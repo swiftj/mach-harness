@@ -11,4 +11,6 @@
 .factory/observations/
 # Machine-local Factory authorization (MACH Next). It must never travel by Git: a clone always starts disabled.
 .factory/local/
+# Product Studio drafts: a product manager's unpublished work stays on their machine.
+.factory/studio/
 .factory/mach-backup-*/

@@ -1,6 +1,6 @@
 # MACH Next — M1 Design: Product Studio domain and `/mach:product-studio`
 
-Status: **proposed, for review. No M1 code exists yet.**
+Status: **accepted and built** (terminal Product Studio). One deviation from this text: `slice check` records the validator's bookkeeping (open questions, spec location, ready or not) without raising the slice's revision, so an interview does not inflate it.
 Based on MACH 0.11.1 and the M0 foundation on `feature/mach-next-product-studio-supervisor`.
 
 M1 delivers the terminal Product Studio: a PM defines a project and epics, interviews a slice, resumes drafts, passes the existing slice validator, and approves a slice and a delivery wave. It publishes nothing (M2), dispatches nothing (M3, M4) and has no web app (M5).

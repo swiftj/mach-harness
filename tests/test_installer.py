@@ -84,6 +84,20 @@ class InstallTest(Base):
         for reference in set(re.findall(r"`((?:references|assets|scripts)/[\w./-]+)`", text)):
             self.assertTrue((self.project / ".claude/skills/mach-intent" / reference).is_file(), reference)
 
+    def test_installed_product_studio_finds_the_intent_skill(self):
+        self.mach("install")
+        script = self.project / ".claude/skills/mach-product-studio/scripts/studio.py"
+        done = subprocess.run([sys.executable, str(script), "--project", str(self.project), "where"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        where = json.loads(done.stdout)
+        self.assertEqual(Path(where["interview_method"]), self.project / ".claude/skills/mach-intent/references/interview-method.md")
+        for key in ("interview_method", "slice_template", "intent_template"):
+            self.assertTrue(Path(where[key]).is_file(), key)
+        self.assertIn(b"\nname: mach-product-studio\n", (self.project / ".claude/skills/mach-product-studio/SKILL.md").read_bytes())
+        ignore = (self.project / ".gitignore").read_text()
+        self.assertIn(".factory/studio/", ignore)
+        self.assertIn(".factory/local/", ignore)
+
     def test_second_install_changes_nothing(self):
         self.mach("install")
         before = snapshot(self.project)

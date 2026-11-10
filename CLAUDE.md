@@ -64,6 +64,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   ├── cleanup/                # Built. Archive, teardown and run record after merge
 │   ├── observe/                # Built. Scorecard, recurring patterns, rule proposals
 │   ├── run/                    # Built. Orchestrator: next-step state machine
+│   ├── product-studio/         # Experimental (MACH Next M1). Product manager's workspace: project, epics, slices, delivery waves
 │   └── init/                   # Built. Plugin-only: scaffolds a project
 ├── agents/
 │   ├── contract-engineer.md    # Stage 2 of intent, pinned to the contracts tier
@@ -73,7 +74,6 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 ├── workflows/
 │   └── belt.js                 # Dynamic Workflow `mach:belt` (`mach-belt` in a project): several tickets in parallel
 ├── templates/                  # What gets scaffolded into a project
-├── mach_product/               # Experimental (MACH Next M0): structural checks for product artifacts. Read-only; no station uses it
 ├── tests/                      # unittest suites and fixtures
 └── docs/                       # Original design notes per station, prd-slice (reference), and mach-next/ (experimental design)
 ```
@@ -105,6 +105,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── archive/                # <ticket_id>.tar.gz per finished cell, and runs.jsonl, one line per ticket
     ├── observations/           # metrics.json and observation-<date>.md reports
     ├── holdouts/<ticket_id>/   # Optional extra checks a person leaves for the verifier; the builder is never shown them
+    ├── studio/                 # Experimental. Product Studio's draft workspace and session; git-ignored, never read by a station
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
             ├── cell.json       # Cell state: stage, mode, slice ID, risk tier, app type, contracts
@@ -234,6 +235,15 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Trigger**: after every `observe.every` finished tickets (5 by default), cleanup and the board report that a pass is due; `/mach-run` and the belt workflow start it with `--auto` and the workflow then runs the tuning ticket.
 * **No person for tuning**: a `factory-tuning` ticket is decided by a unanimous three-seat panel on the contracts tier, with no human approval, provided its diff touches only rule files and its own spec and tests. Reviewers must block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit. Observe never proposes such a change: those stay a person's decision.
 * **Output**: `.factory/observations/metrics.json`, `observation-<date>.md`, `last-pass.json`, and the tuning ticket.
+
+### Experimental: `/mach-product-studio` — Product Manager's Workspace (MACH Next M1)
+* **Status**: experimental, on the MACH Next branch. Design and milestones are in `docs/mach-next/`.
+* **Purpose**: A product manager defines a project (vision, outcomes), its epics, and one slice at a time through the same interview the intent skill uses; saves and resumes drafts; approves slices; and groups approved slices into delivery waves. `studio.py` owns IDs, files, validation and approval.
+* **Workspace**: everything is a draft in `.factory/studio/draft/`, which mirrors the repository layout (`product/project.json`, `product/epics/`, `product/slices/`, `product/intents/`, `product/delivery-waves/`, `specs/slices/`). It is git-ignored. The main checkout is never written to, so no existing gate can be tripped.
+* **Shared with the intent skill, never copied**: the interview method (`skills/intent/references/interview-method.md`), the slice template and grammar references, the spec validator (`validate_slice.py`) and the slice ID allocator (`cell.py slice_ids`), which counts product work orders and Studio drafts as well as specs and open cells.
+* **Approval gates**: `slice approve` requires the spec to pass `validate_slice.py --ready` with no open questions, a complete why (`product/intents/SLICE-NNN.md`), an approved epic and existing dependencies; it then binds the work order to the spec by SHA-256. `wave approve` rechecks every slice and records who approved and when. An approved slice is changed only through `slice reopen`, which returns any approved wave containing it to draft.
+* **Never**: creates a ticket, cell, branch or commit; publishes; reads the machine-local Factory policy; or starts any station. Every report carries `factory_authorized: false`, and tests hold that no station, agent or workflow calls its scripts. Publishing, intake and the supervisor are later milestones.
+* **Commands**: `/mach-product-studio` with no argument shows where things stand and the next step.
 
 ---
 

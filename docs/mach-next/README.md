@@ -10,7 +10,7 @@ This foundation intentionally adds no automatic execution to the existing MACH 0
 
 - Architecture decision record and phased delivery plan, including explicit acceptance tests.
 - Versioned, SCM-tracked product/epic/slice/delivery-wave schemas and a concrete sample project.
-- `mach_product` structural validator: safe artifact paths, relationship integrity, revision sanity, approved-wave checks, dependency cycle detection, and SHA-256 content binding.
+- Structural validator (`skills/product-studio/scripts/product.py`; it was the root `mach_product` package until M1): safe artifact paths, relationship integrity, revision sanity, approved-wave checks, dependency cycle detection, and SHA-256 content binding.
 - Machine-local policy reader whose absent configuration **always evaluates to Factory disabled**.
 - Regression tests using only the Python standard library.
 
@@ -26,7 +26,7 @@ Copy the package's contents to a **new feature branch** at the root of a clone o
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_mach_product_*.py' -v
-python3 -m mach_product.validate --project docs/mach-next/example-project
+python3 skills/product-studio/scripts/product.py --project docs/mach-next/example-project --policy
 ```
 
 The example is a structural fixture, **not** a factory-executable product specification. Expected result: structural validation passes with `factory_authorized: false`.
