@@ -9,4 +9,6 @@
 .factory/holdouts/
 .factory/audit-report.json
 .factory/observations/
+# Machine-local Factory authorization (MACH Next). It must never travel by Git: a clone always starts disabled.
+.factory/local/
 .factory/mach-backup-*/
