@@ -1128,8 +1128,10 @@ def request_text(studio: Studio, wave: Dict[str, Any]) -> Tuple[str, str]:
         lines.append(f"- Epic: {work.get('epic_id')} ({(epics.get(work.get('epic_id')) or {}).get('title')})")
         if spec is not None:
             _, model = studio.analyze(spec, ready=True)
-            if model.get("summary"):
-                lines.append(f"- Outcome: {' '.join(str(model['summary']).split())}")
+            summary = model.get("summary")
+            outcome = summary.get("outcome") if isinstance(summary, dict) else summary
+            if isinstance(outcome, str) and outcome.strip():
+                lines.append(f"- Outcome: {' '.join(outcome.split())}")
             lines.append(f"- {len(model.get('invariants') or [])} invariants, {len(model.get('functional_requirements') or [])} requirements, "
                          f"{len((model.get('decision_matrix') or {}).get('rules') or [])} decision rules, {len(model.get('scenarios') or [])} scenarios")
             lines.append(f"- Spec: `{studio.relative(spec)}`")

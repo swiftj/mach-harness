@@ -256,6 +256,8 @@ class SendTest(Base):
         self.assertEqual((pr["head"], pr["base"], pr["isDraft"]), ("product/WAVE-001", "main", False))
         self.assertIn("SLICE-001: Invite a teammate", pr["body"])
         self.assertIn("starts no work", pr["body"])
+        self.assertIn("- Outcome: The invitee receives an invitation email and one seat is held for them", pr["body"])
+        self.assertNotIn("{'", pr["body"])
         # The product manager's own checkout is exactly as it was.
         self.assertEqual(self.checkout_state(self.a), before)
         self.assertEqual(git(self.a, "worktree", "list").count("\n"), 1)
