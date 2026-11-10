@@ -81,15 +81,42 @@ class NothingIsWiredInTest(unittest.TestCase):
                         found.append(str(path.relative_to(ROOT)))
         self.assertEqual(found, [])
 
-    def test_only_product_studio_uses_the_product_code(self):
-        """No station, agent or workflow may call Product Studio's scripts: approval there starts nothing."""
+    def test_only_intake_reaches_into_product_studio_and_only_to_read(self):
+        """No station, agent or workflow calls Product Studio's scripts, with one exception: the run
+        skill's intake module reuses its validator and its read-from-Git helper. It never publishes."""
+        intake = ROOT / "skills" / "run" / "scripts" / "intake.py"
         found = []
         for top in ("skills", "agents", "workflows", "bin"):
             for path in sorted((ROOT / top).rglob("*")):
-                if path.is_file() and "__pycache__" not in path.parts and "product-studio" not in path.parts and path.suffix in (".py", ".js", ""):
+                if path.is_file() and "__pycache__" not in path.parts and "product-studio" not in path.parts and path != intake and path.suffix in (".py", ".js", ""):
                     text = path.read_text(encoding="utf-8", errors="ignore")
                     found += [f"{path.relative_to(ROOT)}: {word}" for word in ("studio.py", "product.py", "collab.py", "import product", "import studio", "import collab") if word in text]
         self.assertEqual(found, [])
+        source = intake.read_text()
+        self.assertNotIn("import studio", source)
+        self.assertEqual(set(re.findall(r"self\.collab\.(\w+)", source)), {"files_at", "tracked", "git_bytes"})
+        self.assertEqual(set(re.findall(r"self\.product\.(\w+)", source)), {"validate_workspace"})
+
+    def test_intake_reads_git_and_starts_nothing(self):
+        """Intake and the scheduler only query Git. Tickets and cells are made by the ticket and
+        intent stations' own scripts; no agent, workflow or background process is started, and the
+        machine-local Factory policy is never read."""
+        source = (ROOT / "skills" / "run" / "scripts" / "intake.py").read_text()
+        used = set(re.findall(r"git\(self\.root, \"([a-z-]+)\"", source)) | set(re.findall(r"git_bytes\(self\.root, \"([a-z-]+)\"", source))
+        self.assertEqual(used, {"symbolic-ref", "show-ref", "rev-parse", "merge-base", "diff", "rev-list", "check-ignore", "show"})
+        runs = re.findall(r"subprocess\.run\(\[([^\]]*)\]", source)
+        self.assertEqual(len(runs), 1)
+        self.assertTrue(runs[0].startswith("sys.executable, str(path)"))  # only another station's script, with this Python
+        self.assertEqual(set(re.findall(r"self\.script\(\"(\w+)\", \"([\w.]+)\"", source)), {("ticket", "ticket.py"), ("intent", "cell.py")})
+        for word in ("runner.json", "read_local_policy", "claude", "Workflow", "launchctl", "LaunchAgent", "hooks", "Popen", "os.system", "socket", "http",
+                     "\"fetch\"", "\"push\"", "\"checkout\"", "\"switch\"", "\"reset\"", "\"pull\""):
+            self.assertNotIn(word, source, word)
+        run_source = (ROOT / "skills" / "run" / "scripts" / "run.py").read_text()
+        self.assertEqual(run_source.count('"fetch"'), 1)  # only behind the explicit --fetch flag
+        self.assertIn("if args.fetch:", run_source)
+        for name in ("intake.py", "run.py"):
+            text = (ROOT / "skills" / "run" / "scripts" / name).read_text()
+            self.assertNotIn('"factory_started": True', text)
 
     def test_the_validator_cannot_start_or_serve_anything(self):
         """Standard-library reading and checking only: no processes, no network, no writing."""

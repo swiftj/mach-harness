@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mach:schema:factory-event:v1",
+  "title": "MACH Factory Event v1",
+  "description": "One transition of the intake ledger, as a line of .factory/intake/events.jsonl. Events are written only when the ledger changes, in sequence order, so the log can be replayed but is never a second source of truth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "seq",
+    "at",
+    "type",
+    "project_id",
+    "source_commit",
+    "wave_id",
+    "slice_id",
+    "revision",
+    "ticket_id",
+    "data"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Strictly increasing by one; a reader resumes from the last seq it saw."
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "type": {
+      "enum": [
+        "wave.discovered",
+        "intake.validated",
+        "intake.refused",
+        "slice.materialized",
+        "slice.integrated",
+        "dependency.resolved",
+        "dependency.blocked",
+        "work.scheduled",
+        "revision.superseded",
+        "human.required"
+      ]
+    },
+    "project_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_commit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The integration-branch commit the product definitions were read from."
+    },
+    "wave_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "slice_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "revision": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "ticket_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "data": {
+      "type": "object",
+      "description": "Details by type: problems (intake.refused), reasons (dependency.blocked), depends_on (dependency.resolved), commit (slice.integrated), stage, risk, branch and by (work.scheduled), from_revision and effect (revision.superseded), reason (human.required)."
+    }
+  }
+}

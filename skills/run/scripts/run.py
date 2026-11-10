@@ -11,13 +11,20 @@ and not by whoever is driving it.
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
     run.py review-tally <ticket>         count the review votes
     run.py where                         where this script and the project are (used by the workflow)
+    run.py product status                approved product work on the integration branch, against what was taken in
+    run.py product intake [--dry-run]    take approved delivery waves in: one ticket per new slice, never twice
+    run.py product plan                  the dependency-aware plan: what is ready, blocked, active or done, and why
+    run.py product dispatch <slice>...   open the cells for chosen ready slices (or --ready); starts nothing
+    run.py product events [--since N]    the intake ledger's transitions, for a supervisor or a dashboard
 
 A step is either work ("action": audit, groom, plan, build, revise, verify, review, merge, cleanup)
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
 person's approval, a merge, or a person to take over an escalated ticket.
 
 Standard library only. It reads; the only commands it runs are git queries and the review
-station's own script.
+station's own script. The product commands are the exception and live in intake.py: on an
+engineer's explicit command they file tickets and open cells through the ticket and intent
+stations' own scripts. Nothing here starts an agent, and nothing runs in the background.
 """
 
 import argparse
@@ -335,6 +342,52 @@ def cmd_review_tally(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
+def factory(project: Project):
+    """The product intake and scheduler, loaded only when a product command is used."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import intake
+    try:
+        return intake, intake.Factory(project.root, project.config, sibling=sibling, git=git,
+                                      next_step=lambda ticket_id: next_step(project, ticket_id, True))
+    except intake.IntakeError as exc:
+        raise RunError(str(exc))
+
+
+def cmd_product(project: Project, args: argparse.Namespace) -> int:
+    intake, line = factory(project)
+    try:
+        if args.action == "status":
+            found = line.discover()
+            found.pop("_snapshot", None)
+            plan = line.plan()
+            result = {**found, "plan_summary": {key: plan[key] for key in ("counts", "dispatchable", "waiting_for_a_place", "needs_person", "intake_is_current", "limits")},
+                      "factory_started": False}
+        elif args.action == "intake":
+            if args.fetch:
+                fetched = git(project.root, "fetch", "origin")
+                if fetched.returncode != 0:
+                    raise RunError("Could not fetch from the shared repository: " + (fetched.stderr.strip().splitlines() or ["no message"])[-1])
+            adopt = {}
+            for pair in args.adopt or []:
+                slice_id, _, ticket_id = pair.partition("=")
+                if not slice_id or not TICKET_ID_RE.match(ticket_id):
+                    raise RunError(f"'{pair}' is not SLICE-ID=TICKET-ID.")
+                adopt[slice_id] = ticket_id
+            result = line.intake(dry_run=args.dry_run, adopt=adopt, reissue=args.reissue or [])
+        elif args.action == "plan":
+            result = line.plan()
+        elif args.action == "dispatch":
+            result = line.dispatch(args.slice_ids, all_ready=args.ready, limit=args.limit)
+            result["workflow"] = "mach-belt" if PROJECT_INSTALL else "mach:belt"
+            result["run_one"] = [f"{skill('run')} {ticket_id}" for ticket_id in result["tickets"]]
+        else:
+            result = {"events": line.events(since=args.since), "event_types": list(intake.EVENT_TYPES), "schema_version": intake.EVENT_VERSION}
+    except intake.IntakeError as exc:
+        raise RunError(str(exc))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 1 if args.action == "intake" and result.get("refused") and not result.get("created") and not result.get("unchanged") else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH conveyor belt: what happens next to a ticket.")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
@@ -353,6 +406,23 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=text)
         p.add_argument("ticket_id")
         p.set_defaults(func=func)
+    product = sub.add_parser("product", help="approved product work: take it in, plan it, dispatch it").add_subparsers(dest="action", required=True)
+    product.add_parser("status", help="approved waves on the integration branch against the intake ledger; reads only").set_defaults(func=cmd_product)
+    p = product.add_parser("intake", help="take approved delivery waves in: one ticket per new slice")
+    p.add_argument("--dry-run", action="store_true", help="show what would be taken in; change nothing")
+    p.add_argument("--fetch", action="store_true", help="fetch from the shared repository first (never changes the checkout)")
+    p.add_argument("--adopt", action="append", metavar="SLICE-ID=TICKET-ID", help="use an existing ticket for a slice instead of filing one")
+    p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="file a fresh ticket for a slice whose ticket was abandoned")
+    p.set_defaults(func=cmd_product)
+    product.add_parser("plan", help="the dependency-aware execution plan; reads only").set_defaults(func=cmd_product)
+    p = product.add_parser("dispatch", help="open the cells for ready slices; starts no agent")
+    p.add_argument("slice_ids", nargs="*")
+    p.add_argument("--ready", action="store_true", help="every slice the plan marks dispatchable")
+    p.add_argument("--limit", type=int, help="dispatch at most this many")
+    p.set_defaults(func=cmd_product)
+    p = product.add_parser("events", help="the intake ledger's transitions, in order")
+    p.add_argument("--since", type=int, default=0, help="only events after this sequence number")
+    p.set_defaults(func=cmd_product)
     return parser
 
 
