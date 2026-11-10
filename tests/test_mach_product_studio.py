@@ -304,9 +304,12 @@ class ApprovalGateTest(Base):
         self.assertIn("inconsistent", self.refused("slice", "set", "SLICE-001", "--depends-on", "SLICE-001"))
         self.assertEqual(self.tree(self.project), before)
 
-    def test_publishing_commands_are_not_available(self):
-        for name in ("refresh", "send", "feedback"):
-            self.assertIn("not available yet", self.refused(name))
+    def test_nothing_can_be_sent_without_a_shared_repository(self):
+        self.approved_wave()
+        self.assertIn("not connected to a shared repository", self.refused("send", "WAVE-001"))
+        self.assertIn("not connected to a shared repository", self.refused("send", "WAVE-001", "--dry-run"))
+        self.assertEqual(self.ok("feedback")["waves"][0]["status"], "Approved, not sent")
+        self.assertIs(self.ok("refresh")["refreshed"], False)
 
 
 class SliceIdTest(Base):

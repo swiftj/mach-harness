@@ -88,7 +88,7 @@ class NothingIsWiredInTest(unittest.TestCase):
             for path in sorted((ROOT / top).rglob("*")):
                 if path.is_file() and "__pycache__" not in path.parts and "product-studio" not in path.parts and path.suffix in (".py", ".js", ""):
                     text = path.read_text(encoding="utf-8", errors="ignore")
-                    found += [f"{path.relative_to(ROOT)}: {word}" for word in ("studio.py", "product.py", "import product", "import studio") if word in text]
+                    found += [f"{path.relative_to(ROOT)}: {word}" for word in ("studio.py", "product.py", "collab.py", "import product", "import studio", "import collab") if word in text]
         self.assertEqual(found, [])
 
     def test_the_validator_cannot_start_or_serve_anything(self):
@@ -108,28 +108,50 @@ class NothingIsWiredInTest(unittest.TestCase):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 self.assertNotIn(node.func.id, ("open", "exec", "eval", "__import__"))
 
-    def test_studio_names_nothing_that_starts_or_publishes_work(self):
-        """studio.py may ask Git who the user is and whether a path is ignored, and nothing else."""
-        source = (PRODUCT_SCRIPTS / "studio.py").read_text()
-        tree = ast.parse(source)
+    GIT_ALLOWED = {
+        # reading
+        "rev-parse", "check-ignore", "config", "remote", "symbolic-ref", "ls-tree", "show", "cat-file", "for-each-ref", "diff", "merge-base",
+        # the shared project, and a contribution built in a temporary worktree
+        "fetch", "worktree", "add", "commit", "merge", "update-ref", "push",
+    }
+
+    def test_studio_uses_only_the_git_and_gh_commands_it_is_meant_to(self):
+        """Product Studio may read, fetch, build a contribution in its own temporary worktree and
+        push that one branch. It may never rewrite history or move the product manager's checkout."""
+        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py")}
         imported = set()
-        for node in ast.walk(tree):
+        for node in ast.walk(ast.parse(sources["studio.py"])):
             if isinstance(node, ast.Import):
                 imported |= {alias.name.split(".")[0] for alias in node.names}
             elif isinstance(node, ast.ImportFrom):
                 imported.add((node.module or "").split(".")[0])
-        self.assertFalse(imported & {"subprocess", "socket", "http", "urllib", "shutil"}, imported)
-        git_calls = re.findall(r"git\(\[\"([a-z-]+)\"", source)
-        self.assertTrue(git_calls)
-        self.assertEqual(set(git_calls) - {"rev-parse", "check-ignore", "config"}, set())
-        for word in ("runner.json", "read_local_policy", "run.py", "ticket-new", "cell_dir", "write_cell"):
-            self.assertNotIn(word, source)
+        self.assertFalse(imported & {"subprocess", "socket", "http", "urllib", "shutil"}, imported)  # Git and gh go through collab.py
+        used = set()
+        for source in sources.values():
+            used |= set(re.findall(r"git\(\[\"([a-z-]+)\"", source))                          # cell.git(["config", ...], project)
+            used |= set(re.findall(r"git(?:_bytes)?\([a-z_.]+, \"([a-z-]+)\"", source))         # collab.git(project, "fetch", ...)
+            used |= set(re.findall(r"\[\"git\", \"([a-z-]+)\"", source))                       # subprocess.run(["git", "cat-file", ...])
+        self.assertTrue({"fetch", "push", "worktree"} <= used, used)
+        self.assertEqual(used - self.GIT_ALLOWED, set())
+        gh_used = set(re.findall(r"gh\([a-z_.]+, \"pr\", \"([a-z]+)\"", sources["collab.py"])) | set(re.findall(r"\[\"pr\", \"([a-z]+)\"", sources["collab.py"]))
+        self.assertEqual(gh_used, {"list", "create", "view"})  # never merge, close, review or edit
+        for source in sources.values():
+            for word in ("--force", "\"-f\"", "--force-with-lease", "\"reset\"", "\"checkout\"", "\"switch\"", "\"rebase\"", "\"stash\"", "\"pull\"",
+                         "\"clean\"", "--no-verify", "--no-gpg-sign", "--admin", "--auto", "runner.json", "read_local_policy", "run.py", "ticket-new",
+                         "cell_dir", "write_cell"):
+                self.assertNotIn(word, source, word)
+        # A push names an exact commit and a branch under the product prefix; nothing else is pushed.
+        pushes = re.findall(r"git\([^\n]*\"push\"[^\n]*", "\n".join(sources.values()))
+        self.assertEqual(len(pushes), 1)
+        self.assertIn("refs/heads/{branch}", pushes[0])
+        self.assertIn("branch = studio.shared.prefix + wave_id", sources["studio.py"])
 
     def test_report_never_authorizes(self):
-        for name in ("product.py", "studio.py"):
+        for name in ("product.py", "studio.py", "collab.py"):
             source = (PRODUCT_SCRIPTS / name).read_text()
             self.assertNotIn('"factory_authorized": True', source)
-            self.assertIn('"factory_authorized": False', source)
+        for name in ("product.py", "studio.py"):
+            self.assertIn('"factory_authorized": False', (PRODUCT_SCRIPTS / name).read_text())
 
 
 if __name__ == "__main__":
