@@ -106,6 +106,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── observations/           # metrics.json and observation-<date>.md reports
     ├── holdouts/<ticket_id>/   # Optional extra checks a person leaves for the verifier; the builder is never shown them
     ├── studio/                 # Experimental. Product Studio's drafts, session and publication ledger; git-ignored, never read by a station
+    ├── intake/                 # Experimental. The Factory's intake ledger (ledger.json) and its event log (events.jsonl); git-ignored
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
             ├── cell.json       # Cell state: stage, mode, slice ID, risk tier, app type, contracts
@@ -288,6 +289,17 @@ Two drivers use it:
 * **The `mach:belt` workflow (a Claude Dynamic Workflow, `workflows/belt.js`; named `mach-belt` in a project install)**: runs several tickets unattended and in parallel, each in its own cell. The workflow script holds no knowledge of the order: it locates `run.py` once, then asks it what is next through a relay agent given the exact command, starts the worker it names, and asks again, with a cap on steps and a stop when a station runs twice without moving the ticket.
 
 Neither driver grooms interactively on a person's behalf or approves a high-risk change. Whether the line merges is a project setting.
+
+### Experimental: product intake and scheduling (`/mach-run product`, MACH Next M3)
+
+Approved delivery waves that Product Studio published and engineering merged are taken into the Factory through the run skill. `skills/run/scripts/intake.py` does the work; `run.py product status|intake|plan|dispatch|events` are its commands. Design: `docs/mach-next/M3_DESIGN.md`.
+
+* **Intake**: reads product definitions from Git objects at the newest commit the local integration branch shares with the remote, so only merged revisions are used. It verifies the whole tree with Product Studio's validator and each slice with the intent station's gates, then files one execution ticket per new slice revision through the ticket station. The ledger (`.factory/intake/ledger.json`) records the intention before the ticket is filed and finds it again by label after a restart, so nothing is filed twice.
+* **Revisions**: a waiting slice takes a new revision on its ticket; work in the line is never changed and is flagged for a person; integrated work gets a follow-up ticket and keeps its history.
+* **Scheduler**: every slice is `completed`, `active`, `ready`, `blocked` or `superseded`, with reasons. A dependency counts as done only when its commit is on the integration branch, checked in Git; a finished build or an approved cell is still `active`. `factory.max_parallel` limits what is dispatchable.
+* **Dispatch**: only on an engineer's explicit command. It opens the cell, writes `intent.md` from the approved why, passes `cell.py finalize`, and stops at `spec-ready`. It starts no agent; `run.py next` and the belt take over with every gate in place. Product-sourced work is never reviewed below Medium.
+* **Events**: each ledger transition is appended to `.factory/intake/events.jsonl` with a schema version and sequence number, for the supervisor (M4) and Control Tower (M6).
+* **Never**: runs in the background, reads the machine-local Factory policy, fetches unless asked, changes the main checkout, merges or pushes.
 
 ### Merge station: `/mach-merge`
 

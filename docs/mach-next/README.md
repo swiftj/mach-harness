@@ -31,6 +31,12 @@ python3 skills/product-studio/scripts/product.py --project docs/mach-next/exampl
 
 The example is a structural fixture, **not** a factory-executable product specification. Expected result: structural validation passes with `factory_authorized: false`.
 
+## Milestones built since
+
+- **M1** terminal Product Studio: `M1_DESIGN.md`
+- **M2** publishing and collaboration: `M2_DESIGN.md`
+- **M3** Factory intake and dependency-aware scheduling: `M3_DESIGN.md`, with the event and ledger schemas in `schemas/`
+
 ## Critical integration invariant
 
 Product Studio publication/approval is distinct from (a) successful MACH `validate_slice.py` validation, (b) product-PR merge, and (c) the machine-specific authorization to autonomously execute. All four must be satisfied, plus existing Factory gates, before the Supervisor dispatches anything.
