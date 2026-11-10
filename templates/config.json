@@ -32,6 +32,9 @@
   "observe": {
     "every": 5
   },
+  "factory": {
+    "max_parallel": 3
+  },
   "git": {
     "auto_commit": true
   }
