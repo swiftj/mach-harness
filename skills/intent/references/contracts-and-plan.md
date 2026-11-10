@@ -56,7 +56,7 @@ A contract fixes the shape of a boundary: something another team, service, progr
 
 ## Risk tier
 
-Start from the tier in `intent.md`. Raise it to High if the slice touches sign-in or permissions, billing, a database schema, or any existing contract file. Creating a new contract file also makes it High, because other work will build against it. Never lower the tier.
+Start from the tier in `intent.md`. Raise it to High if the slice touches sign-in or permissions, billing, a database schema, or changes any contract file that already exists on the main checkout, because other work already depends on it. Adding a new contract file does not raise the tier: nothing depends on it yet. Never lower the tier. `CELL check-plan` refuses a plan that changes an existing contract without being High.
 
 ## Plan
 

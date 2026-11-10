@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +44,9 @@ MIN_TICKETS_PER_PATTERN = 2
 MIN_SHARE = 0.15
 MAX_EXAMPLES = 3
 MAX_PROPOSALS = 5
+MAX_NOTE_SAMPLES = 60
+TUNING_LABEL = "factory-tuning"
+SKILL_DIR = Path(__file__).resolve().parent.parent
 TARGETS = {"rounds": 1.3, "first_pass": 0.85, "escalation": 0.05, "tests_failing_first": 0.9}
 REQUIRED_HEADINGS = ("Analyzed data", "Patterns", "Proposed changes", "Not proposed")
 REQUIRED_FIELDS = ("Target", "Evidence", "Change")
@@ -313,6 +317,13 @@ def cmd_collect(project: Path, args: argparse.Namespace) -> int:
     analyzed = len(records)
     dated = [record["closed_at"] for record in records if parse_time(record.get("closed_at")) != EARLIEST]
     groups, reviewers = group_findings(records)
+    # Reviewer notes do not block a ticket, so they never count as blockers; the model reads them for recurring themes.
+    note_items = [{"ticket": text_of(record.get("ticket_id")), "reviewer": text_of(note.get("reviewer")).lower() or "unknown",
+                   "title": short(text_of(note.get("title"))), "file": text_of(note.get("file")) or None}
+                  for record in records for note in items(record.get("notes")) if isinstance(note, dict) and text_of(note.get("title"))]
+    by_reviewer: Dict[str, int] = {}
+    for note in note_items:
+        by_reviewer[note["reviewer"]] = by_reviewer.get(note["reviewer"], 0) + 1
     metrics = {
         "generated_at": now(),
         "sample": {
@@ -333,6 +344,7 @@ def cmd_collect(project: Path, args: argparse.Namespace) -> int:
         "patterns": patterns(groups, analyzed, args.min_tickets_per_pattern, args.min_share) if analyzed >= args.min_tickets else [],
         "blockers_by_reviewer": [{"reviewer": group["key"], "tickets": group["tickets"], "count": group["count"], "share": group["share"]}
                                  for group in reviewers.listed(analyzed or 1)],
+        "reviewer_notes": {"count": len(note_items), "by_reviewer": by_reviewer, "samples": note_items[-MAX_NOTE_SAMPLES:]},
         "by_risk": breakdown(records, "risk"),
         "by_app_type": breakdown(records, "app_type"),
         "open_cells": open_cells(project),
@@ -424,7 +436,7 @@ def check_report(text: str, metrics: Dict[str, Any]) -> Tuple[List[str], List[Di
             if len(known) < 2:
                 problems.append(f"Proposed change '{title}' cites {len(known)} ticket ID(s) from the analyzed sample in its Evidence line; "
                                 "it needs at least 2. Only tickets listed in metrics.json under sample.ticket_ids count.")
-        proposals.append({"title": title, "target": target})
+        proposals.append({"title": title, "target": target, "body": "\n".join(body).strip()})
     if len(proposals) > MAX_PROPOSALS:
         problems.append(f"The report proposes {len(proposals)} changes; the limit is {MAX_PROPOSALS}. Keep the best supported and move the rest under 'Not proposed'.")
     if proposals and not sample.get("enough_data"):
@@ -468,14 +480,88 @@ def cmd_report(project: Path, args: argparse.Namespace) -> int:
             break
         except FileExistsError:
             attempt += 1
+    log = project / RUNS
+    total = sum(1 for line in log.read_text(encoding="utf-8").splitlines() if line.strip()) if log.is_file() else 0
+    (folder / "last-pass.json").write_text(json.dumps({"at": now(), "runs_total": total, "report": path.name, "proposed_changes": len(proposals)}, indent=2) + "\n", encoding="utf-8")
     source = Path(args.file).resolve()
     if source.name == "draft.md" and source.parent == folder.resolve():
         source.unlink()  # the filed copy is the record; the draft is done
     print(json.dumps({
         "status": "FILED", "report": str(path), "tickets_analyzed": metrics["sample"].get("tickets_analyzed"),
-        "proposed_changes": len(proposals), "proposed_targets": [proposal["target"] for proposal in proposals], "proposals": proposals,
-        "next": "Present the scorecard and the proposals to the user. Nothing has been changed: each proposal needs a ticket labeled 'factory-tuning' and a person's approval.",
+        "proposed_changes": len(proposals), "proposed_targets": [proposal["target"] for proposal in proposals],
+        "proposals": [{"title": proposal["title"], "target": proposal["target"]} for proposal in proposals],
+        "next": ("Nothing has been changed. To put the proposals into the factory, run 'file-ticket': it files one ticket labelled "
+                 f"'{TUNING_LABEL}' that goes through the line like any other change." if proposals else "Nothing was proposed, so there is nothing to file."),
     }, indent=2, ensure_ascii=False))
+    return 0
+
+
+def sibling(name: str) -> Path:
+    """Another station's skill folder, whichever way MACH is installed."""
+    for candidate in (SKILL_DIR.parent / f"mach-{name}", SKILL_DIR.parent / name):
+        if candidate.is_dir():
+            return candidate
+    raise ObserveError(f"The MACH {name} skill is not installed next to this one ({SKILL_DIR.parent}), so the ticket cannot be filed.")
+
+
+def cmd_file_ticket(project: Path, args: argparse.Namespace) -> int:
+    """File one ticket carrying every proposal in an observation report, so the changes reach the rules through the line."""
+    folder = project / OBSERVATIONS
+    reports = sorted(folder.glob("observation-*.md"), key=lambda path: path.stat().st_mtime) if folder.is_dir() else []
+    report = args.report.resolve() if args.report else (reports[-1] if reports else None)
+    if report is None or not report.is_file():
+        raise ObserveError("There is no filed observation report. Run 'collect' and 'report' first.")
+    lines = report.read_text(encoding="utf-8").splitlines()
+    sections: Dict[str, List[str]] = {}
+    for title, body in split(lines, 2):
+        sections.setdefault(title.lower(), []).extend(body)
+    proposals = [{"title": title, "target": target_path(fields(body).get("target", "")), "body": "\n".join(body).strip()}
+                 for title, body in split(sections.get("proposed changes", []), 3)]
+    proposals = [proposal for proposal in proposals if proposal["target"] and allowed_target(proposal["target"])]
+    if not proposals:
+        print(json.dumps({"status": "NOTHING_TO_FILE", "report": str(report), "note": "The report proposes no changes."}, indent=2))
+        return 0
+    filed_path = folder / "filed.json"
+    filed = load_json(filed_path) or {}
+    if report.name in filed:
+        print(json.dumps({"status": "ALREADY_FILED", "report": str(report), "ticket_id": filed[report.name]}, indent=2))
+        return 0
+    relative_report = report.relative_to(project) if project in report.parents else report
+    body = "\n".join([
+        f"Reported by: the MACH observe station, from {relative_report}.",
+        "",
+        "Apply the rule changes below to the factory's own rule files. Each was proposed because the same problem recurred across finished tickets; "
+        "the evidence is under each change. This is a change to documents: the outcome is checked by reading the files, with no user interface and no outside services.",
+        "",
+        "Rules for this ticket:",
+        "- Change only the files named as targets below.",
+        "- Add or sharpen rules only. Do not remove a rule, weaken a gate, lower a threshold, raise a limit, or edit any script or setting.",
+        "- Use the exact text given under each change.",
+        "",
+        "## Changes",
+        "",
+        *[f"### {proposal['title']}\n\n{proposal['body']}\n" for proposal in proposals],
+        "## Acceptance criteria",
+        "",
+        *[f"- [ ] `{proposal['target']}` contains the rule from \"{proposal['title']}\", worded exactly as given." for proposal in proposals],
+        "- [ ] No rule that was already in those files is removed or weakened.",
+        "- [ ] No file other than the targets is changed, apart from this ticket's own spec and tests.",
+    ])
+    script = sibling("ticket") / "scripts" / "ticket.py"
+    done = subprocess.run([sys.executable, str(script), "--project", str(project), "create", "--title", f"Tune the factory's rules ({report.stem})",
+                           "--label", TUNING_LABEL, "--body", "-"], input=body, capture_output=True, text=True)
+    try:
+        ticket_id = json.loads(done.stdout)["ticket_id"]
+    except (ValueError, KeyError):
+        raise ObserveError("The ticket could not be filed: " + (done.stderr.strip() or done.stdout.strip() or "the ticket script printed nothing"))
+    filed[report.name] = ticket_id
+    filed_path.write_text(json.dumps(filed, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({
+        "status": "FILED", "ticket_id": ticket_id, "label": TUNING_LABEL, "report": str(report), "changes": len(proposals),
+        "targets": sorted({proposal["target"] for proposal in proposals}),
+        "next": f"The ticket goes through the line like any other: groom it headless, build, verify, and review. A ticket labelled '{TUNING_LABEL}' "
+                "is decided by a unanimous review panel, with no person's approval, as long as it changes only the factory's rule files.",
+    }, indent=2))
     return 0
 
 
@@ -518,6 +604,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("report", help="check the written report against the metrics and file it")
     p.add_argument("--file", type=Path, required=True, help="the report, in markdown")
     p.set_defaults(func=cmd_report)
+    p = sub.add_parser("file-ticket", help="file one ticket carrying the proposals of a filed report, so they go through the line")
+    p.add_argument("--report", type=Path, help="the filed observation report (default: the latest)")
+    p.set_defaults(func=cmd_file_ticket)
     p = sub.add_parser("status", help="print the latest metrics summary and the filed reports")
     p.set_defaults(func=cmd_status)
     return parser

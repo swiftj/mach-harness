@@ -482,6 +482,11 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
                 problems.append(f"contract '{item}' must be a path inside the cell's working folder")
             elif not target.is_file():
                 problems.append(f"contract '{item}' is listed but does not exist under {work}")
+            elif cell.get("isolation") == "worktree" and risk in RISK_TIERS and risk != "High":
+                # A contract that is already on the main checkout is something other work depends on.
+                main_head = git(["rev-parse", "HEAD"], project).stdout.strip()
+                if main_head and git(["cat-file", "-e", f"{main_head}:{item}"], work).returncode == 0:
+                    problems.append(f"contract '{item}' already exists on the main checkout; changing an existing contract makes the ticket High risk, so 'Risk tier' must be High")
     elif raw.rstrip(".").strip().lower() == "none":
         problems.append("'Contracts: None.' needs a reason, such as 'None. This slice changes no boundary.'")
 
@@ -538,7 +543,18 @@ def cmd_ticket_new(project: Path, args: argparse.Namespace) -> int:
     folder = project / ".factory" / "tickets"
     folder.mkdir(parents=True, exist_ok=True)
     prefix = str(load_config(project).get("tickets", {}).get("local_prefix") or "LOCAL")
-    numbers = [int(m.group(1)) for p in folder.glob(f"{prefix}-*.md") for m in [re.match(rf"^{re.escape(prefix)}-(\d+)$", p.stem)] if m]
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+    factory = project / ".factory"
+    # Never reuse a number: count open and closed tickets, cells, inbox records, and finished tickets in the run log.
+    names = [p.stem for p in folder.glob(f"{prefix}-*.md")] + [p.stem for p in (factory / "inbox").glob(f"{prefix}-*.json")]
+    names += [p.name for p in (factory / "worktrees").glob(f"{prefix}-*") if p.is_dir()]
+    log = factory / "archive" / "runs.jsonl"
+    for line in log.read_text(encoding="utf-8").splitlines() if log.is_file() else []:
+        try:
+            names.append(str(json.loads(line).get("ticket_id") or ""))
+        except (ValueError, AttributeError):
+            continue
+    numbers = [int(m.group(1)) for name in names for m in [pattern.match(name)] if m]
     ticket_id = f"{prefix}-{max([0, *numbers]) + 1:03d}"
     title = " ".join(args.title.split())
     labels = ", ".join(json.dumps(label) for label in args.label)

@@ -69,7 +69,7 @@ class InstallTest(Base):
         self.assertNotIn(b"/mach:", workflow)
         self.assertTrue((self.project / ".factory/tickets").is_dir())
         self.assertTrue(os.access(self.project / ".factory/bin/mach", os.X_OK))
-        json.loads(files[".factory/config.json"])
+        self.assertEqual(json.loads(files[".factory/config.json"])["observe"], {"every": 5})
 
     def test_installed_skill_is_runnable_and_self_contained(self):
         self.mach("install")

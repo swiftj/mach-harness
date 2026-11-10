@@ -50,7 +50,7 @@ When every reviewer has returned, run `REVIEW tally <ticket>`. Do not rely on wh
 
 | Outcome | Meaning | What you do |
 |---------|---------|-------------|
-| `APPROVED` | Enough reviewers found no blocker. | Report it. The branch may be merged. |
+| `APPROVED` | Enough reviewers found no blocker. For a `factory-tuning` ticket this means all three seats, with no person's approval. | Report it. The branch may be merged. |
 | `AWAITING_HUMAN` | The panel approved, and the change is high risk or the repository's readiness tier requires a person. | Show the user the outcome and the notes, and ask for their decision. Stop and wait. |
 | `REJECTED` | Too few approvals. | Post the findings on the ticket. Return the ticket to the build station only if you were asked to run the pipeline; otherwise report the command that does it. |
 | `ESCALATE` | Rejected in the third failed round. | Do not return it to the build station. Label the ticket `blocked-requires-sme`, set its state to `blocked`, and give the user the findings. |
@@ -65,4 +65,4 @@ Record the outcome on the ticket with the ticket skill if it is installed: a com
 
 ## Recording a person's approval
 
-When the input is `<ticket> approve --by <name>`, or the user approves a ticket that is `AWAITING_HUMAN`: confirm you have shown them the findings for this round, then run `REVIEW approve-human <ticket> --by "<name>" --note "<their words, if they gave a reason>"`. If they decline, do not record anything: ask whether they want it returned to the build station with their reasons as findings, and write those reasons to a file for `build revise --findings`.
+When the input is `<ticket> approve --by <name>`, or the user approves a ticket that is `AWAITING_HUMAN`: if their message says they have read the findings for this round, or you showed them the findings earlier in this conversation, their approval is complete; do not ask again. Otherwise show them the outcome and the findings once, and wait for their answer. Then run `REVIEW approve-human <ticket> --by "<name>" --note "<their words, if they gave a reason>"`. If they decline, do not record anything: ask whether they want it returned to the build station with their reasons as findings, and write those reasons to a file for `build revise --findings`.

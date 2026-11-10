@@ -127,6 +127,15 @@ class Project:
                 return "This ticket is closed."
         return None
 
+    def observe_due(self) -> bool:
+        """Whether enough tickets have finished since the last observe pass for another one."""
+        every = self.section("observe").get("every")
+        every = every if isinstance(every, int) and every > 0 else 5
+        log = self.root / ".factory" / "archive" / "runs.jsonl"
+        total = sum(1 for line in log.read_text(encoding="utf-8").splitlines() if line.strip()) if log.is_file() else 0
+        seen = (load_json(self.root / ".factory" / "observations" / "last-pass.json", {}) or {}).get("runs_total")
+        return total - (seen if isinstance(seen, int) else 0) >= every
+
     def audit(self) -> Dict[str, Any]:
         """Whether the readiness audit lets building start: ok, or why not."""
         if self.section("build").get("require_audit") is False:
@@ -225,8 +234,10 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage == "verified":
         return step(ticket_id, stage, "review", "Verified; ready for the review panel.", risk=cell.get("risk"))
     if stage == "awaiting-human":
-        return step(ticket_id, stage, "stop", "The review panel approved, and a person must approve before merge.", needs="human-approval",
-                    findings=(load_json(root / "review" / "decision.json", {}) or {}).get("findings"))
+        decided = load_json(root / "review" / "decision.json", {}) or {}
+        why = " and ".join(decided.get("human_approval_reasons") or [])
+        return step(ticket_id, stage, "stop", "The review panel approved, and a person must approve before merge" + (f" because {why}." if why else "."),
+                    needs="human-approval", findings=decided.get("findings"))
     if stage == "approved":
         if project.merged(cell.get("branch")):
             return step(ticket_id, stage, "cleanup", "Approved and merged.", model=project.model("utility"),
@@ -263,7 +274,8 @@ def cmd_board(project: Project, args: argparse.Namespace) -> int:
     for ticket_id in ids:
         info = next_step(project, ticket_id, args.headless)
         rows.append({key: info[key] for key in ("ticket_id", "stage", "action", "needs", "reason")})
-    print(json.dumps({"audit": project.audit(), "tickets": rows,
+    tuning = [row["ticket_id"] for row in rows if row["action"] != "stop" and "factory-tuning" in project.ticket_labels(row["ticket_id"])]
+    print(json.dumps({"audit": project.audit(), "observe_due": project.observe_due(), "factory_tuning_ready": tuning, "tickets": rows,
                       "ready_to_run": [row["ticket_id"] for row in rows if row["action"] != "stop"],
                       "waiting_on_a_person": [row["ticket_id"] for row in rows if row["action"] == "stop"]}, indent=2, ensure_ascii=False))
     return 0

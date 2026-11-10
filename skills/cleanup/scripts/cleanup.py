@@ -225,7 +225,7 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str) ->
     summaries = [load_dict(path / "summary.json") for _, path in numbered(list(evidence.glob("previous-*")))] + [load_dict(evidence / "summary.json")]
     failed = [summary for summary in summaries if summary.get("status") == "FAIL_WITH_EVIDENCE"]
 
-    decisions, blockers = [], []
+    decisions, blockers, notes = [], [], []
     for number, folder in numbered(list((cell.root / "review").glob("round-*"))):
         decisions.append(load_dict(folder / "decision.json"))
         for path in sorted((folder / "votes").glob("*.json")):
@@ -234,6 +234,9 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str) ->
                 if isinstance(finding, dict) and finding.get("severity") == "blocker":
                     blockers.append({"round": number, "reviewer": str(vote.get("reviewer") or path.stem), "rule": text_or_none(finding.get("rule")),
                                      "title": str(finding.get("title") or ""), "file": text_or_none(finding.get("file"))})
+                elif isinstance(finding, dict) and finding.get("severity") == "note":
+                    notes.append({"round": number, "reviewer": str(vote.get("reviewer") or path.stem),
+                                  "title": str(finding.get("title") or ""), "file": text_or_none(finding.get("file"))})
 
     first_run = build.get("tests_passing_on_first_run")
     seen_failing = build.get("tests_seen_failing_first")
@@ -250,11 +253,23 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str) ->
         "deviations": [{"type": str(d.get("type") or ""), "task": text_or_none(d.get("task")), "detail": str(d.get("detail") or "")}
                        for d in (build.get("deviations") if isinstance(build.get("deviations"), list) else []) if isinstance(d, dict)],
         "blockers": blockers,
+        "notes": notes,
         "verify_findings": [str(item) for summary in failed for item in (summary.get("failures") if isinstance(summary.get("failures"), list) else [])],
         "tests_seen_failing_first": seen_failing if isinstance(seen_failing, int) else 0,
         "tests_passing_on_first_run": len(first_run) if isinstance(first_run, list) else 0,
         "created_at": text_or_none(info.get("created_at")), "closed_at": now(), "archive": archive,
     }
+
+
+def observe_due(project: Path) -> Dict[str, Any]:
+    """Whether enough tickets have finished since the last observe pass for another one."""
+    every = load_dict(project / ".factory" / "config.json").get("observe")
+    every = every.get("every") if isinstance(every, dict) and isinstance(every.get("every"), int) and every["every"] > 0 else 5
+    log = project / ".factory" / "archive" / RUN_LOG
+    total = sum(1 for line in log.read_text(encoding="utf-8").splitlines() if line.strip()) if log.is_file() else 0
+    seen = load_dict(project / ".factory" / "observations" / "last-pass.json").get("runs_total")
+    since = total - (seen if isinstance(seen, int) else 0)
+    return {"due": since >= every, "finished_since_last_pass": since, "every": every}
 
 
 def survey(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None) -> Dict[str, Any]:
@@ -457,6 +472,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
     with (target.parent / RUN_LOG).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     state = "closed, with the label 'abandoned'" if abandoning else "closed"
+    observe = observe_due(project)
     print(json.dumps({
         "status": "CLEANED", "ticket_id": cell.ticket_id, "outcome": plan["outcome"], "merged_as": plan["merged_as"], "archive": archive, "archive_members": len(members),
         "bundle": f"{cell.ticket_id}/branch.bundle" if bundled else None,
@@ -464,7 +480,9 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
                     f"git fetch {cell.ticket_id}/branch.bundle {cell.branch}:{cell.branch}") if bundled else None,
         "removed": removed, "branch": cell.branch, "branch_deleted": branch_deleted, "branch_note": note,
         "record": record, "run_log": relative(project, target.parent / RUN_LOG),
-        "next": f"Set the ticket {cell.ticket_id} to {state}, using the ticket skill.",
+        "observe_due": observe["due"], "finished_since_last_observe_pass": observe["finished_since_last_pass"],
+        "next": f"Set the ticket {cell.ticket_id} to {state}, using the ticket skill."
+                + (f" Then an observe pass is due ({observe['finished_since_last_pass']} tickets have finished since the last one): run the observe skill with --auto." if observe["due"] else ""),
     }, indent=2, ensure_ascii=False))
     return 0
 

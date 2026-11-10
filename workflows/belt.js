@@ -9,6 +9,7 @@ export const meta = {
     { title: 'Verify', detail: 'a fresh verifier per build' },
     { title: 'Review', detail: 'a fresh panel per verified ticket' },
     { title: 'Wrap up', detail: 'cleanup of merged tickets' },
+    { title: 'Learn', detail: 'an observe pass when one is due, then its tuning ticket' },
   ],
 }
 
@@ -32,8 +33,12 @@ const STEP = {
 }
 const BOARD = {
   type: 'object',
-  properties: { audit_state: { type: 'string', description: 'the "state" field of the "audit" object' } },
-  required: ['audit_state'],
+  properties: {
+    audit_state: { type: 'string', description: 'the "state" field of the "audit" object' },
+    observe_due: { type: 'boolean' },
+    factory_tuning_ready: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['audit_state', 'observe_due', 'factory_tuning_ready'],
 }
 const PANEL = {
   type: 'object',
@@ -154,7 +159,26 @@ const report = results.map((result, index) => result || { ticket: tickets[index]
 for (const result of report) {
   log(`${result.ticket}: ${result.outcome}${result.waiting_for ? ', waiting for ' + result.waiting_for : ''}`)
 }
+
+// Learn: when enough tickets have finished, the observe station measures them and files one tuning ticket,
+// and that ticket runs through the same line. Rule changes are never written directly.
+phase('Learn')
+let learned = 'no observe pass was due'
+const after = await clerk('board --headless', BOARD, 'is an observe pass due?', 'Learn')
+if (after && after.observe_due === true) {
+  await agent('Use the MACH observe skill unattended: /mach:observe --auto', { label: 'observe pass', phase: 'Learn' })
+  learned = 'an observe pass ran'
+}
+const settled = after && after.observe_due === true ? await clerk('board --headless', BOARD, 'any tuning ticket to run?', 'Learn') : after
+const tuning = ((settled && settled.factory_tuning_ready) || []).filter(id => !tickets.includes(id))
+if (tuning.length) {
+  log(`Running the tuning ticket${tuning.length > 1 ? 's' : ''} ${tuning.join(', ')} through the line.`)
+  const tuned = await parallel(tuning.map(ticket => () => runTicket(ticket)))
+  tuned.forEach((result, index) => report.push(result || { ticket: tuning[index], outcome: 'error', reason: 'the run for this ticket failed' }))
+  learned += `; tuning ticket${tuning.length > 1 ? 's' : ''} ${tuning.join(', ')} ran`
+}
 return {
+  learning: learned,
   tickets: report,
   waiting_on_a_person: report.filter(r => r.outcome === 'stopped' && r.waiting_for !== 'nothing').map(r => `${r.ticket}: ${r.waiting_for || r.reason}`),
   finished: report.filter(r => r.outcome === 'stopped' && r.waiting_for === 'nothing').map(r => r.ticket),

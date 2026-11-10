@@ -155,7 +155,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Purpose**: Turns one ticket into the artifact chain. Supersedes the earlier grilling-loop design; it is the `prd-slice` skill adapted to the factory.
 * **Stage 1 — Interview**: Carves the ticket down to one thin vertical slice (the skill decides scope, deferring the rest to reserved slice IDs) and interviews the product owner **one yes-or-no question at a time, each with a recommended answer**, until every branch of the design tree is settled. Facts are looked up by sub-agents, never asked. Writes `intent.md` and a business-level slice spec: RFC 2119 invariants, EARS functional requirements, a complete decision matrix, and Given/When/Then scenarios. No status codes, schemas or technology appear in the spec.
 * **Deterministic gates**: `validate_slice.py` checks structure, grammar, matrix completeness and traceability; `cell.py finalize` requires zero open questions before it exports `spec.json`. Slice IDs are allocated across every open cell so parallel tickets cannot collide.
-* **Stage 2 — Contracts & plan**: A fresh-context contract engineer works from `spec.json` alone to write the boundary contracts and a test-first `plan.md`. `cell.py check-plan` requires every requirement and scenario to be assigned to a task, tests before implementation, and each listed contract to exist. Any contract change raises the ticket to High risk.
+* **Stage 2 — Contracts & plan**: A fresh-context contract engineer works from `spec.json` alone to write the boundary contracts and a test-first `plan.md`. `cell.py check-plan` requires every requirement and scenario to be assigned to a task, tests before implementation, and each listed contract to exist. Changing a contract that already exists on the main checkout raises the ticket to High risk, and `cell.py check-plan` enforces it; adding a new contract does not.
 * **Modes**:
   * *Interactive*: the default.
   * *Headless* (`--headless`, which the orchestrator passes for `AUTO-` tickets): answers each question from facts or safe, strict defaults and records every one as "Decided without a PM"; anything touching money, access, irreversible deletion, or conflicting rules becomes an open question, which blocks stage 2 and labels the ticket `blocked-requires-sme`.
@@ -200,7 +200,8 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **The chair does not review.** The skill's own session seats the panel, tells reviewers where to look and never what to find, and carries out the outcome.
 * **Votes follow from findings.** A reviewer submits findings, never a vote: any `blocker` is a reject, none is an approve. A blocker must name the rule or spec ID it breaks and the file that shows it. A vote cannot be revised.
 * **Consensus Thresholds** (set in `.factory/config.json` under `review`):
-  * **High Risk** (Auth, Billing, DB Schema, Contracts): **Unanimous 3/3 + 1 human approval**.
+  * **High Risk** (Auth, Billing, DB Schema, changes to existing contracts): **Unanimous 3/3 + 1 human approval**. Adding a new contract file does not make a ticket High risk.
+  * **Factory tuning** (label `factory-tuning`, rule files only): **Unanimous 3/3 on the contracts tier, no human approval**.
   * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden.
   * **Low Risk** (Docs, wording): **1/1**, one general reviewer.
   * A Silver readiness tier also requires a human approval, whatever the risk.
@@ -222,13 +223,15 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 
 ### 8. `/mach-observe` — Meta-Learning & Self-Improvement Loop
 * **Assigned Model**: `fable` (`claude-fable-5-2`) (High Reasoning) when run as its own agent; the skill does not pin a model
-* **Purpose**: Continuous optimization of the software factory. `observe.py` measures; the model interprets and proposes; a person decides.
-* **Input**: `.factory/archive/runs.jsonl`, the one-line record the cleanup station writes for every finished ticket (rounds, review blockers and the rules they broke, builder deviations, verification failures), plus open cells and the last audit.
+* **Purpose**: A closed loop that tunes the factory's own rules from its finished tickets. `observe.py` measures and files; the model interprets and proposes; the line applies; the review panel decides.
+* **Input**: `.factory/archive/runs.jsonl`, the record cleanup writes for every finished ticket: rounds, review blockers and the rules they broke, reviewers' non-blocking notes, builder deviations, verification failures. Plus open cells and the last audit.
 * **Scorecard** (targets in brackets): average judging rounds per merged ticket (< 1.3), first-pass rate (> 85%), escalation rate (< 5%), share of tests seen failing first (> 90%), abandonment rate, deviations per ticket.
-* **Patterns**: review blockers grouped by the rule they broke, deviations by type, verification failures by kind. A group is a pattern only if it occurs in at least 2 tickets and 15% of the sample.
-* **Proposals**: for each pattern, the smallest rule that would have prevented it, targeted at `REVIEW.md`, `CLAUDE.md`, `AGENTS.md` or a skill's instructions, citing the tickets that prove it. `observe.py report` refuses a report whose proposals lack evidence from the sample, target any other file, number more than five, or are made on fewer than five finished tickets.
-* **Never on its own authority**: the station does not edit rules or scripts, and never proposes weakening a gate, lowering a threshold or raising the three-round limit. An accepted proposal becomes a `factory-tuning` ticket and goes through grooming, build and review; changes to the factory's rules are High risk.
-* **Output**: `.factory/observations/metrics.json` and `observation-<date>.md`.
+* **Patterns**: review blockers grouped by the rule they broke, deviations by type, verification failures by kind (each needs 2 tickets and 15% of the sample), and themes recurring across at least two tickets' reviewer notes.
+* **Proposals**: the smallest rule that would have prevented each pattern, targeted at `REVIEW.md`, `CLAUDE.md`, `AGENTS.md` or a skill's instructions, citing the tickets that prove it. `observe.py report` refuses proposals without evidence from the sample, aimed at any other file, numbering more than five, or made on fewer than five finished tickets.
+* **Closing the loop**: `observe.py file-ticket` files one ticket labelled `factory-tuning` carrying every proposal. It goes through grooming, build, verification and review like any other ticket, so each rule change is a reviewed, revertible diff. Rules are never edited directly.
+* **Trigger**: after every `observe.every` finished tickets (5 by default), cleanup and the board report that a pass is due; `/mach-run` and the belt workflow start it with `--auto` and the workflow then runs the tuning ticket.
+* **No person for tuning**: a `factory-tuning` ticket is decided by a unanimous three-seat panel on the contracts tier, with no human approval, provided its diff touches only rule files and its own spec and tests. Reviewers must block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit. Observe never proposes such a change: those stay a person's decision.
+* **Output**: `.factory/observations/metrics.json`, `observation-<date>.md`, `last-pass.json`, and the tuning ticket.
 
 ---
 
@@ -260,7 +263,7 @@ The order of the belt is decided by a script, not by whoever is driving. `skills
 | `built` | revise if verification failed or review rejected this build; otherwise verify |
 | `verified` | review |
 | `awaiting-human` | stop: a person approves |
-| `approved` | stop until the branch is merged; then cleanup |
+| `approved` | stop until the branch is merged; then cleanup, and an observe pass when one is due |
 | `blocked` | stop: escalated to a person |
 
 Two drivers use it:
@@ -279,4 +282,4 @@ Neither driver grooms interactively on a person's behalf, approves a high-risk c
 3. **No Speculative Completion**: An agent cannot self-certify completion. Passing to review requires objective artifacts produced by `/mach-verify`.
 4. **Fresh-Context Reviews**: Code review sub-agents must always run in fresh context sessions to eliminate confirmation bias.
 5. **Honor the 3-Loop Limit**: Never exceed 3 review-fix iterations on a single ticket. Escalate to a human engineer immediately upon a third failure.
-6. **Preserve Boundary Contracts**: Component interfaces must be formally specified via Protocol Buffers (`.proto`) or OpenAPI schemas. Changes to contracts require a High Risk review pass.
+6. **Preserve Boundary Contracts**: Component interfaces must be formally specified via Protocol Buffers (`.proto`) or OpenAPI schemas. Changing an existing contract requires a High Risk review pass; adding a new one is ordinary work.

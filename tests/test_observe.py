@@ -450,5 +450,48 @@ class StatusTest(Base):
         self.assertIn("out of date", status["next"])
 
 
+class LoopTest(Base):
+    """Reviewer notes reach the metrics, each pass is marked, and proposals become one tuning ticket."""
+
+    def test_reviewer_notes_are_counted_and_sampled(self):
+        notes = [{"round": 1, "reviewer": "Product", "title": "Refusal box touches the button", "file": "index.html"},
+                 {"round": 1, "reviewer": "security", "title": "No timeout on the email call", "file": None}]
+        self.runs(run("T-1", 1, notes=notes), run("T-2", 2, notes=notes[:1]), run("T-3", 3))
+        found = self.collect()["reviewer_notes"]
+        self.assertEqual((found["count"], found["by_reviewer"]), (3, {"product": 2, "security": 1}))
+        self.assertEqual(found["samples"][0], {"ticket": "T-1", "reviewer": "product", "title": "Refusal box touches the button", "file": "index.html"})
+
+    def test_filing_a_report_marks_the_pass_and_file_ticket_creates_one_tuning_ticket(self):
+        self.six()
+        self.collect()
+        code, out, err = self.call("file-ticket")
+        self.assertEqual(code, 1)
+        self.assertIn("no filed observation report", err)
+        code, out, err = self.file_report(report(proposal(), proposal(name="Second rule", target="`CLAUDE.md`")))
+        self.assertEqual(code, 0, err)
+        marker = json.loads((self.project / ".factory/observations/last-pass.json").read_text())
+        self.assertEqual((marker["runs_total"], marker["proposed_changes"]), (6, 2))
+        code, out, err = self.call("file-ticket")
+        self.assertEqual(code, 0, err)
+        filed = json.loads(out)
+        self.assertEqual((filed["status"], filed["ticket_id"], filed["changes"], filed["targets"]), ("FILED", "LOCAL-001", 2, ["CLAUDE.md", "REVIEW.md"]))
+        ticket = (self.project / ".factory/tickets/LOCAL-001.md").read_text()
+        self.assertIn('labels: ["factory-tuning"]', ticket)
+        self.assertIn("### Deadline on every handler", ticket)
+        self.assertIn("T-1 and T-2 were both blocked for it.", ticket)
+        self.assertIn('- [ ] `CLAUDE.md` contains the rule from "Second rule", worded exactly as given.', ticket)
+        self.assertIn("Add or sharpen rules only.", ticket)
+        again = json.loads(self.call("file-ticket")[1])
+        self.assertEqual((again["status"], again["ticket_id"]), ("ALREADY_FILED", "LOCAL-001"))
+        self.assertEqual(len(list((self.project / ".factory/tickets").glob("*.md"))), 1)
+
+    def test_a_report_with_no_proposals_files_nothing(self):
+        self.six()
+        self.collect()
+        self.assertEqual(self.file_report(report())[0], 0)
+        self.assertEqual(json.loads(self.call("file-ticket")[1])["status"], "NOTHING_TO_FILE")
+        self.assertFalse((self.project / ".factory/tickets").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

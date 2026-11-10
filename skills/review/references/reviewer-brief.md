@@ -8,7 +8,7 @@ You review one change to one ticket. You did not build it, and the other reviewe
 
 Everything is listed under `paths` in the packet (a JSON file).
 
-1. The packet itself: the ticket, round, risk tier, and the files changed.
+1. The packet itself: the ticket, round, risk tier, and the files changed. If it says `"tuning": true`, this ticket changes the factory's own rules and no person will review it after you: see "Tuning tickets" below.
 2. `review_rules`: the project's REVIEW.md. Its rules bind you; its "Project-specific rules" section most of all.
 3. Your checklist file.
 4. `spec`: the slice as data. It is the definition of correct behavior. `intent` says why the slice exists; `plan` says what the builder was told to do and which technical decisions were made.
@@ -46,6 +46,17 @@ Write your findings as a JSON file in the packet's `review_dir`, named `findings
 - An empty `findings` list is a legitimate result when you looked properly and found nothing. Say in the summary what you checked.
 
 Before you call something a blocker, try to disprove it: read the surrounding code, the spec text, and the test or evidence that covers it. A blocker that is wrong costs a whole build round; a real one you talked yourself out of ships a defect. When you are unsure after checking, make it a note and say what you could not determine.
+
+## Tuning tickets
+
+A ticket whose packet says `"tuning": true` changes the rules the factory itself works by (`REVIEW.md`, `CLAUDE.md`, `AGENTS.md`, skill instructions). The panel's unanimous approval is the only check it gets, so hold it to this, whatever your seat:
+
+- It may add a rule or make an existing rule more precise. That is all.
+- Removing a rule, weakening a gate, lowering a threshold, raising a limit such as the three-round limit, loosening who must approve, or making a check optional is a **blocker**. Cite this section as the rule.
+- A new rule must be something a reviewer or builder can apply to a change and answer yes or no. A vague or unenforceable rule is a blocker.
+- The ticket's evidence must support the rule: read the tickets it cites in the plan or intent. A rule that the cited tickets do not justify is a blocker.
+- A rule that contradicts an existing rule, contradicts itself, or silently narrows an existing rule is a blocker.
+- A rule placed where it will be lost is a blocker: in `CLAUDE.md`, anything between the `mach:begin` and `mach:end` markers is rewritten when MACH is installed or updated.
 
 ## Submit
 

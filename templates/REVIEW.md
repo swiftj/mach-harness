@@ -8,7 +8,7 @@ Each ticket's tier is set during grooming (in `intent.md`) and can only be raise
 
 | Tier | Applies when the change touches | Reviewers | Approvals needed | Person must approve |
 |------|---------------------------------|-----------|------------------|---------------------|
-| High | Sign-in or permissions, billing or money, personal data, deleting data, a database schema, or any contract file | 3 | 3 of 3 | Yes |
+| High | Sign-in or permissions, billing or money, personal data, deleting data, a database schema, or a change to an existing contract file | 3 | 3 of 3 | Yes |
 | Medium | Ordinary product behavior and user interface | 3 | 2 of 3 | No |
 | Low | Documentation, wording, formatting, or behavior behind a flag that is off | 1 | 1 of 1 | No |
 

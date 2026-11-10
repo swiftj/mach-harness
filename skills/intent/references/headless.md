@@ -41,6 +41,18 @@ A ticket generated from a crash, an alert, or a failing build describes a fault,
 - Keep everything else out of scope. A repair slice changes no behavior beyond the fault.
 - Never copy personal data, credentials, or tokens from a stack trace or event into the spec, `intent.md`, or a ticket comment.
 
+## Tuning tickets
+
+A ticket labelled `factory-tuning` comes from the observe station. It carries rule changes for the factory's own rule files (`REVIEW.md`, `CLAUDE.md`, `AGENTS.md`, skill instructions), each with its evidence and exact text. Groom it as one slice:
+
+- **Actor** is the reader the rules are written for (a reviewer or a builder); **Trigger** is that reader opening the target file; **Outcome** is that each target file states each new rule, worded exactly as the ticket gives it.
+- One functional requirement per change: the target file contains the rule's text. One invariant: no rule already in those files is removed or weakened. Carry the ticket's exact text into the spec in quotes; do not reword a rule.
+- The decision matrix has one condition per change (rule present: Yes or No); the scenarios read each target file. There are no outside services, and no permission is needed.
+- Where the rule goes matters. In `CLAUDE.md`, never between the `mach:begin` and `mach:end` markers, which MACH rewrites on every install: require it under `## Rules learned by the factory`, outside the markers. State the placement as a requirement so a test checks it.
+- Tests check that each new rule's text is present and in the right place. They must not pin the total number of rules or the wording of rules this ticket does not touch, or the next tuning ticket will break them.
+- Everything is settled by the ticket itself, so there is normally nothing to default and no open question. If a change's text is missing or ambiguous, or it would remove or weaken an existing rule, that is an open question for a person: never fill it in.
+- Stage 2: the app type is `library` (the outcome is checked by reading files), there is no contract file, and the plan changes only the target files and adds one test per rule that reads the file and finds the text. Set the risk tier to High: these files govern every later ticket. The review station still decides a tuning ticket by unanimous panel without a person, because it is labelled `factory-tuning`.
+
 ## Finishing
 
 Record the result on the ticket, with the ticket skill if it is installed, or `CELL ticket-note` for a local ticket:

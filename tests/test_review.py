@@ -473,5 +473,60 @@ class StatusTest(Base):
         self.assertIn("'bad id!' is not a usable ticket ID", self.r_refused("status", "bad id!"))
 
 
+class TuningTicketTest(Base):
+    """A ticket labelled factory-tuning is decided by a unanimous panel, with no person, if it only changes rule files."""
+
+    def label(self):
+        self.verified()
+        self.put(self.project, {".factory/tickets/LOCAL-001.md": '---\nid: LOCAL-001\ntitle: "Tune"\nstate: open\nlabels: ["factory-tuning"]\n---\n'})
+
+    def set_cell(self, **changes):
+        path = self.cellroot / "cell.json"
+        cell = json.loads(path.read_text())
+        cell.update(changes)
+        path.write_text(json.dumps(cell))
+
+    def test_tuning_ticket_changing_other_files_still_needs_a_person(self):
+        self.label()
+        started = self.r_ok("start", TICKET)
+        self.assertEqual((started["tuning"], started["approvals_needed"], [seat["model"] for seat in started["panel"]]), (True, 3, ["opus"] * 3))
+        self.assertTrue(started["human_approval_required"])
+        self.assertIn("changes files other than the factory's rules: README.md, app/invite.py", started["human_approval_reasons"][0])
+
+    def test_rule_files_and_tests_are_what_a_tuning_ticket_may_change(self):
+        for name in ("REVIEW.md", "CLAUDE.md", "AGENTS.md", "skills/build/SKILL.md", ".claude/skills/mach-build/SKILL.md", "skills/review/references/product.md",
+                     "specs/slices/SLICE-009-tune.md", "tests/test_rules.py", "src/rules.test.js"):
+            self.assertTrue(review.TUNING_FILES_RE.search(name), name)
+        for name in ("skills/build/scripts/build.py", ".factory/config.json", "README.md", "app/invite.py", "templates/REVIEW.md.bak", "docs/REVIEW.md"):
+            self.assertFalse(review.TUNING_FILES_RE.search(name), name)
+
+    def test_unanimous_panel_approves_a_rules_only_tuning_ticket_without_a_person(self):
+        self.label()
+        self.set_cell(risk="High", human_review_required=True)
+        started = self.r_ok("start", TICKET)
+        packet_path = self.round / "packet.json"
+        packet = json.loads(packet_path.read_text())
+        packet.update({"files_changed": ["REVIEW.md", "tests/test_rules.py"], "human_approval_required": False, "human_approval_reasons": []})
+        packet_path.write_text(json.dumps(packet))
+        for role in PANEL[:2]:
+            self.vote(role)
+        self.vote(PANEL[2], self.blocker())
+        result = self.tally()
+        self.assertEqual((result[0], result[1]["outcome"] if isinstance(result[1], dict) else json.loads(result[1])["outcome"]), (1, "REJECTED"), "two of three is not enough for a tuning ticket")
+
+    def test_three_approvals_approve_a_rules_only_tuning_ticket_even_at_high_risk(self):
+        self.label()
+        self.set_cell(risk="High", human_review_required=True)
+        self.r_ok("start", TICKET)
+        packet_path = self.round / "packet.json"
+        packet = json.loads(packet_path.read_text())
+        packet.update({"human_approval_required": False, "human_approval_reasons": []})  # as if only rule files had changed
+        packet_path.write_text(json.dumps(packet))
+        for role in PANEL:
+            self.vote(role)
+        result = self.tally()
+        self.assertEqual((result[0], result[1]["outcome"] if isinstance(result[1], dict) else json.loads(result[1])["outcome"]), (0, "APPROVED"))
+
+
 if __name__ == "__main__":
     unittest.main()

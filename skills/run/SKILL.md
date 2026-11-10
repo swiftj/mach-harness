@@ -42,7 +42,7 @@ If the input is exactly `where`, an automated workflow is asking where this skil
 | `build`, `revise` | Start the sub-agent named by `agent_type` with the prompt. |
 | `verify` | Start the sub-agent named by `agent_type` with the prompt. |
 | `review` | Run `RUN review-start <ticket>`. Start every seat it lists at once, each as the sub-agent in its `agent_type`, on its `model`, with exactly its `prompt`. When all have returned, run `RUN review-tally <ticket>`. You chair; you do not review, and you never ask a reviewer to reconsider. |
-| `cleanup` | Run the cleanup skill yourself, as the prompt says. |
+| `cleanup` | Run the cleanup skill yourself, as the prompt says. If its result says `observe_due` is true, run the observe skill with `--auto` straight afterwards: it measures the finished tickets and files one `factory-tuning` ticket if it has anything to propose. Tell the user the ticket's ID; run it through the line only if you were asked to run the pipeline. |
 | `stop` | Go to step 4. |
 
    If a named sub-agent type is not available, use a general sub-agent, tell it to load the matching MACH skill for the ticket, and keep the model the step names.
@@ -64,7 +64,7 @@ End with a short account of the run: each station that ran and its result, in or
 
 ### The board
 
-For `board`, run `RUN board` and show it as a table: each ticket, its stage, the next action, and what stopped tickets are waiting for. Group the tickets that can move now apart from those waiting on a person. Do not start anything.
+For `board`, run `RUN board` and show it as a table: each ticket, its stage, the next action, and what stopped tickets are waiting for. Say if an observe pass is due (`observe_due`) and list any tuning tickets ready to run (`factory_tuning_ready`). Group the tickets that can move now apart from those waiting on a person. Do not start anything.
 
 ### Several tickets at once
 

@@ -366,6 +366,26 @@ def ensure_isolated(cell: Cell) -> None:
     cell.save_info()
 
 
+def sync_with_main(cell: Cell) -> Optional[str]:
+    """A cell planned a while ago may be behind the main checkout. Bring it up to date before building,
+    so the baseline it is measured against is today's code and not the code from when it was groomed."""
+    if cell.info.get("isolation") != "worktree":
+        return None
+    main_head = git(cell.project, "rev-parse", "HEAD").stdout.strip()
+    if not main_head or git(cell.work, "merge-base", "--is-ancestor", main_head, "HEAD").returncode == 0:
+        return None
+    merged = git(cell.work, "merge", "--no-edit", "-m", f"Merge main into {cell.info.get('branch')} before building [{cell.ticket_id}]", main_head)
+    if merged.returncode != 0:
+        conflicts = git(cell.work, "diff", "--name-only", "--diff-filter=U").stdout.split()
+        git(cell.work, "merge", "--abort")
+        raise BuildError(
+            f"The cell's branch is behind the main checkout and cannot be brought up to date automatically: merging main conflicts in "
+            f"{', '.join(conflicts) or 'some files'}. A person must merge main into {cell.info.get('branch')} in {cell.work} and resolve the conflict; "
+            "if the conflict is in the spec or a contract, the ticket needs regrooming."
+        )
+    return main_head
+
+
 def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     stage = cell.info.get("stage")
     if cell.state.get("tasks") and stage in ("building", "built"):
@@ -388,15 +408,29 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}). Commit or remove them before building starts.")
     for task in tasks:
         task["status"] = "pending"
+    synced = sync_with_main(cell)
+    if synced:
+        spec_now = cell.work / str(cell.info.get("spec_path"))
+        if hashlib.sha256(spec_now.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest() != cell.info.get("spec_sha256"):
+            raise BuildError("Bringing the cell up to date with main changed its slice spec. Regroom the ticket with the intent skill before building.")
     hardening = HARDENING_LABEL in ticket_labels(cell)
     cell.state = {
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "loop": 0, "started_at": now(),
         "baseline": git(cell.work, "rev-parse", "HEAD").stdout.strip(), "audit": gate, "hardening": hardening,
         "test_cmd": find_command(cell, "test", args.test_cmd), "lint_cmd": find_command(cell, "lint", args.lint_cmd),
-        "suite": "unknown", "tasks": tasks, "test_files": [], "deviations": [],
+        "suite": "unknown", "tasks": tasks, "test_files": [], "deviations": [], "synced_with_main": synced,
     }
-    baseline: Dict[str, Any] = {"skipped": "Hardening ticket: the test suite may not exist yet."}
-    if args.no_baseline:
+    baseline: Dict[str, Any] = {"skipped": "Hardening ticket with no test command yet."}
+    if hardening and not args.no_baseline and cell.state.get("test_cmd"):
+        # A hardening ticket may start from a failing or missing suite; record what it started from.
+        try:
+            baseline = run_tests(cell)
+            cell.state["suite"] = "green" if baseline["passed"] else "red"
+            baseline["note"] = "Hardening ticket: started from a passing suite." if baseline["passed"] else "Hardening ticket: the suite was already failing at the start."
+            baseline["failing_at_start"] = "" if baseline["passed"] else baseline["output_tail"][-800:]
+        except BuildError as exc:
+            baseline = {"skipped": f"Hardening ticket: the test command could not run at the start ({exc})."}
+    elif args.no_baseline:
         if not hardening and gate["tier"] is not None:
             raise BuildError("--no-baseline is only for a project that has no test suite yet; this repository passed its audit, so its tests must pass in the cell.")
         baseline = {"skipped": args.no_baseline}
@@ -404,7 +438,8 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     elif not hardening:
         baseline = run_tests(cell)
         if not baseline["passed"]:
-            raise BuildError("The tests already fail in the cell before any change, so building cannot start:\n" + baseline["output_tail"][-800:])
+            raise BuildError("The tests already fail in the cell before any change, so building cannot start. The cell is up to date with the main checkout, "
+                             "so the main checkout's tests fail too: run the audit, and harden the repository first.\n" + baseline["output_tail"][-800:])
         cell.state["suite"] = "green"
     cell.state["baseline_run"] = {k: v for k, v in baseline.items() if k not in ("output_tail", "output")}
     cell.info.update({"stage": "building", "human_review_required": bool(gate["human_review_required"]) or cell.info.get("risk") == "High"})
@@ -413,6 +448,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     print(json.dumps({
         "status": "STARTED", "ticket_id": cell.ticket_id, "workdir": str(cell.work), "branch": cell.info.get("branch"),
         "tasks": len(tasks), "test_cmd": cell.state["test_cmd"], "lint_cmd": cell.state["lint_cmd"], "audit": gate,
+        "synced_with_main": f"The cell was behind main and has been brought up to date ({synced[:10]})." if synced else None,
         "next": f"{tasks[0]['id']} [{tasks[0]['kind']}]",
     }, indent=2))
     return 0
@@ -446,6 +482,15 @@ def cmd_next(cell: Cell, args: argparse.Namespace) -> int:
         "suite": cell.state["suite"], "workdir": str(cell.work), "spec": spec_excerpt(cell, task["ids"]),
     }, indent=2, ensure_ascii=False))
     return 0
+
+
+def failure_excerpt(output: str, stems: Sequence[str]) -> str:
+    """The part of a failing run that concerns the test just written, not whatever failed last."""
+    positions = [output.find(stem) for stem in stems if stem and output.find(stem) >= 0]
+    if not positions:
+        return output.strip()[-600:]
+    start = max(0, min(positions) - 200)
+    return output[start:start + 800].strip()
 
 
 def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
@@ -495,7 +540,7 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
         cell.state["suite"] = "red"
     cell.state["test_files"] = sorted(set(cell.state.get("test_files", [])) | set(files))
     task["first_run"] = "pass" if result["passed"] else "fail"
-    task["failure_tail"] = "" if result["passed"] else result["output_tail"][-600:]
+    task["failure_tail"] = "" if result["passed"] else failure_excerpt(result["output"], [Path(name).stem for name in files])
     complete(cell, task, files, result, note)
     return 0
 

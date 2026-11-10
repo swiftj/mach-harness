@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.9.3.** All eight stations are built and tested (ticket, audit, intent, build, verify, review, cleanup, observe), with an orchestrator that moves a ticket from station to station. Merging an approved branch is left to you or your pipeline. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.10.0.** All eight stations are built and tested (ticket, audit, intent, build, verify, review, cleanup, observe), with an orchestrator that moves a ticket from station to station. Merging an approved branch is left to you or your pipeline. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -161,6 +161,7 @@ The session you run this in chairs the panel; it does not review. It starts one 
 | Risk tier | Panel | Needed to pass |
 |-----------|-------|----------------|
 | High | Architecture, security, product, on the `opus` tier | All three, then a person's approval |
+| Factory tuning | The same three seats, on the `opus` tier | All three; no person, if only rule files change |
 | Medium | The same three seats, on the `sonnet` tier | Two of three |
 | Low | One general reviewer | That reviewer |
 
@@ -193,9 +194,17 @@ It never merges, pushes, or deletes anything on a remote.
 /mach-observe
 ```
 
-Observe reads the run records and reports a scorecard: average judging rounds per ticket, first-pass rate, escalation rate, and the share of tests that were seen failing before their code was written. It finds problems that recur across tickets, such as the same review rule broken in several, and proposes the smallest rule that would have prevented each, citing the tickets that prove it.
+Observe closes the loop: the factory tunes its own rules from what its finished tickets show.
 
-It changes nothing. Proposals are filed as a report in `.factory/observations/`; if you accept one, it becomes a `factory-tuning` ticket and goes through the factory like any other change. It will not propose weakening a gate, and it proposes nothing until at least five tickets have finished.
+1. **Measure.** It reads the run record of every finished ticket and reports a scorecard: average judging rounds per ticket, first-pass rate, escalation rate, and the share of tests seen failing before their code was written.
+2. **Find what recurs.** The same review rule broken in several tickets, the same builder deviation, the same kind of verification failure, or a theme that keeps appearing in reviewers' non-blocking notes.
+3. **Propose.** For each, the smallest rule that would have prevented it, aimed at `REVIEW.md`, `CLAUDE.md`, `AGENTS.md` or a skill's instructions, citing the tickets that prove it.
+4. **File.** With `--auto`, or on your yes, it files one ticket labelled `factory-tuning` carrying every proposal.
+5. **Apply through the line.** That ticket is groomed, built, verified and reviewed like any other, so each rule change is a reviewed diff you can revert.
+
+It runs on its own: after every fifth finished ticket (`observe.every` in `.factory/config.json`), cleanup reports that a pass is due, and the line or the workflow starts one and then runs the tuning ticket.
+
+A tuning ticket needs no person. It is decided by a unanimous three-reviewer panel on the strongest model tier, provided it changes only the factory's rule files. Reviewers are told to block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit, and observe will not propose one; those remain your decisions. It proposes nothing until five tickets have finished.
 
 ## Is the repository ready?
 

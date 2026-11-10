@@ -67,6 +67,8 @@ A cell that never had a worktree (`isolation: none`) is archived and its folder 
 
 ### 3. Close the ticket
 
+If `observe_due` is true, enough tickets have finished for the factory to learn from them. After closing the ticket, run the observe skill with `--auto` if you are running unattended or as part of the line; otherwise tell the user it is due.
+
 Only after `run` succeeds, update the ticket with the ticket skill: state `closed`; for an abandoned ticket, also the label `abandoned` and a comment with the reason. The script does not do this.
 
 ### 4. Report

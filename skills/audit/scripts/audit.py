@@ -339,7 +339,7 @@ def audit(repo: Repo, runs: Dict[str, Dict[str, Any]], dirty_before: Optional[Li
     limit = TIMEOUTS["test"]
     fast = tests["status"] == "pass" and (tests["seconds"] or 0) < limit
     card.add(pillar, "Suite finishes in under 5 minutes", 5, fast, f"{tests['seconds']} seconds." if fast else "Not counted: the suite did not pass." if tests["status"] == "fail" else RUN_NOTES.get(tests["status"], "Not measured."),
-             "Split or speed up the suite; agents rerun it after every change.", status=run_status(tests))
+             "Split or speed up the suite; agents rerun it after every change." if tests["status"] in ("pass", "timeout") else "", status=run_status(tests))
     if not test_files or not tests["command"]:
         card.blockers.append("There is no runnable test suite.")
     elif tests["status"] != "pass":

@@ -230,13 +230,48 @@ class StartTest(Base):
         self.ok("start", "LOCAL-001")
         self.assertTrue(json.loads((self.cellroot / "cell.json").read_text())["human_review_required"])
 
+    def test_cell_behind_main_is_brought_up_to_date_before_building(self):
+        self.groom()
+        self.put(self.project, {"app/later.py": "VALUE = 1\n"})
+        self.commit_main()
+        self.audit_report()
+        started = self.ok("start", "LOCAL-001")
+        self.assertIn("brought up to date", started["synced_with_main"])
+        self.assertTrue((self.work / "app/later.py").is_file())
+        self.assertTrue(self.log()[0].startswith("Merge main into feature/LOCAL-001 before building"))
+        self.assertEqual(self.state()["baseline"], git(self.work, "rev-parse", "HEAD").stdout.strip(), "the build's diff starts after the merge")
+
+    def test_cell_behind_main_with_a_conflict_needs_a_person(self):
+        self.groom()
+        self.put(self.work, {"README.md": "# Sample\n\ncell side\n"})
+        git(self.work, "commit", "-qam", "cell edit")
+        self.put(self.project, {"README.md": "# Sample\n\nmain side\n"})
+        self.commit_main()
+        self.audit_report()
+        refusal = self.refused("start", "LOCAL-001")
+        self.assertIn("cannot be brought up to date automatically", refusal)
+        self.assertIn("README.md", refusal)
+        self.assertEqual(git(self.work, "status", "--porcelain").stdout, "", "a failed merge is undone")
+
     def test_bronze_allows_only_hardening_tickets(self):
         self.groom()
         self.audit_report("Bronze")
         self.put(self.project, {".factory/tickets/LOCAL-001.md": '---\nid: LOCAL-001\ntitle: "Harden"\nstate: open\nlabels: ["repo-hardening"]\n---\n'})
         started = self.ok("start", "LOCAL-001")
         self.assertTrue(started["audit"]["human_review_required"])
-        self.assertEqual(self.state()["suite"], "unknown", "a hardening ticket may start before a test suite exists")
+        state = self.state()
+        self.assertEqual((state["suite"], state["baseline_run"]["note"]), ("green", "Hardening ticket: started from a passing suite."))
+
+    def test_hardening_ticket_records_a_suite_that_was_already_failing(self):
+        self.groom()
+        self.audit_report("Bronze")
+        self.put(self.project, {".factory/tickets/LOCAL-001.md": '---\nid: LOCAL-001\ntitle: "Harden"\nstate: open\nlabels: ["repo-hardening"]\n---\n',
+                                ".factory/config.json": json.dumps({"build": {"commands": {"test": f"{sys.executable} -c 'print(\"FAIL: test_old\"); raise SystemExit(1)'"}}})})
+        self.ok("start", "LOCAL-001")
+        state = self.state()
+        self.assertEqual(state["suite"], "red")
+        self.assertIn("already failing at the start", state["baseline_run"]["note"])
+        self.assertIn("FAIL: test_old", state["baseline_run"]["failing_at_start"])
 
     def test_audit_gate_can_be_switched_off_and_failing_baseline_refuses(self):
         self.groom()

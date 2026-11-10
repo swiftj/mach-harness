@@ -153,6 +153,16 @@ class LocalTest(Base):
         again = self.ok("update", "LOCAL-002", "--state", "open")
         self.assertIn("Nothing changed", again["changes"][0])
 
+    def test_new_ticket_numbers_never_reuse_a_finished_or_groomed_ticket(self):
+        self.payload("unused", "")
+        (self.project / ".factory/archive").mkdir(parents=True)
+        (self.project / ".factory/archive/runs.jsonl").write_text(json.dumps({"ticket_id": "LOCAL-004"}) + "\nnot json\n")
+        (self.project / ".factory/worktrees/LOCAL-006").mkdir(parents=True)
+        self.assertEqual(self.ok("create", "--title", "Next")["ticket_id"], "LOCAL-007")
+        with redirect_stdout(io.StringIO()) as out:
+            cell.main(["--project", str(self.project), "ticket-new", "--title", "From intent"])
+        self.assertEqual(json.loads(out.getvalue())["ticket_id"], "LOCAL-008")
+
     def test_front_matter_extras_and_title_with_quotes(self):
         self.ok("create", "--title", 'Fix "pause" button')
         path = self.project / ".factory/tickets/LOCAL-001.md"

@@ -287,6 +287,23 @@ class CheckPlanTest(Base):
                 self.assertEqual(code, 1)
                 self.assertIn(expected, out)
 
+    def test_new_contract_is_ordinary_risk_but_changing_an_existing_one_is_high(self):
+        medium = PLAN.replace("**Risk tier:** High", "**Risk tier:** Medium")
+        self.ready(plan=medium)
+        code, out, _ = self.check()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((self.project / ".factory/worktrees/LOCAL-001/cell.json").read_text())["risk"], "Medium")
+
+    def test_changing_a_contract_already_on_main_must_be_high(self):
+        (self.project / "proto/openapi").mkdir(parents=True)
+        (self.project / "proto/openapi/members.yaml").write_text("openapi: 3.1.0\n")
+        git(self.project, "add", "-A")
+        git(self.project, "commit", "-q", "-m", "existing contract")
+        self.ready(plan=PLAN.replace("**Risk tier:** High", "**Risk tier:** Medium"), contract=False)
+        code, out, _ = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("changing an existing contract makes the ticket High risk", out)
+
     def test_listed_contract_must_exist(self):
         self.ready(contract=False)
         code, out, _ = self.check()

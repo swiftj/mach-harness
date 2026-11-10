@@ -9,6 +9,6 @@ Rules for every agent working here:
 3. **Tests first.** No implementation is written until a failing test for it exists. Every test traces to a requirement ID (`FR-NN`, `INV-NN`), a decision matrix rule (`RN`) or a scenario (`AC-NN`) in the spec.
 4. **No self-certified completion.** Work is done when the verify station has produced evidence in the cell's `evidence/` folder, not when its author says so.
 5. **Fresh-context review, three rounds at most.** Reviewers never share context with the builder. After a third failed round of verification or review the ticket is labelled `blocked-requires-sme` and a person decides.
-6. **Contracts are boundaries.** Contract files (`proto/`, OpenAPI, schemas) change only additively, and any change to them makes the ticket High risk. See `REVIEW.md`.
+6. **Contracts are boundaries.** Contract files (`proto/`, OpenAPI, schemas) change only additively. Adding a new contract is ordinary work; changing one that already exists makes the ticket High risk. See `REVIEW.md`.
 
 Where things are: tickets in `.factory/tickets/`, slice specs in `specs/slices/`, factory settings in `.factory/config.json`, review rules in `REVIEW.md`, agent roles in `AGENTS.md`. Run `make mach-status` to see the open cells, and `/mach-run board` (`/mach:run board` with the plugin) for each ticket's next step.

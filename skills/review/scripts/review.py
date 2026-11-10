@@ -17,6 +17,8 @@ none is an APPROVE. A blocker must name the rule or spec ID it breaks and the fi
     High risk    3 reviewers, 3 approvals, and a person must approve
     Medium risk  3 reviewers, 2 approvals
     Low risk     1 reviewer,  1 approval
+    Tuning       a ticket labelled factory-tuning: 3 reviewers on the strongest tier, 3 approvals, and no person,
+                 provided it changes only the factory's rule files (and its own spec and tests)
 
 The third failed round for a ticket, counting failed verifications, is escalated to a person.
 
@@ -46,6 +48,12 @@ PANELS = {
 }
 SEVERITIES = ("blocker", "note")
 MAX_LOOPS = 3
+TUNING_LABEL = "factory-tuning"
+# What a ticket that tunes the factory's own rules may change without a person: the rule files, and its own spec and tests.
+TUNING_FILES_RE = re.compile(
+    r"^(REVIEW|CLAUDE|AGENTS)\.md$|(^|/)SKILL\.md$|(^|/)skills/[^/]+/references/[^/]+$|^specs/slices/[^/]+\.md$"
+    r"|(^|/)(tests?|__tests__|spec)/|(^|/)(test_[^/]+|[^/]+_test\.[A-Za-z]+|[^/]+\.(test|spec)\.[A-Za-z]+)$"
+)
 
 
 # Files that running a build or test suite leaves behind. They are never part of a change, so the
@@ -147,7 +155,23 @@ class Cell:
         return found
 
 
-def panel_for(cell: Cell, risk: str) -> Dict[str, Any]:
+def ticket_labels(cell: Cell) -> List[str]:
+    labels = list((load_json(cell.project / ".factory" / "inbox" / f"{cell.ticket_id}.json", {}) or {}).get("labels") or [])
+    local = cell.project / ".factory" / "tickets" / f"{cell.ticket_id}.md"
+    if local.is_file():
+        front = re.match(r"^---\n(.*?)\n---", local.read_text(encoding="utf-8"), re.DOTALL)
+        line = re.search(r"^labels:\s*(.*)$", front.group(1), re.MULTILINE) if front else None
+        if line:
+            labels += [a or b for a, b in re.findall(r'"([^"]*)"|([^\s,\[\]"]+)', line.group(1))]
+    return labels
+
+
+def panel_for(cell: Cell, risk: str, tuning: bool = False) -> Dict[str, Any]:
+    if tuning:
+        # A change to the factory's own rules: the full panel on the strongest tier must agree, and that is the whole decision.
+        model = cell.section("models").get("contracts", "opus")
+        return {"reviewers": 3, "approvals": 3, "human_approval": False,
+                "panel": [{"role": role, "focus": ROLES[role], "model": model} for role in ("architecture", "security", "product")]}
     rules = dict(PANELS[risk])
     override = cell.section("review").get(risk.lower())
     if isinstance(override, dict):
@@ -181,8 +205,19 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     if missing:
         raise ReviewError(f"Evidence listed in the verification summary is missing: {', '.join(missing[:5])}. Verify the ticket again.")
     risk = cell.info.get("risk") if cell.info.get("risk") in PANELS else "High"
-    rules = panel_for(cell, risk)
-    human = bool(rules["human_approval"] or cell.info.get("human_review_required"))
+    tuning = TUNING_LABEL in ticket_labels(cell)
+    rules = panel_for(cell, risk, tuning)
+    reasons = []
+    if rules["human_approval"]:
+        reasons.append(f"the change is {risk} risk")
+    audit_note = (load_json(cell.root / "build.json", {}) or {}).get("audit") or {}
+    if audit_note.get("human_review_required"):
+        reasons.append(f"the repository's readiness tier is {audit_note.get('tier')}")
+    elif cell.info.get("human_review_required") and not rules["human_approval"]:
+        reasons.append("the build station marked it for a person's review")
+    if tuning:
+        reasons = []  # decided by the unanimous panel; see the file check below
+    human = bool(reasons)
     # Review everything the ticket's branch adds, including the spec and contracts committed before the build started.
     main_branch = git(cell.project, "branch", "--show-current").stdout.strip()
     fork = git(cell.work, "merge-base", "HEAD", main_branch).stdout.strip() if main_branch and cell.info.get("isolation") == "worktree" else ""
@@ -197,7 +232,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     review_rules = next((p for p in (cell.work / "REVIEW.md", cell.project / "REVIEW.md") if p.is_file()), None)
     cell.packet = {
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "round": cell.loop + 1, "max_rounds": cell.max_loops(),
-        "risk": risk, "approvals_needed": rules["approvals"], "human_approval_required": human,
+        "risk": risk, "approvals_needed": rules["approvals"], "human_approval_required": human, "human_approval_reasons": reasons,
         "head": head, "baseline": baseline, "branch": cell.info.get("branch"), "started_at": now(),
         "panel": rules["panel"],
         "paths": {
@@ -210,9 +245,15 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "diff_stat": git(cell.work, "diff", "--shortstat", f"{baseline}..{head}").stdout.strip(),
         "files_changed": git(cell.work, "diff", "--name-only", f"{baseline}..{head}").stdout.split(),
     }
+    if tuning:
+        outside = [name for name in cell.packet["files_changed"] if not TUNING_FILES_RE.search(name)]
+        if outside:
+            cell.packet["human_approval_reasons"] = ["the tuning ticket changes files other than the factory's rules: " + ", ".join(outside[:6])]
+            cell.packet["human_approval_required"] = True
+    cell.packet["tuning"] = tuning
     write_json(cell.folder / "packet.json", cell.packet)
     print(json.dumps({"status": "STARTED", "packet": str(cell.folder / "packet.json"), **{k: cell.packet[k] for k in (
-        "round", "max_rounds", "risk", "approvals_needed", "human_approval_required", "panel", "diff_stat")},
+        "round", "max_rounds", "risk", "tuning", "approvals_needed", "human_approval_required", "human_approval_reasons", "panel", "diff_stat")},
         "next": "Start one fresh reviewer per panel seat, in parallel, each on its seat's model. Then run tally."}, indent=2))
     return 0
 
@@ -312,7 +353,8 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     decision = {
         "ticket_id": cell.ticket_id, "round": cell.packet["round"], "risk": cell.packet["risk"], "outcome": outcome,
         "approvals": approvals, "approvals_needed": needed, "votes": {role: vote["vote"] for role, vote in votes.items()},
-        "blockers": blockers, "human_approval_required": cell.packet["human_approval_required"], "human_approval": None,
+        "blockers": blockers, "human_approval_required": cell.packet["human_approval_required"],
+        "human_approval_reasons": cell.packet.get("human_approval_reasons", []), "human_approval": None,
         "head": cell.packet["head"], "findings": str(findings_path), "decided_at": now(),
     }
     write_json(cell.folder / "decision.json", decision)
@@ -323,7 +365,8 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     overruled = [role for role, vote in votes.items() if vote["vote"] == "REJECT"] if approvals >= needed else []
     next_step = {
         "APPROVED": f"Approved. The branch {cell.info.get('branch')} may be merged.",
-        "AWAITING_HUMAN": "The panel approved, but a person must approve before merge. Show them the findings and wait; record their decision with approve-human.",
+        "AWAITING_HUMAN": "The panel approved, but a person must approve before merge because " + (" and ".join(cell.packet.get("human_approval_reasons") or []) or "the project requires it")
+        + ". Show them the findings and wait; record their decision with approve-human.",
         "REJECTED": f"Post the findings on the ticket, then return it to the build station: build revise {cell.ticket_id} --findings {findings_path}",
         "ESCALATE": f"This was failed round {cell.packet['round']} of {cell.packet['max_rounds']}. Do not send it back to the build station. Label the ticket 'blocked-requires-sme', set its state to blocked, and give a person the findings.",
     }[outcome]

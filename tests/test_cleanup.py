@@ -17,10 +17,12 @@ import cleanup  # noqa: E402
 from test_build import Base as BuildBase, git  # noqa: E402
 
 BRANCH = "feature/LOCAL-001"
+OBSERVE_EVERY = 5
+
 RECORD_KEYS = {
     "ticket_id", "slice_id", "title", "risk", "app_type", "mode", "outcome", "abandon_reason", "rounds", "first_pass", "verify_failures",
     "review_rejections", "escalated", "human_approval", "deviations", "blockers", "verify_findings", "tests_seen_failing_first",
-    "tests_passing_on_first_run", "created_at", "closed_at", "archive",
+    "tests_passing_on_first_run", "created_at", "closed_at", "archive", "notes",
 }
 
 
@@ -148,6 +150,16 @@ class GateTest(Base):
         self.assert_untouched()
         self.set_cell(stage="merged")
         self.assertEqual(self.c_ok("run", "LOCAL-001")["status"], "CLEANED")
+
+    def test_cleanup_says_when_an_observe_pass_is_due_and_records_reviewer_notes(self):
+        self.merged_and_approved()
+        self.put(self.cellroot, {"review/round-1/votes/product.json": json.dumps({"reviewer": "product", "vote": "APPROVE", "summary": "ok", "findings": [
+            {"severity": "note", "title": "Refusal box touches the button", "detail": "No gap between them.", "file": "index.html", "line": 3, "rule": None}]})})
+        self.put(self.project, {".factory/archive/runs.jsonl": "".join(json.dumps({"ticket_id": f"T-{n}"}) + "\n" for n in range(1, 5))})
+        done = self.c_ok("run", "LOCAL-001")
+        self.assertEqual((done["observe_due"], done["finished_since_last_observe_pass"]), (True, OBSERVE_EVERY))
+        self.assertIn("run the observe skill with --auto", done["next"])
+        self.assertEqual(done["record"]["notes"], [{"round": 1, "reviewer": "product", "title": "Refusal box touches the button", "file": "index.html"}])
 
     def test_refused_with_uncommitted_changes(self):
         self.merged_and_approved()

@@ -24,6 +24,9 @@
     "gold": 90,
     "silver": 70
   },
+  "observe": {
+    "every": 5
+  },
   "git": {
     "auto_commit": true
   }

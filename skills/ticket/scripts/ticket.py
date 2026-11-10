@@ -334,12 +334,27 @@ def local_log(rest: str, message: str) -> str:
     return rest.rstrip("\n") + "\n" + entry + "\n"
 
 
+def used_numbers(project: Path, prefix: str) -> List[int]:
+    """Every number already taken for this prefix: open and closed tickets, cells, inbox records, and finished tickets in the run log."""
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+    factory = project / ".factory"
+    names = [p.stem for p in (factory / "tickets").glob(f"{prefix}-*.md")] + [p.stem for p in (factory / "inbox").glob(f"{prefix}-*.json")]
+    names += [p.name for p in (factory / "worktrees").glob(f"{prefix}-*") if p.is_dir()]
+    log = factory / "archive" / "runs.jsonl"
+    if log.is_file():
+        for line in log.read_text(encoding="utf-8").splitlines():
+            try:
+                names.append(str(json.loads(line).get("ticket_id") or ""))
+            except (ValueError, AttributeError):
+                continue
+    return [int(m.group(1)) for name in names for m in [pattern.match(name)] if m]
+
+
 def local_create(ctx: Context, title: str, body: str, labels: Sequence[str], ticket_id: Optional[str] = None) -> str:
     ctx.local.mkdir(parents=True, exist_ok=True)
     if ticket_id is None:
         prefix = str(ctx.tickets.get("local_prefix") or "LOCAL")
-        numbers = [int(m.group(1)) for p in ctx.local.glob(f"{prefix}-*.md") for m in [re.match(rf"^{re.escape(prefix)}-(\d+)$", p.stem)] if m]
-        ticket_id = f"{prefix}-{max([0, *numbers]) + 1:03d}"
+        ticket_id = f"{prefix}-{max([0, *used_numbers(ctx.project, prefix)]) + 1:03d}"
     elif local_path(ctx, ticket_id).exists():
         raise TicketError(f"Local ticket {ticket_id} already exists.")
     title = " ".join(title.split())

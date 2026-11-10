@@ -200,9 +200,9 @@ class ReviewRelayTest(Base):
 class BoardTest(Base):
     def test_board_lists_cells_and_ungroomed_tickets(self):
         self.ready()
-        for title in ("First", "Second", "Third"):
+        for title in ("First", "Second", "Third"):  # numbered 002 to 004: LOCAL-001 is already taken by the groomed cell
             self.cell_cmd("ticket-new", "--title", title)
-        path = self.project / ".factory/tickets/LOCAL-002.md"
+        path = self.project / ".factory/tickets/LOCAL-003.md"
         path.write_text(path.read_text().replace("state: open", "state: closed"))
         self.cell_cmd("open", "LOCAL-009")
         (self.project / ".factory/worktrees/LOCAL-009/cell.json").write_text(json.dumps({"ticket_id": "LOCAL-009", "stage": "blocked"}))
@@ -210,8 +210,20 @@ class BoardTest(Base):
         board = json.loads(out)
         self.assertEqual(code, 0)
         self.assertEqual(board["audit"]["state"], "ok")
-        self.assertEqual([(t["ticket_id"], t["action"]) for t in board["tickets"]], [("LOCAL-001", "build"), ("LOCAL-009", "stop"), ("LOCAL-003", "groom")])
-        self.assertEqual((board["ready_to_run"], board["waiting_on_a_person"]), (["LOCAL-001", "LOCAL-003"], ["LOCAL-009"]))
+        self.assertEqual([(t["ticket_id"], t["action"]) for t in board["tickets"]], [("LOCAL-001", "build"), ("LOCAL-009", "stop"), ("LOCAL-002", "groom"), ("LOCAL-004", "groom")])
+        self.assertEqual((board["ready_to_run"], board["waiting_on_a_person"]), (["LOCAL-001", "LOCAL-002", "LOCAL-004"], ["LOCAL-009"]))
+        self.assertEqual((board["observe_due"], board["factory_tuning_ready"]), (False, []))
+
+    def test_board_says_when_observe_is_due_and_which_tuning_tickets_are_ready(self):
+        runs = "".join(json.dumps({"ticket_id": f"T-{n}", "outcome": "merged"}) + "\n" for n in range(1, 6))
+        self.put(self.project, {".factory/archive/runs.jsonl": runs,
+                                ".factory/tickets/LOCAL-007.md": '---\nid: LOCAL-007\nstate: open\nlabels: ["factory-tuning"]\n---\n'})
+        board = json.loads(self.run_cmd("board")[1])
+        self.assertEqual((board["observe_due"], board["factory_tuning_ready"]), (True, ["LOCAL-007"]))
+        self.put(self.project, {".factory/observations/last-pass.json": json.dumps({"runs_total": 5})})
+        self.assertFalse(json.loads(self.run_cmd("board")[1])["observe_due"])
+        self.put(self.project, {".factory/config.json": json.dumps({"observe": {"every": 2}}), ".factory/observations/last-pass.json": json.dumps({"runs_total": 3})})
+        self.assertTrue(json.loads(self.run_cmd("board")[1])["observe_due"])
 
 
 class NamingTest(Base):
