@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.4.0.** The ticket, audit, grooming (`intent`) and build stations, the installer, and the project scaffold are built and tested. The verify, review, cleanup and observe stations are specified in [`docs/factory-skills/`](docs/factory-skills/) and not built yet. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.5.0.** The ticket, audit, grooming (`intent`), build and verify stations, the installer, and the project scaffold are built and tested. The review, cleanup and observe stations are specified in [`docs/factory-skills/`](docs/factory-skills/) and not built yet. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -19,7 +19,7 @@ In Claude Code:
 
 Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:intent`, `/mach:build`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
+Commands are namespaced: `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
 
 ### With one command (one project)
 
@@ -111,6 +111,24 @@ Each refusal has an override that needs a written reason, and every use is recor
 
 To run the builder on the model tier the factory assigns, start it as the `builder` agent (`mach:builder` with the plugin, `mach-builder` in a project install).
 
+## Verifying a built ticket
+
+```
+/mach-verify LOCAL-001
+```
+
+Run this in a fresh session, or as the `verifier` agent, never in the conversation that built the ticket. The verifier runs the slice the way its user would and saves what it captures in the cell's `evidence/` folder: screenshots and recordings for a web app, a terminal session and exit codes for a command-line tool, request and response dumps for an API, a consumer-side transcript for a library.
+
+It must prove every scenario in the spec with the scenario's own data, and every decision matrix rule with data of its own choosing. A script checks that each claim points at an evidence file captured in this run, refuses the builder's own test log as proof, catches evidence edited after it was recorded, and gives the verdict:
+
+| Verdict | Meaning |
+|---------|---------|
+| `PASS` | Everything is proven with evidence. The ticket goes to review. |
+| `FAIL_WITH_EVIDENCE` | A behavior does not match the spec. The findings go back to the build station, using one of the three review loops. |
+| `INCOMPLETE_EVIDENCE` | Something is unproven, or a required kind of evidence is missing. |
+
+To give the verifier an extra check the builder never sees, put a file describing it in `.factory/holdouts/<ticket>/`.
+
 ## Is the repository ready?
 
 ```
@@ -168,7 +186,7 @@ Uninstall removes exactly the files MACH installed and you have not changed, and
 ## Developing MACH
 
 ```bash
-make test        # validator, cell gates, ticket adapter, audit, build gates, installer round trips
+make test        # validator, cell gates, ticket adapter, audit, build gates, verify gates, installer round trips
 make validate    # plugin and marketplace manifests
 ```
 
@@ -179,10 +197,12 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `skills/ticket/` | The ticket skill: `SKILL.md` and `ticket.py` (trackers and telemetry). |
 | `skills/audit/` | The audit skill: `SKILL.md` and `audit.py` (scorecard and gate). |
 | `skills/build/` | The build skill: `SKILL.md` and `build.py` (start gates, red/green enforcement, build report). |
+| `skills/verify/` | The verify skill: `SKILL.md`, `verify.py` (evidence records and verdict) and the per-app-type runner guide. |
 | `skills/intent/` | The grooming skill: `SKILL.md`, templates, grammar references, `validate_slice.py`, `cell.py`. |
 | `skills/init/` | Plugin-only wrapper around `bin/mach scaffold`. |
 | `agents/contract-engineer.md` | Stage 2 of grooming, pinned to the `opus` tier. |
 | `agents/builder.md` | The build station, pinned to the `sonnet` tier. |
+| `agents/verifier.md` | The verify station, pinned to the `sonnet` tier, always a fresh context. |
 | `bin/mach`, `install.sh` | The installer. |
 | `templates/` | What gets scaffolded into a project. |
 | `docs/` | Specs for the stations still to build, and the original prd-slice skill the interview is adapted from. |

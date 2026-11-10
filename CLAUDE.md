@@ -58,10 +58,12 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   ├── audit/                  # Built. Readiness scorecard and pipeline gate
 │   ├── intent/                 # Built. Socratic grooming, contracts & plan
 │   ├── build/                  # Built. Test-driven construction with scripted gates
+│   ├── verify/                 # Built. Independent evidence capture and verdict
 │   └── init/                   # Built. Plugin-only: scaffolds a project
 ├── agents/
 │   ├── contract-engineer.md    # Stage 2 of intent, pinned to the contracts tier
-│   └── builder.md              # Build station, pinned to the build tier
+│   ├── builder.md              # Build station, pinned to the build tier
+│   └── verifier.md             # Verify station, fresh context, pinned to the build tier
 ├── templates/                  # What gets scaffolded into a project
 ├── tests/                      # unittest suites and fixtures
 └── docs/                       # Design specs for stations not built yet, and prd-slice (reference)
@@ -91,6 +93,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── tickets/                # Local Markdown ticket queue (the default provider)
     ├── inbox/                  # Normalized incoming ticket payloads and telemetry traces
     ├── archive/                # Compressed historical run logs and evidence bundles
+    ├── holdouts/<ticket_id>/   # Optional extra checks a person leaves for the verifier; the builder is never shown them
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
             ├── cell.json       # Cell state: stage, mode, slice ID, risk tier, app type, contracts
@@ -100,7 +103,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
             ├── plan.md         # How: contracts, test-first task checklist, file touch map
             ├── build.json      # Build state: task progress, suite state, recorded deviations
             ├── build-report.json  # What was built, how, and every gate override, for verify and review
-            ├── evidence/       # Captured verification artifacts (video, log, PNG, diff)
+            ├── evidence/       # Captured verification artifacts, results.json and the summary.json verdict
             └── repo/           # Git worktree on feature/<ticket_id>: code, contracts, specs/slices/
 ```
 
@@ -110,7 +113,7 @@ The cell folder holds the factory's artifacts; `repo/` inside it is the isolated
 
 ## 4. The Complete MACH Skill Suite
 
-Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. Built so far: `ticket`, `audit`, `intent`, `build` and `init`. The other stations below are specified in `docs/factory-skills/` and not yet built.
+Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. Built so far: `ticket`, `audit`, `intent`, `build`, `verify` and `init`. The other stations below are specified in `docs/factory-skills/` and not yet built.
 
 ### 1. `/mach-ticket` — Universal Ticket & Telemetry Adapter
 * **Assigned Model**: `haiku` (`claude-haiku-5-5`) (Low Effort) when run as its own agent. The skill does not pin a model, because a pin would also switch the model of a station that calls it inline; `ticket.py` does the work, so the cost is small on any tier.
@@ -165,14 +168,18 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Output**: commits on `feature/<ticket_id>`, one per task; `build.json` and `build-report.json` in the cell; cell stage `built`.
 
 ### 5. `/mach-verify` — Multi-Target Dynamic Evidence Engine
-* **Assigned Model**: `sonnet` (`claude-sonnet-5-5`) (Medium/High Effort, Fresh Context)
-* **Purpose**: Runs independent, objective verification tailored to the target application type:
-  * **Web Apps (`web`)**: Executes Playwright/Cypress scripts, capturing before-and-after PNG screenshots and WebM video recordings.
-  * **CLI & Terminal Tools (`cli`)**: Runs VHS/Asciinema terminal automation, capturing animated GIFs, stdout/stderr diffs, and exit code logs.
-  * **Backend APIs (`api` / `grpc` / `rest`)**: Validates ProtoBuf compilation, executes `grpcurl`/`curl`/`k6` benchmark scripts, and captures database state diffs.
-  * **Desktop & Mobile Apps (`desktop` / `mobile`)**: Automates OS GUI interactions (`cliclick`, `xdotool`, Android ADB/iOS Simulator) to capture window frames and interaction recordings.
-  * **Libraries & SDKs (`library`)**: Executes test suites, public API signature diffs, and CPU/memory flamegraphs.
-* **Output**: Writes all artifacts and a `summary.json` verification manifest to `.factory/worktrees/<ticket_id>/evidence/`.
+* **Assigned Model**: `sonnet` (`claude-sonnet-5-5`) (Medium Effort, Fresh Context), pinned in the `verifier` agent
+* **Purpose**: Independent, objective verification. The verifier runs the built slice the way its user would and captures what happens; `verify.py` decides whether verification may start, what must be proven, whether each claim has real evidence behind it, and the verdict.
+* **What must be proven**: every scenario (`AC-NN`) with the scenario's own data; every decision matrix rule (`RN`) with data the verifier invents, which serves as a holdout the builder never saw; and any check a person left in `.factory/holdouts/<ticket_id>/`.
+* **Evidence by target** (required kinds are enforced per `app_type`):
+  * **Web Apps (`web`)**: Playwright/Cypress runs, capturing PNG screenshots and WebM video recordings or traces.
+  * **CLI & Terminal Tools (`cli`)**: VHS/Asciinema terminal recordings or transcripts, and an `exit-codes.json` log.
+  * **Backend APIs (`api` / `grpc` / `rest`)**: `curl`/`grpcurl` request and response dumps, contract comparison, and database state diffs.
+  * **Desktop & Mobile Apps (`desktop` / `mobile`)**: OS automation (`cliclick`, `xdotool`, Android ADB, iOS Simulator) capturing window frames and interaction recordings.
+  * **Libraries & SDKs (`library`)**: a consumer-side driver transcript and a public API surface comparison.
+* **Enforced by script**: only an unchanged, built cell can be verified; the suite is rerun and contract files checked automatically; each record needs an evidence file captured in this run, inside `evidence/`, hashed so later edits are caught; the builder's own test log cannot stand as evidence; the verifier may not change the cell's code.
+* **Verdicts**: `PASS` (stage `verified`, ready for review); `FAIL_WITH_EVIDENCE` (writes `findings.md` and returns to the build station, using one review loop); `INCOMPLETE_EVIDENCE` (items unproven or a required kind of evidence missing).
+* **Output**: artifacts, `results.json` and the `summary.json` manifest in `.factory/worktrees/<ticket_id>/evidence/`.
 
 ### 6. `/mach-review` — Multi-Agent Consensus Voting Panel & Escalation
 * **Assigned Model**: `opus` (`claude-opus-5-5`) (High Risk) / `sonnet` (`claude-sonnet-5-5`) (Medium Risk) [Fresh Context]

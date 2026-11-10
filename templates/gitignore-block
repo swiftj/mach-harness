@@ -3,5 +3,6 @@
 .factory/inbox/
 .factory/archive/
 .factory/tmp/
+.factory/holdouts/
 .factory/audit-report.json
 .factory/mach-backup-*/

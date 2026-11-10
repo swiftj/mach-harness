@@ -53,6 +53,7 @@ class InstallTest(Base):
                          ".claude/skills/mach-ticket/SKILL.md", ".claude/skills/mach-ticket/scripts/ticket.py",
                          ".claude/skills/mach-audit/SKILL.md", ".claude/skills/mach-audit/scripts/audit.py",
                          ".claude/skills/mach-build/SKILL.md", ".claude/skills/mach-build/scripts/build.py", ".claude/agents/mach-builder.md",
+                         ".claude/skills/mach-verify/SKILL.md", ".claude/skills/mach-verify/references/evidence-runners.md", ".claude/agents/mach-verifier.md",
                          ".claude/agents/mach-contract-engineer.md", ".factory/bin/mach", ".factory/mach.mk", ".factory/config.json",
                          "REVIEW.md", "AGENTS.md", "Makefile", "CLAUDE.md", ".gitignore", ".factory/.mach-manifest.json"):
             self.assertIn(expected, files)

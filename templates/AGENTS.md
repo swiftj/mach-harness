@@ -9,7 +9,7 @@ Each station runs as its own agent with its own context, model tier and permissi
 | Intent | `mach-intent` | Interviews the product owner; writes `intent.md` and the slice spec | `planning` | the cell folder; `specs/slices/` in the cell's checkout |
 | Intent, stage 2 | `mach-contract-engineer` agent | Derives contracts and `plan.md` from the spec | `contracts` | contract files in the cell's checkout; `plan.md` |
 | Build | `mach-build`, `mach-builder` agent | Test-first implementation, following `plan.md` | `build` | the cell's checkout only |
-| Verify | `mach-verify` | Runs the built slice and captures evidence, in a fresh context | `build` | the cell's `evidence/` only |
+| Verify | `mach-verify`, `mach-verifier` agent | Runs the built slice and captures evidence, in a fresh context | `build` | the cell's `evidence/` only |
 | Review | `mach-review` | Three independent reviewers vote against `REVIEW.md` | `contracts` for High risk, `build` otherwise | nothing; posts findings to the ticket |
 | Cleanup | `mach-cleanup` | Archives evidence, removes merged cells and branches | `utility` | `.factory/archive/`; removes cells |
 | Observe | `mach-observe` | Finds recurring defects and proposes rule changes as a pull request | `planning` | a branch of its own |
