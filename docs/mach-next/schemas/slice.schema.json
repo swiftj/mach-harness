@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mach:schema:slice:v1",
+  "title": "MACH Product Slice Work Order v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "slice_id", "project_id", "epic_id", "revision", "title", "status", "dependencies", "open_questions", "spec_path", "spec_sha256"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "slice_id": {"type": "string", "pattern": "^SLICE-[0-9]{3,}$"},
+    "project_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$"},
+    "epic_id": {"type": "string", "pattern": "^EPIC-[0-9]{3,}$"},
+    "revision": {"type": "integer", "minimum": 1},
+    "title": {"type": "string", "minLength": 1},
+    "status": {"enum": ["draft", "interviewing", "ready_for_approval", "approved_for_engineering", "superseded"]},
+    "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^SLICE-[0-9]{3,}$"}},
+    "open_questions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "spec_path": {"type": ["string", "null"]},
+    "spec_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+  }
+}

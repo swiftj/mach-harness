@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mach:schema:epic:v1",
+  "title": "MACH Product Epic v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "epic_id", "project_id", "revision", "title", "status", "acceptance_criteria"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "epic_id": {"type": "string", "pattern": "^EPIC-[0-9]{3,}$"},
+    "project_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$"},
+    "revision": {"type": "integer", "minimum": 1},
+    "title": {"type": "string", "minLength": 1},
+    "status": {"enum": ["proposed", "approved", "deferred", "completed", "superseded"]},
+    "acceptance_criteria": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  }
+}

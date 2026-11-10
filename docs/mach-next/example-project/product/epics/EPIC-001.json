@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "epic_id": "EPIC-001",
+  "project_id": "campaign-platform",
+  "revision": 1,
+  "title": "Identity and Access",
+  "status": "approved",
+  "acceptance_criteria": ["Only authorized people can access a private campaign"]
+}

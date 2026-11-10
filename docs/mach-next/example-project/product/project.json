@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "project_id": "campaign-platform",
+  "name": "Campaign Platform",
+  "revision": 1,
+  "status": "active",
+  "vision": "Allow storytellers to manage campaigns and invited participants.",
+  "outcomes": ["Storytellers can create a campaign", "Invited members can access permitted campaigns"]
+}

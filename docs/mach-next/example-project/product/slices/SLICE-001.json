@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "slice_id": "SLICE-001",
+  "project_id": "campaign-platform",
+  "epic_id": "EPIC-001",
+  "revision": 1,
+  "title": "Invite a member to a campaign",
+  "status": "interviewing",
+  "dependencies": [],
+  "open_questions": ["Should invitations expire after seven or fourteen days?"],
+  "spec_path": null,
+  "spec_sha256": null
+}
