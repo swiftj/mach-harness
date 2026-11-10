@@ -252,7 +252,7 @@ def run_command(cell: Cell, command: str, timeout: int) -> Dict[str, Any]:
         code, out = done.returncode, done.stdout + ("\n" + done.stderr if done.stderr else "")
     except subprocess.TimeoutExpired:
         code, out = 124, f"Still running after {timeout} seconds; stopped."
-    return {"command": command, "exit_code": code, "passed": code == 0, "seconds": round(time.monotonic() - started, 1), "output_tail": out.strip()[-3000:]}
+    return {"command": command, "exit_code": code, "passed": code == 0, "seconds": round(time.monotonic() - started, 1), "output_tail": out.strip()[-3000:], "output": out}
 
 
 def run_tests(cell: Cell) -> Dict[str, Any]:
@@ -406,7 +406,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         if not baseline["passed"]:
             raise BuildError("The tests already fail in the cell before any change, so building cannot start:\n" + baseline["output_tail"][-800:])
         cell.state["suite"] = "green"
-    cell.state["baseline_run"] = {k: v for k, v in baseline.items() if k != "output_tail"}
+    cell.state["baseline_run"] = {k: v for k, v in baseline.items() if k not in ("output_tail", "output")}
     cell.info.update({"stage": "building", "human_review_required": bool(gate["human_review_required"]) or cell.info.get("risk") == "High"})
     cell.save()
     cell.save_info()
@@ -480,6 +480,18 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
         cell.deviation(task["id"], "test-passed-first-run", args.covered)
         note = "Passed on its first run: " + args.covered
     else:
+        # A red only counts if the new test took part in it. A suite that fails before reaching the test
+        # (a broken command, a folder that cannot be loaded) says nothing about the behavior under test.
+        stems = sorted({Path(name).stem for name in files if Path(name).suffix and Path(name).stem not in ("__init__", "conftest")})
+        if stems and not any(stem in result["output"] for stem in stems):
+            if not args.unrelated_failure:
+                raise BuildError(
+                    f"{task['id']}: the suite fails, but its output never mentions the test you wrote ({', '.join(stems)}), so it may be failing before it "
+                    "reaches that test: a wrong test command, a folder the runner cannot load, or an unrelated error. Read the output below. If the test "
+                    "command or layout is wrong, that is a plan defect to report. If the failure really is your test's, rerun with "
+                    "--unrelated-failure \"<how you know>\"; the reviewers are told.\n" + result["output_tail"][-1200:]
+                )
+            cell.deviation(task["id"], "red-not-attributed", args.unrelated_failure)
         cell.state["suite"] = "red"
     cell.state["test_files"] = sorted(set(cell.state.get("test_files", [])) | set(files))
     task["first_run"] = "pass" if result["passed"] else "fail"
@@ -596,7 +608,7 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "status": "BUILT", "finished_at": now(),
         "branch": cell.info.get("branch"), "baseline": baseline, "head": git(cell.work, "rev-parse", "HEAD").stdout.strip(),
         "review_loop": cell.state.get("loop", 0), "risk": cell.info.get("risk"), "human_review_required": bool(cell.info.get("human_review_required")) or cell.info.get("risk") == "High",
-        "tests": {k: v for k, v in tests.items() if k != "output_tail"}, "lint": {k: v for k, v in lint.items() if k != "output_tail"},
+        "tests": {k: v for k, v in tests.items() if k not in ("output_tail", "output")}, "lint": {k: v for k, v in lint.items() if k not in ("output_tail", "output")},
         "tasks": [{k: t.get(k) for k in ("id", "kind", "status", "commit", "note", "first_run", "loop")} for t in cell.state["tasks"]],
         "tests_seen_failing_first": sum(1 for t in cell.state["tasks"] if t.get("first_run") == "fail"),
         "tests_passing_on_first_run": [t["id"] for t in cell.state["tasks"] if t.get("first_run") == "pass"],
@@ -680,6 +692,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--amend-test", metavar="WHY", help="accept a change to an already committed test; recorded for review")
         if name == "red":
             p.add_argument("--covered", metavar="WHY", help="accept a test that passes on its first run because earlier work satisfies it; recorded for review")
+            p.add_argument("--unrelated-failure", metavar="WHY", help="accept a red whose output does not name the new test; recorded for review")
             p.add_argument("--written-early", metavar="WHY", help="complete a test task whose test an earlier task already committed; recorded for review")
         p.set_defaults(func=func)
 
@@ -705,7 +718,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    for name in ("allow_extra", "amend_test", "covered", "no_baseline", "written_early"):
+    for name in ("allow_extra", "amend_test", "covered", "no_baseline", "written_early", "unrelated_failure"):
         if not hasattr(args, name):
             setattr(args, name, None)
     try:

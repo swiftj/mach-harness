@@ -312,6 +312,18 @@ class StepTest(Base):
         self.assertEqual((state["test_files"], state["tasks"][0]["first_run"]), (["tests/test_invite.py"], "fail"))
         self.assertIn("- [x] T01 [test]", (self.cellroot / "plan.md").read_text())
 
+    def test_red_must_involve_the_new_test(self):
+        state = self.state()
+        state["test_cmd"] = f"{sys.executable} -c 'import sys; print(\"ImportError: Start directory is not importable\"); sys.exit(1)'"
+        (self.cellroot / "build.json").write_text(json.dumps(state))
+        self.put(self.work, {"tests/test_invite.py": RED_TEST})
+        refusal = self.refused("red", "LOCAL-001", "T01")
+        self.assertIn("never mentions the test you wrote (test_invite)", refusal)
+        self.assertIn("Start directory is not importable", refusal)
+        self.assertEqual(self.state()["tasks"][0]["status"], "pending")
+        self.ok("red", "LOCAL-001", "T01", "--unrelated-failure", "The runner prints only a summary line; I ran the test file directly and it fails on the missing function.")
+        self.assertEqual(self.state()["deviations"][0]["type"], "red-not-attributed")
+
     def test_green_requires_a_passing_suite_and_untouched_tests(self):
         self.build_through("T01")
         self.put(self.work, {"app/invite.py": "def invite(email):\n    return 'nope'\n"})
