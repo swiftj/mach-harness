@@ -46,7 +46,7 @@ The work has two stages:
    - A feature idea with no ticket: create a local ticket with `CELL ticket-new --title "<short title>" --body "<the PM's words>"` and use the ID it prints.
 2. **Open the cell:** `CELL open <ticket-id>`. Add `--headless` in headless mode. It prints JSON with `workdir`, `specs_dir`, `intent_path`, `plan_path`, `mode`, `stage`, and the ticket files it found. Use those paths exactly. If it prints a `note`, the cell could not be isolated; pass the note on to the PM once, in plain words.
 3. **Pick the mode.** Headless only if the input contains `--headless`: read `references/headless.md` now and follow it; it replaces every instruction below that waits for the PM. Otherwise the mode is interactive, even for a ticket that was groomed headless before: a person is here now to answer its open questions.
-4. **Resume by stage.** If `stage` is `spec-open`, continue the saved spec. If it is `spec-ready`, go to Stage 2. If it is `planned`, say the ticket is already groomed, and ask what the PM wants changed.
+4. **Resume by stage.** If `stage` is `spec-open`, continue the saved spec. If it is `spec-ready`, go to Stage 2. If it is `planned`, say the ticket is already groomed, and ask what the PM wants changed. If it is `building`, `built` or `blocked`, the ticket has left grooming: say so, and do not change its spec or plan unless the PM asks to regroom it.
 
 ---
 

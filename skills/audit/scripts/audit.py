@@ -21,6 +21,7 @@ the project's code: audit only repositories you would build yourself.
 
 import argparse
 import json
+import os
 import re
 import shlex
 import shutil
@@ -268,11 +269,15 @@ def execute(repo: Repo, kind: str, command: Optional[str], timeouts: Dict[str, i
         argv = shlex.split(command)
     except ValueError as exc:
         return {**result, "status": "fail", "output_tail": f"Cannot parse the command: {exc}"}
+    env = dict(os.environ)
+    while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):  # leading VAR=value, as in a shell
+        key, value = argv.pop(0).split("=", 1)
+        env[key] = value
     if not argv or shutil.which(argv[0]) is None and not (repo.project / argv[0]).is_file():
         return {**result, "status": "unavailable", "output_tail": f"'{argv[0] if argv else command}' is not installed or not on PATH."}
     started = time.monotonic()
     try:
-        done = subprocess.run(argv, cwd=str(repo.project), capture_output=True, text=True, errors="replace", timeout=timeouts[kind], stdin=subprocess.DEVNULL)
+        done = subprocess.run(argv, cwd=str(repo.project), capture_output=True, text=True, errors="replace", timeout=timeouts[kind], stdin=subprocess.DEVNULL, env=env)
     except subprocess.TimeoutExpired:
         return {**result, "status": "timeout", "seconds": timeouts[kind], "output_tail": f"Still running after {timeouts[kind]} seconds; stopped."}
     except OSError as exc:

@@ -57,9 +57,11 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   ├── ticket/                 # Built. Ticket trackers and telemetry ingestion
 │   ├── audit/                  # Built. Readiness scorecard and pipeline gate
 │   ├── intent/                 # Built. Socratic grooming, contracts & plan
+│   ├── build/                  # Built. Test-driven construction with scripted gates
 │   └── init/                   # Built. Plugin-only: scaffolds a project
 ├── agents/
-│   └── contract-engineer.md    # Stage 2 of intent, pinned to the contracts tier
+│   ├── contract-engineer.md    # Stage 2 of intent, pinned to the contracts tier
+│   └── builder.md              # Build station, pinned to the build tier
 ├── templates/                  # What gets scaffolded into a project
 ├── tests/                      # unittest suites and fixtures
 └── docs/                       # Design specs for stations not built yet, and prd-slice (reference)
@@ -96,6 +98,8 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
             ├── spec.md         # What: copy of the validated slice spec
             ├── spec.json       # The spec as data, every matrix rule expanded into test cases
             ├── plan.md         # How: contracts, test-first task checklist, file touch map
+            ├── build.json      # Build state: task progress, suite state, recorded deviations
+            ├── build-report.json  # What was built, how, and every gate override, for verify and review
             ├── evidence/       # Captured verification artifacts (video, log, PNG, diff)
             └── repo/           # Git worktree on feature/<ticket_id>: code, contracts, specs/slices/
 ```
@@ -106,7 +110,7 @@ The cell folder holds the factory's artifacts; `repo/` inside it is the isolated
 
 ## 4. The Complete MACH Skill Suite
 
-Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. Built so far: `ticket`, `audit`, `intent` and `init`. The other stations below are specified in `docs/factory-skills/` and not yet built.
+Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. Built so far: `ticket`, `audit`, `intent`, `build` and `init`. The other stations below are specified in `docs/factory-skills/` and not yet built.
 
 ### 1. `/mach-ticket` — Universal Ticket & Telemetry Adapter
 * **Assigned Model**: `haiku` (`claude-haiku-5-5`) (Low Effort) when run as its own agent. The skill does not pin a model, because a pin would also switch the model of a station that calls it inline; `ticket.py` does the work, so the cost is small on any tier.
@@ -145,12 +149,20 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Outputs**: `intent.md`, `spec.md`, `spec.json`, `plan.md` and `cell.json` in the cell; the slice spec and contracts committed on `feature/<ticket_id>`.
 
 ### 4. `/mach-build` — TDD Builder & Design-System Anti-Slop Anchor
-* **Assigned Model**: `sonnet` (`claude-sonnet-5-5`) (High Effort)
-* **Purpose**: Executes construction inside the isolated Git worktree cell using strict Test-Driven Development (TDD).
-* **Operating Rules**:
-  * **Strict TDD**: Writes failing unit/integration tests first (Red), implements minimal code to pass (Green), refactors into modular ports/adapters (Refactor).
-  * **Design System & Anti-Slop UI Anchor**: For frontend work, audits existing component libraries (`src/components/ui`, Shadcn, Tailwind, Storybook) and mandates component reuse, CSS design tokens (`var(--primary)`), semantic HTML, and ARIA accessibility. Rejects arbitrary inline styles and generic "vibecoded" layouts.
-  * **No Dead Code**: Prohibits unused helpers, spurious dependencies, and monolithic multi-thousand-line files.
+* **Assigned Model**: `sonnet` (`claude-sonnet-5-5`) (High Effort), pinned in the `builder` agent
+* **Purpose**: Executes construction inside the isolated Git worktree cell using strict Test-Driven Development (TDD), following `plan.md` task by task. The model writes tests and code; `build.py` runs the tests, decides whether each step counts, and makes every commit.
+* **Start gates**: the audit allows building (a Bronze repository builds only `repo-hardening` tickets); the cell is `planned` and its spec unchanged; the cell is isolated and clean; the tests pass before anything is touched.
+* **Enforced by script**:
+  * **Order**: tasks are completed in plan order, each with the step its kind requires.
+  * **Red before green**: a `[test]` task is accepted only if the suite fails with it; an `[impl]` task only if the whole suite passes.
+  * **Frozen tests**: a committed test cannot be changed by a later non-test task.
+  * **Scope**: a task may change only the files the plan gave it.
+  * **Traceability**: every `FR`, `INV` and `AC` in the spec must be named by a test before the build can finish.
+  * **Overrides are recorded**: each gate has an override that requires a reason, and every use is written to `build-report.json` for the reviewers.
+* **Design System & Anti-Slop UI Anchor**: For frontend work the builder finds the existing component library and design tokens first and must reuse them, with semantic HTML and ARIA accessibility. Inline styles and hard-coded colors added in interface files are listed in the build report.
+* **No Dead Code**: Prohibits unused helpers, spurious dependencies, and monolithic multi-thousand-line files.
+* **Revision rounds**: `build.py revise` starts a round after a rejected review and refuses a fourth, directing escalation to `blocked-requires-sme`.
+* **Output**: commits on `feature/<ticket_id>`, one per task; `build.json` and `build-report.json` in the cell; cell stage `built`.
 
 ### 5. `/mach-verify` — Multi-Target Dynamic Evidence Engine
 * **Assigned Model**: `sonnet` (`claude-sonnet-5-5`) (Medium/High Effort, Fresh Context)

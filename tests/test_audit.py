@@ -156,7 +156,7 @@ class CheckTest(Base):
 
     def test_command_overrides_and_missing_tools(self):
         self.repo(**{".factory/config.json": json.dumps({"audit": {"commands": {"lint": "no-such-linter-xyz ."}}})})
-        r = self.report("--test-cmd", f"{sys.executable} -c pass")
+        r = self.report("--test-cmd", f"MACH_PROBE=1 {sys.executable} -c 'import os, sys; sys.exit(0 if os.environ.get(\"MACH_PROBE\") else 9)'")
         self.assertEqual((r["commands"]["test"]["source"], r["commands"]["test"]["status"]), ("argument", "pass"))
         self.assertEqual((r["commands"]["lint"]["source"], r["commands"]["lint"]["status"]), ("config", "unavailable"))
         self.assertEqual(r["by_check"]["Linter passes"]["status"], "unknown")

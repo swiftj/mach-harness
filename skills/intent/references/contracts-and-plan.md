@@ -62,7 +62,8 @@ Start from the tier in `intent.md`. Raise it to High if the slice touches sign-i
 
 Read the plan template and write `plan.md` to `plan_path`. The builder follows it literally, in order, practising strict test-driven development.
 
-- **Tests first.** The first task is a `[test]` task. Every `[impl]` task comes after the `[test]` task that fails without it. `[contract]` tasks, for generated code or contract wiring, come before the tests that need them.
+- **Tests first.** The first task is a `[test]` task. Every `[impl]` task comes after the `[test]` task that fails without it.
+- **Every test must be able to fail.** Place each `[test]` task before the `[impl]` task that first makes it pass. A test planned after the code that already satisfies it is never seen failing, which the build station has to record as a deviation. Group the tests an `[impl]` task satisfies directly ahead of it, rather than writing one broad `[impl]` task early and its scenario tests afterwards. `[contract]` tasks, for generated code or contract wiring, come before the tests that need them.
 - **One table-driven test for the matrix.** Plan a single parameterized test that runs every case in `decision_matrix.cases`, asserting each case's expected outcome, its exact message, and its side effects, including that a refusal changes nothing. Name the rule IDs and the number of cases. Cite the FR and INV IDs the rules cover.
 - **One test per scenario.** Each `AC-NN` gets its own `[test]` task. Outside services named under `external_dependencies` are simulated, including the failure each scenario describes; time is controlled, not waited for.
 - **Every ID is assigned.** Each `FR-NN`, `INV-NN` and `AC-NN` in the spec appears in at least one task. A requirement you cannot assign to a test is a spec defect.

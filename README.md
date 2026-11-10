@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.3.0.** The ticket, audit and grooming (`intent`) stations, the installer, and the project scaffold are built and tested. The build, verify, review, cleanup and observe stations are specified in [`docs/factory-skills/`](docs/factory-skills/) and not built yet. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.4.0.** The ticket, audit, grooming (`intent`) and build stations, the installer, and the project scaffold are built and tested. The verify, review, cleanup and observe stations are specified in [`docs/factory-skills/`](docs/factory-skills/) and not built yet. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -19,7 +19,7 @@ In Claude Code:
 
 Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:intent`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
+Commands are namespaced: `/mach:intent`, `/mach:build`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
 
 ### With one command (one project)
 
@@ -92,6 +92,25 @@ claude -p "/mach-intent AUTO-20261109 --headless"
 
 Each question is answered from facts in the project or a strict default and recorded as "Decided without a PM". Anything involving money, access, irreversible deletion, or two rules in conflict is never guessed: it becomes an open question, the ticket is labelled `blocked-requires-sme`, and no contracts or plan are written until a person finishes the interview.
 
+## Building a groomed ticket
+
+```
+/mach-build LOCAL-001
+```
+
+The builder implements the ticket inside its cell, following `plan.md` one task at a time. It writes the tests and the code; a script runs the tests, decides whether each step counts, and makes every commit. The script refuses:
+
+- starting on a repository the audit has not cleared, or on a ticket that is not fully groomed;
+- a task out of order;
+- a test that was never seen failing, or code committed while the suite fails;
+- a change to a test that is already committed;
+- a change to a file the plan did not give the task;
+- finishing while any requirement or scenario in the spec is not named by a test.
+
+Each refusal has an override that needs a written reason, and every use is recorded in `build-report.json` for the reviewers. After a rejected review, `/mach-build LOCAL-001 --revise findings.md` starts a revision round; a fourth round is refused and the ticket is escalated to a person.
+
+To run the builder on the model tier the factory assigns, start it as the `builder` agent (`mach:builder` with the plugin, `mach-builder` in a project install).
+
 ## Is the repository ready?
 
 ```
@@ -149,7 +168,7 @@ Uninstall removes exactly the files MACH installed and you have not changed, and
 ## Developing MACH
 
 ```bash
-make test        # validator, cell gates, ticket adapter, audit, installer round trips
+make test        # validator, cell gates, ticket adapter, audit, build gates, installer round trips
 make validate    # plugin and marketplace manifests
 ```
 
@@ -159,9 +178,11 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 |------|---------|
 | `skills/ticket/` | The ticket skill: `SKILL.md` and `ticket.py` (trackers and telemetry). |
 | `skills/audit/` | The audit skill: `SKILL.md` and `audit.py` (scorecard and gate). |
+| `skills/build/` | The build skill: `SKILL.md` and `build.py` (start gates, red/green enforcement, build report). |
 | `skills/intent/` | The grooming skill: `SKILL.md`, templates, grammar references, `validate_slice.py`, `cell.py`. |
 | `skills/init/` | Plugin-only wrapper around `bin/mach scaffold`. |
 | `agents/contract-engineer.md` | Stage 2 of grooming, pinned to the `opus` tier. |
+| `agents/builder.md` | The build station, pinned to the `sonnet` tier. |
 | `bin/mach`, `install.sh` | The installer. |
 | `templates/` | What gets scaffolded into a project. |
 | `docs/` | Specs for the stations still to build, and the original prd-slice skill the interview is adapted from. |
