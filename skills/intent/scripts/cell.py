@@ -27,6 +27,8 @@ import validate_slice  # noqa: E402
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 SLICE_FILE_RE = re.compile(r"^SLICE-(\d{3,})-.*\.md$")
 SLICE_ID_RE = re.compile(r"SLICE-(\d{3,})")
+PRODUCT_SLICE_RE = re.compile(r"^SLICE-(\d{3,})\.json$")
+STUDIO_DRAFT = (".factory", "studio", "draft")
 FIELD_RE = re.compile(r"^[-*+]\s+\*\*([A-Za-z ]+):\*\*\s*(.*)$")
 REQ_RE = re.compile(r"\b(?:FR|INV|AC)-\d{2,}\b")
 INTENT_SECTIONS = ("Why", "Goal ancestry", "Constraints", "Risk", "Deferred work")
@@ -112,8 +114,11 @@ def workdir(project: Path, cell: Dict[str, Any]) -> Path:
 
 
 def registries(project: Path, own: Optional[Path] = None) -> List[Path]:
-    """Every specs/slices folder that shares the slice ID space, except `own`."""
-    folders = [project / "specs" / "slices"]
+    """Every specs/slices folder that shares the slice ID space, except `own`.
+
+    That is the main checkout, every open cell, and the Product Studio draft workspace.
+    """
+    folders = [project / "specs" / "slices", project.joinpath(*STUDIO_DRAFT, "specs", "slices")]
     worktrees = project / ".factory" / "worktrees"
     if worktrees.is_dir():
         folders.extend(sorted(p / "repo" / "specs" / "slices" for p in worktrees.iterdir() if p.is_dir()))
@@ -266,8 +271,26 @@ def scan_ids(folders: Sequence[Path]) -> Tuple[Dict[int, str], Dict[int, List[Di
     return used, reserved
 
 
-def cmd_next_id(project: Path, args: argparse.Namespace) -> int:
+def slice_ids(project: Path) -> Tuple[Dict[int, str], Dict[int, List[Dict[str, str]]]]:
+    """Every slice number taken in this project, and every number reserved for a deferred feature.
+
+    The one allocator for the whole factory: slice specs on the main checkout, in open cells and
+    in the Product Studio draft workspace, plus product work orders (product/slices/SLICE-NNN.json)
+    that have no spec yet. Grooming a ticket and Product Studio both allocate from here.
+    """
     used, reserved = scan_ids(registries(project))
+    for folder in (project / "product" / "slices", project.joinpath(*STUDIO_DRAFT, "product", "slices")):
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.glob("SLICE-*.json")):
+            match = PRODUCT_SLICE_RE.match(path.name)
+            if match:
+                used.setdefault(int(match.group(1)), path.name)
+    return used, reserved
+
+
+def cmd_next_id(project: Path, args: argparse.Namespace) -> int:
+    used, reserved = slice_ids(project)
     highest = max([0, *used, *reserved])
     result = {
         "next": [f"SLICE-{highest + offset:03d}" for offset in range(1, args.count + 1)],
@@ -361,7 +384,8 @@ def leftover(text: str) -> List[str]:
     return problems
 
 
-def check_intent(path: Path) -> Tuple[List[str], Dict[str, str]]:
+def check_intent(path: Path, header_fields: Sequence[str] = INTENT_FIELDS) -> Tuple[List[str], Dict[str, str]]:
+    """Check an intent file. Product Studio passes fewer header fields: its intent has no ticket yet."""
     if not path.is_file():
         return [f"{path} is missing. Write it from assets/intent-template.md before finalizing."], {}
     text = path.read_text(encoding="utf-8")
@@ -375,7 +399,7 @@ def check_intent(path: Path) -> Tuple[List[str], Dict[str, str]]:
         elif not any(line.strip() for line in sections[name]):
             problems.append(f"'## {name}' is empty; write '- None.' if nothing applies")
     header = fields(sections[""])
-    for name in INTENT_FIELDS:
+    for name in header_fields:
         if not header.get(name):
             problems.append(f"missing header line '- **{name}:** ...'")
     risk = fields(sections.get("Risk", []))
