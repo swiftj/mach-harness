@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "app_type": null,
+  "tickets": {
+    "provider": "local",
+    "local_prefix": "LOCAL"
+  },
+  "telemetry": {
+    "provider": null
+  },
+  "models": {
+    "planning": "fable",
+    "contracts": "opus",
+    "build": "sonnet",
+    "utility": "haiku"
+  },
+  "review": {
+    "max_loops": 3,
+    "high": { "approvals": 3, "reviewers": 3, "human_approval": true },
+    "medium": { "approvals": 2, "reviewers": 3, "human_approval": false },
+    "low": { "approvals": 1, "reviewers": 1, "human_approval": false }
+  },
+  "audit": {
+    "gold": 90,
+    "silver": 70
+  },
+  "git": {
+    "auto_commit": true
+  }
+}

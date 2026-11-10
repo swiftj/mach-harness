@@ -1,0 +1,6 @@
+# MACH factory: cells, raw inbound payloads and archives stay local.
+.factory/worktrees/
+.factory/inbox/
+.factory/archive/
+.factory/tmp/
+.factory/mach-backup-*/

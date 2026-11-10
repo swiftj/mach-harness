@@ -1,0 +1,11 @@
+{
+  "name": "mach-harness",
+  "owner": { "name": "MACH maintainers" },
+  "plugins": [
+    {
+      "name": "mach",
+      "source": "./",
+      "description": "MACH (Multi-Agent Construction Harness): an agentic software factory for Claude Code."
+    }
+  ]
+}

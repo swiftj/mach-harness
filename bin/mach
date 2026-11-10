@@ -1,0 +1,428 @@
+#!/usr/bin/env python3
+"""MACH installer: put the factory into a project, and take it out again.
+
+    mach install    copy the skills and agents into .claude/ and scaffold the factory files
+    mach scaffold   scaffold the factory files only (for projects that use the MACH plugin)
+    mach uninstall  remove everything this tool installed and has not been changed since
+    mach status     show what is installed and what has been changed
+
+It never overwrites a file it did not install, and never deletes a file that was changed after
+it was installed, unless --force is given, which backs the file up first. Tickets, specs, cells
+and archives are your project's data and are never touched. Standard library only.
+"""
+
+import argparse
+import hashlib
+import json
+import re
+import shutil
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+
+MANIFEST = ".factory/.mach-manifest.json"
+BLOCK_START = "mach:begin"
+BLOCK_END = "mach:end"
+BLOCKS = {
+    # file -> (comment prefix, comment suffix, template that holds the block's body)
+    "CLAUDE.md": ("<!-- ", " -->", "claude-block.md"),
+    ".gitignore": ("# ", "", "gitignore-block"),
+}
+SEEDS = {
+    # project file -> template; created only when absent, never overwritten
+    ".factory/config.json": "config.json",
+    "REVIEW.md": "REVIEW.md",
+    "AGENTS.md": "AGENTS.md",
+}
+MANAGED_TEMPLATES = {".factory/mach.mk": "mach.mk"}
+DATA_DIRS = (".factory/tickets", ".factory/inbox", ".factory/worktrees", ".factory/archive", "specs/slices")
+PLUGIN_ONLY_SKILLS = {"init"}
+SKIP_NAMES = {"__pycache__", ".DS_Store"}
+MAKEFILE_NAMES = ("Makefile", "makefile", "GNUmakefile")
+NAME_LINE_RE = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
+
+
+class Item(NamedTuple):
+    dest: str          # path relative to the project
+    data: bytes
+    kind: str          # "managed": owned and updated by MACH; "seed": yours after it is created
+    executable: bool = False
+
+
+class Fail(Exception):
+    pass
+
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def source_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def source_version(root: Path) -> Optional[str]:
+    try:
+        return json.loads((root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def require_source(root: Path) -> str:
+    version = source_version(root)
+    if version is None or not (root / "templates").is_dir():
+        raise Fail(
+            "This copy of 'mach' can only report status and uninstall. To install or update, run it from the MACH "
+            "repository (bin/mach) or use the one-line installer."
+        )
+    return version
+
+
+def prefixed(text: str, name: str) -> str:
+    """Rename a plugin component ('intent') to its project name ('mach-intent') in its front matter."""
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---", 4)
+    head = NAME_LINE_RE.sub(f"name: mach-{name}", text[:end], count=1)
+    return head + text[end:]
+
+
+def skill_items(root: Path) -> List[Item]:
+    items: List[Item] = []
+    for skill in sorted(p for p in (root / "skills").iterdir() if p.is_dir() and p.name not in PLUGIN_ONLY_SKILLS):
+        for path in sorted(skill.rglob("*")):
+            if not path.is_file() or SKIP_NAMES & set(path.relative_to(skill).parts):
+                continue
+            relative = path.relative_to(skill)
+            data = path.read_bytes()
+            if relative.as_posix() == "SKILL.md":
+                data = prefixed(data.decode("utf-8"), skill.name).encode("utf-8")
+            items.append(Item(f".claude/skills/mach-{skill.name}/{relative.as_posix()}", data, "managed", path.suffix == ".py"))
+    agents = root / "agents"
+    for path in sorted(agents.glob("*.md")) if agents.is_dir() else []:
+        items.append(Item(f".claude/agents/mach-{path.name}", prefixed(path.read_text(encoding="utf-8"), path.stem).encode("utf-8"), "managed"))
+    return items
+
+
+def scaffold_items(root: Path, project: Path) -> List[Item]:
+    templates = root / "templates"
+    items = [Item(".factory/bin/mach", Path(__file__).resolve().read_bytes(), "managed", True)]
+    items += [Item(dest, (templates / name).read_bytes(), "managed") for dest, name in MANAGED_TEMPLATES.items()]
+    items += [Item(dest, (templates / name).read_bytes(), "seed") for dest, name in SEEDS.items()]
+    if not any((project / name).exists() for name in MAKEFILE_NAMES):
+        items.append(Item("Makefile", (templates / "Makefile").read_bytes(), "seed"))
+    return items
+
+
+def load_manifest(project: Path) -> Dict:
+    path = project / MANIFEST
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise Fail(f"{path} is not valid JSON ({exc}). Fix or delete it, then run again.")
+
+
+def block_markers(name: str) -> Tuple[str, str]:
+    prefix, suffix, _ = BLOCKS[name]
+    return f"{prefix}{BLOCK_START}{suffix}", f"{prefix}{BLOCK_END}{suffix}"
+
+
+def strip_block(text: str, name: str) -> str:
+    start, end = block_markers(name)
+    pattern = re.compile(r"\n*" + re.escape(start) + r".*?" + re.escape(end) + r"\n?", re.DOTALL)
+    stripped = pattern.sub("\n", text)
+    return stripped.lstrip("\n") if text.startswith(start) or not stripped.strip() else stripped
+
+
+def with_block(text: str, name: str, body: str) -> str:
+    start, end = block_markers(name)
+    block = f"{start}\n{body.strip()}\n{end}\n"
+    base = strip_block(text, name).rstrip("\n")
+    return f"{base}\n\n{block}" if base else block
+
+
+def backup(project: Path, relative: str, stamp: str, dry: bool) -> str:
+    target = Path(".factory") / f"mach-backup-{stamp}" / relative
+    if not dry:
+        (project / target).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(project / relative, project / target)
+    return target.as_posix()
+
+
+def write(project: Path, item: Item) -> None:
+    path = project / item.dest
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(item.data)
+    path.chmod(0o755 if item.executable else 0o644)
+
+
+def apply(project: Path, items: Sequence[Item], components: Sequence[str], version: str, args: argparse.Namespace) -> int:
+    manifest = load_manifest(project)
+    recorded: Dict[str, str] = dict(manifest.get("files", {}))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    log: List[str] = []
+    conflicts: List[str] = []
+    wanted = {item.dest for item in items}
+
+    for item in items:
+        path = project / item.dest
+        new = sha(item.data)
+        if not path.exists():
+            log.append(f"  create   {item.dest}")
+            recorded[item.dest] = new
+            if not args.dry_run:
+                write(project, item)
+            continue
+        current = sha(path.read_bytes())
+        if item.kind == "seed":
+            if item.dest not in recorded:
+                log.append(f"  keep     {item.dest} (already exists; yours)")
+            continue
+        if current == new:
+            recorded[item.dest] = new
+            continue
+        if recorded.get(item.dest) == current:
+            log.append(f"  update   {item.dest}")
+        elif args.force:
+            log.append(f"  replace  {item.dest} (your version saved to {backup(project, item.dest, stamp, args.dry_run)})")
+        else:
+            conflicts.append(item.dest)
+            log.append(f"  SKIP     {item.dest} (changed since it was installed, or not installed by MACH)")
+            continue
+        recorded[item.dest] = new
+        if not args.dry_run:
+            write(project, item)
+
+    # Files an earlier version installed that this version no longer ships.
+    scopes = [prefix for prefix, on in ((".claude/", "skills" in components), (".factory/", "scaffold" in components)) if on]
+    for dest in sorted(set(recorded) - wanted):
+        path = project / dest
+        if not any(dest.startswith(scope) for scope in scopes) or dest in SEEDS:
+            continue
+        if path.is_file() and sha(path.read_bytes()) != recorded[dest]:
+            log.append(f"  keep     {dest} (no longer shipped, but you changed it)")
+        else:
+            log.append(f"  remove   {dest} (no longer shipped)")
+            if not args.dry_run and path.is_file():
+                path.unlink()
+        del recorded[dest]
+
+    blocks: Dict[str, Dict[str, bool]] = dict(manifest.get("blocks", {}))
+    if "scaffold" in components:
+        for name, (_, _, template) in BLOCKS.items():
+            path = project / name
+            existed = path.is_file()
+            old = path.read_text(encoding="utf-8") if existed else ""
+            new_text = with_block(old, name, (source_root() / "templates" / template).read_text(encoding="utf-8"))
+            if new_text != old:
+                log.append(f"  {'update' if existed else 'create'}   {name} (MACH section between '{BLOCK_START}' and '{BLOCK_END}' markers)")
+                if not args.dry_run:
+                    path.write_text(new_text, encoding="utf-8")
+            blocks.setdefault(name, {"created": not existed})
+        for folder in DATA_DIRS:
+            if not (project / folder).is_dir():
+                log.append(f"  create   {folder}/")
+                if not args.dry_run:
+                    (project / folder).mkdir(parents=True)
+
+    manifest = {
+        "version": version,
+        "installed_at": manifest.get("installed_at") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "components": sorted(set(manifest.get("components", [])) | set(components)),
+        "files": dict(sorted(recorded.items())),
+        "blocks": blocks,
+    }
+    if not args.dry_run:
+        (project / MANIFEST).parent.mkdir(parents=True, exist_ok=True)
+        (project / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    title = "Would install" if args.dry_run else "Installed"
+    print(f"{title} MACH {version} in {project}")
+    print("\n".join(log) if log else "  Everything is already up to date.")
+    if conflicts:
+        print(f"\n{len(conflicts)} file(s) were skipped. Rerun with --force to replace them; your versions are backed up first.")
+    if "scaffold" in components and "Makefile" not in recorded and not args.dry_run:
+        print("\nYour Makefile was left alone. To get the 'make mach-*' targets, add this line to it:\n  include .factory/mach.mk")
+    if not args.dry_run:
+        print("\nNext: restart Claude Code in this project, then run  /mach-intent <your feature idea>" if "skills" in components
+              else "\nNext: run  /mach:intent <your feature idea>")
+        print("Remove with:  python3 .factory/bin/mach uninstall")
+    return 1 if conflicts else 0
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    root = source_root()
+    version = require_source(root)
+    project = args.project.resolve()
+    if not project.is_dir():
+        raise Fail(f"{project} is not a folder.")
+    if project == root:
+        raise Fail("Run this from the project you want MACH in, or pass --project. This folder is the MACH repository itself.")
+    items = skill_items(root)
+    components = ["skills"]
+    if not args.no_scaffold:
+        items += scaffold_items(root, project)
+        components.append("scaffold")
+    return apply(project, items, components, version, args)
+
+
+def cmd_scaffold(args: argparse.Namespace) -> int:
+    root = source_root()
+    version = require_source(root)
+    project = args.project.resolve()
+    if not project.is_dir():
+        raise Fail(f"{project} is not a folder.")
+    return apply(project, scaffold_items(root, project), ["scaffold"], version, args)
+
+
+def prune(project: Path, folders: Sequence[Path], dry: bool) -> None:
+    for folder in sorted(set(folders), key=lambda p: len(p.parts), reverse=True):
+        while folder != project and project in folder.parents:
+            cache = folder / "__pycache__"
+            if cache.is_dir() and not dry:
+                shutil.rmtree(cache)
+            if not folder.is_dir() or any(folder.iterdir()):
+                break
+            if not dry:
+                folder.rmdir()
+            folder = folder.parent
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    project = args.project.resolve()
+    manifest = load_manifest(project)
+    if not manifest:
+        print(f"MACH is not installed in {project} (no {MANIFEST}).")
+        return 0
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    log: List[str] = []
+    kept: List[str] = []
+    remaining: Dict[str, str] = {}
+    parents: List[Path] = []
+    own = ".factory/bin/mach"
+    files = dict(manifest.get("files", {}))
+    for dest in sorted(files, key=lambda d: d == own):  # remove this script last
+        path = project / dest
+        if not path.is_file():
+            continue
+        if sha(path.read_bytes()) != files[dest]:
+            if not args.force:
+                kept.append(dest)
+                remaining[dest] = files[dest]
+                log.append(f"  keep     {dest} (you changed it)")
+                continue
+            log.append(f"  remove   {dest} (your version saved to {backup(project, dest, stamp, args.dry_run)})")
+        else:
+            log.append(f"  remove   {dest}")
+        parents.append(path.parent)
+        if not args.dry_run:
+            path.unlink()
+
+    for name, info in manifest.get("blocks", {}).items():
+        path = project / name
+        if not path.is_file() or name not in BLOCKS:
+            continue
+        old = path.read_text(encoding="utf-8")
+        new = strip_block(old, name)
+        if new == old:
+            continue
+        if info.get("created") and not new.strip():
+            log.append(f"  remove   {name}")
+            if not args.dry_run:
+                path.unlink()
+        else:
+            log.append(f"  edit     {name} (MACH section removed)")
+            if not args.dry_run:
+                path.write_text(new, encoding="utf-8")
+
+    data = [folder for folder in DATA_DIRS if (project / folder).is_dir() and any((project / folder).iterdir())]
+    if not args.dry_run:
+        if remaining:
+            manifest["files"] = remaining
+            (project / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        else:
+            (project / MANIFEST).unlink()
+    prune(project, parents + [project / folder for folder in DATA_DIRS] + [project / ".factory"], args.dry_run)
+
+    print(f"{'Would remove' if args.dry_run else 'Removed'} MACH from {project}")
+    print("\n".join(log) if log else "  Nothing to remove.")
+    if kept:
+        print(f"\n{len(kept)} changed file(s) were kept. Rerun with --force to remove them; they are backed up first.")
+    if data:
+        print("\nLeft in place because it is your project's data: " + ", ".join(f"{folder}/" for folder in data))
+        if ".factory/worktrees" in data:
+            print("Open cells are git worktrees. List them with 'git worktree list'; remove one with 'git worktree remove <path>'.")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    project = args.project.resolve()
+    manifest = load_manifest(project)
+    if not manifest:
+        print(f"MACH is not installed in {project}.")
+        print("If you use the MACH plugin instead, its skills come from the plugin: check with  claude plugin list")
+        return 1
+    files = manifest.get("files", {})
+    changed = [d for d, digest in files.items() if (project / d).is_file() and sha((project / d).read_bytes()) != digest]
+    missing = [d for d in files if not (project / d).is_file()]
+    skills = sorted({d.split("/")[2] for d in files if d.startswith(".claude/skills/")})
+    cells = sorted((project / ".factory" / "worktrees").glob("*/cell.json"))
+    latest = source_version(source_root())
+    print(f"MACH {manifest.get('version')} in {project}")
+    if latest and latest != manifest.get("version"):
+        print(f"  This installer is version {latest}: run 'install' again to update.")
+    print(f"  Components: {', '.join(manifest.get('components', [])) or 'none'}")
+    print(f"  Skills:     {', '.join('/' + s for s in skills) or 'none (using the plugin?)'}")
+    print(f"  Files:      {len(files)} installed, {len(changed)} changed by you, {len(missing)} missing")
+    for dest in changed:
+        print(f"    changed  {dest}")
+    for dest in missing:
+        print(f"    missing  {dest}")
+    print(f"  Cells:      {len(cells)}")
+    for path in cells:
+        try:
+            cell = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        print(f"    {cell.get('ticket_id')}  {cell.get('slice_id') or '-'}  {cell.get('stage')}  {cell.get('title') or ''}".rstrip())
+    return 0
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(prog="mach", description="Install, update, inspect or remove the MACH software factory in a project.")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def common(p: argparse.ArgumentParser, changes: bool = True) -> None:
+        p.add_argument("--project", type=Path, default=Path.cwd(), help="the project folder (default: the current folder)")
+        if changes:
+            p.add_argument("--dry-run", action="store_true", help="show what would change without changing anything")
+            p.add_argument("--force", action="store_true", help="also replace or remove files you changed, after backing them up")
+
+    p = sub.add_parser("install", help="install or update the skills, agents and factory files in a project")
+    common(p)
+    p.add_argument("--no-scaffold", action="store_true", help="install only the skills and agents")
+    p.set_defaults(func=cmd_install)
+    p = sub.add_parser("scaffold", help="create only the factory files (for projects that use the MACH plugin)")
+    common(p)
+    p.set_defaults(func=cmd_scaffold)
+    p = sub.add_parser("uninstall", help="remove what MACH installed; your tickets, specs and cells are kept")
+    common(p)
+    p.set_defaults(func=cmd_uninstall)
+    p = sub.add_parser("status", help="show what is installed, what you changed, and the open cells")
+    common(p, changes=False)
+    p.set_defaults(func=cmd_status)
+
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except Fail as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
