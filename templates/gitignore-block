@@ -14,3 +14,6 @@
 # Product Studio drafts: a product manager's unpublished work stays on their machine.
 .factory/studio/
 .factory/mach-backup-*/
+# Python's cache, written when a MACH script runs.
+.claude/skills/mach-*/scripts/__pycache__/
+.factory/bin/__pycache__/

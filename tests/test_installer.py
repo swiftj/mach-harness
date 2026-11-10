@@ -97,6 +97,16 @@ class InstallTest(Base):
         ignore = (self.project / ".gitignore").read_text()
         self.assertIn(".factory/studio/", ignore)
         self.assertIn(".factory/local/", ignore)
+        # Running an installed script leaves no untracked file behind.
+        git = lambda *args: subprocess.run(["git", *args], cwd=str(self.project), capture_output=True, text=True)
+        git("init", "-q", "-b", "main")
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "install")
+        writing = {key: value for key, value in os.environ.items() if key not in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")}
+        subprocess.run([sys.executable, str(script), "--project", str(self.project), "status"], capture_output=True, text=True, env=writing)
+        subprocess.run([sys.executable, str(self.project / ".factory/bin/mach"), "status", "--project", str(self.project)], capture_output=True, env=writing)
+        self.assertTrue(list((self.project / ".claude/skills").rglob("__pycache__")))
+        self.assertEqual(git("status", "--porcelain").stdout, "")
 
     def test_second_install_changes_nothing(self):
         self.mach("install")
