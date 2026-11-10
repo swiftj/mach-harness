@@ -1,7 +1,12 @@
-"""Additive MACH Product structural validator (Python 3.8+; stdlib only).
+#!/usr/bin/env python3
+"""MACH Product structural validator (Python 3.8+; standard library only).
 
-NOT a replacement for existing MACH intent/plan/audit/review gates.
+Checks the shape of the product artifacts (project, epics, slice work orders, delivery waves) and
+how they refer to each other. It is NOT a replacement for the intent, plan, audit or review gates:
+the slice spec itself is judged by the intent skill's validate_slice.py, which studio.py calls.
 A successful structural report MUST NOT authorize Factory execution.
+
+Usage: product.py --project <folder holding product/> [--policy]
 """
 
 import argparse

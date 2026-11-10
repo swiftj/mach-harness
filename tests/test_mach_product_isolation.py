@@ -3,14 +3,17 @@
 import ast
 import hashlib
 import json
+import re
 import shutil
 import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+PRODUCT_SCRIPTS = ROOT / "skills" / "product-studio" / "scripts"
 sys.path.insert(0, str(ROOT / "tests"))
-from mach_product import read_local_policy, validate_workspace  # noqa: E402
+sys.path.insert(0, str(PRODUCT_SCRIPTS))
+from product import read_local_policy, validate_workspace  # noqa: E402
 from test_run import Base  # noqa: E402
 
 SEED = ROOT / "docs" / "mach-next" / "example-project"
@@ -68,38 +71,65 @@ class LineIsUnchangedTest(Base):
 
 
 class NothingIsWiredInTest(unittest.TestCase):
-    def test_no_station_reads_the_product_package_or_the_local_policy(self):
-        """Until the supervisor milestone, no skill, agent, workflow, template or installer may mention either."""
+    def test_no_station_reads_the_local_policy(self):
+        """Until the supervisor milestone, only the read-only policy reader may name the policy file."""
         found = []
         for top in ("skills", "agents", "workflows", "templates", "bin"):
             for path in sorted((ROOT / top).rglob("*")):
-                if path.is_file() and "__pycache__" not in path.parts:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                    found += [f"{path.relative_to(ROOT)}: {word}" for word in ("mach_product", "runner.json") if word in text]
+                if path.is_file() and "__pycache__" not in path.parts and path != PRODUCT_SCRIPTS / "product.py":
+                    if "runner.json" in path.read_text(encoding="utf-8", errors="ignore"):
+                        found.append(str(path.relative_to(ROOT)))
         self.assertEqual(found, [])
 
-    def test_the_product_package_cannot_start_or_serve_anything(self):
+    def test_only_product_studio_uses_the_product_code(self):
+        """No station, agent or workflow may call Product Studio's scripts: approval there starts nothing."""
+        found = []
+        for top in ("skills", "agents", "workflows", "bin"):
+            for path in sorted((ROOT / top).rglob("*")):
+                if path.is_file() and "__pycache__" not in path.parts and "product-studio" not in path.parts and path.suffix in (".py", ".js", ""):
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    found += [f"{path.relative_to(ROOT)}: {word}" for word in ("studio.py", "product.py", "import product", "import studio") if word in text]
+        self.assertEqual(found, [])
+
+    def test_the_validator_cannot_start_or_serve_anything(self):
         """Standard-library reading and checking only: no processes, no network, no writing."""
-        allowed = {"argparse", "datetime", "hashlib", "json", "re", "sys", "pathlib", "typing", "validate"}
-        for path in sorted((ROOT / "mach_product").glob("*.py")):
-            tree = ast.parse(path.read_text())
-            for node in ast.walk(tree):
-                names = []
-                if isinstance(node, ast.Import):
-                    names = [alias.name.split(".")[0] for alias in node.names]
-                elif isinstance(node, ast.ImportFrom):
-                    names = [(node.module or "").split(".")[0]]
-                for name in names:
-                    self.assertIn(name, allowed, f"{path.name} imports {name}")
-                if isinstance(node, ast.Attribute):
-                    self.assertNotIn(node.attr, ("write_text", "write_bytes", "unlink", "mkdir", "rename", "system", "popen"), path.name)
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                    self.assertNotIn(node.func.id, ("open", "exec", "eval", "__import__"), path.name)
+        allowed = {"argparse", "datetime", "hashlib", "json", "re", "sys", "pathlib", "typing"}
+        tree = ast.parse((PRODUCT_SCRIPTS / "product.py").read_text())
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [(node.module or "").split(".")[0]]
+            for name in names:
+                self.assertIn(name, allowed, f"product.py imports {name}")
+            if isinstance(node, ast.Attribute):
+                self.assertNotIn(node.attr, ("write_text", "write_bytes", "unlink", "mkdir", "rename", "system", "popen"))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                self.assertNotIn(node.func.id, ("open", "exec", "eval", "__import__"))
+
+    def test_studio_names_nothing_that_starts_or_publishes_work(self):
+        """studio.py may ask Git who the user is and whether a path is ignored, and nothing else."""
+        source = (PRODUCT_SCRIPTS / "studio.py").read_text()
+        tree = ast.parse(source)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported |= {alias.name.split(".")[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertFalse(imported & {"subprocess", "socket", "http", "urllib", "shutil"}, imported)
+        git_calls = re.findall(r"git\(\[\"([a-z-]+)\"", source)
+        self.assertTrue(git_calls)
+        self.assertEqual(set(git_calls) - {"rev-parse", "check-ignore", "config"}, set())
+        for word in ("runner.json", "read_local_policy", "run.py", "ticket-new", "cell_dir", "write_cell"):
+            self.assertNotIn(word, source)
 
     def test_report_never_authorizes(self):
-        source = (ROOT / "mach_product" / "validate.py").read_text()
-        self.assertNotIn('"factory_authorized": True', source)
-        self.assertEqual(source.count('"factory_authorized": False'), 2)
+        for name in ("product.py", "studio.py"):
+            source = (PRODUCT_SCRIPTS / name).read_text()
+            self.assertNotIn('"factory_authorized": True', source)
+            self.assertIn('"factory_authorized": False', source)
 
 
 if __name__ == "__main__":

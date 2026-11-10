@@ -8,10 +8,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mach_product import read_local_policy, validate, validate_workspace
-
-SEED = Path(__file__).resolve().parents[1] / "docs" / "mach-next" / "example-project"
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "skills" / "product-studio" / "scripts" / "product.py"
+sys.path.insert(0, str(SCRIPT.parent))
+import product as validate  # noqa: E402
+from product import read_local_policy, validate_workspace  # noqa: E402
+
+SEED = ROOT / "docs" / "mach-next" / "example-project"
 
 
 class ProductValidationTests(unittest.TestCase):
@@ -207,9 +210,9 @@ class ProductValidationTests(unittest.TestCase):
 
     def test_command_line_reports_and_exit_codes(self):
         import subprocess
-        import sys
+
         def run(project):
-            return subprocess.run([sys.executable, "-m", "mach_product.validate", "--project", str(project), "--policy"],
+            return subprocess.run([sys.executable, str(SCRIPT), "--project", str(project), "--policy"],
                                   cwd=str(ROOT), capture_output=True, text=True)
         good = run(self.root)
         self.assertEqual(good.returncode, 0, good.stderr)
