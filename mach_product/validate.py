@@ -5,6 +5,7 @@ A successful structural report MUST NOT authorize Factory execution.
 """
 
 import argparse
+import datetime
 import hashlib
 import json
 import re
@@ -17,6 +18,9 @@ EPIC_RE = re.compile(r"^EPIC-[0-9]{3,}$")
 SLICE_RE = re.compile(r"^SLICE-[0-9]{3,}$")
 WAVE_RE = re.compile(r"^WAVE-[0-9]{3,}$")
 HEX_RE = re.compile(r"^[a-f0-9]{64}$")
+# The same file-name rule as skills/intent/scripts/validate_slice.py (FILENAME_RE), which stays authoritative.
+SPEC_NAME_RE = re.compile(r"^(SLICE-[0-9]{3,})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+TIMESTAMP_RE = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$")
 
 SHAPES = {
     "project": ("schema_version", "project_id", "name", "revision", "status", "vision", "outcomes"),
@@ -49,6 +53,19 @@ def _read_json(path: Path, errors: List[str], root: Path) -> Optional[Dict[str, 
     except (OSError, UnicodeError, ValueError) as exc:
         _error(errors, location, str(exc))
         return None
+
+
+def _is_timestamp(value: Any) -> bool:
+    """True for an RFC 3339 date-time with a zone, which is what the wave schema's format asks for."""
+    match = TIMESTAMP_RE.fullmatch(value) if isinstance(value, str) else None
+    if not match:
+        return False
+    try:
+        datetime.datetime.strptime(match.group(1) + " " + match.group(2), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return False
+    zone = match.group(3)
+    return zone == "Z" or (int(zone[1:3]) < 24 and int(zone[4:6]) < 60)
 
 
 def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) -> None:
@@ -100,6 +117,8 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             or not all(isinstance(approval.get(k), str) and approval[k].strip() for k in ("actor", "approved_at"))
         ):
             _error(errors, location, "approval must be null or contain actor and approved_at strings")
+        elif approval is not None and not _is_timestamp(approval["approved_at"]):
+            _error(errors, location, "approval approved_at must be a date-time such as 2026-11-10T14:00:00Z")
 
 
 def _safe_spec(root: Path, value: str, slice_id: str) -> Tuple[Optional[Path], Optional[str]]:
@@ -111,7 +130,8 @@ def _safe_spec(root: Path, value: str, slice_id: str) -> Tuple[Optional[Path], O
     path = PurePosixPath(value)
     if path.is_absolute() or len(path.parts) != 3 or path.parts[:2] != ("specs", "slices"):
         return None, "spec_path must point into specs/slices/"
-    if not re.fullmatch(re.escape(slice_id) + r"-[a-z0-9-]+\.md", path.name):
+    name = SPEC_NAME_RE.fullmatch(path.name)
+    if not name or name.group(1) != slice_id:
         return None, "spec_path must match the slice ID and MACH spec naming convention"
     resolved = (root / value).resolve()
     try:
@@ -159,6 +179,16 @@ def validate_workspace(root: Path) -> Dict[str, Any]:
     root = Path(root).resolve()
     errors = []  # type: List[str]
     project_path = root / "product" / "project.json"
+    if (root / "product").is_symlink():
+        # A linked product folder could point outside the repository, where nothing is versioned.
+        return {
+            "valid": False,
+            "validation_scope": "structural_only",
+            "factory_authorized": False,
+            "project_id": None,
+            "counts": {"epics": 0, "slices": 0, "waves": 0},
+            "errors": ["product: symlinked artifact directory is not permitted"],
+        }
     project = _read_json(project_path, errors, root)
     if project is not None:
         _shape("project", project, "product/project.json", errors)
@@ -198,11 +228,13 @@ def validate_workspace(root: Path) -> Dict[str, Any]:
     graph = {}
     for slice_id, entry in sorted(slices.items()):
         loc = "product/slices/{}.json".format(slice_id)
-        if entry.get("epic_id") not in epics:
+        epic_id = entry.get("epic_id")
+        if not isinstance(epic_id, str) or epic_id not in epics:
             _error(errors, loc, "epic_id is unknown")
         deps = entry.get("dependencies")
-        graph[slice_id] = deps if isinstance(deps, list) else []
-        for dep in graph[slice_id]:
+        deps = deps if isinstance(deps, list) else []
+        graph[slice_id] = [dep for dep in deps if isinstance(dep, str)]
+        for dep in deps:
             if not isinstance(dep, str) or dep not in slices:
                 _error(errors, loc, "unknown dependency '{}'".format(dep))
             if dep == slice_id:
