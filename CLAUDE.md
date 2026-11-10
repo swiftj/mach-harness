@@ -59,14 +59,18 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   ├── intent/                 # Built. Socratic grooming, contracts & plan
 │   ├── build/                  # Built. Test-driven construction with scripted gates
 │   ├── verify/                 # Built. Independent evidence capture and verdict
+│   ├── review/                 # Built. Fresh-context review panel, scripted tally
+│   ├── cleanup/                # Built. Archive, teardown and run record after merge
+│   ├── observe/                # Built. Scorecard, recurring patterns, rule proposals
 │   └── init/                   # Built. Plugin-only: scaffolds a project
 ├── agents/
 │   ├── contract-engineer.md    # Stage 2 of intent, pinned to the contracts tier
 │   ├── builder.md              # Build station, pinned to the build tier
-│   └── verifier.md             # Verify station, fresh context, pinned to the build tier
+│   ├── verifier.md             # Verify station, fresh context, pinned to the build tier
+│   └── reviewer.md             # One seat on the review panel; model set per seat
 ├── templates/                  # What gets scaffolded into a project
 ├── tests/                      # unittest suites and fixtures
-└── docs/                       # Design specs for stations not built yet, and prd-slice (reference)
+└── docs/                       # Original design notes per station, and prd-slice (reference)
 ```
 
 Skill folders are named for the station (`skills/intent/`). As a plugin the command is `/mach:intent`; the installer copies the same folder to `.claude/skills/mach-intent/` and the command is `/mach-intent`. Agents are renamed the same way (`mach:contract-engineer` / `mach-contract-engineer`).
@@ -92,7 +96,8 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── bin/mach                # Copy of the installer, for status and uninstall
     ├── tickets/                # Local Markdown ticket queue (the default provider)
     ├── inbox/                  # Normalized incoming ticket payloads and telemetry traces
-    ├── archive/                # Compressed historical run logs and evidence bundles
+    ├── archive/                # <ticket_id>.tar.gz per finished cell, and runs.jsonl, one line per ticket
+    ├── observations/           # metrics.json and observation-<date>.md reports
     ├── holdouts/<ticket_id>/   # Optional extra checks a person leaves for the verifier; the builder is never shown them
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
@@ -104,6 +109,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
             ├── build.json      # Build state: task progress, suite state, recorded deviations
             ├── build-report.json  # What was built, how, and every gate override, for verify and review
             ├── evidence/       # Captured verification artifacts, results.json and the summary.json verdict
+            ├── review/         # round-N/: packet, diff, votes, findings.md, decision.json
             └── repo/           # Git worktree on feature/<ticket_id>: code, contracts, specs/slices/
 ```
 
@@ -113,7 +119,7 @@ The cell folder holds the factory's artifacts; `repo/` inside it is the isolated
 
 ## 4. The Complete MACH Skill Suite
 
-Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. Built so far: `ticket`, `audit`, `intent`, `build`, `verify` and `init`. The other stations below are specified in `docs/factory-skills/` and not yet built.
+Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. All eight stations are built (`ticket`, `audit`, `intent`, `build`, `verify`, `review`, `cleanup`, `observe`), plus `init`. The original design notes in `docs/factory-skills/` are kept for history; where they differ, this file and each skill's `SKILL.md` describe what was built. Merging an approved branch (step 6 of the conveyor belt) is deliberately left to a person or their pipeline.
 
 ### 1. `/mach-ticket` — Universal Ticket & Telemetry Adapter
 * **Assigned Model**: `haiku` (`claude-haiku-5-5`) (Low Effort) when run as its own agent. The skill does not pin a model, because a pin would also switch the model of a station that calls it inline; `ticket.py` does the work, so the cost is small on any tier.
@@ -164,7 +170,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
   * **Overrides are recorded**: each gate has an override that requires a reason, and every use is written to `build-report.json` for the reviewers.
 * **Design System & Anti-Slop UI Anchor**: For frontend work the builder finds the existing component library and design tokens first and must reuse them, with semantic HTML and ARIA accessibility. Inline styles and hard-coded colors added in interface files are listed in the build report.
 * **No Dead Code**: Prohibits unused helpers, spurious dependencies, and monolithic multi-thousand-line files.
-* **Revision rounds**: `build.py revise` starts a round after a rejected review and refuses a fourth, directing escalation to `blocked-requires-sme`.
+* **Revision rounds**: `build.py revise` starts a revision after a failed verification or a rejected review. A ticket gets three judging rounds in all; on the third failure it refuses and directs escalation to `blocked-requires-sme`.
 * **Output**: commits on `feature/<ticket_id>`, one per task; `build.json` and `build-report.json` in the cell; cell stage `built`.
 
 ### 5. `/mach-verify` — Multi-Target Dynamic Evidence Engine
@@ -182,32 +188,43 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Output**: artifacts, `results.json` and the `summary.json` manifest in `.factory/worktrees/<ticket_id>/evidence/`.
 
 ### 6. `/mach-review` — Multi-Agent Consensus Voting Panel & Escalation
-* **Assigned Model**: `opus` (`claude-opus-5-5`) (High Risk) / `sonnet` (`claude-sonnet-5-5`) (Medium Risk) [Fresh Context]
-* **Purpose**: Evaluates candidate worktree diffs against `REVIEW.md` criteria using a panel of 3 parallel sub-agents:
-  1. *Architectural Scrutiny Agent*: Verifies modularity, service layers, and boundary contracts.
-  2. *Security & Performance Agent*: Evaluates input sanitization, OWASP Top 10, memory leaks, and latency.
-  3. *Product & UX Validator Agent*: Verifies acceptance criteria against captured visual/execution evidence.
-* **Consensus Thresholds**:
-  * **High Risk** (Auth, Billing, DB Schema, Proto Contracts): **Unanimous 3/3 vote + 1 Human SME approval**.
-  * **Medium Risk** (Standard features, UI logic): **Majority 2/3 vote**.
-* **Max 3-Loop Constraint**: If code is rejected, specific feedback is posted to the ticket. If defects remain unresolved after 3 cycles, execution pauses, and the ticket is labeled `blocked-requires-sme` for human intervention.
+* **Assigned Model**: `opus` (`claude-opus-5-5`) (High Risk) / `sonnet` (`claude-sonnet-5-5`) (Medium and Low Risk) [Fresh Context], set per seat by `review.py` and applied to the `reviewer` agent
+* **Purpose**: Evaluates a verified cell's diff against `REVIEW.md` with a panel of parallel reviewer sub-agents, each in a fresh context with its own checklist:
+  1. *Architectural Scrutiny*: layering, contracts, scope against the plan, dead code, dependencies.
+  2. *Security & Performance*: input handling, injection, permissions, secrets, failure behavior, concurrency, resource use.
+  3. *Product & UX Validator*: every requirement and exact message against the tests and the captured evidence.
+* **The chair does not review.** The skill's own session seats the panel, tells reviewers where to look and never what to find, and carries out the outcome.
+* **Votes follow from findings.** A reviewer submits findings, never a vote: any `blocker` is a reject, none is an approve. A blocker must name the rule or spec ID it breaks and the file that shows it. A vote cannot be revised.
+* **Consensus Thresholds** (set in `.factory/config.json` under `review`):
+  * **High Risk** (Auth, Billing, DB Schema, Contracts): **Unanimous 3/3 + 1 human approval**.
+  * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden.
+  * **Low Risk** (Docs, wording): **1/1**, one general reviewer.
+  * A Silver readiness tier also requires a human approval, whatever the risk.
+* **Start gate**: only a cell with a passing verification for exactly the code under review.
+* **Three-Round Limit**: A ticket gets three judging rounds, counting failed verifications. A rejection in round one or two returns to the build station with `findings.md`; a rejection in round three is `ESCALATE`: the cell is `blocked` and the ticket is labelled `blocked-requires-sme`.
+* **Human approval** is recorded with `review.py approve-human`, only on a person's explicit instruction after they have seen the findings. The station never merges.
+* **Output**: `review/round-N/` in the cell with the packet, diff, each vote, `findings.md` and `decision.json`; cell stage `approved`, `awaiting-human`, `built` (rejected) or `blocked`.
 
 ### 7. `/mach-cleanup` — Workspace Teardown & Hygiene Engine
-* **Assigned Model**: `haiku` (`claude-haiku-5-5`) (Low Effort)
-* **Purpose**: Reclaims local disk resources and ensures workspace hygiene after a ticket merges or closes:
-  * Safely unmounts and deletes `.factory/worktrees/<ticket_id>/`.
-  * Deletes merged local feature branches (`feature/<ticket_id>`).
-  * Compresses heavy evidence files (video, GIF, flamegraphs) into `.factory/archive/<ticket_id>-evidence.tar.gz`.
-  * Formats code with standard language tooling (`gofmt`, `prettier`, `ruff`, `cargo fmt`).
-  * Updates ticket status on Gitea/Fossil/GitHub/Jira to `Closed`.
+* **Assigned Model**: `haiku` (`claude-haiku-5-5`) (Low Effort) when run as its own agent; the skill does not pin a model. `cleanup.py` does the work.
+* **Purpose**: After a ticket's branch is merged, or the ticket is abandoned, keep the artifacts, remove the rest, and leave a record of how the run went. This is the only station that deletes anything.
+* **Order**: plan (a dry run that changes nothing) → archive → check the archive → remove the worktree and cell folder → delete the local branch → append the run record. If archiving fails, nothing is deleted.
+* **Archive**: `.factory/archive/<ticket_id>.tar.gz` with everything in the cell folder except the `repo/` checkout; an earlier archive is never overwritten.
+* **Gates**: the branch must be merged into the default branch and the cell `approved`. A squash or rebase merge is accepted with `--merged-as <commit>`. Uncommitted work blocks a normal run. The script deletes only `.factory/worktrees/<ticket_id>` and refuses symlinked cells, a branch that is not `feature/<ticket_id>`, and unusable ticket IDs.
+* **Abandoning** (`--abandon "<why>"`, only on a person's explicit request): uncommitted work and a git bundle of the unmerged branch are saved into the archive first, so the work is recoverable.
+* **Run record**: one line per finished ticket in `.factory/archive/runs.jsonl` (outcome, judging rounds, verification failures, review blockers with the rules they broke, builder deviations), which the observe station reads.
+* **Never**: merges, pushes, deletes remote branches, or changes code on the main checkout. Code formatting belongs to the build station's lint gate, not here.
+* **Also**: `orphans` lists finished or broken cells; `status` lists every cell. The ticket is closed with the ticket skill after a successful run.
 
 ### 8. `/mach-observe` — Meta-Learning & Self-Improvement Loop
-* **Assigned Model**: `fable` (`claude-fable-5-2`) (High Reasoning)
-* **Purpose**: Continuous optimization of the software factory.
-* **Operation**:
-  * Ingests run logs, multi-agent voting histories, review comments, and production telemetry across 20+ runs.
-  * Identifies systemic failure patterns (e.g., repeated missing DB indices or CSS token drift).
-  * Automatically creates an optimization branch and pull request updating `CLAUDE.md`, `REVIEW.md`, or specific skill prompt instructions to permanently eliminate recurring defects.
+* **Assigned Model**: `fable` (`claude-fable-5-2`) (High Reasoning) when run as its own agent; the skill does not pin a model
+* **Purpose**: Continuous optimization of the software factory. `observe.py` measures; the model interprets and proposes; a person decides.
+* **Input**: `.factory/archive/runs.jsonl`, the one-line record the cleanup station writes for every finished ticket (rounds, review blockers and the rules they broke, builder deviations, verification failures), plus open cells and the last audit.
+* **Scorecard** (targets in brackets): average judging rounds per merged ticket (< 1.3), first-pass rate (> 85%), escalation rate (< 5%), share of tests seen failing first (> 90%), abandonment rate, deviations per ticket.
+* **Patterns**: review blockers grouped by the rule they broke, deviations by type, verification failures by kind. A group is a pattern only if it occurs in at least 2 tickets and 15% of the sample.
+* **Proposals**: for each pattern, the smallest rule that would have prevented it, targeted at `REVIEW.md`, `CLAUDE.md`, `AGENTS.md` or a skill's instructions, citing the tickets that prove it. `observe.py report` refuses a report whose proposals lack evidence from the sample, target any other file, number more than five, or are made on fewer than five finished tickets.
+* **Never on its own authority**: the station does not edit rules or scripts, and never proposes weakening a gate, lowering a threshold or raising the three-round limit. An accepted proposal becomes a `factory-tuning` ticket and goes through grooming, build and review; changes to the factory's rules are High risk.
+* **Output**: `.factory/observations/metrics.json` and `observation-<date>.md`.
 
 ---
 

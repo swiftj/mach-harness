@@ -10,9 +10,9 @@ Each station runs as its own agent with its own context, model tier and permissi
 | Intent, stage 2 | `mach-contract-engineer` agent | Derives contracts and `plan.md` from the spec | `contracts` | contract files in the cell's checkout; `plan.md` |
 | Build | `mach-build`, `mach-builder` agent | Test-first implementation, following `plan.md` | `build` | the cell's checkout only |
 | Verify | `mach-verify`, `mach-verifier` agent | Runs the built slice and captures evidence, in a fresh context | `build` | the cell's `evidence/` only |
-| Review | `mach-review` | Three independent reviewers vote against `REVIEW.md` | `contracts` for High risk, `build` otherwise | nothing; posts findings to the ticket |
-| Cleanup | `mach-cleanup` | Archives evidence, removes merged cells and branches | `utility` | `.factory/archive/`; removes cells |
-| Observe | `mach-observe` | Finds recurring defects and proposes rule changes as a pull request | `planning` | a branch of its own |
+| Review | `mach-review`, `mach-reviewer` agent per seat | Independent reviewers submit findings against `REVIEW.md`; a script tallies | `contracts` for High risk, `build` otherwise | the cell's `review/` only |
+| Cleanup | `mach-cleanup` | Archives a finished cell, removes its worktree and branch, writes the run record | `utility` | `.factory/archive/`; removes cells |
+| Observe | `mach-observe` | Measures finished tickets, finds recurring defects, and proposes rule changes for a person to approve | `planning` | `.factory/observations/` only; proposals become `factory-tuning` tickets |
 
 ## Rules that apply to every agent
 
@@ -22,4 +22,4 @@ Each station runs as its own agent with its own context, model tier and permissi
 - Every agent is given the ticket's goal ancestry from `intent.md`, so a small task is always done in view of what it serves.
 - Agents load tool descriptions and reference files only when they need them, to keep their context small.
 
-Stations not yet installed in this project are listed for the roles they will take; `python3 .factory/bin/mach status` shows which skills are present.
+`python3 .factory/bin/mach status` shows which skills are installed in this project.

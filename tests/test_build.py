@@ -355,6 +355,19 @@ class FinishTest(Base):
         self.assertIn("Uncommitted changes in the cell: notes.txt", out)
         self.assertIn("No test names these spec IDs: INV-03, FR-06", out)
 
+    def test_test_run_byproducts_are_not_changes(self):
+        junk = {"app/__pycache__/invite.cpython-312.pyc": "x", ".pytest_cache/v/cache/lastfailed": "{}", ".coverage": "x", "tests/__pycache__/t.pyc": "x"}
+        (self.work / ".gitignore").unlink()
+        git(self.work, "commit", "-qam", "project forgot to ignore byproducts")
+        self.put(self.work, junk)
+        self.assertIn("changed no files", self.refused("red", "LOCAL-001", "T01"))
+        self.build_through("T05")
+        self.put(self.work, junk)
+        self.assertEqual(self.ok("finish", "LOCAL-001")["status"], "BUILT")
+        self.assertFalse(any("pycache" in name or "coverage" in name for name in git(self.work, "ls-files").stdout.split()), "byproducts are never committed")
+        self.assertTrue(build.is_byproduct("src/pkg/__pycache__/a.cpython-314.pyc") and build.is_byproduct("node_modules/x/index.js"))
+        self.assertFalse(build.is_byproduct("src/coverage_report.py") or build.is_byproduct("docs/cache.md"))
+
     def test_finish_writes_the_report(self):
         self.build_through("T05")
         done = self.ok("finish", "LOCAL-001")
@@ -382,7 +395,7 @@ class FinishTest(Base):
 
 
 class RevisionTest(Base):
-    def test_three_revision_rounds_then_escalate(self):
+    def test_two_revisions_then_the_third_failure_escalates(self):
         self.ready()
         self.ok("start", "LOCAL-001")
         self.assertIn("only during a revision round", self.refused("add-task", "LOCAL-001", "--kind", "impl", "--text", "x"))
@@ -391,17 +404,17 @@ class RevisionTest(Base):
         self.ok("finish", "LOCAL-001")
         findings = Path(self.tmp.name) / "findings.md"
         findings.write_text("1. invite() ignores the email.\n")
-        for loop in (1, 2, 3):
+        for loop in (1, 2):
             revising = self.ok("revise", "LOCAL-001", "--findings", str(findings))
-            self.assertEqual((revising["status"], revising["loop"], revising["loops_left"]), ("REVISING", loop, 3 - loop))
+            self.assertEqual((revising["status"], revising["loop"], revising["round"], revising["rounds_left"]), ("REVISING", loop, loop + 1, 2 - loop))
             self.assertTrue((self.cellroot / f"review-findings-{loop}.md").is_file())
             added = self.ok("add-task", "LOCAL-001", "--kind", "docs", "--text", f"Explain round {loop} (FR-01)", "--file", "README.md")
             self.assertEqual(added["task"], f"R{loop}-T01")
             self.put(self.work, {"README.md": f"# Sample\n\nRound {loop}.\n"})
             self.ok("done", "LOCAL-001", f"R{loop}-T01")
             self.assertEqual(self.ok("finish", "LOCAL-001")["status"], "BUILT")
-        self.assertIn("- [x] R3-T01 [docs] Explain round 3 (FR-01) — `README.md`", (self.cellroot / "plan.md").read_text())
-        self.assertEqual(json.loads((self.cellroot / "build-report.json").read_text())["review_loop"], 3)
+        self.assertIn("- [x] R2-T01 [docs] Explain round 2 (FR-01) — `README.md`", (self.cellroot / "plan.md").read_text())
+        self.assertEqual(json.loads((self.cellroot / "build-report.json").read_text())["review_loop"], 2)
         code, out, _ = self.run_build("revise", "LOCAL-001")
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out)["status"], "ESCALATE")

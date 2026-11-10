@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.5.0.** The ticket, audit, grooming (`intent`), build and verify stations, the installer, and the project scaffold are built and tested. The review, cleanup and observe stations are specified in [`docs/factory-skills/`](docs/factory-skills/) and not built yet. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.8.0.** All eight stations are built and tested: ticket, audit, intent, build, verify, review, cleanup and observe. Merging an approved branch is left to you or your pipeline. There is not yet an orchestrator that runs a ticket through every station unattended; you start each station yourself. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -19,7 +19,7 @@ In Claude Code:
 
 Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
+Commands are namespaced: `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
 
 ### With one command (one project)
 
@@ -107,7 +107,7 @@ The builder implements the ticket inside its cell, following `plan.md` one task 
 - a change to a file the plan did not give the task;
 - finishing while any requirement or scenario in the spec is not named by a test.
 
-Each refusal has an override that needs a written reason, and every use is recorded in `build-report.json` for the reviewers. After a rejected review, `/mach-build LOCAL-001 --revise findings.md` starts a revision round; a fourth round is refused and the ticket is escalated to a person.
+Each refusal has an override that needs a written reason, and every use is recorded in `build-report.json` for the reviewers. After a failed verification or a rejected review, `/mach-build LOCAL-001 --revise findings.md` starts a revision. A ticket gets three judging rounds in all; on the third failure it is escalated to a person.
 
 To run the builder on the model tier the factory assigns, start it as the `builder` agent (`mach:builder` with the plugin, `mach-builder` in a project install).
 
@@ -128,6 +128,53 @@ It must prove every scenario in the spec with the scenario's own data, and every
 | `INCOMPLETE_EVIDENCE` | Something is unproven, or a required kind of evidence is missing. |
 
 To give the verifier an extra check the builder never sees, put a file describing it in `.factory/holdouts/<ticket>/`.
+
+## Reviewing a verified ticket
+
+```
+/mach-review LOCAL-001
+```
+
+The session you run this in chairs the panel; it does not review. It starts one reviewer per seat, each a fresh sub-agent that has seen nothing of the build or of the other reviewers, and tells them only where to look:
+
+| Risk tier | Panel | Needed to pass |
+|-----------|-------|----------------|
+| High | Architecture, security, product, on the `opus` tier | All three, then a person's approval |
+| Medium | The same three seats, on the `sonnet` tier | Two of three |
+| Low | One general reviewer | That reviewer |
+
+Reviewers do not vote. Each submits findings, and any finding marked `blocker` makes that seat a reject. A blocker must name the requirement or rule it breaks and the file that shows it, so a reviewer cannot block on taste. A script counts the result:
+
+- `APPROVED`: the branch may be merged. MACH does not merge for you.
+- `AWAITING_HUMAN`: the panel approved a high-risk change. You are shown the findings; say you approve and it is recorded with your name.
+- `REJECTED`: the findings go back to the build station.
+- `ESCALATE`: this was the third failed round. The ticket is labelled `blocked-requires-sme` and waits for a person.
+
+When a reviewer's blocker is outvoted on a medium-risk change, the outcome says so.
+
+## After the merge
+
+```
+/mach-cleanup LOCAL-001
+```
+
+Once you have merged the approved branch, cleanup archives the cell's artifacts to `.factory/archive/LOCAL-001.tar.gz`, removes the cell's worktree, folder and local branch, and appends a one-line record of how the ticket went to `.factory/archive/runs.jsonl`. It shows you a plan first, archives before it deletes, and deletes nothing if the archive fails.
+
+- If you squash-merge or rebase, tell it the commit: `/mach-cleanup LOCAL-001 --merged-as <commit>`.
+- To drop a ticket that will not be finished: `/mach-cleanup LOCAL-001 --abandon "<why>"`. Uncommitted work and a git bundle of the branch are saved in the archive first.
+- `/mach-cleanup orphans` lists cells that look finished or broken.
+
+It never merges, pushes, or deletes anything on a remote.
+
+## Learning from finished tickets
+
+```
+/mach-observe
+```
+
+Observe reads the run records and reports a scorecard: average judging rounds per ticket, first-pass rate, escalation rate, and the share of tests that were seen failing before their code was written. It finds problems that recur across tickets, such as the same review rule broken in several, and proposes the smallest rule that would have prevented each, citing the tickets that prove it.
+
+It changes nothing. Proposals are filed as a report in `.factory/observations/`; if you accept one, it becomes a `factory-tuning` ticket and goes through the factory like any other change. It will not propose weakening a gate, and it proposes nothing until at least five tickets have finished.
 
 ## Is the repository ready?
 
@@ -186,7 +233,7 @@ Uninstall removes exactly the files MACH installed and you have not changed, and
 ## Developing MACH
 
 ```bash
-make test        # validator, cell gates, ticket adapter, audit, build gates, verify gates, installer round trips
+make test        # validator, cell gates, ticket adapter, audit, build, verify, review, cleanup and observe gates, installer round trips
 make validate    # plugin and marketplace manifests
 ```
 
@@ -198,14 +245,18 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `skills/audit/` | The audit skill: `SKILL.md` and `audit.py` (scorecard and gate). |
 | `skills/build/` | The build skill: `SKILL.md` and `build.py` (start gates, red/green enforcement, build report). |
 | `skills/verify/` | The verify skill: `SKILL.md`, `verify.py` (evidence records and verdict) and the per-app-type runner guide. |
+| `skills/review/` | The review skill: `SKILL.md`, `review.py` (panel, votes, tally), the reviewer brief and one checklist per seat. |
+| `skills/cleanup/` | The cleanup skill: `SKILL.md` and `cleanup.py` (archive, teardown, run record). |
+| `skills/observe/` | The observe skill: `SKILL.md` and `observe.py` (scorecard, patterns, report check). |
 | `skills/intent/` | The grooming skill: `SKILL.md`, templates, grammar references, `validate_slice.py`, `cell.py`. |
 | `skills/init/` | Plugin-only wrapper around `bin/mach scaffold`. |
 | `agents/contract-engineer.md` | Stage 2 of grooming, pinned to the `opus` tier. |
 | `agents/builder.md` | The build station, pinned to the `sonnet` tier. |
 | `agents/verifier.md` | The verify station, pinned to the `sonnet` tier, always a fresh context. |
+| `agents/reviewer.md` | One seat on the review panel; the review script sets its model per seat. |
 | `bin/mach`, `install.sh` | The installer. |
 | `templates/` | What gets scaffolded into a project. |
-| `docs/` | Specs for the stations still to build, and the original prd-slice skill the interview is adapted from. |
+| `docs/` | The original design notes for each station, and the prd-slice skill the interview is adapted from. |
 
 When you change the validator, change its references, the fixture in `tests/fixtures/`, and the tests together: a test fails if any rule code the validator can emit is missing from `skills/intent/references/`.
 

@@ -22,7 +22,7 @@ A ticket is rejected without review, and returned to the build station, unless i
 
 ## The reviewers
 
-Every reviewer starts with a fresh context: the diff, the cell's artifacts and this file, and nothing from the builder's session. Each returns `APPROVE` or `REJECT` with itemized, line-numbered findings.
+Every reviewer starts with a fresh context: the diff, the cell's artifacts and this file, and nothing from the builder's session. Each submits findings marked `blocker` or `note`; a seat with any blocker is a reject. A blocker must name the rule or requirement it breaks and the file that shows it.
 
 ### 1. Architecture
 
@@ -47,10 +47,10 @@ Every reviewer starts with a fresh context: the diff, the cell's artifacts and t
 
 ## Loop limit
 
-A rejected ticket returns to the build station with the findings posted on the ticket. After the third rejection, work stops: the ticket is labelled `blocked-requires-sme` and a person takes over. The limit is never raised for a single ticket.
+A ticket gets three judging rounds, counting failed verifications as well as rejected reviews. After a failure in round one or two it returns to the build station with the findings. After a third failure, work stops: the ticket is labelled `blocked-requires-sme` and a person takes over. The limit is never raised for a single ticket.
 
 ## Project-specific rules
 
-Add your own rules below. The observe station proposes additions here when the same defect keeps recurring.
+Add your own rules below. The observe station proposes additions here when the same defect keeps recurring; each proposal arrives as a `factory-tuning` ticket and is reviewed like any other change.
 
 - None yet.

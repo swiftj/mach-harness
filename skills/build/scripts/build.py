@@ -14,7 +14,7 @@ handed to verification.
     build.py done <ticket> <task>      a [contract], [refactor] or [docs] task; commits it
     build.py add-task <ticket> ...     add a task during a revision round
     build.py finish <ticket>           final gate; writes build-report.json
-    build.py revise <ticket>           start a revision round after a rejected review (3 at most)
+    build.py revise <ticket>           start a revision after a failed round; the third failed round escalates
     build.py status <ticket>
 
 Standard library only. It runs the project's test and lint commands inside the cell.
@@ -46,6 +46,18 @@ UI_FILE_RE = re.compile(r"\.(tsx|jsx|vue|svelte|html|astro)$")
 INLINE_STYLE_RE = re.compile(r"style\s*=\s*(\"|'|\{\{)")
 HEX_COLOR_RE = re.compile(r"(?<![\w&])#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b")
 EXCLUDE_LINE = ".factory/worktrees/"
+
+
+# Files that running a build or test suite leaves behind. They are never part of a change, so the
+# gates ignore them even when the project forgot to git-ignore them.
+BYPRODUCT_RE = re.compile(
+    r"(^|/)(__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|\.nox|htmlcov|\.hypothesis|node_modules|\.gradle|\.next|\.turbo|coverage)(/|$)"
+    r"|\.py[co]$|(^|/)\.coverage(\..*)?$|(^|/)\.DS_Store$|\.egg-info(/|$)|\.tsbuildinfo$"
+)
+
+
+def is_byproduct(name: str) -> bool:
+    return bool(BYPRODUCT_RE.search(name))
 
 
 class BuildError(Exception):
@@ -259,7 +271,7 @@ def changed_files(cell: Cell) -> List[str]:
         if " -> " in name:
             name = name.split(" -> ", 1)[1]
         files.append(name.strip().strip('"'))
-    return sorted(set(files))
+    return sorted(name for name in set(files) if not is_byproduct(name))
 
 
 def commit(cell: Cell, files: Sequence[str], message: str) -> str:
@@ -594,12 +606,12 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
         raise BuildError("A revision round starts from a built cell that review or verification sent back.")
     limit = cell.section("review").get("max_loops", 3)
     loop = cell.state.get("loop", 0) + 1
-    if loop > limit:
+    if loop >= limit:  # the build just sent back was failed round number `limit`
         cell.info["stage"] = "blocked"
         cell.save_info()
         print(json.dumps({
             "status": "ESCALATE", "loops_used": limit,
-            "action": f"The limit of {limit} review loops is used up. Do not build again. Label the ticket 'blocked-requires-sme', set its state to blocked, and report to a person.",
+            "action": f"This ticket has now failed {limit} rounds of verification or review, which is the limit. Do not build again. Label the ticket 'blocked-requires-sme', set its state to blocked, and report to a person.",
         }, indent=2))
         return 1
     findings = None
@@ -614,7 +626,7 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     cell.save()
     cell.save_info()
     print(json.dumps({
-        "status": "REVISING", "loop": loop, "loops_left": limit - loop, "findings": str(findings) if findings else None,
+        "status": "REVISING", "loop": loop, "round": loop + 1, "rounds_left": limit - loop - 1, "findings": str(findings) if findings else None,
         "next": "Add one task per finding with 'add-task' (a [test] task first for any behavior that was wrong), then work them with red, green and done.",
     }, indent=2))
     return 0

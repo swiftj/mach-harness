@@ -5,4 +5,5 @@
 .factory/tmp/
 .factory/holdouts/
 .factory/audit-report.json
+.factory/observations/
 .factory/mach-backup-*/

@@ -86,6 +86,11 @@ class StartTest(Base):
         self.assertIn("no contract files", (self.evidence / "contract-check.log").read_text())
         self.assertEqual(git(self.work, "status", "--porcelain").stdout, "")
 
+    def test_byproducts_of_running_tests_do_not_block_verification(self):
+        self.built()
+        self.put(self.work, {"src/__pycache__/a.cpython-314.pyc": "x", ".pytest_cache/README.md": "x"})
+        self.assertEqual(self.v_ok("start", "LOCAL-001")["status"], "STARTED")
+
     def test_restart_archives_earlier_evidence(self):
         self.built()
         self.v_ok("start", "LOCAL-001")

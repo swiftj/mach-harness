@@ -52,6 +52,18 @@ REQUIRED_EVIDENCE: Dict[str, List[Dict[str, Any]]] = {
 TOOLS = ("playwright", "cypress", "vhs", "asciinema", "ffmpeg", "curl", "grpcurl", "k6", "protoc", "buf", "xcrun", "adb", "cliclick", "xdotool", "screencapture", "node", "npx")
 
 
+# Files that running a build or test suite leaves behind. They are never part of a change, so the
+# gates ignore them even when the project forgot to git-ignore them.
+BYPRODUCT_RE = re.compile(
+    r"(^|/)(__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|\.nox|htmlcov|\.hypothesis|node_modules|\.gradle|\.next|\.turbo|coverage)(/|$)"
+    r"|\.py[co]$|(^|/)\.coverage(\..*)?$|(^|/)\.DS_Store$|\.egg-info(/|$)|\.tsbuildinfo$"
+)
+
+
+def is_byproduct(name: str) -> bool:
+    return bool(BYPRODUCT_RE.search(name))
+
+
 class VerifyError(Exception):
     """A gate refused. Printed without a traceback; exit code 1."""
 
@@ -242,7 +254,8 @@ def check_contracts(cell: Cell) -> Dict[str, Any]:
 
 
 def changed_files(cell: Cell) -> List[str]:
-    return [line[3:] for line in git(cell.work, "status", "--porcelain", "--untracked-files=all").stdout.splitlines() if line.strip()]
+    names = [line[3:].strip().strip('"') for line in git(cell.work, "status", "--porcelain", "--untracked-files=all").stdout.splitlines() if line.strip()]
+    return [name for name in names if not is_byproduct(name)]
 
 
 def cmd_start(cell: Cell, args: argparse.Namespace) -> int:

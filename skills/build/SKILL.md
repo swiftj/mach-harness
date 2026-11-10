@@ -91,10 +91,10 @@ Record the same on the ticket with the ticket skill if it is installed, setting 
 
 ## Revision rounds
 
-When review or verification sends a built ticket back, run `BUILD revise <ticket> --findings <file>`. It counts the round; there are three at most.
+When review or verification sends a built ticket back, run `BUILD revise <ticket> --findings <file>`. It counts the failed round. A ticket gets three rounds of verification and review in all: two revisions, and the third failure is escalated.
 
 - `REVISING`: read the findings. For each one, add a task with `BUILD add-task <ticket> --kind <kind> --text "<what to fix> (<spec IDs>)" --file <path>`. A finding about wrong behavior gets a `[test]` task that reproduces it first, then an `[impl]` task. Then work the tasks as in step 3 and finish again. Address every finding; do not argue with one in code.
-- `ESCALATE`: the three rounds are used up. Do not build. Label the ticket `blocked-requires-sme`, set its state to `blocked`, and report to a person with the findings that remain.
+- `ESCALATE`: this was the third failed round. Do not build. Label the ticket `blocked-requires-sme`, set its state to `blocked`, and report to a person with the findings that remain.
 
 ## Stopping early
 
