@@ -1,6 +1,11 @@
 # MACH Next — M2 Design: Publishing and collaboration
 
-Status: **proposed, for review. No M2 code exists yet.**
+Status: **accepted and built.** Four deviations from this text, each made while building:
+
+1. **`git merge` is used, inside the temporary worktree only.** Section 4 said it would stay forbidden. A request that fell behind cannot be brought up to date without it unless history is rewritten, which is worse. It never runs in the PM's checkout and never merges a pull request.
+2. **Keeping your own version keeps your approval.** D4 said reconciling an approved slice always returns it to the interview. Approval is withdrawn only when the approved text is replaced; if the PM keeps their version, what was approved is still what exists.
+3. **Epics and waves can be renumbered too**, and new numbers avoid IDs on other product managers' branches still in review. D6 covered slices only; the same collision happens to the other two.
+4. **With no shared repository, the main checkout remains the shared project**, as in M1, and `send` refuses.
 Builds on M1 (`skills/product-studio/`) on `feature/mach-next-product-studio-supervisor`.
 
 M2 lets a PM share approved work and keep up with other PMs, without running Git. It delivers three operations that M1 reserved and refuses today: `refresh`, `send` and `feedback`, plus `reconcile` and `slice renumber`.

@@ -105,7 +105,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── archive/                # <ticket_id>.tar.gz per finished cell, and runs.jsonl, one line per ticket
     ├── observations/           # metrics.json and observation-<date>.md reports
     ├── holdouts/<ticket_id>/   # Optional extra checks a person leaves for the verifier; the builder is never shown them
-    ├── studio/                 # Experimental. Product Studio's draft workspace and session; git-ignored, never read by a station
+    ├── studio/                 # Experimental. Product Studio's drafts, session and publication ledger; git-ignored, never read by a station
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
             ├── cell.json       # Cell state: stage, mode, slice ID, risk tier, app type, contracts
@@ -236,13 +236,15 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **No person for tuning**: a `factory-tuning` ticket is decided by a unanimous three-seat panel on the contracts tier, with no human approval, provided its diff touches only rule files and its own spec and tests. Reviewers must block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit. Observe never proposes such a change: those stay a person's decision.
 * **Output**: `.factory/observations/metrics.json`, `observation-<date>.md`, `last-pass.json`, and the tuning ticket.
 
-### Experimental: `/mach-product-studio` — Product Manager's Workspace (MACH Next M1)
+### Experimental: `/mach-product-studio` — Product Manager's Workspace (MACH Next M1 and M2)
 * **Status**: experimental, on the MACH Next branch. Design and milestones are in `docs/mach-next/`.
 * **Purpose**: A product manager defines a project (vision, outcomes), its epics, and one slice at a time through the same interview the intent skill uses; saves and resumes drafts; approves slices; and groups approved slices into delivery waves. `studio.py` owns IDs, files, validation and approval.
 * **Workspace**: everything is a draft in `.factory/studio/draft/`, which mirrors the repository layout (`product/project.json`, `product/epics/`, `product/slices/`, `product/intents/`, `product/delivery-waves/`, `specs/slices/`). It is git-ignored. The main checkout is never written to, so no existing gate can be tripped.
 * **Shared with the intent skill, never copied**: the interview method (`skills/intent/references/interview-method.md`), the slice template and grammar references, the spec validator (`validate_slice.py`) and the slice ID allocator (`cell.py slice_ids`), which counts product work orders and Studio drafts as well as specs and open cells.
 * **Approval gates**: `slice approve` requires the spec to pass `validate_slice.py --ready` with no open questions, a complete why (`product/intents/SLICE-NNN.md`), an approved epic and existing dependencies; it then binds the work order to the spec by SHA-256. `wave approve` rechecks every slice and records who approved and when. An approved slice is changed only through `slice reopen`, which returns any approved wave containing it to draft.
-* **Never**: creates a ticket, cell, branch or commit; publishes; reads the machine-local Factory policy; or starts any station. Every report carries `factory_authorized: false`, and tests hold that no station, agent or workflow calls its scripts. Publishing, intake and the supervisor are later milestones.
+* **Keeping in step (M2)**: `refresh` fetches and reads the shared project straight from the remote's integration branch; the PM's checkout is never pulled or changed. Each artifact is compared three ways. JSON artifacts merge field by field; a spec or a why changed on both sides is always a conflict (`reconcile --take mine|theirs`); a different artifact holding a draft's number is a collision (`slice|epic|wave renumber`). What changed is reported by requirement, rule and scenario ID, from the validator's exported model.
+* **Sending (M2)**: `send <WAVE-ID>` publishes one approved wave as one pull request on `product/<WAVE-ID>`. It shares only the wave's closure of product files, built as an ordinary commit in a temporary worktree (so signing and hooks apply), validated as engineering will see it, and recorded in a ledger so a repeated or interrupted send never duplicates. `feedback` reports review in the PM's terms; reviewer text is passed on as data.
+* **Never**: touches the PM's checkout, branch, index or stash; pushes anywhere but `product/...`; force-pushes, rewrites history or merges a pull request; publishes a file outside `product/` and `specs/slices/`; creates a ticket or cell; reads the machine-local Factory policy; or starts any station. Every report carries `factory_authorized: false`, and tests hold the exact Git and `gh` commands it may use and that no station, agent or workflow calls its scripts. Intake and the supervisor are later milestones.
 * **Commands**: `/mach-product-studio` with no argument shows where things stand and the next step.
 
 ---
