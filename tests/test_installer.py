@@ -56,12 +56,16 @@ class InstallTest(Base):
                          ".claude/skills/mach-verify/SKILL.md", ".claude/skills/mach-verify/references/evidence-runners.md", ".claude/agents/mach-verifier.md",
                          ".claude/skills/mach-review/SKILL.md", ".claude/skills/mach-review/references/reviewer-brief.md", ".claude/agents/mach-reviewer.md",
                          ".claude/skills/mach-cleanup/scripts/cleanup.py", ".claude/skills/mach-observe/scripts/observe.py",
+                         ".claude/skills/mach-run/scripts/run.py", ".claude/workflows/mach-run.js",
                          ".claude/agents/mach-contract-engineer.md", ".factory/bin/mach", ".factory/mach.mk", ".factory/config.json",
                          "REVIEW.md", "AGENTS.md", "Makefile", "CLAUDE.md", ".gitignore", ".factory/.mach-manifest.json"):
             self.assertIn(expected, files)
         self.assertFalse(any("mach-init" in name or "__pycache__" in name for name in files), "plugin-only and cache files must not be installed")
         self.assertIn(b"\nname: mach-intent\n", files[SKILL])
         self.assertIn(b"\nname: mach-contract-engineer\n", files[".claude/agents/mach-contract-engineer.md"])
+        workflow = files[".claude/workflows/mach-run.js"]
+        self.assertIn(b"/mach-run clerk", workflow)
+        self.assertNotIn(b"/mach:", workflow)
         self.assertTrue((self.project / ".factory/tickets").is_dir())
         self.assertTrue(os.access(self.project / ".factory/bin/mach", os.X_OK))
         json.loads(files[".factory/config.json"])

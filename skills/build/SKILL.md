@@ -34,7 +34,7 @@ Run `BUILD start <ticket>`. It checks, and refuses with a reason if any fails:
 - the cell is isolated on its own branch and has no stray changes;
 - the tests pass in the cell before you touch anything.
 
-If it says no test command is known, find the one the plan's Tasks section or the project documents and pass it with `--test-cmd`. Do not invent one. If the tests fail at the start only because the project has no test suite yet, and the audit gate is switched off or this is a hardening ticket, add `--no-baseline "<why>"`; it is recorded for the reviewers. If it refuses for any other reason, report the reason and stop: do not work around it.
+If it says no test command is known, find the one the plan's Tasks section or the project documents and pass it with `--test-cmd`. Do not invent one. If the tests fail at the start only because the project has no test suite yet, and the audit gate is switched off or this is a hardening ticket, add `--no-baseline "<why>"`; it is recorded for the reviewers. If it says building has already started, the build is being resumed: go to step 3 and continue from `BUILD next`. If it refuses for any other reason, report the reason and stop: do not work around it.
 
 If the input has `--revise`, see Revision rounds instead.
 

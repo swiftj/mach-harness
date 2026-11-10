@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.8.0.** All eight stations are built and tested: ticket, audit, intent, build, verify, review, cleanup and observe. Merging an approved branch is left to you or your pipeline. There is not yet an orchestrator that runs a ticket through every station unattended; you start each station yourself. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.9.0.** All eight stations are built and tested (ticket, audit, intent, build, verify, review, cleanup, observe), with an orchestrator that moves a ticket from station to station. Merging an approved branch is left to you or your pipeline. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -19,7 +19,7 @@ In Claude Code:
 
 Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
+Commands are namespaced: `/mach:run`, `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
 
 ### With one command (one project)
 
@@ -91,6 +91,27 @@ claude -p "/mach-intent AUTO-20261109 --headless"
 ```
 
 Each question is answered from facts in the project or a strict default and recorded as "Decided without a PM". Anything involving money, access, irreversible deletion, or two rules in conflict is never guessed: it becomes an open question, the ticket is labelled `blocked-requires-sme`, and no contracts or plan are written until a person finishes the interview.
+
+## Running the whole line
+
+```
+/mach-run LOCAL-001
+```
+
+This moves one ticket from wherever it is to the next point where a person is needed. A script reads what each station recorded and names the next step; the session starts the right worker for it (a fresh sub-agent for the build, for verification, and for each review seat), then asks again. It stops and tells you what it is waiting for:
+
+- answers to open questions in the spec;
+- your approval of a high-risk change;
+- the merge, which is always yours;
+- a person to take over a ticket that failed three rounds.
+
+`/mach-run board` shows every open ticket, its stage and its next step, without starting anything.
+
+To move several groomed tickets at once, unattended and in parallel, run the `mach-run` Dynamic Workflow with their IDs, for example by asking Claude Code to "run the mach-run workflow for LOCAL-002 and LOCAL-003". Each ticket is built, verified and reviewed in its own cell; the run ends with a list of what each ticket is waiting for.
+
+The line is driven by what each station recorded, so an interrupted run loses nothing: run it again and it resumes at the station it had reached. When you start the workflow from a non-interactive `claude -p` session, set `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, or the session stops background work after ten minutes.
+
+The sections below describe each station; you can also run any of them yourself.
 
 ## Building a groomed ticket
 
@@ -248,6 +269,8 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `skills/review/` | The review skill: `SKILL.md`, `review.py` (panel, votes, tally), the reviewer brief and one checklist per seat. |
 | `skills/cleanup/` | The cleanup skill: `SKILL.md` and `cleanup.py` (archive, teardown, run record). |
 | `skills/observe/` | The observe skill: `SKILL.md` and `observe.py` (scorecard, patterns, report check). |
+| `skills/run/` | The orchestrator: `SKILL.md` and `run.py` (what happens next to a ticket). |
+| `workflows/mach-run.js` | The Dynamic Workflow that runs several tickets in parallel. |
 | `skills/intent/` | The grooming skill: `SKILL.md`, templates, grammar references, `validate_slice.py`, `cell.py`. |
 | `skills/init/` | Plugin-only wrapper around `bin/mach scaffold`. |
 | `agents/contract-engineer.md` | Stage 2 of grooming, pinned to the `opus` tier. |

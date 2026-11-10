@@ -11,4 +11,4 @@ Rules for every agent working here:
 5. **Fresh-context review, three rounds at most.** Reviewers never share context with the builder. After a third failed round of verification or review the ticket is labelled `blocked-requires-sme` and a person decides.
 6. **Contracts are boundaries.** Contract files (`proto/`, OpenAPI, schemas) change only additively, and any change to them makes the ticket High risk. See `REVIEW.md`.
 
-Where things are: tickets in `.factory/tickets/`, slice specs in `specs/slices/`, factory settings in `.factory/config.json`, review rules in `REVIEW.md`, agent roles in `AGENTS.md`. Run `make mach-status` to see the open cells.
+Where things are: tickets in `.factory/tickets/`, slice specs in `specs/slices/`, factory settings in `.factory/config.json`, review rules in `REVIEW.md`, agent roles in `AGENTS.md`. Run `make mach-status` to see the open cells, and `/mach-run board` (`/mach:run board` with the plugin) for each ticket's next step.
