@@ -136,3 +136,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `docs/` | Specs for the stations still to build, and the original prd-slice skill the interview is adapted from. |
 
 When you change the validator, change its references, the fixture in `tests/fixtures/`, and the tests together: a test fails if any rule code the validator can emit is missing from `skills/intent/references/`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

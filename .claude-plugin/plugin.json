@@ -2,6 +2,7 @@
   "name": "mach",
   "version": "0.1.0",
   "description": "MACH (Multi-Agent Construction Harness): an agentic software factory for Claude Code. Grooms tickets into validated slice specs, contracts and test-first plans inside isolated git worktree cells.",
+  "license": "MIT",
   "homepage": "https://github.com/swiftj/mach-harness",
   "repository": "https://github.com/swiftj/mach-harness",
   "keywords": ["software-factory", "requirements", "spec", "tdd", "worktrees"]
