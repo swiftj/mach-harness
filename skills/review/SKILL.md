@@ -61,7 +61,7 @@ When the outcome is an approval with `overruled_blockers_from`, a reviewer found
 
 Report briefly: the outcome; the round, risk tier and each seat's vote; every blocker in one line each, with its file; how many notes there are and the two or three worth reading; and the path of `findings.md`. Use the reviewers' words; do not soften or reinterpret a finding.
 
-Record the outcome on the ticket with the ticket skill if it is installed: a comment with the outcome and blockers, and the state `needs_review` while awaiting a person, `in_progress` when rejected, `blocked` when escalated. Leave the state alone on approval: the ticket closes when the branch is merged and cleaned up.
+Record the outcome on the ticket with the ticket skill if it is installed: a comment with the outcome and blockers, and the state `needs_review` while awaiting a person, `in_progress` when rejected, `blocked` when escalated. Leave the state alone on approval: the ticket closes when the branch is merged and cleaned up. On approval, also remove the label `blocked-requires-sme` if the ticket still carries it from an earlier headless pass or escalation.
 
 ## Recording a person's approval
 

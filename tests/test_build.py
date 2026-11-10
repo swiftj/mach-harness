@@ -222,6 +222,14 @@ class StartTest(Base):
         self.assertTrue(started["audit"]["human_review_required"])
         self.assertTrue(json.loads((self.cellroot / "cell.json").read_text())["human_review_required"])
 
+    def test_high_risk_always_needs_a_person_even_on_a_gold_repository(self):
+        self.ready()
+        cell = json.loads((self.cellroot / "cell.json").read_text())
+        cell["risk"] = "High"
+        (self.cellroot / "cell.json").write_text(json.dumps(cell))
+        self.ok("start", "LOCAL-001")
+        self.assertTrue(json.loads((self.cellroot / "cell.json").read_text())["human_review_required"])
+
     def test_bronze_allows_only_hardening_tickets(self):
         self.groom()
         self.audit_report("Bronze")
@@ -328,6 +336,18 @@ class StepTest(Base):
         self.assertEqual(done["suite"], "green")
         state = self.state()
         self.assertEqual((state["tasks"][2]["first_run"], state["deviations"][0]["type"]), ("pass", "test-passed-first-run"))
+
+    def test_test_committed_by_an_earlier_task_can_be_recorded_not_padded(self):
+        self.assertIn("needs an earlier committed test", self.refused("red", "LOCAL-001", "T01", "--written-early", "x"))
+        self.build_through("T02")
+        self.put(self.work, {"tests/test_scenarios.py": "x = 1\n"})
+        self.assertIn("has uncommitted changes", self.refused("red", "LOCAL-001", "T03", "--written-early", "T01 wrote it"))
+        (self.work / "tests/test_scenarios.py").unlink()
+        commits = len(self.log())
+        done = self.ok("red", "LOCAL-001", "T03", "--written-early", "T01 committed the scenario tests with the matrix test.")
+        self.assertEqual((done["commit"], done["next"], len(self.log())), (None, "T04 [impl]", commits))
+        state = self.state()
+        self.assertEqual((state["tasks"][2]["first_run"], state["deviations"][0]["type"]), ("not-run", "test-written-early"))
 
     def test_done_keeps_a_green_suite_green(self):
         self.build_through("T04")

@@ -265,6 +265,8 @@ class CheckPlanTest(Base):
         state = json.loads((Path(info["cell_dir"]) / "cell.json").read_text())
         self.assertEqual((state["stage"], state["app_type"], state["risk"]), ("planned", "web", "High"))
         self.assertEqual(state["contracts"], ["proto/openapi/members.yaml"])
+        export = json.loads(Path(info["spec_json_path"]).read_text())
+        self.assertEqual((export["risk"], export["app_type"]), ("High", "web"), "the exported spec follows the plan's risk tier")
         self.assertIn("contract(SLICE-001)", git(Path(info["workdir"]), "log", "--oneline", "-1").stdout)
 
     def test_plan_problems_are_reported(self):

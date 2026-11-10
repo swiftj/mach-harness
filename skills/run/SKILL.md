@@ -13,9 +13,9 @@ You are the factory's line supervisor. You do not groom, build, verify or judge:
 
 `RUN` below means `python3 "${CLAUDE_SKILL_DIR}/scripts/run.py"`. It reads what every station recorded and names the single next step.
 
-## Clerk mode
+## Locating the script
 
-If the input begins with `clerk`, you are being used as a relay by an automated workflow. Run exactly `RUN <the rest of the input>` and reply with the JSON it printed and nothing else. If the command fails, reply with `{"action": "stop", "stop": true, "reason": "<the error text>", "needs": "person-to-take-over"}`. Do nothing else in clerk mode: no stations, no commentary.
+If the input is exactly `where`, an automated workflow is asking where this skill's script is. Run `RUN where` and reply with the JSON it printed and nothing else. Do nothing more.
 
 ## Rules
 
@@ -57,6 +57,7 @@ If the input begins with `clerk`, you are being used as a relay by an automated 
 | `repository-hardening` | The repository is not ready for autonomous work. Give the audit's blockers and offer to file a hardening ticket. |
 | `human-approval` | The panel approved a change that needs a person. Show the outcome and the findings file, and ask for their decision. If they approve, record it with the review skill and continue. |
 | `merge` | The ticket is approved and its branch is ready. MACH does not merge. After they merge, running this skill again cleans up. If they squash or rebase when merging, the line cannot see it: they run the cleanup skill with `--merged-as <commit>`. |
+| `nothing` | The ticket is finished or closed. Say so; there is nothing to run. |
 | `person-to-take-over` | The ticket was escalated or is in a state the line cannot handle. Give the reason and the findings. |
 
 End with a short account of the run: each station that ran and its result, in order.
@@ -67,4 +68,4 @@ For `board`, run `RUN board` and show it as a table: each ticket, its stage, the
 
 ### Several tickets at once
 
-This skill moves one ticket per conversation. To move several unattended, each in its own cell and in parallel, the user runs the `mach-run` workflow with the ticket IDs. Suggest it when the board shows more than one ticket ready to run; do not start it yourself unless asked.
+This skill moves one ticket per conversation. To move several unattended, each in its own cell and in parallel, the user runs the MACH belt workflow with the ticket IDs (`mach:belt` with the plugin, `mach-belt` in a project install). Suggest it when the board shows more than one ticket ready to run; do not start it yourself unless asked.

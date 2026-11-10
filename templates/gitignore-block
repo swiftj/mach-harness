@@ -1,4 +1,7 @@
-# MACH factory: cells, raw inbound payloads and archives stay local.
+# MACH factory: cells, raw inbound payloads, archives and the local ticket queue stay local.
+# Stations update tickets as they work; tracking them would leave the main checkout permanently modified.
+# To share tickets with a team, set tickets.provider to a tracker in .factory/config.json.
+.factory/tickets/
 .factory/worktrees/
 .factory/inbox/
 .factory/archive/

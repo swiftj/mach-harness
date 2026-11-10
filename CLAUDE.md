@@ -70,7 +70,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   ├── verifier.md             # Verify station, fresh context, pinned to the build tier
 │   └── reviewer.md             # One seat on the review panel; model set per seat
 ├── workflows/
-│   └── mach-run.js             # Dynamic Workflow: run several tickets in parallel, unattended
+│   └── belt.js                 # Dynamic Workflow `mach:belt` (`mach-belt` in a project): several tickets in parallel
 ├── templates/                  # What gets scaffolded into a project
 ├── tests/                      # unittest suites and fixtures
 └── docs/                       # Original design notes per station, and prd-slice (reference)
@@ -89,7 +89,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
 ├── .claude/                    # Only with the script install; the plugin keeps these in its own cache
 │   ├── skills/mach-*/
 │   ├── agents/mach-*.md
-│   └── workflows/mach-run.js
+│   └── workflows/mach-belt.js
 ├── specs/
 │   └── slices/                 # SLICE-NNN-name.md: the durable slice specs, merged with the code
 ├── proto/                      # Boundary contracts (Protocol Buffers, OpenAPI, JSON Schema)
@@ -247,7 +247,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
     (Fable 5.2)           (Haiku 5.5)
 ```
 
-### Orchestration: `/mach-run` and the `mach-run` workflow
+### Orchestration: `/mach-run` and the belt workflow
 
 The order of the belt is decided by a script, not by whoever is driving. `skills/run/scripts/run.py next <ticket>` reads what every station recorded (the cell's stage, the audit report, the verification and review decisions) and names the single next step, the worker for it, and its model tier; or it stops and says what the ticket is waiting for.
 
@@ -266,7 +266,7 @@ The order of the belt is decided by a script, not by whoever is driving. `skills
 Two drivers use it:
 
 * **`/mach-run <ticket>`** (a skill): a line supervisor in one conversation moves one ticket station to station, starting a fresh sub-agent for build, verification and each review seat, and stopping wherever a person is needed. `/mach-run board` shows every ticket's next step.
-* **`mach-run` (a Claude Dynamic Workflow, `workflows/mach-run.js`)**: runs several tickets unattended and in parallel, each in its own cell. The workflow script holds no knowledge of the order: it asks `run.py` what is next through a relay agent, starts the worker it names, and asks again, with a cap on steps and a stop when a station runs twice without moving the ticket.
+* **The `mach:belt` workflow (a Claude Dynamic Workflow, `workflows/belt.js`; named `mach-belt` in a project install)**: runs several tickets unattended and in parallel, each in its own cell. The workflow script holds no knowledge of the order: it locates `run.py` once, then asks it what is next through a relay agent given the exact command, starts the worker it names, and asks again, with a cap on steps and a stop when a station runs twice without moving the ticket.
 
 Neither driver grooms interactively on a person's behalf, approves a high-risk change, or merges.
 

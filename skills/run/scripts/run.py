@@ -10,6 +10,7 @@ and not by whoever is driving it.
     run.py board [--headless]            the next step for every open ticket and cell
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
     run.py review-tally <ticket>         count the review votes
+    run.py where                         where this script and the project are (used by the workflow)
 
 A step is either work ("action": audit, groom, plan, build, revise, verify, review, cleanup)
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
@@ -108,6 +109,24 @@ class Project:
                 labels += [a or b for a, b in re.findall(r'"([^"]*)"|([^\s,\[\]"]+)', line.group(1))]
         return labels
 
+    def finished(self, ticket_id: str) -> Optional[str]:
+        """Why a ticket with no cell needs nothing more: it was cleaned up, or its ticket is closed."""
+        runs = self.root / ".factory" / "archive" / "runs.jsonl"
+        if runs.is_file():
+            for line in reversed(runs.read_text(encoding="utf-8").splitlines()):
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(record, dict) and record.get("ticket_id") == ticket_id:
+                    return f"This ticket is finished: it was {record.get('outcome', 'closed')} and cleaned up ({record.get('archive')})."
+        local = self.root / ".factory" / "tickets" / f"{ticket_id}.md"
+        if local.is_file():
+            front = re.match(r"^---\n(.*?)\n---", local.read_text(encoding="utf-8"), re.DOTALL)
+            if front and re.search(r"^state:\s*closed\s*$", front.group(1), re.MULTILINE):
+                return "This ticket is closed."
+        return None
+
     def audit(self) -> Dict[str, Any]:
         """Whether the readiness audit lets building start: ok, or why not."""
         if self.section("build").get("require_audit") is False:
@@ -152,6 +171,9 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     flag = " --headless" if headless else ""
     groom_prompt = f"Use the MACH intent skill: {skill('intent')} {ticket_id}{flag}"
     if not isinstance(cell, dict):
+        finished = project.finished(ticket_id)
+        if finished:
+            return step(ticket_id, None, "stop", finished, needs="nothing")
         known = (project.root / ".factory" / "tickets" / f"{ticket_id}.md").is_file() or (project.root / ".factory" / "inbox" / f"{ticket_id}.json").is_file()
         note = "The ticket has not been groomed yet." if known else "No cell exists for this ticket; grooming will look the ticket up in the tracker."
         return step(ticket_id, None, "groom", note, model=project.model("planning"), prompt=groom_prompt, interactive=not headless)
@@ -213,6 +235,12 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage == "blocked":
         return step(ticket_id, stage, "stop", "The ticket failed its third round and was escalated.", needs="person-to-take-over")
     return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}').", needs="person-to-take-over")
+
+
+def cmd_where(project: Project, args: argparse.Namespace) -> int:
+    print(json.dumps({"run_script": str(Path(__file__).resolve()), "project": str(project.root), "python": sys.executable,
+                      "is_mach_project": (project.root / ".factory").is_dir()}, indent=2))
+    return 0
 
 
 def cmd_next(project: Project, args: argparse.Namespace) -> int:
@@ -287,6 +315,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id")
     p.add_argument("--headless", action="store_true", help="no person is available to answer questions")
     p.set_defaults(func=cmd_next)
+    p = sub.add_parser("where", help="print where this script and the project are, for the workflow")
+    p.set_defaults(func=cmd_where)
     p = sub.add_parser("board", help="the next step for every open ticket and cell")
     p.add_argument("--headless", action="store_true")
     p.set_defaults(func=cmd_board)
@@ -302,6 +332,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         root = args.project.resolve() if args.project else find_project(Path.cwd())
+        if args.command != "where" and not (root / ".factory").is_dir():
+            raise RunError(f"{root} is not a MACH project (it has no .factory folder). Run this from the project's folder, or pass --project.")
         return args.func(Project(root), args)
     except RunError as exc:
         print(f"refused: {exc}", file=sys.stderr)

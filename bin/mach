@@ -104,8 +104,9 @@ def skill_items(root: Path) -> List[Item]:
         items.append(Item(f".claude/agents/mach-{path.name}", prefixed(path.read_text(encoding="utf-8"), path.stem).encode("utf-8"), "managed"))
     workflows = root / "workflows"
     for path in sorted(workflows.glob("*.js")) if workflows.is_dir() else []:
-        # In a project install the skills are /mach-<station>, not /mach:<station>.
-        items.append(Item(f".claude/workflows/{path.name}", path.read_text(encoding="utf-8").replace("/mach:", "/mach-").encode("utf-8"), "managed"))
+        # As a plugin the workflow is mach:<name> and the skills /mach:<station>; in a project they are mach-<name> and /mach-<station>.
+        text = path.read_text(encoding="utf-8").replace("/mach:", "/mach-").replace(f"  name: '{path.stem}',", f"  name: 'mach-{path.stem}',", 1)
+        items.append(Item(f".claude/workflows/mach-{path.name}", text.encode("utf-8"), "managed"))
     return items
 
 

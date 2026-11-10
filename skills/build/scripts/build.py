@@ -407,7 +407,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
             raise BuildError("The tests already fail in the cell before any change, so building cannot start:\n" + baseline["output_tail"][-800:])
         cell.state["suite"] = "green"
     cell.state["baseline_run"] = {k: v for k, v in baseline.items() if k != "output_tail"}
-    cell.info.update({"stage": "building", "human_review_required": bool(gate["human_review_required"])})
+    cell.info.update({"stage": "building", "human_review_required": bool(gate["human_review_required"]) or cell.info.get("risk") == "High"})
     cell.save()
     cell.save_info()
     print(json.dumps({
@@ -451,6 +451,22 @@ def cmd_next(cell: Cell, args: argparse.Namespace) -> int:
 def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
     task = take(cell, args.task, "red")
     files = changed_files(cell)
+    if args.written_early:
+        # An earlier task committed this task's test along with its own. Nothing is left to write;
+        # record the slip for the reviewers rather than strand the ticket or pad a file.
+        if files:
+            raise BuildError(f"--written-early is for a test that is already committed, but {task['id']} has uncommitted changes: {', '.join(files)}.")
+        if not cell.state.get("test_files"):
+            raise BuildError("--written-early needs an earlier committed test; none has been committed yet.")
+        cell.deviation(task["id"], "test-written-early", args.written_early)
+        task.update({"status": "done", "commit": None, "files_changed": [], "first_run": "not-run", "at": now(), "loop": cell.state.get("loop", 0),
+                     "note": "No change: its test was committed by an earlier task. " + args.written_early})
+        tick_plan(cell, task["id"])
+        cell.save()
+        following = cell.next_task()
+        print(json.dumps({"status": "DONE", "task": task["id"], "commit": None, "note": task["note"], "suite": cell.state["suite"],
+                          "next": f"{following['id']} [{following['kind']}]" if following else "All tasks are done. Run: build.py finish " + cell.ticket_id}, indent=2))
+        return 0
     check_scope(cell, task, files, args)
     result = run_tests(cell)
     note = "Seen failing before the implementation."
@@ -584,6 +600,7 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "tasks": [{k: t.get(k) for k in ("id", "kind", "status", "commit", "note", "first_run", "loop")} for t in cell.state["tasks"]],
         "tests_seen_failing_first": sum(1 for t in cell.state["tasks"] if t.get("first_run") == "fail"),
         "tests_passing_on_first_run": [t["id"] for t in cell.state["tasks"] if t.get("first_run") == "pass"],
+        "tests_written_early": [t["id"] for t in cell.state["tasks"] if t.get("first_run") == "not-run"],
         "deviations": cell.state.get("deviations", []), "files_changed": files, "diff": stat,
         "test_files": cell.state.get("test_files", []), "styling_findings": styling,
     }
@@ -663,6 +680,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--amend-test", metavar="WHY", help="accept a change to an already committed test; recorded for review")
         if name == "red":
             p.add_argument("--covered", metavar="WHY", help="accept a test that passes on its first run because earlier work satisfies it; recorded for review")
+            p.add_argument("--written-early", metavar="WHY", help="complete a test task whose test an earlier task already committed; recorded for review")
         p.set_defaults(func=func)
 
     p = sub.add_parser("add-task", help="add a task during a revision round")
@@ -687,7 +705,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    for name in ("allow_extra", "amend_test", "covered", "no_baseline"):
+    for name in ("allow_extra", "amend_test", "covered", "no_baseline", "written_early"):
         if not hasattr(args, name):
             setattr(args, name, None)
     try:

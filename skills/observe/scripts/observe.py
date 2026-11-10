@@ -249,7 +249,8 @@ def group_findings(records: List[Dict[str, Any]]) -> Tuple[List[Groups], Groups]
             blockers.add(rule or f"(no rule) {reviewer}", ticket, title)
             reviewers.add(reviewer, ticket, title)
         for deviation in items(record.get("deviations")):
-            if isinstance(deviation, dict):
+            # 'no-baseline' only says the project had no test suite yet; it is a starting condition, not a habit.
+            if isinstance(deviation, dict) and text_of(deviation.get("type")).lower() != "no-baseline":
                 deviations.add(text_of(deviation.get("type")).lower() or "unknown", ticket, text_of(deviation.get("detail")))
         for finding in items(record.get("verify_findings")):
             if text_of(finding):
@@ -328,7 +329,8 @@ def cmd_collect(project: Path, args: argparse.Namespace) -> int:
         },
         "scorecard": scorecard(records),
         "pattern_thresholds": {"min_tickets": args.min_tickets_per_pattern, "min_share": args.min_share},
-        "patterns": patterns(groups, analyzed, args.min_tickets_per_pattern, args.min_share),
+        # With too few tickets, a group that recurs is not yet a pattern: report none.
+        "patterns": patterns(groups, analyzed, args.min_tickets_per_pattern, args.min_share) if analyzed >= args.min_tickets else [],
         "blockers_by_reviewer": [{"reviewer": group["key"], "tickets": group["tickets"], "count": group["count"], "share": group["share"]}
                                  for group in reviewers.listed(analyzed or 1)],
         "by_risk": breakdown(records, "risk"),
@@ -466,6 +468,9 @@ def cmd_report(project: Path, args: argparse.Namespace) -> int:
             break
         except FileExistsError:
             attempt += 1
+    source = Path(args.file).resolve()
+    if source.name == "draft.md" and source.parent == folder.resolve():
+        source.unlink()  # the filed copy is the record; the draft is done
     print(json.dumps({
         "status": "FILED", "report": str(path), "tickets_analyzed": metrics["sample"].get("tickets_analyzed"),
         "proposed_changes": len(proposals), "proposed_targets": [proposal["target"] for proposal in proposals], "proposals": proposals,

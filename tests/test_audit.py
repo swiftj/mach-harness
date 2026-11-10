@@ -126,7 +126,7 @@ class TierTest(Base):
 class CheckTest(Base):
     def test_dirty_tree_conflict_markers_and_thin_readme(self):
         self.repo(**{"README.md": "# x\n"})
-        self.write({"scratch.txt": "junk\n", "app/core.py": "<<<<<<< HEAD\na = 1\n=======\na = 2\n>>>>>>> other\n"})
+        self.write({".factory/tickets/LOCAL-001.md": "ticket\n", ".claude/settings.json": "{}\n", "scratch.txt": "junk\n", "app/core.py": "<<<<<<< HEAD\na = 1\n=======\na = 2\n>>>>>>> other\n"})
         r = self.report()
         checks = r["by_check"]
         self.assertEqual(checks["Clean working tree"]["score"], 0)

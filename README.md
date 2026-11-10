@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.9.0.** All eight stations are built and tested (ticket, audit, intent, build, verify, review, cleanup, observe), with an orchestrator that moves a ticket from station to station. Merging an approved branch is left to you or your pipeline. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.9.1.** All eight stations are built and tested (ticket, audit, intent, build, verify, review, cleanup, observe), with an orchestrator that moves a ticket from station to station. Merging an approved branch is left to you or your pipeline. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -107,7 +107,7 @@ This moves one ticket from wherever it is to the next point where a person is ne
 
 `/mach-run board` shows every open ticket, its stage and its next step, without starting anything.
 
-To move several groomed tickets at once, unattended and in parallel, run the `mach-run` Dynamic Workflow with their IDs, for example by asking Claude Code to "run the mach-run workflow for LOCAL-002 and LOCAL-003". Each ticket is built, verified and reviewed in its own cell; the run ends with a list of what each ticket is waiting for.
+To move several tickets at once, unattended and in parallel, run the MACH Dynamic Workflow with their IDs, for example by asking Claude Code to "run the mach-belt workflow for LOCAL-002 and LOCAL-003". The workflow is named `mach-belt` in a project install and `mach:belt` with the plugin. Each ticket is built, verified and reviewed in its own cell; the run ends with a list of what each ticket is waiting for.
 
 The line is driven by what each station recorded, so an interrupted run loses nothing: run it again and it resumes at the station it had reached. When you start the workflow from a non-interactive `claude -p` session, set `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, or the session stops background work after ten minutes.
 
@@ -222,7 +222,7 @@ A build or test suite that fails, is missing, or could not be run makes the tier
 /mach-ticket ingest-telemetry sentry crash.json
 ```
 
-Tickets live in `.factory/tickets/` as Markdown files by default. Set `tickets.provider` in `.factory/config.json` to `github`, `gitea-cli`, `jira` or `fossil` to use a tracker through its command-line tool; if your tool takes different arguments, replace any command under `tickets.commands`. MACH has five ticket states (`open`, `in_progress`, `needs_review`, `blocked`, `closed`); on trackers with only open and closed, the others are kept as `mach:<state>` labels.
+Tickets live in `.factory/tickets/` as Markdown files by default. That folder is a local working queue and is git-ignored, because stations update tickets as they work; to share tickets with a team, use a tracker. Set `tickets.provider` in `.factory/config.json` to `github`, `gitea-cli`, `jira` or `fossil` to use a tracker through its command-line tool; if your tool takes different arguments, replace any command under `tickets.commands`. MACH has five ticket states (`open`, `in_progress`, `needs_review`, `blocked`, `closed`); on trackers with only open and closed, the others are kept as `mach:<state>` labels.
 
 `ingest-telemetry` turns a Sentry, PostHog or Datadog payload, a failed CI log, or an application error log into an `AUTO-<timestamp>` ticket with the error, the culprit file and line, and a trimmed trace. Email addresses, tokens and other credentials are redacted from everything it writes except the raw payload, which stays in the git-ignored `.factory/inbox/`. The same fault is not ticketed twice while its ticket is open. Groom the result with `/mach-intent AUTO-... --headless`.
 
@@ -270,7 +270,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `skills/cleanup/` | The cleanup skill: `SKILL.md` and `cleanup.py` (archive, teardown, run record). |
 | `skills/observe/` | The observe skill: `SKILL.md` and `observe.py` (scorecard, patterns, report check). |
 | `skills/run/` | The orchestrator: `SKILL.md` and `run.py` (what happens next to a ticket). |
-| `workflows/mach-run.js` | The Dynamic Workflow that runs several tickets in parallel. |
+| `workflows/belt.js` | The Dynamic Workflow that runs several tickets in parallel. |
 | `skills/intent/` | The grooming skill: `SKILL.md`, templates, grammar references, `validate_slice.py`, `cell.py`. |
 | `skills/init/` | Plugin-only wrapper around `bin/mach scaffold`. |
 | `agents/contract-engineer.md` | Stage 2 of grooming, pinned to the `opus` tier. |

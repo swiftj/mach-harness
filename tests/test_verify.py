@@ -189,6 +189,23 @@ class FinishTest(Base):
         self.capture("flow.webm", "video")
         self.assertEqual(self.v_ok("finish", "LOCAL-001")["status"], "PASS")
 
+    def test_cli_exit_codes_must_be_real_and_cover_every_check(self):
+        cell = self.cell_json()
+        cell["app_type"] = "cli"
+        (self.cellroot / "cell.json").write_text(json.dumps(cell))
+        self.v_ok("start", "LOCAL-001")  # the app type is fixed when verification starts
+        self.prove_all()
+        self.capture("exit-codes.json", "[]")
+        self.assertIn("exit-codes.json must be a list of", self.v_refused("finish", "LOCAL-001"))
+        self.capture("exit-codes.json", json.dumps([{"command": "tool count a.txt", "exit_code": 0, "check": "AC-01"}, {"command": "tool count b.txt", "exit_code": 2, "check": ["AC-02", "R1"]}]))
+        self.assertIn("exit-codes.json has no command for: AC-03, R2, R3, R4, R5", self.v_refused("finish", "LOCAL-001"))
+        self.capture("exit-codes.json", json.dumps([{"command": f"tool check {t}", "exit_code": 0, "check": t} for t in TARGETS]))
+        done = self.v_ok("finish", "LOCAL-001")
+        summary = json.loads((self.evidence / "summary.json").read_text())
+        self.assertEqual(done["status"], "PASS")
+        self.assertEqual(summary["evidence_kinds"], {"terminal session": ["consumer-run.log"], "exit codes": ["exit-codes.json"]})
+        self.assertIsInstance(summary["tools_available"], list)
+
     def test_required_evidence_can_be_set_in_config(self):
         self.put(self.project, {".factory/config.json": json.dumps({"verify": {"required_evidence": {"library": ["api-surface.txt"]}}})})
         self.prove_all()

@@ -183,7 +183,10 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     risk = cell.info.get("risk") if cell.info.get("risk") in PANELS else "High"
     rules = panel_for(cell, risk)
     human = bool(rules["human_approval"] or cell.info.get("human_review_required"))
-    baseline = cell.build.get("baseline")
+    # Review everything the ticket's branch adds, including the spec and contracts committed before the build started.
+    main_branch = git(cell.project, "branch", "--show-current").stdout.strip()
+    fork = git(cell.work, "merge-base", "HEAD", main_branch).stdout.strip() if main_branch and cell.info.get("isolation") == "worktree" else ""
+    baseline = fork if fork and fork != head else cell.build.get("baseline")
     cell.folder.mkdir(parents=True, exist_ok=True)
     for stale in (cell.folder / "votes").glob("*.json") if (cell.folder / "votes").is_dir() else []:
         stale.unlink()

@@ -506,6 +506,10 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
         print(f"FAILED: {len(problems)} error(s)")
         return 1
     cell.update({"app_type": app_type, "risk": risk, "contracts": contracts, "stage": "planned"})
+    if model.get("risk") != risk or model.get("app_type") != app_type:
+        # Keep the exported spec in step with the plan, so every reader sees one risk tier and app type.
+        model.update({"risk": risk, "app_type": app_type})
+        spec_json.write_text(json.dumps(model, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     write_cell(project, cell)
     report(commit(project, cell, contracts, f"contract({cell.get('slice_id')}): boundary contracts [{cell['ticket_id']}]", args.no_commit))
     print(json.dumps({"status": "PLANNED", "app_type": app_type, "risk": risk, "contracts": contracts, "tasks": len(task_lines)}, indent=2))

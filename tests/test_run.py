@@ -48,6 +48,7 @@ class Base(VerifyBase):
 
 class GroomingTest(Base):
     def test_no_cell_means_groom(self):
+        (self.project / ".factory").mkdir(exist_ok=True)
         step = self.next()
         self.assertEqual((step["action"], step["stop"], step["interactive"], step["model"]), ("groom", False, True, "fable"))
         self.assertEqual(step["prompt"], "Use the MACH intent skill: /mach:intent LOCAL-001")
@@ -65,7 +66,16 @@ class GroomingTest(Base):
         step = self.next()
         self.assertEqual((step["action"], step["model"]), ("plan", "opus"))
 
+    def test_finished_or_closed_ticket_needs_nothing(self):
+        self.put(self.project, {".factory/archive/runs.jsonl": json.dumps({"ticket_id": "LOCAL-001", "outcome": "merged", "archive": ".factory/archive/LOCAL-001.tar.gz"}) + "\nnot json\n",
+                                ".factory/tickets/LOCAL-002.md": "---\nid: LOCAL-002\nstate: closed\nlabels: []\n---\n"})
+        done = self.next()
+        self.assertEqual((done["action"], done["needs"]), ("stop", "nothing"))
+        self.assertIn("merged and cleaned up", done["reason"])
+        self.assertEqual((self.next(ticket="LOCAL-002")["needs"], self.next(ticket="LOCAL-003")["action"]), ("nothing", "groom"))
+
     def test_bad_ticket_id(self):
+        (self.project / ".factory").mkdir(exist_ok=True)
         code, _, err = self.run_cmd("next", "../x")
         self.assertEqual(code, 1)
         self.assertIn("not a usable ticket ID", err)
@@ -212,6 +222,19 @@ class NamingTest(Base):
             self.assertEqual(self.next()["agent_type"], "mach-builder")
             self.assertEqual(self.next(ticket="LOCAL-005")["prompt"], "Use the MACH intent skill: /mach-intent LOCAL-005")
 
+    def test_where_gives_the_workflow_an_exact_command(self):
+        code, out, _ = self.run_cmd("where")
+        where = json.loads(out)
+        self.assertEqual(code, 0)
+        self.assertEqual((Path(where["run_script"]), Path(where["project"])), (ROOT / "skills/run/scripts/run.py", self.project))
+        self.assertFalse(where["is_mach_project"])
+        for command in (["next", "LOCAL-001"], ["board"], ["review-start", "LOCAL-001"]):
+            code, _, err = self.run_cmd(*command)
+            self.assertEqual(code, 1)
+            self.assertIn("is not a MACH project", err)
+        (self.project / ".factory").mkdir()
+        self.assertTrue(json.loads(self.run_cmd("where")[1])["is_mach_project"])
+
     def test_sibling_lookup_finds_either_layout(self):
         self.assertEqual(run.sibling("review"), ROOT / "skills" / "review")
         with self.assertRaises(run.RunError):
@@ -219,7 +242,7 @@ class NamingTest(Base):
 
 
 class WorkflowScriptTest(unittest.TestCase):
-    SCRIPT = (ROOT / "workflows" / "mach-run.js").read_text(encoding="utf-8")
+    SCRIPT = (ROOT / "workflows" / "belt.js").read_text(encoding="utf-8")
 
     def test_meta_is_a_pure_literal_at_the_top_with_matching_phases(self):
         self.assertTrue(self.SCRIPT.startswith("export const meta = {"))
@@ -236,6 +259,9 @@ class WorkflowScriptTest(unittest.TestCase):
 
     def test_the_script_never_decides_the_order_itself(self):
         self.assertIn("clerk(`next ${ticket} --headless`", self.SCRIPT)
+        self.assertIn("/mach:run where", self.SCRIPT)
+        self.assertIn("is_mach_project !== true", self.SCRIPT)
+        self.assertNotIn("name: 'run'", self.SCRIPT, "the workflow must not share a name with the run skill")
         self.assertNotRegex(self.SCRIPT, r"/mach:(build|verify|review|intent|cleanup)\b", "stations are named by run.py, not hard-coded")
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")

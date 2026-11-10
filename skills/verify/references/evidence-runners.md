@@ -18,7 +18,7 @@ In every type:
 ## cli
 
 - **Run it:** the built command from the `workdir`, in a clean temporary directory and environment.
-- **Capture:** the terminal session. Use `vhs` (a `.tape` script producing a `.gif`) or `asciinema` (`.cast`) when available; otherwise a transcript `.log` holding each command, its standard output and standard error. Always write `exit-codes.json`: a list of `{"command": ..., "exit_code": ..., "check": "<ID>"}` for every command you ran.
+- **Capture:** the terminal session. Use `vhs` (a `.tape` script producing a `.gif`) or `asciinema` (`.cast`) when available; otherwise a transcript `.log` holding each command, its standard output and standard error. Always write `exit-codes.json`: a list of `{"command": ..., "exit_code": ..., "check": "<ID>"}` for every command you ran, with the command exactly as it was run. `verify.py finish` checks that every scenario and rule has an entry. If no recording tool is installed, say in your report that the session is a plain transcript; the summary records which tools were available.
 - **Also check:** `--help` output for the new command or flag; that errors go to standard error with a non-zero exit code; that a refusal writes nothing.
 
 ## api, rest, grpc

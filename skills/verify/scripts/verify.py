@@ -253,6 +253,26 @@ def check_contracts(cell: Cell) -> Dict[str, Any]:
     return {"valid": valid, "files": contracts, "log": "contract-check.log"}
 
 
+def check_exit_codes(cell: Cell, targets: Sequence[Dict[str, Any]]) -> List[str]:
+    """A command-line slice's exit-codes.json must really list what was run, for every check."""
+    path = next((cell.evidence / name for name in cell.evidence_files() if Path(name).name == "exit-codes.json"), None)
+    if path is None:
+        return []  # its absence is already reported as a missing kind of evidence
+    data = load_json(path)
+    shape = 'exit-codes.json must be a list of {"command": "<what was run>", "exit_code": <number>, "check": "<ID>"} entries.'
+    if not isinstance(data, list) or not data:
+        return [shape]
+    covered = set()
+    for entry in data:
+        if not isinstance(entry, dict) or not isinstance(entry.get("command"), str) or not entry["command"].strip() \
+                or not isinstance(entry.get("exit_code"), int) or isinstance(entry.get("exit_code"), bool):
+            return [shape]
+        check = entry.get("check")
+        covered.update(str(item) for item in (check if isinstance(check, list) else [check]) if item)
+    missing = [target["id"] for target in targets if target["id"] not in covered]
+    return [f"exit-codes.json has no command for: {', '.join(missing)}. Every check needs the command that was run and its exit code."] if missing else []
+
+
 def changed_files(cell: Cell) -> List[str]:
     names = [line[3:].strip().strip('"') for line in git(cell.work, "status", "--porcelain", "--untracked-files=all").stdout.splitlines() if line.strip()]
     return [name for name in names if not is_byproduct(name)]
@@ -288,15 +308,15 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     suite = run_logged(cell, command, cell.evidence / "test-suite.log")
     contracts = check_contracts(cell)
     targets = cell.targets()
+    tools = [name for name in TOOLS if shutil.which(name)]
+    if (cell.work / "node_modules" / ".bin" / "playwright").exists() and "playwright" not in tools:
+        tools.append("playwright (project-local)")
     cell.results = {
-        "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "app_type": app_type, "head": head,
+        "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "app_type": app_type, "head": head, "tools_available": tools,
         "review_loop": cell.build.get("review_loop", 0), "started_at": now(), "started_epoch": started,
         "suite": suite, "contracts": contracts, "records": {},
     }
     cell.save()
-    tools = [name for name in TOOLS if shutil.which(name)]
-    if (cell.work / "node_modules" / ".bin" / "playwright").exists() and "playwright" not in tools:
-        tools.append("playwright (project-local)")
     print(json.dumps({
         "status": "STARTED", "ticket_id": cell.ticket_id, "app_type": app_type, "workdir": str(cell.work), "evidence_dir": str(cell.evidence),
         "suite": suite, "contracts": contracts,
@@ -355,6 +375,8 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     for item in cell.required_evidence():
         if not any(fnmatch.fnmatch(Path(name).name.lower(), pattern.lower()) for name in captured for pattern in item["match"]):
             incomplete.append(f"No {item['kind']} was captured (expected a file like {', '.join(item['match'])}).")
+    if cell.results["app_type"] == "cli":
+        incomplete += check_exit_codes(cell, targets)
     for target_id, record in records.items():
         for entry in record["evidence"]:
             path = cell.evidence / entry["file"]
@@ -381,6 +403,9 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "checks": {target_id: {"kind": r["kind"], "result": r["result"], "note": r["note"], "evidence": [e["file"] for e in r["evidence"]]} for target_id, r in records.items()},
         "unproven": missing,
         "evidence_files": [{"file": name, "sha256": sha(cell.evidence / name)} for name in files if name not in ("summary.json", "results.json")],
+        "evidence_kinds": {item["kind"]: [name for name in captured if any(fnmatch.fnmatch(Path(name).name.lower(), p.lower()) for p in item["match"])]
+                           for item in cell.required_evidence()},
+        "tools_available": cell.results.get("tools_available", []),
         "failures": failures, "timestamp": now(),
     }
     if failures:

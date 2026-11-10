@@ -476,7 +476,9 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
             repo = Repo(project)
     dirty = None
     if repo.is_git:
-        dirty = [line[3:] for line in git(project, "status", "--porcelain")[1].splitlines() if line.strip()]
+        # The factory's own working files (tickets, reports, installed skills) change as stations run; they are not project work.
+        dirty = [line[3:].strip().strip('"') for line in git(project, "status", "--porcelain")[1].splitlines() if line.strip()]
+        dirty = [name for name in dirty if not name.startswith((".factory/", ".claude/"))]
     timeouts = dict(TIMEOUTS)
     timeouts.update({k: v for k, v in (repo.audit_config.get("timeouts") or {}).items() if k in TIMEOUTS and isinstance(v, int) and v > 0})
     commands = detect_commands(repo, {"build": args.build_cmd, "test": args.test_cmd, "lint": args.lint_cmd})

@@ -175,7 +175,14 @@ class CollectTest(Base):
 class PatternTest(Base):
     def patterns(self, *records, argv=()):
         self.runs(*records)
-        return self.collect(*argv)["patterns"]
+        # These tests are about grouping and thresholds, so the sample-size floor is lowered.
+        return self.collect("--min-tickets", "1", *argv)["patterns"]
+
+    def test_no_patterns_are_reported_on_too_small_a_sample(self):
+        records = [run(f"T-{n}", n, blockers=[blocker("FR-04")]) for n in range(1, 4)]
+        self.runs(*records)
+        metrics = self.collect()
+        self.assertEqual((metrics["sample"]["enough_data"], metrics["patterns"]), (False, []))
 
     def test_rule_broken_in_one_ticket_is_not_a_pattern(self):
         records = [run("T-1", 1, blockers=[blocker("FR-04"), blocker("FR-04", round_=2)])] + [run(f"T-{n}", n) for n in range(2, 7)]
@@ -253,7 +260,7 @@ class PatternTest(Base):
             run("T-3", 3, blockers=[blocker("b")], deviations=[{"type": "no-baseline", "task": None, "detail": ""}]),
             run("T-4", 4, deviations=[{"type": "no-baseline", "task": None, "detail": ""}]),
         ]
-        self.assertEqual([(p["key"], len(p["tickets"])) for p in self.patterns(*records)], [("no-baseline", 4), ("b", 3), ("a", 2)])
+        self.assertEqual([(p["key"], len(p["tickets"])) for p in self.patterns(*records)], [("b", 3), ("a", 2)], "no-baseline is a starting condition, not a pattern")
 
 
 class ContextTest(Base):
