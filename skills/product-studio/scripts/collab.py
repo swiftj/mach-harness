@@ -60,6 +60,33 @@ def last_line(done: subprocess.CompletedProcess) -> str:
 # ---- the shared project ----
 
 
+def files_at(project: Path, ref: str) -> Dict[str, bytes]:
+    """The tracked product files at one commit or ref, read from Git's objects. Never touches a checkout."""
+    found: Dict[str, bytes] = {}
+    listing = git(project, "ls-tree", "-r", ref, "--", "product", "specs/slices")
+    wanted = []
+    for line in listing.stdout.splitlines():
+        meta, _, relative = line.partition("\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[1] == "blob" and parts[0] != "120000" and tracked(relative):  # never follow a symlink
+            wanted.append((parts[2], relative))
+    if not wanted:
+        return found
+    # One process for every file: "<sha> blob <size>\n<contents>\n" per object.
+    batch = subprocess.run(["git", "cat-file", "--batch"], cwd=str(project), capture_output=True,
+                           input="".join(f"{blob}\n" for blob, _ in wanted).encode("ascii"))
+    data, offset = batch.stdout, 0
+    for blob, relative in wanted:
+        end = data.find(b"\n", offset)
+        header = data[offset:end].split()
+        if end < 0 or len(header) != 3 or header[0].decode("ascii", "replace") != blob:
+            break
+        size = int(header[2])
+        found[relative] = data[end + 1:end + 1 + size]
+        offset = end + 1 + size + 1
+    return found
+
+
 class Shared:
     """Where the shared project lives: the remote's integration branch, when there is one."""
 
@@ -106,31 +133,7 @@ class Shared:
 
     def files(self) -> Dict[str, bytes]:
         """The product files on the integration branch, straight from Git's objects."""
-        found: Dict[str, bytes] = {}
-        if not self.ref:
-            return found
-        listing = git(self.project, "ls-tree", "-r", self.ref, "--", "product", "specs/slices")
-        wanted = []
-        for line in listing.stdout.splitlines():
-            meta, _, relative = line.partition("\t")
-            parts = meta.split()
-            if len(parts) == 3 and parts[1] == "blob" and parts[0] != "120000" and tracked(relative):  # never follow a symlink
-                wanted.append((parts[2], relative))
-        if not wanted:
-            return found
-        # One process for every file: "<sha> blob <size>\n<contents>\n" per object.
-        batch = subprocess.run(["git", "cat-file", "--batch"], cwd=str(self.project), capture_output=True,
-                               input="".join(f"{blob}\n" for blob, _ in wanted).encode("ascii"))
-        data, offset = batch.stdout, 0
-        for blob, relative in wanted:
-            end = data.find(b"\n", offset)
-            header = data[offset:end].split()
-            if end < 0 or len(header) != 3 or header[0].decode("ascii", "replace") != blob:
-                break
-            size = int(header[2])
-            found[relative] = data[end + 1:end + 1 + size]
-            offset = end + 1 + size + 1
-        return found
+        return files_at(self.project, self.ref) if self.ref else {}
 
     def review_branches(self) -> List[str]:
         """Contribution branches on the remote: other product managers' work still in review."""
