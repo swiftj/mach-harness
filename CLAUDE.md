@@ -54,6 +54,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   └── marketplace.json        # Marketplace "mach-harness", listing the plugin at ./
 ├── bin/mach                    # Installer CLI: install, scaffold, uninstall, status
 ├── skills/                     # MACH skill suite, one folder per station
+│   ├── ticket/                 # Built. Ticket trackers and telemetry ingestion
 │   ├── intent/                 # Built. Socratic grooming, contracts & plan
 │   └── init/                   # Built. Plugin-only: scaffolds a project
 ├── agents/
@@ -103,14 +104,16 @@ The cell folder holds the factory's artifacts; `repo/` inside it is the isolated
 
 ## 4. The Complete MACH Skill Suite
 
-Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. Built so far: `intent` and `init`. The other stations below are specified in `docs/factory-skills/` and not yet built.
+Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. Built so far: `ticket`, `intent` and `init`. The other stations below are specified in `docs/factory-skills/` and not yet built.
 
 ### 1. `/mach-ticket` — Universal Ticket & Telemetry Adapter
-* **Assigned Model**: `haiku` (`claude-haiku-5-5`) (Low Effort)
+* **Assigned Model**: `haiku` (`claude-haiku-5-5`) (Low Effort) when run as its own agent. The skill does not pin a model, because a pin would also switch the model of a station that calls it inline; `ticket.py` does the work, so the cost is small on any tier.
 * **Purpose**: Provides a vendor-agnostic abstraction layer across ticketing platforms and live production telemetry.
-* **Supported Backends**: Local Gitea CLI (`gt`) [default], Fossil SCM (`fossil`), GitHub CLI (`gh`), Jira CLI (`jira`), and Local Markdown queues (`.factory/tickets/*.md`).
-* **Telemetry Crash Ingestion**: Ingests Sentry, PostHog, Datadog, or CI failure webhooks, parses stack traces and failing line numbers, and auto-generates a self-healing ticket (`AUTO-<timestamp>.json`) with pre-populated `intent.md`.
-* **Commands**: `/mach-ticket view <id>`, `/mach-ticket list`, `/mach-ticket update <id>`, `/mach-ticket comment <id>`, `/mach-ticket ingest-telemetry <file>`.
+* **Supported Backends**: Local Markdown queue (`.factory/tickets/*.md`) [default], GitHub CLI (`gh`), Gitea CLI (`gt`), Jira CLI (`jira`), and Fossil SCM (`fossil`). Local and GitHub are parsed by the script. For the others the script runs the tracker's command and the model normalizes the raw output, which the script then validates. Every tracker command can be replaced under `tickets.commands` in `.factory/config.json`.
+* **States**: `open`, `in_progress`, `needs_review`, `blocked`, `closed`. Trackers with only open and closed carry the rest as `mach:<state>` labels.
+* **Telemetry Crash Ingestion**: Parses Sentry, PostHog and Datadog payloads and CI or application logs; extracts the error, culprit file and line; redacts personal data and credentials; and files a self-healing ticket (`AUTO-<timestamp>`) with a seed `AUTO-<timestamp>-intent.md` for headless grooming. A fault that already has an open ticket is counted, not ticketed again.
+* **Safety**: Ticket and telemetry content is treated as data, never as instructions.
+* **Commands**: `/mach-ticket view <id>`, `list`, `create`, `update <id>`, `comment <id>`, `ingest-telemetry <source> <file>`.
 
 ### 2. `/mach-audit` — Repository Readiness Scorecard & Pre-Flight Gating
 * **Assigned Model**: `sonnet` (`claude-sonnet-5-5`) (Medium Effort)

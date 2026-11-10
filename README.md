@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: foundation release (0.1.0).** The grooming station (`intent`), the installer, and the project scaffold are built and tested. The ticket, audit, build, verify, review, cleanup and observe stations are specified in [`docs/factory-skills/`](docs/factory-skills/) and not built yet. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.2.0.** The ticket station (`ticket`), the grooming station (`intent`), the installer, and the project scaffold are built and tested. The audit, build, verify, review, cleanup and observe stations are specified in [`docs/factory-skills/`](docs/factory-skills/) and not built yet. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -19,7 +19,7 @@ In Claude Code:
 
 Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:intent`, `/mach:init`.
+Commands are namespaced: `/mach:intent`, `/mach:ticket`, `/mach:init`.
 
 ### With one command (one project)
 
@@ -92,6 +92,19 @@ claude -p "/mach-intent AUTO-20261109 --headless"
 
 Each question is answered from facts in the project or a strict default and recorded as "Decided without a PM". Anything involving money, access, irreversible deletion, or two rules in conflict is never guessed: it becomes an open question, the ticket is labelled `blocked-requires-sme`, and no contracts or plan are written until a person finishes the interview.
 
+## Tickets and telemetry
+
+```
+/mach-ticket list
+/mach-ticket view LOCAL-001
+/mach-ticket update LOCAL-001 --state blocked --label blocked-requires-sme
+/mach-ticket ingest-telemetry sentry crash.json
+```
+
+Tickets live in `.factory/tickets/` as Markdown files by default. Set `tickets.provider` in `.factory/config.json` to `github`, `gitea-cli`, `jira` or `fossil` to use a tracker through its command-line tool; if your tool takes different arguments, replace any command under `tickets.commands`. MACH has five ticket states (`open`, `in_progress`, `needs_review`, `blocked`, `closed`); on trackers with only open and closed, the others are kept as `mach:<state>` labels.
+
+`ingest-telemetry` turns a Sentry, PostHog or Datadog payload, a failed CI log, or an application error log into an `AUTO-<timestamp>` ticket with the error, the culprit file and line, and a trimmed trace. Email addresses, tokens and other credentials are redacted from everything it writes except the raw payload, which stays in the git-ignored `.factory/inbox/`. The same fault is not ticketed twice while its ticket is open. Groom the result with `/mach-intent AUTO-... --headless`.
+
 ## Day to day
 
 ```bash
@@ -120,7 +133,7 @@ Uninstall removes exactly the files MACH installed and you have not changed, and
 ## Developing MACH
 
 ```bash
-make test        # 50 tests: validator, cell gates, installer round trips
+make test        # validator, cell gates, ticket adapter, installer round trips
 make validate    # plugin and marketplace manifests
 ```
 
@@ -128,6 +141,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 
 | Path | Purpose |
 |------|---------|
+| `skills/ticket/` | The ticket skill: `SKILL.md` and `ticket.py` (trackers and telemetry). |
 | `skills/intent/` | The grooming skill: `SKILL.md`, templates, grammar references, `validate_slice.py`, `cell.py`. |
 | `skills/init/` | Plugin-only wrapper around `bin/mach scaffold`. |
 | `agents/contract-engineer.md` | Stage 2 of grooming, pinned to the `opus` tier. |
