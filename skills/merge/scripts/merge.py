@@ -312,7 +312,11 @@ def land_by_pr(cell: Cell, main: str, merge_now: bool) -> Dict[str, Any]:
     if view.get("state") != "MERGED":
         return {"merged": False, "pull_request": url, "note": "The pull request is open and waiting to be merged."}
     git(cell.project, "fetch", "origin")
-    return {"merged": True, "pull_request": url, "merge_commit": (view.get("mergeCommit") or {}).get("oid")}
+    # Keep the main checkout level with the platform, so the next ticket starts from what just landed.
+    synced = False
+    if git(cell.project, "branch", "--show-current").stdout.strip() == main and not dirty(cell.project):
+        synced = git(cell.project, "merge", "--ff-only", f"origin/{main}").returncode == 0
+    return {"merged": True, "pull_request": url, "merge_commit": (view.get("mergeCommit") or {}).get("oid"), "main_checkout_updated": synced}
 
 
 def load_text(text: str) -> Dict[str, Any]:
