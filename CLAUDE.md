@@ -73,8 +73,9 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 ├── workflows/
 │   └── belt.js                 # Dynamic Workflow `mach:belt` (`mach-belt` in a project): several tickets in parallel
 ├── templates/                  # What gets scaffolded into a project
+├── mach_product/               # Experimental (MACH Next M0): structural checks for product artifacts. Read-only; no station uses it
 ├── tests/                      # unittest suites and fixtures
-└── docs/                       # Original design notes per station, and prd-slice (reference)
+└── docs/                       # Original design notes per station, prd-slice (reference), and mach-next/ (experimental design)
 ```
 
 Skill folders are named for the station (`skills/intent/`). As a plugin the command is `/mach:intent`; the installer copies the same folder to `.claude/skills/mach-intent/` and the command is `/mach-intent`. Agents are renamed the same way (`mach:contract-engineer` / `mach-contract-engineer`).
