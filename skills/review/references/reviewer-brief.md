@@ -42,10 +42,19 @@ Write your findings as a JSON file in the packet's `review_dir`, named `findings
 - **`blocker`**: the change must not merge until this is fixed. Use it only when the change breaks something you can name: a requirement, message or side effect in the spec; a rule in REVIEW.md or CLAUDE.md; a contract; or it introduces a defect that will cause wrong behavior, data loss or a security hole. A blocker needs `rule` (the spec ID, or the rule's name or text) and `file` (a path in the checkout, or `evidence/<file>`). Give `line` when one line shows it.
 - **`note`**: worth knowing and does not block: a risk, a weak test, an improvement, a builder deviation you accept with reservations.
 - Preferences are not findings. If the project's rules do not require it and nothing breaks, leave it out or make it a note.
-- One finding per problem. Do not split one defect into several, and do not pad.
+- One finding per class of problem. If the same defect appears in several places, such as an input that is not validated on four routes, write one finding that names the class and lists every place in its detail, so one fix round can clear it. Do not report the places one at a time, and do not pad.
+- Judge the change, not the codebase. A problem that was already there before this ticket is a note at most, never a blocker, unless the ticket made it worse.
 - An empty `findings` list is a legitimate result when you looked properly and found nothing. Say in the summary what you checked.
 
 Before you call something a blocker, try to disprove it: read the surrounding code, the spec text, and the test or evidence that covers it. A blocker that is wrong costs a whole build round; a real one you talked yourself out of ships a defect. When you are unsure after checking, make it a note and say what you could not determine.
+
+## Later rounds
+
+If the packet has a `delta`, this is not the first round: the ticket was sent back, revised, and verified again. Your job narrows:
+
+- Read `earlier_findings` and check each earlier blocker against `delta.diff`. Is it actually fixed, everywhere it occurred, and not merely hidden?
+- Review what changed since last round (`delta.diff`) for new problems.
+- Do not re-review the rest. The script refuses a blocker on a file that did not change and had no blocker last round; such a finding can only be a note. Nothing settled in an earlier round is reopened.
 
 ## Tuning tickets
 

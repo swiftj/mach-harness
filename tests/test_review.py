@@ -528,5 +528,50 @@ class TuningTicketTest(Base):
         self.assertEqual((result[0], result[1]["outcome"] if isinstance(result[1], dict) else json.loads(result[1])["outcome"]), (0, "APPROVED"))
 
 
+class LaterRoundTest(Base):
+    """After the first round, reviewers judge the fix: what changed, and whether earlier blockers are gone."""
+
+    def second_round(self):
+        self.verified()
+        self.r_ok("start", TICKET)
+        self.cast(rejecting=("architecture", "security"))
+        code, decision = self.tally()
+        self.assertEqual((code, decision["outcome"]), (1, "REJECTED"))
+        self.ok("revise", TICKET, "--findings", decision["findings"])
+        self.ok("add-task", TICKET, "--kind", "docs", "--text", "Explain validation (FR-01)", "--file", "README.md")
+        self.put(self.work, {"README.md": "# Sample\n\nAddresses are validated.\n"})
+        self.ok("done", TICKET, "R1-T01")
+        self.ok("finish", TICKET)
+        self.run_verify("start", TICKET)
+        (self.evidence / "consumer-run.log").write_text("AC-01 ok\n")
+        for target in TARGETS:
+            self.run_verify("record", TICKET, target, "--result", "pass", "--evidence", "consumer-run.log", "--note", NOTE)
+        self.run_verify("finish", TICKET)
+        self.round = self.cellroot / "review" / "round-2"
+        return self.r_ok("start", TICKET)
+
+    def test_round_two_packet_carries_the_delta_and_restricts_blockers(self):
+        started = self.second_round()
+        self.assertEqual(started["round"], 2)
+        packet = json.loads((self.round / "packet.json").read_text())
+        delta = packet["delta"]
+        self.assertEqual((delta["files_changed"], delta["earlier_blocker_files"]), (["README.md"], ["app/invite.py"]))
+        self.assertIn("Addresses are validated.", Path(delta["diff"]).read_text())
+        self.assertNotIn("def invite", Path(delta["diff"]).read_text(), "the delta holds only what changed since round one")
+        self.assertEqual(len(packet["paths"]["earlier_findings"]), 1)
+        refusal = self.bad(self.blocker(file="tests/test_invite.py", line=1))
+        self.assertIn("did not change since the last round and had no blocker then", refusal)
+        self.assertEqual(self.vote("architecture", self.blocker(file="README.md", line=1))["vote"], "REJECT", "a blocker in what changed is allowed")
+        self.assertEqual(self.vote("security", self.blocker())["vote"], "REJECT", "an earlier blocker that is still not fixed may be raised again")
+        self.assertEqual(self.vote("product", self.note(file="tests/test_invite.py", line=1), self.blocker(file="evidence/consumer-run.log", line=1, rule="AC-01"))["vote"], "REJECT",
+                         "notes are unrestricted, and evidence can always be cited")
+
+    def test_first_round_has_no_delta(self):
+        self.verified()
+        self.r_ok("start", TICKET)
+        self.assertIsNone(json.loads((self.round / "packet.json").read_text())["delta"])
+        self.assertEqual(self.vote("architecture", self.blocker(file="tests/test_invite.py", line=1))["vote"], "REJECT")
+
+
 if __name__ == "__main__":
     unittest.main()

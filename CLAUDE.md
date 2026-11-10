@@ -60,6 +60,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   ├── build/                  # Built. Test-driven construction with scripted gates
 │   ├── verify/                 # Built. Independent evidence capture and verdict
 │   ├── review/                 # Built. Fresh-context review panel, scripted tally
+│   ├── merge/                  # Built. Lands the approved commit, locally or by pull request
 │   ├── cleanup/                # Built. Archive, teardown and run record after merge
 │   ├── observe/                # Built. Scorecard, recurring patterns, rule proposals
 │   ├── run/                    # Built. Orchestrator: next-step state machine
@@ -123,7 +124,7 @@ The cell folder holds the factory's artifacts; `repo/` inside it is the isolated
 
 ## 4. The Complete MACH Skill Suite
 
-Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. All eight stations are built (`ticket`, `audit`, `intent`, `build`, `verify`, `review`, `cleanup`, `observe`), plus `init` and the orchestrator `run` (section 5). The original design notes in `docs/factory-skills/` are kept for history; where they differ, this file and each skill's `SKILL.md` describe what was built. Merging an approved branch (step 6 of the conveyor belt) is deliberately left to a person or their pipeline.
+Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. All eight stations are built (`ticket`, `audit`, `intent`, `build`, `verify`, `review`, `cleanup`, `observe`), plus the `merge` station (section 5), `init` and the orchestrator `run` (section 5). The original design notes in `docs/factory-skills/` are kept for history; where they differ, this file and each skill's `SKILL.md` describe what was built.
 
 ### 1. `/mach-ticket` — Universal Ticket & Telemetry Adapter
 * **Assigned Model**: `haiku` (`claude-haiku-5-5`) (Low Effort) when run as its own agent. The skill does not pin a model, because a pin would also switch the model of a station that calls it inline; `ticket.py` does the work, so the cost is small on any tier.
@@ -263,7 +264,9 @@ The order of the belt is decided by a script, not by whoever is driving. `skills
 | `built` | revise if verification failed or review rejected this build; otherwise verify |
 | `verified` | review |
 | `awaiting-human` | stop: a person approves |
-| `approved` | stop until the branch is merged; then cleanup, and an observe pass when one is due |
+| `approved` | merge, if the settings let the line merge this risk tier; otherwise stop for a person to merge |
+| `pr-open` | merge again: check whether the pull request can land |
+| `merged` | cleanup, and an observe pass when one is due |
 | `blocked` | stop: escalated to a person |
 
 Two drivers use it:
@@ -271,7 +274,21 @@ Two drivers use it:
 * **`/mach-run <ticket>`** (a skill): a line supervisor in one conversation moves one ticket station to station, starting a fresh sub-agent for build, verification and each review seat, and stopping wherever a person is needed. `/mach-run board` shows every ticket's next step.
 * **The `mach:belt` workflow (a Claude Dynamic Workflow, `workflows/belt.js`; named `mach-belt` in a project install)**: runs several tickets unattended and in parallel, each in its own cell. The workflow script holds no knowledge of the order: it locates `run.py` once, then asks it what is next through a relay agent given the exact command, starts the worker it names, and asks again, with a cap on steps and a stop when a station runs twice without moving the ticket.
 
-Neither driver grooms interactively on a person's behalf, approves a high-risk change, or merges.
+Neither driver grooms interactively on a person's behalf or approves a high-risk change. Whether the line merges is a project setting.
+
+### Merge station: `/mach-merge`
+
+Step 6 of the belt. `skills/merge/scripts/merge.py` lands exactly what review approved, or refuses.
+
+* **Commit-bound approval**: review records the commit it approved. If the cell's branch is no longer that commit, the approval is voided and the cell returns to `built` to be verified and reviewed again.
+* **Revalidation (merge queue)**: if the main branch has moved since approval, main is merged into the ticket's branch inside the cell and the test suite is rerun on the result. A failing suite returns the ticket to the build station with the failure as findings; a conflict stops for a person.
+* **Method**: `local` makes a merge commit on the main checkout. `pr` pushes the branch, opens a pull request whose body summarises verification, review and build, and merges it with the platform told to accept only the approved commit.
+* **Policy** (`merge` in `.factory/config.json`): `mode` `auto` or `manual`; `auto.<tier>` to keep a risk tier for a person. `--by-person` lets a person merge whatever the policy. High-risk tickets still need a person's approval in review unless the review settings say otherwise.
+* **Never**: force-pushes, rewrites history, deletes a branch, or merges into anything but the default branch.
+
+### Review rounds after the first
+
+A revised ticket gets a delta review. The packet carries the diff since the previous round and the files that had blockers; `review.py submit` refuses a blocker on a file that neither changed nor was blocked before. Reviewers report a recurring defect once, as a class, and treat problems that pre-date the ticket as notes. Together with the three-round limit, this keeps review from re-litigating settled ground.
 
 ---
 

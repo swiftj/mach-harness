@@ -23,7 +23,7 @@ If the input is exactly `where`, an automated workflow is asking where this skil
 2. **Workers are fresh.** Build, verification and each review seat run in their own sub-agents. Never build, verify or review in this conversation, even to "quickly fix" something a station reported.
 3. **Tell workers which ticket, not what to conclude.** A worker's prompt is the prompt `RUN` printed. Do not add a summary of earlier stations, your opinion of the work, or the result you expect.
 4. **Believe the records, not the reports.** After a worker returns, run `RUN next` again. What it says is the state, whatever the worker told you.
-5. **Stop where a person is needed.** Answers to open questions, approval of a high-risk change, and merging are a person's. Never answer, approve or merge on their behalf, and never record an approval the user did not give in this conversation.
+5. **Stop where a person is needed.** Answers to open questions and approval of a high-risk change are a person's, and so is the merge unless the script names a `merge` step. Never answer or approve on their behalf, never merge except by running the merge skill when the line says to, and never record an approval the user did not give in this conversation.
 6. **Never push a stuck ticket.** If the same step comes up twice in a row without the stage changing, the worker is not getting through. Stop and report what it said; do not try a third time or work around the gate.
 
 ## Steps
@@ -42,6 +42,7 @@ If the input is exactly `where`, an automated workflow is asking where this skil
 | `build`, `revise` | Start the sub-agent named by `agent_type` with the prompt. |
 | `verify` | Start the sub-agent named by `agent_type` with the prompt. |
 | `review` | Run `RUN review-start <ticket>`. Start every seat it lists at once, each as the sub-agent in its `agent_type`, on its `model`, with exactly its `prompt`. When all have returned, run `RUN review-tally <ticket>`. You chair; you do not review, and you never ask a reviewer to reconsider. |
+| `merge` | Run the merge skill yourself, as the prompt says. It lands the exact approved commit, or refuses. If it reports a pull request left open, stop and report it: do not retry. |
 | `cleanup` | Run the cleanup skill yourself, as the prompt says. If its result says `observe_due` is true, run the observe skill with `--auto` straight afterwards: it measures the finished tickets and files one `factory-tuning` ticket if it has anything to propose. Tell the user the ticket's ID; run it through the line only if you were asked to run the pipeline. |
 | `stop` | Go to step 4. |
 
@@ -56,7 +57,7 @@ If the input is exactly `where`, an automated workflow is asking where this skil
 | `answers` | The spec has open questions. List them and offer to continue the interview now. |
 | `repository-hardening` | The repository is not ready for autonomous work. Give the audit's blockers and offer to file a hardening ticket. |
 | `human-approval` | The panel approved a change that needs a person. Show the outcome and the findings file, and ask for their decision. If they approve, record it with the review skill and continue. |
-| `merge` | The ticket is approved and its branch is ready. MACH does not merge. After they merge, running this skill again cleans up. If they squash or rebase when merging, the line cannot see it: they run the cleanup skill with `--merged-as <commit>`. |
+| `merge` | The ticket is approved and its branch is ready, and this project's settings leave the merge to a person (`merge.mode` or `merge.auto` in `.factory/config.json`). They can merge it themselves, or tell you to run the merge skill with `--by-person`. After they merge, running this skill again cleans up. If they squash or rebase when merging, the line cannot see it: they run the cleanup skill with `--merged-as <commit>`. |
 | `nothing` | The ticket is finished or closed. Say so; there is nothing to run. |
 | `person-to-take-over` | The ticket was escalated or is in a state the line cannot handle. Give the reason and the findings. |
 

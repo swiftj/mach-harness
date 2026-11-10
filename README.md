@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.10.0.** All eight stations are built and tested (ticket, audit, intent, build, verify, review, cleanup, observe), with an orchestrator that moves a ticket from station to station. Merging an approved branch is left to you or your pipeline. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.11.0.** Every station is built and tested (ticket, audit, intent, build, verify, review, merge, cleanup, observe), with an orchestrator that moves a ticket from station to station. A new project is set to merge approved tickets itself; set `merge.mode` to `manual` to keep the merge for a person. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -19,7 +19,7 @@ In Claude Code:
 
 Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:run`, `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
+Commands are namespaced: `/mach:run`, `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:merge`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
 
 ### With one command (one project)
 
@@ -102,7 +102,7 @@ This moves one ticket from wherever it is to the next point where a person is ne
 
 - answers to open questions in the spec;
 - your approval of a high-risk change;
-- the merge, which is always yours;
+- the merge, if your project keeps it for a person (`merge.mode` or `merge.auto` in `.factory/config.json`);
 - a person to take over a ticket that failed three rounds.
 
 `/mach-run board` shows every open ticket, its stage and its next step, without starting anything.
@@ -167,12 +167,34 @@ The session you run this in chairs the panel; it does not review. It starts one 
 
 Reviewers do not vote. Each submits findings, and any finding marked `blocker` makes that seat a reject. A blocker must name the requirement or rule it breaks and the file that shows it, so a reviewer cannot block on taste. A script counts the result:
 
-- `APPROVED`: the branch may be merged. MACH does not merge for you.
+- `APPROVED`: the branch may be merged, by the merge station or by you, depending on your settings.
 - `AWAITING_HUMAN`: the panel approved a high-risk change. You are shown the findings; say you approve and it is recorded with your name.
 - `REJECTED`: the findings go back to the build station.
 - `ESCALATE`: this was the third failed round. The ticket is labelled `blocked-requires-sme` and waits for a person.
 
 When a reviewer's blocker is outvoted on a medium-risk change, the outcome says so.
+
+A ticket that is sent back and revised gets a narrower second review: reviewers see what changed since the last round and check that the earlier blockers are fixed. A blocker on code that did not change and was not blocked before is refused; it can only be a note. Reviewers also report a recurring defect once, as a class listing every place, so one revision can clear it.
+
+## Merging an approved ticket
+
+```
+/mach-merge LOCAL-001
+```
+
+Review approves one exact commit, and the merge station lands that commit or refuses:
+
+- **Approval is bound to the commit.** If anything was added to the branch after review, the approval is void and the ticket goes back to verification.
+- **It is re-tested against today's main.** If main has moved since approval, the branch is brought up to date inside the cell and the test suite runs again before anything lands, so two tickets that each passed alone cannot break main together. A failing suite sends the ticket back to the build station; a conflict stops for a person.
+- **Locally or through a pull request.** With `merge.method` set to `local` it makes a merge commit on your main checkout. With `pr` it pushes the branch, opens a pull request summarising the verification and review, and merges it at the approved commit, so your CI, review bots and team see a normal pull request.
+
+Who merges is a setting, by risk tier:
+
+```json
+"merge": { "mode": "auto", "method": "local", "auto": { "low": true, "medium": true, "high": true } }
+```
+
+`mode: "auto"` lets the line merge approved tickets; `"manual"` leaves every merge to you. Under `auto`, set a tier to `false` to keep that tier for a person. A high-risk ticket only reaches "approved" after a person has signed off in review, so with the defaults a person still decides every high-risk change. You can always merge one yourself: `/mach-merge LOCAL-001 --by-person`.
 
 ## After the merge
 
@@ -180,7 +202,7 @@ When a reviewer's blocker is outvoted on a medium-risk change, the outcome says 
 /mach-cleanup LOCAL-001
 ```
 
-Once you have merged the approved branch, cleanup archives the cell's artifacts to `.factory/archive/LOCAL-001.tar.gz`, removes the cell's worktree, folder and local branch, and appends a one-line record of how the ticket went to `.factory/archive/runs.jsonl`. It shows you a plan first, archives before it deletes, and deletes nothing if the archive fails.
+Once the approved branch is merged, by the merge station or by you, cleanup archives the cell's artifacts to `.factory/archive/LOCAL-001.tar.gz`, removes the cell's worktree, folder and local branch, and appends a one-line record of how the ticket went to `.factory/archive/runs.jsonl`. It shows you a plan first, archives before it deletes, and deletes nothing if the archive fails.
 
 - If you squash-merge or rebase, tell it the commit: `/mach-cleanup LOCAL-001 --merged-as <commit>`.
 - To drop a ticket that will not be finished: `/mach-cleanup LOCAL-001 --abandon "<why>"`. Uncommitted work and a git bundle of the branch are saved in the archive first.
@@ -263,7 +285,7 @@ Uninstall removes exactly the files MACH installed and you have not changed, and
 ## Developing MACH
 
 ```bash
-make test        # validator, cell gates, ticket adapter, audit, build, verify, review, cleanup and observe gates, installer round trips
+make test        # validator, cell gates, ticket adapter, audit, build, verify, review, merge, cleanup and observe gates, installer round trips
 make validate    # plugin and marketplace manifests
 ```
 
@@ -276,6 +298,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `skills/build/` | The build skill: `SKILL.md` and `build.py` (start gates, red/green enforcement, build report). |
 | `skills/verify/` | The verify skill: `SKILL.md`, `verify.py` (evidence records and verdict) and the per-app-type runner guide. |
 | `skills/review/` | The review skill: `SKILL.md`, `review.py` (panel, votes, tally), the reviewer brief and one checklist per seat. |
+| `skills/merge/` | The merge skill: `SKILL.md` and `merge.py` (commit-bound approval, revalidation, local or pull-request merge). |
 | `skills/cleanup/` | The cleanup skill: `SKILL.md` and `cleanup.py` (archive, teardown, run record). |
 | `skills/observe/` | The observe skill: `SKILL.md` and `observe.py` (scorecard, patterns, report check). |
 | `skills/run/` | The orchestrator: `SKILL.md` and `run.py` (what happens next to a ticket). |

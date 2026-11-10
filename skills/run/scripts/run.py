@@ -12,7 +12,7 @@ and not by whoever is driving it.
     run.py review-tally <ticket>         count the review votes
     run.py where                         where this script and the project are (used by the workflow)
 
-A step is either work ("action": audit, groom, plan, build, revise, verify, review, cleanup)
+A step is either work ("action": audit, groom, plan, build, revise, verify, review, merge, cleanup)
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
 person's approval, a merge, or a person to take over an escalated ticket.
 
@@ -223,7 +223,7 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         decision = load_json(root / "review" / "decision.json", {}) or {}
         summary = load_json(root / "evidence" / "summary.json", {}) or {}
         if decision.get("outcome") == "REJECTED" and decision.get("head") == head:
-            return step(ticket_id, stage, "revise", "Review rejected this build.", agent_type=agent_type("builder"), findings=decision.get("findings"),
+            return step(ticket_id, stage, "revise", "The merge station sent this build back." if decision.get("rejected_by") else "Review rejected this build.", agent_type=agent_type("builder"), findings=decision.get("findings"),
                         prompt=f"Revise MACH ticket {ticket_id} after a rejected review. Findings: {decision.get('findings')}")
         if summary.get("status") == "FAIL_WITH_EVIDENCE" and summary.get("head") == head:
             findings = str(root / "evidence" / "findings.md")
@@ -238,7 +238,23 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         why = " and ".join(decided.get("human_approval_reasons") or [])
         return step(ticket_id, stage, "stop", "The review panel approved, and a person must approve before merge" + (f" because {why}." if why else "."),
                     needs="human-approval", findings=decided.get("findings"))
+    if stage == "merged":
+        return step(ticket_id, stage, "cleanup", "Merged.", model=project.model("utility"), prompt=f"Use the MACH cleanup skill: {skill('cleanup')} {ticket_id}")
+    if stage == "pr-open":
+        return step(ticket_id, stage, "merge", f"A pull request is open for this ticket ({cell.get('pull_request')}); the merge station checks whether it can land.",
+                    model=project.model("utility"), prompt=f"Use the MACH merge skill: {skill('merge')} {ticket_id}")
     if stage == "approved":
+        decided = load_json(root / "review" / "decision.json", {}) or {}
+        risk = cell.get("risk") if cell.get("risk") in ("High", "Medium", "Low") else "High"
+        merging = project.section("merge")
+        tiers = merging.get("auto") if isinstance(merging.get("auto"), dict) else {}
+        revalidated = (cell.get("revalidated") or {}).get("head")
+        if decided.get("head") not in (head, None) and revalidated != head and not project.merged(cell.get("branch")):
+            return step(ticket_id, stage, "merge", "The branch changed after it was approved; the merge station will void the approval and return it to verification.",
+                        model=project.model("utility"), prompt=f"Use the MACH merge skill: {skill('merge')} {ticket_id}")
+        if not project.merged(cell.get("branch")) and merging.get("mode") == "auto" and tiers.get(risk.lower(), True) is not False:
+            return step(ticket_id, stage, "merge", "Approved; the project's settings let the line merge it.", model=project.model("utility"),
+                        prompt=f"Use the MACH merge skill: {skill('merge')} {ticket_id}")
         if project.merged(cell.get("branch")):
             return step(ticket_id, stage, "cleanup", "Approved and merged.", model=project.model("utility"),
                         prompt=f"Use the MACH cleanup skill: {skill('cleanup')} {ticket_id}")

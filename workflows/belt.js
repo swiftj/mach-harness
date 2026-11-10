@@ -8,7 +8,7 @@ export const meta = {
     { title: 'Build', detail: 'one builder per ticket, in its own cell' },
     { title: 'Verify', detail: 'a fresh verifier per build' },
     { title: 'Review', detail: 'a fresh panel per verified ticket' },
-    { title: 'Wrap up', detail: 'cleanup of merged tickets' },
+    { title: 'Wrap up', detail: 'merge approved tickets where the settings allow, then clean up' },
     { title: 'Learn', detail: 'an observe pass when one is due, then its tuning ticket' },
   ],
 }
@@ -24,7 +24,7 @@ if (!tickets.length) {
 }
 
 const MAX_STEPS = 16 // three judging rounds need at most 11 steps; this is a backstop
-const PHASE = { audit: 'Preflight', groom: 'Groom', plan: 'Groom', build: 'Build', revise: 'Build', verify: 'Verify', review: 'Review', cleanup: 'Wrap up' }
+const PHASE = { audit: 'Preflight', groom: 'Groom', plan: 'Groom', build: 'Build', revise: 'Build', verify: 'Verify', review: 'Review', merge: 'Wrap up', cleanup: 'Wrap up' }
 const text = { type: 'string' }
 const STEP = {
   type: 'object',

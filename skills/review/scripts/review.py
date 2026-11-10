@@ -227,6 +227,15 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         stale.unlink()
     diff = git(cell.work, "diff", f"{baseline}..{head}").stdout
     (cell.folder / "diff.patch").write_text(diff, encoding="utf-8")
+    # After the first round, reviewers judge the fix, not the whole ticket again.
+    earlier = load_json(cell.root / "review" / f"round-{cell.loop}" / "packet.json", {}) or {}
+    delta = None
+    if cell.loop > 0 and earlier.get("head") and earlier["head"] != head:
+        (cell.folder / "delta.patch").write_text(git(cell.work, "diff", f"{earlier['head']}..{head}").stdout, encoding="utf-8")
+        blocked = sorted({finding.get("file") for vote in (load_json(path, {}) or {} for path in (cell.root / "review" / f"round-{cell.loop}" / "votes").glob("*.json"))
+                          for finding in vote.get("findings") or [] if finding.get("severity") == "blocker" and finding.get("file")})
+        delta = {"since_commit": earlier["head"], "diff": str(cell.folder / "delta.patch"),
+                 "files_changed": git(cell.work, "diff", "--name-only", f"{earlier['head']}..{head}").stdout.split(), "earlier_blocker_files": blocked}
     previous = cell.root / "review" / f"round-{cell.loop}" / "findings.md"
     verify_findings = sorted((cell.root / "evidence").glob("previous-*/findings.md"))
     review_rules = next((p for p in (cell.work / "REVIEW.md", cell.project / "REVIEW.md") if p.is_file()), None)
@@ -234,7 +243,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "round": cell.loop + 1, "max_rounds": cell.max_loops(),
         "risk": risk, "approvals_needed": rules["approvals"], "human_approval_required": human, "human_approval_reasons": reasons,
         "head": head, "baseline": baseline, "branch": cell.info.get("branch"), "started_at": now(),
-        "panel": rules["panel"],
+        "panel": rules["panel"], "delta": delta,
         "paths": {
             "workdir": str(cell.work), "diff": str(cell.folder / "diff.patch"), "review_rules": str(review_rules) if review_rules else None,
             "intent": str(cell.root / "intent.md"), "spec": str(cell.root / "spec.json"), "plan": str(cell.root / "plan.md"),
@@ -280,6 +289,11 @@ def check_findings(cell: Cell, data: Any) -> List[Dict[str, Any]]:
                 raise ReviewError(f"{label}: a blocker must name the 'file' that shows the problem (a path in the cell's checkout, or evidence/<file>).")
         if isinstance(name, str) and name.strip():
             path = cell.root / name if name.startswith(("evidence/", "review/")) or name in ("plan.md", "intent.md", "spec.json", "build-report.json") else cell.work / name
+            in_checkout = path == cell.work / name
+            delta = cell.packet.get("delta")
+            if severity == "blocker" and in_checkout and delta and name not in delta["files_changed"] and name not in delta["earlier_blocker_files"]:
+                raise ReviewError(f"{label}: this is round {cell.packet['round']}, and '{name}' did not change since the last round and had no blocker then. "
+                                  "A later round judges the fix: whether earlier blockers are resolved, and problems in what changed. Record this as a note.")
             resolved = path.resolve()
             inside = any(base.resolve() == resolved or base.resolve() in resolved.parents for base in (cell.work, cell.root))
             if not inside or not path.is_file():

@@ -1,6 +1,6 @@
 ## MACH software factory
 
-This project is built with MACH (Multi-Agent Construction Harness). Work moves through stations, one ticket at a time: ticket → intent → build → verify → review → merge → cleanup. The stations are skills named `mach-<station>` (`/mach:<station>` when MACH is installed as a plugin).
+This project is built with MACH (Multi-Agent Construction Harness). Work moves through stations, one ticket at a time: ticket → intent → build → verify → review → merge → cleanup → observe. The stations are skills named `mach-<station>` (`/mach:<station>` when MACH is installed as a plugin).
 
 Rules for every agent working here:
 

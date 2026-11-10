@@ -24,6 +24,11 @@
     "gold": 90,
     "silver": 70
   },
+  "merge": {
+    "mode": "auto",
+    "method": "local",
+    "auto": { "low": true, "medium": true, "high": true }
+  },
   "observe": {
     "every": 5
   },

@@ -57,6 +57,7 @@ class InstallTest(Base):
                          ".claude/skills/mach-review/SKILL.md", ".claude/skills/mach-review/references/reviewer-brief.md", ".claude/agents/mach-reviewer.md",
                          ".claude/skills/mach-cleanup/scripts/cleanup.py", ".claude/skills/mach-observe/scripts/observe.py",
                          ".claude/skills/mach-run/scripts/run.py", ".claude/workflows/mach-belt.js",
+                         ".claude/skills/mach-merge/SKILL.md", ".claude/skills/mach-merge/scripts/merge.py",
                          ".claude/agents/mach-contract-engineer.md", ".factory/bin/mach", ".factory/mach.mk", ".factory/config.json",
                          "REVIEW.md", "AGENTS.md", "Makefile", "CLAUDE.md", ".gitignore", ".factory/.mach-manifest.json"):
             self.assertIn(expected, files)
@@ -69,7 +70,9 @@ class InstallTest(Base):
         self.assertNotIn(b"/mach:", workflow)
         self.assertTrue((self.project / ".factory/tickets").is_dir())
         self.assertTrue(os.access(self.project / ".factory/bin/mach", os.X_OK))
-        self.assertEqual(json.loads(files[".factory/config.json"])["observe"], {"every": 5})
+        config = json.loads(files[".factory/config.json"])
+        self.assertEqual(config["observe"], {"every": 5})
+        self.assertEqual((config["merge"]["mode"], config["merge"]["method"]), ("auto", "local"))
 
     def test_installed_skill_is_runnable_and_self_contained(self):
         self.mach("install")
