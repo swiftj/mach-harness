@@ -55,6 +55,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 ├── bin/mach                    # Installer CLI: install, scaffold, uninstall, status
 ├── skills/                     # MACH skill suite, one folder per station
 │   ├── ticket/                 # Built. Ticket trackers and telemetry ingestion
+│   ├── audit/                  # Built. Readiness scorecard and pipeline gate
 │   ├── intent/                 # Built. Socratic grooming, contracts & plan
 │   └── init/                   # Built. Plugin-only: scaffolds a project
 ├── agents/
@@ -82,6 +83,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
 ├── proto/                      # Boundary contracts (Protocol Buffers, OpenAPI, JSON Schema)
 └── .factory/
     ├── config.json             # Factory configuration (ticket provider, model tiers, thresholds)
+    ├── audit-report.json       # Latest readiness scorecard; the gate other stations read
     ├── .mach-manifest.json     # What the installer wrote, with hashes, so uninstall is exact
     ├── bin/mach                # Copy of the installer, for status and uninstall
     ├── tickets/                # Local Markdown ticket queue (the default provider)
@@ -104,7 +106,7 @@ The cell folder holds the factory's artifacts; `repo/` inside it is the isolated
 
 ## 4. The Complete MACH Skill Suite
 
-Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. Built so far: `ticket`, `intent` and `init`. The other stations below are specified in `docs/factory-skills/` and not yet built.
+Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when installed into a project, `/mach:<station>` when installed as a plugin. Built so far: `ticket`, `audit`, `intent` and `init`. The other stations below are specified in `docs/factory-skills/` and not yet built.
 
 ### 1. `/mach-ticket` — Universal Ticket & Telemetry Adapter
 * **Assigned Model**: `haiku` (`claude-haiku-5-5`) (Low Effort) when run as its own agent. The skill does not pin a model, because a pin would also switch the model of a station that calls it inline; `ticket.py` does the work, so the cost is small on any tier.
@@ -116,17 +118,20 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Commands**: `/mach-ticket view <id>`, `list`, `create`, `update <id>`, `comment <id>`, `ingest-telemetry <source> <file>`.
 
 ### 2. `/mach-audit` — Repository Readiness Scorecard & Pre-Flight Gating
-* **Assigned Model**: `sonnet` (`claude-sonnet-5-5`) (Medium Effort)
-* **Purpose**: Audits repository health across 5 pillars before autonomous agents are permitted to touch code:
-  1. Build & Dependency Health (reproducible builds, zero install warnings).
-  2. Test Suite Baseline (100% green tests, execution time < 5 min).
-  3. Static Linting & Typing (zero unsuppressed linter or type-checker errors).
-  4. Contract & Boundary Discipline (ProtoBuf/OpenAPI schemas present and compiling).
-  5. Version Control Hygiene (clean git status, main branch protected).
+* **Assigned Model**: `sonnet` (`claude-sonnet-5-5`) (Medium Effort) when run as its own agent; the skill does not pin a model. `audit.py` measures and scores; the model only explains the result and finds commands the script could not detect.
+* **Purpose**: Audits repository health across 5 pillars, 100 points in all, before autonomous agents are permitted to touch code:
+  1. Reproducible Environment & Build (25): build definition, locked dependencies, a one-command build that runs cleanly.
+  2. Baseline Test Suite (25): tests exist, one command runs them, 100% green, under 5 minutes.
+  3. Linting, Formatting & Static Analysis (20): linter configured and passing, formatter, type checking, secret scanning.
+  4. Rules & Boundary Contracts (15): `CLAUDE.md`, `AGENTS.md`, `REVIEW.md`, a real README, typed contract files.
+  5. Repository Hygiene (15): git history, clean working tree, `.gitignore`, no conflict markers, protected main branch.
 * **Gating Tiers**:
   * **Gold (90–100%)**: Full autonomous execution permitted.
   * **Silver (70–89%)**: Autonomous build permitted with mandatory human review before PR merge.
-  * **Bronze/Fail (<70%)**: Autonomous execution blocked; triggers an automated repo hardening cycle.
+  * **Bronze/Fail (<70%)**: Autonomous execution blocked; hardening work is filed as a `repo-hardening` ticket.
+* **Blockers**: A build or test suite that fails, is missing, or could not be run makes the tier Bronze whatever the score. Checks that cannot be verified locally are reported as unverified, never assumed to pass.
+* **Gate**: `audit.py gate` is what other stations call. It refuses when the report is missing, older than `audit.max_age_days`, for a different commit than the main checkout, or Bronze.
+* **Output**: `.factory/audit-report.json`. Options: `--strict` (Gold or fail), `--fix` (create a missing `.gitignore`), `--json`.
 
 ### 3. `/mach-intent` — Socratic Grooming, Slice Spec, Contracts & Plan
 * **Assigned Model**: interview on the planning tier (`fable`, or the session's model); stage 2 on `opus` via the `contract-engineer` agent

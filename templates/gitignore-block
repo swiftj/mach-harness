@@ -3,4 +3,5 @@
 .factory/inbox/
 .factory/archive/
 .factory/tmp/
+.factory/audit-report.json
 .factory/mach-backup-*/

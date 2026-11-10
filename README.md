@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.2.0.** The ticket station (`ticket`), the grooming station (`intent`), the installer, and the project scaffold are built and tested. The audit, build, verify, review, cleanup and observe stations are specified in [`docs/factory-skills/`](docs/factory-skills/) and not built yet. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.3.0.** The ticket, audit and grooming (`intent`) stations, the installer, and the project scaffold are built and tested. The build, verify, review, cleanup and observe stations are specified in [`docs/factory-skills/`](docs/factory-skills/) and not built yet. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -19,7 +19,7 @@ In Claude Code:
 
 Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:intent`, `/mach:ticket`, `/mach:init`.
+Commands are namespaced: `/mach:intent`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
 
 ### With one command (one project)
 
@@ -92,6 +92,22 @@ claude -p "/mach-intent AUTO-20261109 --headless"
 
 Each question is answered from facts in the project or a strict default and recorded as "Decided without a PM". Anything involving money, access, irreversible deletion, or two rules in conflict is never guessed: it becomes an open question, the ticket is labelled `blocked-requires-sme`, and no contracts or plan are written until a person finishes the interview.
 
+## Is the repository ready?
+
+```
+/mach-audit
+```
+
+Agents working in a repository with a broken build, failing tests or no linter compound the damage, so MACH measures the repository first. The audit runs your build, tests and linter, scores five areas out of 100, and writes `.factory/audit-report.json`:
+
+| Tier | Score | What it means |
+|------|-------|---------------|
+| Gold | 90 to 100 | Full autonomy. |
+| Silver | 70 to 89 | Agents may build, but a person reviews every change before it merges. |
+| Bronze | under 70 | Autonomous work is blocked until the repository is hardened. |
+
+A build or test suite that fails, is missing, or could not be run makes the tier Bronze whatever the score. The scorecard lists each failed check with the points fixing it would add. Commands are detected from your Makefile and package manifests; set `audit.commands.build`, `test` or `lint` in `.factory/config.json` if yours are different. The audit executes your project's own commands, so run it only on code you would build yourself.
+
 ## Tickets and telemetry
 
 ```
@@ -133,7 +149,7 @@ Uninstall removes exactly the files MACH installed and you have not changed, and
 ## Developing MACH
 
 ```bash
-make test        # validator, cell gates, ticket adapter, installer round trips
+make test        # validator, cell gates, ticket adapter, audit, installer round trips
 make validate    # plugin and marketplace manifests
 ```
 
@@ -142,6 +158,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | Path | Purpose |
 |------|---------|
 | `skills/ticket/` | The ticket skill: `SKILL.md` and `ticket.py` (trackers and telemetry). |
+| `skills/audit/` | The audit skill: `SKILL.md` and `audit.py` (scorecard and gate). |
 | `skills/intent/` | The grooming skill: `SKILL.md`, templates, grammar references, `validate_slice.py`, `cell.py`. |
 | `skills/init/` | Plugin-only wrapper around `bin/mach scaffold`. |
 | `agents/contract-engineer.md` | Stage 2 of grooming, pinned to the `opus` tier. |
