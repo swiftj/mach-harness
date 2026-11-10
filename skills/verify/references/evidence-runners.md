@@ -13,6 +13,11 @@ In every type:
 - **Run it:** start the app the way the project documents (its dev or preview command) from the `workdir`, against test data. Wait for it to answer before driving it.
 - **Drive it:** a real browser, through Playwright if the project or machine has it (prefer the project's own Playwright setup), otherwise Cypress or another browser automation tool that is available. Act through what a user sees: roles, labels and visible text, not internal selectors.
 - **Capture:** a screenshot (`.png`) at each Then step, showing the message or state being asserted; a recording of each flow (`.webm`, `.mp4`, or a Playwright trace `.zip`). Take before and after screenshots for anything that changes what is displayed.
+- **Work with what is installed; download nothing.**
+  - If Playwright is installed globally rather than in the project, its test runner cannot find `@playwright/test` from your script's folder: run it with `NODE_PATH="$(npm root -g)"` set.
+  - If Playwright's own browsers are not installed (it says to run `playwright install`), drive an installed browser instead by setting `channel: 'chrome'` (or `'msedge'`) in your config's `use` section.
+  - If video recording fails because Playwright's video encoder is not installed, record a trace instead (`trace: 'on'`): the `trace.zip` it writes holds a screenshot and DOM snapshot for every action, and counts as the recording of the flow. Say in your report that it is a trace, not a video.
+  - Keep your config, test scripts and output folder inside `evidence_dir`, and let Playwright start and stop the app (`webServer` in the config) so nothing is left running.
 - **Also check, and note in the record:** the exact visible text of every message; that controls are reachable by keyboard and labelled; that the page works at a phone width; that a refusal leaves the displayed state unchanged.
 
 ## cli

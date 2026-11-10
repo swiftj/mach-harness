@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.9.2.** All eight stations are built and tested (ticket, audit, intent, build, verify, review, cleanup, observe), with an orchestrator that moves a ticket from station to station. Merging an approved branch is left to you or your pipeline. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.9.3.** All eight stations are built and tested (ticket, audit, intent, build, verify, review, cleanup, observe), with an orchestrator that moves a ticket from station to station. Merging an approved branch is left to you or your pipeline. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
