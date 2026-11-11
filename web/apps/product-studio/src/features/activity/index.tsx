@@ -1,17 +1,9 @@
 import { RefreshCw } from "lucide-react";
-import { EmptyState, Page } from "@mach/ui";
 import type { Feature } from "../types";
+import { SharedScreen } from "./SharedScreen";
 
-/** Placeholder: this feature's owner replaces everything in this folder. Keep the `feature` export's shape. */
-function ActivityScreen() {
-  return (
-    <Page>
-      <EmptyState title="Shared project" description="This screen is being built." />
-    </Page>
-  );
-}
-
+/** Collaboration and refresh: bring in what other product managers shared, and where everything stands. */
 export const feature: Feature = {
-  routes: [{ path: "shared", element: <ActivityScreen /> }],
+  routes: [{ path: "shared", element: <SharedScreen /> }],
   nav: { to: "/shared", label: "Shared project", icon: RefreshCw, section: "deliver", order: 60 },
 };

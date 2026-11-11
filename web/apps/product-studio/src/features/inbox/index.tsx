@@ -1,16 +1,8 @@
 import { Inbox } from "lucide-react";
-import { EmptyState, Page } from "@mach/ui";
 import type { Feature } from "../types";
+import { InboxScreen } from "./InboxScreen";
 
-/** Placeholder: this feature's owner replaces everything in this folder. Keep the `feature` export's shape. */
-function InboxScreen() {
-  return (
-    <Page>
-      <EmptyState title="Decisions" description="This screen is being built." />
-    </Page>
-  );
-}
-
+/** The Decision Inbox: conflicts, collisions, review that needs the PM, withdrawn approvals, open questions. */
 export const feature: Feature = {
   routes: [{ path: "inbox", element: <InboxScreen /> }],
   nav: { to: "/inbox", label: "Decisions", icon: Inbox, section: "attention", order: 40 },
