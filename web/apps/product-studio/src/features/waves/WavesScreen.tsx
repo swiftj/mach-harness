@@ -1,24 +1,10 @@
 import { CircleAlert, Layers, Plus } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
-import {
-  ArtifactId,
-  Banner,
-  Button,
-  EmptyState,
-  ErrorState,
-  Heading,
-  Page,
-  Skeleton,
-  Text,
-  describeError,
-  type FeedbackWave,
-  type StatusWaveRow,
-} from "@mach/ui";
+import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, Text, describeError, type FeedbackWave, type StatusWaveRow, plural } from "@mach/ui";
 import { ChooseSlicesDialog } from "./ChooseSlicesDialog";
 import { WaveCard } from "./WaveCard";
 import { useDeliveryRead } from "./delivery/ops";
-import { plural } from "./delivery/words";
 import { useDependencies } from "./useDependencies";
 
 type Group = { key: string; title: string; hint: string; waves: StatusWaveRow[] };

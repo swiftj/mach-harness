@@ -1,9 +1,8 @@
 import { type ReactNode } from "react";
 import { BookOpen, CircleDot, ListChecks, Lock, PenLine, Save, Search } from "lucide-react";
-import { Badge, Banner, Button, Text, cn } from "@mach/ui";
-import { RichText, count } from "../spec/text";
-import type { ActivityKind } from "./events";
+import { Badge, Banner, Button, Text, cn, RichText, plural as count } from "@mach/ui";
 import type { AnswerKind, InterviewModel, InterviewerMessage, TimelineItem } from "./model";
+import { type ActivityKind } from "@mach/ui/api";
 
 const answerLabels: Record<AnswerKind, string> = {
   accepted: "Accepted the recommendation",

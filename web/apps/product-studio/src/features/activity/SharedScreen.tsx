@@ -1,28 +1,11 @@
 import { CircleAlert, RefreshCw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import {
-  ArtifactId,
-  Banner,
-  Button,
-  ErrorState,
-  Heading,
-  Page,
-  Skeleton,
-  SliceStatusPill,
-  SourceBadge,
-  Text,
-  WaveStatusPill,
-  EpicStatusPill,
-  toast,
-  type MachApiError,
-  type Status,
-} from "@mach/ui";
+import { ArtifactId, Banner, Button, ErrorState, Heading, Page, Skeleton, SliceStatusPill, SourceBadge, Text, WaveStatusPill, EpicStatusPill, toast, type MachApiError, type Status, Disclosure, FactList, Panel, formatWhen, plural } from "@mach/ui";
 import { rememberRefresh, useDeliveryMemory } from "../waves/delivery/memory";
 import { asApiError, deliveryOp, useDeliveryRead } from "../waves/delivery/ops";
-import { Disclosure, FactList, Panel, failureText } from "../waves/delivery/ui";
-import { formatWhen, plural } from "../waves/delivery/words";
 import { RefreshSummary } from "./RefreshSummary";
+import { failureText } from "@mach/ui/api";
 
 interface Row {
   id: string;

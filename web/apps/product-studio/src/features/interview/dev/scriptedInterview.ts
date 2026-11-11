@@ -15,10 +15,8 @@
  * Query parameters (before the hash): ?speed=fast shortens every delay; ?interview=lost drops the
  * stream once during turn 3; ?interview=conflict makes Start answer `conflict`.
  */
-import { MachApiError } from "@mach/ui/api";
-import { devParam, devState } from "../../spec/dev/devState";
-import type { InterviewClient, StreamHandlers } from "../client";
-import type { InterviewEvent, InterviewEventMap, InterviewEventName, InterviewSummary, ParsedQuestion } from "../events";
+import { MachApiError, type InterviewClient, type StreamHandlers, type InterviewEvent, type InterviewEventMap, type InterviewEventName, type InterviewSummary, type ParsedQuestion } from "@mach/ui/api";
+import { devParam, devState } from "../../../dev/devState";
 
 type Step = { wait: number } & { [K in InterviewEventName]: { type: K; data: InterviewEventMap[K] } }[InterviewEventName];
 

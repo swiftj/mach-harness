@@ -1,5 +1,4 @@
-import type { ActivityKind, InterviewEvent, InterviewHostState, InterviewErrorKind, MessageKind, ParsedQuestion, TurnOutcome } from "./events";
-import type { StreamConnection } from "./client";
+import { type ActivityKind, type InterviewEvent, type InterviewHostState, type InterviewErrorKind, type MessageKind, type ParsedQuestion, type TurnOutcome, type StreamConnection } from "@mach/ui/api";
 
 /**
  * The interview screen's state, built only from the host's events and the PM's own replies. Pure

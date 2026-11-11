@@ -2,9 +2,9 @@ import { useState } from "react";
 import { ArtifactId, Button, ConfirmDialog, Heading, SourceBadge, Text, toast, type Renumber, type Status } from "@mach/ui";
 import { asApiError, deliveryOp } from "../waves/delivery/ops";
 import { rememberNeedsApprovalAgain } from "../waves/delivery/memory";
-import { failureText } from "../waves/delivery/ui";
-import { titleFor } from "../waves/delivery/words";
 import { Affects } from "./Affects";
+import { failureText } from "@mach/ui/api";
+import { titleFor } from "../../api/describe";
 
 const nouns: Record<string, string> = { SLICE: "slice", EPIC: "epic", WAVE: "delivery wave" };
 

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { Copy, Terminal } from "lucide-react";
 import { Banner, Button, Heading, Text, toast } from "@mach/ui";
-import type { InterviewCapability } from "../spec/api";
+import { type InterviewCapability } from "../../api/session";
 
 /**
  * Shown when the host reports `capabilities.interview: false`. The interview then happens in Claude

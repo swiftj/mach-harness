@@ -1,19 +1,7 @@
-/**
- * Small presentation pieces shared by the inbox, waves and shared-project screens.
- * PROMOTION CANDIDATES for @mach/ui: Disclosure, IdText, Stepper, failureText.
- */
 import { ChevronRight } from "lucide-react";
 import { Fragment, type HTMLAttributes, type ReactNode } from "react";
-import { ArtifactId, cn, describeError, type MachApiError } from "@mach/ui";
-
-/**
- * The words for a failed act, for an ErrorState or a ConfirmDialog's `error`. A refusal is the
- * engine's own message, under a title that names what did not happen ("WAVE-001 was not sent").
- */
-export function failureText(error: MachApiError, whatDidNotHappen: string): { title: string; message: string } {
-  if (error.kind === "refused") return { title: whatDidNotHappen, message: error.message };
-  return describeError(error);
-}
+import { cn } from "../lib/cn";
+import { ArtifactId } from "./typography";
 
 /** Text from the engine with its IDs (SLICE-001, FR-01) set as identifiers. */
 export function IdText({ text }: { text: string }) {
@@ -34,8 +22,8 @@ export function IdText({ text }: { text: string }) {
 }
 
 /**
- * A collapsed section for technical detail an engineer may ask for (a link, a branch name, the
- * shared repository's own message). Closed by default; the only place engineering words appear.
+ * A collapsed section for technical detail an engineer may ask for (a link, a branch name, a file
+ * path, the shared repository's own message). Closed by default; the only place engineering words appear.
  */
 export function Disclosure({ summary, children, className }: { summary: string; children: ReactNode; className?: string }) {
   return (
@@ -49,7 +37,7 @@ export function Disclosure({ summary, children, className }: { summary: string; 
   );
 }
 
-/** Term and value rows for diagnostics. */
+/** Term and value rows. */
 export function FactList({ facts }: { facts: Array<[string, ReactNode]> }) {
   return (
     <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5">
@@ -100,7 +88,7 @@ export function Stepper({ steps, current, label }: { steps: Step[]; current: num
   );
 }
 
-/** A titled panel. */
+/** A bordered panel on the surface colour. */
 export function Panel({ children, className, ...props }: HTMLAttributes<HTMLElement>) {
   return (
     <section className={cn("rounded-md border border-line bg-surface", className)} {...props}>

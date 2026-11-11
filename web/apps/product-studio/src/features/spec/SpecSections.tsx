@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
-import { ArtifactId, Badge, Heading, StateGlyph, Text, cn } from "@mach/ui";
-import { patternNames, sectionTitles, type Diagnostic, type SectionId, type SpecModel, type WhyDocument } from "./specModel";
-import { inline, plain } from "./text";
+import { ArtifactId, Badge, Heading, Text, cn, type Diagnostic, type SpecSectionId as SectionId, inline, plain, DiagnosticList, OpenQuestionList } from "@mach/ui";
+import { patternNames, sectionTitles } from "./specModel";
+import type { SpecModel as EngineSpecModel, WhyDocument } from "@mach/ui/api";
+
+/** The model may be partial when the spec has structural errors: a missing field is shown as missing. */
+type SpecModel = Partial<EngineSpecModel>;
 
 /** One section of the specification, with the engine's diagnostics about it shown first. */
 export function SpecSection({
@@ -33,23 +36,6 @@ export function SpecSection({
   );
 }
 
-export function DiagnosticList({ items, compact = false }: { items: Diagnostic[]; compact?: boolean }) {
-  return (
-    <ul className={cn("flex flex-col gap-1.5", !compact && "rounded-md border border-danger-line bg-danger-soft px-3 py-2.5")}>
-      {items.map((d, index) => (
-        <li key={index} className="flex items-start gap-2 text-body-sm text-ink">
-          <span className={cn("mt-0.5 shrink-0", d.severity === "error" || d.severity === "why" ? "text-danger-ink" : "text-warning-ink")}>
-            <StateGlyph shape={d.severity === "error" || d.severity === "why" ? "blocked" : "half"} />
-          </span>
-          <span className="min-w-0">
-            {d.message}
-            {d.line ? <span className="ml-1.5 text-caption text-ink-subtle">line {d.line}</span> : null}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 function Missing({ children }: { children: ReactNode }) {
   return <Text size="body-sm" tone="subtle" className="italic">{children}</Text>;
@@ -84,7 +70,11 @@ export function SummarySection({ model, diagnostics }: { model: SpecModel; diagn
       </dl>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(16rem,1fr))] gap-4">
         <TextList title="In this slice" items={model.in_scope} empty="Nothing listed." />
-        <TextList title="Left for later slices" items={model.out_of_scope} empty="Nothing deferred." />
+        <TextList
+          title="Left for later slices"
+          items={model.out_of_scope?.map((item) => (item.deferred_to ? `${item.feature} (deferred to ${item.deferred_to})` : item.feature))}
+          empty="Nothing deferred."
+        />
         <TextList title="Must already be true" items={model.preconditions} empty="No preconditions." />
       </div>
     </SpecSection>
@@ -331,23 +321,6 @@ export function OpenQuestionsSection({ model, fallback, diagnostics }: { model: 
   );
 }
 
-export function OpenQuestionList({ items, compact = false }: { items: Array<{ question: string; follow_up?: string | null }>; compact?: boolean }) {
-  return (
-    <ul className={cn("flex flex-col", compact ? "gap-2" : "gap-2.5")}>
-      {items.map((item, index) => (
-        <li key={index} className={cn("flex items-start gap-2.5", !compact && "rounded-md border border-warning-line bg-surface px-4 py-3")}>
-          <span className="mt-1 shrink-0 text-warning-ink">
-            <StateGlyph shape="half" />
-          </span>
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <p className={cn("text-ink", compact ? "text-body-sm" : "text-body")}>{item.question}</p>
-            {item.follow_up ? <p className="text-caption text-ink-muted">Who can answer: {item.follow_up}</p> : null}
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 export function WhySection({ why, diagnostics }: { why: WhyDocument | null; diagnostics: Diagnostic[] }) {
   return (

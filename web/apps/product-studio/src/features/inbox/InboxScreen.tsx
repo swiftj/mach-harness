@@ -1,30 +1,14 @@
 import { CircleAlert, CircleCheck, RefreshCw, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import {
-  ArtifactId,
-  Banner,
-  Button,
-  EmptyState,
-  ErrorState,
-  Heading,
-  Page,
-  Skeleton,
-  Text,
-  describeError,
-  reviewDescriptor,
-  type FeedbackWave,
-  type Renumber,
-  type Status,
-} from "@mach/ui";
+import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, Text, describeError, reviewDescriptor, type FeedbackWave, type Renumber, type Status, Panel, formatWhen, plural } from "@mach/ui";
 import { ReviewProgress } from "../waves/delivery/ReviewProgress";
 import { forget, useDeliveryMemory, type Withdrawal } from "../waves/delivery/memory";
 import { useDeliveryRead } from "../waves/delivery/ops";
-import { Panel } from "../waves/delivery/ui";
-import { artifactFromPath, formatWhen, plural, titleFor } from "../waves/delivery/words";
 import { CollisionCard } from "./CollisionCard";
 import { ConflictCard } from "./ConflictCard";
 import { OpenQuestionsCard } from "./OpenQuestionsCard";
+import { artifactFromPath, titleFor } from "../../api/describe";
 
 function Group({ id, title, hint, count, children }: { id: string; title: string; hint: string; count: number; children: ReactNode }) {
   return (

@@ -1,24 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import {
-  ArtifactId,
-  Button,
-  ConfirmDialog,
-  Heading,
-  SourceBadge,
-  Text,
-  isFieldConflict,
-  isTextConflict,
-  toast,
-  type ConflictDetail,
-  type Status,
-  type TextChangeSummary,
-} from "@mach/ui";
+import { ArtifactId, Button, ConfirmDialog, Heading, SourceBadge, Text, isFieldConflict, isTextConflict, toast, type ConflictDetail, type Status, type TextChangeSummary, IdText } from "@mach/ui";
 import { asApiError, deliveryOp } from "../waves/delivery/ops";
 import { rememberWithdrawn } from "../waves/delivery/memory";
-import { IdText, failureText } from "../waves/delivery/ui";
-import { artifactFromPath, fieldLabel, titleFor, valueLines, type ArtifactRef } from "../waves/delivery/words";
 import { Affects } from "./Affects";
+import { failureText } from "@mach/ui/api";
+import { artifactFromPath, fieldLabel, titleFor, valueLines, type ArtifactRef } from "../../api/describe";
 
 type Take = "mine" | "theirs";
 

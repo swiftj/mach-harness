@@ -1,9 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Check, HelpCircle, PencilLine, Send, Sparkles } from "lucide-react";
-import { Button, Field, Text, Textarea } from "@mach/ui";
-import { RichText } from "../spec/text";
-import type { ParsedQuestion } from "./events";
+import { Button, Field, Text, Textarea, RichText } from "@mach/ui";
 import type { AnswerKind } from "./model";
+import { type ParsedQuestion } from "@mach/ui/api";
 
 export interface QuestionCardProps {
   question: ParsedQuestion;

@@ -1,8 +1,7 @@
 import { MessageCircleQuestion } from "lucide-react";
 import { Link } from "react-router";
-import { ArtifactId, Button, Heading, SkeletonText, SliceStatusPill, Text, type Status, type StatusSliceRow } from "@mach/ui";
+import { ArtifactId, Button, Heading, SkeletonText, SliceStatusPill, Text, type Status, type StatusSliceRow, plural } from "@mach/ui";
 import { useDeliveryRead } from "../waves/delivery/ops";
-import { plural } from "../waves/delivery/words";
 import { Affects } from "./Affects";
 
 /** A slice whose interview has questions only the PM can answer. The text comes from `slice.show`. */

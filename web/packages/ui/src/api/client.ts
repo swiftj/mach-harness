@@ -177,6 +177,7 @@ export function createClient(options: ClientOptions = {}): MachClient {
       return send("PUT", draftPath(kind, sliceId), `drafts.${kind}`, body, opts.signal);
     },
     interview: createInterviewClient({
+      get: (path, operation, signal) => send("GET", path, operation, undefined, signal),
       post: (path, operation, body) => send("POST", path, operation, body),
       baseUrl: options.baseUrl ?? "",
       eventSource: options.eventSource,

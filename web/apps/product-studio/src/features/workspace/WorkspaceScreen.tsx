@@ -5,6 +5,7 @@ import {
   ArtifactId,
   Banner,
   Button,
+  Disclosure,
   EpicStatusPill,
   ErrorState,
   Heading,
@@ -306,9 +307,27 @@ function AttentionBanners({
     );
   }
   if (status.structural_errors.length) {
+    // The engine's message names files; the PM sees the items they belong to, the exact words behind a disclosure.
+    const affected = [...new Set(status.structural_errors.map((error) => describePath(error.split(":")[0] ?? error, status).label))];
     banners.push(
-      <Banner key="structure" tone="danger" title="The workspace has a structural problem">
-        {status.structural_errors.join(" ")}
+      <Banner
+        key="structure"
+        tone="danger"
+        title="Some of your drafts no longer fit together"
+      >
+        <p>
+          {affected.length === 1 ? "Look at " : "Look at these: "}
+          {affected.join("; ")}. Anything that disagrees with the shared project is on the Decisions screen.
+        </p>
+        <Disclosure summary="What the check reported" className="mt-2 bg-transparent">
+          <ul className="flex flex-col gap-1">
+            {status.structural_errors.map((error) => (
+              <li key={error} className="break-words font-mono text-caption text-ink-muted">
+                {error}
+              </li>
+            ))}
+          </ul>
+        </Disclosure>
       </Banner>,
     );
   }

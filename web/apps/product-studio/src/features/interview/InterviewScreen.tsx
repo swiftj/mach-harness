@@ -16,7 +16,6 @@ import {
   Tooltip,
   describeError,
 } from "@mach/ui";
-import { SLICE_ID, useSliceShow } from "../spec/api";
 import { Composer } from "./Composer";
 import { ContinueInClaudeCode } from "./ContinueInClaudeCode";
 import { isBusy } from "./model";
@@ -24,6 +23,8 @@ import { QuestionCard } from "./QuestionCard";
 import { SpecPreview } from "./SpecPreview";
 import { Transcript } from "./Transcript";
 import { useInterview, type InterviewController } from "./useInterview";
+import { ENGINE_ID as SLICE_ID } from "@mach/ui/api";
+import { useSliceShow } from "../../api/useSliceShow";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 

@@ -1,17 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import { cn } from "@mach/ui";
-
-/**
- * Presentation helpers shared by the specification and interview screens. They change how text
- * looks, never what it says.
- *
- * PROMOTION CANDIDATE: `RichText` (safe rendering of the interviewer's light Markdown) and `plain`.
- */
-
-/** Requirement keywords (MUST NOT, SHALL...) are written in capitals for the validator; read them in lower case. */
-export function plain(text: string): string {
-  return text.replace(/\b(MUST NOT|MUST|SHALL NOT|SHALL|SHOULD NOT|SHOULD|MAY|REQUIRED|RECOMMENDED|OPTIONAL)\b/g, (word) => word.toLowerCase());
-}
+import { cn } from "../lib/cn";
 
 /** `**bold**` and `code` inside a line. No HTML is ever interpreted. */
 export function inline(text: string): ReactNode {
@@ -53,7 +41,10 @@ function blocks(text: string): Block[] {
   return out;
 }
 
-/** The interviewer's messages: paragraphs, numbered and bulleted lists, bold. Rendered as text, never as HTML. */
+/**
+ * Light Markdown written by the interviewer or the engine: paragraphs, numbered and bulleted lists,
+ * bold, code. Rendered as text, never as HTML, so nothing in it can run or style the page.
+ */
 export function RichText({ text, className, editorial = false }: { text: string; className?: string; editorial?: boolean }) {
   return (
     <div className={cn("flex flex-col gap-3 break-words", editorial ? "font-serif text-body-lg" : "text-body", className)}>
@@ -81,8 +72,4 @@ export function RichText({ text, className, editorial = false }: { text: string;
       })}
     </div>
   );
-}
-
-export function count(n: number, one: string, many = `${one}s`): string {
-  return `${n} ${n === 1 ? one : many}`;
 }

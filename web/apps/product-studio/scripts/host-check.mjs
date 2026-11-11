@@ -19,6 +19,7 @@ const { binary, scratch } = buildHost();
 const project = scratchProject();
 studio(project, "project", "init", "--id", "host-check", "--name", "Host Check", "--vision", "Prove the app works inside the real host.", "--outcome", "The app loads with real data");
 studio(project, "epic", "add", "--title", "Embedded app", "--criterion", "Loads under the host's security policy");
+studio(project, "slice", "new", "--epic", "EPIC-001", "--title", "Open the app from the skill");
 
 const host = await startHost(binary, project);
 const browser = await chromium.launch();
@@ -52,6 +53,18 @@ try {
   await page.getByRole("dialog").waitFor({ state: "detached" });
   const approvedNow = studio(project, "status").epics[0]?.status;
   check("epic approved through the app's own client (POST with CSRF)", approvedNow === "approved", `engine says ${approvedNow}`);
+
+  // The lazily loaded map (React Flow, then ELK on first layout) under the CSP.
+  await page.goto(`${host.origin}/#/roadmap`, { waitUntil: "networkidle" });
+  await page.locator(".react-flow__node").first().waitFor({ timeout: 20000 });
+  check("roadmap map loads on demand and lays out", (await page.locator(".react-flow__node").count()) >= 3);
+
+  // The interview screen asks the host for the slice's interview through the shared client.
+  const lookup = page.waitForResponse((r) => r.url().includes("/api/interview?slice_id=SLICE-001"), { timeout: 20000 }).catch(() => null);
+  await page.goto(`${host.origin}/#/slices/SLICE-001/interview`, { waitUntil: "networkidle" });
+  const answered = await lookup;
+  check("interview lookup through the shared client", answered !== null, answered ? `HTTP ${answered.status()}` : "no request");
+  await page.locator("h1").first().waitFor({ timeout: 20000 });
 
   // A state-changing request from the page itself: the client must send CSRF and JSON.
   const set = await page.evaluate(async () => {

@@ -1,5 +1,5 @@
 /**
- * DEVELOPMENT ONLY. Shared by the scripted interview and the slice fixtures under
+ * DEVELOPMENT ONLY. Shared by the scripted interview and the fixture transport under
  * `vite --mode fixtures`, so the specification preview changes when the script "writes up" the
  * spec. Never imported by production code.
  */

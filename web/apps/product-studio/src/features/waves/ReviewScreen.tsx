@@ -1,9 +1,8 @@
 import { ArrowLeft, CircleAlert, RefreshCw } from "lucide-react";
 import { Link, useParams } from "react-router";
-import { ArtifactId, Button, ErrorState, Heading, LoadingState, Page, SliceStatusPill, Text, describeError } from "@mach/ui";
+import { ArtifactId, Button, ErrorState, Heading, LoadingState, Page, SliceStatusPill, Text, describeError, Panel } from "@mach/ui";
 import { FeedbackBody } from "./SendScreen";
 import { useDeliveryRead } from "./delivery/ops";
-import { Panel } from "./delivery/ui";
 
 /** How review of one sent wave is going, in the PM's words. */
 export function ReviewScreen() {

@@ -1,28 +1,10 @@
 import { ArrowLeft, CircleAlert, CircleCheck, RefreshCw, Send as SendIcon } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import {
-  ArtifactId,
-  Badge,
-  Banner,
-  Button,
-  ConfirmDialog,
-  ErrorState,
-  Heading,
-  LoadingState,
-  Page,
-  SkeletonText,
-  SliceStatusPill,
-  Text,
-  describeError,
-  toast,
-  type Send,
-  type Status,
-} from "@mach/ui";
+import { ArtifactId, Badge, Banner, Button, ConfirmDialog, ErrorState, Heading, LoadingState, Page, SkeletonText, SliceStatusPill, Text, describeError, toast, type Send, type Status, Disclosure, FactList, IdText, Panel, Stepper, plural } from "@mach/ui";
 import { ReviewProgress } from "./delivery/ReviewProgress";
 import { asApiError, deliveryOp, useDeliveryRead, type DeliveryRead } from "./delivery/ops";
-import { Disclosure, FactList, IdText, Panel, Stepper, failureText } from "./delivery/ui";
-import { plural } from "./delivery/words";
+import { failureText } from "@mach/ui/api";
 
 const steps = [{ label: "Check what will be sent" }, { label: "Confirm" }, { label: "Sent" }];
 

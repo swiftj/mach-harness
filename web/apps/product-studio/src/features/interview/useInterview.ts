@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { MachApiError } from "@mach/ui/api";
-import { interviewCapability, loadSession, toApiError, type InterviewCapability } from "../spec/api";
-import { getInterviewClient, type InterviewClient } from "./client";
-import type { InterviewSummary } from "./events";
+import { type MachApiError, type InterviewClient, type InterviewSummary } from "@mach/ui/api";
+import { client } from "../../api/client";
 import { initialModel, interviewReducer, type AnswerKind, type Decision, type InterviewModel } from "./model";
+import { interviewCapability, loadSession, toApiError, type InterviewCapability } from "../../api/session";
 
 export type InterviewPhase =
   /** Asking the host whether interviews can run and whether this slice has one. */
@@ -200,4 +199,16 @@ export function useInterview(sliceId: string): InterviewController {
   }, [sliceId]);
 
   return { phase, capability, summary, model, problem, sending, start, reply, interrupt, stop, retryLoad };
+}
+
+/**
+ * The interview client this screen uses: the shared one from @mach/ui/api. Under
+ * `vite --mode fixtures` it is the scripted development interview (dev/scriptedInterview.ts),
+ * loaded lazily so the production bundle never contains it.
+ */
+async function getInterviewClient(): Promise<InterviewClient> {
+  if (import.meta.env.MODE === "fixtures") {
+    return (await import("./dev/scriptedInterview")).scriptedInterviewClient;
+  }
+  return client.interview;
 }

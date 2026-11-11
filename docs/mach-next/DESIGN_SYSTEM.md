@@ -204,6 +204,8 @@ Shadows are tinted charcoal, never grey-blue. In dark, elevation shows mainly as
 - **Sheet**: detail beside the page, from the right (400, 480 or 640px). Used for a reconcile comparison (your draft | shared project, side by side, each with its own button), a slice's check, reviewer remarks.
 - **Popover**: non-modal explanation anchored to a control. **Tooltip**: names an icon-only control; never holds essential information.
 - **Tabs**: underline in `accent`; arrow keys move between tabs.
+- **Reading and detail** (promoted from the screens in wave 3): `RichText` renders light Markdown (paragraphs, lists, bold, code) as text, never HTML; `plain()` lowers requirement keywords (MUST, SHALL) for reading; `IdText` sets engine IDs inside a sentence as identifiers; `Disclosure` hides engineering detail (paths, Git's own words) behind a closed summary; `FactList`, `Panel`, `Stepper`. Formatting: `plural()`, `formatWhen()`.
+- **Specification** (`@mach/ui`, from the spec and interview screens): `checkVerdict`, `CheckPill`, `CheckCounts` put the engine's check into words (a passing check is "ready for your approval", never "approved"); `diagnostics(check)` places each engine message next to the section it concerns; `DiagnosticList`, `OpenQuestionList`; `specModel(show)` and `whyDocument(show)` read `slice show`.
 
 ## 8. Lifecycle visualisation
 
@@ -332,21 +334,22 @@ await client.op("slice.approve", { slice_id: "SLICE-001" });
 await client.writeDraft("spec", "SLICE-001", markdown, { name: "invite-teammate" });  // → { slice_id, kind, path, check }
 
 // The interview (contract 8.2)
+const current = await client.interview.current("SLICE-002");      // GET /api/interview?slice_id= → InterviewSummary | null
 const { interview_id } = await client.interview.start("SLICE-002", "Admins remove people who left");
-const stream = client.interview.events(interview_id, {
-  onEvent: (e) => { if (e.type === "question") show(e.data); },   // typed per event
-  onStreamState: (s) => setLink(s),                                 // connecting | open | retrying | closed
+const unsubscribe = client.interview.subscribe(interview_id, {
+  onEvent: (e) => { if (e.type === "question") show(e.data); },   // typed per event; e.seq is the SSE id
+  onConnection: (s) => setLink(s),                                  // connecting | open | reconnecting | closed
 });
 await client.interview.reply(interview_id, "Yes");
 await client.interview.interrupt(interview_id);   // stop this turn
 await client.interview.stop(interview_id);        // end; the draft and note remain
-stream.close();
+unsubscribe();
 ```
 
 - Every response must be the envelope `{ok, data}` / `{ok:false, error:{kind, message}}`. Anything else is a `protocol` error.
 - Failures reject with `MachApiError { kind, message, status, operation }`. Kinds: the host's `refused | invalid | unauthorized | conflict | unavailable | internal`, plus the client's `network | protocol | aborted`. `describeError(error)` gives a title and message in the interface's voice; a `refused` message is the engine's own and is shown as is.
 - GET requests carry only the session cookie. Every POST and PUT carries `Content-Type: application/json`, `X-MACH-CSRF` and same-origin credentials; when the token is not known yet, the client fetches the session first (one shared request). A 401 marks the session ended; a 403 is one refused request. Slice IDs are checked against `^[A-Z]+-\d{3,}$` before they go into a path.
-- The interview stream (`client.interview.events`) is an `EventSource` that the browser resumes with `Last-Event-ID`; if the host answers with an error status the client reopens it with back-off (1, 2, 4… up to 15 s, six attempts) and stops after an `ended` event.
+- The interview stream (`client.interview.subscribe`) is an `EventSource` that the browser resumes with `Last-Event-ID`; a closed stream is reopened with back-off (2, 4, 8, 16 s, then every 15 s) and replays the current turn, so events whose sequence number (the SSE `id`) was already seen are dropped. It stops after an `ended` event.
 - `client.connection` is the host connection state (`connecting | online | offline | unauthorized`); `useConnectionState(store)` feeds `ConnectionIndicator`.
 - `personalActs` lists the operations that record a person's decision; screens confirm each in a dialog.
 - A `Transport` can be supplied for tests and fixture mode. Product Studio uses one only under `vite --mode fixtures`; the production bundle contains no fixture code (checked by grepping the build).

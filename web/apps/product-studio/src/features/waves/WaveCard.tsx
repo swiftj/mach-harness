@@ -1,27 +1,9 @@
 import { Lock, Minus, Plus, Send, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
-import {
-  ArtifactId,
-  Button,
-  ConfirmDialog,
-  Heading,
-  ReviewStatusPill,
-  SliceStatusPill,
-  SourceBadge,
-  StateGlyph,
-  Text,
-  Tooltip,
-  WaveStatusPill,
-  reviewDescriptor,
-  toast,
-  type FeedbackWave,
-  type Status,
-  type StatusWaveRow,
-} from "@mach/ui";
+import { ArtifactId, Button, ConfirmDialog, Heading, ReviewStatusPill, SliceStatusPill, SourceBadge, StateGlyph, Text, Tooltip, WaveStatusPill, reviewDescriptor, toast, type FeedbackWave, type Status, type StatusWaveRow, IdText, formatWhen, plural } from "@mach/ui";
 import { asApiError, deliveryOp } from "./delivery/ops";
-import { IdText, failureText } from "./delivery/ui";
-import { formatWhen, plural } from "./delivery/words";
+import { failureText } from "@mach/ui/api";
 
 export interface WaveCardProps {
   wave: StatusWaveRow;

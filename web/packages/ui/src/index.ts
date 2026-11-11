@@ -7,6 +7,7 @@
  *   import { ProductGraph } from "@mach/ui/graph";   and "@mach/ui/graph.css"
  */
 export * from "./lib/cn";
+export * from "./lib/format";
 export * from "./tokens/tokens";
 export * from "./theme/ThemeProvider";
 export * from "./motion/motion";
@@ -30,7 +31,10 @@ export * from "./components/skeleton";
 export * from "./components/states";
 export * from "./components/banner";
 export * from "./components/toast";
+export * from "./components/rich-text";
+export * from "./components/detail";
 
 export * from "./shell";
 export * from "./lifecycle";
+export * from "./spec";
 export * from "./api";

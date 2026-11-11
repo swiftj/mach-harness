@@ -94,6 +94,21 @@ for (const scenario of ["empty", "established"]) {
       }
     }
     if (scenario === "established") {
+      // At 1100 wide the rail is icons only; each names itself in a tooltip on hover and focus.
+      await page.setViewportSize({ width: 1100, height: 800 });
+      await page.emulateMedia({ colorScheme: "light" });
+      await page.goto(`${host.origin}/#/`);
+      await settle(page);
+      await page.locator('nav[aria-label="Main"] a').nth(2).hover();
+      await page.getByRole("tooltip").waitFor();
+      await page.screenshot({ path: join(out, "established-rail-tooltip-light-1100.png"), clip: { x: 0, y: 0, width: 420, height: 360 } });
+      // The structural problem, opened.
+      const details = page.locator("details", { hasText: "What the check reported" });
+      if (await details.count()) {
+        await details.first().locator("summary").click();
+        await page.waitForTimeout(200);
+        await page.screenshot({ path: join(out, "established-workspace-structure-light-1100.png") });
+      }
       // The roadmap's detail sheet for a slice, and Vision's epic editor, in both themes.
       await page.setViewportSize({ width: 1440, height: 900 });
       for (const theme of themes) {

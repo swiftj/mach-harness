@@ -1,9 +1,8 @@
 import { CircleCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
-import { ArtifactId, Banner, Button, Heading, Text, type Refresh, type Status } from "@mach/ui";
-import { IdText, Panel } from "../waves/delivery/ui";
-import { artifactFromPath, fieldLabel, plural, titleFor } from "../waves/delivery/words";
+import { ArtifactId, Banner, Button, Heading, Text, type Refresh, type Status, IdText, Panel, plural } from "@mach/ui";
+import { artifactFromPath, fieldLabel, titleFor } from "../../api/describe";
 
 /** The engine reports spec updates with added/removed/changed IDs; the shared type lists only some. */
 type Update = Refresh["updated"][number] & { added?: string[]; removed?: string[] };

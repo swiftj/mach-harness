@@ -1,12 +1,8 @@
 import { Link } from "react-router";
 import { ArrowRight, CircleAlert } from "lucide-react";
-import { ArtifactId, Badge, Button, ErrorState, Heading, SkeletonText, SliceStatusPill, Spinner, Tabs, TabsContent, TabsList, TabsTrigger, Text, describeError } from "@mach/ui";
-import type { SliceShowState } from "../spec/api";
-import { CheckCounts, CheckPill } from "../spec/CheckSummary";
-import { DiagnosticList, OpenQuestionList } from "../spec/SpecSections";
-import { diagnostics, specModel } from "../spec/specModel";
-import { plain } from "../spec/text";
+import { ArtifactId, Badge, Button, ErrorState, Heading, SkeletonText, SliceStatusPill, Spinner, Tabs, TabsContent, TabsList, TabsTrigger, Text, describeError, CheckCounts, CheckPill, DiagnosticList, OpenQuestionList, diagnostics, specModel, plain } from "@mach/ui";
 import type { Decision } from "./model";
+import { type SliceShowState } from "../../api/useSliceShow";
 
 const decisionLabels: Record<Decision["answer"], { label: string; tone: "success" | "info" | "warning" | "neutral" }> = {
   accepted: { label: "Accepted", tone: "success" },

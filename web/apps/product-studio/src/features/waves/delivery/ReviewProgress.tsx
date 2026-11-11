@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
-import { ArtifactId, Button, Heading, Quote, Text, WaveJourney, reviewDescriptor, type FeedbackWave } from "@mach/ui";
-import { Disclosure, FactList } from "./ui";
-import { remarkKind } from "./words";
+import { ArtifactId, Button, Heading, Quote, Text, WaveJourney, reviewDescriptor, type FeedbackWave, Disclosure, FactList } from "@mach/ui";
+import { remarkKind } from "../../../api/describe";
 
 /** What the PM can do about a review state, in their words. Advice only; the engine decided the state. */
 function guidance(wave: FeedbackWave): { text: string; action?: { to: string; label: string } } | null {

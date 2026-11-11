@@ -1,6 +1,6 @@
 import { ENGINE_ID } from "./ids";
 import { MachApiError } from "./errors";
-import { interviewEventTypes, type InterviewEvent, type InterviewEventMap, type InterviewEventType } from "./types";
+import { interviewEventNames, type InterviewEvent, type InterviewSummary, type StartResult } from "./types";
 
 /** The minimum of EventSource the stream needs, so tests and fixture mode can supply their own. */
 export interface EventSourceLike {
@@ -13,41 +13,39 @@ export interface EventSourceLike {
 
 export type EventSourceFactory = (url: string) => EventSourceLike;
 
-/**
- * The stream's own connection, separate from the interview's state:
- *
- *   connecting  opening for the first time
- *   open        receiving events
- *   retrying    the connection dropped; reopening with back-off (the browser resumes with Last-Event-ID)
- *   closed      ended (an `ended` event, `close()`, or too many failed attempts)
- */
-export type StreamState = "connecting" | "open" | "retrying" | "closed";
+/** The stream's link to the host, separate from the interviewer's own state. */
+export type StreamConnection = "connecting" | "open" | "reconnecting" | "closed";
 
-export interface InterviewStreamHandlers {
-  /** Every event, in order, typed. */
+export interface StreamHandlers {
+  /** Every event, in order, typed, each at most once. */
   onEvent: (event: InterviewEvent) => void;
-  onStreamState?: (state: StreamState) => void;
+  onConnection: (state: StreamConnection) => void;
 }
 
-export interface InterviewStream {
-  close(): void;
-}
-
+/**
+ * Everything an interview screen asks of the host (contract 8.2). One interface, so the HTTP
+ * client and a development script are interchangeable.
+ */
 export interface InterviewClient {
+  /** GET /api/interview?slice_id=. Null when the slice has never been interviewed here. */
+  current(sliceId: string, signal?: AbortSignal): Promise<InterviewSummary | null>;
   /**
-   * POST /api/interview. For a new idea, the app runs `slice.new` first and passes the new slice's ID
-   * (with the idea in the PM's words). Rejects with `conflict` while that slice's interview is running,
-   * `refused` for an approved slice, `unavailable` when the host cannot run interviews.
+   * POST /api/interview: start or resume. For a new idea, run `slice.new` first and pass the idea.
+   * Rejects with `conflict` when another window holds the slice, `refused` for an approved slice,
+   * `unavailable` when the host cannot run interviews.
    */
-  start(sliceId: string, idea?: string): Promise<{ interview_id: string }>;
-  /** GET /api/interview/<id>/events as a typed stream that reconnects by itself. */
-  events(interviewId: string, handlers: InterviewStreamHandlers): InterviewStream;
-  /** The PM's answer. */
-  reply(interviewId: string, text: string): Promise<{ sent: boolean }>;
+  start(sliceId: string, idea?: string): Promise<StartResult>;
+  /**
+   * GET /api/interview/<id>/events. Reconnects by itself (the browser resends Last-Event-ID; a closed
+   * stream is reopened with back-off) and drops events whose sequence number it has already seen.
+   * Returns the unsubscribe function.
+   */
+  subscribe(interviewId: string, handlers: StreamHandlers): () => void;
+  reply(interviewId: string, text: string): Promise<void>;
   /** Stop the current turn; the interview stays open. */
-  interrupt(interviewId: string): Promise<unknown>;
+  interrupt(interviewId: string): Promise<void>;
   /** End the interview. The draft, the saved note and the session remain. */
-  stop(interviewId: string): Promise<unknown>;
+  stop(interviewId: string): Promise<void>;
 }
 
 const INTERVIEW_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -57,89 +55,94 @@ function checkId(id: string, operation: string): string {
   return encodeURIComponent(id);
 }
 
-function parse(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw; // `state` may arrive as a bare word
-  }
-}
-
 export function createInterviewClient(deps: {
+  get: (path: string, operation: string, signal?: AbortSignal) => Promise<unknown>;
   post: (path: string, operation: string, body: unknown) => Promise<unknown>;
   baseUrl: string;
   eventSource?: EventSourceFactory;
 }): InterviewClient {
-  const open: EventSourceFactory = deps.eventSource ?? ((url) => new EventSource(url) as unknown as EventSourceLike);
+  const open: EventSourceFactory =
+    deps.eventSource ?? ((url) => new EventSource(url, { withCredentials: true }) as unknown as EventSourceLike);
 
   return {
+    async current(sliceId, signal) {
+      if (!ENGINE_ID.test(sliceId)) throw new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, "interview.current");
+      const data = (await deps.get(`/api/interview?slice_id=${encodeURIComponent(sliceId)}`, "interview.current", signal)) as {
+        interview: InterviewSummary | null;
+      };
+      return data.interview;
+    },
     start(sliceId, idea) {
       if (!ENGINE_ID.test(sliceId)) return Promise.reject(new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, "interview.start"));
-      return deps.post("/api/interview", "interview.start", idea ? { slice_id: sliceId, idea } : { slice_id: sliceId }) as Promise<{ interview_id: string }>;
+      return deps.post("/api/interview", "interview.start", idea ? { slice_id: sliceId, idea } : { slice_id: sliceId }) as Promise<StartResult>;
     },
-    reply(id, text) {
-      return deps.post(`/api/interview/${checkId(id, "interview.reply")}/reply`, "interview.reply", { text }) as Promise<{ sent: boolean }>;
+    async reply(id, text) {
+      await deps.post(`/api/interview/${checkId(id, "interview.reply")}/reply`, "interview.reply", { text });
     },
-    interrupt(id) {
-      return deps.post(`/api/interview/${checkId(id, "interview.interrupt")}/interrupt`, "interview.interrupt", {});
+    async interrupt(id) {
+      await deps.post(`/api/interview/${checkId(id, "interview.interrupt")}/interrupt`, "interview.interrupt", {});
     },
-    stop(id) {
-      return deps.post(`/api/interview/${checkId(id, "interview.stop")}/stop`, "interview.stop", {});
+    async stop(id) {
+      await deps.post(`/api/interview/${checkId(id, "interview.stop")}/stop`, "interview.stop", {});
     },
-    events(id, { onEvent, onStreamState }) {
+    subscribe(id, { onEvent, onConnection }) {
       const url = `${deps.baseUrl}/api/interview/${checkId(id, "interview.events")}/events`;
       let source: EventSourceLike | null = null;
-      let attempts = 0;
-      let finished = false;
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      const setState = (state: StreamState) => onStreamState?.(state);
+      let lastSeq = -1;
+      let closed = false;
+      let failures = 0;
+      let retry: ReturnType<typeof setTimeout> | null = null;
 
       const connect = () => {
+        if (closed) return;
+        onConnection(failures === 0 ? "connecting" : "reconnecting");
         source = open(url);
         source.onopen = () => {
-          attempts = 0;
-          setState("open");
+          failures = 0;
+          onConnection("open");
         };
         source.onerror = () => {
-          if (finished) return;
-          // CONNECTING (0): the browser is already retrying with Last-Event-ID. CLOSED (2): it gave up
-          // (the host answered with an error status); reopen ourselves with back-off.
-          if (source && source.readyState === 2) {
-            source.close();
-            attempts += 1;
-            if (attempts > 6) {
-              finished = true;
-              setState("closed");
-              return;
-            }
-            setState("retrying");
-            timer = setTimeout(connect, Math.min(15000, 1000 * 2 ** (attempts - 1)));
+          if (closed || !source) return;
+          // While CONNECTING (0) the browser retries by itself, sending Last-Event-ID. A CLOSED (2)
+          // source (an error envelope, a dropped host) is reopened here with a growing delay; the
+          // host then replays the current turn and the sequence numbers drop what was seen.
+          if (source.readyState === 2) {
+            source = null;
+            failures += 1;
+            onConnection("reconnecting");
+            retry = setTimeout(connect, Math.min(1000 * 2 ** Math.min(failures, 4), 15000));
           } else {
-            setState("retrying");
+            onConnection("reconnecting");
           }
         };
-        for (const type of interviewEventTypes) {
-          source.addEventListener(type, (message) => {
-            const data = parse(message.data) as InterviewEventMap[InterviewEventType];
-            onEvent({ type, data } as InterviewEvent);
-            if (type === "ended") {
-              finished = true;
+        for (const name of interviewEventNames) {
+          source.addEventListener(name, (message) => {
+            const seq = message.lastEventId ? Number(message.lastEventId) : NaN;
+            if (Number.isFinite(seq)) {
+              if (seq <= lastSeq) return;
+              lastSeq = seq;
+            }
+            let data: unknown;
+            try {
+              data = JSON.parse(message.data);
+            } catch {
+              return;
+            }
+            onEvent({ type: name, data, seq: Number.isFinite(seq) ? seq : null } as InterviewEvent);
+            if (name === "ended") {
+              closed = true;
               source?.close();
-              setState("closed");
+              onConnection("closed");
             }
           });
         }
       };
 
-      setState("connecting");
       connect();
-      return {
-        close() {
-          finished = true;
-          if (timer) clearTimeout(timer);
-          source?.close();
-          setState("closed");
-        },
+      return () => {
+        closed = true;
+        if (retry) clearTimeout(retry);
+        source?.close();
       };
     },
   };

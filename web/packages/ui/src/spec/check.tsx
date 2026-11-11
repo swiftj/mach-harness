@@ -1,6 +1,9 @@
-import type { SliceCheck, SliceStatus } from "@mach/ui/api";
-import { StateGlyph, StatusPill, cn, type GlyphShape, type Tone } from "@mach/ui";
-import { count } from "./text";
+import type { SliceCheck, SliceStatus } from "../api/types";
+import { StatusPill } from "../components/badge";
+import type { Tone } from "../components/tone";
+import { cn } from "../lib/cn";
+import { plural } from "../lib/format";
+import { StateGlyph, type GlyphShape } from "../lifecycle/glyph";
 
 export interface CheckVerdict {
   tone: Tone;
@@ -20,13 +23,13 @@ export function checkVerdict(check: SliceCheck, status?: SliceStatus): CheckVerd
     return { tone: "neutral", glyph: "open", label: "No spec yet", detail: "The interviewer writes the spec once the questions are settled." };
   }
   if (problems > 0) {
-    return { tone: "danger", glyph: "blocked", label: `${count(problems, "problem")} to fix`, detail: "The engine's check found problems in the draft." };
+    return { tone: "danger", glyph: "blocked", label: `${plural(problems, "problem")} to fix`, detail: "The engine's check found problems in the draft." };
   }
   if (check.open_questions.length > 0) {
     return {
       tone: "warning",
       glyph: "half",
-      label: `${count(check.open_questions.length, "open question")}`,
+      label: `${plural(check.open_questions.length, "open question")}`,
       detail: "The spec is well formed, but it cannot be approved while questions are open.",
     };
   }

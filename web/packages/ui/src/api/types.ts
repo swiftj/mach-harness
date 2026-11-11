@@ -459,10 +459,10 @@ export interface SpecModel {
   preconditions: string[];
   invariants: SpecStatement[];
   functional_requirements: SpecRequirement[];
-  decision_matrix: DecisionMatrix;
+  decision_matrix: DecisionMatrix | null;
   scenarios: Scenario[];
   external_dependencies: Array<{ name: string; failure_requirements: string[] }>;
-  required_permissions: string;
+  required_permissions: string | null;
   assumptions: string[];
   accepted_defaults: Array<{ default: string; requirements: string[] }>;
   open_questions: Array<{ question: string; follow_up: string | null }>;
@@ -481,6 +481,9 @@ export interface WhySection {
   /** The bold `- **Name:** value` lines of the section. */
   fields: Record<string, string>;
 }
+
+/** Also called WhyDocument. */
+export type WhyDocument = WhyView;
 
 export interface WhyView {
   exists: boolean;
@@ -585,8 +588,11 @@ export interface Session {
     interview: boolean;
     /** Why the interview is unavailable, in plain words; null when it is available. */
     interview_reason: string | null;
-    /** The exact command to continue in Claude Code, when the host reports one. */
-    interview_command?: string | null;
+    /**
+     * The command prefix for continuing in Claude Code ("/mach:product-studio continue" for a plugin
+     * install); the app appends the slice ID. Null when the host does not say.
+     */
+    continue_command?: string | null;
   };
   versions: { host: string; api: string | number; engine_install: string | null };
   /** Set when the engine could not report status while building the session. */
@@ -614,41 +620,87 @@ export interface DraftWriteResult {
   check: SliceCheck;
 }
 
-/* ── Interview events (contract 8.2) ──────────────────────────────────── */
+/* ── The interview (contract 8.2) ──────────────────────────────────────── */
 
-export type InterviewState = "starting" | "thinking" | "working" | "waiting_for_reply" | "ended" | "failed";
+export type InterviewHostState = "starting" | "thinking" | "working" | "waiting_for_reply" | "ended" | "failed";
+/** Kept for the first wave's name. */
+export type InterviewState = InterviewHostState;
+
+export type MessageKind = "question" | "confirmation" | "other";
+
+export interface ParsedQuestion {
+  message_id: string;
+  /** Restarts at 1 in every session: never a key. */
+  number: number;
+  title: string;
+  body: string;
+  recommendation: string;
+  /** Up to a few lines the interviewer wrote before the question. */
+  preface: string;
+}
+
+export type ActivityKind = "lookup" | "check" | "save" | "write" | "refused" | "other";
+
+export type TurnOutcome = "replied" | "interrupted" | "timed_out" | "failed" | "error_max_budget_usd" | (string & {});
+
+export type InterviewErrorKind =
+  | "no_result"
+  | "timed_out"
+  | "error_max_budget_usd"
+  | "error_during_execution"
+  | "unavailable"
+  | (string & {});
 
 export interface InterviewEventMap {
-  state: InterviewState;
+  state: InterviewHostState;
   /** A streamed chunk; may belong to a message that never becomes final. */
   text: { message_id: string; delta: string };
   /** Once per turn: the reply the PM answers. */
-  message: { message_id: string; text: string; kind: "question" | "confirmation" | "other" };
-  /** Sent with `message` when it parses as exactly one question. Key by message_id; number repeats across sessions. */
-  question: { message_id: string; number: number; title: string; body: string; recommendation: string; preface: string };
-  activity: { kind: "lookup" | "check" | "save" | "write" | "refused" | "other"; text: string };
-  draft_changed: { slice_id: string; what: Array<"spec" | "why" | "work_order"> };
-  turn: { outcome: string; seconds: number; cost_usd: number | null; session_cost_usd: number | null; refused: number | boolean };
+  message: { message_id: string; text: string; kind: MessageKind };
+  /** Sent with `message` when it parses as exactly one question. Key by message_id. */
+  question: ParsedQuestion;
+  activity: { kind: ActivityKind; text: string };
+  draft_changed: { slice_id: string; what: Array<"spec" | "why" | "work_order" | (string & {})> };
+  turn: { outcome: TurnOutcome; seconds: number; cost_usd: number | null; session_cost_usd: number | null; refused: number | string[] | null };
   ended: { reason: "stopped" | "failed" | "host_shutdown" | (string & {}) };
-  error: { kind: string; message: string };
+  error: { kind: InterviewErrorKind; message: string };
 }
 
-export type InterviewEventType = keyof InterviewEventMap;
+export type InterviewEventName = keyof InterviewEventMap;
+/** Kept for the first wave's name. */
+export type InterviewEventType = InterviewEventName;
 
-/** One event from GET /api/interview/<id>/events, as a discriminated union. */
-export type InterviewEvent = { [K in InterviewEventType]: { type: K; data: InterviewEventMap[K] } }[InterviewEventType];
+/**
+ * One event from GET /api/interview/<id>/events. `seq` is the SSE `id` (the host's sequence number),
+ * or null when the host sent none; the client drops events it has already seen.
+ */
+export type InterviewEvent = { [K in InterviewEventName]: { type: K; data: InterviewEventMap[K]; seq: number | null } }[InterviewEventName];
 
-export const interviewEventTypes: readonly InterviewEventType[] = [
-  "state",
-  "text",
-  "message",
-  "question",
-  "activity",
-  "draft_changed",
-  "turn",
-  "ended",
-  "error",
-];
+export const interviewEventNames: InterviewEventName[] = ["state", "text", "message", "question", "activity", "draft_changed", "turn", "ended", "error"];
+/** Kept for the first wave's name. */
+export const interviewEventTypes: readonly InterviewEventName[] = interviewEventNames;
+
+/** GET /api/interview?slice_id=: what the host knows about a slice's interview. */
+export interface InterviewSummary {
+  interview_id: string | null;
+  slice_id: string;
+  /** A process holds this slice's interview now. False when only a saved session exists. */
+  live: boolean;
+  state: InterviewHostState | "saved";
+  turn_running: boolean;
+  /** Another host or window holds the slice's lock. */
+  locked_elsewhere: boolean;
+  last_message: { message_id: string; text: string; kind: MessageKind; question: ParsedQuestion | null } | null;
+  turns: number;
+  session_cost_usd: number | null;
+}
+
+/** POST /api/interview. */
+export interface StartResult {
+  interview_id: string;
+  slice_id: string;
+  resumed: boolean;
+}
 
 /* ── Fixture file shape ─────────────────────────────────────────────────── */
 

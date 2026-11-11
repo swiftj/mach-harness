@@ -1,43 +1,13 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { CircleAlert, MessagesSquare, SearchX } from "lucide-react";
-import {
-  ArtifactId,
-  Banner,
-  Button,
-  EmptyState,
-  ErrorState,
-  Heading,
-  Page,
-  Skeleton,
-  SkeletonText,
-  SliceLifecycle,
-  SliceStatusPill,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-  Text,
-  describeError,
-} from "@mach/ui";
-import type { SliceShow } from "@mach/ui/api";
-import { SLICE_ID, useSliceShow } from "./api";
-import { CheckCounts, CheckPill, checkVerdict } from "./CheckSummary";
+import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, SliceLifecycle, SliceStatusPill, Tabs, TabsContent, TabsList, TabsTrigger, Text, describeError, CheckCounts, CheckPill, checkVerdict, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
+import { type SliceShow, ENGINE_ID as SLICE_ID } from "@mach/ui/api";
 import { ApproveDialog, PauseDialog, ReopenDialog } from "./SliceActs";
 import { SourceEditor } from "./SourceEditor";
-import {
-  AssumptionsSection,
-  DecisionTableSection,
-  DependenciesSection,
-  OpenQuestionsSection,
-  RequirementsSection,
-  RulesSection,
-  ScenariosSection,
-  SummarySection,
-  WhySection,
-} from "./SpecSections";
-import { diagnostics as listDiagnostics, sectionTitles, specModel, whyDocument, type Diagnostic, type SectionId } from "./specModel";
-import { count } from "./text";
+import { AssumptionsSection, DecisionTableSection, DependenciesSection, OpenQuestionsSection, RequirementsSection, RulesSection, ScenariosSection, SummarySection, WhySection } from "./SpecSections";
+import { sectionTitles } from "./specModel";
+import { useSliceShow } from "../../api/useSliceShow";
 
 type View = "spec" | "why" | "source";
 

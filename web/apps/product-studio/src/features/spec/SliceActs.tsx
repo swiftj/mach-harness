@@ -1,12 +1,9 @@
 import { useState } from "react";
 import { CircleCheck, Pause, RotateCcw } from "lucide-react";
-import { Banner, Button, Dialog, DialogClose, DialogContent, DialogTrigger, ErrorState, Field, Text, Textarea, describeError, toast } from "@mach/ui";
+import { Banner, Button, Dialog, DialogClose, DialogContent, DialogTrigger, ErrorState, Field, Text, Textarea, describeError, toast, CheckCounts, CheckPill, DiagnosticList, diagnostics, plural as count } from "@mach/ui";
 import type { MachApiError, SliceShow } from "@mach/ui/api";
-import { studioClient, toApiError } from "./api";
-import { CheckCounts, CheckPill } from "./CheckSummary";
-import { DiagnosticList } from "./SpecSections";
-import { diagnostics } from "./specModel";
-import { count } from "./text";
+import { client as studioClient } from "../../api/client";
+import { toApiError } from "../../api/session";
 
 function Failure({ error, what }: { error: MachApiError; what: string }) {
   // A refusal is the engine's own words, shown as written; the title names what did not happen.

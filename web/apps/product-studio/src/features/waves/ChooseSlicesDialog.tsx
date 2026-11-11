@@ -1,20 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import {
-  ArtifactId,
-  Button,
-  Checkbox,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  SliceStatusPill,
-  Text,
-  toast,
-  type Status,
-} from "@mach/ui";
+import { ArtifactId, Button, Checkbox, Dialog, DialogClose, DialogContent, SliceStatusPill, Text, toast, type Status, plural } from "@mach/ui";
 import { asApiError, deliveryOp } from "./delivery/ops";
-import { failureText } from "./delivery/ui";
-import { plural } from "./delivery/words";
+import { failureText } from "@mach/ui/api";
 
 export interface ChooseSlicesDialogProps {
   open: boolean;

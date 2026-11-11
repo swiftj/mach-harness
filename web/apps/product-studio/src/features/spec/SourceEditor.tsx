@@ -1,9 +1,8 @@
 import { useId, useState } from "react";
-import { Banner, Button, ErrorState, Field, Tabs, TabsContent, TabsList, TabsTrigger, Text, Textarea, describeError, toast } from "@mach/ui";
-import type { MachApiError, SliceCheck, SliceShow } from "@mach/ui/api";
-import { studioClient, toApiError } from "./api";
-import { checkVerdict } from "./CheckSummary";
-import type { WhyDocument } from "./specModel";
+import { Banner, Button, ErrorState, Field, Tabs, TabsContent, TabsList, TabsTrigger, Text, Textarea, describeError, toast, checkVerdict } from "@mach/ui";
+import { type MachApiError, type SliceCheck, type SliceShow, type WhyDocument } from "@mach/ui/api";
+import { client as studioClient } from "../../api/client";
+import { toApiError } from "../../api/session";
 
 type Kind = "spec" | "intent";
 

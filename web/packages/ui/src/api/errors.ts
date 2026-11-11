@@ -66,3 +66,12 @@ export function describeError(error: MachApiError): { title: string; message: st
       return { title: "Something failed inside the host", message: error.message };
   }
 }
+
+/**
+ * The words for a failed act, for an ErrorState or a ConfirmDialog's `error`. A refusal is the
+ * engine's own message, under a title that names what did not happen ("WAVE-001 was not sent").
+ */
+export function failureText(error: MachApiError, whatDidNotHappen: string): { title: string; message: string } {
+  if (error.kind === "refused") return { title: whatDidNotHappen, message: error.message };
+  return describeError(error);
+}
