@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { cn } from "../lib/cn";
 import { useFocusReturn } from "./focus-return";
+import { useModalEscape } from "./modal-escape";
 import { Button } from "./button";
 import { DialogOverlay } from "./dialog";
 
@@ -23,10 +24,11 @@ export interface SheetContentProps extends Omit<ComponentPropsWithoutRef<typeof 
  * comparison, reviewer remarks. Modal: focus is trapped and Escape closes.
  */
 export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(function SheetContent(
-  { title, description, footer, width = 480, className, children, onCloseAutoFocus, ...props },
+  { title, description, footer, width = 480, className, children, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
   ref,
 ) {
   const returnFocus = useFocusReturn();
+  const escape = useModalEscape(onEscapeKeyDown);
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />
@@ -39,6 +41,11 @@ export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(functi
           className,
         )}
         {...props}
+        onEscapeKeyDown={escape.onEscapeKeyDown}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          escape.onKeyDown(event);
+        }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (!event.defaultPrevented) returnFocus(event);
@@ -54,7 +61,7 @@ export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(functi
             )}
           </div>
           <DialogPrimitive.Close asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Close" className="-mr-2">
+            <Button ref={escape.closeRef} variant="ghost" size="icon-sm" aria-label="Close" className="-mr-2">
               <X aria-hidden="true" />
             </Button>
           </DialogPrimitive.Close>

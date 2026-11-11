@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { cn } from "../lib/cn";
 import { useFocusReturn } from "./focus-return";
+import { useModalEscape } from "./modal-escape";
 import { Button } from "./button";
 
 export const Dialog = DialogPrimitive.Root;
@@ -38,10 +39,11 @@ export interface DialogContentProps extends Omit<ComponentPropsWithoutRef<typeof
  * Focus is trapped, Escape closes, focus returns to the trigger.
  */
 export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(function DialogContent(
-  { title, description, footer, width = "md", className, children, onCloseAutoFocus, ...props },
+  { title, description, footer, width = "md", className, children, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
   ref,
 ) {
   const returnFocus = useFocusReturn();
+  const escape = useModalEscape(onEscapeKeyDown);
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />
@@ -56,6 +58,11 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(func
           className,
         )}
         {...props}
+        onEscapeKeyDown={escape.onEscapeKeyDown}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          escape.onKeyDown(event);
+        }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (!event.defaultPrevented) returnFocus(event);
@@ -67,7 +74,7 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(func
             <DialogPrimitive.Description className="text-body text-ink-muted">{description}</DialogPrimitive.Description>
           </div>
           <DialogPrimitive.Close asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Close" className="-mr-2">
+            <Button ref={escape.closeRef} variant="ghost" size="icon-sm" aria-label="Close" className="-mr-2">
               <X aria-hidden="true" />
             </Button>
           </DialogPrimitive.Close>

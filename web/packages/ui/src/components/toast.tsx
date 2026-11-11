@@ -3,6 +3,7 @@ import { CircleAlert, CircleCheck, Info, X } from "lucide-react";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { cn } from "../lib/cn";
 import { toneClasses } from "./tone";
+import { modalLayerOpen } from "./modal-escape";
 
 export type ToastTone = "info" | "success" | "danger";
 
@@ -60,6 +61,13 @@ export function Toaster() {
             onOpenChange={(open) => {
               if (!open) dismissToast(item.id);
             }}
+            // While a dialog or sheet is open, Escape is the dialog's: a notification never takes it
+            // (it stays until it times out or its own Close is pressed). When the notification itself
+            // has focus (reached with F8), Escape still dismisses it.
+            onEscapeKeyDown={(event) => {
+              const inToasts = Boolean(document.activeElement?.closest("[data-mach-toasts]"));
+              if (modalLayerOpen() && !inToasts) event.preventDefault();
+            }}
             className={cn(
               "flex w-[360px] items-start gap-3 rounded-md border border-line-strong bg-surface-raised px-4 py-3 shadow-3",
               "data-[state=open]:animate-pop-in data-[state=closed]:animate-fade-out",
@@ -82,7 +90,7 @@ export function Toaster() {
           </ToastPrimitive.Root>
         );
       })}
-      <ToastPrimitive.Viewport className="fixed bottom-4 right-4 z-[60] flex flex-col gap-2 outline-none" />
+      <ToastPrimitive.Viewport data-mach-toasts="" className="fixed bottom-4 right-4 z-[60] flex flex-col gap-2 outline-none" />
     </ToastPrimitive.Provider>
   );
 }
