@@ -1,0 +1,6 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+# Only these packages may run install scripts. None of the pinned dependencies needs one.
+onlyBuiltDependencies: []

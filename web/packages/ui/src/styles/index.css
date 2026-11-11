@@ -1,0 +1,232 @@
+/*
+ * @mach/ui stylesheet. An app imports exactly this once, from its own entry CSS:
+ *
+ *   @import "@mach/ui/styles.css";
+ *
+ * It brings Tailwind v4, the bundled fonts, the generated tokens, and the Tailwind theme that maps
+ * utilities onto tokens. This file is the Tailwind "preset": every colour, font, radius, shadow and
+ * duration utility resolves to a --mach-* variable, so light/dark/Control Tower switch at run time.
+ */
+@import "./fonts.css";
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Scan the design system's own components for class names. Apps are scanned automatically. */
+@source "../";
+
+/* Dark variant follows the data-theme attribute the ThemeProvider sets. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+  /* Tailwind's default palette is removed on purpose: only token colours exist. */
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --color-canvas: var(--mach-canvas);
+  --color-surface: var(--mach-surface);
+  --color-surface-raised: var(--mach-surface-raised);
+  --color-surface-sunken: var(--mach-surface-sunken);
+  --color-surface-nav: var(--mach-surface-nav);
+  --color-surface-inverse: var(--mach-surface-inverse);
+  --color-overlay: var(--mach-overlay);
+
+  --color-ink: var(--mach-ink);
+  --color-ink-muted: var(--mach-ink-muted);
+  --color-ink-subtle: var(--mach-ink-subtle);
+  --color-ink-inverse: var(--mach-ink-inverse);
+  --color-ink-on-accent: var(--mach-ink-on-accent);
+
+  --color-line: var(--mach-line);
+  --color-line-strong: var(--mach-line-strong);
+  --color-line-control: var(--mach-line-control);
+
+  --color-accent: var(--mach-accent);
+  --color-accent-fill: var(--mach-accent-fill);
+  --color-accent-fill-hover: var(--mach-accent-fill-hover);
+  --color-accent-ink: var(--mach-accent-ink);
+  --color-accent-soft: var(--mach-accent-soft);
+
+  --color-focus: var(--mach-focus);
+
+  --color-info-ink: var(--mach-info-ink);
+  --color-info-soft: var(--mach-info-soft);
+  --color-info-line: var(--mach-info-line);
+  --color-info-fill: var(--mach-info-fill);
+  --color-success-ink: var(--mach-success-ink);
+  --color-success-soft: var(--mach-success-soft);
+  --color-success-line: var(--mach-success-line);
+  --color-success-fill: var(--mach-success-fill);
+  --color-warning-ink: var(--mach-warning-ink);
+  --color-warning-soft: var(--mach-warning-soft);
+  --color-warning-line: var(--mach-warning-line);
+  --color-warning-fill: var(--mach-warning-fill);
+  --color-danger-ink: var(--mach-danger-ink);
+  --color-danger-soft: var(--mach-danger-soft);
+  --color-danger-line: var(--mach-danger-line);
+  --color-danger-fill: var(--mach-danger-fill);
+  --color-danger-fill-hover: var(--mach-danger-fill-hover);
+  --color-neutral-ink: var(--mach-neutral-ink);
+  --color-neutral-soft: var(--mach-neutral-soft);
+  --color-neutral-line: var(--mach-neutral-line);
+  --color-neutral-fill: var(--mach-neutral-fill);
+
+  --color-graph-dot: var(--mach-graph-dot);
+  --color-graph-edge: var(--mach-graph-edge);
+  --color-graph-edge-dependency: var(--mach-graph-edge-dependency);
+
+  --font-serif: var(--mach-font-serif);
+  --font-sans: var(--mach-font-sans);
+  --font-mono: var(--mach-font-mono);
+  --font-display: var(--mach-font-display);
+
+  --text-display: var(--mach-text-display);
+  --text-display--line-height: var(--mach-text-display--line);
+  --text-display--letter-spacing: var(--mach-text-display--tracking);
+  --text-title-1: var(--mach-text-title-1);
+  --text-title-1--line-height: var(--mach-text-title-1--line);
+  --text-title-1--letter-spacing: var(--mach-text-title-1--tracking);
+  --text-title-2: var(--mach-text-title-2);
+  --text-title-2--line-height: var(--mach-text-title-2--line);
+  --text-title-2--letter-spacing: var(--mach-text-title-2--tracking);
+  --text-title-3: var(--mach-text-title-3);
+  --text-title-3--line-height: var(--mach-text-title-3--line);
+  --text-title-3--font-weight: var(--mach-text-title-3--weight);
+  --text-body-lg: var(--mach-text-body-lg);
+  --text-body-lg--line-height: var(--mach-text-body-lg--line);
+  --text-body: var(--mach-text-body);
+  --text-body--line-height: var(--mach-text-body--line);
+  --text-body-sm: var(--mach-text-body-sm);
+  --text-body-sm--line-height: var(--mach-text-body-sm--line);
+  --text-label: var(--mach-text-label);
+  --text-label--line-height: var(--mach-text-label--line);
+  --text-label--font-weight: var(--mach-text-label--weight);
+  --text-caption: var(--mach-text-caption);
+  --text-caption--line-height: var(--mach-text-caption--line);
+  --text-mono: var(--mach-text-mono);
+  --text-mono--line-height: var(--mach-text-mono--line);
+
+  --radius-xs: var(--mach-radius-xs);
+  --radius-sm: var(--mach-radius-sm);
+  --radius-md: var(--mach-radius-md);
+  --radius-lg: var(--mach-radius-lg);
+  --radius-full: var(--mach-radius-full);
+
+  --shadow-1: var(--mach-shadow-1);
+  --shadow-2: var(--mach-shadow-2);
+  --shadow-3: var(--mach-shadow-3);
+
+  --ease-standard: var(--mach-ease-standard);
+  --ease-enter: var(--mach-ease-enter);
+  --ease-exit: var(--mach-ease-exit);
+
+  --spacing-control-sm: var(--mach-control-sm);
+  --spacing-control-md: var(--mach-control-md);
+  --spacing-control-lg: var(--mach-control-lg);
+  --spacing-rail: var(--mach-rail-expanded);
+  --spacing-rail-collapsed: var(--mach-rail-collapsed);
+  --spacing-top-bar: var(--mach-top-bar);
+  --container-reading: var(--mach-reading-measure);
+  --container-content: var(--mach-content-max);
+}
+
+@layer base {
+  html {
+    background: var(--mach-canvas);
+    color: var(--mach-ink);
+    font-family: var(--mach-font-sans);
+    font-size: 100%;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "kern", "liga";
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--mach-canvas);
+    color: var(--mach-ink);
+    font-size: var(--mach-text-body);
+    line-height: var(--mach-text-body--line);
+  }
+
+  /* One focus treatment everywhere: a 2px ring in the focus colour with a 2px gap. The colour is the
+     resting outline colour too, so colour transitions never flash another colour on focus. */
+  *,
+  ::before,
+  ::after {
+    outline-color: var(--mach-focus);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--mach-focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--mach-accent-soft);
+    color: var(--mach-ink);
+  }
+
+  /* Tabular figures wherever numbers line up: counts, revisions, dates. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* Radix popper content animations, keyed off data-state. Durations come from tokens, so reduced motion zeroes them. */
+@keyframes mach-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes mach-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes mach-pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes mach-sheet-in {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+@keyframes mach-sheet-out {
+  from { transform: none; }
+  to { transform: translateX(100%); }
+}
+@keyframes mach-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
+@keyframes mach-pulse-ring {
+  0% { opacity: 0.55; transform: scale(1); }
+  100% { opacity: 0; transform: scale(2.2); }
+}
+
+@utility animate-fade-in {
+  animation: mach-fade-in var(--mach-duration-base) var(--mach-ease-enter) both;
+}
+@utility animate-fade-out {
+  animation: mach-fade-out var(--mach-duration-fast) var(--mach-ease-exit) both;
+}
+@utility animate-pop-in {
+  animation: mach-pop-in var(--mach-duration-base) var(--mach-ease-enter) both;
+}
+@utility animate-sheet-in {
+  animation: mach-sheet-in var(--mach-duration-slow) var(--mach-ease-enter) both;
+}
+@utility animate-sheet-out {
+  animation: mach-sheet-out var(--mach-duration-base) var(--mach-ease-exit) both;
+}

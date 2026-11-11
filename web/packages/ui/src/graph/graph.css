@@ -1,0 +1,47 @@
+/*
+ * React Flow, restyled with MACH tokens. Import once, after @mach/ui/styles.css:
+ *   @import "@mach/ui/graph.css";
+ */
+@import "@xyflow/react/dist/base.css";
+
+.mach-graph .react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke: var(--mach-graph-edge);
+  --xy-controls-button-background-color: var(--mach-surface-raised);
+  --xy-controls-button-background-color-hover: var(--mach-surface-sunken);
+  --xy-controls-button-color: var(--mach-ink-muted);
+  --xy-controls-button-color-hover: var(--mach-ink);
+  --xy-controls-button-border-color: var(--mach-line);
+  --xy-controls-box-shadow: var(--mach-shadow-2);
+  font-family: var(--mach-font-sans);
+}
+
+/* Nodes move to their new place when the layout changes; reduced motion zeroes the duration. */
+.mach-graph .react-flow__node {
+  transition: transform var(--mach-duration-layout) var(--mach-ease-standard);
+}
+
+.mach-graph .react-flow__node:focus-visible {
+  outline: none;
+}
+.mach-graph .react-flow__node:focus-visible > div {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 3px;
+}
+
+.mach-graph .react-flow__controls {
+  border-radius: var(--mach-radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--mach-line);
+}
+.mach-graph .react-flow__controls-button {
+  width: 28px;
+  height: 28px;
+}
+.mach-graph .react-flow__controls-button svg {
+  fill: currentColor;
+}
+.mach-graph .react-flow__controls-button:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: -2px;
+}
