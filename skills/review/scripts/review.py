@@ -358,7 +358,11 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     approvals = sum(1 for vote in votes.values() if vote["vote"] == "APPROVE")
     needed = cell.packet["approvals_needed"]
     blockers = sum(1 for vote in votes.values() for finding in vote["findings"] if finding["severity"] == "blocker")
-    if approvals >= needed:
+    # A blocker from the security seat is not a matter of opinion to be outvoted: it stands until the
+    # build answers it. A project may switch this off (review.security_veto: false); unattended runs refuse to start if it has.
+    vetoed = cell.section("review").get("security_veto") is not False and any(
+        finding["severity"] == "blocker" for finding in (votes.get("security") or {}).get("findings", []))
+    if approvals >= needed and not vetoed:
         outcome = "AWAITING_HUMAN" if cell.packet["human_approval_required"] else "APPROVED"
     else:
         outcome = "ESCALATE" if cell.packet["round"] >= cell.packet["max_rounds"] else "REJECTED"
@@ -367,7 +371,7 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     decision = {
         "ticket_id": cell.ticket_id, "round": cell.packet["round"], "risk": cell.packet["risk"], "outcome": outcome,
         "approvals": approvals, "approvals_needed": needed, "votes": {role: vote["vote"] for role, vote in votes.items()},
-        "blockers": blockers, "human_approval_required": cell.packet["human_approval_required"],
+        "blockers": blockers, "security_veto": bool(vetoed and approvals >= needed), "human_approval_required": cell.packet["human_approval_required"],
         "human_approval_reasons": cell.packet.get("human_approval_reasons", []), "human_approval": None,
         "head": cell.packet["head"], "findings": str(findings_path), "decided_at": now(),
     }
@@ -376,7 +380,7 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     cell.info["stage"] = {"APPROVED": "approved", "AWAITING_HUMAN": "awaiting-human", "REJECTED": "built", "ESCALATE": "blocked"}[outcome]
     cell.info["review"] = outcome
     cell.save_info()
-    overruled = [role for role, vote in votes.items() if vote["vote"] == "REJECT"] if approvals >= needed else []
+    overruled = [role for role, vote in votes.items() if vote["vote"] == "REJECT"] if approvals >= needed and not vetoed else []
     next_step = {
         "APPROVED": f"Approved. The branch {cell.info.get('branch')} may be merged.",
         "AWAITING_HUMAN": "The panel approved, but a person must approve before merge because " + (" and ".join(cell.packet.get("human_approval_reasons") or []) or "the project requires it")

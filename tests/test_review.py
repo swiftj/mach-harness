@@ -324,22 +324,22 @@ class TallyTest(Base):
     def test_medium_majority_approves_and_names_the_overruled_seat(self):
         self.begin()
         self.vote("architecture", self.note())
-        self.vote("security", self.blocker())
-        self.vote("product")
+        self.vote("product", self.blocker())
+        self.vote("security")
         code, done = self.tally()
         self.assertEqual((code, done["outcome"], done["round"], done["risk"]), (0, "APPROVED", 1, "Medium"))
         self.assertEqual((done["approvals"], done["approvals_needed"], done["blockers"]), (2, 2, 1))
-        self.assertEqual(done["votes"], {"architecture": "APPROVE", "security": "REJECT", "product": "APPROVE"})
-        self.assertEqual(done["overruled_blockers_from"], ["security"])
+        self.assertEqual(done["votes"], {"architecture": "APPROVE", "security": "APPROVE", "product": "REJECT"})
+        self.assertEqual(done["overruled_blockers_from"], ["product"])
         self.assertIn("feature/LOCAL-001 may be merged", done["next"])
         cell = self.cell_json()
         self.assertEqual((cell["stage"], cell["review"]), ("approved", "APPROVED"))
         findings = (self.round / "findings.md").read_text()
         self.assertEqual(done["findings"], str(self.round / "findings.md"))
         self.assertIn("# Review findings for LOCAL-001, round 1 of 3", findings)
-        self.assertIn("Outcome: APPROVED. architecture: APPROVE, security: REJECT, product: APPROVE.", findings)
+        self.assertIn("Outcome: APPROVED. architecture: APPROVE, security: APPROVE, product: REJECT.", findings)
         self.assertIn("## Blockers: each must be fixed", findings)
-        self.assertIn(f"1. **Email is never validated** (security; `app/invite.py:2`). Breaks: FR-01. {DETAIL}", findings)
+        self.assertIn(f"1. **Email is never validated** (product; `app/invite.py:2`). Breaks: FR-01. {DETAIL}", findings)
         self.assertIn("1. **README could say more** (architecture; no file).", findings)
         decision = self.decision()
         self.assertEqual(decision, json.loads((self.round / "decision.json").read_text()))
@@ -403,13 +403,42 @@ class TallyTest(Base):
         self.assertIn("round 3 of 3", (folder / "findings.md").read_text())
         self.assertEqual(self.decision()["outcome"], "ESCALATE")
 
+    def test_a_security_blocker_cannot_be_outvoted(self):
+        """Two approvals meet a Medium ticket's threshold, but a blocker from the security seat still rejects."""
+        self.begin()
+        self.vote("architecture")
+        self.vote("security", self.blocker())
+        self.vote("product")
+        code, done = self.tally()
+        self.assertEqual((code, done["outcome"], done["approvals"], done["approvals_needed"]), (1, "REJECTED", 2, 2))
+        self.assertEqual(done["overruled_blockers_from"], [])
+        self.assertEqual(self.decision()["security_veto"], True)
+        self.assertEqual(self.cell_json()["stage"], "built")
+
+    def test_a_security_note_does_not_veto_and_a_project_can_switch_the_veto_off(self):
+        self.begin()
+        self.vote("architecture")
+        self.vote("security", self.note())
+        self.vote("product", self.blocker())
+        self.assertEqual(self.tally()[1]["outcome"], "APPROVED")
+        self.assertEqual(self.decision()["security_veto"], False)
+
+    def test_the_veto_can_be_switched_off_by_the_project(self):
+        self.verified()
+        self.config({"review": {"security_veto": False}})
+        self.r_ok("start", TICKET)
+        self.vote("architecture")
+        self.vote("security", self.blocker())
+        self.vote("product")
+        self.assertEqual(self.tally()[1]["outcome"], "APPROVED")
+
     def test_a_third_round_can_still_be_approved_and_max_loops_is_configurable(self):
         self.verified()
         self.edit_json("build-report.json", review_loop=1)
         self.config({"review": {"max_loops": 2}})
         self.assertEqual(self.r_ok("start", TICKET)["max_rounds"], 2)
         self.round = self.cellroot / "review/round-2"
-        self.cast(rejecting=("security",))
+        self.cast(rejecting=("product",))
         self.assertEqual(self.tally()[1]["outcome"], "APPROVED", "the last round escalates only when it fails")
         self.assertEqual(self.cell_json()["stage"], "approved")
 
@@ -461,15 +490,15 @@ class StatusTest(Base):
         self.assertEqual(self.r_ok("status", TICKET), {"ticket_id": TICKET, "stage": "verified", "review": None, "round": 1,
                                                        "panel": [], "voted": {}, "waiting_for": []})
         self.r_ok("start", TICKET)
-        self.vote("security", self.blocker())
+        self.vote("product", self.blocker())
         status = self.r_ok("status", TICKET)
-        self.assertEqual((status["panel"], status["voted"], status["waiting_for"]), (PANEL, {"security": "REJECT"}, ["architecture", "product"]))
+        self.assertEqual((status["panel"], status["voted"], status["waiting_for"]), (PANEL, {"product": "REJECT"}, ["architecture", "security"]))
         self.vote("architecture")
-        self.vote("product")
+        self.vote("security")
         self.tally()
         status = self.r_ok("status", TICKET)
         self.assertEqual((status["stage"], status["review"], status["waiting_for"]), ("approved", "APPROVED", []))
-        self.assertEqual(status["voted"], {"architecture": "APPROVE", "security": "REJECT", "product": "APPROVE"})
+        self.assertEqual(status["voted"], {"architecture": "APPROVE", "security": "APPROVE", "product": "REJECT"})
         self.assertIn("'bad id!' is not a usable ticket ID", self.r_refused("status", "bad id!"))
 
 
