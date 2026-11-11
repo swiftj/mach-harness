@@ -72,11 +72,13 @@ class LineIsUnchangedTest(Base):
 
 class NothingIsWiredInTest(unittest.TestCase):
     def test_no_station_reads_the_local_policy(self):
-        """Until the supervisor milestone, only the read-only policy reader may name the policy file."""
+        """No station, agent, workflow or Product Studio script reads the machine-local policy. Only the
+        supervisor's own modules in the run skill do, and only they can be affected by it."""
         found = []
         for top in ("skills", "agents", "workflows", "templates", "bin"):
             for path in sorted((ROOT / top).rglob("*")):
-                if path.is_file() and "__pycache__" not in path.parts and path != PRODUCT_SCRIPTS / "product.py":
+                # Two files may name it: the read-only reader from M0, and the run skill's policy module that owns it.
+                if path.is_file() and "__pycache__" not in path.parts and path not in (PRODUCT_SCRIPTS / "product.py", ROOT / "skills/run/scripts/policy.py"):
                     if "runner.json" in path.read_text(encoding="utf-8", errors="ignore"):
                         found.append(str(path.relative_to(ROOT)))
         self.assertEqual(found, [])

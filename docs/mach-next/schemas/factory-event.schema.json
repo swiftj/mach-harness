@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:mach:schema:factory-event:v1",
-  "title": "MACH Factory Event v1",
+  "$id": "urn:mach:schema:factory-event:v2",
+  "title": "MACH Factory Event v2",
   "description": "One transition of the intake ledger, as a line of .factory/intake/events.jsonl. Events are written only when the ledger changes, in sequence order, so the log can be replayed but is never a second source of truth.",
   "type": "object",
   "additionalProperties": false,
@@ -16,11 +16,16 @@
     "slice_id",
     "revision",
     "ticket_id",
+    "runner_id",
+    "execution_id",
+    "source",
+    "cause",
+    "refs",
     "data"
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "seq": {
       "type": "integer",
@@ -42,7 +47,19 @@
         "dependency.blocked",
         "work.scheduled",
         "revision.superseded",
-        "human.required"
+        "human.required",
+        "factory.activated",
+        "factory.disabled",
+        "factory.paused",
+        "factory.resumed",
+        "revision.discovered",
+        "scheduling.decided",
+        "work.claimed",
+        "execution.started",
+        "station.observed",
+        "recovery.started",
+        "execution.completed",
+        "execution.failed"
       ]
     },
     "project_id": {
@@ -82,9 +99,45 @@
         "null"
       ]
     },
+    "runner_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The machine-local runner that was enabled when this was written; null when the Factory was not enabled."
+    },
+    "execution_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The supervisor's execution this event belongs to, if any."
+    },
+    "source": {
+      "enum": [
+        "intake",
+        "engineer",
+        "supervisor"
+      ],
+      "description": "Which part of MACH acted: an engineer's command, product intake, or the supervisor."
+    },
+    "cause": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "The seq of the event that led to this one, where one is known."
+    },
+    "refs": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Where the authoritative state is kept, as paths in the project: the cell's cell.json, the execution's folder. An event describes a change; these say where to read the truth."
+    },
     "data": {
       "type": "object",
-      "description": "Details by type: problems (intake.refused), reasons (dependency.blocked), depends_on (dependency.resolved), commit (slice.integrated), stage, risk, branch, by (engineer, or the name of an authorized caller) and authorization (work.scheduled), from_revision and effect (revision.superseded), reason (human.required)."
+      "description": "Details by type: problems (intake.refused), reasons (dependency.blocked), depends_on (dependency.resolved), commit (slice.integrated), stage, risk, branch, by (engineer, or the name of an authorized caller) and authorization (work.scheduled), from_revision and effect (revision.superseded), reason (human.required). Supervisor events: autonomy, limits and by (factory.*); from_commit and commit (revision.discovered); dispatched, started and held (scheduling.decided); stage, next and attempt (work.claimed); session_id, workflow, until and limits (execution.started); from_stage and stage (station.observed); kind (recovery.started); stage, next, waiting_for, how, seen_to_end and cost_usd (execution.completed); how, claude_error, exit_code and attempt (execution.failed). Never a prompt, a command line, an environment variable or a credential."
     }
   }
 }

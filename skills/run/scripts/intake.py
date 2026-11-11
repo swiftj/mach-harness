@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 LEDGER_VERSION = 1
-EVENT_VERSION = 1
+EVENT_VERSION = 2  # 2 adds runner_id, execution_id, source, cause and refs to every event, and the supervisor's types
 EVENT_TYPES = (
     "wave.discovered",       # an approved delivery wave was seen for the first time
     "intake.validated",      # the source commit and every artifact passed verification
@@ -55,6 +55,16 @@ EVENT_TYPES = (
     "work.scheduled",        # an engineer dispatched a slice into the line
     "revision.superseded",   # a slice revision was replaced or withdrawn
     "human.required",        # a person must decide something before the slice can move
+    # The supervisor's own transitions (supervisor.py):
+    "factory.activated", "factory.disabled", "factory.paused", "factory.resumed",
+    "revision.discovered",   # the integration branch moved to a commit with different product definitions
+    "scheduling.decided",    # what the supervisor chose to dispatch, run or hold this time, and why
+    "work.claimed",          # an execution was reserved for a ticket, durably, before anything started
+    "execution.started",     # the Claude process for a claim is running
+    "station.observed",      # a cell's recorded stage changed
+    "recovery.started",      # a claim or execution left by an earlier supervisor is being reconciled
+    "execution.completed",   # an execution ended and the line's records say where the ticket now stands
+    "execution.failed",      # an execution ended without moving the ticket, or its outcome is unknown
 )
 APPROVED = "approved_for_engineering"
 DEFAULT_MAX_PARALLEL = 3
@@ -150,6 +160,8 @@ class Factory:
         self.events_path = self.home / "events.jsonl"
         self.lock_path = self.home / "lock"
         self._held = 0
+        self.runner_id: Optional[str] = None  # set by the supervisor; None when an engineer is at the controls
+        self.event_source = "intake"
         if (root / ".factory").is_symlink() or self.home.is_symlink():
             raise IntakeError(f"{self.home} is a symbolic link. The intake ledger must be a real folder inside the project.")
         for name in ("product-studio", "intent"):
@@ -204,12 +216,16 @@ class Factory:
             if not shared:
                 info["problems"].append(f"Local '{branch}' shares no history with the shared '{branch}' branch, so no merged product work can be read from it.")
                 return info
-            info["product_commit"] = shared
+            # A local branch that is merely behind sees what was fetched: definitions come from the remote
+            # branch, which is merged work by definition. Nothing is checked out; dispatch still needs
+            # the checkout brought up to date by a person.
+            info["product_commit"] = remote_commit if shared == commit else shared
             if shared != commit and git(self.root, "diff", "--quiet", shared, commit, "--", "product", "specs/slices").returncode != 0:
                 info["notes"].append(f"Local '{branch}' has unshared commits that change product files. They are ignored: product work is only taken from merged revisions.")
             behind = git(self.root, "rev-list", "--count", f"{commit}..{remote_commit}").stdout.strip()
             if behind.isdigit() and int(behind):
-                info["notes"].append(f"Local '{branch}' is {behind} commit(s) behind the shared branch as last fetched. Update it to see newer product work.")
+                info["behind"] = int(behind)
+                info["notes"].append(f"Local '{branch}' is {behind} commit(s) behind the shared branch as last fetched. Product work on the shared branch is visible; update the checkout before dispatching it.")
         return info
 
     def snapshot(self, commit: str) -> Snapshot:
@@ -346,15 +362,21 @@ class Factory:
         data.setdefault("intakes", {})
         data.setdefault("next_seq", 1)
         data.setdefault("pending_events", [])
+        data.setdefault("supervisor", {"executions": {}, "attempts": {}, "parked": {}, "observed": {}})
         return data
 
-    def emit(self, ledger: Dict[str, Any], kind: str, **fields: Any) -> None:
+    def emit(self, ledger: Dict[str, Any], kind: str, /, **fields: Any) -> None:
         """Queue an event for a ledger transition. It is written to the log by save()."""
         assert kind in EVENT_TYPES, kind
         event = {"schema_version": EVENT_VERSION, "seq": ledger["next_seq"], "at": now(), "type": kind,
                  "project_id": ledger.get("project_id"), "source_commit": (ledger.get("source") or {}).get("commit"),
                  "wave_id": fields.pop("wave_id", None), "slice_id": fields.pop("slice_id", None),
-                 "revision": fields.pop("revision", None), "ticket_id": fields.pop("ticket_id", None), "data": fields}
+                 "revision": fields.pop("revision", None), "ticket_id": fields.pop("ticket_id", None),
+                 # Who wrote it and why: the supervisor's runner and execution, the part of MACH that acted,
+                 # the earlier event that led to this one, and where the authoritative state is kept.
+                 "runner_id": fields.pop("runner_id", self.runner_id), "execution_id": fields.pop("execution_id", None),
+                 "source": fields.pop("source", self.event_source), "cause": fields.pop("cause", None),
+                 "refs": fields.pop("refs", None), "data": fields}
         ledger["next_seq"] += 1
         ledger["pending_events"].append(event)
 
@@ -1112,6 +1134,7 @@ class Factory:
         cell["product"] = provenance
         write_atomic(cell_file, json.dumps(cell, indent=2) + "\n")
         entry["dispatched_at"] = now()
+        entry["owner"] = by  # who moves this ticket through the line: an engineer by hand, or the supervisor
         entry["built_against"] = {dep: ledger["slices"][dep].get("revision") for dep in entry.get("dependencies") or [] if dep in ledger["slices"]}
         self.emit(ledger, "work.scheduled", slice_id=slice_id, wave_id=entry.get("wave_id"), revision=entry.get("revision"), ticket_id=ticket_id,
                   stage=cell.get("stage"), risk=cell.get("risk"), branch=cell.get("branch"), by=by, authorization=authorization)

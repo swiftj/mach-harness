@@ -21,7 +21,8 @@ import intake  # noqa: E402
 import run  # noqa: E402
 from test_mach_product_collab import AT, Base as CollabBase, git, intent_for, spec_for  # noqa: E402
 
-EVENT_KEYS = {"schema_version", "seq", "at", "type", "project_id", "source_commit", "wave_id", "slice_id", "revision", "ticket_id", "data"}
+EVENT_KEYS = {"schema_version", "seq", "at", "type", "project_id", "source_commit", "wave_id", "slice_id", "revision", "ticket_id",
+              "runner_id", "execution_id", "source", "cause", "refs", "data"}
 
 
 class Base(CollabBase):
@@ -881,12 +882,13 @@ class EventsTest(Base):
         self.product("plan")
         result = self.product("events")
         events = result["events"]
-        self.assertEqual((result["schema_version"], result["event_types"]), (1, list(intake.EVENT_TYPES)))
+        self.assertEqual((result["schema_version"], result["event_types"]), (2, list(intake.EVENT_TYPES)))
         self.assertEqual([e["seq"] for e in events], list(range(1, len(events) + 1)))
         for event in events:
             self.assertEqual(set(event), EVENT_KEYS)
             self.assertIn(event["type"], intake.EVENT_TYPES)
-            self.assertEqual((event["schema_version"], event["project_id"]), (1, "team-space"))
+            self.assertEqual((event["schema_version"], event["project_id"]), (2, "team-space"))
+            self.assertEqual((event["runner_id"], event["source"], event["execution_id"]), (None, "intake", None))  # no supervisor: an engineer at the controls
             self.assertRegex(event["at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertEqual({e["type"] for e in events}, {"wave.discovered", "intake.validated", "slice.materialized", "dependency.resolved", "dependency.blocked",
                                                        "work.scheduled", "slice.integrated", "revision.superseded"})

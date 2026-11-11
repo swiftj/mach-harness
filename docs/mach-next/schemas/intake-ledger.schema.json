@@ -12,7 +12,8 @@
     "slices",
     "intakes",
     "next_seq",
-    "pending_events"
+    "pending_events",
+    "supervisor"
   ],
   "properties": {
     "schema_version": {
@@ -127,6 +128,13 @@
           "history": {
             "type": "array",
             "description": "Earlier revisions and tickets of this slice."
+          },
+          "owner": {
+            "enum": [
+              "engineer",
+              "supervisor"
+            ],
+            "description": "Who moves a dispatched ticket through the line. The supervisor runs only its own."
           }
         }
       }
@@ -138,6 +146,59 @@
     "pending_events": {
       "type": "array",
       "description": "Events not yet appended to events.jsonl. Part of the ledger until they are in the log."
+    },
+    "supervisor": {
+      "type": "object",
+      "required": [
+        "executions",
+        "attempts",
+        "parked",
+        "observed"
+      ],
+      "description": "The supervisor's own record, kept here so claims and intake share one lock and one order of events. It says what the supervisor did, never where a ticket stands: that is read from the cell.",
+      "properties": {
+        "executions": {
+          "type": "object",
+          "description": "One entry per claimed execution, by execution ID.",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "execution_id",
+              "ticket_id",
+              "state",
+              "claimed_at",
+              "runner_id",
+              "session_id",
+              "stage_at_start",
+              "action_at_start"
+            ],
+            "properties": {
+              "state": {
+                "enum": [
+                  "claimed",
+                  "started",
+                  "finished",
+                  "unknown",
+                  "released"
+                ],
+                "description": "claimed: reserved on disk, nothing started. started: its process was launched. finished: it ended and left a result. unknown: it is gone and left none. released: the claim was given back before anything ran."
+              }
+            }
+          }
+        },
+        "attempts": {
+          "type": "object",
+          "description": "Per ticket: executions that ended without moving it."
+        },
+        "parked": {
+          "type": "object",
+          "description": "Tickets taken out of automatic execution until a person resumes them, each with the reason."
+        },
+        "observed": {
+          "type": "object",
+          "description": "The last stage seen for each ticket, to report a change once."
+        }
+      }
     }
   }
 }
