@@ -53,37 +53,94 @@ State: the supervisor's claims and executions are kept in M3's ledger under a `s
 
 ## 3. The verified execution mechanism
 
-Verified against Claude Code 2.1.322 before the Supervisor was built.
+Verified against Claude Code 2.1.322. The first version of this section (the M4 build) passed only `--permission-mode default` and `--allowedTools`. That was found not to be a boundary on a machine like the engineer's (3.2), and the mechanism was hardened (`executor.py`, `policy.py`). This section describes the hardened mechanism and the evidence for it.
+
+### 3.1 The command
 
 ```
-claude -p "Run the workflow named mach-belt with args {"tickets": ["<id>"], "until": "merge"}. Use the Workflow tool. ..."
+claude -p "Run the workflow named mach:belt with args {"tickets": ["<id>"], "until": "merge"}. Use the Workflow tool. ..."
        --output-format stream-json --verbose
+       --restricted                      the person's settings files, plugins, agents and hooks are not loaded;
+                                         file tools stay in the working folders
+       --strict-mcp-config               no MCP server at all
+       --plugin-dir <MACH>               the run's only plugin (3.3)
        --permission-mode default
-       --allowedTools <the list in the policy>
+       --permission-prompts none         anything that would ask is refused automatically
+       --tools <built-in tools the list names>        e.g. Workflow,Skill,Agent,Read,Write,Edit,Glob,Grep,Bash
+       [--add-dir <MACH>]                only when MACH is a plugin outside the project, so reviewers can read their briefs
+       --disallowedTools Edit(//<MACH>/**) Edit(//<project>/.factory/local/**) Edit(//<project>/.claude/**)
        --max-budget-usd <limit>
        --session-id <a new UUID>
+       --allowedTools <the list in the policy, exactly as the person consented to it; always last>
 ```
 
-run in the project folder with `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, so the run waits for the workflow however long it takes.
+It runs in the project folder with a minimal environment (`executor.environment()`): `HOME`, `USER`, `LOGNAME`, `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `SHELL`, `TERM` and `CLAUDE_CONFIG_DIR` when set, proxy variables only when they carry no `user:password@`, plus `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (the run waits for the workflow however long it takes) and `GIT_TERMINAL_PROMPT=0`. Any name containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, `AUTH` or `COOKIE` is dropped even if listed. The run signs in with the person's own Claude Code login (`apiKeySource: "none"`).
 
-What the proof established:
+`--tools` is derived from the consented list, never added to it: `Bash(git log *)` names `Bash`, and a name that is not a built-in tool (an `mcp__…` entry) is left out. The `--disallowedTools` rules only narrow; they protect MACH's own code, the Factory's policy and execution records, and the project's `.claude/` from the file tools. Nothing passes `--dangerously-skip-permissions`, `bypassPermissions`, `--bare` or `--setting-sources`; tests hold that.
+
+### 3.2 Why: the evidence (before and after)
+
+Both runs were made in a scratch project with MACH script-installed, on this machine, whose `~/.claude/settings.json` has `defaultMode: auto` and allows `Bash(git push:*)`, `Bash(curl:*)`, `Bash(rm:*)` and `Bash(python3:*)`, among others, and which has 21 plugins, 23 MCP servers (including Gmail, Google Drive, Asana and Discord), hooks and 28 agents. Same request, same minimal environment, same allow list (the policy's default), model haiku: *run `git push --dry-run origin main`, `curl -s -m 3 http://127.0.0.1:9/`, `rm scratch-delete-me.txt`, `python3 -c "print(42)"`, and count your `mcp__` tools*.
+
+| | Before: `--permission-mode default --allowedTools <list>` | After: 3.1 |
+|---|---|---|
+| `git push --dry-run` | **ran** (`Everything up-to-date`) | refused: `permission_denied`, listed in `result.permission_denials` |
+| `curl` to a local address | **ran** (connection refused, so the request was made) | refused, as above |
+| `rm scratch-delete-me.txt` | **ran; the file was deleted** | refused; the file is still there |
+| `python3 -c …` | ran | ran: `Bash(python3 *)` is in the consented list (8.2) |
+| `init.mcp_servers` | 23, including `claude.ai Gmail` and `plugin:discord:discord-stdio` | `[]` |
+| `init.tools` | 249 | 9: `Task, Bash, Edit, Glob, Grep, Read, Skill, Workflow, Write` |
+| `init.plugins` | 21 of the person's plugins | `mach` and Claude Code's four built-in `cc-plugin-*` |
+| `init.agents` | 27, including the person's own | built-ins and `mach:builder`, `mach:verifier`, `mach:reviewer`, `mach:contract-engineer` |
+| hooks | `hook_started` / `hook_response` events | none |
+
+The refusal as streamed: `{"type":"system","subtype":"permission_denied","tool_name":"Bash","decision_reason_type":"asyncAgent","decision_reason":"no approval surface in this session; permission request denied automatically"}`, and `"permission_denials":[{"tool_name":"Bash","tool_input":{"command":"git push --dry-run origin main"}}, …]` in the result. `executor.outcome()` already reads both.
+
+File tools under the final flags (MACH as a plugin from outside the project): reading a reviewer brief inside the plugin folder ran; writing into the plugin folder, into `.factory/local/` or editing `.claude/workflows/mach-belt.js` was refused (`File is in a directory that is denied by your permission settings`); reading `~/.zshrc` or `/etc/hosts` was refused (`--restricted: path outside the working directory`); writing a file in the project ran. All five refusals were in `result.permission_denials`.
+
+Environment: the same probe with the supervisor's own environment inherited reported `apiKeySource: "ANTHROPIC_API_KEY"` (it signed in with a key it was not meant to have); with `environment()` it reported `"none"`.
+
+### 3.3 Loading MACH in restricted mode
+
+Restricted mode ignores the project's `.claude/` folder: neither `--add-dir <project>` nor `--setting-sources project` brings its skills, agents or workflows back (both tried). `--plugin-dir` does, and **a Dynamic Workflow loads from a plugin directory in restricted mode**: `init.skills` lists `mach:belt`, and the belt runs.
+
+- **MACH installed as a plugin:** `--plugin-dir` is the plugin's own folder. If it lies outside the project, it is also passed with `--add-dir`, because restricted mode confines the file tools to the working folders and reviewers read their briefs and checklists from the plugin. The file tools may read it but not change it (`--disallowedTools`).
+- **MACH installed by script** (`.claude/skills/mach-*`, `.claude/agents/mach-*.md`, `.claude/workflows/mach-belt.js`): `executor.plugin()` generates a plugin at **`.factory/local/claude-plugin/`**, inside the git-ignored local state, never a temporary folder. It holds copies of the installed files with the installer's renames undone (`mach-build` back to `build`; `/mach-run` back to `/mach:run` where a skill command is typed, never inside a path), so the run sees exactly the plugin MACH was installed from: a test asserts every file equals the source. Copies, not links: linked agent files were not loaded at all, and the station scripts decide their naming from their resolved path. Product Studio's skill is left out. The plugin is rewritten only when the installed files change (a digest is kept), beside the old one and then swapped in, at the same path. A symbolic link at that path, or at `.factory/` or `.factory/local/`, is refused.
+
+In both cases the names are the plugin's: the workflow is `mach:belt`, the agents `mach:builder` and so on, and the station scripts inside print plugin names, so everything the belt asks for exists.
+
+### 3.4 What the proof established
 
 | Question | Finding |
 |----------|---------|
-| Can a non-interactive run launch the existing Dynamic Workflow? | Yes. The belt ran and returned its own structured result. |
-| Is a structured status available? | Yes: a final `result` event with `is_error`, `subtype`, `total_cost_usd`, `permission_denials`, and the workflow's JSON as `result`. |
+| Can a non-interactive run launch the existing Dynamic Workflow? | Yes, in restricted mode, from `--plugin-dir`, for both install kinds. |
+| Do workflow agents and sub-agents inherit the restrictions? | Yes. Their tool calls were refused with the same `permission_denied` event, carrying the worker's `agent_id`; they had the same 9 tools and no MCP server. |
+| Which tools does the belt need? | `Workflow`, `Agent`, `Skill`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash` (via `--tools`, from the list). The workers use `StructuredOutput`, which the workflow provides itself. |
+| How must allow rules be spelled? | As before: `Bash(python3 *)` and the exact interpreter path `Bash(/…/python3.x *)`, because the belt's clerks run `"<interpreter>" "<run.py>" --project "<project>" …`. Quoted script paths match these prefix rules. A compound command is checked part by part: `cd <project> && python3 …/cell.py open …` ran; anything containing a variable (`echo exit=$?`) or an unlisted program was refused. |
+| Is a structured status available? | Yes: a final `result` event with `is_error`, `subtype`, `total_cost_usd` (it includes workflow agents: the plan run's `modelUsage` lists Opus and Haiku), `permission_denials`, and the workflow's JSON as `result`. |
 | Is the session identifiable? | Yes. `--session-id` sets it in advance; it is recorded with the claim. |
 | How do failure and interruption show? | A spent budget: exit 1, `is_error` true, `subtype` `error_max_budget_usd`. A killed process: no result at all. The wrapper records which. |
-| **Does `--allowedTools` bound what a run may do?** | **Not by itself.** This machine's own settings run Claude in `auto` mode, where a tool that is not listed still ran. With `--permission-mode default` an unlisted tool is refused and the refusal is reported. The adapter always passes it. |
-| What is the minimum tool list? | `Workflow`, `Skill`, `Agent`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash(python3 *)`, read-only `git status/log/diff/show`, **and the exact interpreter path** (`Bash(/path/to/python3.x *)`). The belt runs the station script with the interpreter path that script reports; without that entry the belt's first step is refused. |
+
+**Live runs under the final flags** (Claude Code 2.1.322, the person's default model for the run; the stations pick their own):
+
+| Run | Install | Result | Time, cost |
+|-----|---------|--------|-----------|
+| belt for a finished ticket | script | `{"ticket":"POC-001","outcome":"stopped","waiting_for":"nothing"}` | 32 s, $0.40 |
+| the same | plugin (`--plugin-dir` = the MACH repository, `--add-dir` it) | the same | $0.19 |
+| belt to `until: build`, ticket at `spec-ready` | script | the plan station ran (`/mach:intent LOCAL-002 --headless`): read its references from the generated plugin, wrote the contract and `plan.md` with Write, ran `cell.py`, committed; stage `planned` | 136 s, $0.74 |
+| belt to `until: verify`, the same ticket at `planned` | script | the build station ran test-first through `build.py` (14 tasks, one commit each, the project's own test suite run at every step); stage `built` | 179 s, $0.68 |
+
+In those runs the workers were refused, and carried on without: a long chained command with `find`, `cat` and a second `cd`; the builder's `B="python3 …/build.py"; $B red …` (it then ran the script plainly); and the audit agent's `cd … && python3 …/audit.py run; echo exit=$?` (a variable cannot be checked). The second meant the audit did not run inside the belt (8.9).
 
 A refused tool is never granted. If the ticket still made progress, the refusals are listed with the execution's result. If it made none, the ticket is parked and a `human.required` event names what was asked for. A refused shell command is recorded as its program and subcommand only, never its arguments, paths or variables.
 
-**Live result (Claude Code 2.1.322, scratch project).** With Supervised Autopilot enabled, one supervisor pass adopted a planned ticket and started one execution. In 432 seconds and $2.82 the belt built, verified and reviewed it, reached `approved`, and stopped before merge. Workers were refused several compound shell commands (`cd ... && ...`, `VAR=... python3 ...`) and carried on without them. The next pass read the cell's record and logged the execution as completed.
+**Earlier live result (the M4 build, before hardening).** With Supervised Autopilot enabled, one supervisor pass adopted a planned ticket and started one execution. In 432 seconds and $2.82 the belt built, verified and reviewed it, reached `approved`, and stopped before merge.
 
-Nothing passes `--dangerously-skip-permissions` or any flag that skips permission checks; a test holds that.
+### 3.5 The preflight checks the same boundary
 
-**Limits of this mechanism.** The tool list is enforced by Claude Code's permission system as invoked; it is not a sandbox. Rules in the user's own Claude settings that allow more are still in force (section 8).
+`policy.probe_claude` first reads `claude --help` and refuses activation if any flag the boundary depends on is missing (`--restricted`, `--strict-mcp-config`, `--plugin-dir`, `--permission-mode`, `--permission-prompts`, `--tools`, `--allowedTools`, `--disallowedTools`, `--add-dir`, `--max-budget-usd`, `--session-id`, `--output-format`). It then prepares the plugin and asks for one word with exactly the execution's flags, no tools and the same minimal environment, and refuses unless `init` shows permission mode `default`, no MCP server, no tool, and `mach:belt` loaded. It is not run, and fails, while `.factory/local/` is not ignored by Git, because the plugin would be written there.
+
+**Limits of this mechanism.** The tool list is now enforced by Claude Code's permission system without the person's own settings; it is still not a sandbox (section 8).
 
 ## 4. Local configuration and lifecycle
 
@@ -110,7 +167,7 @@ Fields: `enabled`, `paused`, `autonomy` (`observe` or `supervised`), `limits` (p
 | `factory stop` | Emergency stop: ends running executions now and pauses. Outcomes are recorded as unknown. |
 | `factory serve`, `factory tick` | The supervisor itself: until disabled, or one pass. |
 
-The preflight requires: a MACH project; M3's intake loading; a resolvable integration branch; the checkout on it; `.factory/local/` ignored by Git; Python and git; Claude Code installed and answering a non-interactive request; the belt installed; a current audit that is not Bronze; the security veto in force; free disk and no more places than processors; no other live supervisor; the project not forbidding it; and macOS for a persistent service.
+The preflight requires: a MACH project; M3's intake loading; a resolvable integration branch; the checkout on it; `.factory/local/` ignored by Git; Python and git; Claude Code installed, offering the flags the execution boundary depends on, and answering a non-interactive request under exactly those flags (section 3.5); the belt installed; a current audit that is not Bronze; the security veto in force; free disk and no more places than processors; no other live supervisor; the project not forbidding it; and macOS for a persistent service.
 
 **Work already here.** If slices were waiting or in the line before activation, supervised autopilot is not offered until the engineer says whether to include them. Included work in the line is handed to the supervisor; excluded work stays the engineer's, and only work that arrives later is automatic.
 
@@ -170,7 +227,10 @@ No event contains a prompt, a command line, an environment variable or a credent
 
 ## 7. Security decisions
 
-- **Default deny for tools**, with an explicit list a person consented to (section 3).
+- **Default deny for tools**, with an explicit list a person consented to, enforced in restricted mode: the person's own settings, allow rules, plugins, MCP servers, agents and hooks are not loaded into a run, only the built-in tools the list names exist, the file tools stay inside the project (and a plugin MACH is loaded from), and anything that would ask is refused (section 3). `would_enable` says so, and that it is not a sandbox.
+- **No credential is handed to a run.** The run gets a minimal environment and signs in with the person's own Claude Code login. A key or token in the supervisor's environment, such as `ANTHROPIC_API_KEY`, never reaches it; a test holds that.
+- **MACH protects itself from the file tools.** A run may not edit MACH's own files, the Factory's policy and execution records, or the project's `.claude/` with Edit or Write.
+- **The preflight fails closed** when Claude Code lacks the flags the boundary depends on, or when a probe under the execution's own flags shows an MCP server, a tool, another permission mode, or no MACH workflow.
 - **A security blocker is a veto.** A Medium-risk ticket needs two of three approvals, so the security reviewer could be outvoted. `review.py` now rejects the round when the security seat has a blocker, whatever the count, and records `security_veto`. A project can set `review.security_veto: false`; the preflight then refuses supervised autopilot.
 - **No merge by default.** Every execution stops before the merge station unless the engineer chose `--allow-merge`, and the project's own merge settings still apply then.
 - **No human gate is passed.** Approval of a high-risk change, a Silver repository's sign-off, open questions and the three-round escalation are all stops in `run.py`; the supervisor starts nothing for a ticket whose next step is a stop.
@@ -179,14 +239,22 @@ No event contains a prompt, a command line, an environment variable or a credent
 
 ## 8. Limits and unresolved risks
 
-1. **Unattended building runs the repository's own code.** Tests, build scripts and dependencies run as the engineer, on their machine. The controls are consent, an audited repository, merged and approved definitions, and limits. It is not sandboxed.
-2. **`Bash(python3 *)` is broad.** The stations are Python scripts, so the interpreter must be allowed, and that also allows `python3 -c`. Narrowing it to the skill's own scripts was not reliable enough to ship.
-3. **The user's own Claude settings still apply.** Allow rules there add to the list. `--permission-mode default` removes the permissive mode; it does not remove those rules.
-4. **Confirmation is procedural** (section 4).
-5. **One runner per project is assumed, not enforced across machines.**
-6. **A paused or disabled Factory does not interrupt running work** unless `--stop` or `factory stop` is used. The belt has no checkpoint signal; an execution runs to its next stop.
-7. **The LaunchAgent has been tested against a stand-in for `launchctl` only.** It has never been registered with the real one.
-8. **Local ticket numbers** can still collide between two engineers who have not fetched each other's branches.
+1. **Unattended building runs the repository's own code.** Tests, build scripts and dependencies run as the engineer, on their machine, with their network access. The controls are consent, an audited repository, merged and approved definitions, and limits. It is not sandboxed. Restricted mode bounds which tools Claude may call; it does not contain what an allowed command does.
+2. **`Bash(python3 *)` is broad, and makes the other file rules a second layer.** The stations are Python scripts, so the interpreter must be allowed, and that also allows `python3 -c` (it ran in the after-run of section 3.2). A run can therefore still read or write any file the engineer can, open network connections, or run `git push` from inside Python. In particular, the `--disallowedTools` rules that protect MACH and `.factory/local/` stop the file tools, not Python. Narrowing the interpreter rule to the stations' own scripts was not reliable enough to ship.
+3. **The policy file is protected by its location and mode, not by a signature.** Any process running as the engineer, including a run's Python, could rewrite `.factory/local/runner.json`, for example to add a tool for the next execution. The policy is re-validated on every read, but its content is trusted.
+4. **Managed (enterprise) settings and `--settings` still apply under restricted mode.** An organisation's managed settings can add allow rules or MCP servers; the preflight's probe would refuse an MCP server, but not a managed allow rule. Not tested.
+5. **Claude Code's built-in plugins and skills still load** (`cc-plugin-agents-md`, `cc-plugin-telemetry`, `cc-plugin-privacy`, `cc-plugin-plugin-authoring`, and bundled skills such as `schedule` or `loop`). They get no tool beyond the run's own. Their behaviour was not examined further.
+6. **Read access inside the project is not narrowed.** A `.env` or other secret in the project can be read and could reach the model. Reads outside the project (and outside a MACH plugin folder) are refused.
+7. **Merging by pull request over SSH has no SSH agent.** `SSH_AUTH_SOCK` is not passed, so a `git push` to an SSH remote from inside the merge station fails (an HTTPS remote with a credential helper or `gh`'s own sign-in is unaffected). This only matters with `--allow-merge` and `merge.method: pr`, and was not tested live.
+8. **Confirmation is procedural** (section 4).
+9. **Workers' compound shell commands are refused when a part is not allowed or contains a variable.** The skills were written for interactive use; in the restricted runs the audit agent wrote `…/audit.py run; echo exit=$?`, was refused, and did not retry, so the belt's own audit refresh did not happen. The supervisor does not start a ticket without a current audit, so this matters only if the audit goes stale mid-run. The fix belongs in the skills ("one plain command per call"), not in the allow list.
+10. **One runner per project is assumed, not enforced across machines.**
+11. **A paused or disabled Factory does not interrupt running work** unless `--stop` or `factory stop` is used. The belt has no checkpoint signal; an execution runs to its next stop.
+12. **The LaunchAgent has been tested against a stand-in for `launchctl` only.** It has never been registered with the real one.
+13. **Local ticket numbers** can still collide between two engineers who have not fetched each other's branches.
+14. **Verified on one machine and version.** macOS, Claude Code 2.1.322, the person's default model (the probe and the top-level run used it). Linux, older Claude Code (the preflight refuses one without the flags), the verify, review, merge and cleanup stations under the restricted flags, and a full supervisor pass (`factory tick`) against the real `claude` were not run; section 3.4 lists what was (the belt's stop path for both install kinds, and the plan and build stations for a script install).
+
+**Closed by the hardening:** "The user's own Claude settings still apply" (formerly 8.3). Under restricted mode their allow rules, plugins, MCP servers, agents and hooks are not loaded (section 3.2). Likewise the run no longer inherits the supervisor's environment and any key or token in it.
 
 ## 9. How to run the live smoke test
 

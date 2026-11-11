@@ -8,6 +8,8 @@ stage the way a station would. A real end-to-end run is a separate, opt-in smoke
 import io
 import json
 import os
+import re
+import shutil
 import signal
 import stat
 import subprocess
@@ -34,15 +36,27 @@ from test_mach_product_intake import Base as IntakeBase  # noqa: E402
 
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, re, sys, time
+# The run gets a minimal environment, so the stand-in finds its scenario and log by fixed paths, not variables.
 argv = sys.argv[1:]
-scenario = json.load(open(os.environ["FAKE_CLAUDE_SCENARIO"]))
+scenario = json.load(open("@@SCENARIO@@"))
+if argv == ["--help"]:
+    flags = ["--add-dir <directories...>", "--allowedTools, --allowed-tools <tools...>", "--disallowedTools, --disallowed-tools <tools...>",
+             "--max-budget-usd <amount>", "--output-format <format>", "--permission-mode <mode>", "--permission-prompts <target>",
+             "--plugin-dir <path>", "--restricted", "--session-id <uuid>", "--strict-mcp-config", "--tools <tools...>", "--verbose"]
+    if scenario.get("help") == "old":  # a Claude Code from before restricted mode
+        flags = [flag for flag in flags if not flag.startswith(("--restricted", "--permission-prompts"))]
+    print("Usage: claude [options] [command] [prompt]\n\nOptions:\n" + "\n".join("  " + flag + "   what it does" for flag in flags))
+    sys.exit(0)
 prompt = argv[argv.index("-p") + 1]
-with open(os.environ["FAKE_CLAUDE_LOG"], "a") as log:
-    log.write(json.dumps({"argv": argv, "cwd": os.getcwd(), "env_wait": os.environ.get("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS")}) + "\n")
+with open("@@LOG@@", "a") as log:
+    log.write(json.dumps({"argv": argv, "cwd": os.getcwd(), "env_wait": os.environ.get("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"), "env": dict(os.environ)}) + "\n")
 if prompt.startswith("Reply with the single word READY"):
     if scenario.get("probe") == "fail":
         print(json.dumps({"type": "result", "is_error": True, "subtype": "error_auth", "result": None}))
         sys.exit(1)
+    tools = argv[argv.index("--tools") + 1].split(",") if "--tools" in argv and argv[argv.index("--tools") + 1] else []
+    print(json.dumps({"type": "system", "subtype": "init", "session_id": "probe", "permissionMode": argv[argv.index("--permission-mode") + 1],
+                      "mcp_servers": scenario.get("probe_mcp", []), "tools": tools, "skills": ["mach:belt"] if "--plugin-dir" in argv else []}))
     print(json.dumps({"type": "result", "is_error": False, "subtype": "success", "result": "READY", "session_id": "probe"}))
     sys.exit(0)
 args = json.loads(re.search(r"with args (\{.*?\})\. Use the Workflow tool", prompt).group(1))
@@ -77,6 +91,7 @@ result = {"type": "result", "subtype": "success" if not plan.get("is_error") els
 print(json.dumps(result), flush=True)
 sys.exit(plan.get("exit", 0))
 '''
+OS_ADDED_ENV = {"__CF_USER_TEXT_ENCODING"}  # macOS adds this to every process itself; it is not passed by the wrapper
 FAKE_LAUNCHCTL = r'''#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["FAKE_LAUNCHCTL_LOG"], "a") as log:
@@ -88,12 +103,12 @@ class Base(IntakeBase):
     def setUp(self):
         super().setUp()
         self.bin = self.root / "bin"
-        for name, text in (("claude", FAKE_CLAUDE), ("launchctl", FAKE_LAUNCHCTL)):
+        self.scenario = self.root / "claude-scenario.json"
+        self.claude_log = self.root / "claude.log"
+        for name, text in (("claude", FAKE_CLAUDE.replace("@@SCENARIO@@", str(self.scenario)).replace("@@LOG@@", str(self.claude_log))), ("launchctl", FAKE_LAUNCHCTL)):
             path = self.bin / name
             path.write_text(text.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1))
             path.chmod(path.stat().st_mode | stat.S_IEXEC)
-        self.scenario = self.root / "claude-scenario.json"
-        self.claude_log = self.root / "claude.log"
         self.launchctl_log = self.root / "launchctl.log"
         self.home = self.root / "home"
         self.home.mkdir()
@@ -223,6 +238,10 @@ class ActivationTest(Base):
         self.assertIn("Never merges", would["merges"])
         self.assertIn(f"Bash({sys.executable} *)", would["tools_each_execution_may_use"])
         self.assertIn("run this repository's tests", would["runs_repository_code"])
+        self.assertIn("restricted mode", would["execution_boundary"])
+        self.assertIn("not a sandbox", would["execution_boundary"])
+        ready = next(item for item in asked["checks"] if item["check"] == "claude_ready")
+        self.assertIn("inside the execution boundary", ready["detail"])  # the probe ran with the execution's own flags
         self.assertTrue(all(item["ok"] for item in asked["checks"] if item["required"]))
         self.assertIn("not the confirmation code", self.refused_factory("enable", "--confirm", "000000"))
         self.assertFalse(self.local("runner.json").exists())
@@ -249,6 +268,9 @@ class ActivationTest(Base):
         cases = [
             (lambda: self.config(build={"require_audit": True}), "audit", "no readiness audit report"),
             (lambda: self.claude({"probe": "fail"}), "claude_ready", "reported an error"),
+            # A Claude Code without restricted mode cannot keep the person's own settings, plugins and MCP servers out of a run.
+            (lambda: self.claude({"help": "old"}), "claude_ready", "lacks --restricted, --permission-prompts"),
+            (lambda: self.claude({"probe_mcp": [{"name": "gmail", "status": "connected"}]}), "claude_ready", "MCP servers were loaded"),
             (lambda: self.config(review={"security_veto": False}), "security_review", "could be outvoted"),
             (lambda: self.config(factory={"supervisor": False}), "project_allows", "not allowed here"),
             (lambda: self.local("supervisor.json").parent.mkdir(exist_ok=True) or self.local("supervisor.json").write_text(json.dumps(
@@ -377,10 +399,17 @@ class SupervisedTest(Base):
         self.assertEqual(argv[argv.index("--permission-mode") + 1], "default")  # the tool list is a real limit, whatever this machine's own settings
         self.assertEqual(argv[argv.index("--output-format") + 1], "stream-json")
         self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "25")
+        # The person's own settings, plugins, MCP servers and hooks stay out; MACH (here, this repository as a plugin) is the only plugin.
+        self.assertEqual(argv[argv.index("-p") + 2:argv.index("--max-budget-usd")],
+                         ["--output-format", "stream-json", "--verbose", "--restricted", "--strict-mcp-config", "--plugin-dir", str(ROOT),
+                          "--permission-mode", "default", "--permission-prompts", "none", "--tools", "Workflow,Skill,Agent,Read,Write,Edit,Glob,Grep,Bash",
+                          "--add-dir", str(ROOT), "--disallowedTools", f"Edit(/{ROOT}/**)", f"Edit(/{self.eng}/.factory/local/**)", f"Edit(/{self.eng}/.claude/**)"])
         tools = argv[argv.index("--allowedTools") + 1:]
-        self.assertEqual(tools, policy.read(self.eng)["allowed_tools"])
+        self.assertEqual(tools, policy.read(self.eng)["allowed_tools"])  # exactly what the person consented to, and last
         self.assertIn(f"Bash({sys.executable} *)", tools)
-        self.assertFalse([part for part in argv if "dangerously" in part or part in ("Bash", "Bash(*)", "bypassPermissions")])
+        self.assertFalse([part for part in argv if "dangerously" in part or part in ("Bash", "Bash(*)", "bypassPermissions", "--bare", "--setting-sources")])
+        self.assertTrue(set(call["env"]) - OS_ADDED_ENV <= set(executor.PASSED_ENV) | set(executor.PROXY_ENV) | set(executor.ENV), sorted(call["env"]))
+        self.assertEqual((call["env"]["HOME"], call["env"]["GIT_TERMINAL_PROMPT"]), (str(self.home), "0"))
         record = list(self.executions().values())[0]
         self.assertEqual(argv[argv.index("--session-id") + 1], record["session_id"])
         self.assertEqual((record["stage_at_start"], record["action_at_start"], record["until"], record["attempt"]), ("spec-ready", "plan", "merge", 1))
@@ -937,6 +966,89 @@ class ServiceTest(Base):
             with self.assertRaises(service.ServiceError):
                 service.install_agent(self.eng, SCRIPTS / "run.py")
         self.assertFalse(self.launchctl_log.exists())
+
+
+class BoundaryTest(Base):
+    """The allow list is a real boundary only with restricted mode, no MCP servers, MACH as the only plugin and a clean environment."""
+
+    def test_the_command_is_restricted_and_the_consented_list_comes_last(self):
+        argv = executor.command("claude", "mach:belt", ["LOCAL-001"], "merge", ["Read", "Bash(git log *)", "Edit", "mcp__mail__send"], 5, "s-1",
+                                Path("/plugins/mach"), [Path("/plugins/mach")], ["Edit(//plugins/mach/**)"])
+        for flag in ("--restricted", "--strict-mcp-config"):
+            self.assertIn(flag, argv)
+        self.assertEqual([argv[argv.index(flag) + 1] for flag in ("--permission-mode", "--permission-prompts", "--tools", "--plugin-dir", "--add-dir")],
+                         ["default", "none", "Read,Bash,Edit", "/plugins/mach", "/plugins/mach"])  # only built-in tools the list names exist in the run
+        self.assertEqual(argv[argv.index("--allowedTools") + 1:], ["Read", "Bash(git log *)", "Edit", "mcp__mail__send"])
+        self.assertEqual(argv[argv.index("--disallowedTools") + 1:argv.index("--max-budget-usd")], ["Edit(//plugins/mach/**)"])
+        self.assertFalse([part for part in argv if "dangerously" in part or "bypass" in part.lower() or part == "--bare"])
+        with self.assertRaises(ValueError):
+            executor.command("claude", "mach:belt", ["LOCAL-001"], None, ["Read"], 5, "s-1", Path("relative/plugin"))
+        with self.assertRaises(ValueError):
+            executor.command("claude", "mach:belt", ["LOCAL-001"], None, ["Bash(*)"], 5, "s-1", Path("/plugins/mach"))
+
+    def test_no_key_token_or_secret_reaches_the_run(self):
+        leaked = {"ANTHROPIC_API_KEY": "sk-ant-leak-1", "CLAUDE_CODE_OAUTH_TOKEN": "oauth-leak-2", "GITHUB_TOKEN": "ghp-leak-3", "AWS_SECRET_ACCESS_KEY": "aws-leak-4",
+                  "NPM_TOKEN": "npm-leak-5", "DB_PASSWORD": "pw-leak-6", "SSH_AUTH_SOCK": "/tmp/agent-leak-7", "HTTPS_PROXY": "http://user:pw-leak-8@proxy.test:8080",
+                  "CLAUDE_CODE_SESSION_ID": "session-leak-9", "LANG": "en_US.UTF-8", "NO_PROXY": "localhost"}
+        with mock.patch.dict(os.environ, leaked):
+            self.supervised()
+            self.tick()
+            self.wait()
+        calls = self.calls(runs_only=False)
+        self.assertEqual(len(calls), 2)  # the preflight's probe and the execution: both get the same clean environment
+        for call in calls:
+            env = call["env"]
+            self.assertEqual([name for name in env if re.search("KEY|TOKEN|SECRET", name, re.IGNORECASE)], [])
+            for value in leaked.values():
+                if "leak" in value:
+                    self.assertNotIn(value, json.dumps(env))
+            self.assertEqual((env["LANG"], env["NO_PROXY"], env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"]), ("en_US.UTF-8", "localhost", "0"))
+            self.assertTrue(set(env) - OS_ADDED_ENV <= set(executor.PASSED_ENV) | set(executor.PROXY_ENV) | set(executor.ENV), sorted(env))
+        self.assertEqual(executor.environment({"PATH": "/bin", "HTTPS_PROXY": "http://proxy.test:3128", "MY_API_KEY": "k"}),
+                         {"PATH": "/bin", "HTTPS_PROXY": "http://proxy.test:3128", **executor.ENV})
+
+    def test_a_script_install_gets_a_stable_generated_plugin_in_ignored_local_state(self):
+        installed = subprocess.run([sys.executable, str(ROOT / "bin" / "mach"), "install", "--project", str(self.eng)], capture_output=True, text=True)
+        self.assertEqual(installed.returncode, 0, installed.stderr + installed.stdout)
+        run_script = self.eng / ".claude/skills/mach-run/scripts/run.py"
+        folder = self.eng / ".factory/local/claude-plugin"
+        first = executor.plugin(self.eng, run_script)
+        self.assertEqual((first["kind"], first["plugin_dir"], first["workflow"], first["add_dirs"]), ("project", folder, "mach:belt", []))
+        self.assertIn(f"Edit(/{folder}/**)", first["denied"])
+        self.assertEqual(subprocess.run(["git", "check-ignore", "-q", ".factory/local/claude-plugin/workflows/belt.js"], cwd=str(self.eng)).returncode, 0)
+        # The installer's renames are undone exactly: the run sees MACH as the plugin it was installed from.
+        self.assertEqual((folder / "workflows/belt.js").read_text(), (ROOT / "workflows/belt.js").read_text())
+        for agent in (ROOT / "agents").glob("*.md"):
+            self.assertEqual((folder / "agents" / agent.name).read_text(), agent.read_text(), agent.name)
+        for name in ("run", "build", "intent", "review", "verify", "audit", "merge", "cleanup", "observe", "ticket"):
+            source = ROOT / "skills" / name
+            for path in source.rglob("*"):
+                if path.is_file() and "__pycache__" not in path.parts:
+                    self.assertEqual((folder / "skills" / name / path.relative_to(source)).read_bytes(), path.read_bytes(), str(path))
+        self.assertFalse((folder / "skills/product-studio").exists())  # a product manager's skill has no place in an unattended run
+        self.assertEqual(json.loads((folder / ".claude-plugin/plugin.json").read_text())["name"], "mach")
+        # The path never changes, and an unchanged install is not rewritten under a running execution.
+        stamp = (folder / executor.PLUGIN_STAMP).stat().st_mtime_ns
+        self.assertEqual(executor.plugin(self.eng, run_script)["plugin_dir"], folder)
+        self.assertEqual((folder / executor.PLUGIN_STAMP).stat().st_mtime_ns, stamp)
+        # A reinstall or an edit to the installed files is picked up, at the same path, with nothing left beside it.
+        with (self.eng / ".claude/agents/mach-builder.md").open("a") as out:
+            out.write("\nChanged by the engineer.\n")
+        self.assertEqual(executor.plugin(self.eng, run_script)["plugin_dir"], folder)
+        self.assertTrue((folder / "agents/builder.md").read_text().endswith("Changed by the engineer.\n"))
+        self.assertEqual(sorted(path.name for path in (self.eng / ".factory/local").iterdir()), ["claude-plugin"])
+        # Never through a symbolic link, which could point anywhere.
+        shutil.rmtree(str(folder))
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        folder.symlink_to(elsewhere)
+        with self.assertRaises(executor.PluginError):
+            executor.plugin(self.eng, run_script)
+        self.assertEqual(list(elsewhere.iterdir()), [])
+        # Installed as a plugin, MACH is loaded from the plugin's own folder, which the file tools may read but not change.
+        as_plugin = executor.plugin(self.eng, SCRIPTS / "run.py")
+        self.assertEqual((as_plugin["kind"], as_plugin["plugin_dir"], as_plugin["add_dirs"]), ("plugin", ROOT, [ROOT]))
+        self.assertIn(f"Edit(/{ROOT}/**)", as_plugin["denied"])
 
 
 class EventsTest(Base):

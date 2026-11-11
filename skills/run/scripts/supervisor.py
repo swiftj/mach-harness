@@ -437,11 +437,18 @@ class Supervisor:
             record.update({"state": "released", "ended_at": stamp(), "how": "not-started"})
             self.line.save(ledger)
             return {"ticket_id": ticket, "slice_id": slice_id, "why": why}
-        argv = executor.command(pol["claude"], self.workflow, [ticket], until, pol["allowed_tools"], pol["limits"]["max_budget_usd_per_run"], record["session_id"])
+        try:  # MACH is loaded as the run's only plugin; restricted mode ignores the project's .claude/ folder
+            boundary = executor.plugin(self.root, self.run_script)
+        except (executor.PluginError, OSError, UnicodeError) as exc:
+            record.update({"state": "released", "ended_at": stamp(), "how": "not-started"})
+            self.line.save(ledger)
+            return {"ticket_id": ticket, "slice_id": slice_id, "why": f"MACH could not be prepared as the run's plugin: {exc}"}
+        argv = executor.command(pol["claude"], boundary["workflow"], [ticket], until, pol["allowed_tools"], pol["limits"]["max_budget_usd_per_run"], record["session_id"],
+                                boundary["plugin_dir"], boundary["add_dirs"], boundary["denied"])
         executor.prepare(self.root, execution_id, argv, pol["limits"]["max_execution_minutes"])
         record["wrapper_pid"] = executor.launch(self.root, execution_id, self.run_script)
         record.update({"state": "started", "started_at": stamp()})
-        self.line.emit(ledger, "execution.started", session_id=record["session_id"], until=until, workflow=self.workflow,
+        self.line.emit(ledger, "execution.started", session_id=record["session_id"], until=until, workflow=boundary["workflow"],
                        limits={"minutes": pol["limits"]["max_execution_minutes"], "budget_usd": pol["limits"]["max_budget_usd_per_run"]},
                        refs={"execution": f".factory/local/executions/{execution_id}/", "cell": f".factory/worktrees/{ticket}/cell.json"}, **common)
         self.line.save(ledger)

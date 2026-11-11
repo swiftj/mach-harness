@@ -24,6 +24,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import executor
 import policy as policy_module
 import service
 import supervisor as supervisor_module
@@ -120,7 +121,8 @@ def status(ctx: Context) -> Dict[str, Any]:
 def checks(ctx: Context, request: Dict[str, Any], probe: bool) -> List[Dict[str, Any]]:
     integration = ctx.line.integration() if ctx.line is not None else {"problems": ["Product intake is not available."], "branch": None}
     return policy_module.preflight(ctx.root, ctx.config, request, git=ctx.git, audit=ctx.audit(), integration=integration, m3_problem=ctx.m3_problem,
-                                   workflow_installed=ctx.workflow_installed, lease_holder=ctx.sup.lease.holder(), ignored=local_state_ignored(ctx), probe=probe)
+                                   workflow_installed=ctx.workflow_installed, lease_holder=ctx.sup.lease.holder(), ignored=local_state_ignored(ctx), probe=probe,
+                                   boundary=lambda: executor.plugin(ctx.root, ctx.run_script))
 
 
 def failed(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -153,6 +155,11 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
         "max_risk": request["max_risk"] or "High",
         "tools_each_execution_may_use": list(dict.fromkeys([*policy_module.default_tools(), *request["extra_tools"]])) if request["autonomy"] == "supervised" else [],
         "everything_else": "Refused, and raised to a person. Nothing is granted quietly.",
+        "execution_boundary": ("Each execution runs Claude Code in restricted mode, signed in with your own Claude Code login. Your own Claude settings and their "
+                               "allow rules, your plugins, MCP servers, agents and hooks are not loaded; MACH is its only plugin. Only the built-in tools in the "
+                               "list above exist in the run, the file tools stay inside this project, and anything that would need your approval is refused. "
+                               "No API key, token or other credential from the supervisor's environment is passed to it. This bounds Claude's tools; it is not "
+                               "a sandbox: allowed commands, including any Python command, run as you.") if request["autonomy"] == "supervised" else None,
         "runs_repository_code": "Building and verifying run this repository's tests and build scripts on this machine, as you." if request["autonomy"] == "supervised" else None,
         "fetches": "Fetches from the shared repository on a timer. Never changes your checkout." if request["auto_sync"] else "Never fetches by itself.",
         "git_hooks": "Adds wake-up notes to post-merge, post-checkout and post-rewrite." if request["hooks"] else "No Git hooks.",

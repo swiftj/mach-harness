@@ -9,14 +9,28 @@ The command is fixed and explicit:
 
     claude -p "<a fixed prompt naming the workflow and the ticket>"
         --output-format stream-json --verbose     structured events and a final result
+        --restricted                              the person's own settings files, plugins, agents and
+                                                  hooks are not loaded; file tools stay in the project
+        --strict-mcp-config                       no MCP server is loaded at all
+        --plugin-dir <MACH, at a stable path>     the only skills, agents and workflow the run has
         --permission-mode default                 nothing is allowed unless it is listed
-        --allowedTools <the list a person consented to>
+        --permission-prompts none                 anything that would ask is refused, never asked
+        --tools <the built-in tools the list names>
         --max-budget-usd <limit>  --session-id <a new id>
+        [--add-dir <the MACH plugin, when it lives outside the project>]
+        --disallowedTools <edits to MACH itself and to the Factory's local state>
+        --allowedTools <the list a person consented to>
 
-`--permission-mode default` matters: a machine's own settings may run Claude in a more permissive
-mode, and then the tool list would bound nothing. With it, a tool that is not listed is refused,
-the refusal is in the output, and the supervisor raises it to a person. Nothing here ever passes a
-flag that skips permission checks.
+Without `--restricted`, allow rules in the person's own Claude settings (for example
+`Bash(curl:*)` or `Bash(git push:*)`) are added to the list, and every plugin, MCP server, agent and
+hook they have installed is loaded into the run: then the list bounds nothing. With it, a use that
+is not listed is refused, the refusal is in the output, and the supervisor raises it to a person.
+Restricted mode also drops the project's own .claude/ skills, agents and workflows, so MACH is
+loaded explicitly as a plugin (`plugin()`). Nothing here ever passes a flag that skips permission
+checks.
+
+The run gets a minimal environment (`environment()`): it signs in with the person's own Claude Code
+login, and no API key, token or other credential in the supervisor's environment reaches it.
 
 The wrapper exists so that an execution outlives the supervisor that started it and still leaves a
 record: it writes started.json when the process is running and result.json when it ends, whatever
@@ -29,21 +43,37 @@ own records by run.py, as always.
 Standard library only.
 """
 
+import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 EXECUTION_ID_RE = re.compile(r"^x[0-9a-f]{12}$")
-ENV = {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "0"}  # wait for the workflow however long it runs
+ENV = {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "0",  # wait for the workflow however long it runs
+       "GIT_TERMINAL_PROMPT": "0"}                    # a Git command that wants a password fails instead of hanging
 GRACE_SECONDS = 20
+WORKFLOW = "mach:belt"  # MACH is always loaded as the plugin named mach, whichever way it is installed
+# What the run inherits from the supervisor's environment, and nothing else. No API key or token: the
+# run signs in with the person's own Claude Code login. CLAUDE_CONFIG_DIR is a folder, needed to find that login.
+PASSED_ENV = ("HOME", "USER", "LOGNAME", "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "SHELL", "TERM", "CLAUDE_CONFIG_DIR")
+PROXY_ENV = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy")  # passed only without a user:password part
+CREDENTIAL_NAME_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE", re.IGNORECASE)
+# The flags the boundary depends on. A Claude Code whose --help lacks any of them is refused by the preflight.
+REQUIRED_FLAGS = ("--restricted", "--strict-mcp-config", "--plugin-dir", "--permission-mode", "--permission-prompts", "--tools",
+                  "--allowedTools", "--disallowedTools", "--add-dir", "--max-budget-usd", "--session-id", "--output-format")
+TOOL_NAME_RE = re.compile(r"^[A-Z][A-Za-z]*$")
+PLUGIN_FOLDER = "claude-plugin"
+PLUGIN_STAMP = ".mach-factory-plugin.json"
+NOT_FOR_THE_FACTORY = ("product-studio",)  # a product manager's skill; an unattended run has no use for it
 
 
 def now() -> str:
@@ -69,12 +99,193 @@ def prompt(workflow: str, tickets: Sequence[str], until: Optional[str]) -> str:
             "When it has finished, reply with only the JSON it returned. If you are refused, say so and stop.")
 
 
-def command(claude: str, workflow: str, tickets: Sequence[str], until: Optional[str], tools: Sequence[str], budget_usd: float, session_id: str) -> List[str]:
+def builtin_tools(tools: Sequence[str]) -> List[str]:
+    """The built-in tools a run is given: exactly those the consented list names ('Bash(git log *)' names Bash).
+    Restricted mode removes every other built-in tool, so nothing outside the list even exists in the run."""
+    names = [tool.strip().split("(", 1)[0] for tool in tools]
+    return list(dict.fromkeys(name for name in names if TOOL_NAME_RE.match(name)))
+
+
+def protected(root: Path, plugin_dir: Path) -> List[str]:
+    """Edits no run may make with the file tools, whatever the allow list says: MACH's own code and the
+    Factory's machine-local state (its policy, its records of executions). A second layer only: a run that
+    may run Python could still write files, so this does not replace the allow list."""
+    paths = [Path(plugin_dir), root / ".factory" / "local", root / ".claude"]
+    return list(dict.fromkeys(f"Edit(/{path}/**)" for path in paths))
+
+
+def boundary_flags(plugin_dir: Path, tools: Sequence[str], add_dirs: Sequence[Path] = (), denied: Sequence[str] = ()) -> List[str]:
+    """Everything that makes the allow list a real boundary. Shared with the preflight's probe, so what is
+    checked is what is run."""
+    flags = ["--restricted", "--strict-mcp-config", "--plugin-dir", str(plugin_dir),
+             "--permission-mode", "default", "--permission-prompts", "none", "--tools", ",".join(builtin_tools(tools))]
+    for folder in add_dirs:
+        flags += ["--add-dir", str(folder)]
+    if denied:
+        flags += ["--disallowedTools", *denied]
+    return flags
+
+
+def command(claude: str, workflow: str, tickets: Sequence[str], until: Optional[str], tools: Sequence[str], budget_usd: float, session_id: str,
+            plugin_dir: Path, add_dirs: Sequence[Path] = (), denied: Sequence[str] = ()) -> List[str]:
     for tool in tools:
         if tool.strip() in ("Bash", "Bash(*)", "*") or "dangerously" in tool:
             raise ValueError("The tool list may not allow every shell command.")
-    return [claude, "-p", prompt(workflow, tickets, until), "--output-format", "stream-json", "--verbose", "--permission-mode", "default",
+    if not Path(plugin_dir).is_absolute():
+        raise ValueError("The MACH plugin folder must be an absolute path.")
+    # --allowedTools stays last: it takes every word after it, and it is exactly the list a person consented to.
+    return [claude, "-p", prompt(workflow, tickets, until), "--output-format", "stream-json", "--verbose",
+            *boundary_flags(plugin_dir, tools, add_dirs, denied),
             "--max-budget-usd", str(budget_usd), "--session-id", session_id, "--allowedTools", *tools]
+
+
+def environment(base: Mapping[str, str]) -> Dict[str, str]:
+    """The run's whole environment: what it needs to find its programs and the person's own login, and nothing
+    that carries a credential. A key or token in the supervisor's environment never reaches the run."""
+    env = {name: base[name] for name in PASSED_ENV if base.get(name)}
+    for name in PROXY_ENV:
+        value = base.get(name)
+        if value and "@" not in value:
+            env[name] = value
+    env.update(ENV)
+    return {name: value for name, value in env.items() if not CREDENTIAL_NAME_RE.search(name)}
+
+
+# ---- MACH as the run's only plugin ----
+
+
+class PluginError(Exception):
+    """MACH could not be prepared as a plugin for an unattended run; nothing is started."""
+
+
+def plugin(root: Path, run_script: Path) -> Dict[str, Any]:
+    """Where the run loads MACH from, and the workflow's name there.
+
+    Restricted mode ignores the project's .claude/ folder, so MACH is always loaded with --plugin-dir:
+    - installed as a plugin: that plugin's own folder;
+    - installed by script into .claude/: a plugin generated from those installed files, at a stable path in
+      the project's git-ignored local state (.factory/local/claude-plugin/), never a temporary folder.
+    In both cases the names are the plugin's: mach:belt, mach:builder, /mach:run.
+    """
+    skill = Path(run_script).resolve().parent.parent
+    if skill.name.startswith("mach-"):
+        folder = project_plugin(root)
+        return {"kind": "project", "plugin_dir": folder, "workflow": WORKFLOW, "add_dirs": [], "denied": protected(root, folder)}
+    folder = skill.parent.parent
+    if not (folder / ".claude-plugin" / "plugin.json").is_file():
+        raise PluginError(f"MACH's run skill at {skill} is neither in a plugin nor installed in a project's .claude folder.")
+    outside = not inside(folder, root)
+    # Restricted mode keeps the file tools inside the working folders; reviewers read their briefs from the plugin.
+    # A project that is itself MACH's source (MACH building MACH) keeps its own files editable.
+    denied = protected(root, folder) if not inside(root, folder) else protected(root, root / ".factory" / "local")
+    return {"kind": "plugin", "plugin_dir": folder, "workflow": WORKFLOW, "add_dirs": [folder] if outside else [], "denied": denied}
+
+
+def inside(path: Path, folder: Path) -> bool:
+    try:
+        Path(path).resolve().relative_to(Path(folder).resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def unprefixed(text: str, name: str) -> str:
+    """The installer's renaming undone: front matter 'name: mach-build' back to 'name: build'."""
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---", 4)
+    if end < 0:
+        return text
+    head = re.sub(rf"(?m)^name:\s*mach-{re.escape(name)}\s*$", f"name: {name}", text[:end], count=1)
+    return head + text[end:]
+
+
+def project_files(root: Path) -> Dict[str, bytes]:
+    """The plugin's files, built from a script install's .claude/ folder by undoing the installer's renames."""
+    source = root / ".claude"
+    files: Dict[str, bytes] = {}
+    stations = []
+    skills = source / "skills"
+    for skill in sorted(skills.glob("mach-*")) if skills.is_dir() else []:
+        station = skill.name[len("mach-"):]
+        if skill.is_symlink() or not skill.is_dir() or station in NOT_FOR_THE_FACTORY:
+            continue
+        stations.append(station)
+        for path in sorted(skill.rglob("*")):
+            relative = path.relative_to(skill)
+            if path.is_symlink() or not path.is_file() or "__pycache__" in relative.parts:
+                continue
+            data = path.read_bytes()
+            if relative.as_posix() == "SKILL.md":
+                data = unprefixed(data.decode("utf-8"), station).encode("utf-8")
+            files[f"skills/{station}/{relative.as_posix()}"] = data
+    if "run" not in stations:
+        raise PluginError("MACH's run skill is not installed in this project's .claude/skills.")
+    agents = source / "agents"
+    for path in sorted(agents.glob("mach-*.md")) if agents.is_dir() else []:
+        if path.is_symlink() or not path.is_file():
+            continue
+        name = path.stem[len("mach-"):]
+        files[f"agents/{name}.md"] = unprefixed(path.read_text(encoding="utf-8"), name).encode("utf-8")
+    workflows = source / "workflows"
+    belt = workflows / "mach-belt.js"
+    if belt.is_symlink() or not belt.is_file():
+        raise PluginError("The MACH belt workflow is not installed in this project's .claude/workflows.")
+    for path in sorted(workflows.glob("mach-*.js")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        name = path.stem[len("mach-"):]
+        installed = path.read_text(encoding="utf-8")
+        # Only a skill command where a person would type one: never a path such as .claude/skills/mach-run/.
+        text = re.sub(r"(?<![\w./-])/mach-(%s)\b" % "|".join(map(re.escape, stations)), r"/mach:\1", installed)
+        text = text.replace(f"  name: 'mach-{name}',", f"  name: '{name}',", 1)
+        if text.replace("/mach:", "/mach-").replace(f"  name: '{name}',", f"  name: 'mach-{name}',", 1) != installed:
+            raise PluginError(f"The installed workflow {path.name} could not be mapped back to MACH's plugin names.")
+        files[f"workflows/{name}.js"] = text.encode("utf-8")
+    version = "0.0.0"
+    manifest = read_json(root / ".factory" / ".mach-manifest.json")
+    if manifest and isinstance(manifest.get("version"), str) and re.match(r"^[0-9A-Za-z.+-]{1,40}$", manifest["version"]):
+        version = manifest["version"]
+    files[".claude-plugin/plugin.json"] = (json.dumps({"name": "mach", "version": version,
+                                                       "description": "MACH as installed in this project, loaded by the Factory for unattended runs. Generated; do not edit."},
+                                                      indent=2) + "\n").encode("utf-8")
+    return files
+
+
+def project_plugin(root: Path) -> Path:
+    """Write the generated plugin, or leave it alone when it already matches what is installed.
+
+    The path never changes. It is rebuilt only when the installed files change, beside the old one and then
+    swapped in, so a run that is reading it sees a whole plugin."""
+    local = root / ".factory" / "local"
+    for path in (root / ".factory", local):
+        if path.is_symlink():
+            raise PluginError(f"{path} is a symbolic link; the Factory's plugin is not written through one.")
+    target = local / PLUGIN_FOLDER
+    if target.is_symlink():
+        raise PluginError(f"{target} is a symbolic link; the Factory's plugin is not written through one.")
+    files = project_files(root)
+    digest = hashlib.sha256()
+    for name in sorted(files):
+        digest.update(name.encode("utf-8") + b"\0" + hashlib.sha256(files[name]).digest())
+    stamp = read_json(target / PLUGIN_STAMP)
+    if target.is_dir() and stamp and stamp.get("digest") == digest.hexdigest():
+        return target
+    local.mkdir(parents=True, exist_ok=True)
+    os.chmod(str(local), 0o700)
+    fresh = local / f"{PLUGIN_FOLDER}.next-{os.getpid()}"
+    shutil.rmtree(str(fresh), ignore_errors=True)
+    for name, data in files.items():
+        path = fresh / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    write_json(fresh / PLUGIN_STAMP, {"digest": digest.hexdigest(), "generated_at": now(), "from": ".claude"})
+    old = local / f"{PLUGIN_FOLDER}.old-{os.getpid()}"
+    if target.exists():
+        os.replace(str(target), str(old))
+    os.replace(str(fresh), str(target))
+    shutil.rmtree(str(old), ignore_errors=True)
+    return target
 
 
 def write_json(path: Path, data: Dict[str, Any]) -> None:
@@ -115,7 +326,7 @@ def wrapper(root: Path, execution_id: str) -> int:
     spec = read_json(home / "spec.json")
     if not spec or (home / "result.json").exists() or (home / "started.json").exists():
         return 2  # nothing prepared, or this execution was already started once: never run it twice
-    env = {**os.environ, **ENV}
+    env = environment(os.environ)  # never the supervisor's whole environment: no key or token reaches the run
     interrupted = {"signal": None}
 
     def stop(number: int, frame: Any) -> None:

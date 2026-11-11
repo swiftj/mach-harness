@@ -19,6 +19,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import secrets
 import shutil
 import stat
@@ -27,7 +28,10 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import executor  # noqa: E402  (the boundary's flags and environment; the probe uses exactly what an execution uses)
 
 POLICY_VERSION = 2
 AUTONOMY = ("observe", "supervised")  # observe: discover, reconcile and plan. supervised: also run eligible work, stopping at every human gate
@@ -267,25 +271,63 @@ def check(name: str, ok: bool, detail: str, required: bool = True) -> Dict[str, 
     return {"check": name, "ok": bool(ok), "required": required, "detail": detail}
 
 
-def probe_claude(claude: str, root: Path) -> Tuple[bool, str]:
-    """Ask Claude Code for one word, without any tool, to prove it runs unattended and is signed in."""
+def missing_flags(claude: str, root: Path) -> Tuple[Optional[List[str]], str]:
+    """The flags the execution boundary depends on that this Claude Code does not offer, from its own --help."""
     try:
-        done = subprocess.run([claude, "-p", "Reply with the single word READY and nothing else.", "--output-format", "json",
-                               "--permission-mode", "default", "--max-budget-usd", "1"],
-                              cwd=str(root), capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
+        done = subprocess.run([claude, "--help"], cwd=str(root), capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+                              env=executor.environment(os.environ))
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"Claude Code did not answer --help: {exc}"
+    offered = set(re.findall(r"(?<![\w-])--[a-zA-Z][\w-]*", done.stdout or ""))
+    return [flag for flag in executor.REQUIRED_FLAGS if flag not in offered], ""
+
+
+def probe_claude(claude: str, root: Path, boundary: Dict[str, Any], workflow: str) -> Tuple[bool, str]:
+    """Prove that Claude Code can run unattended here inside the same boundary an execution gets: the same
+    restricted flags, the same MACH plugin, the same minimal environment, no tool at all. Fails closed."""
+    missing, problem = missing_flags(claude, root)
+    if missing is None:
+        return False, problem
+    if missing:
+        return False, ("This Claude Code lacks " + ", ".join(missing) + ", which unattended execution depends on to keep your own settings, "
+                       "plugins and MCP servers out of the run. Update Claude Code (2.1.322 or later was verified).")
+    argv = [claude, "-p", "Reply with the single word READY and nothing else.", "--output-format", "stream-json", "--verbose",
+            *executor.boundary_flags(boundary["plugin_dir"], [], boundary.get("add_dirs") or []), "--max-budget-usd", "1"]
+    try:
+        done = subprocess.run(argv, cwd=str(root), capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL, env=executor.environment(os.environ))
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, f"Claude Code did not answer: {exc}"
-    try:
-        result = json.loads(done.stdout)
-    except ValueError:
-        return False, "Claude Code did not return a structured result: " + ((done.stderr or done.stdout).strip().splitlines() or ["no output"])[-1][:200]
+    init: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
+    for line in (done.stdout or "").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "system" and event.get("subtype") == "init" and init is None:
+            init = event
+        if isinstance(event, dict) and event.get("type") == "result":
+            result = event
+    if result is None:
+        return False, "Claude Code did not return a structured result: " + ((done.stderr or done.stdout or "").strip().splitlines() or ["no output"])[-1][:200]
     if done.returncode != 0 or result.get("is_error"):
         return False, f"Claude Code reported an error ({result.get('subtype') or done.returncode})."
-    return True, "Claude Code answered a non-interactive request."
+    if init is None:
+        return False, "Claude Code did not report how it started, so the boundary could not be confirmed."
+    if init.get("permissionMode") != "default":
+        return False, f"Claude Code started in permission mode '{init.get('permissionMode')}', not 'default'."
+    if init.get("mcp_servers"):
+        return False, "MCP servers were loaded despite --strict-mcp-config: " + ", ".join(str((item or {}).get("name")) for item in init["mcp_servers"])[:200] + "."
+    if init.get("tools"):
+        return False, "Tools were available although none were asked for: " + ", ".join(map(str, init["tools"]))[:200] + "."
+    if workflow not in (init.get("skills") or []):
+        return False, f"The MACH workflow {workflow} did not load from {boundary['plugin_dir']} in restricted mode."
+    return True, f"Claude Code answered inside the execution boundary (restricted, no MCP servers, MACH loaded from {boundary['plugin_dir']})."
 
 
 def preflight(root: Path, config: Dict[str, Any], request: Dict[str, Any], *, git: Any, audit: Dict[str, Any], integration: Dict[str, Any],
-              m3_problem: Optional[str], workflow_installed: bool, lease_holder: Optional[str], ignored: bool, probe: bool = True) -> List[Dict[str, Any]]:
+              m3_problem: Optional[str], workflow_installed: bool, lease_holder: Optional[str], ignored: bool, probe: bool = True,
+              boundary: Optional[Callable[[], Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     """Everything that must be true before this machine may run work unattended. Deterministic except the Claude probe."""
     supervised = request["autonomy"] == "supervised"
     checks = [check("mach_project", (root / ".factory" / "config.json").is_file(), "This folder is a MACH project." if (root / ".factory" / "config.json").is_file()
@@ -308,7 +350,17 @@ def preflight(root: Path, config: Dict[str, Any], request: Dict[str, Any], *, gi
                         required=supervised))
     if supervised:
         if claude and probe:
-            ok, detail = probe_claude(claude, root)
+            if not ignored:  # the MACH plugin for the run is written to .factory/local/, which must not reach Git first
+                ok, detail = False, "Not checked: .factory/local/ must be ignored by Git before the execution boundary can be prepared there."
+            elif boundary is None:
+                ok, detail = False, "Not checked: there is no execution boundary to check."
+            else:
+                try:
+                    prepared = boundary()
+                except (executor.PluginError, OSError, UnicodeError) as exc:
+                    ok, detail = False, f"MACH could not be prepared as the run's plugin: {exc}"
+                else:
+                    ok, detail = probe_claude(claude, root, prepared, prepared["workflow"])
             checks.append(check("claude_ready", ok, detail))
         state = audit.get("state")
         checks.append(check("audit", state in ("ok", "off"), {"ok": f"The readiness audit is current: {audit.get('tier')}.", "off": "This project has switched the audit gate off.",
