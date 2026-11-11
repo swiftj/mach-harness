@@ -1,15 +1,7 @@
-import { EmptyState, Page } from "@mach/ui";
 import type { Feature } from "../types";
+import { SpecScreen } from "./SpecScreen";
 
-/** Placeholder: this feature's owner replaces everything in this folder. Keep the `feature` export's shape. */
-function SpecScreen() {
-  return (
-    <Page>
-      <EmptyState title="Slice" description="This screen is being built." />
-    </Page>
-  );
-}
-
+/** The Specification Workspace: one slice, read from `slice.show`. */
 export const feature: Feature = {
   routes: [{ path: "slices/:sliceId", element: <SpecScreen /> }],
 };

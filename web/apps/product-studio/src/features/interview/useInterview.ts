@@ -1,0 +1,203 @@
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import type { MachApiError } from "@mach/ui/api";
+import { interviewCapability, loadSession, toApiError, type InterviewCapability } from "../spec/api";
+import { getInterviewClient, type InterviewClient } from "./client";
+import type { InterviewSummary } from "./events";
+import { initialModel, interviewReducer, type AnswerKind, type Decision, type InterviewModel } from "./model";
+
+export type InterviewPhase =
+  /** Asking the host whether interviews can run and whether this slice has one. */
+  | "loading"
+  /** The host cannot run interviews (`capabilities.interview: false`). */
+  | "unavailable"
+  /** No interview is running for this slice; the PM can start or continue one. */
+  | "idle"
+  | "starting"
+  | "live"
+  /** Another window or host holds this slice's interview. */
+  | "conflict"
+  /** The host or engine refused to start (an approved slice, for one). */
+  | "refused"
+  | "error";
+
+export interface InterviewController {
+  phase: InterviewPhase;
+  capability: InterviewCapability | null;
+  summary: InterviewSummary | null;
+  model: InterviewModel;
+  /** A failure starting, reading or acting; shown in the host's or engine's words. */
+  problem: MachApiError | null;
+  /** True while a reply, an interrupt or a stop is on its way to the host. */
+  sending: "reply" | "interrupt" | "stop" | null;
+  start: () => void;
+  reply: (text: string, answer: AnswerKind) => void;
+  interrupt: () => void;
+  stop: () => void;
+  retryLoad: () => void;
+}
+
+/** Decisions are kept per slice in this browser so the history survives a reload. A convenience only. */
+const storageKey = (sliceId: string) => `mach.interview.decisions.${sliceId}`;
+
+function readDecisions(sliceId: string): Decision[] {
+  try {
+    const raw = window.localStorage.getItem(storageKey(sliceId));
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as Decision[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDecisions(sliceId: string, decisions: Decision[]) {
+  try {
+    window.localStorage.setItem(storageKey(sliceId), JSON.stringify(decisions.slice(-200)));
+  } catch {
+    // Storage blocked: the history lasts for this page only.
+  }
+}
+
+export function useInterview(sliceId: string): InterviewController {
+  const [model, dispatch] = useReducer(interviewReducer, sliceId, (id) => ({ ...initialModel, decisions: readDecisions(id) }));
+  const [phase, setPhase] = useState<InterviewPhase>("loading");
+  const [capability, setCapability] = useState<InterviewCapability | null>(null);
+  const [summary, setSummary] = useState<InterviewSummary | null>(null);
+  const [problem, setProblem] = useState<MachApiError | null>(null);
+  const [sending, setSending] = useState<InterviewController["sending"]>(null);
+  const [loadTick, setLoadTick] = useState(0);
+  const clientRef = useRef<InterviewClient | null>(null);
+  const idRef = useRef<string | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+
+  const attach = useCallback((client: InterviewClient, interviewId: string) => {
+    unsubscribeRef.current?.();
+    idRef.current = interviewId;
+    setPhase("live");
+    unsubscribeRef.current = client.subscribe(interviewId, {
+      onEvent: (event) => dispatch({ type: "event", event }),
+      onConnection: (state) => dispatch({ type: "connection", state }),
+    });
+  }, []);
+
+  // Load: capability, then the slice's current interview. Re-attaches after a reload or restart.
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const [client, session] = await Promise.all([getInterviewClient(), loadSession()]);
+        if (cancelled) return;
+        clientRef.current = client;
+        const cap = interviewCapability(session);
+        setCapability(cap);
+        if (!cap.available) {
+          setPhase("unavailable");
+          return;
+        }
+        let found: InterviewSummary | null = null;
+        try {
+          found = await client.current(sliceId, controller.signal);
+        } catch (cause) {
+          const error = toApiError(cause, "interview.current");
+          if (error.kind === "aborted") return;
+          // An older host without the lookup route: treat as "nothing running" and let Start decide.
+          if (error.kind !== "invalid" && error.kind !== "protocol") throw error;
+        }
+        if (cancelled) return;
+        setSummary(found);
+        if (found?.locked_elsewhere) setPhase("conflict");
+        else if (found?.live && found.interview_id) attach(client, found.interview_id);
+        else setPhase("idle");
+      } catch (cause) {
+        if (cancelled) return;
+        const error = toApiError(cause, "interview");
+        if (error.kind === "aborted") return;
+        setProblem(error);
+        setPhase("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = null;
+      idRef.current = null;
+    };
+  }, [sliceId, loadTick, attach]);
+
+  useEffect(() => {
+    if (model.decisions.length) writeDecisions(sliceId, model.decisions);
+  }, [sliceId, model.decisions]);
+
+  const start = useCallback(() => {
+    const client = clientRef.current;
+    if (!client) return;
+    setPhase("starting");
+    setProblem(null);
+    dispatch({ type: "reset", decisions: readDecisions(sliceId) });
+    client.start(sliceId).then(
+      (result) => attach(client, result.interview_id),
+      (cause: unknown) => {
+        const error = toApiError(cause, "interview.start");
+        setProblem(error);
+        setPhase(error.kind === "conflict" ? "conflict" : error.kind === "refused" ? "refused" : "error");
+      },
+    );
+  }, [sliceId, attach]);
+
+  const reply = useCallback((text: string, answer: AnswerKind) => {
+    const client = clientRef.current;
+    const id = idRef.current;
+    const trimmed = text.trim();
+    if (!client || !id || !trimmed) return;
+    setProblem(null);
+    setSending("reply");
+    dispatch({ type: "replied", text: trimmed, answer });
+    client.reply(id, trimmed).then(
+      () => setSending(null),
+      (cause: unknown) => {
+        setSending(null);
+        dispatch({ type: "reply-failed" });
+        setProblem(toApiError(cause, "interview.reply"));
+      },
+    );
+  }, []);
+
+  const interrupt = useCallback(() => {
+    const client = clientRef.current;
+    const id = idRef.current;
+    if (!client || !id) return;
+    setSending("interrupt");
+    client.interrupt(id).then(
+      () => setSending(null),
+      (cause: unknown) => {
+        setSending(null);
+        setProblem(toApiError(cause, "interview.interrupt"));
+      },
+    );
+  }, []);
+
+  const stop = useCallback(() => {
+    const client = clientRef.current;
+    const id = idRef.current;
+    if (!client || !id) return;
+    setSending("stop");
+    client.stop(id).then(
+      () => setSending(null),
+      (cause: unknown) => {
+        setSending(null);
+        setProblem(toApiError(cause, "interview.stop"));
+      },
+    );
+  }, []);
+
+  const retryLoad = useCallback(() => {
+    dispatch({ type: "reset", decisions: readDecisions(sliceId) });
+    setPhase("loading");
+    setProblem(null);
+    setSummary(null);
+    setLoadTick((t) => t + 1);
+  }, [sliceId]);
+
+  return { phase, capability, summary, model, problem, sending, start, reply, interrupt, stop, retryLoad };
+}
