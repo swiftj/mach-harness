@@ -677,10 +677,18 @@ def cmd_slice_new(studio: Studio, args: argparse.Namespace) -> int:
     return emit({"slice": data, **slice_paths(studio, slice_id), "ids": reserved_ids(studio)})
 
 
+def edit_refusal(slice_id: str, data: Dict[str, Any]) -> Optional[str]:
+    """Why a slice's draft cannot be changed, or None when it can."""
+    if data.get("status") in EDITABLE_SLICE:
+        return None
+    return f"{slice_id} is {data.get('status')}. To change an approved slice, reopen it first: studio.py slice reopen {slice_id}"
+
+
 def require_editable(studio: Studio, slice_id: str) -> Dict[str, Any]:
     data = studio.load("slice", slice_id)
-    if data.get("status") not in EDITABLE_SLICE:
-        raise StudioError(f"{slice_id} is {data.get('status')}. To change an approved slice, reopen it first: studio.py slice reopen {slice_id}")
+    refusal = edit_refusal(slice_id, data)
+    if refusal:
+        raise StudioError(refusal)
     return data
 
 
@@ -746,6 +754,64 @@ def cmd_slice_check(studio: Studio, args: argparse.Namespace) -> int:
     print(json.dumps(result, indent=2, ensure_ascii=False))
     blocking = result["errors"] or result["intent_problems"] or (args.ready and result["open_questions"])
     return 1 if blocking else 0
+
+
+INTENT_TITLE_RE = re.compile(r"^# Intent:[ \t]*(.*?)\s*$", re.MULTILINE)
+
+
+def why_sections(text: Optional[str], cell: Any) -> Dict[str, Any]:
+    """A slice's why split into its sections, with the bold `- **Name:** value` lines of each."""
+    if text is None:
+        return {"exists": False, "markdown": None, "title": None, "header": {}, "sections": []}
+    sections = cell.markdown_sections(text)
+    title = INTENT_TITLE_RE.search(text)
+    preamble = [line for line in sections.get("", []) if not INTENT_TITLE_RE.fullmatch(line)]
+    return {
+        "exists": True, "markdown": text, "title": title.group(1) if title else None,
+        "header": cell.fields(preamble),
+        "sections": [{"heading": heading, "text": "\n".join(lines).strip("\n"), "fields": cell.fields(lines)}
+                     for heading, lines in sections.items() if heading],
+    }
+
+
+def cmd_slice_show(studio: Studio, args: argparse.Namespace) -> int:
+    """Everything the Specification Workspace shows for one slice, in one read. Changes nothing:
+    no sync, no bookkeeping. `slice check` is the call that records a result."""
+    slice_id = args.slice_id
+    data = studio.load("slice", slice_id)
+    spec = studio.spec_of(slice_id)
+    intent = studio.intent_path(slice_id)
+    intent_text = intent.read_bytes().decode("utf-8", errors="replace") if intent.is_file() and not intent.is_symlink() else None
+    spec_view: Optional[Dict[str, Any]] = None
+    if spec is not None:
+        findings, model = studio.analyze(spec, ready=False)
+        spec_view = {
+            "path": studio.relative(spec), "name": spec.name,
+            "markdown": spec.read_bytes().decode("utf-8", errors="replace"),
+            "model": model,
+            "findings": [{"severity": f.severity, "rule": f.rule, "line": f.line or None, "message": f.message} for f in findings],
+        }
+    check = studio.check_slice(slice_id, ready=False)
+    if check.get("spec"):
+        check["spec"] = studio.relative(Path(check["spec"]))
+    refusal = edit_refusal(slice_id, data)
+    return emit({
+        "slice": data,
+        "editable": refusal is None,
+        "edit_refusal": refusal,
+        "paths": {
+            "work_order": studio.relative(studio.path("slice", slice_id)),
+            "specs_dir": "specs/slices",
+            "spec": spec_view["path"] if spec_view else None,
+            "spec_name_pattern": f"{slice_id}-<lowercase-kebab-name>.md",
+            "intent": studio.relative(intent),
+        },
+        "spec": spec_view,
+        "why": why_sections(intent_text, studio.cell),
+        "check": check,
+        "resume_note": (studio.session()["notes"].get(slice_id) or {}).get("note"),
+        "factory_authorized": False,
+    })
 
 
 def cmd_slice_approve(studio: Studio, args: argparse.Namespace) -> int:
@@ -893,6 +959,7 @@ def reconciling(sync: Dict[str, Any]) -> Dict[str, Any]:
 
 def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
     fetched, problem = studio.shared.fetch()
+    detail = studio.shared.fetch_detail
     studio.shared = collab.Shared(studio.project, studio.cell.load_config(studio.project))
     studio._theirs = None
     sync = studio.sync()
@@ -903,6 +970,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
     return emit({
         "refreshed": fetched,
         "problem": None if fetched else problem,
+        "problem_detail": None if fetched or not detail else detail,
         "shared_project": f"the {studio.shared.into} branch of the shared repository" if studio.shared.ref else "this folder (no shared repository)",
         "arrived": sync["arrived"], "updated": sync["updated"], "merged": sync["merged"],
         "approvals_withdrawn": sync["approvals_withdrawn"],
@@ -1159,11 +1227,11 @@ def describe_file(relative: str, is_new: bool) -> str:
 
 def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     need_shared(studio)
-    fetched, problem = studio.shared.fetch()
+    fetched, _ = studio.shared.fetch()
     studio.shared = collab.Shared(studio.project, studio.cell.load_config(studio.project))
     studio._theirs = None
     if not fetched and not args.dry_run:
-        raise StudioError(f"Could not reach the shared repository, so nothing was sent ({problem}). Try again when you are connected.")
+        raise StudioError("Could not reach the shared repository, so nothing was sent. Try again when you are connected.")
     if not studio.shared.ref:
         raise StudioError("The shared repository has no main branch yet, so there is nothing to send this to. An engineer needs to set that up.")
     sync = studio.sync()
@@ -1343,6 +1411,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("slice_id")
     p.add_argument("--ready", action="store_true", help="also fail while open questions remain")
     p.set_defaults(func=cmd_slice_check)
+    p = slice_.add_parser("show", help="the work order, spec, why and current check in one read; changes nothing")
+    p.add_argument("slice_id")
+    p.set_defaults(func=cmd_slice_show)
     p = slice_.add_parser("approve")
     p.add_argument("slice_id")
     p.set_defaults(func=cmd_slice_approve)

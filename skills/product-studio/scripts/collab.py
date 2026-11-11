@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 TRACKED = ("product/project.json", "product/epics/EPIC-*.json", "product/slices/SLICE-*.json",
            "product/intents/SLICE-*.md", "product/delivery-waves/WAVE-*.json", "specs/slices/SLICE-*.md")
 REMOTE = "origin"
+UNREACHABLE = "The shared repository could not be reached."
 ID_IN_PATH_RE = re.compile(r"(EPIC|SLICE|WAVE)-(\d{3,})")
 SPEC_LISTS = (("invariants", "invariant"), ("functional_requirements", "requirement"), ("scenarios", "scenario"))
 
@@ -108,13 +109,17 @@ class Shared:
                     self.into = str(name)
                     break
         self.ref = f"refs/remotes/{REMOTE}/{self.into}" if self.into else None
+        self.fetch_detail = ""
 
     def fetch(self) -> Tuple[bool, str]:
+        """Fetch the shared remote. On failure the message is a plain sentence for a person;
+        Git's own last line is kept apart in `fetch_detail` for whoever needs it."""
         if not self.has_remote:
             return False, "This project has no shared remote."
         done = git(self.project, "fetch", "--prune", REMOTE)
         if done.returncode != 0:
-            return False, last_line(done)
+            self.fetch_detail = last_line(done)
+            return False, UNREACHABLE
         if not self.into:
             self.__init__(self.project, self._config())  # the first fetch may have brought the branch
         return True, ""

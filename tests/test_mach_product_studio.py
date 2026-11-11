@@ -468,6 +468,101 @@ class WithoutGitTest(Base):
         self.assertIs(self.ok("where")["is_git_repository"], False)
 
 
+class SliceShowTest(Base):
+    """slice show: one read for the Specification Workspace, which changes nothing on disk."""
+
+    def files(self):
+        root = self.project / ".factory"
+        return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+    def test_a_ready_slice_in_one_read(self):
+        self.ready_slice()
+        before = self.files()
+        shown = self.ok("slice", "show", "SLICE-001")
+        self.assertEqual(self.files(), before)  # no sync, no bookkeeping
+        self.assertEqual(shown["slice"], self.artifact("product/slices/SLICE-001.json"))
+        self.assertIs(shown["editable"], True)
+        self.assertIsNone(shown["edit_refusal"])
+        self.assertIs(shown["factory_authorized"], False)
+        self.assertEqual(shown["paths"], {"work_order": "product/slices/SLICE-001.json", "specs_dir": "specs/slices",
+                                          "spec": "specs/slices/" + SPEC, "spec_name_pattern": "SLICE-001-<lowercase-kebab-name>.md",
+                                          "intent": "product/intents/SLICE-001.md"})
+        self.assertEqual(shown["spec"]["markdown"], FIXTURE.read_text())
+        self.assertEqual(shown["spec"]["name"], SPEC)
+        # The model is exactly the validator's own export.
+        _, model = cell_validator().analyze(FIXTURE.read_text(), SPEC, {}, ready=False)
+        self.assertEqual(shown["spec"]["model"], json.loads(json.dumps(model)))
+        self.assertEqual(shown["spec"]["findings"], [])
+        why = shown["why"]
+        self.assertEqual((why["exists"], why["markdown"], why["title"]), (True, INTENT_TEXT, "Invite a teammate"))
+        self.assertEqual(why["header"], {"Slice": "SLICE-001 at specs/slices/SLICE-001-invite-teammate.md", "Status": "Ready for approval"})
+        self.assertEqual([s["heading"] for s in why["sections"]], list(cell.INTENT_SECTIONS))
+        risk = next(s for s in why["sections"] if s["heading"] == "Risk")
+        self.assertEqual(risk["fields"], {"Tier": "High", "Reason": "It grants access to a workspace."})
+        # The check is what slice check reports, with the spec path relative to the workspace.
+        check = shown["check"]
+        self.assertEqual((check["ready"], check["errors"], check["spec"], check["risk"]), (True, [], "specs/slices/" + SPEC, "High"))
+        self.assertEqual(check["counts"], self.ok("slice", "check", "SLICE-001")["counts"])
+
+    def test_before_a_spec_or_why_is_written(self):
+        self.start()
+        self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
+        shown = self.ok("slice", "show", "SLICE-001")
+        self.assertIsNone(shown["spec"])
+        self.assertIsNone(shown["paths"]["spec"])
+        self.assertEqual(shown["why"], {"exists": False, "markdown": None, "title": None, "header": {}, "sections": []})
+        self.assertFalse(shown["check"]["ready"])
+        self.assertIn("No spec yet", shown["check"]["errors"][0])
+
+    def test_findings_are_reported_with_their_rule_and_line(self):
+        self.ready_slice()
+        text = FIXTURE.read_text()
+        self.write_spec(text=text[:text.index("## Invariants")] + text[text.index("## Functional requirements"):])
+        shown = self.ok("slice", "show", "SLICE-001")
+        rules = {f["rule"] for f in shown["spec"]["findings"] if f["severity"] == "error"}
+        self.assertIn("missing-section", rules)
+        self.assertTrue(shown["check"]["errors"])
+        self.assertEqual(self.artifact("product/slices/SLICE-001.json")["status"], "draft")  # nothing recorded
+
+    def test_an_approved_slice_is_shown_and_not_editable(self):
+        self.approved_slice()
+        shown = self.ok("slice", "show", "SLICE-001")
+        self.assertIs(shown["editable"], False)
+        self.assertEqual(shown["slice"]["status"], "approved_for_engineering")
+        self.assertIn("reopen it first", shown["edit_refusal"])
+        self.assertEqual(shown["edit_refusal"], self.refused("slice", "check", "SLICE-001").replace("refused: ", "").strip())
+
+    def test_unknown_or_unusable_ids_are_refused(self):
+        self.start()
+        self.assertIn("No slice SLICE-009", self.refused("slice", "show", "SLICE-009"))
+        self.assertIn("not a usable", self.refused("slice", "show", "../SLICE-001"))
+
+
+class OfflineMessageTest(Base):
+    """A shared repository that cannot be reached is reported in a plain sentence, not Git's last line."""
+
+    def setUp(self):
+        super().setUp()
+        git(self.project, "remote", "add", "origin", str(Path(self.tmp.name) / "no-such-repository"))
+
+    def test_refresh_says_so_plainly(self):
+        refreshed = self.ok("refresh")
+        self.assertIs(refreshed["refreshed"], False)
+        self.assertEqual(refreshed["problem"], "The shared repository could not be reached.")
+        self.assertTrue(refreshed["problem_detail"])  # Git's own words, kept apart for an engineer
+
+    def test_send_says_so_plainly(self):
+        self.approved_wave()
+        message = self.refused("send", "WAVE-001")
+        self.assertIn("Could not reach the shared repository, so nothing was sent. Try again when you are connected.", message)
+        self.assertNotIn("repository exists", message)
+
+
+def cell_validator():
+    _, validate_slice = studio.intent_modules()
+    return validate_slice
+
+
 class IntentTemplateTest(unittest.TestCase):
     def test_slice_intent_template_keeps_the_intent_sections_without_a_ticket(self):
         text = (ROOT / "skills/product-studio/assets/intent-template.md").read_text()
