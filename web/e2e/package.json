@@ -1,0 +1,15 @@
+{
+  "name": "@mach/e2e-private",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end suites for Product Studio. Not a pnpm workspace package: it reuses the product-studio app's pinned Playwright and axe.",
+  "scripts": {
+    "build": "node build.mjs",
+    "lifecycle": "node --test --test-reporter=spec suites/lifecycle.test.mjs",
+    "conformance": "node --test --test-reporter=spec suites/conformance.test.mjs",
+    "security": "node --test --test-reporter=spec suites/security.test.mjs",
+    "a11y": "node --test --test-reporter=spec suites/a11y.test.mjs",
+    "interview:real": "E2E_REAL_CLAUDE=1 node --test --test-reporter=spec suites/interview-real.test.mjs",
+    "all": "node --test --test-reporter=spec --test-concurrency=1 suites/lifecycle.test.mjs suites/conformance.test.mjs suites/security.test.mjs suites/a11y.test.mjs"
+  }
+}
