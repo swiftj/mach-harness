@@ -493,6 +493,11 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
             return "published"
         return "draft"
 
+    waved: Dict[str, List[str]] = {}
+    for wave_id, data in waves.items():
+        if data.get("status") != "superseded":
+            for sid in data.get("slices") or []:
+                waved.setdefault(sid, []).append(wave_id)
     slice_rows = []
     for slice_id, data in slices.items():
         spec = studio.spec_of(slice_id)
@@ -501,38 +506,15 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
             "revision": data.get("revision"), "open_questions": len(data.get("open_questions") or []),
             "spec": studio.relative(spec) if spec else None, "has_intent": studio.intent_path(slice_id).is_file(),
             "source": source(f"product/slices/{slice_id}.json"), "resume_note": (session["notes"].get(slice_id) or {}).get("note"),
+            "dependencies": list(data.get("dependencies") or []), "editable": edit_refusal(slice_id, data) is None,
+            "in_waves": waved.get(slice_id, []),
         })
     structural = studio.structural() if project else None
-    suggestions: List[str] = []
-    if not project:
-        suggestions.append("Define the project: its name, vision and outcomes (project init).")
-    elif not epics:
-        suggestions.append("Add the first epic (epic add).")
-    else:
-        for row in slice_rows:
-            if row["status"] in ("draft", "interviewing"):
-                suggestions.append(f"Continue the interview for {row['slice_id']}: {row['title']} (slice resume {row['slice_id']}).")
-            elif row["status"] == "ready_for_approval":
-                suggestions.append(f"{row['slice_id']} is ready: approve it (slice approve {row['slice_id']}).")
-        for epic_id, data in epics.items():
-            if data.get("status") == "proposed":
-                suggestions.append(f"Approve epic {epic_id}: {data.get('title')} (epic approve {epic_id}), so its slices can be approved.")
-        waved = {sid for data in waves.values() for sid in (data.get("slices") or []) if data.get("status") != "superseded"}
-        loose = [row["slice_id"] for row in slice_rows if row["status"] == APPROVED and row["slice_id"] not in waved]
-        if loose:
-            suggestions.append(f"Put approved slices into a delivery wave: {', '.join(loose)} (wave new).")
-        for wave_id, data in waves.items():
-            if data.get("status") == "draft" and data.get("slices") and all((slices.get(s) or {}).get("status") == APPROVED for s in data["slices"]):
-                suggestions.append(f"{wave_id} holds only approved slices: approve it (wave approve {wave_id}).")
-            if data.get("status") == APPROVED and source(f"product/delivery-waves/{wave_id}.json") != "published" and not (ledger.get(wave_id) or {}).get("pushed"):
-                suggestions.append(f"{wave_id} is approved and has not been sent to engineering (send {wave_id}).")
-        if sync["conflicts"] or sync["collisions"]:
-            suggestions.insert(0, "Some of your drafts and the shared project disagree: settle those first (reconcile, or renumber for a collision).")
-        if not any(row["status"] in EDITABLE_SLICE for row in slice_rows):
-            suggestions.append("Start a new slice (slice new --epic EPIC-NNN --title \"...\").")
+    actions = next_actions(project, epics, slices, waves, slice_rows, waved, sync, ledger, source)
     return {
         "project": project and {key: project.get(key) for key in ("project_id", "name", "status", "revision", "vision", "outcomes")},
         "epics": [{"epic_id": key, "title": data.get("title"), "status": data.get("status"), "revision": data.get("revision"),
+                   "acceptance_criteria": list(data.get("acceptance_criteria") or []),
                    "source": source(f"product/epics/{key}.json")} for key, data in epics.items()],
         "slices": slice_rows,
         "waves": [{"wave_id": key, "status": data.get("status"), "revision": data.get("revision"), "slices": data.get("slices"),
@@ -546,8 +528,66 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
         "structurally_valid": structural["valid"] if structural else None,
         "structural_errors": structural["errors"] if structural else [],
         "factory_authorized": False,
-        "suggested_next": suggestions,
+        "suggested_next": [action["sentence"] for action in actions],
+        "next_actions": [{key: action[key] for key in ("kind", "target", "title", "reason", "related")} for action in actions],
     }
+
+
+# The vocabulary of next_actions[].kind. A client maps each to its own button or screen.
+NEXT_ACTION_KINDS = ("define_project", "add_epic", "reconcile", "continue_interview", "approve_slice", "approve_epic",
+                     "create_wave", "approve_wave", "send_wave", "start_slice")
+
+
+def next_actions(project, epics, slices, waves, slice_rows, waved, sync, ledger, source) -> List[Dict[str, Any]]:
+    """What to do next, in order. One decision produces both forms: `sentence` for the terminal
+    (it ends with the command in brackets) and kind, target, title and reason for an app."""
+    actions: List[Dict[str, Any]] = []
+
+    def act(kind: str, target: Optional[str], title: str, reason: str, sentence: str,
+            related: Sequence[str] = (), first: bool = False) -> None:
+        item = {"kind": kind, "target": target, "title": title, "reason": reason, "related": list(related), "sentence": sentence}
+        actions.insert(0, item) if first else actions.append(item)
+
+    if not project:
+        act("define_project", None, "Define the project", "Say what the product is for: its name, vision and outcomes.",
+            "Define the project: its name, vision and outcomes (project init).")
+        return actions
+    if not epics:
+        act("add_epic", None, "Add the first epic", "An epic is a larger capability that several slices deliver.",
+            "Add the first epic (epic add).")
+        return actions
+    for row in slice_rows:
+        if row["status"] in ("draft", "interviewing"):
+            act("continue_interview", row["slice_id"], f"Continue the interview for {row['slice_id']}",
+                f"{row['title']} is still being defined.",
+                f"Continue the interview for {row['slice_id']}: {row['title']} (slice resume {row['slice_id']}).")
+        elif row["status"] == "ready_for_approval":
+            act("approve_slice", row["slice_id"], f"Approve {row['slice_id']}", f"{row['title']} is ready for your approval.",
+                f"{row['slice_id']} is ready: approve it (slice approve {row['slice_id']}).")
+    for epic_id, data in epics.items():
+        if data.get("status") == "proposed":
+            act("approve_epic", epic_id, f"Approve epic {epic_id}", f"{data.get('title')}: its slices can be approved only once it is.",
+                f"Approve epic {epic_id}: {data.get('title')} (epic approve {epic_id}), so its slices can be approved.")
+    loose = [row["slice_id"] for row in slice_rows if row["status"] == APPROVED and row["slice_id"] not in waved]
+    if loose:
+        act("create_wave", None, "Put approved slices into a delivery wave", f"Approved and not in a delivery wave yet: {', '.join(loose)}.",
+            f"Put approved slices into a delivery wave: {', '.join(loose)} (wave new).", related=loose)
+    for wave_id, data in waves.items():
+        if data.get("status") == "draft" and data.get("slices") and all((slices.get(s) or {}).get("status") == APPROVED for s in data["slices"]):
+            act("approve_wave", wave_id, f"Approve {wave_id}", "It holds only approved slices.",
+                f"{wave_id} holds only approved slices: approve it (wave approve {wave_id}).", related=data["slices"])
+        if data.get("status") == APPROVED and source(f"product/delivery-waves/{wave_id}.json") != "published" and not (ledger.get(wave_id) or {}).get("pushed"):
+            act("send_wave", wave_id, f"Send {wave_id} to engineering", "It is approved and has not been sent yet.",
+                f"{wave_id} is approved and has not been sent to engineering (send {wave_id}).", related=data.get("slices") or [])
+    if sync["conflicts"] or sync["collisions"]:
+        act("reconcile", None, "Settle what disagrees with the shared project",
+            "Some of your drafts and the shared project disagree. Settle those first: choose a version, or renumber a draft whose number is taken.",
+            "Some of your drafts and the shared project disagree: settle those first (reconcile, or renumber for a collision).",
+            related=[*sync["conflicts"], *sync["collisions"]], first=True)
+    if not any(row["status"] in EDITABLE_SLICE for row in slice_rows):
+        act("start_slice", None, "Start a new slice", "No slice is being defined right now.",
+            "Start a new slice (slice new --epic EPIC-NNN --title \"...\").")
+    return actions
 
 
 def cmd_status(studio: Studio, args: argparse.Namespace) -> int:

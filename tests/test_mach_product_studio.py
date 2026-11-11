@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -536,6 +537,58 @@ class SliceShowTest(Base):
         self.start()
         self.assertIn("No slice SLICE-009", self.refused("slice", "show", "SLICE-009"))
         self.assertIn("not a usable", self.refused("slice", "show", "../SLICE-001"))
+
+
+class NextActionsTest(Base):
+    """status: next_actions is the same decision as suggested_next, in a form an app can act on."""
+
+    COMMAND = re.compile(r"studio\.py|--[a-z]|\((project|epic|slice|wave|send|reconcile|renumber)\b")
+
+    def actions(self):
+        status = self.ok("status")
+        actions = status["next_actions"]
+        self.assertEqual(len(actions), len(status["suggested_next"]))
+        for action, sentence in zip(actions, status["suggested_next"]):
+            self.assertEqual(sorted(action), ["kind", "reason", "related", "target", "title"])
+            self.assertIn(action["kind"], studio.NEXT_ACTION_KINDS)
+            for text in (action["title"], action["reason"]):
+                self.assertTrue(text and not self.COMMAND.search(text), text)
+            if action["target"]:
+                self.assertIn(action["target"], sentence)  # the same item, in the same place
+        return status, [(a["kind"], a["target"]) for a in actions]
+
+    def test_each_stage_names_its_next_action(self):
+        self.assertEqual(self.actions()[1], [("define_project", None)])
+        self.ok("project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "v", "--outcome", "o")
+        self.assertEqual(self.actions()[1], [("add_epic", None)])
+        self.ok("epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join")
+        self.assertEqual(self.actions()[1], [("approve_epic", "EPIC-001"), ("start_slice", None)])
+        self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
+        self.assertEqual(self.actions()[1], [("continue_interview", "SLICE-001"), ("approve_epic", "EPIC-001")])
+        self.write_spec()
+        self.write_intent()
+        self.ok("slice", "check", "SLICE-001")
+        self.assertEqual(self.actions()[1], [("approve_slice", "SLICE-001"), ("approve_epic", "EPIC-001")])  # a ready slice is still open
+        self.ok("epic", "approve", "EPIC-001")
+        self.ok("slice", "approve", "SLICE-001")
+        status, kinds = self.actions()
+        self.assertEqual(kinds, [("create_wave", None), ("start_slice", None)])
+        self.assertEqual(status["next_actions"][0]["related"], ["SLICE-001"])
+        self.ok("wave", "new", "--slice", "SLICE-001")
+        self.assertEqual(self.actions()[1], [("approve_wave", "WAVE-001"), ("start_slice", None)])
+        self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM", "--at", AT)
+        self.assertEqual(self.actions()[1], [("send_wave", "WAVE-001"), ("start_slice", None)])
+
+    def test_status_carries_what_the_screens_need(self):
+        self.approved_slice()
+        self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Remove a teammate", "--depends-on", "SLICE-001")
+        self.ok("wave", "new", "--slice", "SLICE-001")
+        status = self.ok("status")
+        rows = {row["slice_id"]: row for row in status["slices"]}
+        second = next(sid for sid in rows if sid != "SLICE-001")
+        self.assertEqual((rows["SLICE-001"]["editable"], rows["SLICE-001"]["in_waves"], rows["SLICE-001"]["dependencies"]), (False, ["WAVE-001"], []))
+        self.assertEqual((rows[second]["editable"], rows[second]["in_waves"], rows[second]["dependencies"]), (True, [], ["SLICE-001"]))
+        self.assertEqual(status["epics"][0]["acceptance_criteria"], ["Only invited people can join"])
 
 
 class OfflineMessageTest(Base):
