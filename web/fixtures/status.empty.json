@@ -18,6 +18,15 @@
     "factory_authorized": false,
     "suggested_next": [
       "Define the project: its name, vision and outcomes (project init)."
+    ],
+    "next_actions": [
+      {
+        "kind": "define_project",
+        "target": null,
+        "title": "Define the project",
+        "reason": "Say what the product is for: its name, vision and outcomes.",
+        "related": []
+      }
     ]
   },
   "refused": null

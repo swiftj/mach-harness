@@ -18,6 +18,10 @@
         "title": "Team membership",
         "status": "approved",
         "revision": 2,
+        "acceptance_criteria": [
+          "Only invited people can join",
+          "Admins can see who is invited"
+        ],
         "source": "published"
       }
     ],
@@ -32,7 +36,12 @@
         "spec": "specs/slices/SLICE-001-invite-teammate.md",
         "has_intent": true,
         "source": "published",
-        "resume_note": null
+        "resume_note": null,
+        "dependencies": [],
+        "editable": false,
+        "in_waves": [
+          "WAVE-001"
+        ]
       }
     ],
     "waves": [
@@ -59,12 +68,21 @@
       "details": {}
     },
     "shared_project": "the main branch of the shared repository",
-    "last_refreshed": "2026-11-11T14:55:33Z",
+    "last_refreshed": "2026-11-11T17:55:00Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,
     "suggested_next": [
       "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice is being defined right now.",
+        "related": []
+      }
     ]
   },
   "refused": null

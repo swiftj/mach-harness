@@ -125,7 +125,32 @@ def main():
         s.capture("send.refused-offline", b, "send", "WAVE-001")
     finally:
         s.doCleanups()
+    review_states()
     print("wrote", len(list(OUT.glob("*.json"))), "fixtures to", OUT)
+
+
+def review_states():
+    """A slice with a dependency, and the review states the main scenario does not reach."""
+    s = Scenario()
+    s.setUp()
+    try:
+        a = s.a
+        wave = s.first_wave(a)
+        s.capture("slice.new.with-dependency", a, "slice", "new", "--epic", "EPIC-001", "--title", "Remove a teammate", "--depends-on", "SLICE-001")
+        s.capture("status.with-dependency", a, "status")
+        s.set_gh(fail=["create"])
+        s.capture("send.pr-not-opened", a, "send", wave)
+        s.capture("feedback.pr-not-opened", a, "feedback")
+        s.set_gh(fail=[])
+        s.ok(a, "send", wave)  # sending again opens the request, and sends nothing twice
+        s.set_pr(1, reviewDecision="APPROVED")
+        s.capture("feedback.accepted-waiting-to-merge", a, "feedback")
+        s.set_pr(1, reviewDecision="", mergeable="CONFLICTING")
+        s.capture("feedback.needs-updating", a, "feedback")
+        s.set_pr(1, mergeable="MERGEABLE", state="CLOSED")
+        s.capture("feedback.declined", a, "feedback")
+    finally:
+        s.doCleanups()
 
 
 if __name__ == "__main__":

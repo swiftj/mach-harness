@@ -18,6 +18,9 @@
         "title": "People and access",
         "status": "approved",
         "revision": 3,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
         "source": "conflict"
       }
     ],
@@ -32,7 +35,13 @@
         "spec": "specs/slices/SLICE-001-invite-teammate.md",
         "has_intent": true,
         "source": "conflict",
-        "resume_note": null
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "in_waves": [
+          "WAVE-001",
+          "WAVE-002"
+        ]
       },
       {
         "slice_id": "SLICE-002",
@@ -44,7 +53,10 @@
         "spec": "specs/slices/SLICE-002-invite-teammate.md",
         "has_intent": true,
         "source": "draft",
-        "resume_note": null
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "in_waves": []
       }
     ],
     "waves": [
@@ -131,7 +143,7 @@
       }
     },
     "shared_project": "the main branch of the shared repository",
-    "last_refreshed": "2026-11-11T14:55:37Z",
+    "last_refreshed": "2026-11-11T17:55:03Z",
     "structurally_valid": false,
     "structural_errors": [
       "product/delivery-waves/WAVE-002.json: wave includes unapproved slice 'SLICE-001'"
@@ -141,6 +153,33 @@
       "Some of your drafts and the shared project disagree: settle those first (reconcile, or renumber for a collision).",
       "Continue the interview for SLICE-001: Invite a teammate (slice resume SLICE-001).",
       "Continue the interview for SLICE-002: Remove a teammate (slice resume SLICE-002)."
+    ],
+    "next_actions": [
+      {
+        "kind": "reconcile",
+        "target": null,
+        "title": "Settle what disagrees with the shared project",
+        "reason": "Some of your drafts and the shared project disagree. Settle those first: choose a version, or renumber a draft whose number is taken.",
+        "related": [
+          "product/epics/EPIC-001.json",
+          "product/slices/SLICE-001.json",
+          "specs/slices/SLICE-001-invite-teammate.md"
+        ]
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-001",
+        "title": "Continue the interview for SLICE-001",
+        "reason": "Invite a teammate is still being defined.",
+        "related": []
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-002",
+        "title": "Continue the interview for SLICE-002",
+        "reason": "Remove a teammate is still being defined.",
+        "related": []
+      }
     ]
   },
   "refused": null

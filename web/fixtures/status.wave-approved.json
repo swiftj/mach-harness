@@ -18,6 +18,10 @@
         "title": "Team membership",
         "status": "approved",
         "revision": 2,
+        "acceptance_criteria": [
+          "Only invited people can join",
+          "Admins can see who is invited"
+        ],
         "source": "draft"
       }
     ],
@@ -32,7 +36,12 @@
         "spec": "specs/slices/SLICE-001-invite-teammate.md",
         "has_intent": true,
         "source": "draft",
-        "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?"
+        "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?",
+        "dependencies": [],
+        "editable": false,
+        "in_waves": [
+          "WAVE-001"
+        ]
       }
     ],
     "waves": [
@@ -66,6 +75,24 @@
     "suggested_next": [
       "WAVE-001 is approved and has not been sent to engineering (send WAVE-001).",
       "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "send_wave",
+        "target": "WAVE-001",
+        "title": "Send WAVE-001 to engineering",
+        "reason": "It is approved and has not been sent yet.",
+        "related": [
+          "SLICE-001"
+        ]
+      },
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice is being defined right now.",
+        "related": []
+      }
     ]
   },
   "refused": null

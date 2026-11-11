@@ -18,6 +18,10 @@
         "title": "Team membership",
         "status": "proposed",
         "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join",
+          "Admins can see who is invited"
+        ],
         "source": "draft"
       }
     ],
@@ -32,7 +36,10 @@
         "spec": "specs/slices/SLICE-001-invite-teammate.md",
         "has_intent": true,
         "source": "draft",
-        "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?"
+        "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?",
+        "dependencies": [],
+        "editable": true,
+        "in_waves": []
       }
     ],
     "waves": [],
@@ -50,6 +57,22 @@
     "suggested_next": [
       "SLICE-001 is ready: approve it (slice approve SLICE-001).",
       "Approve epic EPIC-001: Team membership (epic approve EPIC-001), so its slices can be approved."
+    ],
+    "next_actions": [
+      {
+        "kind": "approve_slice",
+        "target": "SLICE-001",
+        "title": "Approve SLICE-001",
+        "reason": "Invite a teammate is ready for your approval.",
+        "related": []
+      },
+      {
+        "kind": "approve_epic",
+        "target": "EPIC-001",
+        "title": "Approve epic EPIC-001",
+        "reason": "Team membership: its slices can be approved only once it is.",
+        "related": []
+      }
     ]
   },
   "refused": null
