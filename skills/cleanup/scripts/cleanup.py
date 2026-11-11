@@ -216,7 +216,35 @@ def text_or_none(value: Any) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
-def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str) -> Dict[str, Any]:
+RECORD_VERSION = 2
+
+
+def integration_record(cell: Cell, plan: Dict[str, Any], approved: Optional[str]) -> Optional[Dict[str, Any]]:
+    """What landed, and where: the provenance of a merged ticket.
+
+    Every commit named here was checked against the default branch by this station before the
+    cell was removed. A reader should still check the commit in Git; the record says where to look.
+    """
+    if plan.get("outcome") != "merged":
+        return None
+    info = cell.info
+    merged = info.get("merged") if isinstance(info.get("merged"), dict) else {}
+    branch = text_or_none(info.get("branch"))
+    tip = git(cell.project, "rev-parse", "--verify", "-q", f"refs/heads/{branch}").stdout.strip() if branch else ""
+    squashed = text_or_none(plan.get("merged_as"))
+    method = "squash-or-rebase" if squashed else text_or_none(merged.get("method")) or "manual"
+    return {
+        "branch": branch, "into": text_or_none(plan.get("merged_into")) or text_or_none(plan.get("default_branch")), "method": method,
+        "approved_commit": approved,
+        # The ticket's own last commit, or for a squash or rebase the commit that replaced it.
+        "landed_commit": squashed or text_or_none(merged.get("landed_commit")) or (tip or None),
+        "merge_commit": text_or_none(merged.get("commit")),
+        "pull_request": text_or_none(info.get("pull_request")),
+        "merged_at": text_or_none(merged.get("at")),
+    }
+
+
+def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """One line for the run log. Field names are read by the observe station; do not rename them."""
     info, build = cell.info, cell.build
     rounds = (build.get("review_loop") if isinstance(build.get("review_loop"), int) else 0) + 1 if build else 0
@@ -240,7 +268,13 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str) ->
 
     first_run = build.get("tests_passing_on_first_run")
     seen_failing = build.get("tests_seen_failing_first")
+    approved = next((text_or_none(decision.get("head")) for decision in reversed(decisions) if decision.get("head")), None) \
+        or text_or_none(load_dict(cell.root / "review" / "decision.json").get("head"))
+    product = info.get("product") if isinstance(info.get("product"), dict) else None
     return {
+        "record_version": RECORD_VERSION,
+        "integration": integration_record(cell, plan, approved) if plan else None,
+        "product": {key: product.get(key) for key in ("slice_id", "revision", "wave_id", "digest", "source_commit")} if product else None,
         "ticket_id": cell.ticket_id, "slice_id": text_or_none(info.get("slice_id")), "title": str(info.get("title") or ""),
         "risk": info.get("risk") if info.get("risk") in RISKS else None, "app_type": text_or_none(info.get("app_type")),
         "mode": info.get("mode") if info.get("mode") in MODES else None,
@@ -441,7 +475,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
     abandoning = args.abandon is not None
     target = next_archive(project, cell.ticket_id)
     archive = relative(project, target)
-    record = run_record(cell, plan["outcome"], plan["abandon_reason"], archive)
+    record = run_record(cell, plan["outcome"], plan["abandon_reason"], archive, plan)
     bundled = plan["would"]["bundle_branch"]
     members = write_archive(cell, target, plan["uncommitted"], default_branch(project)[1] if bundled else None, plan["merged_as"])
 
