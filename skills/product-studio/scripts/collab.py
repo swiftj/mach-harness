@@ -33,7 +33,12 @@ SPEC_LISTS = (("invariants", "invariant"), ("functional_requirements", "requirem
 
 
 class CollabError(Exception):
-    """A problem the caller can fix; studio.py prints it as a refusal."""
+    """A problem the caller can fix; studio.py prints it as a refusal. `app` is the same news for
+    the web app, without Git's words or output."""
+
+    def __init__(self, message: str, app: Optional[str] = None):
+        super().__init__(message)
+        self.app = app
 
 
 def tracked(relative: str) -> bool:
@@ -275,7 +280,7 @@ def build_commit(project: Path, shared: Shared, worktree: Path, start: str, file
     worktree.parent.mkdir(parents=True, exist_ok=True)
     added = git(project, "worktree", "add", "--detach", str(worktree), start)
     if added.returncode != 0:
-        raise CollabError(f"Could not prepare the contribution: {last_line(added)}")
+        raise CollabError(f"Could not prepare the contribution: {last_line(added)}", "Could not prepare the work for sending. An engineer needs to look at this.")
     try:
         assert shared.ref
         merging = git(worktree, "merge-base", "--is-ancestor", shared.ref, "HEAD").returncode != 0
@@ -287,7 +292,8 @@ def build_commit(project: Path, shared: Shared, worktree: Path, start: str, file
             touched += [name for name in git(worktree, "diff", "--name-only", "--diff-filter=U").stdout.splitlines() if name.strip()]
         for relative in sorted(set(touched)):
             if not tracked(relative):
-                raise CollabError(f"The contribution branch contains '{relative}', which is not a product file. An engineer needs to look at that branch.")
+                raise CollabError(f"The contribution branch contains '{relative}', which is not a product file. An engineer needs to look at that branch.",
+                                  "The request already waiting for review contains a file that is not a product definition. An engineer needs to look at it.")
             current = git_bytes(worktree, "show", f"{shared.ref}:{relative}")
             target = worktree / relative
             if current is None:
@@ -304,7 +310,7 @@ def build_commit(project: Path, shared: Shared, worktree: Path, start: str, file
             target.write_bytes(data)
         staged = git(worktree, "add", "-A", "--", "product", "specs")
         if staged.returncode != 0:
-            raise CollabError(f"Could not stage the product files: {last_line(staged)}")
+            raise CollabError(f"Could not stage the product files: {last_line(staged)}", "Could not prepare the product files for sending. An engineer needs to look at this.")
         different = [name for name in git(worktree, "diff", "--cached", "--name-only", shared.ref).stdout.splitlines() if name.strip()]
         stray = [name for name in different if not tracked(name)]
         if stray:
@@ -316,7 +322,8 @@ def build_commit(project: Path, shared: Shared, worktree: Path, start: str, file
             raise CollabError("Nothing to send: the shared project already has all of this.")
         committed = git(worktree, "commit", "-m", message)
         if committed.returncode != 0:
-            raise CollabError("The repository refused the commit (its rules may require signing or a check to pass): " + last_line(committed))
+            raise CollabError("The repository refused the commit (its rules may require signing or a check to pass): " + last_line(committed),
+                              "The shared project's rules refused the work (it may need signing, or a check to pass). An engineer needs to look at this.")
         return git(worktree, "rev-parse", "HEAD").stdout.strip()
     finally:
         if (worktree / ".git").exists() and git(worktree, "rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0:

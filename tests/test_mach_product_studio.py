@@ -1,5 +1,6 @@
 """Tests for studio.py: Product Studio's draft workspace, approval gates and the shared slice ID allocator."""
 
+import ast
 import io
 import json
 import re
@@ -589,6 +590,114 @@ class NextActionsTest(Base):
         self.assertEqual((rows["SLICE-001"]["editable"], rows["SLICE-001"]["in_waves"], rows["SLICE-001"]["dependencies"]), (False, ["WAVE-001"], []))
         self.assertEqual((rows[second]["editable"], rows[second]["in_waves"], rows[second]["dependencies"]), (True, [], ["SLICE-001"]))
         self.assertEqual(status["epics"][0]["acceptance_criteria"], ["Only invited people can join"])
+
+
+class AppWordingTest(Base):
+    """--app: what the web app shows carries no terminal commands or Git words, and a structured hint."""
+
+    BANNED = re.compile(r"studio\.py|--[a-z]|\bbranch\b")
+
+    def app_refusal(self, *argv):
+        code, out, err = self.run_studio("--app", *argv)
+        self.assertEqual(code, 1, out)
+        lines = err.strip().splitlines()
+        hint = json.loads(lines[0][len("refused-hint: "):]) if lines[0].startswith("refused-hint: ") else None
+        message = "\n".join(lines[1:] if hint else lines)
+        self.assertTrue(message.startswith("refused: "), err)
+        message = message[len("refused: "):]
+        self.assertIsNone(self.BANNED.search(message), message)
+        return message, hint
+
+    def test_refusals_for_the_app(self):
+        self.start()
+        self.assertEqual(self.app_refusal("project", "init", "--id", "x-y", "--name", "n", "--vision", "v", "--outcome", "o"),
+                         ("This project is already defined. Change it instead.", {"kind": "edit_project", "target": None}))
+        self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
+        self.write_spec()
+        self.write_intent()
+        message, hint = self.app_refusal("slice", "approve", "SLICE-001")
+        self.assertEqual(message, "SLICE-001 cannot be approved yet:\n  epic EPIC-001 is proposed, not approved")
+        self.assertEqual(hint, {"kind": "approve_epic", "target": "EPIC-001"})
+        self.assertIn("(studio.py epic approve EPIC-001)", self.refused("slice", "approve", "SLICE-001"))  # the terminal keeps its hint
+        self.ok("epic", "approve", "EPIC-001")
+        self.ok("slice", "approve", "SLICE-001")
+        self.assertEqual(self.app_refusal("slice", "check", "SLICE-001"),
+                         ("SLICE-001 is approved_for_engineering. To change an approved slice, reopen it first.", {"kind": "reopen_slice", "target": "SLICE-001"}))
+        self.assertEqual(self.app_refusal("wave", "new")[0], "A delivery wave needs at least one slice.")
+        self.assertIn("--slice SLICE-NNN", self.refused("wave", "new"))
+        shown = json.loads(self.run_studio("--app", "slice", "show", "SLICE-001")[1])
+        self.assertIsNone(self.BANNED.search(shown["edit_refusal"]))
+        self.assertEqual(self.run_studio("--app", "status")[0], 0)
+        self.assertEqual(self.ok("status")["shared_project"], "this folder (no shared repository)")
+        self.assertEqual(json.loads(self.run_studio("--app", "status")[1])["shared_project"], "this folder only (no shared project)")
+
+    def test_every_refusal_with_a_command_has_app_wording(self):
+        """Every refusal or problem whose text names a command, an option or a branch says it twice, through say()."""
+        for name in ("studio.py", "collab.py"):
+            tree = ast.parse((SCRIPTS / name).read_text())
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not node.args:
+                    continue
+                func = node.func
+                called = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+                if called not in ("StudioError", "CollabError", "append"):
+                    continue
+                first = node.args[0]
+                if isinstance(first, ast.Call) and getattr(first.func, "id", "") == "say":
+                    continue
+                if called == "CollabError" and len(node.args) > 1:
+                    continue  # its second argument is the app's wording
+                words = " ".join(n.value for n in ast.walk(first) if isinstance(n, ast.Constant) and isinstance(n.value, str))
+                if called == "append" and not (isinstance(func.value, ast.Name) and func.value.id == "problems"):
+                    continue
+                self.assertIsNone(self.BANNED.search(words), f"{name}:{node.lineno}: {words}")
+
+
+class HintKindsTest(unittest.TestCase):
+    def test_every_hint_kind_is_in_the_vocabulary(self):
+        source = (SCRIPTS / "studio.py").read_text()
+        used = set(re.findall(r"hint\(\"([a-z_]+)\"", source))
+        used |= {f"renumber_{kind}" for kind in ("slice", "epic", "wave")} if 'hint(f"renumber_{kind}"' in source else set()
+        self.assertTrue(used)
+        self.assertEqual(used - set(studio.HINT_KINDS), set())
+
+
+class StatusFactsTest(Base):
+    def test_withdrawn_approvals_are_explained_until_given_again(self):
+        self.approved_wave()
+        self.assertEqual(self.ok("status")["approvals_withdrawn"], [])
+        self.ok("slice", "reopen", "SLICE-001")
+        withdrawn = {(w["artifact"], w["kind"]): w for w in self.ok("status")["approvals_withdrawn"]}
+        self.assertEqual(withdrawn[("SLICE-001", "slice")]["reason"], "You reopened it to change it.")
+        self.assertEqual(withdrawn[("WAVE-001", "wave")]["reason"], "SLICE-001 was reopened, so this wave went back to draft.")
+        self.assertTrue(product._is_timestamp(withdrawn[("SLICE-001", "slice")]["at"]))
+        self.ok("slice", "approve", "SLICE-001")
+        self.assertEqual([w["artifact"] for w in self.ok("status")["approvals_withdrawn"]], ["WAVE-001"])
+        self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM", "--at", AT)
+        self.assertEqual(self.ok("status")["approvals_withdrawn"], [])
+
+    def test_the_project_says_where_it_came_from(self):
+        self.start()
+        self.assertEqual(self.ok("status")["project"]["source"], "draft")
+
+    def test_each_diagnostic_names_its_section(self):
+        self.ready_slice()
+        text = FIXTURE.read_text()
+        broken = text[:text.index("## Invariants")] + text[text.index("## Functional requirements"):]
+        self.write_spec(text=broken)
+        code, out, _ = self.run_studio("slice", "check", "SLICE-001")
+        check = json.loads(out)
+        heading_at = [(n, line[3:].strip()) for n, line in enumerate(broken.splitlines(), start=1) if line.startswith("## ")]
+        self.assertEqual(len(check["diagnostics"]), len(check["errors"]) + len(check["warnings"]))
+        for item in check["diagnostics"]:
+            if item["line"] is None:
+                self.assertIsNone(item["section"])
+                continue
+            expected = [title for start, title in heading_at if start <= item["line"]][-1]
+            self.assertEqual(item["section"], expected, item)
+        self.assertTrue(any(item["section"] for item in check["diagnostics"]))
+        shown = self.ok("slice", "show", "SLICE-001")
+        self.assertTrue(all("section" in f for f in shown["spec"]["findings"]))
 
 
 class OfflineMessageTest(Base):

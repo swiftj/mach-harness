@@ -37,7 +37,27 @@ import product  # noqa: E402
 
 
 class StudioError(Exception):
-    """A problem the caller can fix; printed without a traceback."""
+    """A problem the caller can fix; printed without a traceback.
+
+    `hint` names the app action that would resolve it, as {kind, target} (HINT_KINDS); the terminal
+    skill ignores it."""
+
+    def __init__(self, message: str, hint: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.hint = hint
+
+
+# With --app (the local web app's host passes it), text a person reads leaves out terminal
+# commands and Git words. Decisions and artifacts are the same either way; only wording differs.
+APP = False
+
+
+def say(terminal: str, app: str) -> str:
+    return app if APP else terminal
+
+
+def hint(kind: str, target: Optional[str] = None) -> Dict[str, Any]:
+    return {"kind": kind, "target": target}
 
 
 def sibling(name: str) -> Path:
@@ -67,6 +87,9 @@ TRACKED = collab.TRACKED
 APPROVED = "approved_for_engineering"
 IGNORE_LINE = ".factory/studio/"
 EDITABLE_SLICE = ("draft", "interviewing", "ready_for_approval")
+# Why an approval was withdrawn, in a product manager's words (status: approvals_withdrawn).
+WITHDRAWN_BY_SHARED_SLICE = "It changed in the shared project after you approved it."
+WITHDRAWN_BY_SHARED_WAVE = "It, or one of its slices, changed in the shared project after you approved it."
 
 
 def sha(data: bytes) -> str:
@@ -116,6 +139,22 @@ class Studio:
 
     def save_session(self, data: Dict[str, Any]) -> None:
         write(self.session_path, canonical(data))
+
+    def note_withdrawn(self, reasons: Dict[str, str]) -> None:
+        """Remember why approvals were withdrawn, so status can say so until each is given again."""
+        if not reasons:
+            return
+        session = self.session()
+        withdrawn = session.setdefault("withdrawn", {})
+        for artifact, reason in reasons.items():
+            withdrawn[artifact] = {"reason": reason, "at": now(None)}
+        self.save_session(session)
+
+    def clear_withdrawn(self, artifact: str) -> None:
+        session = self.session()
+        if artifact in (session.get("withdrawn") or {}):
+            del session["withdrawn"][artifact]
+            self.save_session(session)
 
     def ensure_ignored(self) -> None:
         """Keep the workspace out of `git status` so drafts never dirty the main checkout."""
@@ -282,6 +321,8 @@ class Studio:
                 self.save("wave", wave)
                 report["approvals_withdrawn"].append(wave_id)
         report["approvals_withdrawn"] = sorted(set(report["approvals_withdrawn"]))
+        self.note_withdrawn({artifact: WITHDRAWN_BY_SHARED_SLICE if artifact.startswith("SLICE-") else WITHDRAWN_BY_SHARED_WAVE
+                             for artifact in report["approvals_withdrawn"]})
 
     # ---- artifacts ----
 
@@ -296,8 +337,9 @@ class Studio:
     def load(self, kind: str, identifier: Optional[str] = None) -> Dict[str, Any]:
         path = self.path(kind, identifier)
         if not path.is_file():
-            what = "No project yet. Run: studio.py project init" if kind == "project" else f"No {kind} {identifier}."
-            raise StudioError(what)
+            if kind == "project":
+                raise StudioError(say("No project yet. Run: studio.py project init", "No project yet. Define the project first."), hint("define_project"))
+            raise StudioError(f"No {kind} {identifier}.")
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
@@ -395,15 +437,35 @@ class Studio:
         others = self.validate_slice.sibling_specs(spec, self.cell.registries(self.project, own=spec.parent))
         return self.validate_slice.analyze(spec.read_text(encoding="utf-8-sig"), spec.name, others, ready=ready)
 
+    def sections(self, spec: Path) -> List[Tuple[int, str]]:
+        """The spec's top-level sections and the line each starts on, as the validator parses them."""
+        root, _ = self.validate_slice.parse(spec.read_text(encoding="utf-8-sig").splitlines(), self.validate_slice.Report())
+        return sorted((section.line, section.title) for section in self.validate_slice.flatten(root) if section.level == 2)
+
+    @staticmethod
+    def section_of(spans: Sequence[Tuple[int, str]], line: int) -> Optional[str]:
+        """The section a diagnostic's line falls in; None for one about the whole spec (line 0)."""
+        found = None
+        for start, title in spans:
+            if line and start <= line:
+                found = title
+        return found
+
+    def diagnostics(self, spec: Path, findings: Sequence[Any]) -> List[Dict[str, Any]]:
+        spans = self.sections(spec)
+        return [{"severity": f.severity, "rule": f.rule, "line": f.line or None, "section": self.section_of(spans, f.line), "message": f.message}
+                for f in findings]
+
     def check_slice(self, slice_id: str, ready: bool) -> Dict[str, Any]:
         work = self.load("slice", slice_id)
         spec = self.spec_of(slice_id)
-        result: Dict[str, Any] = {"slice_id": slice_id, "spec": None, "errors": [], "warnings": [], "open_questions": [], "intent_problems": []}
+        result: Dict[str, Any] = {"slice_id": slice_id, "spec": None, "errors": [], "warnings": [], "diagnostics": [], "open_questions": [], "intent_problems": []}
         if spec is None:
-            result["errors"].append(f"No spec yet. Write it to {self.draft / 'specs' / 'slices'}/{slice_id}-<short-name>.md")
+            result["errors"].append(say(f"No spec yet. Write it to {self.draft / 'specs' / 'slices'}/{slice_id}-<short-name>.md", "No spec yet."))
         else:
             result["spec"] = str(spec)
             findings, model = self.analyze(spec, ready)
+            result["diagnostics"] = [d for d in self.diagnostics(spec, findings) if d["rule"] != "open-questions"]
             for finding in findings:
                 line = f"{spec.name}:{finding.line}: " if finding.line else f"{spec.name}: "
                 text = f"{line}{finding.message} [{finding.rule}]"
@@ -422,6 +484,9 @@ class Studio:
             result["title"] = model.get("title")
         problems, intent = self.cell.check_intent(self.intent_path(slice_id), header_fields=("Slice", "Status"))
         result["intent_problems"] = [p.replace("assets/intent-template.md before finalizing", "the intent template before approving") for p in problems]
+        if APP:  # no file paths in what the app shows
+            result["intent_problems"] = [say(p, "The slice's why is not written yet.") if p.startswith(str(self.intent_path(slice_id)))
+                                         else p for p in result["intent_problems"]]
         result["risk"] = intent.get("risk")
         result["ready"] = not (result["errors"] or result["open_questions"] or result["intent_problems"])
         return result
@@ -457,7 +522,9 @@ def actor(studio: Studio, given: Optional[str]) -> str:
     name = given if given and given.strip() else studio.cell.git(["config", "user.name"], studio.project).stdout
     name = " ".join(re.sub(r"<[^>]*>", " ", name).split())
     if not name or "@" in name:
-        raise StudioError("Cannot tell who is approving: Git has no user.name configured here. Pass --actor \"Your Name\" (a name, not an address).")
+        raise StudioError(say("Cannot tell who is approving: Git has no user.name configured here. Pass --actor \"Your Name\" (a name, not an address).",
+                              "Cannot tell who is approving: no name is set for you on this computer. Give your name (not an email address) to approve."),
+                          hint("name_approver"))
     return name
 
 
@@ -473,6 +540,12 @@ def cmd_where(studio: Studio, args: argparse.Namespace) -> int:
         "intent_template": str(SKILL_DIR / "assets" / "intent-template.md"),
         "is_git_repository": studio.cell.git(["rev-parse", "--is-inside-work-tree"], studio.project).returncode == 0,
     })
+
+
+def shared_project_words(studio: Studio) -> str:
+    if studio.shared.ref:
+        return say(f"the {studio.shared.into} branch of the shared repository", "the shared project")
+    return say("this folder (no shared repository)", "this folder only (no shared project)")
 
 
 def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
@@ -511,8 +584,16 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
         })
     structural = studio.structural() if project else None
     actions = next_actions(project, epics, slices, waves, slice_rows, waved, sync, ledger, source)
+    withdrawn = []
+    for artifact, note in sorted((session.get("withdrawn") or {}).items()):
+        current = (slices if artifact.startswith("SLICE-") else waves).get(artifact)
+        if current and current.get("status") != APPROVED and isinstance(note, dict):
+            withdrawn.append({"artifact": artifact, "kind": "slice" if artifact.startswith("SLICE-") else "wave",
+                              "reason": note.get("reason"), "at": note.get("at")})
     return {
-        "project": project and {key: project.get(key) for key in ("project_id", "name", "status", "revision", "vision", "outcomes")},
+        "project": project and {**{key: project.get(key) for key in ("project_id", "name", "status", "revision", "vision", "outcomes")},
+                                "source": source("product/project.json")},
+        "approvals_withdrawn": withdrawn,
         "epics": [{"epic_id": key, "title": data.get("title"), "status": data.get("status"), "revision": data.get("revision"),
                    "acceptance_criteria": list(data.get("acceptance_criteria") or []),
                    "source": source(f"product/epics/{key}.json")} for key, data in epics.items()],
@@ -523,7 +604,7 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
                    "pull_request": ((ledger.get(key) or {}).get("pull_request") or {}).get("url")} for key, data in waves.items()],
         "current_slice": session.get("current_slice"),
         "needs_reconciling": reconciling(sync),
-        "shared_project": f"the {studio.shared.into} branch of the shared repository" if studio.shared.ref else "this folder (no shared repository)",
+        "shared_project": shared_project_words(studio),
         "last_refreshed": session.get("refreshed_at"),
         "structurally_valid": structural["valid"] if structural else None,
         "structural_errors": structural["errors"] if structural else [],
@@ -536,6 +617,8 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
 # The vocabulary of next_actions[].kind. A client maps each to its own button or screen.
 NEXT_ACTION_KINDS = ("define_project", "add_epic", "reconcile", "continue_interview", "approve_slice", "approve_epic",
                      "create_wave", "approve_wave", "send_wave", "start_slice")
+# The vocabulary of a refusal's hint (--app): the next-action kinds, plus the acts that resolve a refusal.
+HINT_KINDS = NEXT_ACTION_KINDS + ("reopen_slice", "renumber_slice", "renumber_epic", "renumber_wave", "edit_epic", "edit_project", "name_approver")
 
 
 def next_actions(project, epics, slices, waves, slice_rows, waved, sync, ledger, source) -> List[Dict[str, Any]]:
@@ -611,13 +694,13 @@ def clean_list(values: Optional[Sequence[str]], what: str) -> List[str]:
 def cmd_project_init(studio: Studio, args: argparse.Namespace) -> int:
     studio.sync()
     if studio.path("project").is_file():
-        raise StudioError("This project is already defined. Change it with: studio.py project set")
+        raise StudioError(say("This project is already defined. Change it with: studio.py project set", "This project is already defined. Change it instead."), hint("edit_project"))
     if not product.PROJECT_RE.fullmatch(args.id):
         raise StudioError(f"'{args.id}' is not a usable project ID. Use lowercase letters, digits and hyphens, starting with a letter, such as campaign-platform.")
     data = {"schema_version": 1, "project_id": args.id, "name": args.name.strip(), "revision": 1, "status": "draft",
             "vision": args.vision.strip(), "outcomes": clean_list(args.outcome, "outcome")}
     if not data["outcomes"]:
-        raise StudioError("A project needs at least one outcome (--outcome, repeatable).")
+        raise StudioError(say("A project needs at least one outcome (--outcome, repeatable).", "A project needs at least one outcome."))
     studio.commit_or_restore([("project", data)], "Defining the project")
     return emit({"project": data, "path": str(studio.path("project"))})
 
@@ -664,7 +747,8 @@ def cmd_epic_approve(studio: Studio, args: argparse.Namespace) -> int:
     if data.get("status") not in ("proposed", "deferred", "approved"):
         raise StudioError(f"{args.epic_id} is {data.get('status')}; only a proposed or deferred epic can be approved.")
     if not data.get("acceptance_criteria"):
-        raise StudioError(f"{args.epic_id} has no acceptance criteria. Add at least one before approving (epic set {args.epic_id} --criterion \"...\").")
+        raise StudioError(say(f"{args.epic_id} has no acceptance criteria. Add at least one before approving (epic set {args.epic_id} --criterion \"...\").",
+                              f"{args.epic_id} has no acceptance criteria. Add at least one before approving."), hint("edit_epic", args.epic_id))
     data["status"] = "approved"
     studio.commit_or_restore([("epic", data)], "Approving the epic")
     return emit({"epic": studio.load("epic", args.epic_id)})
@@ -703,7 +787,8 @@ def cmd_slice_new(studio: Studio, args: argparse.Namespace) -> int:
         if number in used:
             raise StudioError(f"{args.id} is already taken by {used[number]}.")
         if number not in reserved:
-            raise StudioError(f"{args.id} is not a reserved ID. Leave --id out to take the next free one; pass it only to pick up an ID an earlier spec deferred this feature to.")
+            raise StudioError(say(f"{args.id} is not a reserved ID. Leave --id out to take the next free one; pass it only to pick up an ID an earlier spec deferred this feature to.",
+                                  f"{args.id} is not a reserved ID. Leave the ID out to take the next free one; give one only to pick up an ID an earlier spec deferred this feature to."))
         slice_id = args.id
     else:
         slice_id = studio.next_id("slice")
@@ -721,14 +806,15 @@ def edit_refusal(slice_id: str, data: Dict[str, Any]) -> Optional[str]:
     """Why a slice's draft cannot be changed, or None when it can."""
     if data.get("status") in EDITABLE_SLICE:
         return None
-    return f"{slice_id} is {data.get('status')}. To change an approved slice, reopen it first: studio.py slice reopen {slice_id}"
+    return say(f"{slice_id} is {data.get('status')}. To change an approved slice, reopen it first: studio.py slice reopen {slice_id}",
+               f"{slice_id} is {data.get('status')}. To change an approved slice, reopen it first.")
 
 
 def require_editable(studio: Studio, slice_id: str) -> Dict[str, Any]:
     data = studio.load("slice", slice_id)
     refusal = edit_refusal(slice_id, data)
     if refusal:
-        raise StudioError(refusal)
+        raise StudioError(refusal, hint("reopen_slice", slice_id) if data.get("status") == APPROVED else None)
     return data
 
 
@@ -776,7 +862,7 @@ def cmd_slice_pause(studio: Studio, args: argparse.Namespace) -> int:
     session = studio.session()
     session["notes"][args.slice_id] = {"note": args.note.strip(), "saved_at": now(None)}
     studio.save_session(session)
-    return emit({"slice_id": args.slice_id, "saved": True, "resume_with": f"studio.py slice resume {args.slice_id}"})
+    return emit({"slice_id": args.slice_id, "saved": True, "resume_with": None if APP else f"studio.py slice resume {args.slice_id}"})
 
 
 def cmd_slice_check(studio: Studio, args: argparse.Namespace) -> int:
@@ -829,7 +915,7 @@ def cmd_slice_show(studio: Studio, args: argparse.Namespace) -> int:
             "path": studio.relative(spec), "name": spec.name,
             "markdown": spec.read_bytes().decode("utf-8", errors="replace"),
             "model": model,
-            "findings": [{"severity": f.severity, "rule": f.rule, "line": f.line or None, "message": f.message} for f in findings],
+            "findings": studio.diagnostics(spec, findings),
         }
     check = studio.check_slice(slice_id, ready=False)
     if check.get("spec"):
@@ -860,28 +946,34 @@ def cmd_slice_approve(studio: Studio, args: argparse.Namespace) -> int:
     slice_id = args.slice_id
     work_order = f"product/slices/{slice_id}.json"
     if work_order in sync["collisions"]:
-        raise StudioError(f"{slice_id} now exists in the shared project as a different slice, so this draft cannot keep that number. "
-                          "It has to be renumbered before it can be approved; renumbering arrives with the publishing milestone.")
+        raise StudioError(say(f"{slice_id} now exists in the shared project as a different slice, so this draft cannot keep that number. "
+                              "It has to be renumbered before it can be approved; renumbering arrives with the publishing milestone.",
+                              f"{slice_id} now exists in the shared project as a different slice, so this draft needs a new number before it can be approved."),
+                          hint("renumber_slice", slice_id))
     if work_order in sync["conflicts"]:
-        raise StudioError(f"{slice_id} changed in the shared project while you were editing it. Reconcile the two versions before approving.")
+        raise StudioError(f"{slice_id} changed in the shared project while you were editing it. Reconcile the two versions before approving.", hint("reconcile", slice_id))
     result = studio.check_slice(slice_id, ready=True)
+    refusal_hint: Optional[Dict[str, Any]] = None
     problems = list(result["errors"]) + list(result["intent_problems"])
     problems += [f"open question: {question}" for question in result["open_questions"]]
     epic = studio.all("epic").get(data.get("epic_id"))
     if not epic:
         problems.append(f"epic {data.get('epic_id')} does not exist")
     elif epic.get("status") != "approved":
-        problems.append(f"epic {data.get('epic_id')} is {epic.get('status')}, not approved (studio.py epic approve {data.get('epic_id')})")
+        problems.append(say(f"epic {data.get('epic_id')} is {epic.get('status')}, not approved (studio.py epic approve {data.get('epic_id')})",
+                            f"epic {data.get('epic_id')} is {epic.get('status')}, not approved"))
+        refusal_hint = hint("approve_epic", data.get("epic_id"))
     slices = studio.all("slice")
     for dependency in data.get("dependencies") or []:
         if dependency not in slices:
             problems.append(f"dependency {dependency} does not exist")
     if problems:
-        raise StudioError(f"{slice_id} cannot be approved yet:\n  " + "\n  ".join(problems))
+        raise StudioError(f"{slice_id} cannot be approved yet:\n  " + "\n  ".join(problems), refusal_hint)
     spec = studio.spec_of(slice_id)
     data.update({"status": APPROVED, "open_questions": [],
                  "spec_path": studio.relative(spec), "spec_sha256": sha(spec.read_bytes())})
     studio.commit_or_restore([("slice", data)], f"Approving {slice_id}")
+    studio.clear_withdrawn(slice_id)
     return emit({"approved": True, "slice": studio.load("slice", slice_id), "risk": result.get("risk"), "counts": result.get("counts"),
                  "warnings": result["warnings"], "factory_authorized": False,
                  "note": "Product approval only. Nothing has been sent to engineering and no work has started."})
@@ -901,6 +993,8 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
             changes.append(("wave", wave))
             withdrawn.append(wave_id)
     studio.commit_or_restore(changes, f"Reopening {args.slice_id}")
+    studio.note_withdrawn({args.slice_id: "You reopened it to change it.",
+                           **{wave_id: f"{args.slice_id} was reopened, so this wave went back to draft." for wave_id in withdrawn}})
     return emit({"reopened": True, "slice": studio.load("slice", args.slice_id), "waves_returned_to_draft": withdrawn})
 
 
@@ -922,7 +1016,7 @@ def cmd_wave_new(studio: Studio, args: argparse.Namespace) -> int:
     studio.sync()
     slice_ids = list(dict.fromkeys(clean_list(args.slice, "slice")))
     if not slice_ids:
-        raise StudioError("A delivery wave needs at least one slice (--slice SLICE-NNN, repeatable).")
+        raise StudioError(say("A delivery wave needs at least one slice (--slice SLICE-NNN, repeatable).", "A delivery wave needs at least one slice."))
     check_wave_slices(studio, slice_ids)
     project = studio.load("project")
     data = {"schema_version": 1, "wave_id": studio.next_id("wave"), "project_id": project["project_id"], "revision": 1,
@@ -966,7 +1060,8 @@ def wave_problems(studio: Studio, sync: Dict[str, Any], data: Dict[str, Any]) ->
             # Judge the spec again with the authoritative validator: approval may be old.
             spec = studio.spec_of(slice_id)
             if spec is None or sha(spec.read_bytes()) != work.get("spec_sha256"):
-                problems.append(f"{slice_id}: its spec changed after it was approved (studio.py slice reopen {slice_id})")
+                problems.append(say(f"{slice_id}: its spec changed after it was approved (studio.py slice reopen {slice_id})",
+                                    f"{slice_id}: its spec changed after it was approved; reopen it"))
                 continue
             if studio.relative(spec) in sync["conflicts"]:
                 problems.append(f"{slice_id}: its spec needs reconciling with the shared project first")
@@ -986,6 +1081,7 @@ def cmd_wave_approve(studio: Studio, args: argparse.Namespace) -> int:
         raise StudioError(f"{args.wave_id} cannot be approved yet:\n  " + "\n  ".join(problems))
     data.update({"status": APPROVED, "approval": {"actor": actor(studio, args.actor), "approved_at": now(args.at)}})
     studio.commit_or_restore([("wave", data)], f"Approving {args.wave_id}")
+    studio.clear_withdrawn(args.wave_id)
     return emit({"approved": True, "wave": studio.load("wave", args.wave_id), "factory_authorized": False,
                  "note": "Product approval only. The wave stays in your workspace until you send it to engineering."})
 
@@ -1011,7 +1107,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         "refreshed": fetched,
         "problem": None if fetched else problem,
         "problem_detail": None if fetched or not detail else detail,
-        "shared_project": f"the {studio.shared.into} branch of the shared repository" if studio.shared.ref else "this folder (no shared repository)",
+        "shared_project": shared_project_words(studio),
         "arrived": sync["arrived"], "updated": sync["updated"], "merged": sync["merged"],
         "approvals_withdrawn": sync["approvals_withdrawn"],
         "needs_reconciling": reconciling(sync),
@@ -1042,6 +1138,8 @@ def withdraw_slice(studio: Studio, slice_id: str) -> List[str]:
                 wave.update({"status": "draft", "approval": None})
                 studio.save("wave", wave)
                 withdrawn.append(wave_id)
+        studio.note_withdrawn({slice_id: "You took the shared version of its spec, which replaces the text you approved.",
+                               **{wave_id: f"{slice_id} is no longer approved, so this wave went back to draft." for wave_id in withdrawn[1:]}})
     return withdrawn
 
 
@@ -1050,8 +1148,10 @@ def cmd_reconcile(studio: Studio, args: argparse.Namespace) -> int:
     relative = resolve_artifact(args.artifact, [*sync["conflicts"], *sync["collisions"]])
     if relative in sync["collisions"]:
         kind = "slice" if "/slices/" in relative else "epic" if "/epics/" in relative else "wave"
-        raise StudioError(f"{Path(relative).stem} is a different {kind} in the shared project, so there is nothing to merge. "
-                          f"Give your draft a new number: studio.py {kind} renumber {Path(relative).stem}")
+        raise StudioError(say(f"{Path(relative).stem} is a different {kind} in the shared project, so there is nothing to merge. "
+                              f"Give your draft a new number: studio.py {kind} renumber {Path(relative).stem}",
+                              f"{Path(relative).stem} is a different {kind} in the shared project, so there is nothing to merge. Give your draft a new number."),
+                          hint(f"renumber_{kind}", Path(relative).stem))
     theirs = studio.theirs()[relative]
     withdrawn: List[str] = []
     if relative.endswith(".json") and not sync["details"][relative].get("unreadable"):
@@ -1065,7 +1165,8 @@ def cmd_reconcile(studio: Studio, args: argparse.Namespace) -> int:
         studio.save_session(session)
     else:
         if args.field:
-            raise StudioError("--field applies to a project, epic, slice work order or wave; a spec or a why is taken whole.")
+            raise StudioError(say("--field applies to a project, epic, slice work order or wave; a spec or a why is taken whole.",
+                                  "Choosing one field applies to a project, epic, slice work order or wave; a spec or a why is taken whole."))
         target = studio.draft / relative
         match = re.search(r"SLICE-\d{3,}", relative)
         if args.take == "theirs":
@@ -1166,6 +1267,8 @@ def cmd_renumber(studio: Studio, args: argparse.Namespace) -> int:
             session["notes"][new] = session["notes"].pop(old)
     session["resolutions"].pop(relative, None)
     studio.save_session(session)
+    studio.note_withdrawn({artifact: "It was given a new number, so it needs your approval again." if artifact == new
+                           else f"{new} was given a new number, so this wave needs your approval again." for artifact in set(returned)})
     after = studio.sync()  # the shared artifact that holds the old number can now arrive
     structural = studio.structural()
     return emit({"renumbered": {"from": old, "to": new}, "changed": sorted(set(changed)), "needs_approval_again": sorted(set(returned)),
@@ -1273,12 +1376,14 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     if not fetched and not args.dry_run:
         raise StudioError("Could not reach the shared repository, so nothing was sent. Try again when you are connected.")
     if not studio.shared.ref:
-        raise StudioError("The shared repository has no main branch yet, so there is nothing to send this to. An engineer needs to set that up.")
+        raise StudioError(say("The shared repository has no main branch yet, so there is nothing to send this to. An engineer needs to set that up.",
+                              "The shared project has nothing in it yet, so there is nothing to send this to. An engineer needs to set that up."))
     sync = studio.sync()
     wave_id = args.wave_id
     wave = studio.load("wave", wave_id)
     if wave.get("status") != APPROVED:
-        raise StudioError(f"{wave_id} is {wave.get('status')}. Only an approved wave can be sent (studio.py wave approve {wave_id}).")
+        raise StudioError(say(f"{wave_id} is {wave.get('status')}. Only an approved wave can be sent (studio.py wave approve {wave_id}).",
+                              f"{wave_id} is {wave.get('status')}. Only an approved wave can be sent."), hint("approve_wave", wave_id))
     files, problems = closure(studio, wave)
     problems += [f"{relative} needs reconciling with the shared project first" for relative in files if relative in sync["conflicts"] or relative in sync["collisions"]]
     problems += wave_problems(studio, sync, wave)
@@ -1297,11 +1402,12 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
                          "note": "The shared project already has all of this. Nothing was sent."})
         raise StudioError(f"Nothing to send: the shared project already has everything in {wave_id}.")
     if on_remote and not entry:
-        raise StudioError(f"Another product manager already has a {wave_id} in review, so this wave needs a new number: studio.py wave renumber {wave_id}")
+        raise StudioError(say(f"Another product manager already has a {wave_id} in review, so this wave needs a new number: studio.py wave renumber {wave_id}",
+                              f"Another product manager already has a {wave_id} in review, so this wave needs a new number."), hint("renumber_wave", wave_id))
     digest = collab.digest_of(changed, sha)
     if args.dry_run:
         return emit({"dry_run": True, "wave_id": wave_id, "would_share": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
-                     "to": f"a request for engineering to add this to the {studio.shared.into} branch",
+                     "to": say(f"a request for engineering to add this to the {studio.shared.into} branch", "a request for engineering to add this to the shared project"),
                      "request": "updates the request already open" if entry and entry.get("pull_request") else "opens a new request",
                      "refreshed": fetched, "note": "Nothing has been sent."})
     if not entry or entry.get("digest") != digest or not entry.get("commit"):
@@ -1312,7 +1418,7 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
                                          remote_branch if on_remote else str(studio.shared.ref), changed, message,
                                          lambda tree: validate_tree(studio, tree, wave))
         except collab.CollabError as exc:
-            raise StudioError(str(exc))
+            raise StudioError(say(str(exc), exc.app or str(exc)))
         collab.git(studio.project, "update-ref", f"refs/mach/studio/{wave_id}", commit)  # keeps the commit until it is pushed
         entry = {"branch": branch, "digest": digest, "commit": commit, "pushed": False, "sent_at": None,
                  "pull_request": (entry or {}).get("pull_request"), "files": sorted(changed)}
@@ -1321,7 +1427,8 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     if not entry.get("pushed"):
         pushed = collab.git(studio.project, "push", collab.REMOTE, f"{entry['commit']}:refs/heads/{branch}")
         if pushed.returncode != 0:
-            raise StudioError(f"{wave_id} is prepared but could not be sent: {collab.last_line(pushed)}. Run send again; nothing will be sent twice.")
+            raise StudioError(say(f"{wave_id} is prepared but could not be sent: {collab.last_line(pushed)}. Run send again; nothing will be sent twice.",
+                                  f"{wave_id} is prepared but could not be sent. Send it again; nothing will be sent twice."))
         entry.update({"pushed": True, "sent_at": now(None)})
         studio.save_ledger(ledger)
     request_problem = ""
@@ -1360,11 +1467,13 @@ def cmd_feedback(studio: Studio, args: argparse.Namespace) -> int:
             row.update(status="Prepared, not sent", meaning="Sending did not finish. Send it again; nothing will be sent twice.")
         elif not entry.get("pull_request"):
             row.update(status="Sent, pull request not opened", branch=entry.get("branch"),
-                       meaning="The work reached the shared repository but the request for review could not be opened. Send it again, or give an engineer the branch name.")
+                       meaning=say("The work reached the shared repository but the request for review could not be opened. Send it again, or give an engineer the branch name.",
+                                   "The work reached the shared project but the request for review could not be opened. Send it again, or ask an engineer to open it."))
         else:
             view, problem = collab.review_state(studio.project, str(entry.get("branch")))
             if view is None:
-                row.update(status="Sent", pull_request=entry["pull_request"].get("url"), meaning=f"The review status could not be read just now ({problem}).")
+                row.update(status="Sent", pull_request=entry["pull_request"].get("url"),
+                           meaning=say(f"The review status could not be read just now ({problem}).", "The review status could not be read just now."))
             else:
                 row.update(collab.in_words(view))
             if wave.get("status") != APPROVED and row.get("status") not in ("Accepted", "Declined"):
@@ -1376,6 +1485,7 @@ def cmd_feedback(studio: Studio, args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH Product Studio operations (drafts only; never starts Factory work)")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
+    parser.add_argument("--app", action="store_true", help="word refusals and reports for the local web app: no terminal commands, plus a hint")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("where", help="print the workspace and the files the interview needs").set_defaults(func=cmd_where)
@@ -1484,8 +1594,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def refuse(exc: Exception) -> int:
+    """Print a refusal. In app mode a structured hint, when there is one, comes first on its own line."""
+    message = str(exc)
+    if APP:
+        message = getattr(exc, "app", None) or message
+        if getattr(exc, "hint", None):
+            print("refused-hint: " + json.dumps(exc.hint, ensure_ascii=False), file=sys.stderr)  # type: ignore[attr-defined]
+    print(f"refused: {message}", file=sys.stderr)
+    return 1
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    global APP
     args = build_parser().parse_args(argv)
+    APP = bool(args.app)
     try:
         cell, _ = intent_modules()
         project = (args.project or cell.find_project(Path.cwd())).resolve()
@@ -1493,12 +1616,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise StudioError(f"{project} is not a folder.")
         return args.func(Studio(project), args)
     except (StudioError, collab.CollabError) as exc:
-        print(f"refused: {exc}", file=sys.stderr)
-        return 1
+        return refuse(exc)
     except Exception as exc:  # CellError and friends from the intent skill
         if exc.__class__.__name__ == "CellError":
-            print(f"refused: {exc}", file=sys.stderr)
-            return 1
+            return refuse(exc)
         raise
 
 
