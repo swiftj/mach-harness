@@ -19,7 +19,7 @@ In Claude Code:
 
 Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:run`, `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:merge`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`.
+Commands are namespaced: `/mach:run`, `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:merge`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`. `/mach:product-studio` is experimental (see [`docs/mach-next/`](docs/mach-next/README.md)).
 
 ### With one command (one project)
 

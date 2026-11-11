@@ -1,0 +1,38 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice": {
+      "schema_version": 1,
+      "slice_id": "SLICE-002",
+      "project_id": "team-space",
+      "epic_id": "EPIC-001",
+      "revision": 1,
+      "title": "Remove a teammate",
+      "status": "draft",
+      "dependencies": [
+        "SLICE-001"
+      ],
+      "open_questions": [],
+      "spec_path": null,
+      "spec_sha256": null
+    },
+    "work_order": "/project/.factory/studio/draft/product/slices/SLICE-002.json",
+    "specs_dir": "/project/.factory/studio/draft/specs/slices",
+    "spec": null,
+    "spec_name_pattern": "SLICE-002-<lowercase-kebab-name>.md",
+    "intent_path": "/project/.factory/studio/draft/product/intents/SLICE-002.md",
+    "ids": {
+      "next": [
+        "SLICE-003",
+        "SLICE-004",
+        "SLICE-005",
+        "SLICE-006",
+        "SLICE-007",
+        "SLICE-008"
+      ],
+      "reserved_without_spec": []
+    }
+  },
+  "refused": null,
+  "hint": null
+}

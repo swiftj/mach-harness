@@ -1,0 +1,20 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "schema_version": 1,
+      "project_id": "team-space",
+      "name": "Team Space",
+      "revision": 1,
+      "status": "draft",
+      "vision": "Teams work together without friction.",
+      "outcomes": [
+        "Teams can work together",
+        "Admins stay in control of who has access"
+      ]
+    },
+    "path": "/project/.factory/studio/draft/product/project.json"
+  },
+  "refused": null,
+  "hint": null
+}

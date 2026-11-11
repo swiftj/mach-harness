@@ -1,0 +1,21 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "waves": [
+      {
+        "wave_id": "WAVE-001",
+        "slices": [
+          "SLICE-001"
+        ],
+        "pull_request": "https://example.test/pull/1",
+        "status": "Accepted, waiting to be added to the shared project",
+        "state": "accepted_waiting_to_merge",
+        "meaning": "Reviewers approved it; it is not in the shared project yet.",
+        "reviewer_remarks": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

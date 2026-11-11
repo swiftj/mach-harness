@@ -1,0 +1,56 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 1,
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "spec_path": "specs/slices/SLICE-001-invite-teammate.md",
+      "spec_sha256": null,
+      "status": "ready_for_approval",
+      "title": "Invite a teammate"
+    },
+    "work_order": "/project/.factory/studio/draft/product/slices/SLICE-001.json",
+    "specs_dir": "/project/.factory/studio/draft/specs/slices",
+    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-001-invite-teammate.md",
+    "spec_name_pattern": "SLICE-001-<lowercase-kebab-name>.md",
+    "intent_path": "/project/.factory/studio/draft/product/intents/SLICE-001.md",
+    "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?",
+    "open_questions": [],
+    "check": {
+      "slice_id": "SLICE-001",
+      "spec": "/project/.factory/studio/draft/specs/slices/SLICE-001-invite-teammate.md",
+      "errors": [],
+      "warnings": [],
+      "diagnostics": [],
+      "open_questions": [],
+      "intent_problems": [],
+      "counts": {
+        "invariants": 4,
+        "functional_requirements": 9,
+        "matrix_rules": 5,
+        "scenarios": 3
+      },
+      "title": "Invite a teammate by email",
+      "risk": "High",
+      "ready": true
+    },
+    "ids": {
+      "next": [
+        "SLICE-002",
+        "SLICE-003",
+        "SLICE-004",
+        "SLICE-005",
+        "SLICE-006",
+        "SLICE-007"
+      ],
+      "reserved_without_spec": []
+    }
+  },
+  "refused": null,
+  "hint": null
+}

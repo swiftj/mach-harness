@@ -11,13 +11,26 @@ and not by whoever is driving it.
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
     run.py review-tally <ticket>         count the review votes
     run.py where                         where this script and the project are (used by the workflow)
+    run.py product status                approved product work on the integration branch, against what was taken in
+    run.py product intake [--dry-run]    take approved delivery waves in: one ticket per new slice, never twice
+    run.py product plan                  the dependency-aware plan: what is ready, blocked, active or done, and why
+    run.py product dispatch <slice>...   open the cells for chosen ready slices (or --ready); starts nothing
+    run.py product events [--since N]    the intake ledger's transitions, for a supervisor or a dashboard
+    run.py product reconcile [--fetch]   intake and a recorded plan in one locked step; never dispatches
+    run.py factory status                what is in force on this machine and what the supervisor is doing; changes nothing
+    run.py factory enable ...            preflight and a confirmation code; with --confirm, enable. Never a side effect
+    run.py factory pause | resume | disable | stop
+    run.py factory serve                 the supervisor: ticks until the Factory is disabled here
+    run.py factory tick                  one supervisor pass
 
 A step is either work ("action": audit, groom, plan, build, revise, verify, review, merge, cleanup)
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
 person's approval, a merge, or a person to take over an escalated ticket.
 
 Standard library only. It reads; the only commands it runs are git queries and the review
-station's own script.
+station's own script. The product commands are the exception and live in intake.py: on an
+engineer's explicit command they file tickets and open cells through the ticket and intent
+stations' own scripts. Nothing here starts an agent, and nothing runs in the background.
 """
 
 import argparse
@@ -335,6 +348,120 @@ def cmd_review_tally(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
+def factory(project: Project):
+    """The product intake and scheduler, loaded only when a product command is used."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import intake
+    try:
+        return intake, intake.Factory(project.root, project.config, sibling=sibling, git=git,
+                                      next_step=lambda ticket_id: next_step(project, ticket_id, True))
+    except intake.IntakeError as exc:
+        raise RunError(str(exc))
+
+
+def fetch(project: Project) -> None:
+    """Fetch from the shared repository. Only ever behind an explicit --fetch; it never changes a checkout."""
+    fetched = git(project.root, "fetch", "origin")
+    if fetched.returncode != 0:
+        raise RunError("Could not fetch from the shared repository: " + (fetched.stderr.strip().splitlines() or ["no message"])[-1])
+
+
+def cmd_product(project: Project, args: argparse.Namespace) -> int:
+    intake, line = factory(project)
+    try:
+        if args.action == "status":
+            found = line.discover()
+            found.pop("_snapshot", None)
+            plan = line.plan()
+            result = {**found, "plan_summary": {key: plan[key] for key in ("counts", "dispatchable", "waiting_for_a_place", "needs_person", "intake_is_current", "limits")},
+                      "factory_started": False}
+        elif args.action == "intake":
+            if args.fetch:
+                fetch(project)
+            adopt = {}
+            for pair in args.adopt or []:
+                slice_id, _, ticket_id = pair.partition("=")
+                if not slice_id or not TICKET_ID_RE.match(ticket_id):
+                    raise RunError(f"'{pair}' is not SLICE-ID=TICKET-ID.")
+                adopt[slice_id] = ticket_id
+            result = line.intake(dry_run=args.dry_run, adopt=adopt, reissue=args.reissue or [])
+        elif args.action == "plan":
+            result = line.plan()
+        elif args.action == "reconcile":
+            if args.fetch:
+                fetch(project)
+            result = line.reconcile()
+        elif args.action == "dispatch":
+            result = line.dispatch(args.slice_ids, all_ready=args.ready, limit=args.limit)
+            result["workflow"] = "mach-belt" if PROJECT_INSTALL else "mach:belt"
+            result["run_one"] = [f"{skill('run')} {ticket_id}" for ticket_id in result["tickets"]]
+        else:
+            result = {"events": line.events(since=args.since), "event_types": list(intake.EVENT_TYPES), "schema_version": intake.EVENT_VERSION}
+    except intake.IntakeError as exc:
+        raise RunError(str(exc))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 1 if args.action == "intake" and result.get("refused") and not result.get("created") and not result.get("unchanged") else 0
+
+
+def workflow_name() -> str:
+    return "mach-belt" if PROJECT_INSTALL else "mach:belt"
+
+
+def workflow_installed(project: Project) -> bool:
+    if PROJECT_INSTALL:
+        return (project.root / ".claude" / "workflows" / "mach-belt.js").is_file()
+    return (SKILL_DIR.parent.parent / "workflows" / "belt.js").is_file()
+
+
+def cmd_factory(project: Project, args: argparse.Namespace) -> int:
+    """The Factory's lifecycle on this machine. Loaded only for these commands; nothing else touches it."""
+    here = Path(__file__).resolve()
+    sys.path.insert(0, str(here.parent))
+    import activation
+    import executor
+    import supervisor as supervisor_module
+    if args.action == "exec":  # the detached wrapper of one execution; internal
+        return executor.wrapper(project.root, args.execution_id)
+    if args.action == "wake":  # called by Git hooks; must never fail or print
+        supervisor_module.wake(project.root, args.event)
+        return 0
+    problem, line = None, None
+    try:
+        _, line = factory(project)
+    except RunError as exc:
+        problem = str(exc)
+    if line is None and args.action != "status":
+        raise RunError(problem or "Product intake is not available.")
+    sup = supervisor_module.Supervisor(project.root, project.config, line, next_step=lambda ticket_id: next_step(project, ticket_id, True),
+                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name())
+    ctx = activation.Context(project.root, project.config, line, sup, git, project.audit, here, workflow_installed(project), problem)
+    try:
+        if args.action == "status":
+            result = activation.status(ctx)
+        elif args.action == "enable":
+            result = activation.enable(ctx, args)
+        elif args.action == "pause":
+            result = activation.pause(ctx)
+        elif args.action == "resume":
+            result = activation.resume(ctx, args)
+        elif args.action == "disable":
+            result = activation.disable(ctx, args)
+        elif args.action == "stop":
+            result = activation.stop(ctx, args)
+        elif args.action == "tick":
+            result = sup.once()
+        else:
+            result = sup.serve(interval=args.interval, max_ticks=args.max_ticks)
+    except (activation.ActivationError, supervisor_module.SupervisorError) as exc:
+        raise RunError(str(exc))
+    except Exception as exc:
+        if exc.__class__.__name__ in ("IntakeError", "PolicyError", "ServiceError"):
+            raise RunError(str(exc))
+        raise
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 1 if args.action == "enable" and not result.get("ready", True) and not result.get("enabled") else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH conveyor belt: what happens next to a ticket.")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
@@ -353,6 +480,71 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=text)
         p.add_argument("ticket_id")
         p.set_defaults(func=func)
+    product = sub.add_parser("product", help="approved product work: take it in, plan it, dispatch it").add_subparsers(dest="action", required=True)
+    product.add_parser("status", help="approved waves on the integration branch against the intake ledger; reads only").set_defaults(func=cmd_product)
+    p = product.add_parser("intake", help="take approved delivery waves in: one ticket per new slice")
+    p.add_argument("--dry-run", action="store_true", help="show what would be taken in; change nothing")
+    p.add_argument("--fetch", action="store_true", help="fetch from the shared repository first (never changes the checkout)")
+    p.add_argument("--adopt", action="append", metavar="SLICE-ID=TICKET-ID", help="use an existing ticket for a slice instead of filing one")
+    p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="file a fresh ticket for a slice whose ticket was abandoned")
+    p.set_defaults(func=cmd_product)
+    product.add_parser("plan", help="the dependency-aware execution plan; reads only").set_defaults(func=cmd_product)
+    p = product.add_parser("reconcile", help="intake and a recorded plan in one locked step; never dispatches")
+    p.add_argument("--fetch", action="store_true", help="fetch from the shared repository first (never changes the checkout)")
+    p.set_defaults(func=cmd_product)
+    p = product.add_parser("dispatch", help="open the cells for ready slices; starts no agent")
+    p.add_argument("slice_ids", nargs="*")
+    p.add_argument("--ready", action="store_true", help="every slice the plan marks dispatchable")
+    p.add_argument("--limit", type=int, help="dispatch at most this many")
+    p.set_defaults(func=cmd_product)
+    p = product.add_parser("events", help="the intake ledger's transitions, in order")
+    p.add_argument("--since", type=int, default=0, help="only events after this sequence number")
+    p.set_defaults(func=cmd_product)
+
+    fac = sub.add_parser("factory", help="the Factory on this machine: status, enable, pause, resume, disable").add_subparsers(dest="action", required=True)
+    fac.add_parser("status", help="what is in force here; changes nothing").set_defaults(func=cmd_factory)
+    p = fac.add_parser("enable", help="preflight and a confirmation code; with --confirm, enable")
+    p.add_argument("--autonomy", choices=("observe", "supervised"), default="observe")
+    p.add_argument("--confirm", metavar="CODE", help="the code the first enable printed, after a person has agreed")
+    p.add_argument("--max-parallel", type=int)
+    p.add_argument("--max-minutes", type=int, help="stop one execution after this many minutes")
+    p.add_argument("--max-runs-per-day", type=int)
+    p.add_argument("--budget-per-run", type=float, help="spending limit for one execution, in US dollars")
+    p.add_argument("--budget-per-day", type=float)
+    p.add_argument("--max-attempts", type=int)
+    p.add_argument("--poll-seconds", type=int)
+    p.add_argument("--max-risk", choices=("Low", "Medium", "High"), help="tickets above this risk tier wait for a person")
+    p.add_argument("--allow-merge", action="store_true", help="let unattended runs reach the merge station (the project's merge settings still apply)")
+    p.add_argument("--allow-tool", action="append", metavar="TOOL", help="one more tool an execution may use, such as 'Bash(make test)'")
+    p.add_argument("--auto-sync", action="store_true", help="fetch from the shared repository on a timer")
+    p.add_argument("--hooks", action="store_true", help="add advisory wake-up notes to this repository's Git hooks")
+    p.add_argument("--persistent", action="store_true", help="install a per-user service that runs the supervisor without a Claude session (macOS)")
+    backlog = p.add_mutually_exclusive_group()
+    backlog.add_argument("--include-backlog", action="store_true", help="automatic execution includes work that was already here")
+    backlog.add_argument("--exclude-backlog", action="store_true", help="work that was already here is left to the engineer")
+    p.set_defaults(func=cmd_factory)
+    fac.add_parser("pause", help="dispatch and start nothing new").set_defaults(func=cmd_factory)
+    p = fac.add_parser("resume", help="check readiness again, then continue")
+    p.add_argument("--retry", action="append", metavar="TICKET", help="a ticket waiting for a person that may be run again")
+    p.add_argument("--retry-all", action="store_true")
+    p.set_defaults(func=cmd_factory)
+    p = fac.add_parser("disable", help="revoke automatic execution on this machine")
+    p.add_argument("--stop", action="store_true", help="also stop executions that are running now")
+    p.set_defaults(func=cmd_factory)
+    p = fac.add_parser("stop", help="emergency stop: end running executions now, and pause")
+    p.add_argument("--execution", help="only this execution")
+    p.set_defaults(func=cmd_factory)
+    fac.add_parser("tick", help="one supervisor pass").set_defaults(func=cmd_factory)
+    p = fac.add_parser("serve", help="run the supervisor until the Factory is disabled here")
+    p.add_argument("--interval", type=int, help="seconds between passes (default: the policy's poll_seconds)")
+    p.add_argument("--max-ticks", type=int, help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_factory)
+    p = fac.add_parser("exec", help=argparse.SUPPRESS)
+    p.add_argument("execution_id")
+    p.set_defaults(func=cmd_factory)
+    p = fac.add_parser("wake", help=argparse.SUPPRESS)
+    p.add_argument("--event", default="manual")
+    p.set_defaults(func=cmd_factory)
     return parser
 
 
@@ -360,6 +552,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         root = args.project.resolve() if args.project else find_project(Path.cwd())
+        if args.command == "factory" and getattr(args, "action", None) == "wake" and not (root / ".factory").is_dir():
+            return 0  # a hook fired somewhere MACH is not: stay silent
         if args.command != "where" and not (root / ".factory").is_dir():
             raise RunError(f"{root} is not a MACH project (it has no .factory folder). Run this from the project's folder, or pass --project.")
         return args.func(Project(root), args)

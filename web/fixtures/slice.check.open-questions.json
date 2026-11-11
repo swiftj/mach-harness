@@ -1,0 +1,27 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice_id": "SLICE-002",
+    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-002-invite-teammate.md",
+    "errors": [],
+    "warnings": [],
+    "diagnostics": [],
+    "open_questions": [
+      "Does a removed teammate keep access until the end of the billing period?",
+      "Can an admin remove themselves?"
+    ],
+    "intent_problems": [],
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "title": "Invite a teammate by email",
+    "risk": "High",
+    "ready": false,
+    "status": "interviewing"
+  },
+  "refused": null,
+  "hint": null
+}

@@ -1,0 +1,19 @@
+{
+  "exit_code": 0,
+  "data": {
+    "epic": {
+      "schema_version": 1,
+      "epic_id": "EPIC-001",
+      "project_id": "team-space",
+      "revision": 1,
+      "title": "Team membership",
+      "status": "proposed",
+      "acceptance_criteria": [
+        "Only invited people can join",
+        "Admins can see who is invited"
+      ]
+    }
+  },
+  "refused": null,
+  "hint": null
+}

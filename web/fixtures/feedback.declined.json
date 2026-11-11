@@ -1,0 +1,21 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "waves": [
+      {
+        "wave_id": "WAVE-001",
+        "slices": [
+          "SLICE-001"
+        ],
+        "pull_request": "https://example.test/pull/1",
+        "status": "Declined",
+        "state": "declined",
+        "meaning": "The request was closed without being accepted.",
+        "reviewer_remarks": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

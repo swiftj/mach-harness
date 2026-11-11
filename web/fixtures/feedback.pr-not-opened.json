@@ -1,0 +1,20 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "waves": [
+      {
+        "wave_id": "WAVE-001",
+        "slices": [
+          "SLICE-001"
+        ],
+        "status": "Sent, review request not opened",
+        "state": "sent_request_not_opened",
+        "branch": "product/WAVE-001",
+        "meaning": "The work reached the shared project but the request for review could not be opened. Send it again, or ask an engineer to open it."
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

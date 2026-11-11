@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mach:schema:runner-policy:v2",
+  "title": "MACH Factory Runner Policy v2",
+  "description": "The machine-local authorization for unattended execution: .factory/local/runner.json. Git-ignored, readable only by its owner, and valid only on the machine and in the folder where an engineer enabled it. Absent, unreadable or invalid means disabled. Project settings may restrict what it grants and can never widen it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "enabled",
+    "paused",
+    "autonomy",
+    "auto_sync",
+    "allow_merge",
+    "persistent",
+    "max_risk",
+    "limits",
+    "allowed_tools",
+    "excluded_slices",
+    "source_branch",
+    "claude",
+    "runner_id",
+    "machine",
+    "project_root",
+    "enabled_by",
+    "enabled_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "paused": {
+      "type": "boolean"
+    },
+    "autonomy": {
+      "enum": [
+        "observe",
+        "supervised"
+      ],
+      "description": "observe: discover, take in and plan; start no agent. supervised: also run eligible work, stopping at every human gate."
+    },
+    "auto_sync": {
+      "type": "boolean",
+      "description": "Fetch from the shared repository on a timer. Never changes a checkout."
+    },
+    "allow_merge": {
+      "type": "boolean",
+      "description": "False: every execution stops before the merge station. True: the project's own merge settings decide."
+    },
+    "persistent": {
+      "type": "boolean",
+      "description": "A per-user service keeps the supervisor running."
+    },
+    "max_risk": {
+      "enum": [
+        "Low",
+        "Medium",
+        "High"
+      ],
+      "description": "Tickets above this tier wait for a person."
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_parallel",
+        "max_execution_minutes",
+        "max_runs_per_day",
+        "max_budget_usd_per_run",
+        "max_budget_usd_per_day",
+        "max_attempts",
+        "poll_seconds"
+      ],
+      "properties": {
+        "max_parallel": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 8,
+          "default": 2
+        },
+        "max_execution_minutes": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 720,
+          "default": 120
+        },
+        "max_runs_per_day": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 20
+        },
+        "max_budget_usd_per_run": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 25
+        },
+        "max_budget_usd_per_day": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 5000,
+          "default": 100
+        },
+        "max_attempts": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 2
+        },
+        "poll_seconds": {
+          "type": "number",
+          "minimum": 30,
+          "maximum": 3600,
+          "default": 300
+        }
+      }
+    },
+    "allowed_tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      },
+      "description": "The only tools an execution may use. A bare 'Bash' is never valid."
+    },
+    "excluded_slices": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Work that was already here at activation and was left to the engineer."
+    },
+    "source_branch": {
+      "type": "string"
+    },
+    "claude": {
+      "type": "string",
+      "description": "The Claude Code program found at activation."
+    },
+    "runner_id": {
+      "type": "string"
+    },
+    "machine": {
+      "type": "string"
+    },
+    "project_root": {
+      "type": "string"
+    },
+    "enabled_by": {
+      "type": "string"
+    },
+    "enabled_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "wave_id": "WAVE-001",
+  "project_id": "campaign-platform",
+  "revision": 1,
+  "base_project_revision": 1,
+  "status": "draft",
+  "slices": ["SLICE-001"],
+  "approval": null
+}

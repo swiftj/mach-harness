@@ -335,7 +335,11 @@ def local_log(rest: str, message: str) -> str:
 
 
 def used_numbers(project: Path, prefix: str) -> List[int]:
-    """Every number already taken for this prefix: open and closed tickets, cells, inbox records, and finished tickets in the run log."""
+    """Every number already taken for this prefix: open and closed tickets, cells, inbox records, finished
+    tickets in the run log, and ticket branches (feature/<id>) in this clone or on a remote as last fetched.
+
+    The branches matter on a fresh clone or a second machine, where none of the local records exist
+    but the ticket's branch name is already in use."""
     pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
     factory = project / ".factory"
     names = [p.stem for p in (factory / "tickets").glob(f"{prefix}-*.md")] + [p.stem for p in (factory / "inbox").glob(f"{prefix}-*.json")]
@@ -347,6 +351,8 @@ def used_numbers(project: Path, prefix: str) -> List[int]:
                 names.append(str(json.loads(line).get("ticket_id") or ""))
             except (ValueError, AttributeError):
                 continue
+    refs = subprocess.run(["git", "for-each-ref", "--format=%(refname)", "refs/heads/feature", "refs/remotes"], cwd=str(project), capture_output=True, text=True)
+    names += [line.rsplit("/feature/", 1)[-1] for line in refs.stdout.splitlines() if "/feature/" in line]
     return [int(m.group(1)) for name in names for m in [pattern.match(name)] if m]
 
 

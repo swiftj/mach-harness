@@ -1,3 +1,10 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Go build output for the Product Studio host
+apps/studio/bin/
+apps/studio/mach-studio
+# Frontend dependencies and build output
+node_modules/
+web/**/dist/

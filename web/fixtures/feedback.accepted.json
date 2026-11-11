@@ -1,0 +1,21 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "waves": [
+      {
+        "wave_id": "WAVE-001",
+        "slices": [
+          "SLICE-001"
+        ],
+        "pull_request": "https://example.test/pull/1",
+        "status": "Accepted",
+        "state": "accepted",
+        "meaning": "Engineering accepted this work into the shared project.",
+        "reviewer_remarks": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

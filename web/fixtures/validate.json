@@ -1,0 +1,19 @@
+{
+  "exit_code": 1,
+  "data": {
+    "counts": {
+      "epics": 1,
+      "slices": 3,
+      "waves": 3
+    },
+    "errors": [
+      "product/delivery-waves/WAVE-002.json: wave includes unapproved slice 'SLICE-001'"
+    ],
+    "factory_authorized": false,
+    "project_id": "team-space",
+    "valid": false,
+    "validation_scope": "structural_only"
+  },
+  "refused": null,
+  "hint": null
+}

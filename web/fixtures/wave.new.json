@@ -1,0 +1,19 @@
+{
+  "exit_code": 0,
+  "data": {
+    "wave": {
+      "schema_version": 1,
+      "wave_id": "WAVE-001",
+      "project_id": "team-space",
+      "revision": 1,
+      "base_project_revision": 1,
+      "status": "draft",
+      "slices": [
+        "SLICE-001"
+      ],
+      "approval": null
+    }
+  },
+  "refused": null,
+  "hint": null
+}

@@ -1,0 +1,82 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together without friction.",
+      "outcomes": [
+        "Teams can work together",
+        "Admins stay in control of who has access"
+      ],
+      "source": "draft"
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "proposed",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join",
+          "Admins can see who is invited"
+        ],
+        "source": "draft"
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-001",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "ready_for_approval",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-001-invite-teammate.md",
+        "has_intent": true,
+        "source": "draft",
+        "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?",
+        "dependencies": [],
+        "editable": true,
+        "in_waves": []
+      }
+    ],
+    "waves": [],
+    "current_slice": "SLICE-001",
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    },
+    "shared_project": "the shared project",
+    "last_refreshed": null,
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "SLICE-001 is ready: approve it (slice approve SLICE-001).",
+      "Approve epic EPIC-001: Team membership (epic approve EPIC-001), so its slices can be approved."
+    ],
+    "next_actions": [
+      {
+        "kind": "approve_slice",
+        "target": "SLICE-001",
+        "title": "Approve SLICE-001",
+        "reason": "Invite a teammate is ready for your approval.",
+        "related": []
+      },
+      {
+        "kind": "approve_epic",
+        "target": "EPIC-001",
+        "title": "Approve epic EPIC-001",
+        "reason": "Team membership: its slices can be approved only once it is.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

@@ -1,0 +1,35 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": null,
+    "approvals_withdrawn": [],
+    "epics": [],
+    "slices": [],
+    "waves": [],
+    "current_slice": null,
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    },
+    "shared_project": "the shared project",
+    "last_refreshed": null,
+    "structurally_valid": null,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Define the project: its name, vision and outcomes (project init)."
+    ],
+    "next_actions": [
+      {
+        "kind": "define_project",
+        "target": null,
+        "title": "Define the project",
+        "reason": "Say what the product is for: its name, vision and outcomes.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

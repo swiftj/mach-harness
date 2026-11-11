@@ -64,6 +64,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   ├── cleanup/                # Built. Archive, teardown and run record after merge
 │   ├── observe/                # Built. Scorecard, recurring patterns, rule proposals
 │   ├── run/                    # Built. Orchestrator: next-step state machine
+│   ├── product-studio/         # Experimental (MACH Next M1). Product manager's workspace: project, epics, slices, delivery waves
 │   └── init/                   # Built. Plugin-only: scaffolds a project
 ├── agents/
 │   ├── contract-engineer.md    # Stage 2 of intent, pinned to the contracts tier
@@ -72,9 +73,11 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   └── reviewer.md             # One seat on the review panel; model set per seat
 ├── workflows/
 │   └── belt.js                 # Dynamic Workflow `mach:belt` (`mach-belt` in a project): several tickets in parallel
+├── apps/studio/                # Experimental (MACH Next M5). Go host for the visual Product Studio: loopback only, embeds the web app
+├── web/                        # Experimental (MACH Next M5). pnpm workspace: @mach/ui design system, showcase, product-studio app, fixtures, e2e
 ├── templates/                  # What gets scaffolded into a project
 ├── tests/                      # unittest suites and fixtures
-└── docs/                       # Original design notes per station, and prd-slice (reference)
+└── docs/                       # Original design notes per station, prd-slice (reference), and mach-next/ (experimental design)
 ```
 
 Skill folders are named for the station (`skills/intent/`). As a plugin the command is `/mach:intent`; the installer copies the same folder to `.claude/skills/mach-intent/` and the command is `/mach-intent`. Agents are renamed the same way (`mach:contract-engineer` / `mach-contract-engineer`).
@@ -104,6 +107,9 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── archive/                # <ticket_id>.tar.gz per finished cell, and runs.jsonl, one line per ticket
     ├── observations/           # metrics.json and observation-<date>.md reports
     ├── holdouts/<ticket_id>/   # Optional extra checks a person leaves for the verifier; the builder is never shown them
+    ├── studio/                 # Experimental. Product Studio's drafts, session and publication ledger; git-ignored, never read by a station
+    ├── intake/                 # Experimental. The Factory's intake ledger (ledger.json) and its event log (events.jsonl); git-ignored
+    ├── local/                  # Experimental. Machine-local authorization (runner.json), the supervisor's lease, and each execution's output; git-ignored, never shared
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
             ├── cell.json       # Cell state: stage, mode, slice ID, risk tier, app type, contracts
@@ -203,7 +209,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Consensus Thresholds** (set in `.factory/config.json` under `review`):
   * **High Risk** (Auth, Billing, DB Schema, changes to existing contracts): **Unanimous 3/3 + 1 human approval**. Adding a new contract file does not make a ticket High risk.
   * **Factory tuning** (label `factory-tuning`, rule files only): **Unanimous 3/3 on the contracts tier, no human approval**.
-  * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden.
+  * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden. A blocker from the security seat is never outvoted: it rejects the round whatever the count (`review.security_veto`, on unless a project switches it off).
   * **Low Risk** (Docs, wording): **1/1**, one general reviewer.
   * A Silver readiness tier also requires a human approval, whatever the risk.
 * **Start gate**: only a cell with a passing verification for exactly the code under review.
@@ -218,7 +224,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Archive**: `.factory/archive/<ticket_id>.tar.gz` with everything in the cell folder except the `repo/` checkout; an earlier archive is never overwritten.
 * **Gates**: the branch must be merged into the default branch and the cell `approved`. A squash or rebase merge is accepted with `--merged-as <commit>`. Uncommitted work blocks a normal run. The script deletes only `.factory/worktrees/<ticket_id>` and refuses symlinked cells, a branch that is not `feature/<ticket_id>`, and unusable ticket IDs.
 * **Abandoning** (`--abandon "<why>"`, only on a person's explicit request): uncommitted work and a git bundle of the unmerged branch are saved into the archive first, so the work is recoverable.
-* **Run record**: one line per finished ticket in `.factory/archive/runs.jsonl` (outcome, judging rounds, verification failures, review blockers with the rules they broke, builder deviations), which the observe station reads.
+* **Run record**: one line per finished ticket in `.factory/archive/runs.jsonl` (outcome, judging rounds, verification failures, review blockers with the rules they broke, builder deviations), which the observe station reads. Since `record_version` 2 it also says what landed (`integration`: branch, target, method, approved, landed and merge commits, pull request) and, for product work, which slice revision it built (`product`).
 * **Never**: merges, pushes, deletes remote branches, or changes code on the main checkout. Code formatting belongs to the build station's lint gate, not here.
 * **Also**: `orphans` lists finished or broken cells; `status` lists every cell. The ticket is closed with the ticket skill after a successful run.
 
@@ -233,6 +239,18 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Trigger**: after every `observe.every` finished tickets (5 by default), cleanup and the board report that a pass is due; `/mach-run` and the belt workflow start it with `--auto` and the workflow then runs the tuning ticket.
 * **No person for tuning**: a `factory-tuning` ticket is decided by a unanimous three-seat panel on the contracts tier, with no human approval, provided its diff touches only rule files and its own spec and tests. Reviewers must block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit. Observe never proposes such a change: those stay a person's decision.
 * **Output**: `.factory/observations/metrics.json`, `observation-<date>.md`, `last-pass.json`, and the tuning ticket.
+
+### Experimental: `/mach-product-studio` — Product Manager's Workspace (MACH Next M1, M2 and M5)
+* **Status**: experimental, on the MACH Next branch. Design and milestones are in `docs/mach-next/`.
+* **Purpose**: A product manager defines a project (vision, outcomes), its epics, and one slice at a time through the same interview the intent skill uses; saves and resumes drafts; approves slices; and groups approved slices into delivery waves. `studio.py` owns IDs, files, validation and approval.
+* **Workspace**: everything is a draft in `.factory/studio/draft/`, which mirrors the repository layout (`product/project.json`, `product/epics/`, `product/slices/`, `product/intents/`, `product/delivery-waves/`, `specs/slices/`). It is git-ignored. The main checkout is never written to, so no existing gate can be tripped.
+* **Shared with the intent skill, never copied**: the interview method (`skills/intent/references/interview-method.md`), the slice template and grammar references, the spec validator (`validate_slice.py`) and the slice ID allocator (`cell.py slice_ids`), which counts product work orders and Studio drafts as well as specs and open cells.
+* **Approval gates**: `slice approve` requires the spec to pass `validate_slice.py --ready` with no open questions, a complete why (`product/intents/SLICE-NNN.md`), an approved epic and existing dependencies; it then binds the work order to the spec by SHA-256. `wave approve` rechecks every slice and records who approved and when. An approved slice is changed only through `slice reopen`, which returns any approved wave containing it to draft.
+* **Keeping in step (M2)**: `refresh` fetches and reads the shared project straight from the remote's integration branch; the PM's checkout is never pulled or changed. Each artifact is compared three ways. JSON artifacts merge field by field; a spec or a why changed on both sides is always a conflict (`reconcile --take mine|theirs`); a different artifact holding a draft's number is a collision (`slice|epic|wave renumber`). What changed is reported by requirement, rule and scenario ID, from the validator's exported model.
+* **Sending (M2)**: `send <WAVE-ID>` publishes one approved wave as one pull request on `product/<WAVE-ID>`. It shares only the wave's closure of product files, built as an ordinary commit in a temporary worktree (so signing and hooks apply), validated as engineering will see it, and recorded in a ledger so a repeated or interrupted send never duplicates. `feedback` reports review in the PM's terms; reviewer text is passed on as data.
+* **Never**: touches the PM's checkout, branch, index or stash; pushes anywhere but `product/...`; force-pushes, rewrites history or merges a pull request; publishes a file outside `product/` and `specs/slices/`; creates a ticket or cell; reads the machine-local Factory policy; or starts any station. Every report carries `factory_authorized: false`, and tests hold the exact Git and `gh` commands it may use and that no station, agent or workflow calls its scripts. Intake and the supervisor are later milestones.
+* **Commands**: `/mach-product-studio` with no argument shows where things stand and the next step.
+* **Visual app (M5)**: the same workspace in a browser, served by `apps/studio` on `127.0.0.1` only and started by the skill ("open the app"), never by a new command. The host runs a fixed list of `studio.py` operations and adds no product rule; the app shows what the engine returns, and a conformance suite holds the terminal and the app to the same artifacts. The guided interview runs through the person's own Claude Code, one restricted turn per reply, able to edit only that slice's spec and why and unable to approve, send or reconcile. No credential reaches the browser, nothing is loaded from another origin, and no route can enable Factory execution or start a station. Design: `docs/mach-next/M5_DESIGN.md`.
 
 ---
 
@@ -275,6 +293,30 @@ Two drivers use it:
 * **The `mach:belt` workflow (a Claude Dynamic Workflow, `workflows/belt.js`; named `mach-belt` in a project install)**: runs several tickets unattended and in parallel, each in its own cell. The workflow script holds no knowledge of the order: it locates `run.py` once, then asks it what is next through a relay agent given the exact command, starts the worker it names, and asks again, with a cap on steps and a stop when a station runs twice without moving the ticket.
 
 Neither driver grooms interactively on a person's behalf or approves a high-risk change. Whether the line merges is a project setting.
+
+### Experimental: product intake and scheduling (`/mach-run product`, MACH Next M3)
+
+Approved delivery waves that Product Studio published and engineering merged are taken into the Factory through the run skill. `skills/run/scripts/intake.py` does the work; `run.py product status|intake|plan|dispatch|events` are its commands. Design: `docs/mach-next/M3_DESIGN.md`.
+
+* **Intake**: reads product definitions from Git objects at the newest commit the local integration branch shares with the remote, so only merged revisions are used. It verifies the whole tree with Product Studio's validator and each slice with the intent station's gates, then files one execution ticket per new slice revision through the ticket station. The ledger (`.factory/intake/ledger.json`) records the intention before the ticket is filed and finds it again by label after a restart, so nothing is filed twice.
+* **Revisions**: a waiting slice takes a new revision on its ticket; work in the line is never changed and is flagged for a person; integrated work gets a follow-up ticket and keeps its history.
+* **Scheduler**: every slice is `completed`, `active`, `ready`, `blocked` or `superseded`, with reasons. A dependency counts as done only when its commit is on the integration branch, checked in Git; a finished build or an approved cell is still `active`. `factory.max_parallel` limits what is dispatchable.
+* **Dispatch**: only on an engineer's explicit command. It opens the cell, writes `intent.md` from the approved why, passes `cell.py finalize`, and stops at `spec-ready`. It starts no agent; `run.py next` and the belt take over with every gate in place. Product-sourced work is never reviewed below Medium.
+* **Events**: each ledger transition is appended to `.factory/intake/events.jsonl` with a schema version and sequence number, for the supervisor (M4) and Control Tower (M6).
+* **Ready for a supervisor**: `product reconcile` is intake plus a recorded plan in one step; intake, reconcile and dispatch hold a lock so there is one writer at a time; and any caller but an engineer must bring an authorization to dispatch, or nothing is dispatched.
+* **Never**: runs in the background, reads the machine-local Factory policy, fetches unless asked, changes the main checkout, merges or pushes.
+
+### Experimental: the Factory Supervisor (`/mach-run factory`, MACH Next M4)
+
+On a machine whose engineer has enabled it, a supervisor keeps approved product work moving unattended. It is off on every machine until enabled there. Code: `policy.py`, `executor.py`, `supervisor.py`, `service.py` and `activation.py` in `skills/run/scripts/`. Design: `docs/mach-next/M4_DESIGN.md`.
+
+* **Authorization is machine-local**: `.factory/local/runner.json`, git-ignored and private. Missing, malformed, written on another machine or for another folder all read as disabled. The project's tracked settings (`factory` in `.factory/config.json`) can restrict it and never widen it; product files are never read for it.
+* **Activation**: `factory enable` runs a preflight and prints exactly what would be allowed and a short-lived code; only `factory enable --confirm <code>`, on a person's explicit yes, enables. Two modes: **observe** (discover, take in and plan; start no agent) and **supervised** (also run eligible work, stopping at every human gate). `status` changes nothing. `pause`, `resume`, `disable` and an emergency `stop` complete the lifecycle.
+* **It decides nothing about order**: each pass calls M3's `reconcile`, dispatches through M3's guarded `dispatch` with an authorization read from disk at that moment, and starts the existing belt workflow for one ticket per execution. `run.py next` and every station gate stay authoritative.
+* **Execution**: one `claude -p` per ticket, in an explicit restricted permission mode, with an explicit tool list, a spending limit and a known session ID, behind a detached wrapper that records its start and end. A tool outside the list is refused and raised to a person, never granted. By default every execution stops before the merge station.
+* **Recovery**: a claim is on disk before a process exists. A restarted supervisor tells apart a claim that never started, an execution still running, one that ended unwatched and one whose outcome is unknown. Unknown outcomes are counted or raised to a person; a lost merge or cleanup is never retried automatically.
+* **One runner per project, per machine**: an ownership lease with a heartbeat. Nothing coordinates two engineers' machines.
+* **Optional, each on explicit request**: advisory Git hooks (a wake-up note, never authorization), fetching on a timer, and a per-user macOS LaunchAgent. None is installed by cloning, installing or running a ticket.
 
 ### Merge station: `/mach-merge`
 

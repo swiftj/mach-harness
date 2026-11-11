@@ -1,0 +1,34 @@
+{
+  "name": "@mach/product-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:fixtures": "vite --mode fixtures",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview --port 4175 --strictPort",
+    "typecheck": "tsc -p tsconfig.json",
+    "host-check": "node scripts/host-check.mjs",
+    "capture": "node scripts/capture.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@mach/ui": "workspace:*",
+    "lucide-react": "1.72.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router": "8.5.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@tailwindcss/vite": "4.3.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "playwright": "1.58.2",
+    "tailwindcss": "4.3.5",
+    "typescript": "6.0.3",
+    "vite": "8.3.8"
+  }
+}

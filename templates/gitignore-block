@@ -9,4 +9,13 @@
 .factory/holdouts/
 .factory/audit-report.json
 .factory/observations/
+# Machine-local Factory authorization (MACH Next). It must never travel by Git: a clone always starts disabled.
+.factory/local/
+# Product Studio drafts: a product manager's unpublished work stays on their machine.
+.factory/studio/
+# The Factory's intake ledger and event log: execution state, never shared by Git.
+.factory/intake/
 .factory/mach-backup-*/
+# Python's cache, written when a MACH script runs.
+.claude/skills/mach-*/scripts/__pycache__/
+.factory/bin/__pycache__/

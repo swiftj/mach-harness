@@ -1,0 +1,117 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "source": "draft"
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "approved",
+        "revision": 2,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "source": "draft"
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-001",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "approved_for_engineering",
+        "revision": 2,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-001-invite-teammate.md",
+        "has_intent": true,
+        "source": "draft",
+        "resume_note": null,
+        "dependencies": [],
+        "editable": false,
+        "in_waves": [
+          "WAVE-001"
+        ]
+      },
+      {
+        "slice_id": "SLICE-002",
+        "title": "Remove a teammate",
+        "epic_id": "EPIC-001",
+        "status": "draft",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": null,
+        "has_intent": false,
+        "source": "draft",
+        "resume_note": null,
+        "dependencies": [
+          "SLICE-001"
+        ],
+        "editable": true,
+        "in_waves": []
+      }
+    ],
+    "waves": [
+      {
+        "wave_id": "WAVE-001",
+        "status": "approved_for_engineering",
+        "revision": 2,
+        "slices": [
+          "SLICE-001"
+        ],
+        "approval": {
+          "actor": "Ada PM",
+          "approved_at": "2026-11-10T14:00:00Z"
+        },
+        "source": "draft",
+        "sent": false,
+        "pull_request": null
+      }
+    ],
+    "current_slice": "SLICE-002",
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    },
+    "shared_project": "the shared project",
+    "last_refreshed": null,
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Continue the interview for SLICE-002: Remove a teammate (slice resume SLICE-002).",
+      "WAVE-001 is approved and has not been sent to engineering (send WAVE-001)."
+    ],
+    "next_actions": [
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-002",
+        "title": "Continue the interview for SLICE-002",
+        "reason": "Remove a teammate is still being defined.",
+        "related": []
+      },
+      {
+        "kind": "send_wave",
+        "target": "WAVE-001",
+        "title": "Send WAVE-001 to engineering",
+        "reason": "It is approved and has not been sent yet.",
+        "related": [
+          "SLICE-001"
+        ]
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

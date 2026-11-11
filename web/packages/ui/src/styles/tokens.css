@@ -1,0 +1,248 @@
+/* GENERATED from src/tokens/tokens.ts by scripts/tokens.ts. Do not edit by hand. */
+
+:root {
+  color-scheme: light;
+  --mach-canvas: #FAF9F5;
+  --mach-surface: #FFFFFF;
+  --mach-surface-raised: #FFFFFF;
+  --mach-surface-sunken: #F3F1EA;
+  --mach-surface-nav: #F3F1EA;
+  --mach-surface-inverse: #141413;
+  --mach-overlay: rgba(20, 20, 19, 0.42);
+  --mach-ink: #141413;
+  --mach-ink-muted: #5C5A54;
+  --mach-ink-subtle: #6B6962;
+  --mach-ink-inverse: #FAF9F5;
+  --mach-ink-on-accent: #FFFFFF;
+  --mach-line: #E3E0D5;
+  --mach-line-strong: #D1CDBF;
+  --mach-line-control: #8C887C;
+  --mach-accent: #D97757;
+  --mach-accent-fill: #B5512F;
+  --mach-accent-fill-hover: #9F4628;
+  --mach-accent-ink: #A9482A;
+  --mach-accent-soft: #F6E7DF;
+  --mach-focus: #2F6AA3;
+  --mach-info-ink: #3A6496;
+  --mach-info-soft: #E8EFF7;
+  --mach-info-line: #B7CCE3;
+  --mach-info-fill: #6A9BCC;
+  --mach-success-ink: #4E5E39;
+  --mach-success-soft: #EEF1E6;
+  --mach-success-line: #C5CFB4;
+  --mach-success-fill: #788C5D;
+  --mach-warning-ink: #7D5A12;
+  --mach-warning-soft: #F8EED7;
+  --mach-warning-line: #E3CD98;
+  --mach-warning-fill: #C99A3A;
+  --mach-danger-ink: #A12F3A;
+  --mach-danger-soft: #F9E6E6;
+  --mach-danger-line: #E8B9BC;
+  --mach-danger-fill: #B2343F;
+  --mach-danger-fill-hover: #962A34;
+  --mach-neutral-ink: #5C5A54;
+  --mach-neutral-soft: #ECE9DF;
+  --mach-neutral-line: #D1CDBF;
+  --mach-neutral-fill: #8C887C;
+  --mach-graph-dot: #D1CDBF;
+  --mach-graph-edge: #8C887C;
+  --mach-graph-edge-dependency: #A9482A;
+  --mach-shadow-1: 0 1px 2px rgba(20, 20, 19, 0.06);
+  --mach-shadow-2: 0 2px 8px rgba(20, 20, 19, 0.08), 0 1px 2px rgba(20, 20, 19, 0.06);
+  --mach-shadow-3: 0 12px 32px rgba(20, 20, 19, 0.14), 0 2px 6px rgba(20, 20, 19, 0.08);
+
+  --mach-font-serif: 'Newsreader Variable', 'Iowan Old Style', Georgia, serif;
+  --mach-font-sans: 'Source Sans 3 Variable', 'Segoe UI', system-ui, sans-serif;
+  --mach-font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+  --mach-font-display: var(--mach-font-serif);
+  --mach-density: 1;
+
+  --mach-text-display: 2.5rem;
+  --mach-text-display--line: 2.875rem;
+  --mach-text-display--weight: 450;
+  --mach-text-display--tracking: -0.015em;
+  --mach-text-title-1: 1.875rem;
+  --mach-text-title-1--line: 2.375rem;
+  --mach-text-title-1--weight: 450;
+  --mach-text-title-1--tracking: -0.01em;
+  --mach-text-title-2: 1.4375rem;
+  --mach-text-title-2--line: 1.875rem;
+  --mach-text-title-2--weight: 500;
+  --mach-text-title-2--tracking: -0.005em;
+  --mach-text-title-3: 1.125rem;
+  --mach-text-title-3--line: 1.625rem;
+  --mach-text-title-3--weight: 600;
+  --mach-text-title-3--tracking: 0;
+  --mach-text-body-lg: 1.0625rem;
+  --mach-text-body-lg--line: 1.75rem;
+  --mach-text-body-lg--weight: 400;
+  --mach-text-body-lg--tracking: 0;
+  --mach-text-body: 1rem;
+  --mach-text-body--line: 1.5rem;
+  --mach-text-body--weight: 400;
+  --mach-text-body--tracking: 0;
+  --mach-text-body-sm: 0.875rem;
+  --mach-text-body-sm--line: 1.25rem;
+  --mach-text-body-sm--weight: 400;
+  --mach-text-body-sm--tracking: 0;
+  --mach-text-label: 0.875rem;
+  --mach-text-label--line: 1.25rem;
+  --mach-text-label--weight: 600;
+  --mach-text-label--tracking: 0;
+  --mach-text-caption: 0.8125rem;
+  --mach-text-caption--line: 1.125rem;
+  --mach-text-caption--weight: 400;
+  --mach-text-caption--tracking: 0.005em;
+  --mach-text-mono: 0.8125rem;
+  --mach-text-mono--line: 1.25rem;
+  --mach-text-mono--weight: 450;
+  --mach-text-mono--tracking: 0;
+
+  --mach-radius-xs: 3px;
+  --mach-radius-sm: 5px;
+  --mach-radius-md: 8px;
+  --mach-radius-lg: 12px;
+  --mach-radius-full: 999px;
+
+  --mach-duration-instant: 0ms;
+  --mach-duration-fast: 120ms;
+  --mach-duration-base: 180ms;
+  --mach-duration-slow: 260ms;
+  --mach-duration-layout: 400ms;
+  --mach-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --mach-ease-enter: cubic-bezier(0, 0, 0, 1);
+  --mach-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --mach-rail-expanded: 248px;
+  --mach-rail-collapsed: 64px;
+  --mach-top-bar: 56px;
+  --mach-reading-measure: 68ch;
+  --mach-content-max: 1200px;
+  --mach-control-sm: 28px;
+  --mach-control-md: 36px;
+  --mach-control-lg: 44px;
+}
+
+/* Dark before JavaScript has run, when the system asks for it and nothing chose light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --mach-canvas: #141413;
+    --mach-surface: #1C1C1A;
+    --mach-surface-raised: #242422;
+    --mach-surface-sunken: #0F0F0E;
+    --mach-surface-nav: #181817;
+    --mach-surface-inverse: #FAF9F5;
+    --mach-overlay: rgba(0, 0, 0, 0.6);
+    --mach-ink: #F0EEE6;
+    --mach-ink-muted: #B5B2A7;
+    --mach-ink-subtle: #9A978C;
+    --mach-ink-inverse: #141413;
+    --mach-ink-on-accent: #141413;
+    --mach-line: #2E2D2A;
+    --mach-line-strong: #3D3C38;
+    --mach-line-control: #75736A;
+    --mach-accent: #D97757;
+    --mach-accent-fill: #D97757;
+    --mach-accent-fill-hover: #E48B6C;
+    --mach-accent-ink: #E8957A;
+    --mach-accent-soft: #3A2620;
+    --mach-focus: #8DB4DD;
+    --mach-info-ink: #8DB4DD;
+    --mach-info-soft: #1E2A36;
+    --mach-info-line: #34506C;
+    --mach-info-fill: #6A9BCC;
+    --mach-success-ink: #A7B98A;
+    --mach-success-soft: #232A1B;
+    --mach-success-line: #47573A;
+    --mach-success-fill: #788C5D;
+    --mach-warning-ink: #D9B061;
+    --mach-warning-soft: #2F2716;
+    --mach-warning-line: #5E4C25;
+    --mach-warning-fill: #C99A3A;
+    --mach-danger-ink: #EC8F96;
+    --mach-danger-soft: #3A1D20;
+    --mach-danger-line: #6E3036;
+    --mach-danger-fill: #E06C75;
+    --mach-danger-fill-hover: #E8848C;
+    --mach-neutral-ink: #B5B2A7;
+    --mach-neutral-soft: #242422;
+    --mach-neutral-line: #3D3C38;
+    --mach-neutral-fill: #8C887C;
+    --mach-graph-dot: #2A2927;
+    --mach-graph-edge: #75736A;
+    --mach-graph-edge-dependency: #E8957A;
+    --mach-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --mach-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+    --mach-shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --mach-canvas: #141413;
+  --mach-surface: #1C1C1A;
+  --mach-surface-raised: #242422;
+  --mach-surface-sunken: #0F0F0E;
+  --mach-surface-nav: #181817;
+  --mach-surface-inverse: #FAF9F5;
+  --mach-overlay: rgba(0, 0, 0, 0.6);
+  --mach-ink: #F0EEE6;
+  --mach-ink-muted: #B5B2A7;
+  --mach-ink-subtle: #9A978C;
+  --mach-ink-inverse: #141413;
+  --mach-ink-on-accent: #141413;
+  --mach-line: #2E2D2A;
+  --mach-line-strong: #3D3C38;
+  --mach-line-control: #75736A;
+  --mach-accent: #D97757;
+  --mach-accent-fill: #D97757;
+  --mach-accent-fill-hover: #E48B6C;
+  --mach-accent-ink: #E8957A;
+  --mach-accent-soft: #3A2620;
+  --mach-focus: #8DB4DD;
+  --mach-info-ink: #8DB4DD;
+  --mach-info-soft: #1E2A36;
+  --mach-info-line: #34506C;
+  --mach-info-fill: #6A9BCC;
+  --mach-success-ink: #A7B98A;
+  --mach-success-soft: #232A1B;
+  --mach-success-line: #47573A;
+  --mach-success-fill: #788C5D;
+  --mach-warning-ink: #D9B061;
+  --mach-warning-soft: #2F2716;
+  --mach-warning-line: #5E4C25;
+  --mach-warning-fill: #C99A3A;
+  --mach-danger-ink: #EC8F96;
+  --mach-danger-soft: #3A1D20;
+  --mach-danger-line: #6E3036;
+  --mach-danger-fill: #E06C75;
+  --mach-danger-fill-hover: #E8848C;
+  --mach-neutral-ink: #B5B2A7;
+  --mach-neutral-soft: #242422;
+  --mach-neutral-line: #3D3C38;
+  --mach-neutral-fill: #8C887C;
+  --mach-graph-dot: #2A2927;
+  --mach-graph-edge: #75736A;
+  --mach-graph-edge-dependency: #E8957A;
+  --mach-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --mach-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --mach-shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* Control Tower: same roles, technical display face, denser controls. */
+:root[data-product="control-tower"] {
+  --mach-font-display: var(--mach-font-sans);
+  --mach-density: 0.875;
+}
+
+/* Reduced motion: every duration collapses. Components also check the media query in JavaScript. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --mach-duration-instant: 0ms;
+    --mach-duration-fast: 0ms;
+    --mach-duration-base: 0ms;
+    --mach-duration-slow: 0ms;
+    --mach-duration-layout: 0ms;
+  }
+}

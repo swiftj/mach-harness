@@ -1,0 +1,31 @@
+{
+  "exit_code": 0,
+  "data": {
+    "approved": true,
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 2,
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "spec_path": "specs/slices/SLICE-001-invite-teammate.md",
+      "spec_sha256": "b0097bdf9d525aac493e1f8038476fc27984db47a22b6f3d229d6fd3ca4c15aa",
+      "status": "approved_for_engineering",
+      "title": "Invite a teammate"
+    },
+    "risk": "High",
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "warnings": [],
+    "factory_authorized": false,
+    "note": "Product approval only. Nothing has been sent to engineering and no work has started."
+  },
+  "refused": null,
+  "hint": null
+}

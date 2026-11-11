@@ -1,0 +1,124 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together without friction.",
+      "outcomes": [
+        "Teams can work together",
+        "Admins stay in control of who has access"
+      ],
+      "source": "published"
+    },
+    "approvals_withdrawn": [
+      {
+        "artifact": "SLICE-001",
+        "kind": "slice",
+        "reason": "You reopened it to change it.",
+        "at": "2026-11-11T20:44:16Z"
+      },
+      {
+        "artifact": "WAVE-001",
+        "kind": "wave",
+        "reason": "SLICE-001 was reopened, so this wave went back to draft.",
+        "at": "2026-11-11T20:44:16Z"
+      }
+    ],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "People and access",
+        "status": "approved",
+        "revision": 3,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "source": "draft"
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-001",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "interviewing",
+        "revision": 3,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-001-invite-teammate.md",
+        "has_intent": true,
+        "source": "draft",
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "in_waves": [
+          "WAVE-001"
+        ]
+      },
+      {
+        "slice_id": "SLICE-002",
+        "title": "Invite a teammate by email",
+        "epic_id": "EPIC-001",
+        "status": "interviewing",
+        "revision": 1,
+        "open_questions": 2,
+        "spec": "specs/slices/SLICE-002-invite-teammate.md",
+        "has_intent": true,
+        "source": "draft",
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "in_waves": []
+      }
+    ],
+    "waves": [
+      {
+        "wave_id": "WAVE-001",
+        "status": "draft",
+        "revision": 3,
+        "slices": [
+          "SLICE-001"
+        ],
+        "approval": null,
+        "source": "draft",
+        "sent": false,
+        "pull_request": null
+      }
+    ],
+    "current_slice": "SLICE-002",
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    },
+    "shared_project": "the shared project",
+    "last_refreshed": "2026-11-11T20:44:16Z",
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Continue the interview for SLICE-001: Invite a teammate (slice resume SLICE-001).",
+      "Continue the interview for SLICE-002: Invite a teammate by email (slice resume SLICE-002)."
+    ],
+    "next_actions": [
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-001",
+        "title": "Continue the interview for SLICE-001",
+        "reason": "Invite a teammate is still being defined.",
+        "related": []
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-002",
+        "title": "Continue the interview for SLICE-002",
+        "reason": "Invite a teammate by email is still being defined.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

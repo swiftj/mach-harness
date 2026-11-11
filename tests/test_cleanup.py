@@ -23,7 +23,10 @@ RECORD_KEYS = {
     "ticket_id", "slice_id", "title", "risk", "app_type", "mode", "outcome", "abandon_reason", "rounds", "first_pass", "verify_failures",
     "review_rejections", "escalated", "human_approval", "deviations", "blockers", "verify_findings", "tests_seen_failing_first",
     "tests_passing_on_first_run", "created_at", "closed_at", "archive", "notes",
+    # record_version 2: what landed and where, and the product slice a ticket came from
+    "record_version", "integration", "product",
 }
+INTEGRATION_KEYS = {"branch", "into", "method", "approved_commit", "landed_commit", "merge_commit", "pull_request", "merged_at"}
 
 
 class Base(BuildBase):
@@ -239,6 +242,11 @@ class RunTest(Base):
         record = records[0]
         self.assertEqual(record, done["record"])
         self.assertEqual(set(record), RECORD_KEYS)
+        landed = record["integration"]
+        self.assertEqual((record["record_version"], record["product"], set(landed)), (2, None, INTEGRATION_KEYS))
+        self.assertEqual((landed["branch"], landed["into"], landed["method"]), (BRANCH, "main", "manual"))
+        self.assertRegex(landed["landed_commit"], r"^[0-9a-f]{40}$")
+        self.assertEqual(git(self.project, "merge-base", "--is-ancestor", landed["landed_commit"], "main").returncode, 0, "the commit it names is on main")
         self.assertEqual({key: record[key] for key in ("ticket_id", "slice_id", "title", "risk", "app_type", "mode", "outcome", "abandon_reason", "archive")},
                          {"ticket_id": "LOCAL-001", "slice_id": "SLICE-001", "title": "Invite a teammate by email", "risk": "Medium", "app_type": "library",
                           "mode": "interactive", "outcome": "merged", "abandon_reason": None, "archive": ".factory/archive/LOCAL-001.tar.gz"})
@@ -346,6 +354,7 @@ class AbandonTest(Base):
         record = self.records()[0]
         self.assertEqual((record["outcome"], record["abandon_reason"], record["first_pass"]), ("abandoned", self.WHY, False))
         self.assertEqual(set(record), RECORD_KEYS)
+        self.assertIsNone(record["integration"], "nothing landed, so nothing is claimed")
 
     def test_blocked_cell_is_abandoned_as_escalated(self):
         self.worked()
@@ -426,7 +435,9 @@ class MergedAsTest(Base):
         self.assertNotIn(BRANCH, self.branches())
         self.assertEqual(git(self.project, "rev-parse", "main").stdout.strip(), self.landed)
         record = self.records()[0]
-        self.assertEqual(set(record), RECORD_KEYS, "the run record's schema does not grow")
+        self.assertEqual(set(record), RECORD_KEYS, "the run record grows only by a versioned change")
+        self.assertEqual((record["integration"]["method"], record["integration"]["landed_commit"], record["integration"]["into"]),
+                         ("squash-or-rebase", self.landed, "main"))
         self.assertEqual((record["outcome"], record["abandon_reason"]), ("merged", None))
         self.assertEqual(json.loads(self.read_member("LOCAL-001/cell.json"))["merged_as"], self.landed)
 

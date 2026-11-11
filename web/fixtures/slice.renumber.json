@@ -1,0 +1,70 @@
+{
+  "exit_code": 0,
+  "data": {
+    "renumbered": {
+      "from": "SLICE-002",
+      "to": "SLICE-003"
+    },
+    "changed": [
+      "product/intents/SLICE-003.md",
+      "product/slices/SLICE-003.json",
+      "specs/slices/SLICE-003-invite-teammate.md"
+    ],
+    "needs_approval_again": [],
+    "needs_reconciling": {
+      "conflicts": [
+        "product/epics/EPIC-001.json",
+        "product/slices/SLICE-001.json",
+        "specs/slices/SLICE-001-invite-teammate.md"
+      ],
+      "collisions": [],
+      "details": {
+        "product/epics/EPIC-001.json": {
+          "fields": {
+            "acceptance_criteria": {
+              "mine": [
+                "Only invited people can join"
+              ],
+              "theirs": [
+                "Only invited people can join",
+                "Invitations expire after 14 days"
+              ]
+            }
+          }
+        },
+        "product/slices/SLICE-001.json": {
+          "fields": {
+            "spec_sha256": {
+              "mine": null,
+              "theirs": "e18a0c5c6d59ab0e13dfe4a48fac156b8becb8fc4d1491e2bfbaf1cd59b290be"
+            }
+          }
+        },
+        "specs/slices/SLICE-001-invite-teammate.md": {
+          "mine": {
+            "path": "specs/slices/SLICE-001-invite-teammate.md",
+            "added": [],
+            "removed": [],
+            "changed": [
+              "wording"
+            ]
+          },
+          "theirs": {
+            "path": "specs/slices/SLICE-001-invite-teammate.md",
+            "added": [],
+            "removed": [],
+            "changed": [
+              "requirement FR-01"
+            ]
+          }
+        }
+      }
+    },
+    "structurally_valid": false,
+    "structural_errors": [
+      "product/delivery-waves/WAVE-002.json: wave includes unapproved slice 'SLICE-001'"
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

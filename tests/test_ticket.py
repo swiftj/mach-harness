@@ -4,6 +4,7 @@ import io
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -162,6 +163,19 @@ class LocalTest(Base):
         with redirect_stdout(io.StringIO()) as out:
             cell.main(["--project", str(self.project), "ticket-new", "--title", "From intent"])
         self.assertEqual(json.loads(out.getvalue())["ticket_id"], "LOCAL-008")
+
+    def test_new_ticket_numbers_never_reuse_a_branch_name(self):
+        """On a fresh clone the local records are gone, but earlier tickets' branches are still on the remote."""
+        git = lambda *args: subprocess.run(["git", *args], cwd=str(self.project), capture_output=True, text=True)
+        git("init", "-q", "-b", "main")
+        git("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "start")
+        git("branch", "feature/LOCAL-003")
+        git("update-ref", "refs/remotes/origin/feature/LOCAL-009", "HEAD")
+        git("update-ref", "refs/remotes/origin/feature/OTHER-040", "HEAD")
+        self.assertEqual(self.ok("create", "--title", "Next")["ticket_id"], "LOCAL-010")
+        with redirect_stdout(io.StringIO()) as out:
+            cell.main(["--project", str(self.project), "ticket-new", "--title", "From intent"])
+        self.assertEqual(json.loads(out.getvalue())["ticket_id"], "LOCAL-011")
 
     def test_front_matter_extras_and_title_with_quotes(self):
         self.ok("create", "--title", 'Fix "pause" button')

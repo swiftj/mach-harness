@@ -84,6 +84,36 @@ class InstallTest(Base):
         for reference in set(re.findall(r"`((?:references|assets|scripts)/[\w./-]+)`", text)):
             self.assertTrue((self.project / ".claude/skills/mach-intent" / reference).is_file(), reference)
 
+    def test_installed_product_studio_finds_the_intent_skill(self):
+        self.mach("install")
+        script = self.project / ".claude/skills/mach-product-studio/scripts/studio.py"
+        done = subprocess.run([sys.executable, str(script), "--project", str(self.project), "where"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        where = json.loads(done.stdout)
+        self.assertEqual(Path(where["interview_method"]), self.project / ".claude/skills/mach-intent/references/interview-method.md")
+        for key in ("interview_method", "slice_template", "intent_template"):
+            self.assertTrue(Path(where[key]).is_file(), key)
+        self.assertIn(b"\nname: mach-product-studio\n", (self.project / ".claude/skills/mach-product-studio/SKILL.md").read_bytes())
+        ignore = (self.project / ".gitignore").read_text()
+        self.assertIn(".factory/studio/", ignore)
+        self.assertIn(".factory/local/", ignore)
+        self.assertIn(".factory/intake/", ignore)
+        self.assertEqual(json.loads((self.project / ".factory/config.json").read_text())["factory"], {"max_parallel": 3})
+        done = subprocess.run([sys.executable, str(self.project / ".claude/skills/mach-run/scripts/run.py"), "--project", str(self.project), "product", "status"],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)  # the installed run skill finds the installed product-studio and intent skills
+        self.assertEqual(json.loads(done.stdout)["factory_started"], False)
+        # Running an installed script leaves no untracked file behind.
+        git = lambda *args: subprocess.run(["git", *args], cwd=str(self.project), capture_output=True, text=True)
+        git("init", "-q", "-b", "main")
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "install")
+        writing = {key: value for key, value in os.environ.items() if key not in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")}
+        subprocess.run([sys.executable, str(script), "--project", str(self.project), "status"], capture_output=True, text=True, env=writing)
+        subprocess.run([sys.executable, str(self.project / ".factory/bin/mach"), "status", "--project", str(self.project)], capture_output=True, env=writing)
+        self.assertTrue(list((self.project / ".claude/skills").rglob("__pycache__")))
+        self.assertEqual(git("status", "--porcelain").stdout, "")
+
     def test_second_install_changes_nothing(self):
         self.mach("install")
         before = snapshot(self.project)

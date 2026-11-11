@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mach:schema:intake-ledger:v1",
+  "title": "MACH Factory Intake Ledger v1",
+  "description": "The Factory's record of approved product work it has taken in: .factory/intake/ledger.json, git-ignored and machine-local. It maps each slice revision to its execution ticket. Whether work is active or integrated is never stored as fact here; it is read from the cells and from Git each time.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "source",
+    "waves",
+    "slices",
+    "intakes",
+    "next_seq",
+    "pending_events",
+    "supervisor"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "project_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The integration branch and commit of the last intake.",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        }
+      }
+    },
+    "waves": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "revision",
+          "digest",
+          "slices",
+          "approval",
+          "first_seen_commit"
+        ]
+      }
+    },
+    "intakes": {
+      "type": "object",
+      "description": "Keyed by project/wave/content digest: each distinct approved wave content is taken in once."
+    },
+    "slices": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "slice_id",
+          "title",
+          "epic_id",
+          "wave_id",
+          "revision",
+          "digest",
+          "spec_path",
+          "spec_sha256",
+          "dependencies",
+          "source_commit",
+          "ticket_id",
+          "pending_ticket",
+          "state",
+          "materialized_at",
+          "dispatched_at",
+          "integrated",
+          "built_against",
+          "last_state",
+          "last_reasons",
+          "history"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "SHA-256 over the work order, the why and the spec: the identity of this slice revision."
+          },
+          "state": {
+            "enum": [
+              "materialized",
+              "superseded"
+            ]
+          },
+          "pending_ticket": {
+            "type": "boolean",
+            "description": "True from the moment a ticket is wanted until one is recorded; an interrupted intake finishes from here."
+          },
+          "integrated": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Set once the slice's commit was verified on the integration branch."
+          },
+          "built_against": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The revision of each dependency when this slice was dispatched."
+          },
+          "last_state": {
+            "enum": [
+              null,
+              "ready",
+              "blocked",
+              "active",
+              "completed",
+              "superseded"
+            ]
+          },
+          "history": {
+            "type": "array",
+            "description": "Earlier revisions and tickets of this slice."
+          },
+          "owner": {
+            "enum": [
+              "engineer",
+              "supervisor"
+            ],
+            "description": "Who moves a dispatched ticket through the line. The supervisor runs only its own."
+          }
+        }
+      }
+    },
+    "next_seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pending_events": {
+      "type": "array",
+      "description": "Events not yet appended to events.jsonl. Part of the ledger until they are in the log."
+    },
+    "supervisor": {
+      "type": "object",
+      "required": [
+        "executions",
+        "attempts",
+        "parked",
+        "observed"
+      ],
+      "description": "The supervisor's own record, kept here so claims and intake share one lock and one order of events. It says what the supervisor did, never where a ticket stands: that is read from the cell.",
+      "properties": {
+        "executions": {
+          "type": "object",
+          "description": "One entry per claimed execution, by execution ID.",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "execution_id",
+              "ticket_id",
+              "state",
+              "claimed_at",
+              "runner_id",
+              "session_id",
+              "stage_at_start",
+              "action_at_start"
+            ],
+            "properties": {
+              "state": {
+                "enum": [
+                  "claimed",
+                  "started",
+                  "finished",
+                  "unknown",
+                  "released"
+                ],
+                "description": "claimed: reserved on disk, nothing started. started: its process was launched. finished: it ended and left a result. unknown: it is gone and left none. released: the claim was given back before anything ran."
+              }
+            }
+          }
+        },
+        "attempts": {
+          "type": "object",
+          "description": "Per ticket: executions that ended without moving it."
+        },
+        "parked": {
+          "type": "object",
+          "description": "Tickets taken out of automatic execution until a person resumes them, each with the reason."
+        },
+        "observed": {
+          "type": "object",
+          "description": "The last stage seen for each ticket, to report a change once."
+        }
+      }
+    }
+  }
+}

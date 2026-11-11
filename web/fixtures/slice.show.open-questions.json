@@ -1,0 +1,715 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [
+        "Does a removed teammate keep access until the end of the billing period?",
+        "Can an admin remove themselves?"
+      ],
+      "project_id": "team-space",
+      "revision": 1,
+      "schema_version": 1,
+      "slice_id": "SLICE-002",
+      "spec_path": "specs/slices/SLICE-002-invite-teammate.md",
+      "spec_sha256": null,
+      "status": "interviewing",
+      "title": "Invite a teammate by email"
+    },
+    "editable": true,
+    "edit_refusal": null,
+    "paths": {
+      "work_order": "product/slices/SLICE-002.json",
+      "specs_dir": "specs/slices",
+      "spec": "specs/slices/SLICE-002-invite-teammate.md",
+      "spec_name_pattern": "SLICE-002-<lowercase-kebab-name>.md",
+      "intent": "product/intents/SLICE-002.md"
+    },
+    "spec": {
+      "path": "specs/slices/SLICE-002-invite-teammate.md",
+      "name": "SLICE-002-invite-teammate.md",
+      "markdown": "# SLICE-002: Invite a teammate by email\n\n## Summary\n\n- **Actor:** Workspace admin\n- **Trigger:** The admin submits one email address on the Members page\n- **Outcome:** The invitee receives an invitation email and one seat is held for them\n\n## Scope\n\n### In scope\n\n- Inviting one teammate by email from the Members page\n- Holding a seat for the invitee as soon as the invitation is sent\n- Refusing invitations that break a seat, duplicate, or email rule\n\n### Out of scope\n\n- None.\n\n## Preconditions\n\n- The admin is signed in to a workspace with at least one purchased seat\n- The workspace's purchased seat count is known\n\n## Invariants\n\n- **INV-01:** A workspace MUST NOT have more members and pending invitations than purchased seats.\n- **INV-02:** An email address MUST NOT hold more than one membership or pending invitation in the same workspace.\n- **INV-03:** An invitation link MUST stop working 7 days after it is sent.\n- **INV-04:** An invitation MUST be sent only to an email address that has text before and after a single at sign.\n\n## Functional requirements\n\n- **FR-01:** [Event-driven] When the admin submits an invitation that passes every check, the system SHALL reserve one seat for the invitee.\n- **FR-02:** [Event-driven] When a seat is reserved for an invitee, the system SHALL send the invitation email to the invitee within 60 seconds.\n- **FR-03:** [Unwanted behavior] If the email address is not valid, then the system SHALL reject the invitation and display \"Enter a valid email address.\"\n- **FR-04:** [Unwanted behavior] If every purchased seat is in use, then the system SHALL reject the invitation and display \"All seats are in use. Add seats to invite more people.\"\n- **FR-05:** [Unwanted behavior] If the email address already belongs to a member or a pending invitation, then the system SHALL reject the invitation and display \"This person is already a member or has a pending invitation.\"\n- **FR-06:** [Unwanted behavior] If the email service does not accept the invitation email within 60 seconds, then the system SHALL display \"We couldn't send the invitation. Try again in a few minutes.\"\n- **FR-07:** [Unwanted behavior] If the admin's account is suspended, then the system SHALL reject the invitation and display \"Your account is suspended. Contact your workspace owner.\"\n- **FR-08:** [Unwanted behavior] If the invitation email cannot be sent, then the system SHALL release the reserved seat.\n- **FR-09:** [Ubiquitous] The system SHALL show the number of seats in use on the Members page.\n\n## Acceptance criteria\n\n### Decision matrix\n\n| Rule | Admin active | Email valid | Already member or invited | Seat available | Expected outcome | Side effects | Covers |\n|------|--------------|-------------|---------------------------|----------------|------------------|--------------|--------|\n| R1   | No           | -           | -                         | -              | Rejected with \"Your account is suspended. Contact your workspace owner.\" | None | FR-07 |\n| R2   | Yes          | No          | -                         | -              | Rejected with \"Enter a valid email address.\" | None | FR-03, INV-04 |\n| R3   | Yes          | Yes         | Yes                       | -              | Rejected with \"This person is already a member or has a pending invitation.\" | None | FR-05, INV-02 |\n| R4   | Yes          | Yes         | No                        | No             | Rejected with \"All seats are in use. Add seats to invite more people.\" | None | FR-04, INV-01 |\n| R5   | Yes          | Yes         | No                        | Yes            | Invitation sent | One seat reserved; invitation email sent to the invitee | FR-01, FR-02 |\n\n### Scenarios\n\n#### AC-01: Admin invites a teammate\n\n- **Covers:** FR-01, FR-02, FR-09\n- **Given** the workspace \"Acme Design\" has 5 purchased seats and 3 members\n- **When** the admin invites \"sam@example.com\"\n- **Then** an invitation email arrives for \"sam@example.com\" within 60 seconds\n- **And** the Members page shows 4 of 5 seats in use\n\n#### AC-02: Invitation link expires\n\n- **Covers:** INV-03\n- **Given** an invitation was sent to \"sam@example.com\" 7 days ago\n- **When** the invitee opens the invitation link\n- **Then** the system displays \"This invitation has expired. Ask your admin for a new one.\"\n\n#### AC-03: Email service failure releases the reserved seat\n\n- **Covers:** FR-06, FR-08\n- **Given** the workspace \"Acme Design\" has 5 purchased seats and 4 members\n- **And** the email service is not responding\n- **When** the admin invites \"sam@example.com\"\n- **Then** after 60 seconds the system displays \"We couldn't send the invitation. Try again in a few minutes.\"\n- **And** the Members page shows 4 of 5 seats in use\n\n## Dependencies and permissions\n\n- **External dependencies:** Email delivery service, which sends the invitation email (failure: FR-06)\n- **Required permissions:** Workspace admin role in the invited workspace\n\n## Assumptions\n\n- The Members page already shows the seat count; found in docs/members-page.md.\n\n## Accepted defaults\n\n- Invitation links expire 7 days after they are sent (INV-03).\n\n## Open questions\n\n- Does a removed teammate keep access until the end of the billing period? Follow up: ask Finance.\n- Can an admin remove themselves? Follow up: ask the product owner.\n",
+      "model": {
+        "slice_id": "SLICE-002",
+        "title": "Invite a teammate by email",
+        "summary": {
+          "actor": "Workspace admin",
+          "trigger": "The admin submits one email address on the Members page",
+          "outcome": "The invitee receives an invitation email and one seat is held for them"
+        },
+        "in_scope": [
+          "Inviting one teammate by email from the Members page",
+          "Holding a seat for the invitee as soon as the invitation is sent",
+          "Refusing invitations that break a seat, duplicate, or email rule"
+        ],
+        "out_of_scope": [],
+        "preconditions": [
+          "The admin is signed in to a workspace with at least one purchased seat",
+          "The workspace's purchased seat count is known"
+        ],
+        "invariants": [
+          {
+            "id": "INV-01",
+            "text": "A workspace MUST NOT have more members and pending invitations than purchased seats."
+          },
+          {
+            "id": "INV-02",
+            "text": "An email address MUST NOT hold more than one membership or pending invitation in the same workspace."
+          },
+          {
+            "id": "INV-03",
+            "text": "An invitation link MUST stop working 7 days after it is sent."
+          },
+          {
+            "id": "INV-04",
+            "text": "An invitation MUST be sent only to an email address that has text before and after a single at sign."
+          }
+        ],
+        "functional_requirements": [
+          {
+            "id": "FR-01",
+            "pattern": "event-driven",
+            "text": "When the admin submits an invitation that passes every check, the system SHALL reserve one seat for the invitee."
+          },
+          {
+            "id": "FR-02",
+            "pattern": "event-driven",
+            "text": "When a seat is reserved for an invitee, the system SHALL send the invitation email to the invitee within 60 seconds."
+          },
+          {
+            "id": "FR-03",
+            "pattern": "unwanted-behavior",
+            "text": "If the email address is not valid, then the system SHALL reject the invitation and display \"Enter a valid email address.\""
+          },
+          {
+            "id": "FR-04",
+            "pattern": "unwanted-behavior",
+            "text": "If every purchased seat is in use, then the system SHALL reject the invitation and display \"All seats are in use. Add seats to invite more people.\""
+          },
+          {
+            "id": "FR-05",
+            "pattern": "unwanted-behavior",
+            "text": "If the email address already belongs to a member or a pending invitation, then the system SHALL reject the invitation and display \"This person is already a member or has a pending invitation.\""
+          },
+          {
+            "id": "FR-06",
+            "pattern": "unwanted-behavior",
+            "text": "If the email service does not accept the invitation email within 60 seconds, then the system SHALL display \"We couldn't send the invitation. Try again in a few minutes.\""
+          },
+          {
+            "id": "FR-07",
+            "pattern": "unwanted-behavior",
+            "text": "If the admin's account is suspended, then the system SHALL reject the invitation and display \"Your account is suspended. Contact your workspace owner.\""
+          },
+          {
+            "id": "FR-08",
+            "pattern": "unwanted-behavior",
+            "text": "If the invitation email cannot be sent, then the system SHALL release the reserved seat."
+          },
+          {
+            "id": "FR-09",
+            "pattern": "ubiquitous",
+            "text": "The system SHALL show the number of seats in use on the Members page."
+          }
+        ],
+        "decision_matrix": {
+          "conditions": [
+            {
+              "name": "Admin active",
+              "values": [
+                "Yes",
+                "No"
+              ]
+            },
+            {
+              "name": "Email valid",
+              "values": [
+                "Yes",
+                "No"
+              ]
+            },
+            {
+              "name": "Already member or invited",
+              "values": [
+                "Yes",
+                "No"
+              ]
+            },
+            {
+              "name": "Seat available",
+              "values": [
+                "Yes",
+                "No"
+              ]
+            }
+          ],
+          "rules": [
+            {
+              "id": "R1",
+              "conditions": {
+                "Admin active": [
+                  "No"
+                ],
+                "Email valid": [
+                  "Yes",
+                  "No"
+                ],
+                "Already member or invited": [
+                  "Yes",
+                  "No"
+                ],
+                "Seat available": [
+                  "Yes",
+                  "No"
+                ]
+              },
+              "expected_outcome": "Rejected with \"Your account is suspended. Contact your workspace owner.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-07"
+              ]
+            },
+            {
+              "id": "R2",
+              "conditions": {
+                "Admin active": [
+                  "Yes"
+                ],
+                "Email valid": [
+                  "No"
+                ],
+                "Already member or invited": [
+                  "Yes",
+                  "No"
+                ],
+                "Seat available": [
+                  "Yes",
+                  "No"
+                ]
+              },
+              "expected_outcome": "Rejected with \"Enter a valid email address.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-03",
+                "INV-04"
+              ]
+            },
+            {
+              "id": "R3",
+              "conditions": {
+                "Admin active": [
+                  "Yes"
+                ],
+                "Email valid": [
+                  "Yes"
+                ],
+                "Already member or invited": [
+                  "Yes"
+                ],
+                "Seat available": [
+                  "Yes",
+                  "No"
+                ]
+              },
+              "expected_outcome": "Rejected with \"This person is already a member or has a pending invitation.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-05",
+                "INV-02"
+              ]
+            },
+            {
+              "id": "R4",
+              "conditions": {
+                "Admin active": [
+                  "Yes"
+                ],
+                "Email valid": [
+                  "Yes"
+                ],
+                "Already member or invited": [
+                  "No"
+                ],
+                "Seat available": [
+                  "No"
+                ]
+              },
+              "expected_outcome": "Rejected with \"All seats are in use. Add seats to invite more people.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-04",
+                "INV-01"
+              ]
+            },
+            {
+              "id": "R5",
+              "conditions": {
+                "Admin active": [
+                  "Yes"
+                ],
+                "Email valid": [
+                  "Yes"
+                ],
+                "Already member or invited": [
+                  "No"
+                ],
+                "Seat available": [
+                  "Yes"
+                ]
+              },
+              "expected_outcome": "Invitation sent",
+              "side_effects": "One seat reserved; invitation email sent to the invitee",
+              "covers": [
+                "FR-01",
+                "FR-02"
+              ]
+            }
+          ],
+          "complete": true,
+          "cases": [
+            {
+              "id": "R1-1",
+              "rule": "R1",
+              "conditions": {
+                "Admin active": "No",
+                "Email valid": "Yes",
+                "Already member or invited": "Yes",
+                "Seat available": "Yes"
+              },
+              "expected_outcome": "Rejected with \"Your account is suspended. Contact your workspace owner.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-07"
+              ]
+            },
+            {
+              "id": "R1-2",
+              "rule": "R1",
+              "conditions": {
+                "Admin active": "No",
+                "Email valid": "Yes",
+                "Already member or invited": "Yes",
+                "Seat available": "No"
+              },
+              "expected_outcome": "Rejected with \"Your account is suspended. Contact your workspace owner.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-07"
+              ]
+            },
+            {
+              "id": "R1-3",
+              "rule": "R1",
+              "conditions": {
+                "Admin active": "No",
+                "Email valid": "Yes",
+                "Already member or invited": "No",
+                "Seat available": "Yes"
+              },
+              "expected_outcome": "Rejected with \"Your account is suspended. Contact your workspace owner.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-07"
+              ]
+            },
+            {
+              "id": "R1-4",
+              "rule": "R1",
+              "conditions": {
+                "Admin active": "No",
+                "Email valid": "Yes",
+                "Already member or invited": "No",
+                "Seat available": "No"
+              },
+              "expected_outcome": "Rejected with \"Your account is suspended. Contact your workspace owner.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-07"
+              ]
+            },
+            {
+              "id": "R1-5",
+              "rule": "R1",
+              "conditions": {
+                "Admin active": "No",
+                "Email valid": "No",
+                "Already member or invited": "Yes",
+                "Seat available": "Yes"
+              },
+              "expected_outcome": "Rejected with \"Your account is suspended. Contact your workspace owner.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-07"
+              ]
+            },
+            {
+              "id": "R1-6",
+              "rule": "R1",
+              "conditions": {
+                "Admin active": "No",
+                "Email valid": "No",
+                "Already member or invited": "Yes",
+                "Seat available": "No"
+              },
+              "expected_outcome": "Rejected with \"Your account is suspended. Contact your workspace owner.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-07"
+              ]
+            },
+            {
+              "id": "R1-7",
+              "rule": "R1",
+              "conditions": {
+                "Admin active": "No",
+                "Email valid": "No",
+                "Already member or invited": "No",
+                "Seat available": "Yes"
+              },
+              "expected_outcome": "Rejected with \"Your account is suspended. Contact your workspace owner.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-07"
+              ]
+            },
+            {
+              "id": "R1-8",
+              "rule": "R1",
+              "conditions": {
+                "Admin active": "No",
+                "Email valid": "No",
+                "Already member or invited": "No",
+                "Seat available": "No"
+              },
+              "expected_outcome": "Rejected with \"Your account is suspended. Contact your workspace owner.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-07"
+              ]
+            },
+            {
+              "id": "R2-1",
+              "rule": "R2",
+              "conditions": {
+                "Admin active": "Yes",
+                "Email valid": "No",
+                "Already member or invited": "Yes",
+                "Seat available": "Yes"
+              },
+              "expected_outcome": "Rejected with \"Enter a valid email address.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-03",
+                "INV-04"
+              ]
+            },
+            {
+              "id": "R2-2",
+              "rule": "R2",
+              "conditions": {
+                "Admin active": "Yes",
+                "Email valid": "No",
+                "Already member or invited": "Yes",
+                "Seat available": "No"
+              },
+              "expected_outcome": "Rejected with \"Enter a valid email address.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-03",
+                "INV-04"
+              ]
+            },
+            {
+              "id": "R2-3",
+              "rule": "R2",
+              "conditions": {
+                "Admin active": "Yes",
+                "Email valid": "No",
+                "Already member or invited": "No",
+                "Seat available": "Yes"
+              },
+              "expected_outcome": "Rejected with \"Enter a valid email address.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-03",
+                "INV-04"
+              ]
+            },
+            {
+              "id": "R2-4",
+              "rule": "R2",
+              "conditions": {
+                "Admin active": "Yes",
+                "Email valid": "No",
+                "Already member or invited": "No",
+                "Seat available": "No"
+              },
+              "expected_outcome": "Rejected with \"Enter a valid email address.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-03",
+                "INV-04"
+              ]
+            },
+            {
+              "id": "R3-1",
+              "rule": "R3",
+              "conditions": {
+                "Admin active": "Yes",
+                "Email valid": "Yes",
+                "Already member or invited": "Yes",
+                "Seat available": "Yes"
+              },
+              "expected_outcome": "Rejected with \"This person is already a member or has a pending invitation.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-05",
+                "INV-02"
+              ]
+            },
+            {
+              "id": "R3-2",
+              "rule": "R3",
+              "conditions": {
+                "Admin active": "Yes",
+                "Email valid": "Yes",
+                "Already member or invited": "Yes",
+                "Seat available": "No"
+              },
+              "expected_outcome": "Rejected with \"This person is already a member or has a pending invitation.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-05",
+                "INV-02"
+              ]
+            },
+            {
+              "id": "R4-1",
+              "rule": "R4",
+              "conditions": {
+                "Admin active": "Yes",
+                "Email valid": "Yes",
+                "Already member or invited": "No",
+                "Seat available": "No"
+              },
+              "expected_outcome": "Rejected with \"All seats are in use. Add seats to invite more people.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-04",
+                "INV-01"
+              ]
+            },
+            {
+              "id": "R5-1",
+              "rule": "R5",
+              "conditions": {
+                "Admin active": "Yes",
+                "Email valid": "Yes",
+                "Already member or invited": "No",
+                "Seat available": "Yes"
+              },
+              "expected_outcome": "Invitation sent",
+              "side_effects": "One seat reserved; invitation email sent to the invitee",
+              "covers": [
+                "FR-01",
+                "FR-02"
+              ]
+            }
+          ]
+        },
+        "scenarios": [
+          {
+            "id": "AC-01",
+            "title": "Admin invites a teammate",
+            "covers": [
+              "FR-01",
+              "FR-02",
+              "FR-09"
+            ],
+            "steps": [
+              {
+                "keyword": "Given",
+                "text": "the workspace \"Acme Design\" has 5 purchased seats and 3 members"
+              },
+              {
+                "keyword": "When",
+                "text": "the admin invites \"sam@example.com\""
+              },
+              {
+                "keyword": "Then",
+                "text": "an invitation email arrives for \"sam@example.com\" within 60 seconds"
+              },
+              {
+                "keyword": "And",
+                "text": "the Members page shows 4 of 5 seats in use"
+              }
+            ]
+          },
+          {
+            "id": "AC-02",
+            "title": "Invitation link expires",
+            "covers": [
+              "INV-03"
+            ],
+            "steps": [
+              {
+                "keyword": "Given",
+                "text": "an invitation was sent to \"sam@example.com\" 7 days ago"
+              },
+              {
+                "keyword": "When",
+                "text": "the invitee opens the invitation link"
+              },
+              {
+                "keyword": "Then",
+                "text": "the system displays \"This invitation has expired. Ask your admin for a new one.\""
+              }
+            ]
+          },
+          {
+            "id": "AC-03",
+            "title": "Email service failure releases the reserved seat",
+            "covers": [
+              "FR-06",
+              "FR-08"
+            ],
+            "steps": [
+              {
+                "keyword": "Given",
+                "text": "the workspace \"Acme Design\" has 5 purchased seats and 4 members"
+              },
+              {
+                "keyword": "And",
+                "text": "the email service is not responding"
+              },
+              {
+                "keyword": "When",
+                "text": "the admin invites \"sam@example.com\""
+              },
+              {
+                "keyword": "Then",
+                "text": "after 60 seconds the system displays \"We couldn't send the invitation. Try again in a few minutes.\""
+              },
+              {
+                "keyword": "And",
+                "text": "the Members page shows 4 of 5 seats in use"
+              }
+            ]
+          }
+        ],
+        "external_dependencies": [
+          {
+            "name": "Email delivery service, which sends the invitation email",
+            "failure_requirements": [
+              "FR-06"
+            ]
+          }
+        ],
+        "required_permissions": "Workspace admin role in the invited workspace",
+        "assumptions": [
+          "The Members page already shows the seat count; found in docs/members-page.md."
+        ],
+        "accepted_defaults": [
+          {
+            "default": "Invitation links expire 7 days after they are sent",
+            "requirements": [
+              "INV-03"
+            ]
+          }
+        ],
+        "open_questions": [
+          {
+            "question": "Does a removed teammate keep access until the end of the billing period?",
+            "follow_up": "ask Finance"
+          },
+          {
+            "question": "Can an admin remove themselves?",
+            "follow_up": "ask the product owner"
+          }
+        ]
+      },
+      "findings": [
+        {
+          "severity": "warning",
+          "rule": "open-questions",
+          "line": 98,
+          "section": "Open questions",
+          "message": "2 open question(s) remain, so the spec is not ready for engineering. Answer them with the PM, then update the spec."
+        }
+      ]
+    },
+    "why": {
+      "exists": true,
+      "markdown": "# Intent: Invite a teammate\n\n- **Slice:** SLICE-002 at specs/slices/SLICE-002-invite-teammate.md\n- **Status:** Ready for approval\n\n## Why\n\n- **Problem:** An admin cannot bring a colleague in.\n- **Who it is for:** A workspace admin.\n- **Success looks like:** The colleague receives an invitation.\n\n## Goal ancestry\n\n- **Goal:** Teams can work together\n- **Epic:** EPIC-001: Team membership\n- **Slice:** SLICE-002: An admin invites one teammate.\n\n## Constraints\n\n- None.\n\n## Risk\n\n- **Tier:** High\n- **Reason:** It grants access.\n\n## Deferred work\n\n- None.\n",
+      "title": "Invite a teammate",
+      "header": {
+        "Slice": "SLICE-002 at specs/slices/SLICE-002-invite-teammate.md",
+        "Status": "Ready for approval"
+      },
+      "sections": [
+        {
+          "heading": "Why",
+          "text": "- **Problem:** An admin cannot bring a colleague in.\n- **Who it is for:** A workspace admin.\n- **Success looks like:** The colleague receives an invitation.",
+          "fields": {
+            "Problem": "An admin cannot bring a colleague in.",
+            "Who it is for": "A workspace admin.",
+            "Success looks like": "The colleague receives an invitation."
+          }
+        },
+        {
+          "heading": "Goal ancestry",
+          "text": "- **Goal:** Teams can work together\n- **Epic:** EPIC-001: Team membership\n- **Slice:** SLICE-002: An admin invites one teammate.",
+          "fields": {
+            "Goal": "Teams can work together",
+            "Epic": "EPIC-001: Team membership",
+            "Slice": "SLICE-002: An admin invites one teammate."
+          }
+        },
+        {
+          "heading": "Constraints",
+          "text": "- None.",
+          "fields": {}
+        },
+        {
+          "heading": "Risk",
+          "text": "- **Tier:** High\n- **Reason:** It grants access.",
+          "fields": {
+            "Tier": "High",
+            "Reason": "It grants access."
+          }
+        },
+        {
+          "heading": "Deferred work",
+          "text": "- None.",
+          "fields": {}
+        }
+      ]
+    },
+    "check": {
+      "slice_id": "SLICE-002",
+      "spec": "specs/slices/SLICE-002-invite-teammate.md",
+      "errors": [],
+      "warnings": [],
+      "diagnostics": [],
+      "open_questions": [
+        "Does a removed teammate keep access until the end of the billing period?",
+        "Can an admin remove themselves?"
+      ],
+      "intent_problems": [],
+      "counts": {
+        "invariants": 4,
+        "functional_requirements": 9,
+        "matrix_rules": 5,
+        "scenarios": 3
+      },
+      "title": "Invite a teammate by email",
+      "risk": "High",
+      "ready": false
+    },
+    "resume_note": null,
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

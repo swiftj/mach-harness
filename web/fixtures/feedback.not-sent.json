@@ -1,0 +1,18 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "waves": [
+      {
+        "wave_id": "WAVE-001",
+        "slices": [
+          "SLICE-001"
+        ],
+        "status": "Approved, not sent",
+        "state": "approved_not_sent"
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

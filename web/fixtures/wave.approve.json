@@ -1,0 +1,25 @@
+{
+  "exit_code": 0,
+  "data": {
+    "approved": true,
+    "wave": {
+      "approval": {
+        "actor": "Ada PM",
+        "approved_at": "2026-11-10T14:00:00Z"
+      },
+      "base_project_revision": 1,
+      "project_id": "team-space",
+      "revision": 2,
+      "schema_version": 1,
+      "slices": [
+        "SLICE-001"
+      ],
+      "status": "approved_for_engineering",
+      "wave_id": "WAVE-001"
+    },
+    "factory_authorized": false,
+    "note": "Product approval only. The wave stays in your workspace until you send it to engineering."
+  },
+  "refused": null,
+  "hint": null
+}

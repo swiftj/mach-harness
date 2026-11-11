@@ -1,0 +1,21 @@
+{
+  "exit_code": 0,
+  "data": {
+    "dry_run": true,
+    "wave_id": "WAVE-001",
+    "would_share": [
+      "delivery wave WAVE-001 (new)",
+      "epic EPIC-001 (new)",
+      "the why for SLICE-001 (new)",
+      "the project (new)",
+      "the work order for SLICE-001 (new)",
+      "the spec SLICE-001-invite-teammate.md (new)"
+    ],
+    "to": "a request for engineering to add this to the shared project",
+    "request": "opens a new request",
+    "refreshed": true,
+    "note": "Nothing has been sent."
+  },
+  "refused": null,
+  "hint": null
+}

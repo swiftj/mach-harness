@@ -1,0 +1,19 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": "/project",
+    "workspace": "/project/.factory/studio/draft",
+    "specs_dir": "/project/.factory/studio/draft/specs/slices",
+    "interview_method": "/Users/johnswift/Projects/mach-harness-m5/skills/intent/references/interview-method.md",
+    "slice_template": "/Users/johnswift/Projects/mach-harness-m5/skills/intent/assets/slice-template.md",
+    "spec_rules": [
+      "/Users/johnswift/Projects/mach-harness-m5/skills/intent/references/spec-structure.md",
+      "/Users/johnswift/Projects/mach-harness-m5/skills/intent/references/ears-syntax.md",
+      "/Users/johnswift/Projects/mach-harness-m5/skills/intent/references/acceptance-matrices.md"
+    ],
+    "intent_template": "/Users/johnswift/Projects/mach-harness-m5/skills/product-studio/assets/intent-template.md",
+    "is_git_repository": true
+  },
+  "refused": null,
+  "hint": null
+}

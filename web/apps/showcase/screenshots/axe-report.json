@@ -1,0 +1,77 @@
+{
+  "generated": "2026-11-11T18:12:50.159Z",
+  "runs": [
+    {
+      "theme": "light",
+      "size": "1440",
+      "state": "page",
+      "overflow": {
+        "page": 0,
+        "main": 0
+      },
+      "violations": [],
+      "passes": 34
+    },
+    {
+      "theme": "light",
+      "size": "1440",
+      "state": "dialog",
+      "violations": [],
+      "passes": 21
+    },
+    {
+      "theme": "light",
+      "size": "1440",
+      "state": "sheet",
+      "violations": [],
+      "passes": 19
+    },
+    {
+      "theme": "light",
+      "size": "1100",
+      "state": "page",
+      "overflow": {
+        "page": 0,
+        "main": 0
+      }
+    },
+    {
+      "theme": "dark",
+      "size": "1440",
+      "state": "page",
+      "overflow": {
+        "page": 0,
+        "main": 0
+      },
+      "violations": [],
+      "passes": 34
+    },
+    {
+      "theme": "dark",
+      "size": "1440",
+      "state": "dialog",
+      "violations": [],
+      "passes": 21
+    },
+    {
+      "theme": "dark",
+      "size": "1440",
+      "state": "sheet",
+      "violations": [],
+      "passes": 19
+    },
+    {
+      "theme": "dark",
+      "size": "1100",
+      "state": "page",
+      "overflow": {
+        "page": 0,
+        "main": 0
+      }
+    }
+  ],
+  "reducedMotion": {
+    "elementsStillAnimating": 0
+  },
+  "externalRequests": []
+}
