@@ -43,6 +43,19 @@ Everything you produce is a **draft in the PM's own workspace** until they appro
    - A feature idea, or a slice or epic ID: go to **Slices**.
    - Approving or grouping work: go to **Approval** or **Delivery waves**.
    - Sending work to engineering, or asking how review is going: go to **Sending to engineering** or **Review feedback**.
+   - Opening the visual app ("open the app", "show me this in the browser"): go to **The visual app**.
+
+---
+
+## The visual app
+
+The same workspace has a visual interface that runs on the PM's own machine. It works on the same drafts through the same `STUDIO`, so the PM can move between it and this conversation freely.
+
+1. Look for the program at `${CLAUDE_SKILL_DIR}/../../apps/studio/bin/mach-studio`. If it is not there, say that the visual app is not installed with this copy of MACH and carry on here; do not build it, download it or look for it elsewhere unless the PM asks.
+2. Start it in the background from the project: `<that path> --project "<project folder>" --no-open`. It prints one line, `Open: http://127.0.0.1:<port>/?t=...`. Give the PM that link exactly as printed. It works once, and only on this machine.
+3. It serves this machine only and stops when this session ends or the PM asks you to stop it. Never start it with any other address, and never pass the link to anyone or anything else.
+
+The app follows the same guardrails as this skill: approving, sending and reconciling happen only when the PM presses the button for them, and nothing in it starts engineering work.
 
 ---
 

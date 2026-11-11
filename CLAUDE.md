@@ -73,6 +73,8 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   └── reviewer.md             # One seat on the review panel; model set per seat
 ├── workflows/
 │   └── belt.js                 # Dynamic Workflow `mach:belt` (`mach-belt` in a project): several tickets in parallel
+├── apps/studio/                # Experimental (MACH Next M5). Go host for the visual Product Studio: loopback only, embeds the web app
+├── web/                        # Experimental (MACH Next M5). pnpm workspace: @mach/ui design system, showcase, product-studio app, fixtures, e2e
 ├── templates/                  # What gets scaffolded into a project
 ├── tests/                      # unittest suites and fixtures
 └── docs/                       # Original design notes per station, prd-slice (reference), and mach-next/ (experimental design)
@@ -238,7 +240,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **No person for tuning**: a `factory-tuning` ticket is decided by a unanimous three-seat panel on the contracts tier, with no human approval, provided its diff touches only rule files and its own spec and tests. Reviewers must block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit. Observe never proposes such a change: those stay a person's decision.
 * **Output**: `.factory/observations/metrics.json`, `observation-<date>.md`, `last-pass.json`, and the tuning ticket.
 
-### Experimental: `/mach-product-studio` — Product Manager's Workspace (MACH Next M1 and M2)
+### Experimental: `/mach-product-studio` — Product Manager's Workspace (MACH Next M1, M2 and M5)
 * **Status**: experimental, on the MACH Next branch. Design and milestones are in `docs/mach-next/`.
 * **Purpose**: A product manager defines a project (vision, outcomes), its epics, and one slice at a time through the same interview the intent skill uses; saves and resumes drafts; approves slices; and groups approved slices into delivery waves. `studio.py` owns IDs, files, validation and approval.
 * **Workspace**: everything is a draft in `.factory/studio/draft/`, which mirrors the repository layout (`product/project.json`, `product/epics/`, `product/slices/`, `product/intents/`, `product/delivery-waves/`, `specs/slices/`). It is git-ignored. The main checkout is never written to, so no existing gate can be tripped.
@@ -248,6 +250,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Sending (M2)**: `send <WAVE-ID>` publishes one approved wave as one pull request on `product/<WAVE-ID>`. It shares only the wave's closure of product files, built as an ordinary commit in a temporary worktree (so signing and hooks apply), validated as engineering will see it, and recorded in a ledger so a repeated or interrupted send never duplicates. `feedback` reports review in the PM's terms; reviewer text is passed on as data.
 * **Never**: touches the PM's checkout, branch, index or stash; pushes anywhere but `product/...`; force-pushes, rewrites history or merges a pull request; publishes a file outside `product/` and `specs/slices/`; creates a ticket or cell; reads the machine-local Factory policy; or starts any station. Every report carries `factory_authorized: false`, and tests hold the exact Git and `gh` commands it may use and that no station, agent or workflow calls its scripts. Intake and the supervisor are later milestones.
 * **Commands**: `/mach-product-studio` with no argument shows where things stand and the next step.
+* **Visual app (M5)**: the same workspace in a browser, served by `apps/studio` on `127.0.0.1` only and started by the skill ("open the app"), never by a new command. The host runs a fixed list of `studio.py` operations and adds no product rule; the app shows what the engine returns, and a conformance suite holds the terminal and the app to the same artifacts. The guided interview runs through the person's own Claude Code, one restricted turn per reply, able to edit only that slice's spec and why and unable to approve, send or reconcile. No credential reaches the browser, nothing is loaded from another origin, and no route can enable Factory execution or start a station. Design: `docs/mach-next/M5_DESIGN.md`.
 
 ---
 

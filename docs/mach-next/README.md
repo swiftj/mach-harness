@@ -37,6 +37,7 @@ The example is a structural fixture, **not** a factory-executable product specif
 - **M2** publishing and collaboration: `M2_DESIGN.md`
 - **M3** Factory intake and dependency-aware scheduling: `M3_DESIGN.md`, with the event and ledger schemas in `schemas/`
 - **M4** the Factory Supervisor, opt-in and machine-local: `M4_DESIGN.md`, with the runner policy schema in `schemas/`
+- **M5** the visual Product Studio: `M5_DESIGN.md`, with the working contract in `M5_CONTRACT.md`, the design system in `DESIGN_SYSTEM.md` and the interview proof in `M5_INTERVIEW_POC.md`
 
 ## Critical integration invariant
 
