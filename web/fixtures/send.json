@@ -18,5 +18,6 @@
     "factory_authorized": false,
     "note": "Engineering has been asked to accept this. No engineering work has started."
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

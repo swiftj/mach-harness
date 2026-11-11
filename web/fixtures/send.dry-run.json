@@ -11,10 +11,11 @@
       "the work order for SLICE-001 (new)",
       "the spec SLICE-001-invite-teammate.md (new)"
     ],
-    "to": "a request for engineering to add this to the main branch",
+    "to": "a request for engineering to add this to the shared project",
     "request": "opens a new request",
     "refreshed": true,
     "note": "Nothing has been sent."
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

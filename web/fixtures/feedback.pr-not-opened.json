@@ -10,9 +10,10 @@
         ],
         "status": "Sent, pull request not opened",
         "branch": "product/WAVE-001",
-        "meaning": "The work reached the shared repository but the request for review could not be opened. Send it again, or give an engineer the branch name."
+        "meaning": "The work reached the shared project but the request for review could not be opened. Send it again, or ask an engineer to open it."
       }
     ]
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

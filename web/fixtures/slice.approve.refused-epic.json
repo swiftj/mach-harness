@@ -1,5 +1,9 @@
 {
   "exit_code": 1,
   "data": null,
-  "refused": "SLICE-001 cannot be approved yet:\n  epic EPIC-001 is proposed, not approved (studio.py epic approve EPIC-001)"
+  "refused": "SLICE-001 cannot be approved yet:\n  epic EPIC-001 is proposed, not approved",
+  "hint": {
+    "kind": "approve_epic",
+    "target": "EPIC-001"
+  }
 }

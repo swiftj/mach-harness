@@ -3,7 +3,8 @@
   "data": {
     "slice_id": "SLICE-001",
     "saved": true,
-    "resume_with": "studio.py slice resume SLICE-001"
+    "resume_with": null
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

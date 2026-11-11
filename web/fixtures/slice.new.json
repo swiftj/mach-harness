@@ -31,5 +31,6 @@
       "reserved_without_spec": []
     }
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

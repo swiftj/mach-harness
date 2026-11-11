@@ -4,7 +4,7 @@
     "refreshed": true,
     "problem": null,
     "problem_detail": null,
-    "shared_project": "the main branch of the shared repository",
+    "shared_project": "the shared project",
     "arrived": [
       "product/delivery-waves/WAVE-001.json",
       "product/epics/EPIC-001.json",
@@ -22,5 +22,6 @@
       "details": {}
     }
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

@@ -14,5 +14,6 @@
       "approval": null
     }
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

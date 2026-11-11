@@ -14,5 +14,6 @@
     "intent_template": "/Users/johnswift/Projects/mach-harness-m5/skills/product-studio/assets/intent-template.md",
     "is_git_repository": true
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

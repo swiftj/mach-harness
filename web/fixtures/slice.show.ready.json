@@ -671,6 +671,7 @@
       "spec": "specs/slices/SLICE-001-invite-teammate.md",
       "errors": [],
       "warnings": [],
+      "diagnostics": [],
       "open_questions": [],
       "intent_problems": [],
       "counts": {
@@ -686,5 +687,6 @@
     "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?",
     "factory_authorized": false
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

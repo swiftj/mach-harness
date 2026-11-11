@@ -26,5 +26,6 @@
     "factory_authorized": false,
     "note": "Product approval only. Nothing has been sent to engineering and no work has started."
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

@@ -14,5 +14,6 @@
     "valid": false,
     "validation_scope": "structural_only"
   },
-  "refused": ""
+  "refused": null,
+  "hint": null
 }

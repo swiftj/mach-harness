@@ -5,6 +5,7 @@
     "spec": "/project/.factory/studio/draft/specs/slices/SLICE-002-invite-teammate.md",
     "errors": [],
     "warnings": [],
+    "diagnostics": [],
     "open_questions": [
       "Does a removed teammate keep access until the end of the billing period?",
       "Can an admin remove themselves?"
@@ -21,5 +22,6 @@
     "ready": false,
     "status": "interviewing"
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

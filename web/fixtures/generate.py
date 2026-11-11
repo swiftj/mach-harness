@@ -5,6 +5,9 @@ Every file here is the exact JSON studio.py printed in a real scenario (a local 
 the shared remote, a stand-in for gh), with temporary paths replaced by /project. Nothing is
 invented, so the web application is developed and tested against what the engine really returns.
 
+The engine runs with --app, as the local host runs it, so the wording is the app's: no terminal
+commands. A refusal's structured hint, when the engine gives one, is kept under "hint".
+
 Run from the repository root:  python3 web/fixtures/generate.py
 """
 import json
@@ -27,9 +30,13 @@ class Scenario(Base):
         (OUT / f"{name}.json").write_text(text + "\n")
 
     def capture(self, name, project, *argv):
-        code, out, err = self.run_studio(project, *argv)
+        code, out, err = self.run_studio(project, "--app", *argv)
         data = json.loads(out) if out.strip().startswith("{") else None
-        self.save(name, {"exit_code": code, "data": data, "refused": err.replace("refused: ", "", 1).strip() if code else None})
+        hint, lines = None, err.strip().splitlines()
+        if lines and lines[0].startswith("refused-hint: "):
+            hint, lines = json.loads(lines[0][len("refused-hint: "):]), lines[1:]
+        refused = "\n".join(lines).replace("refused: ", "", 1).strip() if code and lines else None
+        self.save(name, {"exit_code": code, "data": data, "refused": refused, "hint": hint})
         return data
 
 
@@ -78,7 +85,8 @@ def main():
         s.capture("refresh.second-pm-arrives", b, "refresh")
         s.capture("status.second-pm", b, "status")
         # A draft with open questions and validator errors.
-        open_slice = s.ok(b, "slice", "new", "--epic", "EPIC-001", "--title", "Remove a teammate")["slice"]["slice_id"]
+        # Titled like the spec written for it below, so the work order and the spec agree.
+        open_slice = s.ok(b, "slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate by email")["slice"]["slice_id"]
         s.write_slice(b, open_slice)
         spec = s.draft(b, f"specs/slices/{open_slice}-invite-teammate.md")
         spec.write_text(spec.read_text().replace("## Open questions\n\n- None.", "## Open questions\n\n- Does a removed teammate keep access until the end of the billing period? Follow up: ask Finance.\n- Can an admin remove themselves? Follow up: ask the product owner."))
@@ -87,12 +95,14 @@ def main():
         text = spec.read_text()
         spec.write_text(text[:text.index("## Invariants")] + text[text.index("## Functional requirements"):])
         s.capture("slice.check.errors", b, "slice", "check", open_slice)
+        s.capture("slice.show.errors", b, "slice", "show", open_slice)
         spec.write_text(text)
         s.ok(b, "slice", "check", open_slice)
         # Conflicts: the same epic field, and the same spec, changed in both places.
         s.ok(b, "epic", "set", "EPIC-001", "--title", "People and access", "--criterion", "Only invited people can join")
         s.upstream("product/epics/EPIC-001.json", lambda d: d.update(title="Membership", acceptance_criteria=["Only invited people can join", "Invitations expire after 14 days"]))
-        s.ok(b, "slice", "reopen", "SLICE-001")
+        s.capture("slice.reopen", b, "slice", "reopen", "SLICE-001")
+        s.capture("status.after-reopen", b, "status")
         s.write_slice(b, "SLICE-001", extra="\nBen's wording.\n")
         # Ada revises the same slice properly, and engineering accepts her revision.
         s.ok(a, "refresh")

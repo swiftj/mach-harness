@@ -10,8 +10,10 @@
       "outcomes": [
         "Teams can work together",
         "Admins stay in control of who has access"
-      ]
+      ],
+      "source": "published"
     },
+    "approvals_withdrawn": [],
     "epics": [
       {
         "epic_id": "EPIC-001",
@@ -67,8 +69,8 @@
       "collisions": [],
       "details": {}
     },
-    "shared_project": "the main branch of the shared repository",
-    "last_refreshed": "2026-11-11T17:55:00Z",
+    "shared_project": "the shared project",
+    "last_refreshed": "2026-11-11T19:24:00Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,
@@ -85,5 +87,6 @@
       }
     ]
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

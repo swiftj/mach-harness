@@ -26,6 +26,7 @@
       "spec": "/project/.factory/studio/draft/specs/slices/SLICE-001-invite-teammate.md",
       "errors": [],
       "warnings": [],
+      "diagnostics": [],
       "open_questions": [],
       "intent_problems": [],
       "counts": {
@@ -50,5 +51,6 @@
       "reserved_without_spec": []
     }
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

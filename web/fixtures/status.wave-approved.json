@@ -10,8 +10,10 @@
       "outcomes": [
         "Teams can work together",
         "Admins stay in control of who has access"
-      ]
+      ],
+      "source": "draft"
     },
+    "approvals_withdrawn": [],
     "epics": [
       {
         "epic_id": "EPIC-001",
@@ -67,7 +69,7 @@
       "collisions": [],
       "details": {}
     },
-    "shared_project": "the main branch of the shared repository",
+    "shared_project": "the shared project",
     "last_refreshed": null,
     "structurally_valid": true,
     "structural_errors": [],
@@ -95,5 +97,6 @@
       }
     ]
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

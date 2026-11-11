@@ -27,5 +27,6 @@
       }
     ]
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

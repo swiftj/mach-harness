@@ -2,6 +2,7 @@
   "exit_code": 0,
   "data": {
     "project": null,
+    "approvals_withdrawn": [],
     "epics": [],
     "slices": [],
     "waves": [],
@@ -11,7 +12,7 @@
       "collisions": [],
       "details": {}
     },
-    "shared_project": "the main branch of the shared repository",
+    "shared_project": "the shared project",
     "last_refreshed": null,
     "structurally_valid": null,
     "structural_errors": [],
@@ -29,5 +30,6 @@
       }
     ]
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

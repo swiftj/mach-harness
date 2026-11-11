@@ -20,5 +20,6 @@
     "factory_authorized": false,
     "note": "Product approval only. The wave stays in your workspace until you send it to engineering."
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

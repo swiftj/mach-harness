@@ -10,8 +10,23 @@
       "outcomes": [
         "Teams can work together",
         "Admins stay in control of who has access"
-      ]
+      ],
+      "source": "published"
     },
+    "approvals_withdrawn": [
+      {
+        "artifact": "SLICE-001",
+        "kind": "slice",
+        "reason": "You reopened it to change it.",
+        "at": "2026-11-11T19:24:01Z"
+      },
+      {
+        "artifact": "WAVE-001",
+        "kind": "wave",
+        "reason": "SLICE-001 was reopened, so this wave went back to draft.",
+        "at": "2026-11-11T19:24:01Z"
+      }
+    ],
     "epics": [
       {
         "epic_id": "EPIC-001",
@@ -45,7 +60,7 @@
       },
       {
         "slice_id": "SLICE-002",
-        "title": "Remove a teammate",
+        "title": "Invite a teammate by email",
         "epic_id": "EPIC-001",
         "status": "interviewing",
         "revision": 1,
@@ -142,8 +157,8 @@
         }
       }
     },
-    "shared_project": "the main branch of the shared repository",
-    "last_refreshed": "2026-11-11T17:55:03Z",
+    "shared_project": "the shared project",
+    "last_refreshed": "2026-11-11T19:24:02Z",
     "structurally_valid": false,
     "structural_errors": [
       "product/delivery-waves/WAVE-002.json: wave includes unapproved slice 'SLICE-001'"
@@ -152,7 +167,7 @@
     "suggested_next": [
       "Some of your drafts and the shared project disagree: settle those first (reconcile, or renumber for a collision).",
       "Continue the interview for SLICE-001: Invite a teammate (slice resume SLICE-001).",
-      "Continue the interview for SLICE-002: Remove a teammate (slice resume SLICE-002)."
+      "Continue the interview for SLICE-002: Invite a teammate by email (slice resume SLICE-002)."
     ],
     "next_actions": [
       {
@@ -177,10 +192,11 @@
         "kind": "continue_interview",
         "target": "SLICE-002",
         "title": "Continue the interview for SLICE-002",
-        "reason": "Remove a teammate is still being defined.",
+        "reason": "Invite a teammate by email is still being defined.",
         "related": []
       }
     ]
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

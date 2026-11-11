@@ -1,5 +1,6 @@
 {
   "exit_code": 1,
   "data": null,
-  "refused": "Nothing called 'EPIC-404' needs reconciling. Waiting: product/epics/EPIC-001.json, product/slices/SLICE-001.json, specs/slices/SLICE-001-invite-teammate.md."
+  "refused": "Nothing called 'EPIC-404' needs reconciling. Waiting: product/epics/EPIC-001.json, product/slices/SLICE-001.json, specs/slices/SLICE-001-invite-teammate.md.",
+  "hint": null
 }

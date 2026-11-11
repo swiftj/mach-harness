@@ -15,7 +15,7 @@
       "spec_path": "specs/slices/SLICE-002-invite-teammate.md",
       "spec_sha256": null,
       "status": "interviewing",
-      "title": "Remove a teammate"
+      "title": "Invite a teammate by email"
     },
     "editable": true,
     "edit_refusal": null,
@@ -634,6 +634,7 @@
           "severity": "warning",
           "rule": "open-questions",
           "line": 98,
+          "section": "Open questions",
           "message": "2 open question(s) remain, so the spec is not ready for engineering. Answer them with the PM, then update the spec."
         }
       ]
@@ -690,6 +691,7 @@
       "spec": "specs/slices/SLICE-002-invite-teammate.md",
       "errors": [],
       "warnings": [],
+      "diagnostics": [],
       "open_questions": [
         "Does a removed teammate keep access until the end of the billing period?",
         "Can an admin remove themselves?"
@@ -708,5 +710,6 @@
     "resume_note": null,
     "factory_authorized": false
   },
-  "refused": null
+  "refused": null,
+  "hint": null
 }

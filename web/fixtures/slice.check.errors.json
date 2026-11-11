@@ -12,6 +12,50 @@
       "SLICE-002-invite-teammate.md:87: INV-03 is not defined in Invariants or Functional requirements. [defaults-format]"
     ],
     "warnings": [],
+    "diagnostics": [
+      {
+        "severity": "error",
+        "rule": "missing-section",
+        "line": null,
+        "section": null,
+        "message": "Missing required section '## Invariants'."
+      },
+      {
+        "severity": "error",
+        "rule": "trace-undefined",
+        "line": 45,
+        "section": "Acceptance criteria",
+        "message": "INV-04 is referenced but not defined in Invariants or Functional requirements."
+      },
+      {
+        "severity": "error",
+        "rule": "trace-undefined",
+        "line": 46,
+        "section": "Acceptance criteria",
+        "message": "INV-02 is referenced but not defined in Invariants or Functional requirements."
+      },
+      {
+        "severity": "error",
+        "rule": "trace-undefined",
+        "line": 47,
+        "section": "Acceptance criteria",
+        "message": "INV-01 is referenced but not defined in Invariants or Functional requirements."
+      },
+      {
+        "severity": "error",
+        "rule": "trace-undefined",
+        "line": 62,
+        "section": "Acceptance criteria",
+        "message": "INV-03 is referenced but not defined in Invariants or Functional requirements."
+      },
+      {
+        "severity": "error",
+        "rule": "defaults-format",
+        "line": 87,
+        "section": "Accepted defaults",
+        "message": "INV-03 is not defined in Invariants or Functional requirements."
+      }
+    ],
     "open_questions": [
       "Does a removed teammate keep access until the end of the billing period?",
       "Can an admin remove themselves?"
@@ -28,5 +72,6 @@
     "ready": false,
     "status": "interviewing"
   },
-  "refused": ""
+  "refused": null,
+  "hint": null
 }
