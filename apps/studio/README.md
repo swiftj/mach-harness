@@ -76,7 +76,11 @@ and in its own process group so a time limit stops the Git processes it started 
 
 ## The API
 
-Every response is `{ok: true, data}` or `{ok: false, error: {kind, message}}`. Clients read the
+Every response is `{ok: true, data}` or `{ok: false, error: {kind, message, hint?}}`. `hint` comes
+only with some `refused` errors: the engine's structured suggestion `{kind, target}` for the app
+action that would resolve it (`approve_epic`, `reopen_slice`, `renumber_slice`, `edit_epic`, …;
+`studio.NEXT_ACTION_KINDS` and `HINT_KINDS`). The host runs the engine with `--app`, so refusals
+and reports carry no terminal commands or Git words; decisions and artifacts are the terminal's. Clients read the
 envelope; the HTTP status only follows it (refused 422, invalid 400 or 404/413/415, unauthorized
 401 without a session and 403 for Host/Origin/CSRF, conflict 409, unavailable 503, internal 500).
 
@@ -96,6 +100,7 @@ application/json`. A GET never needs Origin or the CSRF token.
 | `PUT /api/drafts/intent/<SLICE>` | `{markdown}` | `{slice_id, kind, path, check}` |
 | `POST /api/interview` | `{slice_id, idea?}` | `{interview_id, slice_id, resumed}`; `refused` for an approved or unknown slice, `conflict` while the slice's lock is held (this host, another host, or a terminal) |
 | `GET /api/interview?slice_id=<SLICE>` | | `{interview: null}` or `{interview: {interview_id, slice_id, live, state, turn_running, locked_elsewhere, last_message: {message_id, text, kind, question}, turns, session_cost_usd}}`; `interview_id` is null and `state` is `saved` when only a saved session exists |
+| `GET /api/interview/history?slice_id=<SLICE>` | | `{slice_id, events: [{at, interview_id, event, data}], truncated}`: every saved event for the slice, across interviews and restarts, oldest first |
 | `GET /api/interview/<id>/events` | | server-sent events, below |
 | `POST /api/interview/<id>/reply` | `{text}` (up to 8000 characters) | `{sent: true}`; `conflict` while a turn is running or after the interview ended |
 | `POST /api/interview/<id>/interrupt` | `{}` | `{interrupted: true}` once the turn has stopped; `conflict` when no turn is running |
@@ -121,8 +126,13 @@ question on screen. A `: ping` comment comes every 15 s. The stream closes after
 | `activity` | `{kind, text}` after a tool ran: `lookup`, `check`, `save`, `write`, `refused`, `other` |
 | `draft_changed` | `{slice_id, what}`: `spec`, `why`, `work_order`, found by hashing the draft workspace |
 | `turn` | `{outcome, seconds, cost_usd, session_cost_usd, refused}` closes every turn |
+| `reply` | `{text}`: the product manager's reply, first in the turn it starts |
 | `ended` | `{reason}`: `stopped`, `host_shutdown` |
 | `error` | `{kind, message}`: `no_result`, `timed_out`, `error_max_budget_usd`, `error_during_execution` |
+
+History: every event except `text` and the `thinking`/`working` states is appended to
+`.factory/studio/interviews/<SLICE>.events.jsonl` (never Claude Code's own stream). Past 1 MiB the
+oldest half is dropped and `truncated` becomes true.
 
 Resuming: `POST /api/interview` for a slice with a saved session replays the saved last message
 and waits for the reply, without running a turn; the reply resumes the same Claude session.

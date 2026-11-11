@@ -80,6 +80,9 @@ type Bridge interface {
 	Reply(ctx context.Context, id, text string) error
 	Interrupt(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string) error
+	// History is the slice's saved interview events (HistoryEvent), oldest first, across
+	// interviews and host restarts, and whether older ones were dropped.
+	History(sliceID string) ([]HistoryEvent, bool, error)
 	// Busy: a turn is running for this slice, so its draft must not be written by anyone else.
 	Busy(sliceID string) bool
 	// Shutdown stops every running turn and ends every interview with reason host_shutdown.
@@ -122,4 +125,7 @@ func (Unavailable) Reply(context.Context, string, string) error { return ErrUnav
 func (Unavailable) Interrupt(context.Context, string) error     { return ErrUnavailable }
 func (Unavailable) Stop(context.Context, string) error          { return ErrUnavailable }
 func (Unavailable) Busy(string) bool                            { return false }
-func (Unavailable) Shutdown(context.Context)                    {}
+func (Unavailable) History(string) ([]HistoryEvent, bool, error) {
+	return []HistoryEvent{}, false, nil
+}
+func (Unavailable) Shutdown(context.Context) {}

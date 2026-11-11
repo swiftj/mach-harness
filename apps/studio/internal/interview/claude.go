@@ -217,6 +217,7 @@ func (s *session) emit(name string, data any) {
 }
 
 func (s *session) emitLocked(name string, data any) {
+	s.c.appendHistory(s.sliceID, s.id, name, data)
 	s.seq++
 	ev := Event{Seq: s.seq, Name: name, Data: data}
 	s.turnEvents = append(s.turnEvents, ev)
@@ -525,6 +526,7 @@ func (c *Claude) Reply(ctx context.Context, id, text string) error {
 		return &ConflictError{Message: "The interviewer is still working on its reply. Wait for it, or interrupt it."}
 	}
 	s.newTurnLocked()
+	s.emitLocked("reply", map[string]any{"text": text}) // the PM's own words, for the history and other windows
 	return s.startTurnLocked(UserMessage(text))
 }
 

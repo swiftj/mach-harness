@@ -144,6 +144,21 @@ func (s *Server) interviewCurrent(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, http.StatusOK, engine.OKValue(map[string]any{"interview": current}))
 }
 
+// GET /api/interview/history?slice_id=SLICE-001 → {slice_id, events, truncated}
+func (s *Server) interviewHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("slice_id")
+	if len(id) > 32 || !engine.SliceIDPattern.MatchString(id) {
+		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "slice_id must be an ID such as SLICE-001."))
+		return
+	}
+	events, truncated, err := s.opts.Bridge.History(id)
+	if err != nil {
+		s.interviewError(w, err)
+		return
+	}
+	writeEnvelope(w, http.StatusOK, engine.OKValue(map[string]any{"slice_id": id, "events": events, "truncated": truncated}))
+}
+
 // GET /api/interview/<id>/events: server-sent events, replayed after Last-Event-ID.
 func (s *Server) interviewEvents(w http.ResponseWriter, r *http.Request) {
 	id, ok := s.interviewParam(w, r)

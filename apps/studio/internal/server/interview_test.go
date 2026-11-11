@@ -174,10 +174,26 @@ func TestAnInterviewOverHTTP(t *testing.T) {
 	if status, env := h.call("POST", "/api/interview/"+id+"/stop", `{}`, nil); status != 200 || !env.OK {
 		t.Fatalf("stop: %d %+v", status, env.Error)
 	}
+	if second[0].Name != "reply" || second[0].Data["text"] != "--resume other; yes" {
+		t.Fatalf("the reply opens the turn's events: %v", second[0])
+	}
 	ended := h.stream(id, second[len(second)-1].ID, "ended")
 	if sseNames(ended) != "ended state" || ended[0].Data["reason"] != "stopped" {
 		t.Fatalf("ended %v", ended)
 	}
+	_, env = h.call("GET", "/api/interview/history?slice_id=SLICE-001", "", nil)
+	var history struct {
+		SliceID   string                   `json:"slice_id"`
+		Events    []interview.HistoryEvent `json:"events"`
+		Truncated bool                     `json:"truncated"`
+	}
+	json.Unmarshal(env.Data, &history)
+	if !env.OK || history.SliceID != "SLICE-001" || history.Truncated || len(history.Events) < 10 ||
+		history.Events[len(history.Events)-1].Name != "state" || history.Events[0].Name != "state" {
+		t.Fatalf("history: %+v", history)
+	}
+	status, env = h.call("GET", "/api/interview/history?slice_id=../x", "", nil)
+	expect(t, status, env, 400, engine.KindInvalid)
 	status, env = h.call("POST", "/api/interview/"+strings.Repeat("b", 32)+"/reply", `{"text":"yes"}`, nil)
 	expect(t, status, env, 404, engine.KindInvalid)
 }
@@ -224,6 +240,7 @@ func TestEveryInterviewRouteNeedsTheSessionOriginAndCSRF(t *testing.T) {
 	routes := []struct{ method, path, body string }{
 		{"POST", "/api/interview", `{"slice_id":"SLICE-001"}`},
 		{"GET", "/api/interview?slice_id=SLICE-001", ""},
+		{"GET", "/api/interview/history?slice_id=SLICE-001", ""},
 		{"GET", "/api/interview/" + id + "/events", ""},
 		{"POST", "/api/interview/" + id + "/reply", `{"text":"yes"}`},
 		{"POST", "/api/interview/" + id + "/interrupt", `{}`},

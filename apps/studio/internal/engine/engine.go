@@ -133,7 +133,9 @@ func (e *Engine) run(parent context.Context, op Operation, argv []string) Envelo
 
 	// -I: isolated (no PYTHON* variables, no user site, script folder only as studio.py adds it);
 	// -B: write no bytecode next to the engine.
-	full := append([]string{"-I", "-B", e.cfg.Script, "--project", e.cfg.Project}, argv...)
+	// --app: the engine words what a person reads for the app (no terminal commands) and adds a
+	// structured hint to a refusal. Decisions and artifacts are the same as in the terminal.
+	full := append([]string{"-I", "-B", e.cfg.Script, "--project", e.cfg.Project, "--app"}, argv...)
 	cmd := exec.CommandContext(ctx, e.cfg.Python, full...)
 	cmd.Dir = e.cfg.Project
 	cmd.Env = childEnv(os.Environ())
@@ -177,7 +179,9 @@ func mapResult(op Operation, code int, stdout, stderr []byte) Envelope {
 			return OK(json.RawMessage(bytes.TrimSpace(stdout)))
 		}
 		if message, ok := refusal(stderr); ok {
-			return Fail(KindRefused, message)
+			env := Fail(KindRefused, message)
+			env.Error.Hint = refusalHint(stderr)
+			return env
 		}
 	case 2:
 		// argparse: the engine did not accept the arguments. Its own one-line reason, no usage text.
@@ -207,6 +211,20 @@ func refusal(stderr []byte) (string, bool) {
 		return "", false
 	}
 	return truncate(strings.ToValidUTF8(message, "?"), 8192), true
+}
+
+// refusalHint reads the engine's "refused-hint: {kind, target}" line, if there is one and it is a
+// small JSON object.
+func refusalHint(stderr []byte) json.RawMessage {
+	for _, line := range strings.Split(string(stderr), "\n") {
+		if raw, ok := strings.CutPrefix(line, "refused-hint: "); ok {
+			raw = strings.TrimSpace(raw)
+			if len(raw) <= 512 && isObject([]byte(raw)) {
+				return json.RawMessage(raw)
+			}
+		}
+	}
+	return nil
 }
 
 func usageError(stderr []byte) (string, bool) {

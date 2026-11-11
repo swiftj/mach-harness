@@ -68,6 +68,7 @@ func New(opts Options) *Server {
 	}
 	s.api.HandleFunc("POST /api/interview", s.interviewStart)
 	s.api.HandleFunc("GET /api/interview", s.interviewCurrent)
+	s.api.HandleFunc("GET /api/interview/history", s.interviewHistory)
 	s.api.HandleFunc("GET /api/interview/{id}/events", s.interviewEvents)
 	s.api.HandleFunc("POST /api/interview/{id}/reply", s.interviewReply)
 	s.api.HandleFunc("POST /api/interview/{id}/interrupt", s.interviewControl(false))

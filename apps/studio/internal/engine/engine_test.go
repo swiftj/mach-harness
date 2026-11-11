@@ -104,6 +104,10 @@ func TestEveryOperationAgainstTheRealEngine(t *testing.T) {
 		t.Fatalf("slice.show: %v", shown)
 	}
 	mustFail(t, e, "slice.approve", `{"slice_id":"SLICE-001"}`, engine.KindRefused, "epic EPIC-001 is proposed")
+	if env := do(t, e, "slice.approve", `{"slice_id":"SLICE-001"}`); strings.Contains(env.Error.Message, "studio.py") ||
+		string(env.Error.Hint) != `{"kind": "approve_epic", "target": "EPIC-001"}` {
+		t.Fatalf("the app's refusal: %q hint %s", env.Error.Message, env.Error.Hint)
+	}
 	mustOK(t, e, "epic.approve", `{"epic_id":"EPIC-001"}`)
 	mustOK(t, e, "slice.approve", `{"slice_id":"SLICE-001"}`)
 	if shown := mustOK(t, e, "slice.show", `{"slice_id":"SLICE-001"}`); shown["editable"] != false {
@@ -167,6 +171,8 @@ func TestEnvelopeMapping(t *testing.T) {
 		{"exit 0 without JSON", `print('hello')`, "status", false, engine.KindInternal, "not JSON"},
 		{"refusal", `sys.stderr.write("refused: SLICE-001 cannot be approved yet:\n  epic EPIC-001 is proposed\n"); sys.exit(1)`,
 			"slice.approve", false, engine.KindRefused, "SLICE-001 cannot be approved yet:\n  epic EPIC-001 is proposed"},
+		{"refusal with a hint", `sys.stderr.write('refused-hint: {"kind": "approve_epic", "target": "EPIC-001"}\nrefused: SLICE-001 cannot be approved yet\n'); sys.exit(1)`,
+			"slice.approve", false, engine.KindRefused, "SLICE-001 cannot be approved yet"},
 		{"check with problems", `print('{"ready": false, "errors": ["x"]}'); sys.exit(1)`, "slice.check", true, "", ""},
 		{"validate with problems", `print('{"valid": false}'); sys.exit(1)`, "validate", true, "", ""},
 		{"JSON with exit 1 elsewhere", `print('{"a": 1}'); sys.exit(1)`, "epic.approve", false, engine.KindInternal, "exit code 1"},
@@ -212,7 +218,7 @@ func TestTheEngineIsRunWithAFixedVector(t *testing.T) {
 		Flags int      `json:"flags"`
 	}
 	json.Unmarshal(env.Data, &got)
-	want := []string{"--project", e.Project(), "slice", "new", "--epic=EPIC-001", "--title=$(touch pwned); --id=SLICE-009"}
+	want := []string{"--project", e.Project(), "--app", "slice", "new", "--epic=EPIC-001", "--title=$(touch pwned); --id=SLICE-009"}
 	if fmt.Sprint(got.Argv) != fmt.Sprint(want) || got.Flags != 1 {
 		t.Fatalf("argv %q isolated=%d", got.Argv, got.Flags)
 	}

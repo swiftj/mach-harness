@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -683,5 +684,84 @@ func TestCapability(t *testing.T) {
 	}
 	if interview.ContinueCommandFor("/p/.claude/skills/mach-product-studio/scripts/studio.py") != "/mach-product-studio continue" {
 		t.Fatal("project install command")
+	}
+}
+
+func TestTheHistoryIsKeptPerSliceAcrossRestarts(t *testing.T) {
+	r := newRig(t, testkit.Turn{Text: testkit.QuestionText(1, "Who invites")}, testkit.Turn{Text: testkit.QuestionText(2, "Seats")},
+		testkit.Turn{Text: testkit.QuestionText(3, "Expiry")})
+	started := r.start("SLICE-001")
+	evs := until(t, r.bridge, started.InterviewID, 0, "waiting_for_reply")
+	r.bridge.Reply(context.Background(), started.InterviewID, "yes, admins only")
+	until(t, r.bridge, started.InterviewID, lastSeq(evs), "waiting_for_reply")
+	r.bridge.Stop(context.Background(), started.InterviewID)
+
+	history, truncated, err := r.bridge.History("SLICE-001")
+	if err != nil || truncated {
+		t.Fatalf("%v %v", err, truncated)
+	}
+	var got []string
+	for _, ev := range history {
+		label := ev.Name
+		if ev.Name == "state" || ev.Name == "ended" {
+			var d map[string]any
+			json.Unmarshal(ev.Data, &d)
+			if v, ok := d["state"]; ok {
+				label += ":" + fmt.Sprint(v)
+			} else {
+				label += ":" + fmt.Sprint(d["reason"])
+			}
+		}
+		got = append(got, label)
+		if strings.Contains(string(ev.Data), "SECRET FILE CONTENT") || ev.InterviewID != started.InterviewID || ev.At == "" {
+			t.Fatalf("history event %+v", ev)
+		}
+	}
+	want := "state:starting message question turn state:waiting_for_reply reply message question turn state:waiting_for_reply ended:stopped state:ended"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("history\n got %s\nwant %s", strings.Join(got, " "), want)
+	}
+	var reply map[string]any
+	json.Unmarshal(history[5].Data, &reply)
+	if reply["text"] != "yes, admins only" {
+		t.Fatalf("reply %v", reply)
+	}
+
+	// A host restart keeps it, and the next interview adds to it.
+	restarted := r.newBridge(nil)
+	defer restarted.Shutdown(context.Background())
+	again, _ := restarted.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-001"})
+	until(t, restarted, again.InterviewID, 0, "waiting_for_reply")
+	more, _, _ := restarted.History("SLICE-001")
+	if len(more) != len(history)+4 || more[len(more)-1].InterviewID != again.InterviewID {
+		t.Fatalf("after a restart: %d events, want %d", len(more), len(history)+4)
+	}
+	if other, _, _ := restarted.History("SLICE-002"); len(other) != 0 {
+		t.Fatal("another slice has history")
+	}
+}
+
+func TestTheHistoryIsCapped(t *testing.T) {
+	saved := interview.MaxHistoryBytes
+	interview.MaxHistoryBytes = 4096
+	defer func() { interview.MaxHistoryBytes = saved }()
+	turns := make([]testkit.Turn, 12)
+	for i := range turns {
+		turns[i] = testkit.Turn{Text: testkit.QuestionText(i+1, "Question")}
+	}
+	r := newRig(t, turns...)
+	started := r.start("SLICE-001")
+	evs := until(t, r.bridge, started.InterviewID, 0, "waiting_for_reply")
+	for i := 0; i < 11; i++ {
+		r.bridge.Reply(context.Background(), started.InterviewID, "yes")
+		evs = until(t, r.bridge, started.InterviewID, lastSeq(evs), "waiting_for_reply")
+	}
+	info, err := os.Stat(filepath.Join(r.project, ".factory", "studio", "interviews", "SLICE-001.events.jsonl"))
+	if err != nil || info.Size() > 4096 {
+		t.Fatalf("history size %v %v", info, err)
+	}
+	history, truncated, _ := r.bridge.History("SLICE-001")
+	if !truncated || len(history) == 0 || history[len(history)-1].Name != "state" {
+		t.Fatalf("capped history: truncated=%v %d events", truncated, len(history))
 	}
 }

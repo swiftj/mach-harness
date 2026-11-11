@@ -22,6 +22,9 @@ const (
 type Error struct {
 	Kind    string `json:"kind"`
 	Message string `json:"message"`
+	// Hint is the engine's structured suggestion for a refusal, {kind, target}: the app action
+	// that would resolve it. Absent when the engine gives none.
+	Hint json.RawMessage `json:"hint,omitempty"`
 }
 
 // Envelope is the one shape every API response takes.
