@@ -453,14 +453,12 @@ def now(at: Optional[str]) -> str:
 
 
 def actor(studio: Studio, given: Optional[str]) -> str:
-    if given and given.strip():
-        return given.strip()
-    git = studio.cell.git
-    name = git(["config", "user.name"], studio.project).stdout.strip()
-    email = git(["config", "user.email"], studio.project).stdout.strip()
-    if not name:
-        raise StudioError("Cannot tell who is approving: Git has no user.name configured here. Pass --actor \"Your Name\".")
-    return f"{name} <{email}>" if email else name
+    """Who approves: a name. Never an email address; an approval is published and read by many."""
+    name = given if given and given.strip() else studio.cell.git(["config", "user.name"], studio.project).stdout
+    name = " ".join(re.sub(r"<[^>]*>", " ", name).split())
+    if not name or "@" in name:
+        raise StudioError("Cannot tell who is approving: Git has no user.name configured here. Pass --actor \"Your Name\" (a name, not an address).")
+    return name
 
 
 def cmd_where(studio: Studio, args: argparse.Namespace) -> int:

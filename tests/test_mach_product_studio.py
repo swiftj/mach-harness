@@ -158,7 +158,13 @@ class FullSessionTest(Base):
         self.approved_slice()
         self.ok("wave", "new", "--slice", "SLICE-001")
         wave = self.ok("wave", "approve", "WAVE-001")["wave"]
-        self.assertEqual(wave["approval"]["actor"], "Pat PM <pat@example.com>")
+        self.assertEqual(wave["approval"]["actor"], "Pat PM")  # the name, never the address
+        self.ok("slice", "reopen", "SLICE-001")
+        self.ok("slice", "approve", "SLICE-001")
+        self.assertEqual(self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM <pat@example.com>")["wave"]["approval"]["actor"], "Pat PM")
+        self.ok("slice", "reopen", "SLICE-001")
+        self.ok("slice", "approve", "SLICE-001")
+        self.assertIn("a name, not an address", self.refused("wave", "approve", "WAVE-001", "--actor", "pat@example.com"))
         self.assertTrue(product._is_timestamp(wave["approval"]["approved_at"]))
 
     def test_status_suggests_the_next_step(self):
