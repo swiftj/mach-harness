@@ -1,5 +1,13 @@
 import type { EpicStatus, FeedbackWave, ProjectStatus, SliceStatus, Status, StatusSliceRow } from "../api/types";
 import { epicStates, sliceStates, sourceStates } from "../lifecycle/states";
+import type { ArtifactSource } from "../api/types";
+
+/** Short words for a node's footer; the full wording is in the node's accessible name and sheet. */
+function attentionLabel(source: ArtifactSource): string | undefined {
+  if (source === "conflict") return "Conflict";
+  if (source === "collision") return "Number taken";
+  return undefined;
+}
 import type { GraphState, MachEdge, MachNode } from "./types";
 
 const fromSlice: Record<SliceStatus, GraphState> = {
@@ -70,12 +78,12 @@ export function productGraphFromStatus({ status, reviews = [], dependencies = {}
   for (const epic of status.epics) {
     const id = `epic:${epic.epic_id}`;
     const slices = status.slices.filter((s) => s.epic_id === epic.epic_id).length;
-    const attention = epic.source === "conflict" || epic.source === "collision" ? sourceStates[epic.source].label : undefined;
+    const attention = attentionLabel(epic.source);
     nodes.push({
       id,
       type: "mach",
       position: { x: 0, y: 0 },
-      ariaLabel: `Epic ${epic.epic_id}, ${epic.title}, ${epicStates[epic.status].label}${attention ? `, ${attention}` : ""}`,
+      ariaLabel: `Epic ${epic.epic_id}, ${epic.title}, ${epicStates[epic.status].label}${attention ? `, ${sourceStates[epic.source].label}` : ""}`,
       data: {
         kind: "epic",
         artifactId: epic.epic_id,
@@ -92,7 +100,7 @@ export function productGraphFromStatus({ status, reviews = [], dependencies = {}
   for (const row of status.slices) {
     const id = `slice:${row.slice_id}`;
     const state = sliceGraphState(row, status, reviews);
-    const attention = row.source === "conflict" || row.source === "collision" ? sourceStates[row.source].label : undefined;
+    const attention = attentionLabel(row.source);
     const meta =
       row.open_questions > 0
         ? `${row.open_questions} open ${row.open_questions === 1 ? "question" : "questions"}`
@@ -101,7 +109,7 @@ export function productGraphFromStatus({ status, reviews = [], dependencies = {}
       id,
       type: "mach",
       position: { x: 0, y: 0 },
-      ariaLabel: `Slice ${row.slice_id}, ${row.title}, ${sliceStates[row.status].label}${attention ? `, ${attention}` : ""}`,
+      ariaLabel: `Slice ${row.slice_id}, ${row.title}, ${sliceStates[row.status].label}${attention ? `, ${sourceStates[row.source].label}` : ""}`,
       data: { kind: "slice", artifactId: row.slice_id, title: row.title, state, meta, attention },
     });
     edges.push({ id: `epic:${row.epic_id}->${id}`, source: `epic:${row.epic_id}`, target: id, type: "contains", data: { kind: "contains" } });

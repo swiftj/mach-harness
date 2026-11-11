@@ -1,15 +1,6 @@
 import { Network } from "lucide-react";
-import { EmptyState, Page } from "@mach/ui";
 import type { Feature } from "../types";
-
-/** Placeholder: this feature's owner replaces everything in this folder. Keep the `feature` export's shape. */
-function RoadmapScreen() {
-  return (
-    <Page>
-      <EmptyState title="Roadmap" description="This screen is being built." />
-    </Page>
-  );
-}
+import { RoadmapScreen } from "./RoadmapScreen";
 
 export const feature: Feature = {
   routes: [{ path: "roadmap", element: <RoadmapScreen /> }],

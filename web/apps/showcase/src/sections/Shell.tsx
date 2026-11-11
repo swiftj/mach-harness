@@ -20,7 +20,7 @@ import { fx, runs } from "../fixtures";
 const fixtureTransport: Transport = async ({ path }) => {
   await new Promise((resolve) => setTimeout(resolve, 400));
   if (path === "/api/session") {
-    return { status: 200, json: { ok: true, data: { project: { name: "Team Space", folder: "team-space" }, csrf_token: "showcase", capabilities: { interview: false, interview_unavailable_reason: "Showcase" }, versions: {} } } };
+    return { status: 200, json: { ok: true, data: { project: { name: "Team Space", folder: "team-space" }, csrf_token: "showcase", capabilities: { interview: false, interview_reason: "Showcase" }, versions: {} } } };
   }
   if (path === "/api/ops/status") return { status: 200, json: { ok: true, data: fx.statusConflicts } };
   if (path === "/api/ops/send") return { status: 200, json: { ok: false, error: { kind: "refused", message: runs.sendRefusedOffline.refused } } };

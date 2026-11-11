@@ -69,5 +69,5 @@ export type MachEdge = Edge<MachEdgeData>;
 export const nodeSize: Record<GraphNodeKind, { width: number; height: number }> = {
   product: { width: 264, height: 84 },
   epic: { width: 232, height: 84 },
-  slice: { width: 232, height: 92 },
+  slice: { width: 256, height: 92 },
 };

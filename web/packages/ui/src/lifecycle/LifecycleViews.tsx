@@ -5,7 +5,7 @@ import { Badge, StatusPill } from "../components/badge";
 import { toneClasses } from "../components/tone";
 import { cn } from "../lib/cn";
 import { StateGlyph } from "./glyph";
-import { epicStates, reviewStates, sliceLifecycle, sliceStates, sourceStates, waveJourney, waveStates } from "./states";
+import { epicStates, reviewDescriptor, sliceLifecycle, sliceStates, sourceStates, waveJourney, waveStates } from "./states";
 
 export function SliceStatusPill({ status, size }: { status: SliceStatus; size?: "sm" | "md" }) {
   const d = sliceStates[status];
@@ -35,7 +35,7 @@ export function WaveStatusPill({ status, size }: { status: WaveStatus; size?: "s
 }
 
 export function ReviewStatusPill({ status, size }: { status: WaveReviewStatus; size?: "sm" | "md" }) {
-  const d = reviewStates[status];
+  const d = reviewDescriptor(status);
   return (
     <StatusPill tone={d.tone} size={size} icon={<StateGlyph shape={d.glyph} />} title={d.description}>
       {d.label}
@@ -128,7 +128,7 @@ export interface WaveJourneyProps {
  * its stage with its own tone and glyph; states that need the PM are flagged in words.
  */
 export function WaveJourney({ status, meaning, className }: WaveJourneyProps) {
-  const d = reviewStates[status];
+  const d = reviewDescriptor(status);
   const t = toneClasses[d.tone];
   return (
     <div className={cn("flex flex-col gap-3", className)}>

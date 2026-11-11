@@ -38,10 +38,11 @@ export const fixtureTransport: Transport = async ({ path }) => {
       json: {
         ok: true,
         data: {
-          project: { name: "Team Space", folder: "team-space" },
+          project: { name: "Team Space", folder: "team-space", path: "/project", project_id: "team-space" },
           csrf_token: "fixtures",
-          capabilities: { interview: false, interview_unavailable_reason: "Fixture mode has no interviewer." },
-          versions: { app: "fixtures" },
+          capabilities: { interview: false, interview_reason: "Fixture mode has no interviewer." },
+          versions: { host: "fixtures", api: 1, engine_install: null },
+          engine_problem: null,
         },
       },
     };

@@ -8,7 +8,7 @@ import {
   useReactFlow,
   type NodeMouseHandler,
 } from "@xyflow/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useReducedMotion } from "motion/react";
 import { cn } from "../lib/cn";
 import { motion as motionTokens } from "../tokens/tokens";
@@ -58,6 +58,23 @@ function GraphInner({ nodes, edges, direction = "RIGHT", onSelect, selectedId, a
     };
   }, [nodes, edges, direction, flow, reduce]);
 
+  // Refit when the graph's box changes size (window resize, rail collapse), so nothing is cut off.
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = box.current;
+    if (!element || laidOut === null || typeof ResizeObserver === "undefined") return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => flow.fitView({ padding: 0.15, duration: 0, maxZoom: 1 }));
+    });
+    observer.observe(element);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [flow, laidOut]);
+
   const shown = useMemo(
     () => (laidOut ?? []).map((node) => ({ ...node, selected: node.id === selectedId })),
     [laidOut, selectedId],
@@ -67,6 +84,7 @@ function GraphInner({ nodes, edges, direction = "RIGHT", onSelect, selectedId, a
 
   return (
     <div
+      ref={box}
       className={cn("mach-graph relative h-full min-h-48 w-full overflow-hidden rounded-md border border-line bg-canvas", className)}
       aria-busy={laidOut === null || undefined}
     >

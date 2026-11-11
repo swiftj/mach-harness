@@ -1,6 +1,8 @@
+import { ENGINE_ID } from "./ids";
 import { createConnectionStore, type ConnectionStore } from "./connection";
 import { MachApiError, type HostErrorKind } from "./errors";
-import type { DraftDocument, DraftWriteResult, OperationArgs, OperationName, OperationResult, Session } from "./types";
+import { createInterviewClient, type InterviewClient, type EventSourceFactory } from "./interview";
+import type { DraftRead, DraftWriteResult, OperationArgs, OperationName, OperationResult, Session } from "./types";
 
 /** The envelope every host response uses (contract section 4). */
 export type Envelope<T> = { ok: true; data: T } | { ok: false; error: { kind: HostErrorKind; message: string } };
@@ -32,25 +34,31 @@ export interface ClientOptions {
   transport?: Transport;
   /** Shared connection state; one is created when omitted. */
   connection?: ConnectionStore;
-  /** Where the CSRF token is found in the session reply. Defaults to `csrf_token`. */
-  csrfFrom?: (session: Session) => string | null | undefined;
+  /** Builds the interview event stream. Defaults to the browser's EventSource. */
+  eventSource?: EventSourceFactory;
 }
 
 export interface MachClient {
-  /** GET /api/session. Also stores the CSRF token for later state-changing calls. */
+  /**
+   * GET /api/session. Called automatically before the first state-changing request; call it
+   * yourself to read the project and capabilities. Repeated calls share one request until it settles.
+   */
   session(signal?: AbortSignal): Promise<Session>;
   /** POST /api/ops/<name> with typed arguments; resolves with the engine's JSON. */
   op<K extends OperationName>(name: K, args: OperationArgs<K>, signal?: AbortSignal): Promise<OperationResult<K>>;
-  readDraft(kind: "spec" | "intent", sliceId: string, signal?: AbortSignal): Promise<DraftDocument>;
-  /** PUT a draft's markdown; the host runs `slice check` afterwards and returns its result. */
-  writeDraft(kind: "spec" | "intent", sliceId: string, markdown: string, signal?: AbortSignal): Promise<DraftWriteResult>;
+  readDraft(kind: "spec" | "intent", sliceId: string, signal?: AbortSignal): Promise<DraftRead>;
+  /**
+   * PUT a draft's markdown. The host runs `slice check` afterwards and returns it. `name` (such as
+   * "invite-teammate") is only for a slice's first spec.
+   */
+  writeDraft(kind: "spec" | "intent", sliceId: string, markdown: string, options?: { name?: string; signal?: AbortSignal }): Promise<DraftWriteResult>;
+  /** The interview routes (contract 8.2). */
+  interview: InterviewClient;
   connection: ConnectionStore;
 }
 
 export const CSRF_HEADER = "X-MACH-CSRF";
 
-/** Engine IDs (SLICE-001, EPIC-001, WAVE-001). Checked before a value is placed in a URL path. */
-const ID_PATTERN = /^[A-Z]+-\d{3,}$/;
 
 export const fetchTransport =
   (baseUrl = ""): Transport =>
@@ -84,26 +92,34 @@ function isEnvelope(value: unknown): value is Envelope<unknown> {
  * The one way the apps talk to a MACH host.
  *
  *   const client = createClient();
- *   await client.session();
- *   const status = await client.op("status", {});
+ *   const status = await client.op("status", {});      // fetches the session (and CSRF token) first
  *
- * Failures reject with MachApiError. The connection store reflects whether the host answered.
+ * GET requests carry the session cookie only. Every POST and PUT carries
+ * `Content-Type: application/json`, `X-MACH-CSRF` and same-origin credentials, and waits for the
+ * session if the token is not known yet. Failures reject with MachApiError.
  */
 export function createClient(options: ClientOptions = {}): MachClient {
   const transport = options.transport ?? fetchTransport(options.baseUrl ?? "");
   const connection = options.connection ?? createConnectionStore();
-  const csrfFrom = options.csrfFrom ?? ((session: Session) => session.csrf_token);
   let csrf: string | null = null;
+  let pending: Promise<Session> | null = null;
 
-  async function call<T>(method: TransportRequest["method"], path: string, operation: string, payload?: unknown, signal?: AbortSignal): Promise<T> {
+  async function send<T>(method: TransportRequest["method"], path: string, operation: string, payload?: unknown, signal?: AbortSignal): Promise<T> {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (method !== "GET") {
+      if (!csrf) await loadSession();
       headers["Content-Type"] = "application/json";
       if (csrf) headers[CSRF_HEADER] = csrf;
     }
     let response: TransportResponse;
     try {
-      response = await transport({ method, path, headers, body: payload === undefined ? undefined : JSON.stringify(payload), signal });
+      response = await transport({
+        method,
+        path,
+        headers,
+        body: method === "GET" ? undefined : JSON.stringify(payload ?? {}),
+        signal,
+      });
     } catch (cause) {
       if (signal?.aborted || (cause instanceof DOMException && cause.name === "AbortError")) {
         throw new MachApiError("aborted", "The request was cancelled.", operation);
@@ -121,30 +137,49 @@ export function createClient(options: ClientOptions = {}): MachClient {
       connection.set("online");
       return envelope.data as T;
     }
-    connection.set(envelope.error.kind === "unauthorized" ? "unauthorized" : "online");
+    // 401 means the session cookie is missing or expired: the window must be reopened from the link.
+    // A 403 "unauthorized" is a refused CSRF or Origin check on one request, not a lost session.
+    connection.set(envelope.error.kind === "unauthorized" && response.status === 401 ? "unauthorized" : "online");
     throw new MachApiError(envelope.error.kind, envelope.error.message, operation, response.status);
   }
 
+  function loadSession(signal?: AbortSignal): Promise<Session> {
+    pending ??= send<Session>("GET", "/api/session", "session", undefined, signal).then(
+      (session) => {
+        csrf = session.csrf_token || null;
+        pending = null;
+        return session;
+      },
+      (error: unknown) => {
+        pending = null;
+        throw error;
+      },
+    );
+    return pending;
+  }
+
   function draftPath(kind: "spec" | "intent", sliceId: string): string {
-    if (!ID_PATTERN.test(sliceId)) throw new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, `drafts.${kind}`);
+    if (!ENGINE_ID.test(sliceId)) throw new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, `drafts.${kind}`);
     return `/api/drafts/${kind}/${encodeURIComponent(sliceId)}`;
   }
 
   return {
     connection,
-    async session(signal) {
-      const session = await call<Session>("GET", "/api/session", "session", undefined, signal);
-      csrf = csrfFrom(session) ?? null;
-      return session;
-    },
+    session: loadSession,
     op(name, args, signal) {
-      return call("POST", `/api/ops/${name}`, name, args, signal);
+      return send("POST", `/api/ops/${name}`, name, args, signal);
     },
     readDraft(kind, sliceId, signal) {
-      return call("GET", draftPath(kind, sliceId), `drafts.${kind}`, undefined, signal);
+      return send("GET", draftPath(kind, sliceId), `drafts.${kind}`, undefined, signal);
     },
-    writeDraft(kind, sliceId, markdown, signal) {
-      return call("PUT", draftPath(kind, sliceId), `drafts.${kind}`, { markdown }, signal);
+    writeDraft(kind, sliceId, markdown, opts = {}) {
+      const body = kind === "spec" && opts.name ? { markdown, name: opts.name } : { markdown };
+      return send("PUT", draftPath(kind, sliceId), `drafts.${kind}`, body, opts.signal);
     },
+    interview: createInterviewClient({
+      post: (path, operation, body) => send("POST", path, operation, body),
+      baseUrl: options.baseUrl ?? "",
+      eventSource: options.eventSource,
+    }),
   };
 }

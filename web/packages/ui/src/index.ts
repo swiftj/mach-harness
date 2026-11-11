@@ -19,6 +19,7 @@ export * from "./components/input";
 export * from "./components/select";
 export * from "./components/checkbox";
 export * from "./components/dialog";
+export * from "./components/confirm-dialog";
 export * from "./components/sheet";
 export * from "./components/popover";
 export * from "./components/tooltip";

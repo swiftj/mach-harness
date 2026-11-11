@@ -100,8 +100,26 @@ export const reviewStates: Record<WaveReviewStatus, ReviewDescriptor> = {
     attention: false,
     final: false,
   },
+  "Prepared, not sent": {
+    label: "Prepared, not sent",
+    description: "The wave was prepared but did not reach the shared repository. Sending again finishes the job.",
+    tone: "warning",
+    glyph: "blocked",
+    stage: 1,
+    attention: true,
+    final: false,
+  },
+  Sent: {
+    label: "Sent",
+    description: "Sent for review; the review's state could not be read just now.",
+    tone: "info",
+    glyph: "submitted",
+    stage: 2,
+    attention: false,
+    final: false,
+  },
   "Sent, pull request not opened": {
-    label: "Sent, request not opened",
+    label: "Sent, review request not opened",
     description: "The work reached the shared repository but the review request could not be opened. Sending again finishes the job.",
     tone: "warning",
     glyph: "blocked",
@@ -146,8 +164,8 @@ export const reviewStates: Record<WaveReviewStatus, ReviewDescriptor> = {
     final: false,
   },
   "Accepted, waiting to merge": {
-    label: "Accepted, waiting to merge",
-    description: "Reviewers approved it; it has not been merged yet.",
+    label: "Accepted, waiting to be added",
+    description: "Reviewers approved it; it has not been added to the shared project yet.",
     tone: "success",
     glyph: "approved",
     stage: 3,
@@ -173,6 +191,21 @@ export const reviewStates: Record<WaveReviewStatus, ReviewDescriptor> = {
     final: true,
   },
 };
+
+/** For a review word this version does not know: shown as is, neutral, never a crash. */
+export function reviewDescriptor(status: string): ReviewDescriptor {
+  return (
+    (reviewStates as Record<string, ReviewDescriptor | undefined>)[status] ?? {
+      label: status,
+      description: status,
+      tone: "neutral",
+      glyph: "open",
+      stage: 2,
+      attention: false,
+      final: false,
+    }
+  );
+}
 
 /** The wave journey's stage names, in order. */
 export const waveJourney = ["Approved", "Sent", "In review", "Accepted"] as const;

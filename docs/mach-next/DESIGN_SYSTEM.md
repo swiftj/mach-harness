@@ -200,6 +200,7 @@ Shadows are tinted charcoal, never grey-blue. In dark, elevation shows mainly as
 - **Field** wraps label, hint, control and error and wires `id`, `aria-describedby` and `aria-invalid` into `Input`, `Textarea` and `Select`. Errors say what to do ("Use lowercase words joined by hyphens, such as team-space."). `Textarea editorial` sets product writing in the serif.
 - **Select** for short lists (Radix). **Checkbox** with label and description; disabled options say why they are disabled.
 - **Dialog**: a decision. Title is a question, description says what the act means (both required), the confirming button is last. Focus is trapped, Escape closes, focus returns to the trigger.
+- **ConfirmDialog**: the one way a personal act (`personalActs`: approve, send, reconcile) is confirmed. `onConfirm` performs the act and resolves `false` to stay open; a refusal is shown inside the dialog in the engine's own words (`error`). The confirming button shows progress and blocks a second click.
 - **Sheet**: detail beside the page, from the right (400, 480 or 640px). Used for a reconcile comparison (your draft | shared project, side by side, each with its own button), a slice's check, reviewer remarks.
 - **Popover**: non-modal explanation anchored to a control. **Tooltip**: names an icon-only control; never holds essential information.
 - **Tabs**: underline in `accent`; arrow keys move between tabs.
@@ -326,15 +327,26 @@ Shared without change: every role, tone, glyph, radius, motion token, the shell,
 
 ```ts
 const client = createClient();                 // fetch, same origin, no-store, credentials same-origin
-await client.session();                        // GET /api/session; keeps the CSRF token
-const status = await client.op("status", {});  // POST /api/ops/status → Status
+const status = await client.op("status", {});  // POST /api/ops/status → Status (fetches the session first)
 await client.op("slice.approve", { slice_id: "SLICE-001" });
-await client.writeDraft("spec", "SLICE-001", markdown);  // PUT /api/drafts/spec/SLICE-001 → { check }
+await client.writeDraft("spec", "SLICE-001", markdown, { name: "invite-teammate" });  // → { slice_id, kind, path, check }
+
+// The interview (contract 8.2)
+const { interview_id } = await client.interview.start("SLICE-002", "Admins remove people who left");
+const stream = client.interview.events(interview_id, {
+  onEvent: (e) => { if (e.type === "question") show(e.data); },   // typed per event
+  onStreamState: (s) => setLink(s),                                 // connecting | open | retrying | closed
+});
+await client.interview.reply(interview_id, "Yes");
+await client.interview.interrupt(interview_id);   // stop this turn
+await client.interview.stop(interview_id);        // end; the draft and note remain
+stream.close();
 ```
 
 - Every response must be the envelope `{ok, data}` / `{ok:false, error:{kind, message}}`. Anything else is a `protocol` error.
 - Failures reject with `MachApiError { kind, message, status, operation }`. Kinds: the host's `refused | invalid | unauthorized | conflict | unavailable | internal`, plus the client's `network | protocol | aborted`. `describeError(error)` gives a title and message in the interface's voice; a `refused` message is the engine's own and is shown as is.
-- State-changing requests carry `X-MACH-CSRF`. Slice IDs are checked against `^[A-Z]+-\d{3,}$` before they go into a path.
+- GET requests carry only the session cookie. Every POST and PUT carries `Content-Type: application/json`, `X-MACH-CSRF` and same-origin credentials; when the token is not known yet, the client fetches the session first (one shared request). A 401 marks the session ended; a 403 is one refused request. Slice IDs are checked against `^[A-Z]+-\d{3,}$` before they go into a path.
+- The interview stream (`client.interview.events`) is an `EventSource` that the browser resumes with `Last-Event-ID`; if the host answers with an error status the client reopens it with back-off (1, 2, 4… up to 15 s, six attempts) and stops after an `ended` event.
 - `client.connection` is the host connection state (`connecting | online | offline | unauthorized`); `useConnectionState(store)` feeds `ConnectionIndicator`.
 - `personalActs` lists the operations that record a person's decision; screens confirm each in a dialog.
 - A `Transport` can be supplied for tests and fixture mode. Product Studio uses one only under `vite --mode fixtures`; the production bundle contains no fixture code (checked by grepping the build).
@@ -350,3 +362,12 @@ All three faces are under the **SIL Open Font License 1.1**, which permits bundl
 | JetBrains Mono | Copyright 2020 The JetBrains Mono Project Authors | OFL 1.1 | `@fontsource-variable/jetbrains-mono` 5.3.0 |
 
 Icons are Lucide (`lucide-react` 1.72.0, ISC licence). No Anthropic typeface, logo or icon is bundled.
+
+## 17. Content-Security-Policy
+
+The host serves the app under `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'`. Rules for anything added to `@mach/ui` or the apps:
+
+- No asset is inlined as a `data:` URI except images: both apps build with `assetsInlineLimit: 0`.
+- No inline `<script>` or `<style>`, no `style="..."` in served HTML. Styles set from JavaScript through the CSSOM (`element.style`, React's `style` prop, constructable stylesheets) are fine.
+- Radix's scroll lock injects a `<style>` element through `react-style-singleton`. Both apps alias that package to `packages/ui/src/vendor/react-style-singleton.ts`, which adds the same CSS through `document.adoptedStyleSheets`. A new app must add the same alias.
+- `web/apps/product-studio/scripts/host-check.mjs` builds the real host with the app embedded and fails on any console error, CSP violation or request leaving 127.0.0.1.

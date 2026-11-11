@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -19,6 +20,11 @@ export default defineConfig(({ mode }) => {
   }
   return {
     plugins: [react(), tailwindcss()],
+    resolve: {
+      // Radix's scroll lock injects a <style> element, which the host's CSP blocks; this version uses a
+      // constructable stylesheet instead (see the file).
+      alias: { "react-style-singleton": fileURLToPath(new URL("../../packages/ui/src/vendor/react-style-singleton.ts", import.meta.url)) },
+    },
     // Relative asset URLs so the Go host can serve the bundle from any path prefix.
     base: "./",
     server: {
@@ -43,6 +49,10 @@ export default defineConfig(({ mode }) => {
             },
     },
     preview: { host: "127.0.0.1", port: 4175, strictPort: true },
-    build: { target: "es2022", sourcemap: false, chunkSizeWarningLimit: 1600 },
+    build: {
+      // The host's CSP allows fonts and scripts only from 'self': never inline an asset as a data: URI.
+      assetsInlineLimit: 0,
+      modulePreload: { polyfill: false },
+      target: "es2022", sourcemap: false, chunkSizeWarningLimit: 1600 },
   };
 });

@@ -25,6 +25,8 @@ export type ArtifactSource = "draft" | "published" | "conflict" | "collision";
 export type WaveReviewStatus =
   | "Not approved yet"
   | "Approved, not sent"
+  | "Prepared, not sent"
+  | "Sent"
   | "Sent, pull request not opened"
   | "Waiting for review"
   | "Changes requested"
@@ -109,15 +111,26 @@ export interface TextConflict {
   theirs: TextChangeSummary;
 }
 
+/** The engine could not read one side of the artifact. */
+export interface UnreadableConflict {
+  unreadable: true;
+}
+
+export type ConflictDetail = FieldConflict | TextConflict | UnreadableConflict;
+
 export interface NeedsReconciling {
   /** Workspace-relative paths, e.g. "product/epics/EPIC-001.json". */
   conflicts: string[];
   collisions: string[];
-  details: Record<string, FieldConflict | TextConflict>;
+  details: Record<string, ConflictDetail>;
 }
 
-export function isFieldConflict(detail: FieldConflict | TextConflict): detail is FieldConflict {
+export function isFieldConflict(detail: ConflictDetail): detail is FieldConflict {
   return "fields" in detail;
+}
+
+export function isTextConflict(detail: ConflictDetail): detail is TextConflict {
+  return "mine" in detail && "theirs" in detail;
 }
 
 /* ── Operation results ──────────────────────────────────────────────────── */
@@ -179,9 +192,42 @@ export interface Status {
   structurally_valid: boolean | null;
   structural_errors: string[];
   factory_authorized: false;
-  /** The engine's suggestions, already in the PM's words. Show as given. */
+  /**
+   * The engine's suggestions as sentences. They end with a terminal command in brackets, which the
+   * app must never show: prefer `next_actions`, and use `suggestionText()` when falling back.
+   */
   suggested_next: string[];
+  /** Structured next actions (being added by the host owner). Absent on older engines. */
+  next_actions?: NextAction[];
 }
+
+/**
+ * One recommended next step, as the engine will report it in `status.next_actions`.
+ * `target` is the artifact it concerns: an ID (SLICE-002, EPIC-001, WAVE-001) or a workspace path.
+ */
+export interface NextAction {
+  kind: NextActionKind;
+  target: string | null;
+  title: string;
+  reason: string | null;
+}
+
+/** Kinds the app knows how to route. Unknown kinds are still shown, routed by their target. */
+export type NextActionKind =
+  | "define_project"
+  | "add_epic"
+  | "approve_epic"
+  | "start_slice"
+  | "continue_interview"
+  | "approve_slice"
+  | "create_wave"
+  | "approve_wave"
+  | "send_wave"
+  | "review_feedback"
+  | "reconcile"
+  | "renumber"
+  | "refresh"
+  | (string & {});
 
 export interface Validate {
   counts: { epics: number; slices: number; waves: number };
@@ -194,12 +240,15 @@ export interface Validate {
 
 export interface Refresh {
   refreshed: boolean;
-  /** Why the shared project could not be reached, when refreshed is false. */
+  /** Why the shared project could not be reached, in plain words, when refreshed is false. */
   problem: string | null;
+  /** Git's own last line, for an engineer. Show only behind a disclosure. */
+  problem_detail?: string | null;
   shared_project: string;
   arrived: string[];
   updated: Array<{ path: string; fields?: string[]; changed?: string[] }>;
-  merged: Array<{ path: string; fields?: string[] }>;
+  /** Merged field by field: the fields taken from the shared project. */
+  merged: Array<{ path: string; taken_from_shared: string[] }>;
   approvals_withdrawn: string[];
   needs_reconciling: NeedsReconciling;
 }
@@ -341,6 +390,8 @@ export interface FeedbackWave {
   remarks_are_data?: string;
   branch?: string;
   problem?: string | null;
+  /** Set when the wave changed after it was sent, in plain words. */
+  changed_since_sent?: string;
 }
 
 export interface Feedback {
@@ -348,25 +399,113 @@ export interface Feedback {
   waves: FeedbackWave[];
 }
 
-/**
- * `slice show`: everything the Specification Workspace needs in one read. Added to the engine for M5;
- * there is no fixture for it yet, so `spec.model` and `why` are typed loosely until one exists.
- */
+/* ── slice show: the spec as the validator's model ─────────────────────── */
+
+export interface SpecSummary {
+  actor: string;
+  trigger: string;
+  outcome: string;
+}
+
+export interface SpecStatement {
+  /** INV-01, FR-01. */
+  id: string;
+  text: string;
+}
+
+export interface SpecRequirement extends SpecStatement {
+  /** The EARS pattern: ubiquitous, event-driven, state-driven, unwanted, optional, complex. */
+  pattern: string;
+}
+
+export interface MatrixRule {
+  id: string;
+  conditions: Record<string, string[]>;
+  expected_outcome: string;
+  side_effects: string;
+  covers: string[];
+}
+
+export interface MatrixCase {
+  id: string;
+  rule: string;
+  conditions: Record<string, string>;
+  expected_outcome: string;
+  side_effects: string;
+  covers: string[];
+}
+
+export interface DecisionMatrix {
+  conditions: Array<{ name: string; values: string[] }>;
+  rules: MatrixRule[];
+  complete: boolean;
+  cases: MatrixCase[];
+}
+
+export interface Scenario {
+  /** AC-01. */
+  id: string;
+  title: string;
+  covers: string[];
+  steps: Array<{ keyword: "Given" | "When" | "Then" | "And" | "But" | (string & {}); text: string }>;
+}
+
+export interface SpecModel {
+  slice_id: string;
+  title: string;
+  summary: SpecSummary;
+  in_scope: string[];
+  out_of_scope: Array<{ feature: string; deferred_to: string | null }>;
+  preconditions: string[];
+  invariants: SpecStatement[];
+  functional_requirements: SpecRequirement[];
+  decision_matrix: DecisionMatrix;
+  scenarios: Scenario[];
+  external_dependencies: Array<{ name: string; failure_requirements: string[] }>;
+  required_permissions: string;
+  assumptions: string[];
+  accepted_defaults: Array<{ default: string; requirements: string[] }>;
+  open_questions: Array<{ question: string; follow_up: string | null }>;
+}
+
+export interface SpecFinding {
+  severity: "error" | "warning" | (string & {});
+  rule: string;
+  line: number | null;
+  message: string;
+}
+
+export interface WhySection {
+  heading: string;
+  text: string;
+  /** The bold `- **Name:** value` lines of the section. */
+  fields: Record<string, string>;
+}
+
+export interface WhyView {
+  exists: boolean;
+  markdown: string | null;
+  title: string | null;
+  header: Record<string, string>;
+  sections: WhySection[];
+}
+
+/** `slice show`: everything the Specification Workspace needs, in one read. Changes nothing. */
 export interface SliceShow {
   slice: WorkOrder;
   editable: boolean;
+  /** Why the slice cannot be edited, in the engine's words (it may name a terminal command). */
   edit_refusal: string | null;
   paths: { work_order: string; specs_dir: string; spec: string | null; spec_name_pattern: string; intent: string };
   spec: {
     path: string;
     name: string;
     markdown: string;
-    /** The validator's exported model of the spec. Shape owned by validate_slice.py. */
-    model: unknown;
-    findings: Array<{ severity: string; rule: string; line: number | null; message: string }>;
+    /** Partial when the spec has structural errors. */
+    model: Partial<SpecModel>;
+    findings: SpecFinding[];
   } | null;
-  /** The why split into its sections. Shape owned by the engine's why_sections(). */
-  why: unknown;
+  why: WhyView;
   check: SliceCheck;
   resume_note: string | null;
   factory_authorized: false;
@@ -430,39 +569,86 @@ export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>([
 
 /* ── Host endpoints (contract section 4) ────────────────────────────────── */
 
-/**
- * GET /api/session. PROVISIONAL: the field names are this package's proposal; the Go host's
- * authors must confirm them (see the report to the lead).
- */
+/** GET /api/session (contract 8.1). Needs the session cookie; never needs the CSRF token. */
 export interface Session {
-  project: { name: string | null; folder: string };
+  project: {
+    /** The project folder's name. */
+    folder: string;
+    /** The project's absolute path on this machine. */
+    path: string;
+    /** From the engine's status; null before `project init`. */
+    name: string | null;
+    project_id: string | null;
+  };
   csrf_token: string;
-  capabilities: { interview: boolean; interview_unavailable_reason?: string | null };
-  versions: Record<string, string>;
+  capabilities: {
+    interview: boolean;
+    /** Why the interview is unavailable, in plain words; null when it is available. */
+    interview_reason: string | null;
+    /** The exact command to continue in Claude Code, when the host reports one. */
+    interview_command?: string | null;
+  };
+  versions: { host: string; api: string | number; engine_install: string | null };
+  /** Set when the engine could not report status while building the session. */
+  engine_problem: { kind: string; message: string } | null;
 }
 
-/** GET/PUT /api/drafts/spec/<id> and /api/drafts/intent/<id>. */
-export interface DraftDocument {
+/** GET /api/drafts/{spec|intent}/<slice>. */
+export interface DraftRead {
   slice_id: string;
-  markdown: string;
+  kind: "spec" | "intent";
+  editable: boolean;
+  edit_refusal: string | null;
+  path: string | null;
+  exists: boolean;
+  markdown: string | null;
+  /** Spec only. */
+  spec_name_pattern?: string;
 }
 
+/** PUT /api/drafts/{spec|intent}/<slice> returns where it wrote and the check that followed. */
 export interface DraftWriteResult {
+  slice_id: string;
+  kind: "spec" | "intent";
+  path: string;
   check: SliceCheck;
 }
 
-/* ── Interview events (contract section 6, provisional) ─────────────────── */
+/* ── Interview events (contract 8.2) ──────────────────────────────────── */
 
-export type InterviewState = "starting" | "thinking" | "waiting_for_reply" | "working" | "ended" | "failed";
+export type InterviewState = "starting" | "thinking" | "working" | "waiting_for_reply" | "ended" | "failed";
 
-export type InterviewEvent =
-  | { type: "state"; data: InterviewState }
-  | { type: "text"; data: string }
-  | { type: "question"; data: { number: number; title: string; body: string; recommendation: string } }
-  | { type: "activity"; data: string }
-  | { type: "draft_changed"; data: Record<string, never> }
-  | { type: "ended"; data: { reason: string } }
-  | { type: "error"; data: { message: string } };
+export interface InterviewEventMap {
+  state: InterviewState;
+  /** A streamed chunk; may belong to a message that never becomes final. */
+  text: { message_id: string; delta: string };
+  /** Once per turn: the reply the PM answers. */
+  message: { message_id: string; text: string; kind: "question" | "confirmation" | "other" };
+  /** Sent with `message` when it parses as exactly one question. Key by message_id; number repeats across sessions. */
+  question: { message_id: string; number: number; title: string; body: string; recommendation: string; preface: string };
+  activity: { kind: "lookup" | "check" | "save" | "write" | "refused" | "other"; text: string };
+  draft_changed: { slice_id: string; what: Array<"spec" | "why" | "work_order"> };
+  turn: { outcome: string; seconds: number; cost_usd: number | null; session_cost_usd: number | null; refused: number | boolean };
+  ended: { reason: "stopped" | "failed" | "host_shutdown" | (string & {}) };
+  error: { kind: string; message: string };
+}
+
+export type InterviewEventType = keyof InterviewEventMap;
+
+/** One event from GET /api/interview/<id>/events, as a discriminated union. */
+export type InterviewEvent = { [K in InterviewEventType]: { type: K; data: InterviewEventMap[K] } }[InterviewEventType];
+
+export const interviewEventTypes: readonly InterviewEventType[] = [
+  "state",
+  "text",
+  "message",
+  "question",
+  "activity",
+  "draft_changed",
+  "turn",
+  "ended",
+  "error",
+];
 
 /* ── Fixture file shape ─────────────────────────────────────────────────── */
 

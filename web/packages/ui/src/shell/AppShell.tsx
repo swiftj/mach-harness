@@ -1,6 +1,5 @@
-import { Slot } from "@radix-ui/react-slot";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { cloneElement, createContext, isValidElement, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { cn } from "../lib/cn";
 import { layout } from "../tokens/tokens";
 import { Tooltip } from "../components/tooltip";
@@ -133,50 +132,58 @@ export interface NavItemProps {
   badge?: ReactNode;
   /** Plain-text version of the badge for the accessible name, e.g. "3 to settle". */
   badgeLabel?: string;
-  /** Render your router's link as the child: <NavItem asChild ...><Link to="/" /></NavItem>. */
+  /**
+   * Your router's link, with no children: <NavItem asChild ...><Link to="/" /></NavItem>.
+   * NavItem fills it with the icon, label and badge, so a link looks and collapses like any item.
+   */
   asChild?: boolean;
-  children?: ReactNode;
+  children?: ReactElement;
   onClick?: () => void;
   href?: string;
 }
 
 export function NavItem({ icon, label, current, badge, badgeLabel, asChild, children, onClick, href }: NavItemProps) {
   const { collapsed } = useRail();
-  const Comp = asChild ? Slot : href ? "a" : "button";
-  const content = (
-    <Comp
-      href={asChild ? undefined : href}
-      type={!asChild && !href ? "button" : undefined}
-      onClick={onClick}
-      aria-current={current ? "page" : undefined}
-      aria-label={collapsed ? [label, badgeLabel].filter(Boolean).join(", ") : undefined}
-      className={cn(
-        "group relative flex h-9 w-full items-center gap-2.5 rounded-sm text-body-sm text-ink-muted",
-        "transition-colors duration-[var(--mach-duration-fast)] hover:bg-surface-sunken hover:text-ink",
-        collapsed ? "justify-center px-0" : "px-2",
-        current && "bg-accent-soft font-semibold text-accent-ink hover:bg-accent-soft hover:text-accent-ink",
-      )}
-    >
-      {asChild ? (
-        children
-      ) : (
-        <>
-          {current ? <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" /> : null}
-          <span aria-hidden="true" className="[&_svg]:size-[18px]">
-            {icon}
-          </span>
-          {collapsed ? null : <span className="min-w-0 flex-1 truncate text-left">{label}</span>}
-          {!collapsed && badge ? (
-            <span className="ml-auto">
-              {badge}
-              {badgeLabel ? <span className="sr-only">, {badgeLabel}</span> : null}
-            </span>
-          ) : null}
-          {collapsed && badge ? <span aria-hidden="true" className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-warning-fill" /> : null}
-        </>
-      )}
-    </Comp>
+  const className = cn(
+    "group relative flex h-9 w-full items-center gap-2.5 rounded-sm text-body-sm text-ink-muted",
+    "transition-colors duration-[var(--mach-duration-fast)] hover:bg-surface-sunken hover:text-ink",
+    collapsed ? "justify-center px-0" : "px-2",
+    current && "bg-accent-soft font-semibold text-accent-ink hover:bg-accent-soft hover:text-accent-ink",
   );
+  const inner = (
+    <>
+      {current ? <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" /> : null}
+      <span aria-hidden="true" className="inline-flex shrink-0 [&_svg]:size-[18px]">
+        {icon}
+      </span>
+      {collapsed ? null : <span className="min-w-0 flex-1 truncate text-left">{label}</span>}
+      {!collapsed && badge ? (
+        <span className="ml-auto">
+          {badge}
+          {badgeLabel ? <span className="sr-only">, {badgeLabel}</span> : null}
+        </span>
+      ) : null}
+      {collapsed && badge ? <span aria-hidden="true" className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-warning-fill" /> : null}
+    </>
+  );
+  const shared = {
+    className,
+    onClick,
+    "aria-current": current ? ("page" as const) : undefined,
+    "aria-label": collapsed ? [label, badgeLabel].filter(Boolean).join(", ") : undefined,
+  };
+  const content =
+    asChild && isValidElement(children) ? (
+      cloneElement(children as ReactElement<Record<string, unknown>>, shared, inner)
+    ) : href ? (
+      <a href={href} {...shared}>
+        {inner}
+      </a>
+    ) : (
+      <button type="button" {...shared}>
+        {inner}
+      </button>
+    );
   return <li>{collapsed ? <Tooltip content={label} side="right">{content}</Tooltip> : content}</li>;
 }
 
