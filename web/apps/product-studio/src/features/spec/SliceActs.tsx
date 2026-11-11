@@ -8,7 +8,7 @@ import { toApiError } from "../../api/session";
 function Failure({ error, what }: { error: MachApiError; what: string }) {
   // A refusal is the engine's own words, shown as written; the title names what did not happen.
   const described = describeError(error);
-  return <ErrorState title={error.kind === "refused" ? what : described.title} message={error.kind === "refused" ? error.message : described.message} />;
+  return <ErrorState title={error.kind === "refused" ? what : described.title} message={error.kind === "refused" ? error.message : described.message} hint={error.hint} />;
 }
 
 /**

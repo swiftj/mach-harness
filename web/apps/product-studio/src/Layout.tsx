@@ -3,6 +3,7 @@ import {
   AppShell,
   Badge,
   Brand,
+  HintProvider,
   ConnectionIndicator,
   NavItem,
   NavRail,
@@ -14,6 +15,7 @@ import {
 import { client, usingFixtures } from "./api/client";
 import { useRefresh, useSession, useStatus } from "./api/store";
 import { navigation } from "./features/registry";
+import { AppHint } from "./shared/AppHint";
 import type { NavEntry } from "./features/types";
 
 const sections: Array<{ id: NavEntry["section"]; title: string }> = [
@@ -89,7 +91,9 @@ export function Layout() {
         />
       }
     >
-      <Outlet />
+      <HintProvider render={(hint) => <AppHint hint={hint} />}>
+        <Outlet />
+      </HintProvider>
     </AppShell>
   );
 }

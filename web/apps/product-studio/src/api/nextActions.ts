@@ -2,11 +2,11 @@
  * Where each recommended next step leads. The engine decides what is next (`status.next_actions`);
  * this only maps its kind and target to a screen or an in-place act.
  */
-import { artifactKind, idInPath, suggestionText, type NextAction, type Status } from "@mach/ui/api";
+import { artifactKind, idInPath, type ApiErrorHint, type NextAction, type Status } from "@mach/ui/api";
 
 export type ActionRoute =
   /** Go to a screen. */
-  | { type: "navigate"; to: string; label: string }
+  | { type: "navigate"; to: string; label: string; state?: unknown }
   /** A personal act confirmed in place (epic approval). */
   | { type: "approve-epic"; epicId: string; label: string }
   /** Start a slice: ask for its title, then open its interview. */
@@ -22,7 +22,7 @@ export function routeFor(action: NextAction): ActionRoute {
     case "define_project":
       return { type: "navigate", to: "/vision", label: "Define the project" };
     case "add_epic":
-      return { type: "navigate", to: "/vision#epics", label: "Add an epic" };
+      return { type: "navigate", to: "/vision", label: "Add an epic", state: { focus: "epics" } };
     case "approve_epic":
       return id && kind === "epic" ? { type: "approve-epic", epicId: id, label: "Review and approve" } : { type: "navigate", to: "/vision", label: "Open" };
     case "start_slice":
@@ -58,26 +58,31 @@ function byTarget(target: string | null): ActionRoute {
   return { type: "navigate", to: "/roadmap", label: "Open" };
 }
 
-/**
- * The actions to show: the engine's structured list when it reports one; otherwise its sentences,
- * with the terminal command removed and the first ID they mention as the target.
- */
+/** The engine's recommended next steps, in its order. */
 export function nextActions(status: Status): NextAction[] {
-  if (status.next_actions) return status.next_actions;
-  return status.suggested_next.map((sentence) => {
-    const target = sentence.match(/\b(?:SLICE|EPIC|WAVE)-\d{3,}\b/)?.[0] ?? null;
-    const command = sentence.match(/\(([^()]*)\)\s*\.?\s*$/)?.[1] ?? "";
-    // The bracketed command names the operation; it is read to choose the screen, never shown.
-    const kind =
-      /^project init/.test(command) ? "define_project"
-      : /^epic approve/.test(command) ? "approve_epic"
-      : /^slice new/.test(command) ? "start_slice"
-      : /^slice resume/.test(command) ? "continue_interview"
-      : /^slice approve/.test(command) ? "approve_slice"
-      : /^send/.test(command) ? "send_wave"
-      : /^wave/.test(command) ? "approve_wave"
-      : /reconcile|renumber/.test(command) ? "reconcile"
-      : "other";
-    return { kind, target, title: suggestionText(sentence), reason: null };
-  });
+  return status.next_actions ?? [];
+}
+
+/** Where a refusal's hint leads: the next-action kinds, plus the acts that resolve a refusal. */
+export function routeForHint(hint: ApiErrorHint): ActionRoute {
+  const t = hint.target;
+  switch (hint.kind) {
+    case "reopen_slice":
+      return t ? { type: "navigate", to: `/slices/${t}`, label: `Open ${t} to reopen it` } : { type: "navigate", to: "/roadmap", label: "Open the roadmap" };
+    case "renumber_slice":
+    case "renumber_epic":
+    case "renumber_wave":
+      return { type: "navigate", to: "/inbox", label: t ? `Renumber ${t}` : "Open decisions" };
+    case "edit_epic":
+      return { type: "navigate", to: "/vision", label: t ? `Edit ${t}` : "Edit the epics", state: { focus: "epics" } };
+    case "edit_project":
+      return { type: "navigate", to: "/vision", label: "Edit the project" };
+    case "name_approver":
+      return { type: "navigate", to: "/waves", label: "Name who approves" };
+    default: {
+      const route = routeFor({ kind: hint.kind, target: t, title: "", reason: null });
+      if (route.type === "approve-epic") return { ...route, label: `Approve ${route.epicId}` };
+      return route;
+    }
+  }
 }

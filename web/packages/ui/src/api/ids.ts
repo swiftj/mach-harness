@@ -15,12 +15,3 @@ export function artifactKind(target: string | null | undefined): "slice" | "epic
 export function idInPath(path: string): string | null {
   return path.match(/\b(?:SLICE|EPIC|WAVE)-\d{3,}\b/)?.[0] ?? null;
 }
-
-/**
- * `status.suggested_next` sentences end with the terminal command in brackets ("... (slice approve
- * SLICE-001)."). The app never shows terminal commands, so this drops a trailing bracket. Use only
- * when `status.next_actions` is absent.
- */
-export function suggestionText(sentence: string): string {
-  return sentence.replace(/\s*\([^()]*\)\s*\.?\s*$/, ".").replace(/\.\.$/, ".");
-}

@@ -104,6 +104,7 @@ function Editor({ kind, sliceId, original, editable, onSaved }: { kind: Kind; sl
         <ErrorState
           title={error.kind === "refused" ? "Not saved" : describeError(error).title}
           message={error.kind === "refused" ? error.message : describeError(error).message}
+          hint={error.hint}
         />
       ) : null}
       {verdict && result ? (

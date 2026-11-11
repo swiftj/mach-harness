@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { describeError, type MachApiError, type OperationArgs, type OperationName, type OperationResult } from "@mach/ui/api";
+import { describeError, type ApiErrorHint, type MachApiError, type OperationArgs, type OperationName, type OperationResult } from "@mach/ui/api";
 import { client } from "./client";
 import { asError, reloadStatus } from "./store";
 
@@ -9,7 +9,7 @@ export interface EngineAct {
   pending: boolean;
   error: MachApiError | null;
   /** A title and message for the error, ready for ConfirmDialog's `error` or an ErrorState. A refusal keeps the engine's own words. */
-  shown: { title: string; message: string } | null;
+  shown: { title: string; message: string; hint?: ApiErrorHint | null } | null;
   reset: () => void;
 }
 
@@ -34,6 +34,6 @@ export function useEngineAct(): EngineAct {
       setPending(false);
     }
   }, []);
-  const shown = error ? (error.kind === "refused" ? { title: "Not done", message: error.message } : describeError(error)) : null;
+  const shown = error ? (error.kind === "refused" ? { title: "Not done", message: error.message, hint: error.hint } : describeError(error)) : null;
   return { run, pending, error, shown, reset: useCallback(() => setError(null), []) };
 }

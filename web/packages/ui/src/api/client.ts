@@ -5,7 +5,9 @@ import { createInterviewClient, type InterviewClient, type EventSourceFactory } 
 import type { DraftRead, DraftWriteResult, OperationArgs, OperationName, OperationResult, Session } from "./types";
 
 /** The envelope every host response uses (contract section 4). */
-export type Envelope<T> = { ok: true; data: T } | { ok: false; error: { kind: HostErrorKind; message: string } };
+export type Envelope<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: { kind: HostErrorKind; message: string; hint?: { kind: string; target: string | null } | null } };
 
 export interface TransportRequest {
   method: "GET" | "POST" | "PUT";
@@ -140,7 +142,8 @@ export function createClient(options: ClientOptions = {}): MachClient {
     // 401 means the session cookie is missing or expired: the window must be reopened from the link.
     // A 403 "unauthorized" is a refused CSRF or Origin check on one request, not a lost session.
     connection.set(envelope.error.kind === "unauthorized" && response.status === 401 ? "unauthorized" : "online");
-    throw new MachApiError(envelope.error.kind, envelope.error.message, operation, response.status);
+    const hint = envelope.error.hint && typeof envelope.error.hint.kind === "string" ? { kind: envelope.error.hint.kind, target: envelope.error.hint.target ?? null } : null;
+    throw new MachApiError(envelope.error.kind, envelope.error.message, operation, response.status, hint);
   }
 
   function loadSession(signal?: AbortSignal): Promise<Session> {

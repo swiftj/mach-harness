@@ -75,7 +75,7 @@ export function SendScreen() {
   const status = useDeliveryRead("status", {});
   const [result, setResult] = useState<Send | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [sendError, setSendError] = useState<{ title: string; message: string } | null>(null);
+  const [sendError, setSendError] = useState<ReturnType<typeof failureText> | null>(null);
   const wave = status.data?.waves.find((w) => w.wave_id === waveId) ?? null;
   const preview = useDeliveryRead("send.preview", wave && !result ? { wave_id: waveId } : null);
   const feedback = useDeliveryRead("feedback", result?.sent ? { wave_id: waveId } : null);
@@ -166,6 +166,7 @@ export function SendScreen() {
                 icon={<CircleAlert />}
                 title={failureText(preview.error, `${waveId} can't be sent yet`).title}
                 message={failureText(preview.error, `${waveId} can't be sent yet`).message}
+                hint={preview.error.hint}
                 action={
                   <div className="flex flex-wrap gap-2">
                     <Button onClick={preview.reload}>

@@ -217,8 +217,10 @@ class ScriptedInterview {
     }, step.wait * (REAL_TIME_TURNS.has(this.turn) ? 1 : this.speed));
   }
 
-  reply() {
+  reply(text: string) {
     if (this.running) throw new MachApiError("conflict", "The interviewer is still working on a reply.", "interview.reply", 409);
+    // Like the host: the PM's own words open the turn they start.
+    this.emit("reply", { text });
     this.turn += 1;
     this.play(turns[this.turn] ?? fallback);
   }
@@ -276,14 +278,24 @@ export const scriptedInterviewClient: InterviewClient = {
       return () => undefined;
     }
     handlers.onConnection("open");
-    // Like the host without Last-Event-ID: replay what has happened so far.
-    interview.log.forEach((event) => handlers.onEvent(event));
+    // Like the host: replay the current turn so far, and the last final message and question.
+    const lastTurn = interview.log.map((e) => e.type).lastIndexOf("turn");
+    const lastFinal = interview.log.filter((e, i) => i <= lastTurn && (e.type === "message" || e.type === "question")).slice(-2);
+    [...lastFinal, ...interview.log.slice(lastTurn + 1)].forEach((event) => handlers.onEvent(event));
     interview.listeners.add(handlers);
     return () => interview.listeners.delete(handlers);
   },
-  async reply() {
+  async reply(_id, text) {
     await new Promise((resolve) => setTimeout(resolve, 120));
-    current?.reply();
+    current?.reply(text);
+  },
+  async history(sliceId) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Like the host's saved history: everything except streamed text and the busy states.
+    const events = (current?.log ?? [])
+      .filter((e) => e.type !== "text" && !(e.type === "state" && (e.data === "thinking" || e.data === "working")))
+      .map((e) => ({ at: new Date().toISOString(), interview_id: current?.id ?? "", event: e.type, data: e.data as unknown }));
+    return { slice_id: sliceId, events, truncated: devParam("history") === "truncated" };
   },
   async interrupt() {
     current?.interrupt();

@@ -1,21 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, CircleAlert, MessagesSquare, Pause, SearchX, Square, Users, WifiOff } from "lucide-react";
-import {
-  ArtifactId,
-  Banner,
-  Button,
-  EmptyState,
-  ErrorState,
-  Heading,
-  LoadingState,
-  Page,
-  SliceStatusPill,
-  Spinner,
-  Text,
-  Tooltip,
-  describeError,
-} from "@mach/ui";
+import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, LoadingState, Page, SliceStatusPill, Spinner, Text, Tooltip, describeError, HintAction } from "@mach/ui";
 import { Composer } from "./Composer";
 import { ContinueInClaudeCode } from "./ContinueInClaudeCode";
 import { isBusy } from "./model";
@@ -208,6 +194,7 @@ function Conversation({
           icon={<CircleAlert />}
           title={error?.kind === "refused" ? "The interview did not start" : described.title}
           message={error?.kind === "refused" ? error.message : described.message}
+          hint={error?.hint}
           action={<Button onClick={iv.retryLoad}>Try again</Button>}
         />,
       );
@@ -266,7 +253,11 @@ function Conversation({
       <div className="shrink-0 border-t border-line bg-canvas px-8 py-4">
         <div className="mx-auto flex max-w-[46rem] flex-col gap-3">
           {iv.problem ? (
-            <Banner tone="danger" title={iv.problem.kind === "conflict" ? "The interviewer is still working on a reply" : describeError(iv.problem).title}>
+            <Banner
+              tone="danger"
+              title={iv.problem.kind === "conflict" ? "The interviewer is still working on a reply" : describeError(iv.problem).title}
+              actions={iv.problem.hint ? <HintAction hint={iv.problem.hint} /> : undefined}
+            >
               {iv.problem.kind === "conflict" ? "Wait for it to finish, or interrupt it." : iv.problem.message}
             </Banner>
           ) : null}

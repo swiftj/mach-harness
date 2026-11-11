@@ -38,7 +38,7 @@ export default tseslint.config(
   },
   {
     // Playwright scripts run some functions inside the page (page.evaluate).
-    files: ["apps/*/scripts/**"],
+    files: ["apps/*/scripts/**", "e2e/**/*.{js,mjs}"],
     languageOptions: { globals: { ...globals.node, ...globals.browser } }
   }
 );

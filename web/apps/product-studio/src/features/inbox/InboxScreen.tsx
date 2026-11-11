@@ -26,7 +26,7 @@ function Group({ id, title, hint, count, children }: { id: string; title: string
   );
 }
 
-function WithdrawnCard({ item, status, again }: { item: Withdrawal; status: Status; again: boolean }) {
+function WithdrawnCard({ item, status, again, dismissable = true }: { item: Withdrawal; status: Status; again: boolean; dismissable?: boolean }) {
   const title = titleFor(status, item.id);
   const to = item.id.startsWith("WAVE-") ? "/waves" : item.id.startsWith("SLICE-") ? `/slices/${item.id}` : "/roadmap";
   return (
@@ -38,17 +38,19 @@ function WithdrawnCard({ item, status, again }: { item: Withdrawal; status: Stat
         </p>
         <Text size="body-sm">{item.why}</Text>
         <Text size="caption" tone="subtle">
-          {again ? "Needs your approval again" : "Approval withdrawn"} · {formatWhen(item.at)}
+          {again ? "Needs your approval again" : "Approval withdrawn"}{item.at ? ` · ${formatWhen(item.at)}` : ""}
         </Text>
       </div>
       <div className="flex items-center gap-2">
         <Button asChild size="sm">
           <Link to={to}>Review and approve again</Link>
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => forget(item.id)}>
-          <X aria-hidden="true" />
-          Dismiss<span className="sr-only"> {item.id}</span>
-        </Button>
+        {dismissable ? (
+          <Button size="sm" variant="ghost" onClick={() => forget(item.id)}>
+            <X aria-hidden="true" />
+            Dismiss<span className="sr-only"> {item.id}</span>
+          </Button>
+        ) : null}
       </div>
     </article>
   );
@@ -115,7 +117,12 @@ export function InboxScreen() {
   const collisionIds = [...new Set(reconciling.collisions.map((p) => artifactFromPath(p).owner ?? p))];
   const engineering: FeedbackWave[] = (feedback.data?.waves ?? []).filter((w) => reviewDescriptor(w.status).attention);
   const present = (id: string) => [...data.slices.map((s) => s.slice_id), ...data.waves.map((w) => w.wave_id), ...data.epics.map((e) => e.epic_id)].includes(id);
-  const withdrawn = memory.withdrawn.filter((w) => present(w.id));
+  // The engine reports withdrawn approvals and their reason (status.approvals_withdrawn); older
+  // engines did not, so this browser's own record is the fallback.
+  const fromEngine = data.approvals_withdrawn !== undefined;
+  const withdrawn: Withdrawal[] = fromEngine
+    ? (data.approvals_withdrawn ?? []).map((w) => ({ id: w.artifact, why: w.reason ?? "Something changed what you had approved.", at: w.at ?? "" }))
+    : memory.withdrawn.filter((w) => present(w.id));
   const again = memory.needsApprovalAgain.filter((w) => present(w.id) && !withdrawn.some((x) => x.id === w.id));
   const questions = data.slices.filter((s) => s.open_questions > 0);
 
@@ -235,7 +242,7 @@ export function InboxScreen() {
         {withdrawn.length || again.length ? (
           <Group id="approvals" title="Approvals to give again" hint="Something changed what you had approved. Look again before you rely on it." count={withdrawn.length + again.length}>
             {withdrawn.map((item) => (
-              <WithdrawnCard key={`w-${item.id}`} item={item} status={data} again={false} />
+              <WithdrawnCard key={`w-${item.id}`} item={item} status={data} again={false} dismissable={!fromEngine} />
             ))}
             {again.map((item) => (
               <WithdrawnCard key={`a-${item.id}`} item={item} status={data} again />

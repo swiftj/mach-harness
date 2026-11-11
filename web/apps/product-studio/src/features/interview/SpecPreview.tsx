@@ -54,6 +54,7 @@ function DraftPanel({ sliceId, show }: { sliceId: string; show: SliceShowState }
         icon={<CircleAlert />}
         title={show.error?.kind === "refused" ? "Could not read the draft" : described.title}
         message={show.error?.kind === "refused" ? show.error.message : described.message}
+        hint={show.error?.hint}
         action={
           <Button size="sm" onClick={show.reload}>
             Try again

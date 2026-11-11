@@ -32,7 +32,7 @@ export interface ProductGraphInput {
   status: Status;
   /** `feedback.waves`, when known: lets sent slices show as submitted, accepted or blocked. */
   reviews?: FeedbackWave[];
-  /** Work-order dependencies by slice ID (status rows do not carry them; `slice show` does). */
+  /** Work-order dependencies by slice ID. Defaults to the status rows' own `dependencies`. */
   dependencies?: Record<string, string[]>;
 }
 
@@ -52,7 +52,9 @@ export function sliceGraphState(row: StatusSliceRow, status: Status, reviews: Fe
 }
 
 /** Builds graph nodes and edges from the engine's `status` (and optionally `feedback`). No positions: run layoutGraph. */
-export function productGraphFromStatus({ status, reviews = [], dependencies = {} }: ProductGraphInput): { nodes: MachNode[]; edges: MachEdge[] } {
+export function productGraphFromStatus({ status, reviews = [], dependencies }: ProductGraphInput): { nodes: MachNode[]; edges: MachEdge[] } {
+  // Status rows carry each slice's dependencies (engines from M5 wave 3); an explicit map wins.
+  const needs = dependencies ?? Object.fromEntries(status.slices.filter((s) => s.dependencies?.length).map((s) => [s.slice_id, s.dependencies ?? []]));
   const nodes: MachNode[] = [];
   const edges: MachEdge[] = [];
   const project = status.project;
@@ -115,8 +117,10 @@ export function productGraphFromStatus({ status, reviews = [], dependencies = {}
     edges.push({ id: `epic:${row.epic_id}->${id}`, source: `epic:${row.epic_id}`, target: id, type: "contains", data: { kind: "contains" } });
   }
 
-  for (const [sliceId, needs] of Object.entries(dependencies)) {
-    for (const need of needs) {
+  const known = new Set(status.slices.map((s) => s.slice_id));
+  for (const [sliceId, list] of Object.entries(needs)) {
+    for (const need of list) {
+      if (!known.has(need) || !known.has(sliceId)) continue;
       edges.push({
         id: `dep:${sliceId}->${need}`,
         source: `slice:${need}`,

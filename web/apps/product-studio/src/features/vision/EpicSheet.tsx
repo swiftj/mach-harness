@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { Plus, X } from "lucide-react";
-import { Banner, Button, Field, Input, Sheet, SheetClose, SheetContent, Text, toast, type Epic, type StatusEpicRow } from "@mach/ui";
+import { Banner, Button, Field, Input, Sheet, SheetClose, SheetContent, Text, toast, type Epic, type StatusEpicRow, HintAction } from "@mach/ui";
 import { useEngineAct } from "../../api/act";
 
 /**
- * Acceptance criteria the app has seen this visit (from epic.add and epic.set results). `status`
- * does not report them, so an epic created before this visit shows none until it is edited.
+ * Acceptance criteria the app has seen this visit (from epic.add and epic.set results). Engines from
+ * M5 wave 3 report them in `status`; this is the fallback for older ones.
  */
 const criteriaSeen = new Map<string, string[]>();
 export const knownCriteria = (epicId: string) => criteriaSeen.get(epicId) ?? null;
@@ -25,7 +25,7 @@ export function EpicSheet({ state, onClose }: { state: EpicSheetState; onClose: 
 function EpicSheetBody({ state, onClose }: { state: NonNullable<EpicSheetState>; onClose: () => void }) {
   const act = useEngineAct();
   const editing = state?.mode === "edit" ? state.epic : null;
-  const known = editing ? knownCriteria(editing.epic_id) : null;
+  const known = editing ? (editing.acceptance_criteria ?? knownCriteria(editing.epic_id)) : null;
   const [title, setTitle] = useState(editing?.title ?? "");
   const [criteria, setCriteria] = useState<string[]>(known?.length ? known : [""]);
   const [replaceCriteria, setReplaceCriteria] = useState(state.mode === "add" || Boolean(known));
@@ -128,7 +128,7 @@ function EpicSheetBody({ state, onClose }: { state: NonNullable<EpicSheetState>;
             </div>
           )}
           {act.shown ? (
-            <Banner tone="danger" live="assertive" title={act.shown.title}>
+            <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
               <span className="whitespace-pre-line">{act.shown.message}</span>
             </Banner>
           ) : null}

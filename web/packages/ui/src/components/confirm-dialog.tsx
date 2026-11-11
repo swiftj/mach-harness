@@ -2,6 +2,8 @@ import { CircleAlert } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Button } from "./button";
 import { Dialog, DialogClose, DialogContent } from "./dialog";
+import { HintAction } from "./hint";
+import type { ApiErrorHint } from "../api/errors";
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -21,8 +23,8 @@ export interface ConfirmDialogProps {
    * after a refusal that `error` now shows.
    */
   onConfirm: () => Promise<boolean | void> | boolean | void;
-  /** Shown inside the dialog, above the buttons: a refusal in the engine's own words. */
-  error?: { title: string; message: string } | null;
+  /** Shown inside the dialog, above the buttons: a refusal in the engine's own words, and its hinted action. */
+  error?: { title: string; message: string; hint?: ApiErrorHint | null } | null;
 }
 
 /**
@@ -74,6 +76,11 @@ export function ConfirmDialog({
             <div className="flex min-w-0 flex-col gap-0.5">
               <p className="text-label text-danger-ink">{error.title}</p>
               <p className="whitespace-pre-line text-body-sm text-ink">{error.message}</p>
+              {error.hint ? (
+                <div className="pt-1.5">
+                  <HintAction hint={error.hint} />
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}

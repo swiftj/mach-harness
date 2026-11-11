@@ -7,6 +7,7 @@ import {
   Button,
   Disclosure,
   EpicStatusPill,
+  formatWhen,
   ErrorState,
   Heading,
   Page,
@@ -291,11 +292,36 @@ function AttentionBanners({
       </Banner>,
     );
   }
-  if (refresh?.approvals_withdrawn.length) {
+  const withdrawn = status.approvals_withdrawn ?? [];
+  if (withdrawn.length) {
+    banners.push(
+      <Banner
+        key="withdrawn"
+        tone="warning"
+        live="polite"
+        title={withdrawn.length === 1 ? "An approval no longer holds" : `${withdrawn.length} approvals no longer hold`}
+        actions={
+          <Button size="sm" asChild>
+            <Link to="/inbox">Review</Link>
+          </Button>
+        }
+      >
+        <ul className="flex flex-col gap-1">
+          {withdrawn.map((w) => (
+            <li key={w.artifact}>
+              <span className="font-semibold">{titled(w.artifact, status)}</span>
+              {w.reason ? `: ${w.reason}` : ""}
+              {w.at ? <span className="text-ink-muted"> ({formatWhen(w.at)})</span> : null}
+            </li>
+          ))}
+        </ul>
+      </Banner>,
+    );
+  } else if (refresh?.approvals_withdrawn.length) {
     banners.push(
       <Banner key="withdrawn" tone="warning" live="polite" title="Some approvals no longer hold" actions={<Button size="sm" asChild><Link to="/inbox">Review</Link></Button>}>
         A change from the shared project made {refresh.approvals_withdrawn.length === 1 ? "this approval" : "these approvals"} untrue:{" "}
-        {refresh.approvals_withdrawn.map((item) => describePath(item, status).label).join("; ")}. Approve again once you have looked.
+        {refresh.approvals_withdrawn.map((item) => titled(item, status)).join("; ")}. Approve again once you have looked.
       </Banner>,
     );
   }
@@ -332,6 +358,17 @@ function AttentionBanners({
     );
   }
   return banners.length ? <div className="flex flex-col gap-3">{banners}</div> : null;
+}
+
+/** "Slice SLICE-001, Invite a teammate" for an engine ID; workspace paths through describePath. */
+function titled(id: string, status: Status): string {
+  if (id.includes("/")) return describePath(id, status).label;
+  const slice = status.slices.find((s) => s.slice_id === id);
+  if (slice) return `Slice ${id}, ${slice.title}`;
+  const epic = status.epics.find((e) => e.epic_id === id);
+  if (epic) return `Epic ${id}, ${epic.title}`;
+  if (id.startsWith("WAVE-")) return `Delivery wave ${id}`;
+  return id;
 }
 
 function ScopeByEpic({ status, onApprove }: { status: Status; onApprove: (epicId: string) => void }) {
@@ -413,7 +450,7 @@ function Decisions({ status, refresh, reconcileCount }: { status: Status; refres
     ...status.needs_reconciling.conflicts.map((path) => ({ path, why: "Changed here and in the shared project" })),
     ...status.needs_reconciling.collisions.map((path) => ({ path, why: "Needs a new number" })),
   ];
-  const withdrawn = refresh?.approvals_withdrawn ?? [];
+  const withdrawn = status.approvals_withdrawn ? status.approvals_withdrawn.map((w) => w.artifact) : (refresh?.approvals_withdrawn ?? []);
   return (
     <SideCard title="Needs your decision">
       {items.length || withdrawn.length ? (
@@ -427,8 +464,10 @@ function Decisions({ status, refresh, reconcileCount }: { status: Status; refres
             ))}
             {withdrawn.map((item) => (
               <li key={item} className="flex flex-col">
-                <span className="text-body-sm text-ink">{describePath(item, status).label}</span>
-                <span className="text-caption text-warning-ink">Approval withdrawn by a shared change</span>
+                <span className="text-body-sm text-ink">{titled(item, status)}</span>
+                <span className="text-caption text-warning-ink">
+                  {status.approvals_withdrawn?.find((w) => w.artifact === item)?.reason ?? "Approval withdrawn by a shared change"}
+                </span>
               </li>
             ))}
           </ul>

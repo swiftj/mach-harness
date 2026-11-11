@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { cn } from "../lib/cn";
 import { Spinner } from "./spinner";
+import { HintAction } from "./hint";
+import type { ApiErrorHint } from "../api/errors";
 
 export interface EmptyStateProps {
   /** What would be here, in plain words: "No slices yet". */
@@ -40,6 +42,8 @@ export function EmptyState({ title, description, action, icon, className, layout
 }
 
 export interface ErrorStateProps {
+  /** A refusal's hint: the action that would resolve it, rendered by the app's HintProvider. */
+  hint?: ApiErrorHint | null;
   /** What went wrong, specifically. */
   title: ReactNode;
   /** The engine's or host's message, shown as is. */
@@ -51,7 +55,7 @@ export interface ErrorStateProps {
 }
 
 /** A region that could not load or an operation that failed outright. Announced to screen readers. */
-export function ErrorState({ title, message, action, icon, className }: ErrorStateProps) {
+export function ErrorState({ title, message, action, icon, className, hint }: ErrorStateProps) {
   return (
     <div role="alert" className={cn("flex flex-col items-start gap-3 rounded-md border border-danger-line bg-danger-soft px-6 py-5", className)}>
       <div className="flex items-start gap-3">
@@ -61,7 +65,12 @@ export function ErrorState({ title, message, action, icon, className }: ErrorSta
           {message ? <p className="whitespace-pre-line text-body text-ink">{message}</p> : null}
         </div>
       </div>
-      {action ? <div className={cn(icon && "pl-8")}>{action}</div> : null}
+      {action || hint ? (
+        <div className={cn("flex flex-wrap items-center gap-2", icon && "pl-8")}>
+          <HintAction hint={hint} />
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }

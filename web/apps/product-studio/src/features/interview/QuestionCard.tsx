@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Check, HelpCircle, PencilLine, Send, Sparkles } from "lucide-react";
 import { Button, Field, Text, Textarea, RichText } from "@mach/ui";
-import type { AnswerKind } from "./model";
+import { answerText, type AnswerKind } from "./model";
 import { type ParsedQuestion } from "@mach/ui/api";
 
 export interface QuestionCardProps {
@@ -98,7 +98,7 @@ export function QuestionCard({ question, onAnswer, busy }: QuestionCardProps) {
           <>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <div className="flex items-center gap-2">
-                <Button variant="primary" loading={busy} onClick={() => onAnswer("yes", "accepted")}>
+                <Button variant="primary" loading={busy} onClick={() => onAnswer(answerText.accepted, "accepted")}>
                   <Check aria-hidden="true" />
                   Yes, accept
                 </Button>
@@ -108,13 +108,13 @@ export function QuestionCard({ question, onAnswer, busy }: QuestionCardProps) {
                 </Button>
               </div>
               <div className="flex items-center gap-1">
-                <Button variant="ghost" disabled={busy} onClick={() => onAnswer("I don't know", "deferred")}>
+                <Button variant="ghost" disabled={busy} onClick={() => onAnswer(answerText.deferred, "deferred")}>
                   I don't know
                 </Button>
-                <Button variant="ghost" disabled={busy} onClick={() => onAnswer("You decide", "delegated")}>
+                <Button variant="ghost" disabled={busy} onClick={() => onAnswer(answerText.delegated, "delegated")}>
                   You decide
                 </Button>
-                <Button variant="ghost" disabled={busy} onClick={() => onAnswer("Why do you recommend that? Explain before I answer.", "explain")}>
+                <Button variant="ghost" disabled={busy} onClick={() => onAnswer(answerText.explain, "explain")}>
                   <HelpCircle aria-hidden="true" />
                   Explain
                 </Button>

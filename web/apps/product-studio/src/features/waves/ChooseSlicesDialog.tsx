@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { ArtifactId, Button, Checkbox, Dialog, DialogClose, DialogContent, SliceStatusPill, Text, toast, type Status, plural } from "@mach/ui";
+import { ArtifactId, Button, Checkbox, Dialog, DialogClose, DialogContent, SliceStatusPill, Text, toast, type Status, plural, HintAction } from "@mach/ui";
 import { asApiError, deliveryOp } from "./delivery/ops";
 import { failureText } from "@mach/ui/api";
 
@@ -23,7 +23,7 @@ export interface ChooseSlicesDialogProps {
 export function ChooseSlicesDialog({ open, onOpenChange, status, waveId, preselected = [], onDone }: ChooseSlicesDialogProps) {
   const [chosen, setChosen] = useState<string[]>(preselected);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<{ title: string; message: string } | null>(null);
+  const [error, setError] = useState<ReturnType<typeof failureText> | null>(null);
   const [lastOpen, setLastOpen] = useState(open);
 
   if (open !== lastOpen) {
@@ -140,6 +140,7 @@ export function ChooseSlicesDialog({ open, onOpenChange, status, waveId, presele
             <div role="alert" className="rounded-md border border-danger-line bg-danger-soft px-3 py-2.5">
               <p className="text-label text-danger-ink">{error.title}</p>
               <p className="whitespace-pre-line text-body-sm text-ink">{error.message}</p>
+              <HintAction hint={error.hint} />
             </div>
           ) : null}
         </div>

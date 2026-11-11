@@ -17,11 +17,12 @@ export type SpecSectionId =
 
 export interface Diagnostic {
   severity: "error" | "warning" | "open-question" | "why";
-  /** The engine's message, as written, without the file-name prefix. */
+  /** The engine's message, as written. */
   message: string;
   line: number | null;
   rule: string | null;
-  section: SpecSectionId;
+  /** Where it belongs; null when it is about the whole specification. */
+  section: SpecSectionId | null;
 }
 
 /** The spec's model from `slice show`, or null when there is no spec. Partial when the spec has errors. */
@@ -36,36 +37,42 @@ export function whyDocument(show: SliceShow): WhyDocument | null {
   return why && typeof why === "object" ? why : null;
 }
 
+/** The spec's own section headings (as the engine reports them) to the parts the screens show. */
+const sectionByHeading: Record<string, SpecSectionId> = {
+  Summary: "summary",
+  Scope: "summary",
+  Preconditions: "summary",
+  Invariants: "rules",
+  "Functional requirements": "requirements",
+  // The decision matrix and the scenarios share this heading; the table comes first.
+  "Acceptance criteria": "decision-table",
+  "Dependencies and permissions": "dependencies",
+  Assumptions: "assumptions",
+  "Accepted defaults": "assumptions",
+  "Open questions": "open-questions",
+};
+
 /**
- * Places each of the engine's diagnostics next to the section it is about. Only the location is
- * worked out here (from the IDs and section names in the engine's own message); the words are the
- * engine's.
+ * The engine's check findings, each placed by the section the engine names (`diagnostics[].section`).
+ * A finding with no section is about the whole specification. Problems with the why are placed
+ * with the why. Nothing is read from the message text.
  */
 export function diagnostics(check: SliceCheck): Diagnostic[] {
-  const out: Diagnostic[] = [];
-  const parse = (raw: string, severity: Diagnostic["severity"]) => {
-    const located = raw.match(/^[^\s:]+\.md(?::(\d+))?:\s*(.*)$/s);
-    const body = (located ? located[2] : raw) ?? raw;
-    const ruleMatch = body.match(/\s*\[([a-z0-9-]+)\]\s*$/);
-    const message = ruleMatch ? body.slice(0, ruleMatch.index).trim() : body.trim();
-    out.push({ severity, message, line: located?.[1] ? Number(located[1]) : null, rule: ruleMatch?.[1] ?? null, section: sectionFor(message, ruleMatch?.[1] ?? null) });
-  };
-  check.errors.forEach((e) => parse(e, "error"));
-  check.warnings.forEach((w) => parse(w, "warning"));
+  // An engine without `diagnostics` (before M5 wave 3): its errors and warnings are shown as they are,
+  // about the whole specification.
+  const reported = check.diagnostics ?? [
+    ...check.errors.map((message) => ({ severity: "error", rule: null, line: null, section: null, message })),
+    ...check.warnings.map((message) => ({ severity: "warning", rule: null, line: null, section: null, message })),
+  ];
+  const out: Diagnostic[] = reported.map((d) => ({
+    severity: d.severity === "warning" ? "warning" : "error",
+    message: d.message,
+    line: d.line,
+    rule: d.rule,
+    section: d.section ? (sectionByHeading[d.section] ?? null) : null,
+  }));
   check.intent_problems.forEach((p) => out.push({ severity: "why", message: p, line: null, rule: null, section: "why" }));
   return out;
-}
-
-function sectionFor(message: string, rule: string | null): SpecSectionId {
-  const firstId = message.match(/\b(INV|FR|AC|R)-?\d+\b/)?.[1];
-  if (/Invariants/.test(message) || firstId === "INV") return "rules";
-  if (/Functional requirements/.test(message) || firstId === "FR") return "requirements";
-  if (/matrix|Decision/i.test(message) || rule?.startsWith("matrix") || firstId === "R") return "decision-table";
-  if (/Scenario|Acceptance/i.test(message) || firstId === "AC") return "scenarios";
-  if (/open question/i.test(message)) return "open-questions";
-  if (/Assumption|default/i.test(message) || rule?.startsWith("defaults")) return "assumptions";
-  if (/Dependenc|permission/i.test(message)) return "dependencies";
-  return "summary";
 }
 
 export function DiagnosticList({ items, compact = false }: { items: Diagnostic[]; compact?: boolean }) {

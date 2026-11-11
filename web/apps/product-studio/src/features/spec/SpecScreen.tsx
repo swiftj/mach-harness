@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { CircleAlert, MessagesSquare, SearchX } from "lucide-react";
-import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, SliceLifecycle, SliceStatusPill, Tabs, TabsContent, TabsList, TabsTrigger, Text, describeError, CheckCounts, CheckPill, checkVerdict, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
+import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, SliceLifecycle, SliceStatusPill, Tabs, TabsContent, TabsList, TabsTrigger, Text, describeError, CheckCounts, CheckPill, checkVerdict, DiagnosticList, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
 import { type SliceShow, ENGINE_ID as SLICE_ID } from "@mach/ui/api";
 import { ApproveDialog, PauseDialog, ReopenDialog } from "./SliceActs";
 import { SourceEditor } from "./SourceEditor";
 import { AssumptionsSection, DecisionTableSection, DependenciesSection, OpenQuestionsSection, RequirementsSection, RulesSection, ScenariosSection, SummarySection, WhySection } from "./SpecSections";
 import { sectionTitles } from "./specModel";
 import { useSliceShow } from "../../api/useSliceShow";
+import { useStatus } from "../../api/store";
+import { WithdrawnNote } from "../../shared/WithdrawnNote";
 
 type View = "spec" | "why" | "source";
 
@@ -38,6 +40,7 @@ function SpecWorkspace({ sliceId }: { sliceId: string }) {
           icon={<CircleAlert />}
           title={error?.kind === "refused" ? `${sliceId} could not be shown` : described.title}
           message={error?.kind === "refused" ? error.message : described.message}
+          hint={error?.hint}
           action={<Button onClick={show.reload}>Try again</Button>}
         />
       </Page>
@@ -97,8 +100,10 @@ function SpecHeader({ show, onChanged, refreshing, refreshError }: { show: Slice
   const approved = slice.status === "approved_for_engineering";
   const ready = show.check.ready;
   const openCount = show.check.open_questions.length;
+  const withdrawn = useStatus().data?.approvals_withdrawn?.find((w) => w.artifact === slice.slice_id);
   return (
     <header className="flex flex-col gap-5">
+      <WithdrawnNote item={withdrawn} />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
           <ArtifactId>{slice.slice_id}</ArtifactId>
@@ -157,9 +162,19 @@ function SpecBody({ show }: { show: SliceShow }) {
   const model = specModel(show);
   const diags = listDiagnostics(show.check);
   const at = (section: SectionId) => diags.filter((d) => d.section === section);
+  const whole = diags.filter((d) => d.section === null);
+  const aboutWhole = whole.length ? (
+    <section aria-label="About the whole specification" className="flex flex-col gap-2">
+      <Text size="body-sm" weight="semibold">
+        About the whole specification
+      </Text>
+      <DiagnosticList items={whole} />
+    </section>
+  ) : null;
   if (!model) {
     return (
       <div className="flex flex-col gap-8">
+        {aboutWhole}
         <EmptyState
           icon={<MessagesSquare />}
           title="No specification yet"
@@ -171,6 +186,7 @@ function SpecBody({ show }: { show: SliceShow }) {
   }
   return (
     <div className="flex flex-col gap-10">
+      {aboutWhole}
       <SummarySection model={model} diagnostics={at("summary")} />
       <OpenQuestionsSection model={model} fallback={show.check.open_questions} diagnostics={at("open-questions")} />
       <RulesSection model={model} diagnostics={at("rules")} />
@@ -190,7 +206,9 @@ function CheckAside({ show, onGoTo }: { show: SliceShow; onGoTo: (section: Secti
   const verdict = checkVerdict(check, show.slice.status);
   const diags = listDiagnostics(check);
   const bySection = new Map<SectionId, Diagnostic[]>();
-  diags.forEach((d) => bySection.set(d.section, [...(bySection.get(d.section) ?? []), d]));
+  diags.forEach((d) => {
+    if (d.section) bySection.set(d.section, [...(bySection.get(d.section) ?? []), d]);
+  });
   return (
     <aside aria-labelledby="check-title" className="sticky top-6 flex flex-col gap-5">
       <section className="flex flex-col gap-3 rounded-md border border-line bg-surface px-4 py-4">

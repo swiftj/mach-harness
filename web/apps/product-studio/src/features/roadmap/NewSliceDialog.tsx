@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { Button, Dialog, DialogClose, DialogContent, Field, Input, Select, Textarea, toast } from "@mach/ui";
+import { Button, Dialog, DialogClose, DialogContent, Field, Input, Select, Textarea, toast, HintAction } from "@mach/ui";
 import type { StatusEpicRow } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 
@@ -87,9 +87,10 @@ function NewSliceBody({ onOpenChange, epics, epicId }: NewSliceDialogProps) {
           </Field>
         </form>
         {act.shown ? (
-          <p role="alert" className="mt-3 whitespace-pre-line text-body-sm text-danger-ink">
-            {act.shown.message}
-          </p>
+          <div role="alert" className="mt-3 flex flex-col items-start gap-2">
+            <p className="whitespace-pre-line text-body-sm text-danger-ink">{act.shown.message}</p>
+            <HintAction hint={act.shown.hint} />
+          </div>
         ) : null}
       </DialogContent>
   );

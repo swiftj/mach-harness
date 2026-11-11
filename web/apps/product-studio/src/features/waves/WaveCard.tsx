@@ -1,8 +1,9 @@
 import { Lock, Minus, Plus, Send, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
-import { ArtifactId, Button, ConfirmDialog, Heading, ReviewStatusPill, SliceStatusPill, SourceBadge, StateGlyph, Text, Tooltip, WaveStatusPill, reviewDescriptor, toast, type FeedbackWave, type Status, type StatusWaveRow, IdText, formatWhen, plural } from "@mach/ui";
+import { ArtifactId, Button, ConfirmDialog, Heading, ReviewStatusPill, SliceStatusPill, SourceBadge, StateGlyph, Text, Tooltip, WaveStatusPill, reviewDescriptor, toast, type FeedbackWave, type Status, type StatusWaveRow, IdText, formatWhen, plural, Field, Input } from "@mach/ui";
 import { asApiError, deliveryOp } from "./delivery/ops";
+import { WithdrawnNote } from "../../shared/WithdrawnNote";
 import { failureText } from "@mach/ui/api";
 
 export interface WaveCardProps {
@@ -20,7 +21,7 @@ export interface WaveCardProps {
 /** One delivery wave: what is in it, where it stands, and the acts that fit its state. */
 export function WaveCard({ wave, status, review, dependencies, dependenciesLoading, onChanged, onAddSlices, onStartNew }: WaveCardProps) {
   const [approving, setApproving] = useState(false);
-  const [approveError, setApproveError] = useState<{ title: string; message: string } | null>(null);
+  const [approveError, setApproveError] = useState<ReturnType<typeof failureText> | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
 
   const draft = wave.status === "draft";
@@ -56,10 +57,14 @@ export function WaveCard({ wave, status, review, dependencies, dependenciesLoadi
     }
   };
 
+  // The engine's hint `name_approver`: no name is known on this computer, so the PM gives one here.
+  const [approverName, setApproverName] = useState("");
+  const needsName = approveError?.hint?.kind === "name_approver";
+
   const approve = async () => {
     setApproveError(null);
     try {
-      const result = await deliveryOp("wave.approve", { wave_id: wave.wave_id });
+      const result = await deliveryOp("wave.approve", approverName.trim() ? { wave_id: wave.wave_id, actor: approverName.trim() } : { wave_id: wave.wave_id });
       toast({ tone: "success", title: `Approved ${wave.wave_id}`, description: result.note });
       onChanged();
       return true;
@@ -89,6 +94,7 @@ export function WaveCard({ wave, status, review, dependencies, dependenciesLoadi
             {epics.length ? ` from ${epics.map(epicTitle).join(", ")}` : ""}
             {wave.approval ? ` · approved by ${wave.approval.actor}, ${formatWhen(wave.approval.approved_at)}` : ""}
           </Text>
+          <WithdrawnNote item={status.approvals_withdrawn?.find((w) => w.artifact === wave.wave_id)} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {draft ? (
@@ -222,9 +228,14 @@ export function WaveCard({ wave, status, review, dependencies, dependenciesLoadi
         description="Approving is your personal decision that these slices should be delivered together. Every slice is checked again, and your name and the time are recorded."
         confirmLabel={`Approve ${wave.wave_id}`}
         onConfirm={approve}
-        error={approveError}
+        error={approveError && needsName ? { title: approveError.title, message: approveError.message } : approveError}
       >
         <div className="flex flex-col gap-3 text-body-sm">
+          {needsName ? (
+            <Field label="Your name" hint="Recorded with the approval and read by everyone who sees the wave. A name, not an email address.">
+              <Input value={approverName} onChange={(e) => setApproverName(e.target.value)} autoComplete="name" />
+            </Field>
+          ) : null}
           <ul className="flex flex-col gap-1.5 rounded-md bg-surface-sunken px-3 py-2.5">
             {slices.map(({ id, row }) => (
               <li key={id} className="flex flex-wrap items-center gap-2">

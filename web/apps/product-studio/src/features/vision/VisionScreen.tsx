@@ -1,27 +1,7 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import { Link, useLocation } from "react-router";
 import { CircleAlert, Plus, X } from "lucide-react";
-import {
-  ArtifactId,
-  Banner,
-  Button,
-  EpicStatusPill,
-  ErrorState,
-  Field,
-  Heading,
-  Input,
-  Page,
-  Skeleton,
-  SkeletonText,
-  SourceBadge,
-  Text,
-  Textarea,
-  cn,
-  describeError,
-  toast,
-  type Status,
-  type StatusEpicRow,
-} from "@mach/ui";
+import { ArtifactId, Banner, Button, EpicStatusPill, ErrorState, Field, Heading, Input, Page, Skeleton, SkeletonText, SourceBadge, Text, Textarea, cn, describeError, toast, type Status, type StatusEpicRow, HintAction } from "@mach/ui";
 import { useEngineAct } from "../../api/act";
 import { useRefresh, useStatus } from "../../api/store";
 import { fieldWords } from "../../api/describe";
@@ -207,7 +187,7 @@ function ProjectCreator() {
           />
         </Field>
         {act.shown ? (
-          <Banner tone="danger" live="assertive" title={act.shown.title}>
+          <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
             <span className="whitespace-pre-line">{act.shown.message}</span>
           </Banner>
         ) : null}
@@ -240,7 +220,8 @@ function ProjectEditor({ status }: { status: Status }) {
     outcomes: JSON.stringify(clean(outcomes)) !== JSON.stringify(project.outcomes),
   };
   const dirty = changed.name || changed.vision || changed.outcomes;
-  const conflict = status.needs_reconciling.conflicts.includes("product/project.json");
+  const source = project.source ?? (status.needs_reconciling.conflicts.includes("product/project.json") ? "conflict" : undefined);
+  const conflict = source === "conflict" || source === "collision";
   const sharedUpdate = refresh.data?.updated.find((u) => u.path === "product/project.json");
 
   const save = async (event: FormEvent) => {
@@ -276,11 +257,20 @@ function ProjectEditor({ status }: { status: Status }) {
               Vision
             </Heading>
             <ArtifactId>{project.project_id}</ArtifactId>
-            {conflict ? <SourceBadge source="conflict" /> : null}
+            {source ? <SourceBadge source={source} showDraft /> : null}
           </div>
           <Text editorial size="body-lg" tone="muted">
             What the product is for and what people will get from it. Changes are saved to your draft; others see them once they are accepted.
           </Text>
+          {source === "published" ? (
+            <Text size="body-sm" tone="muted">
+              This is the version in the shared project. Saving a change makes it your draft until it is sent and accepted.
+            </Text>
+          ) : source === "draft" ? (
+            <Text size="body-sm" tone="muted">
+              Only in your workspace: not yet in the shared project.
+            </Text>
+          ) : null}
         </div>
         {conflict ? (
           <Banner tone="warning" title="The project changed here and in the shared project" actions={<Button size="sm" asChild><Link to="/inbox">Settle it</Link></Button>}>
@@ -299,7 +289,7 @@ function ProjectEditor({ status }: { status: Status }) {
         </Field>
         <OutcomesEditor outcomes={outcomes} onChange={setOutcomes} error={errors.outcomes} />
         {act.shown ? (
-          <Banner tone="danger" live="assertive" title={act.shown.title}>
+          <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
             <span className="whitespace-pre-line">{act.shown.message}</span>
           </Banner>
         ) : null}
@@ -353,7 +343,7 @@ function Epics({ status }: { status: Status }) {
         </Button>
       </div>
       {act.shown ? (
-        <Banner tone="danger" live="assertive" title={act.shown.title}>
+        <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
           <span className="whitespace-pre-line">{act.shown.message}</span>
         </Banner>
       ) : null}
@@ -361,7 +351,7 @@ function Epics({ status }: { status: Status }) {
         <ul className="flex flex-col divide-y divide-line">
           {status.epics.map((epic) => {
             const slices = slicesOf.get(epic.epic_id) ?? [];
-            const criteria = knownCriteria(epic.epic_id);
+            const criteria = epic.acceptance_criteria ?? knownCriteria(epic.epic_id);
             return (
               <li key={epic.epic_id} className={cn("grid grid-cols-[minmax(0,1fr)_auto] gap-x-6 gap-y-2 py-5", epic.status === "superseded" && "opacity-70")}>
                 <div className="flex min-w-0 flex-col gap-2">

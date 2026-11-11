@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { type MachApiError, type InterviewClient, type InterviewSummary } from "@mach/ui/api";
+import { toInterviewEvent, type MachApiError, type InterviewClient, type InterviewSummary } from "@mach/ui/api";
 import { client } from "../../api/client";
-import { initialModel, interviewReducer, type AnswerKind, type Decision, type InterviewModel } from "./model";
+import { initialModel, interviewReducer, type AnswerKind, type InterviewModel } from "./model";
 import { interviewCapability, loadSession, toApiError, type InterviewCapability } from "../../api/session";
 
 export type InterviewPhase =
@@ -35,29 +35,8 @@ export interface InterviewController {
   retryLoad: () => void;
 }
 
-/** Decisions are kept per slice in this browser so the history survives a reload. A convenience only. */
-const storageKey = (sliceId: string) => `mach.interview.decisions.${sliceId}`;
-
-function readDecisions(sliceId: string): Decision[] {
-  try {
-    const raw = window.localStorage.getItem(storageKey(sliceId));
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? (parsed as Decision[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeDecisions(sliceId: string, decisions: Decision[]) {
-  try {
-    window.localStorage.setItem(storageKey(sliceId), JSON.stringify(decisions.slice(-200)));
-  } catch {
-    // Storage blocked: the history lasts for this page only.
-  }
-}
-
 export function useInterview(sliceId: string): InterviewController {
-  const [model, dispatch] = useReducer(interviewReducer, sliceId, (id) => ({ ...initialModel, decisions: readDecisions(id) }));
+  const [model, dispatch] = useReducer(interviewReducer, initialModel);
   const [phase, setPhase] = useState<InterviewPhase>("loading");
   const [capability, setCapability] = useState<InterviewCapability | null>(null);
   const [summary, setSummary] = useState<InterviewSummary | null>(null);
@@ -89,6 +68,21 @@ export function useInterview(sliceId: string): InterviewController {
         clientRef.current = client;
         const cap = interviewCapability(session);
         setCapability(cap);
+        // The saved conversation: restores the transcript and the decisions after a reload or a
+        // host restart. An older host without the route shows nothing earlier, as before.
+        try {
+          const history = await client.history(sliceId, controller.signal);
+          if (cancelled) return;
+          const events = history.events.flatMap((saved) => {
+            const event = toInterviewEvent(saved.event, saved.data);
+            return event ? [event] : [];
+          });
+          dispatch({ type: "history", events, truncated: history.truncated });
+        } catch (cause) {
+          const error = toApiError(cause, "interview.history");
+          if (error.kind === "aborted") return;
+          if (error.kind !== "invalid" && error.kind !== "protocol") throw error;
+        }
         if (!cap.available) {
           setPhase("unavailable");
           return;
@@ -124,16 +118,11 @@ export function useInterview(sliceId: string): InterviewController {
     };
   }, [sliceId, loadTick, attach]);
 
-  useEffect(() => {
-    if (model.decisions.length) writeDecisions(sliceId, model.decisions);
-  }, [sliceId, model.decisions]);
-
   const start = useCallback(() => {
     const client = clientRef.current;
     if (!client) return;
     setPhase("starting");
     setProblem(null);
-    dispatch({ type: "reset", decisions: readDecisions(sliceId) });
     client.start(sliceId).then(
       (result) => attach(client, result.interview_id),
       (cause: unknown) => {
@@ -191,12 +180,12 @@ export function useInterview(sliceId: string): InterviewController {
   }, []);
 
   const retryLoad = useCallback(() => {
-    dispatch({ type: "reset", decisions: readDecisions(sliceId) });
+    dispatch({ type: "reset" });
     setPhase("loading");
     setProblem(null);
     setSummary(null);
     setLoadTick((t) => t + 1);
-  }, [sliceId]);
+  }, []);
 
   return { phase, capability, summary, model, problem, sending, start, reply, interrupt, stop, retryLoad };
 }

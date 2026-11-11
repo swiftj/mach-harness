@@ -1,6 +1,6 @@
 import { ENGINE_ID } from "./ids";
 import { MachApiError } from "./errors";
-import { interviewEventNames, type InterviewEvent, type InterviewSummary, type StartResult } from "./types";
+import { interviewEventNames, type InterviewEvent, type InterviewHistory, type InterviewSummary, type StartResult } from "./types";
 
 /** The minimum of EventSource the stream needs, so tests and fixture mode can supply their own. */
 export interface EventSourceLike {
@@ -29,6 +29,8 @@ export interface StreamHandlers {
 export interface InterviewClient {
   /** GET /api/interview?slice_id=. Null when the slice has never been interviewed here. */
   current(sliceId: string, signal?: AbortSignal): Promise<InterviewSummary | null>;
+  /** GET /api/interview/history?slice_id=: every saved event for the slice, oldest first. */
+  history(sliceId: string, signal?: AbortSignal): Promise<InterviewHistory>;
   /**
    * POST /api/interview: start or resume. For a new idea, run `slice.new` first and pass the idea.
    * Rejects with `conflict` when another window holds the slice, `refused` for an approved slice,
@@ -49,6 +51,16 @@ export interface InterviewClient {
 }
 
 const INTERVIEW_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Turns one event as the host sends it (live or from history) into the typed event. The host sends
+ * `state` as `{state, ...}`; the typed event carries the state word itself.
+ */
+export function toInterviewEvent(name: string, data: unknown, seq: number | null = null): InterviewEvent | null {
+  if (!(interviewEventNames as string[]).includes(name)) return null;
+  const value = name === "state" && data && typeof data === "object" && "state" in data ? (data as { state: unknown }).state : data;
+  return { type: name, data: value, seq } as InterviewEvent;
+}
 
 function checkId(id: string, operation: string): string {
   if (!INTERVIEW_ID.test(id)) throw new MachApiError("invalid", "That is not an interview ID.", operation);
@@ -71,6 +83,10 @@ export function createInterviewClient(deps: {
         interview: InterviewSummary | null;
       };
       return data.interview;
+    },
+    async history(sliceId, signal) {
+      if (!ENGINE_ID.test(sliceId)) throw new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, "interview.history");
+      return (await deps.get(`/api/interview/history?slice_id=${encodeURIComponent(sliceId)}`, "interview.history", signal)) as InterviewHistory;
     },
     start(sliceId, idea) {
       if (!ENGINE_ID.test(sliceId)) return Promise.reject(new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, "interview.start"));
@@ -128,7 +144,8 @@ export function createInterviewClient(deps: {
             } catch {
               return;
             }
-            onEvent({ type: name, data, seq: Number.isFinite(seq) ? seq : null } as InterviewEvent);
+            const event = toInterviewEvent(name, data, Number.isFinite(seq) ? seq : null);
+            if (event) onEvent(event);
             if (name === "ended") {
               closed = true;
               source?.close();

@@ -104,7 +104,7 @@ export interface ConflictCardProps {
 export function ConflictCard({ path, detail, status, onSettled }: ConflictCardProps) {
   const artifact = artifactFromPath(path);
   const [choice, setChoice] = useState<Choice | null>(null);
-  const [error, setError] = useState<{ title: string; message: string } | null>(null);
+  const [error, setError] = useState<ReturnType<typeof failureText> | null>(null);
   const headingId = `conflict-${path.replace(/[^a-zA-Z0-9]/g, "-")}`;
   const approved = isApproved(status, artifact);
   const textual = artifact.kind === "spec" || artifact.kind === "why";

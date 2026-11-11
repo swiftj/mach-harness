@@ -31,7 +31,10 @@ async function data<T>(name: string): Promise<T> {
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const ok = (value: unknown): TransportResponse => ({ status: 200, json: { ok: true, data: value } });
-const fail = (kind: string, message: string, status = 200): TransportResponse => ({ status, json: { ok: false, error: { kind, message } } });
+const fail = (kind: string, message: string, status = 200, hint: EngineRun<unknown>["hint"] = null): TransportResponse => ({
+  status,
+  json: { ok: false, error: hint ? { kind, message, hint } : { kind, message } },
+});
 
 /** Which fixture answers each operation by default. */
 const defaults: Record<string, string> = {
@@ -92,7 +95,10 @@ async function sliceRoute(path: string, method: string, args: Record<string, unk
       return ok(show ? show.check : await data<SliceCheck>(sliceId === "SLICE-001" ? "slice.check.ready" : "slice.check.open-questions"));
     }
     case "/api/ops/slice.approve": {
-      if (devParam("approve") === "refused") return fail("refused", (await load("slice.approve.refused-epic"))?.refused ?? "Refused.", 409);
+      if (devParam("approve") === "refused") {
+        const refused = await load("slice.approve.refused-epic");
+        return fail("refused", refused?.refused ?? "Refused.", 422, refused?.hint ?? null);
+      }
       devState.approved.add(sliceId);
       return ok(await data("slice.approve"));
     }
@@ -155,5 +161,5 @@ export const fixtureTransport: Transport = async ({ path, method, body }) => {
   const run = name ? await load<unknown>(name) : null;
   if (!run) return fail("invalid", `No fixture answers ${path}.`, 400);
   if (run.data !== null) return ok(run.data);
-  return fail("refused", run.refused ?? "Refused.");
+  return fail("refused", run.refused ?? "Refused.", 422, run.hint ?? null);
 };

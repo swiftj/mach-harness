@@ -14,7 +14,7 @@ const nouns: Record<string, string> = { SLICE: "slice", EPIC: "epic", WAVE: "del
  */
 export function CollisionCard({ id, status, onRenumbered }: { id: string; status: Status; onRenumbered: (result: Renumber) => void }) {
   const [open, setOpen] = useState(false);
-  const [error, setError] = useState<{ title: string; message: string } | null>(null);
+  const [error, setError] = useState<ReturnType<typeof failureText> | null>(null);
   const prefix = id.split("-")[0] ?? "";
   const noun = nouns[prefix] ?? "item";
   const title = titleFor(status, id);

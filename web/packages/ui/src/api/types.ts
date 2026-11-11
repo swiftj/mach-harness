@@ -151,6 +151,8 @@ export interface StatusEpicRow {
   title: string;
   status: EpicStatus;
   revision: number;
+  /** Absent from engines before M5 wave 3. */
+  acceptance_criteria?: string[];
   source: ArtifactSource;
 }
 
@@ -166,6 +168,12 @@ export interface StatusSliceRow {
   has_intent: boolean;
   source: ArtifactSource;
   resume_note: string | null;
+  /** The slices this one needs first. Absent from engines before M5 wave 3. */
+  dependencies?: string[];
+  /** Whether the spec and why may be edited now. */
+  editable?: boolean;
+  /** The waves that contain this slice. */
+  in_waves?: string[];
 }
 
 export interface StatusWaveRow {
@@ -179,8 +187,20 @@ export interface StatusWaveRow {
   pull_request: string | null;
 }
 
+/** An approval the engine withdrew, and why, in the PM's words (status.approvals_withdrawn). */
+export interface ApprovalWithdrawn {
+  /** SLICE-001, WAVE-001. */
+  artifact: string;
+  kind: "slice" | "wave" | (string & {});
+  reason: string | null;
+  /** ISO 8601. */
+  at: string | null;
+}
+
 export interface Status {
-  project: Omit<Project, "schema_version"> | null;
+  project: (Omit<Project, "schema_version"> & { source?: ArtifactSource }) | null;
+  /** Approvals the engine withdrew (a reopen, a change from the shared project), with the reason. */
+  approvals_withdrawn?: ApprovalWithdrawn[];
   epics: StatusEpicRow[];
   slices: StatusSliceRow[];
   waves: StatusWaveRow[];
@@ -192,12 +212,9 @@ export interface Status {
   structurally_valid: boolean | null;
   structural_errors: string[];
   factory_authorized: false;
-  /**
-   * The engine's suggestions as sentences. They end with a terminal command in brackets, which the
-   * app must never show: prefer `next_actions`, and use `suggestionText()` when falling back.
-   */
+  /** The engine's suggestions as sentences (the terminal skill's form). The app shows `next_actions`. */
   suggested_next: string[];
-  /** Structured next actions (being added by the host owner). Absent on older engines. */
+  /** What to do next, in order, structured. Absent only on engines before M5 wave 2. */
   next_actions?: NextAction[];
 }
 
@@ -210,7 +227,29 @@ export interface NextAction {
   target: string | null;
   title: string;
   reason: string | null;
+  /** Other artifacts the action concerns, such as the slices in a wave. */
+  related?: string[];
 }
+
+/**
+ * A refusal's structured suggestion: the app action that would resolve it (error.hint). The
+ * vocabulary is the next-action kinds plus the acts that resolve a refusal.
+ */
+export interface ErrorHint {
+  kind: HintKind;
+  /** The artifact to act on: SLICE-001, EPIC-001, WAVE-001, or null for the project. */
+  target: string | null;
+}
+
+export type HintKind =
+  | NextActionKind
+  | "reopen_slice"
+  | "renumber_slice"
+  | "renumber_epic"
+  | "renumber_wave"
+  | "edit_epic"
+  | "edit_project"
+  | "name_approver";
 
 /** Kinds the app knows how to route. Unknown kinds are still shown, routed by their target. */
 export type NextActionKind =
@@ -260,11 +299,25 @@ export interface SpecCounts {
   scenarios: number;
 }
 
+/**
+ * One finding of the engine's check, placed by the spec's own section heading ("Invariants",
+ * "Acceptance criteria"...). `section` null means it is about the whole specification.
+ */
+export interface CheckDiagnostic {
+  severity: "error" | "warning" | (string & {});
+  rule: string | null;
+  line: number | null;
+  section: string | null;
+  message: string;
+}
+
 export interface SliceCheck {
   slice_id: string;
   spec: string | null;
   errors: string[];
   warnings: string[];
+  /** The errors and warnings with their section (engines from M5 wave 3). */
+  diagnostics?: CheckDiagnostic[];
   open_questions: string[];
   intent_problems: string[];
   counts: SpecCounts;
@@ -472,6 +525,8 @@ export interface SpecFinding {
   severity: "error" | "warning" | (string & {});
   rule: string;
   line: number | null;
+  /** The spec section heading it is about; null for the whole specification. */
+  section?: string | null;
   message: string;
 }
 
@@ -662,6 +717,8 @@ export interface InterviewEventMap {
   activity: { kind: ActivityKind; text: string };
   draft_changed: { slice_id: string; what: Array<"spec" | "why" | "work_order" | (string & {})> };
   turn: { outcome: TurnOutcome; seconds: number; cost_usd: number | null; session_cost_usd: number | null; refused: number | string[] | null };
+  /** The product manager's own reply, first in the turn it starts. */
+  reply: { text: string };
   ended: { reason: "stopped" | "failed" | "host_shutdown" | (string & {}) };
   error: { kind: InterviewErrorKind; message: string };
 }
@@ -676,7 +733,7 @@ export type InterviewEventType = InterviewEventName;
  */
 export type InterviewEvent = { [K in InterviewEventName]: { type: K; data: InterviewEventMap[K]; seq: number | null } }[InterviewEventName];
 
-export const interviewEventNames: InterviewEventName[] = ["state", "text", "message", "question", "activity", "draft_changed", "turn", "ended", "error"];
+export const interviewEventNames: InterviewEventName[] = ["state", "text", "message", "question", "activity", "draft_changed", "turn", "reply", "ended", "error"];
 /** Kept for the first wave's name. */
 export const interviewEventTypes: readonly InterviewEventName[] = interviewEventNames;
 
@@ -693,6 +750,14 @@ export interface InterviewSummary {
   last_message: { message_id: string; text: string; kind: MessageKind; question: ParsedQuestion | null } | null;
   turns: number;
   session_cost_usd: number | null;
+}
+
+/** GET /api/interview/history?slice_id=: every saved event, oldest first, across interviews and restarts. */
+export interface InterviewHistory {
+  slice_id: string;
+  events: Array<{ at: string; interview_id: string; event: InterviewEventName; data: unknown }>;
+  /** The oldest events were dropped to keep the history small. */
+  truncated: boolean;
 }
 
 /** POST /api/interview. */
@@ -721,4 +786,6 @@ export interface EngineRun<T> {
   data: T | null;
   /** The engine's refusal message (stderr after "refused: "), or null. */
   refused: string | null;
+  /** The refusal's structured suggestion, when the engine gave one. */
+  hint?: ErrorHint | null;
 }

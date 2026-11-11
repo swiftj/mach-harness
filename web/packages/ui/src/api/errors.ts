@@ -12,6 +12,12 @@ export type ClientErrorKind =
 
 export type ApiErrorKind = HostErrorKind | ClientErrorKind;
 
+/** A refusal's suggestion: the app action that would resolve it. */
+export interface ApiErrorHint {
+  kind: string;
+  target: string | null;
+}
+
 /**
  * Every failed call rejects with this. `message` is written for a person when kind is "refused"
  * (the engine's own words) and should be shown as is; for other kinds, show `describeError(error)`.
@@ -23,12 +29,15 @@ export class MachApiError extends Error {
   readonly status: number | null;
   /** The operation or path that failed, for logs. Never contains tokens or bodies. */
   readonly operation: string;
+  /** With some refusals: the action that would resolve it. Offer it next to the message; never parse the message. */
+  readonly hint: ApiErrorHint | null;
 
-  constructor(kind: ApiErrorKind, message: string, operation: string, status: number | null = null) {
+  constructor(kind: ApiErrorKind, message: string, operation: string, status: number | null = null, hint: ApiErrorHint | null = null) {
     super(message);
     this.kind = kind;
     this.status = status;
     this.operation = operation;
+    this.hint = hint;
   }
 }
 
@@ -37,10 +46,10 @@ export function isMachApiError(value: unknown): value is MachApiError {
 }
 
 /** A heading for an error, in the interface's voice. The message itself is shown underneath. */
-export function describeError(error: MachApiError): { title: string; message: string } {
+export function describeError(error: MachApiError): { title: string; message: string; hint?: ApiErrorHint | null } {
   switch (error.kind) {
     case "refused":
-      return { title: "Not done", message: error.message };
+      return { title: "Not done", message: error.message, hint: error.hint };
     case "invalid":
       return { title: "That request was not accepted", message: error.message };
     case "unauthorized":
@@ -71,7 +80,7 @@ export function describeError(error: MachApiError): { title: string; message: st
  * The words for a failed act, for an ErrorState or a ConfirmDialog's `error`. A refusal is the
  * engine's own message, under a title that names what did not happen ("WAVE-001 was not sent").
  */
-export function failureText(error: MachApiError, whatDidNotHappen: string): { title: string; message: string } {
-  if (error.kind === "refused") return { title: whatDidNotHappen, message: error.message };
+export function failureText(error: MachApiError, whatDidNotHappen: string): { title: string; message: string; hint?: ApiErrorHint | null } {
+  if (error.kind === "refused") return { title: whatDidNotHappen, message: error.message, hint: error.hint };
   return describeError(error);
 }

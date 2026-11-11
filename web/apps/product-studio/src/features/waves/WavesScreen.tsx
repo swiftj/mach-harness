@@ -1,7 +1,7 @@
 import { CircleAlert, Layers, Plus } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
-import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, Text, describeError, type FeedbackWave, type StatusWaveRow, plural } from "@mach/ui";
+import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, Text, describeError, type FeedbackWave, type StatusWaveRow, plural, HintAction } from "@mach/ui";
 import { ChooseSlicesDialog } from "./ChooseSlicesDialog";
 import { WaveCard } from "./WaveCard";
 import { useDeliveryRead } from "./delivery/ops";
@@ -92,7 +92,16 @@ export function WavesScreen() {
         ) : null}
 
         {feedback.error ? (
-          <Banner tone="info" title="Review progress could not be checked just now" actions={<Button size="sm" onClick={feedback.reload}>Check again</Button>}>
+          <Banner
+            tone="info"
+            title="Review progress could not be checked just now"
+            actions={
+              <>
+                <HintAction hint={feedback.error.hint} />
+                <Button size="sm" onClick={feedback.reload}>Check again</Button>
+              </>
+            }
+          >
             {feedback.error.kind === "refused" ? feedback.error.message : describeError(feedback.error).message} Your waves are shown as your workspace has them.
           </Banner>
         ) : null}
