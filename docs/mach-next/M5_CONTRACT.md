@@ -134,3 +134,62 @@ The interviewer follows the existing `/mach:product-studio` skill. It may read, 
 - **Do not start, enable or install anything of the Factory's**, a LaunchAgent, or a Git hook.
 - **No invented data in the product path.** Fixtures come from `web/fixtures/generate.py`; the showcase may compose them.
 - **Report honestly:** what was built, what was run and its real output, what was not done or not verified.
+
+## 8. Amendments after the first wave
+
+These replace anything above that they contradict. They record what was built and what the interview proof found (`M5_INTERVIEW_POC.md`).
+
+### 8.1 The API as built (`apps/studio/README.md` is the reference)
+
+- `GET /api/session` → `{project: {folder, path, name|null, project_id|null}, csrf_token, capabilities: {interview, interview_reason}, versions: {host, api, engine_install}, engine_problem}`.
+- Operation arguments use the engine's own names. The ones that are not obvious: `{identifier}` for the three renumber operations; `{wave_id, slice_ids: []}` for `wave.add` and `wave.remove`; `{slice: []}` for `wave.new`; `{outcome: []}` and `{criterion: []}` for lists; an empty `depends_on` clears it.
+- `validate` and `slice.check` return `ok: true` with their report even when the report says something is wrong.
+- `PUT /api/drafts/spec/<slice>` takes `{markdown, name?}` (`name`, such as `invite-teammate`, only for a slice's first spec) and returns `{slice_id, kind, path, check}`. `PUT /api/drafts/intent/<slice>` takes `{markdown}`.
+- Every engine call for a project is serialised. A request that waits more than 30 seconds gets `conflict`.
+- HTTP status follows the envelope's kind, but clients read the envelope.
+- The Content-Security-Policy is `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'`. The production build must work under it unchanged: no inline `<script>` or `<style>`, no `style="..."` attributes in served HTML, and **no asset inlined as a `data:` URI except images** (Vite inlines small fonts by default; that must be switched off).
+
+### 8.2 The interview
+
+One Claude Code session per slice, resumed across interviews and host restarts; one `claude -p` process per reply.
+
+Events (server-sent, replacing section 6's table):
+
+| Event | Data |
+|-------|------|
+| `state` | `starting`, `thinking`, `working`, `waiting_for_reply`, `ended`, `failed` |
+| `text` | `{message_id, delta}` — streamed; may belong to a message that is never final |
+| `message` | `{message_id, text, kind}` — once, at the end of a turn, for the reply the PM answers. `kind`: `question`, `confirmation`, `other` |
+| `question` | `{message_id, number, title, body, recommendation, preface}` — sent with `message` when it parses as exactly one question. `number` is not unique across sessions; key by `message_id` |
+| `activity` | `{kind, text}` — after a tool ran. `kind`: `lookup`, `check`, `save`, `write`, `refused`, `other`. Plain words, never tool input |
+| `draft_changed` | `{slice_id, what: []}` — `spec`, `why`, `work_order`; detected by the host |
+| `turn` | `{outcome, seconds, cost_usd, session_cost_usd, refused}` — closes every turn |
+| `ended` | `{reason}` — `stopped`, `failed`, `host_shutdown` |
+| `error` | `{kind, message}` |
+
+Only a parsed `question` gets Yes/No actions. Any other final message is shown as text with a free reply.
+
+Routes: `POST /api/interview {slice_id, idea?}` (the app calls `slice.new` first for a new idea; `conflict` while the slice's lock is held; `refused` for an approved slice), `GET /api/interview/<id>/events`, `POST .../reply {text}`, `POST .../interrupt` (stop this turn, keep the interview), `POST .../stop` (end it; the draft, the saved note and the session remain).
+
+The interviewer may run only `where`, `status`, `validate`, `refresh`, and on its own slice `slice resume`, `slice check`, `slice pause`, `slice set`; it may edit only its own slice's spec and why. Creating slices and epics, and every approval, send and reconcile, are the app's own operations, done by the PM.
+
+The interviewer process, always: `--restricted --strict-mcp-config --permission-mode default --permission-prompts none --tools Read,Glob,Grep,Edit,Write,Bash`, allow rules generated from the interpreter and script paths resolved at start-up (absolute `Edit(//...)` rules; quoted and unquoted spellings of the script path), the skill loaded through a stable one-skill plugin at `.factory/studio/interviews/plugin/`, a minimal environment (never the host's own), the project's real path as working folder, and a spending cap and time limit per turn. A test asserts the exact argument vector. The raw stream never leaves the host.
+
+`capabilities.interview` is false, with the reason, when `claude` is missing, older than 2.1.322, lacks `--restricted` or `--permission-prompts`, or is not signed in. The app then offers "Continue in Claude Code" with the exact command, and says plainly that the interview happens there.
+
+Local interview state lives in `.factory/studio/interviews/` (`<SLICE>.json`, `<SLICE>.lock`, `plugin/`).
+
+### 8.3 Who owns which files in the second wave
+
+The app is split by feature. Each folder under `web/apps/product-studio/src/features/<name>/` exports `feature: Feature` (routes, and a navigation entry if it has one) from `index.tsx`, and is listed in `features/registry.ts`.
+
+| Owner | Files |
+|-------|-------|
+| shell | `web/packages/ui/**`, and in the app: `Layout.tsx`, `router.tsx`, `main.tsx`, `api/**`, `features/registry.ts`, `features/types.ts`, `features/workspace`, `features/vision`, `features/roadmap` |
+| interview | `features/interview`, `features/spec` |
+| delivery | `features/inbox`, `features/waves`, `features/activity` |
+| host | `apps/studio/**`, `skills/product-studio/scripts/**`, `tests/test_mach_product_studio.py`, `tests/test_mach_product_host.py`, `web/fixtures/**` |
+
+A feature owner who needs something shared (a component, a client method, a type) builds it inside their own feature folder and names it in their report for promotion. Nobody edits another owner's files.
+
+Routes: `/` workspace, `/vision`, `/roadmap`, `/slices/:sliceId` specification, `/slices/:sliceId/interview`, `/inbox` decisions, `/waves` (with the send flow beneath it), `/shared` collaboration and refresh.
