@@ -2,7 +2,8 @@
   "exit_code": 0,
   "data": {
     "refreshed": false,
-    "problem": "and the repository exists.",
+    "problem": "The shared repository could not be reached.",
+    "problem_detail": "and the repository exists.",
     "shared_project": "the main branch of the shared repository",
     "arrived": [],
     "updated": [],

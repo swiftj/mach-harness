@@ -154,7 +154,7 @@
       }
     },
     "shared_project": "the main branch of the shared repository",
-    "last_refreshed": "2026-11-11T14:32:12Z",
+    "last_refreshed": "2026-11-11T14:55:38Z",
     "structurally_valid": false,
     "structural_errors": [
       "product/delivery-waves/WAVE-002.json: wave includes unapproved slice 'SLICE-001'"

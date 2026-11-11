@@ -3,6 +3,7 @@
   "data": {
     "refreshed": true,
     "problem": null,
+    "problem_detail": null,
     "shared_project": "the main branch of the shared repository",
     "arrived": [
       "product/delivery-waves/WAVE-001.json",
