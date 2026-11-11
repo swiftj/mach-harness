@@ -221,7 +221,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Archive**: `.factory/archive/<ticket_id>.tar.gz` with everything in the cell folder except the `repo/` checkout; an earlier archive is never overwritten.
 * **Gates**: the branch must be merged into the default branch and the cell `approved`. A squash or rebase merge is accepted with `--merged-as <commit>`. Uncommitted work blocks a normal run. The script deletes only `.factory/worktrees/<ticket_id>` and refuses symlinked cells, a branch that is not `feature/<ticket_id>`, and unusable ticket IDs.
 * **Abandoning** (`--abandon "<why>"`, only on a person's explicit request): uncommitted work and a git bundle of the unmerged branch are saved into the archive first, so the work is recoverable.
-* **Run record**: one line per finished ticket in `.factory/archive/runs.jsonl` (outcome, judging rounds, verification failures, review blockers with the rules they broke, builder deviations), which the observe station reads.
+* **Run record**: one line per finished ticket in `.factory/archive/runs.jsonl` (outcome, judging rounds, verification failures, review blockers with the rules they broke, builder deviations), which the observe station reads. Since `record_version` 2 it also says what landed (`integration`: branch, target, method, approved, landed and merge commits, pull request) and, for product work, which slice revision it built (`product`).
 * **Never**: merges, pushes, deletes remote branches, or changes code on the main checkout. Code formatting belongs to the build station's lint gate, not here.
 * **Also**: `orphans` lists finished or broken cells; `status` lists every cell. The ticket is closed with the ticket skill after a successful run.
 
@@ -299,6 +299,7 @@ Approved delivery waves that Product Studio published and engineering merged are
 * **Scheduler**: every slice is `completed`, `active`, `ready`, `blocked` or `superseded`, with reasons. A dependency counts as done only when its commit is on the integration branch, checked in Git; a finished build or an approved cell is still `active`. `factory.max_parallel` limits what is dispatchable.
 * **Dispatch**: only on an engineer's explicit command. It opens the cell, writes `intent.md` from the approved why, passes `cell.py finalize`, and stops at `spec-ready`. It starts no agent; `run.py next` and the belt take over with every gate in place. Product-sourced work is never reviewed below Medium.
 * **Events**: each ledger transition is appended to `.factory/intake/events.jsonl` with a schema version and sequence number, for the supervisor (M4) and Control Tower (M6).
+* **Ready for a supervisor**: `product reconcile` is intake plus a recorded plan in one step; intake, reconcile and dispatch hold a lock so there is one writer at a time; and any caller but an engineer must bring an authorization to dispatch, or nothing is dispatched.
 * **Never**: runs in the background, reads the machine-local Factory policy, fetches unless asked, changes the main checkout, merges or pushes.
 
 ### Merge station: `/mach-merge`

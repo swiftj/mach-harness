@@ -102,9 +102,9 @@ Events are queued inside the ledger and written to the log by the same save, so 
 
 ## 3. M2 contract inconsistencies found
 
-1. **The approver's name carries an address.** M2 records `approval.actor` as `Name <email>`. Reused in a cell's `intent.md`, the angle brackets are read by the intent gate as an unfilled placeholder. Intake strips the address. M2 also publishes that address in product files and pull request bodies; recording the name alone would be better.
+1. **The approver's name carried an address.** M2 recorded `approval.actor` as `Name <email>`. Reused in a cell's `intent.md`, the angle brackets were read by the intent gate as an unfilled placeholder, and the address was published in product files and pull request bodies. **Fixed:** an approver is a name. Product Studio records the Git user name only and refuses an address; intake still strips one from waves approved earlier.
 2. **A slice's why has no ticket.** By design in M1. Intake adds the `Ticket` and `Mode` lines the intent gate requires.
-3. **A run record has no commit.** `runs.jsonl` says a ticket was merged but not which commit landed. Intake reads the commit from the cell's archive instead. A commit in the run record would be simpler and survives a lost archive.
+3. **A run record had no commit.** `runs.jsonl` said a ticket was merged but not which commit landed. **Fixed:** see section 6.
 4. **Three ways to find the integration branch.** `run.py`, `merge.py` and `collab.py` each work it out. Intake follows `merge.into`, then the remote's default. They agree in practice; they should share one function.
 5. **A wave can be `superseded` in the schema, but Product Studio has no command that sets it.** Intake handles it; M2 cannot yet produce it.
 6. **A slice may appear in more than one approved wave.** Nothing forbids it. Intake delivers it in the lowest-numbered wave.
@@ -119,11 +119,32 @@ None required changing M2's artifacts.
 - It never merges, pushes or changes the main checkout.
 - It does not decide what to do about stale or withdrawn work in the line: it flags it for a person.
 
-## 5. What M4 needs from here
+## 5. What M4 builds on
 
-- **A reconcile entry point.** `Factory.intake()` followed by `Factory.plan(record=True)` is the whole reconciliation, idempotent and safe to repeat. The supervisor calls exactly that on startup, on a hook's wake-up, and on a timer.
-- **A dispatch gate.** `Factory.dispatch()` is the only place work enters the line. The supervisor's policy check (enabled, not paused, autonomy mode, preflight) belongs immediately in front of it, and the event's `by` field should name the supervisor.
-- **The event log as its feed.** `product events --since N` gives the supervisor and Control Tower one ordered stream; `human.required` is the escalation signal.
-- **A lease.** Two processes dispatching at once would both pass the concurrency check. The ledger needs a lock before anything unattended calls dispatch.
-- **Running what was dispatched.** M3 stops at prepared cells. The supervisor must start the belt for them, and count a slice against the limit from dispatch until it is integrated or abandoned, as the plan already does.
-- **The run record commit** (item 3 above), so integration does not depend on archives being kept.
+Each of these was a gap when M3 was first finished. All are now built and tested.
+
+- **One reconcile step.** `Factory.reconcile()` (`run.py product reconcile [--fetch]`) is intake followed by a recorded plan, under one lock. It is idempotent, reports the last event's sequence number, and never dispatches. The supervisor calls exactly this on start-up, on a hook's wake-up and on a timer.
+- **One guarded way into the line.** `Factory.dispatch(..., by=, authorize=)` is the only place work enters the line. An engineer's explicit command needs nothing more. Any other caller must pass `authorize`, a function that is shown the plan and returns `(True, reason)`; without it, or on anything but `True`, nothing is dispatched. The supervisor's policy check (enabled, not paused, its mode, its preflight) is that function. The `work.scheduled` event records `by` and the `authorization` given.
+- **One writer at a time.** Intake, reconcile and dispatch hold `.factory/intake/lock`, a file created exclusively that names its holder. A second process is refused with who holds it. A lock is taken over only when its holder is provably gone (same machine, no such process) or it is older than 15 minutes. Reading (status, plan, events, a dry run) never needs it.
+- **What to run.** The plan lists `runnable`: dispatched slices the line can move right now, with each ticket and its next station. A driver starts the belt with those tickets. A slice counts against `factory.max_parallel` from dispatch until it is integrated or abandoned.
+- **The event log as the feed.** `product events --since N` is one ordered stream for the supervisor and Control Tower; `human.required` is the escalation signal.
+
+What M4 itself still has to build: the machine-local policy and `/mach:run factory enable|disable|status|pause|resume`, the preflight, starting and supervising the belt, and advisory hooks.
+
+## 6. Two fixes made for M4
+
+### The run record says what landed
+
+`runs.jsonl` is now `record_version` 2. Every record gains three fields, and no existing field changed, so the observe station reads it as before:
+
+- `integration`: for a merged ticket, the branch, the branch it landed in, the method (`local`, `pr`, `manual`, or `squash-or-rebase`), the commit review approved, the commit that landed, the merge commit, the pull request, and when. `null` for an abandoned ticket: nothing landed, so nothing is claimed.
+- `product`: for a ticket that came from Product Studio, its slice, revision, wave, digest and source commit.
+- `record_version`.
+
+This follows the usual shape of build provenance: a record names exactly which commits it is about, and a reader verifies them. The cleanup station checked each commit against the default branch before writing the record; the scheduler still checks it in Git before calling a slice completed, and falls back to the cell's archive for records written before this version.
+
+### Ticket numbers never reuse a branch name
+
+Local ticket numbers were counted from records that exist only on the machine that made them. A fresh clone therefore started again at `LOCAL-001` while `feature/LOCAL-001` was still on the remote. Both places that allocate a number (`ticket.py` and `cell.py ticket-new`) now also count `feature/<ticket>` branches in the clone and on any remote as last fetched.
+
+Two engineers who have not fetched each other's branches can still pick the same number. A tracker shared by the team (GitHub, Jira) does not have this problem; the local queue is a single-engineer default.
