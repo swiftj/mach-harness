@@ -578,6 +578,9 @@ def cmd_ticket_new(project: Path, args: argparse.Namespace) -> int:
             names.append(str(json.loads(line).get("ticket_id") or ""))
         except (ValueError, AttributeError):
             continue
+    # ...and ticket branches in this clone or on a remote: on a fresh clone they are the only trace of earlier tickets.
+    refs = git(["for-each-ref", "--format=%(refname)", "refs/heads/feature", "refs/remotes"], project)
+    names += [line.rsplit("/feature/", 1)[-1] for line in refs.stdout.splitlines() if "/feature/" in line]
     numbers = [int(m.group(1)) for name in names for m in [pattern.match(name)] if m]
     ticket_id = f"{prefix}-{max([0, *numbers]) + 1:03d}"
     title = " ".join(args.title.split())
