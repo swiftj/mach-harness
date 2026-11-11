@@ -11,7 +11,8 @@
       "the work order for SLICE-001 (new)",
       "the spec SLICE-001-invite-teammate.md (new)"
     ],
-    "status": "Sent, pull request not opened",
+    "status": "Sent, review request not opened",
+    "state": "sent_request_not_opened",
     "pull_request": null,
     "branch": "product/WAVE-001",
     "problem": "gh: simulated failure: create",

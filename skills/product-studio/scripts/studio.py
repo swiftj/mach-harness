@@ -56,6 +56,16 @@ def say(terminal: str, app: str) -> str:
     return app if APP else terminal
 
 
+# A state in a product manager's words, for app wording; the terminal keeps the identifier.
+STATE_WORDS = {"draft": "a draft", "interviewing": "being defined", "ready_for_approval": "ready for approval",
+               "approved_for_engineering": "approved", "superseded": "replaced", "proposed": "proposed", "approved": "approved",
+               "deferred": "set aside", "completed": "completed", "active": "active", "archived": "archived"}
+
+
+def state(status: Any) -> str:
+    return say(str(status), STATE_WORDS.get(str(status), "in an unknown state"))
+
+
 def hint(kind: str, target: Optional[str] = None) -> Dict[str, Any]:
     return {"kind": kind, "target": target}
 
@@ -745,7 +755,7 @@ def cmd_epic_approve(studio: Studio, args: argparse.Namespace) -> int:
     studio.sync()
     data = studio.load("epic", args.epic_id)
     if data.get("status") not in ("proposed", "deferred", "approved"):
-        raise StudioError(f"{args.epic_id} is {data.get('status')}; only a proposed or deferred epic can be approved.")
+        raise StudioError(f"{args.epic_id} is {state(data.get('status'))}; only a proposed or deferred epic can be approved.")
     if not data.get("acceptance_criteria"):
         raise StudioError(say(f"{args.epic_id} has no acceptance criteria. Add at least one before approving (epic set {args.epic_id} --criterion \"...\").",
                               f"{args.epic_id} has no acceptance criteria. Add at least one before approving."), hint("edit_epic", args.epic_id))
@@ -778,7 +788,7 @@ def cmd_slice_new(studio: Studio, args: argparse.Namespace) -> int:
     studio.sync()
     epic = studio.load("epic", args.epic)
     if epic.get("status") in ("completed", "superseded"):
-        raise StudioError(f"{args.epic} is {epic.get('status')}; a new slice needs an open epic.")
+        raise StudioError(f"{args.epic} is {state(epic.get('status'))}; a new slice needs an open epic.")
     if args.id:
         if not product.SLICE_RE.fullmatch(args.id):
             raise StudioError(f"'{args.id}' is not a usable slice ID, such as SLICE-004.")
@@ -806,8 +816,8 @@ def edit_refusal(slice_id: str, data: Dict[str, Any]) -> Optional[str]:
     """Why a slice's draft cannot be changed, or None when it can."""
     if data.get("status") in EDITABLE_SLICE:
         return None
-    return say(f"{slice_id} is {data.get('status')}. To change an approved slice, reopen it first: studio.py slice reopen {slice_id}",
-               f"{slice_id} is {data.get('status')}. To change an approved slice, reopen it first.")
+    return say(f"{slice_id} is {state(data.get('status'))}. To change an approved slice, reopen it first: studio.py slice reopen {slice_id}",
+               f"{slice_id} is {state(data.get('status'))}. To change an approved slice, reopen it first.")
 
 
 def require_editable(studio: Studio, slice_id: str) -> Dict[str, Any]:
@@ -960,8 +970,8 @@ def cmd_slice_approve(studio: Studio, args: argparse.Namespace) -> int:
     if not epic:
         problems.append(f"epic {data.get('epic_id')} does not exist")
     elif epic.get("status") != "approved":
-        problems.append(say(f"epic {data.get('epic_id')} is {epic.get('status')}, not approved (studio.py epic approve {data.get('epic_id')})",
-                            f"epic {data.get('epic_id')} is {epic.get('status')}, not approved"))
+        problems.append(say(f"epic {data.get('epic_id')} is {state(epic.get('status'))}, not approved (studio.py epic approve {data.get('epic_id')})",
+                            f"epic {data.get('epic_id')} is {state(epic.get('status'))}, not approved"))
         refusal_hint = hint("approve_epic", data.get("epic_id"))
     slices = studio.all("slice")
     for dependency in data.get("dependencies") or []:
@@ -983,7 +993,7 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
     studio.sync()
     data = studio.load("slice", args.slice_id)
     if data.get("status") != APPROVED:
-        raise StudioError(f"{args.slice_id} is {data.get('status')}; only an approved slice can be reopened.")
+        raise StudioError(f"{args.slice_id} is {state(data.get('status'))}; only an approved slice can be reopened.")
     data.update({"status": "interviewing", "spec_sha256": None})
     changes: List[Tuple[str, Dict[str, Any]]] = [("slice", data)]
     withdrawn = []
@@ -1001,7 +1011,7 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
 def editable_wave(studio: Studio, wave_id: str) -> Dict[str, Any]:
     data = studio.load("wave", wave_id)
     if data.get("status") != "draft":
-        raise StudioError(f"{wave_id} is {data.get('status')}. Only a draft wave can be changed; start a new wave instead.")
+        raise StudioError(f"{wave_id} is {state(data.get('status'))}. Only a draft wave can be changed; start a new wave instead.")
     return data
 
 
@@ -1055,7 +1065,7 @@ def wave_problems(studio: Studio, sync: Dict[str, Any], data: Dict[str, Any]) ->
         if relative in sync["collisions"] or relative in sync["conflicts"]:
             problems.append(f"{slice_id} needs reconciling with the shared project first")
         elif work.get("status") != APPROVED:
-            problems.append(f"{slice_id} is {work.get('status')}, not approved")
+            problems.append(f"{slice_id} is {state(work.get('status'))}, not approved")
         else:
             # Judge the spec again with the authoritative validator: approval may be old.
             spec = studio.spec_of(slice_id)
@@ -1382,8 +1392,8 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     wave_id = args.wave_id
     wave = studio.load("wave", wave_id)
     if wave.get("status") != APPROVED:
-        raise StudioError(say(f"{wave_id} is {wave.get('status')}. Only an approved wave can be sent (studio.py wave approve {wave_id}).",
-                              f"{wave_id} is {wave.get('status')}. Only an approved wave can be sent."), hint("approve_wave", wave_id))
+        raise StudioError(say(f"{wave_id} is {state(wave.get('status'))}. Only an approved wave can be sent (studio.py wave approve {wave_id}).",
+                              f"{wave_id} is {state(wave.get('status'))}. Only an approved wave can be sent."), hint("approve_wave", wave_id))
     files, problems = closure(studio, wave)
     problems += [f"{relative} needs reconciling with the shared project first" for relative in files if relative in sync["conflicts"] or relative in sync["collisions"]]
     problems += wave_problems(studio, sync, wave)
@@ -1440,7 +1450,8 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
             studio.save_ledger(ledger)
     request = entry.get("pull_request") or {}
     return emit({"sent": True, "wave_id": wave_id, "shared": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
-                 "status": "Waiting for review" if request else "Sent, pull request not opened",
+                 "status": "Waiting for review" if request else say("Sent, pull request not opened", "Sent, review request not opened"),
+                 "state": "waiting_for_review" if request else "sent_request_not_opened",
                  "pull_request": request.get("url"), "branch": branch,
                  "problem": request_problem or None, "factory_authorized": False,
                  "note": "Engineering has been asked to accept this. No engineering work has started."})
@@ -1462,20 +1473,25 @@ def cmd_feedback(studio: Studio, args: argparse.Namespace) -> int:
         row: Dict[str, Any] = {"wave_id": wave_id, "slices": wave.get("slices")}
         if not entry:
             published = studio.theirs().get(f"product/delivery-waves/{wave_id}.json") == (studio.draft / f"product/delivery-waves/{wave_id}.json").read_bytes()
-            row.update(status="Accepted" if published and wave.get("status") == APPROVED else "Approved, not sent" if wave.get("status") == APPROVED else "Not approved yet")
+            if published and wave.get("status") == APPROVED:
+                row.update(status="Accepted", state="accepted")
+            elif wave.get("status") == APPROVED:
+                row.update(status="Approved, not sent", state="approved_not_sent")
+            else:
+                row.update(status="Not approved yet", state="not_approved")
         elif not entry.get("pushed"):
-            row.update(status="Prepared, not sent", meaning="Sending did not finish. Send it again; nothing will be sent twice.")
+            row.update(status="Prepared, not sent", state="prepared_not_sent", meaning="Sending did not finish. Send it again; nothing will be sent twice.")
         elif not entry.get("pull_request"):
-            row.update(status="Sent, pull request not opened", branch=entry.get("branch"),
+            row.update(status=say("Sent, pull request not opened", "Sent, review request not opened"), state="sent_request_not_opened", branch=entry.get("branch"),
                        meaning=say("The work reached the shared repository but the request for review could not be opened. Send it again, or give an engineer the branch name.",
                                    "The work reached the shared project but the request for review could not be opened. Send it again, or ask an engineer to open it."))
         else:
             view, problem = collab.review_state(studio.project, str(entry.get("branch")))
             if view is None:
-                row.update(status="Sent", pull_request=entry["pull_request"].get("url"),
+                row.update(status="Sent", state="sent", pull_request=entry["pull_request"].get("url"),
                            meaning=say(f"The review status could not be read just now ({problem}).", "The review status could not be read just now."))
             else:
-                row.update(collab.in_words(view))
+                row.update(collab.in_words(view, APP))
             if wave.get("status") != APPROVED and row.get("status") not in ("Accepted", "Declined"):
                 row["changed_since_sent"] = "You have reopened this wave since sending it. Approve and send it again to update the request."
         rows.append(row)

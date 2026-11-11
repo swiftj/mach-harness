@@ -10,6 +10,7 @@
         ],
         "pull_request": "https://example.test/pull/1",
         "status": "Blocked by a check",
+        "state": "blocked_by_check",
         "meaning": "An automatic check on the request is failing: validate-product.",
         "reviewer_remarks": []
       }

@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -102,7 +103,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.opts.Logger.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(started).Round(time.Millisecond))
 	}()
 	security.Headers(rec.Header())
-	isAPI := r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/")
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut:
+	default:
+		// No route takes this method. Close the connection after answering: a client may have sent
+		// a body without framing it (Node does this for DELETE), and those bytes must not be read
+		// as the next request on the same connection.
+		rec.Header().Set("Connection", "close")
+	}
+	isAPI := r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.EscapedPath(), "/api/")
 	if !s.opts.Guard.HostAllowed(r.Host) {
 		if isAPI {
 			writeEnvelope(rec, http.StatusForbidden, engine.Fail(engine.KindUnauthorized, "This address is not allowed. Open Product Studio at 127.0.0.1 or localhost."))
@@ -134,7 +143,42 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.api.ServeHTTP(rec, r)
+	s.routeAPI(rec, r)
+}
+
+// apiMethods are the methods any API route answers to.
+var apiMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut}
+
+// routeAPI routes an API request without the router's own replies: an unclean path is refused
+// (never redirected), and a method a route does not take is a 405, both as the envelope.
+func (s *Server) routeAPI(w http.ResponseWriter, r *http.Request) {
+	escaped := r.URL.EscapedPath()
+	if r.URL.Path != path.Clean(r.URL.Path) || escaped != path.Clean(escaped) || strings.Contains(strings.ToLower(escaped), "%2f") ||
+		strings.Contains(escaped, "//") {
+		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "The address is not a plain API route."))
+		return
+	}
+	if _, pattern := s.api.Handler(r); pattern == "/api/" || pattern == "" {
+		var allowed []string
+		for _, method := range apiMethods {
+			if method == r.Method {
+				continue
+			}
+			probe := r.Clone(r.Context())
+			probe.Method = method
+			if _, p := s.api.Handler(probe); p != "/api/" && p != "" {
+				allowed = append(allowed, method)
+			}
+		}
+		if len(allowed) > 0 {
+			w.Header().Set("Allow", strings.Join(allowed, ", "))
+			writeEnvelope(w, http.StatusMethodNotAllowed, engine.Fail(engine.KindInvalid, "This route does not take "+r.Method+"."))
+			return
+		}
+		writeEnvelope(w, http.StatusNotFound, engine.Fail(engine.KindInvalid, "There is no such route."))
+		return
+	}
+	s.api.ServeHTTP(w, r)
 }
 
 // exchange trades the one-time start token for the session cookie, then drops the token from the

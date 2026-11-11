@@ -451,7 +451,7 @@ func (c *Claude) Current(sliceID string) (*Current, error) {
 		defer s.mu.Unlock()
 		id := s.id
 		return &Current{InterviewID: &id, SliceID: sliceID, Live: true, State: s.state, TurnRunning: s.running != nil,
-			LastMessage: s.rec.LastMessage, Turns: s.rec.Turns, SessionCostUSD: s.rec.SessionCostUSD}, nil
+			LastMessage: withQuestion(s.rec.LastMessage), Turns: s.rec.Turns, SessionCostUSD: s.rec.SessionCostUSD}, nil
 	}
 	rec := c.loadRecord(sliceID)
 	held := lockHeld(c.lockPath(sliceID))

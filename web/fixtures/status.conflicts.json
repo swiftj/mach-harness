@@ -18,13 +18,13 @@
         "artifact": "SLICE-001",
         "kind": "slice",
         "reason": "You reopened it to change it.",
-        "at": "2026-11-11T19:24:01Z"
+        "at": "2026-11-11T20:44:16Z"
       },
       {
         "artifact": "WAVE-001",
         "kind": "wave",
         "reason": "SLICE-001 was reopened, so this wave went back to draft.",
-        "at": "2026-11-11T19:24:01Z"
+        "at": "2026-11-11T20:44:16Z"
       }
     ],
     "epics": [
@@ -158,7 +158,7 @@
       }
     },
     "shared_project": "the shared project",
-    "last_refreshed": "2026-11-11T19:24:02Z",
+    "last_refreshed": "2026-11-11T20:44:18Z",
     "structurally_valid": false,
     "structural_errors": [
       "product/delivery-waves/WAVE-002.json: wave includes unapproved slice 'SLICE-001'"

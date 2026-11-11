@@ -595,7 +595,8 @@ class NextActionsTest(Base):
 class AppWordingTest(Base):
     """--app: what the web app shows carries no terminal commands or Git words, and a structured hint."""
 
-    BANNED = re.compile(r"studio\.py|--[a-z]|\bbranch\b")
+    BANNED = re.compile(r"studio\.py|--[a-z]|\bbranch\b|\b(" + "|".join(
+        sorted({value for enums in product.ENUMS.values() for value in enums["status"] if "_" in value})) + r")\b")
 
     def app_refusal(self, *argv):
         code, out, err = self.run_studio("--app", *argv)
@@ -622,8 +623,13 @@ class AppWordingTest(Base):
         self.ok("epic", "approve", "EPIC-001")
         self.ok("slice", "approve", "SLICE-001")
         self.assertEqual(self.app_refusal("slice", "check", "SLICE-001"),
-                         ("SLICE-001 is approved_for_engineering. To change an approved slice, reopen it first.", {"kind": "reopen_slice", "target": "SLICE-001"}))
+                         ("SLICE-001 is approved. To change an approved slice, reopen it first.", {"kind": "reopen_slice", "target": "SLICE-001"}))
         self.assertEqual(self.app_refusal("wave", "new")[0], "A delivery wave needs at least one slice.")
+        self.ok("wave", "new", "--slice", "SLICE-001")
+        self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM", "--at", AT)
+        self.assertEqual(self.app_refusal("wave", "add", "WAVE-001", "SLICE-001")[0],
+                         "WAVE-001 is approved. Only a draft wave can be changed; start a new wave instead.")
+        self.assertIn("approved_for_engineering", self.refused("slice", "check", "SLICE-001"))  # the terminal keeps the identifier
         self.assertIn("--slice SLICE-NNN", self.refused("wave", "new"))
         shown = json.loads(self.run_studio("--app", "slice", "show", "SLICE-001")[1])
         self.assertIsNone(self.BANNED.search(shown["edit_refusal"]))
@@ -647,6 +653,11 @@ class AppWordingTest(Base):
                     continue
                 if called == "CollabError" and len(node.args) > 1:
                     continue  # its second argument is the app's wording
+                # A state interpolated into a message is worded through state(), never shown raw.
+                for value in [n for n in ast.walk(node) if isinstance(n, ast.FormattedValue)]:
+                    if "status" in ast.unparse(value.value):
+                        self.assertTrue(isinstance(value.value, ast.Call) and getattr(value.value.func, "id", "") == "state",
+                                        f"{name}:{node.lineno}: a raw state in {ast.unparse(value.value)}")
                 words = " ".join(n.value for n in ast.walk(first) if isinstance(n, ast.Constant) and isinstance(n.value, str))
                 if called == "append" and not (isinstance(func.value, ast.Name) and func.value.id == "problems"):
                     continue

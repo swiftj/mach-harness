@@ -84,6 +84,11 @@ and reports carry no terminal commands or Git words; decisions and artifacts are
 envelope; the HTTP status only follows it (refused 422, invalid 400 or 404/413/415, unauthorized
 401 without a session and 403 for Host/Origin/CSRF, conflict 409, unavailable 503, internal 500).
 
+Under `/api/` every response is the envelope, with no redirect: a path that is not clean (`..`,
+`//`, an encoded `/`, a trailing `/`) is `invalid` (400); a route's wrong method is `invalid` (405,
+with `Allow`); an unknown route is `invalid` (404). A method no route takes also closes the
+connection after the answer, so an unframed body can never be read as the next request.
+
 Every request: `Host` exactly `127.0.0.1:<port>` or `localhost:<port>`. Every `/api` request: the
 session cookie (`mach_studio_session`, from the start link). Every request that is not GET or HEAD
 also needs `Origin: http://<Host>`, `X-MACH-CSRF: <csrf_token>` and `Content-Type:

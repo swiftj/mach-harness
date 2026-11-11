@@ -486,6 +486,10 @@ func TestReplayOnReconnect(t *testing.T) {
 			t.Fatal("replay out of order")
 		}
 	}
+	if cur, _ := r.bridge.Current("SLICE-001"); cur == nil || !cur.Live || cur.LastMessage == nil || cur.LastMessage.Question == nil ||
+		cur.LastMessage.Question.Title != "Who invites" {
+		t.Fatalf("a live interview's last question: %+v", cur)
+	}
 	if !r.bridge.Busy("SLICE-001") {
 		t.Fatal("a running turn is not reported busy")
 	}

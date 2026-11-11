@@ -15,7 +15,7 @@
       "title": "Invite a teammate"
     },
     "editable": false,
-    "edit_refusal": "SLICE-001 is approved_for_engineering. To change an approved slice, reopen it first.",
+    "edit_refusal": "SLICE-001 is approved. To change an approved slice, reopen it first.",
     "paths": {
       "work_order": "product/slices/SLICE-001.json",
       "specs_dir": "specs/slices",

@@ -148,7 +148,9 @@ func TestAnInterviewOverHTTP(t *testing.T) {
 	}
 	json.Unmarshal(env.Data, &current)
 	if current.Interview.InterviewID == nil || *current.Interview.InterviewID != id || !current.Interview.Live ||
-		current.Interview.LastMessage == nil || current.Interview.State != "waiting_for_reply" {
+		current.Interview.LastMessage == nil || current.Interview.State != "waiting_for_reply" ||
+		current.Interview.LastMessage.Question == nil || current.Interview.LastMessage.Question.Number != 1 ||
+		current.Interview.LastMessage.Question.MessageID != current.Interview.LastMessage.MessageID {
 		t.Fatalf("current %+v", current.Interview)
 	}
 

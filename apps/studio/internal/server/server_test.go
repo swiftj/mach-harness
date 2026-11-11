@@ -1,9 +1,11 @@
 package server_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -300,11 +302,11 @@ func TestMalformedAndUnknownRequests(t *testing.T) {
 	status, env = h.call("PUT", "/api/drafts/spec/SLICE-001", `{"markdown":"`+strings.Repeat("x", server.MaxDraftBytes+70<<10)+`"}`, nil)
 	expect(t, status, env, 413, engine.KindInvalid)
 	status, env = h.call("GET", "/api/ops/status", "", nil)
-	expect(t, status, env, 404, engine.KindInvalid)
+	expect(t, status, env, 405, engine.KindInvalid) // wave 4: a route's wrong method is a 405, as the envelope
 	status, env = h.call("GET", "/api/nothing", "", nil)
 	expect(t, status, env, 404, engine.KindInvalid)
 	status, env = h.call("DELETE", "/api/drafts/spec/SLICE-001", "", nil)
-	expect(t, status, env, 404, engine.KindInvalid)
+	expect(t, status, env, 405, engine.KindInvalid)
 }
 
 // ---- operations ----
@@ -598,5 +600,87 @@ func TestLogsHoldNoSecretsOrContents(t *testing.T) {
 	}
 	if !strings.Contains(logs, "PUT /api/drafts/spec/SLICE-001 200") {
 		t.Fatalf("requests are logged: %s", logs)
+	}
+}
+
+// Every response under /api/ is the envelope: no redirect for an unclean path, and a wrong method
+// is a 405, not the router's plain text.
+func TestEveryAPIResponseIsTheEnvelope(t *testing.T) {
+	h := start(t)
+	h.login()
+	id := strings.Repeat("d", 32)
+	cases := []struct {
+		method, path string
+		status       int
+		allow        string
+	}{
+		{"POST", "/api/ops/status/../where", 400, ""},
+		{"POST", "/api/ops/..%2Fstatus", 400, ""},
+		{"POST", "/api/ops/%2e%2e", 400, ""},
+		{"POST", "/api/ops/status/", 400, ""},
+		{"POST", "/api//ops/status", 400, ""},
+		{"GET", "/api/drafts/spec/../intent/SLICE-001", 400, ""},
+		{"GET", "/api/interview/" + id + "/../" + id + "/events", 400, ""},
+		{"PATCH", "/api/ops/status", 405, "POST"},
+		{"PUT", "/api/ops/status", 405, "POST"},
+		{"DELETE", "/api/ops/status", 405, "POST"},
+		{"GET", "/api/ops/status", 405, "POST"},
+		{"POST", "/api/drafts/spec/SLICE-001", 405, "GET, PUT"},
+		{"PATCH", "/api/drafts/intent/SLICE-001", 405, "GET, PUT"},
+		{"DELETE", "/api/interview", 405, "GET, POST"},
+		{"GET", "/api/interview/" + id + "/reply", 405, "POST"},
+		{"POST", "/api/interview/" + id + "/events", 405, "GET"},
+		{"POST", "/api/session", 405, "GET"},
+		{"GET", "/api/nothing", 404, ""},
+		{"GET", "/api/", 400, ""}, // not a clean path
+		{"GET", "/api", 404, ""},
+		{"PATCH", "/api/nothing", 404, ""},
+	}
+	for _, c := range cases {
+		req, _ := http.NewRequest(c.method, h.base+c.path, strings.NewReader("{}"))
+		req.AddCookie(h.cookie)
+		req.Header.Set("Origin", h.base)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(security.CSRFHeader, h.csrf)
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var env engine.Envelope
+		if json.Unmarshal(raw, &env) != nil || env.OK || env.Error == nil || env.Error.Kind != engine.KindInvalid ||
+			resp.StatusCode != c.status || resp.Header.Get("Location") != "" || resp.Header.Get("Allow") != c.allow ||
+			!strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
+			t.Errorf("%s %s: %d Allow=%q Location=%q %s", c.method, c.path, resp.StatusCode, resp.Header.Get("Allow"), resp.Header.Get("Location"), raw)
+		}
+	}
+}
+
+// A DELETE whose body is not framed must not spoil the next request on the same connection.
+func TestAnUnframedBodyDoesNotReachTheNextRequest(t *testing.T) {
+	h := start(t)
+	h.login()
+	conn, err := net.Dial("tcp", strings.TrimPrefix(h.base, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	host := strings.TrimPrefix(h.base, "http://")
+	headers := "Host: " + host + "\r\nCookie: " + h.cookie.Name + "=" + h.cookie.Value + "\r\nOrigin: " + h.base +
+		"\r\nX-MACH-CSRF: " + h.csrf + "\r\nContent-Type: application/json\r\n"
+	// DELETE with "{}" after the headers and no Content-Length, then a PATCH on the same connection.
+	fmt.Fprintf(conn, "DELETE /api/ops/status HTTP/1.1\r\n%s\r\n{}PATCH /api/ops/status HTTP/1.1\r\n%sContent-Length: 2\r\n\r\n{}", headers, headers)
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 405 || !resp.Close || !strings.Contains(string(raw), `"kind":"invalid"`) {
+		t.Fatalf("DELETE: %d close=%v %s", resp.StatusCode, resp.Close, raw)
+	}
+	if _, err := http.ReadResponse(reader, nil); err == nil {
+		t.Fatal("the connection stayed open, so the unframed bytes were read as a request")
 	}
 }

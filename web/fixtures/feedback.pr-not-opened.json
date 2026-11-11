@@ -8,7 +8,8 @@
         "slices": [
           "SLICE-001"
         ],
-        "status": "Sent, pull request not opened",
+        "status": "Sent, review request not opened",
+        "state": "sent_request_not_opened",
         "branch": "product/WAVE-001",
         "meaning": "The work reached the shared project but the request for review could not be opened. Send it again, or ask an engineer to open it."
       }

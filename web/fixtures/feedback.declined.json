@@ -10,6 +10,7 @@
         ],
         "pull_request": "https://example.test/pull/1",
         "status": "Declined",
+        "state": "declined",
         "meaning": "The request was closed without being accepted.",
         "reviewer_remarks": []
       }

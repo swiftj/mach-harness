@@ -12,6 +12,7 @@
       "the spec SLICE-001-invite-teammate.md (new)"
     ],
     "status": "Waiting for review",
+    "state": "waiting_for_review",
     "pull_request": "https://example.test/pull/1",
     "branch": "product/WAVE-001",
     "problem": null,
