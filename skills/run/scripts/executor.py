@@ -176,12 +176,18 @@ def stop(pid: Any, execution_id: str) -> bool:
 
 
 def tool_summary(name: Any, tool_input: Any) -> str:
-    """Enough of a refused request for a person to recognise it, and no more: never arguments or file contents."""
+    """Enough of a refused request for a person to recognise it, and no more: the program a shell
+    command would have run, and its subcommand if it has one. Never arguments, paths, variables or file contents."""
     if name == "Bash" and isinstance(tool_input, dict):
         words = str(tool_input.get("command") or "").split()
-        head = " ".join(words[:2]) if words and not words[0].startswith(("/", ".")) else Path(words[0]).name if words else ""
-        return f"Bash: {head[:60]}"
-    return str(name)[:60]
+        while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+            words.pop(0)  # VAR=value prefixes can carry anything
+        if not words:
+            return "Bash"
+        program = Path(words[0]).name[:30]
+        sub = words[1] if len(words) > 1 and re.match(r"^[a-z][a-z-]{1,20}$", words[1]) and program in ("git", "gh", "npm", "pnpm", "yarn", "make", "cargo", "go", "docker", "pip", "uv") else ""
+        return f"Bash: {program} {sub}".strip()
+    return re.sub(r"[^A-Za-z0-9_:.-]", "", str(name))[:60]
 
 
 def outcome(root: Path, execution_id: str) -> Dict[str, Any]:

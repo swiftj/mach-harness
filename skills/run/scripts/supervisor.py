@@ -306,14 +306,16 @@ class Supervisor:
                        "refused_tools": facts.get("refused_tools") or [], "stage_at_end": step.get("stage"), "next_at_end": step.get("action"), "moved": moved})
         common = {"ticket_id": ticket, "slice_id": record.get("slice_id"), "execution_id": record["execution_id"],
                   "refs": {"cell": f".factory/worktrees/{ticket}/cell.json", "execution": f".factory/local/executions/{record['execution_id']}/"}}
-        if record["refused_tools"]:
-            # Never granted quietly: a person sees what was asked for and decides.
-            self.park(ledger, ticket, "It needed tools that are not allowed: " + ", ".join(record["refused_tools"]) + ".", common)
         if moved or (known and step.get("action") == "stop"):
+            # Refusals that the workers got past are reported with the result. Nothing was granted.
             supervisor["attempts"].pop(ticket, None)
             self.line.emit(ledger, "execution.completed", stage=step.get("stage"), next=step.get("action"), waiting_for=step.get("needs"),
-                           how=record["how"], seen_to_end=known, cost_usd=record["cost_usd"], session_id=record["session_id"], **common)
+                           how=record["how"], seen_to_end=known, cost_usd=record["cost_usd"], session_id=record["session_id"],
+                           refused_tools=record["refused_tools"], **common)
             return
+        if record["refused_tools"]:
+            # It got nowhere and was refused something: never granted quietly. A person sees what was asked for and decides.
+            self.park(ledger, ticket, "It made no progress and needed tools that are not allowed: " + ", ".join(record["refused_tools"]) + ".", common)
         count = int((supervisor["attempts"].get(ticket) or {}).get("count") or 0) + 1
         supervisor["attempts"][ticket] = {"count": count, "at": f"{step.get('stage')}@{step.get('action')}"}
         self.line.emit(ledger, "execution.failed", stage=step.get("stage"), next=step.get("action"), how=record["how"], claude_error=facts.get("subtype") if facts.get("is_error") else None,
@@ -393,6 +395,15 @@ class Supervisor:
                 self.park(ledger, ticket, f"Its risk tier ({self.risk_of(ticket)}) is above what this machine runs unattended ({pol['max_risk']}).", {"ticket_id": ticket, "slice_id": slice_id})
             else:
                 reason = self.budget(ledger, pol)
+            until = None if pol.get("allow_merge") else "merge"
+            if not reason and until and item.get("next") == until:
+                # Approved, and this machine does not merge unattended: say so once, claim nothing.
+                reason = "it is approved and waits for a person to merge it"
+                if supervisor.setdefault("told", {}).get(ticket) != until:
+                    supervisor["told"][ticket] = until
+                    self.line.emit(ledger, "human.required", ticket_id=ticket, slice_id=slice_id, reason="It is approved. This machine does not merge unattended, so a person merges it.",
+                                   refs={"cell": f".factory/worktrees/{ticket}/cell.json"})
+                    self.line.save(ledger)
             if reason:
                 report["held"].append({"ticket_id": ticket, "slice_id": slice_id, "why": reason})
                 continue

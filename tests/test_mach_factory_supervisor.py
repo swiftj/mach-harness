@@ -406,6 +406,27 @@ class SupervisedTest(Base):
             self.assertEqual(self.tick()["started"], [])
         self.assertEqual(len(self.calls()), 1)
 
+    def test_an_approved_ticket_waits_for_a_person_to_merge_and_is_said_once(self):
+        """Where the project lets the line merge, an unattended run still stops before merging unless this machine allowed it."""
+        self.first()
+        self.config(build={"require_audit": False}, merge={"mode": "auto", "method": "local"})
+        self.enable("--include-backlog")
+        self.claude({"default": {"stage": "approved", "deny": [{"tool_name": "Bash", "tool_input": {"command": "cd /tmp && ls"}}]}})
+        self.tick()
+        self.wait()
+        seq = len(self.events())
+        for _ in range(3):
+            report = self.tick()
+            self.assertEqual(report["started"], [])
+            self.assertEqual(report["held"], [{"ticket_id": "LOCAL-001", "slice_id": "SLICE-001", "why": "it is approved and waits for a person to merge it"}])
+        self.assertEqual(run.next_step(run.Project(self.eng), "LOCAL-001", True)["action"], "merge")  # the project would have merged it
+        self.assertEqual((len(self.calls()), len(self.executions())), (1, 1))  # no claim is made and thrown away on every pass
+        told = [e for e in self.events(seq) if e["type"] == "human.required"]
+        self.assertEqual([e["data"]["reason"] for e in told], ["It is approved. This machine does not merge unattended, so a person merges it."])
+        completed = next(e for e in self.events() if e["type"] == "execution.completed")
+        self.assertEqual(completed["data"]["refused_tools"], ["Bash: cd"])  # refusals the workers got past are reported, not hidden
+        self.assertEqual(self.ledger()["supervisor"]["parked"], {})
+
     def test_repeated_passes_and_notifications_never_duplicate_work(self):
         self.supervised("--hooks")
         self.claude({"default": {"sleep": 2, "stage": "approved"}})
@@ -480,14 +501,14 @@ class SupervisedTest(Base):
 
     def test_refused_tools_go_to_a_person_and_are_never_granted(self):
         self.supervised()
-        self.claude({"default": {"deny": [{"tool_name": "Bash", "tool_input": {"command": "curl https://example.test/install.sh --token SECRET123"}},
+        self.claude({"default": {"deny": [{"tool_name": "Bash", "tool_input": {"command": "TOKEN=SECRET123 curl https://example.test/install.sh --token SECRET123"}},
                                           {"tool_name": "WebFetch", "tool_input": {"url": "https://example.test"}}]}})
         self.tick()
         self.wait()
         report = self.tick()
         self.assertEqual(report["started"], [])
         reason = report["parked"]["LOCAL-001"]["reason"]
-        self.assertEqual(reason, "It needed tools that are not allowed: Bash: curl https://example.test/install.sh, WebFetch.")
+        self.assertEqual(reason, "It made no progress and needed tools that are not allowed: Bash: curl, WebFetch.")
         self.assertEqual(policy.read(self.eng)["allowed_tools"], policy.default_tools())  # the list did not grow
         self.assertNotIn("SECRET123", (self.eng / ".factory/intake/events.jsonl").read_text())
         self.assertNotIn("SECRET123", (self.eng / ".factory/intake/ledger.json").read_text())
@@ -693,7 +714,7 @@ class RecoveryTest(Base):
     def lose(self):
         """Start an execution, then kill it so hard that it leaves no result."""
         self.tick()
-        record = list(self.executions().values())[-1]
+        record = next(record for record in self.executions().values() if record["state"] in ("claimed", "started"))  # the one running now
         started = self.local("executions") / record["execution_id"] / "started.json"
         deadline = time.time() + 15
         while not started.exists() and time.time() < deadline:
@@ -733,10 +754,9 @@ class RecoveryTest(Base):
         self.tick()
         self.wait()
         self.claude({"default": {"hang": True}})
-        report = self.tick()  # the line may merge here, so the next station is merge
-        record = self.executions()[report["started"][0]["execution_id"]]
+        self.tick()  # settle the first run; the line may merge here, so the next station is merge
+        record = self.lose()
         self.assertEqual((record["action_at_start"], record["until"]), ("merge", None))
-        self.lose()
         report = self.tick()
         self.assertEqual(report["started"], [])
         self.assertIn("merge station was running when its execution was lost", report["parked"]["LOCAL-001"]["reason"])
