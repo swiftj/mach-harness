@@ -64,7 +64,9 @@ class HostConformanceTest(unittest.TestCase):
         self.direct = make_project(parent, "direct")
         self.host = subprocess.Popen(
             [str(self.binary), "--no-open", "--project", str(self.via_host), "--port", "0",
-             "--engine", str(STUDIO), "--python", sys.executable],
+             "--engine", str(STUDIO), "--python", sys.executable,
+             # No interview here: this test is about the engine's artifacts, and never starts Claude Code.
+             "--claude", str(Path(self.tmp.name) / "no-claude-here")],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.stop)
         url = None
@@ -141,6 +143,8 @@ class HostConformanceTest(unittest.TestCase):
         # Through the host, as the web app would.
         session = self.login()
         self.assertIs(session["capabilities"]["interview"], False)
+        self.assertIn("not installed", session["capabilities"]["interview_reason"])
+        self.assertEqual(session["capabilities"]["continue_command"], "/mach:product-studio continue")
         self.assertEqual(session["project"]["folder"], "via-host")
         self.op("project.init", id="team-space", name="Team Space", vision="Teams work together.", outcome=["Teams can work together"])
         self.op("epic.add", title="Team membership", criterion=["Only invited people can join"])

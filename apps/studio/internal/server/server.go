@@ -67,9 +67,11 @@ func New(opts Options) *Server {
 		s.api.HandleFunc("PUT /api/drafts/"+kind+"/{slice}", s.putDraft(kind))
 	}
 	s.api.HandleFunc("POST /api/interview", s.interviewStart)
+	s.api.HandleFunc("GET /api/interview", s.interviewCurrent)
 	s.api.HandleFunc("GET /api/interview/{id}/events", s.interviewEvents)
 	s.api.HandleFunc("POST /api/interview/{id}/reply", s.interviewReply)
-	s.api.HandleFunc("POST /api/interview/{id}/stop", s.interviewStop)
+	s.api.HandleFunc("POST /api/interview/{id}/interrupt", s.interviewControl(false))
+	s.api.HandleFunc("POST /api/interview/{id}/stop", s.interviewControl(true))
 	s.api.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, http.StatusNotFound, engine.Fail(engine.KindInvalid, "There is no such route."))
 	})
@@ -81,10 +83,11 @@ func (s *Server) HTTPServer() *http.Server {
 	return &http.Server{
 		Handler:           s,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       60 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    64 << 10,
-		ErrorLog:          s.opts.Logger,
+		// No ReadTimeout: it would cancel a long-lived event stream. Headers are bounded by
+		// ReadHeaderTimeout and every body by MaxBytesReader.
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 64 << 10,
+		ErrorLog:       s.opts.Logger,
 	}
 }
 
@@ -176,7 +179,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		problem = status.Error
 	}
 	available, reason := s.opts.Bridge.Available()
-	capabilities := map[string]any{"interview": available, "interview_reason": nil}
+	capabilities := map[string]any{"interview": available, "interview_reason": nil, "continue_command": s.opts.Bridge.ContinueCommand()}
 	if !available {
 		capabilities["interview_reason"] = reason
 	}

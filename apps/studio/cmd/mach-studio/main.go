@@ -41,6 +41,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	port := flags.Int("port", 0, "the loopback port to listen on (default: a free one)")
 	python := flags.String("python", "", "the Python interpreter (default: python3 on PATH)")
 	script := flags.String("engine", "", "the path to studio.py (default: found next to this program, then in the project)")
+	claudeFlag := flags.String("claude", "", "the claude command for interviews (default: claude on PATH)")
+	model := flags.String("model", "", "the model for interviews (default: the person's Claude Code default)")
+	budget := flags.Float64("budget-per-turn", 2, "the spending cap in US dollars for each interview turn")
+	turnTimeout := flags.Duration("turn-timeout", 600*time.Second, "the time limit for each interview turn")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -87,8 +91,26 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	logger := log.New(stderr, "mach-studio ", log.LstdFlags)
+	if *budget <= 0 || *budget > 100 || *turnTimeout < time.Second {
+		listener.Close()
+		return errors.New("--budget-per-turn must be between 0 and 100 dollars and --turn-timeout at least 1s")
+	}
+	claudePath := locateClaude(*claudeFlag)
+	var readDirs []string
+	if where := eng.Do(context.Background(), "where", nil); where.OK {
+		readDirs = interview.ReadDirsFromWhere(where.Data, project)
+	}
+	bridge, err := interview.New(interview.Config{
+		ReadDirs: readDirs,
+		Project:  project, Python: interpreter, Script: located.Script, Claude: claudePath, Model: *model,
+		BudgetUSD: *budget, TurnTimeout: *turnTimeout, HostEnv: os.Environ(), Logger: logger,
+	})
+	if err != nil {
+		listener.Close()
+		return err
+	}
 	srv := server.New(server.Options{
-		Engine: eng, Guard: guard, Bridge: interview.Unavailable{}, UI: webui.Handler(),
+		Engine: eng, Guard: guard, Bridge: bridge, UI: webui.Handler(),
 		Logger: logger, EngineInstall: located.Install,
 	}).HTTPServer()
 
@@ -116,9 +138,27 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case <-ctx.Done():
 	}
-	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	bridge.Shutdown(shutdown) // ends every interview (host_shutdown), so event streams close
 	return srv.Shutdown(shutdown)
+}
+
+// locateClaude resolves the claude command once, to an absolute path; "" when it is not found.
+func locateClaude(explicit string) string {
+	name := explicit
+	if name == "" {
+		name = "claude"
+	}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	return abs
 }
 
 // openBrowser starts the system's own opener with the address as one argument; no shell.

@@ -123,3 +123,33 @@ func WriteDraft(root, rel string, data []byte) (string, error) {
 	}
 	return target, nil
 }
+
+// EnsureDir makes (or checks) the folder root/components... one level at a time, refusing any
+// component that is a symbolic link or not a folder. It is used for the host's own local state
+// next to the draft workspace.
+func EnsureDir(root string, components ...string) (string, error) {
+	if !filepath.IsAbs(root) {
+		return "", unsafe("the project root is not absolute")
+	}
+	current := root
+	for i, part := range components {
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "/\\\x00") {
+			return "", unsafe("a folder name is not plain")
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, fs.ErrNotExist) {
+			if err := os.Mkdir(current, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
+				return "", fmt.Errorf("could not make a folder: %w", err)
+			}
+			info, err = os.Lstat(current)
+		}
+		if err != nil {
+			return "", fmt.Errorf("could not check a folder: %w", err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 || !info.IsDir() {
+			return "", unsafe("%s is a symbolic link or not a folder", strings.Join(components[:i+1], "/"))
+		}
+	}
+	return current, nil
+}

@@ -53,9 +53,16 @@ func (b *syncBuffer) String() string {
 }
 
 // start runs the real server on a loopback port against a real project and the real engine.
-func start(t *testing.T) *host {
+func start(t *testing.T) *host { return startWith(t, nil) }
+
+// startWith runs the server with a bridge made for the project (nil: interviews unavailable).
+func startWith(t *testing.T, bridge func(project string) interview.Bridge) *host {
 	t.Helper()
 	project := testkit.NewProject(t)
+	var b interview.Bridge = interview.Unavailable{}
+	if bridge != nil {
+		b = bridge(project)
+	}
 	listener, err := server.Listen(0)
 	if err != nil {
 		t.Fatal(err)
@@ -67,13 +74,14 @@ func start(t *testing.T) *host {
 	}
 	logs := &syncBuffer{}
 	srv := server.New(server.Options{
-		Engine: testkit.NewEngine(t, project), Guard: guard, Bridge: interview.Unavailable{}, UI: webui.Handler(),
+		Engine: testkit.NewEngine(t, project), Guard: guard, Bridge: b, UI: webui.Handler(),
 		Logger: log.New(logs, "", 0), EngineInstall: "explicit",
 	}).HTTPServer()
 	go srv.Serve(listener)
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		b.Shutdown(ctx)
 		srv.Shutdown(ctx)
 	})
 	return &host{t: t, project: project, base: "http://127.0.0.1:" + strconv.Itoa(port), port: port, guard: guard, logs: logs}
@@ -491,14 +499,16 @@ func TestConcurrentWritesToOneSliceAreSerialised(t *testing.T) {
 
 // ---- interview, web app, binding, logs ----
 
-func TestInterviewRoutesAreUnavailableForNow(t *testing.T) {
+func TestInterviewRoutesWhenInterviewsAreUnavailable(t *testing.T) {
 	h := start(t)
 	h.login()
+	id := strings.Repeat("a", 32)
 	for _, c := range []struct{ method, path, body string }{
 		{"POST", "/api/interview", `{"slice_id":"SLICE-001"}`},
-		{"GET", "/api/interview/abc/events", ""},
-		{"POST", "/api/interview/abc/reply", `{"text":"Yes"}`},
-		{"POST", "/api/interview/abc/stop", `{}`},
+		{"GET", "/api/interview/" + id + "/events", ""},
+		{"POST", "/api/interview/" + id + "/reply", `{"text":"Yes"}`},
+		{"POST", "/api/interview/" + id + "/interrupt", `{}`},
+		{"POST", "/api/interview/" + id + "/stop", `{}`},
 	} {
 		status, env := h.call(c.method, c.path, c.body, nil)
 		expect(t, status, env, 503, engine.KindUnavailable)
@@ -506,7 +516,13 @@ func TestInterviewRoutesAreUnavailableForNow(t *testing.T) {
 			t.Fatalf("%s: %q", c.path, env.Error.Message)
 		}
 	}
-	status, env := h.call("POST", "/api/interview", `{"slice_id":"../x"}`, nil)
+	status, env := h.call("GET", "/api/interview?slice_id=SLICE-001", "", nil)
+	if status != 200 || string(env.Data) != `{"interview":null}` {
+		t.Fatalf("current: %d %s", status, env.Data)
+	}
+	status, env = h.call("POST", "/api/interview", `{"slice_id":"../x"}`, nil)
+	expect(t, status, env, 400, engine.KindInvalid)
+	status, env = h.call("POST", "/api/interview/abc/stop", `{}`, nil)
 	expect(t, status, env, 400, engine.KindInvalid)
 }
 

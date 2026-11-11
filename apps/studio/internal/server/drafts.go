@@ -21,6 +21,9 @@ var specShortName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 // showView is the part of `slice show` the draft routes need. Whether a slice may be edited, and
 // the words for why not, come from the engine.
 type showView struct {
+	Slice struct {
+		EpicID string `json:"epic_id"`
+	} `json:"slice"`
 	Editable    bool    `json:"editable"`
 	EditRefusal *string `json:"edit_refusal"`
 	Paths       struct {
@@ -118,6 +121,9 @@ func (s *Server) putDraft(kind string) http.HandlerFunc {
 			view, env := show(r.Context(), tx, id)
 			if view == nil {
 				return env
+			}
+			if s.opts.Bridge.Busy(id) {
+				return engine.Fail(engine.KindConflict, "The interviewer is writing this slice's draft right now. Wait for its reply, or interrupt it.")
 			}
 			if !view.Editable {
 				message := id + " cannot be changed."
