@@ -1,0 +1,22 @@
+{
+  "exit_code": 0,
+  "data": {
+    "sent": true,
+    "wave_id": "WAVE-001",
+    "shared": [
+      "delivery wave WAVE-001 (new)",
+      "epic EPIC-001 (new)",
+      "the why for SLICE-001 (new)",
+      "the project (new)",
+      "the work order for SLICE-001 (new)",
+      "the spec SLICE-001-invite-teammate.md (new)"
+    ],
+    "status": "Waiting for review",
+    "pull_request": "https://example.test/pull/1",
+    "branch": "product/WAVE-001",
+    "problem": null,
+    "factory_authorized": false,
+    "note": "Engineering has been asked to accept this. No engineering work has started."
+  },
+  "refused": null
+}

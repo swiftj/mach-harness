@@ -1,0 +1,25 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "shared_project": "the main branch of the shared repository",
+    "arrived": [
+      "product/delivery-waves/WAVE-001.json",
+      "product/epics/EPIC-001.json",
+      "product/intents/SLICE-001.md",
+      "product/project.json",
+      "product/slices/SLICE-001.json",
+      "specs/slices/SLICE-001-invite-teammate.md"
+    ],
+    "updated": [],
+    "merged": [],
+    "approvals_withdrawn": [],
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    }
+  },
+  "refused": null
+}

@@ -1,0 +1,22 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice_id": "SLICE-001",
+    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-001-invite-teammate.md",
+    "errors": [],
+    "warnings": [],
+    "open_questions": [],
+    "intent_problems": [],
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "title": "Invite a teammate by email",
+    "risk": "High",
+    "ready": true,
+    "status": "ready_for_approval"
+  },
+  "refused": null
+}

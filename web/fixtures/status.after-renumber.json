@@ -1,0 +1,170 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 2,
+      "vision": "Teams work together without friction, wherever they are.",
+      "outcomes": [
+        "Teams can work together",
+        "Admins stay in control of who has access"
+      ]
+    },
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "People and access",
+        "status": "approved",
+        "revision": 3,
+        "source": "conflict"
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-001",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "interviewing",
+        "revision": 3,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-001-invite-teammate.md",
+        "has_intent": true,
+        "source": "conflict",
+        "resume_note": null
+      },
+      {
+        "slice_id": "SLICE-002",
+        "title": "Resend an invitation",
+        "epic_id": "EPIC-001",
+        "status": "approved_for_engineering",
+        "revision": 2,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-002-invite-teammate.md",
+        "has_intent": true,
+        "source": "published",
+        "resume_note": null
+      },
+      {
+        "slice_id": "SLICE-003",
+        "title": "Remove a teammate",
+        "epic_id": "EPIC-001",
+        "status": "interviewing",
+        "revision": 1,
+        "open_questions": 2,
+        "spec": "specs/slices/SLICE-003-invite-teammate.md",
+        "has_intent": true,
+        "source": "draft",
+        "resume_note": null
+      }
+    ],
+    "waves": [
+      {
+        "wave_id": "WAVE-001",
+        "status": "draft",
+        "revision": 3,
+        "slices": [
+          "SLICE-001"
+        ],
+        "approval": null,
+        "source": "draft",
+        "sent": false,
+        "pull_request": null
+      },
+      {
+        "wave_id": "WAVE-002",
+        "status": "approved_for_engineering",
+        "revision": 2,
+        "slices": [
+          "SLICE-001"
+        ],
+        "approval": {
+          "actor": "Ada PM",
+          "approved_at": "2026-11-10T14:00:00Z"
+        },
+        "source": "published",
+        "sent": false,
+        "pull_request": null
+      },
+      {
+        "wave_id": "WAVE-003",
+        "status": "approved_for_engineering",
+        "revision": 2,
+        "slices": [
+          "SLICE-002"
+        ],
+        "approval": {
+          "actor": "Ada PM",
+          "approved_at": "2026-11-10T14:00:00Z"
+        },
+        "source": "published",
+        "sent": false,
+        "pull_request": null
+      }
+    ],
+    "current_slice": "SLICE-003",
+    "needs_reconciling": {
+      "conflicts": [
+        "product/epics/EPIC-001.json",
+        "product/slices/SLICE-001.json",
+        "specs/slices/SLICE-001-invite-teammate.md"
+      ],
+      "collisions": [],
+      "details": {
+        "product/epics/EPIC-001.json": {
+          "fields": {
+            "acceptance_criteria": {
+              "mine": [
+                "Only invited people can join"
+              ],
+              "theirs": [
+                "Only invited people can join",
+                "Invitations expire after 14 days"
+              ]
+            }
+          }
+        },
+        "product/slices/SLICE-001.json": {
+          "fields": {
+            "spec_sha256": {
+              "mine": null,
+              "theirs": "e18a0c5c6d59ab0e13dfe4a48fac156b8becb8fc4d1491e2bfbaf1cd59b290be"
+            }
+          }
+        },
+        "specs/slices/SLICE-001-invite-teammate.md": {
+          "mine": {
+            "path": "specs/slices/SLICE-001-invite-teammate.md",
+            "added": [],
+            "removed": [],
+            "changed": [
+              "wording"
+            ]
+          },
+          "theirs": {
+            "path": "specs/slices/SLICE-001-invite-teammate.md",
+            "added": [],
+            "removed": [],
+            "changed": [
+              "requirement FR-01"
+            ]
+          }
+        }
+      }
+    },
+    "shared_project": "the main branch of the shared repository",
+    "last_refreshed": "2026-11-11T14:32:12Z",
+    "structurally_valid": false,
+    "structural_errors": [
+      "product/delivery-waves/WAVE-002.json: wave includes unapproved slice 'SLICE-001'"
+    ],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Some of your drafts and the shared project disagree: settle those first (reconcile, or renumber for a collision).",
+      "Continue the interview for SLICE-001: Invite a teammate (slice resume SLICE-001).",
+      "Continue the interview for SLICE-003: Remove a teammate (slice resume SLICE-003)."
+    ]
+  },
+  "refused": null
+}

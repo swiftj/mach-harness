@@ -1,0 +1,5 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "Could not reach the shared repository, so nothing was sent (and the repository exists.). Try again when you are connected."
+}

@@ -1,0 +1,18 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "shared_project": "the main branch of the shared repository",
+    "arrived": [],
+    "updated": [],
+    "merged": [],
+    "approvals_withdrawn": [],
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    }
+  },
+  "refused": null
+}

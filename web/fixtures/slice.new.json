@@ -1,0 +1,35 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice": {
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "project_id": "team-space",
+      "epic_id": "EPIC-001",
+      "revision": 1,
+      "title": "Invite a teammate",
+      "status": "draft",
+      "dependencies": [],
+      "open_questions": [],
+      "spec_path": null,
+      "spec_sha256": null
+    },
+    "work_order": "/project/.factory/studio/draft/product/slices/SLICE-001.json",
+    "specs_dir": "/project/.factory/studio/draft/specs/slices",
+    "spec": null,
+    "spec_name_pattern": "SLICE-001-<lowercase-kebab-name>.md",
+    "intent_path": "/project/.factory/studio/draft/product/intents/SLICE-001.md",
+    "ids": {
+      "next": [
+        "SLICE-002",
+        "SLICE-003",
+        "SLICE-004",
+        "SLICE-005",
+        "SLICE-006",
+        "SLICE-007"
+      ],
+      "reserved_without_spec": []
+    }
+  },
+  "refused": null
+}

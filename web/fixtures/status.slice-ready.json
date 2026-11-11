@@ -1,0 +1,56 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together without friction.",
+      "outcomes": [
+        "Teams can work together",
+        "Admins stay in control of who has access"
+      ]
+    },
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "proposed",
+        "revision": 1,
+        "source": "draft"
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-001",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "ready_for_approval",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-001-invite-teammate.md",
+        "has_intent": true,
+        "source": "draft",
+        "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?"
+      }
+    ],
+    "waves": [],
+    "current_slice": "SLICE-001",
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    },
+    "shared_project": "the main branch of the shared repository",
+    "last_refreshed": null,
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "SLICE-001 is ready: approve it (slice approve SLICE-001).",
+      "Approve epic EPIC-001: Team membership (epic approve EPIC-001), so its slices can be approved."
+    ]
+  },
+  "refused": null
+}

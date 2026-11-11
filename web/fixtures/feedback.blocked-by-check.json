@@ -1,0 +1,19 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "waves": [
+      {
+        "wave_id": "WAVE-001",
+        "slices": [
+          "SLICE-001"
+        ],
+        "pull_request": "https://example.test/pull/1",
+        "status": "Blocked by a check",
+        "meaning": "An automatic check on the request is failing: validate-product.",
+        "reviewer_remarks": []
+      }
+    ]
+  },
+  "refused": null
+}

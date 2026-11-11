@@ -1,0 +1,5 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "SLICE-001 cannot be approved yet:\n  No spec yet. Write it to /project/.factory/studio/draft/specs/slices/SLICE-001-<short-name>.md\n  /project/.factory/studio/draft/product/intents/SLICE-001.md is missing. Write it from the intent template before approving.\n  epic EPIC-001 is proposed, not approved (studio.py epic approve EPIC-001)"
+}

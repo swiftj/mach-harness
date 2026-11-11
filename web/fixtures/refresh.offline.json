@@ -1,0 +1,62 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": false,
+    "problem": "and the repository exists.",
+    "shared_project": "the main branch of the shared repository",
+    "arrived": [],
+    "updated": [],
+    "merged": [],
+    "approvals_withdrawn": [],
+    "needs_reconciling": {
+      "conflicts": [
+        "product/epics/EPIC-001.json",
+        "product/slices/SLICE-001.json",
+        "specs/slices/SLICE-001-invite-teammate.md"
+      ],
+      "collisions": [],
+      "details": {
+        "product/epics/EPIC-001.json": {
+          "fields": {
+            "acceptance_criteria": {
+              "mine": [
+                "Only invited people can join"
+              ],
+              "theirs": [
+                "Only invited people can join",
+                "Invitations expire after 14 days"
+              ]
+            }
+          }
+        },
+        "product/slices/SLICE-001.json": {
+          "fields": {
+            "spec_sha256": {
+              "mine": null,
+              "theirs": "e18a0c5c6d59ab0e13dfe4a48fac156b8becb8fc4d1491e2bfbaf1cd59b290be"
+            }
+          }
+        },
+        "specs/slices/SLICE-001-invite-teammate.md": {
+          "mine": {
+            "path": "specs/slices/SLICE-001-invite-teammate.md",
+            "added": [],
+            "removed": [],
+            "changed": [
+              "wording"
+            ]
+          },
+          "theirs": {
+            "path": "specs/slices/SLICE-001-invite-teammate.md",
+            "added": [],
+            "removed": [],
+            "changed": [
+              "requirement FR-01"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "refused": null
+}

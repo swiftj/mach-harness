@@ -1,0 +1,9 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice_id": "SLICE-001",
+    "saved": true,
+    "resume_with": "studio.py slice resume SLICE-001"
+  },
+  "refused": null
+}
