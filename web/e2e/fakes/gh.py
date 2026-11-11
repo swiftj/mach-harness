@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """Stand-in for gh: the same behaviour as the stand-in in tests/test_mach_product_collab.py, plus
 the full argument vector of every call in state["calls"], so a test can assert exactly what reached
-it. State lives in $FAKE_GH_STATE. Never touches the network."""
+it. State lives in $FAKE_GH_STATE. Never touches the network.
+
+Concurrent calls (the host's and a terminal's at once) are serialised with an exclusive lock on
+$FAKE_GH_STATE.lock, held from the read to the write, and the state is replaced atomically, so no
+call ever reads a half-written file or loses another's update. Tests change the state through the
+same lock (lib/world.mjs setPr)."""
+import fcntl
 import json
 import os
 import sys
 
 path = os.environ["FAKE_GH_STATE"]
+lock = open(path + ".lock", "a")
+fcntl.flock(lock, fcntl.LOCK_EX)
 with open(path) as f:
     state = json.load(f)
 args = sys.argv[1:]
@@ -15,8 +23,10 @@ state.setdefault("calls", []).append({"argv": args, "cwd": os.getcwd()})
 
 
 def done(code=0):
-    with open(path, "w") as f:
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w") as f:
         json.dump(state, f)
+    os.replace(tmp, path)
     sys.exit(code)
 
 

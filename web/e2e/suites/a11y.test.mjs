@@ -154,6 +154,7 @@ test("keyboard only: the lifecycle's main path", async (t) => {
     throw new Error(`never reached ${match}; focus went: ${seen.slice(-25).join(" → ")}`);
   };
   const dialog = () => page.getByRole("dialog");
+  const notification = () => page.locator('[aria-label^="Notifications"] li');
   /** Focus stays in the open dialog for a full cycle, Escape closes it, and focus returns to the opener. */
   const trapAndEscape = async (opener) => {
     for (let i = 0; i < 20; i++) {
@@ -166,14 +167,21 @@ test("keyboard only: the lifecycle's main path", async (t) => {
       const f = await focusInfo(page);
       if (!f.inDialog) throw new Error(`Shift+Tab left the dialog to "${f.name}"`);
     }
-    const toasts = await page.getByRole("region", { name: /Notifications/ }).getByRole("listitem").count();
+    // What else is open that Escape could rightly close first: notifications (Radix toasts are <li>) and tooltips.
+    const layers = () =>
+      page.evaluate(() => ({
+        toasts: [...document.querySelectorAll('[aria-label^="Notifications"] li')].map((li) => li.textContent.trim().slice(0, 40)),
+        tooltips: document.querySelectorAll('[role="tooltip"]').length,
+      }));
+    const beforeEsc = await layers();
     const at = await focusInfo(page);
-    const tooltip = await page.getByRole("tooltip").count();
     await press("Escape");
     const closed = await dialog().waitFor({ state: "detached", timeout: 1500 }).then(() => true, () => false);
     if (!closed) {
-      escapeIgnored.push(`Escape did not close the dialog opened by "${opener}" (focus on "${at.name}", ${tooltip} tooltip(s) and ${toasts} notification(s) open; a second Escape was needed)`);
-      if (tooltip) escapeIgnored.pop(); // the first Escape rightly closed the tooltip (WCAG 1.4.13)
+      const afterEsc = await layers();
+      escapeIgnored.push(
+        `Escape did not close the dialog opened by "${opener}" (focus on "${at.name}"; before: ${beforeEsc.toasts.length} notification(s) [${beforeEsc.toasts.join(" / ")}], ${beforeEsc.tooltips} tooltip(s); after: ${afterEsc.toasts.length} notification(s), ${afterEsc.tooltips} tooltip(s))`,
+      );
       await press("Escape");
       await dialog().waitFor({ state: "detached" });
     }
@@ -228,6 +236,9 @@ test("keyboard only: the lifecycle's main path", async (t) => {
     });
 
     await step("the epic dialog traps focus, Escape closes it and focus returns", async () => {
+      // Escape with a notification on screen is its own check (below). Here the "Created" notification
+      // from the previous step is let go first, so this check does not depend on how fast that step ran.
+      await notification().first().waitFor({ state: "detached", timeout: 30000 });
       await tabTo("Add an epic");
       await press("Enter");
       await dialog().waitFor();
@@ -342,6 +353,52 @@ test("keyboard only: the lifecycle's main path", async (t) => {
       report.keyboard = [...noIndicator.keys()];
       assert.deepEqual([...noIndicator.keys()], []);
     });
+  } finally {
+    await context.close();
+    await host.stop();
+    world.cleanup();
+  }
+});
+
+test("Escape closes an open dialog while a notification is on screen", async (t) => {
+  // Deterministic reproduction of the keyboard pass's intermittent failure: whether it failed
+  // depended only on whether the "Created" notification had timed out before Escape was pressed.
+  const world = createWorld({ claude: "none" });
+  const init = world.studio(world.pm, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together");
+  assert.equal(init.code, 0, init.stderr);
+  const host = await startHost(binary, world.pm, world.env);
+  const { page, context } = await watchedPage(browser, host.origin);
+  const notification = () => page.locator('[aria-label^="Notifications"] li');
+  try {
+    await page.goto(host.url, { waitUntil: "networkidle" });
+    await page.goto(`${host.origin}/#/vision`);
+    await page.getByRole("heading", { level: 1, name: "Vision" }).waitFor();
+    for (const how of ["keyboard", "mouse"]) {
+      await t.test(`opened with the ${how}`, async () => {
+        // Any act that confirms with a notification: save the vision.
+        await page.getByRole("textbox", { name: "Vision" }).fill(`Teams work together, ${how}.`);
+        await page.getByRole("button", { name: "Save changes" }).click();
+        await notification().first().waitFor();
+        const opener = page.getByRole("main").getByRole("button", { name: "Add an epic" });
+        if (how === "mouse") await opener.click();
+        else {
+          await opener.focus();
+          await page.keyboard.press("Enter");
+        }
+        await page.getByRole("dialog").waitFor();
+        const before = await notification().count();
+        await page.keyboard.press("Escape");
+        const closed = await page.getByRole("dialog").waitFor({ state: "detached", timeout: 1500 }).then(() => true, () => false);
+        const after = await notification().count();
+        // Leave no dialog or notification behind for the next case: one Escape per remaining layer.
+        for (let i = 0; i < 6 && (await page.getByRole("dialog").count()); i++) {
+          await page.keyboard.press("Escape");
+          await page.getByRole("dialog").waitFor({ state: "detached", timeout: 1000 }).catch(() => {});
+        }
+        await notification().first().waitFor({ state: "detached", timeout: 30000 });
+        assert.ok(closed, `the first Escape closed ${before - after} notification(s) and left the dialog open`);
+      });
+    }
   } finally {
     await context.close();
     await host.stop();

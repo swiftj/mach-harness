@@ -81,10 +81,18 @@ export function createWorld({ claude = "fake", turns, clones = ["pm"] } = {}) {
     claudePath,
     app: false,
     gh: () => JSON.parse(readFileSync(ghState, "utf8")),
+    /** Changes a pull request the way a reviewer would, under the stand-in gh's own lock (fakes/gh.py). */
     setPr(number, changes) {
-      const state = world.gh();
-      Object.assign(state.prs[number - 1], changes);
-      writeFileSync(ghState, JSON.stringify(state));
+      const script = `import fcntl, json, os, sys
+path, number, changes = sys.argv[1], int(sys.argv[2]), json.loads(sys.argv[3])
+lock = open(path + ".lock", "a")
+fcntl.flock(lock, fcntl.LOCK_EX)
+state = json.load(open(path))
+state["prs"][number - 1].update(changes)
+tmp = path + ".setpr.tmp"
+json.dump(state, open(tmp, "w"))
+os.replace(tmp, path)`;
+      execFileSync(python, ["-I", "-B", "-c", script, ghState, String(number), JSON.stringify(changes)], { env });
     },
     claudeCalls() {
       const folder = join(bin, "calls");
