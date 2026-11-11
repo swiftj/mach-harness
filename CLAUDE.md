@@ -107,6 +107,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── holdouts/<ticket_id>/   # Optional extra checks a person leaves for the verifier; the builder is never shown them
     ├── studio/                 # Experimental. Product Studio's drafts, session and publication ledger; git-ignored, never read by a station
     ├── intake/                 # Experimental. The Factory's intake ledger (ledger.json) and its event log (events.jsonl); git-ignored
+    ├── local/                  # Experimental. Machine-local authorization (runner.json), the supervisor's lease, and each execution's output; git-ignored, never shared
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
             ├── cell.json       # Cell state: stage, mode, slice ID, risk tier, app type, contracts
@@ -206,7 +207,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Consensus Thresholds** (set in `.factory/config.json` under `review`):
   * **High Risk** (Auth, Billing, DB Schema, changes to existing contracts): **Unanimous 3/3 + 1 human approval**. Adding a new contract file does not make a ticket High risk.
   * **Factory tuning** (label `factory-tuning`, rule files only): **Unanimous 3/3 on the contracts tier, no human approval**.
-  * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden.
+  * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden. A blocker from the security seat is never outvoted: it rejects the round whatever the count (`review.security_veto`, on unless a project switches it off).
   * **Low Risk** (Docs, wording): **1/1**, one general reviewer.
   * A Silver readiness tier also requires a human approval, whatever the risk.
 * **Start gate**: only a cell with a passing verification for exactly the code under review.
@@ -301,6 +302,18 @@ Approved delivery waves that Product Studio published and engineering merged are
 * **Events**: each ledger transition is appended to `.factory/intake/events.jsonl` with a schema version and sequence number, for the supervisor (M4) and Control Tower (M6).
 * **Ready for a supervisor**: `product reconcile` is intake plus a recorded plan in one step; intake, reconcile and dispatch hold a lock so there is one writer at a time; and any caller but an engineer must bring an authorization to dispatch, or nothing is dispatched.
 * **Never**: runs in the background, reads the machine-local Factory policy, fetches unless asked, changes the main checkout, merges or pushes.
+
+### Experimental: the Factory Supervisor (`/mach-run factory`, MACH Next M4)
+
+On a machine whose engineer has enabled it, a supervisor keeps approved product work moving unattended. It is off on every machine until enabled there. Code: `policy.py`, `executor.py`, `supervisor.py`, `service.py` and `activation.py` in `skills/run/scripts/`. Design: `docs/mach-next/M4_DESIGN.md`.
+
+* **Authorization is machine-local**: `.factory/local/runner.json`, git-ignored and private. Missing, malformed, written on another machine or for another folder all read as disabled. The project's tracked settings (`factory` in `.factory/config.json`) can restrict it and never widen it; product files are never read for it.
+* **Activation**: `factory enable` runs a preflight and prints exactly what would be allowed and a short-lived code; only `factory enable --confirm <code>`, on a person's explicit yes, enables. Two modes: **observe** (discover, take in and plan; start no agent) and **supervised** (also run eligible work, stopping at every human gate). `status` changes nothing. `pause`, `resume`, `disable` and an emergency `stop` complete the lifecycle.
+* **It decides nothing about order**: each pass calls M3's `reconcile`, dispatches through M3's guarded `dispatch` with an authorization read from disk at that moment, and starts the existing belt workflow for one ticket per execution. `run.py next` and every station gate stay authoritative.
+* **Execution**: one `claude -p` per ticket, in an explicit restricted permission mode, with an explicit tool list, a spending limit and a known session ID, behind a detached wrapper that records its start and end. A tool outside the list is refused and raised to a person, never granted. By default every execution stops before the merge station.
+* **Recovery**: a claim is on disk before a process exists. A restarted supervisor tells apart a claim that never started, an execution still running, one that ended unwatched and one whose outcome is unknown. Unknown outcomes are counted or raised to a person; a lost merge or cleanup is never retried automatically.
+* **One runner per project, per machine**: an ownership lease with a heartbeat. Nothing coordinates two engineers' machines.
+* **Optional, each on explicit request**: advisory Git hooks (a wake-up note, never authorization), fetching on a timer, and a per-user macOS LaunchAgent. None is installed by cloning, installing or running a ticket.
 
 ### Merge station: `/mach-merge`
 
