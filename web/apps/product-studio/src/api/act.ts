@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { describeError, type ApiErrorHint, type MachApiError, type OperationArgs, type OperationName, type OperationResult } from "@mach/ui/api";
 import { client } from "./client";
-import { asError, reloadStatus } from "./store";
+import { asError, statusSettled } from "./store";
 
 export interface EngineAct {
   /** Runs one operation. Resolves with the result, or null after a failure (then `error` is set). */
@@ -25,7 +25,7 @@ export function useEngineAct(): EngineAct {
     setError(null);
     try {
       const result = await client.op(name, args);
-      await reloadStatus();
+      await statusSettled();
       return result;
     } catch (e) {
       setError(asError(e));

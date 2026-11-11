@@ -59,6 +59,11 @@ try {
   await page.locator(".react-flow__node").first().waitFor({ timeout: 20000 });
   check("roadmap map loads on demand and lays out", (await page.locator(".react-flow__node").count()) >= 3);
 
+  // A slice with no spec yet: the specification screen says so inside the shell, never an error page.
+  await page.goto(`${host.origin}/#/slices/SLICE-001`, { waitUntil: "networkidle" });
+  await page.getByText("Nothing is written yet").waitFor({ timeout: 20000 });
+  check("slice with no spec shows its empty state in the shell", (await page.locator('nav[aria-label="Main"]').count()) === 1);
+
   // The interview screen asks the host for the slice's interview through the shared client.
   const lookup = page.waitForResponse((r) => r.url().includes("/api/interview?slice_id=SLICE-001"), { timeout: 20000 }).catch(() => null);
   await page.goto(`${host.origin}/#/slices/SLICE-001/interview`, { waitUntil: "networkidle" });

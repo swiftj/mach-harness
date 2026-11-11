@@ -574,7 +574,11 @@ function FromShared({ refresh, loading, status }: { refresh: Refresh | null; loa
         </>
       ) : (
         <Text size="body-sm" tone="muted">
-          {refresh ? "Nothing new since you last looked." : "Not checked yet this visit."}
+          {!refresh
+            ? "Not checked yet this visit."
+            : refresh.needs_reconciling.conflicts.length + refresh.needs_reconciling.collisions.length
+              ? "Nothing new arrived, but some items need your decision."
+              : "Nothing new since you last looked."}
           {status.last_refreshed ? ` Last checked ${new Date(status.last_refreshed).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}.` : ""}
         </Text>
       )}

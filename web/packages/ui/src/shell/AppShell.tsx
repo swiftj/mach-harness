@@ -45,6 +45,14 @@ export function AppShell({ nav, topBar, children, mainId = "main" }: AppShellPro
     <div data-mach-shell="" className="flex h-dvh min-w-[1024px] overflow-hidden bg-canvas text-ink">
       <a
         href={`#${mainId}`}
+        // Hash routing uses the address's fragment for the route, so following "#main" would change
+        // the screen. Move focus to the content instead and leave the address alone.
+        onClick={(event) => {
+          event.preventDefault();
+          const main = document.getElementById(mainId);
+          main?.focus();
+          main?.scrollIntoView({ block: "start" });
+        }}
         className="sr-only z-[70] rounded-sm bg-surface-raised px-3 py-2 text-label text-ink shadow-2 focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
       >
         Skip to content

@@ -14,10 +14,18 @@ const remember = (epic: Epic) => criteriaSeen.set(epic.epic_id, epic.acceptance_
 export type EpicSheetState = { mode: "add" } | { mode: "edit"; epic: StatusEpicRow } | null;
 
 export function EpicSheet({ state, onClose }: { state: EpicSheetState; onClose: () => void }) {
-  // The body mounts each time the sheet opens, so its fields start from the epic.
+  // A fresh body for every opening (its fields start from the epic), kept mounted with the last
+  // state while it closes, so the sheet can hand focus back to whatever opened it.
+  const [last, setLast] = useState<NonNullable<EpicSheetState> | null>(state);
+  const [generation, setGeneration] = useState(0);
+  if (state && state !== last) {
+    setLast(state);
+    setGeneration((g) => g + 1);
+  }
+  const shown = state ?? last;
   return (
     <Sheet open={state !== null} onOpenChange={(open) => !open && onClose()}>
-      {state ? <EpicSheetBody state={state} onClose={onClose} /> : null}
+      {shown ? <EpicSheetBody key={generation} state={shown} onClose={onClose} /> : null}
     </Sheet>
   );
 }

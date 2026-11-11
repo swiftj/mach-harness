@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { Button, Dialog, DialogClose, DialogContent, Field, Input, Select, Textarea, toast, HintAction } from "@mach/ui";
 import type { StatusEpicRow } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
+import { rememberIdea } from "../../api/pendingIdea";
 
 export interface NewSliceDialogProps {
   open: boolean;
@@ -13,14 +14,21 @@ export interface NewSliceDialogProps {
 }
 
 /**
- * Starts a slice: `slice.new` with the PM's title, then the interview. The idea, if given, travels
- * to the interview screen as router state `{ idea }` for it to pass to POST /api/interview.
+ * Starts a slice: `slice.new` with the PM's title, then the interview. The idea, if given, is kept
+ * for the slice (api/pendingIdea) and sent with its first POST /api/interview.
  */
 export function NewSliceDialog(props: NewSliceDialogProps) {
-  // The body mounts each time the dialog opens, so its fields start empty.
+  // A fresh body (empty fields) for every opening, kept mounted while it closes so the dialog can
+  // hand focus back to whatever opened it.
+  const [generation, setGeneration] = useState(0);
+  const [wasOpen, setWasOpen] = useState(props.open);
+  if (props.open !== wasOpen) {
+    setWasOpen(props.open);
+    if (props.open) setGeneration((g) => g + 1);
+  }
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      {props.open ? <NewSliceBody {...props} /> : null}
+      <NewSliceBody key={generation} {...props} />
     </Dialog>
   );
 }
@@ -42,9 +50,10 @@ function NewSliceBody({ onOpenChange, epics, epicId }: NewSliceDialogProps) {
     }
     const result = await act.run("slice.new", { epic, title: title.trim() });
     if (!result) return;
+    rememberIdea(result.slice.slice_id, idea);
     toast({ tone: "success", title: `Started ${result.slice.slice_id}`, description: result.slice.title });
     onOpenChange(false);
-    navigate(`/slices/${result.slice.slice_id}/interview`, { state: idea.trim() ? { idea: idea.trim() } : undefined });
+    navigate(`/slices/${result.slice.slice_id}/interview`);
   };
 
   return (

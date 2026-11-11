@@ -2,7 +2,7 @@ import { ENGINE_ID } from "./ids";
 import { createConnectionStore, type ConnectionStore } from "./connection";
 import { MachApiError, type HostErrorKind } from "./errors";
 import { createInterviewClient, type InterviewClient, type EventSourceFactory } from "./interview";
-import type { DraftRead, DraftWriteResult, OperationArgs, OperationName, OperationResult, Session } from "./types";
+import { readOnlyOperations, type DraftRead, type DraftWriteResult, type OperationArgs, type OperationName, type OperationResult, type Session } from "./types";
 
 /** The envelope every host response uses (contract section 4). */
 export type Envelope<T> =
@@ -56,6 +56,12 @@ export interface MachClient {
   writeDraft(kind: "spec" | "intent", sliceId: string, markdown: string, options?: { name?: string; signal?: AbortSignal }): Promise<DraftWriteResult>;
   /** The interview routes (contract 8.2). */
   interview: InterviewClient;
+  /**
+   * Called after every successful request that may have changed the workspace (an operation not in
+   * readOnlyOperations, a draft write). Apps reload their cached status here, so no screen shows
+   * what was true before an act. Returns the unsubscribe function.
+   */
+  onChange(listener: (operation: string) => void): () => void;
   connection: ConnectionStore;
 }
 
@@ -104,6 +110,8 @@ export function createClient(options: ClientOptions = {}): MachClient {
   const transport = options.transport ?? fetchTransport(options.baseUrl ?? "");
   const connection = options.connection ?? createConnectionStore();
   let csrf: string | null = null;
+  const changeListeners = new Set<(operation: string) => void>();
+  const changed = (operation: string) => changeListeners.forEach((listener) => listener(operation));
   let pending: Promise<Session> | null = null;
 
   async function send<T>(method: TransportRequest["method"], path: string, operation: string, payload?: unknown, signal?: AbortSignal): Promise<T> {
@@ -169,15 +177,24 @@ export function createClient(options: ClientOptions = {}): MachClient {
   return {
     connection,
     session: loadSession,
-    op(name, args, signal) {
-      return send("POST", `/api/ops/${name}`, name, args, signal);
+    async op(name, args, signal) {
+      const result = await send("POST", `/api/ops/${name}`, name, args, signal);
+      if (!readOnlyOperations.has(name)) changed(name);
+      return result as OperationResult<typeof name>;
+    },
+    onChange(listener) {
+      changeListeners.add(listener);
+      return () => changeListeners.delete(listener);
     },
     readDraft(kind, sliceId, signal) {
       return send("GET", draftPath(kind, sliceId), `drafts.${kind}`, undefined, signal);
     },
     writeDraft(kind, sliceId, markdown, opts = {}) {
       const body = kind === "spec" && opts.name ? { markdown, name: opts.name } : { markdown };
-      return send("PUT", draftPath(kind, sliceId), `drafts.${kind}`, body, opts.signal);
+      return send<DraftWriteResult>("PUT", draftPath(kind, sliceId), `drafts.${kind}`, body, opts.signal).then((result) => {
+        changed(`drafts.${kind}`);
+        return result;
+      });
     },
     interview: createInterviewClient({
       get: (path, operation, signal) => send("GET", path, operation, undefined, signal),

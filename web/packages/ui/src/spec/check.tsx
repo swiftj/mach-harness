@@ -53,6 +53,8 @@ export function CheckPill({ check, status, size }: { check: SliceCheck; status?:
 
 /** The four counts the check reports, as a definition list. */
 export function CheckCounts({ check, className }: { check: SliceCheck; className?: string }) {
+  // No spec yet: nothing has been counted, so nothing is shown (not four zeros).
+  if (!check.counts) return null;
   const items: Array<[string, number]> = [
     ["Rules", check.counts.invariants],
     ["Requirements", check.counts.functional_requirements],

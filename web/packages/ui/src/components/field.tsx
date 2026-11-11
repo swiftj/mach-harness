@@ -38,7 +38,12 @@ export function Field({ label, hint, error, optional, children, className }: Fie
       <div className={cn("flex flex-col gap-1.5", className)}>
         <label htmlFor={id} className="text-label text-ink">
           {label}
-          {optional ? <span className="ml-1.5 font-normal text-ink-subtle">optional</span> : null}
+          {optional ? (
+            <>
+              {/* A real separator, so the accessible name reads "The idea, optional", not "The ideaoptional". */}
+              <span className="sr-only">,</span> <span className="font-normal text-ink-subtle">optional</span>
+            </>
+          ) : null}
         </label>
         {hint ? (
           <p id={hintId} className="-mt-0.5 text-body-sm text-ink-muted">

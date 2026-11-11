@@ -2,6 +2,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { cn } from "../lib/cn";
+import { useFocusReturn } from "./focus-return";
 import { Button } from "./button";
 import { DialogOverlay } from "./dialog";
 
@@ -22,9 +23,10 @@ export interface SheetContentProps extends Omit<ComponentPropsWithoutRef<typeof 
  * comparison, reviewer remarks. Modal: focus is trapped and Escape closes.
  */
 export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(function SheetContent(
-  { title, description, footer, width = 480, className, children, ...props },
+  { title, description, footer, width = 480, className, children, onCloseAutoFocus, ...props },
   ref,
 ) {
+  const returnFocus = useFocusReturn();
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />
@@ -37,6 +39,10 @@ export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(functi
           className,
         )}
         {...props}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          if (!event.defaultPrevented) returnFocus(event);
+        }}
       >
         <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
           <div className="flex min-w-0 flex-col gap-1">

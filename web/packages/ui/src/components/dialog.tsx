@@ -2,6 +2,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { cn } from "../lib/cn";
+import { useFocusReturn } from "./focus-return";
 import { Button } from "./button";
 
 export const Dialog = DialogPrimitive.Root;
@@ -37,9 +38,10 @@ export interface DialogContentProps extends Omit<ComponentPropsWithoutRef<typeof
  * Focus is trapped, Escape closes, focus returns to the trigger.
  */
 export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(function DialogContent(
-  { title, description, footer, width = "md", className, children, ...props },
+  { title, description, footer, width = "md", className, children, onCloseAutoFocus, ...props },
   ref,
 ) {
+  const returnFocus = useFocusReturn();
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />
@@ -54,6 +56,10 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(func
           className,
         )}
         {...props}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          if (!event.defaultPrevented) returnFocus(event);
+        }}
       >
         <div className="flex items-start justify-between gap-4 px-6 pt-5">
           <div className="flex flex-col gap-1.5">

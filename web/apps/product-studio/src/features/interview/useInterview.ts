@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toInterviewEvent, type MachApiError, type InterviewClient, type InterviewSummary } from "@mach/ui/api";
 import { client } from "../../api/client";
+import { forgetIdea, peekIdea } from "../../api/pendingIdea";
 import { initialModel, interviewReducer, type AnswerKind, type InterviewModel } from "./model";
 import { interviewCapability, loadSession, toApiError, type InterviewCapability } from "../../api/session";
 
@@ -123,8 +124,13 @@ export function useInterview(sliceId: string): InterviewController {
     if (!client) return;
     setPhase("starting");
     setProblem(null);
-    client.start(sliceId).then(
-      (result) => attach(client, result.interview_id),
+    // The idea typed in "Start a slice" goes with this slice's first start, then is forgotten.
+    const idea = peekIdea(sliceId);
+    client.start(sliceId, idea).then(
+      (result) => {
+        forgetIdea(sliceId);
+        attach(client, result.interview_id);
+      },
       (cause: unknown) => {
         const error = toApiError(cause, "interview.start");
         setProblem(error);

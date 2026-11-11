@@ -71,7 +71,8 @@ export const waveStates: Record<WaveStatus, StateDescriptor> = {
 };
 
 /**
- * Review states of a sent wave. `stage` places it on the wave journey
+ * Review states of a sent wave. The label is always the engine's own word for the state (it is
+ * already in a product manager's words); the app never rewords it. `stage` places it on the wave journey
  * (0 approved, 1 sent, 2 in review, 3 accepted). `attention` marks states the PM must act on.
  */
 export interface ReviewDescriptor extends StateDescriptor {
@@ -119,7 +120,7 @@ export const reviewStates: Record<WaveReviewStatus, ReviewDescriptor> = {
     final: false,
   },
   "Sent, pull request not opened": {
-    label: "Sent, review request not opened",
+    label: "Sent, pull request not opened",
     description: "The work reached the shared repository but the review request could not be opened. Sending again finishes the job.",
     tone: "warning",
     glyph: "blocked",
@@ -164,7 +165,7 @@ export const reviewStates: Record<WaveReviewStatus, ReviewDescriptor> = {
     final: false,
   },
   "Accepted, waiting to merge": {
-    label: "Accepted, waiting to be added",
+    label: "Accepted, waiting to merge",
     description: "Reviewers approved it; it has not been added to the shared project yet.",
     tone: "success",
     glyph: "approved",

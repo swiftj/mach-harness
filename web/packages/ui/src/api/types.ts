@@ -320,7 +320,8 @@ export interface SliceCheck {
   diagnostics?: CheckDiagnostic[];
   open_questions: string[];
   intent_problems: string[];
-  counts: SpecCounts;
+  /** Absent when there is no spec yet. */
+  counts?: SpecCounts;
   title: string | null;
   risk: RiskTier | null;
   ready: boolean;
@@ -615,6 +616,12 @@ export interface Operations {
 export type OperationName = keyof Operations;
 export type OperationArgs<K extends OperationName> = Operations[K]["args"];
 export type OperationResult<K extends OperationName> = Operations[K]["result"];
+
+/**
+ * Operations that change nothing in the workspace. Every other operation, and every draft write,
+ * may change what `status` reports, so the client announces it (MachClient.onChange).
+ */
+export const readOnlyOperations: ReadonlySet<OperationName> = new Set<OperationName>(["where", "status", "validate", "slice.show", "send.preview"]);
 
 /** Operations that record a person's decision. The UI confirms each in a dialog before calling it. */
 export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>([

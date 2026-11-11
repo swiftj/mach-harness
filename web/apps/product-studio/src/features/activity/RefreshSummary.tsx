@@ -1,4 +1,4 @@
-import { CircleCheck } from "lucide-react";
+import { CircleCheck, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { ArtifactId, Banner, Button, Heading, Text, type Refresh, type Status, IdText, Panel, plural } from "@mach/ui";
@@ -58,9 +58,15 @@ export function RefreshSummary({ result, status, heading }: { result: Refresh; s
           {heading}
         </Heading>
         <p className="flex items-start gap-2 text-body text-ink">
-          <CircleCheck aria-hidden="true" className="mt-1 size-4 shrink-0 text-success-ink" />
+          {unsettled ? (
+            <TriangleAlert aria-hidden="true" className="mt-1 size-4 shrink-0 text-warning-ink" />
+          ) : (
+            <CircleCheck aria-hidden="true" className="mt-1 size-4 shrink-0 text-success-ink" />
+          )}
           <span>
-            {nothing ? "You are up to date: nothing new arrived from the shared project. " : ""}
+            {/* Never "up to date" while something still needs the PM's decision. */}
+            {nothing && !unsettled ? "You are up to date: nothing new arrived from the shared project. " : ""}
+            {nothing && unsettled ? "Nothing else arrived, but something you changed was also changed in the shared project. " : ""}
             Your unpublished drafts are preserved; a refresh never overwrites your own changes.
           </span>
         </p>

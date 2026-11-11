@@ -174,11 +174,17 @@ function SpecBody({ show }: { show: SliceShow }) {
   if (!model) {
     return (
       <div className="flex flex-col gap-8">
-        {aboutWhole}
         <EmptyState
           icon={<MessagesSquare />}
-          title="No specification yet"
-          description="The interviewer writes the specification once your answers settle the slice. Continue the interview to get there."
+          title="Nothing is written yet"
+          description="The interviewer writes the specification and the why once your answers settle the slice."
+          action={
+            show.editable ? (
+              <Button variant="primary" asChild>
+                <Link to={`/slices/${show.slice.slice_id}/interview`}>{show.slice.status === "draft" ? "Start the interview" : "Continue the interview"}</Link>
+              </Button>
+            ) : undefined
+          }
         />
         <OpenQuestionsSection model={null} fallback={show.check.open_questions} diagnostics={at("open-questions")} />
       </div>
