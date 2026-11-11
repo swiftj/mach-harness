@@ -292,6 +292,12 @@ def read_local_policy(root: Path) -> Dict[str, Any]:
         if path.is_symlink() or not path.is_file():
             return default
         obj = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(obj, dict) and type(obj.get("schema_version")) is int and obj["schema_version"] == 2:
+            # Written by the Factory's activation (run skill). Shown here; whether it is in force is the supervisor's check, not this reader's.
+            if any(type(obj.get(field)) is not bool for field in ("enabled", "paused", "auto_sync")) or obj.get("autonomy") not in ("observe", "supervised") \
+                    or any(not isinstance(obj.get(field), str) or not obj[field] for field in ("runner_id", "machine", "project_root")):
+                return default
+            return {**{k: obj[k] for k in ("enabled", "paused", "auto_sync", "autonomy")}, "source": "local-file"}
         if not isinstance(obj, dict) or set(obj) != {"schema_version", "enabled", "paused", "auto_sync", "autonomy"}:
             return default
         if type(obj["schema_version"]) is not int or obj["schema_version"] != 1:

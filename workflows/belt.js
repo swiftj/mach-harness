@@ -19,6 +19,8 @@ export const meta = {
 // every later relay is given the exact command, so no relay has to find or load anything.
 
 const tickets = (Array.isArray(args) ? args : (args && args.tickets) || []).map(String)
+// Optional: stop each ticket before this station (for example "merge"), leaving it for a person.
+const until = !Array.isArray(args) && args && typeof args.until === 'string' ? args.until : ''
 if (!tickets.length) {
   return { error: 'Pass the ticket IDs to run, for example ["LOCAL-001", "LOCAL-002"].' }
 }
@@ -117,6 +119,9 @@ async function runTicket(ticket) {
     }
     if (step.stop || step.action === 'stop') {
       return { ticket, outcome: 'stopped', stage: step.stage || '', waiting_for: step.needs || '', reason: step.reason, stations: done }
+    }
+    if (until && step.action === until) {
+      return { ticket, outcome: 'stopped', stage: step.stage || '', waiting_for: `a person: stopped before ${until}, as asked`, reason: step.reason, stations: done }
     }
     // The same step twice with no change of stage means the worker is not getting through.
     const key = `${step.action}@${step.stage || ''}`
