@@ -77,7 +77,9 @@ What the proof established:
 | **Does `--allowedTools` bound what a run may do?** | **Not by itself.** This machine's own settings run Claude in `auto` mode, where a tool that is not listed still ran. With `--permission-mode default` an unlisted tool is refused and the refusal is reported. The adapter always passes it. |
 | What is the minimum tool list? | `Workflow`, `Skill`, `Agent`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash(python3 *)`, read-only `git status/log/diff/show`, **and the exact interpreter path** (`Bash(/path/to/python3.x *)`). The belt runs the station script with the interpreter path that script reports; without that entry the belt's first step is refused. |
 
-A refused tool is never granted quietly. The execution ends, the ticket is parked, and a `human.required` event names what was asked for (the tool and the first words of a shell command; never its arguments).
+A refused tool is never granted. If the ticket still made progress, the refusals are listed with the execution's result. If it made none, the ticket is parked and a `human.required` event names what was asked for. A refused shell command is recorded as its program and subcommand only, never its arguments, paths or variables.
+
+**Live result (Claude Code 2.1.322, scratch project).** With Supervised Autopilot enabled, one supervisor pass adopted a planned ticket and started one execution. In 432 seconds and $2.82 the belt built, verified and reviewed it, reached `approved`, and stopped before merge. Workers were refused several compound shell commands (`cd ... && ...`, `VAR=... python3 ...`) and carried on without them. The next pass read the cell's record and logged the execution as completed.
 
 Nothing passes `--dangerously-skip-permissions` or any flag that skips permission checks; a test holds that.
 
@@ -164,7 +166,7 @@ Correctness never depends on a hook: the supervisor reconciles when it starts an
 
 Each carries stable identifiers (project, wave, slice, ticket, runner, execution), the time, `source` (engineer, intake or supervisor), `cause` where known, and `refs`: the paths where the authoritative state is kept. Events describe changes; they are not the state.
 
-No event contains a prompt, a command line, an environment variable or a credential. A refused shell command is recorded by its first words only. The full stream of an execution stays in `.factory/local/executions/<id>/`, on the machine.
+No event contains a prompt, a command line, an environment variable or a credential. A refused shell command is recorded by its program name only. The full stream of an execution stays in `.factory/local/executions/<id>/`, on the machine.
 
 ## 7. Security decisions
 
