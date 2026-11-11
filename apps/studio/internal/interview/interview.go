@@ -17,7 +17,12 @@ var (
 )
 
 // ConflictError: the slice's lock is held, a turn is running, or the interview has ended.
-type ConflictError struct{ Message string }
+// InterviewID is set when this host itself is running the slice's interview: the app can attach
+// to that interview instead of starting one.
+type ConflictError struct {
+	Message     string
+	InterviewID string
+}
 
 func (e *ConflictError) Error() string { return e.Message }
 

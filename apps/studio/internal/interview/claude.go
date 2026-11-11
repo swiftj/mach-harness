@@ -346,7 +346,7 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	}
 	if s := c.bySlice[req.SliceID]; s != nil {
 		c.mu.Unlock()
-		return Started{}, &ConflictError{Message: req.SliceID + " already has an interview running in this window. Open it instead."}
+		return Started{}, openHere(req.SliceID, s.id)
 	}
 	c.mu.Unlock()
 
@@ -368,10 +368,15 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	}
 	s := &session{c: c, id: randomID(), sliceID: req.SliceID, lock: lock, rec: *rec, subs: map[int]chan Event{}}
 	c.mu.Lock()
-	if c.closing || c.bySlice[req.SliceID] != nil {
+	if c.closing {
 		c.mu.Unlock()
 		releaseLock(lock)
-		return Started{}, &ConflictError{Message: req.SliceID + " already has an interview running."}
+		return Started{}, &unavailable{"Product Studio is shutting down."}
+	}
+	if existing := c.bySlice[req.SliceID]; existing != nil { // started by a request that won the race
+		c.mu.Unlock()
+		releaseLock(lock)
+		return Started{}, openHere(req.SliceID, existing.id)
 	}
 	c.sessions[s.id], c.bySlice[req.SliceID] = s, s
 	c.mu.Unlock()
@@ -406,6 +411,11 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 		return Started{}, err
 	}
 	return Started{InterviewID: s.id, SliceID: req.SliceID, Resumed: resumed}, nil
+}
+
+// openHere: this host already runs the slice's interview; the app attaches to it by its ID.
+func openHere(sliceID, interviewID string) *ConflictError {
+	return &ConflictError{Message: sliceID + "'s interview is already open here.", InterviewID: interviewID}
 }
 
 func (s *session) emitMessageLocked(m Message) {

@@ -103,7 +103,7 @@ application/json`. A GET never needs Origin or the CSRF token.
 | `PUT /api/drafts/spec/<SLICE>` | `{markdown, name?}` | `{slice_id, kind, path, check}`; `conflict` while an interview turn is running for the slice |
 | `GET /api/drafts/intent/<SLICE>` | | `{slice_id, kind, exists, markdown, path, editable, edit_refusal}` |
 | `PUT /api/drafts/intent/<SLICE>` | `{markdown}` | `{slice_id, kind, path, check}` |
-| `POST /api/interview` | `{slice_id, idea?}` | `{interview_id, slice_id, resumed}`; `refused` for an approved or unknown slice, `conflict` while the slice's lock is held (this host, another host, or a terminal) |
+| `POST /api/interview` | `{slice_id, idea?}` | `{interview_id, slice_id, resumed}`; `refused` for an approved or unknown slice; `conflict` while the slice's lock is held. Held by this host: message "SLICE-001's interview is already open here." and `hint: {kind: "open_interview", target: <interview_id>}`, so the app attaches to that interview. Held by another host or a terminal: "SLICE-001 already has an interview running (process N, since T).", no hint |
 | `GET /api/interview?slice_id=<SLICE>` | | `{interview: null}` or `{interview: {interview_id, slice_id, live, state, turn_running, locked_elsewhere, last_message: {message_id, text, kind, question}, turns, session_cost_usd}}`; `interview_id` is null and `state` is `saved` when only a saved session exists |
 | `GET /api/interview/history?slice_id=<SLICE>` | | `{slice_id, events: [{at, interview_id, event, data}], truncated}`: every saved event for the slice, across interviews and restarts, oldest first |
 | `GET /api/interview/<id>/events` | | server-sent events, below |

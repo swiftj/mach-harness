@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -119,6 +121,10 @@ func TestAnInterviewOverHTTP(t *testing.T) {
 	id := h.startInterview(`{"slice_id":"SLICE-001","idea":"let an admin invite a teammate"}`)
 	status, env := h.call("POST", "/api/interview", `{"slice_id":"SLICE-001"}`, nil)
 	expect(t, status, env, 409, engine.KindConflict)
+	if env.Error.Message != "SLICE-001's interview is already open here." ||
+		string(env.Error.Hint) != `{"kind":"open_interview","target":"`+id+`"}` {
+		t.Fatalf("open here: %q %s", env.Error.Message, env.Error.Hint)
+	}
 
 	first := h.stream(id, 0, "waiting_for_reply")
 	if !strings.Contains(sseNames(first), "message question turn state") {
@@ -271,5 +277,26 @@ func TestEveryInterviewRouteNeedsTheSessionOriginAndCSRF(t *testing.T) {
 	}
 	if testkit.Calls(t, claude) != nil {
 		t.Fatal("a refused request started Claude")
+	}
+}
+
+func TestAnInterviewHeldByAnotherProcessIsAPlainConflict(t *testing.T) {
+	h, _ := withClaude(t)
+	h.login()
+	h.startSlice()
+	lock := testkit.Draft(h.project, "..", "interviews", "SLICE-001.lock")
+	os.MkdirAll(filepath.Dir(lock), 0o755)
+	holder := exec.Command(testkit.Python(t), "-c",
+		"import fcntl,sys,time; f=open(sys.argv[1],'a+'); fcntl.flock(f, fcntl.LOCK_EX); f.write('{\\\"pid\\\": 4242, \\\"since\\\": \\\"2026-11-11T12:00:00Z\\\"}'); f.flush(); print('held', flush=True); time.sleep(60)", lock)
+	out, _ := holder.StdoutPipe()
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { holder.Process.Kill(); holder.Wait() }()
+	out.Read(make([]byte, 5))
+	status, env := h.call("POST", "/api/interview", `{"slice_id":"SLICE-001"}`, nil)
+	expect(t, status, env, 409, engine.KindConflict)
+	if env.Error.Hint != nil || !strings.Contains(env.Error.Message, "SLICE-001 already has an interview running (process 4242") {
+		t.Fatalf("held elsewhere: %q %s", env.Error.Message, env.Error.Hint)
 	}
 }

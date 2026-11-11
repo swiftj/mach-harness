@@ -33,7 +33,12 @@ func (s *Server) interviewError(w http.ResponseWriter, err error) {
 		}
 		writeEnvelope(w, http.StatusServiceUnavailable, engine.Fail(engine.KindUnavailable, reason))
 	case errors.As(err, &conflict):
-		writeEnvelope(w, http.StatusConflict, engine.Fail(engine.KindConflict, conflict.Message))
+		env := engine.Fail(engine.KindConflict, conflict.Message)
+		if conflict.InterviewID != "" {
+			// Held by this host: the hint names the live interview, so the app can attach to it.
+			env.Error.Hint, _ = json.Marshal(map[string]string{"kind": "open_interview", "target": conflict.InterviewID})
+		}
+		writeEnvelope(w, http.StatusConflict, env)
 	case errors.Is(err, interview.ErrNotFound):
 		writeEnvelope(w, http.StatusNotFound, engine.Fail(engine.KindInvalid, "There is no such interview."))
 	default:

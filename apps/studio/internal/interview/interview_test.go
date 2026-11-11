@@ -502,12 +502,13 @@ func TestTheLockAllowsOneInterviewPerSlice(t *testing.T) {
 	started := r.start("SLICE-001")
 	until(t, r.bridge, started.InterviewID, 0, "waiting_for_reply")
 	var conflict *interview.ConflictError
-	if _, err := r.bridge.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-001"}); !errors.As(err, &conflict) {
-		t.Fatalf("second start in this host: %v", err)
+	if _, err := r.bridge.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-001"}); !errors.As(err, &conflict) ||
+		conflict.InterviewID != started.InterviewID || conflict.Message != "SLICE-001's interview is already open here." {
+		t.Fatalf("second start in this host: %v %+v", err, conflict)
 	}
 	other := r.newBridge(nil) // another host on the same project
 	if _, err := other.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-001"}); !errors.As(err, &conflict) ||
-		!strings.Contains(conflict.Message, "process") {
+		!strings.Contains(conflict.Message, "already has an interview running (process") || conflict.InterviewID != "" {
 		t.Fatalf("another host: %v", err)
 	}
 	if cur, _ := other.Current("SLICE-001"); cur == nil || cur.Live || !cur.LockedElsewhere {
