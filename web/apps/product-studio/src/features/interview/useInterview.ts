@@ -51,6 +51,7 @@ export function useInterview(sliceId: string): InterviewController {
   const attach = useCallback((client: InterviewClient, interviewId: string) => {
     unsubscribeRef.current?.();
     idRef.current = interviewId;
+    dispatch({ type: "attached", interviewId });
     setPhase("live");
     unsubscribeRef.current = client.subscribe(interviewId, {
       onEvent: (event) => dispatch({ type: "event", event }),
@@ -76,7 +77,7 @@ export function useInterview(sliceId: string): InterviewController {
           if (cancelled) return;
           const events = history.events.flatMap((saved) => {
             const event = toInterviewEvent(saved.event, saved.data);
-            return event ? [event] : [];
+            return event ? [{ event, interviewId: saved.interview_id }] : [];
           });
           dispatch({ type: "history", events, truncated: history.truncated });
         } catch (cause) {
@@ -133,6 +134,13 @@ export function useInterview(sliceId: string): InterviewController {
       },
       (cause: unknown) => {
         const error = toApiError(cause, "interview.start");
+        // This host already runs the slice's interview (another tab, or this window before a
+        // reload): the hint names it, so join it instead of refusing.
+        if (error.kind === "conflict" && error.hint?.kind === "open_interview" && error.hint.target) {
+          forgetIdea(sliceId);
+          attach(client, error.hint.target);
+          return;
+        }
         setProblem(error);
         setPhase(error.kind === "conflict" ? "conflict" : error.kind === "refused" ? "refused" : "error");
       },

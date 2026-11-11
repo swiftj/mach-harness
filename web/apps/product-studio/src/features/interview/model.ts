@@ -1,4 +1,4 @@
-import { type ActivityKind, type InterviewEvent, type InterviewHostState, type InterviewErrorKind, type MessageKind, type ParsedQuestion, type TurnOutcome, type StreamConnection } from "@mach/ui/api";
+import type { ActivityKind, InterviewEvent, InterviewHostState, InterviewErrorKind, MessageKind, ParsedQuestion, TurnOutcome, StreamConnection } from "@mach/ui/api";
 
 /**
  * The interview screen's state, built only from the host's events and the PM's own replies. Pure
@@ -46,7 +46,7 @@ export type TimelineItem =
       /** Sent from this window and not yet confirmed by the host's `reply` event. */
       pending: boolean;
     }
-  | { type: "activity"; key: string; kind: ActivityKind; text: string; turn: number; historic?: boolean }
+  | { type: "activity"; key: string; kind: ActivityKind; text: string; turn: number }
   | { type: "notice"; key: string; tone: "info" | "warning" | "danger"; title: string; text: string | null; retry: boolean };
 
 export interface Decision {
@@ -70,7 +70,17 @@ export interface InterviewModel {
   /** True from the PM's reply until the turn closes. */
   turnRunning: boolean;
   lastTurn: { outcome: TurnOutcome; seconds: number; cost: number | null; sessionCost: number | null } | null;
-  ended: { reason: string } | null;
+  /** The interview that ended, and why. Only the interview it belongs to is governed by it. */
+  ended: { reason: string; interviewId: string | null } | null;
+  /** The live interview this window is attached to. */
+  attached: string | null;
+  /**
+   * After history loads, the host's stream first replays events that history already holds (the
+   * latest turn and the last question). Each replayed event is recognised by its identity (name and
+   * data, within the same interview) and taken off this list instead of being applied twice. The
+   * first live event that is not on it closes the window.
+   */
+  replay: { interviewId: string; expected: string[] } | null;
   /** The last reply the PM sent, so a failed turn can be asked again. */
   lastReply: string | null;
   draftChanges: number;
@@ -88,6 +98,8 @@ export const initialModel: InterviewModel = {
   turnRunning: false,
   lastTurn: null,
   ended: null,
+  attached: null,
+  replay: null,
   lastReply: null,
   draftChanges: 0,
   lastActivity: null,
@@ -99,8 +111,10 @@ export type ModelAction =
   | { type: "replied"; text: string; answer: AnswerKind }
   | { type: "reply-failed" }
   | { type: "reset"; decisions?: Decision[] }
-  /** The saved history, oldest first, applied as if it had streamed; replaces the model. */
-  | { type: "history"; events: InterviewEvent[]; truncated: boolean }
+  /** The saved history, oldest first, each with the interview it came from; replaces the model. */
+  | { type: "history"; events: Array<{ event: InterviewEvent; interviewId: string }>; truncated: boolean }
+  /** This window subscribed to a live interview. */
+  | { type: "attached"; interviewId: string }
   | { type: "local-notice"; tone: "info" | "warning" | "danger"; title: string; text: string | null };
 
 let noticeCounter = 0;
@@ -131,6 +145,8 @@ function upsertMessage(model: InterviewModel, id: string, patch: (m: Interviewer
 function applyEvent(model: InterviewModel, event: InterviewEvent): InterviewModel {
   switch (event.type) {
     case "state": {
+      // A new or resumed interview is starting: an earlier interview's end no longer applies.
+      if (event.data === "starting" && model.ended) model = { ...model, ended: null };
       const busy = event.data === "starting" || event.data === "thinking" || event.data === "working";
       return {
         ...model,
@@ -154,26 +170,12 @@ function applyEvent(model: InterviewModel, event: InterviewEvent): InterviewMode
       if (model.messages[q.message_id]?.question) return model;
       return upsertMessage(model, q.message_id, (m) => ({ ...m, question: q }));
     }
-    case "activity": {
-      // The live stream replays the current turn after the history already showed it: match each
-      // replayed activity once against one loaded from history, so none is shown twice.
-      if (event.seq !== null) {
-        const seen = model.timeline.find(
-          (item) => item.type === "activity" && item.historic && item.turn === model.turn && item.kind === event.data.kind && item.text === event.data.text,
-        );
-        if (seen && seen.type === "activity") {
-          return { ...model, timeline: model.timeline.map((item) => (item === seen ? { ...seen, historic: false } : item)) };
-        }
-      }
+    case "activity":
       return {
         ...model,
         lastActivity: event.data.text,
-        timeline: [
-          ...model.timeline,
-          { type: "activity", key: key("a"), kind: event.data.kind, text: event.data.text, turn: model.turn, historic: event.seq === null },
-        ],
+        timeline: [...model.timeline, { type: "activity", key: key("a"), kind: event.data.kind, text: event.data.text, turn: model.turn }],
       };
-    }
     case "draft_changed":
       return { ...model, draftChanges: model.draftChanges + 1 };
     case "turn": {
@@ -203,17 +205,16 @@ function applyEvent(model: InterviewModel, event: InterviewEvent): InterviewMode
       };
     }
     case "reply": {
-      // The PM's reply as the host recorded it, first in its turn. A reply this window sent is already
-      // shown (pending): confirm it. A reply replayed for a turn already shown changes nothing.
+      // A reply this window sent is already shown (pending): the host's record confirms it.
       const text = event.data.text;
-      const same = model.timeline.find((item) => item.type === "reply" && item.turn === model.turn && item.text === text);
-      if (same && same.type === "reply") {
-        return same.pending ? { ...model, timeline: model.timeline.map((item) => (item === same ? { ...same, pending: false } : item)) } : model;
+      const mine = [...model.timeline].reverse().find((item) => item.type === "reply" && item.pending && item.text === text);
+      if (mine && mine.type === "reply") {
+        return { ...model, timeline: model.timeline.map((item) => (item === mine ? { ...mine, pending: false } : item)) };
       }
       return addReply(model, text, answerFromText(text, Boolean(model.awaiting && model.messages[model.awaiting]?.question)), false);
     }
     case "ended":
-      return { ...model, ended: { reason: event.data.reason }, turnRunning: false, hostState: "ended" };
+      return { ...model, ended: { reason: event.data.reason, interviewId: model.attached }, turnRunning: false, hostState: "ended" };
     case "error":
       return {
         ...model,
@@ -223,6 +224,78 @@ function applyEvent(model: InterviewModel, event: InterviewEvent): InterviewMode
         ],
       };
   }
+}
+
+/**
+ * An event's identity within its interview: its name and its data. Keys are put in order first: the
+ * saved history and the live stream serialise the same data with their keys in different orders.
+ */
+function identity(event: InterviewEvent): string {
+  return `${event.type} ${canonical(event.data)}`;
+}
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical(record[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * Events that say nothing about whether the replay is over: streamed text and the busy states are
+ * never saved in history, and a message or question already known by its ID changes nothing.
+ */
+function neutral(model: InterviewModel, event: InterviewEvent): boolean {
+  if (event.type === "text") return true;
+  if (event.type === "state") return event.data === "thinking" || event.data === "working";
+  if (event.type === "message") return model.messages[event.data.message_id]?.final === true;
+  if (event.type === "question") return model.messages[event.data.message_id]?.question != null;
+  return false;
+}
+
+/**
+ * What the host may replay on connect, from the last interview in history: its latest turn (from the
+ * reply that opened it, or from its start) and its last message and question.
+ */
+function replayWindow(events: Array<{ event: InterviewEvent; interviewId: string }>): InterviewModel["replay"] {
+  const last = events.at(-1)?.interviewId;
+  if (!last) return null;
+  const own = events.filter((e) => e.interviewId === last).map((e) => e.event);
+  const lastReply = own.map((e) => e.type).lastIndexOf("reply");
+  // From the question that reply answered (the host replays it as "the last final message").
+  const answered = lastReply > 0 ? own.slice(0, lastReply).map((e) => e.type).lastIndexOf("message") : -1;
+  const window = own.slice(Math.max(answered >= 0 ? answered : lastReply, 0));
+  const finals = own.filter((e) => e.type === "message" || e.type === "question").slice(-2);
+  return { interviewId: last, expected: [...finals, ...window].map(identity) };
+}
+
+/** While the replayed turn's own `turn` event is still expected, that turn is over: its text and busy states are stale. */
+function pastTurnNoise(replay: NonNullable<InterviewModel["replay"]>, event: InterviewEvent): boolean {
+  const unsaved = event.type === "text" || (event.type === "state" && (event.data === "thinking" || event.data === "working"));
+  return unsaved && replay.expected.some((id) => id.startsWith("turn "));
+}
+
+/** A live event: one the history already holds is taken off the replay window, not applied again. */
+function applyLive(model: InterviewModel, event: InterviewEvent): InterviewModel {
+  if (model.replay && model.replay.interviewId === model.attached && pastTurnNoise(model.replay, event)) {
+    // Streamed text and busy states of a turn the history already closed: nothing to show.
+    return model;
+  }
+  if (model.replay && model.replay.interviewId === model.attached && !neutral(model, event)) {
+    const index = model.replay.expected.indexOf(identity(event));
+    if (index >= 0) {
+      const expected = model.replay.expected.filter((_, i) => i !== index);
+      return { ...model, replay: expected.length ? { ...model.replay, expected } : null };
+    }
+    // Something new: the replay is over.
+    return applyEvent({ ...model, replay: null }, event);
+  }
+  return applyEvent(model, event);
 }
 
 /** A reply in the timeline, and the decision it records when it answers a question. */
@@ -256,11 +329,17 @@ function addReply(model: InterviewModel, text: string, answer: AnswerKind, pendi
 export function interviewReducer(model: InterviewModel, action: ModelAction): InterviewModel {
   switch (action.type) {
     case "event":
-      return applyEvent(model, action.event);
+      return applyLive(model, action.event);
+    case "attached": {
+      const replay = model.replay && model.replay.interviewId === action.interviewId ? model.replay : null;
+      const ended = model.ended && model.ended.interviewId !== action.interviewId ? null : model.ended;
+      return { ...model, attached: action.interviewId, replay, ended, hostState: ended ? model.hostState : model.hostState === "ended" ? null : model.hostState };
+    }
     case "connection":
       return { ...model, connection: action.state };
     case "replied":
-      return addReply(model, action.text, action.answer, true);
+      // The PM acted: whatever the host sends from now on is new, not a replay of history.
+      return addReply({ ...model, replay: null }, action.text, action.answer, true);
     case "reply-failed": {
       // The host did not take the reply: put the question back and drop the optimistic entry.
       const lastReply = [...model.timeline].reverse().find((item) => item.type === "reply");
@@ -292,9 +371,18 @@ export function interviewReducer(model: InterviewModel, action: ModelAction): In
           ],
         };
       }
-      for (const event of action.events) next = applyEvent(next, event);
+      for (const { event, interviewId } of action.events) {
+        next = applyEvent({ ...next, attached: interviewId }, event);
+      }
       // History is the past: nothing is running until the live stream says so.
-      return { ...next, connection: model.connection, turnRunning: false, lastActivity: null };
+      return {
+        ...next,
+        attached: null,
+        connection: model.connection,
+        turnRunning: false,
+        lastActivity: null,
+        replay: replayWindow(action.events),
+      };
     }
     case "local-notice":
       return { ...model, timeline: [...model.timeline, { type: "notice", key: key("l"), tone: action.tone, title: action.title, text: action.text, retry: false }] };

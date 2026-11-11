@@ -18,7 +18,9 @@ export function AppHint({ hint }: { hint: ApiErrorHint }) {
   const refresh = useRefresh();
   const [approve, setApprove] = useState<string | null>(null);
   const [newSlice, setNewSlice] = useState<{ epicId: string | null } | null>(null);
-  if (hint.kind === "name_approver") return null;
+  // Answered in place by the screen that asked: the wave approval names the approver, and the
+  // interview screen joins the open interview.
+  if (hint.kind === "name_approver" || hint.kind === "open_interview") return null;
   const route = routeForHint(hint);
 
   if (route.type === "navigate") {

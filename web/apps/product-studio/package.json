@@ -10,7 +10,8 @@
     "preview": "vite preview --port 4175 --strictPort",
     "typecheck": "tsc -p tsconfig.json",
     "host-check": "node scripts/host-check.mjs",
-    "capture": "node scripts/capture.mjs"
+    "capture": "node scripts/capture.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@mach/ui": "workspace:*",

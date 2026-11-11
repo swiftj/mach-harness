@@ -176,13 +176,9 @@ function Conversation({
       return center(iv.capability ? <ContinueInClaudeCode sliceId={sliceId} capability={iv.capability} /> : null);
     case "conflict":
       return center(
-        <Banner
-          tone="warning"
-          title="This slice is already being interviewed somewhere else"
-          actions={<Button onClick={iv.retryLoad}>Check again</Button>}
-        >
-          Only one interview can run for a slice at a time. It may be open in another window or another Product Studio. Close it or stop its
-          interview there, then check again.
+        <Banner tone="warning" title="The interview cannot be opened here" actions={<Button onClick={iv.retryLoad}>Check again</Button>}>
+          {/* The host's own words when it gave them; otherwise the fact the lookup reported. */}
+          {iv.problem?.kind === "conflict" ? iv.problem.message : "Another process holds this slice's interview."}
         </Banner>,
       );
     case "refused":

@@ -249,7 +249,9 @@ export type HintKind =
   | "renumber_wave"
   | "edit_epic"
   | "edit_project"
-  | "name_approver";
+  | "name_approver"
+  /** POST /api/interview for a slice this host already interviews: `target` is the live interview's ID. */
+  | "open_interview";
 
 /** Kinds the app knows how to route. Unknown kinds are still shown, routed by their target. */
 export type NextActionKind =
