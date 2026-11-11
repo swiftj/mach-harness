@@ -85,6 +85,7 @@ When the input starts with `product`, an engineer is working with delivery waves
 | `product plan` | `RUN product plan` | Show a table of every slice: state, ticket, what it depends on, and the reasons, word for word. List `dispatchable`, `waiting_for_a_place` and `needs_person` separately. If `intake_is_current` is false, say the integration branch has moved since the last intake. |
 | `product dispatch <SLICE-ID>...` or `product dispatch --ready` | `RUN product dispatch ...` | Report what was dispatched and what was refused, with reasons. Dispatch prepares each cell and starts nothing. Then ask whether to run the dispatched tickets now. |
 | `product events` | `RUN product events` | Summarize the recent transitions. |
+| `product reconcile` | `RUN product reconcile` | Intake and a recorded plan in one step, for catching up after time away. Report it as you would an intake followed by a plan. It never dispatches. |
 
 After a dispatch, on the engineer's yes: for one ticket, continue with **One ticket** above for that ticket ID. For several, the engineer runs the belt workflow named in `workflow` with the `tickets` list. Either way every station and every gate applies exactly as for any other ticket; the first step is the contracts and plan stage, because the spec is already approved.
 

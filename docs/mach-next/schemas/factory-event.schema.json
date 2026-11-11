@@ -84,7 +84,7 @@
     },
     "data": {
       "type": "object",
-      "description": "Details by type: problems (intake.refused), reasons (dependency.blocked), depends_on (dependency.resolved), commit (slice.integrated), stage, risk, branch and by (work.scheduled), from_revision and effect (revision.superseded), reason (human.required)."
+      "description": "Details by type: problems (intake.refused), reasons (dependency.blocked), depends_on (dependency.resolved), commit (slice.integrated), stage, risk, branch, by (engineer, or the name of an authorized caller) and authorization (work.scheduled), from_revision and effect (revision.superseded), reason (human.required)."
     }
   }
 }

@@ -28,9 +28,11 @@ events.jsonl (its transitions, in order, for a supervisor or a dashboard to read
 Standard library only. Imported by run.py; not a command of its own.
 """
 
+import contextlib
 import hashlib
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -57,6 +59,8 @@ EVENT_TYPES = (
 APPROVED = "approved_for_engineering"
 DEFAULT_MAX_PARALLEL = 3
 RISK_FLOOR = "Medium"  # product-sourced work is never reviewed below this tier
+LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process that is gone, is taken over
+ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
 IGNORE_LINE = ".factory/intake/"
 
 
@@ -144,6 +148,8 @@ class Factory:
         self.home = root / ".factory" / "intake"
         self.ledger_path = self.home / "ledger.json"
         self.events_path = self.home / "events.jsonl"
+        self.lock_path = self.home / "lock"
+        self._held = 0
         if (root / ".factory").is_symlink() or self.home.is_symlink():
             raise IntakeError(f"{self.home} is a symbolic link. The intake ledger must be a real folder inside the project.")
         for name in ("product-studio", "intent"):
@@ -262,6 +268,67 @@ class Factory:
                 if problems:
                     per_wave[wave_id] = problems
         return whole, per_wave
+
+    # ---- one writer at a time ----
+
+    @contextlib.contextmanager
+    def lock(self, purpose: str):
+        """Hold the ledger for one intake, reconcile or dispatch.
+
+        Two processes deciding at once would both see the same free places and both dispatch. The
+        lock is a file created exclusively, naming its holder. It is taken over only when the
+        holder is provably gone (same machine, no such process) or it is older than the stale limit.
+        """
+        if self._held:  # already ours: intake records a plan inside its own lock
+            self._held += 1
+            try:
+                yield
+            finally:
+                self._held -= 1
+            return
+        self.home.mkdir(parents=True, exist_ok=True)
+        holder = {"pid": os.getpid(), "host": platform.node(), "at": now(), "purpose": purpose}
+        for attempt in (1, 2):
+            try:
+                handle = os.open(str(self.lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                try:
+                    other = json.loads(self.lock_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    other = {}
+                if attempt == 1 and self.lock_is_stale(other):
+                    with contextlib.suppress(OSError):
+                        self.lock_path.unlink()
+                    continue
+                raise IntakeError(f"Another {other.get('purpose') or 'intake or dispatch'} is running on this Factory "
+                                  f"(process {other.get('pid')} on {other.get('host')}, since {other.get('at')}). Wait for it to finish, then try again.")
+            else:
+                with os.fdopen(handle, "w", encoding="utf-8") as out:
+                    out.write(json.dumps(holder))
+                break
+        self._held = 1
+        try:
+            yield
+        finally:
+            self._held = 0
+            with contextlib.suppress(OSError):
+                self.lock_path.unlink()
+
+    def lock_is_stale(self, other: Dict[str, Any]) -> bool:
+        try:
+            age = (datetime.now(timezone.utc) - datetime.strptime(str(other.get("at")), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)).total_seconds()
+        except ValueError:
+            return True  # unreadable: nobody can be holding it properly
+        if age > LOCK_STALE_SECONDS:
+            return True
+        if other.get("host") == platform.node() and type(other.get("pid")) is int:
+            try:
+                os.kill(other["pid"], 0)
+            except ProcessLookupError:
+                return True
+            except OSError:
+                return False
+        return False
 
     # ---- the ledger and its events ----
 
@@ -413,11 +480,14 @@ class Factory:
             return {"status": "queued"}
         if record.get("outcome") != "merged":
             return {"status": "abandoned", "outcome": record.get("outcome")}
-        archived = self.archived(ticket_id, "cell.json")
-        merged = archived.get("merged") if isinstance(archived.get("merged"), dict) else {}
-        # A person may have merged it by hand: then the commit review approved is what landed.
-        landed = on_branch([archived.get("merged_as"), merged.get("commit"), merged.get("landed_commit"),
-                            self.archived(ticket_id, "review/decision.json").get("head")])
+        # The run record says what landed (record_version 2). Whatever it says is checked in Git.
+        recorded = record.get("integration") if isinstance(record.get("integration"), dict) else {}
+        landed = on_branch([recorded.get("merge_commit"), recorded.get("landed_commit"), recorded.get("approved_commit")])
+        if not landed:  # an older record names no commit: fall back to the cell's archive
+            archived = self.archived(ticket_id, "cell.json")
+            merged = archived.get("merged") if isinstance(archived.get("merged"), dict) else {}
+            landed = on_branch([archived.get("merged_as"), merged.get("commit"), merged.get("landed_commit"),
+                                self.archived(ticket_id, "review/decision.json").get("head")])
         return {"status": "integrated", "commit": landed} if landed else {"status": "merged-unverified"}
 
     def archived(self, ticket_id: str, name: str) -> Dict[str, Any]:
@@ -532,6 +602,24 @@ class Factory:
     def intake(self, dry_run: bool = False, adopt: Optional[Dict[str, str]] = None, reissue: Sequence[str] = ()) -> Dict[str, Any]:
         """Take approved product work into this Factory. Creates one ticket per new slice revision
         and nothing else: no cell, no branch, no agent. Safe to run again at any time."""
+        if dry_run:
+            return self._intake(True, adopt, reissue)
+        with self.lock("intake"):
+            return self._intake(False, adopt, reissue)
+
+    def reconcile(self) -> Dict[str, Any]:
+        """Bring this Factory level with the integration branch and with its own line, in one step.
+
+        Intake, then the plan with its state changes recorded. It is idempotent and holds the lock
+        throughout, so it is what a supervisor calls on start-up, on a wake-up and on a timer. It
+        never dispatches.
+        """
+        with self.lock("reconcile"):
+            report = self._intake(False, None, ())
+            plan = self.plan(record=True)
+        return {"intake": report, "plan": plan, "last_event": self.ledger()["next_seq"] - 1, "factory_started": False}
+
+    def _intake(self, dry_run: bool, adopt: Optional[Dict[str, str]], reissue: Sequence[str]) -> Dict[str, Any]:
         ledger = self.ledger()
         found = self.discover(ledger)
         snap: Optional[Snapshot] = found.pop("_snapshot", None)
@@ -840,6 +928,9 @@ class Factory:
             "dispatchable": [key for key in ready if rows[key]["dispatchable"]],
             "waiting_for_a_place": [key for key in ready if not rows[key]["dispatchable"]],
             "needs_person": [key for key, row in rows.items() if row["needs_person"]],
+            # Dispatched work the line can move right now: what a driver would start, in order.
+            "runnable": [{"slice_id": key, "ticket_id": row["ticket_id"], "next": work[key].get("next")} for key, row in sorted(rows.items(), key=lambda item: number(item[0]))
+                         if row["state"] == "active" and work[key].get("next") not in (None, "stop")],
             "parallel_groups": [sorted(groups[level], key=number) for level in sorted(groups)],
             "slices": [rows[key] for key in sorted(rows, key=number)],
             "factory_started": False,
@@ -875,14 +966,33 @@ class Factory:
 
     # ---- dispatch ----
 
-    def dispatch(self, slice_ids: Sequence[str], all_ready: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
+    def dispatch(self, slice_ids: Sequence[str], all_ready: bool = False, limit: Optional[int] = None, by: str = ENGINEER,
+                 authorize: Optional[Callable[[Dict[str, Any]], Tuple[bool, str]]] = None) -> Dict[str, Any]:
         """Put chosen ready slices into the line: open each cell and bring it to 'spec-ready'.
 
-        Runs only on an engineer's explicit command. It prepares; it starts no agent and no
-        workflow. From here run.py's state machine decides every step, with every gate in place.
+        This is the only place work enters the line. An engineer's explicit command needs nothing
+        more. Any other caller must bring an authorization: a function that is shown the plan and
+        answers yes or no with a reason. Without one, or on a no, nothing is dispatched. The
+        supervisor's policy check (enabled, not paused, its mode, its preflight) plugs in here.
+
+        It prepares; it starts no agent and no workflow. From here run.py's state machine decides
+        every step, with every gate in place.
         """
+        with self.lock("dispatch"):
+            return self._dispatch(slice_ids, all_ready, limit, by, authorize)
+
+    def _dispatch(self, slice_ids: Sequence[str], all_ready: bool, limit: Optional[int], by: str,
+                  authorize: Optional[Callable[[Dict[str, Any]], Tuple[bool, str]]]) -> Dict[str, Any]:
         ledger = self.ledger()
         plan = self.plan(ledger=ledger, record=True)
+        authorization = "an engineer's explicit command"
+        if by != ENGINEER:
+            if authorize is None:
+                raise IntakeError(f"Only an engineer's explicit command can dispatch work. '{by}' brought no authorization, so nothing was dispatched.")
+            allowed, why = authorize(plan)
+            if allowed is not True:
+                raise IntakeError(f"Dispatch by '{by}' was not authorized: {why or 'no reason given'}. Nothing was dispatched.")
+            authorization = str(why or "authorized")
         if plan["source_problems"]:
             raise IntakeError(" ".join(plan["source_problems"]))
         by_id = {row["slice_id"]: row for row in plan["slices"]}
@@ -921,7 +1031,7 @@ class Factory:
             if at_head is None or sha(at_head) != entry.get("spec_sha256"):
                 refused.append({"slice_id": key, "why": [f"In the main checkout, {entry.get('spec_path')} is not the approved spec. Update the checkout, or remove the local change."]})
                 continue
-            result = self.open_cell(ledger, entry, snap)
+            result = self.open_cell(ledger, entry, snap, by, authorization)
             dispatched.append(result)
         tickets = [item["ticket_id"] for item in dispatched]
         return {"dispatched": dispatched, "refused": refused, "tickets": tickets, "factory_started": False,
@@ -966,7 +1076,8 @@ class Factory:
             out.append(line)
         return "\n".join(out) + "\n"
 
-    def open_cell(self, ledger: Dict[str, Any], entry: Dict[str, Any], snap: Snapshot) -> Dict[str, Any]:
+    def open_cell(self, ledger: Dict[str, Any], entry: Dict[str, Any], snap: Snapshot, by: str = ENGINEER,
+                  authorization: str = "an engineer's explicit command") -> Dict[str, Any]:
         slice_id, ticket_id = entry["slice_id"], str(entry["ticket_id"])
         cell_file = self.root / ".factory" / "worktrees" / ticket_id / "cell.json"
         provenance = {"slice_id": slice_id, "revision": entry.get("revision"), "wave_id": entry.get("wave_id"), "digest": entry.get("digest"),
@@ -1003,7 +1114,7 @@ class Factory:
         entry["dispatched_at"] = now()
         entry["built_against"] = {dep: ledger["slices"][dep].get("revision") for dep in entry.get("dependencies") or [] if dep in ledger["slices"]}
         self.emit(ledger, "work.scheduled", slice_id=slice_id, wave_id=entry.get("wave_id"), revision=entry.get("revision"), ticket_id=ticket_id,
-                  stage=cell.get("stage"), risk=cell.get("risk"), branch=cell.get("branch"), by="explicit dispatch")
+                  stage=cell.get("stage"), risk=cell.get("risk"), branch=cell.get("branch"), by=by, authorization=authorization)
         entry.update({"last_state": "active", "last_reasons": [], "last_attention": None})
         self.save(ledger)
         self.ticket("update", ticket_id, "--state", "in_progress", "--label", "groomed",

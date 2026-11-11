@@ -16,6 +16,7 @@ and not by whoever is driving it.
     run.py product plan                  the dependency-aware plan: what is ready, blocked, active or done, and why
     run.py product dispatch <slice>...   open the cells for chosen ready slices (or --ready); starts nothing
     run.py product events [--since N]    the intake ledger's transitions, for a supervisor or a dashboard
+    run.py product reconcile [--fetch]   intake and a recorded plan in one locked step; never dispatches
 
 A step is either work ("action": audit, groom, plan, build, revise, verify, review, merge, cleanup)
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
@@ -353,6 +354,13 @@ def factory(project: Project):
         raise RunError(str(exc))
 
 
+def fetch(project: Project) -> None:
+    """Fetch from the shared repository. Only ever behind an explicit --fetch; it never changes a checkout."""
+    fetched = git(project.root, "fetch", "origin")
+    if fetched.returncode != 0:
+        raise RunError("Could not fetch from the shared repository: " + (fetched.stderr.strip().splitlines() or ["no message"])[-1])
+
+
 def cmd_product(project: Project, args: argparse.Namespace) -> int:
     intake, line = factory(project)
     try:
@@ -364,9 +372,7 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
                       "factory_started": False}
         elif args.action == "intake":
             if args.fetch:
-                fetched = git(project.root, "fetch", "origin")
-                if fetched.returncode != 0:
-                    raise RunError("Could not fetch from the shared repository: " + (fetched.stderr.strip().splitlines() or ["no message"])[-1])
+                fetch(project)
             adopt = {}
             for pair in args.adopt or []:
                 slice_id, _, ticket_id = pair.partition("=")
@@ -376,6 +382,10 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
             result = line.intake(dry_run=args.dry_run, adopt=adopt, reissue=args.reissue or [])
         elif args.action == "plan":
             result = line.plan()
+        elif args.action == "reconcile":
+            if args.fetch:
+                fetch(project)
+            result = line.reconcile()
         elif args.action == "dispatch":
             result = line.dispatch(args.slice_ids, all_ready=args.ready, limit=args.limit)
             result["workflow"] = "mach-belt" if PROJECT_INSTALL else "mach:belt"
@@ -415,6 +425,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="file a fresh ticket for a slice whose ticket was abandoned")
     p.set_defaults(func=cmd_product)
     product.add_parser("plan", help="the dependency-aware execution plan; reads only").set_defaults(func=cmd_product)
+    p = product.add_parser("reconcile", help="intake and a recorded plan in one locked step; never dispatches")
+    p.add_argument("--fetch", action="store_true", help="fetch from the shared repository first (never changes the checkout)")
+    p.set_defaults(func=cmd_product)
     p = product.add_parser("dispatch", help="open the cells for ready slices; starts no agent")
     p.add_argument("slice_ids", nargs="*")
     p.add_argument("--ready", action="store_true", help="every slice the plan marks dispatchable")

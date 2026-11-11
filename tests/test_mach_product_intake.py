@@ -457,6 +457,26 @@ class SchedulerTest(Base):
         _, rows = self.plan()
         self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-001"]["integrated_commit"], rows["SLICE-002"]["state"]), ("completed", landed, "ready"))
 
+    def test_the_run_record_says_what_landed_and_git_confirms_it(self):
+        """A version 2 run record names the commit. No archive is needed, and the commit is still checked."""
+        self.chain()
+        self.product("dispatch", "SLICE-001")
+        landed = self.integrate("LOCAL-001")
+        merge_commit = git(self.eng, "rev-parse", "HEAD").strip()
+        archive = self.eng / ".factory/archive"
+        archive.mkdir()
+        record = {"record_version": 2, "ticket_id": "LOCAL-001", "outcome": "merged",
+                  "integration": {"branch": "feature/LOCAL-001", "into": "main", "method": "local", "landed_commit": landed, "merge_commit": merge_commit}}
+        (archive / "runs.jsonl").write_text(json.dumps(record) + "\n")
+        git(self.eng, "worktree", "remove", "--force", str(self.eng / ".factory/worktrees/LOCAL-001/repo"))
+        (self.eng / ".factory/worktrees/LOCAL-001/cell.json").unlink()
+        _, rows = self.plan()
+        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-001"]["integrated_commit"], rows["SLICE-002"]["state"]), ("completed", merge_commit, "ready"))
+        record["integration"].update(landed_commit="1" * 40, merge_commit="2" * 40)  # a record naming commits that are not on the branch
+        (archive / "runs.jsonl").write_text(json.dumps(record) + "\n")
+        _, rows = self.plan()
+        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-002"]["state"]), ("blocked", "blocked"))
+
     def test_a_run_record_alone_is_not_integration(self):
         self.chain()
         self.product("dispatch", "SLICE-001")
@@ -749,6 +769,108 @@ class DispatchTest(Base):
         self.assertIn("Product proposed Low; product-sourced work is reviewed at Medium or above.", intent_md)
 
 
+class SupervisorReadinessTest(Base):
+    """What the next milestone builds on: one reconcile step, one guarded way into the line, one writer at a time."""
+
+    def line(self):
+        return run.factory(run.Project(self.eng))[1]
+
+    def test_reconcile_is_intake_and_a_recorded_plan_and_never_dispatches(self):
+        self.chain_published()
+        first = self.product("reconcile")
+        self.assertEqual([c["slice_id"] for c in first["intake"]["created"]], ["SLICE-001", "SLICE-002", "SLICE-003"])
+        self.assertEqual((first["plan"]["dispatchable"], first["factory_started"]), (["SLICE-001"], False))
+        self.assertEqual(first["last_event"], len(self.events()))
+        seq = first["last_event"]
+        again = self.product("reconcile")
+        self.assertEqual((again["intake"]["created"], again["last_event"]), ([], seq))  # idempotent: nothing new, nothing said twice
+        self.assertFalse((self.eng / ".factory/worktrees").exists())
+        self.assertFalse((self.eng / ".factory/intake/lock").exists())
+
+    def chain_published(self):
+        self.first()
+        second = self.slice(self.a, "Second", depends=["SLICE-001"])
+        third = self.slice(self.a, "Third", depends=[second])
+        self.publish(self.a, second, third)
+
+    def test_the_plan_lists_what_a_driver_would_run(self):
+        self.chain()
+        self.assertEqual(self.plan()[0]["runnable"], [])
+        self.product("dispatch", "SLICE-001")
+        self.assertEqual(self.plan()[0]["runnable"], [{"slice_id": "SLICE-001", "ticket_id": "LOCAL-001", "next": "plan"}])
+        self.set_cell("LOCAL-001", stage="awaiting-human")  # stopped for a person: nothing to run
+        plan, _ = self.plan()
+        self.assertEqual((plan["runnable"], plan["needs_person"]), ([], ["SLICE-001"]))
+
+    def test_only_an_engineer_dispatches_without_authorization(self):
+        self.chain()
+        line = self.line()
+        with self.assertRaises(intake.IntakeError) as refused:
+            line.dispatch(["SLICE-001"], by="supervisor")
+        self.assertIn("brought no authorization", str(refused.exception))
+        seen = []
+
+        def paused(plan):
+            seen.append(plan["dispatchable"])
+            return False, "the Factory is paused"
+
+        with self.assertRaises(intake.IntakeError) as refused:
+            line.dispatch(["SLICE-001"], by="supervisor", authorize=paused)
+        self.assertIn("not authorized: the Factory is paused", str(refused.exception))
+        with self.assertRaises(intake.IntakeError):
+            line.dispatch(["SLICE-001"], by="supervisor", authorize=lambda plan: ("yes", "truthy is not True"))
+        self.assertEqual(seen, [["SLICE-001"]])  # it was shown the plan it was asked about
+        self.assertFalse((self.eng / ".factory/worktrees").exists())
+        self.assertNotIn("work.scheduled", [e["type"] for e in self.events()])
+        done = line.dispatch(["SLICE-001"], by="supervisor", authorize=lambda plan: (True, "enabled; supervised; preflight passed"))
+        self.assertEqual((done["tickets"], done["factory_started"]), (["LOCAL-001"], False))
+        scheduled = [e for e in self.events() if e["type"] == "work.scheduled"][0]
+        self.assertEqual((scheduled["data"]["by"], scheduled["data"]["authorization"]), ("supervisor", "enabled; supervised; preflight passed"))
+
+    def test_one_writer_at_a_time(self):
+        self.chain()
+        lock = self.eng / ".factory/intake/lock"
+        import os
+        held = {"pid": os.getpid(), "host": intake.platform.node(), "at": intake.now(), "purpose": "dispatch"}
+        lock.write_text(json.dumps(held))
+        for argv in (("intake",), ("reconcile",), ("dispatch", "SLICE-001")):
+            message = self.refused(*argv)
+            self.assertIn("Another dispatch is running on this Factory", message)
+        self.assertFalse((self.eng / ".factory/worktrees").exists())
+        self.product("plan")  # reading never needs the lock
+        self.product("status")
+        self.product("intake", "--dry-run")
+        self.assertEqual(json.loads(lock.read_text()), held)
+
+    def test_a_lock_left_by_a_dead_process_is_taken_over(self):
+        self.chain()
+        lock = self.eng / ".factory/intake/lock"
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        lock.write_text(json.dumps({"pid": gone.pid, "host": intake.platform.node(), "at": intake.now(), "purpose": "intake"}))
+        self.assertEqual(self.product("dispatch", "SLICE-001")["tickets"], ["LOCAL-001"])
+        self.assertFalse(lock.exists())
+
+    def test_a_lock_on_another_machine_is_respected_until_it_is_old(self):
+        self.chain()
+        lock = self.eng / ".factory/intake/lock"
+        lock.write_text(json.dumps({"pid": 1, "host": "another-machine", "at": intake.now(), "purpose": "reconcile"}))
+        self.assertIn("another-machine", self.refused("intake"))
+        lock.write_text(json.dumps({"pid": 1, "host": "another-machine", "at": "2026-01-01T00:00:00Z", "purpose": "reconcile"}))
+        self.product("intake")
+        lock.write_text("not json")
+        self.product("intake")
+        self.assertFalse(lock.exists())
+
+    def test_the_lock_is_released_when_a_step_fails(self):
+        self.first()
+        with mock.patch.object(intake.Factory, "materialize", side_effect=RuntimeError("power cut")):
+            with self.assertRaises(RuntimeError):
+                self.run_product("intake")
+        self.assertFalse((self.eng / ".factory/intake/lock").exists())
+        self.product("intake")
+
+
 class EventsTest(Base):
     def test_every_event_is_versioned_ordered_and_typed(self):
         self.chain()
@@ -772,7 +894,8 @@ class EventsTest(Base):
         blocked = next(e for e in events if e["type"] == "dependency.blocked")
         self.assertEqual((blocked["slice_id"], blocked["data"]["reasons"]), ("SLICE-002", ["It waits for SLICE-001 to be integrated (now queued)."]))
         scheduled = next(e for e in events if e["type"] == "work.scheduled")
-        self.assertEqual((scheduled["ticket_id"], scheduled["data"]["by"], scheduled["data"]["stage"]), ("LOCAL-001", "explicit dispatch", "spec-ready"))
+        self.assertEqual((scheduled["ticket_id"], scheduled["data"]["by"], scheduled["data"]["stage"]), ("LOCAL-001", "engineer", "spec-ready"))
+        self.assertEqual(scheduled["data"]["authorization"], "an engineer's explicit command")
 
     def test_schema_files_describe_the_events_and_the_ledger(self):
         schemas = ROOT / "docs/mach-next/schemas"
