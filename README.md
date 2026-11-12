@@ -325,6 +325,8 @@ When you change the validator, change its references, the fixture in `tests/fixt
 
 Set the new version in `.claude-plugin/plugin.json`, merge to `main`, then push a tag `v<version>`. The `release` workflow tests, builds the Product Studio host for each machine with the web app embedded, writes `SHA256SUMS`, and publishes the GitHub release the installer downloads from. The tag must match the plugin's version or the workflow stops.
 
+Before publishing, each program is started on a runner of its own kind (`apps/studio/smoke.sh`: open the one-time link, load the app, ask the engine for status). There is no hosted Intel Mac runner in the workflow, so check that one by hand on an Apple silicon Mac, where it runs under Rosetta: `sh apps/studio/smoke.sh <path to mach-studio-darwin-amd64>`. Running the workflow by hand from the Actions tab builds and smoke-tests everything and publishes nothing.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

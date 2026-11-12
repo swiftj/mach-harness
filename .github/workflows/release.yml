@@ -2,24 +2,26 @@
 # built for each supported machine with the web app embedded, plus SHA256SUMS. The installer
 # (bin/mach) downloads the file for the person's machine from this release and checks it against
 # SHA256SUMS, so the file names here and in bin/mach must stay the same.
+#
+# Run by hand (workflow_dispatch) it builds and smoke-tests everything and publishes nothing.
 name: release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
-  contents: write        # create the release and attach files
-  id-token: write        # sign the build provenance
-  attestations: write
+  contents: read
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: The tag must match the plugin's version
+        if: github.ref_type == 'tag'
         run: |
           version=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
@@ -27,15 +29,15 @@ jobs:
             exit 1
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: apps/studio/go.mod
           cache-dependency-path: apps/studio/go.mod
@@ -55,10 +57,52 @@ jobs:
           done
           (cd dist && sha256sum mach-studio-* > SHA256SUMS && cat SHA256SUMS)
 
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hosts
+          path: dist/
+          if-no-files-found: error
+
+  # Each program is started on a machine of its own kind before anything is published.
+  # darwin-amd64 has no hosted runner here; it is checked by hand under Rosetta (see README).
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, file: mach-studio-linux-amd64 }
+          - { runner: ubuntu-24.04-arm, file: mach-studio-linux-arm64 }
+          - { runner: macos-latest, file: mach-studio-darwin-arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: hosts
+          path: dist
+      - name: Start it, open the link, ask the engine for status
+        run: |
+          chmod +x "dist/${{ matrix.file }}"
+          sh apps/studio/smoke.sh "dist/${{ matrix.file }}"
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release and attach files
+      id-token: write        # sign the build provenance
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: hosts
+          path: dist
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/mach-studio-*
-
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
