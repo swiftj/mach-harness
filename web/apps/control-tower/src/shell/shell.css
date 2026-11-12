@@ -1,0 +1,32 @@
+/* The shell's few rules that utilities cannot say. Tokens only. */
+
+/* The frame: header, stage, inspector, timeline. Track sizes interpolate, so Theater Mode and the
+   panels open and close smoothly; under reduced motion the base stylesheet zeroes the transition. */
+.mach-frame {
+  display: grid;
+  grid-template-areas:
+    "top top"
+    "stage inspector"
+    "timeline inspector";
+  height: 100dvh;
+  min-width: 1100px;
+  overflow: hidden;
+  background: var(--mach-canvas);
+  transition:
+    grid-template-rows var(--mach-duration-layout) var(--mach-ease-standard),
+    grid-template-columns var(--mach-duration-layout) var(--mach-ease-standard);
+}
+.mach-frame[data-resizing] {
+  transition: none;
+}
+
+/* Beyond the live edge nothing has happened yet: a quiet drafting hatch over the tracks. */
+.mach-future {
+  background-color: var(--mach-surface);
+  background-image: repeating-linear-gradient(135deg, var(--mach-line) 0 1px, transparent 1px 7px);
+}
+
+/* Theater Mode's chrome fades in on pointer movement; it never moves on its own. */
+.mach-theater-bar {
+  transition: opacity 180ms var(--mach-ease-standard);
+}

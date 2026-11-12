@@ -1,4 +1,6 @@
-/** Placeholder until the shell owner replaces it. */
+import { Shell } from "./shell";
+
+/** MACH Control Tower, M6.0: the Living Factory prototype (a simulation). */
 export function App() {
-  return <main className="p-8">Living Factory prototype (simulation): not built yet.</main>;
+  return <Shell />;
 }
