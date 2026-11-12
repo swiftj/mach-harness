@@ -1,16 +1,48 @@
-/** Time words for the drawing. All inputs are factory milliseconds from the scenario start. */
+/**
+ * Time words for the drawing. Inputs are factory milliseconds: from the scenario start for the
+ * simulation, Unix milliseconds (`order_ms`) for live and replay. The two never overlap (a scenario
+ * lasts minutes; a Unix time is past 1973), so one function prints either without being told which:
+ * run time as mm:ss for the simulation, the time of day (the viewer's clock) for real execution.
+ */
 
-/** "03:38", "27:19": run time in factory mm:ss, the Shell timeline's format (its timecode without tenths). */
-export function clock(t: number): string {
-  const s = Math.max(0, Math.floor(t / 1000));
-  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+/** Factory times at or above this are Unix milliseconds (live, replay), below it scenario time. */
+const ABSOLUTE = 1e11;
+
+export function isAbsolute(t: number): boolean {
+  return t >= ABSOLUTE;
 }
 
-/** "27:19.4": the playhead, to a tenth. */
+const two = (n: number): string => String(n).padStart(2, "0");
+
+function timeOfDay(t: number): string {
+  const d = new Date(t);
+  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+}
+
+/** "03:38", "27:19": run time in factory mm:ss, the Shell timeline's format. Live and replay: "14:02:10", the time of day. */
+export function clock(t: number): string {
+  if (isAbsolute(t)) return timeOfDay(t);
+  const s = Math.max(0, Math.floor(t / 1000));
+  return `${two(Math.floor(s / 60))}:${two(s % 60)}`;
+}
+
+/** "27:19.4": the playhead, to a tenth (live and replay: the time of day, to a tenth). */
 export function clockTenths(t: number): string {
   const tenths = Math.max(0, Math.floor(t / 100));
+  if (isAbsolute(t)) return `${timeOfDay(tenths * 100)}.${tenths % 10}`;
   const s = Math.floor(tenths / 10);
-  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}.${tenths % 10}`;
+  return `${two(Math.floor(s / 60))}:${two(s % 60)}.${tenths % 10}`;
+}
+
+/**
+ * What a ruler's times are measured from: zero for the simulation (its labels read run time), the
+ * viewer's local midnight before `t` for live and replay (its labels then read the time of day).
+ */
+export function rulerOrigin(t: number): number {
+  if (!isAbsolute(t)) return 0;
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
 }
 
 /** A duration: "4.2s", "38s", "4m 12s", "1h 02m". */

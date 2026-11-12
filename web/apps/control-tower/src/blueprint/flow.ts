@@ -52,9 +52,13 @@ export interface Flow {
 const REPEATS = new Set<ColumnKey>(["build", "verify", "verification", "review", "consensus"]);
 const colIndex = (c: ColumnKey): number => COLUMN_ORDER.indexOf(c);
 
-/** The judging round a visit belongs to: a revision starts the next round. */
-export function visitRound(v: StationVisit): number {
-  return v.action === "revise" ? v.round + 1 : v.round;
+/**
+ * The judging round a visit belongs to. The simulation records a revision under the round it revises
+ * (a revision starts the next round, so +1); the lifecycle log records every visit under the judging
+ * round it belongs to already (`ids.round`), so a recorded visit's round is taken as it is.
+ */
+export function visitRound(v: Pick<StationVisit, "action" | "round" | "meta">): number {
+  return v.action === "revise" && v.meta.authority === "simulated" ? v.round + 1 : v.round;
 }
 
 function roundAt(cell: CellState, t: number): number {

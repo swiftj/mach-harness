@@ -8,8 +8,14 @@
  *
  * A visit that is still open is given a window that grows in steps (see `axisEnd`), so the segments
  * change a dozen times over an hour, never per frame. A pure function of the playhead.
+ *
+ * Times are the records' own: the execution from its process's start and end records, a visit from
+ * its entry plus the duration the station measured. A visit whose start or end was placed rather than
+ * measured (an inference, or no record) is flagged `placed`, and the ruler draws it so.
  */
 import type { ExecutionState, StationVisit } from "../sim";
+import { execSpan, placed as isPlaced, visitEnd } from "./facts";
+import { visitRound } from "./flow";
 import { axisEnd } from "./time";
 
 export interface Segment {
@@ -22,6 +28,8 @@ export interface Segment {
   readonly station?: string;
   readonly round?: number;
   readonly open?: boolean;
+  /** The visit's start or end was placed (inferred or not recorded), not measured. */
+  readonly placed?: boolean;
 }
 
 export interface ExecAxis {
@@ -41,23 +49,25 @@ function gapWidth(ms: number): number {
 
 /** The execution's axis at playhead t. The same object is returned while its segments are unchanged. */
 export function execAxis(x0: number, w: number, exec: ExecutionState, visits: readonly StationVisit[], t: number): ExecAxis {
-  const start = exec.startedAt ?? exec.claimedAt;
+  const span = execSpan(exec);
+  const start = span.start;
   const sorted = [...visits].sort((a, b) => a.enteredAt - b.enteredAt);
-  type Raw = { kind: "visit" | "gap"; start: number; end: number; station?: string; round?: number; open?: boolean };
+  type Raw = { kind: "visit" | "gap"; start: number; end: number; station?: string; round?: number; open?: boolean; placed?: boolean };
   const raw: Raw[] = [];
   let cursor = start;
   for (const v of sorted) {
     if (v.enteredAt > cursor) raw.push({ kind: "gap", start: cursor, end: v.enteredAt });
-    const open = v.leftAt === null || v.leftAt > t;
-    const end = open ? axisEnd(v.enteredAt, null, t) : Math.max(v.leftAt as number, v.enteredAt + 1000);
-    raw.push({ kind: "visit", start: v.enteredAt, end, station: v.station, round: v.action === "revise" ? v.round + 1 : v.round, open });
-    cursor = end;
+    const left = visitEnd(v);
+    const open = left === null || left > t;
+    const end = open ? axisEnd(v.enteredAt, null, t) : Math.max(left, v.enteredAt + 1000);
+    raw.push({ kind: "visit", start: v.enteredAt, end, station: v.station, round: visitRound(v), open, placed: isPlaced(v.meta.start) || (!open && isPlaced(v.meta.end)) });
+    cursor = Math.max(cursor, end);
   }
   // The tail: to the execution's end, or (while it runs) a stepped window past the last visit.
-  const tailEnd = exec.endedAt !== null && exec.endedAt <= t ? Math.max(exec.endedAt, cursor + 1000) : Math.max(cursor + 1000, axisEnd(cursor, null, t));
+  const tailEnd = span.end !== null && span.end <= t ? Math.max(span.end, cursor + 1000) : Math.max(cursor + 1000, axisEnd(cursor, null, t));
   if (!sorted.length) raw.push({ kind: "gap", start: cursor, end: tailEnd });
   else if (tailEnd > cursor) raw.push({ kind: "gap", start: cursor, end: tailEnd });
-  const key = `${x0}|${w}|${raw.map((r) => `${r.kind[0]}${r.start}-${r.end}`).join(",")}`;
+  const key = `${x0}|${w}|${raw.map((r) => `${r.kind[0]}${r.start}-${r.end}${r.placed ? "p" : ""}`).join(",")}`;
   const hit = cache.get(key);
   if (hit) return hit;
   // Gaps get short fixed segments; visits share the rest by the square root of their duration.

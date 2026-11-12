@@ -12,25 +12,31 @@
  * grammar already draws. The spec's camera (f.1) is one transform on one wrapper, which keeps text
  * crisp, hit-testing exact and lets the pinned gutter and column head follow by a CSS variable with
  * no React work per frame. ELK does what it is best at, once: a layered layout of the belt's columns
- * as the fixture uses them (with the review seats as one layer); the columns are then fixed for the
- * whole run, so nothing re-lays out as time passes. What we give up: React Flow's built-in minimap,
- * controls and edge routing, which are drawn here instead, to the grammar.
+ * in their static order (with the review seats as one layer); the columns are then fixed for good, so
+ * nothing re-lays out as time passes. What we give up: React Flow's built-in minimap, controls and
+ * edge routing, which are drawn here instead, to the grammar.
+ *
+ * Live, replay and simulation (M6.2) are drawn by the same view from the store's log: nothing is laid
+ * out from the whole run. Waves, slices, executions, visits and rounds are added as their first event
+ * is applied, after what is drawn; the sheet grows (in steps) and never shrinks under the camera; when
+ * rows above what the camera shows change, the camera is moved by the same amount, so what is in view
+ * stays where it is (`anchorShift`).
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { animate } from "motion/react";
 import { BlueprintSheet, FactoryScene, fc } from "@mach/ui";
-import type { EntityRef, Scene, WaveState } from "../sim";
-import { finalScene, refKind } from "../sim";
-import { cameraFollows, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
+import type { EntityRef, WaveState } from "../sim";
+import { isKnown, refKind } from "../sim";
+import { cameraFollows, isStale, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
 import { spreadTemplate, useColumns, type ColumnTemplate } from "./columns";
-import { computeLayout, drawingWidthFor, SHEET, type Lane, type Layout, type Rect } from "./layout";
+import { computeLayout, drawingWidthFor, SHEET, SHEET_BASE_HEIGHT, SHEET_STEP, type Lane, type Layout, type Rect, type WaveBand } from "./layout";
 import { DependencyLayer, LaneView } from "./Lane";
 import { clamp, fitCamera, focusCamera, type Camera, type Reserve } from "./camera";
 import { leafBounds } from "./bounds";
-import { PlayheadFact } from "./TitleBlock";
+import { PlayheadFact, sheetFacts, StaleNote } from "./TitleBlock";
 import { ancestors, nodeForRef, treeOf, type Tree, type TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, TreeContext, type TreeCtx } from "./treeitem";
-import { CameraContext, ClearContext, createCameraStore, createHitRegistry, HitContext, LayersContext, LodContext, nearestHit, useCamera, type ClearArea, type ClearAreaSource } from "./context";
+import { CameraContext, ClearContext, createCameraStore, createHitRegistry, HitContext, LayersContext, LodContext, nearestHit, SimulatedContext, useCamera, type ClearArea, type ClearAreaSource } from "./context";
 import { ColumnHead, furnitureBox, HEAD_H, Legend, Revisions } from "./furniture";
 import { Minimap, PinnedTitle, RULER, rulersShown, ZoneRulers, zoneCounts } from "./overlays";
 import { Gutter } from "./gutter";
@@ -122,25 +128,66 @@ function opensFor(tree: Tree, entity: EntityRef): string[] {
   return path.filter((p) => p.startsWith("w:") || p.startsWith("s:"));
 }
 
-function defaultOpen(tree: Tree): Set<string> {
+/**
+ * Lanes open by default while the sheet holds at most this many (spec c.2, c.5). Each lane's default is
+ * decided once, the first time the view sees it: a lane that arrives when the sheet already holds more
+ * is closed (its strip carries its state), and lanes already open stay open, so the sheet never folds
+ * up under the person when the seventh slice arrives. Twelve cells at once are twelve strips.
+ */
+const LANE_OPEN_LIMIT = 6;
+
+/** Every lane's default, decided the first time it is seen (see LANE_OPEN_LIMIT). Mutated, never replaced. */
+type LaneDefaults = Map<string, boolean>;
+
+function noteLanes(tree: Tree, seen: LaneDefaults): void {
+  const lanes = tree.roots.flatMap((r) => r.children);
+  const fresh = lanes.filter((l) => !seen.has(l.id));
+  if (!fresh.length) return;
+  const open = lanes.length <= LANE_OPEN_LIMIT;
+  for (const l of fresh) seen.set(l.id, open);
+}
+
+/** The default expansion: every wave, and the lanes whose default is open. */
+function defaultOpen(tree: Tree, seen: LaneDefaults): Set<string> {
   const out = new Set<string>();
-  if (tree.root) {
-    out.add(tree.root.id);
-    for (const lane of tree.root.children) out.add(lane.id);
+  for (const root of tree.roots) {
+    out.add(root.id);
+    for (const lane of root.children) if (seen.get(lane.id) !== false) out.add(lane.id);
   }
   return out;
 }
 
-/** The sheet's planned height: the whole run at the default expansion, so the paper does not grow under a fitted camera. */
-const plannedCache = new WeakMap<ColumnTemplate, number>();
-function plannedHeight(template: ColumnTemplate, scene: Scene): number {
-  let h = plannedCache.get(template);
-  if (h === undefined) {
-    const tree = treeOf(scene);
-    h = computeLayout(scene, tree, defaultOpen(tree), template).height;
-    plannedCache.set(template, h);
+/**
+ * The sheet's planned height: what the history so far needs at the default expansion, in whole steps,
+ * never less than the base sheet and never less than it was (the paper does not shrink under the
+ * camera, and grows a step at a time, not per event).
+ */
+function plannedFrom(height: number, before: number): number {
+  const over = Math.max(0, height - SHEET_BASE_HEIGHT);
+  return Math.max(before, SHEET_BASE_HEIGHT + Math.ceil(over / SHEET_STEP) * SHEET_STEP);
+}
+
+/** The drawing's width: fixed, so no column ever moves (it is the width of the base sheet cut landscape). */
+const drawingWidth = (template: ColumnTemplate): number => drawingWidthFor(SHEET_BASE_HEIGHT, template.width);
+
+/**
+ * How far what the camera shows has moved between two layouts, in sheet units: the selection's item,
+ * else the focused item, else the topmost lane in view. Rows that appear below it move nothing; a lane
+ * above it that grows or a late event inserted above moves it, and the camera follows by that much.
+ */
+function anchorShift(prev: Layout, next: Layout, ids: readonly (string | null)[], viewTop: number): number {
+  for (const id of ids) {
+    if (!id) continue;
+    const a = prev.bounds.get(id);
+    const b = next.bounds.get(id);
+    if (a && b && a.y + a.h >= viewTop) return b.y - a.y;
   }
-  return h;
+  const lane = prev.lanes.find((l) => l.y + l.h > viewTop);
+  const now = lane ? next.lanes.find((l) => l.id === lane.id) : undefined;
+  if (lane && now) return now.y - lane.y;
+  const wave = prev.waves.find((w) => w.y + w.h > viewTop);
+  const after = wave ? next.waves.find((w) => w.id === wave.id) : undefined;
+  return wave && after ? after.y - wave.y : 0;
 }
 
 /**
@@ -193,26 +240,26 @@ function followMove(layout: Layout, t: number, cam: Camera, view: { w: number; h
 export function BlueprintView() {
   const store = useStore();
   const actions = useSceneActions();
-  const fixture = useSceneStore((s) => s.fixture);
   const scene = useScene();
   const tree = treeOf(scene);
-  const baseTemplate = useColumns(fixture);
+  const baseTemplate = useColumns();
   const reduced = useSceneStore((s) => s.reducedMotion);
   const theater = useSceneStore((s) => s.theater);
   const focusReq = useSceneStore((s) => s.focus);
   const selection = useSceneStore((s) => s.selection);
 
-  // Which lanes are open. Lanes that appear later (a slice dispatched mid-run) open by default.
-  const [userOpen, setUserOpen] = useState<ReadonlySet<string>>(() => defaultOpen(tree));
+  // Which lanes are open: what the person opened, and the defaults (every wave; each lane as decided
+  // when it was first seen) less what the person closed.
+  const [laneDefaults] = useState<LaneDefaults>(() => new Map());
+  noteLanes(tree, laneDefaults);
+  const [userOpen, setUserOpen] = useState<ReadonlySet<string>>(() => new Set());
   const [userClosed, setUserClosed] = useState<ReadonlySet<string>>(() => new Set());
+  const defaults = useMemo(() => defaultOpen(tree, laneDefaults), [tree, laneDefaults]);
   const expanded = useMemo(() => {
     const out = new Set(userOpen);
-    if (tree.root) {
-      if (!userClosed.has(tree.root.id)) out.add(tree.root.id);
-      for (const lane of tree.root.children) if (!userClosed.has(lane.id)) out.add(lane.id);
-    }
+    for (const id of defaults) if (!userClosed.has(id)) out.add(id);
     return out;
-  }, [userOpen, userClosed, tree]);
+  }, [userOpen, userClosed, defaults]);
 
   // Expand to what the store names: a focus request or a selection made elsewhere (the inspector, the
   // Atlas, the Shell bringing this view up with a selection).
@@ -238,10 +285,13 @@ export function BlueprintView() {
     }
   }
 
-  // The sheet is cut once for the whole run: its height from the run at the default expansion, its
-  // width landscape to the stage's proportion, and the belt's columns spread across that width.
-  const planned = useMemo(() => (baseTemplate ? plannedHeight(baseTemplate, finalScene(fixture)) : 0), [baseTemplate, fixture]);
-  const template = useMemo(() => (baseTemplate ? spreadTemplate(baseTemplate, drawingWidthFor(planned, baseTemplate.width)) : null), [baseTemplate, planned]);
+  // The sheet: its width fixed (landscape at the base height), the belt's columns spread across it; its
+  // height planned from the history so far at the default expansion, growing in steps, never shrinking.
+  const template = useMemo(() => (baseTemplate ? spreadTemplate(baseTemplate, drawingWidth(baseTemplate)) : null), [baseTemplate]);
+  const needed = useMemo(() => (template ? computeLayout(scene, tree, defaults, template).height : 0), [scene, tree, defaults, template]);
+  const [peak, setPeak] = useState(0);
+  const planned = template ? plannedFrom(needed, peak) : 0;
+  if (planned > peak) setPeak(planned);
   const layout: Layout | null = useMemo(() => (template ? computeLayout(scene, tree, expanded, template, planned) : null), [scene, tree, expanded, template, planned]);
   const layoutRef = useRef<Layout | null>(layout);
   useLayoutEffect(() => {
@@ -393,6 +443,28 @@ export function BlueprintView() {
     fitted.current = false;
     if (store.getState().follow) store.setFollow(false);
   }, [store]);
+
+  // Keep what the camera shows where it is when the history changes the layout (anchorShift). A change
+  // the person made (opening or closing a lane) is left to the lanes' own transition; a fitted camera
+  // re-fits when the sheet has grown a step.
+  const shown = useRef<{ layout: Layout | null; userOpen: ReadonlySet<string>; userClosed: ReadonlySet<string> }>({ layout: null, userOpen, userClosed });
+  useLayoutEffect(() => {
+    const prev = shown.current;
+    shown.current = { layout, userOpen, userClosed };
+    if (!layout || !prev.layout || prev.layout === layout || !placed.current) return;
+    if (prev.userOpen !== userOpen || prev.userClosed !== userClosed) return;
+    if (fitted.current) {
+      if (prev.layout.height !== layout.height || prev.layout.width !== layout.width) moveTo(fitCam(layout), true);
+      return;
+    }
+    const c = cam.current;
+    const viewTop = (RULER + PIN_GAP + HEAD_H * c.k - c.y) / c.k;
+    const sel = store.getState().selection;
+    const dy = anchorShift(prev.layout, layout, [sel ? nodeForRef(tree, sel) : null, focusedId, activeId], viewTop);
+    if (Math.abs(dy) < 0.5) return;
+    anim.current?.stop();
+    apply(keep({ ...c, y: c.y - dy * c.k }));
+  }, [layout, userOpen, userClosed, tree, focusedId, activeId, store, apply, keep, moveTo, fitCam]);
 
   // First placement: framed on the selection the Shell brings us up with, else the whole sheet.
   useLayoutEffect(() => {
@@ -548,7 +620,9 @@ export function BlueprintView() {
     let primary: string | null = null;
     return store.subscribe(() => {
       const s = store.getState();
-      if (!s.playing || !cameraFollows(s) || fitted.current) return;
+      // Moving: playback, or a live view pinned to the edge. Never while the connection is stale (a held frame).
+      const moving = s.playing || (s.source === "live" && s.following && !isStale(s.connection));
+      if (!moving || !cameraFollows(s) || fitted.current) return;
       const now = performance.now();
       if (now - lastCheck < (s.reducedMotion ? FOLLOW.everyReducedMs : FOLLOW.everyMs)) return;
       lastCheck = now;
@@ -848,15 +922,10 @@ export function BlueprintView() {
   const [gutterEl, setGutterEl] = useState<SVGGElement | null>(null);
   const [rowsEl, setRowsEl] = useState<SVGGElement | null>(null);
   const layers = useMemo(() => ({ gutter: gutterEl, rows: rowsEl, animate: animating }), [gutterEl, rowsEl, animating]);
-  const title = tree.root?.data.kind === "wave" ? tree.root.data.wave.title : "Waiting for a wave";
-  const waveId = tree.root?.data.kind === "wave" ? tree.root.data.wave.id : "";
-  const facts: ReadonlyArray<readonly [string, string]> = [
-    ["Wave", waveId || "none yet"],
-    ["Project", scene.project.name],
-    ["Playhead", ""],
-    ["Run", fixture.id],
-  ];
+  const sheet = sheetFacts(scene, tree.roots.flatMap((r) => (r.data.kind === "wave" ? [r.data.wave] : [])));
+  const facts = sheet.facts;
   const furniture = layout ? furnitureBox(layout) : null;
+  const hasWaves = tree.roots.length > 0;
   return (
     <CameraContext.Provider value={camStore}>
       <ClearContext.Provider value={clearArea}>
@@ -875,25 +944,28 @@ export function BlueprintView() {
         >
           <div ref={stage} className="bp-stage">
             {layout && template && furniture ? (
-              <FactoryScene label="Execution Blueprint (simulation)" interactive width={layout.width} height={layout.height} ground={false}>
+              <FactoryScene label={`Execution Blueprint (${scene.provenance.label.toLowerCase()})`} interactive width={layout.width} height={layout.height} ground={false}>
                 <BlueprintSheet
                   width={layout.width}
                   height={layout.height}
                   title="Execution Blueprint"
-                  subtitle={waveId ? `${waveId} · ${title}` : "Waiting for an approved wave"}
-                  simulationLabel="Simulation"
+                  subtitle={sheet.subtitle}
+                  simulationLabel={sheet.stamp}
                   zonesX={zoneCounts(layout).zx}
                   zonesY={zoneCounts(layout).zy}
                   facts={facts}
                   titleBlock="strip"
                 >
+                  <SimulatedContext.Provider value={scene.provenance.source === "simulation"}>
                   <LodContext.Provider value={lodState}>
                   <LayersContext.Provider value={layers}>
                     <BandContext.Provider value={band}>
                       <TreeContext.Provider value={ctx}>
-                        <g role="tree" aria-label={tree.root ? "Execution hierarchy: wave, slices, executions, station visits, agents, tool calls" : "Execution hierarchy: empty, the wave has not arrived yet"} tabIndex={tree.root ? undefined : 0} onKeyDown={onKeyDown} onFocus={(e) => setFocusedId((e.target as Element).getAttribute("data-tid"))} onBlur={() => setFocusedId(null)}>
-                          {tree.root ? <WaveItem layout={layout} tree={tree} template={template} animate={animating} /> : null}
-                          {!tree.root ? <PlaceholderBelt layout={layout} template={template} /> : null}
+                        <g role="tree" aria-label={hasWaves ? "Execution hierarchy: waves, slices, executions, station visits, agents, tool calls" : "Execution hierarchy: empty, no wave has arrived yet"} tabIndex={hasWaves ? undefined : 0} onKeyDown={onKeyDown} onFocus={(e) => setFocusedId((e.target as Element).getAttribute("data-tid"))} onBlur={() => setFocusedId(null)}>
+                          {layout.waves.map((band, i) => (
+                            <WaveItem key={band.id} band={band} pos={i + 1} size={layout.waves.length} layout={layout} template={template} animate={animating} />
+                          ))}
+                          {!hasWaves ? <PlaceholderBelt layout={layout} template={template} /> : null}
                         </g>
                         <DependencyLayer scene={scene} lanes={layout.lanes} ax={layout.ax} aw={layout.aw} template={template} />
                         {/* Pinned layers, drawn last: the gutters, then the column head above them. */}
@@ -904,10 +976,12 @@ export function BlueprintView() {
                     </BandContext.Provider>
                   </LayersContext.Provider>
                   </LodContext.Provider>
+                  </SimulatedContext.Provider>
                   <Legend x={furniture.legend.x} y={furniture.legend.y} overview={lodState === "overview" || (theater && lodState !== "near")} />
-                  <Revisions x={furniture.rev.x} y={furniture.rev.y} w={furniture.rev.w} h={furniture.rev.h} />
+                  <Revisions x={furniture.rev.x} y={furniture.rev.y} w={furniture.rev.w} h={furniture.rev.h} overview={lodState === "overview"} />
                 </BlueprintSheet>
                 <PlayheadFact width={layout.width} height={layout.height} factIndex={2} factCount={facts.length} />
+                <StaleNote width={layout.width} height={layout.height} factCount={facts.length} />
               </FactoryScene>
             ) : (
               <p className="bp-pending">Laying out the drawing…</p>
@@ -922,7 +996,7 @@ export function BlueprintView() {
               kept left of a drawer that covers the stage (--bp-cover-r). */}
           <div className="bp-corner bp-chrome">
             {layout && template && !theater ? <Minimap layout={layout} template={template} centreOn={centreOn} frameLane={frameLane} /> : null}
-            {layout ? <PinnedTitle layout={layout} theater={theater} /> : null}
+            {layout ? <PinnedTitle layout={layout} theater={theater} stamp={sheet.stamp} /> : null}
             {theater ? null : (
               <div className="bp-controls" role="toolbar" aria-label="Blueprint camera">
                 <button type="button" onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out">
@@ -954,25 +1028,28 @@ function ZoomWord() {
   );
 }
 
-function WaveItem({ layout, tree, template, animate }: { layout: Layout; tree: Tree; template: ColumnTemplate; animate: boolean }) {
-  const root = tree.root!;
-  const selected = useSceneStore((s) => s.selection === root.ref);
-  const wave = root.data.kind === "wave" ? root.data.wave : null;
-  const ring = { x: SHEET.left, y: layout.waveY + 4, w: 420, h: SHEET.waveHeader - 12 };
-  return <WaveTreeItem node={root} expanded={layout.waveExpanded} ring={ring} layout={layout} selected={selected} wave={wave} template={template} animate={animate} />;
+function WaveItem({ band, pos, size, layout, template, animate }: { band: WaveBand; pos: number; size: number; layout: Layout; template: ColumnTemplate; animate: boolean }) {
+  const node = band.node;
+  const selected = useSceneStore((s) => s.selection === node.ref);
+  const wave = node.data.kind === "wave" ? node.data.wave : null;
+  const ring = { x: SHEET.left, y: band.y + 4, w: 420, h: SHEET.waveHeader - 12 };
+  return <WaveTreeItem node={node} pos={pos} size={size} band={band} ring={ring} layout={layout} selected={selected} wave={wave} template={template} animate={animate} />;
 }
 
-function WaveTreeItem({ node, expanded, ring, layout, selected, wave, template, animate }: { node: TreeNode; expanded: boolean; ring: Rect; layout: Layout; selected: boolean; wave: WaveState | null; template: ColumnTemplate; animate: boolean }) {
+function WaveTreeItem({ node, pos, size, band, ring, layout, selected, wave, template, animate }: { node: TreeNode; pos: number; size: number; band: WaveBand; ring: Rect; layout: Layout; selected: boolean; wave: WaveState | null; template: ColumnTemplate; animate: boolean }) {
   const x = SHEET.left;
-  const y = layout.waveY;
+  const y = band.y;
   const w = layout.width - SHEET.left * 2;
-  const lanes = layout.lanes;
+  const lanes = band.lanes;
+  // A wave the history names without its definition: its id stands as its title, and the line says so.
+  const titled = wave ? isKnown(wave.meta, "title") : false;
+  const meta = wave ? `${wave.id} · ${lanes.length} slice${lanes.length === 1 ? "" : "s"}${titled ? "" : " · title not recorded"} · approved by ${wave.approvedBy}` : "";
   return (
     <Item
       node={node}
-      pos={1}
-      size={1}
-      expanded={expanded}
+      pos={pos}
+      size={size}
+      expanded={band.expanded}
       ring={ring}
       group={lanes.map((lane: Lane, i) => (
         <LaneView key={lane.id} lane={lane} pos={i + 1} size={lanes.length} rows={lane.rows} layout={layout} template={template} animate={animate} />
@@ -982,12 +1059,12 @@ function WaveTreeItem({ node, expanded, ring, layout, selected, wave, template, 
       <Gutter id={node.id} entity={node.ref} y={y + 2} h={44} ax={layout.ax} band={0}>
         {selected ? <SelectBar x={x - 2} y={0} h={42} /> : null}
         <ToggleTarget x={x + 8} y={22} />
-        <Chevron x={x + 8} y={22} open={expanded} />
+        <Chevron x={x + 8} y={22} open={band.expanded} />
         <text x={x + 20} y={27} className="bp-fine" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 21, fontWeight: 700 }}>
           {wave?.title ?? ""}
         </text>
         <text x={x + 20} y={41} className="bp-fine notranslate" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 9.5 }}>
-          {wave?.id} · {wave?.sliceIds.length} slices · approved by {wave?.approvedBy}
+          {meta}
         </text>
         <text x={x + 20} y={36} className="bp-over" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 44, fontWeight: 700 }}>
           {wave?.title ?? ""}

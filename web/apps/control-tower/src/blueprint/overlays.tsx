@@ -13,7 +13,8 @@ import type { ColumnTemplate } from "./columns";
 import { CameraContext, useCamera } from "./context";
 import type { FlowNode } from "./flow";
 import { SHEET, type Layout } from "./layout";
-import { clockTenths } from "./time";
+import { useStaleSince } from "./motion";
+import { clock, clockTenths } from "./time";
 
 /** The sheet's border margin, where its own zone strip is drawn. */
 export const MARGIN = 18;
@@ -87,27 +88,36 @@ export function ZoneRulers({ layout }: { layout: Layout }) {
 
 /**
  * The title block's live fact, pinned to the stage when the sheet's own block is off screen. It shows
- * only what the Shell's header does not: the playhead, and the simulation label while in Theater (where
- * the header is hidden).
+ * only what the Shell's header does not: the playhead, and the source's stamp while in Theater (where
+ * the header is hidden). While the connection is stale or lost it is always shown, and says "as last
+ * seen at" instead of the playhead: the drawing is then a held frame.
  */
-export function PinnedTitle({ layout, theater }: { layout: Layout; theater: boolean }) {
+export function PinnedTitle({ layout, theater, stamp }: { layout: Layout; theater: boolean; stamp: string }) {
   const cam = useCamera();
   const store = useContext(CameraContext);
   const view = store?.size() ?? { w: 0, h: 0 };
   const t = useSceneStore((s) => Math.floor(s.playhead / 100) * 100);
+  const staleSince = useStaleSince();
   const tbW = 260;
   const tbH = 54 + 4 * 16;
   const sx = cam.x + (layout.width - MARGIN - tbW) * cam.k;
   const sy = cam.y + (layout.height - MARGIN - tbH) * cam.k;
   const visible = sx >= 0 && sy >= 0 && sx + tbW * cam.k <= view.w && sy + tbH * cam.k <= view.h;
-  if (visible) return null;
+  if (visible && staleSince === null) return null;
   return (
-    <div className="bp-title" aria-hidden="true">
-      {theater ? <span className="bp-title-stamp">Simulation</span> : null}
-      <span className="bp-title-fact">
-        <span>Playhead</span>
-        <span className="tabular">{clockTenths(t)}</span>
-      </span>
+    <div className="bp-title" aria-hidden="true" data-stale={staleSince !== null ? "1" : undefined}>
+      {theater ? <span className="bp-title-stamp">{stamp}</span> : null}
+      {staleSince !== null ? (
+        <span className="bp-title-fact">
+          <span>As last seen at</span>
+          <span className="tabular">{clock(staleSince)}</span>
+        </span>
+      ) : (
+        <span className="bp-title-fact">
+          <span>Playhead</span>
+          <span className="tabular">{clockTenths(t)}</span>
+        </span>
+      )}
     </div>
   );
 }
@@ -147,6 +157,7 @@ export interface MinimapProps {
  */
 export const Minimap = memo(function Minimap({ layout, template, centreOn, frameLane }: MinimapProps) {
   const cam = useCamera();
+  const stale = useStaleSince() !== null;
   const store = useContext(CameraContext);
   const view = store?.size() ?? { w: 0, h: 0 };
   const W = 150;
@@ -230,7 +241,7 @@ export const Minimap = memo(function Minimap({ layout, template, centreOn, frame
               <g key={lane.id}>
                 <rect x={SHEET.left * s} y={y} width={(layout.width - SHEET.left * 2) * s} height={h - 0.5} style={{ fill: fc("floor"), opacity: lane.cell ? 0.9 : 0.4 }} />
                 <line x1={(ax + (template.x.start ?? 0)) * s} y1={row} x2={(ax + (template.x.end ?? 0)) * s} y2={row} style={{ stroke: fc("plate-edge"), strokeWidth: 0.8, strokeDasharray: "2 2" }} />
-                {ext ? <line x1={(ax + (template.x.start ?? 0)) * s} y1={row} x2={(ax + ext.x) * s} y2={row} style={{ stroke: fc(ext.done ? "pass" : ext.live ? "live" : "ink"), strokeWidth: 2.2, strokeLinecap: "round" }} /> : null}
+                {ext ? <line x1={(ax + (template.x.start ?? 0)) * s} y1={row} x2={(ax + ext.x) * s} y2={row} style={{ stroke: fc(ext.done ? "pass" : ext.live && !stale ? "live" : "ink"), strokeWidth: 2.2, strokeLinecap: "round" }} /> : null}
               </g>
             );
           })}

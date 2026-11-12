@@ -233,7 +233,7 @@ function revisionsOf(scene: Scene): Revision[] {
 }
 
 /** The revision table: rounds and decisions as the drawing's revisions, lettered A, B, C as they happen. */
-export function Revisions({ x, y, w, h }: { x: number; y: number; w: number; h: number }) {
+export function Revisions({ x, y, w, h, overview = false }: { x: number; y: number; w: number; h: number; overview?: boolean }) {
   const scene = useScene();
   const all = revisionsOf(scene);
   const rows = Math.floor((h - 22) / 13);
@@ -266,7 +266,8 @@ export function Revisions({ x, y, w, h }: { x: number; y: number; w: number; h: 
           </text>
         ))}
       </g>
-      {shown.map((r, i) => (
+      {/* The fine rows are hidden at the overview; they are not drawn there at all. */}
+      {(overview ? [] : shown).map((r, i) => (
         <g key={`${r.at}${r.text}`} className="bp-fine" style={{ fontSize: 9 }}>
           <text x={x + 9} y={y + 29 + i * 13} style={{ fill: "var(--mach-ink)", fontWeight: 700 }}>
             {String.fromCharCode(65 + ((first + i) % 26))}
@@ -282,7 +283,7 @@ export function Revisions({ x, y, w, h }: { x: number; y: number; w: number; h: 
           </text>
         </g>
       ))}
-      {!all.length ? (
+      {!all.length && !overview ? (
         <text x={x + 144} y={y + 29} className="bp-fine" style={{ fill: "var(--mach-ink-subtle)", fontSize: 9 }}>
           No rounds or decisions yet.
         </text>

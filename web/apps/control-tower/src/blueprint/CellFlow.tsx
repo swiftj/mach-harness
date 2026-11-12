@@ -3,6 +3,12 @@
  * round rows with the return-to-build loop between them, the review panel's fan-out and join on the
  * consensus gate, the human gate, merge revalidation, cleanup and integration. Columns the belt has
  * not reached are drawn unbuilt. Every mark has a `data-ref` naming the entity it draws.
+ *
+ * Live and replay: a mark set by an event that arrived late takes its reduced form (a brief state
+ * change, never a travel replayed); while the connection is stale nothing is drawn as working and no
+ * elapsed time runs; a duration whose start or end was placed rather than measured is dimensioned
+ * with open arrowheads and "≈"; verification reads "recorded" of "expected" (the targets listed are
+ * reconstructed); a gate's reason code is named where it refused.
  */
 import { memo, useContext, type ReactNode } from "react";
 import {
@@ -24,13 +30,15 @@ import {
   type GatePosition,
 } from "@mach/ui";
 import type { AgentState, ArtifactState, CellState, EntityRef, GateState, ReviewRoundState, SliceState } from "../sim";
-import { ref } from "../sim";
+import { isKnown, ref } from "../sim";
 import { useSceneStore } from "../scene";
 import type { ColumnTemplate } from "./columns";
 import type { Flow, FlowNode } from "./flow";
-import { useEventProgress, usePlayhead } from "./motion";
+import { useEventProgress, useLate, usePlayhead, useStaleSince } from "./motion";
 import { clock, duration } from "./time";
-import { LodContext } from "./context";
+import { LodContext, SimulatedContext } from "./context";
+import { placed, visitEnd } from "./facts";
+import { DimLine } from "./marks";
 import { PlacedCallout } from "./callout";
 import { OverviewFlow } from "./overview";
 import { artifactFile, agentState, grammarArtifact, grammarGate, grammarSeat, stationKind, tierOf } from "./vocab";
@@ -84,7 +92,7 @@ export const CellFlow = memo(function CellFlow({ cell, slice, flow, template, ax
           <Segment key={`${s.from.key}>${s.to.key}`} from={s.from} to={s.to} retry={s.retry} seats={seats} cell={cell} />
         ))}
         {flow.nodes.map((n) => (
-          <FlowMark key={n.key} node={n} cell={cell} slice={slice} seats={seats} next={nextOf(flow, n)} />
+          <FlowMark key={n.key} node={n} cell={cell} slice={slice} seats={seats} next={nextOf(flow, n)} flow={flow} />
         ))}
         <Dimensions flow={flow} cell={cell} y={dimsY - row0} />
       </g>
@@ -129,19 +137,22 @@ function Segment({ from, to, retry, seats, cell }: { from: FlowNode; to: FlowNod
 function Route({ from, to }: { from: FlowNode; to: FlowNode }) {
   const built = isBuilt(to);
   const startT = startOf(to) ?? (to.kind === "end" ? null : null);
-  const draw = useEventProgress(startT, "pathDraw");
+  const late = useLate(to.visit?.meta.eventId ?? to.gate?.meta.eventId);
+  const draw = useEventProgress(startT, "pathDraw", 0, late);
+  const stale = useStaleSince() !== null;
   const pts = routePoints(from, to);
   if (!built) {
     // Not reached yet: the grammar's planned route, a dashed hairline at full contrast (spec c.3.1).
     return <RoutePath variant="blueprint" points={pts} planned />;
   }
-  const active = (to.visit && to.visit.leftAt === null && to.visit.station !== "human-approval") || (to.gate?.state === "open" && to.gate.gate !== "red-before-green");
+  const active = !stale && ((to.visit && to.visit.leftAt === null && to.visit.station !== "human-approval") || (to.gate?.state === "open" && to.gate.gate !== "red-before-green"));
   const state: FactoryState = active ? "active" : "succeeded";
   return <RoutePath variant="blueprint" points={pts} state={state} progress={startT === null ? 1 : draw} />;
 }
 
 function Retry({ from, to }: { from: FlowNode; to: FlowNode }) {
-  const p = useEventProgress(from.gate?.decidedAt, "verifyReturn");
+  const late = useLate(from.gate?.meta.eventId);
+  const p = useEventProgress(from.gate?.decidedAt, "verifyReturn", 0, late);
   // The return leaves the refusing gate backwards, off its left vertex, and drops clear of its label.
   const out = from.x - from.r - 16;
   return (
@@ -150,6 +161,11 @@ function Retry({ from, to }: { from: FlowNode; to: FlowNode }) {
       <RetryLoop variant="blueprint" from={{ x: out, y: from.y }} to={{ x: to.x, y: to.y - to.r - 4 }} crestY={from.y + 54} round={to.round} progress={p} />
     </g>
   );
+}
+
+/** The consensus gate of a review panel's round, from the flow (never built from an id). */
+function consensusOf(flow: Flow, seatsNode: FlowNode): GateState | null {
+  return flow.nodes.find((n) => n.gate?.gate === "review" && n.round === seatsNode.round)?.gate ?? null;
 }
 
 function reviewRound(cell: CellState, seatsNode: FlowNode): ReviewRoundState | null {
@@ -215,7 +231,7 @@ function Pick({ entity, children, label }: { entity: EntityRef; children: ReactN
   );
 }
 
-function FlowMark({ node, cell, slice, seats, next }: { node: FlowNode; cell: CellState; slice: SliceState; seats: readonly number[]; next: FlowNode | null }) {
+function FlowMark({ node, cell, slice, seats, next, flow }: { node: FlowNode; cell: CellState; slice: SliceState; seats: readonly number[]; next: FlowNode | null; flow: Flow }) {
   switch (node.kind) {
     case "start":
       return <StartMark node={node} cell={cell} slice={slice} />;
@@ -224,7 +240,7 @@ function FlowMark({ node, cell, slice, seats, next }: { node: FlowNode; cell: Ce
     case "future":
       return <FutureMark node={node} seats={seats} />;
     case "seats":
-      return <SeatsMark node={node} cell={cell} seats={seats} />;
+      return <SeatsMark node={node} cell={cell} seats={seats} consensus={consensusOf(flow, node)} />;
     case "gate":
       return <GateMark node={node} cell={cell} />;
     case "visit":
@@ -249,6 +265,7 @@ function Label({ y, text, sub, tone, opacity = 1 }: { y: number; text: string; s
 
 function StartMark({ node, cell, slice }: { node: FlowNode; cell: CellState; slice: SliceState }) {
   const opened = cell.stageHistory[0];
+  const when = isKnown(cell.meta, "openedAt") ? clock(cell.openedAt) : "time not recorded";
   return (
     <Pick entity={ref.cell(cell.ticketId)}>
       <g transform={`translate(${node.x} ${node.y})`}>
@@ -256,9 +273,9 @@ function StartMark({ node, cell, slice }: { node: FlowNode; cell: CellState; sli
         <circle r={7.5} style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 1.25 }} />
         <circle r={2.4} style={{ fill: fc("ink") }} />
         <path d="M-12 0h-6M0 -12v-5" aria-hidden="true" style={{ stroke: fc("ink-soft"), strokeWidth: 0.75 }} />
-        <Label y={22} text="Opened" sub={`${clock(cell.openedAt)} · ${opened?.stage ?? ""}`} />
+        <Label y={22} text="Opened" sub={`${when}${opened?.stage ? ` · ${opened.stage}` : ""}`} />
       </g>
-      <title>{`${cell.ticketId} opened by ${opened?.by ?? "intake"} at ${clock(cell.openedAt)} for ${slice.id}`}</title>
+      <title>{`${cell.ticketId} opened by ${opened?.by ?? "intake"} at ${when} for ${slice.id}`}</title>
     </Pick>
   );
 }
@@ -335,6 +352,7 @@ function visitFraction(cell: CellState, node: FlowNode): { done: number; of: num
   if (!v || v.leftAt !== null || v.station !== "verify") return undefined;
   const ver = cell.verifications.find((x) => x.round === node.round);
   if (!ver || !ver.checks.length) return undefined;
+  // Checks recorded of targets listed: the only fraction the contract allows (8.1), both counted, never estimated.
   return { done: ver.checks.filter((c) => c.result !== "pending").length, of: ver.checks.length };
 }
 
@@ -354,9 +372,14 @@ const HEADLINE_ORDER: ArtifactState["kind"][] = ["merge-commit", "decision", "ve
 
 function VisitMark({ node, cell, next }: { node: FlowNode; cell: CellState; next: FlowNode | null }) {
   const v = node.visit!;
-  const state: FactoryState = v.leftAt === null ? "active" : v.outcome === "failed" ? "failed" : "succeeded";
-  const appear = useEventProgress(v.enteredAt, "stateChange");
-  const elapsed = useElapsed(v.leftAt === null ? v.enteredAt : null);
+  const stale = useStaleSince() !== null;
+  // While the connection is stale an open visit is held as last seen: not working, no clock running.
+  const state: FactoryState = v.leftAt === null ? (stale ? "idle" : "active") : v.outcome === "failed" ? "failed" : "succeeded";
+  const late = useLate(v.meta.eventId);
+  const appear = useEventProgress(v.enteredAt, "stateChange", 0, late);
+  const elapsed = useElapsed(v.leftAt === null && !stale ? v.enteredAt : null);
+  const end = visitEnd(v);
+  const approx = placed(v.meta.start) || placed(v.meta.end);
   const arts = headlineArtifacts(cell, node);
   const head = [...arts].sort((a, b) => HEADLINE_ORDER.indexOf(a.kind) - HEADLINE_ORDER.indexOf(b.kind))[0];
   const task = v.station === "build" && v.leftAt === null ? cell.tasks[cell.tasks.length - 1] : undefined;
@@ -378,9 +401,14 @@ function VisitMark({ node, cell, next }: { node: FlowNode; cell: CellState; next
           <text x={node.x} y={node.y + 41 + drop} textAnchor="middle" style={{ fill: fc("live"), fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }} className="tabular" aria-hidden="true">
             {task.id} {task.status}
           </text>
-        ) : v.leftAt !== null ? (
+        ) : end !== null ? (
           <text x={node.x} y={node.y + 41 + drop} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }} className="tabular" aria-hidden="true">
-            {duration(v.leftAt - v.enteredAt)}
+            {approx ? "≈ " : ""}
+            {duration(end - v.enteredAt)}
+          </text>
+        ) : stale ? (
+          <text x={node.x} y={node.y + 41} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontSize: 8.5 }} aria-hidden="true">
+            as last seen
           </text>
         ) : null}
       </Pick>
@@ -395,7 +423,8 @@ function VisitMark({ node, cell, next }: { node: FlowNode; cell: CellState; next
 }
 
 function HandoffCard({ artifact, count, x, y, ticket }: { artifact: ArtifactState; count: number; x: number; y: number; ticket: string }) {
-  const p = useEventProgress(artifact.writtenAt, "artifactMaterialise");
+  const late = useLate(artifact.meta.eventId);
+  const p = useEventProgress(artifact.writtenAt, "artifactMaterialise", 0, late);
   const failed = artifact.kind === "verification-findings" || (artifact.kind === "review-findings" && false);
   return (
     <Pick entity={ref.artifact(artifact.id)}>
@@ -443,10 +472,16 @@ function lampsFor(cell: CellState, g: GateState): GateLamp[] | undefined {
   return undefined;
 }
 
-function gateSub(cell: CellState, g: GateState): string {
+function gateSub(cell: CellState, g: GateState, simulated: boolean): string {
   const at = g.decidedAt ?? g.openedAt;
   if (g.gate === "verification") {
     const ver = cell.verifications.find((x) => x.round === g.round);
+    if (ver && !simulated) {
+      // A real history: checks as recorded, and the targets listed for them (reconstructed) as expected.
+      const recorded = ver.checks.filter((c) => c.at !== null).length;
+      const expected = ver.checks.length - recorded;
+      return `${recorded} recorded${expected ? ` · ${expected} expected` : ""} · ${clock(at)}`;
+    }
     if (ver) {
       const passed = ver.checks.filter((c) => c.result === "pass").length;
       return `${passed}/${ver.checks.length} · ${clock(at)}`;
@@ -466,7 +501,9 @@ function gateSub(cell: CellState, g: GateState): string {
 function GateMark({ node, cell }: { node: FlowNode; cell: CellState }) {
   const g = node.gate!;
   const position = gatePosition(g);
-  const p = useEventProgress(g.decidedAt ?? g.openedAt, g.state === "failed" ? "gateRefuse" : g.state === "open" ? "gateClose" : "gateOpen");
+  const simulated = useContext(SimulatedContext);
+  const late = useLate(g.meta.eventId);
+  const p = useEventProgress(g.decidedAt ?? g.openedAt, g.state === "failed" ? "gateRefuse" : g.state === "open" ? "gateClose" : "gateOpen", 0, late);
   const kind = grammarGate(g.gate);
   const tone = g.state === "failed" ? fc("fail") : g.state === "waiting" ? fc("human") : undefined;
   const callout = gateCallout(cell, g);
@@ -477,7 +514,7 @@ function GateMark({ node, cell }: { node: FlowNode; cell: CellState }) {
           <GateGlyph variant="blueprint" kind={kind} position={position} progress={p} lamps={lampsFor(cell, g)} at={{ x: node.x, y: node.y }} showLabel={false} />
         </g>
         <g transform={`translate(${node.x} ${node.y})`}>
-          <Label y={32} text={SHORT_GATE[g.gate]} sub={gateSub(cell, g)} tone={tone} />
+          <Label y={32} text={SHORT_GATE[g.gate]} sub={gateSub(cell, g, simulated)} tone={tone} />
         </g>
       </Pick>
       {callout ? <GateCallout node={node} gate={g} {...callout} /> : null}
@@ -490,12 +527,12 @@ function gateCallout(cell: CellState, g: GateState): { text: string; detail: str
     const ver = cell.verifications.find((x) => x.round === g.round);
     const failed = ver?.checks.filter((c) => c.result === "fail") ?? [];
     const passed = ver?.checks.filter((c) => c.result === "pass").length ?? 0;
-    return { text: `${failed.map((c) => c.targetId).join(", ")} failed · ${passed} of ${ver?.checks.length ?? 0} passed`, detail: failed[0]?.title ?? g.detail, tone: "fail", at: g.decidedAt };
+    return { text: `${failed.map((c) => c.targetId).join(", ")} failed · ${passed} of ${ver?.checks.length ?? 0} passed`, detail: `${g.reasonCode && g.reasonCode !== failed[0]?.title ? `${g.reasonCode} · ` : ""}${failed[0]?.title ?? g.detail}`, tone: "fail", at: g.decidedAt };
   }
   if (g.gate === "review" && g.state === "failed" && g.decidedAt !== null) {
     const r = cell.reviews.find((x) => x.round === g.round);
     const blocker = r?.findings.find((f) => f.severity === "blocker" && !f.outvoted);
-    return { text: `Rejected: ${blocker ? `${blocker.seat} blocker ${blocker.rule ?? ""}` : g.detail}`, detail: blocker ? clip(blocker.title, 64) : "", tone: "fail", at: g.decidedAt };
+    return { text: `Rejected: ${blocker ? `${blocker.seat} blocker ${blocker.rule ?? ""}` : g.detail}`, detail: blocker ? clip(blocker.title, 64) : (g.reasonCode ?? ""), tone: "fail", at: g.decidedAt };
   }
   if (g.gate === "human-approval") {
     const r = [...cell.reviews].reverse().find((x) => x.humanApproval);
@@ -519,7 +556,8 @@ function GateCallout({ node, gate, text, detail, tone, at }: { node: FlowNode; g
   // notes lean back over the work that failed; the human gate's leans forward over what is to come.
   const left = gate.gate === "verification" || gate.gate === "review";
   const dy = gate.gate === "review" ? -74 : -48;
-  const p = useEventProgress(at, "stateChange");
+  const late = useLate(gate.meta.eventId);
+  const p = useEventProgress(at, "stateChange", 0, late);
   if (p <= 0) return null;
   return (
     <g style={{ opacity: p }} role="note" aria-label={`${text}. ${detail}`}>
@@ -528,9 +566,11 @@ function GateCallout({ node, gate, text, detail, tone, at }: { node: FlowNode; g
   );
 }
 
-function SeatsMark({ node, cell, seats }: { node: FlowNode; cell: CellState; seats: readonly number[] }) {
+function SeatsMark({ node, cell, seats, consensus }: { node: FlowNode; cell: CellState; seats: readonly number[]; consensus: GateState | null }) {
   const round = reviewRound(cell, node);
   const delta = round?.delta ?? null;
+  // A real history records only that a round is a delta review, not what changed since.
+  const deltaOnly = !delta && Boolean(round?.isDelta);
   // A delta round's tag sits below the panel (clear of the loop and the main line's labels). The panel
   // needs no heading of its own: the column head names it, the consensus label carries its count.
   const headY = node.row === 0 ? node.y + (seats[0] ?? -28) - 21 : node.y + (seats[2] ?? 28) + 22;
@@ -543,23 +583,33 @@ function SeatsMark({ node, cell, seats }: { node: FlowNode; cell: CellState; sea
           </text>
         </g>
       ) : null}
+      {deltaOnly ? (
+        <g aria-hidden="true" transform={`translate(${node.x} ${headY})`}>
+          <text textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontSize: 9, fontWeight: 600 }}>
+            Δ delta review
+          </text>
+        </g>
+      ) : null}
       {SEAT_KEYS.map((k, i) => (
-        <Seat key={k} index={i} node={node} cell={cell} round={round} dy={seats[i] ?? 0} />
+        <Seat key={k} index={i} node={node} cell={cell} round={round} dy={seats[i] ?? 0} consensus={consensus} />
       ))}
     </g>
   );
 }
 
-function Seat({ index, node, cell, round, dy }: { index: number; node: FlowNode; cell: CellState; round: ReviewRoundState | null; dy: number }) {
+function Seat({ index, node, cell, round, dy, consensus }: { index: number; node: FlowNode; cell: CellState; round: ReviewRoundState | null; dy: number; consensus: GateState | null }) {
   const seat = round?.seats.find((s) => s.seat === SEAT_KEYS[index]) ?? null;
   const agent = seatAgent(cell, round, index);
-  const arrive = useEventProgress(agent?.startedAt, "agentArrive");
-  const seatElapsed = useElapsed(agent && agent.finishedAt === null ? agent.startedAt : null);
+  const late = useLate(agent?.meta.eventId);
+  const arrive = useEventProgress(agent?.startedAt, "agentArrive", 0, late);
+  const stale = useStaleSince() !== null;
+  const seatElapsed = useElapsed(agent && agent.finishedAt === null && !stale ? agent.startedAt : null);
   const findings = round?.findings.filter((f) => f.seat === SEAT_KEYS[index]) ?? [];
   const x = node.x;
   const y = node.y + dy;
   if (!seat) return null;
-  const state: FactoryState = seat.vote === "APPROVE" ? "succeeded" : seat.vote === "REJECT" ? "failed" : agent ? agentState(agent) : "idle";
+  const working: FactoryState = agent ? agentState(agent) : "idle";
+  const state: FactoryState = seat.vote === "APPROVE" ? "succeeded" : seat.vote === "REJECT" ? "failed" : stale && working === "active" ? "idle" : working;
   const outvoted = findings.find((f) => f.severity === "blocker" && f.outvoted);
   const blockers = findings.filter((f) => f.severity === "blocker");
   // Blockers carry the grammar's flag with their rule; notes are a small count beside the seat, so a
@@ -568,7 +618,7 @@ function Seat({ index, node, cell, round, dy }: { index: number; node: FlowNode;
   const notes = findings.length - blockers.length;
   return (
     <>
-      <Pick entity={agent ? ref.agent(agent.id) : ref.gate(`${cell.ticketId}/review#${round?.round ?? 1}`)}>
+      <Pick entity={agent ? ref.agent(agent.id) : consensus ? ref.gate(consensus.id) : ref.cell(cell.ticketId)}>
         <AgentMarker variant="blueprint" agentRole="reviewer" seat={grammarSeat(seat.seat)} tier={tierOf(seat.model)} state={state} elapsed={seatElapsed} arrive={agent ? arrive : 0.35} at={{ x, y }} showLabel={false} />
         {/* The seat's findings as the grammar's flag, planted beside it: a blocker flag (with its rule) when
             the seat filed one, otherwise a note flag counting its notes. */}
@@ -609,6 +659,8 @@ interface DimGroup {
   start: number;
   end: number | null;
   what: string;
+  /** A start or end in the group was placed (inferred or not recorded), not measured. */
+  placed: boolean;
 }
 
 function dimGroups(flow: Flow): DimGroup[] {
@@ -617,7 +669,8 @@ function dimGroups(flow: Flow): DimGroup[] {
   const take = (key: string, what: string, nodes: FlowNode[], start: number | null, end: number | null): void => {
     if (!nodes.length || start === null) return;
     const xs = nodes.map((n) => n.x);
-    groups.push({ key, row: nodes[0]!.row, x1: Math.min(...xs) - 18, x2: Math.max(...xs) + 18, start, end, what });
+    const approx = nodes.some((n) => (n.visit ? placed(n.visit.meta.start) || (n.visit.leftAt !== null && placed(n.visit.meta.end)) : false));
+    groups.push({ key, row: nodes[0]!.row, x1: Math.min(...xs) - 18, x2: Math.max(...xs) + 18, start, end, what, placed: approx });
   };
   const byRound = new Map<number, FlowNode[]>();
   for (const n of built) {
@@ -628,22 +681,22 @@ function dimGroups(flow: Flow): DimGroup[] {
   for (const [round, nodes] of byRound) {
     const plan = nodes.filter((n) => n.col === "plan" || n.col === "plan-check" || n.col === "audit");
     const planVisit = plan.find((n) => n.visit)?.visit;
-    if (planVisit) take(`plan${round}`, "Plan", plan, planVisit.enteredAt, planVisit.leftAt);
+    if (planVisit) take(`plan${round}`, "Plan", plan, planVisit.enteredAt, visitEnd(planVisit));
     const bv = nodes.filter((n) => n.col === "build" || n.col === "red-before-green" || n.col === "verify" || n.col === "verification");
     const buildV = bv.find((n) => n.col === "build")?.visit;
     const verdict = bv.find((n) => n.col === "verification")?.gate;
     const verifyV = bv.find((n) => n.col === "verify")?.visit;
-    if (buildV) take(`bv${round}`, `Build and verify, round ${round}`, bv.filter((n) => n.row === bv.find((m) => m.col === "build")!.row), buildV.enteredAt, verdict?.decidedAt ?? (verifyV ? verifyV.leftAt : buildV.leftAt) ?? null);
+    if (buildV) take(`bv${round}`, `Build and verify, round ${round}`, bv.filter((n) => n.row === bv.find((m) => m.col === "build")!.row), buildV.enteredAt, verdict?.decidedAt ?? (verifyV ? visitEnd(verifyV) : visitEnd(buildV)) ?? null);
     const rv = nodes.filter((n) => n.col === "review" || n.col === "consensus");
     const reviewV = rv.find((n) => n.visit)?.visit;
-    if (reviewV) take(`rv${round}`, `Review, round ${round}`, rv, reviewV.enteredAt, reviewV.leftAt);
+    if (reviewV) take(`rv${round}`, `Review, round ${round}`, rv, reviewV.enteredAt, visitEnd(reviewV));
     const human = nodes.filter((n) => n.col === "human-approval");
     const hg = human[0]?.gate;
     if (hg) take(`hu${round}`, "Waiting for a person", human, hg.openedAt, hg.decidedAt);
     const integ = nodes.filter((n) => n.col === "merge-revalidation" || n.col === "merge" || n.col === "cleanup");
     const mergeV = integ.find((n) => n.col === "merge")?.visit;
     const cleanV = integ.find((n) => n.col === "cleanup")?.visit;
-    if (mergeV) take(`in${round}`, "Merge and cleanup", integ, mergeV.enteredAt, cleanV ? cleanV.leftAt : null);
+    if (mergeV) take(`in${round}`, "Merge and cleanup", integ, mergeV.enteredAt, cleanV ? visitEnd(cleanV) : null);
   }
   return groups;
 }
@@ -659,15 +712,29 @@ function Dimensions({ flow, cell, y }: { flow: Flow; cell: CellState; y: number 
 }
 
 function Dim({ g, y }: { g: DimGroup; y: number }) {
+  const label = duration((g.end ?? g.start) - g.start);
   return (
-    <g aria-label={`${g.what}: ${duration((g.end ?? g.start) - g.start)}`} role="img">
-      <DimensionLine x1={g.x1} x2={g.x2} y={y} label={duration((g.end ?? g.start) - g.start)} extend={5} />
+    <g aria-label={`${g.what}: ${g.placed ? "about " : ""}${label}`} role="img">
+      {g.placed ? <DimLine x1={g.x1} x2={g.x2} y={y} label={label} inferred extend={5} /> : <DimensionLine x1={g.x1} x2={g.x2} y={y} label={label} extend={5} />}
     </g>
   );
 }
 
 function LiveDim({ g, y }: { g: DimGroup; y: number }) {
   const t = usePlayhead(1000);
+  const staleSince = useStaleSince();
+  if (staleSince !== null) {
+    // Held: what had run when the stream was last confirmed, not a clock.
+    return (
+      <g aria-label={`${g.what}: running at least ${duration(staleSince - g.start)} when last seen`} role="img">
+        <path d={`M${g.x1} ${y - 5}V${y + 3}`} aria-hidden="true" style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
+        <line x1={g.x1} y1={y} x2={g.x2} y2={y} aria-hidden="true" style={{ stroke: fc("ink-soft"), strokeWidth: 0.75, strokeDasharray: "4 3" }} />
+        <text x={(g.x1 + g.x2) / 2} y={y - 4} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 9.5 }} className="tabular">
+          ≥ {duration(Math.max(0, staleSince - g.start))} as last seen
+        </text>
+      </g>
+    );
+  }
   return (
     <g aria-label={`${g.what}: running for ${duration(t - g.start)}`} role="img">
       <path d={`M${g.x1} ${y - 5}V${y + 3}`} aria-hidden="true" style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />

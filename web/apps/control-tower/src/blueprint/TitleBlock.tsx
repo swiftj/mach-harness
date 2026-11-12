@@ -1,18 +1,64 @@
 /**
- * The live line of the sheet's title block: the playhead to a tenth of a second and the events
- * applied. Drawn into the row BlueprintSheet leaves for it, as its own small component, so the
- * playhead re-renders this text and nothing else.
+ * The sheet's title block, as the scene says it: where the drawing comes from (its provenance: the
+ * Simulation, the Live Factory, a historical replay), how complete its history is (partial since a
+ * gap, reconstructed from a snapshot), and, as its own small components, the playhead's live line and,
+ * while the connection is stale or lost, the "as last seen" note. The playhead re-renders its text and
+ * nothing else.
  */
+import { fc } from "@mach/ui";
+import type { Scene, WaveState } from "../sim";
+import { isKnown } from "../sim";
 import { useSceneStore } from "../scene";
-import { clockTenths } from "./time";
+import { useStaleSince } from "./motion";
+import { clock, clockTenths } from "./time";
 
 const MARGIN = 18;
 const TB_W = 260;
 
+export interface SheetFacts {
+  readonly subtitle: string;
+  /** The stamp that is never hidden: "Simulation", "Live", "Replay". */
+  readonly stamp: string;
+  readonly facts: ReadonlyArray<readonly [string, string]>;
+}
+
+/** What the history's completeness says, in a few words for the title block. */
+export function completenessWords(scene: Scene): string {
+  const c = scene.completeness;
+  if (c.state === "complete") return "complete";
+  if (c.state === "reconstructed") return c.since !== null ? `reconstructed, ${clock(c.since)}` : "reconstructed";
+  const began = Object.keys(c.began).length;
+  const gaps = c.gaps.length;
+  return `partial${c.since !== null ? ` since ${clock(c.since)}` : ""}${gaps ? ` · ${gaps} gap${gaps === 1 ? "" : "s"}` : began ? ` · ${began} begun late` : ""}`;
+}
+
+/** The title block's subtitle, stamp and facts for a scene and the waves it draws. */
+export function sheetFacts(scene: Scene, waves: readonly WaveState[]): SheetFacts {
+  const p = scene.provenance;
+  const first = waves[0];
+  const waveTitle = (w: WaveState): string => (isKnown(w.meta, "title") ? `${w.id} · ${w.title}` : w.id);
+  const subtitle = !first ? "Waiting for an approved wave" : waves.length === 1 ? waveTitle(first) : `${waves.length} waves · ${first.id} to ${waves[waves.length - 1]!.id}`;
+  if (p.source === "simulation") {
+    return { subtitle, stamp: "Simulation", facts: [["Wave", first?.id ?? "none yet"], ["Project", scene.project.name], ["Playhead", ""], ["Run", p.origin ?? ""]] };
+  }
+  const ids = waves.map((w) => w.id).join(", ");
+  return {
+    subtitle,
+    stamp: p.source === "live" ? "Live" : "Replay",
+    facts: [
+      [waves.length > 1 ? "Waves" : "Wave", ids.length > 26 ? `${waves.length} waves` : ids || "none yet"],
+      ["History", completenessWords(scene)],
+      ["Playhead", ""],
+      ["Source", p.origin ? `${p.label} · ${p.origin}` : p.label],
+    ],
+  };
+}
+
 export function PlayheadFact({ width, height, factIndex, factCount }: { width: number; height: number; factIndex: number; factCount: number }) {
   const t = useSceneStore((s) => Math.floor(s.playhead / 100) * 100);
   const cursor = useSceneStore((s) => s.cursor);
-  const total = useSceneStore((s) => s.fixture.events.length);
+  const total = useSceneStore((s) => s.extent.events);
+  const soFar = useSceneStore((s) => s.extent.kind === "so-far");
   const innerW = width - MARGIN * 2;
   const innerH = height - MARGIN * 2;
   const tbH = 54 + factCount * 16;
@@ -23,8 +69,32 @@ export function PlayheadFact({ width, height, factIndex, factCount }: { width: n
       {clockTenths(t)}
       <tspan style={{ fill: "var(--mach-ink-muted)" }}>
         {" "}
-        · {cursor}/{total} events
+        · {cursor}/{total} events{soFar ? " so far" : ""}
       </tspan>
     </text>
+  );
+}
+
+/**
+ * While the connection is stale or lost (live only), a note set over the title block's top edge:
+ * "As last seen at 14:02:10". Nothing on the sheet is then drawn as working, and nothing moves.
+ */
+export function StaleNote({ width, height, factCount }: { width: number; height: number; factCount: number }) {
+  const since = useStaleSince();
+  const state = useSceneStore((s) => s.connection?.state ?? null);
+  if (since === null) return null;
+  const innerW = width - MARGIN * 2;
+  const innerH = height - MARGIN * 2;
+  const tbH = 54 + factCount * 16;
+  const x = MARGIN + innerW - TB_W;
+  const y = MARGIN + innerH - tbH - 26;
+  const text = `As last seen at ${clock(since)}${state === "disconnected" ? " · disconnected" : state === "reconnecting" ? " · reconnecting" : " · connection stale"}`;
+  return (
+    <g role="status" aria-label={text}>
+      <rect x={x} y={y} width={TB_W} height={20} rx={2} style={{ fill: fc("wait-soft"), stroke: fc("wait"), strokeWidth: 1 }} />
+      <text x={x + 10} y={y + 13.5} style={{ fill: "var(--mach-ink)", fontSize: 10.5, fontWeight: 700 }}>
+        {text}
+      </text>
+    </g>
   );
 }

@@ -14,7 +14,8 @@ import { factoryStates, fc, StateMark, type FactoryState } from "@mach/ui";
 import type { CellState, GateState, ReviewRoundState } from "../sim";
 import { ref } from "../sim";
 import type { Flow, FlowNode } from "./flow";
-import { useEventProgress } from "./motion";
+import { ActivityMark } from "./marks";
+import { useEventProgress, useLate, useStaleSince } from "./motion";
 import { agentState, gateState } from "./vocab";
 
 /** Sizes in sheet units: about 15 px across on screen at a fit of 0.42. */
@@ -52,7 +53,7 @@ export function OverviewFlow({ cell, flow, seats }: { cell: CellState; flow: Flo
         <OverviewSegment key={`${s.from.key}>${s.to.key}`} from={s.from} to={s.to} retry={s.retry} seats={seats} cell={cell} />
       ))}
       {flow.nodes.map((n) => (
-        <OverviewNode key={n.key} node={n} cell={cell} seats={seats} />
+        <OverviewNode key={n.key} node={n} cell={cell} seats={seats} flow={flow} />
       ))}
     </g>
   );
@@ -82,12 +83,14 @@ function routeD(a: FlowNode, b: FlowNode): string {
 
 function OverviewRoute({ from, to }: { from: FlowNode; to: FlowNode }) {
   const start = startOf(to);
-  const draw = useEventProgress(start, "pathDraw");
+  const late = useLate(to.visit?.meta.eventId ?? to.gate?.meta.eventId);
+  const draw = useEventProgress(start, "pathDraw", 0, late);
+  const stale = useStaleSince() !== null;
   const d = routeD(from, to);
   if (!built(to)) return <path d={d} aria-hidden="true" style={{ fill: "none", stroke: fc("route"), strokeWidth: STROKE.planned, strokeDasharray: "8 7" }} />;
   const p = start === null ? 1 : draw;
   if (p <= 0) return null;
-  const active = (to.visit && to.visit.leftAt === null && to.visit.station !== "human-approval") || (to.gate?.state === "open" && to.gate.gate !== "red-before-green");
+  const active = !stale && ((to.visit && to.visit.leftAt === null && to.visit.station !== "human-approval") || (to.gate?.state === "open" && to.gate.gate !== "red-before-green"));
   return (
     <path
       d={d}
@@ -99,7 +102,8 @@ function OverviewRoute({ from, to }: { from: FlowNode; to: FlowNode }) {
 }
 
 function OverviewRetry({ from, to }: { from: FlowNode; to: FlowNode }) {
-  const p = useEventProgress(from.gate?.decidedAt, "verifyReturn");
+  const late = useLate(from.gate?.meta.eventId);
+  const p = useEventProgress(from.gate?.decidedAt, "verifyReturn", 0, late);
   if (p <= 0) return null;
   // Down from the refusing gate, back along under the round, and into the build that starts the next one.
   const crest = from.y + Math.max(40, (to.y - from.y) * 0.55);
@@ -156,8 +160,8 @@ function Unbuilt({ node, gate }: { node: FlowNode; gate: boolean }) {
   );
 }
 
-function OverviewNode({ node, cell, seats }: { node: FlowNode; cell: CellState; seats: readonly number[] }) {
-  if (node.kind === "seats") return <OverviewSeats node={node} cell={cell} seats={seats} />;
+function OverviewNode({ node, cell, seats, flow }: { node: FlowNode; cell: CellState; seats: readonly number[]; flow: Flow }) {
+  if (node.kind === "seats") return <OverviewSeats node={node} cell={cell} seats={seats} flow={flow} />;
   if (node.kind === "future") {
     if (node.col === "review") return <g aria-hidden="true">{seats.map((dy, i) => <circle key={i} cx={node.x} cy={node.y + dy} r={R.seat} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 2, strokeDasharray: "5 4" }} />)}</g>;
     return <Unbuilt node={node} gate={radius(node) === R.gate} />;
@@ -178,12 +182,15 @@ function OverviewNode({ node, cell, seats }: { node: FlowNode; cell: CellState; 
 
 function OverviewVisit({ node, cell }: { node: FlowNode; cell: CellState }) {
   const v = node.visit!;
-  const appear = useEventProgress(v.enteredAt, "stateChange");
+  const late = useLate(v.meta.eventId);
+  const appear = useEventProgress(v.enteredAt, "stateChange", 0, late);
+  const stale = useStaleSince() !== null;
   const st = stateOf(node) ?? "idle";
   return (
     <g data-ref={ref.station(v.station, cell.ticketId)} style={{ cursor: "pointer", opacity: 0.35 + 0.65 * appear }} aria-hidden="true">
       <g transform={`translate(${node.x} ${node.y})`}>
-        <StateMark state={st} r={R.station} progress={0} />
+        {/* Held, never working, while the connection is stale. */}
+        {stale && st === "active" ? <ActivityMark state="stale" r={R.station} /> : <StateMark state={st} r={R.station} progress={0} />}
       </g>
     </g>
   );
@@ -234,7 +241,11 @@ function OverviewGate({ node, cell }: { node: FlowNode; cell: CellState }) {
   );
 }
 
-function OverviewSeats({ node, cell, seats }: { node: FlowNode; cell: CellState; seats: readonly number[] }) {
+function flowGate(flow: Flow, round: number): GateState | null {
+  return flow.nodes.find((n) => n.gate?.gate === "review" && n.round === round)?.gate ?? null;
+}
+
+function OverviewSeats({ node, cell, seats, flow }: { node: FlowNode; cell: CellState; seats: readonly number[]; flow: Flow }) {
   const round = roundOf(cell, node);
   return (
     <g>
@@ -243,7 +254,9 @@ function OverviewSeats({ node, cell, seats }: { node: FlowNode; cell: CellState;
         if (!seat) return null;
         const agent = seat.agentId ? (cell.agents[seat.agentId] ?? null) : null;
         const st: FactoryState = seat.vote === "APPROVE" ? "succeeded" : seat.vote === "REJECT" ? "failed" : agent ? agentState(agent) : "idle";
-        const entity = agent ? ref.agent(agent.id) : ref.gate(`${cell.ticketId}/review#${round?.round ?? 1}`);
+        // A seat with no agent yet names the round's consensus gate, found in the flow (never built from an id).
+        const consensus = flowGate(flow, node.round);
+        const entity = agent ? ref.agent(agent.id) : consensus ? ref.gate(consensus.id) : ref.cell(cell.ticketId);
         return (
           <g key={key} data-ref={entity} style={{ cursor: "pointer" }} aria-hidden="true" transform={`translate(${node.x} ${node.y + (seats[i] ?? 0)})`}>
             <StateMark state={st} r={R.seat} progress={0} />

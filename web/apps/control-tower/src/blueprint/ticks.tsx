@@ -5,6 +5,10 @@
  * git node), redrawn as path data. Only the call in flight is drawn with the `ToolTick` primitive and
  * its animation (the spec's motion budget: at most one tick animates per cell). Hit-testing is done
  * by the view against the positions registered here; keyboard focus uses windowed tree items.
+ *
+ * Only for agents whose calls were each observed (the simulation, a main loop, an Agent-tool
+ * sub-agent). A Dynamic Workflow agent's calls are a count (contract D13, 8.1): it never gets a trace
+ * (rows.tsx draws its count and last tool instead).
  */
 import { memo, useContext, useEffect } from "react";
 import { fc, ToolTick } from "@mach/ui";
