@@ -83,7 +83,7 @@ Recorded in the M5 completion report. In short: Python suites for the engine and
 
 ## 7. Open decisions
 
-1. **Distribution: decided.** Prebuilt host programs for macOS and Linux (arm64 and amd64) are attached to each GitHub release by the `release` workflow, with `SHA256SUMS` and a build provenance attestation. `bin/mach install` and `scaffold` download the one for the machine from the release matching the installed version, check its SHA-256, and place it at `.factory/bin/mach-studio`; a failed download never fails the install. The checksum comes from the same release, so it proves the file arrived intact, not who built it; the attestation covers that for anyone who wants to check. Windows has no build.
+1. **Distribution: decided.** Prebuilt host programs for Apple silicon Macs and Linux (arm64 and amd64) are attached to each GitHub release by the `release` workflow, with `SHA256SUMS` and a build provenance attestation. `bin/mach install` and `scaffold` download the one for the machine from the release matching the installed version, check its SHA-256, and place it at `.factory/bin/mach-studio`; a failed download never fails the install. The checksum comes from the same release, so it proves the file arrived intact, not who built it; the attestation covers that for anyone who wants to check. Intel Macs and Windows have no build, by choice.
 2. **Supervisor hardening.** The restricted-mode execution fix (`bbe5aee`) reached `main` with the MACH Next merge. The separate M4 branch still has the weaker flags and should not be used on its own.
 3. **Conversation history.** The specification is the record of an interview. Whether the full conversation should also be kept, and for how long, is a product and privacy choice.
 

@@ -266,7 +266,16 @@ class StudioTest(Base):
         return data
 
     def test_this_machine_has_a_published_build(self):
-        self.assertRegex(mach.studio_asset() or "", r"^mach-studio-(darwin|linux)-(arm64|amd64)$")
+        self.assertIn((mach.studio_asset() or "").replace("mach-studio-", ""), mach.STUDIO_BUILDS)
+
+    def test_an_intel_mac_has_no_build_and_is_told_so(self):
+        system, machine = mach.platform.system, mach.platform.machine
+        mach.platform.system, mach.platform.machine = (lambda: "Darwin"), (lambda: "x86_64")
+        self.addCleanup(lambda: (setattr(mach.platform, "system", system), setattr(mach.platform, "machine", machine)))
+        self.assertIsNone(mach.studio_asset())
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertIn("no build is published for Darwin x86_64", out)
 
     def test_install_downloads_checks_and_records_the_program(self):
         data = self.publish()
@@ -377,7 +386,8 @@ class PackagingTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         targets = re.search(r"for target in ([a-z0-9/ ]+); do", workflow).group(1).split()
         published = {f"mach-studio-{t.replace('/', '-')}" for t in targets}
-        expected = {f"mach-studio-{system}-{machine}" for system in set(mach.STUDIO_SYSTEMS.values()) for machine in set(mach.STUDIO_MACHINES.values())}
+        expected = {f"mach-studio-{build}" for build in mach.STUDIO_BUILDS}
+        self.assertNotIn("mach-studio-darwin-amd64", expected)
         self.assertEqual(published, expected)
         self.assertIn(f"> {mach.STUDIO_SUMS}", workflow)
         self.assertIn('tags: ["v*"]', workflow)

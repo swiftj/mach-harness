@@ -52,6 +52,8 @@ STUDIO_REPO = "swiftj/mach-harness"
 STUDIO_SUMS = "SHA256SUMS"
 STUDIO_SYSTEMS = {"darwin": "darwin", "linux": "linux"}
 STUDIO_MACHINES = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64", "amd64": "amd64"}
+# What each release publishes. Intel Macs and Windows have no build.
+STUDIO_BUILDS = ("darwin-arm64", "linux-arm64", "linux-amd64")
 STUDIO_MAX_BYTES = 200 * 1024 * 1024
 
 
@@ -126,7 +128,7 @@ def studio_asset() -> Optional[str]:
     """The release file for this machine, or None when no build is published for it."""
     system = STUDIO_SYSTEMS.get(platform.system().lower())
     machine = STUDIO_MACHINES.get(platform.machine().lower())
-    return f"mach-studio-{system}-{machine}" if system and machine else None
+    return f"mach-studio-{system}-{machine}" if f"{system}-{machine}" in STUDIO_BUILDS else None
 
 
 def studio_base(version: str) -> str:
