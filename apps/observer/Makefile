@@ -1,0 +1,9 @@
+# The read-only observer behind the MACH Control Tower (MACH Next M6.1). Standard library only.
+.PHONY: test vet build
+test:
+	go vet ./...
+	go test ./...
+vet:
+	go vet ./...
+build:
+	go build -trimpath -o bin/mach-observer ./cmd/mach-observer
