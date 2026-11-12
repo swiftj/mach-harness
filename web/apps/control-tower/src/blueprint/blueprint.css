@@ -1,0 +1,73 @@
+/* The Blueprint's viewport and its fixed controls. Colours are tokens only. */
+.bp-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--mach-factory-ground);
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+.bp-viewport:active {
+  cursor: grabbing;
+}
+.bp-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.bp-stage [data-ref],
+.bp-stage [data-toggle] {
+  cursor: pointer;
+}
+.bp-stage [role="treeitem"]:focus {
+  outline: none;
+}
+.bp-pending {
+  padding: 24px;
+  color: var(--mach-ink-muted);
+  font-size: 13px;
+}
+.bp-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--mach-line);
+  border-radius: var(--mach-radius-sm);
+  background: var(--mach-surface-raised);
+  box-shadow: var(--mach-shadow-2);
+  font-family: var(--mach-font-sans);
+}
+.bp-controls button {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--mach-ink-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.bp-controls button:hover {
+  background: var(--mach-surface-sunken);
+  color: var(--mach-ink);
+}
+.bp-controls button:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: -2px;
+}
+.bp-zoom {
+  min-width: 40px;
+  text-align: center;
+  color: var(--mach-ink-muted);
+  font-size: 11px;
+  font-family: var(--mach-font-mono);
+}
