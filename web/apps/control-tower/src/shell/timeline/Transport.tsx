@@ -154,7 +154,7 @@ function ChapterName() {
       <span className="shrink-0 text-caption text-ink-subtle tabular">
         {n} of {SCENARIO.chapters.length}
       </span>
-      <span className="truncate font-serif text-ink">{chapter.title}</span>
+      <span className="truncate font-sans font-semibold text-ink">{chapter.title}</span>
     </span>
   );
 }

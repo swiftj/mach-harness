@@ -33,7 +33,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ c
 });
 
 export type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
-  /** Long-form product writing (a vision, a why) reads in the serif. */
+  /** Long-form product writing (a vision, a why) reads at the larger reading size. */
   editorial?: boolean;
 };
 
@@ -49,7 +49,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
       className={cn(
         controlClass,
         "min-h-20 resize-y px-3 py-2",
-        editorial ? "font-serif text-body-lg" : "text-body",
+        editorial ? "text-body-lg" : "text-body",
         className,
       )}
       {...props}

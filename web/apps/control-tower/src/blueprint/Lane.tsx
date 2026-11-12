@@ -76,7 +76,7 @@ export interface LaneProps {
   animate: boolean;
 }
 
-/** The gutter's title width in characters at the drawing's 15 px serif. */
+/** The gutter's title width in characters at the drawing's 15 px bold sans. */
 const TITLE_CHARS = 36;
 
 export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, template, animate }: LaneProps) {
@@ -149,7 +149,7 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
         <g transform={`translate(${gx + 20} 18)`}>
           <circle r={10} style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 1 }} />
           <line x1={-10} y1={0} x2={10} y2={0} style={{ stroke: fc("ink-soft"), strokeWidth: 0.6 }} />
-          <text y={-1.5} textAnchor="middle" className="bp-fine" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 8.5, fontWeight: 600 }}>
+          <text y={-1.5} textAnchor="middle" className="bp-fine" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 8.5, fontWeight: 700 }}>
             {pos}
           </text>
           <g transform="translate(0 5.5)">
@@ -158,7 +158,7 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
         </g>
         <g className="bp-fine">
           {lines.map((l, i) => (
-            <text key={i} x={tx} y={22 + i * 17} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 15, fontWeight: 450 }}>
+            <text key={i} x={tx} y={22 + i * 17} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 15, fontWeight: 700 }}>
               {l}
             </text>
           ))}
@@ -188,7 +188,7 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
         </g>
         <g className="bp-over">
           {overLines.map((l, i) => (
-            <text key={i} x={tx} y={overSize + 4 + i * overSize * 1.12} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: overSize, fontWeight: 450 }}>
+            <text key={i} x={tx} y={overSize + 4 + i * overSize * 1.12} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: overSize, fontWeight: 700 }}>
               {l}
             </text>
           ))}

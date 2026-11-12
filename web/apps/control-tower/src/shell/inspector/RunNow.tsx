@@ -47,7 +47,7 @@ export function RunNow() {
             <p className="mt-3 text-caption text-ink-subtle tabular">
               Chapter {n} of {SCENARIO.chapters.length}, from {timecode(chapter.t, false)}
             </p>
-            <h2 className="mt-0.5 font-serif text-title-3 text-ink">{chapter.title}</h2>
+            <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">{chapter.title}</h2>
             <p className="mt-1.5 text-body-sm text-ink-muted">{chapter.summary}</p>
           </>
         ) : null}

@@ -113,7 +113,7 @@ function DraftPanel({ sliceId, show }: { sliceId: string; show: SliceShowState }
           <Heading level={2} size="title-3" id="preview-outcome">
             Outcome
           </Heading>
-          <p className="font-serif text-body-lg text-ink">{model.summary.outcome}</p>
+          <p className="text-body-lg text-ink">{model.summary.outcome}</p>
         </section>
       ) : null}
 

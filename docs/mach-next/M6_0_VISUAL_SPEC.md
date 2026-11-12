@@ -14,13 +14,13 @@ Units: **pu** (plan units) on the ground plane; 1 pu = 1 CSS px at camera zoom 1
 
 **The drawn plant.** MACH is drawn the way an engineer draws a plant: an axonometric drawing on a warm sheet, with drafted line weights, section hatching on cut faces, lettering on the floor, registration marks and dimension lines. Then the drawing comes alive: the lamp in a working cell comes on, carriages ride the conveyor track, a gate's arm lifts, a sheet rises out of the floor as an artifact is written, a dashed arc swings back from verification to build and a pip fills on its crest. The Blueprint is the same drawing folded flat: the engineering sheet of the same run, with a title block, zones, process bubbles and dimensioned durations.
 
-This fits MACH's existing identity (warm neutrals, serif display, one terracotta accent, calm motion) rather than replacing it, and it is the opposite of a sci-fi console.
+This fits MACH's existing identity (warm neutrals, bold sans display, one terracotta accent, calm motion) rather than replacing it, and it is the opposite of a sci-fi console.
 
 ### Principles
 
 1. **Everything is a place or a thing in a place.** Stations are machines standing on a floor; agents are figures standing at machines; artifacts are sheets standing on shelves; gates are frames across the track. No floating cards.
 2. **Two projections, one alphabet.** The same symbol for a station kind appears on a machine's top face in the Atlas and inside a process bubble in the Blueprint; the same head shape marks a model tier in both; the same state mark, ink and tint mean the same state in both.
-3. **Drafting discipline.** Three line weights only on structure (0.75, 1, 1.5 px), plus 2 to 2.6 px for things that act (gate arms, live routes, posts). Section hatching (45 degrees, 5 px pitch) only on faces in shade or cut. Text is either lettering on the floor (serif for regions, mono for IDs, projected into the plane) or upright labels (sans), never both for one thing.
+3. **Drafting discipline.** Three line weights only on structure (0.75, 1, 1.5 px), plus 2 to 2.6 px for things that act (gate arms, live routes, posts). Section hatching (45 degrees, 5 px pitch) only on faces in shade or cut. Text is either lettering on the floor (bold sans for regions, mono for IDs, projected into the plane) or upright labels (sans), never both for one thing.
 4. **Light means work, nothing else glows.** Light comes from the upper left, fixed. The only light that changes is a cell's work lamp (on while a station in it works). The only colour that means "now" is the live ink (blue, `factory-live`). Terracotta is selection (the place), and the human gate's ink is the terracotta family because a person's act is MACH's primary act.
 5. **Motion has a cause.** Every movement is the visible consequence of one event and is a pure function of `playhead - event.at`. Nothing idles, breathes, shimmers or pulses.
 6. **Shape before colour.** Every state has a mark whose shape alone distinguishes it; every position of a gate is an arm angle; every tier is a head shape. Colour reinforces.
@@ -194,7 +194,7 @@ The layout is fixed by the formula; cells never reflow while playing (a cell kee
 
 ### c.1 The sheet
 
-`BlueprintSheet`: an engineering drawing sheet. Outer hairline at 6 px, inner border 1.25 px at 18 px margin, filled `factory-ground`. Zone letters A, B, C… along the top and numbers 1, 2, 3… down the left (8 × 4 zones by default, more as the sheet grows), so any point can be cited ("the failure in zone D2"). **Title block** in the lower right, 260 px wide: title in the serif 15, subtitle (wave, run) sans 10, facts (Cell, Slice, Playhead, Seed) with mono values, and the **Simulation stamp** (warning soft, warning line, bold 10) which is never hidden.
+`BlueprintSheet`: an engineering drawing sheet. Outer hairline at 6 px, inner border 1.25 px at 18 px margin, filled `factory-ground`. Zone letters A, B, C… along the top and numbers 1, 2, 3… down the left (8 × 4 zones by default, more as the sheet grows), so any point can be cited ("the failure in zone D2"). **Title block** in the lower right, 260 px wide: title in bold sans 15, subtitle (wave, run) sans 10, facts (Cell, Slice, Playhead, Seed) with mono values, and the **Simulation stamp** (warning soft, warning line, bold 10) which is never hidden.
 
 ### c.2 Hierarchy and lanes
 
@@ -206,7 +206,7 @@ Depths 4 (tool calls) and 5 (artifacts) exist for a fully expanded cell: rule 0.
 
 | Depth | Rule | Title | Indent | Height (expanded / collapsed) |
 |---|---|---|---|---|
-| 0 wave | 1.75 px `ink-soft` | serif 16, ID mono 9.5 | 0 | content / 36 |
+| 0 wave | 1.75 px `ink-soft` | bold sans 16, ID mono 9.5 | 0 | content / 36 |
 | 1 cell | 1 px `plate-edge`, band `floor` at 0.6 | sans 12.5 semibold, ticket ID mono | 14 | 146 per round row set / 30 |
 | 2 agents | 0.6 px | sans 11 | 28 | 50 / 24 |
 | 3 tool calls | 0.6 px | sans 11 | 42 | 62 / 24 |
@@ -294,7 +294,7 @@ Cell stages map to states in `cellStages` (`waiting-on-dependency` waiting, `eli
 
 | Type | Atlas form and size | Blueprint form | Fill / stroke tokens | Icon | Label rule | States |
 |---|---|---|---|---|---|---|
-| **Region** (`RegionPlate`) | Plate 8 high, rim inset 8, corner registration marks 12, poché both sides | Wave lane (c.2) | top `plate-top`, faces `plate-lit`/`plate-shade`, edge `plate-edge`, rim `plate-edge` | none | Floor lettering, serif 19 (26 far), `--mach-ink-muted`; caption sans 10.5 | active (live rule along the front edge), dimmed |
+| **Region** (`RegionPlate`) | Plate 8 high, rim inset 8, corner registration marks 12, poché both sides | Wave lane (c.2) | top `plate-top`, faces `plate-lit`/`plate-shade`, edge `plate-edge`, rim `plate-edge` | none | Floor lettering, bold sans 19 (26 far), `--mach-ink-muted`; caption sans 10.5 | active (live rule along the front edge), dimmed |
 | **Cell** (`CellPlate`) | 216 × 148 section model (b.3) | Cell lane | floor `floor` (finished: `done`), walls `plate-*`, cut poché | stage mark on mast | Ticket ID on floor (mono 11); stage word and elapsed at near | every cell stage; lamp 0..1; completion; elapsed; dimmed; selected |
 | **Station** (`StationMachine`) | 36 × 36 block, height by kind (intake 16, groom/plan 12, audit 14, build 22, verify 18, review 12, human-approval 30, merge 16, cleanup 10, observe 20); symbol 18 on top (22 far); while working, a live ring r 13 around the symbol with one tick per elapsed minute (`elapsed`); a measured `fraction` fills the ring in the state ink | Process bubble r 15 | top: tint of state (idle `machine-top`); outline: state ink (idle `plate-edge`); front edge `plate-rim` | station symbol | Name plate on the front face (`nameplate`); upright name + "Working · 4 min 12 s · 7 of 8" at near | idle, active (+elapsed, +fraction), succeeded, failed (+round), waiting, human, blocked; settled; planned |
 | **Agent** (`AgentMarker`) | Floor disc r 8 with role emblem; post 1.6 px; head by tier; height by tier (Fable 32, Opus 28, Sonnet 24, Haiku 18); while working, the head filled live inside a thin ring r 8.5 with one tick per elapsed minute (`elapsed`) | Head at 1:1 + label | head fill: `live` when working, tint otherwise; stroke: state ink | head = tier, emblem = role, seat letter A/S/P | Role (or name) 10.5 + tier 9.5 at near | idle, active, succeeded, failed, waiting, human, blocked; arrive 0..1; leave 0..1 |
@@ -322,7 +322,7 @@ Artifact marks: intent (four lines of prose), spec (braces), contract (double fr
 Labels never overlap a machine or another label. In order of preference:
 
 1. **Name plate** (`StationMachine nameplate`): the station's name lettered on the machine's front (lit) face, sans 7 (or half the machine's height) semibold, `ink-muted`, shown at mid and near on machines at least 10 high. Use for every machine inside a bay; then the upright label is not needed.
-2. **Floor lettering** (`FloorLettering`, `GateGlyph floorLabel`): words painted on the floor. Gates: the label runs along the span on the downstream side, 14 pu from the posts, sans 8 semibold. Region names: serif in the lettering strip. Engine IDs: mono. Text along plan y always reads from lower left to upper right.
+2. **Floor lettering** (`FloorLettering`, `GateGlyph floorLabel`): words painted on the floor. Gates: the label runs along the span on the downstream side, 14 pu from the posts, sans 8 semibold. Region names: bold sans in the lettering strip. Engine IDs: mono. Text along plan y always reads from lower left to upper right.
 3. **Below the disc** (`AgentMarker labelPosition="below"`): an agent's role and tier centred 16 px under its floor disc, used whenever the space beside its head holds a machine (always, inside a bay).
 4. **Upright label** beside the thing, at near zoom only, for things standing on open floor (gates, packets, region machines).
 5. **Callout** with a leader, for the selected thing and for failures, in the overlay layer.
@@ -635,7 +635,7 @@ All in `@mach/ui`, pure, props only, no timers or randomness. Atlas `at` is a pl
 | `StationMachine` | `kind, state, elapsed? (ms), fraction? ({done, of}), round?, label?, nameplate?, settled?, planned?, at, variant?, lod?, dimmed?, showLabel?`; `progress` deprecated, not drawn |
 | `AgentMarker` | `agentRole, tier, seat?, state, elapsed? (ms), arrive?, leave?, label?, labelPosition? ("beside" \| "below"), at, variant?, lod?, dimmed?, showLabel?`; `progress` deprecated, not drawn |
 | `GateGlyph` | `kind (adds "plan-check"), position, progress? (the arm's transition, which has a fixed end), from?, lamps?, axis?, floorLabel?, planned? (Blueprint), at, variant?, lod?, dimmed?, showLabel?` |
-| `FloorLettering` | `at, text, axis? ("x" \| "y"), size?, font? ("serif" \| "sans" \| "mono"), tone?, weight?, anchor?, decorative?, dimmed?` |
+| `FloorLettering` | `at, text, axis? ("x" \| "y"), size?, font? ("sans" \| "mono"), tone?, weight?, anchor?, decorative?, dimmed?` |
 | `PlanDimension` | `from, to, offset?, label, dimmed?` |
 | `FindingsFlag` | `at, severity ("blocker" \| "note"), count?, rule?, variant?, lod?, dimmed?` |
 | `TaskBoard` | `tasks: TaskCell[] ("pending" \| "active" \| "red" \| "green" \| "overridden"), at, columns?, variant?, lod?, dimmed?` |

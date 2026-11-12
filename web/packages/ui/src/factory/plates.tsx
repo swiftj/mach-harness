@@ -169,7 +169,7 @@ export interface RegionPlateProps {
 
 /**
  * A production region: a low plinth with a drafted rim (a second line inset by 8), corner
- * registration marks, and its name lettered on the floor in the serif, running along the flow.
+ * registration marks, and its name lettered on the floor in bold, running along the flow.
  * Children are drawn on the plate's top face (plan coordinates).
  */
 export function RegionPlate({ box, kind, title, caption, height = factoryTokens.elevation.regionPlate, lod = "mid", dimmed, active, children }: RegionPlateProps) {
@@ -209,7 +209,7 @@ export function RegionPlate({ box, kind, title, caption, height = factoryTokens.
         <text
           x={box.x + inset + 10}
           y={box.y + box.d - inset - (caption && lod !== "far" ? 22 : 10)}
-          style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-serif)", fontSize: letter, fontWeight: 420, letterSpacing: "0.01em" }}
+          style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-sans)", fontSize: letter, fontWeight: 650, letterSpacing: "0.015em" }}
         >
           {name}
         </text>

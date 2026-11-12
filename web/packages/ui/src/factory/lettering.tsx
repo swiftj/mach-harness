@@ -16,7 +16,7 @@ function toneColor(tone: LetteringTone): string {
   return fc(tone);
 }
 
-const faces = { serif: "var(--mach-font-serif)", sans: "var(--mach-font-sans)", mono: "var(--mach-font-mono)" } as const;
+const faces = { sans: "var(--mach-font-sans)", mono: "var(--mach-font-mono)" } as const;
 
 export interface FloorLetteringProps {
   /** Plan point of the text's anchor, on the floor at its elevation. */
@@ -29,8 +29,8 @@ export interface FloorLetteringProps {
   axis?: "x" | "y";
   /** Size in plan units. Regions 19 (26 far), IDs 11, notes 8. */
   size?: number;
-  /** serif for places, mono for engine IDs, sans for words. */
-  font?: "serif" | "sans" | "mono";
+  /** mono for engine IDs, sans for words; places are sans at a heavier `weight`. */
+  font?: "sans" | "mono";
   tone?: LetteringTone;
   weight?: number;
   anchor?: "start" | "middle" | "end";

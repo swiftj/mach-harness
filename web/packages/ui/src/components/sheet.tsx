@@ -57,7 +57,7 @@ export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(functi
       >
         <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
           <div className="flex min-w-0 flex-col gap-1">
-            <DialogPrimitive.Title className="font-display text-title-2 text-ink">{title}</DialogPrimitive.Title>
+            <DialogPrimitive.Title className="font-display text-title-2 font-[650] text-ink">{title}</DialogPrimitive.Title>
             {description ? (
               <DialogPrimitive.Description className="text-body-sm text-ink-muted">{description}</DialogPrimitive.Description>
             ) : (

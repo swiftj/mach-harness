@@ -55,7 +55,7 @@ export function Brand() {
 export function RunIdentity({ compact }: { compact?: boolean }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2.5">
-      <h1 className="truncate font-serif text-body-lg leading-none text-ink">
+      <h1 className="truncate font-sans text-body-lg font-bold leading-none text-ink">
         {RUN.waveTitle}
         <span className="sr-only">, a simulated run of the MACH Factory</span>
       </h1>

@@ -13,7 +13,7 @@ const merge = extendTailwindMerge({
       text: Object.keys(typeScale),
       radius: Object.keys(radius),
       shadow: ["1", "2", "3"],
-      font: ["serif", "sans", "mono", "display"],
+      font: ["sans", "mono", "display"],
     },
   },
 });

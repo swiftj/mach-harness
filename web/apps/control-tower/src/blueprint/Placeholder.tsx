@@ -24,7 +24,7 @@ export const PlaceholderBelt = memo(function PlaceholderBelt({ layout, template 
       <line x1={x + 12} y1={0} x2={layout.width - SHEET.left} y2={0} style={{ stroke: fc("plate-edge"), strokeWidth: 1 }} />
       <line x1={ax - 14} y1={0} x2={ax - 14} y2={h} style={{ stroke: fc("plate-edge"), strokeWidth: 0.6 }} />
       <g className="bp-fine">
-        <text x={x + 20} y={34} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 21 }}>
+        <text x={x + 20} y={34} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 21, fontWeight: 650 }}>
           Awaiting an approved wave
         </text>
         <text x={x + 20} y={54} style={{ fill: "var(--mach-ink-muted)", fontSize: 10.5 }}>
@@ -35,7 +35,7 @@ export const PlaceholderBelt = memo(function PlaceholderBelt({ layout, template 
         </text>
       </g>
       <g className="bp-over">
-        <text x={x + 20} y={52} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 40 }}>
+        <text x={x + 20} y={52} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 40, fontWeight: 650 }}>
           Awaiting a wave
         </text>
         <text x={x + 20} y={96} style={{ fill: "var(--mach-ink-muted)", fontSize: 30, fontWeight: 600 }}>
@@ -43,7 +43,7 @@ export const PlaceholderBelt = memo(function PlaceholderBelt({ layout, template 
         </text>
       </g>
       {/* Where the sections will stand: a quiet note in the empty part of the sheet. */}
-      <text x={layout.width / 2} y={h + (layout.height - y - h - 170) / 2} textAnchor="middle" style={{ fill: "var(--mach-ink-subtle)", fontFamily: "var(--mach-font-serif)", fontSize: 34 }}>
+      <text x={layout.width / 2} y={h + (layout.height - y - h - 170) / 2} textAnchor="middle" style={{ fill: "var(--mach-ink-subtle)", fontFamily: "var(--mach-font-sans)", fontSize: 34, fontWeight: 650 }}>
         One section per slice, drawn as the wave is dispatched
       </text>
       <g className="bp-flow" transform={`translate(${ax} ${row0})`}>

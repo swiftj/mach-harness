@@ -18,17 +18,17 @@ const defaultSize: Record<HeadingLevel, NonNullable<HeadingProps["size"]>> = {
 };
 
 /**
- * Headings. Display and title steps use the display face (Newsreader in Product Studio,
- * Source Sans in Control Tower); title-3 is always the interface sans.
+ * Headings. Every step is the interface sans; display and title steps are set bold, so weight and size
+ * carry the hierarchy.
  */
 export function Heading({ level, size, className, ...props }: HeadingProps) {
   const step = size ?? defaultSize[level];
   return createElement(`h${level}`, {
     className: cn(
       "text-ink text-balance",
-      step === "display" && "font-display text-display font-[450]",
-      step === "title-1" && "font-display text-title-1 font-[450]",
-      step === "title-2" && "font-display text-title-2 font-medium",
+      step === "display" && "font-display text-display font-bold",
+      step === "title-1" && "font-display text-title-1 font-bold",
+      step === "title-2" && "font-display text-title-2 font-[650]",
       step === "title-3" && "font-sans text-title-3 font-semibold",
       className,
     ),
@@ -40,7 +40,7 @@ export interface TextProps extends HTMLAttributes<HTMLElement> {
   as?: "p" | "span" | "div" | "dd" | "dt" | "li";
   size?: "body-lg" | "body" | "body-sm" | "caption";
   tone?: "default" | "muted" | "subtle" | "accent" | "danger" | "success" | "warning" | "info";
-  /** Reading text: the serif, for product writing such as a vision or a why. */
+  /** Marks product writing (a vision, a why). It no longer changes the face: all text is the sans. Use `size="body-lg"` for the reading size. */
   editorial?: boolean;
   weight?: "regular" | "semibold";
 }
@@ -49,14 +49,14 @@ export function Text({
   as = "p",
   size = "body",
   tone = "default",
-  editorial = false,
+  editorial: _editorial = false,
   weight = "regular",
   className,
   ...props
 }: TextProps) {
   return createElement(as, {
     className: cn(
-      editorial ? "font-serif" : "font-sans",
+      "font-sans",
       size === "body-lg" && "text-body-lg",
       size === "body" && "text-body",
       size === "body-sm" && "text-body-sm",
@@ -81,7 +81,7 @@ export function Prose({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        "max-w-reading font-serif text-body-lg text-ink [&_p+p]:mt-4 [&_strong]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_li+li]:mt-1",
+        "max-w-reading font-sans text-body-lg text-ink [&_p+p]:mt-4 [&_strong]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_li+li]:mt-1",
         className,
       )}
       {...props}
@@ -138,7 +138,7 @@ export interface QuoteProps extends HTMLAttributes<HTMLElement> {
 export function Quote({ from, kind, className, children, ...props }: QuoteProps) {
   return (
     <figure className={cn("border-l-2 border-line-strong pl-4", className)} {...props}>
-      <blockquote className="font-serif text-body-lg italic text-ink">{children}</blockquote>
+      <blockquote className="font-sans text-body-lg italic text-ink">{children}</blockquote>
       <figcaption className="mt-1 text-body-sm text-ink-muted">
         <span className="font-semibold text-ink">{from}</span>
         {kind ? <span> {kind}</span> : null}

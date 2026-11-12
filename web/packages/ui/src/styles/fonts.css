@@ -1,13 +1,10 @@
 /*
- * Bundled typefaces. All three are SIL Open Font License 1.1 and come from npm, so the built app
+ * Bundled typefaces. Both are SIL Open Font License 1.1 and come from npm, so the built app
  * serves them itself; nothing is fetched from a font CDN. Licences are recorded in DESIGN_SYSTEM.md.
  *
- *   Newsreader (Production Type)        editorial headings and long-form reading, with optical sizes
- *   Source Sans 3 (Adobe)               interface text
+ *   Source Sans 3 (Adobe)               all words: titles (bold), interface and reading text
  *   JetBrains Mono (JetBrains)          identifiers such as SLICE-001, paths, digests
  */
-@import "@fontsource-variable/newsreader/opsz.css";
-@import "@fontsource-variable/newsreader/opsz-italic.css";
 @import "@fontsource-variable/source-sans-3/wght.css";
 @import "@fontsource-variable/source-sans-3/wght-italic.css";
 @import "@fontsource-variable/jetbrains-mono/wght.css";

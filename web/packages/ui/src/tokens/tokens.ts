@@ -455,23 +455,22 @@ export const factoryTokens = {
 
 export type FactoryTokens = typeof factoryTokens;
 
-/** Font stacks. Every face is bundled from npm (`@fontsource-variable/*`); nothing loads from a CDN. */
+/** Font stacks: one sans for words and one mono for identifiers; there is no serif. Every face is bundled from npm (`@fontsource-variable/*`); nothing loads from a CDN. */
 export const fonts = {
-  serif: "'Newsreader Variable', 'Iowan Old Style', Georgia, serif",
   sans: "'Source Sans 3 Variable', 'Segoe UI', system-ui, sans-serif",
   mono: "'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace",
 } as const;
 
 /**
- * Type scale. Sizes in rem (1rem = 16px). `family` is the default face for that step;
- * Control Tower swaps the display steps to the sans face (see `productOverrides`).
+ * Type scale. Sizes in rem (1rem = 16px). `family` is the default face for that step. Titles are
+ * the interface sans set bold; weight and size carry the hierarchy, not a second typeface.
  */
 export const typeScale = {
-  display: { size: "2.5rem", line: "2.875rem", weight: 450, tracking: "-0.015em", family: "serif" },
-  "title-1": { size: "1.875rem", line: "2.375rem", weight: 450, tracking: "-0.01em", family: "serif" },
-  "title-2": { size: "1.4375rem", line: "1.875rem", weight: 500, tracking: "-0.005em", family: "serif" },
+  display: { size: "2.5rem", line: "2.875rem", weight: 700, tracking: "-0.02em", family: "sans" },
+  "title-1": { size: "1.875rem", line: "2.375rem", weight: 700, tracking: "-0.015em", family: "sans" },
+  "title-2": { size: "1.4375rem", line: "1.875rem", weight: 650, tracking: "-0.01em", family: "sans" },
   "title-3": { size: "1.125rem", line: "1.625rem", weight: 600, tracking: "0", family: "sans" },
-  "body-lg": { size: "1.0625rem", line: "1.75rem", weight: 400, tracking: "0", family: "serif" },
+  "body-lg": { size: "1.0625rem", line: "1.75rem", weight: 400, tracking: "0", family: "sans" },
   body: { size: "1rem", line: "1.5rem", weight: 400, tracking: "0", family: "sans" },
   "body-sm": { size: "0.875rem", line: "1.25rem", weight: 400, tracking: "0", family: "sans" },
   label: { size: "0.875rem", line: "1.25rem", weight: 600, tracking: "0", family: "sans" },
@@ -555,7 +554,6 @@ export const layout = {
 export const productOverrides = {
   "product-studio": {},
   "control-tower": {
-    "--mach-font-display": "var(--mach-font-sans)",
     "--mach-density": "0.875",
   },
 } as const;

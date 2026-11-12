@@ -37,7 +37,7 @@ function Caption() {
   const recent = moment && moment.t >= chapter.t ? moment : null;
   return (
     <div className="min-w-0" data-theater-caption="">
-      <p className="truncate font-serif text-body-lg leading-snug text-ink">{chapter.title}</p>
+      <p className="truncate font-sans text-body-lg font-semibold leading-snug text-ink">{chapter.title}</p>
       {recent ? <p className="truncate text-body-sm text-ink-muted">{recent.text}</p> : null}
     </div>
   );

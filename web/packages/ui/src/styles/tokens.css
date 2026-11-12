@@ -79,24 +79,23 @@
   --mach-shadow-2: 0 2px 8px rgba(20, 20, 19, 0.08), 0 1px 2px rgba(20, 20, 19, 0.06);
   --mach-shadow-3: 0 12px 32px rgba(20, 20, 19, 0.14), 0 2px 6px rgba(20, 20, 19, 0.08);
 
-  --mach-font-serif: 'Newsreader Variable', 'Iowan Old Style', Georgia, serif;
   --mach-font-sans: 'Source Sans 3 Variable', 'Segoe UI', system-ui, sans-serif;
   --mach-font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
-  --mach-font-display: var(--mach-font-serif);
+  --mach-font-display: var(--mach-font-sans);
   --mach-density: 1;
 
   --mach-text-display: 2.5rem;
   --mach-text-display--line: 2.875rem;
-  --mach-text-display--weight: 450;
-  --mach-text-display--tracking: -0.015em;
+  --mach-text-display--weight: 700;
+  --mach-text-display--tracking: -0.02em;
   --mach-text-title-1: 1.875rem;
   --mach-text-title-1--line: 2.375rem;
-  --mach-text-title-1--weight: 450;
-  --mach-text-title-1--tracking: -0.01em;
+  --mach-text-title-1--weight: 700;
+  --mach-text-title-1--tracking: -0.015em;
   --mach-text-title-2: 1.4375rem;
   --mach-text-title-2--line: 1.875rem;
-  --mach-text-title-2--weight: 500;
-  --mach-text-title-2--tracking: -0.005em;
+  --mach-text-title-2--weight: 650;
+  --mach-text-title-2--tracking: -0.01em;
   --mach-text-title-3: 1.125rem;
   --mach-text-title-3--line: 1.625rem;
   --mach-text-title-3--weight: 600;
@@ -314,9 +313,8 @@
   --mach-shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);
 }
 
-/* Control Tower: same roles, technical display face, denser controls. */
+/* Control Tower: same roles and faces, denser controls. */
 :root[data-product="control-tower"] {
-  --mach-font-display: var(--mach-font-sans);
   --mach-density: 0.875;
 }
 

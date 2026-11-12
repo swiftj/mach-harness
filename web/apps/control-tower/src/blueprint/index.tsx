@@ -849,13 +849,13 @@ function WaveTreeItem({ node, expanded, ring, layout, selected, wave, template, 
         {selected ? <SelectBar x={x - 2} y={0} h={42} /> : null}
         <ToggleTarget x={x + 8} y={22} />
         <Chevron x={x + 8} y={22} open={expanded} />
-        <text x={x + 20} y={27} className="bp-fine" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 21, fontWeight: 450 }}>
+        <text x={x + 20} y={27} className="bp-fine" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 21, fontWeight: 700 }}>
           {wave?.title ?? ""}
         </text>
         <text x={x + 20} y={41} className="bp-fine notranslate" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 9.5 }}>
           {wave?.id} · {wave?.sliceIds.length} slices · approved by {wave?.approvedBy}
         </text>
-        <text x={x + 20} y={36} className="bp-over" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 44, fontWeight: 450 }}>
+        <text x={x + 20} y={36} className="bp-over" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 44, fontWeight: 700 }}>
           {wave?.title ?? ""}
         </text>
       </Gutter>

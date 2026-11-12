@@ -49,7 +49,7 @@ export const MachNodeView = memo(function MachNodeView({ data, selected, targetP
       <p
         className={cn(
           "line-clamp-1 text-ink",
-          data.kind === "product" ? "font-display text-title-3 font-medium" : "text-body-sm font-semibold",
+          data.kind === "product" ? "font-display text-title-3 font-semibold" : "text-body-sm font-semibold",
         )}
         title={data.title}
       >

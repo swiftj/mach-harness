@@ -179,7 +179,7 @@ function Places() {
     <Section
       id="factory-places"
       title="Regions and cells"
-      intro="A region is a low plinth with a drafted rim and its name lettered on the floor in the serif, running with the flow. A cell is an architectural section model of a bay: two back walls standing, the two front walls cut at curb height with poché on the cut, so the work inside is always seen."
+      intro="A region is a low plinth with a drafted rim and its name lettered on the floor in bold, running with the flow. A cell is an architectural section model of a bay: two back walls standing, the two front walls cut at curb height with poché on the cut, so the work inside is always seen."
     >
       <Group title="Production regions" note="Six regions, in belt order. The live rule along the front edge marks a region where something is working.">
         <div className="grid grid-cols-3 gap-4">

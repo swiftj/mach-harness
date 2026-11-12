@@ -47,7 +47,7 @@ export function blueprintSheetLayout(width: number, height: number, factsCount =
 
 /**
  * The sheet: a double border (outer hairline, inner 1.25), zone letters across the top and numbers
- * down the side, and a title block in the lower right carrying the title (serif), the facts and the
+ * down the side, and a title block in the lower right carrying the title (bold), the facts and the
  * simulation label, which is never hidden.
  */
 export function BlueprintSheet({ width, height, title, subtitle, simulationLabel, zonesX = 8, zonesY = 4, facts = [], titleBlock = "overlay", children }: BlueprintSheetProps) {
@@ -90,7 +90,7 @@ export function BlueprintSheet({ width, height, title, subtitle, simulationLabel
       <g>
         <rect x={tbX} y={tbY} width={tbW} height={tbH} aria-hidden="true" style={{ fill: fc("plate-top"), stroke: fc("ink-soft"), strokeWidth: 1.25 }} />
         <line x1={tbX} y1={tbY + 38} x2={tbX + tbW} y2={tbY + 38} aria-hidden="true" style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
-        <text x={tbX + 10} y={tbY + 19} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 15, fontWeight: 450 }}>
+        <text x={tbX + 10} y={tbY + 19} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 15, fontWeight: 700 }}>
           {title}
         </text>
         {subtitle ? (
@@ -150,7 +150,7 @@ const laneIndent = 14;
 
 /**
  * A lane: a band with a gutter on the left holding the lane's title, ID and state mark, and a
- * hierarchy brace whose indent is its depth. Wave lanes have a heavy top rule and a serif title; cell
+ * hierarchy brace whose indent is its depth. Wave lanes have a heavy top rule and a bold title; cell
  * lanes a regular rule; station and agent lanes fine rules. A collapsed lane shows a disclosure
  * chevron, its summary and nothing else.
  */
@@ -181,7 +181,7 @@ export function BlueprintLane({ x, y, width, height, depth, title, id, state, co
           y={0}
           style={{
             fill: "var(--mach-ink)",
-            fontFamily: depth === 0 ? "var(--mach-font-serif)" : "var(--mach-font-sans)",
+            fontFamily: "var(--mach-font-sans)",
             fontSize: depth === 0 ? 16 : depth === 1 ? 12.5 : depth <= 3 ? 11 : 10.5,
             fontWeight: depth === 0 ? 450 : 600,
           }}

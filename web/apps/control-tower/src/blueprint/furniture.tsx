@@ -255,7 +255,7 @@ export function Revisions({ x, y, w, h }: { x: number; y: number; w: number; h: 
         <text x={x + 144} y={y + 11.5}>ROUNDS AND DECISIONS</text>
       </g>
       <g className="bp-over">
-        <text x={x + 12} y={y + 34} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 32 }}>
+        <text x={x + 12} y={y + 34} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 32, fontWeight: 650 }}>
           Revisions · {all.length}
         </text>
         {all.slice(-2).map((r, i, list) => (

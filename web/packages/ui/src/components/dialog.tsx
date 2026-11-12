@@ -74,7 +74,7 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(func
       >
         <div className="flex items-start justify-between gap-4 px-6 pt-5">
           <div className="flex flex-col gap-1.5">
-            <DialogPrimitive.Title className="font-display text-title-2 text-ink">{title}</DialogPrimitive.Title>
+            <DialogPrimitive.Title className="font-display text-title-2 font-[650] text-ink">{title}</DialogPrimitive.Title>
             <DialogPrimitive.Description className="text-body text-ink-muted">{description}</DialogPrimitive.Description>
           </div>
           <DialogPrimitive.Close asChild>

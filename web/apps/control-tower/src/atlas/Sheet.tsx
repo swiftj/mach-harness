@@ -66,7 +66,7 @@ export const Sheet = memo(function Sheet({ width, height, lod, fixture, titled }
 function TitleBlock({ x, y, title, lines }: { x: number; y: number; title: string; lines: string[] }) {
   return (
     <g>
-      <text x={x} y={y - 26} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 21, fontWeight: 430 }}>
+      <text x={x} y={y - 26} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 21, fontWeight: 700 }}>
         {title}
       </text>
       <path d={`M${x} ${y - 18}h300`} style={{ stroke: "var(--mach-ink-muted)", strokeWidth: 0.75 }} />
