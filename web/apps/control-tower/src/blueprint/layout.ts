@@ -14,21 +14,23 @@ export const SHEET = {
   left: 40,
   top: 40,
   /** The gutter: titles, IDs and state marks. The drawing starts after it. */
-  gutter: 312,
+  gutter: 340,
   /** The dependency channel at the right edge of the drawing. */
   channel: 170,
   right: 24,
   /** Space kept below the content for the title block. */
-  titleBlock: 132,
+  titleBlock: 150,
   waveHeader: 64,
-  cellCollapsed: 58,
-  sliceWaiting: 58,
+  cellCollapsed: 80,
+  sliceWaiting: 78,
   execRow: 32,
-  visitRow: 34,
+  /** The execution's one ruler, under its header when it is open. */
+  execRuler: 28,
+  visitRow: 32,
   gateRow: 24,
   agentRow: 28,
   agentExpanded: 78,
-  dimBand: 26,
+  dimBand: 21,
 } as const;
 
 export interface Rect {
@@ -92,11 +94,12 @@ export function needsHuman(slice: SliceState): boolean {
 
 function flowHeight(flow: Flow): { rowsBottom: number; dimRows: number } {
   const lastRow = flow.rows - 1;
-  const seatPad = flow.seatRows.has(lastRow) ? 54 : 0;
+  const seatPad = flow.seatRows.has(lastRow) ? 46 : 0;
   return { rowsBottom: lastRow * ROW + 40 + seatPad, dimRows: flow.rows };
 }
 
-export function computeLayout(scene: Scene, tree: Tree, expanded: ReadonlySet<string>, template: ColumnTemplate): Layout {
+/** `minHeight`: the sheet's planned size, so it does not grow under a fitted camera as the run proceeds. */
+export function computeLayout(scene: Scene, tree: Tree, expanded: ReadonlySet<string>, template: ColumnTemplate, minHeight = 0): Layout {
   const ax = SHEET.left + SHEET.gutter;
   const aw = Math.ceil(template.width);
   const width = ax + aw + SHEET.channel + SHEET.right + SHEET.left;
@@ -107,7 +110,7 @@ export function computeLayout(scene: Scene, tree: Tree, expanded: ReadonlySet<st
   const laneW = width - SHEET.left * 2;
   let y: number = SHEET.top;
   const root = tree.root;
-  if (!root) return { width, height: y + 220 + SHEET.titleBlock, ax, aw, waveY: y, waveH: 0, waveExpanded: false, lanes, rows, visible, bounds };
+  if (!root) return { width, height: Math.max(y + 220 + SHEET.titleBlock, minHeight), ax, aw, waveY: y, waveH: 0, waveExpanded: false, lanes, rows, visible, bounds };
 
   const waveY = y;
   const waveExpanded = expanded.has(root.id);
@@ -128,7 +131,7 @@ export function computeLayout(scene: Scene, tree: Tree, expanded: ReadonlySet<st
       visible.push(laneNode.id);
       const gates = cell ? (gatesByTicket.get(cell.ticketId) ?? []).sort((a, b) => a.openedAt - b.openedAt || a.seq - b.seq) : [];
       if (!cell) {
-        const h = isOpen ? SHEET.sliceWaiting + 10 + laneNode.children.length * 13 : SHEET.sliceWaiting;
+        const h = isOpen ? SHEET.sliceWaiting + 12 + laneNode.children.length * 13 : SHEET.sliceWaiting;
         lanes.push({ id: laneNode.id, node: laneNode, slice, cell, gates, y: laneY, h, expanded: isOpen, flow: null, row0: laneY + 30, dimsY: laneY + h, dimRows: 0, rows: [] });
         bounds.set(laneNode.id, { x: SHEET.left, y: laneY, w: laneW, h });
         if (isOpen) for (const d of laneNode.children) {
@@ -149,7 +152,7 @@ export function computeLayout(scene: Scene, tree: Tree, expanded: ReadonlySet<st
       const row0 = laneY + 92;
       const { rowsBottom, dimRows } = flowHeight(flow);
       const dimsY = row0 + rowsBottom + 6;
-      let cy = Math.max(laneY + 132, dimsY + dimRows * SHEET.dimBand + 4);
+      let cy = Math.max(laneY + 128, dimsY + dimRows * SHEET.dimBand + 2);
       const laneStartRows = rows.length;
       // Children: dependencies and script-written artifacts are drawn in the workflow; executions get rows.
       for (const child of laneNode.children) {
@@ -174,15 +177,16 @@ export function computeLayout(scene: Scene, tree: Tree, expanded: ReadonlySet<st
   }
   const waveH = y - waveY;
   bounds.set(root.id, { x: SHEET.left, y: waveY, w: laneW, h: SHEET.waveHeader });
-  const height = Math.max(y + 24 + SHEET.titleBlock, 700);
+  const height = Math.max(y + 24 + SHEET.titleBlock, 700, minHeight);
   return { width, height, ax, aw, waveY, waveH, waveExpanded, lanes, rows, visible, bounds };
 }
 
 function placeExecution(node: TreeNode, y: number, expanded: ReadonlySet<string>, rows: Row[], visible: string[]): number {
   const open = expanded.has(node.id);
   visible.push(node.id);
-  rows.push({ id: node.id, node, y, h: SHEET.execRow, depth: 0, expanded: open, expandable: node.children.length > 0 });
-  y += SHEET.execRow;
+  const eh = SHEET.execRow + (open ? SHEET.execRuler : 0);
+  rows.push({ id: node.id, node, y, h: eh, depth: 0, expanded: open, expandable: node.children.length > 0 });
+  y += eh;
   if (!open) return y;
   for (const child of node.children) {
     visible.push(child.id);

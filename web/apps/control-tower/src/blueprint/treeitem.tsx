@@ -19,8 +19,8 @@ export interface TreeCtx {
 export const TreeContext = createContext<TreeCtx | null>(null);
 
 /**
- * The band of the sheet (in sheet y) the camera shows, widened by a screen above and below and
- * quantised to 400 units, so it changes a few times per pan rather than every frame. Rows outside it
+ * The band of the sheet (in sheet y) the camera shows, widened by half a screen above and below and
+ * quantised to 200 units, so it changes a few times per pan rather than every frame. Rows outside it
  * draw their tool calls as one path instead of one element each.
  */
 export const BandContext = createContext<readonly [number, number]>([-Infinity, Infinity]);

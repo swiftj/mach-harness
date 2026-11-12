@@ -4,7 +4,7 @@
  * closed, and the execution rows below. Waiting slices that have no cell yet show the belt they
  * will run, unbuilt, and why they wait.
  */
-import { memo } from "react";
+import { memo, useContext } from "react";
 import { ArtifactCard, DependencyLink, fc, StateMark, type FactoryState } from "@mach/ui";
 import type { EntityRef, Scene } from "../sim";
 import { refKind } from "../sim";
@@ -17,7 +17,8 @@ import { useEventProgress } from "./motion";
 import { ExecutionRows } from "./rows";
 import { clock } from "./time";
 import type { TreeNode } from "./tree";
-import { Chevron, Item, SelectBar, ToggleTarget, useSelected } from "./treeitem";
+import { BandContext, Chevron, Item, SelectBar, ToggleTarget, useSelected, useTreeCtx } from "./treeitem";
+import { Gutter } from "./gutter";
 import { artifactFile, gateState, grammarArtifact, stageState, stageWords } from "./vocab";
 
 /** Whether a lane is outside the highlighted dependency chain (only slice-level subjects dim the sheet). */
@@ -33,6 +34,37 @@ function useDimmed(entities: readonly EntityRef[]): boolean {
 
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
+/** Break a title into lines of at most `max` characters, at spaces. */
+export function wrap(text: string, max: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(" ")) {
+    if (line && (line + " " + word).length > max) {
+      lines.push(line);
+      line = word;
+    } else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** The lane's story in a few words, for the overview lettering: what happened that matters. */
+function storyOf(lane: Lane): string[] {
+  const { cell, slice } = lane;
+  if (!cell) return [slice.scheduler === "waiting-on-dependency" ? `Waits for ${slice.dependsOn.map((d) => d.replace("SLICE-", "")).join(" and ")}` : slice.scheduler];
+  const out = [`${stageWords(cell.stage)}${cell.round > 1 ? ` · round ${cell.round}` : ""}`];
+  const human = [...cell.reviews].reverse().find((r) => r.humanApproval)?.humanApproval;
+  const rejected = cell.reviews.find((r) => r.outcome === "REJECTED");
+  const failedCheck = cell.verifications.find((v) => v.status === "FAIL_WITH_EVIDENCE")?.checks.find((c) => c.result === "fail");
+  const outvoted = cell.reviews.flatMap((r) => r.findings).find((f) => f.outvoted);
+  if (failedCheck) out.push(`${failedCheck.targetId} failed, back to build`);
+  if (rejected) out.push(`Rejected: ${rejected.findings.find((f) => f.severity === "blocker")?.rule ?? "blocker"}`);
+  if (outvoted) out.push(`Blocker ${outvoted.rule ?? ""} outvoted`);
+  if (human) out.push(`Approved by ${human.by}`);
+  else if (cell.stage === "awaiting-human") out.push("Waiting for a person");
+  return out.slice(0, 3);
+}
+
 export interface LaneProps {
   lane: Lane;
   pos: number;
@@ -43,9 +75,14 @@ export interface LaneProps {
   animate: boolean;
 }
 
+/** The gutter's title width in characters at the drawing's 15 px serif. */
+const TITLE_CHARS = 36;
+
 export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, template, animate }: LaneProps) {
   const { node, slice, cell, flow } = lane;
   const selected = useSelected(node.ref);
+  const ctx = useTreeCtx();
+  const band = useContext(BandContext);
   const dimmed = useDimmed(cell ? [`cell:${cell.ticketId}`, `slice:${slice.id}`] : [`slice:${slice.id}`]);
   const { ax, aw, width } = layout;
   const x = SHEET.left;
@@ -56,7 +93,8 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   const execRows = rows.filter((r) => r.depth === 0);
   const deps = node.children.filter((c) => c.kind === "dependency");
   const scriptArtifacts = node.children.filter((c) => c.kind === "artifact");
-  const gx = x + 22;
+  const gx = x + 20;
+  const tx = gx + 36;
   const at = (child: TreeNode): number => node.children.indexOf(child) + 1;
   const kids = node.children.length;
   const row0 = lane.row0 - lane.y;
@@ -65,11 +103,21 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   const dispatched = history.find((hh) => hh.state === "dispatched");
   const waited = history.find((hh) => hh.state === "waiting-on-dependency");
   const schedLine = [waited ? `waited from ${clock(waited.at)}` : null, eligible ? `eligible ${clock(eligible.at)}` : null, dispatched ? `dispatched ${clock(dispatched.at)}` : null].filter(Boolean).join(" · ");
+  const lines = wrap(slice.title, TITLE_CHARS).slice(0, 2);
+  const idY = 22 + lines.length * 17;
+  const stageY = idY + 14;
+  const schedY = stageY + 13;
+  const depY = (cell ? schedY : stageY) + 13;
+  const onScreen = lane.y + h >= band[0] && lane.y <= band[1];
+  // Overview lettering: the title and the lane's story set large, for the establishing view.
+  // The lane's header area: down to its first execution row (the rows' own gutters lie below).
+  const headH = (lane.rows[0]?.y ?? lane.y + h) - lane.y;
+  const overSize = Math.max(22, Math.min(42, headH / 6.5));
+  const overLines = wrap(slice.title, Math.floor((SHEET.gutter - 66) / (overSize * 0.46))).slice(0, headH > 200 ? 4 : 2);
+  const story = storyOf(lane);
   const group = (
     <>
-      {lane.expanded
-        ? deps.map((d, i) => <DependencyItem key={d.id} node={d} pos={at(d)} size={kids} x={gx + 27} y={(cell ? 80 : 64) + i * 13} w={SHEET.gutter - 52} />)
-        : null}
+      {lane.expanded ? deps.map((d) => <DependencyItem key={d.id} node={d} pos={at(d)} size={kids} />) : null}
       {lane.expanded && cell && flow ? scriptArtifacts.map((a, i) => <ScriptArtifact key={a.id} node={a} pos={at(a)} size={kids} x={ax + flow.start.x - 30 + i * 17} y={row0 - 34} />) : null}
       {lane.expanded && cell && flow
         ? execRows.map((r) => <ExecutionRows key={r.id} exec={r} pos={at(r.node)} size={kids} rows={rows} laneY={lane.y} ax={ax} aw={aw} width={width} flow={flow} cell={cell} />)
@@ -78,46 +126,90 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   );
   return (
     <g style={{ transform: `translate(0px, ${lane.y}px)`, transition: animate ? "transform 400ms cubic-bezier(0.2, 0, 0, 1)" : "none", opacity: dimmed ? 0.28 : 1 }}>
-      <Item node={node} pos={pos} size={size} expanded={lane.expanded} ring={{ x: x + 2, y: 2, w: SHEET.gutter - 8, h: lane.expanded ? Math.min(h - 4, 96) : h - 4 }} group={group}>
+      <Item node={node} pos={pos} size={size} expanded={lane.expanded} ring={{ x: ax - 12, y: 2, w: width - ax - SHEET.left + 10, h: h - 4 }} group={group}>
         <rect x={x} y={0} width={w} height={h} aria-hidden="true" style={{ fill: fc("floor"), opacity: cell ? 0.55 : 0.3 }} />
         <line x1={x + 12} y1={0} x2={x + w} y2={0} aria-hidden="true" style={{ stroke: fc("plate-edge"), strokeWidth: 1 }} />
-        <path d={`M${x + 9} ${6}h-3v${h - 12}h3`} aria-hidden="true" style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: 1 }} />
-        {selected ? <SelectBar x={x + 4} y={1} h={h - 2} /> : null}
-        <ToggleTarget x={gx} y={19} />
-        <Chevron x={gx} y={19} open={lane.expanded} />
-        <g transform={`translate(${gx + 15} 18)`} aria-hidden="true">
-          <StateMark state={state} r={5.5} mark={mark} progress={0} />
-        </g>
-        <text x={gx + 27} y={22} style={{ fill: "var(--mach-ink)", fontSize: 12.5, fontWeight: 600 }}>
-          {clip(slice.title, 34)}
-          <title>{slice.title}</title>
-        </text>
-        <text x={gx + 27} y={36} style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 9.5 }} className="notranslate">
-          {cell ? `${cell.ticketId} · ` : ""}
-          {slice.id}
-          <tspan style={{ fontFamily: "var(--mach-font-sans)", fill: slice.risk === "High" ? fc("human") : "var(--mach-ink-muted)", fontWeight: slice.risk === "High" ? 600 : 400 }}> · {slice.risk} risk</tspan>
-        </text>
-        {cell && lane.expanded ? (
-          <>
-            <text x={gx + 27} y={52} style={{ fill: "var(--mach-ink)", fontSize: 10 }}>
-              {stageWords(cell.stage)}
-              <tspan style={{ fill: cell.round > 1 ? fc("fail") : "var(--mach-ink-muted)" }}> · round {cell.round} of 3</tspan>
-            </text>
-            <text x={gx + 27} y={66} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }} className="tabular">
-              {schedLine}
-            </text>
-          </>
+        {cell && flow && lane.expanded && onScreen ? (
+          <g className="bp-flow">
+            <CellFlow cell={cell} slice={slice} flow={flow} template={template} ax={ax} row0={row0} dimsY={lane.dimsY - lane.y} laneH={h} />
+          </g>
         ) : null}
-        {cell && !lane.expanded ? <CollapsedSummary scene={null} ticket={cell.ticketId} x={gx + 27} y={50} lane={lane} /> : null}
-        {!cell ? (
-          <text x={gx + 27} y={50} style={{ fill: fc("wait"), fontSize: 9.5 }} className="tabular">
-            {slice.scheduler === "waiting-on-dependency" ? `Waiting on a dependency since ${clock(waited?.at ?? slice.since)}` : slice.scheduler}
-          </text>
-        ) : null}
-        {cell && flow && lane.expanded ? <CellFlow cell={cell} slice={slice} flow={flow} template={template} ax={ax} row0={row0} dimsY={lane.dimsY - lane.y} laneH={h} /> : null}
         {cell && flow && !lane.expanded ? <Strip nodes={flow.nodes} ax={ax} y={29} /> : null}
         {!cell ? <WaitingStrip template={template} ax={ax} y={row0} reason={slice.reasons[0] ?? ""} /> : null}
       </Item>
+      <Gutter id={node.id} entity={node.ref} y={lane.y} h={h} ax={ax} band={cell ? 0.55 : 0.3} dimmed={dimmed}>
+        <line x1={x + 12} y1={0} x2={ax - 14} y2={0} style={{ stroke: fc("plate-edge"), strokeWidth: 1 }} />
+        <path d={`M${x + 9} 6h-3v${h - 12}h3`} style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: 1 }} />
+        {selected ? <SelectBar x={x + 4} y={1} h={h - 2} /> : null}
+        {ctx.focusedId === node.id ? <rect x={x + 2} y={2} width={ax - x - 18} height={Math.min(h - 4, depY + deps.length * 13)} rx={4} style={{ fill: "none", stroke: "var(--mach-focus)", strokeWidth: 2 }} /> : null}
+        <ToggleTarget x={gx} y={19} />
+        <Chevron x={gx} y={19} open={lane.expanded} />
+        {/* The section mark: a drafted bubble with the slice's place in the wave, as on a sheet's section heading. */}
+        <g transform={`translate(${gx + 20} 18)`}>
+          <circle r={10} style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 1 }} />
+          <line x1={-10} y1={0} x2={10} y2={0} style={{ stroke: fc("ink-soft"), strokeWidth: 0.6 }} />
+          <text y={-1.5} textAnchor="middle" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 8.5, fontWeight: 600 }}>
+            {pos}
+          </text>
+          <g transform="translate(0 5.5)">
+            <StateMark state={state} r={3.2} mark={mark} progress={0} />
+          </g>
+        </g>
+        <g className="bp-fine">
+          {lines.map((l, i) => (
+            <text key={i} x={tx} y={22 + i * 17} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 15, fontWeight: 450 }}>
+              {l}
+            </text>
+          ))}
+          <text x={tx} y={idY} style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 9.5 }} className="notranslate">
+            {cell ? `${cell.ticketId} · ` : ""}
+            {slice.id}
+            <tspan style={{ fontFamily: "var(--mach-font-sans)", fill: slice.risk === "High" ? fc("human") : "var(--mach-ink-muted)", fontWeight: slice.risk === "High" ? 600 : 400 }}> · {slice.risk} risk</tspan>
+          </text>
+          {cell && lane.expanded ? (
+            <>
+              <text x={tx} y={stageY} style={{ fill: "var(--mach-ink)", fontSize: 10 }}>
+                {stageWords(cell.stage)}
+                <tspan style={{ fill: cell.round > 1 ? fc("fail") : "var(--mach-ink-muted)" }}> · round {cell.round} of 3</tspan>
+              </text>
+              <text x={tx} y={schedY} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }} className="tabular">
+                {schedLine}
+              </text>
+            </>
+          ) : null}
+          {cell && !lane.expanded ? <CollapsedSummary scene={null} ticket={cell.ticketId} x={tx} y={stageY} lane={lane} /> : null}
+          {!cell ? (
+            <text x={tx} y={stageY} style={{ fill: fc("wait"), fontSize: 9.5 }} className="tabular">
+              {slice.scheduler === "waiting-on-dependency" ? `Waiting on a dependency since ${clock(waited?.at ?? slice.since)}` : slice.scheduler}
+            </text>
+          ) : null}
+          {lane.expanded ? deps.map((d, i) => <DependencyLine key={d.id} node={d} x={tx} y={depY + i * 13} />) : null}
+        </g>
+        <g className="bp-over">
+          {overLines.map((l, i) => (
+            <text key={i} x={tx} y={overSize + 4 + i * overSize * 1.12} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: overSize, fontWeight: 450 }}>
+              {l}
+            </text>
+          ))}
+          {(() => {
+            // Story lines: sized to the gutter's width, and set only where they fit above the lane's end.
+            const width = SHEET.gutter - 70;
+            const longest = Math.max(1, ...story.map((l) => l.length));
+            const size = Math.min(overSize * 0.68, width / (longest * 0.55));
+            const first = overSize + 4 + (overLines.length - 1) * overSize * 1.12 + size * 1.5;
+            return story.map((line, i) => {
+              const at = first + i * size * 1.25;
+              if (at + 4 > headH) return null;
+              const tone = /failed|Rejected|outvoted/.test(line) ? fc("fail") : /person|Approved/.test(line) ? fc("human") : i === 0 ? "var(--mach-ink-muted)" : fc("wait");
+              return (
+                <text key={i} x={tx} y={at} style={{ fill: tone, fontSize: size, fontWeight: 600 }}>
+                  {line}
+                </text>
+              );
+            });
+          })()}
+        </g>
+      </Gutter>
     </g>
   );
 });
@@ -180,20 +272,27 @@ const WaitingStrip = memo(function WaitingStrip({ template, ax, y, reason }: { t
   );
 });
 
-function DependencyItem({ node, pos, size, x, y, w }: { node: TreeNode; pos: number; size: number; x: number; y: number; w: number }) {
+function DependencyItem({ node, pos, size }: { node: TreeNode; pos: number; size: number }) {
+  // The item's visible line is in the lane's pinned gutter (DependencyLine); this is its focus target.
+  return <Item node={node} pos={pos} size={size} ring={{ x: 0, y: 0, w: 0, h: 0 }} />;
+}
+
+function DependencyLine({ node, x, y }: { node: TreeNode; x: number; y: number }) {
+  const ctx = useTreeCtx();
   if (node.data.kind !== "dependency") return null;
   const dep = node.data.dep;
   const ok = dep.state === "satisfied";
   return (
-    <Item node={node} pos={pos} size={size} ring={{ x: x - 4, y: y - 9, w, h: 12, r: 2 }}>
-      <g transform={`translate(${x} ${y - 3})`} aria-hidden="true">
+    <g data-tid={node.id} data-ref={node.ref}>
+      {ctx.focusedId === node.id ? <rect x={x - 6} y={y - 10} width={SHEET.gutter - 76} height={13} rx={2} style={{ fill: "none", stroke: "var(--mach-focus)", strokeWidth: 2 }} /> : null}
+      <g transform={`translate(${x} ${y - 3})`}>
         <rect x={-3.5} y={-1} width={7} height={5.5} rx={1} style={{ fill: ok ? fc("pass") : fc("wait") }} />
         <path d={ok ? "M-2 -1v-2.2a2 2 0 0 1 4 0" : "M-2 -1v-2a2 2 0 0 1 4 0v2"} style={{ fill: "none", stroke: ok ? fc("pass") : fc("wait"), strokeWidth: 1.1 }} />
       </g>
       <text x={x + 8} y={y} style={{ fill: ok ? fc("pass") : fc("wait"), fontSize: 9.5 }}>
         {ok ? `${dep.to} integrated · unlocked ${clock(dep.satisfiedAt ?? 0)}` : `waits for ${dep.to} to be integrated`}
       </text>
-    </Item>
+    </g>
   );
 }
 
@@ -252,11 +351,9 @@ function Dependency({ id, stubFrom, x, fromY, toY, labelX, satisfiedAt, state, f
   const midY = (fromY + toY) / 2;
   return (
     <g data-ref={entity} style={{ cursor: "pointer" }}>
-      {/* Out of the prerequisite's integrated mark into the channel, and from the channel into the dependent lane. */}
-      <path d={`M${stubFrom} ${fromY}H${x - 6}`} aria-hidden="true" style={{ fill: "none", stroke: ink, strokeWidth: highlighted ? 1.8 : 1.2, strokeDasharray: done ? undefined : "4 3", opacity: dimmed ? 0.28 : done ? 0.7 : 1 }} />
-      <DependencyLink variant="blueprint" from={{ x: x - 6, y: fromY }} to={{ x: x + 6, y: toY - 4 }} state={state} progress={state === "satisfied" ? p : 0} highlighted={highlighted} dimmed={dimmed} />
-      {/* The inlet: where the cable meets the dependent lane, a short bar across the channel. */}
-      <path d={`M${x} ${toY}h12`} aria-hidden="true" style={{ fill: "none", stroke: ink, strokeWidth: 2, strokeLinecap: "round", opacity: dimmed ? 0.28 : 1 }} />
+      {/* The grammar's channel form: out of the prerequisite's integrated mark, down its own track in the
+          channel, and into the dependent lane, with the padlock at the channel's middle. */}
+      <DependencyLink variant="blueprint" from={{ x: stubFrom, y: fromY }} to={{ x: x + 14, y: toY }} channelX={x} state={state} progress={state === "satisfied" ? p : 0} highlighted={highlighted} dimmed={dimmed} />
       <text x={labelX} y={midY - 1} style={{ fill: ink, fontSize: 9.5, fontWeight: 600, opacity: dimmed ? 0.3 : 1 }} className="tabular">
         {toSlice.replace("SLICE-", "")} waits for {fromSlice.replace("SLICE-", "")}
         <tspan x={labelX} dy={12} style={{ fontWeight: 400, fontFamily: "var(--mach-font-mono)", fontSize: 9 }}>

@@ -14,7 +14,6 @@ import {
   fc,
   GateGlyph,
   RetryLoop,
-  roundedPath,
   RoutePath,
   StateMark,
   StationMachine,
@@ -123,7 +122,12 @@ function Route({ from, to }: { from: FlowNode; to: FlowNode }) {
   const draw = useEventProgress(startT, "pathDraw");
   const pts = routePoints(from, to);
   if (!built) {
-    return <path d={roundedPath(pts, 8)} aria-hidden="true" style={{ fill: "none", stroke: fc("route"), strokeWidth: 1, strokeDasharray: "3 3", opacity: UNBUILT }} />;
+    // Not reached yet: the grammar's planned route (a dashed hairline), at the unbuilt opacity.
+    return (
+      <g style={{ opacity: UNBUILT }}>
+        <RoutePath variant="blueprint" points={pts} planned arrow={false} />
+      </g>
+    );
   }
   const active = (to.visit && to.visit.leftAt === null && to.visit.station !== "human-approval") || (to.gate?.state === "open" && to.gate.gate !== "red-before-green");
   const state: FactoryState = active ? "active" : "succeeded";
@@ -137,7 +141,7 @@ function Retry({ from, to }: { from: FlowNode; to: FlowNode }) {
   return (
     <g>
       {p > 0 ? <path d={`M${from.x - from.r - 1} ${from.y}H${out}`} aria-hidden="true" style={{ fill: "none", stroke: fc("fail"), strokeWidth: 1.6, strokeDasharray: "5 3", strokeLinecap: "round" }} /> : null}
-      <RetryLoop variant="blueprint" from={{ x: out, y: from.y }} to={{ x: to.x, y: to.y - to.r - 4 }} crestY={from.y + 60} round={to.round} progress={p} />
+      <RetryLoop variant="blueprint" from={{ x: out, y: from.y }} to={{ x: to.x, y: to.y - to.r - 4 }} crestY={from.y + 54} round={to.round} progress={p} />
     </g>
   );
 }
@@ -431,7 +435,8 @@ function gateSub(cell: CellState, g: GateState): string {
   }
   if (g.gate === "review") {
     const r = cell.reviews.find((x) => x.round === g.round);
-    if (r && r.approvals !== null) return `${r.approvals}/${r.approvalsNeeded} · ${clock(at)}`;
+    if (r && r.approvals !== null) return `${r.approvals} of ${r.approvalsNeeded} · ${clock(at)}`;
+    if (r) return `${r.risk} · ${r.approvalsNeeded} of 3`;
   }
   if (g.state === "skipped") return "not needed";
   if (g.state === "open") return `since ${clock(g.openedAt)}`;
@@ -506,7 +511,8 @@ function GateCallout({ node, gate, text, detail, tone, at }: { node: FlowNode; g
 function SeatsMark({ node, cell, seats }: { node: FlowNode; cell: CellState; seats: readonly number[] }) {
   const round = reviewRound(cell, node);
   const delta = round?.delta ?? null;
-  // The panel's heading sits above it on the main line and below it on a round row, clear of the loop.
+  // A delta round's tag sits below the panel (clear of the loop and the main line's labels). The panel
+  // needs no heading of its own: the column head names it, the consensus label carries its count.
   const headY = node.row === 0 ? node.y + (seats[0] ?? -28) - 21 : node.y + (seats[2] ?? 28) + 22;
   return (
     <g>
@@ -516,10 +522,6 @@ function SeatsMark({ node, cell, seats }: { node: FlowNode; cell: CellState; sea
             Δ delta · {delta.filesChanged.length} files since {delta.sinceCommit.slice(0, 7)}
           </text>
         </g>
-      ) : round ? (
-        <text x={node.x} y={headY} textAnchor="middle" aria-hidden="true" style={{ fill: "var(--mach-ink-muted)", fontSize: 9, fontWeight: 600 }}>
-          Review · {round.risk} · {round.approvalsNeeded} of 3
-        </text>
       ) : null}
       {SEAT_KEYS.map((k, i) => (
         <Seat key={k} index={i} node={node} cell={cell} round={round} dy={seats[i] ?? 0} />
@@ -539,11 +541,10 @@ function Seat({ index, node, cell, round, dy }: { index: number; node: FlowNode;
   const state: FactoryState = seat.vote === "APPROVE" ? "succeeded" : seat.vote === "REJECT" ? "failed" : agent ? agentState(agent) : "idle";
   const outvoted = findings.find((f) => f.severity === "blocker" && f.outvoted);
   const blockers = findings.filter((f) => f.severity === "blocker");
-  const flag = blockers.length
-    ? { severity: "blocker" as const, count: blockers.length, rule: blockers[0]?.rule ?? undefined }
-    : findings.length
-      ? { severity: "note" as const, count: findings.length, rule: undefined }
-      : null;
+  // Blockers carry the grammar's flag with their rule; notes are a small count beside the seat, so a
+  // panel of three with notes does not become a thicket of pennants between the branches.
+  const flag = blockers.length ? { severity: "blocker" as const, count: blockers.length, rule: blockers[0]?.rule ?? undefined } : null;
+  const notes = findings.length - blockers.length;
   return (
     <>
       <Pick entity={agent ? ref.agent(agent.id) : ref.gate(`${cell.ticketId}/review#${round?.round ?? 1}`)}>
@@ -551,6 +552,14 @@ function Seat({ index, node, cell, round, dy }: { index: number; node: FlowNode;
         {/* The seat's findings as the grammar's flag, planted beside it: a blocker flag (with its rule) when
             the seat filed one, otherwise a note flag counting its notes. */}
         {flag ? <FindingsFlag variant="blueprint" at={{ x: x + 10, y: y - 5 }} severity={flag.severity} count={flag.count} rule={flag.rule} lod="near" /> : null}
+        {notes > 0 && !flag ? (
+          <g transform={`translate(${x + 10} ${y - 8})`}>
+            <circle r={3.6} style={{ fill: fc("plate-top"), stroke: fc("wait"), strokeWidth: 0.9 }} />
+            <text y={2.5} textAnchor="middle" style={{ fill: fc("wait"), fontSize: 6.5, fontWeight: 700 }}>
+              {notes}
+            </text>
+          </g>
+        ) : null}
       </Pick>
       {outvoted && round?.outcome ? <OutvotedCallout x={x} y={y} rule={outvoted.rule} title={outvoted.title} seat={outvoted.seat} at={round.decidedAt ?? outvoted.at} /> : null}
     </>
@@ -623,7 +632,7 @@ function Dimensions({ flow, cell, y }: { flow: Flow; cell: CellState; y: number 
   void cell;
   return (
     <g>
-      {groups.map((g) => (g.end !== null ? <Dim key={g.key} g={g} y={y + g.row * 26 + 16} /> : <LiveDim key={g.key} g={g} y={y + g.row * 26 + 16} />))}
+      {groups.map((g) => (g.end !== null ? <Dim key={g.key} g={g} y={y + g.row * 21 + 14} /> : <LiveDim key={g.key} g={g} y={y + g.row * 21 + 14} />))}
     </g>
   );
 }

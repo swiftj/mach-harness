@@ -71,3 +71,123 @@
   font-size: 11px;
   font-family: var(--mach-font-mono);
 }
+
+/* Levels of detail. Overview (the establishing view, zoom under 0.55): fine lettering gives way
+   to large lettering, so the whole sheet stays legible. Theater Mode hides labels below near zoom. */
+.bp-stage .bp-over {
+  display: none;
+}
+.bp-stage[data-lod="overview"] .bp-fine,
+.bp-stage[data-lod="overview"] .bp-flow text {
+  display: none;
+}
+.bp-stage[data-lod="overview"] .bp-over {
+  display: inline;
+}
+.bp-viewport[data-theater="1"] .bp-stage:not([data-lod="near"]) .bp-fine,
+.bp-viewport[data-theater="1"] .bp-stage:not([data-lod="near"]) .bp-flow text {
+  display: none;
+}
+.bp-viewport[data-theater="1"] .bp-stage:not([data-lod="near"]) .bp-over {
+  display: inline;
+}
+
+/* Stage chrome (not under the camera). */
+.bp-chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.bp-chrome > * {
+  pointer-events: auto;
+}
+.bp-controls.bp-chrome {
+  inset: auto 16px 16px auto;
+}
+.bp-rulers {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none !important;
+  font-family: var(--mach-font-sans);
+}
+.bp-title {
+  position: absolute;
+  right: 16px;
+  bottom: 56px;
+  width: 214px;
+  padding: 6px 9px 6px;
+  border: 1.25px solid var(--mach-factory-ink-soft);
+  background: var(--mach-factory-plate-top);
+  font-family: var(--mach-font-sans);
+  pointer-events: none !important;
+}
+.bp-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.bp-title-name {
+  font-family: var(--mach-font-serif);
+  font-size: 13px;
+  color: var(--mach-ink);
+}
+.bp-title-stamp {
+  padding: 1px 6px;
+  border: 1px solid var(--mach-factory-wait);
+  border-radius: 2px;
+  background: var(--mach-factory-wait-soft);
+  color: var(--mach-warning-ink);
+  font-size: 10px;
+  font-weight: 700;
+}
+.bp-title-sub {
+  margin-top: 2px;
+  color: var(--mach-ink-muted);
+  font-size: 10px;
+}
+.bp-title-fact {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 0.75px solid var(--mach-factory-plate-edge);
+  color: var(--mach-ink-muted);
+  font-size: 10px;
+}
+.bp-title-fact .tabular {
+  color: var(--mach-ink);
+  font-family: var(--mach-font-mono);
+}
+.bp-minimap {
+  position: absolute;
+  right: 246px;
+  bottom: 16px;
+  padding: 6px;
+  border: 1px solid var(--mach-line);
+  border-radius: var(--mach-radius-sm);
+  background: var(--mach-surface-raised);
+  box-shadow: var(--mach-shadow-2);
+}
+.bp-minimap-plot {
+  position: relative;
+  cursor: crosshair;
+  touch-action: none;
+}
+.bp-minimap-lane {
+  position: absolute;
+  left: 0;
+  width: 10px;
+  padding: 0;
+  border: 0;
+  border-left: 3px solid var(--mach-factory-plate-edge);
+  background: transparent;
+  cursor: pointer;
+}
+.bp-minimap-lane:hover {
+  border-left-color: var(--mach-factory-select);
+}
+.bp-minimap-lane:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 1px;
+}

@@ -1,9 +1,9 @@
 /** Time words for the drawing. All inputs are factory milliseconds from the scenario start. */
 
-/** "27:19" (run time, as the timeline shows it). */
+/** "03:38", "27:19": run time in factory mm:ss, the Shell timeline's format (its timecode without tenths). */
 export function clock(t: number): string {
   const s = Math.max(0, Math.floor(t / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
 /** "27:19.4": the playhead, to a tenth. */

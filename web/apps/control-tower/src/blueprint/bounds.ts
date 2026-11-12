@@ -1,6 +1,6 @@
-/** Where a leaf (a tool call, an artifact, a finding) is drawn: on its agent's lane, at its time. */
+/** Where a leaf (a tool call, an artifact, a finding) is drawn: on its agent's lane, at its time on the execution's axis. */
+import { execAxis, xOn } from "./axis";
 import type { Layout, Rect } from "./layout";
-import { axisEnd } from "./time";
 import type { Tree, TreeNode } from "./tree";
 
 export function leafBounds(layout: Layout, tree: Tree, node: TreeNode, playhead: number): Rect | null {
@@ -9,18 +9,11 @@ export function leafBounds(layout: Layout, tree: Tree, node: TreeNode, playhead:
   const row = layout.bounds.get(agentId);
   const agent = tree.byId.get(agentId);
   const parent = agent?.parent ? tree.byId.get(agent.parent) : null;
-  if (!row || !parent) return null;
-  let start = 0;
-  let end: number | null = null;
-  if (parent.data.kind === "visit") {
-    start = parent.data.visit.enteredAt;
-    end = parent.data.visit.leftAt;
-  } else if (parent.data.kind === "relay") {
-    start = parent.data.execution.startedAt ?? parent.data.execution.claimedAt;
-    end = parent.data.execution.endedAt;
-  } else return row;
-  const e = axisEnd(start, end, playhead);
-  const t = node.data.kind === "tool" ? node.data.call.startedAt : node.data.kind === "artifact" ? node.data.artifact.writtenAt : node.data.kind === "finding" ? node.data.finding.at : start;
-  const x = layout.ax + ((Math.min(Math.max(t, start), e) - start) / (e - start)) * layout.aw;
+  const exec = parent?.parent ? tree.byId.get(parent.parent) : null;
+  if (!row || !exec || exec.data.kind !== "execution") return row ?? null;
+  const visits = exec.children.flatMap((c) => (c.data.kind === "visit" ? [c.data.visit] : []));
+  const axis = execAxis(layout.ax, layout.aw, exec.data.execution, visits, playhead);
+  const t = node.data.kind === "tool" ? node.data.call.startedAt : node.data.kind === "artifact" ? node.data.artifact.writtenAt : node.data.kind === "finding" ? node.data.finding.at : axis.start;
+  const x = xOn(axis, t);
   return { x: x - 90, y: row.y - 20, w: 180, h: row.h + 40 };
 }
