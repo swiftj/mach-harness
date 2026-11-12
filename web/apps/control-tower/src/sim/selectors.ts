@@ -251,35 +251,39 @@ export function entityAt(scene: Scene, entity: AnyRef): EntityState | null {
 
 /**
  * The set to highlight with an entity: for a slice, everything it waits for and everything that
- * waits for it (transitively), with the edges and cells; for a dependency, both ends; for a cell,
+ * waits for it (transitively), with the edges and cells; for a dependency, its chain: both ends,
+ * the prerequisite's own prerequisites and the dependent's dependents (transitively); for a cell,
  * its slice and that slice's set; for an agent, its cell, parent and children.
  */
 export function relatedRefs(scene: Scene, entity: EntityRef): readonly EntityRef[] {
   const out = new Set<EntityRef>([entity]);
   const id = refId(entity);
-  const addSliceSet = (sliceId: string): void => {
-    const visit = (start: string, direction: "up" | "down"): void => {
-      const queue = [start];
-      const seen = new Set<string>();
-      while (queue.length) {
-        const current = queue.shift() as string;
-        if (seen.has(current)) continue;
-        seen.add(current);
-        out.add(ref.slice(current));
-        const ticket = scene.slices[current]?.ticketId;
-        if (ticket && scene.cells[ticket]) out.add(ref.cell(ticket));
-        for (const edge of Object.values(scene.dependencies)) {
-          if (direction === "up" && edge.from === current) {
-            out.add(ref.dependency(edge.from, edge.to));
-            queue.push(edge.to);
-          }
-          if (direction === "down" && edge.to === current) {
-            out.add(ref.dependency(edge.from, edge.to));
-            queue.push(edge.from);
-          }
+  // Walks the dependency graph from one slice, adding each slice reached, its cell and the links
+  // crossed. "up" follows prerequisites (an edge runs from the dependent to its prerequisite);
+  // "down" follows dependents.
+  const visit = (start: string, direction: "up" | "down"): void => {
+    const queue = [start];
+    const seen = new Set<string>();
+    while (queue.length) {
+      const current = queue.shift() as string;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      out.add(ref.slice(current));
+      const ticket = scene.slices[current]?.ticketId;
+      if (ticket && scene.cells[ticket]) out.add(ref.cell(ticket));
+      for (const edge of Object.values(scene.dependencies)) {
+        if (direction === "up" && edge.from === current) {
+          out.add(ref.dependency(edge.from, edge.to));
+          queue.push(edge.to);
+        }
+        if (direction === "down" && edge.to === current) {
+          out.add(ref.dependency(edge.from, edge.to));
+          queue.push(edge.from);
         }
       }
-    };
+    }
+  };
+  const addSliceSet = (sliceId: string): void => {
     visit(sliceId, "up");
     visit(sliceId, "down");
   };
@@ -288,8 +292,12 @@ export function relatedRefs(scene: Scene, entity: EntityRef): readonly EntityRef
       addSliceSet(id);
       break;
     case "dependency": {
+      // The link's chain: the prerequisite and everything it waits on, the dependent and everything
+      // that waits on it, with their cells and links. Sibling prerequisites of the dependent are
+      // not part of this link's chain and dim.
       const [from, to] = id.split("->") as [string, string];
-      out.add(ref.slice(from)).add(ref.slice(to));
+      visit(to, "up");
+      visit(from, "down");
       break;
     }
     case "cell": {

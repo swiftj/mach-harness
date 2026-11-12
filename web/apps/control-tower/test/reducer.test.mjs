@@ -136,6 +136,19 @@ test("selectors: any entity resolves, and hover sets cover the dependency graph"
   assert.ok(relatedRefs(end, `artifact:${artifact.id}`).includes(`agent:${artifact.writer.agentId}`));
 });
 
+test("selectors: a dependency link highlights its chain, its downstream dependents included (D14)", () => {
+  // 43:42: SLICE-024 -> SLICE-021 is satisfied; SLICE-025 still waits on SLICE-024 and SLICE-022.
+  const scene = sceneAt(SCENARIO, (43 * 60 + 42) * 1000);
+  assert.ok(scene.dependencies["SLICE-025->SLICE-024"], "the scenario still has SLICE-025 waiting on SLICE-024");
+  const related = relatedRefs(scene, "dependency:SLICE-024->SLICE-021");
+  // Both ends, with their cells.
+  for (const r of ["dependency:SLICE-024->SLICE-021", "slice:SLICE-024", "slice:SLICE-021", "cell:LOCAL-034", "cell:LOCAL-031"]) assert.ok(related.includes(r), r);
+  // The dependent's own dependents, and the link that makes them so: not dimmed.
+  for (const r of ["slice:SLICE-025", "dependency:SLICE-025->SLICE-024"]) assert.ok(related.includes(r), r);
+  // A sibling prerequisite of a downstream dependent is not part of this link's chain.
+  for (const r of ["slice:SLICE-022", "dependency:SLICE-025->SLICE-022"]) assert.ok(!related.includes(r), r);
+});
+
 test("selectors: timelines and moments", () => {
   const lanes = cellTimelines(SCENARIO, SCENARIO.duration);
   assert.deepEqual(lanes.map((l) => l.ticketId), ["LOCAL-031", "LOCAL-032", "LOCAL-033", "LOCAL-034"]);
