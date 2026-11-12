@@ -558,7 +558,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
           findings: r.findings.map((f) => (passed && f.severity === "blocker" ? { ...f, outvoted: true } : f)),
         })),
       }));
-      s = setGate(s, ticket ?? "", "review", d.round, passed ? "passed" : "failed", `${d.outcome}: ${d.approvals} of ${d.approvals_needed} needed`, t, seq);
+      s = setGate(s, ticket ?? "", "review", d.round, passed ? "passed" : "failed", `${d.outcome}: ${d.approvals} approved, ${d.approvals_needed} needed`, t, seq);
       if (d.outcome === "AWAITING_HUMAN") s = setGate(s, ticket ?? "", "human-approval", d.round, "waiting", "The panel approved; a person must approve before merge.", t, seq);
       return s;
     }

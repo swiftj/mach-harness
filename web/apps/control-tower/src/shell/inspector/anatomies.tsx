@@ -45,6 +45,7 @@ import {
 } from "../vocab";
 import { Elapsed, Facts, JumpButton, Mono, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
+import { reviewTally } from "./timing";
 
 const at = (t: number | null | undefined) => (t === null || t === undefined ? "not yet" : <Mono>{timecode(t, false)}</Mono>);
 
@@ -235,7 +236,7 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
                     </RefLink>
                   ) : null}
                   {r ? (
-                    <RefLink to={ref.gate(`${cell.ticketId}/review#${n}`)} glyph={<GateGlyphSmall kind="consensus" size={18} state={r.outcome === null ? "active" : r.outcome === "APPROVED" ? "succeeded" : r.outcome === "AWAITING_HUMAN" ? "human" : "failed"} />} detail={r.approvals !== null ? `${r.approvals} of ${r.approvalsNeeded}` : `needs ${r.approvalsNeeded}`}>
+                    <RefLink to={ref.gate(`${cell.ticketId}/review#${n}`)} glyph={<GateGlyphSmall kind="consensus" size={18} state={r.outcome === null ? "active" : r.outcome === "APPROVED" ? "succeeded" : r.outcome === "AWAITING_HUMAN" ? "human" : "failed"} />} detail={reviewTally(r)}>
                       Review {r.outcome ? r.outcome.toLowerCase().replace("_", " ") : "in progress"}
                     </RefLink>
                   ) : null}

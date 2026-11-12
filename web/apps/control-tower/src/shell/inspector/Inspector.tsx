@@ -45,15 +45,13 @@ import {
 import { identityOf, parseStation, selectEntity } from "./entity";
 import { Evidence, JumpButton, useEntityEvents } from "./parts";
 import { RunNow } from "./RunNow";
+import { cellTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
 
-interface Look {
+interface Look extends Timing {
   glyph: ReactNode;
   state: FactoryState;
   mark?: FactoryMarkShape;
   word: string;
-  /** Where it stands in time at the playhead. */
-  phase: "running" | "finished";
-  since: number | null;
 }
 
 /** Glyph, state and phase of an entity that exists at the playhead. */
@@ -66,7 +64,7 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     }
     case "wave": {
       const w = value as WaveState;
-      return { glyph: <WaveGlyph size={28} />, state: w.state === "validated" ? "succeeded" : "active", word: w.state === "validated" ? "Verified" : "Arrived", phase: "finished", since: w.discoveredAt };
+      return { glyph: <WaveGlyph size={28} />, state: w.state === "validated" ? "succeeded" : "active", word: w.state === "validated" ? "Verified" : "Arrived", ...waveTiming(w) };
     }
     case "slice": {
       const s = value as SliceState;
@@ -76,7 +74,7 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     case "cell": {
       const c = value as CellState;
       const l = stageLook(c.stage);
-      return { glyph: <CellGlyph size={28} state={l.state} />, state: l.state, mark: l.mark, word: l.label, phase: c.merged ? "finished" : "running", since: c.openedAt };
+      return { glyph: <CellGlyph size={28} state={l.state} />, state: l.state, mark: l.mark, word: l.label, ...cellTiming(c) };
     }
     case "station": {
       const { station } = parseStation(id);
@@ -84,7 +82,7 @@ function lookOf(entity: AnyRef, value: unknown): Look {
       const visits = cell ? cell.visits.filter((v) => v.station === station) : [];
       const last = visits[visits.length - 1];
       const state: FactoryState = !last ? "idle" : last.leftAt === null ? "active" : outcomeState(last.outcome);
-      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: !last ? "Not visited" : last.leftAt === null ? "Working" : (last.outcome ?? "ended").replace(/^./, (c) => c.toUpperCase()), phase: last && last.leftAt === null ? "running" : "finished", since: last?.enteredAt ?? null };
+      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: !last ? "Not visited" : last.leftAt === null ? "Working" : (last.outcome ?? "ended").replace(/^./, (c) => c.toUpperCase()), ...stationTiming(last) };
     }
     case "agent": {
       const a = value as AgentState;
@@ -177,13 +175,15 @@ function TimeStatus({ look, entity }: { look: Look | null; entity: AnyRef }) {
   }
   return (
     <p className="mt-2 text-caption text-ink-muted">
-      {look.phase === "running" ? "In progress" : "Finished"}
       {look.since !== null ? (
         <>
-          {look.phase === "running" ? " since " : " at "}
-          <span className="font-mono tabular text-ink">{timecode(look.since, false)}</span>
+          {timingWords(look)} <span className="font-mono tabular text-ink">{timecode(look.since, false)}</span>
         </>
-      ) : null}
+      ) : look.phase === "running" ? (
+        "In progress"
+      ) : (
+        "Finished"
+      )}
       , as of the playhead.
     </p>
   );

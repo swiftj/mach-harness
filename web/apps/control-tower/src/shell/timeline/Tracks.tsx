@@ -13,6 +13,7 @@ import { StateGlyph } from "../glyphs";
 import { schedulerLook, selectable, stageLook, timecode, duration as words } from "../vocab";
 import { drawTracks, hitTest, layoutTracks, readPalette, SUMMARY_ROW, tOf, xOf, type Hit, type View } from "./draw";
 import type { TimelineModel, Track } from "./model";
+import { setScrubbing } from "../scrub";
 import { usePlayheadEffect } from "./playhead";
 
 export const GUTTER = 176;
@@ -220,6 +221,7 @@ export const Tracks = memo(function Tracks({
     if (!p) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = { x: e.clientX, moved: false, id: e.pointerId };
+    setScrubbing(true);
     store.seek(tOf(view, p.x));
   };
   const onPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
@@ -243,6 +245,7 @@ export const Tracks = memo(function Tracks({
   const onPointerUp = (e: PointerEvent<HTMLCanvasElement>) => {
     const d = drag.current;
     drag.current = null;
+    setScrubbing(false);
     if (!d || d.moved) return;
     const p = pointAt(e);
     if (!p) return;
@@ -404,7 +407,11 @@ export const Tracks = memo(function Tracks({
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
-                onPointerCancel={() => (drag.current = null)}
+                onPointerCancel={() => {
+                  drag.current = null;
+                  setScrubbing(false);
+                }}
+                onLostPointerCapture={() => setScrubbing(false)}
                 onPointerLeave={onPointerLeave}
               />
             </div>

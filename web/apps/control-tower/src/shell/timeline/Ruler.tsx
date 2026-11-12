@@ -12,6 +12,7 @@ import { useSceneStore, useStore } from "../../scene";
 import { stepChapter } from "../keyboard";
 import { spokenTime, timecode } from "../vocab";
 import { GUTTER, type TimeWindow } from "./Tracks";
+import { setScrubbing } from "../scrub";
 import { usePlayheadEffect } from "./playhead";
 
 const CHAPTERS = SCENARIO.chapters;
@@ -95,6 +96,7 @@ export const Ruler = memo(function Ruler({ moments, duration, window: win, onWin
     if ((e.target as HTMLElement).closest("button")) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     dragging.current = true;
+    setScrubbing(true);
     store.seek(tAt(e.clientX));
     sliderRef.current?.focus({ preventScroll: true });
   };
@@ -111,6 +113,7 @@ export const Ruler = memo(function Ruler({ moments, duration, window: win, onWin
   };
   const stop = () => {
     dragging.current = false;
+    setScrubbing(false);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -147,6 +150,7 @@ export const Ruler = memo(function Ruler({ moments, duration, window: win, onWin
         onPointerMove={onPointerMove}
         onPointerUp={stop}
         onPointerCancel={stop}
+        onLostPointerCapture={stop}
         onPointerLeave={() => setTip(null)}
       >
         {/* The slider is the strip itself; the chapter flags are buttons inside the same strip. */}

@@ -26,12 +26,15 @@ import { lazy, memo, startTransition, Suspense, useEffect, useLayoutEffect, useR
 import { AtlasView, type AtlasEffects } from "../atlas";
 import { BlueprintView } from "../blueprint";
 import { SceneStoreProvider, useSceneStore, useStore, type SceneStore, type ViewMode } from "../scene";
+import { isScrubbing, onScrubbing } from "./scrub";
 
 const MODES: readonly ViewMode[] = ["atlas", "blueprint"];
 const EASE = "cubic-bezier(0.2, 0, 0, 1)";
 /** The Atlas folded: squashed towards its front edge and sunk a little, as if laid down onto the sheet. */
 const FOLDED = "translateY(24px) scaleY(0.86)";
 const FLAT = "translateY(0px) scaleY(1)";
+/** The longest a switch waits for a view that has just caught up to stop changing before it folds. */
+const STALE_WAIT_MS = 300;
 
 /** Outgoing (0–300 ms) and incoming (from 200 or 300 ms) keyframes per view. */
 function leaving(mode: ViewMode): { frames: Keyframe[]; options: KeyframeAnimationOptions } {
@@ -58,47 +61,79 @@ const View = memo(function View({ mode, light }: { mode: ViewMode; light: boolea
 });
 
 /**
- * The store as one view sees it. While the view is hidden its updates are batched, at most one every
- * HIDDEN_MS, so a prepared view costs a fraction of a shown one during playback; reading the store
- * gives the state as of the last batch, so its renders stay consistent. Shown again, it is brought up
- * to date at once and then follows every change as before. Actions go straight to the one store.
+ * The store as one view sees it. While the view is hidden, reading the store gives the state as of
+ * its last update, so its renders stay consistent, and it is updated:
+ * - during playback, at most once every HIDDEN_MS, so a prepared view costs a fraction of a shown one;
+ * - after a jump while paused (a seek, a chapter, a step, a click on the timeline), once, as soon as
+ *   the browser is idle, so a switch straight after it finds the view current (findings N2);
+ * - while the playhead is dragged, not at all, and once when the drag ends (findings, scrubbing).
+ * Shown again, it is brought up to date at once and then follows every change as before. Actions go
+ * straight to the one store.
  */
 const HIDDEN_MS = 500;
+/** How long after a jump the hidden view may wait for an idle moment before it is updated anyway. */
+const JUMP_IDLE_MS = 400;
 interface GatedStore extends SceneStore {
   setShown(shown: boolean): void;
+  /** Whether the hidden view shows an earlier state than the store's. */
+  stale(): boolean;
 }
 function gatedStore(store: SceneStore): GatedStore {
   const listeners = new Set<() => void>();
   let shown = true;
   let state = store.getState();
   let timer = 0;
+  let cancelIdle: (() => void) | null = null;
+  const cancel = () => {
+    window.clearTimeout(timer);
+    timer = 0;
+    cancelIdle?.();
+    cancelIdle = null;
+  };
   const notify = () => {
     state = store.getState();
     for (const l of [...listeners]) l();
   };
   const flush = () => {
-    timer = 0;
+    cancel();
+    if (shown || state === store.getState()) return;
     notify();
   };
   const onChange = () => {
-    if (shown) notify();
-    else if (!timer) timer = window.setTimeout(flush, HIDDEN_MS);
+    if (shown) return notify();
+    if (isScrubbing()) return cancel();
+    if (store.getState().playing) {
+      if (!timer && !cancelIdle) timer = window.setTimeout(flush, HIDDEN_MS);
+      return;
+    }
+    // Paused: a jump. Catch up once the browser is idle (each further change restarts the wait).
+    cancel();
+    cancelIdle = whenIdle(flush, JUMP_IDLE_MS);
   };
-  // Listens to the one store only while the view has listeners of its own.
+  const onScrub = (dragging: boolean) => {
+    if (!dragging && !shown && state !== store.getState()) {
+      cancel();
+      cancelIdle = whenIdle(flush, JUMP_IDLE_MS);
+    }
+  };
+  // Listens to the one store (and to drags) only while the view has listeners of its own.
   let unsubscribe: (() => void) | null = null;
+  let offScrub: (() => void) | null = null;
   return {
     ...store,
     getState: () => (shown ? store.getState() : state),
     subscribe(listener) {
       listeners.add(listener);
       unsubscribe ??= store.subscribe(onChange);
+      offScrub ??= onScrubbing(onScrub);
       return () => {
         listeners.delete(listener);
         if (!listeners.size && unsubscribe) {
           unsubscribe();
           unsubscribe = null;
-          window.clearTimeout(timer);
-          timer = 0;
+          offScrub?.();
+          offScrub = null;
+          cancel();
         }
       };
     },
@@ -106,11 +141,11 @@ function gatedStore(store: SceneStore): GatedStore {
       if (next === shown) return;
       shown = next;
       if (shown) {
-        window.clearTimeout(timer);
-        timer = 0;
+        cancel();
         if (state !== store.getState()) notify();
       }
     },
+    stale: () => state !== store.getState(),
   };
 }
 
@@ -210,7 +245,10 @@ export function Stage({ light = false }: { light?: boolean }) {
     }
     const incoming = layers.current[view];
     const outgoing = layers.current[settled];
-    // The incoming view is brought up to date before it shows (a no-op once it already is).
+    // The incoming view is brought up to date before it shows (a no-op once it already is). A view
+    // still behind the store (a switch straight after a jump, before the idle update) catches up here,
+    // before the fold, and the fold waits until it has settled and painted (findings N2).
+    const stale = stores[view].stale();
     stores[view].setShown(true);
     if (settled === view || !incoming || !outgoing) {
       // Settled: the layers carry no animation, no promoted layer and no inline style.
@@ -224,12 +262,20 @@ export function Stage({ light = false }: { light?: boolean }) {
     // Shown, nearly transparent: the browser rasterises it now, not in the first frame of the motion.
     incoming.style.opacity = "0.01";
     let waits = 2;
+    // A view that caught up may go on changing for a few frames (its camera framing the jump's
+    // focus): the fold starts after a frame with no change in it, or after STALE_WAIT_MS at most.
+    let changed = false;
+    const watch = stale ? new MutationObserver(() => (changed = true)) : null;
+    watch?.observe(incoming, { subtree: true, attributes: true, childList: true, characterData: true });
+    const until = performance.now() + STALE_WAIT_MS;
     const start = () => {
       if (cancelled) return;
-      if (waits-- > 0) {
+      if (waits-- > 0 || (changed && performance.now() < until)) {
+        changed = false;
         frame = requestAnimationFrame(start);
         return;
       }
+      watch?.disconnect();
       const out = leaving(settled);
       const inn = entering(view);
       outgoing.animate(out.frames, out.options);
@@ -245,6 +291,7 @@ export function Stage({ light = false }: { light?: boolean }) {
     frame = requestAnimationFrame(start);
     return () => {
       cancelled = true;
+      watch?.disconnect();
       cancelAnimationFrame(frame);
     };
   }, [view, settled, reduced, stores]);
