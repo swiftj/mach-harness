@@ -5,42 +5,9 @@
  */
 import { memo, type ReactNode } from "react";
 import { GroundGrid, Prism, RegionPlate, RoutePath, fc, planeStroke, planeTransform, project, round, type Lod, type RegionKind, type Vec3 } from "@mach/ui";
+import { FloorLettering } from "@mach/ui";
 import type { PlantLayout, Rect } from "./layout";
 import { PLATE_Z } from "./layout";
-
-/** Lettering drawn into the plane at elevation z: reads along plan x (or along y when `alongY`). */
-export function PlaneText({ x, y, z = PLATE_Z, size = 9, children, mono, serif, alongY, anchor = "start", tone = "muted", weight }: { x: number; y: number; z?: number; size?: number; children: ReactNode; mono?: boolean; serif?: boolean; alongY?: boolean; anchor?: "start" | "middle" | "end"; tone?: "muted" | "subtle" | "ink" | "fail" | "pass" | "wait" | "human" | "live"; weight?: number }) {
-  const fill = tone === "muted" ? "var(--mach-ink-muted)" : tone === "subtle" ? "var(--mach-ink-subtle)" : tone === "ink" ? "var(--mach-ink)" : fc(tone);
-  return (
-    <g transform={planeTransform(z)} aria-hidden="true">
-      <text
-        x={x}
-        y={y}
-        transform={alongY ? `rotate(90 ${x} ${y})` : undefined}
-        textAnchor={anchor}
-        className="notranslate"
-        style={{ fill, fontSize: size, fontFamily: mono ? "var(--mach-font-mono)" : serif ? "var(--mach-font-serif)" : undefined, fontWeight: weight }}
-      >
-        {children}
-      </text>
-    </g>
-  );
-}
-
-/** A drafted dimension along plan x on the ground: extension lines, slash ticks, a value. */
-export function PlanDimension({ x0, x1, y, z = 0, label, lod }: { x0: number; x1: number; y: number; z?: number; label: string; lod: Lod }) {
-  if (lod === "far") return null;
-  const s = planeStroke;
-  return (
-    <g transform={planeTransform(z)} aria-hidden="true">
-      <path d={`M${x0} ${y - 10}V${y + 4}M${x1} ${y - 10}V${y + 4}M${x0} ${y}H${x1}`} style={{ fill: "none", stroke: "var(--mach-ink-subtle)", strokeWidth: 0.75 * s }} />
-      <path d={`M${x0 - 3} ${y + 3}L${x0 + 3} ${y - 3}M${x1 - 3} ${y + 3}L${x1 + 3} ${y - 3}`} style={{ stroke: "var(--mach-ink-muted)", strokeWidth: 1.1 * s }} />
-      <text x={(x0 + x1) / 2} y={y - 4} textAnchor="middle" className="notranslate" style={{ fill: "var(--mach-ink-subtle)", fontSize: 8.5, fontFamily: "var(--mach-font-mono)" }}>
-        {label}
-      </text>
-    </g>
-  );
-}
 
 function regionBox(r: Rect) {
   return { x: r.x, y: r.y, w: r.w, d: r.d };
@@ -68,7 +35,8 @@ export function Plant({ layout, lod, captions, active, dimRoutes }: PlantProps) 
 /** 1. The drafting sheet the plant is drawn on. */
 const Ground = memo(function Ground({ layout: L, lod }: { layout: PlantLayout; lod: Lod }) {
   const e = L.extent;
-  return <GroundGrid x={e.x - 120} y={e.y - 120} w={e.w + 240} d={e.d + 240} lod={lod} fade={0.85} />;
+  // The grid runs 96 pu past the plant and fades out; the stage beyond is plain ground (spec b.2).
+  return <GroundGrid x={e.x} y={e.y} w={e.w} d={e.d} lod={lod} fade={0.7} />;
 });
 
 /** 3. Plates, bridges, the dock and the conduit: re-drawn only when a caption or an active rule changes. */
@@ -81,12 +49,8 @@ const Regions = memo(function Regions({ layout: L, lod, captions, active }: Omit
       <Prism box={{ x: L.dock.x, y: L.dock.y, w: L.dock.w, d: L.dock.d, z: 0, h: PLATE_Z - 2 }} hatch="both" top="plate-lit" />
       {lod !== "far" ? (
         <>
-          <PlaneText x={L.dock.x + 6} y={L.dock.y + 12} z={PLATE_Z - 2} size={8} mono tone="subtle">
-            DOCK · PRODUCT STUDIO
-          </PlaneText>
-          <PlaneText x={L.dock.x + 6} y={L.dock.y + L.dock.d - 6} z={PLATE_Z - 2} size={8} mono tone="subtle">
-            approved waves only
-          </PlaneText>
+          <FloorLettering at={{ x: L.dock.x + 6, y: L.dock.y + 12, z: PLATE_Z - 2 }} text="DOCK · PRODUCT STUDIO" size={8} font="mono" tone="subtle" weight={500} decorative />
+          <FloorLettering at={{ x: L.dock.x + 6, y: L.dock.y + L.dock.d - 6, z: PLATE_Z - 2 }} text="approved waves only" size={8} font="mono" tone="subtle" weight={500} decorative />
         </>
       ) : null}
       {/* Regions, back to front. */}
@@ -143,9 +107,7 @@ const Infrastructure = memo(function Infrastructure({ layout: L, lod, dimRoutes 
       </g>
       {/* Ruler on the main line: one tick every 24 pu, a numbered tick every 96. */}
       {lod !== "far" ? <Ruler y={I.trunkY + 12} x0={I.trunkTo} x1={I.trunkFrom} /> : null}
-      <PlaneText x={I.trunkTo + 230} y={I.trunkY - 12} z={PLATE_Z} size={lod === "far" ? 14 : 10} mono tone="pass" weight={600}>
-        main · integration branch
-      </PlaneText>
+      <FloorLettering at={{ x: I.trunkTo + 230, y: I.trunkY - 12, z: PLATE_Z }} text="main · integration branch" size={lod === "far" ? 14 : 10} font="mono" tone="pass" weight={600} decorative />
     </g>
   );
 });

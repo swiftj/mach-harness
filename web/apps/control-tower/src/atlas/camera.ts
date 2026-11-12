@@ -29,6 +29,10 @@ export interface CameraStore {
   viewport: { width: number; height: number };
   /** The plant's projected bounds, for clamping. */
   bounds: ScreenRect;
+  /** The camera is at the fit framing (no pan, zoom or focus since): a resize re-fits. */
+  fitted: boolean;
+  setFitted(on: boolean): void;
+  setViewport(size: { width: number; height: number }): void;
 }
 
 const Z = factoryTokens.zoom;
@@ -44,6 +48,13 @@ export function createCamera(bounds: ScreenRect): CameraStore {
   const store: CameraStore = {
     viewport: { width: 1, height: 1 },
     bounds,
+    fitted: true,
+    setFitted(on) {
+      store.fitted = on;
+    },
+    setViewport(size) {
+      store.viewport = size;
+    },
     get: () => cam,
     set(next, opts) {
       if (raf !== null && opts?.user) {

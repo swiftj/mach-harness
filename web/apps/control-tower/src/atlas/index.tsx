@@ -8,27 +8,30 @@
  *   ├ camera wrapper (one CSS transform)
  *   │ ├ L1 <svg> scene: ground, plates, tracks, bays, works, air
  *   │ └ L3 <svg> overlay: brackets, focus ring, labels, callouts (pointer-events: none)
- *   ├ effects slot: aligned to the same camera, empty in this pass (see `AtlasEffects`)
+ *   ├ L2 effects slot (optional, src/effects): a light layer between scene and overlay, given the camera
+ *   ├ overlay wrapper (the same transform)
  *   └ L4 DOM: zoom controls, dev frame meter
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { FactoryScene, factoryTokens, lodForZoom, screenBounds, type Lod, type RegionKind } from "@mach/ui";
-import { useScene, useSceneActions, useSceneStore, useStore } from "../scene";
+import { cameraFollows, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
 import { refKind, sceneAt, type EntityRef, type Scene } from "../sim";
 import { AtlasContext, useHighlight, type AtlasContextValue } from "./context";
 import { createCamera, frame, visibleRect, zoomAt, type Camera, type CameraStore, type ScreenRect } from "./camera";
-import { plantLayout, type PlantLayout } from "./layout";
+import { PLATE_Z, plantLayout, type PlantLayout } from "./layout";
 import { Plant } from "./Plant";
 import { Bay, FreeBay } from "./Bay";
 import { ArchiveWorks, AwayAgents, ChamberWorks, GatehouseWorks, IntakeWorks, IntegrationWorks } from "./Stations";
 import { Dependencies, LiveConduits, Transit } from "./Air";
 import { Overlay } from "./Overlay";
 import { Meter } from "./Meter";
-import { activeBoxes, locateScreen } from "./locate";
+import { locateScreen } from "./locate";
+import { activeMembers, followDecision, withGrace } from "./follow";
+import { Sheet } from "./Sheet";
 import "./atlas.css";
 
 /** A later light layer (WebGL) mounts here: it gets the camera store and must stay decoration only. */
-export type AtlasEffects = ComponentType<{ camera: CameraStore; layout: PlantLayout }>;
+export type AtlasEffects = ComponentType<{ camera: CameraStore; layout: PlantLayout; onActive?: (on: boolean) => void }>;
 
 export interface AtlasViewProps {
   /** Optional decoration layer drawn between the scene and the overlay, aligned to the same camera. */
@@ -108,22 +111,38 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [lod, setLod] = useState<Lod>("mid");
   const [visibleBays, setVisibleBays] = useState<string>("*");
   const [focused, setFocused] = useState<EntityRef | null>(null);
   const [dragging, setDragging] = useState(false);
-  const followSuspended = useRef(false);
+  // Follow is the store's one flag (cameraFollows); the Atlas keeps only how it follows: the sticky
+  // primary, the zoom the person chose, which places were active lately, and the framing it asked for.
+  const followPrimary = useRef<string | null>(null);
+  const pendingFollow = useRef<Camera | null>(null);
+  const followBase = useRef<number | null>(null);
+  const followSeen = useRef(new Map<string, { t: number; rect: ScreenRect }>());
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [lightLayer, setLightLayer] = useState(false);
+  const [atFit, setAtFit] = useState(true);
 
   // The camera writes its transform straight to the wrapper: panning never re-renders React.
   useEffect(() => {
     let lodNow: Lod = "mid";
     let raf = 0;
+    let latest = camera.get();
+    // One React update per frame at most, always with the latest camera (never starved by an easing).
     const apply = (cam: Camera) => {
-      const w = wrapperRef.current;
-      if (w) w.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.zoom})`;
-      cancelAnimationFrame(raf);
+      const transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.zoom})`;
+      if (wrapperRef.current) wrapperRef.current.style.transform = transform;
+      if (overlayRef.current) overlayRef.current.style.transform = transform;
+      latest = cam;
+      if (raf) return;
       raf = requestAnimationFrame(() => {
+        raf = 0;
+        const cam = latest;
+        setAtFit(camera.fitted);
         lodNow = lodForZoom(cam.zoom, lodNow);
         setLod(lodNow);
         setZoom(Math.round(cam.zoom * 100) / 100);
@@ -140,7 +159,12 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
       });
     };
     const off = camera.subscribe((cam, user) => {
-      if (user) followSuspended.current = true;
+      if (user) {
+        camera.setFitted(false);
+        // A person panned or zoomed: camera follow goes off for every view (store.follow).
+        if (store.getState().follow) store.setFollow(false);
+        followBase.current = null;
+      }
       apply(cam);
     });
     apply(camera.get());
@@ -148,48 +172,91 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
       off();
       cancelAnimationFrame(raf);
     };
-  }, [camera, layout]);
+  }, [camera, layout, store]);
 
+  // Fit (spec b.2): frame the plates, not the ground, in this container (the scene area the shell
+  // leaves): zoom = min((w - 64) / bounds w, (h - 48) / bounds h), capped at 1.4; centred across,
+  // with the vertical margin split 40% above and 60% below so the plant sits slightly high.
   const fitAll = useCallback(
     (ms: number) => {
-      const r = screenBounds([{ ...layout.extent, x: layout.extent.x + 30, w: layout.extent.w - 60, z: 0, h: 40 }]);
-      camera.animateTo(frame(r, camera.viewport, 1.6), ms);
+      const R = layout.regions;
+      const r = screenBounds([R.intake, R.floor, R.review, R.human, R.integration, R.archive, layout.dock].map((b) => ({ ...b, z: 0, h: b === R.intake || b === R.floor || b === R.review ? 60 : PLATE_Z })));
+      const { width: vw, height: vh } = camera.viewport;
+      const zoom = Math.min(1.4, (vw - 64) / r.width, (vh - 48) / r.height);
+      const spare = vh - r.height * zoom;
+      camera.animateTo({ zoom, x: vw / 2 - (r.x + r.width / 2) * zoom, y: spare * 0.4 - r.y * zoom }, ms);
+      camera.setFitted(true);
     },
     [camera, layout],
   );
 
-  // Size: track the viewport; the first measurement frames the whole plant.
+  // Size: track the container. The first measurement opens on the store's selection if there is one
+  // (the shell switches modes and expects the view on it), else on the fit. Later resizes (inspector,
+  // timeline, Theater Mode) re-fit if the camera was at fit, else keep the same point at the centre.
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
     let first = true;
     const ro = new ResizeObserver(() => {
-      camera.viewport = { width: el.clientWidth, height: el.clientHeight };
+      const before = camera.viewport;
+      const next = { width: el.clientWidth, height: el.clientHeight };
+      if (next.width === before.width && next.height === before.height) return;
+      camera.setViewport(next);
+      setViewportSize(next);
       if (first) {
         first = false;
         fitAll(0);
+        const sel = store.getState().selection;
+        if (sel) store.focusOn(sel, "api");
+        return;
       }
+      if (camera.fitted) {
+        fitAll(0);
+        return;
+      }
+      const c = camera.get();
+      const cx = (before.width / 2 - c.x) / c.zoom;
+      const cy = (before.height / 2 - c.y) / c.zoom;
+      camera.set({ zoom: c.zoom, x: next.width / 2 - cx * c.zoom, y: next.height / 2 - cy * c.zoom });
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [camera, fitAll]);
+  }, [camera, fitAll, store]);
 
-  // Focus requests from the store: frame the target (650 ms standard; reduced motion cuts).
+  // Focus requests from the store: frame the target (650 ms standard; reduced motion cuts). Requests
+  // with reason "follow" come from the follow camera (this view's or the shell's) and leave follow on.
   useEffect(() => {
     let lastNonce = store.getState().focus?.nonce ?? -1;
-    let wasFollowing = store.getState().following;
     let lastFollowCheck = 0;
+    let wasFollowing = cameraFollows(store.getState());
+    const followNow = (s: ReturnType<typeof store.getState>) => {
+      followBase.current ??= camera.get().zoom;
+      const members = withGrace(activeMembers(layout, sceneAt(s.fixture, s.playhead), s.playhead), s.playhead, followSeen.current);
+      const d = followDecision(camera.get(), camera.viewport, members, followPrimary.current, followBase.current);
+      followPrimary.current = d.primary;
+      return { d, members };
+    };
     return store.subscribe(() => {
       const s = store.getState();
       const ms = s.reducedMotion ? 0 : factoryTokens.motion.cameraFocus;
-      if (s.following && !wasFollowing) followSuspended.current = false;
-      wasFollowing = s.following;
+      const follows = cameraFollows(s);
+      if (follows && !wasFollowing) {
+        // Follow came back on (followLive, setFollow(true)): follow from the zoom the person is at.
+        followBase.current = camera.get().zoom;
+        lastFollowCheck = 0;
+      }
+      wasFollowing = follows;
       if (s.focus && s.focus.nonce !== lastNonce) {
         lastNonce = s.focus.nonce;
-        if (s.focus.reason === "follow") followSuspended.current = false;
-        if (s.focus.target === "overview") {
+        if (s.focus.reason === "follow") {
+          // Our own follow framing, or the shell's "Follow": apply the follow rule's framing.
+          const target = pendingFollow.current ?? followNow(s).d.target;
+          pendingFollow.current = null;
+          if (target) camera.animateTo(target, s.reducedMotion ? 0 : 900);
+        } else if (s.focus.target === "overview") {
           fitAll(ms);
         } else {
+          camera.setFitted(false);
           const scene = sceneAt(s.fixture, s.playhead);
           const kind = refKind(s.focus.target);
           const pad = kind === "cell" || kind === "slice" ? 40 * 0.9 : 8;
@@ -199,31 +266,41 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
             camera.animateTo(frame(r, camera.viewport, 2.2, Math.min(minZoom, camera.get().zoom > minZoom ? camera.get().zoom : minZoom)), ms);
           }
         }
-        if (s.focus.reason !== "follow") followSuspended.current = s.focus.reason === "select" ? true : followSuspended.current;
       }
-      // Follow mode: keep the active set inside the inner 70% of the viewport, re-framing at most every 2 s (4 s reduced).
-      if (s.playing && s.following && !followSuspended.current) {
+      // The follow camera (follow.ts has the rule): only while cameraFollows and playing, at most every 4 s (6 s reduced).
+      if (follows && s.playing) {
         const now = performance.now();
-        if (now - lastFollowCheck < (s.reducedMotion ? 4000 : 2000)) return;
+        if (now - lastFollowCheck < (s.reducedMotion ? 6000 : 4000)) return;
         lastFollowCheck = now;
-        const boxes = activeBoxes(layout, sceneAt(s.fixture, s.playhead), s.playhead);
-        if (!boxes.length) return;
-        const r = screenBounds(boxes, 20);
-        const cam = camera.get();
-        const vw = camera.viewport.width;
-        const vh = camera.viewport.height;
-        const sx = r.x * cam.zoom + cam.x;
-        const sy = r.y * cam.zoom + cam.y;
-        const inside = sx >= vw * 0.15 && sy >= vh * 0.15 && sx + r.width * cam.zoom <= vw * 0.85 && sy + r.height * cam.zoom <= vh * 0.85;
-        if (inside) return;
-        const fit = frame(r, { width: vw * 0.7 + 128, height: vh * 0.7 + 128 }, cam.zoom, Z.min);
-        const zoom = Math.min(cam.zoom, fit.zoom);
-        const cx = r.x + r.width / 2;
-        const cy = r.y + r.height / 2;
-        camera.animateTo({ zoom, x: vw / 2 - cx * zoom, y: vh / 2 - cy * zoom }, s.reducedMotion ? 0 : 900);
+        const { d } = followNow(s);
+        if (!d.target) return;
+        pendingFollow.current = d.target;
+        const ref: EntityRef | "overview" = d.primary?.startsWith("cell:") ? (d.primary as EntityRef) : d.primary === "review" ? "station:review" : d.primary === "human" ? "station:human-approval" : d.primary === "integration" ? "station:merge" : "overview";
+        store.focusOn(ref, "follow");
       }
     });
   }, [store, camera, layout, fitAll]);
+
+  // Development and capture only: read and drive the camera (the follow check in the capture script).
+  useEffect(() => {
+    const env = (import.meta as { env?: { DEV?: boolean; MODE?: string } }).env;
+    if (!env || !(env.DEV || env.MODE === "capture")) return;
+    const hook = {
+      get: () => camera.get(),
+      set: (c: Camera) => camera.set(c),
+      zoomTo: (zoom: number) => camera.set(zoomAt(camera.get(), zoom / camera.get().zoom, camera.viewport.width / 2, camera.viewport.height / 2)),
+      fit: () => fitAll(0),
+      follow: () => {
+        followBase.current = camera.get().zoom;
+        store.setFollow(true);
+      },
+      lod: () => viewportRef.current?.dataset.lod,
+    };
+    Object.defineProperty(window, "__atlasCamera", { value: hook, configurable: true });
+    return () => {
+      delete (window as { __atlasCamera?: unknown }).__atlasCamera;
+    };
+  }, [camera, fitAll, store]);
 
   // Wheel: zoom to the cursor (spec f.1). Native, so it can prevent the page from scrolling.
   useEffect(() => {
@@ -294,15 +371,49 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
     camera.set(zoomAt(c, factor, camera.viewport.width / 2, camera.viewport.height / 2), { user: true });
   };
 
+  // Roving focus (spec f.11): the view is one tab stop; inside it, arrows move between entities in
+  // reading order (region by region; within a cell: cell, machines, agents, artifacts). Shift+arrows pan.
+  const lastEntity = useRef<EntityRef | null>(null);
+  const entities = () => [...(viewportRef.current?.querySelectorAll<SVGGElement>('[data-ref][role="button"]') ?? [])];
+  const moveFocus = (step: number) => {
+    const list = entities();
+    if (!list.length) return;
+    const active = document.activeElement as Element | null;
+    let i = list.findIndex((el) => el === active);
+    if (i < 0) {
+      const remembered = lastEntity.current ? list.findIndex((el) => el.getAttribute("data-ref") === lastEntity.current) : -1;
+      i = remembered >= 0 ? remembered - step : step > 0 ? -1 : list.length;
+    }
+    const next = list[Math.max(0, Math.min(list.length - 1, i + step))];
+    if (!next) return;
+    next.focus({ preventScroll: true });
+    lastEntity.current = next.getAttribute("data-ref") as EntityRef;
+    // Keep the focused entity in view: pan just enough, at the current zoom.
+    const vp = viewportRef.current?.getBoundingClientRect();
+    const r = next.getBoundingClientRect();
+    if (vp) {
+      const m = 48;
+      const dx = r.left < vp.left + m ? vp.left + m - r.left : r.right > vp.right - m ? vp.right - m - r.right : 0;
+      const dy = r.top < vp.top + m ? vp.top + m - r.top : r.bottom > vp.bottom - m ? vp.bottom - m - r.bottom : 0;
+      if (dx || dy) {
+        const c = camera.get();
+        if (store.getState().follow) store.setFollow(false);
+        camera.setFitted(false);
+        camera.animateTo({ ...c, x: c.x + dx, y: c.y + dy }, store.getState().reducedMotion ? 0 : 240);
+      }
+    }
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const onCanvas = e.target === e.currentTarget;
+    if (e.defaultPrevented || e.altKey || e.metaKey || e.ctrlKey) return;
     const pan = 80;
     const arrows: Record<string, [number, number]> = { ArrowLeft: [pan, 0], ArrowRight: [-pan, 0], ArrowUp: [0, pan], ArrowDown: [0, -pan] };
     const arrow = arrows[e.key];
-    if (arrow && (onCanvas || e.shiftKey)) {
+    if (arrow && e.shiftKey) {
       const c = camera.get();
       camera.set({ ...c, x: c.x + arrow[0], y: c.y + arrow[1] }, { user: true });
-    } else if (e.key === "+" || e.key === "=") zoomBy(Z.step);
+    } else if (arrow) moveFocus(e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1);
+    else if (e.key === "+" || e.key === "=") zoomBy(Z.step);
     else if (e.key === "-" || e.key === "_") zoomBy(1 / Z.step);
     else if (e.key === "0") fitAll(store.getState().reducedMotion ? 0 : factoryTokens.motion.cameraFocus);
     else if ((e.key === "f" || e.key === "F") && !e.shiftKey && store.getState().selection) focusOn(store.getState().selection as EntityRef, "select");
@@ -310,12 +421,16 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
       const s = store.getState();
       if (s.hovered) hover(null);
       else if (s.selection) select(null, { focus: false });
+      else if (e.target !== e.currentTarget) viewportRef.current?.focus();
       else return;
     } else return;
+    // Handled here: the shell skips events whose default is prevented.
     e.preventDefault();
   };
 
-  const ctx = useMemo<AtlasContextValue>(() => ({ lod, layout }), [lod, layout]);
+
+  const theater = useSceneStore((s) => s.theater);
+  const ctx = useMemo<AtlasContextValue>(() => ({ lod, layout, lightLayer: Boolean(Effects) && lightLayer }), [lod, layout, lightLayer, Effects]);
   const showMeter = meter ?? (import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).has("meter"));
   const visible = useMemo(() => new Set(visibleBays === "*" ? layout.bays.map((b) => b.ticketId) : visibleBays.split(",")), [visibleBays, layout]);
 
@@ -330,7 +445,7 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
         data-lod={lod}
         data-dragging={dragging}
         role="application"
-        aria-label="Factory Atlas, a simulation: the plant drawn in axonometric. Arrow keys pan, plus and minus zoom, 0 fits, Tab moves through the plant region by region."
+        aria-label="Factory Atlas, a simulation: the plant drawn in axonometric. Arrow keys move between its parts, region by region; Enter selects; Shift with arrows pans; plus and minus zoom; 0 fits."
         aria-roledescription="plant drawing"
         tabIndex={0}
         onPointerDown={onPointerDown}
@@ -369,13 +484,18 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
             <Transit />
             <Dependencies />
           </FactoryScene>
+        </div>
+        {/* L2: the optional light layer, between the scene and the overlay; it takes the camera itself. */}
+        <div className="atlas-effects" aria-hidden="true">
+          {Effects ? <Effects camera={camera} layout={layout} onActive={setLightLayer} /> : null}
+        </div>
+        <div ref={overlayRef} className="atlas-camera atlas-camera-overlay">
           <svg className="atlas-overlay" aria-hidden="true" width={bounds.width} height={bounds.height} viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`} style={{ left: bounds.x, top: bounds.y }}>
-            <Overlay zoom={zoom} lod={lod} focused={focused} />
+            <Overlay zoom={zoom} lod={lod} focused={focused} theater={theater} />
           </svg>
         </div>
-        <div className="atlas-effects" aria-hidden="true">
-          {Effects ? <Effects camera={camera} layout={layout} /> : null}
-        </div>
+        <Sheet width={viewportSize.width} height={viewportSize.height} lod={lod} fixture={fixture} titled={atFit && !theater} />
+        {theater ? null : (
         <div className="atlas-controls" role="toolbar" aria-label="Atlas camera">
           <button type="button" aria-label="Zoom out" onClick={(e) => (e.stopPropagation(), zoomBy(1 / Z.step))} onPointerDown={(e) => e.stopPropagation()}>
             −
@@ -390,6 +510,7 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
             Fit
           </button>
         </div>
+        )}
         {showMeter ? <Meter /> : null}
       </div>
     </AtlasContext.Provider>

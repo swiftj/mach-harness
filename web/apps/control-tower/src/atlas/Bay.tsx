@@ -14,15 +14,19 @@ import {
   Prism,
   RetryLoop,
   StateMark,
+  StationMachine,
   ToolTick,
   agentRoles,
   depthOf,
+  dimmedOpacity,
+  dimmedTextOpacity,
   fc,
   liftedArc,
   modelTiers,
   planeStroke,
   planeTransform,
   pointAlong,
+  prismFaces,
   project,
   reviewerSeats,
   round,
@@ -32,29 +36,21 @@ import {
   type CellStage as UiStage,
   type FactoryState,
   type Lod,
+  type PlanBox,
   type Vec3,
 } from "@mach/ui";
-import { BELT_PHASES, ref, sceneAt, type CellState, type ExecutionState, type GateState } from "../sim";
+import { FloorLettering, PlanDimension, TaskBoard as TaskBoardMark, type TaskCell } from "@mach/ui";
+import { BELT_PHASES, ref, sceneAt, type CellState, type EntityRef, type ExecutionState, type GateState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
-import { agentProgress, animating, anim, callsOf, gateView, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PlacedAgent } from "./derive";
-import { FLOOR_Z, PLATE_Z, type BaySlot } from "./layout";
-import { Machine } from "./Machine";
-import { PlaneText, PlanDimension } from "./Plant";
+import { animating, anim, callsOf, lampLevel, gateView, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PlacedAgent } from "./derive";
+import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot } from "./layout";
 
 const CELL_W = 216;
 const CELL_D = 148;
 
 function uiStage(stage: CellState["stage"]): UiStage {
   return stage === "spec-open" ? "interview" : stage;
-}
-
-/** Elapsed against an expected length, for a station's dial while its end is unknown. */
-const EXPECTED_STATION: Record<string, number> = { plan: 140_000, groom: 140_000, build: 900_000, verify: 300_000 };
-
-function stationProgress(cell: CellState, t: number): number {
-  const expected = cell.station ? EXPECTED_STATION[cell.station] : undefined;
-  return expected && cell.stationSince !== null ? Math.max(0, Math.min(0.96, (t - cell.stationSince) / expected)) : 0;
 }
 
 function machineState(cell: CellState, kinds: readonly string[]): { state: FactoryState; round?: number } {
@@ -83,21 +79,37 @@ function ReservedBay({ bay, waiting, known }: { bay: BaySlot; waiting: boolean; 
   const highlight = useHighlight();
   const { x, y } = bay.origin;
   const dim = isDimmed(highlight, ref.slice(bay.sliceId), ref.cell(bay.ticketId));
-  // The bay is built and waiting: slab, walls and rail, with the machines' footprints marked out.
+  const mast = project({ x: x + 10, y: y + 10, z: PLATE_Z + 2 });
+  // Spec b.2: a reserved bay is the cell outline only, dashed, with "Reserved" lettered, at dimmed
+  // opacity, never heavier than a working bay. Its slice's wait is still marked, at the mast corner.
   return (
-    <g aria-hidden="true">
-      <CellPlate origin={bay.origin} ticket={bay.ticketId} stage={waiting ? "waiting-on-dependency" : "eligible"} lod={lod} dimmed={dim}>
-        <g transform={planeTransform(FLOOR_Z)}>
-          {(["intent", "build", "verify"] as const).map((p) => (
-            <rect key={p} x={bay.pads[p].x - 20} y={bay.pads[p].y - 20} width={40} height={40} style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: planeStroke, strokeDasharray: "4 3" }} />
-          ))}
-        </g>
+    <g aria-hidden="true" style={{ opacity: dim ? dimmedOpacity * 0.6 : 1 }}>
+      <g style={{ opacity: dimmedOpacity + 0.17 }}>
+        <BayOutline x={x} y={y} />
+      </g>
+      <g style={{ opacity: dimmedTextOpacity + 0.1 }}>
+        <FloorLettering at={{ x: x + 14, y: y + CELL_D - 12, z: PLATE_Z }} text={bay.ticketId} size={lod === "far" ? 14 : 10} font="mono" tone="subtle" weight={500} decorative />
         {lod !== "far" ? (
-          <PlaneText x={x + 14} y={y + CELL_D - 26} z={FLOOR_Z} size={7.5} mono tone={waiting ? "wait" : "subtle"} weight={600}>
-            {known ? (waiting ? `RESERVED · ${bay.sliceId} WAITS ON A DEPENDENCY` : `RESERVED · ${bay.sliceId}`) : "RESERVED"}
-          </PlaneText>
+          <FloorLettering at={{ x: x + 14, y: y + CELL_D - 28, z: PLATE_Z }} text={known ? (waiting ? `Reserved · ${bay.sliceId} waits on a dependency` : `Reserved · ${bay.sliceId}`) : "Reserved"} size={8.5} font="sans" tone={waiting ? "wait" : "subtle"} weight={600} decorative />
         ) : null}
-      </CellPlate>
+      </g>
+      {known ? (
+        <g transform={`translate(${round(mast.x)} ${round(mast.y)})`}>
+          <StateMark state={waiting ? "waiting" : "idle"} r={lod === "far" ? 6 : 4.5} />
+        </g>
+      ) : null}
+    </g>
+  );
+}
+
+function BayOutline({ x, y }: { x: number; y: number }) {
+  return (
+    <g transform={planeTransform(PLATE_Z)}>
+      <rect x={x} y={y} width={CELL_W} height={CELL_D} style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: planeStroke, strokeDasharray: "6 4" }} />
+      <path
+        d={`M${x} ${y + 12}V${y}H${x + 12}M${x + CELL_W - 12} ${y}H${x + CELL_W}V${y + 12}M${x + CELL_W} ${y + CELL_D - 12}V${y + CELL_D}H${x + CELL_W - 12}M${x + 12} ${y + CELL_D}H${x}V${y + CELL_D - 12}`}
+        style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 1.2 * planeStroke }}
+      />
     </g>
   );
 }
@@ -108,44 +120,32 @@ export function FreeBay({ slot, maxParallel }: { slot: { x: number; y: number; i
   const { x, y } = slot;
   return (
     <g aria-hidden="true">
-      <g transform={planeTransform(PLATE_Z)}>
-        <rect x={x} y={y} width={CELL_W} height={CELL_D} style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: planeStroke, strokeDasharray: "6 4" }} />
-        <path
-          d={`M${x} ${y + 12}V${y}H${x + 12}M${x + CELL_W - 12} ${y}H${x + CELL_W}V${y + 12}M${x + CELL_W} ${y + CELL_D - 12}V${y + CELL_D}H${x + CELL_W - 12}M${x + 12} ${y + CELL_D}H${x}V${y + CELL_D - 12}`}
-          style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 1.2 * planeStroke }}
-        />
+      <g style={{ opacity: dimmedOpacity + 0.17 }}>
+        <BayOutline x={x} y={y} />
       </g>
       {lod !== "far" ? (
-        <>
-          <PlaneText x={x + 14} y={y + 26} size={9} mono tone="subtle" weight={600}>
-            {`BAY ${slot.index + 1} · FREE`}
-          </PlaneText>
-          {maxParallel !== null ? (
-            <PlaneText x={x + 14} y={y + 40} size={7.5} mono tone="subtle">
-              {`AT MOST ${maxParallel} CELLS AT ONCE (max_parallel)`}
-            </PlaneText>
-          ) : null}
-          <PlanDimension x0={x} x1={x + CELL_W} y={y + CELL_D - 16} z={PLATE_Z} label="216 · one worktree per ticket" lod={lod} />
-        </>
+        <g style={{ opacity: dimmedTextOpacity + 0.1 }}>
+          <FloorLettering at={{ x: x + 14, y: y + 26, z: PLATE_Z }} text={`Bay ${slot.index + 1} · free`} size={9} font="sans" tone="subtle" weight={600} decorative />
+          {maxParallel !== null ? <FloorLettering at={{ x: x + 14, y: y + 40, z: PLATE_Z }} text={`At most ${maxParallel} cells at once (max_parallel)`} size={8} font="sans" tone="subtle" weight={500} decorative /> : null}
+          <PlanDimension from={{ x, y: y + CELL_D, z: PLATE_Z }} to={{ x: x + CELL_W, y: y + CELL_D, z: PLATE_Z }} offset={14} label="216 pu · one worktree per ticket" />
+        </g>
       ) : null}
     </g>
   );
 }
 
 function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visible: boolean }) {
-  const { lod, layout: L } = useAtlas();
+  const { lod, layout: L, lightLayer } = useAtlas();
   const highlight = useHighlight();
   const ticket = cell.ticketId;
-  // Re-render with the playhead only while one of this cell's animations runs; otherwise only when
-  // a quantised progress step (an agent's arc, the station dial) changes.
+  // Re-render with the playhead only while one of this cell's animations runs.
   const t = usePlayheadKeyed((s) => {
     const now = s.playhead;
     if (animating(s.fixture, now, (e) => e.ticket_id === ticket)) return now;
     const c = sceneAt(s.fixture, now).cells[ticket];
     if (!c) return "none";
-    let k = String(Math.floor(stationProgress(c, now) * 24));
-    for (const id of c.activeAgentIds) k += `,${Math.floor(agentProgress(c.agents[id]!, now) * 24)}`;
-    return k;
+    // Settled: nothing in the cell's picture depends on the playhead until its next event.
+    return `${c.activeAgentIds.length}`;
   });
   const reduced = useSceneStore((s) => s.reducedMotion);
   const exec = useScene((s) => {
@@ -156,14 +156,15 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   const { x, y } = bay.origin;
   const cellRef = ref.cell(cell.ticketId);
   const dimCell = isDimmed(highlight, cellRef);
-  const working = cell.station !== null && ["groom", "plan", "build", "verify", "audit"].includes(cell.station) && cell.activeAgentIds.length > 0;
-  const stationP = Math.floor(stationProgress(cell, t) * 24) / 24;
+  const lamp = lightLayer ? 0 : q(lampLevel(cell, t, reduced));
+  // No dial for open work: the machine's active state says "at work"; how far along is not known.
+  const stationP = 0;
   const completion = cell.merged ? q(anim("cellComplete", t - cell.merged.at, reduced)) : 0;
   const agents = placeAgents(null, L, cell, t, reduced);
   const inBay = agents.filter((a) => a.at.z === FLOOR_Z).sort((a, b) => depthOf(a.at) - depthOf(b.at));
 
   if (!visible) {
-    return <CellPlate origin={bay.origin} ticket={cell.ticketId} stage={uiStage(cell.stage)} lit={working} completion={completion} lod={lod} dimmed={dimCell} />;
+    return <CellPlate origin={bay.origin} ticket={cell.ticketId} stage={uiStage(cell.stage)} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} />;
   }
 
   const intent = machineState(cell, ["groom", "plan"]);
@@ -174,7 +175,6 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
 
   // Children in painter's order: things at the back (shelf, panel) first, then machines, agents.
   const kids: { depth: number; node: ReactNode }[] = [];
-  kids.push({ depth: -1e6, node: <CellHit key="hit" bay={bay} cell={cell} /> });
   kids.push({ depth: depthOf({ x: x + 16, y: y + 26 }), node: <Console key="console" bay={bay} cell={cell} exec={exec} t={t} reduced={reduced} lod={lod} /> });
   kids.push({ depth: depthOf({ x, y: y + 18 }), node: <Shelf key="shelf" bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} highlight={highlight} /> });
   kids.push({ depth: depthOf({ x: x + 62, y: y + 82 }), node: <TaskBoard key="tasks" bay={bay} cell={cell} lod={lod} /> });
@@ -184,9 +184,7 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
     return {
       depth: depthOf(at),
       node: (
-        <Hit key={key} entity={sref} label={`${kind === "plan" ? "Plan" : kind === "build" ? "Build" : "Verify"} station, ${cell.ticketId}: ${st.state}${st.round ? `, round ${st.round} of 3` : ""}`}>
-          <Machine kind={kind} state={st.state} progress={q(p)} round={st.round} at={at} lod={lod} dimmed={!dimCell && isDimmed(highlight, cellRef, sref)} />
-        </Hit>
+        <StationMachine key={key} nameplate showLabel={false} label={kind === "plan" ? "Plan" : kind === "build" ? "Build" : "Verify"} kind={kind} state={st.state} progress={q(p)} round={st.round} at={at} lod={lod} dimmed={!dimCell && isDimmed(highlight, cellRef, sref)} />
       ),
     };
   };
@@ -195,34 +193,88 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   kids.push(machine("m-verify", "verify", bay.pads.verify, verify, cell.station === "verify" ? verifyP : 0, "verify"));
   kids.push({ depth: depthOf({ x, y: y + 118 }), node: <Ticker key="ticker" bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} /> });
   kids.push({ depth: depthOf({ x, y: y + 128 }), node: <Branch key="branch" bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} /> });
-  for (const a of inBay) kids.push({ depth: depthOf(a.at) + 0.5, node: <AgentFigure key={a.agent.id} placed={a} lod={lod} dimmed={!dimCell && isDimmed(highlight, cellRef, ref.agent(a.agent.id))} /> });
+  for (const a of inBay) kids.push({ depth: depthOf(a.at) + 0.5, node: <AgentFigure key={a.agent.id} placed={a} lod={lod} dimmed={!dimCell && isDimmed(highlight, cellRef, ref.agent(a.agent.id))} proxied /> });
   kids.sort((a, b) => a.depth - b.depth);
 
   return (
     <g>
-      <CellPlate origin={bay.origin} ticket={cell.ticketId} slice={cell.sliceId} stage={uiStage(cell.stage)} lit={working} completion={completion} progress={q(stationP)} lod={lod} dimmed={dimCell} rail>
+      <CellPlate origin={bay.origin} ticket={cell.ticketId} slice={cell.sliceId} stage={uiStage(cell.stage)} lampIntensity={lamp} completion={completion} progress={q(stationP)} lod={lod} dimmed={dimCell} rail>
         {kids.map((k) => k.node)}
       </CellPlate>
-      <VerificationGate bay={bay} cell={cell} gate={vgate} t={t} reduced={reduced} lod={lod} dimmed={dimCell} />
+      <VerificationGate bay={bay} gate={vgate} t={t} reduced={reduced} lod={lod} dimmed={dimCell} />
       <VerifyLoop bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} dimmed={dimCell} />
+      <BayHits items={bayHits(bay, cell, inBay, vgate, lod, t, reduced, { intent, build, verify })} />
     </g>
   );
 }
 
-/** The whole floor of the bay is the cell's hit target (drawn first, under everything inside). */
-function CellHit({ bay, cell }: { bay: BaySlot; cell: CellState }) {
+interface HitItem {
+  entity: EntityRef;
+  label: string;
+  box: PlanBox;
+}
+
+/**
+ * The bay's hit targets, drawn after its picture as transparent proxies, in the spec's reading
+ * order (f.11): the cell, its machines in belt order, the agents, the artifacts, then the task
+ * board, the results rack, the verdict gate and a findings card in flight. Drawing them last also
+ * puts them on top for pointing, so the picture itself can stay in painter's order.
+ */
+function bayHits(bay: BaySlot, cell: CellState, agents: PlacedAgent[], gate: GateState | null, lod: Lod, t: number, reduced: boolean, st: Record<"intent" | "build" | "verify", { state: FactoryState; round?: number }>): HitItem[] {
   const { x, y } = bay.origin;
-  const pts = [
-    { x, y, z: FLOOR_Z },
-    { x: x + CELL_W, y, z: FLOOR_Z },
-    { x: x + CELL_W, y: y + CELL_D, z: FLOOR_Z },
-    { x, y: y + CELL_D, z: FLOOR_Z },
-  ].map(project);
+  const T = cell.ticketId;
+  const items: HitItem[] = [{ entity: ref.cell(T), label: `Cell ${T}, ${cell.title}: ${cell.stage}, round ${cell.round} of 3`, box: { x, y, w: CELL_W, d: CELL_D, z: FLOOR_Z, h: 0 } }];
+  const machine = (pad: "intent" | "build" | "verify", station: "plan" | "build" | "verify", name: string, h: number) => {
+    const s = st[pad];
+    items.push({ entity: ref.station(station, T), label: `${name} station, ${T}: ${s.state}${s.round ? `, round ${s.round} of 3` : ""}`, box: boxAt(bay.pads[pad], 40, 40, h) });
+  };
+  machine("intent", "plan", "Plan", 12);
+  machine("build", "build", "Build", 22);
+  machine("verify", "verify", "Verify", 18);
+  for (const a of [...agents].sort((m, n) => m.at.x - n.at.x)) {
+    items.push({ entity: ref.agent(a.agent.id), label: `${agentName(a)}${a.agent.role === "reviewer" ? " reviewer" : ""}, ${modelTiers[uiTier(a.agent.model)].label}, ${T}: ${a.agent.status === "running" ? "working" : a.agent.status}`, box: boxAt(a.at, 18, 18, modelTiers[uiTier(a.agent.model)].height + 8) });
+  }
+  if (lod !== "far") {
+    for (const { artifact: a, at } of shelfSlots(bay, cell)) {
+      items.push({ entity: ref.artifact(a.id), label: `Artifact ${a.label} (${a.path}), written ${a.writer.agentId ? "by an agent" : "by a script"}`, box: { x: at.x - 7, y: at.y - 1.5, w: 14, d: 3, z: FLOOR_Z, h: 18 } });
+    }
+    if (cell.tasks.length) {
+      const green = cell.tasks.filter((k) => k.status === "green" || k.status === "done").length;
+      const red = cell.tasks.filter((k) => k.status === "red").length;
+      items.push({ entity: `gate:${T}/red-before-green`, label: `Red before green, ${T}: ${cell.tasks.length} tasks, ${red} seen failing first, ${green} passing`, box: { x: x + 60, y: y + 80, w: 38, d: Math.ceil(cell.tasks.length / 5) * 6.4 + 2, z: FLOOR_Z, h: 1 } });
+    }
+  }
+  // The verdict gate and its results rack are one entity: the gate carries the checks in its name.
+  const v = gateView(gate, t, reduced);
+  const ver = cell.verifications[cell.verifications.length - 1];
+  const checks = ver ? `, ${ver.checks.filter((c) => c.result === "pass").length} of ${ver.checks.length} checks passed` : "";
+  items.push({ entity: `gate:${gate ? gate.id : `${T}/verification#1`}`, label: `Verification verdict gate, ${T}: ${v.position}${gate ? `, round ${gate.round}` : ""}${checks}`, box: boxAt(bay.gate, 8, 46, 36) });
+  return items;
+}
+
+function BayHits({ items }: { items: HitItem[] }) {
   return (
-    <Hit entity={ref.cell(cell.ticketId)} label={`Cell ${cell.ticketId}, ${cell.title}: ${cell.stage}, round ${cell.round} of 3`}>
-      <polygon points={toPoints(pts)} style={{ fill: "transparent" }} />
-    </Hit>
+    <g>
+      {items.map((it) => {
+        const f = prismFaces(it.box);
+        const pts = (it.box.h ?? 0) > 0 ? [f.top[0]!, f.top[1]!, f.shade[3]!, f.shade[2]!, f.lit[3]!, f.top[3]!] : f.top;
+        return (
+          <Hit key={it.entity} entity={it.entity} label={it.label}>
+            <polygon points={toPoints(pts)} style={{ fill: "transparent" }} />
+          </Hit>
+        );
+      })}
+    </g>
   );
+}
+
+/** The artifacts standing on the shelf and where: the most recent ones, oldest first. */
+function shelfSlots(bay: BaySlot, cell: CellState): { artifact: CellState["artifacts"][number]; at: Vec3 }[] {
+  const all = cell.artifacts;
+  const slots = 7;
+  const shown = all.length > slots ? all.slice(all.length - (slots - 1)) : all;
+  const offset = all.length > shown.length ? 1 : 0;
+  return shown.map((artifact, i) => ({ artifact, at: { x: bay.origin.x + 34 + (i + offset) * 19, y: bay.origin.y + 18, z: FLOOR_Z } }));
 }
 
 /** The line console at the entrance, and the wall panel showing the belt workflow's phases. */
@@ -248,9 +300,7 @@ function Console({ bay, cell, exec, t, reduced, lod }: { bay: BaySlot; cell: Cel
         })}
       </g>
       {lod === "near" ? (
-        <PlaneText x={x + 162} y={y + 14} z={FLOOR_Z} size={6.5} mono tone={running ? "live" : "subtle"}>
-          {running ? `mach:belt · ${cell.workflowPhase ?? "Preflight"}` : exec ? "mach:belt · idle" : "no execution"}
-        </PlaneText>
+        <FloorLettering at={{ x: x + 162, y: y + 14, z: FLOOR_Z }} text={running ? `mach:belt · ${cell.workflowPhase ?? "Preflight"}` : exec ? "mach:belt · idle" : "no execution"} size={6.5} font="mono" tone={running ? "live" : "subtle"} weight={500} decorative />
       ) : null}
     </g>
   );
@@ -260,39 +310,29 @@ function Console({ bay, cell, exec, t, reduced, lod }: { bay: BaySlot; cell: Cel
 function Shelf({ bay, cell, t, reduced, lod, highlight }: { bay: BaySlot; cell: CellState; t: number; reduced: boolean; lod: Lod; highlight: ReadonlySet<string> }) {
   const { x, y } = bay.origin;
   const all = cell.artifacts;
-  const slots = 7;
-  const shown = all.length > slots ? all.slice(all.length - (slots - 1)) : all;
-  const hidden = all.length - shown.length;
-  const at = (i: number): Vec3 => ({ x: x + 34 + i * 19, y: y + 18, z: FLOOR_Z });
   if (lod === "far") {
     return all.length ? (
-      <PlaneText x={x + 30} y={y + 22} z={FLOOR_Z} size={12} mono tone="muted">
-        {`${all.length} files`}
-      </PlaneText>
+      <FloorLettering at={{ x: x + 30, y: y + 22, z: FLOOR_Z }} text={`${all.length} files`} size={12} font="mono" tone="muted" weight={500} decorative />
     ) : null;
   }
-  const offset = hidden > 0 ? 1 : 0;
+  const slots = shelfSlots(bay, cell);
+  const hidden = all.length - slots.length;
+  const stackAt = { x: x + 34, y: y + 18, z: FLOOR_Z };
   return (
     <g>
       {hidden > 0 ? (
-        <g aria-label={`${hidden} earlier artifacts`} role="img">
-          {[2, 1, 0].map((k) => (
-            <ArtifactCard key={k} kind={uiArtifact(all[hidden - 1 - k]?.kind ?? "plan")} at={{ ...at(0), x: at(0).x - k * 2.2, y: at(0).y - k * 1.5 }} lod="mid" showLabel={false} />
-          ))}
-          <PlaneText x={at(0).x - 8} y={at(0).y + 9} z={FLOOR_Z} size={7.5} mono tone="muted" weight={600}>
-            {`+${hidden}`}
-          </PlaneText>
+        <g aria-hidden="true">
+          {/* Earlier files: one sheet with a drafted edge behind it, and the count. */}
+          <path d={`M${round(project({ ...stackAt, x: stackAt.x - 9 }).x)} ${round(project({ ...stackAt, x: stackAt.x - 9, z: FLOOR_Z + 16 }).y)}h-2v${round(18 * 0.82)}`} style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 0.8 }} />
+          <ArtifactCard kind={uiArtifact(all[hidden - 1]?.kind ?? "plan")} at={stackAt} lod="mid" showLabel={false} />
+          <FloorLettering at={{ x: stackAt.x - 8, y: stackAt.y + 9, z: FLOOR_Z }} text={`+${hidden}`} size={7.5} font="mono" tone="muted" weight={600} decorative />
         </g>
       ) : null}
-      {shown.map((a, i) => {
+      {slots.map(({ artifact: a, at }) => {
         const p = q(anim("artifactMaterialise", t - a.writtenAt, reduced));
         const aref = ref.artifact(a.id);
         const failed = a.kind === "verification-findings" || (a.kind === "review-findings" && cell.reviews.some((r) => r.outcome === "REJECTED" && r.round === a.round));
-        return (
-          <Hit key={a.id} entity={aref} label={`Artifact ${a.label} (${a.path}), written ${a.writer.agentId ? "by an agent" : "by a script"}`}>
-            <ArtifactCard kind={uiArtifact(a.kind)} state={failed ? "failed" : "succeeded"} progress={p} file={a.label} at={at(i + offset)} lod={lod} showLabel={false} dimmed={highlight.size > 0 && !highlight.has(aref) && !highlight.has(ref.cell(cell.ticketId))} />
-          </Hit>
-        );
+        return <ArtifactCard key={a.id} kind={uiArtifact(a.kind)} state={failed ? "failed" : "succeeded"} progress={p} file={a.label} at={at} lod={lod} showLabel={false} dimmed={highlight.size > 0 && !highlight.has(aref) && !highlight.has(ref.cell(cell.ticketId))} />;
       })}
     </g>
   );
@@ -302,29 +342,9 @@ function Shelf({ bay, cell, t, reduced, lod, highlight }: { bay: BaySlot; cell: 
 function TaskBoard({ bay, cell, lod }: { bay: BaySlot; cell: CellState; lod: Lod }) {
   if (lod === "far" || cell.tasks.length === 0) return null;
   const { x, y } = bay.origin;
-  // On the clear floor between the plan bench and the build machine, in front of the rail.
-  const per = 5;
-  const chip = (i: number) => ({ cx: x + 62 + (i % per) * 7.2, cy: y + 82 + Math.floor(i / per) * 6.4 });
-  const green = cell.tasks.filter((k) => k.status === "green" || k.status === "done").length;
-  const red = cell.tasks.filter((k) => k.status === "red").length;
-  return (
-    <Hit entity={`gate:${cell.ticketId}/red-before-green`} label={`Red before green, ${cell.ticketId}: ${cell.tasks.length} tasks, ${red} seen failing first, ${green} passing`}>
-      <g transform={planeTransform(FLOOR_Z)}>
-        {cell.tasks.map((k, i) => {
-          const { cx, cy } = chip(i);
-          const isTest = k.kind === "test";
-          const ink = k.status === "active" ? fc("live") : isTest ? fc("fail") : k.kind === "impl" ? fc("pass") : fc("ink");
-          const filled = k.status !== "active";
-          return (
-            <g key={k.id}>
-              <rect x={cx} y={cy} width={5.4} height={4.6} rx={0.6} style={{ fill: filled ? ink : fc("plate-top"), stroke: ink, strokeWidth: 0.9 * planeStroke }} />
-              {k.loop > 0 ? <circle cx={cx + 2.7} cy={cy + 2.3} r={0.9} style={{ fill: fc("plate-top") }} /> : null}
-            </g>
-          );
-        })}
-      </g>
-    </Hit>
-  );
+  const tasks: TaskCell[] = cell.tasks.map((k) => (k.status === "active" ? "active" : k.status === "red" ? "red" : "green"));
+  // Upright on two legs on the clear floor between the plan bench and the build machine.
+  return <TaskBoardMark tasks={tasks} at={{ x: x + 58, y: y + 84, z: FLOOR_Z }} columns={6} lod={lod} />;
 }
 
 /** Verification results accumulating: one mark per check of the current round. */
@@ -332,9 +352,8 @@ function ResultsRack({ bay, cell, lod, t, reduced }: { bay: BaySlot; cell: CellS
   const ver = cell.verifications[cell.verifications.length - 1];
   if (!ver || lod === "far") return null;
   const { x, y } = bay.origin;
-  const passed = ver.checks.filter((c) => c.result === "pass").length;
   return (
-    <Hit entity={`gate:${cell.ticketId}/verification#${ver.round}`} label={`Verification round ${ver.round}, ${cell.ticketId}: ${passed} of ${ver.checks.length} checks passed, ${ver.status}`}>
+    <g aria-hidden="true">
       <g>
         {ver.checks.map((c, i) => {
           const p = project({ x: x + 172 + (i % 5) * 8.4, y: y + 22 + Math.floor(i / 5) * 8.4, z: FLOOR_Z });
@@ -347,7 +366,7 @@ function ResultsRack({ bay, cell, lod, t, reduced }: { bay: BaySlot; cell: CellS
           );
         })}
       </g>
-    </Hit>
+    </g>
   );
 }
 
@@ -403,9 +422,18 @@ function Branch({ bay, cell, t, reduced, lod }: { bay: BaySlot; cell: CellState;
     <g transform={planeTransform(FLOOR_Z)} aria-hidden="true">
       <line x1={x0} y1={by} x2={x1} y2={by} style={{ stroke: cell.merged ? fc("pass") : fc("ink-soft"), strokeWidth: planeStroke }} />
       {cell.merged ? <path d={`M${x1 - 3} ${by - 2.5}L${x1} ${by}L${x1 - 3} ${by + 2.5}`} style={{ fill: "none", stroke: fc("pass"), strokeWidth: planeStroke }} /> : null}
+      {/* Settled commits as one path of rings; only the newest, while it rises in, is its own element. */}
+      <path
+        d={commits
+          .map((c, i) => ({ c, cx: x0 + 4 + i * step }))
+          .filter(({ c }) => anim("artifactMaterialise", t - c.writtenAt, reduced) >= 1)
+          .map(({ cx }) => `M${round(cx - 1.9)} ${by}a1.9 1.9 0 1 0 3.8 0a1.9 1.9 0 1 0 -3.8 0`)
+          .join("")}
+        style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 0.9 * planeStroke }}
+      />
       {commits.map((c, i) => {
         const p = anim("artifactMaterialise", t - c.writtenAt, reduced);
-        return <circle key={c.id} cx={x0 + 4 + i * step} cy={by} r={1.9 * Math.max(0.2, p)} style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 0.9 * planeStroke }} />;
+        return p < 1 ? <circle key={c.id} cx={x0 + 4 + i * step} cy={by} r={1.9 * Math.max(0.2, p)} style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 0.9 * planeStroke }} /> : null;
       })}
       {lod === "near" ? (
         <text x={x0 - 3} y={by + 1.8} textAnchor="end" style={{ fill: "var(--mach-ink-subtle)", fontSize: 5.5, fontFamily: "var(--mach-font-mono)" }} className="notranslate">
@@ -422,24 +450,23 @@ export function agentName(placed: PlacedAgent): string {
   return role;
 }
 
-export function AgentFigure({ placed, lod, dimmed }: { placed: PlacedAgent; lod: Lod; dimmed: boolean }) {
+export function AgentFigure({ placed, lod, dimmed, proxied }: { placed: PlacedAgent; lod: Lod; dimmed: boolean; proxied?: boolean }) {
   const a = placed.agent;
   const seat = a.seat && a.seat !== "general" ? a.seat : undefined;
+  const figure = <AgentMarker agentRole={uiRole(a)} tier={uiTier(a.model)} seat={seat} state={placed.state} progress={placed.progress} arrive={placed.arrive} leave={placed.leave} at={placed.at} lod={lod} dimmed={dimmed} showLabel={false} />;
+  if (proxied) return figure;
   return (
     <Hit entity={ref.agent(a.id)} label={`${agentName(placed)}${a.role === "reviewer" ? " reviewer" : ""}, ${modelTiers[uiTier(a.model)].label}, ${a.ticketId}: ${a.status === "running" ? "working" : a.status}`}>
-      <AgentMarker agentRole={uiRole(a)} tier={uiTier(a.model)} seat={seat} state={placed.state} progress={placed.progress} arrive={placed.arrive} leave={placed.leave} at={placed.at} lod={lod} dimmed={dimmed} showLabel={false} />
+      {figure}
     </Hit>
   );
 }
 
 /** The verdict gate outside the door: closes when verification starts, opens on PASS, refuses on a failure. */
-function VerificationGate({ bay, cell, gate: g, t, reduced, lod, dimmed }: { bay: BaySlot; cell: CellState; gate: GateState | null; t: number; reduced: boolean; lod: Lod; dimmed: boolean }) {
+function VerificationGate({ bay, gate: g, t, reduced, lod, dimmed }: { bay: BaySlot; gate: GateState | null; t: number; reduced: boolean; lod: Lod; dimmed: boolean }) {
   const v = gateView(g, t, reduced);
-  const id = g ? g.id : `${cell.ticketId}/verification#1`;
   return (
-    <Hit entity={`gate:${id}`} label={`Verification verdict gate, ${cell.ticketId}: ${v.position}${g ? `, round ${g.round}` : ""}`}>
       <GateGlyph kind="verification" position={v.position} from={v.from} progress={v.progress} at={bay.gate} axis="y" lod={lod} dimmed={dimmed} showLabel={false} />
-    </Hit>
   );
 }
 
@@ -458,9 +485,9 @@ function VerifyLoop({ bay, cell, t, reduced, lod, dimmed }: { bay: BaySlot; cell
       <RetryLoop from={from} to={to} round={failed.round + 1} progress={p} lod={lod} dimmed={dimmed} />
       {p > 0.2 && p < 1 ? (
         findings ? (
-          <Hit entity={ref.artifact(findings.id)} label={`Findings ${findings.label}: returned to build, round ${failed.round + 1} of 3`}>
+          <g aria-hidden="true">
             <ArtifactCard kind="findings" state="failed" progress={segment(p, 0, 0.4)} at={cardP > 0 ? ride : { ...from, z: FLOOR_Z + 18 }} lod={lod} showLabel={false} />
-          </Hit>
+          </g>
         ) : null
       ) : null}
     </g>

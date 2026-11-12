@@ -1,6 +1,6 @@
 /**
  * Development entry for the Factory Atlas alone, before the shell exists: /dev/atlas.html.
- * ?theme=light|dark pins the theme; ?meter shows the frame meter; ?t=<factory ms> seeks; ?play=16 plays.
+ * ?theme=light|dark pins the theme; ?meter shows the frame meter; ?fx=1 mounts the WebGL light layer; ?t=<factory ms> seeks; ?play=16 plays.
  * The capture script drives it through window.__machSim. Not part of the build.
  */
 import { StrictMode } from "react";
@@ -9,6 +9,7 @@ import { ThemeProvider, TooltipProvider, type ThemePreference } from "@mach/ui";
 import "../src/index.css";
 import { AtlasView } from "../src/atlas";
 import { getSceneStore } from "../src/scene";
+import { PixiEffects } from "../src/effects";
 
 const params = new URLSearchParams(window.location.search);
 const theme = params.get("theme");
@@ -35,10 +36,10 @@ createRoot(root).render(
   <StrictMode>
     <ThemeProvider product="control-tower" persist={false} defaultPreference={theme === "light" || theme === "dark" ? (theme as ThemePreference) : "system"}>
       <TooltipProvider>
-        <div style={{ position: "fixed", inset: 0 }}>
-          <AtlasView meter={params.has("meter")} />
+        <main style={{ position: "fixed", inset: 0 }}>
+          <AtlasView meter={params.has("meter")} effects={params.get("fx") === "1" ? PixiEffects : undefined} />
           <Stamp />
-        </div>
+        </main>
       </TooltipProvider>
     </ThemeProvider>
   </StrictMode>,

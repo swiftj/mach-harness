@@ -5,7 +5,7 @@
  * spec's durations (wall ms at 1x) converted to factory ms.
  */
 import { animationProgress, liftedArc, type ArtifactKind as UiArtifactKind, type FactoryAnimationName, type FactoryState, type GatePosition, type ModelTier as UiTier, type AgentRole as UiRole, type ToolFamily, type Vec3 } from "@mach/ui";
-import { eventsInWindow, finalScene, type AnySimEvent, type EventKind, type AgentState, type ArtifactState, type CellState, type Fixture, type GateState, type Scene, type StationId, type ToolCallState } from "../sim";
+import { agentTimingAt, eventsInWindow, finalScene, type AnySimEvent, type EventKind, type AgentState, type ArtifactState, type CellState, type Fixture, type GateState, type Scene, type StationId, type ToolCallState } from "../sim";
 import { PLAYBACK_BASE_RATE } from "../scene";
 import { FLOOR_Z, PLATE_Z, plantLayout, type BaySlot, type PlantLayout } from "./layout";
 
@@ -86,7 +86,8 @@ export function uiArtifact(kind: ArtifactState["kind"]): UiArtifactKind {
     case "build-state":
     case "review-packet":
     case "run-record":
-      return "build-report";
+    case "archive":
+      return kind;
     case "verification-results":
     case "verification-summary":
       return "results";
@@ -95,9 +96,7 @@ export function uiArtifact(kind: ArtifactState["kind"]): UiArtifactKind {
     case "review-findings":
       return "findings";
     case "review-diff":
-      return "commit";
-    case "archive":
-      return "decision";
+      return "diff";
   }
 }
 
@@ -148,24 +147,21 @@ export function agentState(agent: AgentState): FactoryState {
   return agent.status === "running" ? "active" : agent.status === "error" ? "failed" : "succeeded";
 }
 
-/** Expected length of an agent's work by role (factory ms), for the arc while its span is open. */
-const EXPECTED: Record<AgentState["role"], number> = {
-  clerk: 8_000,
-  intent: 140_000,
-  "contract-engineer": 110_000,
-  builder: 900_000,
-  verifier: 280_000,
-  reviewer: 150_000,
-  merge: 70_000,
-  cleanup: 20_000,
-  audit: 30_000,
-  observe: 60_000,
-};
+/**
+ * What is known about an agent's work at t (sim README section 5): started and elapsed, and finished
+ * once it has. There is no completion fraction for open work, because nothing knows how long it will
+ * take: a working agent is drawn "at work" (live head, no arc); finished work is drawn whole.
+ */
+export function agentArc(agent: AgentState, t: number): number {
+  return agentTimingAt(agent, t).finished ? 1 : 0;
+}
 
-export function agentProgress(agent: AgentState, t: number): number {
-  if (agent.finishedAt !== null && t >= agent.finishedAt) return 1;
-  const p = (t - agent.startedAt) / EXPECTED[agent.role];
-  return Math.max(0, Math.min(0.96, p));
+/** Elapsed time, as lettered beside work in flight: "40 s", "6 min", "1 h 12". */
+export function fmtElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}`;
 }
 
 // ---------------------------------------------------------------- gates
@@ -298,7 +294,7 @@ export function routeBetween(L: PlantLayout, bay: BaySlot, from: StationId | nul
   if (from === "review" && to === "human-approval") return down(L.human.parked.y, true);
   if (from === "review" && to === "merge") return down(mergeIn, true);
   if (from === "human-approval" && to === "merge") return down(mergeIn, false);
-  if (from === "merge" && to === "cleanup") return L.tracks.toArchive ?? [];
+  if (from === "merge" && to === "cleanup") return [...(L.tracks.trunk ?? []), ...(L.tracks.toArchive ?? []).slice(1)];
   if (from === "review" && onFloor(to)) return liftedArc(L.review.entry, { ...bay.pads.build, z: FLOOR_Z }, 92, 40);
   return [stationPoint(L, bay, from, "out"), stationPoint(L, bay, to, "in")];
 }
@@ -332,7 +328,7 @@ export function legsOf(fixture: Fixture): readonly Leg[] {
       out.push({ id: `dispatch:${e.seq}`, ticketId: e.ticket_id, kind: "dispatch", start: e.t, dur: TRAVEL_MS, route, state: "active", label: `${e.ticket_id} dispatched`, priority: 4, motion: "packetTravel" });
     } else if (e.type === "merge.completed" && e.ticket_id) {
       const m = L.integration.merge;
-      out.push({ id: `integrate:${e.seq}`, ticketId: e.ticket_id, kind: "integrate", start: e.t, dur: 1100 * RATE, route: [{ ...m, y: m.y + 22 }, { x: m.x, y: L.integration.trunkY, z: PLATE_Z - 6 }, { x: m.x - 96, y: L.integration.trunkY, z: PLATE_Z - 6 }], state: "succeeded", label: `${e.ticket_id} merged into main`, priority: 5, motion: "mergeIntegrate" });
+      out.push({ id: `integrate:${e.seq}`, ticketId: e.ticket_id, kind: "integrate", start: e.t, dur: 1100 * RATE, route: [{ ...m, x: m.x - 22 }, { x: m.x - 22 - 96, y: m.y, z: PLATE_Z }], state: "succeeded", label: `${e.ticket_id} merged into main`, priority: 5, motion: "mergeIntegrate" });
     }
   }
   for (const cell of Object.values(fin.cells)) {
@@ -458,7 +454,7 @@ export function placeAgents(_scene: Scene | null, L: PlantLayout, cell: CellStat
       arrive: q(anim("agentArrive", t - a.startedAt, reduced)),
       leave: a.finishedAt !== null ? q(anim("agentLeave", t - a.finishedAt, reduced)) : 0,
       state: agentState(a),
-      progress: Math.floor(agentProgress(a, t) * 24) / 24,
+      progress: agentArc(a, t),
       stack,
     });
   }
@@ -480,4 +476,16 @@ export function callsOf(cell: CellState): ToolCallState[] {
 export function fmtClock(ms: number): string {
   const s = Math.floor(ms / 1000);
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/**
+ * The work lamp's intensity, 0..1 (spec b.3): rising over `stateChange` when a floor station starts,
+ * falling over `stateChange` after the last one ends. Shared by the SVG pool and the WebGL light.
+ */
+export function lampLevel(cell: CellState, t: number, reduced = false): number {
+  const floor = (st: string | null) => st === "plan" || st === "groom" || st === "build" || st === "verify" || st === "audit";
+  if (floor(cell.station) && cell.stationSince !== null) return anim("stateChange", t - cell.stationSince, reduced);
+  const last = cell.visits[cell.visits.length - 1];
+  if (last && floor(last.station) && last.leftAt !== null && t - last.leftAt < 260 * RATE) return 1 - anim("stateChange", t - last.leftAt, reduced);
+  return 0;
 }

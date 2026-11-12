@@ -11,6 +11,8 @@ import type { PlantLayout } from "./layout";
 export interface AtlasContextValue {
   lod: Lod;
   layout: PlantLayout;
+  /** The WebGL light layer is drawing the lamp pools; the SVG pools switch off. */
+  lightLayer: boolean;
 }
 
 export const AtlasContext = createContext<AtlasContextValue | null>(null);
@@ -53,6 +55,7 @@ export interface HitProps {
 /**
  * Makes a drawn thing selectable: a focusable SVG group with an accessible name. Click, Enter or
  * Space selects (without moving the camera, spec f.2); double-click focuses; hover highlights.
+ * Entities are not tab stops: the view is one, and arrows rove between them (see AtlasView).
  */
 export const Hit = memo(function Hit({ entity, label, children }: HitProps) {
   const selected = useSceneStore((s) => s.selection === entity);
@@ -67,7 +70,7 @@ export const Hit = memo(function Hit({ entity, label, children }: HitProps) {
   return (
     <g
       role="button"
-      tabIndex={0}
+      tabIndex={-1}
       aria-label={label}
       aria-pressed={selected}
       data-ref={entity}
