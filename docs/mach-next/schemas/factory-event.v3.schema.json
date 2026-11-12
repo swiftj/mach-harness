@@ -1,0 +1,2044 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mach:schema:factory-event:v3",
+  "title": "MACH Factory Event v3 (normalised view)",
+  "description": "One event of the Control Tower's normalised history, as the observer serves it to a client. Version 3 is a VIEW: nothing writes it to .factory/. It is produced by the observer from five sources that stay as they are on disk: the intake log (factory-event v2, unchanged), each cell's lifecycle.jsonl, each execution's started.json and result.json, runs.jsonl, and each execution's stream.jsonl. Every field here is browser-safe by construction; fields that never leave the observer are listed in M6_1_EVENT_CONTRACT.md section 9. This schema is strict for producers (conformance tests); consumers must ignore unknown fields and kinds within version 3. Design: docs/mach-next/M6_1_EVENT_CONTRACT.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+                "schema_version",
+                "schema_revision",
+                "id",
+                "type",
+                "pos",
+                "origin",
+                "authority",
+                "time",
+                "order",
+                "ids",
+                "entities",
+                "parent",
+                "cause",
+                "artifacts",
+                "unknown",
+                "inferred",
+                "provenance",
+                "late",
+                "withheld",
+                "data"
+              ],
+  "properties": {
+                  "schema_version": {"const": 3},
+                  "schema_revision": {
+                                       "type": "integer",
+                                       "minimum": 0,
+                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know."
+                                     },
+                  "id": {
+                          "type": "string",
+                          "pattern": "^(i|c|x|r|s|o):[^\\s]+$",
+                          "maxLength": 300,
+                          "description": "Deterministic from source and source sequence; rebuilding the index gives the same id. See M6_1_EVENT_CONTRACT.md section 5."
+                        },
+                  "type": {
+                            "enum": [
+                                      "wave.discovered",
+                                      "intake.validated",
+                                      "intake.refused",
+                                      "slice.materialized",
+                                      "slice.integrated",
+                                      "dependency.resolved",
+                                      "dependency.blocked",
+                                      "work.scheduled",
+                                      "revision.superseded",
+                                      "human.required",
+                                      "factory.activated",
+                                      "factory.disabled",
+                                      "factory.paused",
+                                      "factory.resumed",
+                                      "revision.discovered",
+                                      "scheduling.decided",
+                                      "work.claimed",
+                                      "execution.started",
+                                      "station.observed",
+                                      "recovery.started",
+                                      "execution.completed",
+                                      "execution.failed",
+                                      "station.entered",
+                                      "station.exited",
+                                      "gate.evaluated",
+                                      "build.task_completed",
+                                      "verify.check_recorded",
+                                      "review.round_started",
+                                      "review.verdict_submitted",
+                                      "review.decided",
+                                      "human.approval_recorded",
+                                      "merge.completed",
+                                      "cleanup.completed",
+                                      "execution.process_started",
+                                      "execution.process_ended",
+                                      "run.recorded",
+                                      "session.initialized",
+                                      "workflow.started",
+                                      "workflow.phases_declared",
+                                      "workflow.finished",
+                                      "agent.queued",
+                                      "agent.started",
+                                      "agent.progressed",
+                                      "agent.finished",
+                                      "tool.called",
+                                      "tool.returned",
+                                      "tool.refused",
+                                      "execution.usage",
+                                      "review.finding",
+                                      "artifact.recorded",
+                                      "history.began",
+                                      "verify.targets_listed",
+                                      "capacity.wait_changed",
+                                      "history.gap"
+                                    ]
+                          },
+                  "pos": {
+                           "type": "integer",
+                           "minimum": 1,
+                           "description": "Delivery position in this observer index epoch. The cursor. Not the history order."
+                         },
+                  "origin": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": ["stream", "key", "seq", "part", "writer", "script", "source_version"],
+                              "properties": {
+                                              "stream": {
+                                                          "enum": [
+                                                                    "intake-log",
+                                                                    "cell-lifecycle",
+                                                                    "execution-record",
+                                                                    "run-record",
+                                                                    "execution-stream",
+                                                                    "observer"
+                                                                  ]
+                                                        },
+                                              "key": {
+                                                       "type": "string",
+                                                       "maxLength": 200,
+                                                       "description": "The source partition: i:<gen>, c:<ticket>:<gen>, x:<execution_id>, r:<gen>, s:<execution_id>, o."
+                                                     },
+                                              "seq": {
+                                                       "type": ["integer", "null"],
+                                                       "minimum": 1,
+                                                       "description": "Durable per-source sequence: v2 seq, lifecycle seq, runs.jsonl line, stream.jsonl line, 1/2 for started/result. Null for observer events."
+                                                     },
+                                              "part": {
+                                                        "type": ["integer", "null"],
+                                                        "minimum": 0,
+                                                        "description": "Sub-index when one source record yields several events (a message with several tool calls)."
+                                                      },
+                                              "writer": {
+                                                          "enum": [
+                                                                    "intake",
+                                                                    "engineer",
+                                                                    "supervisor",
+                                                                    "station",
+                                                                    "executor",
+                                                                    "cleanup",
+                                                                    "claude",
+                                                                    "observer"
+                                                                  ]
+                                                        },
+                                              "script": {
+                                                          "type": ["string", "null"],
+                                                          "maxLength": 40,
+                                                          "description": "For station writers: the script, e.g. build.py."
+                                                        },
+                                              "source_version": {"type": ["string", "null"], "maxLength": 60}
+                                            }
+                            },
+                  "authority": {"enum": ["authoritative", "observed", "reconstructed"]},
+                  "time": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["occurred_at", "precision", "not_before", "not_after", "observed_at", "order_ms"],
+                            "properties": {
+                                            "occurred_at": {"type": ["string", "null"], "format": "date-time"},
+                                            "precision": {"enum": ["ms", "s", "arrival", "bounded", "unknown"]},
+                                            "not_before": {"type": ["string", "null"], "format": "date-time"},
+                                            "not_after": {"type": ["string", "null"], "format": "date-time"},
+                                            "observed_at": {"type": "string", "format": "date-time"},
+                                            "order_ms": {
+                                                          "type": "integer",
+                                                          "minimum": 0,
+                                                          "description": "Unix ms used to place the event in history; never earlier than the previous event of the same source."
+                                                        }
+                                          }
+                          },
+                  "order": {
+                             "type": "string",
+                             "pattern": "^[0-9]{15}~[1-6]~[^~]+~[0-9]{12}~[0-9]{4}$",
+                             "description": "Deterministic total history order: order_ms, source rank, source key, seq, part."
+                           },
+                  "ids": {
+                           "type": "object",
+                           "additionalProperties": false,
+                           "required": [
+                                         "project_id",
+                                         "wave_id",
+                                         "slice_id",
+                                         "revision",
+                                         "ticket_id",
+                                         "cell_instance",
+                                         "execution_id",
+                                         "runner_id",
+                                         "visit_id",
+                                         "station",
+                                         "round",
+                                         "attempt",
+                                         "seat",
+                                         "agent_id",
+                                         "parent_agent_id",
+                                         "tool_call_id"
+                                       ],
+                           "properties": {
+                                           "project_id": {"type": ["string", "null"]},
+                                           "wave_id": {"type": ["string", "null"]},
+                                           "slice_id": {"type": ["string", "null"]},
+                                           "revision": {"type": ["integer", "null"]},
+                                           "ticket_id": {"type": ["string", "null"]},
+                                           "cell_instance": {
+                                                              "type": ["string", "null"],
+                                                              "pattern": "^[0-9a-f]{8}$",
+                                                              "description": "The generation of the ticket's cell: first 8 hex of the SHA-256 of the first line of its lifecycle.jsonl."
+                                                            },
+                                           "execution_id": {"type": ["string", "null"]},
+                                           "runner_id": {"type": ["string", "null"]},
+                                           "visit_id": {
+                                                         "type": ["string", "null"],
+                                                         "description": "<ticket>/<station>#<n>; with ~<k> after the ticket for a cell's k-th incarnation, k >= 2."
+                                                       },
+                                           "station": {
+                                                        "enum": [
+                                                                  "intake",
+                                                                  "groom",
+                                                                  "plan",
+                                                                  "audit",
+                                                                  "build",
+                                                                  "verify",
+                                                                  "review",
+                                                                  "human-approval",
+                                                                  "merge",
+                                                                  "cleanup",
+                                                                  "observe",
+                                                                  null
+                                                                ]
+                                                      },
+                                           "round": {
+                                                      "type": ["integer", "null"],
+                                                      "minimum": 1,
+                                                      "description": "Judging round, 1 to 3 (the lifecycle record's round; older v1 files call it attempt)."
+                                                    },
+                                           "attempt": {
+                                                        "type": ["integer", "null"],
+                                                        "minimum": 1,
+                                                        "description": "The supervisor's execution attempt for the ticket at its current step (work.claimed, execution.failed). Not the judging round."
+                                                      },
+                                           "seat": {"enum": ["architecture", "security", "product", "general", null]},
+                                           "agent_id": {
+                                                         "type": ["string", "null"],
+                                                         "description": "<execution_id>/<workflow agentId (a + 16 hex)>, <execution_id>/<Agent-tool agent_id>, or <execution_id>/main. Opaque: never parsed by views."
+                                                       },
+                                           "parent_agent_id": {"type": ["string", "null"]},
+                                           "tool_call_id": {"type": ["string", "null"], "description": "<execution_id>/<tool_use_id>. Opaque."}
+                                         }
+                         },
+                  "entities": {
+                                "type": "array",
+                                "items": {
+                                           "type": "string",
+                                           "pattern": "^(project|workflow|wave|slice|cell|station|visit|execution|agent|tool|artifact|gate|dependency|finding|seat|actor):.+$",
+                                           "maxLength": 300
+                                         },
+                                "uniqueItems": true,
+                                "description": "Every entity this event touches, as the Control Tower's kind:id refs. Computed by the observer; views never derive them."
+                              },
+                  "parent": {
+                              "type": ["string", "null"],
+                              "pattern": "^(project|workflow|wave|slice|cell|station|visit|execution|agent|tool|artifact|gate|dependency|finding|seat|actor):.+$",
+                              "description": "The enclosing span's entity (a tool call's agent, an agent's parent agent or visit, a visit's execution when recorded)."
+                            },
+                  "cause": {
+                             "oneOf": [
+                                        {"type": "null"},
+                                        {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "required": ["event_id", "basis"],
+                                          "properties": {"event_id": {"type": "string"}, "basis": {"enum": ["recorded", "identity"]}}
+                                        }
+                                      ],
+                             "description": "Only when a writer recorded the link (recorded) or both records carry the same identifier (identity). Never from temporal adjacency."
+                           },
+                  "artifacts": {
+                                 "type": "array",
+                                 "items": {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "required": ["ref", "sha256", "commit"],
+                                            "properties": {
+                                                            "ref": {"type": "string", "pattern": "^artifact:.+$"},
+                                                            "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                            "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"}
+                                                          }
+                                          }
+                               },
+                  "unknown": {
+                               "type": "array",
+                               "items": {"type": "string"},
+                               "uniqueItems": true,
+                               "description": "Fields that apply to this event but are not known (as opposed to null meaning not applicable)."
+                             },
+                  "inferred": {
+                                "type": "object",
+                                "additionalProperties": {"enum": ["time-window", "single-candidate", "label", "path", "stderr-line", "held-sentence"]},
+                                "description": "Fields the observer filled by inference, with the rule. cause is never inferred."
+                              },
+                  "provenance": {
+                                  "oneOf": [
+                                             {"type": "null"},
+                                             {
+                                               "type": "object",
+                                               "additionalProperties": false,
+                                               "required": ["basis", "rule", "files"],
+                                               "properties": {
+                                                               "basis": {"type": "array", "items": {"type": "string"}},
+                                                               "rule": {"type": "string", "maxLength": 80},
+                                                               "files": {"type": "array", "items": {"type": "string"}}
+                                                             }
+                                             }
+                                           ]
+                                },
+                  "late": {"type": "boolean", "description": "Delivered after events that sort after it in history order."},
+                  "withheld": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "How many source fields the allow-list or redaction dropped from this event."
+                              },
+                  "data": {"type": "object"}
+                },
+  "allOf": [
+             {
+               "if": {"properties": {"type": {"const": "wave.discovered"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_wave_discovered"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"wave_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "intake.validated"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_intake_validated"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "intake.refused"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_intake_refused"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "slice.materialized"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_slice_materialized"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"slice_id": {"not": {"type": "null"}}, "ticket_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "slice.integrated"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_slice_integrated"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"slice_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "dependency.resolved"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_dependency_resolved"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"slice_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "dependency.blocked"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_dependency_blocked"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"slice_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "work.scheduled"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_work_scheduled"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"slice_id": {"not": {"type": "null"}}, "ticket_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "revision.superseded"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_revision_superseded"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"slice_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "human.required"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_human_required"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "factory.activated"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_factory_activated"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "factory.disabled"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_factory_disabled"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "factory.paused"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_factory_paused"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "factory.resumed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_factory_resumed"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "revision.discovered"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_revision_discovered"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "scheduling.decided"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_scheduling_decided"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "work.claimed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_work_claimed"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"ticket_id": {"not": {"type": "null"}}, "execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "execution.started"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_execution_started"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"ticket_id": {"not": {"type": "null"}}, "execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "station.observed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_station_observed"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"ticket_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "recovery.started"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_recovery_started"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "execution.completed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_execution_completed"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"ticket_id": {"not": {"type": "null"}}, "execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "execution.failed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_execution_failed"},
+                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
+                                         "ids": {"properties": {"ticket_id": {"not": {"type": "null"}}, "execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "station.entered"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_station_entered"},
+                                         "origin": {"properties": {"stream": {"const": "cell-lifecycle"}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "station.exited"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_station_exited"},
+                                         "origin": {"properties": {"stream": {"const": "cell-lifecycle"}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "gate.evaluated"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_gate_evaluated"},
+                                         "origin": {"properties": {"stream": {"const": "cell-lifecycle"}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "build.task_completed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_build_task_completed"},
+                                         "origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "observer"]}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "verify.check_recorded"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_verify_check_recorded"},
+                                         "origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "observer"]}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "review.round_started"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_review_round_started"},
+                                         "origin": {"properties": {"stream": {"const": "cell-lifecycle"}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "review.verdict_submitted"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_review_verdict_submitted"},
+                                         "origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "observer"]}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}},
+                                                                  "seat": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "review.decided"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_review_decided"},
+                                         "origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "observer"]}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "human.approval_recorded"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_human_approval_recorded"},
+                                         "origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "observer"]}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "merge.completed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_merge_completed"},
+                                         "origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "observer"]}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "cleanup.completed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_cleanup_completed"},
+                                         "origin": {"properties": {"stream": {"const": "cell-lifecycle"}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "execution.process_started"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_execution_process_started"},
+                                         "origin": {"properties": {"stream": {"const": "execution-record"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "execution.process_ended"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_execution_process_ended"},
+                                         "origin": {"properties": {"stream": {"const": "execution-record"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "run.recorded"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_run_recorded"},
+                                         "origin": {"properties": {"stream": {"const": "run-record"}}},
+                                         "ids": {"properties": {"ticket_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "session.initialized"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_session_initialized"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "workflow.started"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_workflow_started"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "workflow.phases_declared"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_workflow_phases_declared"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "workflow.finished"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_workflow_finished"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "agent.queued"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_agent_queued"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "agent.started"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_agent_started"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}, "agent_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "agent.progressed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_agent_progressed"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}, "agent_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "agent.finished"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_agent_finished"},
+                                         "origin": {"properties": {"stream": {"enum": ["execution-stream", "observer"]}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}, "agent_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "tool.called"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_tool_called"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "execution_id": {"not": {"type": "null"}},
+                                                                  "agent_id": {"not": {"type": "null"}},
+                                                                  "tool_call_id": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "tool.returned"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_tool_returned"},
+                                         "origin": {"properties": {"stream": {"enum": ["execution-stream", "observer"]}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "execution_id": {"not": {"type": "null"}},
+                                                                  "agent_id": {"not": {"type": "null"}},
+                                                                  "tool_call_id": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "tool.refused"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_tool_refused"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "execution.usage"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_execution_usage"},
+                                         "origin": {"properties": {"stream": {"const": "execution-stream"}}},
+                                         "ids": {"properties": {"execution_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "review.finding"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_review_finding"},
+                                         "origin": {"properties": {"stream": {"const": "observer"}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "round": {"not": {"type": "null"}},
+                                                                  "seat": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "artifact.recorded"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_artifact_recorded"},
+                                         "origin": {"properties": {"stream": {"const": "observer"}}},
+                                         "ids": {"properties": {"ticket_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "history.began"}}, "required": ["type"]},
+               "then": {"properties": {"data": {"$ref": "#/$defs/data_history_began"}, "origin": {"properties": {"stream": {"const": "observer"}}}}}
+             },
+             {
+               "if": {"properties": {"type": {"const": "verify.targets_listed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_verify_targets_listed"},
+                                         "origin": {"properties": {"stream": {"const": "observer"}}},
+                                         "ids": {"properties": {"ticket_id": {"not": {"type": "null"}}, "visit_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "capacity.wait_changed"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_capacity_wait_changed"},
+                                         "origin": {"properties": {"stream": {"const": "observer"}}},
+                                         "ids": {"properties": {"ticket_id": {"not": {"type": "null"}}}}
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "history.gap"}}, "required": ["type"]},
+               "then": {"properties": {"data": {"$ref": "#/$defs/data_history_gap"}, "origin": {"properties": {"stream": {"const": "observer"}}}}}
+             },
+             {
+               "if": {"properties": {"origin": {"properties": {"stream": {"const": "execution-stream"}}}}},
+               "then": {"properties": {"authority": {"const": "observed"}}}
+             },
+             {
+               "if": {"properties": {"origin": {"properties": {"stream": {"const": "observer"}}}}},
+               "then": {"properties": {"authority": {"const": "reconstructed"}, "provenance": {"type": "object"}}}
+             },
+             {
+               "if": {"properties": {"origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "execution-record", "run-record"]}}}}},
+               "then": {"properties": {"authority": {"const": "authoritative"}}}
+             },
+             {
+               "if": {"properties": {"type": {"const": "station.observed"}}, "required": ["type"]},
+               "then": {"properties": {"authority": {"const": "observed"}}}
+             },
+             {
+               "if": {"properties": {"origin": {"properties": {"stream": {"const": "intake-log"}}}, "type": {"not": {"const": "station.observed"}}}},
+               "then": {"properties": {"authority": {"const": "authoritative"}}}
+             }
+           ],
+  "$defs": {
+             "data_wave_discovered": {
+                                       "type": "object",
+                                       "additionalProperties": false,
+                                       "required": ["slices", "approval"],
+                                       "properties": {
+                                                       "slices": {"type": "array", "items": {"type": "string"}},
+                                                       "approval": {
+                                                                     "type": "object",
+                                                                     "additionalProperties": false,
+                                                                     "required": ["approved_at", "by_role"],
+                                                                     "properties": {
+                                                                                     "approved_at": {
+                                                                                                      "type": ["string", "null"],
+                                                                                                      "format": "date-time"
+                                                                                                    },
+                                                                                     "by_role": {"enum": ["person"]}
+                                                                                   }
+                                                                   }
+                                                     }
+                                     },
+             "data_intake_validated": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["digest"],
+                                        "properties": {"digest": {"type": "string"}}
+                                      },
+             "data_intake_refused": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": ["problems"],
+                                      "properties": {"problems": {"type": "array", "items": {"type": "string", "maxLength": 400}}}
+                                    },
+             "data_slice_materialized": {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "required": ["digest", "adopted", "dependencies"],
+                                          "properties": {
+                                                          "digest": {"type": "string"},
+                                                          "adopted": {"type": "boolean"},
+                                                          "dependencies": {"type": "array", "items": {"type": "string"}},
+                                                          "reissued": {"type": ["boolean", "null"]}
+                                                        }
+                                        },
+             "data_slice_integrated": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["commit"],
+                                        "properties": {"commit": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"}}
+                                      },
+             "data_dependency_resolved": {
+                                           "type": "object",
+                                           "additionalProperties": false,
+                                           "required": ["depends_on"],
+                                           "properties": {"depends_on": {"type": "array", "items": {"type": "string"}}}
+                                         },
+             "data_dependency_blocked": {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "required": ["reasons"],
+                                          "properties": {"reasons": {"type": "array", "items": {"type": "string", "maxLength": 400}}}
+                                        },
+             "data_work_scheduled": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": ["stage", "risk", "branch", "by_role", "authorization"],
+                                      "properties": {
+                                                      "stage": {
+                                                                 "enum": [
+                                                                           "interview",
+                                                                           "spec-open",
+                                                                           "spec-ready",
+                                                                           "planned",
+                                                                           "building",
+                                                                           "built",
+                                                                           "verified",
+                                                                           "awaiting-human",
+                                                                           "approved",
+                                                                           "pr-open",
+                                                                           "merged",
+                                                                           "blocked",
+                                                                           null
+                                                                         ]
+                                                               },
+                                                      "risk": {"enum": ["High", "Medium", "Low", null]},
+                                                      "branch": {"type": "string"},
+                                                      "by_role": {"enum": ["engineer", "supervisor", "person"]},
+                                                      "authorization": {"type": ["string", "null"], "maxLength": 300}
+                                                    }
+                                    },
+             "data_revision_superseded": {
+                                           "type": "object",
+                                           "additionalProperties": false,
+                                           "required": ["from_revision", "effect"],
+                                           "properties": {
+                                                           "from_revision": {"type": ["integer", "null"]},
+                                                           "effect": {"type": "string", "maxLength": 300}
+                                                         }
+                                         },
+             "data_human_required": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": ["reason"],
+                                      "properties": {"reason": {"type": "string", "maxLength": 600}}
+                                    },
+             "data_factory_activated": {
+                                         "type": "object",
+                                         "additionalProperties": false,
+                                         "required": ["autonomy", "by_role", "limits", "allow_merge", "persistent", "backlog", "excluded_slices"],
+                                         "properties": {
+                                                         "autonomy": {"enum": ["observe", "supervised"]},
+                                                         "by_role": {"enum": ["engineer", "person"]},
+                                                         "limits": {
+                                                                     "type": "object",
+                                                                     "additionalProperties": {"type": "number"},
+                                                                     "required": [],
+                                                                     "properties": {
+                                                                                     "max_parallel": {"type": "number"},
+                                                                                     "max_execution_minutes": {"type": "number"},
+                                                                                     "max_runs_per_day": {"type": "number"},
+                                                                                     "max_budget_usd_per_run": {"type": "number"},
+                                                                                     "max_budget_usd_per_day": {"type": "number"},
+                                                                                     "max_attempts": {"type": "number"},
+                                                                                     "poll_seconds": {"type": "number"}
+                                                                                   }
+                                                                   },
+                                                         "allow_merge": {"type": "boolean"},
+                                                         "persistent": {"type": "boolean"},
+                                                         "backlog": {"type": ["string", "null"]},
+                                                         "excluded_slices": {"type": "array", "items": {"type": "string"}}
+                                                       }
+                                       },
+             "data_factory_disabled": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["by_role", "stopped"],
+                                        "properties": {"by_role": {"enum": ["engineer", "person"]}, "stopped": {"type": "boolean"}}
+                                      },
+             "data_factory_paused": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": ["by_role", "reason"],
+                                      "properties": {
+                                                      "by_role": {"enum": ["engineer", "person"]},
+                                                      "reason": {"type": ["string", "null"], "maxLength": 300}
+                                                    }
+                                    },
+             "data_factory_resumed": {
+                                       "type": "object",
+                                       "additionalProperties": false,
+                                       "required": ["by_role", "retrying"],
+                                       "properties": {
+                                                       "by_role": {"enum": ["engineer", "person"]},
+                                                       "retrying": {"type": "array", "items": {"type": "string"}}
+                                                     }
+                                     },
+             "data_revision_discovered": {
+                                           "type": "object",
+                                           "additionalProperties": false,
+                                           "required": ["from_commit", "commit"],
+                                           "properties": {
+                                                           "from_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                           "commit": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"}
+                                                         }
+                                         },
+             "data_scheduling_decided": {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "required": ["state", "dispatched", "started", "held"],
+                                          "properties": {
+                                                          "state": {"enum": ["supervised", "observe", "paused"]},
+                                                          "dispatched": {"type": "array", "items": {"type": "string"}},
+                                                          "started": {"type": "array", "items": {"type": "string"}},
+                                                          "held": {
+                                                                    "type": "array",
+                                                                    "items": {
+                                                                               "type": "object",
+                                                                               "additionalProperties": false,
+                                                                               "required": ["slice_id", "ticket_id", "why"],
+                                                                               "properties": {
+                                                                                               "slice_id": {"type": ["string", "null"]},
+                                                                                               "ticket_id": {"type": ["string", "null"]},
+                                                                                               "why": {"type": "string", "maxLength": 400}
+                                                                                             }
+                                                                             }
+                                                                  }
+                                                        }
+                                        },
+             "data_work_claimed": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": ["stage", "next", "attempt"],
+                                    "properties": {
+                                                    "stage": {
+                                                               "enum": [
+                                                                         "interview",
+                                                                         "spec-open",
+                                                                         "spec-ready",
+                                                                         "planned",
+                                                                         "building",
+                                                                         "built",
+                                                                         "verified",
+                                                                         "awaiting-human",
+                                                                         "approved",
+                                                                         "pr-open",
+                                                                         "merged",
+                                                                         "blocked",
+                                                                         null
+                                                                       ]
+                                                             },
+                                                    "next": {
+                                                              "enum": [
+                                                                        "audit",
+                                                                        "groom",
+                                                                        "plan",
+                                                                        "build",
+                                                                        "revise",
+                                                                        "verify",
+                                                                        "review",
+                                                                        "merge",
+                                                                        "cleanup",
+                                                                        "stop",
+                                                                        null
+                                                                      ]
+                                                            },
+                                                    "attempt": {"type": "integer"}
+                                                  }
+                                  },
+             "data_execution_started": {
+                                         "type": "object",
+                                         "additionalProperties": false,
+                                         "required": ["until", "workflow", "limits"],
+                                         "properties": {
+                                                         "until": {"type": ["string", "null"]},
+                                                         "workflow": {"type": "string"},
+                                                         "limits": {
+                                                                     "type": "object",
+                                                                     "additionalProperties": false,
+                                                                     "required": ["minutes", "budget_usd"],
+                                                                     "properties": {"minutes": {"type": "number"}, "budget_usd": {"type": "number"}}
+                                                                   }
+                                                       }
+                                       },
+             "data_station_observed": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["from_stage", "stage"],
+                                        "properties": {
+                                                        "from_stage": {
+                                                                        "enum": [
+                                                                                  "interview",
+                                                                                  "spec-open",
+                                                                                  "spec-ready",
+                                                                                  "planned",
+                                                                                  "building",
+                                                                                  "built",
+                                                                                  "verified",
+                                                                                  "awaiting-human",
+                                                                                  "approved",
+                                                                                  "pr-open",
+                                                                                  "merged",
+                                                                                  "blocked",
+                                                                                  null
+                                                                                ]
+                                                                      },
+                                                        "stage": {
+                                                                   "enum": [
+                                                                             "interview",
+                                                                             "spec-open",
+                                                                             "spec-ready",
+                                                                             "planned",
+                                                                             "building",
+                                                                             "built",
+                                                                             "verified",
+                                                                             "awaiting-human",
+                                                                             "approved",
+                                                                             "pr-open",
+                                                                             "merged",
+                                                                             "blocked"
+                                                                           ]
+                                                                 }
+                                                      }
+                                      },
+             "data_recovery_started": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["kind"],
+                                        "properties": {
+                                                        "kind": {
+                                                                  "enum": [
+                                                                            "ended-while-unwatched",
+                                                                            "still-running",
+                                                                            "claim-never-started",
+                                                                            "outcome-unknown",
+                                                                            "took-over-from-dead-supervisor"
+                                                                          ]
+                                                                }
+                                                      }
+                                      },
+             "data_execution_completed": {
+                                           "type": "object",
+                                           "additionalProperties": false,
+                                           "required": ["stage", "next", "waiting_for", "how", "seen_to_end", "cost_usd", "refused_tools"],
+                                           "properties": {
+                                                           "stage": {
+                                                                      "enum": [
+                                                                                "interview",
+                                                                                "spec-open",
+                                                                                "spec-ready",
+                                                                                "planned",
+                                                                                "building",
+                                                                                "built",
+                                                                                "verified",
+                                                                                "awaiting-human",
+                                                                                "approved",
+                                                                                "pr-open",
+                                                                                "merged",
+                                                                                "blocked",
+                                                                                null
+                                                                              ]
+                                                                    },
+                                                           "next": {
+                                                                     "enum": [
+                                                                               "audit",
+                                                                               "groom",
+                                                                               "plan",
+                                                                               "build",
+                                                                               "revise",
+                                                                               "verify",
+                                                                               "review",
+                                                                               "merge",
+                                                                               "cleanup",
+                                                                               "stop",
+                                                                               null
+                                                                             ]
+                                                                   },
+                                                           "waiting_for": {"type": ["string", "null"]},
+                                                           "how": {"type": ["string", "null"]},
+                                                           "seen_to_end": {"type": "boolean"},
+                                                           "cost_usd": {"type": ["number", "null"]},
+                                                           "refused_tools": {"type": "array", "items": {"type": "string"}}
+                                                         }
+                                         },
+             "data_execution_failed": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["stage", "next", "how", "claude_error", "exit_code", "attempt"],
+                                        "properties": {
+                                                        "stage": {
+                                                                   "enum": [
+                                                                             "interview",
+                                                                             "spec-open",
+                                                                             "spec-ready",
+                                                                             "planned",
+                                                                             "building",
+                                                                             "built",
+                                                                             "verified",
+                                                                             "awaiting-human",
+                                                                             "approved",
+                                                                             "pr-open",
+                                                                             "merged",
+                                                                             "blocked",
+                                                                             null
+                                                                           ]
+                                                                 },
+                                                        "next": {
+                                                                  "enum": [
+                                                                            "audit",
+                                                                            "groom",
+                                                                            "plan",
+                                                                            "build",
+                                                                            "revise",
+                                                                            "verify",
+                                                                            "review",
+                                                                            "merge",
+                                                                            "cleanup",
+                                                                            "stop",
+                                                                            null
+                                                                          ]
+                                                                },
+                                                        "how": {"type": ["string", "null"]},
+                                                        "claude_error": {"type": ["string", "null"]},
+                                                        "exit_code": {"type": ["integer", "null"]},
+                                                        "attempt": {"type": "integer"}
+                                                      }
+                                      },
+             "data_station_entered": {
+                                       "type": "object",
+                                       "additionalProperties": false,
+                                       "required": ["station", "stage", "action", "resumed", "unclosed_visit", "head", "counts"],
+                                       "properties": {
+                                                       "station": {
+                                                                    "enum": [
+                                                                              "intake",
+                                                                              "groom",
+                                                                              "plan",
+                                                                              "audit",
+                                                                              "build",
+                                                                              "verify",
+                                                                              "review",
+                                                                              "human-approval",
+                                                                              "merge",
+                                                                              "cleanup",
+                                                                              "observe"
+                                                                            ]
+                                                                  },
+                                                       "stage": {
+                                                                  "enum": [
+                                                                            "interview",
+                                                                            "spec-open",
+                                                                            "spec-ready",
+                                                                            "planned",
+                                                                            "building",
+                                                                            "built",
+                                                                            "verified",
+                                                                            "awaiting-human",
+                                                                            "approved",
+                                                                            "pr-open",
+                                                                            "merged",
+                                                                            "blocked",
+                                                                            null
+                                                                          ]
+                                                                },
+                                                       "action": {
+                                                                   "enum": [
+                                                                             "audit",
+                                                                             "groom",
+                                                                             "plan",
+                                                                             "build",
+                                                                             "revise",
+                                                                             "verify",
+                                                                             "review",
+                                                                             "merge",
+                                                                             "cleanup",
+                                                                             "stop",
+                                                                             null
+                                                                           ]
+                                                                 },
+                                                       "resumed": {"type": "boolean"},
+                                                       "unclosed_visit": {"type": ["string", "null"], "maxLength": 40},
+                                                       "head": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                       "counts": {
+                                                                   "type": "object",
+                                                                   "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,39}$"},
+                                                                   "additionalProperties": {"type": ["integer", "boolean"]},
+                                                                   "description": "Integer and boolean facts the station recorded (tasks, items, errors, problems). Never strings."
+                                                                 }
+                                                     }
+                                     },
+             "data_station_exited": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": ["station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts"],
+                                      "properties": {
+                                                      "station": {
+                                                                   "enum": [
+                                                                             "intake",
+                                                                             "groom",
+                                                                             "plan",
+                                                                             "audit",
+                                                                             "build",
+                                                                             "verify",
+                                                                             "review",
+                                                                             "human-approval",
+                                                                             "merge",
+                                                                             "cleanup",
+                                                                             "observe"
+                                                                           ]
+                                                                 },
+                                                      "outcome": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,40}$"},
+                                                      "stage": {
+                                                                 "enum": [
+                                                                           "interview",
+                                                                           "spec-open",
+                                                                           "spec-ready",
+                                                                           "planned",
+                                                                           "building",
+                                                                           "built",
+                                                                           "verified",
+                                                                           "awaiting-human",
+                                                                           "approved",
+                                                                           "pr-open",
+                                                                           "merged",
+                                                                           "blocked",
+                                                                           null
+                                                                         ]
+                                                               },
+                                                      "duration_ms": {"type": ["integer", "null"]},
+                                                      "closed_by": {"enum": ["cleanup", null]},
+                                                      "head": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                      "counts": {
+                                                                  "type": "object",
+                                                                  "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,39}$"},
+                                                                  "additionalProperties": {"type": ["integer", "boolean"]},
+                                                                  "description": "Integer and boolean facts the station recorded (tasks, items, errors, problems). Never strings."
+                                                                }
+                                                    }
+                                    },
+             "data_gate_evaluated": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": ["gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts"],
+                                      "properties": {
+                                                      "gate": {
+                                                                "type": "string",
+                                                                "pattern": "^[a-z][a-z-]*(?:\\.[a-z][a-z-]*)?$",
+                                                                "description": "The station's own gate name, e.g. build.start, build.red, build.finish, verify.verdict, review.tally, merge.land, round-limit."
+                                                              },
+                                                      "verdict": {"enum": ["passed", "refused", "overridden"]},
+                                                      "reason_code": {"type": ["string", "null"], "maxLength": 60},
+                                                      "subject": {"type": ["string", "null"], "maxLength": 60},
+                                                      "status": {"enum": ["PASS", "FAIL_WITH_EVIDENCE", "INCOMPLETE_EVIDENCE", null]},
+                                                      "audit_tier": {"type": ["string", "null"], "maxLength": 20},
+                                                      "counts": {
+                                                                  "type": "object",
+                                                                  "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,39}$"},
+                                                                  "additionalProperties": {"type": ["integer", "boolean"]},
+                                                                  "description": "Integer and boolean facts the station recorded (tasks, items, errors, problems). Never strings."
+                                                                }
+                                                    }
+                                    },
+             "data_build_task_completed": {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "required": ["task_id", "kind", "step", "first_run", "suite", "commit"],
+                                            "properties": {
+                                                            "task_id": {"type": "string", "pattern": "^(?:R\\d+-)?T\\d+$"},
+                                                            "kind": {"enum": ["test", "impl", "contract", "refactor", "docs"]},
+                                                            "step": {"enum": ["red", "green", "done"]},
+                                                            "first_run": {"enum": ["pass", "fail", "not-run", null]},
+                                                            "suite": {"enum": ["unknown", "red", "green", null]},
+                                                            "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"}
+                                                          }
+                                          },
+             "data_verify_check_recorded": {
+                                             "type": "object",
+                                             "additionalProperties": false,
+                                             "required": ["target_id", "target_kind", "result", "evidence", "rerecorded"],
+                                             "properties": {
+                                                             "target_id": {"type": "string", "maxLength": 40},
+                                                             "target_kind": {"enum": ["scenario", "matrix rule", "holdout"]},
+                                                             "result": {"enum": ["pass", "fail"]},
+                                                             "evidence": {
+                                                                           "type": "array",
+                                                                           "items": {
+                                                                                      "type": "object",
+                                                                                      "additionalProperties": false,
+                                                                                      "required": ["file", "sha256", "bytes"],
+                                                                                      "properties": {
+                                                                                                      "file": {"type": "string", "maxLength": 300},
+                                                                                                      "sha256": {
+                                                                                                                  "type": "string",
+                                                                                                                  "pattern": "^[0-9a-f]{7,64}$"
+                                                                                                                },
+                                                                                                      "bytes": {"type": ["integer", "null"]}
+                                                                                                    }
+                                                                                    }
+                                                                         },
+                                                             "rerecorded": {"type": "boolean"}
+                                                           }
+                                           },
+             "data_review_round_started": {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "required": [
+                                                          "risk",
+                                                          "max_rounds",
+                                                          "tuning",
+                                                          "approvals_needed",
+                                                          "human_approval_required",
+                                                          "panel",
+                                                          "delta",
+                                                          "restarted"
+                                                        ],
+                                            "properties": {
+                                                            "risk": {"enum": ["High", "Medium", "Low"]},
+                                                            "max_rounds": {"type": "integer"},
+                                                            "tuning": {"type": "boolean"},
+                                                            "approvals_needed": {"type": "integer"},
+                                                            "human_approval_required": {"type": "boolean"},
+                                                            "panel": {
+                                                                       "type": "array",
+                                                                       "items": {
+                                                                                  "type": "object",
+                                                                                  "additionalProperties": false,
+                                                                                  "required": ["seat", "model"],
+                                                                                  "properties": {
+                                                                                                  "seat": {
+                                                                                                            "enum": [
+                                                                                                                      "architecture",
+                                                                                                                      "security",
+                                                                                                                      "product",
+                                                                                                                      "general"
+                                                                                                                    ]
+                                                                                                          },
+                                                                                                  "model": {"type": ["string", "null"]}
+                                                                                                }
+                                                                                }
+                                                                     },
+                                                            "delta": {"type": "boolean"},
+                                                            "restarted": {"type": "boolean"}
+                                                          }
+                                          },
+             "data_review_verdict_submitted": {
+                                                "type": "object",
+                                                "additionalProperties": false,
+                                                "required": ["seat", "vote", "blockers", "notes", "rules", "model"],
+                                                "properties": {
+                                                                "seat": {"enum": ["architecture", "security", "product", "general"]},
+                                                                "vote": {"enum": ["APPROVE", "REJECT"]},
+                                                                "blockers": {"type": "integer"},
+                                                                "notes": {"type": "integer"},
+                                                                "rules": {"type": "array", "items": {"type": "string"}},
+                                                                "model": {"type": ["string", "null"]}
+                                                              }
+                                              },
+             "data_review_decided": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": [
+                                                    "outcome",
+                                                    "approvals",
+                                                    "approvals_needed",
+                                                    "votes",
+                                                    "blockers",
+                                                    "security_veto",
+                                                    "human_approval_required"
+                                                  ],
+                                      "properties": {
+                                                      "outcome": {"enum": ["APPROVED", "AWAITING_HUMAN", "REJECTED", "ESCALATE"]},
+                                                      "approvals": {"type": "integer"},
+                                                      "approvals_needed": {"type": "integer"},
+                                                      "votes": {
+                                                                 "type": "object",
+                                                                 "propertyNames": {"enum": ["architecture", "security", "product", "general"]},
+                                                                 "additionalProperties": {"enum": ["APPROVE", "REJECT"]}
+                                                               },
+                                                      "blockers": {"type": "integer"},
+                                                      "security_veto": {"type": "boolean"},
+                                                      "human_approval_required": {"type": "boolean"}
+                                                    }
+                                    },
+             "data_human_approval_recorded": {
+                                               "type": "object",
+                                               "additionalProperties": false,
+                                               "required": ["by_role", "note_given"],
+                                               "properties": {"by_role": {"enum": ["person"]}, "note_given": {"type": "boolean"}}
+                                             },
+             "data_merge_completed": {
+                                       "type": "object",
+                                       "additionalProperties": false,
+                                       "required": ["method", "merge_commit", "approved_commit", "landed_commit", "revalidated", "pull_request"],
+                                       "properties": {
+                                                       "method": {"enum": ["local", "pr"]},
+                                                       "merge_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                       "approved_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                       "landed_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                       "revalidated": {"type": "boolean"},
+                                                       "pull_request": {"type": ["integer", "null"]}
+                                                     }
+                                     },
+             "data_cleanup_completed": {
+                                         "type": "object",
+                                         "additionalProperties": false,
+                                         "required": ["outcome", "archive", "bundle", "uncommitted_saved"],
+                                         "properties": {
+                                                         "outcome": {"enum": ["merged", "abandoned"]},
+                                                         "archive": {"type": ["string", "null"], "maxLength": 200},
+                                                         "bundle": {"type": "boolean"},
+                                                         "uncommitted_saved": {"type": "boolean"}
+                                                       }
+                                       },
+             "data_execution_process_started": {"type": "object", "additionalProperties": false, "required": [], "properties": {}},
+             "data_execution_process_ended": {
+                                               "type": "object",
+                                               "additionalProperties": false,
+                                               "required": ["ended", "exit_code", "seconds"],
+                                               "properties": {
+                                                               "ended": {"enum": ["exited", "timed-out", "interrupted", "could-not-start"]},
+                                                               "exit_code": {"type": ["integer", "null"]},
+                                                               "seconds": {"type": ["integer", "null"]}
+                                                             }
+                                             },
+             "data_run_recorded": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": [
+                                                  "record_version",
+                                                  "outcome",
+                                                  "rounds",
+                                                  "first_pass",
+                                                  "verify_failures",
+                                                  "review_rejections",
+                                                  "escalated",
+                                                  "human_approval",
+                                                  "deviations",
+                                                  "blockers",
+                                                  "tests_seen_failing_first",
+                                                  "tests_passing_on_first_run",
+                                                  "risk",
+                                                  "app_type",
+                                                  "merge_method",
+                                                  "merge_commit"
+                                                ],
+                                    "properties": {
+                                                    "record_version": {"type": "integer"},
+                                                    "outcome": {"enum": ["merged", "abandoned"]},
+                                                    "rounds": {"type": ["integer", "null"]},
+                                                    "first_pass": {"type": "boolean"},
+                                                    "verify_failures": {"type": "integer"},
+                                                    "review_rejections": {"type": "integer"},
+                                                    "escalated": {"type": "boolean"},
+                                                    "human_approval": {"type": "boolean"},
+                                                    "deviations": {"type": "integer"},
+                                                    "blockers": {"type": "integer"},
+                                                    "tests_seen_failing_first": {"type": "integer"},
+                                                    "tests_passing_on_first_run": {"type": "integer"},
+                                                    "risk": {"enum": ["High", "Medium", "Low", null]},
+                                                    "app_type": {"type": ["string", "null"]},
+                                                    "merge_method": {"enum": ["local", "pr", null]},
+                                                    "merge_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"}
+                                                  }
+                                  },
+             "data_session_initialized": {
+                                           "type": "object",
+                                           "additionalProperties": false,
+                                           "required": ["claude_code_version", "model", "permission_mode", "tools", "agents"],
+                                           "properties": {
+                                                           "claude_code_version": {"type": ["string", "null"]},
+                                                           "model": {"type": ["string", "null"]},
+                                                           "permission_mode": {"type": ["string", "null"]},
+                                                           "tools": {"type": "array", "items": {"type": "string"}},
+                                                           "agents": {"type": "array", "items": {"type": "string"}}
+                                                         }
+                                         },
+             "data_workflow_started": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["workflow", "tickets", "until"],
+                                        "properties": {
+                                                        "workflow": {"type": "string", "maxLength": 80},
+                                                        "tickets": {"type": "array", "items": {"type": "string"}},
+                                                        "until": {"type": ["string", "null"]}
+                                                      }
+                                      },
+             "data_workflow_phases_declared": {
+                                                "type": "object",
+                                                "additionalProperties": false,
+                                                "required": ["phases"],
+                                                "properties": {
+                                                                "phases": {
+                                                                            "type": "array",
+                                                                            "items": {
+                                                                                       "type": "object",
+                                                                                       "additionalProperties": false,
+                                                                                       "required": ["index", "title"],
+                                                                                       "properties": {
+                                                                                                       "index": {"type": "integer"},
+                                                                                                       "title": {"type": "string", "maxLength": 60}
+                                                                                                     }
+                                                                                     }
+                                                                          }
+                                                              }
+                                              },
+             "data_workflow_finished": {
+                                         "type": "object",
+                                         "additionalProperties": false,
+                                         "required": [
+                                                       "status",
+                                                       "notification_status",
+                                                       "total_tokens",
+                                                       "tool_uses",
+                                                       "duration_ms",
+                                                       "stop_reason",
+                                                       "workflow_json",
+                                                       "tickets"
+                                                     ],
+                                         "properties": {
+                                                         "status": {"enum": ["completed", "killed", "unknown"]},
+                                                         "notification_status": {"type": ["string", "null"], "maxLength": 30},
+                                                         "total_tokens": {"type": ["integer", "null"]},
+                                                         "tool_uses": {"type": ["integer", "null"]},
+                                                         "duration_ms": {"type": ["integer", "null"]},
+                                                         "stop_reason": {"enum": ["budget", "unknown", null]},
+                                                         "workflow_json": {"type": "boolean"},
+                                                         "tickets": {
+                                                                      "type": "array",
+                                                                      "items": {
+                                                                                 "type": "object",
+                                                                                 "additionalProperties": false,
+                                                                                 "required": ["ticket", "outcome", "stage", "waiting_for", "stations"],
+                                                                                 "properties": {
+                                                                                                 "ticket": {"type": "string", "maxLength": 80},
+                                                                                                 "outcome": {
+                                                                                                              "type": ["string", "null"],
+                                                                                                              "maxLength": 40
+                                                                                                            },
+                                                                                                 "stage": {
+                                                                                                            "type": ["string", "null"],
+                                                                                                            "maxLength": 40
+                                                                                                          },
+                                                                                                 "waiting_for": {
+                                                                                                                  "type": ["string", "null"],
+                                                                                                                  "maxLength": 200
+                                                                                                                },
+                                                                                                 "stations": {
+                                                                                                               "type": "array",
+                                                                                                               "items": {"type": "string"}
+                                                                                                             }
+                                                                                               }
+                                                                               }
+                                                                    }
+                                                       }
+                                       },
+             "data_agent_queued": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": ["index", "label", "phase", "phase_index", "model"],
+                                    "properties": {
+                                                    "index": {"type": "integer"},
+                                                    "label": {"type": "string", "maxLength": 120},
+                                                    "phase": {"type": ["string", "null"], "maxLength": 60},
+                                                    "phase_index": {"type": ["integer", "null"]},
+                                                    "model": {"type": ["string", "null"]}
+                                                  }
+                                  },
+             "data_agent_started": {
+                                     "type": "object",
+                                     "additionalProperties": false,
+                                     "required": ["index", "label", "phase", "phase_index", "agent_type", "model", "agent_try"],
+                                     "properties": {
+                                                     "index": {"type": "integer"},
+                                                     "label": {"type": "string", "maxLength": 120},
+                                                     "phase": {"type": ["string", "null"], "maxLength": 60},
+                                                     "phase_index": {"type": ["integer", "null"]},
+                                                     "agent_type": {"type": ["string", "null"], "maxLength": 80},
+                                                     "model": {"type": ["string", "null"]},
+                                                     "agent_try": {"type": ["integer", "null"]}
+                                                   }
+                                   },
+             "data_agent_progressed": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": ["tool_calls", "tokens", "last_tool"],
+                                        "properties": {
+                                                        "tool_calls": {"type": ["integer", "null"]},
+                                                        "tokens": {"type": ["integer", "null"]},
+                                                        "last_tool": {"type": ["string", "null"], "maxLength": 60}
+                                                      }
+                                      },
+             "data_agent_finished": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": ["status", "duration_ms", "tokens", "tool_calls"],
+                                      "properties": {
+                                                      "status": {"enum": ["done", "error", "unknown"]},
+                                                      "duration_ms": {"type": ["integer", "null"]},
+                                                      "tokens": {"type": ["integer", "null"]},
+                                                      "tool_calls": {"type": ["integer", "null"]}
+                                                    }
+                                    },
+             "data_tool_called": {
+                                   "type": "object",
+                                   "additionalProperties": false,
+                                   "required": ["tool", "target_class", "script", "path_rel"],
+                                   "properties": {
+                                                   "tool": {"type": "string", "maxLength": 60},
+                                                   "target_class": {
+                                                                     "enum": [
+                                                                               "cell-file",
+                                                                               "repo-file",
+                                                                               "outside-project",
+                                                                               "station-script",
+                                                                               "git",
+                                                                               "test-run",
+                                                                               "search",
+                                                                               "agent",
+                                                                               "workflow",
+                                                                               "skill",
+                                                                               "other"
+                                                                             ]
+                                                                   },
+                                                   "script": {"type": ["string", "null"], "maxLength": 60},
+                                                   "path_rel": {"type": ["string", "null"], "maxLength": 300}
+                                                 }
+                                 },
+             "data_tool_returned": {
+                                     "type": "object",
+                                     "additionalProperties": false,
+                                     "required": ["status", "duration_ms"],
+                                     "properties": {"status": {"enum": ["ok", "error", "unknown"]}, "duration_ms": {"type": ["integer", "null"]}}
+                                   },
+             "data_tool_refused": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": ["tool", "summary"],
+                                    "properties": {"tool": {"type": "string", "maxLength": 60}, "summary": {"type": "string", "maxLength": 100}}
+                                  },
+             "data_execution_usage": {
+                                       "type": "object",
+                                       "additionalProperties": false,
+                                       "required": ["total_cost_usd", "subtype", "is_error", "terminal_reason", "budget_exhausted", "models"],
+                                       "properties": {
+                                                       "total_cost_usd": {"type": ["number", "null"]},
+                                                       "subtype": {"type": ["string", "null"], "maxLength": 40},
+                                                       "is_error": {"type": ["boolean", "null"]},
+                                                       "terminal_reason": {"type": ["string", "null"], "maxLength": 40},
+                                                       "budget_exhausted": {"type": "boolean"},
+                                                       "models": {
+                                                                   "type": "object",
+                                                                   "additionalProperties": {
+                                                                                             "type": "object",
+                                                                                             "additionalProperties": false,
+                                                                                             "required": [
+                                                                                                           "cost_usd",
+                                                                                                           "input_tokens",
+                                                                                                           "output_tokens",
+                                                                                                           "cache_read_tokens",
+                                                                                                           "cache_creation_tokens"
+                                                                                                         ],
+                                                                                             "properties": {
+                                                                                                             "cost_usd": {"type": ["number", "null"]},
+                                                                                                             "input_tokens": {
+                                                                                                                               "type": [
+                                                                                                                                         "integer",
+                                                                                                                                         "null"
+                                                                                                                                       ]
+                                                                                                                             },
+                                                                                                             "output_tokens": {
+                                                                                                                                "type": [
+                                                                                                                                          "integer",
+                                                                                                                                          "null"
+                                                                                                                                        ]
+                                                                                                                              },
+                                                                                                             "cache_read_tokens": {
+                                                                                                                                    "type": [
+                                                                                                                                              "integer",
+                                                                                                                                              "null"
+                                                                                                                                            ]
+                                                                                                                                  },
+                                                                                                             "cache_creation_tokens": {
+                                                                                                                                        "type": [
+                                                                                                                                                  "integer",
+                                                                                                                                                  "null"
+                                                                                                                                                ]
+                                                                                                                                      }
+                                                                                                           }
+                                                                                           }
+                                                                 }
+                                                     }
+                                     },
+             "data_review_finding": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": ["seat", "n", "severity", "rule", "file_rel", "title"],
+                                      "properties": {
+                                                      "seat": {"enum": ["architecture", "security", "product", "general"]},
+                                                      "n": {"type": "integer"},
+                                                      "severity": {"enum": ["blocker", "note"]},
+                                                      "rule": {"type": ["string", "null"], "maxLength": 80},
+                                                      "file_rel": {"type": ["string", "null"], "maxLength": 300},
+                                                      "title": {"type": "string", "maxLength": 200}
+                                                    }
+                                    },
+             "data_artifact_recorded": {
+                                         "type": "object",
+                                         "additionalProperties": false,
+                                         "required": ["kind", "path_rel", "sha256", "bytes", "media_type", "commit", "nature", "integrity"],
+                                         "properties": {
+                                                         "kind": {"type": "string", "maxLength": 40},
+                                                         "path_rel": {"type": "string", "maxLength": 300},
+                                                         "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                         "bytes": {"type": ["integer", "null"]},
+                                                         "media_type": {"type": ["string", "null"]},
+                                                         "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                         "nature": {"enum": ["evidence", "record", "code", "prose"]},
+                                                         "integrity": {"enum": ["match", "mismatch", "missing", "unchecked"]}
+                                                       }
+                                       },
+             "data_history_began": {
+                                     "type": "object",
+                                     "additionalProperties": false,
+                                     "required": ["reason", "snapshot"],
+                                     "properties": {
+                                                     "reason": {
+                                                                 "enum": [
+                                                                           "no-lifecycle-log",
+                                                                           "observer-started-late",
+                                                                           "archive-only",
+                                                                           "source-unreadable",
+                                                                           "first-seen"
+                                                                         ]
+                                                               },
+                                                     "snapshot": {
+                                                                   "type": "object",
+                                                                   "additionalProperties": false,
+                                                                   "properties": {
+                                                                                   "stage": {
+                                                                                              "enum": [
+                                                                                                        "interview",
+                                                                                                        "spec-open",
+                                                                                                        "spec-ready",
+                                                                                                        "planned",
+                                                                                                        "building",
+                                                                                                        "built",
+                                                                                                        "verified",
+                                                                                                        "awaiting-human",
+                                                                                                        "approved",
+                                                                                                        "pr-open",
+                                                                                                        "merged",
+                                                                                                        "blocked",
+                                                                                                        null
+                                                                                                      ]
+                                                                                            },
+                                                                                   "round": {"type": ["integer", "null"]},
+                                                                                   "station": {"type": ["string", "null"]},
+                                                                                   "state": {"type": ["string", "null"]}
+                                                                                 }
+                                                                 }
+                                                   }
+                                   },
+             "data_verify_targets_listed": {
+                                             "type": "object",
+                                             "additionalProperties": false,
+                                             "required": ["targets", "source"],
+                                             "properties": {
+                                                             "targets": {
+                                                                          "type": "array",
+                                                                          "items": {
+                                                                                     "type": "object",
+                                                                                     "additionalProperties": false,
+                                                                                     "required": ["id", "kind"],
+                                                                                     "properties": {
+                                                                                                     "id": {"type": "string", "maxLength": 40},
+                                                                                                     "kind": {
+                                                                                                               "enum": [
+                                                                                                                         "scenario",
+                                                                                                                         "matrix rule",
+                                                                                                                         "holdout"
+                                                                                                                       ]
+                                                                                                             }
+                                                                                                   }
+                                                                                   }
+                                                                        },
+                                                             "source": {"enum": ["spec.json"]}
+                                                           }
+                                           },
+             "data_capacity_wait_changed": {
+                                             "type": "object",
+                                             "additionalProperties": false,
+                                             "required": ["state", "scope", "limit"],
+                                             "properties": {
+                                                             "state": {"enum": ["waiting", "released"]},
+                                                             "scope": {"enum": ["execution"]},
+                                                             "limit": {"type": ["integer", "null"]}
+                                                           }
+                                           },
+             "data_history_gap": {
+                                   "type": "object",
+                                   "additionalProperties": false,
+                                   "required": ["source_key", "from_seq", "to_seq", "reason", "count"],
+                                   "properties": {
+                                                   "source_key": {"type": "string", "maxLength": 160},
+                                                   "from_seq": {"type": ["integer", "null"]},
+                                                   "to_seq": {"type": ["integer", "null"]},
+                                                   "reason": {
+                                                               "enum": [
+                                                                         "missing-seq",
+                                                                         "unparsable-line",
+                                                                         "truncated",
+                                                                         "rewritten",
+                                                                         "conflict",
+                                                                         "unreadable",
+                                                                         "no-timestamps",
+                                                                         "state-mismatch",
+                                                                         "unknown-type"
+                                                                       ]
+                                                             },
+                                                   "count": {"type": ["integer", "null"]}
+                                                 }
+                                 }
+           }
+}
