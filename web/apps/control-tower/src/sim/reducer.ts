@@ -4,6 +4,11 @@
  * The engine (engine.ts) runs it once over the whole fixture and keeps every scene.
  */
 import type { AnySimEvent } from "./events";
+import type { EngineEvent } from "./v3";
+import { isV3 } from "./v3";
+import type { EntityMeta, SceneProvenance } from "./provenance";
+import { COMPLETE, PROVENANCE, SIM_META } from "./provenance";
+import { reduceV3 } from "./reduce-v3";
 import type {
   AgentState,
   ArtifactState,
@@ -25,7 +30,25 @@ import { actorOf, emptyActors } from "./actors";
 import type { GateKind, SchedulerState } from "./vocabulary";
 import { MAX_ROUNDS } from "./vocabulary";
 
-const EMPTY_COUNTERS: Counters = {
+/** The live-only fields of an execution, empty: the simulation never sets them. */
+export const EMPTY_EXECUTION_EXTRAS = {
+  processStartedAt: null,
+  processEndedAt: null,
+  ended: null,
+  exitCode: null,
+  recovery: null,
+  workflowId: null,
+  workflowStatus: null,
+  stopReason: null,
+  phases: [],
+  queued: {},
+  usage: null,
+  claudeCodeVersion: null,
+  refused: [],
+  capacityWait: null,
+} as const satisfies Partial<ExecutionState>;
+
+export const EMPTY_COUNTERS: Counters = {
   events: 0,
   agentsActive: 0,
   agentsStarted: 0,
@@ -47,13 +70,16 @@ const EMPTY_COUNTERS: Counters = {
   costUsd: 0,
 };
 
-export function emptyScene(definitions: ProductDefinitions): Scene {
+export function emptyScene(definitions: ProductDefinitions, source: SceneProvenance = PROVENANCE.simulation): Scene {
   return {
+    provenance: source,
+    completeness: COMPLETE,
     cursor: 0,
     at: 0,
     lastSeq: null,
+    lastEventId: null,
     project: definitions.project,
-    factory: { enabled: false, autonomy: null, enabledBy: null, allowMerge: false, limits: null, runnerId: null, productCommit: null },
+    factory: { enabled: false, autonomy: null, enabledBy: null, allowMerge: false, limits: null, runnerId: null, productCommit: null, paused: false },
     supervisor: { lastDecisionAt: null, lastDecision: null, attention: {} },
     waves: {},
     slices: {},
@@ -63,13 +89,39 @@ export function emptyScene(definitions: ProductDefinitions): Scene {
     gates: {},
     actors: emptyActors(),
     counters: EMPTY_COUNTERS,
+    strayAgents: {},
   };
 }
 
 // ---------------------------------------------------------------- small immutable helpers
 
-const put = <T>(record: Readonly<Record<string, T>>, key: string, value: T): Readonly<Record<string, T>> => ({ ...record, [key]: value });
-const replaceLast = <T>(list: readonly T[], match: (item: T) => boolean, update: (item: T) => T): readonly T[] => {
+/**
+ * Records the reducer created during the current transient run (see beginTransient). Only the log
+ * opens one, and only for scenes it discards: a record created and owned by the run may be written
+ * in place by a later event of the same run instead of being copied again. Every scene the log keeps
+ * or hands out is sealed first (endTransient), so no scene anyone holds is ever changed.
+ */
+let owned: WeakSet<object> | null = null;
+
+/** Start a run in which the reducer may update the records it created itself in place. */
+export function beginTransient(): void {
+  owned = new WeakSet();
+}
+/** Seal everything created so far: from now on, every update copies again. */
+export function endTransient(): void {
+  owned = null;
+}
+
+export const put = <T>(record: Readonly<Record<string, T>>, key: string, value: T): Readonly<Record<string, T>> => {
+  if (owned && owned.has(record)) {
+    (record as Record<string, T>)[key] = value;
+    return record;
+  }
+  const copy = { ...record, [key]: value };
+  if (owned) owned.add(copy);
+  return copy;
+};
+export const replaceLast = <T>(list: readonly T[], match: (item: T) => boolean, update: (item: T) => T): readonly T[] => {
   for (let i = list.length - 1; i >= 0; i--) {
     const item = list[i] as T;
     if (match(item)) {
@@ -80,38 +132,49 @@ const replaceLast = <T>(list: readonly T[], match: (item: T) => boolean, update:
   }
   return list;
 };
-const bump = (counters: Counters, changes: Partial<Record<keyof Counters, number>>): Counters => {
+export const bump = (counters: Counters, changes: Partial<Record<keyof Counters, number>>): Counters => {
   const next = { ...counters };
   for (const key of Object.keys(changes) as Array<keyof Counters>) next[key] = Math.round((next[key] + (changes[key] ?? 0)) * 100) / 100;
   return next;
 };
 
-function withSlice(scene: Scene, id: string | null, update: (slice: SliceState) => SliceState): Scene {
+export function withSlice(scene: Scene, id: string | null, update: (slice: SliceState) => SliceState): Scene {
   const slice = id ? scene.slices[id] : undefined;
   return slice ? { ...scene, slices: put(scene.slices, slice.id, update(slice)) } : scene;
 }
-function withCell(scene: Scene, ticket: string | null, update: (cell: CellState) => CellState): Scene {
+export function withCell(scene: Scene, ticket: string | null, update: (cell: CellState) => CellState): Scene {
   const cell = ticket ? scene.cells[ticket] : undefined;
   return cell ? { ...scene, cells: put(scene.cells, cell.ticketId, update(cell)) } : scene;
 }
-function withAgent(cell: CellState, agentId: string, update: (agent: AgentState) => AgentState): CellState {
+export function withAgent(cell: CellState, agentId: string, update: (agent: AgentState) => AgentState): CellState {
   const agent = cell.agents[agentId];
   return agent ? { ...cell, agents: put(cell.agents, agentId, update(agent)) } : cell;
 }
-function withExecution(scene: Scene, id: string | null, update: (execution: ExecutionState) => ExecutionState): Scene {
+export function withExecution(scene: Scene, id: string | null, update: (execution: ExecutionState) => ExecutionState): Scene {
   const execution = id ? scene.executions[id] : undefined;
   return execution ? { ...scene, executions: put(scene.executions, execution.id, update(execution)) } : scene;
 }
-function setGate(scene: Scene, ticket: string, gate: GateKind, round: number | null, state: GateState["state"], detail: string, t: number, seq: number): Scene {
+export function setGate(
+  scene: Scene,
+  ticket: string,
+  gate: GateKind,
+  round: number | null,
+  state: GateState["state"],
+  detail: string,
+  t: number,
+  seq: number,
+  meta: EntityMeta = SIM_META,
+  reasonCode: string | null = null,
+): Scene {
   const id = gateId(ticket, gate, round ?? undefined);
   const before = scene.gates[id];
   const decided = state === "open" || state === "waiting" ? null : t;
   const next: GateState = before
-    ? { ...before, state, detail, decidedAt: decided, seq }
-    : { id, ticketId: ticket, gate, round, state, detail, openedAt: t, decidedAt: decided, seq };
+    ? { ...before, state, detail, decidedAt: decided, seq, meta, reasonCode: reasonCode ?? before.reasonCode }
+    : { id, ticketId: ticket, gate, round, state, detail, openedAt: t, decidedAt: decided, seq, reasonCode, meta };
   return { ...scene, gates: put(scene.gates, id, next) };
 }
-function schedule(slice: SliceState, state: SchedulerState, t: number, seq: number, reasons?: readonly string[]): SliceState {
+export function schedule(slice: SliceState, state: SchedulerState, t: number, seq: number, reasons?: readonly string[]): SliceState {
   if (slice.scheduler === state && !reasons) return slice;
   return {
     ...slice,
@@ -122,7 +185,7 @@ function schedule(slice: SliceState, state: SchedulerState, t: number, seq: numb
   };
 }
 
-function newCell(ticketId: string, sliceId: string, definitions: ProductDefinitions, t: number): CellState {
+export function newCell(ticketId: string, sliceId: string, definitions: ProductDefinitions, t: number, meta: EntityMeta = SIM_META): CellState {
   const def = definitions.slices[sliceId];
   return {
     ticketId,
@@ -155,12 +218,28 @@ function newCell(ticketId: string, sliceId: string, definitions: ProductDefiniti
     merged: null,
     archived: null,
     openedAt: t,
+    cellInstance: null,
+    gateLog: [],
+    capacityWait: null,
+    runRecord: null,
+    historyBegan: null,
+    meta,
   };
 }
 
 // ---------------------------------------------------------------- the reducer
 
-export function reduce(scene: Scene, event: AnySimEvent, definitions: ProductDefinitions): Scene {
+/**
+ * The one reducer. It takes the simulation's events (factory-event v2 plus `t`) and the observer's
+ * version 3 events (v3.ts), distinguished by `schema_version`, and builds the one Scene type from
+ * either. The version 3 cases live in reduce-v3.ts for size; this is their only entry point.
+ */
+export function reduce(scene: Scene, event: EngineEvent, definitions: ProductDefinitions): Scene {
+  if (isV3(event)) return reduceV3(scene, event, definitions);
+  return reduceSim(scene, event, definitions);
+}
+
+function reduceSim(scene: Scene, event: AnySimEvent, definitions: ProductDefinitions): Scene {
   const actor = actorOf(event);
   if (!actor) return reduceEvent(scene, event, definitions);
   const next = reduceEvent(scene, event, definitions);
@@ -171,7 +250,7 @@ export function reduce(scene: Scene, event: AnySimEvent, definitions: ProductDef
 function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefinitions): Scene {
   const t = event.t;
   const seq = event.seq;
-  let s: Scene = { ...scene, cursor: scene.cursor + 1, at: t, lastSeq: seq, counters: bump(scene.counters, { events: 1 }) };
+  let s: Scene = { ...scene, cursor: scene.cursor + 1, at: t, lastSeq: seq, lastEventId: `sim:${seq}`, counters: bump(scene.counters, { events: 1 }) };
   const ticket = event.ticket_id;
   // intake.py open_cell writes the cell's files and finalizes it before it records work.scheduled.
   if (ticket && !s.cells[ticket] && (event.type === "artifact.written" || event.type === "cell.stage_changed")) {
@@ -204,6 +283,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
           state: "discovered",
           discoveredAt: t,
           seq,
+          meta: SIM_META,
         }),
       };
     }
@@ -229,12 +309,13 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         since: t,
         integratedCommit: null,
         history: [{ state: "materialized", at: t, seq }],
+        meta: SIM_META,
       };
       let dependencies = s.dependencies;
       for (const to of dependsOn) {
         const key = `${id}->${to}`;
         const done = s.slices[to]?.scheduler === "integrated";
-        const edge: DependencyState = { id: key, from: id, to, state: done ? "satisfied" : "blocking", satisfiedAt: done ? t : null, satisfiedSeq: done ? seq : null };
+        const edge: DependencyState = { id: key, from: id, to, state: done ? "satisfied" : "blocking", satisfiedAt: done ? t : null, satisfiedSeq: done ? seq : null, meta: SIM_META };
         dependencies = put(dependencies, key, edge);
       }
       return { ...s, slices: put(s.slices, id, slice), dependencies };
@@ -299,6 +380,8 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         workflowFinishedAt: null,
         endedAt: null,
         outcome: null,
+        ...EMPTY_EXECUTION_EXTRAS,
+        meta: SIM_META,
       };
       s = { ...s, executions: put(s.executions, id, execution) };
       return withCell(s, ticket, (cell) => ({ ...cell, executionId: id }));
@@ -341,7 +424,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         station: d.station,
         action: d.action,
         stationSince: t,
-        visits: [...cell.visits, { station: d.station, action: d.action, round: d.round, enteredAt: t, enteredSeq: seq, leftAt: null, outcome: null }],
+        visits: [...cell.visits, { station: d.station, action: d.action, round: d.round, enteredAt: t, enteredSeq: seq, leftAt: null, outcome: null, visitId: null, outcomeWord: null, durationMs: null, meta: SIM_META }],
       }));
     }
     case "station.left":
@@ -378,6 +461,17 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         summary: null,
         currentToolCallId: null,
         toolCalls: [],
+        lifecycle: "running",
+        observation: "per-call",
+        toolCallCount: 0,
+        lastTool: null,
+        tokens: null,
+        durationMs: null,
+        refused: [],
+        workflowId: null,
+        index: null,
+        modelName: d.model,
+        meta: SIM_META,
       };
       s = withCell(s, ticket, (cell) => {
         let next: CellState = { ...cell, agents: put(cell.agents, agent.id, agent), agentOrder: [...cell.agentOrder, agent.id], activeAgentIds: [...cell.activeAgentIds, agent.id] };
@@ -390,14 +484,37 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
     }
     case "agent.finished":
       s = withCell(s, ticket, (cell) => ({
-        ...withAgent(cell, event.data.agent_id, (a) => ({ ...a, status: event.data.outcome === "error" ? "error" : "done", finishedAt: t, summary: event.data.summary, currentToolCallId: null })),
+        ...withAgent(cell, event.data.agent_id, (a) => ({
+          ...a,
+          status: event.data.outcome === "error" ? "error" : "done",
+          lifecycle: event.data.outcome === "error" ? "error" : "done",
+          finishedAt: t,
+          durationMs: t - a.startedAt,
+          summary: event.data.summary,
+          currentToolCallId: null,
+        })),
         activeAgentIds: cell.activeAgentIds.filter((id) => id !== event.data.agent_id),
       }));
       return { ...s, counters: bump(s.counters, { agentsActive: -1 }) };
     case "tool.started": {
       const d = event.data;
-      const call: ToolCallState = { id: d.call_id, agentId: d.agent_id, ticketId: ticket ?? "", tool: d.tool, target: d.target, startedAt: t, startedSeq: seq, finishedAt: null, status: "running", summary: null, artifactIds: [] };
-      s = withCell(s, ticket, (cell) => withAgent(cell, d.agent_id, (a) => ({ ...a, currentToolCallId: call.id, toolCalls: [...a.toolCalls, call] })));
+      const call: ToolCallState = {
+        id: d.call_id,
+        agentId: d.agent_id,
+        ticketId: ticket ?? "",
+        tool: d.tool,
+        target: d.target,
+        startedAt: t,
+        startedSeq: seq,
+        finishedAt: null,
+        status: "running",
+        result: "running",
+        summary: null,
+        artifactIds: [],
+        toolName: d.tool,
+        meta: SIM_META,
+      };
+      s = withCell(s, ticket, (cell) => withAgent(cell, d.agent_id, (a) => ({ ...a, currentToolCallId: call.id, toolCalls: [...a.toolCalls, call], toolCallCount: a.toolCalls.length + 1, lastTool: d.tool })));
       return { ...s, counters: bump(s.counters, { toolCallsActive: 1, toolCalls: 1 }) };
     }
     case "tool.finished": {
@@ -406,7 +523,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         withAgent(cell, d.agent_id, (a) => ({
           ...a,
           currentToolCallId: a.currentToolCallId === d.call_id ? null : a.currentToolCallId,
-          toolCalls: replaceLast(a.toolCalls, (c) => c.id === d.call_id, (c) => ({ ...c, finishedAt: t, status: d.ok ? "ok" : "error", summary: d.summary })),
+          toolCalls: replaceLast(a.toolCalls, (c) => c.id === d.call_id, (c) => ({ ...c, finishedAt: t, status: d.ok ? "ok" : "error", result: d.ok ? "ok" : "error", summary: d.summary })),
         })),
       );
       return { ...s, counters: bump(s.counters, { toolCallsActive: -1 }) };
@@ -427,6 +544,8 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         writer: { agentId: d.writer.agent_id, callId: d.writer.call_id, script: d.writer.script },
         writtenAt: t,
         seq,
+        record: null,
+        meta: SIM_META,
       };
       s = withCell(s, ticket, (cell) => {
         const index = cell.artifacts.findIndex((a) => a.id === artifact.id);
@@ -446,7 +565,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
       return setGate(s, ticket ?? "", event.data.gate, null, event.data.passed ? "passed" : "failed", event.data.detail, t, seq);
     case "task.started": {
       const d = event.data;
-      const task: TaskState = { id: d.task_id, kind: d.kind, text: d.text, files: d.files, ids: d.ids, loop: d.loop, status: "active", startedAt: t, doneAt: null, commit: null };
+      const task: TaskState = { id: d.task_id, kind: d.kind, text: d.text, files: d.files, ids: d.ids, loop: d.loop, status: "active", startedAt: t, doneAt: null, commit: null, meta: SIM_META };
       return withCell(s, ticket, (cell) => ({ ...cell, tasks: [...cell.tasks, task] }));
     }
     case "task.red":
@@ -513,6 +632,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         humanApprovalRequired: d.human_approval_required,
         humanApprovalReasons: d.human_approval_reasons,
         delta: d.delta ? { sinceCommit: d.delta.since_commit, filesChanged: d.delta.files_changed, earlierBlockerFiles: d.delta.earlier_blocker_files } : null,
+        isDelta: d.delta !== null,
         seats: d.panel.map((p) => ({ seat: p.role, model: p.model, agentId: null, vote: null, votedAt: null })),
         findings: [],
         startedAt: t,
@@ -532,7 +652,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         ...cell,
         reviews: replaceLast(cell.reviews, (r) => r.round === d.round, (r) => ({
           ...r,
-          findings: [...r.findings, { id: d.finding_id, round: d.round, seat: d.seat, severity: d.severity, title: d.title, rule: d.rule, file: d.file, at: t, outvoted: false }],
+          findings: [...r.findings, { id: d.finding_id, round: d.round, seat: d.seat, severity: d.severity, title: d.title, rule: d.rule, file: d.file, at: t, outvoted: false, meta: SIM_META }],
         })),
       }));
       return { ...s, counters: bump(s.counters, d.severity === "blocker" ? { blockers: 1 } : { notes: 1 }) };
