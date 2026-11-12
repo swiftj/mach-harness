@@ -8,17 +8,10 @@
  * backwards shows the earlier frame.
  */
 import { animationProgress, type FactoryAnimationName } from "@mach/ui";
-import { isStale, PLAYBACK_BASE_RATE, useSceneStore, type SceneStoreState } from "../scene";
+import { isStale, timeScaleOf, useSceneStore, type SceneStoreState } from "../scene";
 
 const STEPS = 48;
 
-/**
- * Factory ms per 1x wall ms: the simulation and a replay play their history at PLAYBACK_BASE_RATE;
- * live time runs at the wall's own pace, so a live animation lasts what the grammar says.
- */
-function rateOf(s: Pick<SceneStoreState, "source">): number {
-  return s.source === "live" ? 1 : PLAYBACK_BASE_RATE;
-}
 
 /**
  * Progress 0..1 of a named grammar animation whose event happened at factory time `at`. `late`: the
@@ -26,9 +19,10 @@ function rateOf(s: Pick<SceneStoreState, "source">): number {
  * Its mark then takes the reduced form, a brief state change, never a travel replayed from the start:
  * the person was not shown it happening, so the drawing must not pretend they are.
  */
-export function eventProgress(s: Pick<SceneStoreState, "playhead" | "reducedMotion" | "source">, at: number | null | undefined, name: FactoryAnimationName, delay = 0, late = false): number {
+export function eventProgress(s: Pick<SceneStoreState, "playhead" | "reducedMotion" | "source" | "following" | "speed">, at: number | null | undefined, name: FactoryAnimationName, delay = 0, late = false): number {
   if (at === null || at === undefined) return 0;
-  const elapsed = (s.playhead - at) / rateOf(s);
+  // The store's one time scale (1 at the live edge, the chosen playback rate otherwise).
+  const elapsed = (s.playhead - at) / timeScaleOf(s);
   return Math.round(animationProgress(name, elapsed, { reduced: s.reducedMotion || late, delay }) * STEPS) / STEPS;
 }
 

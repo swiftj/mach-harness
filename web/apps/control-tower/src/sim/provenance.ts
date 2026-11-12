@@ -47,6 +47,14 @@ export interface EntityMeta {
   readonly start: TimeQuality;
   /** How the entity's end time is known (`finishedAt`, `leftAt`, ...); `unknown` while open. */
   readonly end: TimeQuality;
+  /**
+   * The observer committed the event that last set it after events that sort after it (the event's
+   * own `late`, contract 6.5): a view treats the change as a state change (drawn at its end state),
+   * never as motion replayed. Lateness to this browser alone (a batch inserted before what it already
+   * held) is a delivery fact and stays on the log entry: `isLateEntry(log, meta.eventId)`. Always
+   * false for the simulation.
+   */
+  readonly late: boolean;
 }
 
 /** The meta of every simulated entity: one frozen object, shared. */
@@ -58,6 +66,7 @@ export const SIM_META: EntityMeta = Object.freeze({
   inferred: Object.freeze({}),
   start: "simulated",
   end: "simulated",
+  late: false,
 });
 
 export interface SceneProvenance {

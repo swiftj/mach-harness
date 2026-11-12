@@ -14,7 +14,6 @@
  * it was laid out from the fixture's definitions.
  */
 import { cellAnatomy, factoryTokens, type PlanBox, type Vec3 } from "@mach/ui";
-import type { Scene } from "../sim";
 
 const SIZE = factoryTokens.size;
 export const PLATE_Z: number = factoryTokens.elevation.regionPlate; // 8
@@ -96,37 +95,6 @@ export interface PlantLayout {
 export interface PlantSlot {
   sliceId: string;
   ticketId: string;
-}
-
-/**
- * The bays known in a scene, in a stable order: the slices of each wave in the order the waves were
- * discovered, then slices outside any received wave, then cells whose slice is not known. Read it
- * from the head scene (everything received), so scrubbing back never moves a bay.
- */
-export function slotsOf(scene: Scene): PlantSlot[] {
-  const out: PlantSlot[] = [];
-  const seen = new Set<string>();
-  const ticketOfSlice = new Map<string, string>();
-  for (const c of Object.values(scene.cells)) if (c.sliceId) ticketOfSlice.set(c.sliceId, c.ticketId);
-  const add = (sliceId: string) => {
-    if (!sliceId || seen.has(sliceId)) return;
-    seen.add(sliceId);
-    const slice = scene.slices[sliceId];
-    out.push({ sliceId, ticketId: ticketOfSlice.get(sliceId) ?? (slice?.ticketId || sliceId) });
-  };
-  const waves = Object.values(scene.waves).sort((a, b) => a.discoveredAt - b.discoveredAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  for (const w of waves) for (const id of w.sliceIds) add(id);
-  const firstAt = (id: string) => scene.slices[id]?.history[0]?.at ?? scene.slices[id]?.since ?? 0;
-  for (const id of Object.keys(scene.slices).sort((a, b) => firstAt(a) - firstAt(b) || (a < b ? -1 : 1))) add(id);
-  const tickets = new Set(out.map((s) => s.ticketId));
-  for (const c of Object.values(scene.cells).sort((a, b) => a.openedAt - b.openedAt || (a.ticketId < b.ticketId ? -1 : 1))) {
-    if (tickets.has(c.ticketId)) continue;
-    const sliceId = c.sliceId && !seen.has(c.sliceId) ? c.sliceId : `cell:${c.ticketId}`;
-    seen.add(sliceId);
-    tickets.add(c.ticketId);
-    out.push({ sliceId, ticketId: c.ticketId });
-  }
-  return out;
 }
 
 /** A key that changes exactly when the plant's layout would. */

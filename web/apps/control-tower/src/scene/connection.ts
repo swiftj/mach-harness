@@ -4,14 +4,21 @@
  *
  * - `connecting`: no stream yet (first load, or after a reset while history reloads);
  * - `live`: the stream is open and a message (event or heartbeat) arrived within the stale bound;
- * - `reconnecting`: the stream dropped; resuming from the durable cursor;
+ * - `reconnecting`: the stream dropped; resuming from the durable cursor (the first few attempts);
  * - `stale`: open as far as the browser knows, but silent beyond the stale bound;
- * - `disconnected`: given up (the observer refused, or the person closed it).
+ * - `disconnected`: the observer has not answered for `DISCONNECTED_AFTER` attempts in a row; the
+ *   source keeps retrying with back-off and resumes from the cursor when it answers (the same
+ *   origin, the same session: the observer keeps both across a restart); or the person closed it;
+ * - `no-session`: the observer answered 401: it does not know this browser (the session expired or
+ *   was dropped). No retry; the person needs a new link.
  *
  * Times are factory time (`t`, Unix ms for live) where a view prints them ("stale since 14:02:10"),
  * so they come from the stream, not the browser's clock.
  */
-export type ConnectionState = "connecting" | "live" | "reconnecting" | "stale" | "disconnected";
+export type ConnectionState = "connecting" | "live" | "reconnecting" | "stale" | "disconnected" | "no-session";
+
+/** Failed reconnection attempts in a row after which the state is `disconnected` (still retrying). */
+export const DISCONNECTED_AFTER = 4;
 
 export interface SupervisorFreshness {
   /** Seconds since the Factory Supervisor's lease heartbeat, as the observer read it. */
@@ -70,6 +77,33 @@ export const INITIAL_CONNECTION: ConnectionStatus = {
   resets: 0,
   refused: 0,
 };
+
+/**
+ * The Factory's state on this machine, as the observer reads it from the Factory's own files
+ * (`GET /api/v1/factory/status`, apps/observer/README.md). Read tolerantly: anything not reported is
+ * null. The Control Tower only reads it; nothing here can enable, pause or schedule anything.
+ */
+export interface FactoryStatus {
+  /** The project has Factory state (a `.factory/` folder). */
+  readonly factoryPresent: boolean | null;
+  /** The machine-local policy, summarised: enabled, paused, the effective mode, autonomy. */
+  readonly enabled: boolean | null;
+  readonly paused: boolean | null;
+  readonly mode: string | null;
+  readonly autonomy: string | null;
+  readonly supervisor: {
+    readonly leasePresent: boolean | null;
+    readonly heartbeatFresh: boolean | null;
+    readonly heartbeatAgeSeconds: number | null;
+    readonly leaseExpired: boolean | null;
+  };
+  /** Per source the observer follows: its state and how far its reading lags the file (bytes) and the clock (ms). */
+  readonly sources: readonly { readonly key: string; readonly state: string | null; readonly lagBytes: number | null; readonly lastReadAgeMs: number | null }[];
+  /** The observer's ingest: stale, its watermark (Unix ms), catching up. */
+  readonly ingest: { readonly stale: boolean | null; readonly watermark: number | null; readonly catchingUp: boolean | null };
+  /** When the observer read the files (Unix ms). */
+  readonly readAt: number | null;
+}
 
 /** Whether what the scene shows as executing may have changed unseen. */
 export function isStale(status: ConnectionStatus | null): boolean {

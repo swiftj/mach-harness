@@ -479,7 +479,8 @@ function gateSub(cell: CellState, g: GateState, simulated: boolean): string {
     if (ver && !simulated) {
       // A real history: checks as recorded, and the targets listed for them (reconstructed) as expected.
       const recorded = ver.checks.filter((c) => c.at !== null).length;
-      const expected = ver.checks.length - recorded;
+      // Expected only when a list of targets was received, never inferred from untimed checks.
+      const expected = ver.listed ? ver.checks.filter((c) => c.result === "pending").length : 0;
       return `${recorded} recorded${expected ? ` · ${expected} expected` : ""} · ${clock(at)}`;
     }
     if (ver) {

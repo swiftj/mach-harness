@@ -126,7 +126,11 @@ test("degraded states: executing, waiting for a person, completed, failed, inter
   assert.equal(activityOf(gate, "cell:LOCAL-031").state, "waiting-person");
   const end = log.head();
   assert.equal(activityOf(end, "execution:x1a2b3c4d5e6f").state, "completed");
-  assert.equal(activityOf(end, "slice:SLICE-021").state, "unknown", "approved and not merged: nothing recorded says what it waits for");
+  // Approved and not merged: its state is known (review done, merge next); who merges is not recorded.
+  const approved = activityOf(end, "slice:SLICE-021");
+  assert.equal(approved.state, "completed");
+  assert.deepEqual(approved.awaiting, { step: "merge", label: "Approved, not merged yet", by: null, basis: null });
+  assert.match(approved.reason, /Who merges is not recorded/);
   const agent = Object.values(end.cells["LOCAL-031"].agents).find((a) => a.observation === "count-only");
   assert.equal(activityOf(end, `agent:${agent.id}`).state, "completed");
   assert.equal(activityOf(end, "cell:NOPE").state, "unknown");
@@ -190,7 +194,7 @@ test("event-to-entity links in both directions (for Evidence Theater and Analyti
   const visit = liveEntityAt(log.head(), "visit:LOCAL-031/verify#1");
   assert.equal(visit.value.outcomeWord, "FAIL_WITH_EVIDENCE");
   assert.equal(liveEntityAt(log.head(), "seat:LOCAL-031/review#2/security").value.vote, "REJECT");
-  assert.equal(liveEntityAt(log.head(), "workflow:x1a2b3c4d5e6f/task0001").value.id, "x1a2b3c4d5e6f");
+  assert.equal(liveEntityAt(log.head(), "workflow:x1a2b3c4d5e6f/task0001").value.executionId, "x1a2b3c4d5e6f");
   assert.ok(describeEntry(log.entries().at(-1)).length > 5);
 });
 

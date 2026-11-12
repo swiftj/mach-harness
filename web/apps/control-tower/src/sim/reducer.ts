@@ -90,6 +90,7 @@ export function emptyScene(definitions: ProductDefinitions, source: SceneProvena
     actors: emptyActors(),
     counters: EMPTY_COUNTERS,
     strayAgents: {},
+    capacityWaits: {},
   };
 }
 
@@ -419,12 +420,16 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
     // ------------------------------------------------ stations and stages
     case "station.entered": {
       const d = event.data;
+      // The scene's meaning is the lifecycle log's: a visit belongs to the judging round it starts. The
+      // simulation records a revision under the round it revises (build.revised moves the round on
+      // after it), so a revise visit is converted here, at the simulation's edge, to the round it starts.
+      const round = d.action === "revise" ? Math.min(d.round + 1, MAX_ROUNDS) : d.round;
       return withCell(s, ticket, (cell) => ({
         ...cell,
         station: d.station,
         action: d.action,
         stationSince: t,
-        visits: [...cell.visits, { station: d.station, action: d.action, round: d.round, enteredAt: t, enteredSeq: seq, leftAt: null, outcome: null, visitId: null, outcomeWord: null, durationMs: null, meta: SIM_META }],
+        visits: [...cell.visits, { station: d.station, action: d.action, round, enteredAt: t, enteredSeq: seq, leftAt: null, outcome: null, visitId: null, outcomeWord: null, durationMs: null, meta: SIM_META }],
       }));
     }
     case "station.left":
@@ -601,6 +606,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         decidedAt: null,
         requiredEvidence: d.required_evidence,
         checks: d.targets.map((x) => ({ targetId: x.id, targetKind: x.kind, title: x.title, result: "pending", evidence: [], note: null, at: null })),
+        listed: { eventId: `sim:${seq}`, authority: "simulated", count: d.targets.length, late: false },
       };
       s = withCell(s, ticket, (cell) => ({ ...cell, verifications: [...cell.verifications, v] }));
       return setGate(s, ticket ?? "", "verification", d.round, "open", `${d.targets.length} checks to prove`, t, seq);
@@ -633,7 +639,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         humanApprovalReasons: d.human_approval_reasons,
         delta: d.delta ? { sinceCommit: d.delta.since_commit, filesChanged: d.delta.files_changed, earlierBlockerFiles: d.delta.earlier_blocker_files } : null,
         isDelta: d.delta !== null,
-        seats: d.panel.map((p) => ({ seat: p.role, model: p.model, agentId: null, vote: null, votedAt: null })),
+        seats: d.panel.map((p) => ({ seat: p.role, model: p.model, agentId: null, vote: null, votedAt: null, votedEventId: null, votedLate: false })),
         findings: [],
         startedAt: t,
         outcome: null,
@@ -641,6 +647,10 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         approvals: null,
         overruledBlockersFrom: [],
         humanApproval: null,
+        eventId: `sim:${seq}`,
+        late: false,
+        decidedEventId: null,
+        decidedLate: false,
       };
       s = withCell(s, ticket, (cell) => ({ ...cell, reviews: [...cell.reviews, round] }));
       s = setGate(s, ticket ?? "", "review", d.round, "open", `${d.panel.length} seat(s), ${d.approvals_needed} approval(s) needed`, t, seq);
@@ -661,7 +671,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
       const d = event.data;
       return withCell(s, ticket, (cell) => ({
         ...cell,
-        reviews: replaceLast(cell.reviews, (r) => r.round === d.round, (r) => ({ ...r, seats: r.seats.map((seat) => (seat.seat === d.seat ? { ...seat, vote: d.vote, votedAt: t } : seat)) })),
+        reviews: replaceLast(cell.reviews, (r) => r.round === d.round, (r) => ({ ...r, seats: r.seats.map((seat) => (seat.seat === d.seat ? { ...seat, vote: d.vote, votedAt: t, votedEventId: `sim:${seq}` } : seat)) })),
       }));
     }
     case "review.decided": {
@@ -673,6 +683,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
           ...r,
           outcome: d.outcome,
           decidedAt: t,
+          decidedEventId: `sim:${seq}`,
           approvals: d.approvals,
           overruledBlockersFrom: d.overruled_blockers_from,
           findings: r.findings.map((f) => (passed && f.severity === "blocker" ? { ...f, outvoted: true } : f)),
@@ -686,7 +697,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
       const d = event.data;
       s = withCell(s, ticket, (cell) => ({
         ...cell,
-        reviews: replaceLast(cell.reviews, (r) => r.round === d.round, (r) => ({ ...r, outcome: "APPROVED", humanApproval: { by: d.by, note: d.note, at: t } })),
+        reviews: replaceLast(cell.reviews, (r) => r.round === d.round, (r) => ({ ...r, outcome: "APPROVED", humanApproval: { by: d.by, note: d.note, at: t, eventId: `sim:${seq}`, late: false } })),
       }));
       const attention = { ...s.supervisor.attention };
       if (ticket) delete attention[ticket];

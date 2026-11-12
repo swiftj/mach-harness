@@ -124,5 +124,5 @@ test("no id is parsed: opaque, random ids with separators work everywhere", () =
     assert.ok(relatedRefs(head, `agent:${a.id}`).includes(`cell:${ticket}`));
     assert.equal(activityOf(head, `agent:${a.id}`).state, "completed");
   }
-  assert.equal(liveEntityAt(head, `workflow:${execution}/task0001`).value.id, execution);
+  assert.equal(liveEntityAt(head, `workflow:${execution}/task0001`).value.executionId, execution);
 });

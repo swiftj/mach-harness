@@ -185,7 +185,7 @@ function ReceivedCounts() {
             costed ? (
               <span key="c">
                 ${cost.toFixed(2)} recorded, over {costed} of {executionCount} execution{executionCount === 1 ? "" : "s"}
-                {under ? <span className="block text-caption text-warning-ink">May be under-reported: a budget stop ended work in flight.</span> : null}
+                {under ? <span className="block text-caption text-warning-ink">May be under-reported: the record says so for at least one execution.</span> : null}
               </span>
             ) : (
               <NotRecorded key="c" />

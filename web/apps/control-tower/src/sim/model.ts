@@ -4,7 +4,7 @@
  * convention (never mutate them): the engine shares unchanged parts between moments.
  */
 import type { AnySimEvent, FactoryLimits, ReviewOutcome, StationOutcome, TargetKind, VerificationStatus } from "./events";
-import type { Completeness, EntityMeta, SceneProvenance } from "./provenance";
+import type { Authority, Completeness, EntityMeta, SceneProvenance } from "./provenance";
 import type {
   AgentRole,
   AppType,
@@ -39,18 +39,25 @@ export const ENTITY_KINDS = [
   "dependency",
   "finding",
   "actor",
+  // The kinds the contract adds (5.2). Live and replay make them; the simulation does not.
+  "project",
+  "workflow",
+  "visit",
+  "seat",
 ] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
 /**
- * The four kinds the contract adds (5.2), live only; the simulation never makes them. Kept out of
- * EntityKind until the views handle them (their switches over EntityKind are exhaustive): a
- * `LiveRef` is resolved by liveEntityAt, and AnyEntityRef is what the store and the link index hold.
+ * The kinds only real history makes (contract 5.2): a project, a Dynamic Workflow, one station
+ * visit, one review seat. They are ordinary EntityKinds since M6.2's second wave; the list is kept
+ * for code that asks "is this a kind the simulation never makes?".
  */
 export const LIVE_ENTITY_KINDS = ["project", "workflow", "visit", "seat"] as const;
 export type LiveEntityKind = (typeof LIVE_ENTITY_KINDS)[number];
+/** A reference of one of the live-only kinds. Every LiveRef is an EntityRef. */
 export type LiveRef = `${LiveEntityKind}:${string}`;
-export type AnyEntityRef = EntityRef | LiveRef;
+/** Kept for compatibility: every reference is an EntityRef now. */
+export type AnyEntityRef = EntityRef;
 
 /**
  * One string names any selectable thing: `<kind>:<id>`.
@@ -99,10 +106,10 @@ export const ref = {
   dependency: (from: string, to: string): EntityRef => `dependency:${from}->${to}`,
   finding: (id: string): EntityRef => `finding:${id}`,
   actor: (id: ActorId): ActorRef => `actor:${id}`,
-  visit: (visitId: string): LiveRef => `visit:${visitId}`,
-  seat: (ticketId: string, round: number, seat: string): LiveRef => `seat:${ticketId}/review#${round}/${seat}`,
-  workflow: (workflowId: string): LiveRef => `workflow:${workflowId}`,
-  project: (id: string): LiveRef => `project:${id}`,
+  visit: (visitId: string): EntityRef => `visit:${visitId}`,
+  seat: (ticketId: string, round: number, seat: string): EntityRef => `seat:${ticketId}/review#${round}/${seat}`,
+  workflow: (workflowId: string): EntityRef => `workflow:${workflowId}`,
+  project: (id: string): EntityRef => `project:${id}`,
 };
 
 /**
@@ -201,6 +208,23 @@ export interface Scene {
    * or its cell has not been seen). Kept so they can be selected; never placed in a cell by guessing.
    */
   readonly strayAgents: Readonly<Record<string, AgentState>>;
+  /**
+   * Live: recorded waits for an execution place (capacity.wait_changed, `waiting`), by ticket, held
+   * whether or not the ticket's cell or execution is in the scene. Released waits are removed.
+   */
+  readonly capacityWaits: Readonly<Record<string, CapacityWaitState>>;
+}
+
+/** A recorded wait for an execution place (contract 10.6, `capacity.wait_changed`; reconstructed). */
+export interface CapacityWaitState {
+  readonly ticketId: string;
+  readonly sliceId: string | null;
+  readonly executionId: string | null;
+  readonly scope: string;
+  readonly limit: number | null;
+  readonly since: number;
+  readonly eventId: string;
+  readonly late: boolean;
 }
 
 export interface ActorState {
@@ -339,6 +363,12 @@ export interface VerificationState {
   readonly decidedAt: number | null;
   readonly checks: readonly VerificationCheck[];
   readonly requiredEvidence: readonly string[];
+  /**
+   * The list of targets to prove, when one was received (`verify.targets_listed`, reconstructed by
+   * the observer from spec.json; the simulation's `verification.started`). Checks still `pending`
+   * are then "expected" as a fact; without it, nothing is expected.
+   */
+  readonly listed: { readonly eventId: string; readonly authority: Authority; readonly count: number; readonly late: boolean } | null;
 }
 
 export interface FindingState {
@@ -361,6 +391,9 @@ export interface SeatState {
   readonly agentId: string | null;
   readonly vote: "APPROVE" | "REJECT" | null;
   readonly votedAt: number | null;
+  /** The verdict's event (`review.verdict_submitted`; simulation `review.vote`), and whether it arrived late. */
+  readonly votedEventId: string | null;
+  readonly votedLate: boolean;
 }
 
 export interface ReviewRoundState {
@@ -379,7 +412,13 @@ export interface ReviewRoundState {
   readonly decidedAt: number | null;
   readonly approvals: number | null;
   readonly overruledBlockersFrom: readonly ReviewSeat[];
-  readonly humanApproval: { readonly by: string; readonly note: string | null; readonly at: number } | null;
+  readonly humanApproval: { readonly by: string; readonly note: string | null; readonly at: number; readonly eventId: string; readonly late: boolean } | null;
+  /** The event that started the round (its seats exist from it), and whether it arrived late. */
+  readonly eventId: string;
+  readonly late: boolean;
+  /** The decision's event, and whether it arrived late. */
+  readonly decidedEventId: string | null;
+  readonly decidedLate: boolean;
 }
 
 export interface ToolCallState {
@@ -525,6 +564,13 @@ export interface GateEvaluation {
   readonly round: number | null;
   readonly at: number;
   readonly eventId: string;
+  readonly late: boolean;
+  /**
+   * The gate state this evaluation set (`scene.gates` id), or null when no gate state stands for it
+   * (a refused `build.start`, `verify.start`, `merge.run`, the round limit...): such an evaluation is
+   * still a recorded fact, read with `gateRefusals`.
+   */
+  readonly gateId: string | null;
 }
 
 /** An agent a workflow has queued but not started: known by its index only (contract 5.2). */
@@ -572,7 +618,17 @@ export interface ExecutionState {
   /** Agents queued and not yet started, by index. */
   readonly queued: Readonly<Record<string, QueuedAgentState>>;
   /** Recorded spend (execution.usage); never per agent. */
-  readonly usage: { readonly costUsd: number | null; readonly budgetExhausted: boolean; readonly terminalReason: string | null } | null;
+  readonly usage: {
+    readonly costUsd: number | null;
+    readonly budgetExhausted: boolean;
+    readonly terminalReason: string | null;
+    /** The stream's own verdict (execution.usage.cost_complete): false when the spend may be under-reported; null when the record does not say (before schema revision 1). */
+    readonly costComplete: boolean | null;
+    /** Why it may be incomplete, as recorded (`budget-stop`, `agents-killed-in-flight`). */
+    readonly costIncompleteReasons: readonly string[];
+    /** The `execution.usage` event. */
+    readonly eventId: string;
+  } | null;
   readonly claudeCodeVersion: string | null;
   readonly refused: readonly { readonly tool: string; readonly agentId: string | null; readonly at: number }[];
   /** A recorded wait for an execution place (capacity.wait_changed, reconstructed from the scheduler's decision). */

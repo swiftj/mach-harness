@@ -13,11 +13,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { FactoryScene, StateMark, factoryTokens, lodForZoom, screenBounds, type Lod, type RegionKind } from "@mach/ui";
-import { cameraFollows, isStale, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
-import { refKind, type EntityRef, type Scene } from "../sim";
+import { cameraFollows, isStale, timeScaleOf, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
+import { bayOrder, refKind, type EntityRef, type Scene } from "../sim";
 import { AtlasContext, useHighlight, type AtlasContextValue } from "./context";
 import { createCamera, frame, visibleRect, zoomAt, type Camera, type ScreenRect } from "./camera";
-import { PLATE_Z, plantLayout, slotsOf, type PlantLayout } from "./layout";
+import { PLATE_Z, plantLayout, type PlantLayout } from "./layout";
 import { setMotionSource, type ViewMode } from "./derive";
 import { Plant } from "./Plant";
 import { Bay, FreeBay } from "./Bay";
@@ -99,19 +99,21 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
   const store = useStore();
   // A store never changes source: the motion rate (live time is real time) is set before anything draws.
   const source = useSceneStore((s) => s.source);
-  setMotionSource(source);
+  // The store's one time scale for motion (1 at the live edge, the chosen playback rate otherwise).
+  const scale = useSceneStore(timeScaleOf);
+  setMotionSource(source, scale);
   const log = useSceneStore((s) => s.log);
   const logVersion = useSceneStore((s) => s.logVersion);
   const stale = useSceneStore((s) => isStale(s.connection));
   // What the stale stamp says: the connection's state and the last confirmed moment (factory time).
   const staleSince = useSceneStore((s) => (isStale(s.connection) ? `${s.connection!.state}|${s.connection!.staleSince ?? s.liveAt}` : null));
   const provenanceLabel = log.provenance.label;
-  // The plant from what is known so far (the head scene: every event received), never from the end
-  // of a run. plantLayout returns the same object while the bays known are the same.
+  // The plant from what is known so far, never from the end of a run: the bays from the log's
+  // assignment table (bayOrder), in which a bay index never changes once given, late waves included.
+  // plantLayout returns the same object while the bays known are the same.
   const layout = useMemo(() => {
-    const head = log.head();
-    const waveIds = Object.values(head.waves).sort((a, b) => a.discoveredAt - b.discoveredAt).map((w) => w.id);
-    return plantLayout(slotsOf(head), waveIds);
+    const order = bayOrder(log);
+    return plantLayout(order.slots, order.waveIds);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- logVersion is the log's change signal
   }, [log, logVersion]);
   const mode = useMemo<ViewMode>(() => ({ live: source !== "simulation", stale }), [source, stale]);

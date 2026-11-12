@@ -385,6 +385,9 @@ export function createSceneLog(options: SceneLogOptions): SceneLog {
       // At least one late event: merge in order, then re-derive from the checkpoint at or before the first change.
       const lateIds = new Set<string>();
       for (const entry of fresh) if (lastOrder !== null && entry.order < lastOrder) lateIds.add(entry.id);
+      // Lateness to this client is a delivery fact: it is on the entry (`isLateEntry`), never in the
+      // scene, so the same history gives the same scene in any delivery order. The scene's `late`
+      // fields carry the observer's own flag (the event's `late`), which is part of the record.
       const incoming = fresh.map((entry) => (lateIds.has(entry.id) && !entry.late ? { ...entry, late: true } : entry));
       const merged: LogEntry[] = new Array(entries.length + incoming.length);
       let i = 0;

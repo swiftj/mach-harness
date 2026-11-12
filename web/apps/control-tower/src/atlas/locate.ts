@@ -3,7 +3,7 @@
  * framing. Pure, from the layout and the scene at the playhead.
  */
 import { factoryTokens, screenBounds, type PlanBox } from "@mach/ui";
-import { findAgent, findArtifact, findToolCall, refId, refKind, type EntityRef, type Scene } from "../sim";
+import { entityAt, findAgent, findArtifact, findToolCall, ref, refId, refKind, type EntityRef, type Scene } from "../sim";
 import { SIM_MODE, chamberOccupant, placeAgents, type ViewMode } from "./derive";
 import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot, type PlantLayout } from "./layout";
 import type { ScreenRect } from "./camera";
@@ -125,6 +125,23 @@ export function locate(L: PlantLayout, scene: Scene, t: number, entity: EntityRe
       if (seat && seat in L.review.seats) return [boxAt(L.review.seats[seat as keyof PlantLayout["review"]["seats"]], 40, 30, 20)];
       return [regionBox(L.regions.review)];
     }
+    // The kinds real history adds: found in the scene by identity, placed where what they belong to is.
+    case "visit": {
+      const found = entityAt(scene, entity);
+      return found?.kind === "visit" ? locate(L, scene, t, ref.station(found.value.station, found.value.ticketId), mode) : [];
+    }
+    case "seat": {
+      const found = entityAt(scene, entity);
+      if (found?.kind !== "seat") return [];
+      const seat = found.value.seat;
+      return seat in L.review.seats ? [boxAt(L.review.seats[seat as keyof PlantLayout["review"]["seats"]], 40, 30, 20)] : [regionBox(L.regions.review)];
+    }
+    case "workflow": {
+      const found = entityAt(scene, entity);
+      return found?.kind === "workflow" ? locate(L, scene, t, ref.execution(found.value.executionId), mode) : [];
+    }
+    case "project":
+      return [{ ...L.extent, z: 0, h: PLATE_Z }];
   }
 }
 

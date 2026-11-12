@@ -24,7 +24,7 @@ import { fixtureLog } from "../sim/engine";
 import type { SceneLog } from "../sim/log";
 import type { SceneSource } from "../sim/provenance";
 import type { Clock, SwitchableClock } from "./clock";
-import type { ConnectionStatus } from "./connection";
+import type { ConnectionStatus, FactoryStatus } from "./connection";
 import { INITIAL_CONNECTION } from "./connection";
 
 /** Factory milliseconds per wall millisecond at 1x: the 55-minute run plays in about 5.5 minutes. Simulation and replay playback only; live time runs at 1. */
@@ -67,6 +67,12 @@ export interface SceneStoreState {
   readonly extent: Extent;
   /** Live only: the connection, its staleness, lag and the supervisor's heartbeat. Null for simulation and replay. */
   readonly connection: ConnectionStatus | null;
+  /**
+   * Live and replay: the Factory's state on this machine as the observer last read it
+   * (`/api/v1/factory/status`): whether there is Factory state at all, enabled, paused, the
+   * supervisor's heartbeat, per-source lag. Null until read, and always for the simulation.
+   */
+  readonly factoryStatus: FactoryStatus | null;
   /** Simulation: the fixture. Live and replay: NO_FIXTURE (compatibility; read `log`). */
   readonly fixture: Fixture;
   /** Factory time shown. Simulation: ms from the scenario start; live and replay: Unix ms (`order_ms`). */
@@ -95,6 +101,21 @@ export interface SceneStoreState {
    * does not change it.
    */
   readonly follow: boolean;
+}
+
+/**
+ * The one time scale for motion, in factory ms per wall ms, for every view and every source:
+ * - live, at the edge (following): 1, real time;
+ * - anything played back (the simulation, a historical replay, and a live store scrubbed back or
+ *   replaying an earlier moment): the playback rate the person chose, PLAYBACK_BASE_RATE x speed.
+ * A motion written as `d` wall ms lasts `d x timeScaleOf(state)` factory ms, so on screen it lasts
+ * `d` at every speed and in every source. Views read it from here, never from the source alone.
+ */
+export function timeScaleOf(state: Pick<SceneStoreState, "source" | "following" | "speed">): number {
+  if (state.source === "live" && state.following) return 1;
+  // The simulation keeps M6.0's rule (a motion takes the same share of the run at any speed), so the
+  // approved prototype looks as it did; real history scales with the chosen speed so motions stay legible.
+  return state.source === "simulation" ? PLAYBACK_BASE_RATE : PLAYBACK_BASE_RATE * state.speed;
 }
 
 /** Whether the camera should follow the live action now: follow is on and the playhead is live. */
@@ -145,6 +166,8 @@ export interface SceneStore {
   /** The stream confirmed history up to factory time `t` (an event or a heartbeat). Moves the live edge, never backwards. */
   setLiveEdge(t: number): void;
   setConnection(status: ConnectionStatus): void;
+  /** The Factory's state on this machine, as the observer last read it (live and replay). */
+  setFactoryStatus(status: FactoryStatus | null): void;
   dispose(): void;
 }
 
@@ -193,6 +216,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     logVersion: log.version(),
     extent: extentOf(isSim ? fixture : log, isSim ? undefined : startEdge),
     connection: source === "live" ? INITIAL_CONNECTION : null,
+    factoryStatus: null,
     fixture,
     playhead: start,
     liveAt: isSim ? start : startEdge,
@@ -240,7 +264,10 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     return Math.max(state.liveAt, base, confirmed + Math.min(LIVE_EXTRAPOLATION_MS, Math.max(0, now - confirmedWall)));
   };
 
-  const loopWanted = (): boolean => state.playing || (source === "live" && state.following);
+  // Playback runs while playing. A live store following the edge runs only while someone watches it
+  // (a subscriber): a store made and dropped unwatched (React's development double render) holds no
+  // frame loop, so none leaks.
+  const loopWanted = (): boolean => state.playing || (source === "live" && state.following && listeners.size > 0);
 
   const onFrame = (now: number): void => {
     frame = null;
@@ -295,7 +322,11 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     getState: () => state,
     subscribe(listener) {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      if (loopWanted()) startLoop();
+      return () => {
+        listeners.delete(listener);
+        if (!loopWanted()) stopLoop();
+      };
     },
     play() {
       if (state.playing) return;
@@ -399,13 +430,16 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       set({ connection: status });
       if (loopWanted()) startLoop();
     },
+    setFactoryStatus(status) {
+      if (source === "simulation" || status === state.factoryStatus) return;
+      set({ factoryStatus: status });
+    },
     dispose() {
       stopLoop();
       listeners.clear();
     },
   };
   if (options.autoplay) store.play();
-  else if (source === "live" && state.following) startLoop();
   return store;
 }
 

@@ -9,6 +9,7 @@ import {
   findToolCall,
   isKnown,
   refId,
+  stableEntityAt,
   type ActorId,
   type AnyRef,
   type FindingState,
@@ -66,6 +67,12 @@ export function selectEntity(scene: Scene, entity: AnyRef): unknown {
       }
       return scene.cells;
     }
+    // Assembled from the scene by identity; the same object while it does not change.
+    case "visit":
+    case "seat":
+    case "workflow":
+    case "project":
+      return stableEntityAt(scene, entity)?.value ?? null;
   }
 }
 
@@ -131,5 +138,19 @@ export function identityOf(entity: AnyRef, scene: Scene): Identity {
       const { ticketId, station } = parseStation(id);
       return { ...base, kindWord: ticketId ? "Station visit" : "Station", name: `${STATION_WORDS[station as StationKind] ?? station}${ticketId ? ` in ${ticketId}` : ""}` };
     }
+    case "visit": {
+      const v = stableEntityAt(scene, entity);
+      return { ...base, name: v?.kind === "visit" ? `${STATION_WORDS[v.value.station as StationKind] ?? v.value.station}, round ${v.value.round}, in ${v.value.ticketId}` : id };
+    }
+    case "seat": {
+      const v = stableEntityAt(scene, entity);
+      return { ...base, name: v?.kind === "seat" ? `The ${v.value.seat} seat, round ${v.value.round}, ${v.value.ticketId}` : id };
+    }
+    case "workflow": {
+      const v = stableEntityAt(scene, entity);
+      return { ...base, name: v?.kind === "workflow" ? `Workflow of ${v.value.ticketId || "an execution"}` : id };
+    }
+    case "project":
+      return { ...base, name: scene.project.name || `Project ${id}` };
   }
 }

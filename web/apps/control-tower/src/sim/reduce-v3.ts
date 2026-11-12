@@ -43,7 +43,7 @@ type E<K extends keyof V3DataMap> = FactoryEventV3<K>;
 
 // ---------------------------------------------------------------- provenance helpers
 
-function metaOf(e: Pick<FactoryEventV3, "authority" | "id" | "time" | "unknown" | "inferred">, extra: Partial<EntityMeta> = {}): EntityMeta {
+function metaOf(e: Pick<FactoryEventV3, "authority" | "id" | "time" | "unknown" | "inferred" | "late">, extra: Partial<EntityMeta> = {}): EntityMeta {
   return {
     authority: e.authority as Authority,
     eventId: e.id,
@@ -52,14 +52,28 @@ function metaOf(e: Pick<FactoryEventV3, "authority" | "id" | "time" | "unknown" 
     inferred: {},
     start: timeQualityOf(e.time.precision),
     end: "unknown",
+    late: e.late === true,
     ...extra,
   };
 }
 
-/** The entity's meta after a later event touched it: authority and event move on; what is unknown or inferred is kept unless resolved. */
-function touch(prev: EntityMeta, e: Pick<FactoryEventV3, "authority" | "id">, patch: Partial<EntityMeta> = {}): EntityMeta {
-  return { ...prev, authority: e.authority as Authority, eventId: e.id, ...patch };
+/** The entity's meta after a later event touched it: authority, event and lateness move on; what is unknown or inferred is kept unless resolved. */
+function touch(prev: EntityMeta, e: Pick<FactoryEventV3, "authority" | "id" | "late">, patch: Partial<EntityMeta> = {}): EntityMeta {
+  return { ...prev, authority: e.authority as Authority, eventId: e.id, late: e.late === true, ...patch };
 }
+
+/** The union of two id lists in order of first sight: everything already held keeps its place. */
+function union(held: readonly string[], more: readonly string[]): readonly string[] {
+  const added = more.filter((id, i) => !held.includes(id) && more.indexOf(id) === i);
+  return added.length ? [...held, ...added] : held;
+}
+
+/** A recorded risk reaches the cell's slice too: the slice's risk is the cell's once one is recorded. */
+function withSliceRisk(s: Scene, sliceId: string | null | undefined, risk: SliceState["risk"] | null, e: AnyV3Event): Scene {
+  if (!risk) return s;
+  return withSlice(s, sliceId ?? null, (slice) => (slice.risk === risk && isKnownField(slice.meta, "risk") ? slice : { ...slice, risk, meta: { ...slice.meta, unknown: without(slice.meta.unknown, "risk"), fields: { ...slice.meta.fields, risk: e.authority as Authority } } }));
+}
+const isKnownField = (meta: EntityMeta, field: string): boolean => !meta.unknown.includes(field);
 
 const without = (list: readonly string[], ...names: string[]): readonly string[] => (names.some((n) => list.includes(n)) ? list.filter((x) => !names.includes(x)) : list);
 const withAll = (list: readonly string[], ...names: string[]): readonly string[] => {
@@ -113,6 +127,20 @@ function stageOf(stage: string | null | undefined): CellStage | null {
 }
 
 const DEFAULT_ACTION: Partial<Record<StationId, StepAction>> = { audit: "audit", groom: "groom", plan: "plan", build: "build", verify: "verify", review: "review", merge: "merge", cleanup: "cleanup" };
+
+/**
+ * A visit's action when its record names none. A station's own action is identity (the build
+ * station builds); the human-approval gate is where run.py answers `stop` (awaiting-human: stop, a
+ * person decides), so that visit's action is `stop`, never a station's work. For a station with no
+ * action of its own the action is `stop` and listed as not recorded.
+ */
+function actionOf(recorded: StepAction | null, station: StationId): { action: StepAction; unknown: boolean; rule: string | null } {
+  if (recorded) return { action: recorded, unknown: false, rule: null };
+  const own = DEFAULT_ACTION[station];
+  if (own) return { action: own, unknown: false, rule: "station" };
+  if (station === "human-approval") return { action: "stop", unknown: false, rule: "awaiting-human" };
+  return { action: "stop", unknown: true, rule: null };
+}
 
 /** A station's own outcome word mapped onto the simulation's vocabulary; the word itself is kept verbatim beside it. */
 function outcomeOf(word: string): StationOutcome {
@@ -292,6 +320,7 @@ function agentOf(e: AnyV3Event, id: string, extra: Partial<AgentState>): AgentSt
 // ---------------------------------------------------------------- the reducer
 
 export function reduceV3(scene: Scene, event: AnyV3Event | UnknownV3Event, definitions: ProductDefinitions): Scene {
+  const projectId = event.ids.project_id;
   const base: Scene = {
     ...scene,
     cursor: scene.cursor + 1,
@@ -299,6 +328,8 @@ export function reduceV3(scene: Scene, event: AnyV3Event | UnknownV3Event, defin
     lastSeq: event.pos,
     lastEventId: event.id,
     counters: bump(scene.counters, { events: 1 }),
+    // The project is named by its events (`ids.project_id`); its name and branch are not in them.
+    ...(projectId && !scene.project.id ? { project: { ...scene.project, id: projectId } } : {}),
   };
   // A kind from a later revision within version 3: kept in the log and the index, not reduced (contract 14).
   if (!isKnownV3Kind(event.type)) return base;
@@ -346,20 +377,23 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     case "wave.discovered": {
       const id = e.ids.wave_id ?? "";
       const def = definitions.waves[id];
+      const prior = s.waves[id];
+      // A wave discovered again (a new revision, a re-read) adds to what is known of it, never replaces
+      // it: its slices are the union in order of first sight, and it keeps the moment it was first seen.
       return {
         ...s,
         waves: put(s.waves, id, {
           id,
           title: def?.title ?? id,
           epicTitle: def?.epicTitle ?? "",
-          revision: e.ids.revision,
-          sliceIds: e.data.slices,
+          revision: e.ids.revision ?? prior?.revision ?? null,
+          sliceIds: prior ? union(prior.sliceIds, e.data.slices) : union([], e.data.slices),
           approvedBy: e.data.approval.by_role === "person" ? "a person" : e.data.approval.by_role,
-          approvedAt: e.data.approval.approved_at ?? "",
-          state: "discovered",
-          discoveredAt: at,
-          seq,
-          meta: metaOf(e, { unknown: def ? [] : ["title", "epicTitle"] }),
+          approvedAt: e.data.approval.approved_at ?? prior?.approvedAt ?? "",
+          state: prior?.state ?? "discovered",
+          discoveredAt: prior?.discoveredAt ?? at,
+          seq: prior?.seq ?? seq,
+          meta: prior ? touch(prior.meta, e) : metaOf(e, { unknown: def ? [] : ["title", "epicTitle"] }),
         }),
       };
     }
@@ -374,13 +408,15 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const def = definitions.slices[id];
       const dependsOn = e.data.dependencies;
       const prior = s.slices[id];
+      const knownCell = ticket ? s.cells[ticket] : undefined;
+      const cellRisk = knownCell && isKnownField(knownCell.meta, "risk") ? knownCell.risk : null;
       const slice: SliceState = {
         id,
         title: def?.title ?? id,
         summary: def?.summary ?? "",
         waveId: e.ids.wave_id ?? "",
         revision: e.ids.revision,
-        risk: def?.risk ?? prior?.risk ?? "Medium",
+        risk: def?.risk ?? (cellRisk ?? prior?.risk ?? "Medium"),
         ticketId: ticket ?? "",
         dependsOn,
         scheduler: "materialized",
@@ -388,7 +424,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         since: at,
         integratedCommit: null,
         history: [...(prior?.history ?? []), { state: "materialized", at, seq }],
-        meta: metaOf(e, { unknown: def ? [] : ["title", "summary", "risk"] }),
+        meta: metaOf(e, { unknown: def ? [] : ["title", "summary", ...(cellRisk ? [] : ["risk"])] }),
       };
       let dependencies = s.dependencies;
       for (const to of dependsOn) {
@@ -407,6 +443,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       s = withSlice(s, e.ids.slice_id, (slice) => ({ ...schedule(slice, "dispatched", at, seq, []), meta: touch(slice.meta, e) }));
       s = ensureCell(s, e, definitions);
       const d = e.data;
+      s = withSliceRisk(s, e.ids.slice_id, d.risk, e);
       return withCell(s, ticket, (cell) => {
         const stage = stageOf(d.stage);
         const unknown = without(cell.meta.unknown, ...(d.risk ? ["risk"] : []), ...(stage ? ["stage"] : []));
@@ -551,7 +588,10 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         ...cell,
         verifications: replaceLast(cell.verifications, (v) => e.ids.round === null || v.round === e.ids.round, (v) => {
           const known = new Map(v.checks.map((c) => [c.targetId, c]));
-          return { ...v, checks: targets.map((x) => known.get(x.id) ?? { targetId: x.id, targetKind: x.kind, title: x.id, result: "pending" as const, evidence: [], note: null, at: null }) };
+          const listed = targets.map((x) => known.get(x.id) ?? { targetId: x.id, targetKind: x.kind, title: x.id, result: "pending" as const, evidence: [], note: null, at: null });
+          // A check recorded for a target the list does not name is kept: it was recorded.
+          const extra = v.checks.filter((c) => !targets.some((x) => x.id === c.targetId));
+          return { ...v, checks: [...listed, ...extra], listed: { eventId: e.id, authority: e.authority as Authority, count: targets.length, late: e.late === true } };
         }),
       }));
       const round = e.ids.round ?? s.cells[ticket ?? ""]?.round ?? 1;
@@ -582,7 +622,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const d = e.data;
       return withCell(s, ticket, (cell) => ({
         ...cell,
-        reviews: replaceLast(cell.reviews, (r) => e.ids.round === null || r.round === e.ids.round, (r) => ({ ...r, seats: r.seats.map((seat) => (seat.seat === d.seat ? { ...seat, vote: d.vote, votedAt: at } : seat)) })),
+        reviews: replaceLast(cell.reviews, (r) => e.ids.round === null || r.round === e.ids.round, (r) => ({ ...r, seats: r.seats.map((seat) => (seat.seat === d.seat ? { ...seat, vote: d.vote, votedAt: at, votedEventId: e.id, votedLate: e.late === true } : seat)) })),
       }));
     }
     case "review.decided":
@@ -592,7 +632,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const round = e.ids.round ?? s.cells[ticket ?? ""]?.round ?? 1;
       s = withCell(s, ticket, (cell) => ({
         ...cell,
-        reviews: replaceLast(cell.reviews, (r) => r.round === round, (r) => ({ ...r, outcome: "APPROVED", humanApproval: { by: "a person", note: null, at } })),
+        reviews: replaceLast(cell.reviews, (r) => r.round === round, (r) => ({ ...r, outcome: "APPROVED", humanApproval: { by: "a person", note: null, at, eventId: e.id, late: e.late === true } })),
       }));
       const attention = { ...s.supervisor.attention };
       if (ticket) delete attention[ticket];
@@ -728,7 +768,9 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       s = ensureExecution(s, e);
       const id = e.ids.execution_id;
       const before = id ? s.executions[id] : undefined;
-      s = withExecution(s, id, (x) => ({ ...x, usage: { costUsd: e.data.total_cost_usd, budgetExhausted: e.data.budget_exhausted, terminalReason: e.data.terminal_reason } }));
+      const d = e.data;
+      const reasons = Array.isArray(d.cost_incomplete_reasons) ? d.cost_incomplete_reasons.filter((r) => typeof r === "string") : [];
+      s = withExecution(s, id, (x) => ({ ...x, usage: { costUsd: d.total_cost_usd, budgetExhausted: d.budget_exhausted, terminalReason: d.terminal_reason, costComplete: typeof d.cost_complete === "boolean" ? d.cost_complete : null, costIncompleteReasons: reasons, eventId: e.id } }));
       return withCost(s, before, id);
     }
 
@@ -759,6 +801,12 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       return artifactRecorded(ensureCell(s, e, definitions), e, at);
     case "capacity.wait_changed": {
       const waiting = e.data.state === "waiting";
+      // Held at the scene whether or not the ticket's cell or execution is known yet (a slice held for
+      // a place before its cell opens): a recorded wait is never lost for want of an entity to hang it on.
+      const capacityWaits = { ...s.capacityWaits };
+      if (ticket && waiting) capacityWaits[ticket] = { ticketId: ticket, sliceId: e.ids.slice_id, executionId: e.ids.execution_id, scope: e.data.scope, limit: e.data.limit, since: at, eventId: e.id, late: e.late === true };
+      else if (ticket) delete capacityWaits[ticket];
+      s = { ...s, capacityWaits };
       s = withCell(s, ticket, (cell) => ({ ...cell, capacityWait: waiting ? { since: at, limit: e.data.limit, eventId: e.id } : null }));
       return withExecution(s, e.ids.execution_id, (x) => ({ ...x, capacityWait: waiting ? { since: at, limit: e.data.limit } : null }));
     }
@@ -792,7 +840,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
 
     // ------------------------------------------------ the client's own markers
     case "client.history_missing": {
-      const gap: HistoryGapState = { eventId: e.id, at, reason: e.data.reason === "reset" ? "observer-index-reset" : "cursor-expired", source: "client", from: e.data.after, to: e.data.resumed_at, count: null };
+      const gap: HistoryGapState = { eventId: e.id, at, reason: e.data.reason === "reset" ? "observer-index-reset" : e.data.reason === "window" ? "before-window" : "cursor-expired", source: "client", from: e.data.after, to: e.data.resumed_at, count: null };
       return { ...s, completeness: { ...s.completeness, state: s.completeness.state === "reconstructed" ? "reconstructed" : "partial", since: at, gaps: [...s.completeness.gaps, gap] } };
     }
     case "client.snapshot_applied":
@@ -810,7 +858,8 @@ function stationEntered(input: Scene, e: E<"station.entered">, at: number): Scen
   const d = e.data;
   const cell = ticket ? s.cells[ticket] : undefined;
   if (!cell) return s;
-  const action: StepAction = d.action ?? DEFAULT_ACTION[d.station] ?? "build";
+  const known = actionOf(d.action, d.station);
+  const action: StepAction = known.action;
   const round = e.ids.round ?? cell.round;
   const stage = stageOf(d.stage);
   const visit = {
@@ -824,7 +873,7 @@ function stationEntered(input: Scene, e: E<"station.entered">, at: number): Scen
     visitId: e.ids.visit_id,
     outcomeWord: null,
     durationMs: null,
-    meta: metaOf(e, { unknown: d.action ? [] : ["action"] }),
+    meta: metaOf(e, { unknown: known.unknown ? ["action"] : [], inferred: known.rule ? { action: known.rule } : {} }),
   };
   s = withCell(s, ticket, (c) => ({
     ...c,
@@ -840,7 +889,8 @@ function stationEntered(input: Scene, e: E<"station.entered">, at: number): Scen
     meta: { ...touch(c.meta, e), fields: stage ? { ...c.meta.fields, stage: "authoritative" } : c.meta.fields, unknown: stage ? without(c.meta.unknown, "stage") : c.meta.unknown },
   }));
   if (d.station === "verify") {
-    const v: VerificationState = { round, status: "running", startedAt: at, decidedAt: null, checks: [], requiredEvidence: [] };
+    // Nothing to prove is listed yet: `verify.targets_listed` (reconstructed) gives the list when it comes.
+    const v: VerificationState = { round, status: "running", startedAt: at, decidedAt: null, checks: [], requiredEvidence: [], listed: null };
     s = withCell(s, ticket, (c) => ({ ...c, verifications: [...c.verifications.filter((x) => !(x.round === round && x.status === "running")), v] }));
     s = setGate(s, ticket ?? "", "verification", round, "open", "Checks to prove not listed yet.", at, e.pos, metaOf(e));
   }
@@ -875,13 +925,33 @@ function stationExited(input: Scene, e: E<"station.exited">, at: number): Scene 
   });
 }
 
+/** The gate state (`scene.gates` id) a lifecycle gate evaluation sets, or null when none stands for it. */
+function gateStateOf(gate: string, passed: boolean, ticket: string, round: number): string | null {
+  switch (gate) {
+    case "audit.readiness":
+      return gateId(ticket, "audit");
+    case "plan.check":
+      return gateId(ticket, "plan-check");
+    case "verify.verdict":
+      return gateId(ticket, "verification", round);
+    case "build.red":
+    case "build.green":
+      return passed ? null : gateId(ticket, "red-before-green");
+    case "merge.land":
+      return passed ? null : gateId(ticket, "merge-revalidation");
+    default:
+      return null;
+  }
+}
+
 function gateEvaluated(input: Scene, e: E<"gate.evaluated">, at: number): Scene {
   let s = input;
   const ticket = e.ids.ticket_id ?? "";
   const d = e.data;
   const round = e.ids.round;
-  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id }] }));
   const passed = d.verdict !== "refused";
+  const matched = gateStateOf(d.gate, passed, ticket, round ?? s.cells[ticket]?.round ?? 1);
+  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched }] }));
   const meta = metaOf(e);
   switch (d.gate) {
     case "audit.readiness":
@@ -924,7 +994,7 @@ function reviewStarted(input: Scene, e: E<"review.round_started">, at: number): 
     humanApprovalReasons: [],
     delta: null,
     isDelta: d.delta,
-    seats: d.panel.map((p) => ({ seat: p.seat, model: modelIdOf(p.model) ?? "sonnet", agentId: null, vote: null, votedAt: null })),
+    seats: d.panel.map((p) => ({ seat: p.seat, model: modelIdOf(p.model) ?? "sonnet", agentId: null, vote: null, votedAt: null, votedEventId: null, votedLate: false })),
     findings: [],
     startedAt: at,
     outcome: null,
@@ -932,9 +1002,14 @@ function reviewStarted(input: Scene, e: E<"review.round_started">, at: number): 
     approvals: null,
     overruledBlockersFrom: [],
     humanApproval: null,
+    eventId: e.id,
+    late: e.late === true,
+    decidedEventId: null,
+    decidedLate: false,
   };
   const restarted = cell.reviews.some((r) => r.round === round);
   s = withCell(s, ticket, (c) => ({ ...c, reviews: restarted ? c.reviews.map((r) => (r.round === round ? state : r)) : [...c.reviews, state], risk: d.risk, meta: { ...c.meta, unknown: without(c.meta.unknown, "risk") } }));
+  s = withSliceRisk(s, cell.sliceId || e.ids.slice_id, d.risk, e);
   s = setGate(s, ticket ?? "", "review", round, "open", `${d.panel.length} seat(s), ${d.approvals_needed} approval(s) needed`, at, e.pos, metaOf(e));
   return restarted ? s : { ...s, counters: bump(s.counters, { reviewRounds: 1 }) };
 }
@@ -953,6 +1028,8 @@ function reviewDecided(input: Scene, e: E<"review.decided">, at: number): Scene 
       ...r,
       outcome: d.outcome,
       decidedAt: at,
+      decidedEventId: e.id,
+      decidedLate: e.late === true,
       approvals: d.approvals,
       overruledBlockersFrom: overruled,
       findings: r.findings.map((f) => (passed && f.severity === "blocker" ? { ...f, outvoted: true } : f)),
@@ -1058,7 +1135,7 @@ const SCHEDULER_WORDS: Readonly<Record<string, SliceState["scheduler"]>> = {
 function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number, definitions: ProductDefinitions): Scene {
   let s = input;
   const st = e.data.state;
-  const meta = (unknown: string[] = []): EntityMeta => ({ authority: "reconstructed", eventId: e.id, fields: {}, unknown, inferred: {}, start: "unknown", end: "unknown" });
+  const meta = (unknown: string[] = []): EntityMeta => ({ authority: "reconstructed", eventId: e.id, fields: {}, unknown, inferred: {}, start: "unknown", end: "unknown", late: false });
   for (const w of st.waves ?? []) {
     if (s.waves[w.wave_id]) continue;
     s = { ...s, waves: put(s.waves, w.wave_id, { id: w.wave_id, title: definitions.waves[w.wave_id]?.title ?? w.wave_id, epicTitle: "", revision: w.revision ?? null, sliceIds: w.slices ?? [], approvedBy: "a person", approvedAt: "", state: "validated", discoveredAt: at, seq: 0, meta: meta(["title", "epicTitle", "approvedAt", "discoveredAt"]) }) };
@@ -1094,7 +1171,7 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
   }
   for (const x of st.executions ?? []) {
     const prior = s.executions[x.execution_id];
-    const state = x.state === "running" || x.state === "active" ? "running" : x.state === "completed" || x.state === "finished" ? "completed" : x.state === "failed" ? "failed" : null;
+    const state = x.state === "running" || x.state === "active" ? "running" : x.state === "claimed" ? "claimed" : x.state === "completed" || x.state === "finished" ? "completed" : x.state === "failed" ? "failed" : null;
     const base = prior ?? newExecution({ ...e, ids: { ...e.ids, ticket_id: x.ticket_id ?? null, execution_id: x.execution_id } } as unknown as AnyV3Event, x.execution_id, { meta: meta(["next", "claimedAt", "startedAt"]) });
     s = { ...s, executions: put(s.executions, x.execution_id, { ...base, state: state ?? base.state, attempt: x.attempt ?? base.attempt, meta: { ...base.meta, authority: "reconstructed", eventId: e.id } }) };
   }

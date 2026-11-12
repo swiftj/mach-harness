@@ -20,10 +20,14 @@ import {
   type ExecutionState,
   type FindingState,
   type GateState,
+  type ProjectEntity,
   type Scene,
+  type SeatEntity,
   type SliceState,
   type ToolCallState,
+  type VisitEntity,
   type WaveState,
+  type WorkflowEntity,
 } from "../../sim";
 import { useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
@@ -38,10 +42,14 @@ import {
   ExecutionAnatomy,
   FindingAnatomy,
   GateAnatomy,
+  ProjectAnatomy,
+  SeatAnatomy,
   SliceAnatomy,
   StationAnatomy,
   ToolAnatomy,
+  VisitAnatomy,
   WaveAnatomy,
+  WorkflowAnatomy,
 } from "./anatomies";
 import { identityOf, parseStation, selectEntity } from "./entity";
 import { AuthorityBadge, Evidence, JumpButton, precisionWords, useEntityEvents } from "./parts";
@@ -120,6 +128,23 @@ function lookOf(entity: AnyRef, value: unknown): Look {
       const state: FactoryState = x.state === "running" || x.state === "claimed" ? "active" : x.state === "failed" ? "failed" : "succeeded";
       return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: x.state, phase: state === "active" ? "running" : "finished", since: x.endedAt ?? x.startedAt };
     }
+    case "visit": {
+      const v = value as VisitEntity;
+      const state: FactoryState = v.leftAt === null ? "active" : outcomeState(v.outcome);
+      return { glyph: <StationGlyph kind={v.station as StationKind} size={28} state={state} />, state, word: v.leftAt === null ? "Working" : (v.outcomeWord ?? v.outcome ?? "Ended"), phase: v.leftAt === null ? "running" : "finished", since: v.leftAt ?? v.enteredAt };
+    }
+    case "seat": {
+      const v = value as SeatEntity;
+      const state: FactoryState = v.vote === "APPROVE" ? "succeeded" : v.vote === "REJECT" ? "failed" : "waiting";
+      return { glyph: <GateGlyphSmall kind={gateOf("review")} size={28} state={state} />, state, word: v.vote === "APPROVE" ? "Approved" : v.vote === "REJECT" ? "Rejected" : "No vote yet", phase: v.vote ? "finished" : "running", since: v.votedAt };
+    }
+    case "workflow": {
+      const v = value as WorkflowEntity;
+      const state: FactoryState = v.status === "running" ? "active" : v.status === "completed" ? "succeeded" : v.status === "killed" ? "failed" : "idle";
+      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: v.status === "running" ? "Running" : v.status === "completed" ? "Completed" : v.status === "killed" ? "Killed" : "Not recorded", phase: v.status === "running" ? "running" : "finished", since: v.finishedAt };
+    }
+    case "project":
+      return { glyph: <WaveGlyph size={28} />, state: "idle", word: "Project", phase: "running", since: null };
   }
 }
 
@@ -149,6 +174,14 @@ function Anatomy({ entity, value }: { entity: AnyRef; value: unknown }) {
       return <FindingAnatomy finding={value as FindingState} />;
     case "execution":
       return <ExecutionAnatomy execution={value as ExecutionState} />;
+    case "visit":
+      return <VisitAnatomy visit={value as VisitEntity} />;
+    case "seat":
+      return <SeatAnatomy seat={value as SeatEntity} />;
+    case "workflow":
+      return <WorkflowAnatomy workflow={value as WorkflowEntity} />;
+    case "project":
+      return <ProjectAnatomy project={value as ProjectEntity} />;
   }
 }
 

@@ -166,8 +166,6 @@ export interface ConnectionLook {
   sentence: string;
 }
 
-/** After this many failed attempts in a row, a reconnecting stream is shown as disconnected (still retrying). */
-export const DISCONNECTED_AFTER_ATTEMPTS = 3;
 
 /** The words for a connection. Times are factory time (the stream's), never the browser's clock. */
 export function connectionLook(c: ConnectionStatus): ConnectionLook {
@@ -180,10 +178,13 @@ export function connectionLook(c: ConnectionStatus): ConnectionLook {
     case "stale":
       return { state: "stale", label: since ? `Stale since ${since}` : "Stale", sentence: `Nothing heard from the observer${since ? ` since ${since} UTC` : ""}. What is shown is as last seen.` };
     case "reconnecting":
-      if (c.attempts >= DISCONNECTED_AFTER_ATTEMPTS) return { state: "disconnected", label: "Disconnected, retrying", sentence: `The observer cannot be reached${since ? ` since ${since} UTC` : ""}. Retrying; what is shown is as last seen.` };
       return { state: "reconnecting", label: "Reconnecting", sentence: "The stream dropped. Reconnecting from the last cursor." };
     case "disconnected":
+      // The source says disconnected after several failed attempts and keeps retrying (attempts > 0).
+      if (c.attempts > 0) return { state: "disconnected", label: "Disconnected, retrying", sentence: `The observer cannot be reached${since ? ` since ${since} UTC` : ""}. Retrying; what is shown is as last seen.` };
       return { state: "disconnected", label: "Disconnected", sentence: `Disconnected${c.reason ? `: ${c.reason}` : "."}` };
+    case "no-session":
+      return { state: "disconnected", label: "No session", sentence: "The observer does not know this browser: the session expired or was dropped. Open the observer's new link." };
   }
 }
 
@@ -221,7 +222,7 @@ const ageWords = (seconds: number | null | undefined) => (seconds === null || se
 
 /** The facts behind the connection badge: also shown in the inspector's "the run now". */
 export function ConnectionFacts({ connection }: { connection: ConnectionStatus }) {
-  const { factory } = useSource();
+  const factory = useSceneStore((s) => s.factoryStatus);
   const look = connectionLook(connection);
   const heartbeat = connection.supervisor?.heartbeatAgeSeconds ?? factory?.supervisor.heartbeatAgeSeconds ?? null;
   const leasePresent = connection.supervisor?.present || factory?.supervisor.leasePresent;
@@ -328,7 +329,8 @@ export function useStageNotice(): Notice | null {
   const source = useSceneStore((s) => s.source);
   const connection = useSceneStore((s) => s.connection);
   const empty = useSceneStore((s) => s.source !== "simulation" && s.log.size() === 0);
-  const { notice, factory, observer } = useSource();
+  const { notice, observer } = useSource();
+  const factory = useSceneStore((s) => s.factoryStatus);
   // A fresh live page has received nothing yet; give history a moment before calling it empty.
   const [settled, setSettled] = useState(false);
   useEffect(() => {
@@ -340,7 +342,7 @@ export function useStageNotice(): Notice | null {
     if (notice) return { key: "sim", tone: "info", title: notice, body: observer === "no-session" ? "An observer answered but this browser has no session with it. The link comes from the skill that started the observer; each link works once." : "Nothing here is real execution. Real history appears when the page is opened from the observer's link." };
     return null;
   }
-  if (connection && connection.state === "disconnected" && /unauthori|session/i.test(connection.reason ?? "")) {
+  if (connection && connection.state === "no-session") {
     return { key: "session", tone: "danger", title: "No observer session", body: "The observer no longer knows this browser: the session expired, or the observer was restarted. The link comes from the skill that started the observer; open the new link it printed." };
   }
   if (connection && isStale(connection)) {

@@ -1,17 +1,27 @@
 // An in-memory observer for the live source's tests: the documented /api/v1 routes (session, events
-// after a cursor, snapshot, factory status) behind an injected fetch, and a server-sent event stream
+// after a cursor, history in order, snapshot at a cursor, factory status, in the shapes
+// apps/observer/README.md documents) behind an injected fetch, and a server-sent event stream
 // behind an injected EventSource factory (hello, events with id = cursor, heartbeat, gap, reset).
 // Built from M6_1_OBSERVER_DESIGN.md sections 8, 11 and 12 and the contract's section 14. It never
 // starts the Go binary.
 
-export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false, heartbeatMs = 15000 } = {}) {
+export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false, heartbeatMs = 15000, history = true } = {}) {
   const server = {
     generation,
     events: [], // in pos order
     floor: 0, // positions <= floor are no longer held
     snapshotCapability: snapshot,
     snapshotState: { cells: [], slices: [], executions: [], gates: [], waves: [] },
-    lease: { present: true, heartbeat_age_seconds: 4, live: true },
+    /** `/factory/status`'s documented parts (apps/observer/README.md). */
+    status: {
+      factory_present: true,
+      summary: { enabled: true, paused: false, mode: "supervised", autonomy: "supervised", policy_usable: true },
+      supervisor: { lease_present: true, heartbeat_fresh: true, heartbeat_age_seconds: 4, lease_expired: false },
+      freshness: { ingest: { stale: false, watermark_ms: null, catching_up: false }, sources: [{ key: "i:0badc0de", state: "live", lag_bytes: 0, last_read_age_ms: 120 }] },
+    },
+    historyRoute: history,
+    /** Cursors snapshots were asked at (null: the default). */
+    snapshotsAt: [],
     streams: [],
     requests: [],
     down: false,
@@ -38,8 +48,29 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
       const next = page.length ? cur(page.at(-1).pos) : after;
       return ok({ generation: server.generation, events: page, next, head: cur(head()), floor: cur(server.floor), more: page.length > 0 && page.at(-1).pos < head() });
     }
-    if (path === "/snapshot") return server.snapshotCapability ? ok({ cursor: cur(head()), generation: server.generation, reconstructed: false, state: server.snapshotState }) : fail(404, "not_found");
-    if (path === "/factory/status") return ok({ lease: server.lease, read_at: "2026-11-12T09:00:00Z" });
+    if (path === "/history") {
+      if (!server.historyRoute) return fail(404, "not_found");
+      const from = u.searchParams.get("from_order") ?? (u.searchParams.get("from_ms") ? String(Number(u.searchParams.get("from_ms"))).padStart(15, "0") : null);
+      const to = u.searchParams.get("to_order") ?? (u.searchParams.get("to_ms") ? String(Number(u.searchParams.get("to_ms"))).padStart(15, "0") : null);
+      const limit = Number(u.searchParams.get("limit") ?? 1000);
+      const inOrder = [...server.events].sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0));
+      const window = inOrder.filter((e) => (from === null || e.order >= from) && (to === null || e.order < to));
+      const page = window.slice(0, limit);
+      const more = window.length > limit;
+      return ok({ generation: server.generation, schema: 3, events: page, from_order: from, to_order: to, next_from_order: more ? window[limit].order : null, more, complete: server.floor === 0, head: cur(head()), floor: cur(server.floor), watermark_ms: null });
+    }
+    if (path === "/snapshot") {
+      if (!server.snapshotCapability) return fail(404, "not_found");
+      const at = u.searchParams.get("at");
+      server.snapshotsAt.push(at);
+      if (at) {
+        const pos = Number(at.slice(at.lastIndexOf(".") + 1));
+        if (pos < server.floor) return fail(410, "cursor_expired", { reason: "expired", floor: cur(server.floor), head: cur(head()) });
+        return ok({ cursor: at, generation: server.generation, pos, reconstructed: pos < head(), authority: pos < head() ? "reconstructed" : "projection", state: server.snapshotState });
+      }
+      return ok({ cursor: cur(head()), generation: server.generation, pos: head(), reconstructed: false, authority: "projection", state: server.snapshotState });
+    }
+    if (path === "/factory/status") return ok({ ...server.status, report: {}, recorded_mode: null, read_at: "2026-11-12T09:00:00Z" });
     return fail(404, "not_found");
   };
 

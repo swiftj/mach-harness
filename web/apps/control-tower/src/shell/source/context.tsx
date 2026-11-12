@@ -1,6 +1,6 @@
 /**
  * What the shell knows about where its scenes come from, beyond the store: why this source was
- * chosen, whether an observer answered, the Factory's state on this machine, and how to switch to
+ * chosen, whether an observer answered, and how to switch to
  * another source (a new store; the URL keeps the choice). Provided by App.tsx. The store's own
  * `source` and every scene's `provenance` remain the authority for labelling what is drawn.
  */
@@ -8,7 +8,6 @@ import { createContext, useContext, useMemo } from "react";
 import { indexFor, type HistoryIndex } from "../history";
 import { useSceneStore } from "../../scene";
 import type { SourceChoice } from "./boot";
-import type { FactoryReading } from "./status";
 
 export type ObserverPresence = "answered" | "none" | "no-session";
 
@@ -21,8 +20,6 @@ export interface SourceInfo {
   readonly notice: string | null;
   /** The observer's project folder name, when it said. */
   readonly project: string | null;
-  /** The Factory's state on this machine, as the observer last read it. Null: not read (yet). */
-  readonly factory: FactoryReading | null;
   /** Switch to another source: a new store; selection and view carry over through the address. */
   readonly switchTo: (choice: SourceChoice) => void;
 }
@@ -32,7 +29,6 @@ const FALLBACK: SourceInfo = {
   observer: "none",
   notice: null,
   project: null,
-  factory: null,
   switchTo: () => undefined,
 };
 
@@ -49,6 +45,6 @@ export function useHistoryIndex(): HistoryIndex {
 
 /** The value for the provider, stable while its parts are. */
 export function useSourceInfo(info: SourceInfo): SourceInfo {
-  const { requested, observer, notice, project, factory, switchTo } = info;
-  return useMemo(() => ({ requested, observer, notice, project, factory, switchTo }), [requested, observer, notice, project, factory, switchTo]);
+  const { requested, observer, notice, project, switchTo } = info;
+  return useMemo(() => ({ requested, observer, notice, project, switchTo }), [requested, observer, notice, project, switchTo]);
 }

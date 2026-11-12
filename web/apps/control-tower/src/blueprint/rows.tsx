@@ -371,7 +371,8 @@ const CheckMarks = memo(function CheckMarks({ axis, cell, round, y }: { axis: Ex
   if (!ver) return null;
   let pass = "";
   let fail = "";
-  const expected = ver.checks.filter((c) => c.at === null);
+  // Expected only from a fact: the list of targets received (`verify.targets_listed`), less what is recorded.
+  const expected = ver.listed ? ver.checks.filter((c) => c.result === "pending") : [];
   for (const c of ver.checks) {
     if (c.at === null) continue;
     const x = Math.round(xOn(axis, c.at) * 2) / 2;

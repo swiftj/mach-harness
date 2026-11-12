@@ -16,14 +16,15 @@ import { PLAYBACK_BASE_RATE } from "../scene";
 import { FLOOR_Z, PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
 
 /**
- * Factory ms per spec ms. Set once from the store's source (a store never changes source) before
- * the Atlas draws: the simulation and replay at the base rate, live at 1.
+ * Factory ms per spec ms: the store's one time scale (`timeScaleOf` in src/scene), set before the
+ * Atlas draws. 1 at the live edge; the chosen playback rate for the simulation, a replay, and a live
+ * store scrubbed back.
  */
 export let RATE: number = PLAYBACK_BASE_RATE;
 /** Whether the Atlas draws live execution (late events snap; the nine activity states apply). */
 export let LIVE = false;
-export function setMotionSource(source: SceneSource): void {
-  RATE = source === "live" ? 1 : PLAYBACK_BASE_RATE;
+export function setMotionSource(source: SceneSource, scale: number): void {
+  RATE = scale;
   LIVE = source !== "simulation";
 }
 /** A recent event keeps its afterglow (callouts, the chamber's last decision) this long, factory ms. */

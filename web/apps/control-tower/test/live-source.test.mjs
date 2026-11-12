@@ -185,14 +185,14 @@ test("selection survives ordinary updates; the supervisor's heartbeat freshness 
   clock.frames(2, 16);
   assert.equal(store.getState().selection, "cell:LOCAL-031");
   assert.ok(store.getState().highlighted.includes("cell:LOCAL-031"));
-  server.lease = { present: true, heartbeat_age_seconds: 95, live: false };
+  server.status = { ...server.status, supervisor: { lease_present: true, heartbeat_fresh: false, heartbeat_age_seconds: 95, lease_expired: false } };
   timers.tick();
   await settle();
   assert.deepEqual(store.getState().connection.supervisor, { heartbeatAgeSeconds: 95, live: false, present: true, readAt: Date.parse("2026-11-12T09:00:00Z") });
   source.stop();
 });
 
-test("an observer that refuses the client is shown as disconnected, not retried forever", async () => {
+test("an observer that answers 401 puts the connection in the no-session state, not retried", async () => {
   const server = fakeObserver();
   const clock = manualClock(0);
   const timers = fakeTimers();
@@ -200,8 +200,8 @@ test("an observer that refuses the client is shown as disconnected, not retried 
   const { store, source } = createLiveFactory({ client: createObserverClient({ fetch }), openStream: server.openStream, clock, timers });
   await source.start();
   await settle();
-  assert.equal(store.getState().connection.state, "disconnected");
-  assert.equal(timers.pendingTimeouts, 0);
+  assert.equal(store.getState().connection.state, "no-session");
+  assert.equal(timers.pendingTimeouts, 0, "a session cannot come back by retrying");
   source.stop();
 });
 

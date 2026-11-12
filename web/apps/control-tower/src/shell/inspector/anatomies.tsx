@@ -7,6 +7,7 @@ import { useMemo, type ReactNode } from "react";
 import { stations as stationLooks, type StationKind } from "@mach/ui";
 import {
   ACTOR_KINDS,
+  costCompletenessOf,
   describeEntry,
   isKnown,
   MAX_ROUNDS,
@@ -19,9 +20,13 @@ import {
   type ExecutionState,
   type FindingState,
   type GateState,
+  type ProjectEntity,
+  type SeatEntity,
   type SliceState,
   type ToolCallState,
+  type VisitEntity,
   type WaveState,
+  type WorkflowEntity,
 } from "../../sim";
 import { useScene } from "../../scene";
 import { AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateGlyph, StateWord, StationGlyph, ToolGlyph } from "../glyphs";
@@ -841,9 +846,20 @@ function useModelCosts(executionId: string): Array<[string, number | null]> {
   }, [all]);
 }
 
-/** A cost the record says may be low: a budget stop killed work in flight. */
+const COST_REASON_WORDS: Readonly<Record<string, string>> = {
+  "budget-stop": "a budget stop ended the run",
+  "agents-killed-in-flight": "agents were stopped with work in flight",
+};
+
+/** A cost the record itself says may be low (execution.usage.cost_complete: false). Never guessed. */
 export function mayBeUnderReported(x: ExecutionState): boolean {
-  return Boolean(x.usage?.budgetExhausted || x.stopReason === "budget" || x.workflowStatus === "killed");
+  return costCompletenessOf(x).complete === false;
+}
+
+/** Why the record says the cost may be low, in words. */
+export function underReportedWhy(x: ExecutionState): string {
+  const reasons = costCompletenessOf(x).reasons.map((r) => COST_REASON_WORDS[r] ?? r);
+  return reasons.length ? reasons.join("; ") : "the record does not say why";
 }
 
 /** The execution's recorded cost, or null when none is recorded (never 0 for "not recorded"). */
@@ -891,7 +907,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
                 <span key="cost">
                   {usd(cost)}
                   {real ? " (recorded)" : " (simulated)"}
-                  {under ? <span className="block text-caption text-warning-ink">May be under-reported: a budget stop ended work in flight.</span> : null}
+                  {under ? <span className="block text-caption text-warning-ink">May be under-reported: {underReportedWhy(execution)}.</span> : null}
                 </span>
               ),
             ],
@@ -904,7 +920,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
       {models.length ? (
         <Section title="Cost by model" aside={<span className="text-caption text-ink-subtle">recorded; never per agent</span>}>
           <Facts facts={models.map(([name, cost]): [string, ReactNode] => [name, cost === null ? <NotRecorded key={name} /> : usd(cost)])} />
-          {under ? <p className="mt-2 text-caption text-warning-ink">These may be under-reported: a budget stop ended work in flight.</p> : null}
+          {under ? <p className="mt-2 text-caption text-warning-ink">These may be under-reported: {underReportedWhy(execution)}.</p> : null}
         </Section>
       ) : null}
       <Section title="Related">
@@ -989,5 +1005,128 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
         </ul>
       </Section>
     </>
+  );
+}
+
+// ---------------------------------------------------------------- the kinds real history adds (contract 5.2)
+
+/** One station visit: when it began and ended, what the station said, and its round. */
+export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
+  const kind = visit.station as StationKind;
+  return (
+    <>
+      <Section title="Facts">
+        <Facts
+          facts={[
+            ["Station", STATION_WORDS[kind] ?? visit.station],
+            ["Cell", <Mono key="c">{visit.ticketId}</Mono>],
+            ["Round", `${visit.round} of ${MAX_ROUNDS}`],
+            ["Step", isKnown(visit.meta, "action") ? visit.action : <NotRecorded key="a" />],
+            ["Entered", at(visit.enteredAt)],
+            ["Left", visit.leftAt === null ? "still open" : at(visit.leftAt)],
+            ["Duration", visit.durationMs !== null ? `${Math.round(visit.durationMs / 1000)} s, measured` : visit.leftAt === null ? <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={null} /> : <NotRecorded key="d" />],
+            ["The station said", visit.outcomeWord ? <Mono key="o">{visit.outcomeWord}</Mono> : visit.leftAt === null ? "not yet" : <NotRecorded key="o" />],
+          ]}
+        />
+      </Section>
+      <Section title="Related">
+        <RefList>
+          <RefLink to={ref.station(visit.station, visit.ticketId)} glyph={<StationGlyph kind={kind} size={18} />}>
+            Every visit to this station
+          </RefLink>
+          <RefLink to={ref.cell(visit.ticketId)} glyph={<CellGlyph size={18} />}>
+            <span className="font-mono text-[12px]">{visit.ticketId}</span>
+          </RefLink>
+        </RefList>
+      </Section>
+    </>
+  );
+}
+
+/** One review seat: it exists from its round's start, whether or not its reviewer is seen. */
+export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
+  return (
+    <>
+      <Section title="Facts">
+        <Facts
+          facts={[
+            ["Seat", seat.seat],
+            ["Cell", <Mono key="c">{seat.ticketId}</Mono>],
+            ["Round", `${seat.round} of ${MAX_ROUNDS}`],
+            ["Model", seat.model],
+            ["Vote", seat.vote ?? "not yet"],
+            seat.votedAt !== null ? ["Voted", at(seat.votedAt)] : null,
+            seat.votedLate ? ["Arrived", "late: recorded after events that come after it"] : null,
+            ["Findings", seat.findings],
+            ["Reviewer", seat.agentId ? <Mono key="r">{seat.agentId}</Mono> : "not seen"],
+          ]}
+        />
+        {seat.votedEventId ? <JumpButton eventId={seat.votedEventId} label="Go to the vote" /> : null}
+      </Section>
+      <Section title="Related">
+        <RefList>
+          <RefLink to={ref.gate(`${seat.ticketId}/review#${seat.round}`)} glyph={<GateGlyphSmall kind={gateOf("review")} size={18} />}>
+            Review, round {seat.round}
+          </RefLink>
+          {seat.agentId ? (
+            <RefLink to={ref.agent(seat.agentId)} glyph={<AgentGlyph tier={tierOf(seat.model)} agentRole={roleOf("reviewer")} size={18} />}>
+              The reviewer
+            </RefLink>
+          ) : null}
+        </RefList>
+      </Section>
+    </>
+  );
+}
+
+/** A Dynamic Workflow: its recorded status, declared phases and agents. Its agents' tool calls are counts only. */
+export function WorkflowAnatomy({ workflow }: { workflow: WorkflowEntity }) {
+  return (
+    <>
+      <Section title="Facts">
+        <Facts
+          facts={[
+            ["Workflow", workflow.name ? <Mono key="n">{workflow.name}</Mono> : <NotRecorded key="n" />],
+            ["Execution", <Mono key="x">{workflow.executionId}</Mono>],
+            ["Ticket", workflow.ticketId ? <Mono key="t">{workflow.ticketId}</Mono> : <NotRecorded key="t" />],
+            ["Status", workflow.status === null ? <NotRecorded key="s" /> : workflow.status === "running" ? "Running" : workflow.status],
+            workflow.stopReason ? ["Stopped by", workflow.stopReason] : null,
+            ["Ended", workflow.finishedAt === null ? "not yet" : at(workflow.finishedAt)],
+            ["Declared phases", workflow.phases.length ? workflow.phases.join(", ") : <NotRecorded key="p" />],
+            ["Agents started", workflow.agentIds.length],
+            workflow.queued ? ["Queued, not started", workflow.queued] : null,
+          ]}
+        />
+        <p className="mt-3 text-caption text-ink-subtle">A phase list is declared, not entered: when the belt is in a phase is not recorded.</p>
+      </Section>
+      <Section title="Related">
+        <RefList>
+          <RefLink to={ref.execution(workflow.executionId)} glyph={<ExecutionGlyph size={18} />}>
+            <span className="font-mono text-[12px]">{workflow.executionId}</span>
+          </RefLink>
+        </RefList>
+      </Section>
+    </>
+  );
+}
+
+/** The project: what the history holds about it. */
+export function ProjectAnatomy({ project }: { project: ProjectEntity }) {
+  const f = project.factory;
+  return (
+    <Section title="Facts">
+      <Facts
+        facts={[
+          ["Project", <Mono key="p">{project.id}</Mono>],
+          ["Name", project.name ?? <NotRecorded key="n" />],
+          ["Integration branch", project.integrationBranch ? <Mono key="b">{project.integrationBranch}</Mono> : <NotRecorded key="b" />],
+          ["Factory", f.enabled ? `${f.paused ? "Paused" : "Enabled"}${f.autonomy ? `, ${f.autonomy}` : ""}` : "Not enabled in the history received"],
+          ["Waves", project.waves],
+          ["Slices", project.slices],
+          ["Cells", project.cells],
+          ["Executions", project.executions],
+        ]}
+      />
+    </Section>
   );
 }

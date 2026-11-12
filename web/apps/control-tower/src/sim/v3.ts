@@ -204,7 +204,17 @@ export interface V3DataMap {
   "tool.called": { tool: string; target_class: string; script: string | null; path_rel: string | null };
   "tool.returned": { status: "ok" | "error" | "unknown"; duration_ms: number | null };
   "tool.refused": { tool: string; summary: string };
-  "execution.usage": { total_cost_usd: number | null; subtype: string | null; is_error: boolean | null; terminal_reason: string | null; budget_exhausted: boolean; models: Readonly<Record<string, { cost_usd?: number | null; input_tokens?: number | null; output_tokens?: number | null }>> };
+  "execution.usage": {
+    total_cost_usd: number | null;
+    subtype: string | null;
+    is_error: boolean | null;
+    terminal_reason: string | null;
+    budget_exhausted: boolean;
+    models: Readonly<Record<string, { cost_usd?: number | null; input_tokens?: number | null; output_tokens?: number | null }>>;
+    /** Schema revision 1: the stream's own verdict on whether the reported spend is all of it, and why not. Absent before revision 1. */
+    cost_complete?: boolean | null;
+    cost_incomplete_reasons?: string[] | null;
+  };
   "review.finding": { seat: ReviewSeat; n: number; severity: "blocker" | "note"; rule: string | null; file_rel: string | null; title: string };
   "artifact.recorded": { kind: string; path_rel: string; sha256: string | null; bytes: number | null; media_type: string | null; commit: string | null; nature: "evidence" | "record" | "code" | "prose"; integrity: "match" | "mismatch" | "missing" | "unchecked" };
   "verify.targets_listed": { targets: Array<{ id: string; kind: "scenario" | "matrix rule" | "holdout" }>; source: "spec.json" };
@@ -212,7 +222,7 @@ export interface V3DataMap {
   "history.began": { reason: string; snapshot: { stage?: string | null; round?: number | null; station?: string | null; state?: string | null } };
   "history.gap": { source_key: string; from_seq: number | null; to_seq: number | null; reason: string; count: number | null };
   // ---- client-only
-  "client.history_missing": { reason: "expired" | "reset"; after: string | null; resumed_at: string | null };
+  "client.history_missing": { reason: "expired" | "reset" | "window"; after: string | null; resumed_at: string | null };
   "client.snapshot_applied": { cursor: string; generation: string; state: ObserverSnapshotState };
 }
 

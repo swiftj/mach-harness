@@ -18,10 +18,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSceneStore, SceneStoreProvider, type SceneStore } from "./scene";
 import { Shell } from "./shell";
-import { browserFetch, createBrowserLive, createBrowserReplay, observerClient, probeObserver, requestedSource, urlFor, type Probe, type SourceChoice } from "./shell/source/boot";
+import { createBrowserLive, createBrowserReplay, observerClient, probeObserver, requestedSource, urlFor, type Probe, type SourceChoice } from "./shell/source/boot";
 import { SourceContext, useSourceInfo, type ObserverPresence } from "./shell/source/context";
 import { LoadFailed, NoSession, Probing } from "./shell/source/Gate";
-import { fetchFactoryStatus, type FactoryReading } from "./shell/source/status";
 import { setTimeBase } from "./shell/vocab";
 
 /** How often the Factory's state on this machine is read again (the observer reads its files at most once a second). */
@@ -46,7 +45,6 @@ export function App() {
   const [probe, setProbe] = useState<{ attempt: number; probe: Probe } | null>(null);
   // Bumped by "Try again" and by every switch: a new store (and a fresh load) each time.
   const [generation, setGeneration] = useState(0);
-  const [factory, setFactory] = useState<FactoryReading | null>(null);
   const [replay, setReplay] = useState<{ generation: number; store: SceneStore | null; error: string | null } | null>(null);
 
   // Does an observer answer here? Asked again on "Try again".
@@ -113,22 +111,25 @@ export function App() {
     return () => media.removeEventListener("change", on);
   }, [store]);
 
-  // The Factory's state on this machine, while an observer answers.
-  const answered = answer?.kind === "observer";
+  // The Factory's state on this machine, into the store (state.factoryStatus). The live source reads it
+  // itself; a historical replay has no source, so it is read here while the observer answers.
   useEffect(() => {
-    if (!answered) return;
+    if (!store || target !== "replay") return;
     let cancelled = false;
     const read = () =>
-      void fetchFactoryStatus(browserFetch).then((reading) => {
-        if (!cancelled && reading) setFactory(reading);
-      });
+      void client.factoryStatus().then(
+        (status) => {
+          if (!cancelled) store.setFactoryStatus(status);
+        },
+        () => undefined,
+      );
     read();
     const timer = window.setInterval(read, FACTORY_STATUS_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [answered]);
+  }, [store, target, client]);
 
   const switchTo = useCallback((choice: SourceChoice) => {
     window.history.replaceState(null, "", urlFor(choice, window.location));
@@ -144,7 +145,6 @@ export function App() {
     observer,
     notice,
     project: answer?.kind === "observer" ? answer.session.project : null,
-    factory: answered ? factory : null,
     switchTo,
   });
 

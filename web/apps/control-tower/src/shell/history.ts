@@ -5,17 +5,17 @@
  * enabled or paused, executions starting and ending, verdicts, a person needed or approving) and the
  * Factory track's marks.
  *
- * For a live log this is built incrementally: each call reads only the entries added since the last
- * one, so a batch of events costs what it adds, not the whole history (200,000 events stay
- * responsive). A late insertion or a reset (the entries before the last one read changed) rebuilds
- * it once. Nothing here is invented: every item is one received event, with its id.
+ * For a live log this is built incrementally by the scene model's shared folds (src/sim/fold.ts, the
+ * same one `moments(log)` uses): each call reads only the entries added since the last one, so a
+ * batch of events costs what it adds, not the whole history. A late insertion or a reset rebuilds it
+ * once. Nothing here is invented: every item is one received event, with its id.
  */
 import {
   chapters as storyChapters,
+  createLogFold,
   describeEntry,
   moments as momentsOf,
   ref,
-  significanceOf,
   type AnyRef,
   type Fixture,
   type LogEntry,
@@ -54,8 +54,6 @@ export interface HistoryIndex {
   readonly storyboard: boolean;
 }
 
-const RANKED = new Set(["major", "chapter"]);
-
 /** The kinds that make a real landmark, and what kind of landmark each is. */
 const LANDMARK_KINDS: Readonly<Record<string, Landmark["kind"]>> = {
   "wave.discovered": "wave",
@@ -71,15 +69,6 @@ const LANDMARK_KINDS: Readonly<Record<string, Landmark["kind"]>> = {
   "human.approval_recorded": "person",
 };
 
-function momentOf(entry: LogEntry): Moment | null {
-  const event = entry.event;
-  if (event.schema_version !== 3) return null;
-  const significance = significanceOf(event.type);
-  if (!RANKED.has(significance)) return null;
-  const ids = (event as { ids?: { ticket_id?: string | null } }).ids;
-  return { id: entry.id, seq: (event as { pos?: number }).pos ?? 0, t: entry.t, kind: event.type as Moment["kind"], significance, ticketId: ids?.ticket_id ?? null, text: describeEntry(entry), refs: entry.refs };
-}
-
 interface V3Like {
   readonly type: string;
   readonly ids: { readonly wave_id: string | null; readonly slice_id: string | null; readonly ticket_id: string | null };
@@ -87,10 +76,11 @@ interface V3Like {
 }
 
 /** The Factory track's mark for an entry, people by role only ("a person"). */
-function factoryMarkOf(entry: LogEntry, text: () => string): FactoryMark | null {
+function factoryMarkOf(entry: LogEntry): FactoryMark | null {
   const event = entry.event as unknown as V3Like;
   if ((entry.event as { schema_version?: number }).schema_version !== 3) return null;
   const { ids } = event;
+  const text = (): string => describeEntry(entry);
   switch (event.type) {
     case "factory.activated":
     case "factory.paused":
@@ -112,96 +102,28 @@ function factoryMarkOf(entry: LogEntry, text: () => string): FactoryMark | null 
   }
 }
 
-interface Held {
-  version: number;
-  logVersion: number;
-  /** Absolute count of entries read (dropped + index). */
-  read: number;
-  lastId: string | null;
-  floor: number;
-  moments: Moment[];
-  landmarks: Landmark[];
-  factoryMarks: FactoryMark[];
-}
+const landmarkFold = createLogFold<Landmark>((entry) => {
+  const kind = LANDMARK_KINDS[entry.event.type];
+  return kind && entry.event.schema_version === 3 ? { id: entry.id, t: entry.t, title: describeEntry(entry), kind, summary: null } : null;
+});
+const markFold = createLogFold<FactoryMark>(factoryMarkOf);
 
-const held = new WeakMap<SceneLog, Held>();
 const fixtureHeld = new WeakMap<Fixture, HistoryIndex>();
 
-function readInto(h: Held, entries: readonly LogEntry[], from: number): boolean {
-  let changed = false;
-  for (let i = from; i < entries.length; i++) {
-    const entry = entries[i] as LogEntry;
-    let text: string | null = null;
-    const say = () => (text ??= describeEntry(entry));
-    const m = momentOf(entry);
-    if (m) {
-      h.moments.push(m);
-      text = m.text;
-      changed = true;
-    }
-    const kind = LANDMARK_KINDS[entry.event.type];
-    if (kind) {
-      h.landmarks.push({ id: entry.id, t: entry.t, title: say(), kind, summary: null });
-      changed = true;
-    }
-    const mark = factoryMarkOf(entry, say);
-    if (mark) {
-      h.factoryMarks.push(mark);
-      changed = true;
-    }
-  }
-  return changed;
-}
+/** One index object per combination of the folds' states, so React selectors can compare by identity. */
+const indexes = new WeakMap<SceneLog, { parts: readonly unknown[]; index: HistoryIndex }>();
 
-/** The index of a log, brought up to date with what it holds now. */
+/** The index of a log, brought up to date with what it holds now (incrementally: see the header). */
 export function historyIndexOf(log: SceneLog): HistoryIndex {
-  let h = held.get(log);
-  const logVersion = log.version();
-  if (h && h.logVersion === logVersion) return snapshot(h);
-  const entries = log.entries();
-  const dropped = log.dropped();
-  if (!h) {
-    h = { version: 0, logVersion: -1, read: 0, lastId: null, floor: log.floorTime() ?? 0, moments: [], landmarks: [], factoryMarks: [] };
-    held.set(log, h);
-  }
-  const lastIndex = h.read - dropped - 1;
-  const appendOnly = h.read === 0 || (lastIndex >= 0 && lastIndex < entries.length && entries[lastIndex]?.id === h.lastId);
-  let changed: boolean;
-  if (appendOnly) {
-    changed = readInto(h, entries, Math.max(0, lastIndex + 1));
-  } else {
-    // A late event was inserted before what was read, or the oldest were compacted past it: read again once.
-    h.moments = [];
-    h.landmarks = [];
-    h.factoryMarks = [];
-    readInto(h, entries, 0);
-    changed = true;
-  }
-  // Compaction: nothing below the floor can be replayed, so it is not offered.
-  const floor = log.floorTime() ?? 0;
-  if (floor > h.floor) {
-    h.floor = floor;
-    const keep = <T extends { t: number }>(list: T[]) => (list.length && (list[0] as T).t < floor ? list.filter((x) => x.t >= floor) : list);
-    h.moments = keep(h.moments);
-    h.landmarks = keep(h.landmarks);
-    h.factoryMarks = keep(h.factoryMarks);
-    changed = true;
-  }
-  h.read = dropped + entries.length;
-  h.lastId = entries.at(-1)?.id ?? null;
-  h.logVersion = logVersion;
-  if (changed) h.version += 1;
-  return snapshot(h);
-}
-
-// One object per version, so React selectors can compare by identity.
-const snapshots = new WeakMap<Held, HistoryIndex>();
-function snapshot(h: Held): HistoryIndex {
-  const prior = snapshots.get(h);
-  if (prior && prior.version === h.version) return prior;
-  const next: HistoryIndex = { version: h.version, moments: h.moments, landmarks: h.landmarks, factoryMarks: h.factoryMarks, storyboard: false };
-  snapshots.set(h, next);
-  return next;
+  const moments = momentsOf(log, "major");
+  const landmarks = landmarkFold(log);
+  const marks = markFold(log);
+  const held = indexes.get(log);
+  const parts = [moments, landmarks, marks];
+  if (held && held.parts.every((p, i) => p === parts[i])) return held.index;
+  const index: HistoryIndex = { version: (held?.index.version ?? 0) + 1, moments, landmarks: landmarks.items, factoryMarks: marks.items, storyboard: false };
+  indexes.set(log, { parts, index });
+  return index;
 }
 
 /** The simulation's index: its storyboard chapters and its major moments, computed once. */

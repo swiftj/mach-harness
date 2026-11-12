@@ -8,6 +8,11 @@
  * unknown fields are ignored, missing optional ones are null.
  */
 
+import type { FactoryStatus } from "../scene/connection";
+import type { ObserverSnapshotState } from "../sim/v3";
+
+export type { FactoryStatus };
+
 export interface FetchResponseLike {
   readonly status: number;
   json(): Promise<unknown>;
@@ -53,28 +58,106 @@ export interface EventsPage {
 }
 
 export interface ObserverSnapshot {
+  /** The cursor the state is at: stream from it (`after=`) for no gap and no repeat. */
   readonly cursor: string;
   readonly generation: string;
+  /** Rebuilt from the observer's nearest checkpoint (a cursor earlier than its projection). */
   readonly reconstructed: boolean;
-  readonly state: Readonly<Record<string, unknown>>;
+  /** The projected state, normalised to the shape the reducer reads (every part optional). */
+  readonly state: ObserverSnapshotState;
 }
 
-export interface FactoryStatus {
-  readonly leasePresent: boolean;
-  readonly heartbeatAgeSeconds: number | null;
-  readonly leaseLive: boolean | null;
-  readonly readAt: number | null;
+/** A window of history in `order` (`GET /api/v1/history`), for replay. */
+export interface HistoryPage {
+  readonly generation: string;
+  readonly events: readonly unknown[];
+  /** Page on with `from_order` = this while `more`. */
+  readonly nextFromOrder: string | null;
+  readonly more: boolean;
+  /** False when part of the window may have left the observer's memory. */
+  readonly complete: boolean;
+  readonly watermark: number | null;
 }
 
 export interface ObserverClient {
   session(): Promise<ObserverSession>;
   /** Events after a cursor, in delivery order. */
   events(after: string, limit?: number): Promise<EventsPage>;
+  /** History in `order` within a window (`from_order` inclusive start, `to_order` end), for replay. */
+  history(window?: { readonly fromOrder?: string | null; readonly toOrder?: string | null; readonly fromMs?: number | null; readonly toMs?: number | null; readonly limit?: number }): Promise<HistoryPage>;
+  /** The projected state at a cursor (default: the observer's own position) and that cursor. */
   snapshot(at?: string): Promise<ObserverSnapshot>;
   factoryStatus(): Promise<FactoryStatus>;
 }
 
 export const EVENT_SCHEMA = 3;
+
+const bool = (value: unknown): boolean | null => (typeof value === "boolean" ? value : null);
+const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : value && typeof value === "object" ? Object.values(value) : []);
+const strings = (value: unknown): string[] => (Array.isArray(value) ? (value.filter((x) => typeof x === "string") as string[]) : []);
+
+/**
+ * `/api/v1/factory/status` in the observer's documented shape (apps/observer/README.md): the policy
+ * `summary {enabled, paused, mode, autonomy}`, `factory_present`, `supervisor {lease_present,
+ * heartbeat_fresh, heartbeat_age_seconds, lease_expired}`, `read_at`, and `freshness` (per-source
+ * state and lag, the ingest's watermark). Missing parts are null.
+ */
+export function readFactoryStatus(data: unknown): FactoryStatus {
+  const d = obj(data);
+  const summary = obj(d.summary);
+  const supervisor = obj(d.supervisor);
+  const freshness = obj(d.freshness);
+  const ingest = obj(freshness.ingest);
+  return {
+    factoryPresent: bool(d.factory_present),
+    enabled: bool(summary.enabled),
+    paused: bool(summary.paused),
+    mode: str(summary.mode),
+    autonomy: str(summary.autonomy),
+    supervisor: {
+      leasePresent: bool(supervisor.lease_present),
+      heartbeatFresh: bool(supervisor.heartbeat_fresh),
+      heartbeatAgeSeconds: num(supervisor.heartbeat_age_seconds),
+      leaseExpired: bool(supervisor.lease_expired),
+    },
+    sources: list(freshness.sources).map((x) => {
+      const src = obj(x);
+      return { key: str(src.key) ?? "", state: str(src.state), lagBytes: num(src.lag_bytes), lastReadAgeMs: num(src.last_read_age_ms) };
+    }),
+    ingest: { stale: bool(ingest.stale), watermark: timeOf(ingest.watermark_ms), catchingUp: bool(ingest.catching_up) },
+    readAt: timeOf(d.read_at),
+  };
+}
+
+/** A gate state word from a human gate of the snapshot. */
+const humanGateState = (g: Record<string, unknown>): string => (g.closed ? (g.closed_by === "rejected" ? "failed" : "passed") : "waiting");
+
+/**
+ * `/api/v1/snapshot`'s `state` (the observer's projection: `waves`, `slices`, `cells`, `executions`
+ * as maps by id, `gates` as the human gates) in the shape the reducer reads. Arrays are taken too.
+ */
+export function readSnapshotState(data: unknown): ObserverSnapshotState {
+  const d = obj(data);
+  const waves = list(d.waves).map((x) => obj(x)).filter((w) => typeof w.wave_id === "string");
+  const slices = list(d.slices).map((x) => obj(x)).filter((x) => typeof x.slice_id === "string");
+  const cells = list(d.cells).map((x) => obj(x)).filter((c) => typeof c.ticket_id === "string");
+  const executions = list(d.executions)
+    .map((x) => {
+      const o = obj(x);
+      return Object.keys(obj(o.run)).length ? obj(o.run) : o;
+    })
+    .filter((x) => typeof x.execution_id === "string");
+  const gates = list(d.gates).map((x) => obj(x));
+  return {
+    waves: waves.map((w) => ({ wave_id: w.wave_id as string, slices: strings(w.slices), revision: num(w.revision) })),
+    slices: slices.map((x) => ({ slice_id: x.slice_id as string, ticket_id: str(x.ticket_id), state: str(x.state), dependencies: strings(x.dependencies ?? x.depends_on), revision: num(x.revision) })),
+    cells: cells.map((c) => ({ ticket_id: c.ticket_id as string, slice_id: str(c.slice_id), stage: str(c.stage), risk: str(c.risk), current_visit: str(c.current_visit), rounds: num(c.round ?? c.rounds) })),
+    executions: executions.map((x) => ({ execution_id: x.execution_id as string, ticket_id: str(x.ticket_id), state: str(x.state), attempt: num(x.attempt) })),
+    gates: gates
+      .filter((g) => typeof g.ticket_id === "string" && (g.gate === undefined ? g.kind === "approval" : true))
+      .map((g) => ({ ticket_id: g.ticket_id as string, gate: typeof g.gate === "string" ? g.gate : "human-approval", round: num(g.round), state: typeof g.state === "string" ? g.state : humanGateState(g) })),
+  };
+}
 
 const obj = (value: unknown): Record<string, unknown> => (value && typeof value === "object" ? (value as Record<string, unknown>) : {});
 const str = (value: unknown): string | null => (typeof value === "string" ? value : null);
@@ -150,19 +233,29 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
         watermark: timeOf(d.watermark_ms ?? d.watermark),
       };
     },
+    async history(window = {}) {
+      const q = new URLSearchParams();
+      if (window.fromOrder) q.set("from_order", window.fromOrder);
+      else if (typeof window.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(window.fromMs))));
+      if (window.toOrder) q.set("to_order", window.toOrder);
+      else if (typeof window.toMs === "number") q.set("to_ms", String(Math.max(0, Math.floor(window.toMs))));
+      q.set("limit", String(window.limit ?? 1000));
+      const d = await get(`/history?${q.toString()}`);
+      return {
+        generation: str(d.generation) ?? "",
+        events: Array.isArray(d.events) ? d.events : [],
+        nextFromOrder: str(d.next_from_order),
+        more: d.more === true,
+        complete: d.complete !== false,
+        watermark: timeOf(d.watermark_ms),
+      };
+    },
     async snapshot(at) {
       const d = await get(at ? `/snapshot?at=${encodeURIComponent(at)}` : "/snapshot");
-      return { cursor: str(d.cursor) ?? "", generation: str(d.generation) ?? "", reconstructed: d.reconstructed === true, state: obj(d.state) };
+      return { cursor: str(d.cursor) ?? "", generation: str(d.generation) ?? "", reconstructed: d.reconstructed === true, state: readSnapshotState(d.state) };
     },
     async factoryStatus() {
-      const d = await get("/factory/status");
-      const lease = obj(d.lease);
-      return {
-        leasePresent: lease.present === true,
-        heartbeatAgeSeconds: num(lease.heartbeat_age_seconds),
-        leaseLive: typeof lease.live === "boolean" ? lease.live : null,
-        readAt: timeOf(d.read_at),
-      };
+      return readFactoryStatus(await get("/factory/status"));
     },
   };
 }

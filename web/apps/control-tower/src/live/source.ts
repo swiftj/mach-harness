@@ -20,8 +20,14 @@
  *   store, and the store keeps them across `logChanged`.
  * - **Staleness.** No message (event or heartbeat) for `staleAfterMs` (default 2.5 heartbeats):
  *   `stale`, with `staleSince` the last confirmed moment. Any message: `live` again.
- * - **Supervisor freshness.** `/factory/status` is read every `statusEveryMs` for the lease's
- *   heartbeat age.
+ * - **Lost observer.** A dropped stream is `reconnecting`; after DISCONNECTED_AFTER failed attempts
+ *   in a row it is `disconnected`, still retrying with back-off (1 s doubling to 30 s). The observer
+ *   keeps its sessions, its index and its port across a restart, so when it answers again on the
+ *   same origin the source resumes from its cursor: nothing is reloaded, nothing applied twice.
+ * - **No session.** The observer answered 401: `no-session`, no retry (a new link is needed).
+ * - **The Factory's state.** `/factory/status` is read every `statusEveryMs` and handed to the store
+ *   (`state.factoryStatus`): enabled, paused, Factory state present, the supervisor's heartbeat,
+ *   per-source lag.
  *
  * Wall time only through the injected clock and timers.
  */
@@ -33,10 +39,11 @@ import type { AnyV3Event, EngineEvent } from "../sim/v3";
 import { parseV3 } from "../sim/v3";
 import type { Clock } from "../scene/clock";
 import type { ConnectionStatus } from "../scene/connection";
-import { INITIAL_CONNECTION } from "../scene/connection";
+import { DISCONNECTED_AFTER, INITIAL_CONNECTION } from "../scene/connection";
 import type { SceneStore } from "../scene/store";
 import { createSceneStore } from "../scene/store";
 import type { ObserverClient, ObserverSnapshot } from "./observer";
+import type { SceneSource } from "../sim/provenance";
 import { ObserverError, parseCursor, timeOf } from "./observer";
 
 /** The parts of the browser's EventSource the source uses. */
@@ -172,7 +179,7 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
 
   const heard = (): void => {
     lastMessageWall = clock.now();
-    if (status.state === "stale" || status.state === "connecting" || status.state === "reconnecting") publish({ state: "live", staleSince: null, attempts: 0, reason: null });
+    if (status.state === "stale" || status.state === "connecting" || status.state === "reconnecting" || status.state === "disconnected") publish({ state: "live", staleSince: null, attempts: 0, reason: null });
   };
 
   const closeStream = (): void => {
@@ -202,7 +209,9 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
   const reconnectLater = (reason: string): void => {
     if (stopped || retryTimer !== null) return;
     const attempts = status.attempts + 1;
-    publish({ state: "reconnecting", attempts, reason, staleSince: status.staleSince ?? confirmed() });
+    // Not "reconnecting" forever: after a few failures in a row the observer is said to be lost, and
+    // the source goes on trying (an observer restarted on the same port is found again).
+    publish({ state: attempts > DISCONNECTED_AFTER ? "disconnected" : "reconnecting", attempts, reason, staleSince: status.staleSince ?? confirmed() });
     const delay = Math.min(retryCapMs, retryMs * 2 ** Math.min(10, attempts - 1));
     retryTimer = timers.setTimeout(() => {
       retryTimer = null;
@@ -239,7 +248,10 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       if (watermark !== null) store.setLiveEdge(watermark);
       publish({ watermark, sourceLagMs: at !== null && watermark !== null ? Math.max(0, at - watermark) : status.sourceLagMs, confirmedAt: Math.max(confirmed(), watermark ?? 0) });
     });
-    es.addEventListener("gap", () => void recover("expired"));
+    es.addEventListener("gap", (m) => {
+      const d = (safeJson(m.data) ?? {}) as Record<string, unknown>;
+      void recover("expired", typeof d.floor === "string" ? d.floor : null);
+    });
     es.addEventListener("reset", () => void recover("reset"));
     es.onerror = () => {
       flush();
@@ -249,7 +261,7 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
   };
 
   /** History is missing (expired) or the index was rebuilt (reset): reload, keep everything the person set. */
-  const recover = async (reason: "expired" | "reset"): Promise<void> => {
+  const recover = async (reason: "expired" | "reset", floor: string | null = null): Promise<void> => {
     if (recovering || stopped) return;
     recovering = true;
     flush();
@@ -265,7 +277,9 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
         apply([clientEvent("client.history_missing", markers, confirmed(), { reason, after: before, resumed_at: null } as AnyV3Event["data"])]);
       }
       if (session.snapshot) {
-        const snapshot: ObserverSnapshot = await client.snapshot();
+        // The state at the observer's floor, with that cursor, when it can still rebuild it: then the
+        // stream continues from exactly there, with no gap and no repeat. Otherwise its current state.
+        const snapshot: ObserverSnapshot = await snapshotAt(reason === "expired" ? floor : null);
         markers += 1;
         apply([clientEvent("client.snapshot_applied", markers, confirmed(), { cursor: snapshot.cursor, generation: snapshot.generation, state: snapshot.state } as AnyV3Event["data"])]);
         after = snapshot.cursor || after;
@@ -278,6 +292,17 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       recovering = false;
       reconnectLater(error instanceof Error ? error.message : "Recovery failed.");
     }
+  };
+
+  const snapshotAt = async (at: string | null): Promise<ObserverSnapshot> => {
+    if (at) {
+      try {
+        return await client.snapshot(at);
+      } catch (error) {
+        if (!(error instanceof ObserverError) || (error.kind !== "cursor_expired" && error.kind !== "cursor_reset")) throw error;
+      }
+    }
+    return client.snapshot();
   };
 
   /** Backfill, starting at the floor when the requested cursor has expired. */
@@ -300,15 +325,20 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
         await recover("reset");
         return;
       }
-      publish({ generation: session.generation, state: status.state === "reconnecting" ? "reconnecting" : "connecting" });
+      publish({ generation: session.generation, state: status.state === "reconnecting" || status.state === "disconnected" ? status.state : "connecting" });
       const cursor = await backfill(status.cursor ?? `${session.generation}.0`);
       publish({ cursor });
       openLive();
     } catch (error) {
       if (error instanceof ObserverError && error.kind === "cursor_expired") return recover("expired");
       if (error instanceof ObserverError && error.kind === "cursor_reset") return recover("reset");
-      if (error instanceof ObserverError && (error.kind === "unauthorized" || error.kind === "invalid")) {
-        publish({ state: "disconnected", reason: error.message, staleSince: confirmed() || null });
+      if (error instanceof ObserverError && error.kind === "unauthorized") {
+        // 401: the observer does not know this browser. Retrying cannot help; a new link can.
+        publish({ state: "no-session", reason: error.message, staleSince: confirmed() || null });
+        return;
+      }
+      if (error instanceof ObserverError && error.kind === "invalid") {
+        publish({ state: "disconnected", attempts: 0, reason: error.message, staleSince: confirmed() || null });
         return;
       }
       reconnectLater(error instanceof Error ? error.message : "The observer could not be reached.");
@@ -323,7 +353,8 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
   const readStatus = async (): Promise<void> => {
     try {
       const s = await client.factoryStatus();
-      publish({ supervisor: { heartbeatAgeSeconds: s.heartbeatAgeSeconds, live: s.leaseLive, present: s.leasePresent, readAt: s.readAt } });
+      store.setFactoryStatus(s);
+      publish({ supervisor: { heartbeatAgeSeconds: s.supervisor.heartbeatAgeSeconds, live: s.supervisor.heartbeatFresh, present: s.supervisor.leasePresent === true, readAt: s.readAt } });
     } catch {
       // Status is advisory; the stream's own state already says whether the observer answers.
     }
@@ -346,7 +377,7 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       if (staleTimer !== null) timers.clearInterval(staleTimer);
       if (statusTimer !== null) timers.clearInterval(statusTimer);
       retryTimer = staleTimer = statusTimer = null;
-      publish({ state: "disconnected", reason: "Closed.", staleSince: confirmed() || null });
+      publish({ state: "disconnected", attempts: 0, reason: "Closed.", staleSince: confirmed() || null });
     },
     status: () => ({ ...status, received: status.received }),
     flush,
@@ -378,16 +409,49 @@ export function createLiveFactory(options: Omit<LiveSourceOptions, "log" | "stor
 }
 
 /**
- * Historical Replay: load an observer's whole retained history into a log (no stream), for a
- * replay store. Nothing here touches the Factory; it reads.
+ * Historical Replay: load an observer's history into a log (no stream), for a replay store. Nothing
+ * here touches the Factory; it reads.
+ *
+ * It reads `/api/v1/history` in `order`, one window page after another (late events are where they
+ * belong), optionally between `fromMs` and `toMs`. When the window starts after the history's
+ * beginning, or the observer says part of it may have left its memory (`complete: false`), a
+ * `client.history_missing` marker at the window's start makes the scene say `partial` from there.
+ * An observer without `/history` (404, 503) is read with the paged `/events` instead. With `retain`,
+ * a long history keeps only its newest events (the rest compacted into the floor).
  */
-export async function loadHistory(client: ObserverClient, options: { readonly pageLimit?: number } = {}): Promise<SceneLog> {
+export async function loadHistory(
+  client: ObserverClient,
+  options: { readonly pageLimit?: number; readonly fromMs?: number | null; readonly toMs?: number | null; readonly retain?: number; readonly source?: SceneSource } = {},
+): Promise<SceneLog> {
   const session = await client.session();
-  const log = createSceneLog({ definitions: LIVE_DEFINITIONS, provenance: provenance("replay", session.project), checkpointEvery: 128, cacheSize: 256 });
+  const log = createSceneLog({ definitions: LIVE_DEFINITIONS, provenance: provenance(options.source ?? "replay", session.project), checkpointEvery: 128, cacheSize: 256, retain: options.retain });
+  const limit = options.pageLimit ?? 1000;
+  const parse = (raw: readonly unknown[]) => raw.map(parseV3).filter((e): e is NonNullable<typeof e> => e !== null);
+  try {
+    let fromOrder: string | null = null;
+    let first = true;
+    for (;;) {
+      const page = await client.history({ fromOrder, fromMs: fromOrder ? null : (options.fromMs ?? null), toMs: options.toMs ?? null, limit });
+      const events = parse(page.events);
+      if (first && events.length && (!page.complete || (options.fromMs ?? null) !== null)) {
+        // What came before the window is not loaded: say so where the window begins.
+        const t = Math.min(...events.map((e) => e.time.order_ms));
+        log.ingest([clientEvent("client.history_missing", 1, t, { reason: "window", after: null, resumed_at: null } as AnyV3Event["data"])]);
+      }
+      first = false;
+      log.ingest(events);
+      if (!page.more || !page.nextFromOrder) break;
+      fromOrder = page.nextFromOrder;
+    }
+    return log;
+  } catch (error) {
+    if (!(error instanceof ObserverError) || (error.kind !== "not_found" && error.kind !== "unavailable")) throw error;
+  }
+  // The paged /events fallback: the whole retained history in delivery order (the log sorts it).
   let cursor = `${session.generation}.0`;
   for (;;) {
-    const page = await client.events(cursor, options.pageLimit ?? 1000);
-    log.ingest(page.events.map(parseV3).filter((e): e is NonNullable<typeof e> => e !== null));
+    const page = await client.events(cursor, limit);
+    log.ingest(parse(page.events));
     cursor = page.next ?? cursor;
     if (!page.more) return log;
   }

@@ -1,8 +1,9 @@
 # Control Tower, M6.2: live execution through the one scene model
 
-Status: the engine, the store and the observer client are built and tested; the views (Atlas,
-Blueprint, shell) still draw only the simulation. They move to the live sources in the next wave
-(section 6). Nothing here writes anything anywhere: the client reads the observer's `/api/v1`.
+Status: the engine, the store and the observer client are built and tested, and the views (Atlas,
+Blueprint, shell) draw all three sources. Section 8 lists the follow-ups the view owners reported
+after connecting them, and what was done about each. Nothing here writes anything anywhere: the
+client reads the observer's `/api/v1`.
 
 Read with: `docs/mach-next/M6_1_EVENT_CONTRACT.md` (the v3 envelope, sections 6 to 8, 11, 12, 14),
 `docs/mach-next/M6_1_OBSERVER_DESIGN.md` (sections 8 to 12), `docs/mach-next/M6_0_ARCHITECTURE.md`
@@ -34,8 +35,8 @@ cannot be honest:
   would have to split one event into several synthetic ones, each needing an id, an order and a
   provenance of its own.
 
-**What remains of "the simulation as v3".** The simulation is *not* re-expressed as v3 events in this
-wave. It enters the same engine through the same log, with ids `sim:<seq>`, an order key of the same
+**What remains of "the simulation as v3".** The simulation is *not* re-expressed as v3 events (also
+not in the follow-up pass, section 8 item 16, which lists what blocks it). It enters the same engine through the same log, with ids `sim:<seq>`, an order key of the same
 shape (`<t>~0~sim~<seq>~0000`), authority `simulated` on every entity and provenance `simulation` on
 every scene, so it can never be mistaken for real execution. Re-expressing it as v3 would change what
 it shows: 1,380 of its 2,126 events are per-call `tool.*` for workflow agents, which v3 makes a count,
@@ -96,6 +97,8 @@ get it wrong.
 | `extent` | `whole-run` (duration) | `so-far` (floor to edge, events held) | `so-far` |
 | Chapters | the storyboard's | none (future knowledge) | none |
 | `connection` | null | `ConnectionStatus` | null |
+| `factoryStatus` | null | `/factory/status`, read by the source | `/factory/status`, read by the app |
+| `timeScaleOf(state)` | base rate x speed | 1 while following; base rate x speed when scrubbed back | base rate x speed |
 | `fixture` | the fixture | `NO_FIXTURE` (compatibility only) | `NO_FIXTURE` |
 
 Replay inside a live store is a client-side playhead: `seek` back sets `following: false`; ingest
@@ -104,26 +107,32 @@ re-attaches; a replay that plays up to the edge re-attaches by itself. Nothing i
 pause the Factory.
 
 `ConnectionStatus` (`scene/connection.ts`): `state` (`connecting`, `live`, `reconnecting`, `stale`,
-`disconnected`), `confirmedAt`, `staleSince` (the last confirmed moment, factory time), `attempts`,
+`disconnected` after `DISCONNECTED_AFTER` failed attempts while still retrying, `no-session` on 401), `confirmedAt`, `staleSince` (the last confirmed moment, factory time), `attempts`,
 the durable `cursor` and `generation`, `watermark`, `sourceLagMs` (observer-reported: heartbeat time
 minus watermark), `supervisor` (lease present, heartbeat age, live, from `/factory/status`), `reason`,
 and counters (`received`, `duplicates`, `late`, `gaps`, `resets`, `refused`).
 
 ## 4. The observer client and the live source
 
-`live/observer.ts`: `session`, `events(after, limit)`, `snapshot(at?)`, `factoryStatus`, behind an
-injected `fetch`, M5's envelope, `X-MACH-Event-Schema: 3`. `live/source.ts`, `createLiveSource`:
+`live/observer.ts`: `session`, `events(after, limit)`, `history(window)`, `snapshot(at?)`,
+`factoryStatus`, behind an injected `fetch`, M5's envelope, `X-MACH-Event-Schema: 3`. The snapshot's
+state (the observer's projection: maps by id, human gates) and `/factory/status` (`summary`,
+`factory_present`, `supervisor`, `freshness`) are read in the shapes `apps/observer/README.md`
+documents (`readSnapshotState`, `readFactoryStatus`). `live/source.ts`, `createLiveSource`:
 
 1. `GET /session`; if a held cursor names another epoch, treat it as a reset.
 2. History in pages from the cursor (`/events?after=`), each page applied to the log.
 3. `GET /stream?schema=3&after=<cursor>`; messages queued and applied once per animation frame;
    heartbeats move the edge to the watermark (or `at` minus the 1.5 s settle window when the
    heartbeat carries none, as the observer's does today).
-4. A dropped stream: `reconnecting`, back-off 1 s doubling to 30 s, resume from the cursor.
+4. A dropped stream: `reconnecting`, back-off 1 s doubling to 30 s, resume from the cursor; after
+   `DISCONNECTED_AFTER` (4) failures in a row, `disconnected`, still retrying. The observer keeps its
+   sessions, index and port across a restart, so when it answers again the source resumes from its
+   cursor. A 401 is `no-session`, not retried.
 5. `gap`: a `client.history_missing` marker enters the log at the last confirmed moment (the scene
-   reads `partial` from there), then `/snapshot` if the observer serves one (a `client.snapshot_applied`
-   marker seeds what it says, `reconstructed`), then history from the snapshot's cursor, or from the
-   floor.
+   reads `partial` from there), then `/snapshot?at=<the gap's floor>` (the state at that cursor; the
+   observer's current state if it can no longer rebuild that one), a `client.snapshot_applied` marker
+   seeds what it says (`reconstructed`), then history from the snapshot's cursor.
 6. `reset`: history again from the new epoch's start; ids and order are deterministic, so everything
    already held de-duplicates and the scene does not change.
 7. Silence for 2.5 heartbeats: `stale`; any message: `live`.
@@ -236,7 +245,7 @@ Shell (`src/shell`):
    (`?source=live|replay`, or the host's session), create the store with `createLiveFactory` and
    start the source; `window.__machSim` stays simulation-only.
 
-## 7. Not done
+## 7. Not done (first wave; see section 8 for what the follow-up pass changed)
 
 - The views are not adapted (section 6); the app runs in simulation mode only, as before. Not
   checked in a browser in this wave: typecheck, lint, tests and the production build pass.
@@ -252,3 +261,42 @@ Shell (`src/shell`):
   a queued workflow agent maps to `waiting-resources` with the reason "queued in its workflow".
 - A capacity wait attaches to the cell and execution named by its `ids`; a slice waiting for a free
   cell stays `unknown` (D16).
+
+## 8. Follow-ups after the views were connected (M6.2, second pass)
+
+| # | What | Where |
+|---|---|---|
+| 1 | A visit belongs to the judging round it starts (the lifecycle log's meaning). The simulation's revise visit is converted where it enters the scene (`reducer.ts`, `station.entered`). Blueprint's `visitRound` is now the scene's round. | `sim/reducer.ts`, `blueprint/flow.ts` |
+| 2 | A repeated `wave.discovered` merges into the wave's slices (union, order of first sight) and keeps its first moment. `bayOrder(log)` is an assignment table per log: new bays ordered by the `order` of their first event, then appended; an index never changes (an older wave arriving late goes last). The Atlas lays out from it. | `sim/reduce-v3.ts`, `sim/selectors.ts`, `atlas/layout.ts`, `atlas/index.tsx` |
+| 3 | An approved (or `pr-open`) cell not merged yet: `activityOf` says `completed` with `awaiting {step: "merge", label, by, basis}`; `by` is `person` only where an event says so (the execution stopped at that stage waiting for one; a refused merge), else null (not recorded). | `sim/selectors.ts` |
+| 4 | `VerificationState.listed {eventId, authority, count, late}` when `verify.targets_listed` (or the simulation's `verification.started`) was received; "expected" = pending checks of a listed round only. | `sim/model.ts`, `blueprint/rows.tsx`, `blueprint/CellFlow.tsx` |
+| 5 | Review rounds (`eventId`, `late`, `decidedEventId`, `decidedLate`), seats (`votedEventId`, `votedLate`), human approvals (`eventId`, `late`), gate evaluations (`eventId`, `late`) and every `EntityMeta` (`late`). Scene `late` is the observer's own flag (part of the record); lateness to this browser stays on the log entry (`isLateEntry`), so delivery order never changes a scene. | `sim/*` |
+| 6 | A slice's risk follows the cell's recorded risk (`work.scheduled`, `review.round_started`). The human-approval visit's action is `stop` (run.py's answer at awaiting-human; `meta.inferred.action`). `cellHome(scene, ticket)`: a cell with no slice stands under its ticket, wave not recorded. | `sim/reduce-v3.ts`, `sim/selectors.ts` |
+| 7 | `scene.capacityWaits` holds recorded waits whether or not the cell exists (`capacityWaits`, `capacityWaitOf`); gate evaluations name the gate state they set (`gateId`, null when none), `gateRefusals(scene, ticket?)` lists refusals no gate state stands for. | `sim/*` |
+| 8 | `project`, `workflow`, `visit`, `seat` are `EntityKind`s; `entityAt` resolves them by identity; `stableEntityAt` keeps the object while it does not change (for React selectors). Inspector sections for the four. | `sim/model.ts`, `sim/selectors.ts`, `shell/inspector/*`, `shell/vocab.ts`, `atlas/locate.ts` |
+| 9 | `timeScaleOf(state)`: 1 at the live edge, `PLAYBACK_BASE_RATE x speed` otherwise (simulation, replay, a live store scrubbed back). Atlas (`setMotionSource`) and Blueprint (`eventProgress`) read it. | `scene/store.ts`, `atlas/derive.ts`, `atlas/index.tsx`, `blueprint/motion.ts` |
+| 10 | `createLogFold` (`sim/fold.ts`): incremental per-log lists (appends read only what is new; a late insert rebuilds once; compaction trims). `moments(log)` uses it; the shell's history index is built from it (its private machinery is gone). The Atlas's `legsOf` still scans the log per version (view code, not changed). | `sim/fold.ts`, `sim/selectors.ts`, `shell/history.ts` |
+| 11 | `/factory/status` in the documented shape, in the store (`state.factoryStatus`, `setFactoryStatus`); the shell's own reader (`shell/source/status.ts`) is removed. | `live/observer.ts`, `scene/store.ts`, `App.tsx`, `shell/SourceBadge.tsx` |
+| 12 | `disconnected` after `DISCONNECTED_AFTER` failures (still retrying), resume from the cursor when the observer answers again; `no-session` on 401. The shell's attempt-count workaround and reason regex are gone. | `live/source.ts`, `scene/connection.ts`, `shell/SourceBadge.tsx` |
+| 13 | Snapshot at the gap's floor cursor; replay reads `/history` windows in order (`fromMs`/`toMs`, a `before-window` gap marker when the window starts part-way or `complete: false`), falling back to paged `/events`. Not done: loading further windows on demand while scrubbing a long replay (replay still loads the history it is given in one go). | `live/source.ts`, `live/observer.ts` |
+| 14 | `execution.usage.cost_complete` and `cost_incomplete_reasons` (revision 1) on `ExecutionState.usage`; `costCompletenessOf`; the shell's stand-in (budget stop or killed workflow read as under-reported) is gone. | `sim/*`, `shell/inspector/anatomies.tsx` |
+| 15 | A live store's follow loop runs only while it has a subscriber; a store made and dropped unwatched (StrictMode) asks for no frames. | `scene/store.ts` |
+| 16 | Not done. See below. | |
+
+**16, the simulation as v3: what blocks it.** Re-expressing the scenario as v3 events would change what
+the simulation draws, because the views draw simulation facts no v3 kind carries: `task.started`
+(active tasks with their text, files and requirement ids), `test.result` (`testsRun`, `lastTest`
+with passed, failed, seconds), `verification.started.required_evidence` and target titles,
+`review.started.human_approval_reasons` and the delta's files, agents' `effort`, `tier` and
+`summary`, an artifact's writing agent and tool call (`artifact.written.writer`; v3 never records
+it), and `workflow.phase` as a moment (`cell.workflowPhase`; v3 has only the declared list). As v3
+these become "not recorded" placeholders and the Atlas, Blueprint and inspector draw them so. The
+shell's simulation timeline (`timeline/model.ts`, `timelineModel()`) and history index read the
+fixture's v2 events directly, and `test/scenario.test.mjs`, `reducer.test.mjs` and
+`no-early-outcomes.test.mjs` count per-call and v2 kinds. The per-call tool events themselves are not
+the blocker (they can be `tool.called`/`tool.returned` with the agent as parent).
+
+Item 1 changes the Atlas's simulation markup in one way (compared at seven playheads against the tree
+before this pass): after a revision, a revised cell's build machine and its hit target are labelled
+"round 2 of 3", as they already were while the revision ran and as they are live. No drawn shape or
+position differs; the other four playheads are byte-identical.

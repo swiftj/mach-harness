@@ -12,6 +12,8 @@ import { describeEntry, significanceOf } from "./describe-v3";
 import { indexFixture, lowerBound, upperBound } from "./engine";
 import type { LogEntry, SceneLog } from "./log";
 import { isSceneLog } from "./log";
+import type { LogFold } from "./fold";
+import { countThrough, createLogFold } from "./fold";
 import type { ActivityState, Authority, EntityMeta } from "./provenance";
 import type {
   AnyRef,
@@ -28,13 +30,14 @@ import type {
   Fixture,
   GateState,
   Scene,
+  SeatState,
   SliceState,
   StationVisit,
   ToolCallState,
   WaveState,
 } from "./model";
 import { isActorRef, ref, refId, refKind } from "./model";
-import type { LiveEntityKind, LiveRef } from "./model";
+import type { CapacityWaitState, GateEvaluation, LiveEntityKind, LiveRef } from "./model";
 
 /**
  * Where events come from: a simulation fixture (the M6.0 API, returning the fixture's own events) or
@@ -232,7 +235,60 @@ export type EntityState =
   | { kind: "gate"; value: GateState }
   | { kind: "dependency"; value: DependencyState }
   | { kind: "finding"; value: FindingState }
-  | { kind: "actor"; value: ActorState };
+  | { kind: "actor"; value: ActorState }
+  | { kind: "visit"; value: VisitEntity }
+  | { kind: "seat"; value: SeatEntity }
+  | { kind: "workflow"; value: WorkflowEntity }
+  | { kind: "project"; value: ProjectEntity };
+
+/** One station visit, with the cell it belongs to (`visit:<ticket>/<station>#<n>`). */
+export type VisitEntity = StationVisit & { readonly ticketId: string; readonly visitId: string };
+
+/** One review seat (`seat:<ticket>/review#<round>/<seat>`): it exists from its round's start, whether or not its reviewer is seen. */
+export interface SeatEntity {
+  readonly ticketId: string;
+  readonly round: number;
+  readonly seat: string;
+  readonly model: SeatState["model"];
+  readonly agentId: string | null;
+  readonly vote: "APPROVE" | "REJECT" | null;
+  readonly votedAt: number | null;
+  readonly votedEventId: string | null;
+  readonly votedLate: boolean;
+  /** The round's start: the event that made the seat. */
+  readonly eventId: string;
+  readonly late: boolean;
+  readonly findings: number;
+}
+
+/** A Dynamic Workflow (`workflow:<execution>/<task>`), as its execution records it. Its agents are found by identity. */
+export interface WorkflowEntity {
+  readonly id: string;
+  readonly executionId: string;
+  readonly ticketId: string;
+  readonly name: string | null;
+  readonly status: ExecutionState["workflowStatus"];
+  readonly stopReason: ExecutionState["stopReason"];
+  readonly finishedAt: number | null;
+  /** The declared phase list (not phases entered: those are not observable). */
+  readonly phases: readonly string[];
+  readonly queued: number;
+  readonly agentIds: readonly string[];
+  readonly meta: EntityMeta;
+}
+
+/** The project (`project:<id>`): what the history holds about it. */
+export interface ProjectEntity {
+  readonly id: string;
+  /** Not recorded in events (the observer's session may name its folder). Null: not recorded. */
+  readonly name: string | null;
+  readonly integrationBranch: string | null;
+  readonly factory: Scene["factory"];
+  readonly waves: number;
+  readonly slices: number;
+  readonly cells: number;
+  readonly executions: number;
+}
 
 const agentsCache = new WeakMap<Readonly<Record<string, CellState>>, readonly AgentState[]>();
 
@@ -342,6 +398,61 @@ export function entityAt(scene: Scene, entity: AnyRef): EntityState | null {
       const visits = Object.values(scene.cells).flatMap((cell) => cell.visits.filter((v) => v.station === station));
       return { kind: "station", value: { station, ticketId: null, visits, cells: cellsAtStation(scene, station).map((c) => c.ticketId) } };
     }
+    // Live and replay kinds: found by identity in the scene, never by parsing the id.
+    case "visit":
+      for (const cell of Object.values(scene.cells)) {
+        const visit = cell.visits.find((v) => v.visitId === id);
+        if (visit) return { kind: "visit", value: { ...visit, ticketId: cell.ticketId, visitId: id } };
+      }
+      return null;
+    case "seat":
+      for (const cell of Object.values(scene.cells)) {
+        for (const round of cell.reviews) {
+          for (const seat of round.seats) {
+            if (ref.seat(cell.ticketId, round.round, seat.seat) !== entity) continue;
+            return {
+              kind: "seat",
+              value: {
+                ticketId: cell.ticketId,
+                round: round.round,
+                seat: seat.seat,
+                model: seat.model,
+                agentId: seat.agentId,
+                vote: seat.vote,
+                votedAt: seat.votedAt,
+                votedEventId: seat.votedEventId,
+                votedLate: seat.votedLate,
+                eventId: round.eventId,
+                late: round.late,
+                findings: round.findings.filter((f) => f.seat === seat.seat).length,
+              },
+            };
+          }
+        }
+      }
+      return null;
+    case "workflow":
+      for (const x of Object.values(scene.executions)) {
+        if (x.workflowId !== id) continue;
+        const agentIds = allAgents(scene).filter((a) => a.workflowId === id).map((a) => a.id);
+        return { kind: "workflow", value: { id, executionId: x.id, ticketId: x.ticketId, name: x.workflow, status: x.workflowStatus, stopReason: x.stopReason, finishedAt: x.workflowFinishedAt, phases: x.phases, queued: Object.keys(x.queued).length, agentIds, meta: x.meta } };
+      }
+      return null;
+    case "project":
+      if (!scene.project.id || scene.project.id !== id) return null;
+      return {
+        kind: "project",
+        value: {
+          id,
+          name: scene.project.name || null,
+          integrationBranch: scene.project.integrationBranch || null,
+          factory: scene.factory,
+          waves: Object.keys(scene.waves).length,
+          slices: Object.keys(scene.slices).length,
+          cells: Object.keys(scene.cells).length,
+          executions: Object.keys(scene.executions).length,
+        },
+      };
   }
 }
 
@@ -569,7 +680,52 @@ export interface Moment {
 
 const RANK: Record<Significance, number> = { chapter: 3, major: 2, minor: 1, ambient: 0 };
 const momentCache = new WeakMap<Fixture, readonly Moment[]>();
-const logMomentCache = new WeakMap<SceneLog, { version: number; all: readonly Moment[] }>();
+
+/** One entry as a moment, whatever its source. */
+function momentOfEntry(entry: LogEntry): Moment {
+  const event = entry.event;
+  const sim = event.schema_version !== 3;
+  return {
+    id: entry.id,
+    seq: sim ? (event as AnySimEvent).seq : (event as { pos: number }).pos,
+    t: entry.t,
+    kind: event.type as EventKind,
+    significance: sim ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOf(event.type),
+    ticketId: sim ? (event as AnySimEvent).ticket_id : ((event as { ids: { ticket_id: string | null } }).ids.ticket_id ?? null),
+    text: describeEntry(entry),
+    refs: entry.refs,
+  };
+}
+
+/** A log's moments at or above each significance, kept incrementally (src/sim/fold.ts): a batch of events costs what it adds. */
+const momentFolds: Readonly<Record<Significance, (log: SceneLog) => LogFold<Moment>>> = {
+  ambient: createLogFold((entry) => momentOfEntry(entry)),
+  minor: createLogFold((entry) => (RANK[significanceOfEntry(entry)] >= RANK.minor ? momentOfEntry(entry) : null)),
+  major: createLogFold((entry) => (RANK[significanceOfEntry(entry)] >= RANK.major ? momentOfEntry(entry) : null)),
+  chapter: createLogFold((entry) => (RANK[significanceOfEntry(entry)] >= RANK.chapter ? momentOfEntry(entry) : null)),
+};
+function significanceOfEntry(entry: LogEntry): Significance {
+  const event = entry.event;
+  return event.schema_version !== 3 ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOf(event.type);
+}
+
+/** The first `n` items of a fold's list, one array per (list, n) while it is in use, so a selector can compare by identity. */
+const prefixCache = new WeakMap<readonly Moment[], Map<number, readonly Moment[]>>();
+function prefix(items: readonly Moment[], n: number): readonly Moment[] {
+  let byCount = prefixCache.get(items);
+  if (!byCount) prefixCache.set(items, (byCount = new Map()));
+  let hit = byCount.get(n);
+  if (!hit) {
+    hit = items.slice(0, n);
+    byCount.set(n, hit);
+    // A small LRU: scrubbing asks for many counts; only the recent ones are worth keeping.
+    if (byCount.size > 16) byCount.delete(byCount.keys().next().value as number);
+  } else {
+    byCount.delete(n);
+    byCount.set(n, hit);
+  }
+  return hit;
+}
 
 /**
  * Events at or above a significance, with a sentence each, for timeline markers. With t, only the
@@ -581,28 +737,10 @@ export function moments(history: History, atLeast: Significance = "major", t?: n
 
 function momentsOf(history: History, atLeast: Significance, t?: number): readonly Moment[] {
   if (isSceneLog(history)) {
-    // A live log grows: moments are rebuilt when its version changes (they are only what has been received).
-    let held = logMomentCache.get(history);
-    if (!held || held.version !== history.version()) {
-      const all = history.entries().map((entry): Moment => {
-        const event = entry.event;
-        const sim = event.schema_version !== 3;
-        return {
-          id: entry.id,
-          seq: sim ? (event as AnySimEvent).seq : (event as { pos: number }).pos,
-          t: entry.t,
-          kind: event.type as EventKind,
-          significance: sim ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOf(event.type),
-          ticketId: sim ? (event as AnySimEvent).ticket_id : ((event as { ids: { ticket_id: string | null } }).ids.ticket_id ?? null),
-          text: describeEntry(entry),
-          refs: entry.refs,
-        };
-      });
-      held = { version: history.version(), all };
-      logMomentCache.set(history, held);
-    }
-    const floor = RANK[atLeast];
-    return held.all.filter((m) => RANK[m.significance] >= floor && (t === undefined || m.t <= t));
+    // Incremental per log: only events added since the last read are described (fold.ts). Same array
+    // for the same (significance, count) while it is in use.
+    const items = momentFolds[atLeast](history).items;
+    return prefix(items, t === undefined ? items.length : countThrough(items, t));
   }
   const fixture = history;
   let all = momentCache.get(fixture);
@@ -727,6 +865,12 @@ export interface Activity {
   /** Since when, if known. */
   readonly since: number | null;
   readonly authority: Authority;
+  /**
+   * Work done and the next step not taken yet, when that is what is known: an approved cell not
+   * merged yet (`step: "merge"`), a cell whose pull request is open. `by` is who takes the step when
+   * an event says so (`line`: the Factory's own merge; `person`), else null: not recorded.
+   */
+  readonly awaiting?: { readonly step: "merge"; readonly label: string; readonly by: "line" | "person" | null; readonly basis: string | null };
 }
 
 export interface ActivityOptions {
@@ -817,43 +961,286 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
   if (execution && (execution.state === "running" || execution.state === "claimed")) return { state: "executing", reason: "Its execution is running.", since: execution.startedAt ?? execution.claimedAt, authority: execution.meta.authority };
   const slice = scene.slices[cell.sliceId];
   if (slice?.scheduler === "waiting-on-dependency") return { state: "waiting-dependency", reason: slice.reasons.join(" ") || "Waiting for what it depends on.", since: slice.since, authority: slice.meta.authority };
+  if (cell.stage === "approved" || cell.stage === "pr-open") return awaitingMerge(scene, cell, authority);
   return { state: "unknown", reason: "Between stations; nothing recorded says what it waits for.", since: null, authority };
+}
+
+/**
+ * An approved cell not merged yet (or one whose pull request is open): its state is known. Review is
+ * done (`completed`); the merge is the next step. Who merges is in the merge policy, which no event
+ * carries, so it is said only where an event says it: the last execution stopped waiting for a person
+ * at this stage (`execution.completed.waiting_for`), or its merge station ran and was refused.
+ */
+function awaitingMerge(scene: Scene, cell: CellState, authority: Authority): Activity {
+  const since = cell.stageHistory.at(-1)?.at ?? null;
+  const pr = cell.stage === "pr-open";
+  const label = pr ? "Pull request open, not merged yet" : "Approved, not merged yet";
+  const x = cell.executionId ? scene.executions[cell.executionId] : undefined;
+  const stopped = x?.outcome && x.outcome.stage === cell.stage ? x.outcome : null;
+  if (stopped?.waitingFor) {
+    return { state: "waiting-person", reason: `${label}. The last execution stopped here, waiting for ${stopped.waitingFor}.`, since, authority: x?.meta.authority ?? authority, awaiting: { step: "merge", label, by: "person", basis: x?.meta.eventId ?? null } };
+  }
+  const refused = [...cell.gateLog].reverse().find((g) => (g.gate === "merge.run" || g.gate === "merge.land") && g.verdict === "refused");
+  if (refused && refused.at >= (since ?? 0)) {
+    return { state: "waiting-person", reason: `${label}. The merge station was refused (${refused.reasonCode ?? "no reason code"}).`, since: refused.at, authority, awaiting: { step: "merge", label, by: "person", basis: refused.eventId } };
+  }
+  return { state: "completed", reason: `${label}. ${pr ? "The pull request has not landed." : "Review approved it."} Who merges is not recorded.`, since, authority, awaiting: { step: "merge", label, by: null, basis: null } };
 }
 
 // ---------------------------------------------------------------- live-only entities
 
-export type LiveEntityState =
-  | { kind: "visit"; value: StationVisit & { readonly ticketId: string } }
-  | { kind: "seat"; value: { readonly ticketId: string; readonly round: number; readonly seat: string; readonly model: string; readonly agentId: string | null; readonly vote: "APPROVE" | "REJECT" | null } }
-  | { kind: "workflow"; value: ExecutionState };
+export type LiveEntityState = Extract<EntityState, { kind: LiveEntityKind }>;
 
 /**
- * The live-only kinds (`visit:`, `seat:`, `workflow:`), found by identity in the scene: a visit by
- * its recorded visit id, a seat by its round's panel, a workflow by its execution's workflow id. No
- * id is parsed.
+ * The live-only kinds (`visit:`, `seat:`, `workflow:`, `project:`). Kept for callers written before
+ * they were EntityKinds: it is entityAt narrowed to them.
  */
 export function liveEntityAt(scene: Scene, entity: LiveRef): LiveEntityState | null {
-  const id = entity.slice(entity.indexOf(":") + 1);
-  switch (entity.slice(0, entity.indexOf(":")) as LiveEntityKind) {
-    case "visit":
-      for (const cell of Object.values(scene.cells)) {
-        const visit = cell.visits.find((v) => v.visitId === id);
-        if (visit) return { kind: "visit", value: { ...visit, ticketId: cell.ticketId } };
-      }
-      return null;
-    case "seat":
-      for (const cell of Object.values(scene.cells)) {
-        for (const round of cell.reviews) {
-          for (const seat of round.seats) {
-            if (ref.seat(cell.ticketId, round.round, seat.seat) === entity) return { kind: "seat", value: { ticketId: cell.ticketId, round: round.round, seat: seat.seat, model: seat.model, agentId: seat.agentId, vote: seat.vote } };
-          }
-        }
-      }
-      return null;
-    case "workflow":
-      for (const x of Object.values(scene.executions)) if (x.workflowId === id) return { kind: "workflow", value: x };
-      return null;
-    default:
-      return null;
+  const found = entityAt(scene, entity);
+  return found && (found.kind === "visit" || found.kind === "seat" || found.kind === "workflow" || found.kind === "project") ? found : null;
+}
+
+/**
+ * entityAt for a React selector: the same object for the same entity while its content is the same.
+ * The live kinds (visit, seat, workflow, project) are assembled from several parts of the scene, so
+ * entityAt makes a new object each call; this keeps the previous one when every field is the same
+ * (shallow: the parts are the scene's own stable objects).
+ */
+const stableValues = new Map<string, unknown>();
+const stableByScene = new WeakMap<Scene, Map<string, EntityState | null>>();
+export function stableEntityAt(scene: Scene, entity: AnyRef): EntityState | null {
+  let perScene = stableByScene.get(scene);
+  if (!perScene) stableByScene.set(scene, (perScene = new Map()));
+  if (perScene.has(entity)) return perScene.get(entity) ?? null;
+  const found = entityAt(scene, entity);
+  let out = found;
+  if (found) {
+    const prev = stableValues.get(entity) as EntityState | undefined;
+    if (prev && prev.kind === found.kind && shallowSame(prev.value, found.value)) out = prev;
+    else stableValues.set(entity, found);
+    if (stableValues.size > 512) stableValues.delete(stableValues.keys().next().value as string);
   }
+  perScene.set(entity, out);
+  return out;
+}
+function shallowSame(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    const x = (a as Record<string, unknown>)[k];
+    const y = (b as Record<string, unknown>)[k];
+    if (x === y) continue;
+    if (!Array.isArray(x) || !Array.isArray(y) || x.length !== y.length || x.some((v, i) => v !== y[i])) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------- lateness
+
+/**
+ * Whether an event reached this history late: the observer flagged it (`late`), or it reached this
+ * browser after events that sort after it and was inserted where it belongs. Either way a view draws
+ * what it set as a state change, never as motion replayed from its start. False for an unknown id.
+ */
+export function isLateEntry(log: SceneLog, eventId: string | null | undefined): boolean {
+  return eventId ? (log.entry(eventId)?.late ?? false) : false;
+}
+
+// ---------------------------------------------------------------- cost
+
+export interface CostCompleteness {
+  /** True: the recorded spend is all of it. False: it may be under-reported. Null: no record says. */
+  readonly complete: boolean | null;
+  /** Why it may be incomplete, as the record says (`budget-stop`, `agents-killed-in-flight`). */
+  readonly reasons: readonly string[];
+  /** The event that says so. */
+  readonly eventId: string | null;
+}
+
+/**
+ * Whether an execution's recorded cost is complete, from the stream's own verdict only
+ * (`execution.usage.cost_complete` and its reasons, schema revision 1). Nothing is guessed: with
+ * no usage record, or one written before the field existed, it is not known (null).
+ */
+export function costCompletenessOf(x: ExecutionState): CostCompleteness {
+  if (!x.usage) return { complete: null, reasons: [], eventId: null };
+  return { complete: x.usage.costComplete, reasons: x.usage.costIncompleteReasons, eventId: x.usage.eventId };
+}
+
+// ---------------------------------------------------------------- recorded facts no gate state stands for
+
+/** Recorded waits for an execution place, by ticket (capacity.wait_changed; reconstructed by the observer). */
+export function capacityWaits(scene: Scene): readonly CapacityWaitState[] {
+  return Object.values(scene.capacityWaits).sort((a, b) => a.since - b.since || (a.ticketId < b.ticketId ? -1 : 1));
+}
+
+/** The recorded capacity wait of one ticket, whether or not its cell is in the scene. */
+export function capacityWaitOf(scene: Scene, ticketId: string): CapacityWaitState | null {
+  return scene.capacityWaits[ticketId] ?? null;
+}
+
+export interface GateRefusal extends GateEvaluation {
+  readonly ticketId: string;
+}
+
+/**
+ * Gate evaluations the lifecycle log recorded as refused that no gate state stands for (a refused
+ * `build.start`, `verify.start`, `groom.finalize`, `merge.run`, the round limit...), oldest first.
+ * With a ticket, that cell's only. They are facts: draw them, never fold them into another gate.
+ */
+export function gateRefusals(scene: Scene, ticketId?: string): readonly GateRefusal[] {
+  const cells = ticketId ? (scene.cells[ticketId] ? [scene.cells[ticketId]] : []) : Object.values(scene.cells);
+  const out: GateRefusal[] = [];
+  for (const cell of cells) for (const g of cell.gateLog) if (g.verdict === "refused" && g.gateId === null) out.push({ ...g, ticketId: cell.ticketId });
+  return out.sort((a, b) => a.at - b.at);
+}
+
+// ---------------------------------------------------------------- where a cell stands
+
+export interface CellHome {
+  readonly ticketId: string;
+  /** The slice it builds, when recorded. */
+  readonly sliceId: string | null;
+  /** The wave its slice belongs to, when recorded (the slice's own, else a wave that lists it). */
+  readonly waveId: string | null;
+  /** The lane's title: the slice's title when recorded, else the ticket. Never a placeholder. */
+  readonly laneTitle: string;
+  readonly sliceKnown: boolean;
+  readonly waveKnown: boolean;
+}
+
+/**
+ * A cell's home in the picture, defined for every cell: a cell with no slice (a hand-driven ticket,
+ * history begun part-way) stands under its own ticket, in a wave that is "not recorded".
+ */
+export function cellHome(scene: Scene, ticketId: string): CellHome {
+  const cell = scene.cells[ticketId];
+  const slice = cell?.sliceId ? scene.slices[cell.sliceId] : undefined;
+  const waveId = slice ? (scene.waves[slice.waveId] ? slice.waveId : (Object.values(scene.waves).find((w) => w.sliceIds.includes(slice.id))?.id ?? null)) : cell?.sliceId ? (Object.values(scene.waves).find((w) => w.sliceIds.includes(cell.sliceId))?.id ?? null) : null;
+  const title = slice && isKnown(slice.meta, "title") ? slice.title : ticketId;
+  return { ticketId, sliceId: cell?.sliceId || null, waveId, laneTitle: title, sliceKnown: Boolean(slice), waveKnown: waveId !== null };
+}
+
+// ---------------------------------------------------------------- bays: a stable assignment table
+
+/** One bay: the slice it is for and its cell's ticket (the slice's id until a ticket is known). A cell with no slice has `cell:<ticket>`. */
+export interface BayClaim {
+  readonly sliceId: string;
+  readonly ticketId: string;
+}
+
+export interface BayOrder {
+  /** Changes whenever `slots` or `waveIds` change. */
+  readonly version: number;
+  /** Index i is bay i, for the life of the log (and so of its store): a bay never moves. */
+  readonly slots: readonly BayClaim[];
+  /** Waves in the order they were assigned, also never reordered. */
+  readonly waveIds: readonly string[];
+}
+
+interface BayTable {
+  logVersion: number;
+  slots: BayClaim[];
+  index: Map<string, number>;
+  waveIds: string[];
+  out: BayOrder;
+}
+const bayTables = new WeakMap<SceneLog, BayTable>();
+
+/** The order key of the first retained event that touches an entity, or null. */
+function firstOrder(log: SceneLog, entity: EntityRef): string | null {
+  return log.entriesFor(entity)[0]?.order ?? null;
+}
+
+/**
+ * The bays a log's history calls for, with an assignment table kept for the life of the log: what is
+ * new is ordered by the contract's `order` of its first event (a wave's slices by their place in the
+ * wave), then appended. Once a bay index is given it never changes, even when an older wave arrives
+ * late. A slice outside any wave and a cell whose slice is not known each get a bay too; when a
+ * cell's slice becomes known, its bay is kept and re-keyed to the slice.
+ */
+export function bayOrder(log: SceneLog): BayOrder {
+  let table = bayTables.get(log);
+  const logVersion = log.version();
+  if (table && table.logVersion === logVersion) return table.out;
+  if (!table) {
+    table = { logVersion: -1, slots: [], index: new Map(), waveIds: [], out: { version: 0, slots: [], waveIds: [] } };
+    bayTables.set(log, table);
+  }
+  const scene = log.head();
+  let changed = false;
+  const ticketOfSlice = new Map<string, string>();
+  for (const c of Object.values(scene.cells)) if (c.sliceId) ticketOfSlice.set(c.sliceId, c.ticketId);
+  const ticketFor = (sliceId: string): string => ticketOfSlice.get(sliceId) ?? (scene.slices[sliceId]?.ticketId || sliceId);
+
+  // Waves: new ones by the order of their first event.
+  const newWaves = Object.values(scene.waves)
+    .filter((w) => !table.waveIds.includes(w.id))
+    .map((w) => ({ id: w.id, key: firstOrder(log, ref.wave(w.id)) ?? "" }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.id < b.id ? -1 : 1));
+  if (newWaves.length) {
+    table.waveIds = [...table.waveIds, ...newWaves.map((w) => w.id)];
+    changed = true;
+  }
+
+  // Candidates not yet assigned, each with its key: (order of first event, place in its wave).
+  const candidates: { sliceId: string; ticketId: string; key: string; place: number }[] = [];
+  const offered = new Set<string>();
+  const offer = (sliceId: string, key: string | null, place: number): void => {
+    if (!sliceId || offered.has(sliceId)) return;
+    offered.add(sliceId);
+    if (table.index.has(sliceId)) return;
+    candidates.push({ sliceId, ticketId: ticketFor(sliceId), key: key ?? "", place });
+  };
+  for (const w of Object.values(scene.waves)) {
+    const key = firstOrder(log, ref.wave(w.id));
+    w.sliceIds.forEach((id, i) => offer(id, key, i));
+  }
+  for (const id of Object.keys(scene.slices)) offer(id, firstOrder(log, ref.slice(id)), 0);
+  const tickets = new Set<string>();
+  for (const slot of table.slots) tickets.add(slot.ticketId);
+  for (const c of candidates) tickets.add(c.ticketId);
+  for (const sliceId of offered) tickets.add(ticketFor(sliceId));
+  for (const c of Object.values(scene.cells)) {
+    if (tickets.has(c.ticketId)) continue;
+    const key = `cell:${c.ticketId}`;
+    if (table.index.has(key)) continue;
+    candidates.push({ sliceId: key, ticketId: c.ticketId, key: firstOrder(log, ref.cell(c.ticketId)) ?? "", place: 0 });
+  }
+  candidates.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.place - b.place || (a.sliceId < b.sliceId ? -1 : 1)));
+
+  let slots = table.slots;
+  for (const c of candidates) {
+    // A cell drawn before its slice was known keeps its bay: the bay is re-keyed to the slice.
+    const standIn = table.index.get(`cell:${c.ticketId}`);
+    if (standIn !== undefined && c.ticketId !== c.sliceId) {
+      if (slots === table.slots) slots = slots.slice();
+      slots[standIn] = { sliceId: c.sliceId, ticketId: c.ticketId };
+      table.index.delete(`cell:${c.ticketId}`);
+      table.index.set(c.sliceId, standIn);
+      changed = true;
+      continue;
+    }
+    if (slots === table.slots) slots = slots.slice();
+    table.index.set(c.sliceId, slots.length);
+    slots.push({ sliceId: c.sliceId, ticketId: c.ticketId });
+    changed = true;
+  }
+  // A ticket learned later (the slice's cell opened) updates the slot; its index stays.
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i] as BayClaim;
+    if (slot.sliceId.startsWith("cell:")) continue;
+    const ticketId = ticketFor(slot.sliceId);
+    if (ticketId !== slot.ticketId) {
+      if (slots === table.slots) slots = slots.slice();
+      slots[i] = { sliceId: slot.sliceId, ticketId };
+      changed = true;
+    }
+  }
+  table.slots = slots;
+  table.logVersion = logVersion;
+  if (changed) table.out = { version: table.out.version + 1, slots: table.slots, waveIds: table.waveIds };
+  return table.out;
 }

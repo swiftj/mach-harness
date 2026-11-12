@@ -314,6 +314,10 @@ export const KIND_WORDS: Record<ShellKind, string> = {
   gate: "Gate",
   dependency: "Dependency",
   finding: "Review finding",
+  project: "Project",
+  workflow: "Workflow",
+  visit: "Visit",
+  seat: "Review seat",
 };
 
 export const TELEMETRY_WORDS: Record<Telemetry, { label: string; description: string }> = {
