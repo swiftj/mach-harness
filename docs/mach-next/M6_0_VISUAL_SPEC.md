@@ -2,7 +2,7 @@
 
 The art direction, composition, grammar, motion and interaction rules for the Factory Atlas and the Execution Blueprint. Owner: visual design. Builders (Atlas, Blueprint, Shell) follow it literally; where this file and your instinct disagree, this file wins, and a change goes through the visual-design owner.
 
-- Code: `web/packages/ui/src/factory/**`, exported from `@mach/ui` (a `@mach/ui/factory` subpath is proposed to the lead; until then import from `@mach/ui`).
+- Code: `web/packages/ui/src/factory/**`, exported from `@mach/ui` and from the `@mach/ui/factory` subpath.
 - Tokens: `web/packages/ui/src/tokens/tokens.ts` (`factory-*` roles and `factoryTokens`), generated into `tokens.css`, contrast-checked by `pnpm --filter @mach/ui typecheck`.
 - Reference sheet: the showcase, `pnpm dev:showcase`, then `http://127.0.0.1:4174/?product=control-tower#factory`. Screenshots: `web/apps/showcase/screenshots/factory/` (`node apps/showcase/scripts/capture-factory.mjs` after a showcase build).
 
@@ -30,7 +30,7 @@ This fits MACH's existing identity (warm neutrals, serif display, one terracotta
 
 - Not a dashboard: no KPI tiles, no charts in the scene, no card grid.
 - Not a node-link diagram of rectangles; the Blueprint uses process bubbles, diamonds, lanes and dimension lines, the Atlas uses solids.
-- No particles, bloom, neon, scan lines, holograms, glass, gradients as decoration, random flicker, idle pulsing, camera shake, or game HUD chrome.
+- No particles, bloom, neon, scan lines, holograms, glass, gradients as decoration, random flicker, idle pulsing, camera shake, or game HUD chrome. (The one exception is the optional light layer of section g: off by default, decoration only, and the drawing is complete without it.)
 - No isometric "cute" illustration: no characters with faces, no props that do not correspond to a MACH entity.
 
 ---
@@ -78,7 +78,7 @@ How it is achieved:
 All coordinates in pu; plates 8 high (`RegionPlate`); gaps between regions `factoryTokens.size.regionGap` (56); every track crosses a gap on a **bridge** (`Prism`, 20 wide, top at plate height, `hatch="lit"`), so no route touches bare ground. `C` = `size.cell` (216 × 148), `A` = `size.aisle` (56), `g` = `size.cellGap` (32).
 
 ```
-n bays:   rows = n ≤ 3 ? n : 3 (6 ≤ n ≤ 9) or 4 (n ≥ 10);  cols = ceil(n / rows)  (at most 3)
+n bays:   rows = n ≤ 3 ? n : 3 (4 ≤ n ≤ 9) or 4 (n ≥ 10);  cols = ceil(n / rows)  (at most 3)
 floor:    W = 48 + cols·C.x + (cols − 1)·A
           D = 48 + 40 + rows·C.y + (rows − 1)·g          (the extra 40 is the lettering strip)
 bay i:    col = floor(i / rows), row = i mod rows
@@ -98,7 +98,7 @@ bay i:    col = floor(i / rows), row = i mod rows
 
 - Bays fill **columns of three** (up to 9 bays), then four. Two columns of three is the reference composition for the 5–6 slice storyboard. A free slot in a column is drawn as a **reserved bay**: the cell outline only (dashed `plate-edge`, no walls, no machines), with "Reserved" lettered on it, at dimmed opacity. Reserved bays must never be heavier than working bays.
 - Every region keeps a **lettering strip** of 40 pu along its front edge, clear of tracks and machines; the region name is painted there (`RegionPlate`). Tracks run at least 48 pu from a plate's front edge. A region name longer than the plate's width × 0.09 characters is shortened ("Archive", "Approval").
-- The plant never reflows while playing: the layout is computed once from the fixture's slices.
+- The plant never reflows while playing: the layout is computed once from the fixture's slices (a prototype allowance, section g).
 
 **Framing at fit.** "Fit" frames the plant, not the ground:
 
@@ -165,7 +165,7 @@ One fixed light from the upper left (plan −x, +y, above). It decides face tone
 | 4. Machine top | #3D3C37 | #FFFFFF | `factory-machine-top`: the brightest neutral |
 | 5. Work | live, lamp, state tints | live, lamp, state tints | `factory-live`, `factory-lamp` (#4A3A27 / #FFF0D6) and the `*-soft` tints, which are the only warm or saturated areas |
 
-Finished bays use `factory-done` (#272924 / #EEF0E7), not a pass tint (b.3). Faces: lit #1A1917 / #ECE8DD, shade #121110 / #D5CFC0 with poché; edges #78756C / #8A8679, which now carry depth and meet 3:1 against the ground and the plate top; rim #57534C (dark only; in light the rim is white on white and invisible by design). Shadows: rgba(0, 0, 0, 0.62) in dark, warm rgba(58, 52, 40, 0.13) in light. No specular highlights, and no glow (the WebGL bloom is dropped, section g).
+Finished bays use `factory-done` (#272924 / #EEF0E7), not a pass tint (b.3). Faces: lit #1A1917 / #ECE8DD, shade #121110 / #D5CFC0 with poché; edges #78756C / #8A8679, which now carry depth and meet 3:1 against the ground and the plate top; rim #57534C (dark only; in light the rim is white on white and invisible by design). Shadows: rgba(0, 0, 0, 0.62) in dark, warm rgba(58, 52, 40, 0.13) in light. No specular highlights, and no glow in the drawing (a bloom may appear only in the optional light layer, which is off by default; section g).
 
 ### b.6 Density, 3 to 12 cells
 
@@ -258,13 +258,15 @@ The Blueprint draws the whole belt from the start, so most of it is, at first, n
 
 Shared: every symbol, head shape, state mark, ink, tint, type face and role; selection is the terracotta bracket (Atlas) or bar (Blueprint); the playhead is one.
 
-**The mode switch** ("the drawing folds flat"), 700 ms (`modeSwitch`), standard easing, interface motion (`motion/react`):
+**The mode switch** ("the drawing folds flat"), 700 ms in all (`modeSwitch`), standard easing, interface motion (`motion/react`). M6.0 moves the two views **as wholes**; no entity travels on its own:
 
-1. 0–300 ms: Atlas solids lose height (z × (1 − p)), shadows and side faces fade; labels fade out.
-2. 0–700 ms: each entity's screen position interpolates from `project(atlasPoint)` to its Blueprint position (a FLIP on entity centres; the Blueprint layout is precomputed).
-3. 300–700 ms: Atlas glyphs cross-fade to their Blueprint forms in place; lanes, sheet border and title block fade in.
+1. 0–300 ms: the outgoing view leaves. Atlas to Blueprint: the Atlas folds down onto the sheet (it tilts back and flattens) and fades. Blueprint to Atlas: the sheet fades.
+2. From about 300 ms, ending at 700 ms: the incoming view arrives (it may start while the outgoing one is still fading). The Blueprint sheet fades in over the folded Atlas; on the way back, the Atlas unfolds from the flat sheet and fades in.
+3. Both views exist only during the switch; then the outgoing one unmounts.
 
-The selected entity stays selected and is kept in view on both sides. Reverse for Blueprint to Atlas. **Reduced motion: a cut.** The new mode replaces the old in one frame, with no travel and no cross-fade; focus stays on the selected entity (or the canvas) and the polite live region announces "Factory Atlas" or "Execution Blueprint". A cut is the honest reading of "reduce motion": a cross-fade is still motion, and the announcement carries the change.
+How the fold is drawn (a 3D tilt and flatten, or a flat squash and cross-fade) is the shell's choice within these phases and the mode-switch budget of section g (no frame over 24 ms). The selected entity stays selected and is kept in view on both sides: after the switch the incoming view frames the selection, and keyboard focus moves to its canvas if it was in the outgoing view. **Reduced motion: a cut.** The new mode replaces the old in one frame, with no travel and no cross-fade; focus stays on the selected entity (or the canvas) and the polite live region announces "Factory Atlas" or "Execution Blueprint". A cut is the honest reading of "reduce motion": a cross-fade is still motion, and the announcement carries the change.
+
+> **Deferred: per-entity travel.** An earlier draft of this section had each entity's screen position interpolate from `project(atlasPoint)` to its Blueprint position (a FLIP on entity centres), with Atlas glyphs cross-fading into their Blueprint forms in place. It is not built in M6.0 and may be taken up later. Its cost: both views' layouts must be available to one coordinator at the same moment (today each view keeps its layout, camera and culling to itself, and the Blueprint's layout is computed when it mounts); every entity needs a matching form in both views, though many have none (tool ticks, the ticker, the sheet's furniture); several hundred elements would move under transforms each frame, against a budget the whole-view fold already misses on the first switch (`M6_0_FINDINGS.md` 2.4); and the moving layer would have to keep its accessible names and focus valid mid-flight. Until it is built, nothing in this file or in the views may depend on it.
 
 ---
 
@@ -427,7 +429,7 @@ While `follow` is on, the camera frames the **active places**: bays, the chamber
 1. If every active place fits in the viewport (with the fit padding of b.2) at the current zoom, or at up to a quarter further out (zoom × 0.8), and that zoom is not below mid (0.6), frame them all.
 2. Otherwise stay with **one** place: the one the camera is on, while it is active; when it stops being active, the active place whose work started most recently.
 3. Re-frame at most once per 4 s of wall time, easing 900 ms (standard); never zoom in beyond the current zoom to follow.
-4. Under reduced motion, re-frames are cuts, at most once per 4 s.
+4. Under reduced motion, re-frames are cuts, at most once per 6 s.
 
 ### f.4 Dependency highlighting
 
@@ -435,24 +437,26 @@ Hovering or selecting a cell, slice or dependency link highlights its **dependen
 
 ### f.5 Blueprint expansion
 
-Click the disclosure chevron or press `Enter` on a focused lane header to expand or collapse; `Alt+→` / `Alt+←` expand / collapse the focused lane; `*` expands all lanes of the selected wave. Expansion animates per c.2.
+Click the disclosure chevron to expand or collapse a lane. By keyboard (the Blueprint is a tree, f.10): `→` opens a closed lane or moves into an open one, `←` closes it or moves to its parent, and `Alt+→` / `Alt+←` open and close the focused lane without moving; `Enter` selects, as everywhere. There is no expand-all key (f.10). Expansion animates per c.2.
 
 ### f.6 Mode switch
 
-A two-option segmented control "Atlas | Blueprint" in the top bar, keys `1` and `2`. The transition is c.6; under reduced motion it is a cut (c.6). The URL hash carries the mode (`#atlas`, `#blueprint`) and the selection (`?sel=TCK-112`).
+A two-option segmented control "Atlas | Blueprint" in the top bar, keys `1` and `2`. The transition is c.6; under reduced motion it is a cut (c.6). The URL hash carries the mode (`#atlas`, `#blueprint`) and the selection as an entity reference (`#blueprint?sel=cell:LOCAL-031`).
 
 ### f.7 Theater Mode
 
-Key `T` or the button in the top bar. Hidden: the navigation rail, the top bar, the inspector, entity labels below near zoom, hover outlines. Collapsed: the timeline becomes a 3 px progress line along the bottom with the time code at the right (mono 13). **Always shown**: the simulation stamp (top left, 16 px inset: "Simulation" in the stamp style of the title block), the mode (top right, a quiet word "Atlas" or "Blueprint", ink-muted). Follow mode turns on. `Escape` or `T` exits. Pointer movement shows the timeline bar for 2.5 s (fade 180 ms), and the bar stays while hovered.
+Key `T` or the button in the top bar. Hidden: the top bar, the inspector, entity labels below near zoom, hover outlines. Collapsed: the timeline becomes a 3 px progress line along the bottom with the time code at the right (mono 13). **Always shown**: the simulation stamp (top left, 16 px inset: "Simulation" in the stamp style of the title block), the mode (top right, a quiet word "Atlas" or "Blueprint", ink-muted). `Escape` or `T` exits. Pointer movement shows the timeline bar for 2.5 s (fade 180 ms), and the bar stays while hovered.
+
+**Theater Mode changes neither the playhead nor follow.** Entering or leaving it never moves the playhead, never returns to live, and never turns camera follow on or off. A replay being watched or recorded stays the replay it was: it does not jump to live. If the playhead was live, it stays live, and the camera follows as f.3 says.
 
 ### f.8 Timeline
 
-Docked at the bottom, 132 px high (collapsible to 40):
+Docked at the bottom. **By default it is a compact summary**: the transport and one summary track of the whole run (chapter flags and the playhead), low enough that the stage keeps most of the window. The person can **expand** it to show the per-cell tracks below, **resize** it by dragging its top edge or with the up and down arrow keys on that edge (whose target is at least 24 px tall, WCAG 2.2 target size), and **collapse** it to the transport row alone. `Shift+T` expands or collapses it. Its exact heights are the shell's; none of them may hide the transport or the playhead.
 
-- **Tracks**: one per cell (ticket ID in mono at the left, 160 px gutter), a gates track, a people track. Station spans are bars 6 px high in the station's state tint with the state ink at their ends; gate events are diamonds; people's acts are terracotta triangles; failures are fail-ink ticks that extend through the track.
+- **Tracks** (expanded): one per cell (ticket ID in mono at the left, 160 px gutter), a gates track, a people track. Station spans are bars 6 px high in the station's state tint with the state ink at their ends; gate events are diamonds; people's acts are terracotta triangles; failures are fail-ink ticks that extend through the track.
 - **Markers**: the scenario's chapter marks (wave arrives, first failure, human gate, merge) as labelled flags above the tracks.
 - **Playhead**: 2 px `--mach-ink` line with a handle; time code above (mono, `mm:ss.s`). Dragging scrubs; clicking a track jumps to that time; scroll horizontally zooms time.
-- **Controls**: play/pause, step to previous/next event, speed (0.5×, 1×, 2×, 4×), Live (jumps to the live edge and turns on follow), loop off.
+- **Controls**: play/pause, step to previous/next event, speed (0.5×, 1×, 2×, 4×, 8×, 16×), Live (jumps to the live edge and turns on follow), loop off.
 - **Live-follow**: at the live edge the playhead reads "Live" and advances with the clock; any scrub leaves live.
 
 ### f.9 Inspector
@@ -488,7 +492,7 @@ This is the map that ships (`src/shell/keyboard.ts` generates the help sheet fro
 | `1` / `2` | Factory Atlas / Execution Blueprint |
 | `T` | Theater Mode |
 | `F` | Focus the selection |
-| `Shift+F` | Resume live-follow |
+| `Shift+F` | Camera follow back on (f.3) |
 | `Escape` | Clear highlight, then selection, then leave Theater Mode |
 | `I` | Show or hide the inspector |
 | `Shift+T` | Expand or collapse the timeline |
@@ -508,7 +512,7 @@ Skip link → top bar (title, mode switch, Theater, theme) → canvas (**one tab
 
 ### f.12 Reduced motion
 
-All factory animations follow the `reduced` column of section e (no travel, no sweeping arcs, no drawing; end states appear at the event time; fades of 160 ms at most). The camera jumps instead of easing; follow mode re-frames by jumping and at most every 4 s. The mode switch is a cut (c.6). Playback still runs and the playhead can be stepped event by event with `,` and `.`. Nothing loops in either mode.
+All factory animations follow the `reduced` column of section e (no travel, no sweeping arcs, no drawing; end states appear at the event time; fades of 160 ms at most). The camera jumps instead of easing; follow mode re-frames by jumping and at most every 6 s (f.3). The mode switch is a cut (c.6). Playback still runs and the playhead can be stepped event by event with `,` and `.`. Nothing loops in either mode.
 
 ---
 
@@ -529,10 +533,12 @@ All factory animations follow the `reduced` column of section e (no travel, no s
 ```
 
 - **L1 Scene (SVG)**: all structure and all meaning. Primitives from `@mach/ui` only. React components memoised per entity; their props are the entity's state and progress values computed by the selectors for the current playhead, **quantised to 1/240** so unchanged things do not re-render. Culling: entities whose screen bounds (with 64 px margin) are outside the viewport are not rendered.
-- **L2 Light (WebGL): dropped for M6.0.** The Atlas owner built it and measured it (side-by-sides `cmp-*.png`). Judgment: drop it. On the bay floor in dark the bloom lays a veil over the machines, which are the meaning, while the SVG lamp pool (b.3) already says "work is here" at the right tone; the gate wash barely registers; and it costs about 0.8 ms more per frame for nothing a reader needs. The layer would have to do three things differently to earn a place in a later milestone: (1) light **only floors**, which means splitting L1 into a floor SVG and a solids SVG with the canvas between them, so no light ever lies on top of a machine, agent or label; (2) replace the SVG lamp pool at the same geometry rather than adding to it (`lampPool`, `lampFalloff`, b.3), so there is one light, not two; (3) stay under 0.3 ms a frame and show something the SVG cannot (a soft falloff across a plate seam, for example). Until then the original description below is kept only as the definition of what such a layer may not exceed. Original: decoration only. Permitted effects: the cell lamp's soft bloom (radius 120 px, max alpha 0.18 dark / 0.10 light, blend `screen` in dark and `multiply` with the lamp tint in light), a short fading trail behind travelling packets (length ≤ 40 px, alpha ≤ 0.25, a pure function of the packet's progress), and the gate plaque flash on refusal. It reads the same scene selectors; it never decides anything; the page must be complete and correct with it switched off (it is off under reduced motion and when WebGL is unavailable). PixiJS: `import "pixi.js/unsafe-eval"`, no workers (contract rule 6).
+- **L2 Light (WebGL): optional, off by default, decoration only.** The drawing (L1, L3) is complete and correct without it, and every screenshot, recording and review is of the drawing alone unless it says otherwise. A person can switch it on in the keyboard help sheet ("Experimental light layer"), for comparison; its code loads only then. It is `aria-hidden`, takes no pointer events, reads the same selectors at the playhead, and decides nothing. It is off under reduced motion and when WebGL is unavailable. What it may draw, and nothing else: the cell lamp's pool at the same geometry and stops as the SVG pool (`lampPool`, `lampFalloff`, b.3), replacing the SVG pool while it draws so there is one light, not two, with a soft bloom (radius about 120 px, max alpha 0.18 dark / 0.10 light); a short fading trail behind travelling packets (length ≤ 40 px on screen, alpha ≤ 0.25, a pure function of the packet's progress); and **a brief wash on a gate only when it refuses** (fail ink, a pure function of the refusal event; a gate that opens gets no wash). PixiJS: `import "pixi.js/unsafe-eval"`, no workers (contract rule 6). Why it is not on by default: in the owner's side-by-sides (`cmp-*.png`) the bloom lays a veil over the bay floor's machines in dark, which are the meaning, while the SVG pool already says "work is here" at the right tone, and it costs about 0.8 ms more per frame. To be turned on by default in a later milestone it would have to (1) light only floors (a floor SVG and a solids SVG with the canvas between them, so no light lies on a machine, agent or label), (2) stay under 0.3 ms a frame, and (3) show something the SVG cannot.
 - **L3 Overlay (SVG)**: not depth-sorted, never occluded. Hit targets for entities are in L1 (each entity's group carries `role="button"`, `tabIndex`, `aria-label`, `aria-pressed`); L3 only draws.
 - **One camera, one playhead**: both come from the scene store (`src/scene`). L1 and L3 share the CSS transform of one wrapper, so they cannot drift; L2 copies the camera into its stage in the same animation frame (`requestAnimationFrame` reads the store once per frame and updates L2; React updates L1/L3 from the same snapshot).
 - **Interaction**: pointer events on the viewport; hit testing by the SVG (L1 groups); `unproject` for ground positions.
+
+> **Prototype allowance: layouts and the timeline see the whole run.** Some things in M6.0 are laid out from the whole recorded run, not from the events up to the playhead: the timeline's extent, the Atlas plant and its routes (b.2), and the Blueprint's columns and sheet size (c.2). The timeline also draws the future of the run and hides it under a mask beyond the live edge. Nothing is *shown* before it happens, so the picture never reflows. This is acceptable only because the run is a recording, whose future already exists. A live observer cannot do it: it does not know how many slices, cells, rounds or stations are coming or how long the run will last, so the production Control Tower must grow these layouts as events arrive, and must never draw what has not happened yet.
 
 Performance budgets (12 cells, 1440 × 900, Apple M1, Chromium):
 
