@@ -109,6 +109,7 @@ export const roleNames = [
   "factory-plate-rim",
   "factory-machine-top",
   "factory-floor",
+  "factory-done",
   "factory-hatch",
   "factory-shadow",
   "factory-ink",
@@ -195,6 +196,7 @@ const light: Theme = {
   "factory-plate-rim": "#FFFFFF",
   "factory-machine-top": "#FFFFFF",
   "factory-floor": "#F6F3EC",
+  "factory-done": "#EEF0E7",
   "factory-hatch": "#B5AF9E",
   "factory-shadow": "rgba(58, 52, 40, 0.13)",
   "factory-ink": "#3A3833",
@@ -277,6 +279,7 @@ const dark: Theme = {
   "factory-plate-rim": "#57534C",
   "factory-machine-top": "#3D3C37",
   "factory-floor": "#2A2925",
+  "factory-done": "#272924",
   "factory-hatch": "#3E3C37",
   "factory-shadow": "rgba(0, 0, 0, 0.62)",
   "factory-ink": "#DAD6CA",
@@ -364,6 +367,10 @@ export const contrastPairs: ReadonlyArray<{ fg: Role; bg: Role; min: 3 | 4.5; us
   { fg: "factory-live", bg: "factory-lamp", min: 3, use: "Live work under the work lamp" },
   { fg: "factory-live", bg: "factory-machine-top", min: 3, use: "Working dial on a machine top" },
   { fg: "ink-muted", bg: "factory-plate-lit", min: 4.5, use: "Name plate on a machine's front face" },
+  // Factory, pass 3: the calm floor of finished work.
+  { fg: "ink-muted", bg: "factory-done", min: 4.5, use: "Floor lettering in a finished bay" },
+  { fg: "factory-ink", bg: "factory-done", min: 4.5, use: "Glyph ink in a finished bay" },
+  { fg: "factory-pass", bg: "factory-done", min: 3, use: "Passed mark in a finished bay" },
 ];
 
 /**

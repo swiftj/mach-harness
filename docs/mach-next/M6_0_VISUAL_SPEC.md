@@ -24,6 +24,7 @@ This fits MACH's existing identity (warm neutrals, serif display, one terracotta
 4. **Light means work, nothing else glows.** Light comes from the upper left, fixed. The only light that changes is a cell's work lamp (on while a station in it works). The only colour that means "now" is the live ink (blue, `factory-live`). Terracotta is selection (the place), and the human gate's ink is the terracotta family because a person's act is MACH's primary act.
 5. **Motion has a cause.** Every movement is the visible consequence of one event and is a pure function of `playhead - event.at`. Nothing idles, breathes, shimmers or pulses.
 6. **Shape before colour.** Every state has a mark whose shape alone distinguishes it; every position of a gate is an arm angle; every tier is a head shape. Colour reinforces.
+7. **Show what is known; never predict.** Work in flight is shown as *working, for this long*: the working mark (a ring with four spokes) and the elapsed time (one tick per minute around a dial, at most 12, and the words "4 min 12 s"). Nothing fills toward an end nobody knows. Fills are reserved for fractions with a real denominator: checks proven of checks declared, tasks green of tasks planned, judging rounds used of three, votes cast of seats. A primitive's `progress` for work in flight is deprecated and not drawn; measured fractions go in `fraction`.
 
 ### What it is not
 
@@ -88,7 +89,7 @@ bay i:    col = floor(i / rows), row = i mod rows
 |---|---|---|
 | `intake` Intake and scheduling | (0, 0, 240, D) | Dock (72 × 80) off its left edge at y = D/2; intake machine at (70, D/2); the scheduler (Haiku) at (70, D/2 + 50); holding pads (40 × 40) in a column at x = 150, 56 apart, centred on D/2; audit machine at (170, D/2 − 90); the audit gate at (226, D/2), axis y; outbound track along y = D/2 over the bridge to the floor's spine |
 | `floor` Construction floor | (296, 0, W, D) | The bays; the **spine** track along y at floor.x + 12 (dispatch spurs to each bay's entrance); aisles between columns; the **riser** track along y at floor.x + W − 12, which collects every aisle and carries work to the chamber over the bridge at the chamber's centre line |
-| `review` Review chamber | (floor.x + W + 56, 0, 220, 232) | Entry on its left edge at y = 116; three seats inlaid as floor discs (r 13) at entry + (80, −52), (+96, 0), (+80, +52); the consensus gate at (+166, 0), axis y; exit to the column |
+| `review` Review chamber | (floor.x + W + 56, 0, 220, 232) | Entry on its left edge at y = 116. The three seats sit **in a row on one screen line**, so no seat covers another's figure or label: seat centres at S + k·(30, −30) for k = −1, 0, 1 (architecture, security, product), with S = entry + (96, 0); in plan that is a line along (1, −1), which projects to a horizontal screen line 54 px between seats. Seats are floor discs (r 13). The consensus gate at entry + (166, 0), axis y; exit to the column. (The first draft's triangle let the front seat cover the back seat's label; the Atlas's row is adopted.) |
 | `human` Approval gatehouse | (review.x + 40, review.d + 56, 180, 180) | The **column** track along y at x = review.x + review.w − 30 drops from the chamber through the gatehouse; the human gate stands across it at the gatehouse's centre line, axis x; the human-approval machine (height 30) beside it; a held cell's packet parks before the gate |
 | `integration` Integration yard | (floor.x + 120, Y, review.x + review.w − floor.x − 120, 132) | Y = max(D, human.y + human.d) + 56. The revalidation gate where the column enters, axis x; the merge machine on the column; the **main line** along x at Y + 48, running back (−x) along the whole front to the archive bridge, drawn in the pass ink once anything has merged |
 | `archive` Archive and observe | (integration.x − 256, Y, 200, 132) | Cleanup and observe machines on the main line's continuation; finished cells' archive cards and the run record stacked by the observe machine |
@@ -132,7 +133,8 @@ The reference sheet's "plant at fit zoom" study (`PlantStudy`) is this compositi
 - **Tool calls** accumulate as ticks along the ticker from left to right in time order. At most 24 ticks; beyond that the oldest 12 merge into a density bar (a 1.5 px line with tick marks every 2 pu).
 - **Signal mast** at (10, 10), rising 20 above the wall top, carrying the stage mark (`cellStages[stage]`), with the stage word at near zoom.
 - **Lamp**: while any station in the cell is working, the cell's light pool is on. Geometry: `lampPool(origin)`, an ellipse on the floor centred at (0.52 w, 0.5 d) with rx = 0.5 w and ry = 0.56 d. Falloff: `lampFalloff`, radial stops (0, 1), (0.45, 0.82), (0.75, 0.38), (1, 0) of `factory-lamp`. Intensity: `CellPlate lampIntensity` 0..1, which multiplies the pool's opacity; it is driven from the playhead: `animationProgress("stateChange", t − start.at)` rising at the first station start, `1 − animationProgress("stateChange", t − end.at)` falling at the last station end. It never flickers or breathes. A WebGL layer may replace the SVG pool by drawing the same ellipse (projected with `planeMatrix(pool.z)`) with the same stops and intensity; it must then switch the SVG pool off for that cell (`lampIntensity={0}`), never draw both.
-- **Completion**: on `cellComplete`, the floor takes the `pass-soft` wash (opacity 0.85 × progress) and the mast shows the double ring.
+- **Completion**: on `cellComplete`, the floor settles to `factory-done` (a neutral barely tinted toward the pass family, #272924 dark / #EEF0E7 light) at opacity = progress, the mast shows the double ring, and the bay's machines are drawn `settled` (machine-top fill, plain edge, a small passed mark): **finished work is calm**. The saturated pass tints are for the moment of passing, not for rest. (The first draft's 0.85 `pass-soft` wash read as an alarm-green block in the dark far view.)
+- **Mast**: the stage mark, and at near zoom the stage word and, while the stage is working, how long it has run ("Building · 6 min 40 s", `CellPlate elapsed`). No fill.
 - **Floor lettering**: ticket ID in mono 11 (16 at far), slice ID in mono 9 at near only, both in `ink-muted` / `ink-subtle`, drawn in the plane.
 
 ### b.4 Layering and depth
@@ -163,7 +165,7 @@ One fixed light from the upper left (plan −x, +y, above). It decides face tone
 | 4. Machine top | #3D3C37 | #FFFFFF | `factory-machine-top`: the brightest neutral |
 | 5. Work | live, lamp, state tints | live, lamp, state tints | `factory-live`, `factory-lamp` (#4A3A27 / #FFF0D6) and the `*-soft` tints, which are the only warm or saturated areas |
 
-Faces: lit #1A1917 / #ECE8DD, shade #121110 / #D5CFC0 with poché; edges #78756C / #8A8679, which now carry depth and meet 3:1 against the ground and the plate top; rim #57534C (dark only; in light the rim is white on white and invisible by design). Shadows: rgba(0, 0, 0, 0.62) in dark, warm rgba(58, 52, 40, 0.13) in light. No specular highlights, no glow except the optional WebGL lamp bloom (section g), which is decoration and capped.
+Finished bays use `factory-done` (#272924 / #EEF0E7), not a pass tint (b.3). Faces: lit #1A1917 / #ECE8DD, shade #121110 / #D5CFC0 with poché; edges #78756C / #8A8679, which now carry depth and meet 3:1 against the ground and the plate top; rim #57534C (dark only; in light the rim is white on white and invisible by design). Shadows: rgba(0, 0, 0, 0.62) in dark, warm rgba(58, 52, 40, 0.13) in light. No specular highlights, and no glow (the WebGL bloom is dropped, section g).
 
 ### b.6 Density, 3 to 12 cells
 
@@ -198,6 +200,10 @@ The layout is fixed by the formula; cells never reflow while playing (a cell kee
 
 `BlueprintLane`, nesting: **wave** (depth 0) ⊃ **slice / cell** (1) ⊃ **station rows** (rounds; within the cell lane) ⊃ **agents** (2) ⊃ **tool calls and artifacts** (3).
 
+Depths 4 (tool calls) and 5 (artifacts) exist for a fully expanded cell: rule 0.5 px, title sans 10.5, indent 56 and 70. A lane that can be collapsed shows a disclosure chevron at the left of its title: pointing right when collapsed, down when expanded (`collapsed`, `expanded`).
+
+**Title block.** On a sheet whose drawing reaches the lower right, use `titleBlock="strip"`: the block sits in its own strip under a rule at the bottom of the sheet and the drawing is laid out in `blueprintSheetLayout(...).content`, so the block never covers a node. The overlay placement remains for sheets that leave that corner empty.
+
 | Depth | Rule | Title | Indent | Height (expanded / collapsed) |
 |---|---|---|---|---|
 | 0 wave | 1.75 px `ink-soft` | serif 16, ID mono 9.5 | 0 | content / 36 |
@@ -217,20 +223,28 @@ The left gutter is 168 px: title, ID and state mark. A hierarchy brace (3 px, `p
 
 | Thing | Blueprint form |
 |---|---|
-| Station | Process bubble r 15 with the station symbol (17), a hairline bar through the middle (the line-station mark), state mark r 4.6 at its upper right, progress arc at r 18.5 while working, "×n" in the fail ink at upper left when it is round n ≥ 2, name below (sans 10.5 semibold) |
+| Station | Process bubble r 15 with the station symbol (17), a hairline bar through the middle (the line-station mark), state mark r 4.6 at its upper right, while working a live ring at r 18.5 with one tick per elapsed minute and the elapsed time under the name; a measured `fraction` (e.g. checks proven) fills that ring and reads "7 of 8", "×n" in the fail ink at upper left when it is round n ≥ 2, name below (sans 10.5 semibold) |
 | Gate | Diamond r 14 with the gate symbol (13); the bar under it: a solid bar when shut, two stubs when open; lamps above |
-| Agent | The tier head (same shapes as the Atlas) at 1:1, progress arc r 8.5, seat letter above for reviewers, label "Builder · Sonnet" at 10 |
+| Agent | The tier head (same shapes as the Atlas) at 1:1, while working a thin live ring r 8.5 with one tick per elapsed minute, seat letter above for reviewers, label "Builder · Sonnet" at 10 |
 | Tool call | Stem 9 px with family cap, on the tool lane's baseline at the x of its time within the station's column span |
 | Artifact | Card 14 × 18 with folded corner and kind mark, at the handoff it carries (between the two nodes) |
 | Wave, slice | Lanes (c.2) |
 | Human | Human gate diamond; a person's act is a callout naming who and when |
+
+### c.3.1 Unbuilt: what has not been reached yet
+
+The Blueprint draws the whole belt from the start, so most of it is, at first, not reached. **Unbuilt** (`planned` on `StationMachine`, `GateGlyph` and `RoutePath`): the node's outline dashed 3/2.5 in `ink-soft` at full opacity, filled with the ground (no tint), its symbol in `ink-soft`, no state mark, its label in `ink-subtle`; routes a 1 px dashed 3/3 line in the route ink with the plain arrowhead. This replaces the builders' first answer (the idle mark at 42% opacity): opacity drops labels below 4.5:1 and makes "not yet" look like "dimmed by a highlight", which means something else. Unbuilt is drawn at full contrast; only its line is dashed.
+
+### c.3.2 Time ruler
+
+`TimeRuler` across the top of the sheet's drawing area (or under it, `side="bottom"`): a hairline, major ticks 6 px with the factory time in mono 9 (`m:ss`, `h:mm:ss` past an hour), minor ticks 3 px, five per major, majors chosen from 1 s … 1 h so they stand at least 72 px apart, and the playhead as a 2 px ink line with its time. The columns stay fixed (c.2); the ruler says when, with dimension lines for durations under the lanes.
 
 ### c.4 Edges
 
 - **Route**: 1.25 px (2 px live), rounded corners r 8, arrowhead 6.5 px, ink by state.
 - **Retry loop**: dashed 5/3 in the fail ink from the failed verify to the round-n build, with the round pips (r 2.6, three slots) at its middle and "Round n of 3".
 - **Fan-out / join**: cubic splays from the gate's right point to the three seats, and from the seats to the consensus diamond; each branch in its state ink; vote marks at the seats.
-- **Dependency**: S-curve dashed 4/3 in the wait ink, from the prerequisite's merge node to the dependent's lane, padlock at its middle; on unlock, solid in the pass ink.
+- **Dependency**: by default an S-curve dashed 4/3 in the wait ink, from the prerequisite's merge node to the dependent's lane, padlock at its middle; on unlock, solid in the pass ink. With more than one dependency on the sheet use the **channel form** (`DependencyLink channelX`): every link runs across to a shared vertical channel in the gutter (x = sheet left + 168 + 12, one channel per wave), along it, and across to the dependent, padlock at the channel's middle; links in one channel are 6 px apart, in the order of their prerequisites.
 - **Escalation**: dotted 2/3 riser in the fail ink, straight up from the blocked node to a person tag.
 
 ### c.5 Precision at density
@@ -250,7 +264,7 @@ Shared: every symbol, head shape, state mark, ink, tint, type face and role; sel
 2. 0–700 ms: each entity's screen position interpolates from `project(atlasPoint)` to its Blueprint position (a FLIP on entity centres; the Blueprint layout is precomputed).
 3. 300–700 ms: Atlas glyphs cross-fade to their Blueprint forms in place; lanes, sheet border and title block fade in.
 
-The selected entity stays selected and is kept in view on both sides. Reverse for Blueprint to Atlas. Reduced motion: a 160 ms cross-fade, no travel.
+The selected entity stays selected and is kept in view on both sides. Reverse for Blueprint to Atlas. **Reduced motion: a cut.** The new mode replaces the old in one frame, with no travel and no cross-fade; focus stays on the selected entity (or the canvas) and the polite live region announces "Factory Atlas" or "Execution Blueprint". A cut is the honest reading of "reduce motion": a cross-fade is still motion, and the announcement carries the change.
 
 ---
 
@@ -263,7 +277,7 @@ Colours are token roles (`--mach-factory-*` unless written `--mach-*`). Sizes in
 | State (`FactoryState`) | Word | Mark (shape) | Ink | Tint | Outline | Used for |
 |---|---|---|---|---|---|---|
 | `idle` | Idle | dashed ring | `ink-soft` (strokes), `plate-edge` (outline) | `plate-top` | dashed 3/2.5 rim | Not running, nothing wrong |
-| `active` | Working | ring with a filled sector = progress | `live` | `live-soft` | solid ×1.25 | Work in progress |
+| `active` | Working | ring with four spokes (static), plus elapsed ticks where the thing has a dial | `live` | `live-soft` | solid ×1.25 | Work in progress, for as long as it has run |
 | `succeeded` | Passed | disc with tick | `pass` | `pass-soft` | solid | Finished and passed |
 | `failed` | Failed | disc with cross | `fail` | `fail-soft` | solid ×1.5 | Finished and failed |
 | `waiting` | Waiting | ring with hourglass | `wait` | `wait-soft` | dashed 5/2.5 ×1.25 | Held by a dependency or capacity |
@@ -279,9 +293,9 @@ Cell stages map to states in `cellStages` (`waiting-on-dependency` waiting, `eli
 | Type | Atlas form and size | Blueprint form | Fill / stroke tokens | Icon | Label rule | States |
 |---|---|---|---|---|---|---|
 | **Region** (`RegionPlate`) | Plate 8 high, rim inset 8, corner registration marks 12, poché both sides | Wave lane (c.2) | top `plate-top`, faces `plate-lit`/`plate-shade`, edge `plate-edge`, rim `plate-edge` | none | Floor lettering, serif 19 (26 far), `--mach-ink-muted`; caption sans 10.5 | active (live rule along the front edge), dimmed |
-| **Cell** (`CellPlate`) | 216 × 148 section model (b.3) | Cell lane | floor `floor`, walls `plate-*`, cut poché | stage mark on mast | Ticket ID on floor (mono 11); stage word at near | every cell stage; lit; completion; dimmed; selected |
-| **Station** (`StationMachine`) | 36 × 36 block, height by kind (intake 16, groom/plan 12, audit 14, build 22, verify 18, review 12, human-approval 30, merge 16, cleanup 10, observe 20); symbol 18 on top (22 far); dial r 13 while working | Process bubble r 15 | top: tint of state (idle `machine-top`); outline: state ink (idle `plate-edge`); front edge `plate-rim` | station symbol | Name sans 11 semibold + state 9.5, at near | idle, active (+progress), succeeded, failed (+round), waiting, human, blocked |
-| **Agent** (`AgentMarker`) | Floor disc r 8 with role emblem; post 1.6 px; head by tier; height by tier (Fable 32, Opus 28, Sonnet 24, Haiku 18); progress arc r 8.5 | Head at 1:1 + label | head fill: `live` when working, tint otherwise; stroke: state ink | head = tier, emblem = role, seat letter A/S/P | Role (or name) 10.5 + tier 9.5 at near | idle, active, succeeded, failed, waiting, human, blocked; arrive 0..1; leave 0..1 |
+| **Cell** (`CellPlate`) | 216 × 148 section model (b.3) | Cell lane | floor `floor` (finished: `done`), walls `plate-*`, cut poché | stage mark on mast | Ticket ID on floor (mono 11); stage word and elapsed at near | every cell stage; lamp 0..1; completion; elapsed; dimmed; selected |
+| **Station** (`StationMachine`) | 36 × 36 block, height by kind (intake 16, groom/plan 12, audit 14, build 22, verify 18, review 12, human-approval 30, merge 16, cleanup 10, observe 20); symbol 18 on top (22 far); while working, a live ring r 13 around the symbol with one tick per elapsed minute (`elapsed`); a measured `fraction` fills the ring in the state ink | Process bubble r 15 | top: tint of state (idle `machine-top`); outline: state ink (idle `plate-edge`); front edge `plate-rim` | station symbol | Name plate on the front face (`nameplate`); upright name + "Working · 4 min 12 s · 7 of 8" at near | idle, active (+elapsed, +fraction), succeeded, failed (+round), waiting, human, blocked; settled; planned |
+| **Agent** (`AgentMarker`) | Floor disc r 8 with role emblem; post 1.6 px; head by tier; height by tier (Fable 32, Opus 28, Sonnet 24, Haiku 18); while working, the head filled live inside a thin ring r 8.5 with one tick per elapsed minute (`elapsed`) | Head at 1:1 + label | head fill: `live` when working, tint otherwise; stroke: state ink | head = tier, emblem = role, seat letter A/S/P | Role (or name) 10.5 + tier 9.5 at near | idle, active, succeeded, failed, waiting, human, blocked; arrive 0..1; leave 0..1 |
 | **Gate** (`GateGlyph`) | Portal: posts 2.4 px, span 44, height 34 (human 46); lintel 3 px; plaque 18 × 15 on the lintel with the gate symbol; arm 2.6 px pivoting at the near post, banded with three dots | Diamond r 14 + bar | posts and lintel `ink`; arm and plaque: state ink (closed: `ink`) | gate symbol; lamps | Gate name 11 + position 9.5 at near | closed (arm 0 degrees), open (82 degrees), refusing (drops 14 to 0 degrees, refuse curve, plaque flash), waiting (closed, human ink) |
 | **Artifact** (`ArtifactCard`) | Upright sheet 14 × 18, folded corner 4, mark by kind | Card 1:1 | `plate-top` / `ink` (failed: `fail-soft` / `fail`) | kind mark | File name mono 9 at near | succeeded, active (being written), failed (findings); materialise 0..1 |
 | **Tool call** (`ToolTick`) | Stem 11 with family cap, on the ticker | Stem 9 on the tool lane | `ink`; running `live`; failed `fail` with cross-bar | read ring, write square, run triangle, search lozenge, test check, git node | In the inspector only | idle (open cap), active, succeeded, failed; tick 0..1 |
@@ -292,9 +306,9 @@ Cell stages map to states in `cellStages` (`waiting-on-dependency` waiting, `eli
 
 Station symbols (24 grid, 1.5 stroke, round caps): intake hopper; groom wedge cut from a disc; plan set square; audit gauge; build bonded courses; verify crosshair; review three seats on a dashed triangle; human-approval person; merge two lines becoming one; cleanup archive box; observe lens; red-before-green: cross, divider, tick.
 
-Gate kinds: audit (gauge), red-before-green (lamps: red then green), verification verdict (crosshair), review consensus (three vote lamps), human approval (person, gatehouse height), merge revalidation (merge).
+Gate kinds: plan check (`plan-check`, set square: `cell.py check-plan` before building), audit (gauge), red-before-green (lamps: red then green), verification verdict (crosshair), review consensus (three vote lamps), human approval (person, gatehouse height), merge revalidation (merge).
 
-Artifact marks: intent (four lines of prose), spec (braces), contract (double frame), plan (checkboxes), commit (node on a line), build-report (bars), evidence (viewfinder corners), results (ticks and a cross), vote (ballot with tick), findings (lines with an exclamation), decision (seal with tick), merge-commit (merge Y), and from pass 2: review-packet (envelope, `review/round-N/packet`), diff (plus over minus beside a gutter, `review/round-N/diff`), build-state (segmented bar, `build.json`), archive (banded box, `<ticket>.tar.gz`), run-record (bulleted ledger, `runs.jsonl`).
+Artifact marks: intent (four lines of prose), spec (braces), contract (double frame), plan (checkboxes), commit (node on a line), build-report (bars), evidence (viewfinder corners), results (ticks and a cross), vote (ballot with tick), findings (lines with an exclamation), decision (seal with tick), merge-commit (merge Y), and from pass 2: review-packet (envelope, `review/round-N/packet`), diff (plus over minus beside a gutter, `review/round-N/diff`), build-state (segmented bar, `build.json`), archive (banded box, `<ticket>.tar.gz`), run-record (bulleted ledger, `runs.jsonl`), and from pass 3, one grammar kind for each of MACH's own: findings-copy (the findings returned into the cell for the builder), verification-results, verification-summary (the verdict seal), verification-findings, review-diff, review-findings. Where an artifact came from is a **provenance badge** in its folded corner: a crosshair for verification, three dots for review, a return hook for findings handed back to the builder (`artifactProvenance`).
 
 | Mark | Primitive | Form | Tokens | States |
 |---|---|---|---|---|
@@ -311,9 +325,13 @@ Labels never overlap a machine or another label. In order of preference:
 4. **Upright label** beside the thing, at near zoom only, for things standing on open floor (gates, packets, region machines).
 5. **Callout** with a leader, for the selected thing and for failures, in the overlay layer.
 
+**Agent labels in the overlay.** Agent labels are drawn in the overlay layer (L3), never in the depth-sorted scene. Each label is two lines, role (sans 10 semibold) and tier (sans 9 `ink-muted`), anchored 16 px under the agent's floor disc. When two or more agents share a machine, their labels **stack** under the machine's agent spot: ordered by seat from left to right on screen (then by start time), 24 px per label pitch, the first at 16 px under the leftmost disc, left-aligned on a common x; at most three labels, then one line "+n more" in `ink-muted`. A stacked label is joined to its agent by a hairline leader (0.75 px `plate-edge`) only when the label is more than 20 px from its disc.
+
+**Callout placement** (deterministic, so the same frame always looks the same). Callouts are placed in priority order: escalation, failure, waiting for a person, selection, event under the playhead. For each callout, try these leader directions in order, with leader lengths 36 then 64 px: up-right (45°), up-left, right (horizontal, shoulder only), left, down-right, down-left. Take the first whose leader and label box (estimated as 6.2 px per character at 10.5 px, two lines 30 px tall) intersect none of: machines, gates, agents, agent labels and callouts already placed (screen bounds, 4 px padding). If none is clear, use up-right at 64 px. Never move a callout because the camera moved within the same zoom level; re-place only on a zoom-level change or when its target moves.
+
 **Plan dimensions** (`PlanDimension`) letter real measures on the floor (a bay's width, the parallel limit across a row, "max 3 parallel"): extension lines, slash ticks and the value in mono 8 along the line. Never decorative.
 
-Agent roles (emblem on the floor disc): scheduler (clock), line supervisor (double ring), contract engineer (set-square triangle), builder (solid square), verifier (cross), reviewer (three dots; plus the seat letter A, S or P beside the head).
+Agent roles (emblem on the floor disc): scheduler (clock), line supervisor (double ring), contract engineer (set-square triangle), builder (solid square), verifier (cross), reviewer (three dots; plus the seat letter A, S or P beside the head), and the belt's own workers: clerk (clipboard), intent worker (wedge), audit worker (gauge), merge worker (two lines joining), cleanup worker (archive box), observer (lens).
 
 ### d.3 Edges
 
@@ -324,7 +342,9 @@ Agent roles (emblem on the floor disc): scheduler (clock), line supervisor (doub
 | Join | `Branches mode="join"` | Seats to the consensus gate, arrowheads | Seats to the consensus diamond | branch ink = the vote | per-branch progress; vote mark at the seat |
 | Retry loop | `RetryLoop` | Dashed 5/3 arc lifted 30–34 over the line, from verify to build; pips at the crest | Dashed loop to the next round's row | `fail` | draw 0..1; round n of 3 |
 | Dependency, blocking | `DependencyLink state="blocking"` | Overhead cable lifted 40–46, dashed 4/3, padlock shut at the crest, arrow at the dependent | S-curve, dashed | `wait` | highlighted (1.8 px) |
+| Dependency, channel form | `DependencyLink channelX` | — | Across to a shared gutter channel, along it, across to the dependent; padlock at the channel's middle | as blocking / satisfied | as below |
 | Dependency, satisfied | `DependencyLink state="satisfied"` | Solid line drawn over the dashes, shackle opens; afterwards dashes at 0.15 | Same | `pass` | unlock 0..1 |
+| Unbuilt route | `RoutePath planned` | Dashed 3/3, 1 px | Dashed 3/3, 1 px, plain arrowhead | `route` | not travelled yet |
 | Artifact handoff | `RoutePath kind="handoff"` | Dotted (0.1/4, round caps), the card rides it | Same | `route`; live `live` | draw 0..1 |
 | Escalation | `Escalation` | Riser straight up, dotted 2/3, to a person tag. Vertical is reserved for escalation | Riser up from the node | `fail`, tag `fail-soft` | draw 0..1 |
 
@@ -332,7 +352,7 @@ Agent roles (emblem on the floor disc): scheduler (clock), line supervisor (doub
 
 ## e. Animation grammar
 
-**Rule.** Every factory animation is `progress = animationProgress(name, playhead − event.at, { reduced })`, a pure function of the playhead. No animation reads a clock, keeps state between frames or uses randomness. Scrubbing backwards gives the earlier frame because the same function is evaluated at the earlier time. Spans of work (an agent working, a station running) use `spanProgress(playhead, start.at, end.at)`.
+**Rule.** Every factory animation is `progress = animationProgress(name, playhead − event.at, { reduced })`, a pure function of the playhead. No animation reads a clock, keeps state between frames or uses randomness. Scrubbing backwards gives the earlier frame because the same function is evaluated at the earlier time. Spans of work in flight (an agent working, a station running) are **not** shown as progress: their end is not known while they run. They show the working mark and `elapsed = playhead − start.at` (`formatElapsed`, `elapsedTicks`). `spanProgress` remains for things whose end is fixed in advance (a gate's arm, a packet whose arrival event is already in the fixture), never for work.
 
 Curves (`easings`): `standard` (0.2, 0, 0, 1), `enter` (0, 0, 0, 1), `exit` (0.4, 0, 1, 1), `travel` (0.45, 0, 0.25, 1), `draw` (0.3, 0, 0.2, 1), `settle` (0.16, 0.84, 0.3, 1), `refuse` (drops to 1.12 in the first 35%, one damped return, exactly 1 at the end).
 
@@ -343,7 +363,8 @@ Reduced motion: `snap` means the end state appears at the event time (progress 1
 | `packetTravel` | Work leaves one station for the next | 1400 (or the gap to the arrival event, if shorter) | travel | Packet position `pointAlong(route, p)`; the route is live while 0 < p < 1 | snap: the packet is at its destination |
 | `pathDraw` | A route or handoff is first used | 600 | draw | `RoutePath progress` from the start point | fade |
 | `agentArrive` | Agent started | 480 | settle | Post grows from the disc (height × p), head drops in, opacity min(1, 1.6p) | fade |
-| agent working | Agent started → agent finished | span | linear | Head arc fills with `spanProgress`; state active | arc shown at its value, no sweep between steps |
+| agent working | Agent started → agent finished | span | none | Head live, ringed; one tick appears per elapsed minute (a step, not a sweep); elapsed in the label at near | same (ticks are steps) |
+| station working | Station started → station finished | span | none | Live ring on the top face; one tick per elapsed minute; elapsed in the near label; a measured fraction (checks proven, tasks green) fills the ring as each result event arrives | same |
 | `agentLeave` | Agent finished | 360 | exit | Post sinks (1 − p); opacity follows | fade |
 | `toolTick` | Tool call started | 240 | settle | Stem rises, cap settles; colour live until the call's end event, then ink or fail | snap |
 | `artifactMaterialise` | Artifact written | 520 | settle | Card rises out of the floor (height × p), mark fades in over the last 60% | fade |
@@ -359,7 +380,7 @@ Reduced motion: `snap` means the end state appears at the event time (progress 1
 | `humanRelease` | Person approves | 700 | settle | Gatehouse arm opens; a callout "Approved by <name>" fades in | snap |
 | `mergeIntegrate` | Merge completes | 1100 | travel | Packet rides from the merge machine onto the trunk and along it 96 pu, then the merge-commit card materialises on the trunk | fade |
 | `dependencyUnlock` | Dependency satisfied | 800 | standard | Solid pass line draws over the dashes; shackle opens; dependent pad's state turns eligible at 100% | snap |
-| `cellComplete` | Cell merged / archived | 900 | settle | Floor wash 0 to 0.85; lamp off; mast to double ring | fade |
+| `cellComplete` | Cell merged / archived | 900 | settle | Floor settles to `done` (opacity 0 to 1); lamp off; machines settle; mast to double ring | fade |
 | `stateChange` | Any state change without its own animation | 260 | standard | Cross-fade of tint and mark | snap |
 
 **Interface motion** (motion/react, not factory progress): camera focus 650 ms standard; mode switch 700 ms; inspector open 260 ms enter; lane expand 400 ms standard; hover 120 ms.
@@ -399,7 +420,14 @@ One camera `{ x, y, zoom }` (screen translation and scale) applied as a CSS `tra
 
 ### f.3 Follow mode (live playback)
 
-On by default while playing at the live edge. The camera keeps the **active set** (entities with an animation in progress or state `active`) inside the inner 70% of the viewport: when any active entity leaves that safe area, the camera eases (900 ms, standard) to frame the active set at the current zoom (zoom changes only if the set no longer fits, never above the current zoom). It never re-frames more often than every 2 s. Any manual pan, zoom or focus suspends follow; "Follow" in the timeline bar (key `L` when not live, or `Shift+F`) resumes it.
+One flag in the scene store, `follow` (boolean), shared by both modes: on by default while playing at the live edge, turned on by `L`, `Shift+F` and "Live", turned off by any manual pan, zoom or focus. Nothing else decides whether the camera follows.
+
+While `follow` is on, the camera frames the **active places**: bays, the chamber, the gatehouse, the yard or intake, each counted active while any work in it runs **and for 90 s of factory time after its last work stops** (so the camera does not leave the moment something finishes).
+
+1. If every active place fits in the viewport (with the fit padding of b.2) at the current zoom, or at up to a quarter further out (zoom × 0.8), and that zoom is not below mid (0.6), frame them all.
+2. Otherwise stay with **one** place: the one the camera is on, while it is active; when it stops being active, the active place whose work started most recently.
+3. Re-frame at most once per 4 s of wall time, easing 900 ms (standard); never zoom in beyond the current zoom to follow.
+4. Under reduced motion, re-frames are cuts, at most once per 4 s.
 
 ### f.4 Dependency highlighting
 
@@ -411,7 +439,7 @@ Click the disclosure chevron or press `Enter` on a focused lane header to expand
 
 ### f.6 Mode switch
 
-A two-option segmented control "Atlas | Blueprint" in the top bar, keys `1` and `2`. The transition is c.6. The URL hash carries the mode (`#atlas`, `#blueprint`) and the selection (`?sel=TCK-112`).
+A two-option segmented control "Atlas | Blueprint" in the top bar, keys `1` and `2`. The transition is c.6; under reduced motion it is a cut (c.6). The URL hash carries the mode (`#atlas`, `#blueprint`) and the selection (`?sel=TCK-112`).
 
 ### f.7 Theater Mode
 
@@ -446,34 +474,41 @@ A right sheet, 400 px, opening over 260 ms (`slow`, enter). Anatomy for every en
 
 ### f.10 Keyboard map
 
+This is the map that ships (`src/shell/keyboard.ts` generates the help sheet from the same list). Keys in the last group act when a view (Atlas or Blueprint canvas, or the timeline tracks) has focus.
+
 | Key | Action |
 |---|---|
 | `Space` | Play / pause |
 | `,` / `.` | Previous / next event |
-| `Shift+,` / `Shift+.` | Back / forward 10 s |
-| `Home` / `End` | Start / live edge |
-| `L` | Go live (and follow) |
-| `1` / `2` | Atlas / Blueprint |
+| `Shift+,` / `Shift+.` | Back / forward 10 s of factory time |
+| `[` / `]` | Previous / next chapter |
+| `{` / `}` | Slower / faster (0.5× to 16×) |
+| `Home` / `End` | Start of the run / live edge |
+| `L` | Return to live (and follow) |
+| `1` / `2` | Factory Atlas / Execution Blueprint |
 | `T` | Theater Mode |
 | `F` | Focus the selection |
-| `Shift+F` | Resume follow |
-| `+` / `-` / `0` | Zoom in / out / fit |
-| `Shift+Arrows` | Pan |
-| `Tab` / `Shift+Tab` | Next / previous entity in reading order |
-| `Arrows` (canvas focused) | Move selection to the spatial neighbour (Atlas) or next node in the lane (Blueprint) |
-| `Enter` / `Space` on an entity | Select (Space plays only when the canvas, not an entity, has focus) |
-| `Alt+→` / `Alt+←` | Expand / collapse lane (Blueprint) |
-| `I` | Toggle inspector |
-| `Escape` | Clear highlight, then clear selection, then leave Theater Mode |
+| `Shift+F` | Resume live-follow |
+| `Escape` | Clear highlight, then selection, then leave Theater Mode |
+| `I` | Show or hide the inspector |
+| `Shift+T` | Expand or collapse the timeline |
 | `?` | Keyboard help |
+| `+` / `-` / `0` | Zoom in / out / fit (in a view) |
+| `Shift+Arrows` | Pan (in a view) |
+| `Arrows` | Move to the neighbouring entity (in a view): the spatial neighbour in the Atlas, the next node in the lane in the Blueprint |
+| `Enter` | Select the focused entity |
+| `Alt+→` / `Alt+←` | Expand / collapse a lane (Blueprint) |
+| `←` / `→` | Previous / next event (timeline tracks focused) |
+
+Dropped from the first draft: `Tab` between entities (each view is one tab stop; arrows move inside it, f.11) and `*` (expand all; the Blueprint has no need for it with depth defaults).
 
 ### f.11 Focus order
 
-Skip link → top bar (title, mode switch, Theater, theme) → canvas (one tab stop; inside it, entities in reading order: regions left to right, then each region's cells by row then column, then within a cell machines in belt order, agents, artifacts) → timeline controls → timeline tracks (one tab stop; arrows move between events) → inspector. The focus ring is the design system's (2 px `--mach-focus`, 2 px offset); on SVG entities it is drawn as an extra rounded rectangle around the entity's screen bounds.
+Skip link → top bar (title, mode switch, Theater, theme) → canvas (**one tab stop**; inside it, arrow keys move between entities: in the Atlas to the nearest entity in the arrow's screen direction, ties broken by reading order (regions left to right, then each region's cells by row then column, then within a cell machines in belt order, agents, artifacts); in the Blueprint along and across lanes; the first focus lands on the selection, or else the first active place) → timeline controls → timeline tracks (one tab stop; arrows move between events) → inspector. The focus ring is the design system's (2 px `--mach-focus`, 2 px offset); on SVG entities it is drawn as an extra rounded rectangle around the entity's screen bounds.
 
 ### f.12 Reduced motion
 
-All factory animations follow the `reduced` column of section e (no travel, no sweeping arcs, no drawing; end states appear at the event time; fades of 160 ms at most). The camera jumps instead of easing; follow mode re-frames by jumping and at most every 4 s. The mode switch is a 160 ms cross-fade. Playback still runs and the playhead can be stepped event by event with `,` and `.`. Nothing loops in either mode.
+All factory animations follow the `reduced` column of section e (no travel, no sweeping arcs, no drawing; end states appear at the event time; fades of 160 ms at most). The camera jumps instead of easing; follow mode re-frames by jumping and at most every 4 s. The mode switch is a cut (c.6). Playback still runs and the playhead can be stepped event by event with `,` and `.`. Nothing loops in either mode.
 
 ---
 
@@ -494,7 +529,7 @@ All factory animations follow the `reduced` column of section e (no travel, no s
 ```
 
 - **L1 Scene (SVG)**: all structure and all meaning. Primitives from `@mach/ui` only. React components memoised per entity; their props are the entity's state and progress values computed by the selectors for the current playhead, **quantised to 1/240** so unchanged things do not re-render. Culling: entities whose screen bounds (with 64 px margin) are outside the viewport are not rendered.
-- **L2 Light (optional WebGL)**: decoration only. Permitted effects: the cell lamp's soft bloom (radius 120 px, max alpha 0.18 dark / 0.10 light, blend `screen` in dark and `multiply` with the lamp tint in light), a short fading trail behind travelling packets (length ≤ 40 px, alpha ≤ 0.25, a pure function of the packet's progress), and the gate plaque flash on refusal. It reads the same scene selectors; it never decides anything; the page must be complete and correct with it switched off (it is off under reduced motion and when WebGL is unavailable). PixiJS: `import "pixi.js/unsafe-eval"`, no workers (contract rule 6).
+- **L2 Light (WebGL): dropped for M6.0.** The Atlas owner built it and measured it (side-by-sides `cmp-*.png`). Judgment: drop it. On the bay floor in dark the bloom lays a veil over the machines, which are the meaning, while the SVG lamp pool (b.3) already says "work is here" at the right tone; the gate wash barely registers; and it costs about 0.8 ms more per frame for nothing a reader needs. The layer would have to do three things differently to earn a place in a later milestone: (1) light **only floors**, which means splitting L1 into a floor SVG and a solids SVG with the canvas between them, so no light ever lies on top of a machine, agent or label; (2) replace the SVG lamp pool at the same geometry rather than adding to it (`lampPool`, `lampFalloff`, b.3), so there is one light, not two; (3) stay under 0.3 ms a frame and show something the SVG cannot (a soft falloff across a plate seam, for example). Until then the original description below is kept only as the definition of what such a layer may not exceed. Original: decoration only. Permitted effects: the cell lamp's soft bloom (radius 120 px, max alpha 0.18 dark / 0.10 light, blend `screen` in dark and `multiply` with the lamp tint in light), a short fading trail behind travelling packets (length ≤ 40 px, alpha ≤ 0.25, a pure function of the packet's progress), and the gate plaque flash on refusal. It reads the same scene selectors; it never decides anything; the page must be complete and correct with it switched off (it is off under reduced motion and when WebGL is unavailable). PixiJS: `import "pixi.js/unsafe-eval"`, no workers (contract rule 6).
 - **L3 Overlay (SVG)**: not depth-sorted, never occluded. Hit targets for entities are in L1 (each entity's group carries `role="button"`, `tabIndex`, `aria-label`, `aria-pressed`); L3 only draws.
 - **One camera, one playhead**: both come from the scene store (`src/scene`). L1 and L3 share the CSS transform of one wrapper, so they cannot drift; L2 copies the camera into its stage in the same animation frame (`requestAnimationFrame` reads the store once per frame and updates L2; React updates L1/L3 from the same snapshot).
 - **Interaction**: pointer events on the viewport; hit testing by the SVG (L1 groups); `unproject` for ground positions.
@@ -526,6 +561,7 @@ Both themes use the same roles; the Control Tower defaults to dark (`product="co
 | `factory-plate-rim` | #FFFFFF | #57534C | The lit front edge of every solid |
 | `factory-machine-top` | #FFFFFF | #3D3C37 | Idle machine tops, task boards: the brightest neutral |
 | `factory-floor` | #F6F3EC | #2A2925 | Bay floor |
+| `factory-done` | #EEF0E7 | #272924 | A finished bay's floor: calm, barely green |
 | `factory-hatch` | #B5AF9E | #3E3C37 | Poché |
 | `factory-shadow` | rgba(58,52,40,0.13) | rgba(0,0,0,0.62) | Contact shadows |
 | `factory-ink` / `-ink-soft` | #3A3833 / #7A766B | #DAD6CA / #A19E93 | Symbols and structure lines |
@@ -538,7 +574,7 @@ Both themes use the same roles; the Control Tower defaults to dark (`product="co
 | `factory-select` | #B5512F | #E48B6C | Selection brackets |
 | `factory-lamp` | #FFF0D6 | #4A3A27 | The work lamp's pool |
 
-**Contrast** (enforced by the token script, 118 pairs, all passing; pass 2 added plate edges against ground and plate top, symbols on machine tops, lettering, glyphs and live marks under the lamp, and name plates on lit faces): text on ground, plates and floors ≥ 4.5:1 (`ink`, `ink-muted`, `factory-ink`); every mark that carries meaning ≥ 3:1 against the surface it sits on and against its own tint (`live`, `pass`, `fail`, `wait`, `human`, `route`, `select`, `ink-soft`). Decorative lines (grid, plate edges, hatch) have no requirement and carry no meaning on their own.
+**Contrast** (enforced by the token script, 124 pairs, all passing; pass 3 added lettering, glyph ink and the passed mark on the `done` floor; pass 2 added plate edges against ground and plate top, symbols on machine tops, lettering, glyphs and live marks under the lamp, and name plates on lit faces): text on ground, plates and floors ≥ 4.5:1 (`ink`, `ink-muted`, `factory-ink`); every mark that carries meaning ≥ 3:1 against the surface it sits on and against its own tint (`live`, `pass`, `fail`, `wait`, `human`, `route`, `select`, `ink-soft`). Decorative lines (grid, plate edges, hatch) have no requirement and carry no meaning on their own.
 
 **Colour independence.** Every state has a distinct mark shape (d.1); a station's state is also its outline style (dashed when idle, heavier when failed or blocked); a gate's position is its arm angle; a tier is a head shape and a height; a role is an emblem; a dependency's state is dashed versus solid plus the padlock's shackle; a retry is a dashed arc with counted pips; an escalation is the only vertical. Every primitive's accessible name states its state in words. The reference sheet reads in greyscale.
 
@@ -548,7 +584,7 @@ Theme specifics: in dark, solids are lighter than the ground and the lamp is a w
 
 ## Primitive reference
 
-All in `@mach/ui`, pure, props only, no timers or randomness. Atlas `at` is a plan point; Blueprint `at` is a screen point (`variant="blueprint"`). Every animating primitive takes `progress` 0..1.
+All in `@mach/ui`, pure, props only, no timers or randomness. Atlas `at` is a plan point; Blueprint `at` is a screen point (`variant="blueprint"`). Every primitive that animates toward a known end takes `progress` 0..1 (transitions: arrival, a gate's arm, a path drawing); work in flight takes `elapsed`, and measured fractions take `fraction`.
 
 | Primitive | Props |
 |---|---|
@@ -557,12 +593,12 @@ All in `@mach/ui`, pure, props only, no timers or randomness. Atlas `at` is a pl
 | `GroundGrid` | `x, y, w, d, lod?, fade?` |
 | `Prism` | `box, top?, lit?, shade?, edge?, hatch?, shadow?, weight?, dash?, rim? (default true), children` (drawn on the top face in plan coordinates) |
 | `RegionPlate` | `box, kind, title?, caption?, height?, lod?, dimmed?, active?, children` |
-| `CellPlate` | `origin, ticket, slice?, stage, z?, lit?, lampIntensity? (0..1, overrides lit), completion?, progress?, lod?, dimmed?, rail?, children` |
+| `CellPlate` | `origin, ticket, slice?, stage, z?, lit?, lampIntensity? (0..1, overrides lit), completion?, elapsed? (ms), lod?, dimmed?, rail?, children`; `progress` deprecated, not drawn |
 | `lampPool(origin, z?)`, `lampFalloff` | The lamp's ellipse on the floor `{cx, cy, rx, ry, z}` and its gradient stops `[offset, opacity][]`, shared with any WebGL layer |
 | `cellAnatomy(origin, z?)` | returns `floorZ, size, rail, pads, agentSpot(pad, seat), shelf(i), ticker(f), tickerLine, door, mast` |
-| `StationMachine` | `kind, state, progress?, round?, label?, nameplate?, at, variant?, lod?, dimmed?, showLabel?` |
-| `AgentMarker` | `agentRole, tier, seat?, state, progress?, arrive?, leave?, label?, labelPosition? ("beside" \| "below"), at, variant?, lod?, dimmed?, showLabel?` |
-| `GateGlyph` | `kind, position, progress?, from?, lamps?, axis?, floorLabel?, at, variant?, lod?, dimmed?, showLabel?` |
+| `StationMachine` | `kind, state, elapsed? (ms), fraction? ({done, of}), round?, label?, nameplate?, settled?, planned?, at, variant?, lod?, dimmed?, showLabel?`; `progress` deprecated, not drawn |
+| `AgentMarker` | `agentRole, tier, seat?, state, elapsed? (ms), arrive?, leave?, label?, labelPosition? ("beside" \| "below"), at, variant?, lod?, dimmed?, showLabel?`; `progress` deprecated, not drawn |
+| `GateGlyph` | `kind (adds "plan-check"), position, progress? (the arm's transition, which has a fixed end), from?, lamps?, axis?, floorLabel?, planned? (Blueprint), at, variant?, lod?, dimmed?, showLabel?` |
 | `FloorLettering` | `at, text, axis? ("x" \| "y"), size?, font? ("serif" \| "sans" \| "mono"), tone?, weight?, anchor?, decorative?, dimmed?` |
 | `PlanDimension` | `from, to, offset?, label, dimmed?` |
 | `FindingsFlag` | `at, severity ("blocker" \| "note"), count?, rule?, variant?, lod?, dimmed?` |
@@ -570,20 +606,21 @@ All in `@mach/ui`, pure, props only, no timers or randomness. Atlas `at` is a pl
 | `ArtifactCard` | `kind, state?, progress?, file?, at, variant?, lod?, dimmed?, showLabel?` |
 | `ToolTick` | `family, state?, progress?, detail?, at, variant?, dimmed?` |
 | `Packet` | `at, angle?, state?, ticket?, variant?, lod?, dimmed?, showLabel?` |
-| `RoutePath` | `points, variant?, kind? ("route" \| "handoff"), state?, progress?, chevrons?, arrow?, lod?, dimmed?, label?` |
+| `RoutePath` | `points, variant?, kind? ("route" \| "handoff"), state?, progress?, chevrons?, arrow?, planned?, lod?, dimmed?, label?` |
 | `RetryLoop` | `from, to, round, maxRounds?, progress?, variant?, lift?, crestY?, lod?, dimmed?` |
 | `Branches` | `origin, targets, mode ("fan-out" \| "join"), progress? (number or per branch), states?, variant?, dimmed?, label?` |
-| `DependencyLink` | `from, to, state ("blocking" \| "satisfied"), progress?, variant?, lift?, dimmed?, highlighted?` |
+| `DependencyLink` | `from, to, state ("blocking" \| "satisfied"), progress?, variant?, lift?, channelX? (Blueprint channel form), dimmed?, highlighted?` |
 | `Escalation` | `from, height?, progress?, variant?, label?, dimmed?` |
 | `SelectionBrackets` | `bounds, pad?, arm?, label?` |
-| `BlueprintSheet` | `width, height, title, subtitle?, simulationLabel, zonesX?, zonesY?, facts?, children` |
-| `BlueprintLane` | `x, y, width, height, depth, title, id?, state?, collapsed?, summary?, dimmed?, selected?, children` |
+| `BlueprintSheet` | `width, height, title, subtitle?, simulationLabel, zonesX?, zonesY?, facts?, titleBlock? ("overlay" \| "strip"), children`; `blueprintSheetLayout(width, height, factsCount, titleBlock)` → `{inner, block, content}` |
+| `BlueprintLane` | `x, y, width, height, depth (0–5), title, id?, state?, collapsed?, expanded?, summary?, dimmed?, selected?, children` |
+| `TimeRuler` | `x, y, width, from, to (ms), playhead?, side? ("top" \| "bottom")` |
 | `DimensionLine` | `x1, x2, y, label, extend?` |
 | `Callout` | `x, y, dx?, dy?, text, detail?, tone?` |
-| Symbols | `StationSymbol`, `ArtifactMark`, `ToolCap`, `AgentHead`, `RoleEmblem`, `StateMark` |
+| Symbols | `StationSymbol`, `ArtifactMark`, `ProvenanceBadge`, `ToolCap`, `AgentHead`, `RoleEmblem` (12 roles), `StateMark` (adds `ring-working`; `ring-sector` only for measured fractions, default 0), `ElapsedTicks` (`r, count, color, length?, strokeWidth?`) |
 | Projection | `project`, `unproject`, `planeMatrix`, `planeTransform`, `planeStroke`, `uprightTransform`, `uprightTransformY`, `prismFaces`, `shadowPolygon`, `depthOf`, `screenBounds`, `toPoints`, `projectPoints`, `projectPath` |
 | Geometry | `polylineLength`, `pointAlong`, `slicePolyline`, `offsetPolyline`, `roundedPath`, `marksAlong`, `liftedArc` |
-| Motion | `animationProgress`, `spanProgress`, `staggerDelay`, `segment`, `easings`, `cubicBezier`, `factoryAnimations`, `clamp01`, `lerp` |
+| Motion | `animationProgress`, `spanProgress` (fixed ends only), `formatElapsed`, `elapsedTicks`, `staggerDelay`, `segment`, `easings`, `cubicBezier`, `factoryAnimations`, `clamp01`, `lerp` |
 | Grammar | `factoryStates`, `cellStages`, `stations`, `stationOrder`, `regions`, `agentRoles`, `reviewerSeats`, `modelTiers`, `gates`, `gatePositions`, `artifacts`, `toolFamilies`, `lodForZoom`, `fc`, `dimmedOpacity` |
 | Tokens | `factoryTokens` (projection, grid, elevation, size, stroke, shadow, zoom, motion, budget) |
 

@@ -155,3 +155,20 @@ export function segment(p: number, from: number, to: number): number {
   if (to <= from) return p >= to ? 1 : 0;
   return clamp01((p - from) / (to - from));
 }
+
+/**
+ * Elapsed time in words for a working thing: "45 s", "4 min 12 s", "1 h 03 min". Work in flight is
+ * shown as how long it has run, never as a fraction of an unknown total.
+ */
+export function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ${String(s % 60).padStart(2, "0")} s`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
+}
+
+/** Whole minutes elapsed, capped: the number of elapsed ticks a working dial shows. */
+export function elapsedTicks(ms: number, cap = 12): number {
+  return Math.max(0, Math.min(cap, Math.floor(ms / 60000)));
+}

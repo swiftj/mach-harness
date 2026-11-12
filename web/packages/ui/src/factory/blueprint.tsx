@@ -23,21 +23,38 @@ export interface BlueprintSheetProps {
   zonesY?: number;
   /** Extra title-block rows, label then value. */
   facts?: ReadonlyArray<readonly [string, string]>;
+  /**
+   * Where the title block goes. "overlay" (default, as before): in the lower-right corner of the
+   * drawing area, over anything drawn there. "strip": in its own strip along the bottom of the sheet,
+   * under a rule, so it never covers the drawing; lay the drawing out inside `blueprintSheetLayout().content`.
+   */
+  titleBlock?: "overlay" | "strip";
   children?: ReactNode;
 }
 
 const MARGIN = 18;
+const TB_W = 260;
+
+/** The sheet's areas, for laying out a drawing that the title block must not cover. */
+export function blueprintSheetLayout(width: number, height: number, factsCount = 0, titleBlock: "overlay" | "strip" = "overlay") {
+  const inner = { x: MARGIN, y: MARGIN, w: width - MARGIN * 2, h: height - MARGIN * 2 };
+  const tbH = 54 + factsCount * 16;
+  const strip = titleBlock === "strip";
+  const block = { x: inner.x + inner.w - TB_W, y: inner.y + inner.h - tbH, w: TB_W, h: tbH };
+  const content = strip ? { x: inner.x, y: inner.y, w: inner.w, h: inner.h - tbH - 8 } : inner;
+  return { inner, block, content };
+}
 
 /**
  * The sheet: a double border (outer hairline, inner 1.25), zone letters across the top and numbers
  * down the side, and a title block in the lower right carrying the title (serif), the facts and the
  * simulation label, which is never hidden.
  */
-export function BlueprintSheet({ width, height, title, subtitle, simulationLabel, zonesX = 8, zonesY = 4, facts = [], children }: BlueprintSheetProps) {
-  const inner = { x: MARGIN, y: MARGIN, w: width - MARGIN * 2, h: height - MARGIN * 2 };
+export function BlueprintSheet({ width, height, title, subtitle, simulationLabel, zonesX = 8, zonesY = 4, facts = [], titleBlock = "overlay", children }: BlueprintSheetProps) {
+  const { inner, content } = blueprintSheetLayout(width, height, facts.length, titleBlock);
   const zw = inner.w / zonesX;
   const zh = inner.h / zonesY;
-  const tbW = 260;
+  const tbW = TB_W;
   const tbH = 54 + facts.length * 16;
   const tbX = inner.x + inner.w - tbW;
   const tbY = inner.y + inner.h - tbH;
@@ -65,6 +82,9 @@ export function BlueprintSheet({ width, height, title, subtitle, simulationLabel
           </g>
         ))}
       </g>
+      {titleBlock === "strip" ? (
+        <line x1={inner.x} y1={content.y + content.h + 4} x2={inner.x + inner.w} y2={content.y + content.h + 4} aria-hidden="true" style={{ stroke: fc("ink-soft"), strokeWidth: 0.75 }} />
+      ) : null}
       {children}
       {/* Title block. */}
       <g>
@@ -102,14 +122,14 @@ export function BlueprintSheet({ width, height, title, subtitle, simulationLabel
 
 /* ------------------------------------------------------------------------------------------------ */
 
-export type LaneDepth = 0 | 1 | 2 | 3;
+export type LaneDepth = 0 | 1 | 2 | 3 | 4 | 5;
 
 export interface BlueprintLaneProps {
   x: number;
   y: number;
   width: number;
   height: number;
-  /** 0 wave, 1 slice/cell, 2 station, 3 agent. Deeper lanes indent and use lighter rules. */
+  /** 0 wave, 1 slice/cell, 2 station, 3 agent, 4 tool calls, 5 artifacts. Deeper lanes indent and use lighter rules. */
   depth: LaneDepth;
   title: string;
   /** Engine ID (mono). */
@@ -121,6 +141,8 @@ export interface BlueprintLaneProps {
   summary?: string;
   dimmed?: boolean;
   selected?: boolean;
+  /** Draw the disclosure chevron pointing down when expanded (the lane can be collapsed). */
+  expanded?: boolean;
   children?: ReactNode;
 }
 
@@ -132,10 +154,10 @@ const laneIndent = 14;
  * lanes a regular rule; station and agent lanes fine rules. A collapsed lane shows a disclosure
  * chevron, its summary and nothing else.
  */
-export function BlueprintLane({ x, y, width, height, depth, title, id, state, collapsed, summary, dimmed, selected, children }: BlueprintLaneProps) {
+export function BlueprintLane({ x, y, width, height, depth, title, id, state, collapsed, summary, dimmed, selected, expanded, children }: BlueprintLaneProps) {
   const gutter = 168;
   const indent = depth * laneIndent;
-  const rule = depth === 0 ? 1.75 : depth === 1 ? 1 : 0.6;
+  const rule = depth === 0 ? 1.75 : depth === 1 ? 1 : depth <= 3 ? 0.6 : 0.5;
   const st = state ? factoryStates[state] : null;
   return (
     <g role="group" aria-label={`${title}${id ? ` ${id}` : ""}${st ? `: ${st.label}` : ""}${collapsed ? ", collapsed" : ""}`} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
@@ -148,6 +170,7 @@ export function BlueprintLane({ x, y, width, height, depth, title, id, state, co
       {selected ? <rect x={x + indent - 2} y={y + 1} width={3} height={height - 2} aria-hidden="true" style={{ fill: fc("select") }} /> : null}
       <g transform={`translate(${x + indent + 8} ${y + (collapsed ? height / 2 + 4 : 20)})`}>
         {collapsed ? <path d="M-2 -7l4 3.5l-4 3.5" aria-hidden="true" style={{ fill: "none", stroke: "var(--mach-ink-muted)", strokeWidth: 1.3, strokeLinecap: "round", strokeLinejoin: "round" }} /> : null}
+        {expanded && !collapsed ? <path d="M-3.5 -5.5l3.5 4l3.5 -4" transform="translate(-10 0)" aria-hidden="true" style={{ fill: "none", stroke: "var(--mach-ink-muted)", strokeWidth: 1.3, strokeLinecap: "round", strokeLinejoin: "round" }} /> : null}
         {st ? (
           <g transform={`translate(${collapsed ? 12 : 4} -4)`}>
             <StateMark state={state!} r={5} />
@@ -159,7 +182,7 @@ export function BlueprintLane({ x, y, width, height, depth, title, id, state, co
           style={{
             fill: "var(--mach-ink)",
             fontFamily: depth === 0 ? "var(--mach-font-serif)" : "var(--mach-font-sans)",
-            fontSize: depth === 0 ? 16 : depth === 1 ? 12.5 : 11,
+            fontSize: depth === 0 ? 16 : depth === 1 ? 12.5 : depth <= 3 ? 11 : 10.5,
             fontWeight: depth === 0 ? 450 : 600,
           }}
         >
@@ -221,6 +244,72 @@ export function Callout({ x, y, dx = 28, dy = -28, text, detail, tone = "ink" }:
         <text x={ex + shoulder + 4 * dir} y={ey + 16} textAnchor={dir > 0 ? "start" : "end"} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }}>
           {detail}
         </text>
+      ) : null}
+    </g>
+  );
+}
+
+/* ------------------------------------------------------------------------------------------------ */
+
+export interface TimeRulerProps {
+  /** Left edge, baseline and length of the ruler, in screen px. */
+  x: number;
+  y: number;
+  width: number;
+  /** The factory times at the ruler's ends, in ms. */
+  from: number;
+  to: number;
+  /** The playhead, drawn as a 2 px ink line with its time above, when inside the range. */
+  playhead?: number;
+  /** Ticks point down (a ruler above the drawing, default) or up (below it). */
+  side?: "top" | "bottom";
+}
+
+const STEPS = [1, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600].map((s) => s * 1000);
+
+function clock(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+/**
+ * A time axis for the Blueprint: a hairline with major ticks labelled in factory time (m:ss), minor
+ * ticks between, chosen so majors are at least 72 px apart, and the playhead. Precise and quiet; the
+ * drawing's columns stay fixed and the ruler states when things happened.
+ */
+export function TimeRuler({ x, y, width, from, to, playhead, side = "top" }: TimeRulerProps) {
+  const span = Math.max(1, to - from);
+  const pxPerMs = width / span;
+  const major = STEPS.find((s) => s * pxPerMs >= 72) ?? STEPS[STEPS.length - 1]!;
+  const minor = major / 5;
+  const dir = side === "top" ? 1 : -1;
+  const ticks: Array<{ t: number; major: boolean }> = [];
+  for (let t = Math.ceil(from / minor) * minor; t <= to; t += minor) ticks.push({ t, major: Math.abs(t / major - Math.round(t / major)) < 1e-6 });
+  const X = (t: number) => round(x + (t - from) * pxPerMs);
+  const ph = playhead !== undefined && playhead >= from && playhead <= to ? X(playhead) : null;
+  return (
+    <g role="img" aria-label={`Time axis from ${clock(from)} to ${clock(to)}${playhead !== undefined ? `, playhead at ${clock(playhead)}` : ""}`}>
+      <line x1={x} y1={y} x2={x + width} y2={y} aria-hidden="true" style={{ stroke: "var(--mach-ink-muted)", strokeWidth: 0.75 }} />
+      {ticks.map(({ t, major: big }) => (
+        <line key={t} x1={X(t)} y1={y} x2={X(t)} y2={y + dir * (big ? 6 : 3)} aria-hidden="true" style={{ stroke: big ? "var(--mach-ink-muted)" : fc("plate-edge"), strokeWidth: 0.75 }} />
+      ))}
+      {ticks
+        .filter((k) => k.major)
+        .map(({ t }) => (
+          <text key={`l${t}`} x={X(t)} y={side === "top" ? y - 4 : y + 14} textAnchor="middle" aria-hidden="true" className="tabular" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 9 }}>
+            {clock(t)}
+          </text>
+        ))}
+      {ph !== null ? (
+        <g aria-hidden="true">
+          <line x1={ph} y1={y - 12} x2={ph} y2={y + 8} style={{ stroke: "var(--mach-ink)", strokeWidth: 2 }} />
+          <text x={ph + 4} y={y - 14} className="tabular" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-mono)", fontSize: 9.5, fontWeight: 600 }}>
+            {clock(playhead!)}
+          </text>
+        </g>
       ) : null}
     </g>
   );

@@ -4,6 +4,7 @@ import { cellStages, dimmedOpacity, fc, regions, type CellStage, type FactoryCol
 import { planeStroke, planeTransform, prismFaces, project, round, screenBounds, shadowPolygon, toPoints, type PlanBox, type Vec2 } from "./projection";
 import { useFactoryIds } from "./scene";
 import { StateMark } from "./symbols";
+import { formatElapsed } from "./motion";
 
 /**
  * The built environment: the ground sheet with its drafting grid, prisms (any raised block), region
@@ -286,10 +287,12 @@ export interface CellPlateProps {
    * Overrides `lit` when given: 0 is off, 1 is full.
    */
   lampIntensity?: number;
-  /** 0..1, the cell-complete animation: the floor takes the passed wash. */
+  /** 0..1, the cell-complete animation: the floor settles to the calm `done` tone. */
   completion?: number;
-  /** Progress of the current stage, for the mast's working mark. */
+  /** Deprecated: kept for compatibility and no longer drawn. A stage in flight has no known end; use `elapsed`. */
   progress?: number;
+  /** How long the current stage has run, in factory ms: shown beside the stage word on the mast at near zoom. */
+  elapsed?: number;
   lod?: Lod;
   dimmed?: boolean;
   /** Draw the cell's own conveyor rail. */
@@ -302,9 +305,10 @@ export interface CellPlateProps {
  * A construction cell, drawn as an architectural section model of a bay: a floor slab, two back
  * walls standing full height (their inner faces lit), and the two front walls cut away at curb
  * height with poché hatching on the cut, so the work inside is always visible. A signal mast at the
- * back corner carries the stage mark. The ticket ID is lettered on the floor.
+ * back corner carries the stage mark (and, at near zoom, how long the stage has run). The ticket ID
+ * is lettered on the floor. A finished cell's floor settles to the calm `done` tone.
  */
-export function CellPlate({ origin, ticket, slice, stage, z = factoryTokens.elevation.regionPlate as number, lit, lampIntensity, completion = 0, progress, lod = "mid", dimmed, rail = true, children }: CellPlateProps) {
+export function CellPlate({ origin, ticket, slice, stage, z = factoryTokens.elevation.regionPlate as number, lit, lampIntensity, completion = 0, elapsed, lod = "mid", dimmed, rail = true, children }: CellPlateProps) {
   const ids = useFactoryIds();
   const a = cellAnatomy(origin, z);
   const { x: w, y: d } = a.size;
@@ -320,7 +324,7 @@ export function CellPlate({ origin, ticket, slice, stage, z = factoryTokens.elev
       {/* Floor slab. */}
       <Prism box={{ x, y, w, d, z, h: 4 }} top="floor" hatch="none">
         {lamp > 0 ? <ellipse aria-hidden="true" cx={pool.cx} cy={pool.cy} rx={pool.rx} ry={pool.ry} style={{ fill: `url(#${ids.lamp})`, opacity: lamp }} /> : null}
-        {completion > 0 ? <rect aria-hidden="true" x={x} y={y} width={w} height={d} style={{ fill: fc("pass-soft"), opacity: completion * 0.85 }} /> : null}
+        {completion > 0 ? <rect aria-hidden="true" x={x} y={y} width={w} height={d} style={{ fill: fc("done"), opacity: completion }} /> : null}
         {/* Floor lettering: the ticket, and the slice at near zoom. */}
         <text x={x + 14} y={y + d - 9} style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: lod === "far" ? 16 : 11, fontWeight: 500 }} className="notranslate">
           {ticket}
@@ -346,10 +350,11 @@ export function CellPlate({ origin, ticket, slice, stage, z = factoryTokens.elev
       {/* Signal mast with the stage mark. */}
       <line aria-hidden="true" x1={mast.x} y1={mast.y} x2={mastTop.x} y2={mastTop.y} style={{ stroke: fc("ink-soft"), strokeWidth: 1.2 }} />
       <g transform={`translate(${round(mastTop.x)} ${round(mastTop.y - 6)})`}>
-        <StateMark state={look.state} mark={look.mark} r={lod === "far" ? 8 : 6} progress={progress} />
+        <StateMark state={look.state} mark={look.mark} r={lod === "far" ? 8 : 6} />
         {lod === "near" ? (
-          <text x={10} y={4} style={{ fill: "var(--mach-ink)", fontSize: 10.5, fontWeight: 600 }}>
+          <text x={10} y={4} className="tabular" style={{ fill: "var(--mach-ink)", fontSize: 10.5, fontWeight: 600 }}>
             {look.label}
+            {look.state === "active" && elapsed !== undefined ? <tspan style={{ fill: "var(--mach-ink-muted)", fontWeight: 400 }}>{` · ${formatElapsed(elapsed)}`}</tspan> : null}
           </text>
         ) : null}
       </g>

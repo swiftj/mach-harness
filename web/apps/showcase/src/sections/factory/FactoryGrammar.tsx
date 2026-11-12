@@ -8,6 +8,10 @@ import {
   Escalation,
   FactoryScene,
   FindingsFlag,
+  BlueprintLane,
+  BlueprintSheet,
+  TimeRuler,
+  blueprintSheetLayout,
   FloorLettering,
   PlanDimension,
   TaskBoard,
@@ -199,12 +203,12 @@ function Places() {
         <div className="grid grid-cols-2 gap-4">
           {stages.map((s) => (
             <Tile key={s} caption={cellStages[s].label} detail={`Stage ${s}`} label={`Cell at stage ${s}`} viewBox="-146 -46 352 226" width={480} height={308}>
-              <CellPlate origin={{ x: 0, y: 0 }} ticket="TCK-112" slice="SLICE-007" stage={s} lampIntensity={s === "building" ? lamp : 0} progress={0.6} lod="near">
+              <CellPlate origin={{ x: 0, y: 0 }} ticket="TCK-112" slice="SLICE-007" stage={s} lampIntensity={s === "building" ? lamp : 0} elapsed={s === "building" ? 6 * 60000 + 40000 : undefined} lod="near">
                 <Bay stage={s} />
               </CellPlate>
             </Tile>
           ))}
-          <Tile caption="Merged" detail="Passed wash, double-ring mark" label="Merged cell" viewBox="-146 -46 352 226" width={480} height={308}>
+          <Tile caption="Merged" detail="Calm done floor, settled machines, double ring" label="Merged cell" viewBox="-146 -46 352 226" width={480} height={308}>
             <CellPlate origin={{ x: 0, y: 0 }} ticket="TCK-109" stage="merged" completion={done} lod="near">
               <Bay stage="merged" />
             </CellPlate>
@@ -220,9 +224,9 @@ function Places() {
         <div className="grid grid-cols-3 gap-4">
           {(["far", "mid", "near"] as const).map((lod) => (
             <Tile key={lod} caption={lod === "far" ? "Far, below 0.6" : lod === "mid" ? "Mid, 0.6 to 1.4" : "Near, above 1.4"} label={`Cell at ${lod} zoom`} viewBox="-146 -46 352 226" width={330} height={212}>
-              <CellPlate origin={{ x: 0, y: 0 }} ticket="TCK-112" slice="SLICE-007" stage="building" lit lod={lod} progress={0.6}>
-                <StationMachine kind="build" state="active" progress={0.6} at={{ x: 110, y: 58, z: 12 }} lod={lod} />
-                <AgentMarker agentRole="builder" tier="sonnet" state="active" progress={0.6} at={{ x: 100, y: 92, z: 12 }} lod={lod} />
+              <CellPlate origin={{ x: 0, y: 0 }} ticket="TCK-112" slice="SLICE-007" stage="building" lit lod={lod} elapsed={(0.6) * 12 * 60000}>
+                <StationMachine kind="build" state="active" elapsed={(0.6) * 12 * 60000} at={{ x: 110, y: 58, z: 12 }} lod={lod} />
+                <AgentMarker agentRole="builder" tier="sonnet" state="active" elapsed={(0.6) * 12 * 60000} at={{ x: 100, y: 92, z: 12 }} lod={lod} />
               </CellPlate>
             </Tile>
           ))}
@@ -241,10 +245,10 @@ function Bay({ stage }: { stage: CellStage }) {
   const plan: FactoryState = stage === "waiting-on-dependency" ? "idle" : "succeeded";
   return (
     <>
-      <StationMachine kind="plan" state={plan} at={a.pads.intent} />
-      <StationMachine kind="build" state={build} progress={0.6} at={a.pads.build} />
-      <StationMachine kind="verify" state={verify} round={stage === "blocked" ? 3 : undefined} at={a.pads.verify} />
-      {stage === "building" ? <AgentMarker agentRole="builder" tier="sonnet" state="active" progress={0.6} at={a.agentSpot("build")} /> : null}
+      <StationMachine kind="plan" state={plan} at={a.pads.intent} settled={stage === "merged"} />
+      <StationMachine kind="build" state={build} elapsed={6 * 60000} at={a.pads.build} settled={stage === "merged"} />
+      <StationMachine kind="verify" state={verify} round={stage === "blocked" ? 3 : undefined} at={a.pads.verify} settled={stage === "merged"} />
+      {stage === "building" ? <AgentMarker agentRole="builder" tier="sonnet" state="active" elapsed={6 * 60000} at={a.agentSpot("build")} /> : null}
       {stage === "blocked" ? <AgentMarker agentRole="verifier" tier="sonnet" state="blocked" at={a.agentSpot("verify")} /> : null}
     </>
   );
@@ -253,15 +257,16 @@ function Bay({ stage }: { stage: CellStage }) {
 /* ------------------------------------------------------------------------------------------------ */
 
 function Stations() {
-  const [p, setP] = useState(0.58);
+  const [p, setP] = useState(0.45);
+  const elapsed = p * 15 * 60000;
   const shown: FactoryState[] = ["idle", "active", "succeeded", "failed"];
   return (
     <Section
       id="factory-stations"
       title="Stations"
-      intro="Each station kind has one drafted symbol. In the Atlas it is inscribed on the top face of the machine, and while it works a dial fills around it. In the Blueprint the same symbol sits in a process bubble, after the instrument bubbles of a piping drawing."
+      intro="Each station kind has one drafted symbol. In the Atlas it is inscribed on the top face of the machine; while it works a live ring stands around it with one tick per minute of elapsed work, because nobody knows how long work in flight will take. Only a measured fraction fills the ring. In the Blueprint the same symbol sits in a process bubble, after the instrument bubbles of a piping drawing."
     >
-      <Scrub label="Work progress" value={p} onChange={setP} hint="Span of the station's work, start to end event" />
+      <Scrub label="Elapsed" value={p} onChange={setP} hint={`${Math.round(p * 15)} of 15 minutes of work: one tick per minute, never a fill`} />
       <Group title="Every station, in belt order">
         <div className="flex flex-col">
           {stationOrder.map((k) => (
@@ -276,14 +281,20 @@ function Stations() {
             >
               {shown.map((s) => (
                 <Tile key={s} caption={factoryStates[s].label} label={`${stations[k].label} machine, ${factoryStates[s].label}`} viewBox="-44 -50 88 74" width={112} height={94}>
-                  <StationMachine kind={k} state={s} progress={p} at={{ x: 0, y: 0, z: 0 }} round={s === "failed" && k === "verify" ? 2 : undefined} />
+                  <StationMachine kind={k} state={s} elapsed={elapsed} fraction={k === "verify" && s === "active" ? { done: 5, of: 8 } : undefined} at={{ x: 0, y: 0, z: 0 }} round={s === "failed" && k === "verify" ? 2 : undefined} />
                 </Tile>
               ))}
+              <Tile caption="Settled" detail="Finished, at rest" label={`${stations[k].label} machine, settled`} viewBox="-44 -50 88 74" width={112} height={94}>
+                <StationMachine kind={k} state="succeeded" settled at={{ x: 0, y: 0, z: 0 }} />
+              </Tile>
               {shown.map((s) => (
                 <Tile key={`b${s}`} caption={factoryStates[s].label} detail="Blueprint" label={`${stations[k].label} process symbol, ${factoryStates[s].label}`} viewBox="-30 -26 60 60" width={76} height={76}>
-                  <StationMachine kind={k} state={s} progress={p} at={{ x: 0, y: 0 }} variant="blueprint" showLabel={false} round={s === "failed" && k === "verify" ? 2 : undefined} />
+                  <StationMachine kind={k} state={s} elapsed={elapsed} fraction={k === "verify" && s === "active" ? { done: 5, of: 8 } : undefined} at={{ x: 0, y: 0 }} variant="blueprint" showLabel={false} round={s === "failed" && k === "verify" ? 2 : undefined} />
                 </Tile>
               ))}
+              <Tile caption="Unbuilt" detail="Blueprint, not reached" label={`${stations[k].label} process symbol, not reached yet`} viewBox="-30 -26 60 60" width={76} height={76}>
+                <StationMachine kind={k} state="idle" planned at={{ x: 0, y: 0 }} variant="blueprint" showLabel={false} />
+              </Tile>
             </RowOf>
           ))}
         </div>
@@ -297,23 +308,24 @@ function Stations() {
 function Agents() {
   const [arrive, setArrive] = useState(1);
   const [work, setWork] = useState(0.45);
-  const roles: AgentRole[] = ["scheduler", "supervisor", "contract-engineer", "builder", "verifier", "reviewer"];
+  const elapsed = work * 15 * 60000;
+  const roles: AgentRole[] = ["scheduler", "supervisor", "clerk", "intent", "contract-engineer", "builder", "verifier", "reviewer", "audit", "merge", "cleanup", "observe"];
   const tiers: ModelTier[] = ["fable", "opus", "sonnet", "haiku"];
   return (
     <Section
       id="factory-agents"
       title="Agents"
-      intro="An agent is a standing figure. Its head's shape and its height are its model tier: Fable a diamond, Opus a square, Sonnet a circle, Haiku a triangle, heavier models standing taller. Its role is the emblem on its floor disc. While it works, an arc around its head fills with progress."
+      intro="An agent is a standing figure. Its head's shape and its height are its model tier: Fable a diamond, Opus a square, Sonnet a circle, Haiku a triangle, heavier models standing taller. Its role is the emblem on its floor disc. While it works its head is lit and ringed, with one tick per minute it has worked."
     >
       <div className="flex flex-wrap gap-3">
         <Scrub label="Arrival" value={arrive} onChange={setArrive} hint="agentArrive, 480 ms, settle" />
-        <Scrub label="Work" value={work} onChange={setWork} />
+        <Scrub label="Elapsed" value={work} onChange={setWork} hint={`${Math.round(work * 15)} min: one tick per minute`} />
       </div>
       <Group title="Tiers and roles">
         <RowOf title="Tier">
           {tiers.map((t) => (
             <Tile key={t} caption={modelTiers[t].label} detail={`${modelTiers[t].head}, ${modelTiers[t].height} high`} label={`${modelTiers[t].label} agent`} viewBox="-30 -46 60 58" width={96} height={92} grid>
-              <AgentMarker agentRole="builder" tier={t} state="active" progress={work} arrive={arrive} at={{ x: 0, y: 0, z: 0 }} />
+              <AgentMarker agentRole="builder" tier={t} state="active" elapsed={elapsed} arrive={arrive} at={{ x: 0, y: 0, z: 0 }} />
             </Tile>
           ))}
         </RowOf>
@@ -327,14 +339,14 @@ function Agents() {
         <RowOf title="State">
           {workStates.map((s) => (
             <Tile key={s} caption={factoryStates[s].label} label={`Agent, ${factoryStates[s].label}`} viewBox="-30 -46 60 58" width={96} height={92} grid>
-              <AgentMarker agentRole="verifier" tier="sonnet" state={s} progress={work} arrive={arrive} at={{ x: 0, y: 0, z: 0 }} />
+              <AgentMarker agentRole="verifier" tier="sonnet" state={s} elapsed={elapsed} arrive={arrive} at={{ x: 0, y: 0, z: 0 }} />
             </Tile>
           ))}
         </RowOf>
         <RowOf title="Blueprint">
           {tiers.map((t) => (
             <Tile key={t} caption={modelTiers[t].label} label={`${modelTiers[t].label} agent in the Blueprint`} viewBox="-20 -18 190 34" width={230} height={42}>
-              <AgentMarker agentRole="reviewer" seat="architecture" tier={t} state="active" progress={work} arrive={arrive} at={{ x: 0, y: 0 }} variant="blueprint" showLabel />
+              <AgentMarker agentRole="reviewer" seat="architecture" tier={t} state="active" elapsed={elapsed} arrive={arrive} at={{ x: 0, y: 0 }} variant="blueprint" showLabel />
             </Tile>
           ))}
         </RowOf>
@@ -545,6 +557,35 @@ function Connections() {
           <Escalation variant="blueprint" from={{ x: 880, y: 150 }} height={90} progress={draw} label="Escalated" />
         </FactoryScene>
       </Group>
+      <Group title="Blueprint furniture" note="The time ruler; unbuilt nodes and routes, at full contrast with dashed lines; dependencies sharing a gutter channel; deep lanes with their disclosure chevrons; and a sheet whose title block has its own strip.">
+        <FactoryScene label="Blueprint furniture" viewBox="0 0 1000 300" className="h-auto w-full rounded-xs border border-line">
+          <TimeRuler x={190} y={34} width={780} from={0} to={46 * 60000} playhead={draw * 46 * 60000} />
+          <BlueprintLane x={10} y={56} width={980} height={230} depth={1} title="Invite a teammate" id="TCK-112" state="active" expanded>
+            <BlueprintLane x={10} y={140} width={980} height={40} depth={2} title="Agents" expanded />
+            <BlueprintLane x={10} y={180} width={980} height={36} depth={3} title="Builder" expanded />
+            <BlueprintLane x={10} y={216} width={980} height={34} depth={4} title="Tool calls" expanded />
+            <BlueprintLane x={10} y={250} width={980} height={34} depth={5} title="Artifacts" collapsed summary="9 files" />
+          </BlueprintLane>
+          <StationMachine variant="blueprint" kind="build" state="succeeded" at={{ x: 240, y: 98 }} showLabel={false} />
+          <RoutePath variant="blueprint" points={[{ x: 257, y: 98 }, { x: 323, y: 98 }]} state="succeeded" />
+          <StationMachine variant="blueprint" kind="verify" state="active" elapsed={7 * 60000} fraction={{ done: 5, of: 8 }} at={{ x: 340, y: 98 }} showLabel={false} />
+          <RoutePath variant="blueprint" points={[{ x: 357, y: 98 }, { x: 423, y: 98 }]} planned />
+          <GateGlyph variant="blueprint" kind="verification" position="closed" planned at={{ x: 440, y: 98 }} showLabel={false} />
+          <RoutePath variant="blueprint" points={[{ x: 456, y: 98 }, { x: 523, y: 98 }]} planned />
+          <GateGlyph variant="blueprint" kind="plan-check" position="open" at={{ x: 560, y: 98 }} showLabel={false} />
+          <StationMachine variant="blueprint" kind="review" state="idle" planned at={{ x: 620, y: 98 }} showLabel={false} />
+          <DependencyLink variant="blueprint" from={{ x: 700, y: 78 }} to={{ x: 940, y: 200 }} state="blocking" channelX={900} />
+          <DependencyLink variant="blueprint" from={{ x: 700, y: 118 }} to={{ x: 940, y: 240 }} state="satisfied" progress={unlock} channelX={906} />
+        </FactoryScene>
+        <FactoryScene label="Blueprint sheet with its title block in a strip" viewBox="0 0 1000 220" className="h-auto w-full rounded-xs border border-line">
+          <BlueprintSheet width={1000} height={220} title="Execution blueprint" subtitle="Title block in its own strip" simulationLabel="Simulation" zonesX={10} zonesY={2} titleBlock="strip" facts={[["Cell", "TCK-112"]]}>
+            {(() => {
+              const c = blueprintSheetLayout(1000, 220, 1, "strip").content;
+              return <rect x={c.x + 8} y={c.y + 8} width={c.w - 16} height={c.h - 16} aria-hidden="true" style={{ fill: "none", stroke: "var(--mach-factory-plate-edge)", strokeDasharray: "4 4" }} />;
+            })()}
+          </BlueprintSheet>
+        </FactoryScene>
+      </Group>
     </Section>
   );
 }
@@ -563,12 +604,12 @@ function Lettering() {
       <Group title="Label placements" note="Name plates show at mid and near zoom on machines at least 10 high. Floor lettering at a gate runs along its span on the downstream side. Agent labels can sit under the floor disc when the space beside the head is taken.">
         <div className="grid grid-cols-2 gap-4">
           <Tile caption="Name plates and an agent labelled below" detail="nameplate · labelPosition below" label="Cell with name plates on its machines and an agent labelled below its disc" viewBox="-146 -46 352 226" width={480} height={308}>
-            <CellPlate origin={{ x: 0, y: 0 }} ticket="LOCAL-031" slice="SLICE-021" stage="building" lit progress={0.55} lod="mid">
+            <CellPlate origin={{ x: 0, y: 0 }} ticket="LOCAL-031" slice="SLICE-021" stage="building" lit elapsed={(0.55) * 12 * 60000} lod="mid">
               <StationMachine kind="plan" label="Plan" state="succeeded" nameplate at={a.pads.intent} />
-              <StationMachine kind="build" state="active" progress={0.55} nameplate at={a.pads.build} />
+              <StationMachine kind="build" state="active" elapsed={(0.55) * 12 * 60000} nameplate at={a.pads.build} />
               <StationMachine kind="verify" state="idle" nameplate at={a.pads.verify} />
               <TaskBoard tasks={tasks} at={{ x: 70, y: 28, z: a.floorZ }} columns={6} />
-              <AgentMarker agentRole="builder" tier="sonnet" state="active" progress={0.55} at={a.agentSpot("build")} labelPosition="below" showLabel />
+              <AgentMarker agentRole="builder" tier="sonnet" state="active" elapsed={(0.55) * 12 * 60000} at={a.agentSpot("build")} labelPosition="below" showLabel />
             </CellPlate>
             <GateGlyph kind="verification" position="closed" at={{ ...a.door, x: a.door.x + 10 }} floorLabel="Verdict" />
           </Tile>
@@ -631,7 +672,7 @@ function States() {
           {workStates.map((s) => (
             <figure key={s} className="m-0 flex flex-col items-start gap-2">
               <FactoryScene label={factoryStates[s].label} viewBox="-14 -14 28 28" width={40} height={40} ground={false}>
-                <StateMark state={s} r={11} progress={0.62} />
+                <StateMark state={s} r={11} />
               </FactoryScene>
               <figcaption className="flex flex-col">
                 <span className="text-body-sm font-semibold text-ink">{factoryStates[s].label}</span>
@@ -646,7 +687,7 @@ function States() {
           {stageList.map((s) => (
             <li key={s} className="grid grid-cols-[28px_200px_minmax(0,1fr)] items-center gap-3 border-b border-line py-2">
               <FactoryScene label="" aria-hidden="true" viewBox="-9 -9 18 18" width={20} height={20} ground={false}>
-                <StateMark state={cellStages[s].state} mark={cellStages[s].mark} r={8} progress={0.5} />
+                <StateMark state={cellStages[s].state} mark={cellStages[s].mark} r={8} />
               </FactoryScene>
               <span className="font-mono text-mono text-ink">{s}</span>
               <span className="text-body-sm text-ink-muted">{cellStages[s].label}</span>

@@ -12,7 +12,9 @@ import {
   stations,
   toolFamilies,
   type AgentRole,
+  artifactProvenance,
   type ArtifactKind,
+  type FactoryColor,
   type FactoryState,
   type GateKind,
   type GatePosition,
@@ -22,11 +24,11 @@ import {
   type StationKind,
   type ToolFamily,
 } from "./grammar";
-import { clamp01, lerp, segment } from "./motion";
+import { clamp01, elapsedTicks, formatElapsed, lerp, segment } from "./motion";
 import { planeStroke, planeTransform, project, round, uprightTransform, type Vec3 } from "./projection";
 import { Prism } from "./plates";
 import { FloorLettering } from "./lettering";
-import { AgentHead, ArtifactMark, RoleEmblem, StateMark, StationSymbol, ToolCap, artifactCardPath, artifactFoldPath } from "./symbols";
+import { AgentHead, ArtifactMark, ElapsedTicks, ProvenanceBadge, RoleEmblem, StateMark, StationSymbol, ToolCap, artifactCardPath, artifactFoldPath } from "./symbols";
 
 /**
  * The things that work on the plant: station machines, agents, gates, artifacts, tool-call ticks and
@@ -57,48 +59,71 @@ function labelOn(lod: Lod | undefined, showLabel: boolean | undefined): boolean 
 /* Station machine                                                                                   */
 /* ------------------------------------------------------------------------------------------------ */
 
+/** A measured fraction with a real denominator: checks proven of checks declared, tasks green of tasks planned. */
+export interface Fraction {
+  done: number;
+  of: number;
+}
+
 export interface StationMachineProps extends Common {
   kind: StationKind;
   state: FactoryState;
-  /** Progress of the work running at the station, 0..1 (drawn as the dial on the top face). */
+  /**
+   * Deprecated: kept for compatibility and no longer drawn. A station's work in flight has no known
+   * end, so it is shown by `elapsed`; a measured fraction goes in `fraction`.
+   */
   progress?: number;
+  /** How long the current work has run, in factory ms. Drawn as one tick per minute around the dial (at most 12) and in the near label. */
+  elapsed?: number;
+  /** A fraction with a real denominator, drawn as the dial's filled sector and "7 of 8" in the near label. */
+  fraction?: Fraction;
   /** Number of the current judging round (1..3) when the station has run more than once. */
   round?: number;
   /** Visible label override (default: the station's name). */
   label?: string;
   /** Letter the station's name on the machine's front (lit) face, like a maker's plate. Shown at mid and near zoom. */
   nameplate?: boolean;
+  /** Finished work at rest: a passed machine drawn quiet (machine top, plain edge, a small passed mark), for cells that are done. */
+  settled?: boolean;
+  /** Not reached yet in this run (Blueprint "unbuilt"): dashed outline, no fill, no state mark. */
+  planned?: boolean;
+}
+
+function fractionWords(f: Fraction | undefined): string {
+  return f && f.of > 0 ? `${f.done} of ${f.of}` : "";
 }
 
 /**
  * A station as a machine: a square block (36 plan units) whose height depends on its kind, with the
- * station's symbol inscribed on its top face and, while it works, a progress dial drawn around the
- * symbol on that face. Failed machines show a hatched red top band; idle ones a dashed rim.
+ * station's symbol inscribed on its top face. While it works, a live ring stands around the symbol
+ * with one tick per minute of elapsed work; only a measured `fraction` fills the dial. Idle ones have a
+ * dashed rim; settled ones are quiet; planned ones are dashed outlines.
  */
-export function StationMachine({ kind, state, progress = 0, round: judging, label, nameplate, at, variant = "atlas", lod = "mid", dimmed, showLabel }: StationMachineProps) {
+export function StationMachine({ kind, state, elapsed, fraction, round: judging, label, nameplate, settled, planned, at, variant = "atlas", lod = "mid", dimmed, showLabel }: StationMachineProps) {
   const look = stations[kind];
   const st = factoryStates[state];
-  const name = `${label ?? look.label}: ${st.label}${judging && judging > 1 ? `, round ${judging} of 3` : ""}`;
+  const fw = fractionWords(fraction);
+  const timing = state === "active" && elapsed !== undefined ? `, for ${formatElapsed(elapsed)}` : "";
+  const name = `${label ?? look.label}: ${planned ? "not reached yet" : st.label}${timing}${fw ? `, ${fw}` : ""}${judging && judging > 1 ? `, round ${judging} of 3` : ""}`;
   const ink = fc(st.ink);
-  if (variant === "blueprint") return <ProcessSymbol kind={kind} state={state} progress={progress} round={judging} at={at} label={label ?? look.label} showLabel={showLabel ?? true} dimmed={dimmed} />;
+  if (variant === "blueprint")
+    return <ProcessSymbol kind={kind} state={state} elapsed={elapsed} fraction={fraction} round={judging} at={at} label={label ?? look.label} name={name} showLabel={showLabel ?? true} dimmed={dimmed} settled={settled} planned={planned} />;
 
   const s = factoryTokens.size.stationPad;
   const z = at.z ?? 0;
   const box = { x: at.x - s / 2, y: at.y - s / 2, w: s, d: s, z, h: look.height };
-  const working = state === "active";
+  const working = state === "active" && !planned;
+  const quiet = settled && state === "succeeded";
   const r = 13;
-  const p = clamp01(progress);
-  const arcEnd = { x: at.x + Math.sin(p * Math.PI * 2) * r, y: at.y - Math.cos(p * Math.PI * 2) * r };
+  const f = fraction && fraction.of > 0 ? clamp01(fraction.done / fraction.of) : null;
+  const arcEnd = f !== null ? { x: at.x + Math.sin(f * Math.PI * 2) * r, y: at.y - Math.cos(f * Math.PI * 2) * r } : null;
   const labelPt = project({ x: at.x + s / 2, y: at.y + s / 2, z });
+  const top: FactoryColor = planned || state === "idle" || quiet ? "machine-top" : st.soft;
+  const edge: FactoryColor = planned || state === "idle" || quiet ? "plate-edge" : st.ink;
+  const ticks = working && elapsed !== undefined ? elapsedTicks(elapsed) : 0;
   return (
     <g role="img" aria-label={name} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
-      <Prism
-        box={box}
-        top={state === "idle" ? "machine-top" : st.soft}
-        weight={state === "failed" || state === "blocked" ? 1.6 : 1}
-        edge={state === "idle" ? "plate-edge" : st.ink}
-        dash={state === "idle" ? undefined : undefined}
-      >
+      <Prism box={box} top={top} weight={!quiet && (state === "failed" || state === "blocked") ? 1.6 : 1} edge={edge} dash={planned ? "3 2.5" : undefined} hatch={planned ? "none" : "shade"} shadow={!planned}>
         {/* Inscribed rim, dashed while unsettled. */}
         <rect
           aria-hidden="true"
@@ -106,28 +131,39 @@ export function StationMachine({ kind, state, progress = 0, round: judging, labe
           y={box.y + 3.5}
           width={s - 7}
           height={s - 7}
-          style={{ fill: "none", stroke: state === "idle" ? fc("plate-edge") : ink, strokeWidth: 0.8 * planeStroke, strokeDasharray: st.dash }}
+          style={{ fill: "none", stroke: edge === "plate-edge" ? fc("plate-edge") : ink, strokeWidth: 0.8 * planeStroke, strokeDasharray: planned ? "2 2" : quiet ? undefined : st.dash }}
         />
         <g transform={`translate(${at.x} ${at.y}) rotate(-45) translate(${-at.x} ${-at.y})`}>
           {/* Symbols are rotated -45 degrees in plan so they read upright on the top face. */}
-          <StationSymbol kind={kind} x={at.x} y={at.y} size={lod === "far" ? 22 : 18} color={state === "idle" ? fc("ink-soft") : fc("ink")} strokeWidth={1.4 * planeStroke} />
+          <StationSymbol kind={kind} x={at.x} y={at.y} size={lod === "far" ? 22 : 18} color={state === "idle" || planned ? fc("ink-soft") : fc("ink")} strokeWidth={1.4 * planeStroke} />
         </g>
         {working ? (
           <g aria-hidden="true">
-            <circle cx={at.x} cy={at.y} r={r} style={{ fill: "none", stroke: fc("live"), strokeOpacity: 0.28, strokeWidth: 2 * planeStroke }} />
-            {p > 0.001 ? (
-              p >= 0.999 ? (
-                <circle cx={at.x} cy={at.y} r={r} style={{ fill: "none", stroke: fc("live"), strokeWidth: 2 * planeStroke }} />
-              ) : (
-                <path
-                  d={`M${at.x} ${at.y - r}A${r} ${r} 0 ${p > 0.5 ? 1 : 0} 1 ${round(arcEnd.x)} ${round(arcEnd.y)}`}
-                  style={{ fill: "none", stroke: fc("live"), strokeWidth: 2 * planeStroke, strokeLinecap: "round" }}
-                />
-              )
+            {/* Working: a live ring, and one tick per minute it has run. Never a fill. */}
+            <circle cx={at.x} cy={at.y} r={r} style={{ fill: "none", stroke: fc("live"), strokeOpacity: f === null ? 0.85 : 0.3, strokeWidth: (f === null ? 1.4 : 2) * planeStroke }} />
+            {ticks > 0 ? (
+              <g transform={`translate(${at.x} ${at.y})`}>
+                <ElapsedTicks r={r + 1.5} count={ticks} color={fc("live")} length={3} strokeWidth={1.2 * planeStroke} />
+              </g>
+            ) : null}
+          </g>
+        ) : null}
+        {f !== null && !planned ? (
+          <g aria-hidden="true">
+            {/* A measured fraction: the only thing that fills the dial. */}
+            {f >= 0.999 ? (
+              <circle cx={at.x} cy={at.y} r={r} style={{ fill: "none", stroke: ink, strokeWidth: 2 * planeStroke }} />
+            ) : f > 0.001 && arcEnd ? (
+              <path d={`M${at.x} ${at.y - r}A${r} ${r} 0 ${f > 0.5 ? 1 : 0} 1 ${round(arcEnd.x)} ${round(arcEnd.y)}`} style={{ fill: "none", stroke: ink, strokeWidth: 2 * planeStroke, strokeLinecap: "round" }} />
             ) : null}
           </g>
         ) : null}
       </Prism>
+      {quiet ? (
+        <g transform={`translate(${round(project({ x: box.x + 6, y: box.y + 6, z: z + look.height }).x)} ${round(project({ x: box.x + 6, y: box.y + 6, z: z + look.height }).y)})`}>
+          <StateMark state="succeeded" r={3.4} />
+        </g>
+      ) : null}
       {nameplate && lod !== "far" && look.height >= 10 ? (
         <g transform={uprightTransform({ x: box.x, y: box.y + s, z }, look.height)} aria-hidden="true">
           <text x={5} y={look.height / 2 + Math.min(7, look.height * 0.5) * 0.36} style={{ fill: "var(--mach-ink-muted)", fontSize: Math.min(7, look.height * 0.5), fontWeight: 650, letterSpacing: "0.04em" }}>
@@ -138,8 +174,10 @@ export function StationMachine({ kind, state, progress = 0, round: judging, labe
       {labelOn(lod, showLabel) ? (
         <g transform={`translate(${round(labelPt.x + 6)} ${round(labelPt.y + 4)})`}>
           <text style={{ fill: "var(--mach-ink)", fontSize: 11, fontWeight: 600 }}>{label ?? look.label}</text>
-          <text y={12} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }}>
-            {st.label}
+          <text y={12} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }} className="tabular">
+            {planned ? "Not reached yet" : st.label}
+            {working && elapsed !== undefined ? ` · ${formatElapsed(elapsed)}` : ""}
+            {fw ? ` · ${fw}` : ""}
             {judging && judging > 1 ? ` · round ${judging} of 3` : ""}
           </text>
         </g>
@@ -149,36 +187,86 @@ export function StationMachine({ kind, state, progress = 0, round: judging, labe
 }
 
 /** The Blueprint's station: a process bubble (after the instrument bubble of a P&ID). */
-function ProcessSymbol({ kind, state, progress = 0, round: judging, at, label, showLabel, dimmed }: { kind: StationKind; state: FactoryState; progress?: number; round?: number; at: Vec3; label: string; showLabel: boolean; dimmed?: boolean }) {
+function ProcessSymbol({
+  kind,
+  state,
+  elapsed,
+  fraction,
+  round: judging,
+  at,
+  label,
+  name,
+  showLabel,
+  dimmed,
+  settled,
+  planned,
+}: {
+  kind: StationKind;
+  state: FactoryState;
+  elapsed?: number;
+  fraction?: Fraction;
+  round?: number;
+  at: Vec3;
+  label: string;
+  name: string;
+  showLabel: boolean;
+  dimmed?: boolean;
+  settled?: boolean;
+  planned?: boolean;
+}) {
   const st = factoryStates[state];
   const ink = fc(st.ink);
   const r = 15;
-  const p = clamp01(progress);
-  const a = p * Math.PI * 2;
+  const quiet = settled && state === "succeeded";
+  const plain = planned || state === "idle" || quiet;
+  const f = fraction && fraction.of > 0 ? clamp01(fraction.done / fraction.of) : null;
+  const a = (f ?? 0) * Math.PI * 2;
+  const working = state === "active" && !planned;
   return (
-    <g role="img" aria-label={`${label}: ${st.label}${judging && judging > 1 ? `, round ${judging} of 3` : ""}`} transform={`translate(${round(at.x)} ${round(at.y)})`} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
-      <circle r={r} style={{ fill: state === "idle" ? fc("plate-top") : fc(st.soft), stroke: state === "idle" ? fc("ink-soft") : ink, strokeWidth: 1.25 * st.weight, strokeDasharray: st.dash }} />
+    <g role="img" aria-label={name} transform={`translate(${round(at.x)} ${round(at.y)})`} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
+      <circle
+        r={r}
+        style={{
+          fill: planned ? fc("ground") : plain ? fc("plate-top") : fc(st.soft),
+          stroke: planned ? fc("ink-soft") : plain ? (quiet ? fc("plate-edge") : fc("ink-soft")) : ink,
+          strokeWidth: planned ? 1 : 1.25 * st.weight,
+          strokeDasharray: planned ? "3 2.5" : quiet ? undefined : st.dash,
+        }}
+      />
       {/* Horizontal bar: the P&ID mark for a station on the line, as opposed to a field instrument. */}
-      <line x1={-r} y1={0} x2={r} y2={0} aria-hidden="true" style={{ stroke: state === "idle" ? fc("plate-edge") : ink, strokeWidth: 0.6, opacity: 0.6 }} />
-      <StationSymbol kind={kind} size={17} color={state === "idle" ? fc("ink-soft") : fc("ink")} strokeWidth={1.35} />
-      {state === "active" && p > 0.001 ? (
+      <line x1={-r} y1={0} x2={r} y2={0} aria-hidden="true" style={{ stroke: plain ? fc("plate-edge") : ink, strokeWidth: 0.6, opacity: 0.6 }} />
+      <StationSymbol kind={kind} size={17} color={state === "idle" || planned ? fc("ink-soft") : fc("ink")} strokeWidth={1.35} />
+      {working ? (
+        <g aria-hidden="true">
+          <circle r={r + 3.5} style={{ fill: "none", stroke: fc("live"), strokeWidth: 1.2, strokeOpacity: f === null ? 0.85 : 0.3 }} />
+          {elapsed !== undefined ? <ElapsedTicks r={r + 4.5} count={elapsedTicks(elapsed)} color={fc("live")} length={2.6} /> : null}
+        </g>
+      ) : null}
+      {f !== null && !planned && f > 0.001 ? (
         <path
           aria-hidden="true"
-          d={p >= 0.999 ? `M0 ${-r - 3.5}A${r + 3.5} ${r + 3.5} 0 1 1 -0.01 ${-r - 3.5}` : `M0 ${-r - 3.5}A${r + 3.5} ${r + 3.5} 0 ${p > 0.5 ? 1 : 0} 1 ${round(Math.sin(a) * (r + 3.5))} ${round(-Math.cos(a) * (r + 3.5))}`}
-          style={{ fill: "none", stroke: fc("live"), strokeWidth: 2, strokeLinecap: "round" }}
+          d={f >= 0.999 ? `M0 ${-r - 3.5}A${r + 3.5} ${r + 3.5} 0 1 1 -0.01 ${-r - 3.5}` : `M0 ${-r - 3.5}A${r + 3.5} ${r + 3.5} 0 ${f > 0.5 ? 1 : 0} 1 ${round(Math.sin(a) * (r + 3.5))} ${round(-Math.cos(a) * (r + 3.5))}`}
+          style={{ fill: "none", stroke: ink, strokeWidth: 2, strokeLinecap: "round" }}
         />
       ) : null}
-      <g transform={`translate(${r * 0.78} ${-r * 0.78})`}>
-        <StateMark state={state} r={4.6} progress={p} />
-      </g>
+      {!planned ? (
+        <g transform={`translate(${r * 0.78} ${-r * 0.78})`}>
+          <StateMark state={state} r={quiet ? 3.6 : 4.6} />
+        </g>
+      ) : null}
       {judging && judging > 1 ? (
         <text x={-r - 2} y={-r + 2} textAnchor="end" style={{ fill: fc("fail"), fontSize: 9.5, fontWeight: 700 }} className="tabular">
           ×{judging}
         </text>
       ) : null}
       {showLabel ? (
-        <text y={r + 14} textAnchor="middle" style={{ fill: "var(--mach-ink)", fontSize: 10.5, fontWeight: 600 }}>
+        <text y={r + 14} textAnchor="middle" style={{ fill: planned ? "var(--mach-ink-subtle)" : "var(--mach-ink)", fontSize: 10.5, fontWeight: 600 }}>
           {label}
+        </text>
+      ) : null}
+      {showLabel && (working || f !== null) ? (
+        <text y={r + 26} textAnchor="middle" className="tabular" style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }}>
+          {[working && elapsed !== undefined ? formatElapsed(elapsed) : "", fractionWords(fraction)].filter(Boolean).join(" · ")}
         </text>
       ) : null}
     </g>
@@ -195,8 +283,13 @@ export interface AgentMarkerProps extends Common {
   tier: ModelTier;
   seat?: ReviewerSeat;
   state: FactoryState;
-  /** Progress of the agent's work, 0..1: the arc around its head. */
+  /**
+   * Deprecated: kept for compatibility and no longer drawn. An agent's run has no known end; pass
+   * `elapsed` and the head shows one tick per minute it has worked.
+   */
   progress?: number;
+  /** How long the agent has been working, in factory ms. */
+  elapsed?: number;
   /** 0..1 arrival (agentArrive). 1 means present. */
   arrive?: number;
   /** 0..1 departure (agentLeave). 0 means present. */
@@ -210,27 +303,30 @@ export interface AgentMarkerProps extends Common {
 /**
  * An agent as a standing figure: a floor disc carrying its role emblem, a post whose height is its
  * model tier, and a head whose shape is its tier (Fable diamond, Opus square, Sonnet circle, Haiku
- * triangle). While working, an arc around the head fills with progress. A reviewer carries its seat
+ * triangle). While working, its head is filled with the live ink and ringed, with one tick per minute it
+ * has worked (never a fill toward an unknown end). A reviewer carries its seat
  * letter. Arrival grows the post up from the disc; departure sinks it back.
  */
-export function AgentMarker({ agentRole: role, tier, seat, state, progress = 0, arrive = 1, leave = 0, label, labelPosition = "beside", at, variant = "atlas", lod = "mid", dimmed, showLabel }: AgentMarkerProps) {
+export function AgentMarker({ agentRole: role, tier, seat, state, elapsed, arrive = 1, leave = 0, label, labelPosition = "beside", at, variant = "atlas", lod = "mid", dimmed, showLabel }: AgentMarkerProps) {
   const tierLook = modelTiers[tier];
   const st = factoryStates[state];
   const roleLabel = role === "reviewer" && seat ? `${reviewerSeats[seat].label} reviewer` : agentRoles[role].label;
-  const name = `${label ?? roleLabel}, ${tierLook.label}: ${st.label}`;
+  const name = `${label ?? roleLabel}, ${tierLook.label}: ${st.label}${state === "active" && elapsed !== undefined ? `, for ${formatElapsed(elapsed)}` : ""}`;
   const ink = fc(st.ink);
   const present = clamp01(arrive) * (1 - clamp01(leave));
-  const p = clamp01(progress);
+  const ticks = state === "active" && elapsed !== undefined ? elapsedTicks(elapsed) : 0;
   const headFill = state === "active" ? fc("live") : state === "idle" ? fc("plate-top") : fc(st.soft);
   const headStroke = state === "idle" ? fc("ink") : ink;
 
   if (variant === "blueprint") {
-    const a = p * Math.PI * 2;
     return (
       <g role="img" aria-label={name} transform={`translate(${round(at.x)} ${round(at.y)})`} style={{ opacity: (dimmed ? dimmedOpacity : 1) * present }}>
         <AgentHead tier={tier} fill={headFill} stroke={headStroke} />
-        {state === "active" && p > 0.001 && p < 0.999 ? (
-          <path aria-hidden="true" d={`M0 -8.5A8.5 8.5 0 ${p > 0.5 ? 1 : 0} 1 ${round(Math.sin(a) * 8.5)} ${round(-Math.cos(a) * 8.5)}`} style={{ fill: "none", stroke: fc("live"), strokeWidth: 1.4, strokeLinecap: "round" }} />
+        {state === "active" ? (
+          <g aria-hidden="true">
+            <circle r={8.5} style={{ fill: "none", stroke: fc("live"), strokeWidth: 1, strokeOpacity: 0.6 }} />
+            <ElapsedTicks r={8.5} count={ticks} color={fc("live")} length={2.2} strokeWidth={1} />
+          </g>
         ) : null}
         {seat ? (
           <text x={0} y={-11} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontSize: 8.5, fontWeight: 700 }} aria-hidden="true">
@@ -251,7 +347,6 @@ export function AgentMarker({ agentRole: role, tier, seat, state, progress = 0, 
   const base = project({ ...at, z });
   const top = project({ ...at, z: z + h });
   const rr = 8.5;
-  const a = p * Math.PI * 2;
   return (
     <g role="img" aria-label={name} style={{ opacity: (dimmed ? dimmedOpacity : 1) * Math.min(1, present * 1.6) }}>
       {/* Floor disc with the role emblem, in the plane. */}
@@ -266,15 +361,11 @@ export function AgentMarker({ agentRole: role, tier, seat, state, progress = 0, 
       <line x1={base.x} y1={base.y} x2={top.x} y2={top.y} aria-hidden="true" style={{ stroke: headStroke, strokeWidth: 1.6, strokeLinecap: "round" }} />
       <g transform={`translate(${round(top.x)} ${round(top.y - 4)})`}>
         <AgentHead tier={tier} fill={headFill} stroke={headStroke} />
-        {state === "active" && p > 0.001 ? (
-          p >= 0.999 ? (
-            <circle r={rr} aria-hidden="true" style={{ fill: "none", stroke: fc("live"), strokeWidth: 1.4 }} />
-          ) : (
-            <>
-              <circle r={rr} aria-hidden="true" style={{ fill: "none", stroke: fc("live"), strokeOpacity: 0.25, strokeWidth: 1.4 }} />
-              <path aria-hidden="true" d={`M0 ${-rr}A${rr} ${rr} 0 ${p > 0.5 ? 1 : 0} 1 ${round(Math.sin(a) * rr)} ${round(-Math.cos(a) * rr)}`} style={{ fill: "none", stroke: fc("live"), strokeWidth: 1.6, strokeLinecap: "round" }} />
-            </>
-          )
+        {state === "active" ? (
+          <g aria-hidden="true">
+            <circle r={rr} style={{ fill: "none", stroke: fc("live"), strokeOpacity: 0.6, strokeWidth: 1.1 }} />
+            <ElapsedTicks r={rr} count={ticks} color={fc("live")} length={2.4} strokeWidth={1.1} />
+          </g>
         ) : null}
         {state !== "active" && state !== "idle" ? (
           <g transform="translate(7 -7)">
@@ -333,6 +424,8 @@ export interface GateGlyphProps extends Common {
    * or a ticket ID). Shown at mid and near zoom; use instead of, or with, the upright label.
    */
   floorLabel?: string;
+  /** Not reached yet in this run (Blueprint "unbuilt"): dashed outline, no fill, no bar, no lamps. */
+  planned?: boolean;
 }
 
 const armAngle: Record<GatePosition, number> = { open: 82, closed: 0, refusing: 0, waiting: 0 };
@@ -343,13 +436,28 @@ const armAngle: Record<GatePosition, number> = { open: 82, closed: 0, refusing: 
  * the span; refusing drops it shut with one damped overshoot and lights the plaque in the fail ink;
  * waiting holds it shut with the plaque in the human ink. The state word is in the accessible name.
  */
-export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps, axis = "y", floorLabel, at, variant = "atlas", lod = "mid", dimmed, showLabel }: GateGlyphProps) {
+export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps, axis = "y", floorLabel, planned, at, variant = "atlas", lod = "mid", dimmed, showLabel }: GateGlyphProps) {
   const g = gates[kind];
   const pos = gatePositions[position];
   const st = factoryStates[pos.state];
   const ink = position === "closed" ? fc("ink") : fc(st.ink);
-  const name = `${g.label}: ${pos.label}`;
+  const name = `${g.label}: ${planned ? "not reached yet" : pos.label}`;
   const p = clamp01(progress);
+
+  if (variant === "blueprint" && planned) {
+    const r = 14;
+    return (
+      <g role="img" aria-label={name} transform={`translate(${round(at.x)} ${round(at.y)})`} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
+        <path d={`M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z`} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 1, strokeDasharray: "3 2.5" }} />
+        <StationSymbol kind={g.symbol} size={13} color={fc("ink-soft")} strokeWidth={1.2} />
+        {showLabel ?? true ? (
+          <text y={r + 17} textAnchor="middle" style={{ fill: "var(--mach-ink-subtle)", fontSize: 10.5, fontWeight: 600 }}>
+            {g.label}
+          </text>
+        ) : null}
+      </g>
+    );
+  }
 
   if (variant === "blueprint") {
     const r = 14;
@@ -485,6 +593,7 @@ export function ArtifactCard({ kind, state = "succeeded", progress = 1, file, at
         <path d={artifactCardPath} style={{ fill, stroke, strokeWidth: 1.1, strokeLinejoin: "round" }} />
         <path d={artifactFoldPath} aria-hidden="true" style={{ fill: "none", stroke, strokeWidth: 0.9 }} />
         <ArtifactMark kind={kind} color={state === "failed" ? fc("fail") : fc("ink")} />
+        {artifactProvenance[kind] ? <ProvenanceBadge from={artifactProvenance[kind]!} color={state === "failed" ? fc("fail") : fc("ink")} /> : null}
         {showLabel ?? lod === "near" ? (
           <text x={w + 5} y={h / 2 + 3.5} style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 9.5 }} className="notranslate">
             {file ?? look.file}
@@ -508,6 +617,7 @@ export function ArtifactCard({ kind, state = "succeeded", progress = 1, file, at
           <path d={artifactFoldPath} aria-hidden="true" style={{ fill: "none", stroke, strokeWidth: 0.8 }} />
           <g style={{ opacity: segment(p, 0.4, 1) }}>
             <ArtifactMark kind={kind} color={state === "failed" ? fc("fail") : fc("ink")} />
+            {artifactProvenance[kind] ? <ProvenanceBadge from={artifactProvenance[kind]!} color={state === "failed" ? fc("fail") : fc("ink")} /> : null}
           </g>
         </g>
       </g>

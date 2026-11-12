@@ -56,6 +56,8 @@ export interface RoutePathProps {
   lod?: Lod;
   dimmed?: boolean;
   label?: string;
+  /** Not travelled yet in this run (Blueprint "unbuilt"): a dashed hairline in the route ink, whatever the state. */
+  planned?: boolean;
 }
 
 /**
@@ -63,7 +65,7 @@ export interface RoutePathProps {
  * 12 at near zoom, chevrons every 48 pointing the way. While work travels it the rails take the live
  * ink and weight. In the Blueprint it is one precise line with rounded corners and an arrowhead.
  */
-export function RoutePath({ points, variant = "atlas", kind = "route", state = "idle", progress = 1, chevrons, arrow, lod = "mid", dimmed, label }: RoutePathProps) {
+export function RoutePath({ points, variant = "atlas", kind = "route", state = "idle", progress = 1, chevrons, arrow, lod = "mid", dimmed, label, planned }: RoutePathProps) {
   const ids = useFactoryIds();
   const p = clamp01(progress);
   if (points.length < 2 || p <= 0) return null;
@@ -79,6 +81,18 @@ export function RoutePath({ points, variant = "atlas", kind = "route", state = "
     return (
       <g {...groupProps} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
         <path d={roundedPath(screen(drawn, variant), 6)} style={{ ...style, strokeWidth: 1.4, strokeDasharray: "0.1 4" }} markerEnd={arrow ? `url(#${arrowFor(ids, live ? "live" : "route")})` : undefined} />
+      </g>
+    );
+  }
+
+  if (planned) {
+    return (
+      <g {...groupProps} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
+        <path
+          d={roundedPath(screen(drawn, variant), variant === "blueprint" ? 8 : 5)}
+          style={{ ...style, stroke: fc("route"), strokeWidth: 1, strokeDasharray: "3 3" }}
+          markerEnd={variant === "blueprint" && (arrow ?? true) ? `url(#${ids.arrow})` : undefined}
+        />
       </g>
     );
   }
@@ -272,6 +286,12 @@ export interface DependencyLinkProps {
   dimmed?: boolean;
   /** Highlighted: drawn at full weight while the rest dims. */
   highlighted?: boolean;
+  /**
+   * Blueprint only: route the link through a vertical channel at this x (the dependency gutter) instead
+   * of an S-curve: across to the channel, along it, and across to the dependent, with the padlock at
+   * the channel's middle.
+   */
+  channelX?: number;
 }
 
 /** A small padlock, shackle opening by `open` 0..1. Centred on its body. */
@@ -292,7 +312,7 @@ function Lock({ open, color, x, y }: { open: number; color: string; x: number; y
  * dashed, waiting ink, lock shut. Satisfied: the unlock draws a solid passed line over the dashes and
  * opens the shackle; afterwards the link recedes to a fine solid line.
  */
-export function DependencyLink({ from, to, state, progress = 1, variant = "atlas", lift = 46, dimmed, highlighted }: DependencyLinkProps) {
+export function DependencyLink({ from, to, state, progress = 1, variant = "atlas", lift = 46, dimmed, highlighted, channelX }: DependencyLinkProps) {
   const ids = useFactoryIds();
   const u = state === "satisfied" ? clamp01(progress) : 0;
   const pts: Vec2[] =
@@ -307,8 +327,9 @@ export function DependencyLink({ from, to, state, progress = 1, variant = "atlas
           }
           return out;
         })();
-  const d = roundedPath(pts, 0);
-  const mid = pts[12]!;
+  const channel = variant === "blueprint" && channelX !== undefined;
+  const d = channel ? roundedPath([from, { x: channelX!, y: from.y }, { x: channelX!, y: to.y }, to], 6) : roundedPath(pts, 0);
+  const mid = channel ? { x: channelX!, y: (from.y + to.y) / 2 } : pts[12]!;
   const weight = highlighted ? 1.8 : 1.3;
   return (
     <g role="img" aria-label={state === "blocking" ? "Dependency: blocking" : "Dependency: satisfied"} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>

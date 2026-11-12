@@ -179,7 +179,56 @@ const artifactPaths: Record<ArtifactKind, ReactNode> = {
   archive: <path d="M2.6 5.6h8.8v2.6H2.6zM3.4 8.2v6.6h7.2V8.2M5.8 10.8h2.4" />,
   // Ledger lines with bullets: one line per finished ticket.
   "run-record": <path d="M3 5.6h.2M5 5.6h6.2M3 8.4h.2M5 8.4h6.2M3 11.2h.2M5 11.2h6.2M3 14h.2M5 14h4" />,
+  // Pass 3: MACH's own kinds. The base mark says what it is; the corner badge (ArtifactCard) says where from.
+  "findings-copy": <path d="M3 5.4h5.4M3 8.2h4.4M3 11h5.4M3 13.8h3.6M10.6 5.4v5.2M10.6 13v.8" />,
+  "verification-results": <path d="M2.8 6.2l1.2 1.2 2-2.2M2.8 10.2l1.2 1.2 2-2.2M2.8 14.4l2.6-2.6M5.4 14.4l-2.6-2.6M8 6.4h3.4M8 10.4h3.4M8 13.4h3.4" />,
+  "verification-summary": (
+    <>
+      <circle cx="7" cy="10.2" r="3.8" />
+      <path d="M5.3 10.3l1.2 1.2 2.3-2.5M3 5h4" />
+    </>
+  ),
+  "verification-findings": <path d="M3 5.4h5.4M3 8.2h4.4M3 11h5.4M3 13.8h3.6M10.6 5.4v5.2M10.6 13v.8" />,
+  "review-diff": <path d="M3 6.4h3.4M4.7 4.7v3.4M3 11.8h3.4M8.6 4.6v10.2M10.2 6h1.2M10.2 9h1.2M10.2 12h1.2" />,
+  "review-findings": <path d="M3 5.4h5.4M3 8.2h4.4M3 11h5.4M3 13.8h3.6M10.6 5.4v5.2M10.6 13v.8" />,
 };
+
+/** The provenance badge drawn in an artifact's folded corner (card coordinates), 3.6 across. */
+export function ProvenanceBadge({ from, color }: { from: "verification" | "review" | "return"; color: string }) {
+  const s = { stroke: color, fill: "none", strokeWidth: 0.7, strokeLinecap: "round" as const };
+  if (from === "verification")
+    return (
+      <g aria-hidden="true" style={s}>
+        <circle cx="12" cy="2" r="1.3" />
+        <path d="M12 0.2v0.6M12 3.2v0.6M10.2 2h0.6M13.2 2h0.6" />
+      </g>
+    );
+  if (from === "review")
+    return (
+      <g aria-hidden="true" style={{ fill: color }}>
+        <circle cx="12" cy="1" r="0.6" />
+        <circle cx="11.1" cy="2.7" r="0.6" />
+        <circle cx="12.9" cy="2.7" r="0.6" />
+      </g>
+    );
+  return <path aria-hidden="true" d="M13.4 1.2H11l1-1M11 1.2l1 1" style={s} />;
+}
+
+/**
+ * Elapsed ticks: one short radial tick per whole minute a thing has been working, around a circle of
+ * radius `r` centred at (0, 0), clockwise from 12 o'clock, at most 12. A count of time spent, never
+ * a fraction of a total.
+ */
+export function ElapsedTicks({ r, count, color, length = 2.6, strokeWidth = 1.1 }: { r: number; count: number; color: string; length?: number; strokeWidth?: number }) {
+  const n = Math.max(0, Math.min(12, Math.floor(count)));
+  const d = Array.from({ length: n }, (_, i) => {
+    const a = (i / 12) * Math.PI * 2;
+    const sx = Math.sin(a);
+    const cy = -Math.cos(a);
+    return `M${(sx * r).toFixed(2)} ${(cy * r).toFixed(2)}L${(sx * (r + length)).toFixed(2)} ${(cy * (r + length)).toFixed(2)}`;
+  }).join("");
+  return n > 0 ? <path aria-hidden="true" d={d} style={{ stroke: color, strokeWidth, strokeLinecap: "round" }} /> : null;
+}
 
 /** An artifact's mark only (without its card), in card coordinates. */
 export function ArtifactMark({ kind, color = fc("ink") }: { kind: ArtifactKind; color?: string }) {
@@ -264,6 +313,24 @@ export function RoleEmblem({ role, color }: { role: AgentRole; color: string }) 
           <path d="M0 0V-2M0 0L1.4 1" />
         </g>
       );
+    // The belt's own workers (pass 3).
+    case "clerk":
+      return <path aria-hidden="true" d="M-2.2 -2.6h4.4v5.2h-4.4zM-1 -2.6v-0.6h2v0.6M-1.2 0h2.4" style={s} />;
+    case "intent":
+      return <path aria-hidden="true" d="M-0.4 0.4V-2.8A2.8 2.8 0 1 0 2.8 0.4z" style={{ ...s, fill: color }} />;
+    case "audit":
+      return <path aria-hidden="true" d="M-2.8 1.6a2.8 2.8 0 0 1 5.6 0M0 1.6l1.4-1.8" style={s} />;
+    case "merge":
+      return <path aria-hidden="true" d="M-2 -2.6v1c0 1.4 2 1.6 2 3v1.2M2 -2.6v1c0 1.4-2 1.6-2 3" style={s} />;
+    case "cleanup":
+      return <path aria-hidden="true" d="M-2.6 -2.4h5.2v1.6h-5.2zM-2.1 -0.8v3h4.2v-3" style={s} />;
+    case "observe":
+      return (
+        <g aria-hidden="true" style={s}>
+          <path d="M-3 0s1.2-2 3-2 3 2 3 2-1.2 2-3 2-3-2-3-2z" />
+          <circle r="0.8" style={{ fill: color }} />
+        </g>
+      );
   }
 }
 
@@ -274,10 +341,21 @@ export function StateMark({ state, r = 6, progress, mark, surface = fc("plate-to
   const shape = mark ?? look.mark;
   const sw = Math.max(1.1, r * 0.22);
   switch (shape) {
+    case "ring-working": {
+      // A ring with four spokes: a wheel that is turning. Static; says "working", not how far.
+      const a = r * 0.22;
+      const b = r * 0.62;
+      return (
+        <g aria-hidden="true">
+          <circle r={r - sw / 2} style={{ fill: surface, stroke: ink, strokeWidth: sw }} />
+          <path d={`M0 ${-a}V${-b}M0 ${a}V${b}M${-a} 0H${-b}M${a} 0H${b}`} style={{ stroke: ink, strokeWidth: sw * 0.9, strokeLinecap: "round" }} />
+        </g>
+      );
+    }
     case "ring-dashed":
       return <circle aria-hidden="true" r={r - sw / 2} style={{ fill: surface, stroke: ink, strokeWidth: sw, strokeDasharray: `${r * 0.42} ${r * 0.34}` }} />;
     case "ring-sector": {
-      const p = Math.min(1, Math.max(0, progress ?? 0.5));
+      const p = Math.min(1, Math.max(0, progress ?? 0));
       const a = p * Math.PI * 2;
       const rr = r - sw * 1.4;
       const large = p > 0.5 ? 1 : 0;

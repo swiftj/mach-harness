@@ -80,11 +80,8 @@ export function AtlasStudy({ t }: { t: number }) {
   // The bridge carries the route across the gap between the two plates, at plate height.
   const bridge = { x: 286, y: a.door.y - 10, w: chamber.x - 286 + 4, d: 20, z: 0, h: z };
   const toChamber: Vec3[] = [a.door, { x: chamber.x + 40, y: a.door.y, z }];
-  const seats: Vec3[] = [
-    { x: chamber.x + 112, y: a.door.y - 52, z: cz },
-    { x: chamber.x + 126, y: a.door.y, z: cz },
-    { x: chamber.x + 112, y: a.door.y + 52, z: cz },
-  ];
+  // Seats in a row on one screen line (spec b.2).
+  const seats: Vec3[] = [-1, 0, 1].map((k) => ({ x: chamber.x + 40 + 96 + k * 30, y: a.door.y - k * 30, z: cz }));
   const consensusAt = { x: chamber.x + 192, y: a.door.y, z: cz };
   const packet = s.travel > 0 && s.travel < 1 ? pointAlong(toChamber, s.travel) : null;
   const inner = s.build < 1 ? pointAlong([a.pads.build, a.pads.verify], 0) : s.verify < 1 ? pointAlong([a.pads.build, a.pads.verify], segment(s.verify, 0, 0.3)) : null;
@@ -122,18 +119,18 @@ export function AtlasStudy({ t }: { t: number }) {
           ))}
         </RegionPlate>
         <Prism box={bridge} hatch="lit" />
-        <CellPlate origin={cell} ticket="TCK-112" slice="SLICE-007" stage={s.stage} lit={t < 0.6} progress={s.build < 1 ? s.build : s.verify} lod="near">
+        <CellPlate origin={cell} ticket="TCK-112" slice="SLICE-007" stage={s.stage} lit={t < 0.6} elapsed={(s.build < 1 ? s.build : s.verify) * 12 * 60000} lod="near">
           {/* Machines on the rail, back to front. */}
           <StationMachine kind="plan" label="Groom and plan" state="succeeded" at={a.pads.intent} />
-          <StationMachine kind="build" state={s.buildState} progress={s.build} round={2} at={a.pads.build} />
-          <StationMachine kind="verify" state={s.verifyState} progress={s.verify} round={2} at={a.pads.verify} />
+          <StationMachine kind="build" state={s.buildState} elapsed={(s.build) * 12 * 60000} round={2} at={a.pads.build} />
+          <StationMachine kind="verify" state={s.verifyState} elapsed={(s.verify) * 12 * 60000} round={2} at={a.pads.verify} />
           {shelf.map(([k, p], i) => (p > 0 ? <ArtifactCard key={k} kind={k} progress={p} at={a.shelf(i)} /> : null))}
           {ticks.map(([f, at, st], i) =>
             t >= at ? <ToolTick key={i} family={f} state={st ?? (i === ticks.length - 1 && t < 0.6 ? "active" : "succeeded")} progress={segment(t, at, at + 0.02)} at={a.ticker(i / (ticks.length - 1))} /> : null,
           )}
           <AgentMarker agentRole="contract-engineer" tier="opus" state="succeeded" at={a.agentSpot("intent")} />
-          <AgentMarker agentRole="builder" tier="sonnet" state={s.buildState === "active" ? "active" : "idle"} progress={s.build} at={a.agentSpot("build")} leave={segment(t, 0.36, 0.42)} />
-          <AgentMarker agentRole="verifier" tier="sonnet" state={s.verifyState === "active" ? "active" : s.verifyState === "succeeded" ? "succeeded" : "idle"} progress={s.verify} arrive={segment(t, 0.34, 0.4)} at={a.agentSpot("verify")} />
+          <AgentMarker agentRole="builder" tier="sonnet" state={s.buildState === "active" ? "active" : "idle"} elapsed={(s.build) * 12 * 60000} at={a.agentSpot("build")} leave={segment(t, 0.36, 0.42)} />
+          <AgentMarker agentRole="verifier" tier="sonnet" state={s.verifyState === "active" ? "active" : s.verifyState === "succeeded" ? "succeeded" : "idle"} elapsed={(s.verify) * 12 * 60000} arrive={segment(t, 0.34, 0.4)} at={a.agentSpot("verify")} />
           {inner ? <Packet at={inner.point} angle={inner.angle} ticket="TCK-112" /> : null}
         </CellPlate>
         <RetryLoop from={{ ...a.pads.verify, z: z + 20 }} to={{ ...a.pads.build, z: z + 24 }} round={2} progress={1} lift={30} lod="near" />
@@ -143,7 +140,7 @@ export function AtlasStudy({ t }: { t: number }) {
         <Branches origin={toChamber[toChamber.length - 1]!} targets={seats} mode="fan-out" progress={[s.fan, segment(s.fan, 0.1, 1), segment(s.fan, 0.2, 1)]} states={["active", "active", "active"]} />
         <Branches origin={consensusAt} targets={seats} mode="join" progress={s.votes} states={votes} />
         {(["architecture", "security", "product"] as const).map((seat, i) => (
-          <AgentMarker key={seat} agentRole="reviewer" seat={seat} tier="opus" state={votes[i]!} progress={s.votes} arrive={segment(s.fan, 0.3 + i * 0.15, 0.7 + i * 0.1)} at={{ ...seats[i]!, x: seats[i]!.x + 8 }} />
+          <AgentMarker key={seat} agentRole="reviewer" seat={seat} tier="opus" state={votes[i]!} elapsed={(s.votes) * 12 * 60000} arrive={segment(s.fan, 0.3 + i * 0.15, 0.7 + i * 0.1)} at={{ ...seats[i]!, x: seats[i]!.x + 8 }} />
         ))}
         <GateGlyph kind="consensus" position={s.votes >= 1 ? "open" : "closed"} progress={1} lamps={lamps} at={consensusAt} lod="near" />
         <SelectionBrackets bounds={cellBounds} pad={4} />
@@ -214,8 +211,8 @@ export function BlueprintStudy({ t }: { t: number }) {
               <GateGlyph variant="blueprint" kind="audit" position="open" at={{ x: col.audit, y: Y1 }} />
               <StationMachine variant="blueprint" kind="build" state="succeeded" at={{ x: col.build, y: Y1 }} showLabel={false} />
               <StationMachine variant="blueprint" kind="verify" state="failed" at={{ x: col.verify, y: Y1 }} showLabel={false} />
-              <StationMachine variant="blueprint" kind="build" state={s.buildState} progress={s.build} round={2} at={{ x: col.build, y: Y2 }} />
-              <StationMachine variant="blueprint" kind="verify" state={s.verifyState} progress={s.verify} round={2} at={{ x: col.verify, y: Y2 }} />
+              <StationMachine variant="blueprint" kind="build" state={s.buildState} elapsed={(s.build) * 12 * 60000} round={2} at={{ x: col.build, y: Y2 }} />
+              <StationMachine variant="blueprint" kind="verify" state={s.verifyState} elapsed={(s.verify) * 12 * 60000} round={2} at={{ x: col.verify, y: Y2 }} />
               <GateGlyph variant="blueprint" kind="verification" position={s.gate > 0 ? "open" : "closed"} at={{ x: col.gate, y: Y1 }} showLabel={false} />
               <text x={col.gate} y={Y1 + 31} textAnchor="middle" style={{ fill: "var(--mach-ink)", fontSize: 10.5, fontWeight: 600 }}>
                 Verdict
@@ -243,8 +240,8 @@ export function BlueprintStudy({ t }: { t: number }) {
 
             <BlueprintLane x={24} y={232} width={W - 48} height={50} depth={2} title="Agents" state={t < 0.6 ? "active" : "idle"}>
               <AgentMarker variant="blueprint" agentRole="contract-engineer" tier="opus" state="succeeded" at={{ x: col.plan, y: 257 }} showLabel={false} />
-              <AgentMarker variant="blueprint" agentRole="builder" tier="sonnet" state={s.buildState === "active" ? "active" : "succeeded"} progress={s.build} at={{ x: col.build, y: 257 }} showLabel />
-              <AgentMarker variant="blueprint" agentRole="verifier" tier="sonnet" state={s.verifyState === "active" ? "active" : s.verifyState} progress={s.verify} at={{ x: col.verify, y: 257 }} showLabel />
+              <AgentMarker variant="blueprint" agentRole="builder" tier="sonnet" state={s.buildState === "active" ? "active" : "succeeded"} elapsed={(s.build) * 12 * 60000} at={{ x: col.build, y: 257 }} showLabel />
+              <AgentMarker variant="blueprint" agentRole="verifier" tier="sonnet" state={s.verifyState === "active" ? "active" : s.verifyState} elapsed={(s.verify) * 12 * 60000} at={{ x: col.verify, y: 257 }} showLabel />
             </BlueprintLane>
             <BlueprintLane x={24} y={282} width={W - 48} height={62} depth={3} title="Tool calls" summary={`${ticks.filter(([, at]) => t >= at).length} calls`}>
               <line x1={col.build - 52} y1={308} x2={col.verify + 52} y2={308} aria-hidden="true" style={{ stroke: "var(--mach-factory-grid-major)", strokeDasharray: "2 3" }} />

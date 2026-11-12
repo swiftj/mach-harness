@@ -72,11 +72,8 @@ function origin(i: number) {
 export const plantExtent = { x: -24, y: -24, w: review.x + review.w + 48, d: yardY + 132 + 48 };
 
 export function PlantStudy({ lod = "far", label }: { lod?: Lod; label: string }) {
-  const seats: Vec3[] = [
-    { x: review.x + 110, y: 64, z: Z },
-    { x: review.x + 126, y: 116, z: Z },
-    { x: review.x + 110, y: 168, z: Z },
-  ];
+  // Seats in a row on one screen line (spec b.2): S + k·(30, −30), S = entry + (96, 0).
+  const seats: Vec3[] = [-1, 0, 1].map((k) => ({ x: review.x + 30 + 96 + k * 30, y: 116 - k * 30, z: Z }));
   const chamberEntry = { x: review.x + 30, y: 116, z: Z };
   const riserX = floor.x + W - 12;
   const toReview: Vec3[] = [
@@ -134,11 +131,11 @@ export function PlantStudy({ lod = "far", label }: { lod?: Lod; label: string })
         const a = cellAnatomy(o);
         return (
           <CellPlate key={b.ticket} origin={o} ticket={b.ticket} stage={b.stage} lit={b.lamp > 0} lampIntensity={b.lamp} completion={b.stage === "merged" ? 1 : 0} progress={b.progress} lod={lod} dimmed={b.stage === "waiting-on-dependency"}>
-            <StationMachine kind="plan" state={b.plan} at={a.pads.intent} lod={lod} />
-            <StationMachine kind="build" state={b.build} progress={b.progress} round={b.loop ? 2 : undefined} at={a.pads.build} lod={lod} />
-            <StationMachine kind="verify" state={b.verify} progress={b.progress} at={a.pads.verify} lod={lod} />
-            {b.build === "active" ? <AgentMarker agentRole="builder" tier="sonnet" state="active" progress={b.progress} at={a.agentSpot("build")} lod={lod} /> : null}
-            {b.verify === "active" ? <AgentMarker agentRole="verifier" tier="sonnet" state="active" progress={b.progress} at={a.agentSpot("verify")} lod={lod} /> : null}
+            <StationMachine kind="plan" state={b.plan} at={a.pads.intent} lod={lod} settled={b.stage === "merged"} />
+            <StationMachine kind="build" state={b.build} elapsed={(b.progress) * 12 * 60000} round={b.loop ? 2 : undefined} at={a.pads.build} lod={lod} settled={b.stage === "merged"} />
+            <StationMachine kind="verify" state={b.verify} elapsed={(b.progress) * 12 * 60000} at={a.pads.verify} lod={lod} settled={b.stage === "merged"} />
+            {b.build === "active" ? <AgentMarker agentRole="builder" tier="sonnet" state="active" elapsed={(b.progress) * 12 * 60000} at={a.agentSpot("build")} lod={lod} /> : null}
+            {b.verify === "active" ? <AgentMarker agentRole="verifier" tier="sonnet" state="active" elapsed={(b.progress) * 12 * 60000} at={a.agentSpot("verify")} lod={lod} /> : null}
           </CellPlate>
         );
       })}
@@ -150,7 +147,7 @@ export function PlantStudy({ lod = "far", label }: { lod?: Lod; label: string })
       <DependencyLink from={{ ...cellAnatomy(origin(2)).mast }} to={{ ...a4.mast }} state="blocking" lift={40} />
       <Branches origin={chamberEntry} targets={seats} mode="fan-out" progress={1} states={["active", "active", "active"]} />
       {(["architecture", "security", "product"] as const).map((seat, i) => (
-        <AgentMarker key={seat} agentRole="reviewer" seat={seat} tier="opus" state="active" progress={0.5 + i * 0.15} at={{ ...seats[i]!, x: seats[i]!.x + 8 }} lod={lod} />
+        <AgentMarker key={seat} agentRole="reviewer" seat={seat} tier="opus" state="active" elapsed={(0.5 + i * 0.15) * 12 * 60000} at={{ ...seats[i]!, x: seats[i]!.x + 8 }} lod={lod} />
       ))}
       <GateGlyph kind="consensus" position="closed" lamps={["pass", "pending", "off"]} at={{ x: review.x + 196, y: 116, z: Z }} lod={lod} />
       <GateGlyph kind="human" position="waiting" at={{ x: colX, y: human.y + human.d / 2, z: Z }} axis="x" lod={lod} />

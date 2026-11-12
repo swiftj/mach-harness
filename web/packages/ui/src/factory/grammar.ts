@@ -18,6 +18,7 @@ export type FactoryColor =
   | "plate-rim"
   | "machine-top"
   | "floor"
+  | "done"
   | "hatch"
   | "shadow"
   | "ink"
@@ -51,7 +52,7 @@ export function fc(name: FactoryColor): string {
 export type FactoryState = "idle" | "active" | "succeeded" | "failed" | "waiting" | "human" | "blocked";
 
 /** The shape that carries a state without colour. */
-export type FactoryMarkShape = "ring-dashed" | "ring-sector" | "disc-tick" | "disc-cross" | "ring-hourglass" | "ring-dot" | "octagon-bar" | "double-ring";
+export type FactoryMarkShape = "ring-dashed" | "ring-working" | "ring-sector" | "disc-tick" | "disc-cross" | "ring-hourglass" | "ring-dot" | "octagon-bar" | "double-ring";
 
 export interface FactoryStateLook {
   label: string;
@@ -69,7 +70,9 @@ export interface FactoryStateLook {
 
 export const factoryStates: Record<FactoryState, FactoryStateLook> = {
   idle: { label: "Idle", description: "Nothing is happening here now.", ink: "ink-soft", soft: "plate-top", mark: "ring-dashed", dash: "3 2.5", weight: 1 },
-  active: { label: "Working", description: "Work is in progress here.", ink: "live", soft: "live-soft", mark: "ring-sector", weight: 1.25 },
+  // Working is shown as a state and an elapsed time, never as a fill: nobody knows how long work in flight will take.
+  // `ring-sector` is kept for measured fractions (checks proven of declared, tasks green of planned).
+  active: { label: "Working", description: "Work is in progress here.", ink: "live", soft: "live-soft", mark: "ring-working", weight: 1.25 },
   succeeded: { label: "Passed", description: "Finished and passed.", ink: "pass", soft: "pass-soft", mark: "disc-tick", weight: 1 },
   failed: { label: "Failed", description: "Finished and failed; the evidence says why.", ink: "fail", soft: "fail-soft", mark: "disc-cross", weight: 1.5 },
   waiting: { label: "Waiting", description: "Ready, held back by something else (a dependency, capacity).", ink: "wait", soft: "wait-soft", mark: "ring-hourglass", dash: "5 2.5", weight: 1.25 },
@@ -178,7 +181,7 @@ export const regions: Record<RegionKind, { label: string; description: string }>
 /* Agents                                                                                            */
 /* ------------------------------------------------------------------------------------------------ */
 
-export type AgentRole = "scheduler" | "supervisor" | "contract-engineer" | "builder" | "verifier" | "reviewer";
+export type AgentRole = "scheduler" | "supervisor" | "contract-engineer" | "builder" | "verifier" | "reviewer" | "clerk" | "intent" | "audit" | "merge" | "cleanup" | "observe";
 export type ReviewerSeat = "architecture" | "security" | "product";
 export type ModelTier = "fable" | "opus" | "sonnet" | "haiku";
 
@@ -189,6 +192,12 @@ export const agentRoles: Record<AgentRole, { label: string }> = {
   builder: { label: "Builder" },
   verifier: { label: "Verifier" },
   reviewer: { label: "Reviewer" },
+  clerk: { label: "Clerk" },
+  intent: { label: "Intent worker" },
+  audit: { label: "Audit worker" },
+  merge: { label: "Merge worker" },
+  cleanup: { label: "Cleanup worker" },
+  observe: { label: "Observer" },
 };
 
 export const reviewerSeats: Record<ReviewerSeat, { label: string; letter: string }> = {
@@ -209,10 +218,11 @@ export const modelTiers: Record<ModelTier, { label: string; head: "diamond" | "s
 /* Gates, artifacts, tool calls                                                                      */
 /* ------------------------------------------------------------------------------------------------ */
 
-export type GateKind = "audit" | "red-green" | "verification" | "consensus" | "human" | "revalidation";
+export type GateKind = "plan-check" | "audit" | "red-green" | "verification" | "consensus" | "human" | "revalidation";
 export type GatePosition = "open" | "closed" | "refusing" | "waiting";
 
 export const gates: Record<GateKind, { label: string; symbol: StationKind | "red-green" }> = {
+  "plan-check": { label: "Plan check", symbol: "plan" },
   audit: { label: "Audit gate", symbol: "audit" },
   "red-green": { label: "Red before green", symbol: "red-green" },
   verification: { label: "Verification verdict", symbol: "verify" },
@@ -245,7 +255,13 @@ export type ArtifactKind =
   | "diff"
   | "build-state"
   | "archive"
-  | "run-record";
+  | "run-record"
+  | "findings-copy"
+  | "verification-results"
+  | "verification-summary"
+  | "verification-findings"
+  | "review-diff"
+  | "review-findings";
 
 export const artifacts: Record<ArtifactKind, { label: string; file: string }> = {
   intent: { label: "Intent", file: "intent.md" },
@@ -265,6 +281,25 @@ export const artifacts: Record<ArtifactKind, { label: string; file: string }> = 
   "build-state": { label: "Build state", file: "build.json" },
   archive: { label: "Archive", file: "<ticket>.tar.gz" },
   "run-record": { label: "Run record", file: "runs.jsonl" },
+  "findings-copy": { label: "Findings for the builder", file: "findings.md (copy in the cell)" },
+  "verification-results": { label: "Verification results", file: "evidence/results.json" },
+  "verification-summary": { label: "Verification verdict", file: "evidence/summary.json" },
+  "verification-findings": { label: "Verification findings", file: "evidence/findings.md" },
+  "review-diff": { label: "Review diff", file: "review/round-N/diff" },
+  "review-findings": { label: "Review findings", file: "review/round-N/findings.md" },
+};
+
+/** Where an artifact came from, marked in its folded corner: verification (crosshair) or review (three seats). */
+export const artifactProvenance: Partial<Record<ArtifactKind, "verification" | "review" | "return">> = {
+  "verification-results": "verification",
+  "verification-summary": "verification",
+  "verification-findings": "verification",
+  evidence: "verification",
+  "review-diff": "review",
+  "review-findings": "review",
+  "review-packet": "review",
+  vote: "review",
+  "findings-copy": "return",
 };
 
 export type ToolFamily = "read" | "write" | "run" | "search" | "test" | "git";

@@ -57,6 +57,7 @@
   --mach-factory-plate-rim: #FFFFFF;
   --mach-factory-machine-top: #FFFFFF;
   --mach-factory-floor: #F6F3EC;
+  --mach-factory-done: #EEF0E7;
   --mach-factory-hatch: #B5AF9E;
   --mach-factory-shadow: rgba(58, 52, 40, 0.13);
   --mach-factory-ink: #3A3833;
@@ -209,6 +210,7 @@
     --mach-factory-plate-rim: #57534C;
     --mach-factory-machine-top: #3D3C37;
     --mach-factory-floor: #2A2925;
+    --mach-factory-done: #272924;
     --mach-factory-hatch: #3E3C37;
     --mach-factory-shadow: rgba(0, 0, 0, 0.62);
     --mach-factory-ink: #DAD6CA;
@@ -289,6 +291,7 @@
   --mach-factory-plate-rim: #57534C;
   --mach-factory-machine-top: #3D3C37;
   --mach-factory-floor: #2A2925;
+  --mach-factory-done: #272924;
   --mach-factory-hatch: #3E3C37;
   --mach-factory-shadow: rgba(0, 0, 0, 0.62);
   --mach-factory-ink: #DAD6CA;
