@@ -1,0 +1,652 @@
+package project
+
+import (
+	"sort"
+	"strings"
+
+	"mach/observer/internal/feed"
+)
+
+// TimeView is how a stamp is served: a time in RFC 3339 (or null), its precision and bounds, and
+// the event that recorded it.
+type TimeView struct {
+	At        *string `json:"at"`
+	Precision string  `json:"precision"`
+	NotBefore *string `json:"not_before,omitempty"`
+	NotAfter  *string `json:"not_after,omitempty"`
+	EventID   string  `json:"event_id"`
+	Pos       uint64  `json:"pos"`
+	Authority string  `json:"authority"`
+}
+
+// TV renders a stamp; nil stays nil.
+func TV(st *Stamp) *TimeView {
+	if st == nil {
+		return nil
+	}
+	f := func(p *int64) *string {
+		if p == nil {
+			return nil
+		}
+		return ptr(feed.FormatMS(*p))
+	}
+	return &TimeView{At: f(st.At), Precision: st.Precision, NotBefore: f(st.NotBefore), NotAfter: f(st.NotAfter), EventID: st.EventID, Pos: st.Pos, Authority: st.Authority}
+}
+
+// ---- executions ----
+
+var terminalExec = map[string]bool{"finished": true, "failed": true, "interrupted": true, "timed-out": true, "could-not-start": true}
+
+// ExecState is an execution's state from what was recorded, strongest fact first: a recorded
+// unknown outcome, a failure, an interruption, completion, a process that ended (the supervisor
+// has not recorded it yet), a running process, a claim.
+func ExecState(x *Execution) string {
+	unknown := false
+	for _, k := range x.Recovery {
+		unknown = unknown || k == "outcome-unknown"
+	}
+	switch {
+	case unknown && x.Completed == nil && x.Failed == nil:
+		return "unknown"
+	case x.Failed != nil:
+		return "failed"
+	case x.Ended == "interrupted" || x.Ended == "timed-out" || x.Ended == "could-not-start":
+		return x.Ended
+	case x.Completed != nil:
+		return "finished"
+	case x.ProcessEnded != nil:
+		return "ended"
+	case x.ProcessStarted != nil || x.Started != nil:
+		return "running"
+	case x.Claimed != nil:
+		return "claimed"
+	}
+	return "unknown"
+}
+
+// StateClass groups execution states for the runs filter: active, finished, unknown.
+func StateClass(state string) string {
+	switch {
+	case state == "unknown":
+		return "unknown"
+	case terminalExec[state]:
+		return "finished"
+	}
+	return "active"
+}
+
+// RunView is one execution as /runs serves it.
+type RunView struct {
+	ExecutionID string    `json:"execution_id"`
+	TicketID    string    `json:"ticket_id,omitempty"`
+	SliceID     string    `json:"slice_id,omitempty"`
+	Workflow    string    `json:"workflow,omitempty"`
+	State       string    `json:"state"`
+	Attempt     *int64    `json:"attempt"`
+	Claimed     *TimeView `json:"claimed_at"`
+	// StartedAt and EndedAt are the process's own times (execution-record) when recorded, else
+	// the supervisor's (intake log), which are stamped late; TimeBasis says which.
+	StartedAt     *TimeView              `json:"started_at"`
+	EndedAt       *TimeView              `json:"ended_at"`
+	TimeBasis     string                 `json:"time_basis"`
+	Duration      Duration               `json:"duration"`
+	Ended         string                 `json:"ended,omitempty"`
+	ExitCode      *int64                 `json:"exit_code"`
+	How           string                 `json:"how,omitempty"`
+	StageAtStart  string                 `json:"stage_at_start,omitempty"`
+	StageAtEnd    string                 `json:"stage_at_end,omitempty"`
+	Moved         *bool                  `json:"moved"`
+	Cost          Cost                   `json:"cost"`
+	Tokens        *int64                 `json:"tokens_total"`
+	Models        map[string]*ModelUsage `json:"models"`
+	UnderReported bool                   `json:"cost_may_be_under_reported"`
+	UnderReasons  []string               `json:"under_reported_reasons"`
+	RefusedTools  []string               `json:"refused_tools"`
+	Recovery      []string               `json:"recovery"`
+	Agents        int                    `json:"agents"`
+	Visits        []string               `json:"visits"`
+}
+
+// Cost is a recorded cost with its source; null with a reason when nothing recorded it.
+type Cost struct {
+	USD        *float64 `json:"usd"`
+	Source     string   `json:"source,omitempty"` // execution.usage (stream) | execution.completed (supervisor)
+	Authority  string   `json:"authority,omitempty"`
+	NullReason string   `json:"null_reason,omitempty"`
+}
+
+// Run builds an execution's view.
+func Run(x *Execution) RunView {
+	v := RunView{ExecutionID: x.ExecutionID, TicketID: x.TicketID, SliceID: x.SliceID, Workflow: x.Workflow, State: ExecState(x), Attempt: x.Attempt,
+		Claimed: TV(x.Claimed), Ended: x.Ended, ExitCode: x.ExitCode, How: x.How, StageAtStart: x.StageAtStart, StageAtEnd: x.StageAtEnd,
+		RefusedTools: nonNilS(x.RefusedTools), Recovery: nonNilS(x.Recovery), Agents: len(x.Agents) + len(x.Queued), Visits: nonNilS(x.Visits),
+		Models: map[string]*ModelUsage{}, UnderReasons: []string{}}
+	start, end := x.ProcessStarted, x.ProcessEnded
+	v.TimeBasis = "process"
+	if start == nil {
+		start, v.TimeBasis = x.Started, "supervisor"
+	}
+	if end == nil {
+		if x.Completed != nil {
+			end = x.Completed
+		} else {
+			end = x.Failed
+		}
+		if end != nil {
+			v.TimeBasis = "supervisor"
+		}
+	}
+	v.StartedAt, v.EndedAt = TV(start), TV(end)
+	v.Duration = between(start, end, false)
+	if v.TimeBasis == "supervisor" && v.Duration.Basis == "measured" {
+		v.Duration.Basis = "bounded" // the supervisor stamps executions up to a poll late
+	}
+	if x.Completed != nil || x.Failed != nil {
+		v.Moved = ptr(x.Completed != nil)
+	}
+	switch {
+	case x.Usage != nil && x.Usage.TotalCostUSD != nil:
+		v.Cost = Cost{USD: x.Usage.TotalCostUSD, Source: "execution.usage", Authority: "observed"}
+	case x.CostUSD != nil:
+		v.Cost = Cost{USD: x.CostUSD, Source: "execution.completed", Authority: "authoritative"}
+	default:
+		v.Cost.NullReason = "no cost was recorded for this execution (no result was read)"
+	}
+	if x.Usage != nil {
+		var total int64
+		seen := false
+		for m, u := range x.Usage.Models {
+			v.Models[m] = u
+			for _, n := range []*int64{u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheCreationTokens} {
+				if n != nil {
+					total += *n
+					seen = true
+				}
+			}
+		}
+		if seen {
+			v.Tokens = &total
+		}
+		if x.Usage.BudgetExhausted {
+			v.UnderReasons = append(v.UnderReasons, "budget exhausted: agents in flight may not have reported their spend")
+		}
+	}
+	for _, ref := range sortedKeys(x.Workflows) {
+		if w := x.Workflows[ref]; w.Status == "killed" {
+			v.UnderReasons = append(v.UnderReasons, "a workflow was killed: agents in flight may not have reported their spend")
+		}
+	}
+	switch v.State {
+	case "interrupted", "timed-out":
+		v.UnderReasons = append(v.UnderReasons, "the process was "+v.State+" before reporting its final usage")
+	case "unknown":
+		v.UnderReasons = append(v.UnderReasons, "the execution's outcome is unknown")
+	}
+	v.UnderReported = len(v.UnderReasons) > 0
+	return v
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// Runs lists executions, newest claim first (by position), filtered by state class and ticket.
+func Runs(s *State, class, ticket string) []RunView {
+	xs := make([]*Execution, 0, len(s.Executions))
+	for _, x := range s.Executions {
+		if ticket != "" && x.TicketID != ticket {
+			continue
+		}
+		if class != "" && StateClass(ExecState(x)) != class {
+			continue
+		}
+		xs = append(xs, x)
+	}
+	sort.Slice(xs, func(i, j int) bool {
+		pi, pj := firstPos(xs[i]), firstPos(xs[j])
+		if pi != pj {
+			return pi > pj
+		}
+		return xs[i].ExecutionID < xs[j].ExecutionID
+	})
+	out := make([]RunView, 0, len(xs))
+	for _, x := range xs {
+		out = append(out, Run(x))
+	}
+	return out
+}
+
+func firstPos(x *Execution) uint64 {
+	for _, st := range []*Stamp{x.Claimed, x.Started, x.ProcessStarted, x.Session0()} {
+		if st != nil {
+			return st.Pos
+		}
+	}
+	return 0
+}
+
+// Session0 is the stamp of the earliest stream fact, when nothing else is recorded.
+func (x *Execution) Session0() *Stamp {
+	var first *Stamp
+	for _, a := range x.Agents {
+		for _, st := range []*Stamp{a.Queued, a.Started} {
+			if st != nil && (first == nil || st.Pos < first.Pos) {
+				first = st
+			}
+		}
+	}
+	return first
+}
+
+// AgentView is one agent: identity, label, phase, model, state, times, a token total and a
+// tool-call count. Never a cost; never a per-call record (contract 8.1).
+type AgentView struct {
+	*Agent
+	QueuedAt   *TimeView `json:"queued_at"`
+	StartedAt  *TimeView `json:"started_at"`
+	FinishedAt *TimeView `json:"finished_at"`
+	Queue      Duration  `json:"queue_wait"`
+	Run        Duration  `json:"run"`
+}
+
+// Agents lists an execution's agents (started ones, then those still queued), in start order.
+func Agents(x *Execution) []AgentView {
+	var list []*Agent
+	for _, a := range x.Agents {
+		list = append(list, a)
+	}
+	for _, a := range x.Queued {
+		list = append(list, a)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		pi, pj := agentPos(list[i]), agentPos(list[j])
+		if pi != pj {
+			return pi < pj
+		}
+		return list[i].AgentID+itoa(list[i].Index) < list[j].AgentID+itoa(list[j].Index)
+	})
+	out := make([]AgentView, 0, len(list))
+	for _, a := range list {
+		v := AgentView{Agent: a, QueuedAt: TV(a.Queued), StartedAt: TV(a.Started), FinishedAt: TV(a.Finished)}
+		v.Queue = between(a.Queued, a.Started, false)
+		if a.Started != nil && a.DurationMS != nil {
+			v.Run = Duration{MS: a.DurationMS, MinMS: a.DurationMS, MaxMS: a.DurationMS, Basis: "measured"}
+		} else {
+			v.Run = between(a.Started, a.Finished, false)
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func agentPos(a *Agent) uint64 {
+	for _, st := range []*Stamp{a.Queued, a.Started} {
+		if st != nil {
+			return st.Pos
+		}
+	}
+	return 0
+}
+
+// ToolView is one main-loop (or Agent-tool sub-agent) tool call.
+type ToolView struct {
+	*Tool
+	CalledAt   *TimeView `json:"called_at"`
+	ReturnedAt *TimeView `json:"returned_at"`
+	Span       Duration  `json:"span"`
+}
+
+// Tools lists an execution's main-loop tool calls in call order.
+func Tools(x *Execution) []ToolView {
+	list := make([]*Tool, 0, len(x.Tools))
+	for _, t := range x.Tools {
+		list = append(list, t)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].Called.Pos != list[j].Called.Pos {
+			return list[i].Called.Pos < list[j].Called.Pos
+		}
+		return list[i].ToolCallID < list[j].ToolCallID
+	})
+	out := make([]ToolView, 0, len(list))
+	for _, t := range list {
+		out = append(out, ToolView{Tool: t, CalledAt: TV(t.Called), ReturnedAt: TV(t.Returned), Span: between(t.Called, t.Returned, false)})
+	}
+	return out
+}
+
+// ---- waits ----
+
+// Wait is why a slice or ticket is waiting, only as recorded.
+type Wait struct {
+	Kind    string    `json:"kind"`  // dependency | capacity | person | unknown
+	Basis   string    `json:"basis"` // recorded | recorded-sentence | unknown
+	Reasons []string  `json:"reasons"`
+	Since   *TimeView `json:"since"`
+	Rule    string    `json:"rule,omitempty"`
+}
+
+// SliceWait says why a slice that is not yet active is waiting. Nil when it is not waiting.
+func SliceWait(s *State, sl *Slice) *Wait {
+	if sl.State == "blocked" {
+		return &Wait{Kind: "dependency", Basis: "recorded", Reasons: nonNilS(sl.Reasons), Since: TV(sl.Blocked)}
+	}
+	if w := ticketWait(s, sl.TicketID, sl.SliceID); w != nil {
+		return w
+	}
+	if sl.State == "ready" {
+		return &Wait{Kind: "unknown", Basis: "unknown", Reasons: []string{"eligible and not dispatched; no reason is recorded"}, Since: TV(sl.eligible())}
+	}
+	return nil
+}
+
+// ticketWait: a person (an open human gate, or a cell awaiting a person), then capacity (a
+// recorded capacity wait, or the scheduler's fixed capacity sentence), then another recorded hold.
+func ticketWait(s *State, ticket, slice string) *Wait {
+	for _, k := range sortedKeys(s.Gates) {
+		g := s.Gates[k]
+		if g.Closed == nil && ((ticket != "" && g.TicketID == ticket) || (slice != "" && g.SliceID == slice)) {
+			reasons := []string{}
+			if g.Reason != "" {
+				reasons = append(reasons, g.Reason)
+			} else if g.Kind == "approval" {
+				reasons = append(reasons, "the review asked for a person's approval")
+			}
+			return &Wait{Kind: "person", Basis: "recorded", Reasons: reasons, Since: TV(g.Opened)}
+		}
+	}
+	if c := s.Cells[ticket]; ticket != "" && c != nil && c.Stage == "awaiting-human" {
+		return &Wait{Kind: "person", Basis: "recorded", Reasons: []string{"the cell is awaiting a person"}, Since: TV(c.Updated)}
+	}
+	if st := s.Pending.Capacity[ticket]; ticket != "" && st != nil {
+		return &Wait{Kind: "capacity", Basis: "recorded", Reasons: []string{}, Since: TV(st), Rule: "capacity.wait_changed"}
+	}
+	for _, h := range s.Factory.Held {
+		if (ticket != "" && h.TicketID == ticket) || (slice != "" && h.SliceID == slice) {
+			if capacitySentence.MatchString(h.Why) {
+				return &Wait{Kind: "capacity", Basis: "recorded-sentence", Reasons: []string{h.Why}, Since: TV(s.Factory.LastDecision), Rule: "held-sentence"}
+			}
+			return &Wait{Kind: "unknown", Basis: "recorded", Reasons: []string{h.Why}, Since: TV(s.Factory.LastDecision)}
+		}
+	}
+	return nil
+}
+
+// ---- project, waves, slices, cells ----
+
+// OpenGates lists open human gates.
+func OpenGates(s *State) []*HumanGate {
+	var out []*HumanGate
+	for _, k := range sortedKeys(s.Gates) {
+		if g := s.Gates[k]; g.Closed == nil {
+			out = append(out, g)
+		}
+	}
+	if out == nil {
+		out = []*HumanGate{}
+	}
+	return out
+}
+
+// ProjectView is the project's execution state.
+func ProjectView(s *State) map[string]any {
+	counts := map[string]int{"completed": 0, "active": 0, "ready": 0, "blocked": 0, "superseded": 0, "unknown": 0}
+	for _, sl := range s.Slices {
+		counts[sl.State]++
+	}
+	active := []string{}
+	for _, t := range sortedKeys(s.Cells) {
+		c := s.Cells[t]
+		if !c.Archived && c.Merge == nil && c.Stage != "merged" {
+			active = append(active, t)
+		}
+	}
+	running := 0
+	for _, x := range s.Executions {
+		if StateClass(ExecState(x)) == "active" {
+			running++
+		}
+	}
+	return map[string]any{
+		"project_id":        s.Project.ProjectID,
+		"integration":       map[string]any{"commit_seen": s.Project.CommitSeen, "at": TV(s.Project.CommitAt)},
+		"factory":           FactoryView(s),
+		"counts_by_state":   counts,
+		"active_cells":      active,
+		"executions_active": running,
+		"human_gates_open":  OpenGates(s),
+		"intake":            map[string]any{"last_validated": TV(s.Project.LastValidated), "refused": s.Project.IntakeRefused},
+		"waves":             len(s.Waves),
+		"slices":            len(s.Slices),
+		"cells":             len(s.Cells),
+		"history":           map[string]any{"partial": s.Partial, "gaps": s.GapCounts, "not_v3": s.NotV3},
+	}
+}
+
+// FactoryView is the Factory's recorded mode (from the intake log: what MACH recorded, not a
+// reading of the machine-local policy).
+func FactoryView(s *State) map[string]any {
+	f := s.Factory
+	state := f.State
+	if state == "" {
+		state = "unknown"
+	}
+	return map[string]any{"state": state, "autonomy": f.Autonomy, "allow_merge": f.AllowMerge, "persistent": f.Persistent, "limits": f.Limits,
+		"paused_reason": f.PausedReason, "since": TV(f.Since), "scheduler_state": f.SchedulerState, "last_decision": TV(f.LastDecision),
+		"held": nonNil(f.Held), "dispatched": nonNilS(f.Dispatched), "started": nonNilS(f.Started)}
+}
+
+// WaveView summarises a wave.
+func WaveView(s *State, w *Wave) map[string]any {
+	counts := map[string]int{}
+	for _, id := range w.Slices {
+		if sl := s.Slices[id]; sl != nil {
+			counts[sl.State]++
+		} else {
+			counts["not-materialized"]++
+		}
+	}
+	return map[string]any{"wave_id": w.WaveID, "revision": w.Revision, "slices": nonNilS(w.Slices), "approved": w.Approved, "approved_at": w.ApprovedAt,
+		"first_seen_at": TV(w.FirstSeen), "state_counts": counts}
+}
+
+// Waves lists waves by id.
+func Waves(s *State) []map[string]any {
+	out := []map[string]any{}
+	for _, id := range sortedKeys(s.Waves) {
+		out = append(out, WaveView(s, s.Waves[id]))
+	}
+	return out
+}
+
+// SliceView is one slice with its scheduler state and recorded wait.
+func SliceView(s *State, sl *Slice) map[string]any {
+	revs := sl.Revisions
+	if revs == nil {
+		revs = []SliceRevision{}
+	}
+	hist := sl.History
+	if hist == nil {
+		hist = []StateChange{}
+	}
+	return map[string]any{"slice_id": sl.SliceID, "wave_id": sl.WaveID, "revision": sl.Revision, "ticket_id": sl.TicketID, "state": sl.State,
+		"dependencies": nonNilS(sl.Dependencies), "depends_on": nonNilS(sl.DependsOn), "last_reasons": nonNilS(sl.Reasons), "waiting": SliceWait(s, sl),
+		"commit": sl.Commit, "materialized_at": TV(sl.Materialized), "blocked_at": TV(sl.Blocked), "resolved_at": TV(sl.Resolved),
+		"dispatched_at": TV(sl.Scheduled), "integrated_at": TV(sl.Integrated), "superseded_at": TV(sl.Superseded),
+		"earlier_revisions": revs, "history": hist}
+}
+
+// WaveDetail is a wave with its slices.
+func WaveDetail(s *State, w *Wave) map[string]any {
+	v := WaveView(s, w)
+	slices := []map[string]any{}
+	for _, id := range w.Slices {
+		if sl := s.Slices[id]; sl != nil {
+			slices = append(slices, SliceView(s, sl))
+		} else {
+			slices = append(slices, map[string]any{"slice_id": id, "state": "unknown", "waiting": nil, "note": "named by the wave; not materialized yet"})
+		}
+	}
+	v["slices"] = slices
+	return v
+}
+
+// Slices lists slices by id, optionally of one wave or one state.
+func Slices(s *State, wave, state string) []map[string]any {
+	out := []map[string]any{}
+	for _, id := range sortedKeys(s.Slices) {
+		sl := s.Slices[id]
+		if (wave == "" || sl.WaveID == wave) && (state == "" || sl.State == state) {
+			out = append(out, SliceView(s, sl))
+		}
+	}
+	return out
+}
+
+// CellSummary is one cell in a list.
+func CellSummary(c *Cell) map[string]any {
+	last := ""
+	if n := len(c.Visits); n > 0 {
+		last = c.Visits[n-1].Outcome
+	}
+	return map[string]any{"ticket_id": c.TicketID, "cell_instance": c.CellInstance, "slice_id": c.SliceID, "wave_id": c.WaveID, "stage": c.Stage,
+		"stage_source": c.StageSource, "risk": c.Risk, "app_type": c.AppType, "created_at": TV(c.FirstSeen), "updated_at": TV(c.Updated),
+		"current_visit": c.CurrentVisit, "round": c.Round, "visits": len(c.Visits), "last_outcome": last, "lifecycle": c.Lifecycle,
+		"archived": c.Archived, "merged": c.Merge != nil, "executions": nonNilS(c.Executions)}
+}
+
+// Cells lists cells by ticket, optionally filtered by stage or station of the current visit.
+func Cells(s *State, stage string, archived *bool) []map[string]any {
+	out := []map[string]any{}
+	for _, t := range sortedKeys(s.Cells) {
+		c := s.Cells[t]
+		if (stage == "" || c.Stage == stage) && (archived == nil || c.Archived == *archived) {
+			out = append(out, CellSummary(c))
+		}
+	}
+	return out
+}
+
+// VisitView is a visit with its measured duration and what happened inside it.
+type VisitView struct {
+	*Visit
+	EnteredAt *TimeView `json:"entered_at"`
+	ExitedAt  *TimeView `json:"exited_at"`
+	Duration  Duration  `json:"duration"`
+	Gates     []*Gate   `json:"gates"`
+	Tasks     []*Task   `json:"tasks"`
+	Checks    []*Check  `json:"checks"`
+}
+
+// Visits renders a cell's visits with their contents.
+func Visits(c *Cell) []VisitView {
+	out := make([]VisitView, 0, len(c.Visits))
+	for _, v := range c.Visits {
+		vv := VisitView{Visit: v, EnteredAt: TV(v.Entered), ExitedAt: TV(v.Exited), Duration: between(v.Entered, v.Exited, false),
+			Gates: []*Gate{}, Tasks: []*Task{}, Checks: []*Check{}}
+		for _, g := range c.Gates {
+			if g.VisitID == v.VisitID {
+				vv.Gates = append(vv.Gates, g)
+			}
+		}
+		for _, t := range c.Tasks {
+			if t.VisitID == v.VisitID {
+				vv.Tasks = append(vv.Tasks, t)
+			}
+		}
+		for _, k := range c.Checks {
+			if k.VisitID == v.VisitID {
+				vv.Checks = append(vv.Checks, k)
+			}
+		}
+		out = append(out, vv)
+	}
+	return out
+}
+
+// CellDetail is a cell's full station history.
+func CellDetail(s *State, c *Cell) map[string]any {
+	v := CellSummary(c)
+	v["visits"] = Visits(c)
+	v["visit_count"] = len(c.Visits)
+	v["gates"] = orEmpty(c.Gates)
+	v["gates_dropped"] = c.GatesDropped
+	v["tasks"] = orEmpty(c.Tasks)
+	v["checks"] = orEmpty(c.Checks)
+	v["targets"] = orEmpty(c.Targets)
+	v["reviews"] = orEmpty(c.Reviews)
+	v["findings"] = orEmpty(c.Findings)
+	v["approvals"] = orEmpty(c.Approvals)
+	v["merge"] = c.Merge
+	v["cleanup"] = c.Cleanup
+	v["history_began"] = c.Began
+	v["artifacts"] = c.Artifacts
+	v["dropped"] = c.Dropped
+	gates := []*HumanGate{}
+	for _, k := range sortedKeys(s.Gates) {
+		if g := s.Gates[k]; g.TicketID == c.TicketID {
+			gates = append(gates, g)
+		}
+	}
+	v["human_gates"] = gates
+	v["waiting"] = ticketWait(s, c.TicketID, c.SliceID)
+	rounds := map[string]any{}
+	for _, vis := range c.Visits {
+		if vis.Round != nil {
+			k := itoa(vis.Round)
+			list, _ := rounds[k].([]string)
+			rounds[k] = append(list, vis.VisitID)
+		}
+	}
+	v["rounds"] = rounds
+	return v
+}
+
+func orEmpty[T any](list []T) []T {
+	if list == nil {
+		return []T{}
+	}
+	return list
+}
+
+// SnapshotView is the projected state of the Factory, as /snapshot serves it.
+func SnapshotView(s *State) map[string]any {
+	cells := map[string]any{}
+	for _, t := range sortedKeys(s.Cells) {
+		cells[t] = CellDetail(s, s.Cells[t])
+	}
+	slices := map[string]any{}
+	for _, id := range sortedKeys(s.Slices) {
+		slices[id] = SliceView(s, s.Slices[id])
+	}
+	waves := map[string]any{}
+	for _, id := range sortedKeys(s.Waves) {
+		waves[id] = WaveView(s, s.Waves[id])
+	}
+	execs := map[string]any{}
+	for _, id := range sortedKeys(s.Executions) {
+		x := s.Executions[id]
+		execs[id] = map[string]any{"run": Run(x), "agents": Agents(x), "tools": Tools(x), "refused": orEmpty(x.Refused), "workflows": x.Workflows, "session": x.Session}
+	}
+	gates := []*HumanGate{}
+	for _, k := range sortedKeys(s.Gates) {
+		gates = append(gates, s.Gates[k])
+	}
+	return map[string]any{"factory": FactoryView(s), "project": ProjectView(s), "waves": waves, "slices": slices, "cells": cells,
+		"executions": execs, "gates": gates, "gaps": orEmpty(s.Gaps)}
+}
+
+// HasPrefixAny reports whether v starts with any prefix.
+func HasPrefixAny(v string, prefixes ...string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(v, p) {
+			return true
+		}
+	}
+	return false
+}

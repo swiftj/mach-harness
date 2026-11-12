@@ -2,6 +2,8 @@ package server
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,48 +12,64 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"mach/observer/internal/event"
-	"mach/observer/internal/ingest"
+	"mach/observer/internal/artifact"
+	"mach/observer/internal/feed"
+	"mach/observer/internal/feedtest"
+	"mach/observer/internal/project"
 	"mach/observer/internal/security"
-	"mach/observer/internal/store"
-	"mach/observer/internal/testkit"
 	"mach/observer/internal/webui"
 )
 
+type fakeIngest struct {
+	mu sync.Mutex
+	st IngestState
+}
+
+func (f *fakeIngest) Ingest() IngestState { f.mu.Lock(); defer f.mu.Unlock(); return f.st }
+
+type fakeFactory struct {
+	mu sync.Mutex
+	st FactoryState
+}
+
+func (f *fakeFactory) Factory(time.Time) FactoryState { f.mu.Lock(); defer f.mu.Unlock(); return f.st }
+
 type harness struct {
-	root   string
-	base   string
-	host   string
-	client *http.Client
-	cookie *http.Cookie
-	store  *store.Store
-	server *Server
+	root    string
+	base    string
+	host    string
+	cookie  *http.Cookie
+	log     *feedtest.Mem
+	proj    *project.Projector
+	server  *Server
+	guard   *security.Guard
+	ingest  *fakeIngest
+	factory *fakeFactory
 }
 
 type config struct {
-	memory       int
+	window       int
 	heartbeat    time.Duration
 	writeTimeout time.Duration
 	maxStreams   int
-	noIngest     bool
+	batch        int
+	events       []map[string]any
 }
 
 func start(t *testing.T, c config) *harness {
 	t.Helper()
-	if c.memory == 0 {
-		c.memory = 1000
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	os.MkdirAll(filepath.Join(root, ".factory/worktrees"), 0o755)
+	mem := feedtest.NewMem("", c.window)
+	if c.events != nil {
+		mem.Append(c.events...)
 	}
-	root := testkit.Project(t)
-	st, err := store.Open(filepath.Join(root, ".factory/local/observer/index"), c.memory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loop := ingest.New(ingest.Options{Root: root, Store: st, PollMin: 10 * time.Millisecond, PollMax: 20 * time.Millisecond})
+	proj := project.New(project.Options{Log: mem, Interval: 5})
 	l, err := security.Listen("127.0.0.1", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -59,36 +77,44 @@ func start(t *testing.T, c config) *harness {
 	port := l.Addr().(*net.TCPAddr).Port
 	guard, _ := security.NewGuard(port)
 	done := make(chan struct{})
-	s := New(Options{Root: root, Guard: guard, Store: st, Ingest: loop, UI: webui.Handler(), Done: done,
-		Heartbeat: c.heartbeat, WriteTimeout: c.writeTimeout, MaxStreams: c.maxStreams})
+	in := &fakeIngest{st: IngestState{Ticks: 3, LastTickAt: time.Now(), IntervalMS: 150, FactoryFound: true,
+		Sources: []SourceState{{Key: "i:0badc0de", Path: ".factory/intake/events.jsonl", State: "live", LastReadAt: time.Now(), Offset: 100, Size: ptr(int64(140))}}}}
+	fac := &fakeFactory{st: FactoryState{Present: true, Report: map[string]any{"policy": map[string]any{"effective": "supervised"}}, Effective: "supervised",
+		Enabled: true, Autonomy: "supervised", PolicyUsable: true, LeasePresent: true, LeaseLive: true, LeaseAgeSec: ptr(2.0), ReadAt: time.Now()}}
+	s := New(Options{Root: root, Guard: guard, Log: mem, Projector: proj, Catalog: artifact.New(root), Ingest: in, Factory: fac, UI: webui.Handler(),
+		Done: done, Heartbeat: c.heartbeat, WriteTimeout: c.writeTimeout, MaxStreams: c.maxStreams, StreamBatch: c.batch, LinkFile: ".factory/local/observer/link"})
 	hs := s.HTTPServer()
 	go hs.Serve(l)
-	if !c.noIngest {
-		go loop.Run(done)
-	}
+	go proj.Run(done)
 	t.Cleanup(func() {
 		close(done)
 		hs.Close()
-		st.Close()
 	})
+	h := &harness{root: root, base: fmt.Sprintf("http://127.0.0.1:%d", port), host: fmt.Sprintf("127.0.0.1:%d", port), log: mem, proj: proj,
+		server: s, guard: guard, ingest: in, factory: fac}
+	h.cookie = h.login(t)
+	return h
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// login opens the current one-time link in a fresh browser (cookie jar) and returns its session.
+func (h *harness) login(t *testing.T) *http.Cookie {
+	t.Helper()
 	jar, _ := cookiejar.New(nil)
-	h := &harness{root: root, base: fmt.Sprintf("http://127.0.0.1:%d", port), host: fmt.Sprintf("127.0.0.1:%d", port),
-		client: &http.Client{Jar: jar, Timeout: 10 * time.Second}, store: st, server: s}
-	resp, err := h.client.Get(guard.StartURL())
+	client := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+	resp, err := client.Get(h.guard.StartURL())
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	u := resp.Request.URL
-	for _, ck := range jar.Cookies(u) {
+	for _, ck := range jar.Cookies(resp.Request.URL) {
 		if ck.Name == security.CookieName {
-			h.cookie = ck
+			return ck
 		}
 	}
-	if h.cookie == nil {
-		t.Fatal("no session after the start link")
-	}
-	return h
+	t.Fatal("no session after the start link")
+	return nil
 }
 
 func (h *harness) do(t *testing.T, method, path string, edit func(*http.Request)) (*http.Response, Envelope, []byte) {
@@ -109,17 +135,17 @@ func (h *harness) do(t *testing.T, method, path string, edit func(*http.Request)
 	return resp, env, body
 }
 
-func (h *harness) waitHead(t *testing.T, want uint64) {
+func (h *harness) get(t *testing.T, path string) map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, head := h.store.Bounds(); head >= want {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+	resp, env, body := h.do(t, "GET", path, nil)
+	if resp.StatusCode != 200 || !env.OK {
+		t.Fatalf("GET %s: %d %s", path, resp.StatusCode, body)
 	}
-	_, head := h.store.Bounds()
-	t.Fatalf("head %d, want %d", head, want)
+	var out struct {
+		Data map[string]any `json:"data"`
+	}
+	json.Unmarshal(body, &out)
+	return out.Data
 }
 
 func checkCSP(t *testing.T, resp *http.Response) {
@@ -130,501 +156,633 @@ func checkCSP(t *testing.T, resp *http.Response) {
 	}
 }
 
+// Every route, with a valid example, for the checks that apply to all of them.
+func routes() []string {
+	return []string{"/api/v1/session", "/api/v1/health", "/api/v1/factory/status", "/api/v1/events", "/api/v1/snapshot", "/api/v1/project",
+		"/api/v1/waves", "/api/v1/waves/WAVE-001", "/api/v1/slices", "/api/v1/slices/SLICE-001", "/api/v1/cells", "/api/v1/cells/T-1",
+		"/api/v1/cells/T-1/visits/build%231", "/api/v1/cells/T-1/evidence", "/api/v1/runs", "/api/v1/runs/x0123456789ab",
+		"/api/v1/runs/x0123456789ab/agents", "/api/v1/runs/x0123456789ab/tools", "/api/v1/spans", "/api/v1/artifacts",
+		"/api/v1/analytics/metrics", "/api/v1/analytics/runs"}
+}
+
 // ---- security ----
 
 func TestEveryOtherMethodIsRefused(t *testing.T) {
-	h := start(t, config{})
+	h := start(t, config{events: feedtest.Scenario()})
+	paths := append(routes(), "/api/v1/stream", "/api/v1/artifacts/a000000000000000000000000/content", "/api/v1/nope", "/", "/?t=x")
 	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "PROPFIND"} {
-		for _, path := range []string{"/api/v1/health", "/api/v1/stream", "/api/v1/nope", "/", "/?t=x"} {
+		for _, path := range paths {
 			resp, _, _ := h.do(t, method, path, nil)
 			checkCSP(t, resp)
 			if resp.StatusCode != http.StatusMethodNotAllowed || resp.Header.Get("Allow") != "GET" {
-				t.Errorf("%s %s: %d", method, path, resp.StatusCode)
+				t.Fatalf("%s %s: %d", method, path, resp.StatusCode)
 			}
 		}
 	}
 }
 
-func TestBadHostIsRefused(t *testing.T) {
-	h := start(t, config{})
-	for _, host := range []string{"evil.example", "evil.example:" + strings.Split(h.host, ":")[1], "127.0.0.1:1", "[::1]:80"} {
-		resp, env, _ := h.do(t, "GET", "/api/v1/health", func(r *http.Request) { r.Host = host })
-		checkCSP(t, resp)
-		if resp.StatusCode != http.StatusForbidden || env.OK {
-			t.Errorf("host %q: %d", host, resp.StatusCode)
-		}
-		resp, _, _ = h.do(t, "GET", "/", func(r *http.Request) { r.Host = host })
-		if resp.StatusCode != http.StatusForbidden {
-			t.Errorf("host %q on the page: %d", host, resp.StatusCode)
-		}
-	}
-}
-
-func TestOtherOriginIsRefused(t *testing.T) {
-	h := start(t, config{})
-	cases := []map[string]string{{"Origin": "http://evil.example"}, {"Origin": "null"}, {"Sec-Fetch-Site": "cross-site"}, {"Sec-Fetch-Site": "same-site"}}
-	for _, headers := range cases {
-		for _, path := range []string{"/api/v1/health", "/api/v1/stream", "/api/v1/events"} {
-			resp, env, _ := h.do(t, "GET", path, func(r *http.Request) {
-				for k, v := range headers {
-					r.Header.Set(k, v)
-				}
-			})
+func TestEveryRouteNeedsTheSession(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	for _, path := range append(routes(), "/api/v1/stream", "/api/v1/artifacts/a000000000000000000000000/content") {
+		for name, cookie := range map[string]*http.Cookie{"none": nil, "forged": {Name: security.CookieName, Value: "forged"}} {
+			req, _ := http.NewRequest("GET", h.base+path, nil)
+			if cookie != nil {
+				req.AddCookie(cookie)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
 			checkCSP(t, resp)
-			if resp.StatusCode != http.StatusForbidden || env.Error == nil || env.Error.Kind != KindUnauthorized {
-				t.Errorf("%v %s: %d", headers, path, resp.StatusCode)
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("%s with %s cookie: %d", path, name, resp.StatusCode)
 			}
 		}
 	}
-	resp, _, _ := h.do(t, "GET", "/api/v1/health", func(r *http.Request) {
-		r.Header.Set("Origin", h.base)
-		r.Header.Set("Sec-Fetch-Site", "same-origin")
-	})
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("same origin: %d", resp.StatusCode)
-	}
 }
 
-func TestSessionRequired(t *testing.T) {
+func TestBadHostOriginAndFetchSite(t *testing.T) {
 	h := start(t, config{})
-	for _, path := range []string{"/api/v1/health", "/api/v1/factory/status", "/api/v1/events", "/api/v1/stream", "/api/v1/session"} {
-		req, _ := http.NewRequest("GET", h.base+path, nil)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
+	for _, edit := range []func(*http.Request){
+		func(r *http.Request) { r.Host = "evil.example:" + strings.Split(h.host, ":")[1] },
+		func(r *http.Request) { r.Header.Set("Origin", "http://evil.example") },
+		func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") },
+	} {
+		resp, _, _ := h.do(t, "GET", "/api/v1/health", edit)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%d", resp.StatusCode)
 		}
-		resp.Body.Close()
-		checkCSP(t, resp)
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("no cookie %s: %d", path, resp.StatusCode)
-		}
-		req.AddCookie(&http.Cookie{Name: security.CookieName, Value: "forged"})
-		resp, _ = http.DefaultClient.Do(req)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("forged cookie %s: %d", path, resp.StatusCode)
-		}
-	}
-	// The start link works once.
-	resp, err := http.Get(h.base + "/?t=" + "anything")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("a wrong start token: %d", resp.StatusCode)
 	}
 }
 
-func TestUnknownAndUncleanRoutes(t *testing.T) {
+func TestUncleanRoutesAndSchema(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	for _, path := range []string{"/api/v1/../v1/health", "/api/v1/cells/%2e%2e/evidence", "/api/v1//health", "/api/v1/cells/T-1%2fx",
+		"/api/v1/cells/T%00-1", "/api/v1/cells/a%5cb", "/api/v1/artifacts/..%2f..%2fetc%2fpasswd/content"} {
+		resp, _, body := h.do(t, "GET", path, nil)
+		if resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s: %d %s", path, resp.StatusCode, body)
+		}
+	}
+	if resp, env, _ := h.do(t, "GET", "/api/v1/nope", nil); resp.StatusCode != 404 || env.Error.Kind != KindNotFound {
+		t.Fatalf("%d", resp.StatusCode)
+	}
+	for _, edit := range []func(*http.Request){
+		func(r *http.Request) { r.URL.RawQuery = "schema=2" },
+		func(r *http.Request) { r.Header.Set("X-MACH-Event-Schema", "4") },
+	} {
+		resp, env, _ := h.do(t, "GET", "/api/v1/events", edit)
+		if resp.StatusCode != 400 || env.Error.Kind != KindInvalid || len(env.Error.Supported) != 1 || env.Error.Supported[0] != 3 {
+			t.Fatalf("an unknown schema: %d %+v", resp.StatusCode, env.Error)
+		}
+	}
+	h.get(t, "/api/v1/events?schema=3")
+}
+
+// A second browser opens the next one-time link and gets its own session; both work.
+func TestSecondBrowser(t *testing.T) {
 	h := start(t, config{})
-	for path, want := range map[string]int{"/api/v1/nope": 404, "/api/v2/health": 404, "/api/v1/../v1/health": 400, "/api/v1//health": 400,
-		"/api/v1/factory%2fstatus": 400} {
-		req, _ := http.NewRequest("GET", h.base+"/", nil)
-		req.URL.Opaque = path // send the path as written, without client-side cleaning
-		req.AddCookie(h.cookie)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		checkCSP(t, resp)
-		if resp.StatusCode != want {
-			t.Errorf("%s: %d, want %d", path, resp.StatusCode, want)
+	second := h.login(t)
+	if second.Value == h.cookie.Value {
+		t.Fatal("the second browser shares the first one's session")
+	}
+	for _, c := range []*http.Cookie{h.cookie, second} {
+		resp, _, _ := h.do(t, "GET", "/api/v1/health", func(r *http.Request) { r.Header.Del("Cookie"); r.AddCookie(c) })
+		if resp.StatusCode != 200 {
+			t.Fatal("a session stopped working")
 		}
 	}
-	resp, _, body := h.do(t, "GET", "/", nil)
-	checkCSP(t, resp)
-	if resp.StatusCode != 200 || !strings.Contains(string(body), "Control Tower") {
-		t.Fatalf("page: %d", resp.StatusCode)
+	if s := h.get(t, "/api/v1/session"); s["sessions"].(map[string]any)["count"].(float64) != 2 || s["new_link"] == nil {
+		t.Fatalf("%v", s)
 	}
 }
 
-// ---- status ----
+// ---- shapes ----
 
-func TestHealthAndFactoryStatus(t *testing.T) {
-	h := start(t, config{})
-	host, _ := os.Hostname()
-	policy := map[string]any{"schema_version": 2, "enabled": true, "paused": false, "autonomy": "supervised", "allow_merge": false,
-		"persistent": false, "max_risk": "Medium", "limits": map[string]any{}, "allowed_tools": []string{"Bash(git status)"},
-		"excluded_slices": []string{}, "source_branch": "main", "claude": map[string]any{"path": "/Users/someone/bin/claude"},
-		"runner_id": "R-1", "machine": host, "project_root": h.root, "enabled_by": "Ada Lovelace", "enabled_at": "2026-11-12T09:00:00Z"}
-	data, _ := json.Marshal(policy)
-	os.WriteFile(filepath.Join(h.root, ".factory/local/runner.json"), data, 0o600)
-	lease, _ := json.Marshal(map[string]any{"instance": "abc", "runner_id": "R-1", "pid": os.Getpid(), "host": host,
-		"started_at": time.Now().UTC().Format(time.RFC3339), "heartbeat_at": time.Now().UTC().Format(time.RFC3339),
-		"expires_at": time.Now().Add(time.Minute).UTC().Format(time.RFC3339)})
-	os.WriteFile(filepath.Join(h.root, ".factory/local/supervisor.json"), lease, 0o600)
-	os.MkdirAll(filepath.Join(h.root, ".factory/local/executions/x0123456789ab"), 0o700)
-	testkit.Append(t, testkit.CellLog(h.root, "T-1"), testkit.LifecycleLine("T-1", 1, "station.entered", "build", nil))
-	os.MkdirAll(filepath.Join(h.root, ".factory/worktrees/T-2"), 0o755)
-
-	resp, env, body := h.do(t, "GET", "/api/v1/factory/status", nil)
-	if resp.StatusCode != 200 || !env.OK {
-		t.Fatalf("%d %s", resp.StatusCode, body)
+func TestEveryEndpointShape(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	want := map[string][]string{
+		"/api/v1/session":                    {"versions", "display_policy", "capabilities", "limits", "generation"},
+		"/api/v1/health":                     {"status", "observer_time", "index", "projection", "ingest", "freshness", "streams"},
+		"/api/v1/factory/status":             {"factory_present", "report", "summary", "supervisor", "recorded_mode", "freshness"},
+		"/api/v1/events":                     {"events", "next", "head", "floor", "more", "scanned"},
+		"/api/v1/snapshot":                   {"cursor", "generation", "reconstructed", "state"},
+		"/api/v1/project":                    {"counts_by_state", "factory", "active_cells", "human_gates_open", "cursor"},
+		"/api/v1/waves":                      {"items", "cursor"},
+		"/api/v1/waves/WAVE-001":             {"wave_id", "slices", "state_counts"},
+		"/api/v1/slices":                     {"items", "total", "more"},
+		"/api/v1/slices/SLICE-002":           {"state", "waiting", "history", "dependencies"},
+		"/api/v1/cells":                      {"items", "total"},
+		"/api/v1/cells/T-1":                  {"visits", "gates", "tasks", "checks", "reviews", "approvals", "merge", "cleanup", "rounds"},
+		"/api/v1/cells/T-1/visits/build%231": {"visit", "events"},
+		"/api/v1/cells/T-1/evidence":         {"artifacts", "checks", "settings"},
+		"/api/v1/runs":                       {"items", "total"},
+		"/api/v1/runs/x0123456789ab":         {"run", "workflows", "usage", "observations"},
+		"/api/v1/runs/x0123456789ab/agents":  {"items", "note"},
+		"/api/v1/runs/x0123456789ab/tools":   {"items", "refused"},
+		"/api/v1/spans":                      {"items", "basis_vocabulary"},
+		"/api/v1/artifacts":                  {"items", "settings"},
+		"/api/v1/analytics/metrics":          {"metrics", "definitions_version"},
+		"/api/v1/analytics/runs":             {"items", "total"},
 	}
-	for _, private := range []string{"Ada Lovelace", "git status", "/Users/someone", "abc"} {
-		if strings.Contains(string(body), private) {
-			t.Fatalf("%q reached the status: %s", private, body)
+	for path, keys := range want {
+		d := h.get(t, path)
+		for _, k := range keys {
+			if _, ok := d[k]; !ok {
+				t.Errorf("%s: no %q in %v", path, k, mapKeys(d))
+			}
 		}
 	}
-	var view struct {
-		Data struct {
-			FactoryPresent bool `json:"factory_present"`
-			Policy         struct {
-				Usable    bool   `json:"usable"`
-				Effective string `json:"effective"`
-			} `json:"policy"`
-			Lease struct {
-				Live     bool `json:"live"`
-				SameHost bool `json:"same_host"`
-			} `json:"lease"`
-			Counts struct {
-				Cells, CellsWithLifecycle, Executions int
-			} `json:"counts"`
-			Index struct {
-				Generation string `json:"generation"`
-			} `json:"index"`
-		} `json:"data"`
+	for _, path := range []string{"/api/v1/waves/WAVE-404", "/api/v1/slices/S-404", "/api/v1/cells/T-404", "/api/v1/cells/T-1/visits/build%239",
+		"/api/v1/runs/x404", "/api/v1/runs/x404/agents"} {
+		if resp, env, _ := h.do(t, "GET", path, nil); resp.StatusCode != 404 || env.Error.Kind != KindNotFound {
+			t.Fatalf("%s: %d", path, resp.StatusCode)
+		}
 	}
-	json.Unmarshal(body, &view)
-	d := view.Data
-	if !d.FactoryPresent || !d.Policy.Usable || d.Policy.Effective != "supervised" || !d.Lease.Live || !d.Lease.SameHost {
-		t.Fatalf("%s", body)
+	// specific facts
+	run := h.get(t, "/api/v1/runs/x0123456789ab")["run"].(map[string]any)
+	if run["state"] != "finished" || run["cost"].(map[string]any)["usd"].(float64) != 4.5 || run["time_basis"] != "process" {
+		t.Fatalf("run %v", run)
 	}
-	var counts map[string]any
-	json.Unmarshal(mustField(t, body, "counts"), &counts)
-	if counts["cells"] != 2.0 || counts["cells_with_lifecycle"] != 1.0 || counts["executions"] != 1.0 || !event.ValidGeneration(d.Index.Generation) {
-		t.Fatalf("counts %v", counts)
+	runs := h.get(t, "/api/v1/runs?state=unknown")["items"].([]any)
+	if len(runs) != 1 || runs[0].(map[string]any)["cost_may_be_under_reported"] != true {
+		t.Fatalf("unknown runs %v", runs)
 	}
-	// A policy others can read reads as unusable.
-	os.Chmod(filepath.Join(h.root, ".factory/local/runner.json"), 0o644)
-	time.Sleep(1100 * time.Millisecond) // the status is cached for a second
-	_, _, body = h.do(t, "GET", "/api/v1/factory/status", nil)
-	if !strings.Contains(string(body), `"reason":"shared-permissions"`) || !strings.Contains(string(body), `"effective":"disabled"`) {
-		t.Fatalf("%s", body)
+	agents, _ := json.Marshal(h.get(t, "/api/v1/runs/x0123456789ab/agents")["items"])
+	if strings.Contains(string(agents), "cost") {
+		t.Fatalf("an agent has a cost: %s", agents)
 	}
-
-	resp, env, body = h.do(t, "GET", "/api/v1/health", nil)
-	if resp.StatusCode != 200 || !env.OK || !strings.Contains(string(body), `"status":"ok"`) {
-		t.Fatalf("%s", body)
+	sl := h.get(t, "/api/v1/slices/SLICE-002")
+	if sl["state"] != "ready" || sl["waiting"].(map[string]any)["kind"] != "capacity" {
+		t.Fatalf("slice %v", sl)
+	}
+	sess := h.get(t, "/api/v1/session")
+	if sess["capabilities"].(map[string]any)["stream_observations"].(map[string]any)["ok"] != true ||
+		len(sess["versions"].(map[string]any)["event"].(map[string]any)["kinds"].([]any)) != 54 {
+		t.Fatalf("session %v", sess)
+	}
+	m := h.get(t, "/api/v1/analytics/metrics?ids=Q2,K5&group_by=risk")["metrics"].([]any)
+	if len(m) != 2 || m[1].(map[string]any)["value"] != nil || m[1].(map[string]any)["null_reason"] == "" {
+		t.Fatalf("metrics %v", m)
+	}
+	for _, path := range []string{"/api/v1/analytics/metrics?ids=NOPE", "/api/v1/analytics/metrics?group_by=evil", "/api/v1/runs?state=x",
+		"/api/v1/runs?limit=0", "/api/v1/runs?limit=1001", "/api/v1/runs?offset=-1", "/api/v1/spans?kinds=bogus", "/api/v1/slices?state=x",
+		"/api/v1/cells?archived=maybe", "/api/v1/events?authority=sure", "/api/v1/events?ticket=..%2Fx", "/api/v1/runs?ticket=a%20b"} {
+		if resp, env, _ := h.do(t, "GET", path, nil); resp.StatusCode != 400 || env.Error.Kind != KindInvalid {
+			t.Fatalf("%s: %d", path, resp.StatusCode)
+		}
 	}
 }
 
-func mustField(t *testing.T, body []byte, name string) json.RawMessage {
-	var env struct {
-		Data map[string]json.RawMessage `json:"data"`
+func mapKeys(m map[string]any) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
 	}
-	if err := json.Unmarshal(body, &env); err != nil {
-		t.Fatal(err)
+	return out
+}
+
+func TestFreshnessFacts(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	st := h.get(t, "/api/v1/factory/status")
+	if st["supervisor"].(map[string]any)["heartbeat_fresh"] != true || st["summary"].(map[string]any)["mode"] != "supervised" {
+		t.Fatalf("%v", st)
 	}
-	return env.Data[name]
+	src := st["freshness"].(map[string]any)["sources"].([]any)[0].(map[string]any)
+	if src["lag_bytes"].(float64) != 40 || src["last_read_at"] == nil {
+		t.Fatalf("%v", src)
+	}
+	if h.get(t, "/api/v1/health")["status"] != "ok" {
+		t.Fatal("health")
+	}
+	// The supervisor's lease expires and ingest stops ticking: both are visible.
+	h.factory.mu.Lock()
+	h.factory.st.LeaseExpired, h.factory.st.LeaseLive = true, false
+	h.factory.mu.Unlock()
+	h.ingest.mu.Lock()
+	h.ingest.st.LastTickAt = time.Now().Add(-time.Minute)
+	h.ingest.mu.Unlock()
+	h.server.statusMu.Lock()
+	h.server.statusAt = time.Time{}
+	h.server.statusMu.Unlock()
+	st = h.get(t, "/api/v1/factory/status")
+	if st["supervisor"].(map[string]any)["heartbeat_fresh"] != false || st["freshness"].(map[string]any)["ingest"].(map[string]any)["stale"] != true {
+		t.Fatalf("%v", st)
+	}
+	if h.get(t, "/api/v1/health")["status"] != "degraded" {
+		t.Fatal("a stale ingest must read as degraded")
+	}
 }
 
 // ---- events ----
 
-func appendLedger(t *testing.T, root string, from, to int) {
-	var buf []byte
-	for i := from; i <= to; i++ {
-		ticket := "T-1"
-		if i%2 == 0 {
-			ticket = "T-2"
-		}
-		buf = append(buf, testkit.LedgerLine(i, "work.claimed", ticket, nil)...)
-	}
-	testkit.Append(t, testkit.LedgerPath(root), buf)
-}
-
 func TestEventsPagingFiltersAndCursorErrors(t *testing.T) {
-	h := start(t, config{memory: 20})
-	appendLedger(t, h.root, 1, 10)
-	h.waitHead(t, 10)
-	gen := h.store.Generation()
-	var page struct {
-		Data struct {
-			Events []event.Event `json:"events"`
-			Next   string        `json:"next"`
-			More   bool          `json:"more"`
-		} `json:"data"`
+	evs := feedtest.Scenario()
+	h := start(t, config{events: evs, window: 40})
+	floor, head := h.log.Bounds()
+	if floor == 0 {
+		t.Fatal("the test needs an evicted beginning")
 	}
-	_, _, body := h.do(t, "GET", "/api/v1/events?limit=4", nil)
-	json.Unmarshal(body, &page)
-	if len(page.Data.Events) != 4 || page.Data.Next != gen+".4" || !page.Data.More {
-		t.Fatalf("%s", body)
+	page := h.get(t, "/api/v1/events?limit=10")
+	if len(page["events"].([]any)) != 10 || page["more"] != true {
+		t.Fatalf("%v", page)
 	}
-	_, _, body = h.do(t, "GET", "/api/v1/events?after="+page.Data.Next+"&ticket=T-2", nil)
-	json.Unmarshal(body, &page)
-	if len(page.Data.Events) != 3 || page.Data.Events[0].Subject.TicketID != "T-2" || page.Data.Events[0].Cursor != gen+".6" {
-		t.Fatalf("%s", body)
+	next := page["next"].(string)
+	all := len(page["events"].([]any))
+	for page["more"] == true {
+		page = h.get(t, "/api/v1/events?limit=7&after="+page["next"].(string))
+		all += len(page["events"].([]any))
 	}
-	for q, want := range map[string]struct {
+	if all != int(head-floor) {
+		t.Fatalf("paged %d, want %d", all, head-floor)
+	}
+	if _, err := feed.ParseCursor(next); err != nil {
+		t.Fatal(err)
+	}
+	for q, check := range map[string]func(*feed.Event) bool{
+		"ticket=T-1":                        func(e *feed.Event) bool { return e.Ticket() == "T-1" },
+		"execution=x0fedcba98765":           func(e *feed.Event) bool { return e.Execution() == "x0fedcba98765" },
+		"type=station.":                     func(e *feed.Event) bool { return strings.HasPrefix(e.Type, "station.") },
+		"entity=visit:T-1/merge%231":        func(e *feed.Event) bool { return e.HasEntity("visit:T-1/merge#1") },
+		"authority=observed":                func(e *feed.Event) bool { return e.Authority == "observed" },
+		"station=merge&type=station.exited": func(e *feed.Event) bool { return feed.Str(e.IDs.Station) == "merge" && e.Type == "station.exited" },
+	} {
+		events := h.get(t, "/api/v1/events?limit=1000&"+q)["events"].([]any)
+		if len(events) == 0 {
+			t.Fatalf("%s matched nothing", q)
+		}
+		for _, raw := range events {
+			b, _ := json.Marshal(raw)
+			ev, err := feed.Decode(feed.Record{Pos: 1, Raw: b})
+			if err != nil || !check(ev) {
+				t.Fatalf("%s: %s", q, b)
+			}
+		}
+	}
+	gen := h.log.Epoch()
+	for after, want := range map[string]struct {
 		status int
 		kind   string
 	}{
-		"after=0123456789abcdef.3": {409, KindCursorReset},
-		"after=" + gen + ".99":     {409, KindCursorReset},
-		"after=garbage":            {400, KindInvalid},
-		"limit=0":                  {400, KindInvalid},
+		"fedcba9876543210.1":               {409, KindCursorReset},
+		gen + ".99999":                     {409, KindCursorReset},
+		fmt.Sprintf("%s.%d", gen, floor-1): {410, KindCursorExpired},
+		"nonsense":                         {400, KindInvalid},
 	} {
-		resp, env, body := h.do(t, "GET", "/api/v1/events?"+q, nil)
-		if resp.StatusCode != want.status || env.Error == nil || env.Error.Kind != want.kind {
-			t.Errorf("%s: %d %s", q, resp.StatusCode, body)
+		resp, env, _ := h.do(t, "GET", "/api/v1/events?after="+after, nil)
+		if resp.StatusCode != want.status || env.Error.Kind != want.kind {
+			t.Fatalf("%s: %d %+v", after, resp.StatusCode, env.Error)
 		}
 	}
-	appendLedger(t, h.root, 11, 40)
-	h.waitHead(t, 40)
-	resp, env, _ := h.do(t, "GET", "/api/v1/events?after="+gen+".2", nil)
-	if resp.StatusCode != http.StatusGone || env.Error.Kind != KindCursorExpired || env.Error.Cursor.Floor != gen+".20" {
-		t.Fatalf("expired cursor: %d %+v", resp.StatusCode, env.Error)
+}
+
+// A selective filter over a long log examines at most ScanCap events per request, and says how
+// far it got so the client can page on.
+func TestEventsScanCap(t *testing.T) {
+	h := start(t, config{})
+	var batch []map[string]any
+	for i := 0; i < ScanCap+500; i++ {
+		batch = append(batch, feedtest.New("intake-log", "intake.validated", int64(i)).Data(map[string]any{"digest": "d"}).Build())
+	}
+	h.log.Append(batch...)
+	h.log.Append(feedtest.New("intake-log", "work.claimed", 1).Ticket("T-9").Exec("x9").Data(map[string]any{"stage": "planned", "next": "build", "attempt": 1}).Build())
+	page := h.get(t, "/api/v1/events?ticket=T-9")
+	if len(page["events"].([]any)) != 0 || page["scanned"].(float64) != ScanCap || page["more"] != true {
+		t.Fatalf("%v", page["scanned"])
+	}
+	page = h.get(t, "/api/v1/events?ticket=T-9&after="+page["next"].(string))
+	if len(page["events"].([]any)) != 1 {
+		t.Fatalf("the second page missed the match: %v", page["scanned"])
+	}
+}
+
+// ---- snapshot ----
+
+func TestSnapshotThenStreamHasNoGapAndNoRepeat(t *testing.T) {
+	evs := feedtest.Scenario()
+	h := start(t, config{events: evs[:20]})
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { // appends while the snapshot is taken
+		defer wg.Done()
+		for _, e := range evs[20:] {
+			h.log.Append(e)
+			time.Sleep(time.Millisecond)
+		}
+		close(stop)
+	}()
+	snap := h.get(t, "/api/v1/snapshot")
+	cur := snap["cursor"].(string)
+	c, _ := feed.ParseCursor(cur)
+	wg.Wait()
+	_, head := h.log.Bounds()
+	got := readStream(t, h, "/api/v1/stream", map[string]string{"Last-Event-ID": cur}, int(head-c.Pos))
+	for i, id := range got {
+		if want := h.server.cursor(c.Pos + uint64(i) + 1); id != want {
+			t.Fatalf("event %d: %s, want %s", i, id, want)
+		}
+	}
+	// A reconstructed snapshot at an earlier cursor.
+	early := h.get(t, "/api/v1/snapshot?at="+h.server.cursor(10))
+	if early["reconstructed"] != true || early["pos"].(float64) != 10 {
+		t.Fatalf("%v", early["reconstructed"])
+	}
+	for at, want := range map[string]int{h.server.cursor(head + 5): 409, "fedcba9876543210.3": 409, "junk": 400} {
+		if resp, _, _ := h.do(t, "GET", "/api/v1/snapshot?at="+at, nil); resp.StatusCode != want {
+			t.Fatalf("%s: %d", at, resp.StatusCode)
+		}
+	}
+}
+
+func TestSnapshotOfEvictedHistoryIsRefused(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario(), window: 10})
+	resp, env, _ := h.do(t, "GET", "/api/v1/snapshot?at="+h.server.cursor(2), nil)
+	if resp.StatusCode != 410 || env.Error.Kind != KindCursorExpired {
+		t.Fatalf("%d %+v", resp.StatusCode, env.Error)
 	}
 }
 
 // ---- stream ----
 
-type sse struct {
-	name, id, data string
-}
-
-type streamConn struct {
-	resp   *http.Response
-	events chan sse
-}
-
-func (h *harness) open(t *testing.T, lastID, after string) *streamConn {
+// readStream reads ids from a stream until n events arrived.
+func readStream(t *testing.T, h *harness, path string, headers map[string]string, n int) []string {
 	t.Helper()
-	path := "/api/v1/stream"
-	if after != "" {
-		path += "?after=" + after
-	}
 	req, _ := http.NewRequest("GET", h.base+path, nil)
 	req.AddCookie(h.cookie)
-	if lastID != "" {
-		req.Header.Set("Last-Event-ID", lastID)
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkCSP(t, resp)
-	c := &streamConn{resp: resp, events: make(chan sse, 100000)}
-	t.Cleanup(func() { resp.Body.Close() })
-	go func() {
-		defer close(c.events)
-		r := bufio.NewReader(resp.Body)
-		var cur sse
-		for {
-			line, err := r.ReadString('\n')
+	defer resp.Body.Close()
+	var ids []string
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for len(ids) < n && sc.Scan() {
+		if id, found := strings.CutPrefix(sc.Text(), "id: "); found {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) < n {
+		t.Fatalf("got %d events, want %d", len(ids), n)
+	}
+	return ids
+}
+
+func TestStreamReconnectAfterTheBrowserClosed(t *testing.T) {
+	evs := feedtest.Scenario()
+	h := start(t, config{events: evs[:10]})
+	first := readStream(t, h, "/api/v1/stream?after="+h.server.cursor(0), nil, 6) // the browser closes after 6
+	h.log.Append(evs[10:]...)
+	rest := readStream(t, h, "/api/v1/stream", map[string]string{"Last-Event-ID": first[len(first)-1]}, len(evs)-6)
+	all := append(first, rest...)
+	for i, id := range all {
+		if id != h.server.cursor(uint64(i+1)) {
+			t.Fatalf("position %d is %s: a gap or a repeat", i+1, id)
+		}
+	}
+}
+
+func TestStreamFilters(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	ids := readStream(t, h, "/api/v1/stream?execution=x0fedcba98765&after="+h.server.cursor(0), nil, 6)
+	for _, id := range ids {
+		c, _ := feed.ParseCursor(id)
+		recs, _ := h.log.After(c.Pos-1, 1)
+		ev, _ := feed.Decode(recs[0])
+		if ev.Execution() != "x0fedcba98765" {
+			t.Fatalf("%s is not the execution's", id)
+		}
+	}
+}
+
+func controlEvents(t *testing.T, h *harness, path string, headers map[string]string, want string) string {
+	t.Helper()
+	req, _ := http.NewRequest("GET", h.base+path, nil)
+	req.AddCookie(h.cookie)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		if sc.Text() == "event: "+want {
+			sc.Scan()
+			return sc.Text()
+		}
+	}
+	t.Fatalf("no %s event", want)
+	return ""
+}
+
+func TestStreamHeartbeatGapAndReset(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario(), window: 10, heartbeat: 50 * time.Millisecond})
+	if hb := controlEvents(t, h, "/api/v1/stream", nil, "heartbeat"); !strings.Contains(hb, `"scanned"`) || !strings.Contains(hb, `"head"`) {
+		t.Fatalf("heartbeat %s", hb)
+	}
+	if gap := controlEvents(t, h, "/api/v1/stream", map[string]string{"Last-Event-ID": h.server.cursor(1)}, "gap"); !strings.Contains(gap, `"expired"`) {
+		t.Fatalf("gap %s", gap)
+	}
+	if reset := controlEvents(t, h, "/api/v1/stream", map[string]string{"Last-Event-ID": "fedcba9876543210.4"}, "reset"); !strings.Contains(reset, "generation") {
+		t.Fatalf("reset %s", reset)
+	}
+	if reset := controlEvents(t, h, "/api/v1/stream?after="+h.server.cursor(9999), nil, "reset"); !strings.Contains(reset, "ahead") {
+		t.Fatalf("reset %s", reset)
+	}
+}
+
+// Sixteen clients at once, one of which never reads: the fifteen readers get every event in
+// order, the stalled one is dropped at its write deadline, appending never waits, and a
+// seventeenth is turned away.
+func TestSixteenClientsOneStalled(t *testing.T) {
+	h := start(t, config{maxStreams: 16, writeTimeout: 2 * time.Second, batch: 256})
+	// the stalled client: connects, reads nothing
+	stalled, err := net.Dial("tcp", h.host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stalled.Close()
+	fmt.Fprintf(stalled, "GET /api/v1/stream?after=%s HTTP/1.1\r\nHost: %s\r\nCookie: %s=%s\r\n\r\n", h.server.cursor(0), h.host, security.CookieName, h.cookie.Value)
+	const total = 20000
+	var wg sync.WaitGroup
+	results := make([][]string, 15)
+	ready := make(chan struct{}, 15)
+	for i := 0; i < 15; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req, _ := http.NewRequest("GET", h.base+"/api/v1/stream?after="+h.server.cursor(0), nil)
+			req.AddCookie(h.cookie)
+			resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 			if err != nil {
+				t.Error(err)
+				ready <- struct{}{}
 				return
 			}
-			line = strings.TrimRight(line, "\n")
-			switch {
-			case line == "":
-				if cur.data != "" {
-					if cur.name == "" {
-						cur.name = "message"
-					}
-					c.events <- cur
+			defer resp.Body.Close()
+			ready <- struct{}{}
+			sc := bufio.NewScanner(resp.Body)
+			sc.Buffer(make([]byte, 1<<20), 1<<20)
+			for len(results[i]) < total && sc.Scan() {
+				if id, found := strings.CutPrefix(sc.Text(), "id: "); found {
+					results[i] = append(results[i], id)
 				}
-				cur = sse{}
-			case strings.HasPrefix(line, "event: "):
-				cur.name = strings.TrimPrefix(line, "event: ")
-			case strings.HasPrefix(line, "id: "):
-				cur.id = strings.TrimPrefix(line, "id: ")
-			case strings.HasPrefix(line, "data: "):
-				cur.data = strings.TrimPrefix(line, "data: ")
 			}
-		}
-	}()
-	return c
-}
-
-func (c *streamConn) next(t *testing.T, skipHeartbeats bool) sse {
-	t.Helper()
-	timeout := time.After(5 * time.Second)
-	for {
-		select {
-		case e, ok := <-c.events:
-			if !ok {
-				t.Fatal("the stream ended")
-			}
-			if skipHeartbeats && e.name == "heartbeat" {
-				continue
-			}
-			return e
-		case <-timeout:
-			t.Fatal("no event within 5s")
-		}
+		}(i)
 	}
-}
-
-func (c *streamConn) ended(t *testing.T) {
-	t.Helper()
-	select {
-	case _, ok := <-c.events:
-		if ok {
-			t.Fatal("an event after the stream should have ended")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the stream did not end")
+	for i := 0; i < 15; i++ {
+		<-ready
 	}
-}
-
-func TestStreamLiveAndReconnectWithLastEventID(t *testing.T) {
-	h := start(t, config{})
-	gen := h.store.Generation()
-	c := h.open(t, "", "")
-	if c.resp.Header.Get("Content-Type") != "text/event-stream; charset=utf-8" {
-		t.Fatal(c.resp.Header.Get("Content-Type"))
-	}
-	if hello := c.next(t, true); hello.name != "hello" || !strings.Contains(hello.data, `"cursor":"`+gen+`.0"`) {
-		t.Fatalf("%+v", hello)
-	}
-	appendLedger(t, h.root, 1, 3)
-	var seen []string
-	for range 2 {
-		e := c.next(t, true)
-		seen = append(seen, e.id)
-	}
-	c.resp.Body.Close() // the client drops after two events
-	if seen[1] != gen+".2" {
-		t.Fatalf("ids %v", seen)
-	}
-	appendLedger(t, h.root, 4, 5)
-	h.waitHead(t, 5)
-
-	again := h.open(t, seen[1], "")
-	if hello := again.next(t, true); hello.name != "hello" || !strings.Contains(hello.data, `"cursor":"`+seen[1]+`"`) {
-		t.Fatalf("%+v", hello)
-	}
-	for want := 3; want <= 5; want++ {
-		e := again.next(t, true)
-		var ev event.Event
-		json.Unmarshal([]byte(e.data), &ev)
-		if e.name != "message" || e.id != gen+"."+strconv.Itoa(want) || ev.Source.Seq != int64(want) {
-			t.Fatalf("event %d: %+v", want, e)
-		}
-	}
-	appendLedger(t, h.root, 6, 6)
-	if e := again.next(t, true); e.id != gen+".6" {
-		t.Fatalf("live after catch-up: %+v", e)
-	}
-}
-
-func TestStreamHeartbeat(t *testing.T) {
-	h := start(t, config{heartbeat: 30 * time.Millisecond})
-	c := h.open(t, "", "")
-	c.next(t, false) // hello
-	if e := c.next(t, false); e.name != "heartbeat" || !strings.Contains(e.data, `"head"`) || e.id != "" {
-		t.Fatalf("%+v", e)
-	}
-}
-
-func TestStreamGapAndReset(t *testing.T) {
-	h := start(t, config{memory: 5})
-	appendLedger(t, h.root, 1, 20)
-	h.waitHead(t, 20)
-	gen := h.store.Generation()
-
-	c := h.open(t, gen+".3", "")
-	if e := c.next(t, true); e.name != "gap" || !strings.Contains(e.data, `"reason":"expired"`) || !strings.Contains(e.data, `"floor":"`+gen+`.15"`) {
-		t.Fatalf("%+v", e)
-	}
-	c.ended(t)
-
-	r := h.open(t, "0123456789abcdef.3", "")
-	if e := r.next(t, true); e.name != "reset" || !strings.Contains(e.data, `"reason":"generation"`) || !strings.Contains(e.data, `"generation":"`+gen+`"`) {
-		t.Fatalf("%+v", e)
-	}
-	r.ended(t)
-
-	ok := h.open(t, gen+".15", "")
-	ok.next(t, true) // hello
-	if e := ok.next(t, true); e.id != gen+".16" {
-		t.Fatalf("from the floor: %+v", e)
-	}
-}
-
-func TestStreamLimit(t *testing.T) {
-	h := start(t, config{maxStreams: 1})
-	c := h.open(t, "", "")
-	c.next(t, true)
-	resp, env, _ := h.do(t, "GET", "/api/v1/stream", nil)
-	if resp.StatusCode != http.StatusServiceUnavailable || env.Error.Kind != KindUnavailable {
-		t.Fatalf("%d", resp.StatusCode)
-	}
-}
-
-// A client that stops reading must not hold up ingest or other clients, and is dropped.
-func TestSlowClientDoesNotBlockOthers(t *testing.T) {
-	h := start(t, config{memory: 60000, writeTimeout: time.Second, noIngest: true})
-	gen := h.store.Generation()
-
-	// The slow client: a raw connection that sends its request and never reads.
-	conn, err := net.Dial("tcp", h.host)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if tcp, ok := conn.(*net.TCPConn); ok {
-		tcp.SetReadBuffer(4096)
-	}
-	fmt.Fprintf(conn, "GET /api/v1/stream?after=%s.0 HTTP/1.1\r\nHost: %s\r\nCookie: %s=%s\r\n\r\n", gen, h.host, security.CookieName, h.cookie.Value)
-
-	fast := h.open(t, "", gen+".0")
-	fast.next(t, true) // hello
-	for wait := time.Now().Add(5 * time.Second); h.server.streams.Load() != 2; {
-		if time.Now().After(wait) {
-			t.Fatalf("the slow client never opened its stream (%d open)", h.server.streams.Load())
-		}
+	deadline := time.Now().Add(5 * time.Second)
+	for h.server.streams.Load() < 16 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-
-	// Ingest writes far more than the slow client's socket can hold, as fast as it can.
-	payload := strings.Repeat("x", 200)
-	const total = 30000
-	startAppend := time.Now()
-	for i := 1; i <= total; i += 500 {
-		var batch []*event.Event
-		for j := i; j < i+500; j++ {
-			batch = append(batch, &event.Event{V: 3, ID: "e" + strconv.Itoa(j), Type: "t", Authority: "authoritative",
-				Data: map[string]any{"pad": payload}})
+	if resp, _, _ := h.do(t, "GET", "/api/v1/stream", nil); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("a seventeenth stream: %d", resp.StatusCode)
+	}
+	var batches [][]map[string]any // built before the clock starts: only appending is timed
+	for k := 0; k < total; k += 1000 {
+		var batch []map[string]any
+		for j := k; j < k+1000; j++ {
+			batch = append(batch, feedtest.New("intake-log", "intake.validated", int64(j)).Data(map[string]any{"digest": "d"}).Build())
 		}
-		if _, err := h.store.Append(batch, nil); err != nil {
-			t.Fatal(err)
+		batches = append(batches, batch)
+	}
+	began := time.Now()
+	for _, batch := range batches {
+		h.log.Append(batch...)
+	}
+	// The stalled client never drains: an append that waited for it would never finish. The
+	// bound is loose because appending here also encodes 20,000 events under -race.
+	if took := time.Since(began); took > 10*time.Second {
+		t.Fatalf("appending waited for clients: %s", took)
+	}
+	wg.Wait()
+	for i, ids := range results {
+		if len(ids) != total || ids[0] != h.server.cursor(1) || ids[total-1] != h.server.cursor(total) {
+			t.Fatalf("client %d got %d events", i, len(ids))
 		}
 	}
-	if took := time.Since(startAppend); took > 3*time.Second {
-		t.Fatalf("appending took %s: a reader is holding up ingest", took)
-	}
-
-	// The fast client receives everything, in order.
-	deadline := time.After(20 * time.Second)
-	got := 0
-	for got < total {
-		select {
-		case e, ok := <-fast.events:
-			if !ok {
-				t.Fatalf("the fast stream ended after %d", got)
-			}
-			if e.name != "message" {
-				continue
-			}
-			got++
-			if e.id != gen+"."+strconv.Itoa(got) {
-				t.Fatalf("out of order: %s at %d", e.id, got)
-			}
-		case <-deadline:
-			t.Fatalf("the fast client got %d of %d", got, total)
-		}
-	}
-
-	// The slow client is dropped once a write blocks past the deadline.
-	dropDeadline := time.Now().Add(10 * time.Second)
-	for h.server.streams.Load() > 1 {
-		if time.Now().After(dropDeadline) {
-			t.Fatalf("the slow client still holds a stream (%d open)", h.server.streams.Load())
-		}
+	deadline = time.Now().Add(5 * time.Second)
+	for h.server.streams.Load() > 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
+	if n := h.server.streams.Load(); n != 0 {
+		t.Fatalf("%d streams still open: the stalled client was not dropped", n)
+	}
+}
+
+// ---- artifacts over HTTP ----
+
+func writeFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestArtifactAPI(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	cell := filepath.Join(h.root, ".factory/worktrees/T-1")
+	text := []byte("output\nkey: sk-ant-abcdefghijklmnopqrstu\n")
+	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 32)...)
+	html := []byte("<html><script>alert(1)</script>")
+	writeFile(t, filepath.Join(cell, "evidence/AC-01.txt"), text)
+	writeFile(t, filepath.Join(cell, "evidence/shot.png"), png)
+	writeFile(t, filepath.Join(cell, "evidence/fake.png"), html)
+	writeFile(t, filepath.Join(cell, "evidence/big.png"), png)
+	os.Truncate(filepath.Join(cell, "evidence/big.png"), artifact.MaxImage+10)
+	big, _ := os.ReadFile(filepath.Join(cell, "evidence/big.png"))
+	writeFile(t, filepath.Join(cell, "repo/secret.go"), []byte("package secret"))
+	res, _ := json.Marshal(map[string]any{"head": "abcdef1", "review_loop": 0, "records": map[string]any{"AC-01": map[string]any{"kind": "scenario", "result": "pass",
+		"evidence": []map[string]string{{"file": "AC-01.txt", "sha256": sha(text)}, {"file": "shot.png", "sha256": sha(png)}, {"file": "fake.png", "sha256": sha(html)},
+			{"file": "big.png", "sha256": sha(big)}, {"file": "../repo/secret.go", "sha256": "x"}}}}})
+	writeFile(t, filepath.Join(cell, "evidence/results.json"), res)
+
+	items := h.get(t, "/api/v1/artifacts?ticket=T-1")["items"].([]any)
+	ids := map[string]string{}
+	for _, it := range items {
+		m := it.(map[string]any)
+		ids[m["path_rel"].(string)] = m["id"].(string)
+		if strings.Contains(m["path_rel"].(string), "repo") {
+			t.Fatal("repo/ was catalogued")
+		}
+	}
+	if ids["evidence/AC-01.txt"] == "" {
+		t.Fatalf("%v", ids)
+	}
+	if v := h.get(t, "/api/v1/artifacts/"+ids["evidence/AC-01.txt"]); v["visit_id"] != "T-1/verify#1" || v["verified_evidence"] != true {
+		t.Fatalf("%v", v)
+	}
+	ev := h.get(t, "/api/v1/cells/T-1/evidence")
+	if len(ev["checks"].([]any)) != 2 {
+		t.Fatalf("%v", ev["checks"])
+	}
+
+	// text: scrubbed, plain, sandboxed, marked
+	resp, _, body := h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/AC-01.txt"]+"/content", nil)
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/plain; charset=utf-8" || resp.Header.Get("Content-Security-Policy") != ArtifactCSP ||
+		resp.Header.Get("X-MACH-Redacted") == "0" || resp.Header.Get("X-Content-Type-Options") != "nosniff" || strings.Contains(string(body), "sk-ant-") ||
+		!strings.HasPrefix(resp.Header.Get("Content-Disposition"), "inline") {
+		t.Fatalf("%d %v %q", resp.StatusCode, resp.Header, body)
+	}
+	if resp, _, _ := h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/AC-01.txt"]+"/content?download=1", nil); !strings.HasPrefix(resp.Header.Get("Content-Disposition"), "attachment") {
+		t.Fatal("download is not an attachment")
+	}
+	// images: refused until the project opts in
+	if resp, env, _ := h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/shot.png"]+"/content", nil); resp.StatusCode != 403 || env.Error.Reason != "media-disabled" {
+		t.Fatalf("%d %+v", resp.StatusCode, env.Error)
+	}
+	writeFile(t, filepath.Join(h.root, ".factory/config.json"), []byte(`{"tower":{"evidence_media":true}}`))
+	time.Sleep(2100 * time.Millisecond) // the catalog's cache
+	resp, _, body = h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/shot.png"]+"/content", nil)
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "image/png" || string(body) != string(png) || resp.Header.Get("X-MACH-Evidence-Match") != "match" {
+		t.Fatalf("%d %v", resp.StatusCode, resp.Header)
+	}
+	if resp, _, _ := h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/shot.png"]+"/content", func(r *http.Request) { r.Header.Set("Range", "bytes=0-3") }); resp.StatusCode != 206 {
+		t.Fatalf("range: %d", resp.StatusCode)
+	}
+	// wrong type, oversized
+	if resp, env, _ := h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/fake.png"]+"/content", nil); resp.StatusCode != 415 || env.Error.Kind != KindRefused {
+		t.Fatalf("fake png: %d", resp.StatusCode)
+	}
+	if resp, env, _ := h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/big.png"]+"/content", nil); resp.StatusCode != 413 || env.Error.Reason != "too-large" {
+		t.Fatalf("big png: %d %+v", resp.StatusCode, env.Error)
+	}
+	// changed after cataloguing (within the cache window, so the catalog still holds the old hash)
+	writeFile(t, filepath.Join(cell, "evidence/AC-01.txt"), []byte("other\n"))
+	if resp, env, _ := h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/AC-01.txt"]+"/content", nil); resp.StatusCode != 409 && resp.StatusCode != 404 {
+		t.Fatalf("changed: %d %+v", resp.StatusCode, env.Error)
+	}
+	// ids that are paths, or someone else's
+	for _, id := range []string{"..%2F..%2Fetc%2Fpasswd", "%2Fetc%2Fpasswd", "a%00", "evidence%2FAC-01.txt", "abc", "a" + strings.Repeat("0", 24), "A" + strings.Repeat("0", 24)} {
+		resp, _, _ := h.do(t, "GET", "/api/v1/artifacts/"+id+"/content", nil)
+		if resp.StatusCode != 400 && resp.StatusCode != 404 {
+			t.Fatalf("%s: %d", id, resp.StatusCode)
+		}
+	}
+	// a catalog id from another project with the very same file
+	otherRoot, _ := filepath.EvalSymlinks(t.TempDir())
+	writeFile(t, filepath.Join(otherRoot, ".factory/worktrees/T-1/evidence/AC-01.txt"), text)
+	writeFile(t, filepath.Join(otherRoot, ".factory/worktrees/T-1/evidence/results.json"), res)
+	others, _ := artifact.New(otherRoot).Snapshot()
+	for _, e := range others {
+		if resp, _, _ := h.do(t, "GET", "/api/v1/artifacts/"+e.ID+"/content", nil); resp.StatusCode != 404 {
+			t.Fatalf("another project's id %s: %d", e.Path, resp.StatusCode)
+		}
+	}
+}
+
+func sha(b []byte) string {
+	s := sha256.Sum256(b)
+	return hex.EncodeToString(s[:])
 }

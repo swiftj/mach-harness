@@ -1,11 +1,13 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"mach/observer/internal/event"
 	"mach/observer/internal/redact"
@@ -13,7 +15,7 @@ import (
 )
 
 func ev(id string) *event.Event {
-	return &event.Event{V: event.Version, ID: id, Type: "t", Authority: event.Authoritative}
+	return &event.Event{ID: id, Type: "t", Authority: event.Authoritative}
 }
 
 func batch(from, to int) []*event.Event {
@@ -38,7 +40,7 @@ func TestAppendAfterAndDedupe(t *testing.T) {
 		t.Fatalf("duplicates were added: %d", n)
 	}
 	got, err := s.After(1, 10)
-	if err != nil || len(got) != 3 || got[0].Event.ID != "e2" || got[2].Event.Position != 4 {
+	if err != nil || len(got) != 3 || got[0].Event.ID != "e2" || got[2].Event.Pos != 4 {
 		t.Fatalf("%v %v", got, err)
 	}
 	if _, err := s.After(5, 10); err != ErrFuture {
@@ -99,8 +101,8 @@ func TestTornIndexTailIsCut(t *testing.T) {
 	s, _ := Open(dir, 100)
 	s.Append(batch(1, 2), map[string]tail.Checkpoint{"ledger": {Offset: 1}})
 	s.Close()
-	f, _ := os.OpenFile(filepath.Join(dir, "events.log"), os.O_APPEND|os.O_WRONLY, 0)
-	f.WriteString(`{"v":3,"id":"e3","cur`)
+	f, _ := os.OpenFile(filepath.Join(dir, "segment-000001.log"), os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString(`{"schema_version":3,"id":"e3","po`)
 	f.Close()
 	r, err := Open(dir, 100)
 	if err != nil {
@@ -146,5 +148,106 @@ func TestChangedClosesOnAppend(t *testing.T) {
 	case <-ch:
 	default:
 		t.Fatal("readers were not woken")
+	}
+}
+
+func evAt(id, ticket, order string, refs ...string) *event.Event {
+	return &event.Event{ID: id, Type: "station.entered", Authority: event.Authoritative, Order: order,
+		IDs: event.IDs{TicketID: ticket, ExecutionID: "x" + ticket}, Entities: refs}
+}
+
+func TestSegmentsRollRetainAndServeBelowMemory(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenWith(dir, Options{MaxMemory: 50, SegmentBytes: 40 << 10, RetainBytes: 400 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 2000; i += 10 {
+		s.Append(batch(i, i+9), map[string]tail.Checkpoint{"ledger": {Offset: int64(i)}})
+	}
+	info := s.Info()
+	if info.Segments < 3 || info.Dropped == 0 || info.DiskBytes > 480<<10 {
+		t.Fatalf("segments %+v", info)
+	}
+	floor, head := s.Bounds()
+	if head != 2000 || floor == 0 || floor >= 1950 {
+		t.Fatalf("floor %d head %d", floor, head)
+	}
+	got, err := s.After(floor, 100) // below the memory window: read from the segments
+	if err != nil || len(got) != 100 || got[0].Event.Pos != floor+1 || got[99].Event.Pos != floor+100 || got[0].Event.Cursor == "" {
+		t.Fatalf("%d %v", len(got), err)
+	}
+	if _, err := s.After(floor-1, 1); err != ErrExpired {
+		t.Fatalf("below the retained floor: %v", err)
+	}
+	s.Close()
+	r, err := OpenWith(dir, Options{MaxMemory: 50, SegmentBytes: 40 << 10, RetainBytes: 400 << 10})
+	if err != nil || r.Info().Rebuilt != "" {
+		t.Fatalf("%v %q", err, r.Info().Rebuilt)
+	}
+	defer r.Close()
+	if f2, h2 := r.Bounds(); f2 != floor || h2 != 2000 {
+		t.Fatalf("after reopen floor %d head %d", f2, h2)
+	}
+	if n, _ := r.Append(batch(2001, 2001), nil); n != 1 {
+		t.Fatal("append after reopen")
+	}
+}
+
+func TestQueriesAndHistoryOrder(t *testing.T) {
+	s, _ := Open("", 100)
+	s.Append([]*event.Event{
+		evAt("a", "T-1", "000000000000003~2~c~000000000001~0000", "cell:T-1"),
+		evAt("b", "T-2", "000000000000001~2~c~000000000001~0000", "cell:T-2"),
+		evAt("c", "T-1", "000000000000002~2~c~000000000002~0000", "cell:T-1", "visit:T-1/build#1"),
+	}, nil)
+	p, _ := s.ByTicket("T-1", 0, 10)
+	if len(p.Entries) != 2 || p.Entries[1].Event.ID != "c" {
+		t.Fatalf("%+v", p)
+	}
+	p, _ = s.ByEntity("visit:T-1/build#1", 0, 10)
+	if len(p.Entries) != 1 {
+		t.Fatal("entity")
+	}
+	p, _ = s.ByExecution("xT-2", 0, 10)
+	if len(p.Entries) != 1 || p.Entries[0].Event.ID != "b" {
+		t.Fatal("execution")
+	}
+	p, _ = s.Run(Query{After: 1, TypePrefix: "station."})
+	if len(p.Entries) != 2 {
+		t.Fatal("type prefix after a cursor")
+	}
+	h := s.History("", "", []string{"cell:T-1"}, 10)
+	if len(h) != 2 || h[0].Event.ID != "c" {
+		t.Fatalf("history in order: %v", h)
+	}
+	if s.MaxOrder() != "000000000000003~2~c~000000000001~0000" {
+		t.Fatal(s.MaxOrder())
+	}
+	if e, ok := s.Get("b"); !ok || e.Event.Pos != 2 {
+		t.Fatal("get")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go s.Append(batch(9, 9), nil)
+	if err := s.Wait(ctx, 3); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOldFormatIndexIsRebuilt(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "meta.json"), []byte(`{"format":1,"generation":"0123456789abcdef","redaction_version":1,"event_version":3}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "events.log"), []byte(`{"v":3}`+"\n"), 0o600)
+	s, err := Open(dir, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.Info().Rebuilt != "index format changed" {
+		t.Fatal(s.Info().Rebuilt)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "events.log")); err == nil {
+		t.Fatal("the old log was kept")
 	}
 }

@@ -69,9 +69,9 @@ type Counts struct {
 
 // Report is the factory part of /api/v1/factory/status.
 type Report struct {
+	// Project names the folder only: an absolute path never leaves the observer (contract 9.1).
 	Project struct {
 		Folder string `json:"folder"`
-		Path   string `json:"path"`
 	} `json:"project"`
 	FactoryPresent bool   `json:"factory_present"`
 	Policy         Policy `json:"policy"`
@@ -84,7 +84,6 @@ type Report struct {
 func Read(root string, now time.Time) Report {
 	var r Report
 	r.Project.Folder = filepath.Base(root)
-	r.Project.Path = root
 	r.ReadAt = now.UTC().Format(time.RFC3339)
 	r.FactoryPresent = realDir(filepath.Join(root, ".factory"))
 	r.Policy = readPolicy(root)

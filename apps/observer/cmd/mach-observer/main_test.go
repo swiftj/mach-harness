@@ -36,6 +36,11 @@ func fixture(t *testing.T) string {
 		testkit.LifecycleLine("T-1", 2, "gate.decided", "build", map[string]any{"gate": "red", "verdict": "passed"})...))
 	testkit.Append(t, filepath.Join(root, ".factory/worktrees/T-1/cell.json"), []byte(`{"stage":"building"}`))
 	testkit.Append(t, filepath.Join(root, ".factory/worktrees/T-1/evidence/summary.json"), []byte(`{"status":"PASS"}`))
+	testkit.Append(t, filepath.Join(root, ".factory/worktrees/T-1/evidence/AC-01.txt"), []byte("ran it\n"))
+	testkit.Append(t, filepath.Join(root, ".factory/worktrees/T-1/evidence/results.json"),
+		[]byte(`{"head":"abcdef1","review_loop":0,"records":{"AC-01":{"kind":"scenario","result":"pass","evidence":[{"file":"AC-01.txt","sha256":"x"}]}}}`))
+	testkit.Append(t, filepath.Join(root, ".factory/worktrees/T-1/review/round-1/findings.md"), []byte("# none\n"))
+	testkit.Append(t, filepath.Join(root, ".factory/config.json"), []byte(`{"tower":{"evidence_media":false}}`))
 	testkit.Append(t, filepath.Join(root, ".factory/local/executions/x0123456789ab/stream.jsonl"), []byte(`{"type":"system","subtype":"init"}`+"\n"))
 	testkit.Append(t, filepath.Join(root, ".factory/archive/runs.jsonl"), []byte(`{"record_version":2}`+"\n"))
 	testkit.Append(t, filepath.Join(root, ".factory/archive/T-0.tar.gz"), []byte("not really a tarball"))
@@ -152,29 +157,73 @@ func TestReadOnlyOverAFactoryTree(t *testing.T) {
 
 	r := launch(t, root)
 	waitEvents(t, r, 7) // five ledger lines and two lifecycle lines
-	for _, path := range []string{"/api/v1/health", "/api/v1/factory/status", "/api/v1/session", "/", "/some/app/route"} {
+	touchEveryEndpoint(t, r)
+	r.stop(t)
+
+	again := launch(t, root) // a restart reads its own index, still writes nothing else
+	waitEvents(t, again, 7)
+	touchEveryEndpoint(t, again)
+	again.stop(t)
+
+	if diffs := testkit.DiffTrees(before, testkit.HashTree(t, root, IndexDir)); len(diffs) > 0 {
+		t.Fatalf("the observer changed MACH's files: %v", diffs)
+	}
+	// Everything in the observer's own folder is private to the user.
+	filepath.Walk(filepath.Join(root, IndexDir), func(p string, info os.FileInfo, err error) error {
+		if err == nil && info.Mode().Perm()&0o077 != 0 {
+			t.Errorf("%s is mode %v", p, info.Mode().Perm())
+		}
+		return nil
+	})
+	for _, name := range []string{".gitignore", "lock", "projection/projection.json"} {
+		if _, err := os.Lstat(filepath.Join(root, IndexDir, name)); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(root, IndexDir, LinkName)); err == nil {
+		t.Fatal("the one-time link file outlived the observer")
+	}
+}
+
+// touchEveryEndpoint reads every route, an artifact's content, a snapshot at a cursor, and a stream.
+func touchEveryEndpoint(t *testing.T, r *running) {
+	t.Helper()
+	for _, path := range []string{"/api/v1/health", "/api/v1/factory/status", "/api/v1/session", "/api/v1/events?limit=1000",
+		"/api/v1/snapshot", "/api/v1/project", "/api/v1/waves", "/api/v1/slices", "/api/v1/cells", "/api/v1/runs", "/api/v1/spans",
+		"/api/v1/artifacts", "/api/v1/cells/T-1/evidence", "/api/v1/analytics/metrics?group_by=day", "/api/v1/analytics/runs", "/", "/some/app/route"} {
 		r.get(t, path)
+	}
+	var snap struct {
+		Data struct {
+			Cursor string `json:"cursor"`
+		} `json:"data"`
+	}
+	json.Unmarshal(r.get(t, "/api/v1/snapshot"), &snap)
+	r.get(t, "/api/v1/snapshot?at="+snap.Data.Cursor)
+	var cat struct {
+		Data struct {
+			Items []struct {
+				ID            string `json:"id"`
+				ContentAccess string `json:"content_access"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	json.Unmarshal(r.get(t, "/api/v1/artifacts"), &cat)
+	served := 0
+	for _, it := range cat.Data.Items {
+		if it.ContentAccess == "text" {
+			r.get(t, "/api/v1/artifacts/"+it.ID+"/content")
+			served++
+		}
+	}
+	if served == 0 {
+		t.Fatal("no artifact content was read")
 	}
 	streamResp, err := r.client.Get(r.base + "/api/v1/stream?after=")
 	if err == nil {
 		buf := make([]byte, 256)
 		streamResp.Body.Read(buf)
 		streamResp.Body.Close()
-	}
-	r.stop(t)
-
-	again := launch(t, root) // a restart reads its own index, still writes nothing else
-	waitEvents(t, again, 7)
-	again.stop(t)
-
-	if diffs := testkit.DiffTrees(before, testkit.HashTree(t, root, IndexDir)); len(diffs) > 0 {
-		t.Fatalf("the observer changed MACH's files: %v", diffs)
-	}
-	for _, name := range []string{".gitignore", "lock", "index/meta.json", "index/events.log", "index/checkpoints.json"} {
-		info, err := os.Lstat(filepath.Join(root, IndexDir, name))
-		if err != nil || info.Mode().Perm()&0o077 != 0 {
-			t.Fatalf("%s: %v, mode %v", name, err, info)
-		}
 	}
 }
 
@@ -213,8 +262,10 @@ func TestSourceBoundary(t *testing.T) {
 		"Rename": true, "Mkdir": true, "MkdirAll": true, "MkdirTemp": true, "Truncate": true, "Chmod": true, "Chtimes": true, "Chown": true,
 		"Symlink": true, "Link": true, "StartProcess": true}
 	allowedWriters := map[string]bool{"internal/store/store.go": true, "internal/lock/lock_unix.go": true, "cmd/mach-observer/main.go": true,
-		"internal/tail/fileid_unix.go": true, "internal/factory/pid_unix.go": true} // the last two open read-only (checked below)
-	readOnlyOpeners := map[string]bool{"internal/tail/fileid_unix.go": true, "internal/factory/pid_unix.go": true}
+		"internal/project/persist.go":  true,                                                                                // the saved projection, in the observer's own folder
+		"internal/tail/fileid_unix.go": true, "internal/factory/pid_unix.go": true, "internal/normalize/open_unix.go": true} // these open read-only (checked below)
+	readOnlyOpeners := map[string]bool{"internal/tail/fileid_unix.go": true, "internal/factory/pid_unix.go": true, "internal/normalize/open_unix.go": true,
+		"internal/artifact/safe.go": true}
 	files := 0
 	filepath.Walk(module, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.Contains(path, "/testkit/") {

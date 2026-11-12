@@ -6,240 +6,334 @@ import (
 	"strings"
 	"testing"
 
-	"mach/observer/internal/store"
+	"mach/observer/internal/event"
 	"mach/observer/internal/testkit"
 )
 
-func open(t *testing.T, dir string) *store.Store {
-	t.Helper()
-	s, err := store.Open(dir, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s
-}
+const x1 = "x0123456789ab"
 
-func tick(t *testing.T, o *Observer) int {
-	t.Helper()
-	n, err := o.Tick()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return n
-}
-
-func types(t *testing.T, s *store.Store, after uint64) []string {
-	t.Helper()
-	entries, err := s.After(after, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []string
-	for _, e := range entries {
-		out = append(out, e.Event.Type)
-	}
-	return out
-}
-
-func TestLedgerAndCellsMergeAndNewCellAppears(t *testing.T) {
+func TestProbeWorkflowStream(t *testing.T) {
 	root := testkit.Project(t)
-	s := open(t, "")
-	o := New(Options{Root: root, Store: s})
-	testkit.Append(t, testkit.LedgerPath(root), testkit.LedgerLine(1, "wave.discovered", "", map[string]any{"slices": []string{"SLICE-001"}}))
-	if n := tick(t, o); n != 1 {
-		t.Fatalf("added %d", n)
+	execution(t, root, x1, "probe-workflow.jsonl", true)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	n := h.validate()
+	evs := h.events()
+	k := kinds(evs)
+	want := map[string]int{"session.initialized": 1, "workflow.started": 1, "workflow.phases_declared": 1, "agent.queued": 4,
+		"agent.started": 4, "agent.finished": 4, "tool.called": 1, "tool.returned": 1, "tool.refused": 1, "workflow.finished": 1,
+		"execution.usage": 1, "execution.process_started": 1, "execution.process_ended": 1}
+	for kind, c := range want {
+		if k[kind] != c {
+			t.Errorf("%s: %d, want %d (all: %v)", kind, k[kind], c, k)
+		}
 	}
-	testkit.Append(t, testkit.CellLog(root, "T-1"), testkit.LifecycleLine("T-1", 1, "station.entered", "build", map[string]any{"stage": "building"}))
-	testkit.Append(t, testkit.LedgerPath(root), testkit.LedgerLine(2, "work.claimed", "T-1", map[string]any{"stage": "planned", "attempt": 1}))
-	if n := tick(t, o); n != 2 {
-		t.Fatalf("a new cell and a ledger line: added %d", n)
+	if n != len(evs) {
+		t.Fatal("count")
 	}
-	got := types(t, s, 0)
-	if len(got) != 3 || got[0] != "wave.discovered" || got[1] != "work.claimed" || got[2] != "station.entered" {
-		t.Fatalf("merged order (ledger first within a tick): %v", got)
+	wf := ofType(evs, "workflow.finished")[0]
+	if wf.Data["status"] != "completed" || wf.Data["stop_reason"] != nil || wf.Cause == nil || wf.Cause.Basis != "identity" {
+		t.Fatalf("workflow.finished: %+v", wf.Data)
 	}
-	if n := tick(t, o); n != 0 {
-		t.Fatalf("nothing new, added %d", n)
+	if wf.ID != "s:"+x1+":26.0" {
+		t.Fatalf("workflow.finished is anchored to the notification line: %s", wf.ID)
 	}
-}
-
-func TestRestartResumesWithoutDuplicates(t *testing.T) {
-	root := testkit.Project(t)
-	index := filepath.Join(root, ".factory/local/observer/index")
-	s := open(t, index)
-	o := New(Options{Root: root, Store: s})
-	testkit.Append(t, testkit.LedgerPath(root), append(testkit.LedgerLine(1, "work.claimed", "T-1", nil), testkit.LedgerLine(2, "execution.started", "T-1", nil)...))
-	testkit.Append(t, testkit.CellLog(root, "T-1"), testkit.LifecycleLine("T-1", 1, "station.entered", "build", nil))
-	tick(t, o)
-	gen := s.Generation()
-	s.Close()
-
-	testkit.Append(t, testkit.LedgerPath(root), testkit.LedgerLine(3, "station.observed", "T-1", nil))
-	testkit.Append(t, testkit.CellLog(root, "T-1"), testkit.LifecycleLine("T-1", 2, "station.exited", "build", nil))
-
-	s2 := open(t, index)
-	defer s2.Close()
-	if s2.Generation() != gen {
-		t.Fatal("a restart keeps the generation")
+	ref := ofType(evs, "tool.refused")[0]
+	if ref.IDs.AgentID != x1+"/a0000000000000001" || ref.IDs.ToolCallID != "" || ref.Data["tool"] != "Bash" {
+		t.Fatalf("refusal linked to its agent: %+v %+v", ref.IDs, ref.Data)
 	}
-	o2 := New(Options{Root: root, Store: s2})
-	if n := tick(t, o2); n != 2 {
-		t.Fatalf("after restart only the two new lines are added, got %d", n)
+	for _, e := range ofType(evs, "agent.finished") {
+		if e.Data["status"] != "done" || e.Time.Precision != "ms" || e.Data["duration_ms"] == nil {
+			t.Fatalf("agent.finished: %+v %+v", e.Data, e.Time)
+		}
+		if e.Cause == nil || !strings.HasPrefix(e.Cause.EventID, "s:"+x1+":") {
+			t.Fatalf("agent.finished cause: %+v", e.Cause)
+		}
 	}
-	if _, head := s2.Bounds(); head != 5 {
-		t.Fatalf("head %d", head)
+	for _, e := range ofType(evs, "agent.progressed") {
+		if _, ok := e.Data["cost_usd"]; ok {
+			t.Fatal("a per-agent cost")
+		}
 	}
-	if got := types(t, s2, 3); got[0] != "station.observed" || got[1] != "station.exited" {
-		t.Fatalf("%v", got)
+	use := ofType(evs, "execution.usage")[0]
+	if use.Data["budget_exhausted"] != false || use.Data["subtype"] != "success" {
+		t.Fatalf("usage: %+v", use.Data)
 	}
-}
-
-func TestCrashBetweenLogAndCheckpointsRepeatsNothing(t *testing.T) {
-	root := testkit.Project(t)
-	index := filepath.Join(root, ".factory/local/observer/index")
-	s := open(t, index)
-	o := New(Options{Root: root, Store: s})
-	testkit.Append(t, testkit.LedgerPath(root), testkit.LedgerLine(1, "work.claimed", "T-1", nil))
-	tick(t, o)
-	stale, err := os.ReadFile(filepath.Join(index, "checkpoints.json"))
-	if err != nil {
-		t.Fatal(err)
+	models := use.Data["models"].(map[string]any)
+	if len(models) == 0 {
+		t.Fatal("no per-model usage")
 	}
-	testkit.Append(t, testkit.LedgerPath(root), testkit.LedgerLine(2, "execution.started", "T-1", nil))
-	tick(t, o)
-	s.Close()
-	// The crash: events.log has line 2, the checkpoints were never moved past line 1.
-	if err := os.WriteFile(filepath.Join(index, "checkpoints.json"), stale, 0o600); err != nil {
-		t.Fatal(err)
+	for _, e := range ofType(evs, "tool.called") {
+		if e.Data["tool"] != "Workflow" || e.Data["target_class"] != "workflow" || e.IDs.AgentID != x1+"/main" {
+			t.Fatalf("main-loop call: %+v", e)
+		}
 	}
-	s2 := open(t, index)
-	defer s2.Close()
-	o2 := New(Options{Root: root, Store: s2})
-	if n := tick(t, o2); n != 0 {
-		t.Fatalf("the re-read line must be dropped by its ID, added %d", n)
-	}
-	if _, head := s2.Bounds(); head != 2 || s2.Info().Duplicates != 1 {
-		t.Fatalf("head %d duplicates %d", head, s2.Info().Duplicates)
+	// Heartbeats are not events: 17 task_progress records, 7 of them snapshots.
+	if len(ofType(evs, "agent.progressed")) > 7 {
+		t.Fatalf("progress emitted from heartbeats: %d", len(ofType(evs, "agent.progressed")))
 	}
 }
 
-func TestTruncatedAndRewrittenLedgerIsDeduplicated(t *testing.T) {
+func TestBudgetKilledWorkflowThatReportsSuccess(t *testing.T) {
 	root := testkit.Project(t)
-	s := open(t, "")
-	o := New(Options{Root: root, Store: s})
-	content := append(testkit.LedgerLine(1, "work.claimed", "T-1", nil), testkit.LedgerLine(2, "execution.started", "T-1", nil)...)
-	testkit.Append(t, testkit.LedgerPath(root), content)
-	tick(t, o)
-	// Something rewrote the log: shorter, same history, then one new line.
-	os.WriteFile(testkit.LedgerPath(root), testkit.LedgerLine(1, "work.claimed", "T-1", nil), 0o644)
-	tick(t, o)
-	testkit.Append(t, testkit.LedgerPath(root), testkit.LedgerLine(2, "execution.started", "T-1", nil))
-	testkit.Append(t, testkit.LedgerPath(root), testkit.LedgerLine(3, "execution.completed", "T-1", nil))
-	tick(t, o)
-	got := types(t, s, 0)
-	want := []string{"work.claimed", "execution.started", "history.gap", "execution.completed"}
-	if len(got) != len(want) {
-		t.Fatalf("got %v", got)
+	execution(t, root, x1, "budget-stops-workflow.jsonl", true)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	evs := h.events()
+	wf := ofType(evs, "workflow.finished")
+	if len(wf) != 1 || wf[0].Data["status"] != "killed" || wf[0].Data["stop_reason"] != "unknown" || wf[0].Data["notification_status"] != "stopped" {
+		t.Fatalf("a success result must never read as a completed workflow: %+v", wf)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("got %v want %v", got, want)
+	use := ofType(evs, "execution.usage")[0]
+	if use.Data["subtype"] != "success" || use.Data["budget_exhausted"] != false {
+		t.Fatalf("%+v", use.Data)
+	}
+	for _, a := range ofType(evs, "agent.finished") {
+		if a.Data["status"] != "error" {
+			t.Fatalf("killed agents report error: %+v", a.Data)
+		}
+	}
+
+	// With stderr's budget line the stop is attributed, marked as read from stderr.
+	root2 := testkit.Project(t)
+	execution(t, root2, x1, "budget-stops-workflow.jsonl", true)
+	testkit.WriteFile(t, filepath.Join(testkit.ExecDir(root2, x1), "stderr.log"),
+		[]byte("Budget limit reached ($0.17 of $0.15); stopping background agents.\n/Users/someone/secret path\n"))
+	h2 := newHarness(t, root2, "", false)
+	h2.drain()
+	wf2 := ofType(h2.events(), "workflow.finished")[0]
+	if wf2.Data["stop_reason"] != "budget" || wf2.Inferred["data.stop_reason"] != "stderr-line" {
+		t.Fatalf("%+v %+v", wf2.Data, wf2.Inferred)
+	}
+	flagged := false
+	for _, s := range h2.o.Stats().Sources {
+		flagged = flagged || s.CostMayBeUnderReported
+	}
+	if !flagged {
+		t.Fatal("a budget-killed workflow's cost is flagged as possibly under-reported")
+	}
+	for _, raw := range h2.raws() {
+		if strings.Contains(string(raw), "secret path") {
+			t.Fatal("stderr content was forwarded")
 		}
 	}
 }
 
-func TestSequenceGapIsReported(t *testing.T) {
+func TestBudgetExceededResult(t *testing.T) {
 	root := testkit.Project(t)
-	s := open(t, "")
-	o := New(Options{Root: root, Store: s})
-	// MACH's torn-line failure (M6_0_TELEMETRY_GAPS 2.1): line 2 was cut by a crash and line 3 was
-	// appended onto it, so both are one unreadable line. Line 4 is whole.
-	torn := append(testkit.LedgerLine(1, "work.claimed", "T-1", nil), []byte(`{"schema_version":2,"seq":2,"at`)...)
-	torn = append(torn, testkit.LedgerLine(3, "execution.started", "T-1", nil)...)
-	testkit.Append(t, testkit.LedgerPath(root), append(torn, testkit.LedgerLine(4, "execution.completed", "T-1", nil)...))
-	tick(t, o)
-	entries, _ := s.After(0, 10)
-	if len(entries) != 3 || entries[1].Event.Type != "history.gap" || entries[1].Event.Authority != "reconstructed" {
-		t.Fatalf("%v", types(t, s, 0))
+	execution(t, root, x1, "budget-exceeded.jsonl", true)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	evs := h.events()
+	use := ofType(evs, "execution.usage")[0]
+	if use.Data["budget_exhausted"] != true || use.Data["terminal_reason"] != "budget_exhausted" {
+		t.Fatalf("%+v", use.Data)
 	}
-	d := entries[1].Event.Data
-	if d["from_seq"] != int64(2) || d["to_seq"] != int64(3) || d["count"] != int64(2) || d["reason"] != "sequence" {
-		t.Fatalf("gap %v", d)
-	}
-	if !strings.HasPrefix(entries[1].Event.ID, "o:gap:i:") || !strings.HasPrefix(entries[2].Event.ID, "i:") {
-		t.Fatalf("ids %s %s", entries[1].Event.ID, entries[2].Event.ID)
-	}
-	if o.Stats().Sources[0].Refused != 1 {
-		t.Fatal("the unreadable line is counted")
+	wf := ofType(evs, "workflow.finished")
+	if len(wf) != 1 || wf[0].Data["status"] != "killed" || wf[0].Data["stop_reason"] != "budget" {
+		t.Fatalf("%+v", wf)
 	}
 }
 
-func TestForeignTicketLineRefusedAndCellGone(t *testing.T) {
+func TestAgentToolSubAgentsAreStreamedPerCall(t *testing.T) {
 	root := testkit.Project(t)
-	s := open(t, "")
-	o := New(Options{Root: root, Store: s})
-	testkit.Append(t, testkit.CellLog(root, "T-1"), testkit.LifecycleLine("T-2", 1, "station.entered", "build", nil))
-	testkit.Append(t, testkit.CellLog(root, "T-1"), testkit.LifecycleLine("T-1", 1, "station.entered", "build", nil))
-	tick(t, o)
-	if got := types(t, s, 0); len(got) != 1 {
-		t.Fatalf("one cell cannot speak for another: %v", got)
+	execution(t, root, x1, "agent-tool-contrast.jsonl", true)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	evs := h.events()
+	calls := ofType(evs, "tool.called")
+	if len(calls) != 4 {
+		t.Fatalf("calls: %d", len(calls))
 	}
-	os.RemoveAll(filepath.Join(root, ".factory/worktrees/T-1"))
-	tick(t, o)
-	tick(t, o)
-	if _, head := s.Bounds(); head != 1 {
-		t.Fatal("a vanished cell is source state, not history")
+	sub := 0
+	for _, c := range calls {
+		if c.IDs.AgentID != x1+"/main" {
+			sub++
+			if c.IDs.ParentAgentID != x1+"/main" || c.Parent != "agent:"+c.IDs.AgentID {
+				t.Fatalf("sub-agent call: %+v", c.IDs)
+			}
+		}
 	}
-	for _, src := range o.Stats().Sources {
-		if src.Key == "cell/T-1" && (!src.Gone || src.Refused != 1) {
-			t.Fatalf("%+v", src)
+	if sub != 2 {
+		t.Fatalf("sub-agent calls %d", sub)
+	}
+	for _, r := range ofType(evs, "tool.returned") {
+		if r.Cause == nil || r.Data["duration_ms"] == nil {
+			t.Fatalf("returned: %+v", r)
+		}
+	}
+	if len(ofType(evs, "workflow.started")) != 0 || len(ofType(evs, "agent.started")) != 0 {
+		t.Fatal("Agent-tool tasks are not workflows")
+	}
+}
+
+func TestBeltParallelAgentsAndLabels(t *testing.T) {
+	root := testkit.Project(t)
+	execution(t, root, x1, "belt-build-verify-review.jsonl", true)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	evs := h.events()
+	seats := map[string]string{}
+	for _, e := range ofType(evs, "agent.started") {
+		label := e.Data["label"].(string)
+		if strings.HasSuffix(label, "reviewer") {
+			if e.IDs.Station != "review" || e.Inferred["ids.seat"] != "label" || e.IDs.TicketID != "TICKET-1" {
+				t.Fatalf("reviewer: %+v %+v", e.IDs, e.Inferred)
+			}
+			if prev, dup := seats[e.IDs.AgentID]; dup {
+				t.Fatalf("two reviewers share an agent id: %s %s", prev, e.IDs.Seat)
+			}
+			seats[e.IDs.AgentID] = e.IDs.Seat
+		}
+		if strings.HasSuffix(label, "what next?") && (e.IDs.Station != "" || e.IDs.TicketID != "TICKET-1") {
+			t.Fatalf("clerk: %+v", e.IDs)
+		}
+	}
+	got := map[string]bool{}
+	for _, s := range seats {
+		got[s] = true
+	}
+	if !got["architecture"] || !got["security"] || !got["product"] {
+		t.Fatalf("parallel reviewers not distinguished: %v", seats)
+	}
+	// The fixture's {"_omitted_records": n} lines are not Claude records: counted, never read.
+	gaps := ofType(evs, "history.gap")
+	found := false
+	for _, g := range gaps {
+		if g.Data["reason"] == "unknown-type" && strings.Contains(g.ID, "type-untyped") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("untyped lines not reported: %d gaps", len(gaps))
+	}
+	if h.o.Stats().Unrecognised["untyped"] != 2 {
+		t.Fatalf("unrecognised: %v", h.o.Stats().Unrecognised)
+	}
+}
+
+func TestWorkflowToolRefusedAndUnknownRecordType(t *testing.T) {
+	root := testkit.Project(t)
+	execution(t, root, x1, "workflow-tool-refused.jsonl", true)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	evs := h.events()
+	if len(ofType(evs, "workflow.started")) != 0 || len(ofType(evs, "workflow.finished")) != 0 {
+		t.Fatal("no workflow ran")
+	}
+	found := false
+	for _, g := range ofType(evs, "history.gap") {
+		if strings.Contains(g.ID, "type-system%2Fthinking_tokens") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("an unrecognised record type is reported by name only")
+	}
+}
+
+func TestUnknownClaudeVersionIsRestricted(t *testing.T) {
+	root := testkit.Project(t)
+	execution(t, root, x1, "probe-workflow.jsonl", true)
+	p := filepath.Join(testkit.ExecDir(root, x1), "stream.jsonl")
+	b, _ := os.ReadFile(p)
+	os.WriteFile(p, []byte(strings.ReplaceAll(string(b), `"2.1.322"`, `"9.9.9"`)), 0o644)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	k := kinds(h.events())
+	if k["agent.started"] != 0 || k["workflow.started"] != 0 || k["session.initialized"] != 1 || k["tool.refused"] != 1 || k["execution.usage"] != 1 {
+		t.Fatalf("restricted mode: %v", k)
+	}
+	for _, s := range h.o.Stats().Sources {
+		if s.Key == "stream/"+x1 && (s.StreamKnown == nil || *s.StreamKnown || s.ClaudeVersion != "9.9.9") {
+			t.Fatalf("%+v", s)
 		}
 	}
 }
 
-func TestLinkedCellFolderIsIgnored(t *testing.T) {
+func TestOpenSpansClosedAtProcessEnd(t *testing.T) {
 	root := testkit.Project(t)
-	outside := t.TempDir()
-	testkit.Append(t, filepath.Join(outside, "lifecycle.jsonl"), testkit.LifecycleLine("T-9", 1, "station.entered", "build", nil))
-	if err := os.Symlink(outside, filepath.Join(root, ".factory/worktrees/T-9")); err != nil {
-		t.Fatal(err)
+	execution(t, root, x1, "probe-workflow.jsonl", true)
+	p := filepath.Join(testkit.ExecDir(root, x1), "stream.jsonl")
+	b, _ := os.ReadFile(p)
+	lines := strings.SplitAfter(string(b), "\n")
+	os.WriteFile(p, []byte(strings.Join(lines[:10], "")), 0o644) // killed after the second snapshot
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	evs := h.events()
+	closed := 0
+	for _, e := range ofType(evs, "agent.finished") {
+		if e.Authority == event.Reconstructed {
+			closed++
+			if e.Data["status"] != "unknown" || e.Time.Precision != "bounded" || !strings.HasPrefix(e.ID, "o:close:agent:") {
+				t.Fatalf("%+v", e)
+			}
+		}
 	}
-	s := open(t, "")
-	o := New(Options{Root: root, Store: s})
-	tick(t, o)
-	if _, head := s.Bounds(); head != 0 {
-		t.Fatal("a linked cell folder was followed")
+	if closed != 3 {
+		t.Fatalf("closed %d open agents", closed)
+	}
+	if len(ofType(evs, "workflow.finished")) != 0 {
+		t.Fatal("a workflow without task_updated is not reported finished")
 	}
 }
 
-func TestLifecycleNullSeqAndRepeatedLines(t *testing.T) {
+func TestLifecycleHelperSample(t *testing.T) {
 	root := testkit.Project(t)
-	s := open(t, "")
-	o := New(Options{Root: root, Store: s})
-	log := testkit.CellLog(root, "T-1")
-	testkit.Append(t, log, testkit.LifecycleLine("T-1", 1, "station.entered", "build", nil))
-	testkit.Append(t, log, testkit.LifecycleLine("T-1", 0, "gate.evaluated", "build", map[string]any{"gate": "build.start", "outcome": "pass"}))
-	testkit.Append(t, log, testkit.LifecycleLine("T-1", 3, "station.exited", "build", map[string]any{"outcome": "built"}))
-	tick(t, o)
-	entries, _ := s.After(0, 10)
-	if len(entries) != 4 || entries[1].Event.ID == entries[0].Event.ID {
-		t.Fatalf("%v", types(t, s, 0))
+	data, err := os.ReadFile(filepath.Join("..", "normalize", "testdata", "lifecycle-helper.jsonl"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Records 1, (null), 3: the jump from 1 to 3 is a gap of one; the null record has its own line.
-	if entries[2].Event.Type != "history.gap" || entries[2].Event.Data["from_seq"] != int64(2) {
-		t.Fatalf("%v", types(t, s, 0))
+	testkit.WriteFile(t, filepath.Join(testkit.CellDir(root, "LOCAL-001"), "cell.json"), mustJSON(map[string]any{"stage": "merged", "created_at": "2026-11-12T20:55:40+00:00"}))
+	testkit.Append(t, testkit.CellLog(root, "LOCAL-001"), data)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	evs := h.events()
+	life := 0
+	for _, e := range evs {
+		if e.Origin.Stream == event.StreamLifecycle {
+			life++
+			if e.Authority != event.Authoritative || e.IDs.CellInstance == "" || !strings.HasPrefix(e.IDs.VisitID, "LOCAL-001/") {
+				t.Fatalf("%+v", e)
+			}
+		}
 	}
-	if !strings.HasSuffix(entries[1].Event.ID, ":2") || !strings.HasSuffix(entries[3].Event.ID, ":3") {
-		t.Fatalf("lifecycle ids are by physical line: %s %s", entries[1].Event.ID, entries[3].Event.ID)
+	if life != 15 {
+		t.Fatalf("lifecycle events %d", life)
 	}
-	// The file is cut back to its first line and the same lines are written again: nothing repeats.
-	data, _ := os.ReadFile(log)
-	first := data[:len(testkit.LifecycleLine("T-1", 1, "station.entered", "build", nil))]
-	os.WriteFile(log, first, 0o644)
-	tick(t, o)
-	os.WriteFile(log, data, 0o644)
-	tick(t, o)
-	if got := types(t, s, 4); len(got) != 1 || got[0] != "history.gap" {
-		t.Fatalf("after a truncation only the truncation is reported: %v", got)
+	v := ofType(evs, "review.verdict_submitted")[0]
+	if v.Data["vote"] != "APPROVE" || v.IDs.Seat != "security" || v.Data["model"] != "sonnet" {
+		t.Fatalf("%+v %+v", v.Data, v.IDs)
+	}
+	exit := ofType(evs, "station.exited")[0]
+	if exit.Data["duration_ms"] != int64(1) && exit.Data["duration_ms"] != float64(1) || exit.Cause == nil {
+		t.Fatalf("duration from the matching entry: %+v", exit.Data)
+	}
+	g := ofType(evs, "gate.evaluated")
+	if g[1].Data["status"] != "PASS" || g[0].Data["audit_tier"] != "Gold" || g[0].Data["verdict"] != "passed" {
+		t.Fatalf("%+v %+v", g[0].Data, g[1].Data)
+	}
+	if len(ofType(evs, "history.gap")) != 0 {
+		t.Fatalf("gaps: %+v", ofType(evs, "history.gap")[0].Data)
+	}
+}
+
+func TestOldLifecycleFilesNameTheRoundAttempt(t *testing.T) {
+	root := testkit.Project(t)
+	testkit.Append(t, testkit.CellLog(root, "T-1"), testkit.Record{Seq: 1, Ticket: "T-1", Type: "station.entered", Station: "build", Round: 2, OldRound: true, Data: map[string]any{"stage": "building"}}.Line())
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	e := ofType(h.events(), "station.entered")[0]
+	if e.IDs.Round != 2 || e.IDs.Attempt != 0 {
+		t.Fatalf("%+v", e.IDs)
 	}
 }

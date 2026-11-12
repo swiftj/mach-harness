@@ -1,7 +1,8 @@
 // Package webui serves the built Control Tower app from the binary itself: nothing is read from
 // disk and nothing is fetched from another origin at run time. Adapted from
-// apps/studio/internal/webui (MACH Next M5). The committed dist/ is a placeholder; a build
-// script (not part of this wave) copies web/apps/control-tower's build over it before go build.
+// apps/studio/internal/webui (MACH Next M5). The committed dist/ is a placeholder page that says the
+// binary was built without the app; build.sh copies web/apps/control-tower's build over it, builds,
+// and puts the placeholder back.
 package webui
 
 import (

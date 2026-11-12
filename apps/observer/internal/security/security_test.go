@@ -84,3 +84,49 @@ func TestHostAndSameSite(t *testing.T) {
 		}
 	}
 }
+
+// A second browser: each exchange mints the next one-time link (handed to OnMint, which the
+// observer writes to its private link file); every session stays valid; old tokens never work.
+func TestSecondBrowserGetsTheNextLink(t *testing.T) {
+	g, _ := NewGuard(4000)
+	var minted []string
+	g.OnMint(func(url string) { minted = append(minted, url) })
+	if len(minted) != 1 || minted[0] != g.StartURL() {
+		t.Fatalf("the current link was not handed over: %v", minted)
+	}
+	tokenOf := func(url string) string { return url[len("http://127.0.0.1:4000/?t="):] }
+	first, ok := g.Exchange(tokenOf(minted[0]))
+	if !ok || len(minted) != 2 || minted[1] == minted[0] {
+		t.Fatalf("no next link after an exchange: %v", minted)
+	}
+	second, ok := g.Exchange(tokenOf(minted[1]))
+	if !ok || first.Value == second.Value {
+		t.Fatal("the second browser did not get its own session")
+	}
+	for _, c := range []*http.Cookie{first, second} {
+		r := httptest.NewRequest("GET", "/api/v1/health", nil)
+		r.AddCookie(c)
+		if !g.Authenticated(r) {
+			t.Fatal("a session was lost when another browser joined")
+		}
+	}
+	for _, used := range minted[:2] {
+		if _, ok := g.Exchange(tokenOf(used)); ok {
+			t.Fatal("a used token worked again")
+		}
+	}
+	if g.Sessions() != 2 {
+		t.Fatalf("sessions %d", g.Sessions())
+	}
+	// Past the cap, the oldest session is forgotten.
+	for i := 0; i < MaxSessions; i++ {
+		if _, ok := g.Exchange(tokenOf(minted[len(minted)-1])); !ok {
+			t.Fatal("exchange failed")
+		}
+	}
+	r := httptest.NewRequest("GET", "/api/v1/health", nil)
+	r.AddCookie(first)
+	if g.Authenticated(r) || g.Sessions() != MaxSessions {
+		t.Fatalf("the cap was not applied: %d", g.Sessions())
+	}
+}

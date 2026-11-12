@@ -3,6 +3,8 @@
 package testkit
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -150,4 +153,104 @@ func DiffTrees(before, after map[string]string) []string {
 		}
 	}
 	return diffs
+}
+
+// WriteFile writes data to path, creating its folder.
+func WriteFile(t testing.TB, path string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ExecDir is an execution's folder.
+func ExecDir(root, execution string) string {
+	return filepath.Join(root, ".factory", "local", "executions", execution)
+}
+
+// CellDir is a cell's folder.
+func CellDir(root, ticket string) string { return filepath.Join(root, ".factory", "worktrees", ticket) }
+
+// StreamFixture is the path of one of tests/fixtures/execution-streams/*.jsonl.
+func StreamFixture(name string) string {
+	return filepath.Join(RepoRoot(), "tests", "fixtures", "execution-streams", name)
+}
+
+// Record is a lifecycle record with every field explicit.
+type Record struct {
+	Seq       int // 0 writes null
+	At        string
+	Ticket    string
+	Type      string
+	Station   string
+	Visit     int
+	Round     int // 0 writes null
+	Execution string
+	Data      map[string]any
+	OldRound  bool // write the judging round as "attempt", as files written before decision 2 did
+}
+
+// Line encodes the record as the lifecycle helper writes it.
+func (r Record) Line() []byte {
+	var seq, round, x any
+	if r.Seq > 0 {
+		seq = r.Seq
+	}
+	if r.Round > 0 {
+		round = r.Round
+	}
+	if r.Execution != "" {
+		x = r.Execution
+	}
+	if r.Data == nil {
+		r.Data = map[string]any{}
+	}
+	if r.At == "" {
+		r.At = "2026-11-12T10:00:01.250Z"
+	}
+	if r.Visit == 0 {
+		r.Visit = 1
+	}
+	m := map[string]any{"v": 1, "seq": seq, "at": r.At, "ticket_id": r.Ticket, "type": r.Type, "station": r.Station,
+		"visit": fmt.Sprintf("%s#%d", r.Station, r.Visit), "execution_id": x, "data": r.Data}
+	if r.OldRound {
+		m["attempt"] = round
+	} else {
+		m["round"] = round
+	}
+	b, _ := json.Marshal(m)
+	return append(b, '\n')
+}
+
+// WriteArchive writes a cell archive as cleanup does: a gzip tar with every member under
+// "<prefix>/".
+func WriteArchive(t testing.TB, path, prefix string, files map[string][]byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		data := files[n]
+		if err := tw.WriteHeader(&tar.Header{Name: prefix + "/" + n, Mode: 0o644, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		tw.Write(data)
+	}
+	tw.Close()
+	gz.Close()
+	f.Close()
 }

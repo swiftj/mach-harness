@@ -22,8 +22,10 @@ import (
 	"syscall"
 	"time"
 
+	"mach/observer/internal/artifact"
 	"mach/observer/internal/ingest"
 	"mach/observer/internal/lock"
+	"mach/observer/internal/project"
 	"mach/observer/internal/security"
 	"mach/observer/internal/server"
 	"mach/observer/internal/store"
@@ -39,6 +41,10 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// LinkName is the file in the observer's folder that holds the next one-time link (mode 0600),
+// for a second browser: the skill prints it. It is removed when the observer stops.
+const LinkName = "link"
 
 // IndexDir is the observer's own folder, relative to the project root. It is the only place the
 // observer writes.
@@ -93,17 +99,36 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	loop := ingest.New(ingest.Options{Root: root, Store: st, Logger: logger})
+	feedLog := storeLog{st}
+	proj := project.New(project.Options{Log: feedLog, PersistDir: projectionDir(indexDir), Logger: logger})
+	defer proj.Close()
+	linkFile := ""
+	if indexDir != "" {
+		linkFile = IndexDir + "/" + LinkName
+		path := filepath.Join(indexDir, LinkName)
+		guard.OnMint(func(url string) {
+			if err := writePrivate(path, []byte(url+"\n")); err != nil {
+				logger.Printf("could not save the next one-time link: %v", err)
+			}
+		})
+		defer os.Remove(path) // a stale link must not outlive the observer
+	}
 	done := make(chan struct{})
-	srv := server.New(server.Options{Root: root, Guard: guard, Store: st, Ingest: loop, UI: webui.Handler(),
-		Logger: logger, Done: done}).HTTPServer()
+	srv := server.New(server.Options{Root: root, Guard: guard, Log: feedLog, Projector: proj, Catalog: artifact.New(root),
+		Ingest: ingestSource{loop}, Factory: factorySource{root}, UI: webui.Handler(), Logger: logger, Done: done, LinkFile: linkFile}).HTTPServer()
 
 	fmt.Fprintf(stdout, "MACH Control Tower observer for %s (read-only)\n", filepath.Base(root))
 	fmt.Fprintf(stdout, "Open: %s\n", guard.StartURL())
-	fmt.Fprintln(stdout, "The link works once. Press Ctrl+C to stop.")
+	if linkFile != "" {
+		fmt.Fprintf(stdout, "The link works once. A fresh link for another browser is kept in %s. Press Ctrl+C to stop.\n", linkFile)
+	} else {
+		fmt.Fprintln(stdout, "The link works once. Press Ctrl+C to stop.")
+	}
 	if f, ok := stdout.(*os.File); ok {
 		f.Sync()
 	}
 
+	go proj.Run(done)
 	go loop.Run(done)
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(listener) }()
@@ -129,6 +154,42 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+func projectionDir(indexDir string) string {
+	if indexDir == "" {
+		return ""
+	}
+	dir := filepath.Join(indexDir, "projection")
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return ""
+	}
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
+		return "" // a link or a file: keep the projection in memory only
+	}
+	return dir
+}
+
+// writePrivate writes data to path atomically, readable only by this user.
+func writePrivate(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 func indexDirOrEmpty(dir, sub string) string {

@@ -1,22 +1,9 @@
-// Package store is the observer's merged log: every normalized event, in the order the observer
-// accepted it, each at a position that never changes within a generation.
-//
-// It is a projection of MACH's files, never a replacement: deleting it loses nothing, because it
-// is rebuilt from the sources (under a new generation, so clients know their cursors no longer
-// apply). On disk it is three files under the index folder:
-//
-//	meta.json         format, generation, and the redaction and event versions it was built under
-//	events.log        one normalized event per line, append-only, fsynced before checkpoints move
-//	checkpoints.json  each source's tail position, written atomically after events.log is synced
-//
-// Because events.log is synced before checkpoints.json is replaced, a crash can only leave the
-// checkpoints behind the log, never ahead. The lines between are read again on restart and
-// dropped by their deterministic IDs, so nothing is lost and nothing is repeated.
 package store
 
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -26,6 +13,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,11 +24,16 @@ import (
 	"mach/observer/internal/tail"
 )
 
-// Format is the on-disk layout version.
-const Format = 1
+// Format is the on-disk layout version. 2: numbered segments.
+const Format = 2
 
-// DefaultMaxMemory is how many recent events are held in memory and so served by cursor.
-const DefaultMaxMemory = 50000
+// Defaults.
+const (
+	DefaultMaxMemory    = 50000
+	DefaultSegmentBytes = 64 << 20
+	DefaultRetainBytes  = 512 << 20
+	sparseEvery         = 1024
+)
 
 // Errors a cursor read can return.
 var (
@@ -53,6 +48,7 @@ type Meta struct {
 	CreatedAt        string `json:"created_at"`
 	RedactionVersion int    `json:"redaction_version"`
 	EventVersion     int    `json:"event_version"`
+	EventRevision    int    `json:"event_revision"`
 }
 
 // Entry is one stored event: the decoded event and its encoded line, made once.
@@ -68,35 +64,84 @@ type Info struct {
 	Floor      uint64 `json:"floor"`
 	InMemory   int    `json:"in_memory"`
 	Persisted  bool   `json:"persisted"`
-	Rebuilt    string `json:"rebuilt,omitempty"` // why the index was started again at open, if it was
+	Rebuilt    string `json:"rebuilt,omitempty"`
 	Duplicates int64  `json:"duplicates"`
+	Segments   int    `json:"segments"`
+	DiskBytes  int64  `json:"disk_bytes"`
+	Dropped    int64  `json:"dropped_segments"`
+	MaxOrder   string `json:"max_order,omitempty"`
+}
+
+// Options configure a store.
+type Options struct {
+	MaxMemory    int   // events held in memory (and indexed by ticket, execution and entity)
+	SegmentBytes int64 // a segment is closed when it grows past this
+	RetainBytes  int64 // whole oldest segments are dropped while the total is above this
+}
+
+type segment struct {
+	n           int
+	path        string
+	first, last uint64
+	size        int64
+	marks       []mark
+}
+
+type mark struct {
+	pos    uint64
+	offset int64
+}
+
+type held struct {
+	pos uint64
 }
 
 // Store is safe for concurrent use: one writer (the ingest loop), many readers.
 type Store struct {
-	dir    string
-	maxMem int
+	dir  string
+	opts Options
 
 	mu          sync.RWMutex
 	meta        Meta
-	entries     []Entry // contiguous: entries[i].Event.Position == first+i
+	entries     []Entry // contiguous: entries[i].Event.Pos == first+i
 	first       uint64
 	head        uint64
-	ids         map[string]uint64
-	seg         *os.File
+	ids         map[string]held
+	byTicket    map[string][]uint64
+	byExec      map[string][]uint64
+	byEntity    map[string][]uint64
+	segs        []*segment
+	cur         *os.File
+	diskFloor   uint64
 	checkpoints map[string]tail.Checkpoint
 	changed     chan struct{}
 	rebuilt     string
 	dupes       int64
+	dropped     int64
+	maxOrder    string
+	watermark   int64
 	closed      bool
 }
 
-// Open opens or creates the index in dir. An empty dir keeps everything in memory only.
+// Open opens or creates the index in dir with default options. An empty dir keeps everything in
+// memory only.
 func Open(dir string, maxMemory int) (*Store, error) {
-	if maxMemory <= 0 {
-		maxMemory = DefaultMaxMemory
+	return OpenWith(dir, Options{MaxMemory: maxMemory})
+}
+
+// OpenWith opens or creates the index with options.
+func OpenWith(dir string, opts Options) (*Store, error) {
+	if opts.MaxMemory <= 0 {
+		opts.MaxMemory = DefaultMaxMemory
 	}
-	s := &Store{dir: dir, maxMem: maxMemory, ids: map[string]uint64{}, checkpoints: map[string]tail.Checkpoint{}, changed: make(chan struct{}), first: 1}
+	if opts.SegmentBytes <= 0 {
+		opts.SegmentBytes = DefaultSegmentBytes
+	}
+	if opts.RetainBytes <= 0 {
+		opts.RetainBytes = DefaultRetainBytes
+	}
+	s := &Store{dir: dir, opts: opts, ids: map[string]held{}, byTicket: map[string][]uint64{}, byExec: map[string][]uint64{},
+		byEntity: map[string][]uint64{}, checkpoints: map[string]tail.Checkpoint{}, changed: make(chan struct{}), first: 1}
 	if dir == "" {
 		s.meta = newMeta()
 		return s, nil
@@ -114,11 +159,9 @@ func Open(dir string, maxMemory int) (*Store, error) {
 			return nil, err
 		}
 	}
-	seg, err := os.OpenFile(filepath.Join(dir, "events.log"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("could not open the index log: %w", err)
+	if err := s.openCurrent(); err != nil {
+		return nil, err
 	}
-	s.seg = seg
 	return s, nil
 }
 
@@ -128,7 +171,13 @@ func newMeta() Meta {
 		panic("no randomness: " + err.Error())
 	}
 	return Meta{Format: Format, Generation: hex.EncodeToString(b), CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		RedactionVersion: redact.Version, EventVersion: event.Version}
+		RedactionVersion: redact.Version, EventVersion: event.Version, EventRevision: event.Revision}
+}
+
+var segmentRe = regexp.MustCompile(`^segment-([0-9]{6})\.log$`)
+
+func (s *Store) segmentPath(n int) string {
+	return filepath.Join(s.dir, fmt.Sprintf("segment-%06d.log", n))
 }
 
 // load reads an existing index. It returns a reason when the index must be started again.
@@ -149,11 +198,11 @@ func (s *Store) load() (string, error) {
 		return "index format changed", nil
 	case meta.RedactionVersion != redact.Version:
 		return "redaction rules changed", nil
-	case meta.EventVersion != event.Version:
+	case meta.EventVersion != event.Version || meta.EventRevision != event.Revision:
 		return "event version changed", nil
 	}
 	s.meta = meta
-	if reason, err := s.loadLog(); reason != "" || err != nil {
+	if reason, err := s.loadSegments(); reason != "" || err != nil {
 		return reason, err
 	}
 	if data, err := os.ReadFile(filepath.Join(s.dir, "checkpoints.json")); err == nil {
@@ -168,95 +217,209 @@ func (s *Store) load() (string, error) {
 	return "", nil
 }
 
-// loadLog reads events.log. A torn or unreadable last line (a crash during append) is cut off; an
-// unreadable line anywhere else, or positions out of order, mean the index is started again.
-func (s *Store) loadLog() (string, error) {
-	path := filepath.Join(s.dir, "events.log")
-	f, err := os.Open(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
-	}
+type posLine struct {
+	Pos   uint64 `json:"pos"`
+	Order string `json:"order"`
+}
+
+// loadSegments scans every retained segment: positions must run on without a hole, a torn last
+// line (a crash during append) is cut off, anything else unreadable starts the index again. The
+// most recent MaxMemory events are decoded into memory.
+func (s *Store) loadSegments() (string, error) {
+	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	r := bufio.NewReaderSize(f, 1<<16)
-	var good int64
-	for {
-		line, err := r.ReadBytes('\n')
-		if len(line) > 0 && line[len(line)-1] == '\n' {
-			var ev event.Event
-			if json.Unmarshal(line, &ev) != nil {
-				if _, peekErr := r.Peek(1); peekErr == io.EOF {
-					break // the last line is unreadable: treat as torn
-				}
-				return "index log corrupt", nil
-			}
-			c, perr := event.ParseCursor(ev.Cursor)
-			if perr != nil || c.Generation != s.meta.Generation || c.Position != s.head+1 {
-				return "index log out of order", nil
-			}
-			ev.Position = c.Position
-			s.push(Entry{Event: &ev, Raw: bytes.TrimRight(line, "\n")})
-			good += int64(len(line))
+	var nums []int
+	for _, e := range entries {
+		if m := segmentRe.FindStringSubmatch(e.Name()); m != nil && e.Type().IsRegular() {
+			n, _ := strconv.Atoi(m[1])
+			nums = append(nums, n)
 		}
-		if err == io.EOF {
-			break
-		}
+	}
+	sort.Ints(nums)
+	var expect uint64
+	for i, n := range nums {
+		seg := &segment{n: n, path: s.segmentPath(n)}
+		f, err := os.Open(seg.path)
 		if err != nil {
 			return "", err
 		}
-	}
-	if info, err := f.Stat(); err == nil && info.Size() > good {
-		if err := os.Truncate(path, good); err != nil {
-			return "", fmt.Errorf("could not cut a torn line from the index log: %w", err)
+		r := bufio.NewReaderSize(f, 1<<20)
+		var offset int64
+		count := 0
+		for {
+			line, err := r.ReadBytes('\n')
+			if len(line) > 0 && line[len(line)-1] == '\n' {
+				var p posLine
+				if json.Unmarshal(line, &p) != nil || p.Pos == 0 || (expect != 0 && p.Pos != expect+1) {
+					if _, peek := r.Peek(1); peek == io.EOF && i == len(nums)-1 {
+						break // a torn or unreadable last line
+					}
+					f.Close()
+					return "index log corrupt", nil
+				}
+				if seg.first == 0 {
+					seg.first = p.Pos
+				}
+				if count%sparseEvery == 0 {
+					seg.marks = append(seg.marks, mark{pos: p.Pos, offset: offset})
+				}
+				count++
+				seg.last, expect = p.Pos, p.Pos
+				if p.Order > s.maxOrder {
+					s.maxOrder = p.Order
+				}
+				offset += int64(len(line))
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				f.Close()
+				return "", err
+			}
 		}
+		f.Close()
+		if info, err := os.Stat(seg.path); err == nil && info.Size() > offset {
+			if i != len(nums)-1 {
+				return "index log corrupt", nil
+			}
+			if err := os.Truncate(seg.path, offset); err != nil {
+				return "", fmt.Errorf("could not cut a torn line from the index log: %w", err)
+			}
+		}
+		seg.size = offset
+		if seg.first == 0 {
+			if i == len(nums)-1 && i > 0 {
+				seg.first = expect + 1
+			} else if i != len(nums)-1 {
+				return "index log corrupt", nil
+			}
+		}
+		s.segs = append(s.segs, seg)
 	}
+	if len(s.segs) > 0 && s.segs[0].first > 0 {
+		s.diskFloor = s.segs[0].first - 1
+	}
+	s.head = expect
+	if s.head == 0 {
+		return "", nil
+	}
+	from := uint64(1)
+	if s.head > uint64(s.opts.MaxMemory) {
+		from = s.head - uint64(s.opts.MaxMemory) + 1
+	}
+	if from <= s.diskFloor {
+		from = s.diskFloor + 1
+	}
+	got, err := s.readDisk(from-1, s.opts.MaxMemory+1)
+	if err != nil {
+		return "index log corrupt", nil
+	}
+	s.head = 0
+	for _, e := range got {
+		s.push(e)
+	}
+	s.head = expect
 	return "", nil
 }
 
-// reset starts a new generation: it removes the three named files and writes fresh metadata.
-// It never removes anything else.
+// reset starts a new generation: it removes the index's own files (by exact name) and writes
+// fresh metadata. It never removes anything else.
 func (s *Store) reset() error {
-	for _, name := range []string{"events.log", "checkpoints.json", "meta.json"} {
-		if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
+	entries, _ := os.ReadDir(s.dir)
+	for _, e := range entries {
+		name := e.Name()
+		if segmentRe.MatchString(name) || name == "events.log" || name == "checkpoints.json" || name == "meta.json" {
+			if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
 		}
 	}
 	s.meta = newMeta()
-	s.entries, s.first, s.head = nil, 1, 0
-	s.ids = map[string]uint64{}
+	s.entries, s.first, s.head, s.diskFloor, s.segs, s.maxOrder = nil, 1, 0, 0, nil, ""
+	s.ids = map[string]held{}
+	s.byTicket, s.byExec, s.byEntity = map[string][]uint64{}, map[string][]uint64{}, map[string][]uint64{}
 	s.checkpoints = map[string]tail.Checkpoint{}
 	data, _ := json.MarshalIndent(s.meta, "", "  ")
 	return writeAtomic(filepath.Join(s.dir, "meta.json"), append(data, '\n'))
 }
 
+func (s *Store) openCurrent() error {
+	if len(s.segs) == 0 {
+		s.segs = append(s.segs, &segment{n: 1, path: s.segmentPath(1), first: s.head + 1})
+	}
+	last := s.segs[len(s.segs)-1]
+	f, err := os.OpenFile(last.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("could not open the index log: %w", err)
+	}
+	s.cur = f
+	return nil
+}
+
+func index(m map[string][]uint64, key string, pos uint64) {
+	if key != "" {
+		m[key] = append(m[key], pos)
+	}
+}
+
 func (s *Store) push(e Entry) {
 	if len(s.entries) == 0 {
-		s.first = e.Event.Position
+		s.first = e.Event.Pos
 	}
 	s.entries = append(s.entries, e)
-	s.head = e.Event.Position
-	s.ids[e.Event.ID] = e.Event.Position
-	if over := len(s.entries) - s.maxMem; over > 0 {
+	s.head = e.Event.Pos
+	s.ids[e.Event.ID] = held{pos: e.Event.Pos}
+	index(s.byTicket, e.Event.IDs.TicketID, e.Event.Pos)
+	index(s.byExec, e.Event.IDs.ExecutionID, e.Event.Pos)
+	for _, ref := range e.Event.Entities {
+		index(s.byEntity, ref, e.Event.Pos)
+	}
+	if e.Event.Order > s.maxOrder {
+		s.maxOrder = e.Event.Order
+	}
+	if over := len(s.entries) - s.opts.MaxMemory; over > 0 {
 		for _, old := range s.entries[:over] {
 			delete(s.ids, old.Event.ID)
 		}
-		if cap(s.entries) > 2*s.maxMem {
+		if cap(s.entries) > 2*s.opts.MaxMemory {
 			s.entries = append([]Entry(nil), s.entries[over:]...)
 		} else {
 			s.entries = s.entries[over:]
 		}
 		s.first += uint64(over)
+		if s.first%uint64(max(1, s.opts.MaxMemory/4)) < uint64(over) {
+			s.trimIndexes()
+		}
 	}
 }
 
-// Generation is this index's generation.
+// trimIndexes drops positions that left the memory window from the secondary indexes.
+func (s *Store) trimIndexes() {
+	for _, m := range []map[string][]uint64{s.byTicket, s.byExec, s.byEntity} {
+		for k, list := range m {
+			i := sort.Search(len(list), func(i int) bool { return list[i] >= s.first })
+			switch {
+			case i == len(list):
+				delete(m, k)
+			case i > 0:
+				m[k] = append([]uint64(nil), list[i:]...)
+			}
+		}
+	}
+}
+
+// Generation is this index's epoch (the contract's <epoch>; called generation in the design).
 func (s *Store) Generation() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.meta.Generation
 }
+
+// Epoch is Generation.
+func (s *Store) Epoch() string { return s.Generation() }
 
 // Checkpoints returns a copy of the persisted source positions.
 func (s *Store) Checkpoints() map[string]tail.Checkpoint {
@@ -269,7 +432,41 @@ func (s *Store) Checkpoints() map[string]tail.Checkpoint {
 	return out
 }
 
-// Append adds events that are not already held (by ID), persists them, then persists the
+// Lookup returns the content hash of an event held in memory by id.
+func (s *Store) Lookup(id string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h, ok := s.ids[id]
+	if !ok || h.pos < s.first {
+		return "", false
+	}
+	return s.entries[h.pos-s.first].Event.ContentHash(), true // computed once, on demand
+}
+
+// MaxOrder is the largest history order key committed.
+func (s *Store) MaxOrder() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.maxOrder
+}
+
+// SetWatermark records the order_ms up to which ingest asserts history is complete (contract 6.6).
+func (s *Store) SetWatermark(ms int64) {
+	s.mu.Lock()
+	if ms > s.watermark {
+		s.watermark = ms
+	}
+	s.mu.Unlock()
+}
+
+// Watermark is the live edge: the order_ms up to which history is complete, apart from late arrivals.
+func (s *Store) Watermark() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.watermark
+}
+
+// Append adds events that are not already held (by id), persists them, then persists the
 // checkpoints, then makes them visible and wakes every reader. It returns how many were added.
 func (s *Store) Append(batch []*event.Event, checkpoints map[string]tail.Checkpoint) (int, error) {
 	s.mu.Lock()
@@ -288,7 +485,7 @@ func (s *Store) Append(batch []*event.Event, checkpoints map[string]tail.Checkpo
 		}
 		seen[ev.ID] = true
 		next++
-		ev.Position = next
+		ev.Pos = next
 		ev.Cursor = event.Cursor{Generation: s.meta.Generation, Position: next}.String()
 		raw, err := json.Marshal(ev)
 		if err != nil {
@@ -298,13 +495,10 @@ func (s *Store) Append(batch []*event.Event, checkpoints map[string]tail.Checkpo
 		buf.WriteByte('\n')
 		fresh = append(fresh, Entry{Event: ev, Raw: raw})
 	}
-	if s.seg != nil {
+	if s.cur != nil {
 		if buf.Len() > 0 {
-			if _, err := s.seg.Write(buf.Bytes()); err != nil {
-				return 0, fmt.Errorf("could not append to the index log: %w", err)
-			}
-			if err := s.seg.Sync(); err != nil {
-				return 0, fmt.Errorf("could not sync the index log: %w", err)
+			if err := s.write(buf.Bytes(), fresh); err != nil {
+				return 0, err
 			}
 		}
 		if len(checkpoints) > 0 {
@@ -339,12 +533,84 @@ func (s *Store) Append(batch []*event.Event, checkpoints map[string]tail.Checkpo
 	return len(fresh), nil
 }
 
+// write appends encoded lines to the current segment, syncs, keeps the sparse index, rolls to a
+// new segment past the size bound and drops the oldest segments past the retention bound.
+func (s *Store) write(data []byte, fresh []Entry) error {
+	seg := s.segs[len(s.segs)-1]
+	if _, err := s.cur.Write(data); err != nil {
+		return fmt.Errorf("could not append to the index log: %w", err)
+	}
+	if err := s.cur.Sync(); err != nil {
+		return fmt.Errorf("could not sync the index log: %w", err)
+	}
+	offset := seg.size
+	count := 0
+	if seg.last >= seg.first && seg.last != 0 {
+		count = int(seg.last - seg.first + 1)
+	}
+	for _, e := range fresh {
+		if seg.first == 0 || count == 0 {
+			seg.first = e.Event.Pos
+		}
+		if count%sparseEvery == 0 {
+			seg.marks = append(seg.marks, mark{pos: e.Event.Pos, offset: offset})
+		}
+		count++
+		seg.last = e.Event.Pos
+		offset += int64(len(e.Raw)) + 1
+	}
+	seg.size = offset
+	if seg.size < s.opts.SegmentBytes {
+		return nil
+	}
+	if err := s.cur.Close(); err != nil {
+		return err
+	}
+	next := &segment{n: seg.n + 1, path: s.segmentPath(seg.n + 1), first: seg.last + 1}
+	f, err := os.OpenFile(next.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("could not start a new index segment: %w", err)
+	}
+	s.cur = f
+	s.segs = append(s.segs, next)
+	var total int64
+	for _, g := range s.segs {
+		total += g.size
+	}
+	for total > s.opts.RetainBytes && len(s.segs) > 1 {
+		old := s.segs[0]
+		if err := os.Remove(old.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		total -= old.size
+		s.segs = s.segs[1:]
+		s.diskFloor = old.last
+		s.dropped++
+	}
+	return nil
+}
+
 // Changed returns a channel that is closed at the next append. Take it before reading, so an
 // append between the read and the wait is never missed.
 func (s *Store) Changed() <-chan struct{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.changed
+}
+
+// Wait returns when the head is past after, or ctx ends.
+func (s *Store) Wait(ctx context.Context, after uint64) error {
+	for {
+		ch := s.Changed()
+		if _, head := s.Bounds(); head > after {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ch:
+		}
+	}
 }
 
 // Bounds returns the floor and head positions. A cursor at the floor has missed nothing still held.
@@ -354,15 +620,32 @@ func (s *Store) Bounds() (floor, head uint64) {
 	return s.floorLocked(), s.head
 }
 
-func (s *Store) floorLocked() uint64 {
+// Head is the newest position.
+func (s *Store) Head() uint64 {
+	_, head := s.Bounds()
+	return head
+}
+
+func (s *Store) memFloor() uint64 {
 	if len(s.entries) == 0 {
 		return s.head
 	}
 	return s.first - 1
 }
 
-// After returns up to limit entries after position c.
+func (s *Store) floorLocked() uint64 {
+	if s.cur != nil {
+		return min(s.diskFloor, s.memFloor())
+	}
+	return s.memFloor()
+}
+
+// After returns up to limit entries after position c, in position order: from memory when the
+// window holds them, else from the segments on disk.
 func (s *Store) After(c uint64, limit int) ([]Entry, error) {
+	if limit <= 0 {
+		limit = 1
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if c > s.head {
@@ -374,17 +657,265 @@ func (s *Store) After(c uint64, limit int) ([]Entry, error) {
 	if c == s.head {
 		return nil, nil
 	}
-	start := int(c + 1 - s.first)
-	end := min(start+limit, len(s.entries))
-	return append([]Entry(nil), s.entries[start:end]...), nil
+	if c >= s.memFloor() {
+		start := int(c + 1 - s.first)
+		end := min(start+limit, len(s.entries))
+		return append([]Entry(nil), s.entries[start:end]...), nil
+	}
+	return s.readDisk(c, limit)
+}
+
+// readDisk reads up to limit entries after position c from the segments. The caller holds the lock.
+func (s *Store) readDisk(c uint64, limit int) ([]Entry, error) {
+	var out []Entry
+	for _, seg := range s.segs {
+		if seg.last <= c || seg.last == 0 {
+			continue
+		}
+		var offset int64
+		for _, m := range seg.marks {
+			if m.pos <= c+1 {
+				offset = m.offset
+			}
+		}
+		f, err := os.Open(seg.path)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			f.Close()
+			return nil, err
+		}
+		r := bufio.NewReaderSize(f, 1<<16)
+		for len(out) < limit {
+			line, err := r.ReadBytes('\n')
+			if len(line) > 0 && line[len(line)-1] == '\n' {
+				raw := bytes.TrimRight(line, "\n")
+				var p posLine
+				if json.Unmarshal(raw, &p) == nil && p.Pos > c {
+					var ev event.Event
+					if err := json.Unmarshal(raw, &ev); err != nil {
+						f.Close()
+						return nil, err
+					}
+					ev.Cursor = event.Cursor{Generation: s.meta.Generation, Position: ev.Pos}.String()
+					out = append(out, Entry{Event: &ev, Raw: append([]byte(nil), raw...)})
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+		f.Close()
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Get returns an event held in memory by id.
+func (s *Store) Get(id string) (Entry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h, ok := s.ids[id]
+	if !ok || h.pos < s.first {
+		return Entry{}, false
+	}
+	return s.entries[h.pos-s.first], true
+}
+
+// Query selects events after a position. Every filter set must match (an event matches Entity
+// when it lists that reference). Within the memory window the ticket, execution and entity
+// filters use indexes; outside it the segments are scanned, at most Scan events per call.
+type Query struct {
+	After      uint64
+	Limit      int
+	Ticket     string
+	Execution  string
+	Entity     string
+	TypePrefix string
+	Scan       int // events examined at most when no index applies (default 10,000)
+}
+
+// Page is a query's answer: the entries, the position scanned up to (the next After), and
+// whether more may follow.
+type Page struct {
+	Entries []Entry
+	Next    uint64
+	More    bool
+}
+
+func (q Query) match(e *event.Event) bool {
+	if q.Ticket != "" && e.IDs.TicketID != q.Ticket {
+		return false
+	}
+	if q.Execution != "" && e.IDs.ExecutionID != q.Execution {
+		return false
+	}
+	if q.TypePrefix != "" && (len(e.Type) < len(q.TypePrefix) || e.Type[:len(q.TypePrefix)] != q.TypePrefix) {
+		return false
+	}
+	if q.Entity != "" {
+		found := false
+		for _, ref := range e.Entities {
+			if ref == q.Entity {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// Run answers a query.
+func (s *Store) Run(q Query) (Page, error) {
+	if q.Limit <= 0 || q.Limit > 10000 {
+		q.Limit = 1000
+	}
+	if q.Scan <= 0 {
+		q.Scan = 10000
+	}
+	s.mu.RLock()
+	if q.After > s.head {
+		s.mu.RUnlock()
+		return Page{}, ErrFuture
+	}
+	if q.After < s.floorLocked() {
+		s.mu.RUnlock()
+		return Page{}, ErrExpired
+	}
+	if q.After >= s.memFloor() {
+		var list []uint64
+		indexed := true
+		switch {
+		case q.Ticket != "":
+			list = s.byTicket[q.Ticket]
+		case q.Execution != "":
+			list = s.byExec[q.Execution]
+		case q.Entity != "":
+			list = s.byEntity[q.Entity]
+		default:
+			indexed = false
+		}
+		if indexed {
+			page := Page{Next: s.head}
+			i := sort.Search(len(list), func(i int) bool { return list[i] > q.After })
+			for ; i < len(list); i++ {
+				pos := list[i]
+				if pos < s.first {
+					continue
+				}
+				e := s.entries[pos-s.first]
+				if !q.match(e.Event) {
+					continue
+				}
+				if len(page.Entries) == q.Limit {
+					page.Next, page.More = page.Entries[len(page.Entries)-1].Event.Pos, true
+					break
+				}
+				page.Entries = append(page.Entries, e)
+			}
+			s.mu.RUnlock()
+			return page, nil
+		}
+	}
+	s.mu.RUnlock()
+	page := Page{Next: q.After}
+	scanned := 0
+	for scanned < q.Scan {
+		batch, err := s.After(page.Next, min(1000, q.Scan-scanned))
+		if err != nil {
+			return page, err
+		}
+		if len(batch) == 0 {
+			return page, nil
+		}
+		for _, e := range batch {
+			scanned++
+			if q.match(e.Event) {
+				if len(page.Entries) == q.Limit {
+					page.More = true
+					return page, nil
+				}
+				page.Entries = append(page.Entries, e)
+			}
+			page.Next = e.Event.Pos
+		}
+	}
+	page.More = page.Next < s.Head()
+	return page, nil
+}
+
+// ByTicket is Run with a ticket filter.
+func (s *Store) ByTicket(ticket string, after uint64, limit int) (Page, error) {
+	return s.Run(Query{After: after, Limit: limit, Ticket: ticket})
+}
+
+// ByExecution is Run with an execution filter.
+func (s *Store) ByExecution(execution string, after uint64, limit int) (Page, error) {
+	return s.Run(Query{After: after, Limit: limit, Execution: execution})
+}
+
+// ByEntity is Run with an entity reference filter ("cell:LOCAL-031", "agent:x…/a…").
+func (s *Store) ByEntity(ref string, after uint64, limit int) (Page, error) {
+	return s.Run(Query{After: after, Limit: limit, Entity: ref})
+}
+
+// History returns the events held in memory whose order is in [fromOrder, toOrder) (an empty
+// bound is open) and that touch any of entities (none: all), sorted by order, at most limit.
+// It is the replay window of contract 14 ("/history"); late events appear where they belong.
+func (s *Store) History(fromOrder, toOrder string, entities []string, limit int) []Entry {
+	if limit <= 0 || limit > 50000 {
+		limit = 5000
+	}
+	want := map[string]bool{}
+	for _, e := range entities {
+		want[e] = true
+	}
+	s.mu.RLock()
+	var out []Entry
+	for _, e := range s.entries {
+		o := e.Event.Order
+		if fromOrder != "" && o < fromOrder || toOrder != "" && o >= toOrder {
+			continue
+		}
+		if len(want) > 0 {
+			hit := false
+			for _, ref := range e.Event.Entities {
+				if want[ref] {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				continue
+			}
+		}
+		out = append(out, e)
+	}
+	s.mu.RUnlock()
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Event.Order < out[j].Event.Order })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 // Info summarises the store.
 func (s *Store) Info() Info {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	var disk int64
+	for _, g := range s.segs {
+		disk += g.size
+	}
 	return Info{Generation: s.meta.Generation, Head: s.head, Floor: s.floorLocked(), InMemory: len(s.entries),
-		Persisted: s.seg != nil, Rebuilt: s.rebuilt, Duplicates: s.dupes}
+		Persisted: s.cur != nil, Rebuilt: s.rebuilt, Duplicates: s.dupes, Segments: len(s.segs), DiskBytes: disk,
+		Dropped: s.dropped, MaxOrder: s.maxOrder}
 }
 
 // Close closes the log file. Readers see no further appends.
@@ -395,8 +926,8 @@ func (s *Store) Close() error {
 		return nil
 	}
 	s.closed = true
-	if s.seg != nil {
-		return s.seg.Close()
+	if s.cur != nil {
+		return s.cur.Close()
 	}
 	return nil
 }

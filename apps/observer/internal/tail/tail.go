@@ -42,6 +42,11 @@ type Checkpoint struct {
 	Resets   int64  `json:"resets"`
 	Gone     bool   `json:"gone,omitempty"`
 	Blocked  bool   `json:"blocked,omitempty"` // the path is a link or not a regular file
+	// For sources read whole rather than tailed (execution records, archives): what has been
+	// emitted (bit flags owned by ingest) and the identity of the file when it was read.
+	Flags uint32 `json:"flags,omitempty"`
+	Size  int64  `json:"size,omitempty"`
+	MTime int64  `json:"mtime,omitempty"`
 }
 
 // Line is one complete line and where it started.
