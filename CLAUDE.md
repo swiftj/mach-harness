@@ -75,7 +75,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 ├── workflows/
 │   └── belt.js                 # Dynamic Workflow `mach:belt` (`mach-belt` in a project): several tickets in parallel
 ├── apps/studio/                # Experimental (MACH Next M5). Go host for the visual Product Studio: loopback only, embeds the web app
-├── web/                        # Experimental (MACH Next M5). pnpm workspace: @mach/ui design system, showcase, product-studio app, fixtures, e2e
+├── web/                        # Experimental (MACH Next M5). pnpm workspace: @mach/ui design system, showcase, product-studio app, fixtures, e2e; and control-tower, the M6.0 Living Factory prototype (a simulation that reads no Factory state)
 ├── templates/                  # What gets scaffolded into a project
 ├── tests/                      # unittest suites and fixtures
 └── docs/                       # Original design notes per station, prd-slice (reference), and mach-next/ (experimental design)
