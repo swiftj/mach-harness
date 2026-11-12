@@ -10,13 +10,85 @@
 // 6. Greyscale renders of the grammar for a colour-independence review (the judgement is in the findings).
 // 7. The accessibility tree (ARIA snapshot) of the principal states, and the live-region announcements
 //    during one minute of playback (virtual clock, so the announcer's own 4 s spacing is honoured).
-// 8. 200% zoom: 1920x1080 and 1280x800 windows at 200% (960x540 and 640x400 CSS px).
+// 8. 200% zoom: 1920x1080 and 1280x800 windows at 200% (960x540 and 640x400 CSS px), three states each.
+// 2b and 2c (focus return after the help sheet; the hidden, still-mounted view) were added for the
+// re-measure after the defect fixes.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { AxeBuilder } from "@axe-core/playwright";
-import { app, ensureBuild, frames, log, openApp, ORIGIN, S, sim, sleep, startPreview } from "./lib.mjs";
+import { ACTIVE, ACTIVE_ATLAS, app, ensureBuild, frames, log, openApp, ORIGIN, S, sim, sleep, startPreview, waitPrepared } from "./lib.mjs";
+
+const ENTITIES = `${ACTIVE_ATLAS} [data-ref][role="button"]`;
+const ARROWS = ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"];
+/** Open the timeline from its summary row to every track (the "Tracks" disclosure). */
+async function openTracks(page) {
+  const b = page.locator("section[aria-label='Execution timeline'] button[aria-expanded]", { hasText: "Tracks" });
+  if ((await b.count()) && (await b.first().getAttribute("aria-expanded")) === "false") await b.first().click();
+  await sleep(600);
+}
+
+/**
+ * The Atlas's arrow-key navigation graph: from every entity, each of the four arrows, at a fixed
+ * camera. Then a breadth-first search from the entry point (the entity an arrow lands on when the
+ * canvas itself has focus) proves which entities can be reached by arrows alone, and gives the
+ * shortest key path to each.
+ */
+async function arrowGraph(page) {
+  const cam = await page.evaluate(() => window.__atlasCamera.get());
+  const refs = await page.evaluate((sel) => [...document.querySelectorAll(sel)].map((e) => e.getAttribute("data-ref")), ENTITIES);
+  const indexOfActive = () => page.evaluate((sel) => [...document.querySelectorAll(sel)].indexOf(document.activeElement), ENTITIES);
+  const edges = refs.map(() => ({}));
+  for (let i = 0; i < refs.length; i++) {
+    for (const k of ARROWS) {
+      await page.evaluate(
+        ({ sel, i, cam }) => {
+          window.__atlasCamera.set(cam);
+          [...document.querySelectorAll(sel)][i]?.focus({ preventScroll: true });
+        },
+        { sel: ENTITIES, i, cam },
+      );
+      await page.keyboard.press(k);
+      edges[i][k] = await indexOfActive();
+    }
+  }
+  // Entry: the canvas focused, then an arrow.
+  await page.evaluate(({ sel, cam }) => {
+    window.__atlasCamera.set(cam);
+    document.querySelector(sel).focus({ preventScroll: true });
+  }, { sel: "[data-stage-active] [data-view=atlas]", cam });
+  await page.keyboard.press("ArrowRight");
+  const entry = await indexOfActive();
+  const path = { [entry]: ["ArrowRight (entry)"] };
+  const queue = [entry];
+  while (queue.length) {
+    const i = queue.shift();
+    for (const k of ARROWS) {
+      const j = edges[i]?.[k];
+      if (j >= 0 && !(j in path)) {
+        path[j] = [...path[i], k];
+        queue.push(j);
+      }
+    }
+  }
+  await page.evaluate((c) => window.__atlasCamera.set(c), cam);
+  const dupRefs = refs.filter((r, i) => refs.indexOf(r) !== i);
+  const deadEnds = refs.filter((_, i) => ARROWS.every((k) => edges[i][k] === i || edges[i][k] < 0));
+  return {
+    total: refs.length,
+    distinctRefs: new Set(refs).size,
+    duplicateRefs: [...new Set(dupRefs)],
+    entry: refs[entry] ?? null,
+    reached: Object.keys(path).length,
+    unreached: refs.filter((_, i) => !(i in path)),
+    longestPath: Math.max(0, ...Object.values(path).map((p) => p.length)),
+    deadEnds,
+    refs,
+    edges,
+    paths: Object.fromEntries(Object.entries(path).map(([i, p]) => [refs[i], p])),
+  };
+}
 
 const out = join(app, "screenshots", "_a11y");
 mkdirSync(out, { recursive: true });
@@ -79,6 +151,15 @@ try {
           await context.close();
         }
       }
+      // The timeline opened to every track (it starts as one summary row), Atlas, 27:40, gate selected.
+      {
+        const { context, page } = await openApp(browser, { theme, width, height });
+        await sim(page, "seek", S(1660));
+        await sim(page, "select", "gate:LOCAL-031/verification#1");
+        await openTracks(page);
+        report.axe.push({ theme, size: `${width}x${height}`, view: "atlas", ...(await axe(page, "timeline tracks open, gate selected")) });
+        await context.close();
+      }
       // Theater and the help sheet, once per theme and size.
       {
         const { context, page } = await openApp(browser, { theme, width, height });
@@ -131,27 +212,42 @@ try {
       steps.push({ interaction, keys: keys.join(" "), ok, evidence, focusAfter: `${focus.region}: ${focus.role ?? focus.tag} ${focus.ref ?? focus.name}`.slice(0, 120) });
     };
     const camera = (page) => page.evaluate(() => window.__atlasCamera?.get() ?? null);
-    const dimmedCount = (page) => page.evaluate(() => [...document.querySelectorAll("[data-view=atlas] svg g")].filter((g) => Number(getComputedStyle(g).opacity) < 0.6).length);
+    const dimmedCount = (page) => page.evaluate((sel) => [...document.querySelectorAll(`${sel} svg g`)].filter((g) => Number(getComputedStyle(g).opacity) < 0.6).length, ACTIVE_ATLAS);
+    /**
+     * Reach the first entity whose ref starts with `prefix` by arrows alone, along the shortest path
+     * the navigation graph found (the canvas has focus, nothing selected). Every key is pressed for
+     * real; the walk checks it lands on each step's expected entity.
+     */
     const reachBy = async (page, prefix) => {
-      for (const k of ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "ArrowRight"]) {
-        for (let i = 0; i < 60; i++) {
-          const f = await active(page);
-          if (f.ref?.startsWith(prefix)) return f.ref;
-          await page.keyboard.press(k);
-        }
-      }
-      return null;
+      const g = await arrowGraph(page);
+      const target = Object.keys(g.paths).find((r) => r.startsWith(prefix));
+      if (!target) return null;
+      await page.locator(`${ACTIVE} [data-view=atlas]`).focus();
+      for (const k of g.paths[target]) await page.keyboard.press(k.split(" ")[0]);
+      const f = await active(page);
+      return f.ref === target ? target : null;
     };
 
-    // Focus order from the top of the page, and the visibility of each stop.
-    await fresh(async (page) => {
+    // Focus order from the top of the page, all the way round, and the visibility of each stop; and
+    // whether any stop lies in the hidden view (both views stay mounted). Once per active view.
+    for (const view of ["atlas", "blueprint"]) {
+      const { context, page } = await openApp(browser, { theme: "dark", view });
+      await sim(page, "seek", S(640));
+      await waitPrepared(page);
+      await sleep(2500);
       const order = [];
-      for (let i = 0; i < 45; i++) {
+      for (let i = 0; i < 160; i++) {
         await page.keyboard.press("Tab");
-        order.push(await active(page));
+        const a = await active(page);
+        a.inHiddenView = await page.evaluate(() => Boolean(document.activeElement?.closest("[data-stage-view]:not([data-stage-active])")));
+        if (i > 2 && order.length && a.tag === order[0].tag && a.name === order[0].name && a.box.join() === order[0].box.join()) break;
+        order.push(a);
       }
-      report.focusOrder = order;
-    });
+      report[view === "atlas" ? "focusOrder" : "focusOrderBlueprint"] = order;
+      report.hiddenView ??= {};
+      report.hiddenView[`tabStopsInHiddenView (${view} active)`] = order.filter((o) => o.inHiddenView).length;
+      await context.close();
+    }
 
     // Skip link, canvas, zoom, pan, arrows, selection, agent inspection, focus.
     await fresh(async (page) => {
@@ -179,24 +275,31 @@ try {
         return [dx !== 0 || dy !== 0, `camera moved ${dx}, ${dy} px`];
       });
       await step("fit (0)", ["0"], async () => [true, `zoom ${(await camera(page)).zoom.toFixed(2)}`]);
-      // Walk with arrows and collect every entity reached.
-      const reached = new Set();
-      for (const [k, n] of [
-        ["ArrowRight", 80],
-        ["ArrowDown", 50],
-        ["ArrowLeft", 80],
-        ["ArrowUp", 50],
-        ["ArrowRight", 40],
-        ["ArrowDown", 30],
-      ]) {
-        for (let i = 0; i < n; i++) {
-          await page.keyboard.press(k);
-          const f = await active(page);
-          if (f.ref) reached.add(f.ref);
-        }
+      // Spatial arrows: the navigation graph at the fit, at three moments, and a breadth-first search
+      // from the entry point (every arrow pressed from every entity).
+      report.atlasArrowReach = [];
+      for (const t of [640, 2622, 3350]) {
+        await sim(page, "seek", S(t));
+        await page.evaluate(() => window.__atlasCamera.fit());
+        await sleep(900);
+        const g = await arrowGraph(page);
+        report.atlasArrowReach.push({ t, total: g.total, distinctRefs: g.distinctRefs, duplicateRefs: g.duplicateRefs, entry: g.entry, reached: g.reached, unreached: g.unreached, longestPath: g.longestPath, deadEnds: g.deadEnds, edges: Object.fromEntries(g.refs.map((r, i) => [r, Object.fromEntries(ARROWS.map((k) => [k.replace("Arrow", ""), g.refs[g.edges[i][k]] ?? null]))])) });
+        log(`arrows at ${t}s: ${g.reached} of ${g.total} reachable from ${g.entry}; longest path ${g.longestPath}`);
       }
-      const allRefs = await page.evaluate(() => [...new Set([...document.querySelectorAll('[data-view=atlas] [data-ref][role="button"]')].map((e) => e.getAttribute("data-ref")))]);
-      report.atlasArrowReach = { reached: [...reached].sort(), total: allRefs.length, unreached: allRefs.filter((r) => !reached.has(r)).sort() };
+      // And zoomed in to 2.0 on LOCAL-031 at 27:40 (bays off screen are culled from the drawing).
+      await sim(page, "seek", S(1660));
+      await sim(page, "focus", "cell:LOCAL-031");
+      await sleep(900);
+      await page.evaluate(() => window.__atlasCamera.zoomTo(2.0));
+      await sleep(600);
+      {
+        const g = await arrowGraph(page);
+        report.atlasArrowReachZoomed = { t: 1660, zoom: 2.0, total: g.total, reached: g.reached, unreached: g.unreached, entry: g.entry };
+      }
+      await sim(page, "seek", S(640));
+      await page.evaluate(() => window.__atlasCamera.fit());
+      await sleep(700);
+      await page.locator(`${ACTIVE} [data-view=atlas]`).focus();
       const agent = await reachBy(page, "agent:");
       await step("select an agent (arrows to it, Enter)", ["Enter"], async (_b, a) => [Boolean(agent) && a.selection === agent, `reached ${agent}, selection ${a.selection}`]);
       await step("agent inspection: the inspector lists its tool calls", [], async () => {
@@ -210,7 +313,7 @@ try {
     // Dependency highlighting by keyboard.
     await fresh(async (page) => {
       const step = stepper(page);
-      await page.locator("[data-view=atlas]").focus();
+      await page.locator(ACTIVE_ATLAS).focus();
       const dep = await reachBy(page, "dependency:");
       const before = await dimmedCount(page);
       await step("dependency highlighting (arrows to a dependency, Enter)", ["Enter"], async (_b, a) => {
@@ -222,7 +325,7 @@ try {
     // Playback, views and panels from the canvas (not a button, which owns Space).
     await fresh(async (page) => {
       const step = stepper(page);
-      await page.locator("[data-view=atlas]").focus();
+      await page.locator(ACTIVE_ATLAS).focus();
       await step("play (Space)", [" "], async (b, a) => [a.playing && !b.playing, `playing ${a.playing}`]);
       await step("pause (Space)", [" "], async (b, a) => [!a.playing && b.playing, `playing ${a.playing}`]);
       await step("next, next, previous event (. . ,)", [".", ".", ","], async (b, a) => [a.cursor === b.cursor + 1, `cursor ${b.cursor} to ${a.cursor}`]);
@@ -271,7 +374,7 @@ try {
     // The Blueprint: switch with 2, walk the tree, expand and collapse, select, zoom, pan.
     await fresh(async (page) => {
       const step = stepper(page);
-      await page.locator("[data-view=atlas]").focus();
+      await page.locator(ACTIVE_ATLAS).focus();
       await step("Execution Blueprint (2)", ["2"], async (_b, a, f) => [a.view === "blueprint" && f.region === "stage", `view ${a.view}; focus ${f.role ?? f.tag}`]);
       await sleep(800);
       const expandedCount = () => page.evaluate(() => document.querySelectorAll('[data-stage-view="blueprint"] [role=treeitem][aria-expanded="true"]').length);
@@ -314,7 +417,7 @@ try {
         const b = await locator.first().boundingBox();
         if (b && b.width > 0 && b.y < 1080) await page.screenshot({ path: join(out, `focus-${name}.png`), clip: { x: Math.max(0, b.x - 24), y: Math.max(0, b.y - 24), width: Math.min(600, b.width + 48), height: Math.min(1080 - Math.max(0, b.y - 24), b.height + 48) } }).catch(() => {});
       }
-      await page.locator("[data-view=atlas]").focus();
+      await page.locator(ACTIVE_ATLAS).focus();
       await page.keyboard.press("ArrowRight");
       await page.keyboard.press("ArrowRight");
       await sleep(300);
@@ -322,6 +425,185 @@ try {
     });
   }
   log("keyboard:", report.keyboard.filter((s) => !s.ok).length, "steps failed");
+
+  // ------------------------------------------------------------ 2b. focus return after the help sheet
+  // Each opener is marked, "?" opens the sheet, Escape closes it, and focus must be back on the very
+  // element (or, if a view re-rendered it away, on that view's canvas).
+  {
+    report.helpFocusReturn = [];
+    const openers = [
+      ["Atlas canvas", "atlas", async (p) => p.locator(ACTIVE_ATLAS).focus()],
+      ["Atlas entity (arrow)", "atlas", async (p) => (await p.locator(ACTIVE_ATLAS).focus(), p.keyboard.press("ArrowRight"))],
+      ["Atlas entity, selected (Enter)", "atlas", async (p) => (await p.locator(ACTIVE_ATLAS).focus(), await p.keyboard.press("ArrowRight"), await p.keyboard.press("ArrowRight"), p.keyboard.press("Enter"))],
+      ["Blueprint tree item", "blueprint", async (p) => (await p.locator(`${ACTIVE} [role=treeitem]`).first().focus(), p.keyboard.press("ArrowDown"))],
+      ["playhead slider", "atlas", async (p) => p.locator('[role=slider][aria-label="Playhead over the whole run"]').focus()],
+      ["timeline tracks", "atlas", async (p) => p.locator('[role=application][aria-label^="Execution tracks"]').focus()],
+      ["top-bar inspector button", "atlas", async (p) => p.getByRole("button", { name: /inspector/ }).first().focus()],
+      ["help button, by keyboard (Enter)", "atlas", async (p) => p.getByRole("button", { name: /Keyboard|help|shortcuts/i }).first().focus(), "Enter"],
+      ["help button, by mouse", "atlas", null, "click"],
+    ];
+    for (const [label, view, prepare, how = "?"] of openers) {
+      const { context, page } = await openApp(browser, { theme: "dark", view });
+      await sim(page, "seek", S(640));
+      await waitPrepared(page);
+      await sleep(1200);
+      try {
+        if (how === "click") await page.getByRole("button", { name: /Keyboard|help|shortcuts/i }).first().click();
+        else {
+          await prepare(page);
+          await sleep(300);
+        }
+        const opener = await page.evaluate(() => {
+          const el = document.activeElement;
+          el?.setAttribute("data-probe-opener", "");
+          return { tag: el?.tagName.toLowerCase(), role: el?.getAttribute("role"), ref: el?.getAttribute("data-ref"), name: (el?.getAttribute("aria-label") ?? el?.textContent ?? "").trim().slice(0, 60) };
+        });
+        if (how === "Enter") await page.keyboard.press("Enter");
+        else if (how === "?") await page.keyboard.press("?");
+        await page.getByRole("dialog").waitFor({ timeout: 3000 });
+        await sleep(400);
+        await page.keyboard.press("Escape");
+        await sleep(500);
+        const after = await page.evaluate(() => {
+          const el = document.activeElement;
+          return { same: Boolean(el?.hasAttribute("data-probe-opener")), tag: el?.tagName.toLowerCase(), role: el?.getAttribute("role"), ref: el?.getAttribute("data-ref"), focusVisible: el?.matches(":focus-visible") ?? false, name: (el?.getAttribute("aria-label") ?? el?.textContent ?? "").trim().slice(0, 60) };
+        });
+        report.helpFocusReturn.push({ opener: label, from: opener, to: after, ok: after.same });
+      } catch (e) {
+        report.helpFocusReturn.push({ opener: label, ok: false, error: String(e).slice(0, 200) });
+      }
+      await context.close();
+    }
+    // An opener that is re-rendered away while the sheet is open: an agent focused at 10:40, the
+    // playhead moved (hook) to 00:10 while the sheet is open, so the agent no longer exists.
+    {
+      const { context, page } = await openApp(browser, { theme: "dark" });
+      await sim(page, "seek", S(640));
+      await sleep(1000);
+      await page.locator(ACTIVE_ATLAS).focus();
+      const g = await arrowGraph(page);
+      const target = Object.keys(g.paths).find((r) => r.startsWith("agent:"));
+      await page.locator(ACTIVE_ATLAS).focus();
+      for (const k of g.paths[target] ?? []) await page.keyboard.press(k.split(" ")[0]);
+      await page.keyboard.press("?");
+      await page.getByRole("dialog").waitFor();
+      await sim(page, "seek", S(10));
+      await sleep(400);
+      await page.keyboard.press("Escape");
+      await sleep(500);
+      const after = await page.evaluate(() => ({ role: document.activeElement?.getAttribute("role"), tag: document.activeElement?.tagName.toLowerCase(), inAtlas: Boolean(document.activeElement?.closest("[data-stage-active] [data-view=atlas]")) }));
+      report.helpFocusReturn.push({ opener: `agent ${target} re-rendered away while open`, to: after, ok: after.inAtlas });
+      await context.close();
+    }
+    log("help focus return:", report.helpFocusReturn.filter((r) => !r.ok).map((r) => r.opener));
+  }
+
+  // ------------------------------------------------------------ 2d. probes for earlier defects D8 and D14
+  {
+    report.defectProbes = {};
+    // D8: an Atlas accessible name after playing to a time, against seeking straight to it.
+    const labels = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("[data-stage-active] [data-view=atlas] [data-ref][role=button]")].map((e) => [e.getAttribute("data-ref"), e.getAttribute("aria-label")])));
+    const runs = {};
+    for (const route of ["seek", "play"]) {
+      const { context, page } = await openApp(browser, { theme: "dark" });
+      await sim(page, "setFollow", false);
+      if (route === "seek") await sim(page, "seek", S(400));
+      else {
+        await sim(page, "seek", S(390));
+        await sim(page, "setSpeed", 1);
+        await sim(page, "play");
+        await page.evaluate(() => window.__machSim.advance(1000, 250));
+        await sim(page, "pause");
+      }
+      await sleep(500);
+      await frames(page, 3);
+      runs[route] = await labels(page);
+      runs[`${route}-playhead`] = await page.evaluate(() => window.__machSim.state().playhead);
+      await context.close();
+    }
+    const differ = Object.keys(runs.seek).filter((k) => runs.seek[k] !== runs.play[k]).map((k) => ({ ref: k, seek: runs.seek[k], play: runs.play[k] }));
+    report.defectProbes.D8_staleNames = { at: "06:40 (seek) vs 06:30 + 10 s of 1x play", playheads: [runs["seek-playhead"], runs["play-playhead"]], entities: Object.keys(runs.seek).length, differing: differ };
+    // D14: with the dependency selected, are its prerequisite and its dependent both lit?
+    {
+      const { context, page } = await openApp(browser, { theme: "dark" });
+      await sim(page, "seek", S(2622));
+      await sim(page, "select", "dependency:SLICE-024->SLICE-021");
+      await sleep(800);
+      const op = (ref) => page.evaluate((r) => {
+        const el = document.querySelector(`[data-stage-active] [data-view=atlas] [data-ref="${r}"]`);
+        if (!el) return null;
+        let o = 1;
+        for (let n = el; n && n.tagName !== "svg"; n = n.parentElement) o *= Number(getComputedStyle(n).opacity);
+        return Math.round(o * 100) / 100;
+      }, ref);
+      const refs = await page.evaluate(() => [...document.querySelectorAll("[data-stage-active] [data-view=atlas] [data-ref^='slice:'], [data-stage-active] [data-view=atlas] [data-ref^='dependency:'], [data-stage-active] [data-view=atlas] [data-ref^='cell:']")].map((e) => e.getAttribute("data-ref")));
+      const out = {};
+      for (const r of [...new Set(refs)]) out[r] = await op(r);
+      report.defectProbes.D14_dependencyChain = { selected: "dependency:SLICE-024->SLICE-021", t: "43:42", effectiveOpacity: out };
+      await context.close();
+    }
+    log("defect probes:", JSON.stringify({ D8: report.defectProbes.D8_staleNames.differing.length, D14: report.defectProbes.D14_dependencyChain.effectiveOpacity["slice:SLICE-025"] }));
+  }
+
+  // ------------------------------------------------------------ 2c. the hidden view (both stay mounted)
+  // Duplicate ids, what a screen reader is given, and whether keys reach the hidden view.
+  {
+    const h = (report.hiddenView ??= {});
+    const dupIds = (page) =>
+      page.evaluate(() => {
+        const ids = [...document.querySelectorAll("[id]")].map((e) => e.id);
+        return [...new Set(ids.filter((x, i) => ids.indexOf(x) !== i))];
+      });
+    const { context, page } = await openApp(browser, { theme: "dark" });
+    await sim(page, "seek", S(1660));
+    await sim(page, "select", "cell:LOCAL-031");
+    await waitPrepared(page);
+    await sleep(2500);
+    h.duplicateIds = { atlasActive: await dupIds(page) };
+    h.layersAtlasActive = await page.evaluate(() => [...document.querySelectorAll("[data-stage-view]")].map((e) => ({ view: e.dataset.stageView, active: e.hasAttribute("data-stage-active"), inert: e.inert, ariaHidden: e.getAttribute("aria-hidden"), visibility: getComputedStyle(e).visibility })));
+    const snapA = await page.locator("body").ariaSnapshot();
+    h.ariaAtlasActive = { mentionsTree: /- tree\b/.test(snapA), mentionsPlantDrawing: /application "Factory Atlas/.test(snapA), mainLabel: await page.evaluate(() => document.querySelector("main")?.getAttribute("aria-label")) };
+    // Keys with focus outside any view while the Atlas is up: must not move the hidden Blueprint.
+    const bpZoom = () => page.evaluate(() => document.querySelector('[data-stage-view="blueprint"] [style*="scale("]')?.style.transform ?? null);
+    const atZoom = () => page.evaluate(() => window.__atlasCamera.get().zoom);
+    await page.getByRole("button", { name: /inspector/ }).first().focus();
+    const b0 = await bpZoom();
+    const a0 = await atZoom();
+    for (const k of ["+", "+", "-", "0", "Shift+ArrowDown"]) await page.keyboard.press(k);
+    await sleep(600);
+    h.keysOutsideViewsWhileAtlasUp = { blueprintTransformChanged: (await bpZoom()) !== b0, atlasZoomChanged: Math.abs((await atZoom()) - a0) > 1e-3 };
+    // Now the Blueprint up, expanded everywhere: ids and the tree.
+    await page.keyboard.press("2");
+    await sleep(1500);
+    for (let i = 0; i < 30; i++) {
+      const item = page.locator(`${ACTIVE} [role=treeitem][aria-expanded="false"]`).first();
+      if (!(await item.count())) break;
+      await item.focus();
+      await page.keyboard.press("Alt+ArrowRight");
+      await sleep(120);
+    }
+    h.duplicateIds.blueprintActiveExpanded = await dupIds(page);
+    const snapB = await page.locator("body").ariaSnapshot();
+    h.ariaBlueprintActive = { mentionsTree: /- tree\b/.test(snapB), mentionsPlantDrawing: /application "Factory Atlas/.test(snapB), mainLabel: await page.evaluate(() => document.querySelector("main")?.getAttribute("aria-label")), treeItemsInActive: await page.locator(`${ACTIVE} [role=treeitem]`).count(), atlasEntityButtonsInHidden: await page.locator('[data-stage-view="atlas"]:not([data-stage-active]) [role=button]').count() };
+    await page.getByRole("button", { name: /inspector/ }).first().focus();
+    const a1 = await atZoom();
+    const b1 = await bpZoom();
+    for (const k of ["+", "+", "-"]) await page.keyboard.press(k);
+    await sleep(600);
+    h.keysOutsideViewsWhileBlueprintUp = { blueprintTransformChanged: (await bpZoom()) !== b1, atlasZoomChanged: Math.abs((await atZoom()) - a1) > 1e-3 };
+    // The help sheet open over the Blueprint.
+    await page.keyboard.press("?");
+    await page.getByRole("dialog").waitFor();
+    h.duplicateIds.helpOpen = await dupIds(page);
+    await page.keyboard.press("Escape");
+    // Can a hidden-view element take focus at all (programmatically)? inert should refuse it.
+    h.hiddenElementFocusable = await page.evaluate(() => {
+      const el = document.querySelector('[data-stage-view="atlas"]:not([data-stage-active]) [data-view=atlas]');
+      el?.focus();
+      return document.activeElement === el;
+    });
+    await context.close();
+  }
 
   // ------------------------------------------------------------ 4. reduced motion, measured
   // Thirty frames of 1x playback (33 ms of wall time each) through five travelling moments, at a fixed
@@ -332,11 +614,13 @@ try {
     const { context, page } = await openApp(browser, { reducedMotion });
     await sim(page, "setFollow", false);
     const windows = [];
+    let maxRunning = 0;
     for (const [label, t] of [
-      ["dispatch", 31],
-      ["verification fails, return to build", 1639],
+      ["wave arrives (D1)", 31],
+      ["review fan-out", 1580.5],
+      ["verification fails, return to build (D3)", 1639],
       ["rejection crosses the plant", 1928.3],
-      ["merge travels to the trunk", 2562.6],
+      ["merge worker leaves (D2)", 2562.6],
       ["dependency unlocks", 2610.6],
     ]) {
       await sim(page, "seek", S(t - 0.5));
@@ -353,13 +637,14 @@ try {
           const q = prev[k];
           if (q && (Math.abs(q[0] - p[0]) > 0.5 || Math.abs(q[1] - p[1]) > 0.5)) moves[k] = (moves[k] ?? 0) + 1;
         }
-        for (const a of await page.evaluate(() =>
+        const running = await page.evaluate(() =>
           document
             .getAnimations()
             .filter((x) => x.playState === "running")
             .map((x) => `${x.constructor.name}:${x.transitionProperty ?? x.animationName ?? "?"} on ${(x.effect?.target?.getAttribute?.("class") ?? x.effect?.target?.tagName ?? "?").toString().slice(0, 50)}`),
-        ))
-          anims.add(a);
+        );
+        maxRunning = Math.max(maxRunning, running.length);
+        for (const a of running) anims.add(a);
         prev = next;
       }
       await sim(page, "pause");
@@ -373,12 +658,57 @@ try {
         runningAnimations: [...anims].slice(0, 12),
       });
     }
-    // The mode switch: a cut under reduced motion.
-    await page.keyboard.press("2");
-    await frames(page, 2);
-    const fold = await page.evaluate(() => ({ viewsMounted: document.querySelectorAll("[data-stage-view]").length, animations: document.getAnimations().map((x) => `${x.constructor.name}:${x.transitionProperty ?? x.animationName ?? "keyframes"}`).slice(0, 8) }));
-    await page.keyboard.press("1");
-    windows.push({ label: "mode switch (2), two frames later", ...fold });
+    // Camera follow during playback: how the camera moves (an ease moves it in many consecutive
+    // frames; a jump in one). 20 s of factory time at 16x from 10:00, follow on, 30 frames.
+    {
+      await sim(page, "seek", S(600));
+      await page.evaluate(() => window.__atlasCamera.zoomTo(1.6));
+      await sim(page, "followLive");
+      await sim(page, "setFollow", true);
+      await sim(page, "setSpeed", 16);
+      await sim(page, "play");
+      const cams = [];
+      for (let i = 0; i < 90; i++) {
+        await page.evaluate(() => window.__machSim.advance(1000 / 30, 1000 / 30));
+        await frames(page, 1);
+        cams.push(await page.evaluate(() => window.__atlasCamera.get()));
+      }
+      await sim(page, "pause");
+      await sim(page, "setFollow", false);
+      const moved = cams.slice(1).map((c, i) => Math.hypot(c.x - cams[i].x, c.y - cams[i].y) > 0.5 || Math.abs(c.zoom - cams[i].zoom) > 0.001);
+      let runs = 0;
+      let longest = 0;
+      let cur = 0;
+      for (const m of moved) {
+        if (m) {
+          cur++;
+          if (cur === 1) runs++;
+          longest = Math.max(longest, cur);
+        } else cur = 0;
+      }
+      windows.push({ label: "camera follow, 16x, 90 frames", framesWithCameraMove: moved.filter(Boolean).length, separateMoves: runs, longestRunOfMovingFrames: longest });
+    }
+    // The mode switch: under reduced motion a cut. Each layer's visibility and opacity, and the
+    // animations on the stage layers, in each of the four frames after the key.
+    await sim(page, "pause");
+    await page.locator(ACTIVE_ATLAS).focus();
+    const switchFrames = [];
+    for (const key of ["2", "1"]) {
+      await page.keyboard.press(key);
+      for (let f = 0; f < 4; f++) {
+        await frames(page, 1);
+        switchFrames.push(
+          await page.evaluate((k) => ({
+            key: k,
+            layers: [...document.querySelectorAll("[data-stage-view]")].map((e) => `${e.dataset.stageView}${e.hasAttribute("data-stage-active") ? "*" : ""} ${getComputedStyle(e).visibility} op ${Number(getComputedStyle(e).opacity).toFixed(2)} tf ${getComputedStyle(e).transform}`),
+            stageAnimations: [...document.querySelectorAll("[data-stage-view]")].flatMap((e) => e.getAnimations().map((a) => `${e.dataset.stageView}: ${a.constructor.name} ${a.playState}`)),
+          }), key),
+        );
+      }
+      await sleep(900);
+    }
+    windows.push({ label: "mode switch, four frames after each key", frames: switchFrames });
+    windows.push({ label: "most Web Animations running at once over the windows", maxRunning });
     report.reducedMotion[reducedMotion] = windows;
     await context.close();
   }
@@ -489,22 +819,48 @@ try {
     ["1920x1080 at 200%", 960, 540],
     ["1280x800 at 200%", 640, 400],
   ]) {
-    const { context, page } = await openApp(browser, { theme: "dark", width, height, dpr: 2 });
-    await sim(page, "seek", S(1660));
-    await sim(page, "select", "gate:LOCAL-031/verification#1");
-    await sleep(1200);
-    const file = `zoom200-${width}x${height}.png`;
-    await page.screenshot({ path: join(out, file) });
-    const check = await page.evaluate(() => {
-      const offscreen = [...document.querySelectorAll("header button, header input, header [role=radio], [data-transport], [role=toolbar] button")]
-        .filter((e) => !e.closest("[inert]"))
-        .map((e) => [e.getAttribute("aria-label") ?? e.textContent.trim().slice(0, 30), e.getBoundingClientRect()])
-        .filter(([, r]) => r.right > innerWidth + 1 || r.bottom > innerHeight + 1 || r.width === 0)
-        .map(([n]) => n);
-      return { horizontalScroll: document.documentElement.scrollWidth > innerWidth, verticalScroll: document.documentElement.scrollHeight > innerHeight, controlsOffscreenOrHidden: offscreen };
-    });
-    report.zoom200.push({ label, file, ...check });
-    await context.close();
+    for (const [stateName, view, select] of [
+      ["atlas", "atlas", null],
+      ["atlas-selected", "atlas", "gate:LOCAL-031/verification#1"],
+      ["blueprint-selected", "blueprint", "gate:LOCAL-031/verification#1"],
+    ]) {
+      const { context, page } = await openApp(browser, { theme: "dark", width, height, dpr: 2, view });
+      await sim(page, "seek", S(1660));
+      if (select) await sim(page, "select", select);
+      await sleep(1500);
+      const file = `zoom200-${width}x${height}-${stateName}.png`;
+      await page.screenshot({ path: join(out, file) });
+      const check = await page.evaluate(() => {
+        const box = (sel) => {
+          const e = document.querySelector(sel);
+          if (!e) return null;
+          const r = e.getBoundingClientRect();
+          return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+        };
+        const controls = [...document.querySelectorAll("header button, header input, header [role=radio], [data-transport], [role=toolbar] button, section[aria-label='Execution timeline'] button, [role=slider]")].filter((e) => !e.closest("[inert]") && !e.closest("[data-stage-view]:not([data-stage-active])"));
+        const offscreen = controls
+          .map((e) => [e.getAttribute("aria-label") ?? e.textContent.trim().slice(0, 30), e.getBoundingClientRect()])
+          .filter(([, r]) => r.right > innerWidth + 1 || r.bottom > innerHeight + 1 || r.left < -1 || r.width === 0)
+          .map(([n]) => n);
+        // Controls covered by something else at their centre (the drawer over the transport, say).
+        const covered = controls
+          .filter((e) => {
+            const r = e.getBoundingClientRect();
+            if (!r.width || r.right > innerWidth || r.bottom > innerHeight) return false;
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return hit && hit !== e && !e.contains(hit) && !hit.contains(e);
+          })
+          .map((e) => e.getAttribute("aria-label") ?? e.textContent.trim().slice(0, 30));
+        const stamp = [...document.querySelectorAll("[data-simulation-stamp]")].some((el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.right <= innerWidth && r.bottom <= innerHeight && getComputedStyle(el).visibility !== "hidden";
+        });
+        return { horizontalScroll: document.documentElement.scrollWidth > innerWidth, verticalScroll: document.documentElement.scrollHeight > innerHeight, controlsOffscreenOrHidden: offscreen, controlsCovered: covered, stampVisible: stamp, stage: box("#stage"), timeline: box("section[aria-label='Execution timeline']"), inspector: box("aside") };
+      });
+      const a = await axe(page, `200% ${stateName}`);
+      report.zoom200.push({ label, state: stateName, file, ...check, axe: a.violations });
+      await context.close();
+    }
   }
 } finally {
   await browser.close();
@@ -528,7 +884,7 @@ for (const name of ["03-three-bays-atlas-dark@2x", "07-verify-fail-return-atlas-
 async function positions(page) {
   return page.evaluate(() => {
     const out = {};
-    for (const ent of document.querySelectorAll("[data-view=atlas] [data-ref]")) {
+    for (const ent of document.querySelectorAll("[data-stage-active] [data-view=atlas] [data-ref]")) {
       const ref = ent.getAttribute("data-ref");
       const kids = ent.querySelectorAll("g[transform], g[style*=transform], circle, rect, path, polygon, text, use");
       const counts = {};
@@ -551,8 +907,12 @@ console.log(
     {
       axeViolations: report.axe.flatMap((r) => r.violations.map((v) => `${r.theme} ${r.size} ${r.view} ${r.state}: ${v.id} (${v.nodes})`)),
       keyboardFailed: report.keyboard?.filter((s) => !s.ok),
-      atlasUnreached: report.atlasArrowReach?.unreached.length,
-      reduced: Object.fromEntries(Object.entries(report.reducedMotion).map(([k, v]) => [k, v.map((w) => `${w.label}: ${w.elementsTravelling ?? ""} travelling, ${w.elementsJumpingOnce ?? ""} jumps, anims ${JSON.stringify(w.runningAnimations ?? w.animations)}`)])),
+      atlasArrows: report.atlasArrowReach?.map((r) => `${r.t}s: ${r.reached}/${r.total} (unreached ${r.unreached.join(", ") || "none"})`),
+      atlasArrowsZoomed: report.atlasArrowReachZoomed && `${report.atlasArrowReachZoomed.reached}/${report.atlasArrowReachZoomed.total}`,
+      helpFocusReturn: report.helpFocusReturn?.map((r) => `${r.ok ? "ok" : "FAIL"} ${r.opener}${r.ok ? "" : ` -> ${JSON.stringify(r.to ?? r.error)}`}`),
+      hiddenView: report.hiddenView,
+      focusStops: [report.focusOrder?.length, report.focusOrderBlueprint?.length],
+      reduced: Object.fromEntries(Object.entries(report.reducedMotion).map(([k, v]) => [k, v.map((w) => (w.frames ? `${w.label}: ${JSON.stringify(w.frames.map((f) => f.layers.join(" | ") + " anims " + f.stageAnimations.length))}` : `${w.label}: ${JSON.stringify({ ...w, label: undefined })}`))])),
       contrastFailing: Object.fromEntries(Object.entries(report.contrast).map(([k, v]) => [k, v.failing])),
       announcements: report.liveRegion?.length,
       zoom200: report.zoom200,

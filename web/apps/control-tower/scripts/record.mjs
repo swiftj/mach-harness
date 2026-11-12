@@ -51,22 +51,55 @@ function installPageHelpers() {
       if (!rec) {
         rec = { t0: now };
         seen.set(a, rec);
+        // Held by a playback rate of 0 rather than pause(): a paused fold, once cancelled by the app,
+        // left its start value applied to the Atlas layer in headless Chromium (a blank stage for the
+        // rest of the film), with no animation listed and inline styles overridden.
         try {
-          a.pause();
+          a.playbackRate = 0;
         } catch {
-          // an animation that cannot pause is left alone
+          // an animation that cannot be held is left alone
         }
       }
       const end = a.effect?.getComputedTiming?.().endTime ?? 0;
       const t = now - rec.t0;
       if (Number.isFinite(end) && t >= end) {
         try {
-          a.finish();
+          if (a.playState !== "finished") {
+            a.playbackRate = 1;
+            a.finish();
+          }
         } catch {
           // infinite or already finished
         }
       } else {
         a.currentTime = t;
+      }
+    }
+    // A stage layer at rest (no animation, no inline opacity, visible) must be fully opaque. With the
+    // fold's animations held by this driver, after the app cancelled the fold back to the Atlas, the
+    // Atlas layer's computed opacity stayed at the fold's start value (0) in headless Chromium, with
+    // no animation listed on it and inline styles overridden: a blank stage in every later frame. On
+    // the real clock the same path ends at opacity 1, headless and headed (checked), so this is the
+    // recorder's held document timeline, not the app. The layer is given an !important inline opacity of 1
+    // (which outranks an animation value) until the app animates or styles it again; each repair is
+    // counted and reported with the film.
+    for (const el of document.querySelectorAll("[data-stage-view]")) {
+      const ours = el.hasAttribute("data-cap-opacity");
+      if (el.getAnimations().length || (el.style.opacity && !ours)) {
+        // The app animates or styles the layer again: our override steps aside.
+        if (ours) {
+          el.style.removeProperty("opacity");
+          el.removeAttribute("data-cap-opacity");
+        }
+        continue;
+      }
+      if (ours) continue;
+      const cs = getComputedStyle(el);
+      if (cs.visibility !== "hidden" && Number(cs.opacity) < 1) {
+        // An !important inline value outranks the stuck animation value in the cascade.
+        window.__capLayerRepairs = (window.__capLayerRepairs ?? 0) + 1;
+        el.style.setProperty("opacity", "1", "important");
+        el.setAttribute("data-cap-opacity", "");
       }
     }
   };
@@ -145,7 +178,7 @@ function installPageHelpers() {
         const x = x0 + r * Math.cos((a * Math.PI) / 4);
         const y = y0 + r * Math.sin((a * Math.PI) / 4);
         const hit = document.elementFromPoint(x, y);
-        if (hit && hit.closest("[data-view=atlas]") && !hit.closest("[data-ref]") && !hit.closest("button")) return { x, y };
+        if (hit && hit.closest("[data-stage-active] [data-view=atlas]") && !hit.closest("[data-ref]") && !hit.closest("button")) return { x, y };
       }
     }
     return { x: x0, y: y0 };
@@ -291,7 +324,7 @@ class Recorder {
     const to = await this.page.evaluate(() => window.__atlasCamera.get());
     await this.page.evaluate((c) => window.__atlasCamera.set(c), from);
     const { vw, vh } = await this.page.evaluate(() => {
-      const b = (document.querySelector("[data-view=atlas]") ?? document.body).getBoundingClientRect();
+      const b = (document.querySelector("[data-stage-active] [data-view=atlas]") ?? document.body).getBoundingClientRect();
       return { vw: b.width, vh: b.height };
     });
     await this.during(seconds, (k) =>
@@ -318,8 +351,9 @@ class Recorder {
 
 async function centre(page, refs) {
   await page.evaluate((list) => {
-    const view = (document.querySelector("[data-view=atlas]") ?? document.getElementById("stage")).getBoundingClientRect();
-    const boxes = list.flatMap((ref) => [...document.querySelectorAll(`[data-ref="${CSS.escape(ref)}"]`)].map((e) => e.getBoundingClientRect())).filter((b) => b.width || b.height);
+    const view = (document.querySelector("[data-stage-active] [data-view=atlas]") ?? document.getElementById("stage")).getBoundingClientRect();
+    // Both views stay mounted; only the active layer's boxes count.
+    const boxes = list.flatMap((ref) => [...document.querySelectorAll(`[data-stage-active] [data-ref="${CSS.escape(ref)}"]`)].map((e) => e.getBoundingClientRect())).filter((b) => b.width || b.height);
     if (!boxes.length) return;
     const x = (Math.min(...boxes.map((b) => b.left)) + Math.max(...boxes.map((b) => b.right))) / 2;
     const y = (Math.min(...boxes.map((b) => b.top)) + Math.max(...boxes.map((b) => b.bottom))) / 2;
@@ -369,7 +403,7 @@ async function speedTo(r, target) {
 async function opening(r) {
   // The composed empty plant, live, following; then playback starts with the real Play button.
   await r.park();
-  await r.hold(4);
+  await r.hold(5);
   await r.showPointer(true);
   await r.clickOn('[data-transport="play"]', 0.9);
   await r.hold(0.3);
@@ -408,9 +442,33 @@ async function construction(r) {
   await speedTo(r, 1);
   await r.glide({ focus: "cell:LOCAL-032", zoom: 1.1 }, 1.8);
   await r.hold(6);
+  // The timeline starts as one summary row; open every track for a look, then fold it again.
+  const tracks = r.page.locator("section[aria-label='Execution timeline'] button[aria-expanded]", { hasText: "Tracks" });
+  await r.showPointer(true);
+  await r.clickLocator(tracks, 0.8);
+  await r.park();
+  await r.hold(4.5);
+  await r.showPointer(true);
+  await r.clickLocator(tracks, 0.6);
+  await r.park();
+  await r.hold(0.8);
   await speedTo(r, 16);
-  await r.playTo(1585);
+  // Slowing from 16x to 1x one key at a time moves the playhead about 30 s more.
+  await r.playTo(1540);
   await speedTo(r, 1);
+}
+
+async function wholePlant(r) {
+  // Pull right back to the whole plant at far zoom (the far level of detail) while the bays build.
+  await r.glide({ focus: "overview", zoom: 0.5 }, 2.0);
+  await r.hold(2.4);
+}
+
+async function reviewFanOut(r) {
+  // LOCAL-033's panel at 1x: three seats fan out, two approve, the product seat's blocker is outvoted.
+  await r.glide({ focus: "gate:LOCAL-033/review#1", zoom: 1.5 }, 1.4);
+  await r.playTo(1616);
+  await r.hold(1.2);
 }
 
 async function verificationFails(r) {
@@ -418,12 +476,17 @@ async function verificationFails(r) {
   await r.playTo(1637);
   await speedTo(r, 0.5);
   await r.playTo(1659);
+  // The verdict, inspected: a real click on the verification gate.
+  await r.showPointer(true);
+  await r.clickOn('[data-stage-active] [data-view=atlas] [data-ref="gate:LOCAL-031/verification#1"]', 0.8);
+  await r.park();
+  await r.hold(2.6);
 }
 
 async function inspectAgent(r) {
   // Select the builder the loop brought back, for real; F frames it (the app's own 650 ms focus).
   await r.showPointer(true);
-  await r.clickOn('[data-view=atlas] [data-ref="agent:ag-031-12"]', 0.8);
+  await r.clickOn('[data-stage-active] [data-view=atlas] [data-ref="agent:ag-031-12"]', 0.8);
   await r.hold(0.6);
   await r.park();
   await r.key("f", 1.2);
@@ -433,6 +496,9 @@ async function inspectAgent(r) {
 async function blueprint(r) {
   // The same selection in the Execution Blueprint; open the agent to its tool calls with its chevron.
   await r.key("2", 1.6);
+  // The whole sheet at fit draws the simplified marks; then F frames the selection again.
+  await r.key("0", 3.4);
+  await r.key("f", 1.4);
   await r.showPointer(true);
   const toggle = '[data-stage-view="blueprint"] g[data-ref="agent:ag-031-12"] rect[data-toggle]';
   if (await r.page.locator(toggle).count()) {
@@ -440,13 +506,14 @@ async function blueprint(r) {
     await r.hold(0.9);
   }
   // Pinch-zoom (Ctrl + wheel) toward the agent's tool calls.
-  const row = await r.page.locator('[data-stage-view="blueprint"] [role=treeitem][data-ref="agent:ag-031-12"]').boundingBox();
+  const row = await r.page.locator('[data-stage-active] [role=treeitem][data-ref="agent:ag-031-12"]').boundingBox();
   const stage = await r.page.locator('[data-stage-view="blueprint"]').boundingBox();
   if (row && stage) await r.moveTo(stage.x + stage.width * 0.45, Math.min(stage.y + stage.height - 40, row.y + 24), 0.7);
   await r.page.keyboard.down("Control");
   await r.during(1.2, () => r.page.mouse.wheel(0, -12));
   await r.page.keyboard.up("Control");
   await r.park();
+  await r.hold(1.5);
   await r.playTo(1745);
 }
 
@@ -460,6 +527,7 @@ async function reviewAndRejection(r) {
   await speedTo(r, 1);
   await r.glide({ focus: "cell:LOCAL-032", zoom: 0.85, around: ["cell:LOCAL-032", "gate:review"] }, 1.4);
   await r.playTo(1950);
+  await r.hold(1.2);
 }
 
 async function scrub(r) {
@@ -523,7 +591,7 @@ async function dependency(r) {
   await r.sim("pause");
   await r.glide({ focus: "dependency:SLICE-024->SLICE-021", zoom: 1.0 }, 1.4);
   await r.showPointer(true);
-  await r.clickOn('[data-view=atlas] [data-ref="dependency:SLICE-024->SLICE-021"]', 0.9);
+  await r.clickOn('[data-stage-active] [data-view=atlas] [data-ref="dependency:SLICE-024->SLICE-021"]', 0.9);
   await r.hold(1.2);
   await r.clickLocator(r.page.locator("aside").getByRole("button", { name: "Go to when it cleared" }), 0.9);
   await r.hold(0.4);
@@ -543,7 +611,7 @@ async function theater(r) {
   await r.hold(1.0);
   await speedTo(r, 4);
   await r.playTo(3360, 60);
-  await r.hold(4);
+  await r.hold(6);
 }
 
 const FILMS = {
@@ -551,7 +619,7 @@ const FILMS = {
     file: "living-factory-dark-1080p.mp4",
     theme: "dark",
     async run(r) {
-      for (const segment of [opening, waveArrives, construction, verificationFails, inspectAgent, blueprint, reviewAndRejection, scrub, humanGate, integration, dependency, theater]) {
+      for (const segment of [opening, waveArrives, wholePlant, construction, reviewFanOut, verificationFails, inspectAgent, blueprint, reviewAndRejection, scrub, humanGate, integration, dependency, theater]) {
         const from = r.frame;
         await segment(r);
         log(`  ${segment.name}: ${((r.frame - from) / FPS).toFixed(1)} s (ends at ${(r.frame / FPS).toFixed(1)} s, factory ${((await r.state()).playhead / 1000).toFixed(0)} s)`);
@@ -614,13 +682,15 @@ async function record(browser, name) {
   const started = Date.now();
   try {
     await film.run(r);
+    r.layerRepairs = await page.evaluate(() => window.__capLayerRepairs ?? 0);
   } finally {
     await r.finish().catch((e) => log(String(e)));
     await context.close();
   }
   const seconds = r.frame / FPS;
+  log(`${name}: stage-layer opacity repairs ${r.layerRepairs}`);
   log(`${name}: ${r.frame} frames, ${seconds.toFixed(1)} s of film, rendered in ${((Date.now() - started) / 60000).toFixed(1)} min${r.missingStamp.length ? `; Simulation label missing in ${r.missingStamp.length} frames` : "; Simulation label visible in every frame"}`);
-  return { name, file, frames: r.frame, seconds, missingStamp: r.missingStamp };
+  return { name, file, frames: r.frame, seconds, missingStamp: r.missingStamp, layerRepairs: r.layerRepairs };
 }
 
 function shareable(file) {
@@ -668,4 +738,4 @@ try {
 if (!DRY) {
   for (const r of results) if (r.name === "main") await shareable(r.file);
 }
-console.log(JSON.stringify(results.map(({ name, file, frames, seconds, missingStamp }) => ({ name, file, frames, seconds, missingStampFrames: missingStamp.length })), null, 2));
+console.log(JSON.stringify(results.map(({ name, file, frames, seconds, missingStamp, layerRepairs }) => ({ name, file, frames, seconds, missingStampFrames: missingStamp.length, layerRepairs })), null, 2));

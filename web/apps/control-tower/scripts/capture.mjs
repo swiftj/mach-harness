@@ -15,7 +15,7 @@
 // transitions (camera 650 ms, mode switch 700 ms) to finish, checked by reading the camera until it
 // stops moving.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { app, args, ensureBuild, frames, log, openApp, S, sim, sleep, startPreview } from "./lib.mjs";
@@ -80,7 +80,10 @@ const BEATS = [
   {
     id: "09-integration",
     t: 2567,
-    atlas: { select: "cell:LOCAL-031", focus: "station:merge", zoom: 1.3, around: ["station:merge"] },
+    // Centred between the merge machine and the approval yard, so the trunk, the gate and what fed it fill the frame.
+    // `nudge` moves the drawing down so the yard and the approval and review regions above it fill the frame
+    // (centred on the merge machine alone, the lower half was empty ground past the plant's edge).
+    atlas: { select: "cell:LOCAL-031", focus: "station:merge", zoom: 1.15, around: ["station:merge"], nudge: [-120, 230] },
     blueprint: { select: "cell:LOCAL-031", bp: { ref: "cell:LOCAL-031", k: 0.9 } },
   },
   {
@@ -134,14 +137,15 @@ async function settleCamera(page, view) {
 /** Centre the Atlas camera on the union of these entities' screen boxes. */
 async function centreOn(page, refs) {
   await page.evaluate((list) => {
-    const stage = document.querySelector("[data-stage-view] [data-view=atlas]") ?? document.getElementById("stage");
+    // Both views stay mounted; only the active one counts (the hidden one still has layout boxes).
+    const stage = document.querySelector("[data-stage-active] [data-view=atlas]") ?? document.getElementById("stage");
     const view = stage.getBoundingClientRect();
     let x0 = Infinity;
     let y0 = Infinity;
     let x1 = -Infinity;
     let y1 = -Infinity;
     for (const ref of list) {
-      for (const el of document.querySelectorAll(`[data-ref="${CSS.escape(ref)}"]`)) {
+      for (const el of stage.querySelectorAll(`[data-ref="${CSS.escape(ref)}"]`)) {
         const r = el.getBoundingClientRect();
         if (!r.width && !r.height) continue;
         x0 = Math.min(x0, r.left);
@@ -161,7 +165,7 @@ async function centreOn(page, refs) {
 /** Open Blueprint tree items (an agent shows its tool calls) by keyboard, as a person would. */
 async function expand(page, refs) {
   for (const ref of refs) {
-    const item = page.locator(`[role=treeitem][data-ref="${ref}"]`).first();
+    const item = page.locator(`[data-stage-active] [role=treeitem][data-ref="${ref}"]`).first();
     if (!(await item.count())) continue;
     if ((await item.getAttribute("aria-expanded")) === "false") {
       await item.focus();
@@ -216,6 +220,10 @@ async function stage(page, view, t, frame) {
   if (view === "atlas" && frame.zoom) {
     await page.evaluate((z) => window.__atlasCamera.zoomTo(z), frame.zoom);
     if (frame.around) await centreOn(page, frame.around);
+    if (frame.nudge) await page.evaluate(([dx, dy]) => {
+      const c = window.__atlasCamera.get();
+      window.__atlasCamera.set({ ...c, x: c.x + dx, y: c.y + dy });
+    }, frame.nudge);
     await frames(page, 3);
   }
   if (view === "blueprint" && frame.expand) await expand(page, frame.expand);
@@ -226,11 +234,71 @@ async function stage(page, view, t, frame) {
   await frames(page, 3);
 }
 
+/**
+ * A machine check of each still, for the findings (D6, D7): Atlas callouts (the overlay's text)
+ * reaching past the visible stage or under the inspector/timeline, and pairs of visible text boxes in
+ * the active view that overlap by more than 30% of the smaller one (a heuristic: rotated floor
+ * lettering has a loose box). The selection's screen box is checked against the visible stage.
+ */
+const layout = {};
+async function layoutCheck(page) {
+  return page.evaluate(() => {
+    const act = document.querySelector("[data-stage-active]");
+    if (!act) return null;
+    const stage = document.getElementById("stage").getBoundingClientRect();
+    const aside = document.querySelector("aside");
+    const ab = aside && !aside.hasAttribute("inert") ? aside.getBoundingClientRect() : null;
+    const visible = { left: stage.left, top: stage.top, right: ab && ab.left < stage.right && ab.width > 0 && ab.left > stage.left ? Math.min(stage.right, ab.left) : stage.right, bottom: stage.bottom };
+    const texts = [...act.querySelectorAll("svg text")]
+      .map((t) => ({ t, r: t.getBoundingClientRect() }))
+      .filter(({ t, r }) => {
+        if (r.width < 2 || r.height < 2 || r.right < visible.left || r.left > visible.right || r.bottom < visible.top || r.top > visible.bottom) return false;
+        for (let n = t; n && n !== act; n = n.parentElement) {
+          const cs = getComputedStyle(n);
+          if (cs.visibility === "hidden" || cs.display === "none" || Number(cs.opacity) < 0.35) return false;
+        }
+        return true;
+      });
+    const clipped = texts
+      .filter(({ t }) => t.closest(".atlas-overlay"))
+      .filter(({ r }) => r.left < visible.left - 1 || r.right > visible.right + 1 || r.top < visible.top - 1 || r.bottom > visible.bottom + 1)
+      .map(({ t }) => t.textContent.trim().slice(0, 50));
+    const overlaps = [];
+    for (let i = 0; i < texts.length && overlaps.length < 12; i++) {
+      for (let j = i + 1; j < texts.length; j++) {
+        const a = texts[i].r;
+        const b = texts[j].r;
+        const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (w <= 0 || h <= 0) continue;
+        const small = Math.min(a.width * a.height, b.width * b.height);
+        if ((w * h) / small > 0.3 && texts[i].t.textContent.trim() && texts[j].t.textContent.trim()) overlaps.push(`"${texts[i].t.textContent.trim().slice(0, 32)}" x "${texts[j].t.textContent.trim().slice(0, 32)}"`);
+      }
+    }
+    const sel = window.__machSim?.state().selection;
+    let selection = null;
+    if (sel) {
+      const boxes = [...act.querySelectorAll(`[data-ref="${CSS.escape(sel)}"]`)].map((e) => e.getBoundingClientRect()).filter((r) => r.width || r.height);
+      if (boxes.length) {
+        const x0 = Math.min(...boxes.map((b) => b.left));
+        const x1 = Math.max(...boxes.map((b) => b.right));
+        const y0 = Math.min(...boxes.map((b) => b.top));
+        const y1 = Math.max(...boxes.map((b) => b.bottom));
+        const iw = Math.max(0, Math.min(x1, visible.right) - Math.max(x0, visible.left));
+        const ih = Math.max(0, Math.min(y1, visible.bottom) - Math.max(y0, visible.top));
+        selection = { ref: sel, shareInView: Math.round((100 * iw * ih) / Math.max(1, (x1 - x0) * (y1 - y0))) };
+      } else selection = { ref: sel, shareInView: null };
+    }
+    return { view: act.dataset.stageView, overlayTextOutsideStage: clipped, textOverlaps: overlaps, selection };
+  });
+}
+
 async function shoot(page, name) {
   const path = join(out, `${name}.png`);
   await page.screenshot({ path });
   const stamp = await page.evaluate(() => [...document.querySelectorAll("[data-simulation-stamp]")].some((el) => el.getBoundingClientRect().width > 0 && getComputedStyle(el).visibility !== "hidden"));
   if (!stamp) throw new Error(`${name}: the Simulation label is not visible`);
+  layout[name] = await layoutCheck(page);
   shots.push(name);
   log("shot", name);
 }
@@ -321,8 +389,27 @@ async function extrasPass(browser, theme) {
         ["d", "11-human-gate-held", { focus: "gate:LOCAL-032/human-approval", zoom: 1.5 }],
       ]) {
         const t = BEATS.find((b) => b.id === beat).t;
+        // One page for the four: clear what the last shot selected, so its drawer does not carry over.
+        await sim(page, "select", null);
         await stage(page, "atlas", t, frame);
         await sleep(400);
+        // The drawer covers the right of the stage when something is selected: frame the selection in
+        // the part left visible (the app's own framing centres it in the whole stage).
+        if (frame.select) {
+          await page.evaluate((ref) => {
+            const atlas = document.querySelector("[data-stage-active] [data-view=atlas]");
+            const stage = atlas.getBoundingClientRect();
+            const drawer = document.querySelector("aside").getBoundingClientRect();
+            const right = drawer.width && drawer.left < stage.right ? drawer.left : stage.right;
+            const boxes = [...atlas.querySelectorAll(`[data-ref="${CSS.escape(ref)}"]`)].map((e) => e.getBoundingClientRect()).filter((b) => b.width || b.height);
+            if (!boxes.length) return;
+            const cx = (Math.min(...boxes.map((b) => b.left)) + Math.max(...boxes.map((b) => b.right))) / 2;
+            const cam = window.__atlasCamera.get();
+            window.__atlasCamera.set({ ...cam, x: cam.x + (stage.left + right) / 2 - cx });
+          }, frame.select);
+          await sleep(400);
+          await frames(page, 3);
+        }
         await shoot(page, `23-narrow-1100-${n}-${beat.slice(3)}-atlas-${theme}`);
       }
     } finally {
@@ -366,6 +453,10 @@ try {
 } finally {
   await browser.close();
   server.stop();
+}
+if (!only) {
+  mkdirSync(join(out, "_layout"), { recursive: true });
+  writeFileSync(join(out, "_layout", "report.json"), JSON.stringify(layout, null, 2));
 }
 if (args.has("--sheets") && existsSync(FFMPEG)) contactSheets();
 log(`${shots.length} screenshots in ${out}`);

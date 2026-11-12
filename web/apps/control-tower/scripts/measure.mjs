@@ -15,7 +15,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import os from "node:os";
 import { chromium } from "playwright";
-import { app, args, dist, ensureBuild, log, openApp, ORIGIN, S, sim, sleep, startPreview } from "./lib.mjs";
+import { ACTIVE, app, args, dist, ensureBuild, log, openApp, ORIGIN, S, sim, sleep, startPreview, waitPrepared } from "./lib.mjs";
 
 const out = join(app, "screenshots", "_perf");
 mkdirSync(out, { recursive: true });
@@ -100,11 +100,24 @@ async function measure(page, cdp, during, ms = RUN_MS) {
   };
 }
 
+/**
+ * The Atlas's SVG element and text counts. Both views stay mounted, so the count is of the Atlas
+ * itself (whichever layer it is in); the hidden Blueprint's elements are reported separately, since
+ * they are in the DOM too (the budget is written for one view).
+ */
 async function atlasCounts(page) {
   return page.evaluate(() => {
-    const atlas = document.querySelector("[data-view=atlas]");
+    const atlas = document.querySelector("[data-stage-view=atlas] [data-view=atlas]");
     if (!atlas) return null;
-    return { lod: atlas.dataset.lod, svgElements: atlas.querySelectorAll("svg *").length, textElements: atlas.querySelectorAll("svg text").length, zoom: window.__atlasCamera?.get().zoom };
+    const bp = document.querySelector("[data-stage-view=blueprint]");
+    return {
+      lod: atlas.dataset.lod,
+      zoom: Math.round((window.__atlasCamera?.get().zoom ?? 0) * 1000) / 1000,
+      svgElements: atlas.querySelectorAll("svg *").length,
+      textElements: atlas.querySelectorAll("svg text").length,
+      atlasActive: Boolean(atlas.closest("[data-stage-active]")),
+      hiddenBlueprintSvgElements: bp && !bp.hasAttribute("data-stage-active") ? bp.querySelectorAll("svg *").length : null,
+    };
   });
 }
 
@@ -140,6 +153,9 @@ async function scenarios(browser, label) {
     await cdp.send("Performance.enable");
     await instrument(page);
     await sim(page, "pause");
+    // The other view is prepared while the browser is idle; measure the settled app, as a person who
+    // has been looking for a few seconds would use it (an early switch is measured on its own below).
+    await waitPrepared(page);
     return { context, page, cdp };
   };
   // GPU of this browser.
@@ -189,7 +205,7 @@ async function scenarios(browser, label) {
         }
       });
       const s = await page.evaluate(() => window.__machSim.state());
-      result.scenarios.push({ config, speed, playheadFrom: 400, playheadTo: Math.round(s.playhead / 1000), ...m, atlasBefore: before, treeItems: view === "blueprint" ? await page.locator("[role=treeitem]").count() : undefined });
+      result.scenarios.push({ config, speed, playheadFrom: 400, playheadTo: Math.round(s.playhead / 1000), ...m, atlasBefore: before, treeItems: view === "blueprint" ? await page.locator(`${ACTIVE} [role=treeitem]`).count() : undefined });
       log(label, config, `${speed}x`, `p95 ${m.p95} ms, max ${m.max} ms, ${m.over16_7} over 16.7`);
       await context.close();
     }
@@ -223,15 +239,54 @@ async function scenarios(browser, label) {
     log(label, "scrub", view, `p95 ${m.p95}, max ${m.max}`);
     await context.close();
   }
-  // The mode switch, both ways, at 640 s with a selection.
+  // The mode switch, many times both ways: six round trips at each of three moments, with a selection,
+  // each measured over 1.2 s from the key press (the switch is 700 ms). Then a switch pressed 300 ms
+  // after load, before the other view has been prepared; and the cut under reduced motion.
   {
     const { context, page, cdp } = await open("atlas");
-    await sim(page, "seek", S(640));
-    await sim(page, "select", "cell:LOCAL-031");
-    await sleep(1000);
-    for (const key of ["2", "1", "2", "1"]) {
-      const m = await measure(page, cdp, async () => page.keyboard.press(key), 1500);
-      result.modeSwitch.push({ to: key === "2" ? "blueprint" : "atlas", ...m });
+    for (const [t, sel] of [
+      [640, "cell:LOCAL-031"],
+      [1660, "gate:LOCAL-031/verification#1"],
+      [2852, "gate:LOCAL-032/human-approval"],
+    ]) {
+      await sim(page, "seek", S(t));
+      await sim(page, "select", sel);
+      await sleep(1000);
+      for (let i = 0; i < 6; i++) {
+        for (const key of ["2", "1"]) {
+          await page.mouse.move(900, 20);
+          const m = await measure(page, cdp, async () => page.keyboard.press(key), 1200);
+          const raw = await page.evaluate(() => window.__perf.stamps.slice(1).map((x, i) => x - window.__perf.stamps[i]));
+          result.modeSwitch.push({ at: t, n: i + 1, to: key === "2" ? "blueprint" : "atlas", ...m, intervals: raw.map((x) => Math.round(x * 10) / 10) });
+          await sleep(400);
+        }
+      }
+    }
+    await context.close();
+  }
+  for (const reducedMotion of ["no-preference", "reduce"]) {
+    const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, colorScheme: "dark", reducedMotion });
+    const page = await context.newPage();
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Performance.enable");
+    await page.goto(`${ORIGIN}/?theme=dark#atlas`, { waitUntil: "load" });
+    await page.waitForFunction(() => Boolean(window.__machSim));
+    await instrument(page);
+    const mountedBefore = await page.evaluate(() => document.querySelectorAll("[data-stage-view]").length);
+    await sleep(300 - 0);
+    const m = await measure(page, cdp, async () => page.keyboard.press("2"), 1500);
+    result.modeSwitchEarly ??= [];
+    result.modeSwitchEarly.push({ reducedMotion, viewsMountedWhenPressed: mountedBefore, ...m });
+    if (reducedMotion === "reduce") {
+      // The cut, after preparation, a few times each way.
+      await waitPrepared(page);
+      await sleep(2500);
+      for (let i = 0; i < 4; i++)
+        for (const key of ["1", "2"]) {
+          const c = await measure(page, cdp, async () => page.keyboard.press(key), 800);
+          result.modeSwitchReduced ??= [];
+          result.modeSwitchReduced.push({ to: key === "2" ? "blueprint" : "atlas", ...c });
+        }
     }
     await context.close();
   }
@@ -258,15 +313,63 @@ async function scenarios(browser, label) {
     result.memory = samples;
     await context.close();
   }
-  // Atlas element counts at far, mid and near.
-  {
+  // Atlas element counts at a range of zooms at 10:40 (as before), then across the WHOLE run: every
+  // minute at far (0.5), the bottom of mid (0.6, the most of the plant drawn at mid detail) and the
+  // fit, then every 5 s within a minute either side of each zoom's three highest minutes.
+  if (label === "headless" || args.has("--counts-everywhere")) {
     const { context, page } = await open("atlas");
+    await sim(page, "setFollow", false);
     await sim(page, "seek", S(640));
     await sleep(800);
-    for (const zoom of [0.5, 0.74, 1.0, 2.0]) {
+    for (const zoom of [0.35, 0.5, 0.6, 0.74, 1.0, 1.4, 2.0]) {
       await page.evaluate((z) => window.__atlasCamera.zoomTo(z), zoom);
       await sleep(500);
       result.counts.push(await atlasCounts(page));
+    }
+    await page.evaluate(() => window.__atlasCamera.fit());
+    await sleep(700);
+    const fitZoom = (await atlasCounts(page)).zoom;
+    const duration = await page.evaluate(() => window.__machSim.duration);
+    const sweep = async (times) => {
+      const rows = [];
+      for (const t of times) {
+        await sim(page, "seek", Math.min(duration, S(t)));
+        await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        await sleep(60);
+        rows.push({ t, ...(await atlasCounts(page)) });
+      }
+      return rows;
+    };
+    result.countsRun = {};
+    for (const [name, zoom] of [
+      ["far 0.5", 0.5],
+      ["mid 0.6", 0.6],
+      [`fit ${fitZoom}`, null],
+    ]) {
+      if (zoom) await page.evaluate((z) => window.__atlasCamera.zoomTo(z), zoom);
+      else await page.evaluate(() => window.__atlasCamera.fit());
+      await sleep(700);
+      const minutes = [];
+      for (let t = 0; t <= duration / 1000; t += 60) minutes.push(t);
+      minutes.push(Math.floor(duration / 1000));
+      const coarse = await sweep(minutes);
+      const peaks = [...coarse].sort((a, b) => b.svgElements - a.svgElements).slice(0, 3).map((r) => r.t);
+      const fine = [];
+      for (const p of peaks) for (let t = Math.max(0, p - 60); t <= Math.min(duration / 1000, p + 60); t += 5) if (!minutes.includes(t)) fine.push(t);
+      const detail = await sweep([...new Set(fine)].sort((a, b) => a - b));
+      const all = [...coarse, ...detail];
+      const max = all.reduce((m, r) => (r.svgElements > m.svgElements ? r : m), all[0]);
+      const maxText = all.reduce((m, r) => (r.textElements > m.textElements ? r : m), all[0]);
+      result.countsRun[name] = {
+        lods: [...new Set(all.map((r) => r.lod))],
+        samples: all.length,
+        maxSvg: { t: max.t, svg: max.svgElements, lod: max.lod },
+        maxText: { t: maxText.t, text: maxText.textElements },
+        peaks,
+        coarse: coarse.map((r) => [r.t, r.svgElements, r.textElements, r.lod]),
+        detail: detail.map((r) => [r.t, r.svgElements, r.textElements, r.lod]),
+      };
+      log(label, "counts over the run", name, JSON.stringify(result.countsRun[name].maxSvg), "text", JSON.stringify(result.countsRun[name].maxText));
     }
     await context.close();
   }
@@ -369,7 +472,9 @@ for (const [label, b] of Object.entries(report.browsers)) {
   console.log(`\n${label}: ${b.version}, ${b.gpu?.renderer}, refresh ~${b.refresh} Hz`);
   for (const s of b.scenarios) console.log(`  ${s.config.padEnd(22)} ${String(s.speed).padStart(2)}x  p50 ${s.p50}  p95 ${s.p95}  p99 ${s.p99}  max ${s.max}  >16.7 ${s.over16_7}  >33 ${s.over33}  script/frame ${s.perFrameMs.script}  layout ${s.perFrameMs.layout}  style ${s.perFrameMs.style}  long tasks ${s.longTasks.count}`);
   for (const s of b.scrub) console.log(`  scrub ${s.view.padEnd(10)} p95 ${s.p95} max ${s.max} >16.7 ${s.over16_7} script/frame ${s.perFrameMs.script}`);
-  for (const s of b.modeSwitch) console.log(`  switch to ${s.to.padEnd(10)} max ${s.max} p95 ${s.p95} >24: ${s.max > 24}`);
+  for (const s of b.modeSwitch) console.log(`  switch at ${s.at} #${s.n} to ${s.to.padEnd(10)} max ${s.max} p95 ${s.p95} >24: ${s.intervals.filter((x) => x > 24).length}`);
+  for (const s of b.modeSwitchEarly ?? []) console.log(`  early switch (${s.reducedMotion}, views mounted ${s.viewsMountedWhenPressed}) max ${s.max} p95 ${s.p95}`);
+  for (const s of b.modeSwitchReduced ?? []) console.log(`  reduced cut to ${s.to} max ${s.max}`);
   console.log("  memory", JSON.stringify(b.memory));
   console.log("  load", JSON.stringify(b.load));
 }

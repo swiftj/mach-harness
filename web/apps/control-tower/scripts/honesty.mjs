@@ -19,7 +19,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { chromium } from "playwright";
-import { app, ensureBuild, frames, log, openApp, S, sim, sleep, startCspServer } from "./lib.mjs";
+import { app, args, ensureBuild, frames, log, openApp, S, sim, sleep, startCspServer } from "./lib.mjs";
 
 const out = join(app, "screenshots", "_honesty");
 mkdirSync(out, { recursive: true });
@@ -106,6 +106,52 @@ async function playThrough(page) {
   return page.evaluate(() => window.__machSim.state());
 }
 
+/**
+ * Switch the light layer on from the help sheet and read its canvas: `.atlas-effects-layer canvas`
+ * (the first canvas on the page is the timeline's). Its size is compared with the Atlas stage. WebGL
+ * may be missing in headless Chromium (software), in which case the layer must stay off.
+ */
+async function lightLayerCheck(page) {
+  await sim(page, "setMode", "atlas");
+  await sleep(900);
+  await page.locator("body").click({ position: { x: 900, y: 20 } });
+  await page.keyboard.press("?");
+  await page.getByRole("dialog").waitFor({ timeout: 5000 }).catch(() => {});
+  const lightSwitch = page.getByRole("dialog").getByRole("switch").first();
+  if (!(await lightSwitch.count())) return { result: "switch not found" };
+  await lightSwitch.click();
+  const switchedOn = await lightSwitch.getAttribute("aria-checked");
+  await page.keyboard.press("Escape");
+  await sim(page, "seek", S(640));
+  await sim(page, "play");
+  await sleep(3000);
+  const read = () =>
+    page.evaluate(() => {
+      const gl = document.createElement("canvas").getContext("webgl2") ?? document.createElement("canvas").getContext("webgl");
+      const ext = gl?.getExtension("WEBGL_debug_renderer_info");
+      const c = document.querySelector("[data-stage-active] .atlas-effects-layer canvas") ?? document.querySelector(".atlas-effects-layer canvas");
+      const stage = document.querySelector("[data-stage-active] .atlas-viewport") ?? document.querySelector("[data-stage-active] [data-view=atlas]");
+      const sb = stage?.getBoundingClientRect();
+      const cb = c?.getBoundingClientRect();
+      return {
+        webgl: gl ? (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "yes") : "no WebGL",
+        layerHost: Boolean(document.querySelector(".atlas-effects-layer")),
+        canvas: c ? { backing: [c.width, c.height], css: [Math.round(cb.width), Math.round(cb.height)], ariaHidden: c.closest("[aria-hidden=true]") ? "yes" : c.getAttribute("aria-hidden"), pointerEvents: getComputedStyle(c).pointerEvents } : null,
+        stage: sb ? [Math.round(sb.width), Math.round(sb.height)] : null,
+        timelineCanvasesFirst: document.querySelector("canvas")?.closest("section") ? "the first canvas on the page is the timeline's" : "the first canvas is not the timeline's",
+      };
+    });
+  const first = await read();
+  // Resize the window: the canvas must follow the stage.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await sleep(1200);
+  const resized = await read();
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await sleep(600);
+  await sim(page, "pause");
+  return { switchedOn, first, afterResizeTo1600x900: resized };
+}
+
 const rawHash = (png) => execFileSync(FFMPEG, ["-v", "error", "-i", png, "-f", "rawvideo", "-pix_fmt", "rgba", "-"], { maxBuffer: 1 << 28 });
 const md5 = (b) => createHash("md5").update(b).digest("hex");
 
@@ -126,24 +172,9 @@ try {
     await page.goto(`${origin}/?theme=dark#atlas`, { waitUntil: "load" });
     await page.waitForFunction(() => Boolean(window.__machSim));
     const end = await playThrough(page);
-    // The optional WebGL light layer (off by default) is switched on in the help sheet: check it too.
-    await sim(page, "setMode", "atlas");
-    await page.locator("body").click({ position: { x: 900, y: 20 } });
-    await page.keyboard.press("?");
-    await page.getByRole("dialog").waitFor({ timeout: 5000 }).catch(() => {});
-    const lightSwitch = page.getByRole("dialog").getByRole("switch").first();
-    let lightLayer = "switch not found";
-    if (await lightSwitch.count()) {
-      await lightSwitch.click();
-      await page.keyboard.press("Escape");
-      await sim(page, "seek", S(640));
-      await sim(page, "play");
-      await sleep(3000);
-      lightLayer = await page.evaluate(() => {
-        const c = document.querySelector("canvas");
-        return c ? `canvas present (${c.width}x${c.height}, aria-hidden=${c.closest("[aria-hidden=true]") ? "yes" : c.getAttribute("aria-hidden")})` : "no canvas";
-      });
-    }
+    // The optional WebGL light layer (off by default) is switched on in the help sheet: check it too,
+    // under the same policy, recording its requests with the rest.
+    const lightLayer = await lightLayerCheck(page);
     report.a_network_b_csp = { origin, csp: "M5 host policy (lib.mjs M5_CSP)", endState: end, lightLayer, ...w.summary() };
     await context.close();
     log("network/CSP:", report.a_network_b_csp.total, "requests,", report.a_network_b_csp.external.length, "external,", report.a_network_b_csp.violations.length, "CSP violations,", report.a_network_b_csp.errors.length, "errors");
@@ -199,7 +230,31 @@ try {
             const playhead = (await page.evaluate(() => window.__machSim.state())).playhead;
             const camera = view === "atlas" ? await page.evaluate(() => JSON.stringify(window.__atlasCamera.get())) : await page.evaluate(() => document.querySelector('[data-stage-view="blueprint"] [style*="scale("]')?.style.transform ?? null);
             // The markup of the stage and the inspector: what the app rendered, before rasterization.
-            const dom = await page.evaluate(() => document.getElementById("stage").outerHTML + (document.querySelector("aside")?.innerText ?? ""));
+            // Both views stay mounted; the hidden one is brought up to date in batches (every 500 ms of
+            // wall time), so its markup is interface state. Compare the active view, and record the whole
+            // stage separately.
+            // React's useId values (`_r_f_`, pattern and marker ids) depend on mount order, which now
+            // depends on when the hidden view was prepared (idle time): interface identity, not the
+            // scene. They are normalised; the raw markup's hash is kept as `rawDom`.
+            const rawDomText = await page.evaluate(() => document.querySelector("#stage [data-stage-active]").outerHTML + (document.querySelector("aside")?.innerText ?? ""));
+            // Canonical markup: attributes sorted by name and inline style declarations sorted, so the
+            // order React happened to set them in (which differs by route) does not count as a difference.
+            const canonical = await page.evaluate(() => {
+              const ser = (n) => {
+                if (n.nodeType === 3) return n.textContent;
+                if (n.nodeType !== 1) return "";
+                const attrs = [...n.attributes]
+                  .map((a) => [a.name, a.name === "style" ? a.value.split(";").map((x) => x.trim()).filter(Boolean).sort().join("; ") : a.value])
+                  .sort((x, y) => (x[0] < y[0] ? -1 : 1))
+                  .map(([k, v]) => `${k}="${v}"`)
+                  .join(" ");
+                return `<${n.tagName.toLowerCase()} ${attrs}>${[...n.childNodes].map(ser).join("")}</${n.tagName.toLowerCase()}>`;
+              };
+              return ser(document.querySelector("#stage [data-stage-active]")) + (document.querySelector("aside")?.innerText ?? "");
+            });
+            const dom = canonical.replace(/_r_[a-z0-9]+_/g, "_r_ID_");
+            if (pass === 1) writeFileSync(join(out, `det-dom-${view}-${String(t).padStart(4, "0")}-${route}.html`), dom.replace(/></g, ">\n<"));
+            const wholeStage = await page.evaluate(() => document.getElementById("stage").outerHTML);
             const raw = rawHash(stage);
             first ??= raw;
             let differing = 0;
@@ -211,14 +266,17 @@ try {
                 maxDelta = Math.max(maxDelta, d);
               }
             }
-            hashes[`${route}#${pass}`] = { md5: md5(raw), dom: md5(Buffer.from(dom)), playhead, camera, pixelsDifferingFromFirst: differing, share: Number((differing / (raw.length / 4)).toFixed(5)), maxDelta };
+            hashes[`${route}#${pass}`] = { md5: md5(raw), dom: md5(Buffer.from(dom)), rawDom: md5(Buffer.from(rawDomText)), wholeStage: md5(Buffer.from(wholeStage)), playhead, camera, pixelsDifferingFromFirst: differing, share: Number((differing / (raw.length / 4)).toFixed(5)), maxDelta };
             await context.close();
           }
         }
         const distinct = [...new Set(Object.values(hashes).map((h) => h.md5))];
         const doms = [...new Set(Object.values(hashes).map((h) => h.dom))];
+        const sameRouteSameRaw = Object.keys(routes).every((r) => hashes[`${r}#1`].rawDom === hashes[`${r}#2`].rawDom);
+        const sameRouteSame = Object.keys(routes).every((r) => hashes[`${r}#1`].dom === hashes[`${r}#2`].dom);
+        const wholes = [...new Set(Object.values(hashes).map((h) => h.wholeStage))];
         const worst = Math.max(...Object.values(hashes).map((h) => h.share));
-        results.push({ view, t, domIdentical: doms.length === 1, pixelIdentical: distinct.length === 1, distinctRasters: distinct.length, worstPixelShare: worst, hashes });
+        results.push({ view, t, sameRouteTwiceIdentical: sameRouteSame, sameRouteTwiceIdenticalRawIds: sameRouteSameRaw, wholeStageVariants: wholes.length, domIdentical: doms.length === 1, domVariants: doms.length, routesAgree: Object.fromEntries(Object.keys(routes).map((r) => [r, hashes[`${r}#1`].dom === hashes["seek#1"].dom])), pixelIdentical: distinct.length === 1, distinctRasters: distinct.length, worstPixelShare: worst, hashes });
         log(`determinism ${view} ${t}s: markup ${doms.length === 1 ? "identical" : `${doms.length} variants`}; pixels ${distinct.length === 1 ? "identical" : `${distinct.length} rasters, worst ${(worst * 100).toFixed(2)}% of pixels`}`);
       }
     }
@@ -257,7 +315,7 @@ try {
   {
     const states = [];
     for (const theme of ["dark", "light"]) {
-      for (const [name, setup, width] of [
+      for (const [name, setup, width, reducedMotion = "no-preference"] of [
         ["atlas", async () => {}, 1920],
         ["blueprint", async (p) => sim(p, "setMode", "blueprint"), 1920],
         ["theater-atlas", async (p) => sim(p, "setTheater", true), 1920],
@@ -265,8 +323,14 @@ try {
         ["help", async (p) => p.keyboard.press("?"), 1920],
         ["atlas-1100", async () => {}, 1100],
         ["atlas-selected-1100", async (p) => sim(p, "select", "cell:LOCAL-031"), 1100],
+        ["atlas-200%-960x540", async () => {}, 960],
+        ["blueprint-200%-960x540-selected", async (p) => (await sim(p, "setMode", "blueprint"), sim(p, "select", "cell:LOCAL-031")), 960],
+        ["theater-200%-960x540", async (p) => sim(p, "setTheater", true), 960],
+        ["atlas-reduced-motion", async () => {}, 1920, "reduce"],
+        ["blueprint-reduced-motion", async (p) => sim(p, "setMode", "blueprint"), 1920, "reduce"],
       ]) {
-        const { context, page } = await openApp(browser, { origin, theme, width, height: width === 1100 ? 800 : 1080 });
+        const height = width === 1100 ? 800 : width === 960 ? 540 : 1080;
+        const { context, page } = await openApp(browser, { origin, theme, width, height, dpr: width === 960 ? 2 : 1, reducedMotion });
         await sim(page, "seek", S(1652));
         await setup(page);
         await sleep(1200);
@@ -280,11 +344,30 @@ try {
             .map((el) => el.textContent.trim()),
         );
         const inert = await page.evaluate(() => [...document.querySelectorAll("[data-simulation-stamp]")].map((el) => Boolean(el.closest("[inert]"))));
-        states.push({ theme, state: name, visibleStamps: visible.length, text: visible[0] ?? null, stampsInInertRegions: inert.filter(Boolean).length });
+        states.push({ theme, state: name, size: `${width}x${height}`, reducedMotion, visibleStamps: visible.length, text: visible[0] ?? null, stampsInInertRegions: inert.filter(Boolean).length });
         await context.close();
       }
     }
     report.f_stamp = states;
+  }
+  // The light layer again in a headed Chromium on the real GPU (headless may have no WebGL), under the
+  // same policy, with its requests, CSP violations and errors.
+  if (!args.has("--headless-only")) {
+    const headed = await chromium.launch({ headless: false, args: ["--ignore-gpu-blocklist", "--window-size=1920,1180"] });
+    try {
+      const context = await headed.newContext({ viewport: { width: 1920, height: 1080 }, colorScheme: "dark" });
+      const page = await context.newPage();
+      const w = await watch(page, origin);
+      await page.goto(`${origin}/?theme=dark#atlas`, { waitUntil: "load" });
+      await page.waitForFunction(() => Boolean(window.__machSim));
+      await sim(page, "useLiveClock");
+      const lightLayer = await lightLayerCheck(page);
+      const sum = w.summary();
+      report.lightLayerHeaded = { lightLayer, requests: sum.total, external: sum.external, violations: sum.violations, errors: sum.errors, urls: sum.urls };
+      await context.close();
+    } finally {
+      await headed.close();
+    }
   }
 } finally {
   await browser.close();
@@ -300,11 +383,11 @@ async function snapshotEntities(page) {
       return x.toString(16);
     };
     const refs = {};
-    for (const el of document.querySelectorAll("[data-view=atlas] [data-ref]")) refs[el.getAttribute("data-ref")] = h(el.outerHTML);
+    for (const el of document.querySelectorAll("[data-stage-active] [data-view=atlas] [data-ref]")) refs[el.getAttribute("data-ref")] = h(el.outerHTML);
     const layers = {};
     const loose = {};
     const looseText = {};
-    document.querySelectorAll("[data-view=atlas] svg").forEach((svg, i) => {
+    document.querySelectorAll("[data-stage-active] [data-view=atlas] svg").forEach((svg, i) => {
       const clone = svg.cloneNode(true);
       clone.querySelectorAll("[data-ref]").forEach((e) => e.remove());
       layers[`svg${i}`] = h(clone.outerHTML);
@@ -381,6 +464,10 @@ console.log(
       motionSamples: report.e_motionSamples?.length,
       unattributed: report.e_unattributed?.length,
       stamp: report.f_stamp?.filter((s) => !s.visibleStamps).map((s) => `${s.theme}/${s.state}`),
+      stampStates: report.f_stamp?.length,
+      determinismSameRouteTwice: `${det.filter((d) => d.sameRouteTwiceIdentical).length} of ${det.length}`,
+      lightHeadless: report.a_network_b_csp?.lightLayer,
+      lightHeaded: report.lightLayerHeaded?.lightLayer,
     },
     null,
     2,

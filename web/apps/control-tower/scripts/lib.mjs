@@ -181,5 +181,18 @@ export function sim(page, method, ...params) {
   return page.evaluate(([m, p]) => window.__machSim[m](...p), [method, params]);
 }
 
+/**
+ * The stage keeps both views mounted; the inactive one is hidden (`visibility: hidden`, `inert`,
+ * `aria-hidden`) and still has layout boxes. Every selector, box and count about "the view on screen"
+ * must be scoped to the active layer.
+ */
+export const ACTIVE = "[data-stage-active]";
+export const ACTIVE_ATLAS = `${ACTIVE} [data-view=atlas]`;
+
+/** Wait until both views are mounted (the stage prepares the hidden one while the browser is idle). */
+export async function waitPrepared(page, timeout = 8000) {
+  await page.waitForFunction(() => document.querySelectorAll("[data-stage-view]").length === 2, undefined, { timeout }).catch(() => {});
+}
+
 export const S = (seconds) => seconds * 1000;
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
