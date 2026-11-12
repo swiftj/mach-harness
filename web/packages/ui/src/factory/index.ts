@@ -13,3 +13,5 @@ export * from "./plates";
 export * from "./machines";
 export * from "./routes";
 export * from "./blueprint";
+export * from "./lettering";
+export * from "./marks";

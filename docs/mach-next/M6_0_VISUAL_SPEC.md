@@ -55,30 +55,59 @@ How it is achieved:
 - **Inverse**: `unproject(screenPoint, z)` gives the plan point at elevation z (hit testing, zoom-to-cursor, drop positions).
 - **No CSS 3D.** The projection is in SVG coordinates; CSS transforms are used only for the camera (section f), so text stays crisp and hit testing stays exact.
 
-### b.2 The plant layout
+### b.2 The plant layout: a U, framed to fill the stage
 
-Regions in belt order along +x, each a plate 8 pu high (`RegionPlate`), separated by 56 pu aisles of bare ground. All coordinates in pu; `D` is the depth of the construction floor.
-
-| Region (`RegionKind`) | Plan x | Plan y | Size (w × d) | Contents |
-|---|---|---|---|---|
-| `intake` Intake and scheduling | 0 | 0 | 240 × D | The intake machine at (60, D/2); the scheduler (Haiku) at its desk at (60, D/2 + 40); holding pads (40 × 40) for slices `waiting-on-dependency` and `eligible` in a column at x = 150, 56 apart; the audit machine at (200, D/2 − 60) and the audit gate across the exit at (240, D/2), axis y |
-| `floor` Construction floor | 296 | 0 | W × D | The cells |
-| `review` Review chamber | floor.x + W + 56 | D/2 − 130 | 240 × 260 | Entry at its left edge, middle; three seats inlaid as floor discs (r 13) at (+112, −52), (+126, 0), (+112, +52) from the entry; the consensus gate at (+200, 0), axis y |
-| `human` Human approval | review.x + 296 | D/2 − 80 | 120 × 160 | The human gate (gatehouse height 46) at its centre, axis y |
-| `integration` Integration | human.x + 176 | 0 | 220 × D | The merge machine at (+70, D/2); the revalidation gate before it; the trunk: the main line, a track along y at x = +160 for the full depth, drawn at z = −6 (a cut in the plate, hatched both sides) |
-| `archive` Archive and observe | integration.x + 276 | 0 | 200 × 200 | Cleanup machine at (+60, +70), observe machine at (+140, +130); finished cells' records as a stack of artifact sheets |
-
-**Cells on the floor.** Cell size 216 × 148 (`factoryTokens.size.cell`). Rows run along y (at most 4), columns along x.
+**Decision (pass 2).** The plant is built as a **U**, not as the straight belt of the first draft. Any plan rectangle projects to a box about twice as wide as it is tall, so a straight belt along +x became a thin diagonal with empty plates and a viewport mostly made of ground. Folding the belt into a U keeps the plan close to square, so its projection fills a 16:10 stage, and it puts the flow in a readable order: along the back from left to right, down the right side, and back along the front. The Atlas build (bfb1d68) is right in principle; this section is what it should converge on.
 
 ```
-rows = min(n, 4)            cols = ceil(n / rows)
-cell i: col = floor(i / rows), row = i mod rows
-origin = (floor.x + 24 + col × (216 + 56),  24 + row × (148 + 32))
-W = 48 + cols × 216 + (cols − 1) × 56
-D = 48 + rows × 148 + (rows − 1) × 32
+             back row, flow along +x ──────────────────────────────►
+   ┌───────────────┐   ┌────────────────────────────────┐   ┌──────────────┐
+   │ Intake and    │═══│ Construction floor             │═══│ Review       │
+   │ scheduling    │   │  [bay 1]   ║   [bay 4]         │   │ chamber      │
+   │ dock, hopper, │   │  [bay 2]   ║   [bay 5]         │   └──────╥───────┘
+   │ pads, audit   │   │  [bay 3]   ║   [bay 6]         │          ║  bridge down +y
+   └───────────────┘   │  lettering strip               │   ┌──────╨───────┐
+                       └────────────────────────────────┘   │ Approval     │
+   ┌──────────┐   ┌──────────────────────────────────────────┤ gatehouse    │
+   │ Archive  │═══│ Integration yard: main line ◄────────────┴──────────────┘
+   └──────────┘   └──────────────────────────────────────────┘
+             front row, flow back along −x ◄──────────────────────────
 ```
 
-3 cells: 1 column of 3, W = 264, D = 556. 12 cells: 3 columns of 4, W = 808, D = 736. The 56 pu gaps between columns are **aisles**: each cell's door opens onto the aisle at its right; aisle tracks run along +y to the **front transfer**, a track along x at y = D − 12 that carries work to the review chamber's entry. With one column the door opens straight onto the transfer, which then turns to the chamber entry. A **bridge** (`Prism`, 20 pu wide, height = plate top, hatched lit face) carries every track across each 56 pu gap between regions; no route ever touches bare ground.
+All coordinates in pu; plates 8 high (`RegionPlate`); gaps between regions `factoryTokens.size.regionGap` (56); every track crosses a gap on a **bridge** (`Prism`, 20 wide, top at plate height, `hatch="lit"`), so no route touches bare ground. `C` = `size.cell` (216 × 148), `A` = `size.aisle` (56), `g` = `size.cellGap` (32).
+
+```
+n bays:   rows = n ≤ 3 ? n : 3 (6 ≤ n ≤ 9) or 4 (n ≥ 10);  cols = ceil(n / rows)  (at most 3)
+floor:    W = 48 + cols·C.x + (cols − 1)·A
+          D = 48 + 40 + rows·C.y + (rows − 1)·g          (the extra 40 is the lettering strip)
+bay i:    col = floor(i / rows), row = i mod rows
+          origin = (floor.x + 24 + col·(C.x + A),  24 + row·(C.y + g))
+```
+
+| Region | Plan box (x, y, w, d) | Contents |
+|---|---|---|
+| `intake` Intake and scheduling | (0, 0, 240, D) | Dock (72 × 80) off its left edge at y = D/2; intake machine at (70, D/2); the scheduler (Haiku) at (70, D/2 + 50); holding pads (40 × 40) in a column at x = 150, 56 apart, centred on D/2; audit machine at (170, D/2 − 90); the audit gate at (226, D/2), axis y; outbound track along y = D/2 over the bridge to the floor's spine |
+| `floor` Construction floor | (296, 0, W, D) | The bays; the **spine** track along y at floor.x + 12 (dispatch spurs to each bay's entrance); aisles between columns; the **riser** track along y at floor.x + W − 12, which collects every aisle and carries work to the chamber over the bridge at the chamber's centre line |
+| `review` Review chamber | (floor.x + W + 56, 0, 220, 232) | Entry on its left edge at y = 116; three seats inlaid as floor discs (r 13) at entry + (80, −52), (+96, 0), (+80, +52); the consensus gate at (+166, 0), axis y; exit to the column |
+| `human` Approval gatehouse | (review.x + 40, review.d + 56, 180, 180) | The **column** track along y at x = review.x + review.w − 30 drops from the chamber through the gatehouse; the human gate stands across it at the gatehouse's centre line, axis x; the human-approval machine (height 30) beside it; a held cell's packet parks before the gate |
+| `integration` Integration yard | (floor.x + 120, Y, review.x + review.w − floor.x − 120, 132) | Y = max(D, human.y + human.d) + 56. The revalidation gate where the column enters, axis x; the merge machine on the column; the **main line** along x at Y + 48, running back (−x) along the whole front to the archive bridge, drawn in the pass ink once anything has merged |
+| `archive` Archive and observe | (integration.x − 256, Y, 200, 132) | Cleanup and observe machines on the main line's continuation; finished cells' archive cards and the run record stacked by the observe machine |
+
+**Rules.**
+
+- Bays fill **columns of three** (up to 9 bays), then four. Two columns of three is the reference composition for the 5–6 slice storyboard. A free slot in a column is drawn as a **reserved bay**: the cell outline only (dashed `plate-edge`, no walls, no machines), with "Reserved" lettered on it, at dimmed opacity. Reserved bays must never be heavier than working bays.
+- Every region keeps a **lettering strip** of 40 pu along its front edge, clear of tracks and machines; the region name is painted there (`RegionPlate`). Tracks run at least 48 pu from a plate's front edge. A region name longer than the plate's width × 0.09 characters is shortened ("Archive", "Approval").
+- The plant never reflows while playing: the layout is computed once from the fixture's slices.
+
+**Framing at fit.** "Fit" frames the plant, not the ground:
+
+1. Take the projected bounds of every plate plus 60 pu of elevation above the back row (masts, gates), as `screenBounds(regionBoxes)` does.
+2. Zoom = min((viewport width − 2 × 32) / bounds width, (viewport height − top chrome − timeline − 2 × 24) / bounds height). The viewport here is the scene area after the inspector and timeline, not the window.
+3. Centre the bounds in that area. Do **not** cap the fit zoom below 1 for small plants; do cap it at 1.4 (so fit never lands at near zoom).
+4. Because the U projects to about 2:1 and the stage is about 1.6:1, fit is limited by width; the remaining vertical margin is split 40 % above, 60 % below (the plant sits slightly high, the way a drawing sits on a sheet).
+5. The ground grid extends 96 pu beyond the plant on all sides and fades out (`GroundGrid fade` 0.7); the stage beyond it is plain `factory-ground`. No vignette.
+
+The reference sheet's "plant at fit zoom" study (`PlantStudy`) is this composition with six slots and a viewBox computed by these rules.
 
 ### b.3 A cell as a place
 
@@ -102,7 +131,7 @@ D = 48 + rows × 148 + (rows − 1) × 32
 - **Artifacts** stand on the back shelf in the order written; the eight most recent are shown, older ones collapse into a stack mark with a count at slot 0.
 - **Tool calls** accumulate as ticks along the ticker from left to right in time order. At most 24 ticks; beyond that the oldest 12 merge into a density bar (a 1.5 px line with tick marks every 2 pu).
 - **Signal mast** at (10, 10), rising 20 above the wall top, carrying the stage mark (`cellStages[stage]`), with the stage word at near zoom.
-- **Lamp**: while any station in the cell is working, an elliptical pool of `factory-lamp` lights the floor (rx = 0.5 w, ry = 0.56 d, centred). Off otherwise. It never animates on its own; it fades in or out over `stateChange` (260 ms) at the start and end events.
+- **Lamp**: while any station in the cell is working, the cell's light pool is on. Geometry: `lampPool(origin)`, an ellipse on the floor centred at (0.52 w, 0.5 d) with rx = 0.5 w and ry = 0.56 d. Falloff: `lampFalloff`, radial stops (0, 1), (0.45, 0.82), (0.75, 0.38), (1, 0) of `factory-lamp`. Intensity: `CellPlate lampIntensity` 0..1, which multiplies the pool's opacity; it is driven from the playhead: `animationProgress("stateChange", t − start.at)` rising at the first station start, `1 − animationProgress("stateChange", t − end.at)` falling at the last station end. It never flickers or breathes. A WebGL layer may replace the SVG pool by drawing the same ellipse (projected with `planeMatrix(pool.z)`) with the same stops and intensity; it must then switch the SVG pool off for that cell (`lampIntensity={0}`), never draw both.
 - **Completion**: on `cellComplete`, the floor takes the `pass-soft` wash (opacity 0.85 × progress) and the mast shows the double ring.
 - **Floor lettering**: ticket ID in mono 11 (16 at far), slice ID in mono 9 at near only, both in `ink-muted` / `ink-subtle`, drawn in the plane.
 
@@ -120,17 +149,30 @@ Draw order, back to front (painter's algorithm inside each layer):
 
 Depth cues, in this order of strength: occlusion (layers above), elevation (heights fixed per kind), **contact shadows** (`shadowPolygon`: the footprint swept by height × (0.5, −0.18) in plan, `factory-shadow`, flat, no blur), **face shading** (top `plate-top`, lit face `plate-lit`, shade face `plate-shade` + poché), and **atmospheric fade** (grid only; plates are never faded by distance, only by dimming).
 
-### b.5 Lighting
+### b.5 Lighting and tonal hierarchy
 
-One fixed light from the upper left (plan −x, +y, above). It decides face tones and shadow direction, and never moves. The only variable light is the cell lamp (b.3). In dark theme, plates are lighter than the ground (elevation shows as lightness, as in the design system); in light theme, plates are lighter than the ground too (white on warm paper), with shaded faces darker. No specular highlights, no glow except the optional WebGL lamp bloom (section g), which is decoration and capped.
+One fixed light from the upper left (plan −x, +y, above). It decides face tones and shadow direction, and never moves. Every raised solid's front edge toward +y (the top face's lit edge) is drawn in `plate-rim`, a rim catching that light (`Prism rim`, on by default). The only variable light is the cell lamp (b.3).
+
+**Tonal ladder.** At far zoom the eye must find work first, then the plant's structure, then the ground. Each step is a distinct tone, in both themes:
+
+| Step | Dark | Light | Role |
+|---|---|---|---|
+| 1. Ground | #0B0B0A | #EFEBE2 | `factory-ground`: the stage recedes |
+| 2. Region plate top | #211F1D | #FDFCF9 | `factory-plate-top`: circulation, quiet |
+| 3. Bay floor | #2A2925 | #F6F3EC | `factory-floor`: where work happens; lighter than circulation in dark, a shade under it in light |
+| 4. Machine top | #3D3C37 | #FFFFFF | `factory-machine-top`: the brightest neutral |
+| 5. Work | live, lamp, state tints | live, lamp, state tints | `factory-live`, `factory-lamp` (#4A3A27 / #FFF0D6) and the `*-soft` tints, which are the only warm or saturated areas |
+
+Faces: lit #1A1917 / #ECE8DD, shade #121110 / #D5CFC0 with poché; edges #78756C / #8A8679, which now carry depth and meet 3:1 against the ground and the plate top; rim #57534C (dark only; in light the rim is white on white and invisible by design). Shadows: rgba(0, 0, 0, 0.62) in dark, warm rgba(58, 52, 40, 0.13) in light. No specular highlights, no glow except the optional WebGL lamp bloom (section g), which is decoration and capped.
 
 ### b.6 Density, 3 to 12 cells
 
-| Cells | Columns | Default zoom to fit | Changes |
+| Bays | Columns × rows | Fit zoom at 1440 × 900 (scene area about 1100 × 640) | Changes |
 |---|---|---|---|
-| 1–4 | 1 | about 1.0 | Full detail at mid |
-| 5–8 | 2 | about 0.75 | Shelf shows 6 artifacts; ticker merges after 16 |
-| 9–12 | 3 | about 0.55 (far) | Opens at far zoom: machines keep symbols, agents drop role emblems, ticks become density bars, artifacts become a count on the shelf |
+| 1–3 | 1 × n | about 0.75 (mid) | Full detail |
+| 4–6 | 2 × 3 | about 0.62 (mid, at the edge) | The reference composition |
+| 7–9 | 3 × 3 | about 0.52 (far) | Opens at far: machines keep symbols, agents drop role emblems, ticks become density bars, artifacts a count on the shelf |
+| 10–12 | 3 × 4 | about 0.45 (far) | As above; agent and tool labels only on hover |
 
 The layout is fixed by the formula; cells never reflow while playing (a cell keeps its place for the whole scenario, so spatial memory holds).
 
@@ -238,7 +280,7 @@ Cell stages map to states in `cellStages` (`waiting-on-dependency` waiting, `eli
 |---|---|---|---|---|---|---|
 | **Region** (`RegionPlate`) | Plate 8 high, rim inset 8, corner registration marks 12, poché both sides | Wave lane (c.2) | top `plate-top`, faces `plate-lit`/`plate-shade`, edge `plate-edge`, rim `plate-edge` | none | Floor lettering, serif 19 (26 far), `--mach-ink-muted`; caption sans 10.5 | active (live rule along the front edge), dimmed |
 | **Cell** (`CellPlate`) | 216 × 148 section model (b.3) | Cell lane | floor `floor`, walls `plate-*`, cut poché | stage mark on mast | Ticket ID on floor (mono 11); stage word at near | every cell stage; lit; completion; dimmed; selected |
-| **Station** (`StationMachine`) | 36 × 36 block, height by kind (intake 16, groom/plan 12, audit 14, build 22, verify 18, review 12, human-approval 30, merge 16, cleanup 10, observe 20); symbol 18 on top (22 far); dial r 13 while working | Process bubble r 15 | top: tint of state (idle `plate-top`); outline: state ink (idle `plate-edge`) | station symbol | Name sans 11 semibold + state 9.5, at near | idle, active (+progress), succeeded, failed (+round), waiting, human, blocked |
+| **Station** (`StationMachine`) | 36 × 36 block, height by kind (intake 16, groom/plan 12, audit 14, build 22, verify 18, review 12, human-approval 30, merge 16, cleanup 10, observe 20); symbol 18 on top (22 far); dial r 13 while working | Process bubble r 15 | top: tint of state (idle `machine-top`); outline: state ink (idle `plate-edge`); front edge `plate-rim` | station symbol | Name sans 11 semibold + state 9.5, at near | idle, active (+progress), succeeded, failed (+round), waiting, human, blocked |
 | **Agent** (`AgentMarker`) | Floor disc r 8 with role emblem; post 1.6 px; head by tier; height by tier (Fable 32, Opus 28, Sonnet 24, Haiku 18); progress arc r 8.5 | Head at 1:1 + label | head fill: `live` when working, tint otherwise; stroke: state ink | head = tier, emblem = role, seat letter A/S/P | Role (or name) 10.5 + tier 9.5 at near | idle, active, succeeded, failed, waiting, human, blocked; arrive 0..1; leave 0..1 |
 | **Gate** (`GateGlyph`) | Portal: posts 2.4 px, span 44, height 34 (human 46); lintel 3 px; plaque 18 × 15 on the lintel with the gate symbol; arm 2.6 px pivoting at the near post, banded with three dots | Diamond r 14 + bar | posts and lintel `ink`; arm and plaque: state ink (closed: `ink`) | gate symbol; lamps | Gate name 11 + position 9.5 at near | closed (arm 0 degrees), open (82 degrees), refusing (drops 14 to 0 degrees, refuse curve, plaque flash), waiting (closed, human ink) |
 | **Artifact** (`ArtifactCard`) | Upright sheet 14 × 18, folded corner 4, mark by kind | Card 1:1 | `plate-top` / `ink` (failed: `fail-soft` / `fail`) | kind mark | File name mono 9 at near | succeeded, active (being written), failed (findings); materialise 0..1 |
@@ -252,7 +294,24 @@ Station symbols (24 grid, 1.5 stroke, round caps): intake hopper; groom wedge cu
 
 Gate kinds: audit (gauge), red-before-green (lamps: red then green), verification verdict (crosshair), review consensus (three vote lamps), human approval (person, gatehouse height), merge revalidation (merge).
 
-Artifact marks: intent (four lines of prose), spec (braces), contract (double frame), plan (checkboxes), commit (node on a line), build-report (bars), evidence (viewfinder corners), results (ticks and a cross), vote (ballot with tick), findings (lines with an exclamation), decision (seal with tick), merge-commit (merge Y).
+Artifact marks: intent (four lines of prose), spec (braces), contract (double frame), plan (checkboxes), commit (node on a line), build-report (bars), evidence (viewfinder corners), results (ticks and a cross), vote (ballot with tick), findings (lines with an exclamation), decision (seal with tick), merge-commit (merge Y), and from pass 2: review-packet (envelope, `review/round-N/packet`), diff (plus over minus beside a gutter, `review/round-N/diff`), build-state (segmented bar, `build.json`), archive (banded box, `<ticket>.tar.gz`), run-record (bulleted ledger, `runs.jsonl`).
+
+| Mark | Primitive | Form | Tokens | States |
+|---|---|---|---|---|
+| **Findings flag** | `FindingsFlag` | A pole 22 high (16 in the Blueprint) with a pennant 11 × 9. Blocker: solid pennant with a light bar; note: outlined pennant. Count on the pennant when more than one; the cited rule (mono 8.5) beside it at near zoom | blocker `fail`, note `wait`, pole `ink` | blocker, note; count; rule. Planted at the file or machine the finding names; it stays until the next round's decision |
+| **Red/green task board** | `TaskBoard` | One 4.4 cell per plan task, 1.4 apart, `columns` per row (default 8), on a `machine-top` board. Atlas: upright on 6-high legs beside the build machine; at far zoom a single plate, filled `pass` when every task is green. Blueprint: a flat strip under the build node | pending dashed `ink-soft`; active `live` outline on `live-soft`; red half filled `fail` (its test was seen failing); green full `pass`; overridden `wait` with a slash | per task |
+
+### d.2.1 Label placement
+
+Labels never overlap a machine or another label. In order of preference:
+
+1. **Name plate** (`StationMachine nameplate`): the station's name lettered on the machine's front (lit) face, sans 7 (or half the machine's height) semibold, `ink-muted`, shown at mid and near on machines at least 10 high. Use for every machine inside a bay; then the upright label is not needed.
+2. **Floor lettering** (`FloorLettering`, `GateGlyph floorLabel`): words painted on the floor. Gates: the label runs along the span on the downstream side, 14 pu from the posts, sans 8 semibold. Region names: serif in the lettering strip. Engine IDs: mono. Text along plan y always reads from lower left to upper right.
+3. **Below the disc** (`AgentMarker labelPosition="below"`): an agent's role and tier centred 16 px under its floor disc, used whenever the space beside its head holds a machine (always, inside a bay).
+4. **Upright label** beside the thing, at near zoom only, for things standing on open floor (gates, packets, region machines).
+5. **Callout** with a leader, for the selected thing and for failures, in the overlay layer.
+
+**Plan dimensions** (`PlanDimension`) letter real measures on the floor (a bay's width, the parallel limit across a row, "max 3 parallel"): extension lines, slash ticks and the value in mono 8 along the line. Never decorative.
 
 Agent roles (emblem on the floor disc): scheduler (clock), line supervisor (double ring), contract engineer (set-square triangle), builder (solid square), verifier (cross), reviewer (three dots; plus the seat letter A, S or P beside the head).
 
@@ -460,24 +519,26 @@ Both themes use the same roles; the Control Tower defaults to dark (`product="co
 
 | Role | Light | Dark | Use |
 |---|---|---|---|
-| `factory-ground` | #F2EFE7 | #111110 | The sheet |
-| `factory-grid` / `-grid-major` | #E5E1D5 / #D5D0C1 | #1D1D1B / #282725 | Drafting grid |
-| `factory-plate-top` / `-lit` / `-shade` | #FDFCF9 / #ECE8DD / #DAD5C6 | #242421 / #1B1B19 / #161614 | Solid faces |
-| `factory-plate-edge` | #9F9B8E | #55534D | Drafted outlines (decorative) |
-| `factory-floor` | #F7F5EF | #1C1C1A | Cell floor |
-| `factory-hatch` | #BDB8A8 | #34332F | Poché |
-| `factory-shadow` | rgba(58,52,40,0.13) | rgba(0,0,0,0.5) | Contact shadows |
-| `factory-ink` / `-ink-soft` | #3A3833 / #7A766B | #DAD6CA / #8F8C81 | Symbols and structure lines |
-| `factory-route` | #858175 | #76736A | Idle track |
-| `factory-live` / `-soft` | #2F6AA3 / #DCE7F3 | #8DB4DD / #1C2938 | Work in progress |
-| `factory-pass` / `-soft` | #56683F / #E6EBDB | #A7B98A / #222A1B | Passed |
-| `factory-fail` / `-soft` | #A12F3A / #F5DEDF | #EC8F96 / #3A1D20 | Failed, blocked, escalation |
-| `factory-wait` / `-soft` | #86621A / #F3E6C6 | #D9B061 / #2F2716 | Waiting, dependencies |
-| `factory-human` / `-soft` | #A9482A / #F6E3D9 | #E8957A / #3A2620 | A person's gate |
+| `factory-ground` | #EFEBE2 | #0B0B0A | The stage |
+| `factory-grid` / `-grid-major` | #E3DFD3 / #D3CEBF | #181816 / #24231F | Drafting grid |
+| `factory-plate-top` / `-lit` / `-shade` | #FDFCF9 / #ECE8DD / #D5CFC0 | #211F1D / #1A1917 / #121110 | Solid faces |
+| `factory-plate-edge` | #8A8679 | #78756C | Drafted outlines; 3:1 against ground and plate top |
+| `factory-plate-rim` | #FFFFFF | #57534C | The lit front edge of every solid |
+| `factory-machine-top` | #FFFFFF | #3D3C37 | Idle machine tops, task boards: the brightest neutral |
+| `factory-floor` | #F6F3EC | #2A2925 | Bay floor |
+| `factory-hatch` | #B5AF9E | #3E3C37 | Poché |
+| `factory-shadow` | rgba(58,52,40,0.13) | rgba(0,0,0,0.62) | Contact shadows |
+| `factory-ink` / `-ink-soft` | #3A3833 / #7A766B | #DAD6CA / #A19E93 | Symbols and structure lines |
+| `factory-route` | #858175 | #8C897F | Idle track |
+| `factory-live` / `-soft` | #2F6AA3 / #DCE7F3 | #8DB4DD / #1E3046 | Work in progress |
+| `factory-pass` / `-soft` | #56683F / #E6EBDB | #A7B98A / #26301E | Passed |
+| `factory-fail` / `-soft` | #A12F3A / #F5DEDF | #EC8F96 / #3E2024 | Failed, blocked, escalation |
+| `factory-wait` / `-soft` | #86621A / #F3E6C6 | #D9B061 / #362C17 | Waiting, dependencies |
+| `factory-human` / `-soft` | #A9482A / #F6E3D9 | #E8957A / #42291F | A person's gate |
 | `factory-select` | #B5512F | #E48B6C | Selection brackets |
-| `factory-lamp` | #FFF6E6 | #2A2620 | The work lamp |
+| `factory-lamp` | #FFF0D6 | #4A3A27 | The work lamp's pool |
 
-**Contrast** (enforced by the token script, 100 pairs, all passing): text on ground, plates and floors ≥ 4.5:1 (`ink`, `ink-muted`, `factory-ink`); every mark that carries meaning ≥ 3:1 against the surface it sits on and against its own tint (`live`, `pass`, `fail`, `wait`, `human`, `route`, `select`, `ink-soft`). Decorative lines (grid, plate edges, hatch) have no requirement and carry no meaning on their own.
+**Contrast** (enforced by the token script, 118 pairs, all passing; pass 2 added plate edges against ground and plate top, symbols on machine tops, lettering, glyphs and live marks under the lamp, and name plates on lit faces): text on ground, plates and floors ≥ 4.5:1 (`ink`, `ink-muted`, `factory-ink`); every mark that carries meaning ≥ 3:1 against the surface it sits on and against its own tint (`live`, `pass`, `fail`, `wait`, `human`, `route`, `select`, `ink-soft`). Decorative lines (grid, plate edges, hatch) have no requirement and carry no meaning on their own.
 
 **Colour independence.** Every state has a distinct mark shape (d.1); a station's state is also its outline style (dashed when idle, heavier when failed or blocked); a gate's position is its arm angle; a tier is a head shape and a height; a role is an emblem; a dependency's state is dashed versus solid plus the padlock's shackle; a retry is a dashed arc with counted pips; an escalation is the only vertical. Every primitive's accessible name states its state in words. The reference sheet reads in greyscale.
 
@@ -494,13 +555,18 @@ All in `@mach/ui`, pure, props only, no timers or randomness. Atlas `at` is a pl
 | `FactoryScene` | `label`, `interactive?`, `ground?`, SVG props. Provides defs (hatch, lamp, arrows, dimension tick) with ids unique to the scene |
 | `FactoryDefs` | children; for drawing into an SVG you own |
 | `GroundGrid` | `x, y, w, d, lod?, fade?` |
-| `Prism` | `box, top?, lit?, shade?, edge?, hatch?, shadow?, weight?, dash?, children` (drawn on the top face in plan coordinates) |
+| `Prism` | `box, top?, lit?, shade?, edge?, hatch?, shadow?, weight?, dash?, rim? (default true), children` (drawn on the top face in plan coordinates) |
 | `RegionPlate` | `box, kind, title?, caption?, height?, lod?, dimmed?, active?, children` |
-| `CellPlate` | `origin, ticket, slice?, stage, z?, lit?, completion?, progress?, lod?, dimmed?, rail?, children` |
+| `CellPlate` | `origin, ticket, slice?, stage, z?, lit?, lampIntensity? (0..1, overrides lit), completion?, progress?, lod?, dimmed?, rail?, children` |
+| `lampPool(origin, z?)`, `lampFalloff` | The lamp's ellipse on the floor `{cx, cy, rx, ry, z}` and its gradient stops `[offset, opacity][]`, shared with any WebGL layer |
 | `cellAnatomy(origin, z?)` | returns `floorZ, size, rail, pads, agentSpot(pad, seat), shelf(i), ticker(f), tickerLine, door, mast` |
-| `StationMachine` | `kind, state, progress?, round?, label?, at, variant?, lod?, dimmed?, showLabel?` |
-| `AgentMarker` | `agentRole, tier, seat?, state, progress?, arrive?, leave?, label?, at, variant?, lod?, dimmed?, showLabel?` |
-| `GateGlyph` | `kind, position, progress?, from?, lamps?, axis?, at, variant?, lod?, dimmed?, showLabel?` |
+| `StationMachine` | `kind, state, progress?, round?, label?, nameplate?, at, variant?, lod?, dimmed?, showLabel?` |
+| `AgentMarker` | `agentRole, tier, seat?, state, progress?, arrive?, leave?, label?, labelPosition? ("beside" \| "below"), at, variant?, lod?, dimmed?, showLabel?` |
+| `GateGlyph` | `kind, position, progress?, from?, lamps?, axis?, floorLabel?, at, variant?, lod?, dimmed?, showLabel?` |
+| `FloorLettering` | `at, text, axis? ("x" \| "y"), size?, font? ("serif" \| "sans" \| "mono"), tone?, weight?, anchor?, decorative?, dimmed?` |
+| `PlanDimension` | `from, to, offset?, label, dimmed?` |
+| `FindingsFlag` | `at, severity ("blocker" \| "note"), count?, rule?, variant?, lod?, dimmed?` |
+| `TaskBoard` | `tasks: TaskCell[] ("pending" \| "active" \| "red" \| "green" \| "overridden"), at, columns?, variant?, lod?, dimmed?` |
 | `ArtifactCard` | `kind, state?, progress?, file?, at, variant?, lod?, dimmed?, showLabel?` |
 | `ToolTick` | `family, state?, progress?, detail?, at, variant?, dimmed?` |
 | `Packet` | `at, angle?, state?, ticket?, variant?, lod?, dimmed?, showLabel?` |

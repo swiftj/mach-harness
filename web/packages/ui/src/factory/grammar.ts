@@ -15,6 +15,8 @@ export type FactoryColor =
   | "plate-lit"
   | "plate-shade"
   | "plate-edge"
+  | "plate-rim"
+  | "machine-top"
   | "floor"
   | "hatch"
   | "shadow"
@@ -238,7 +240,12 @@ export type ArtifactKind =
   | "vote"
   | "findings"
   | "decision"
-  | "merge-commit";
+  | "merge-commit"
+  | "review-packet"
+  | "diff"
+  | "build-state"
+  | "archive"
+  | "run-record";
 
 export const artifacts: Record<ArtifactKind, { label: string; file: string }> = {
   intent: { label: "Intent", file: "intent.md" },
@@ -253,6 +260,11 @@ export const artifacts: Record<ArtifactKind, { label: string; file: string }> = 
   findings: { label: "Findings", file: "findings.md" },
   decision: { label: "Decision", file: "decision.json" },
   "merge-commit": { label: "Merge commit", file: "merge commit" },
+  "review-packet": { label: "Review packet", file: "review/round-N/packet" },
+  diff: { label: "Diff", file: "review/round-N/diff" },
+  "build-state": { label: "Build state", file: "build.json" },
+  archive: { label: "Archive", file: "<ticket>.tar.gz" },
+  "run-record": { label: "Run record", file: "runs.jsonl" },
 };
 
 export type ToolFamily = "read" | "write" | "run" | "search" | "test" | "git";

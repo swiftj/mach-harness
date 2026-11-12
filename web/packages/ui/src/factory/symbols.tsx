@@ -169,6 +169,16 @@ const artifactPaths: Record<ArtifactKind, ReactNode> = {
     </>
   ),
   "merge-commit": <path d="M3.8 4.4v2.4c0 2.4 3.2 2.8 3.2 5.2v3.4M10.2 4.4v2.4c0 2.4-3.2 2.8-3.2 5.2" />,
+  // An envelope: the packet sent to the panel.
+  "review-packet": <path d="M2.6 6.6h8.8v7.4H2.6zM2.6 6.6L7 10.4l4.4-3.8" />,
+  // A plus over a minus, beside a gutter: what changed.
+  diff: <path d="M3 6.4h3.4M4.7 4.7v3.4M3 11.8h3.4M8.6 4.6v10.2M10.2 6h1.2M10.2 9h1.2M10.2 12h1.2" />,
+  // A segmented progress bar: task progress and suite state.
+  "build-state": <path d="M2.6 8.2h8.8v3.8H2.6zM5.5 8.2v3.8M8.5 8.2v3.8M3.4 10.1h1.3M6.3 10.1h1.3M3 5.4h5M3 14.6h6.4" />,
+  // A banded box: the finished cell's archive.
+  archive: <path d="M2.6 5.6h8.8v2.6H2.6zM3.4 8.2v6.6h7.2V8.2M5.8 10.8h2.4" />,
+  // Ledger lines with bullets: one line per finished ticket.
+  "run-record": <path d="M3 5.6h.2M5 5.6h6.2M3 8.4h.2M5 8.4h6.2M3 11.2h.2M5 11.2h6.2M3 14h.2M5 14h4" />,
 };
 
 /** An artifact's mark only (without its card), in card coordinates. */

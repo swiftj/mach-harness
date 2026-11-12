@@ -7,6 +7,11 @@ import {
   DependencyLink,
   Escalation,
   FactoryScene,
+  FindingsFlag,
+  FloorLettering,
+  PlanDimension,
+  TaskBoard,
+  type TaskCell,
   GateGlyph,
   GroundGrid,
   Heading,
@@ -47,6 +52,7 @@ import {
 import { Section } from "../../layout";
 import { Group, RowOf, Scrub, Tile } from "./kit";
 import { AtlasStudy, BlueprintStudy } from "./Studies";
+import { PlantStudy } from "./PlantStudy";
 
 const workStates: FactoryState[] = ["idle", "active", "succeeded", "failed", "waiting", "human", "blocked"];
 
@@ -71,6 +77,7 @@ export function FactoryGrammar() {
       <Artifacts />
       <Tools />
       <Connections />
+      <Lettering />
       <States />
     </div>
   );
@@ -143,6 +150,13 @@ function Studies() {
       title="Composition studies"
       intro="One cell, drawn both ways from the same primitives. The Atlas shows it as a place where work happens; the Blueprint shows the same run as a precise drawing of what happened, in order. The slider stands in for the playhead in both."
     >
+      <figure id="factory-plant-fit" className="m-0 flex flex-col gap-2">
+        <PlantStudy lod="far" label="The whole plant at fit zoom: intake, two columns of bays, the review chamber, approval, integration and the archive in a U" />
+        <figcaption className="text-caption text-ink-muted">
+          The plant at fit zoom, far level. The U: the back row flows from intake across the floor to the review chamber; the chamber drops through
+          approval to the integration yard, whose main line runs back along the front to the archive. Framed to its projected bounds.
+        </figcaption>
+      </figure>
       <Scrub label="Playhead" value={t} onChange={setT} hint="The cell's second round: build, verify, the verdict gate, the panel fanning out, the votes." />
       <AtlasStudy t={t} />
       <BlueprintStudy t={t} />
@@ -154,6 +168,7 @@ function Studies() {
 
 function Places() {
   const [done, setDone] = useState(0.7);
+  const [lamp, setLamp] = useState(1);
   const regionKinds = Object.keys(regions) as RegionKind[];
   const stages: CellStage[] = ["building", "verified", "awaiting-human", "blocked"];
   return (
@@ -174,12 +189,17 @@ function Places() {
       <Group
         title="Cells by stage"
         note="The mast at the back corner carries the stage mark. The lamp is on while any station in the cell works. A completed cell takes the passed wash on its floor."
-        tools={<Scrub label="Cell complete" value={done} onChange={setDone} hint="cellComplete, 900 ms, settle" />}
+        tools={
+          <div className="flex flex-wrap gap-3">
+            <Scrub label="Lamp" value={lamp} onChange={setLamp} hint="lampIntensity, stateChange 260 ms" />
+            <Scrub label="Cell complete" value={done} onChange={setDone} hint="cellComplete, 900 ms, settle" />
+          </div>
+        }
       >
         <div className="grid grid-cols-2 gap-4">
           {stages.map((s) => (
             <Tile key={s} caption={cellStages[s].label} detail={`Stage ${s}`} label={`Cell at stage ${s}`} viewBox="-146 -46 352 226" width={480} height={308}>
-              <CellPlate origin={{ x: 0, y: 0 }} ticket="TCK-112" slice="SLICE-007" stage={s} lit={s === "building"} progress={0.6} lod="near">
+              <CellPlate origin={{ x: 0, y: 0 }} ticket="TCK-112" slice="SLICE-007" stage={s} lampIntensity={s === "building" ? lamp : 0} progress={0.6} lod="near">
                 <Bay stage={s} />
               </CellPlate>
             </Tile>
@@ -524,6 +544,73 @@ function Connections() {
           <DependencyLink variant="blueprint" from={{ x: 680, y: 40 }} to={{ x: 800, y: 130 }} state="satisfied" progress={unlock} />
           <Escalation variant="blueprint" from={{ x: 880, y: 150 }} height={90} progress={draw} label="Escalated" />
         </FactoryScene>
+      </Group>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------------------------------------------ */
+
+function Lettering() {
+  const a = cellAnatomy({ x: 0, y: 0 });
+  const tasks: TaskCell[] = ["green", "green", "green", "red", "green", "active", "pending", "pending", "pending", "overridden", "pending", "pending"];
+  return (
+    <Section
+      id="factory-lettering"
+      title="Lettering, dimensions and marks"
+      intro="Words belong on the plant where a draughtsman would put them: a maker's plate on a machine's face, a word painted on the floor beside a gate, a name under a figure, a dimension along a bay. Two marks stand beside the machines: the findings flag and the red/green task board."
+    >
+      <Group title="Label placements" note="Name plates show at mid and near zoom on machines at least 10 high. Floor lettering at a gate runs along its span on the downstream side. Agent labels can sit under the floor disc when the space beside the head is taken.">
+        <div className="grid grid-cols-2 gap-4">
+          <Tile caption="Name plates and an agent labelled below" detail="nameplate · labelPosition below" label="Cell with name plates on its machines and an agent labelled below its disc" viewBox="-146 -46 352 226" width={480} height={308}>
+            <CellPlate origin={{ x: 0, y: 0 }} ticket="LOCAL-031" slice="SLICE-021" stage="building" lit progress={0.55} lod="mid">
+              <StationMachine kind="plan" label="Plan" state="succeeded" nameplate at={a.pads.intent} />
+              <StationMachine kind="build" state="active" progress={0.55} nameplate at={a.pads.build} />
+              <StationMachine kind="verify" state="idle" nameplate at={a.pads.verify} />
+              <TaskBoard tasks={tasks} at={{ x: 70, y: 28, z: a.floorZ }} columns={6} />
+              <AgentMarker agentRole="builder" tier="sonnet" state="active" progress={0.55} at={a.agentSpot("build")} labelPosition="below" showLabel />
+            </CellPlate>
+            <GateGlyph kind="verification" position="closed" at={{ ...a.door, x: a.door.x + 10 }} floorLabel="Verdict" />
+          </Tile>
+          <Tile caption="Floor lettering and a plan dimension" detail="FloorLettering · PlanDimension" label="Plate with floor lettering and a dimension along a bay" viewBox="-146 -46 352 226" width={480} height={308}>
+            <RegionPlate box={{ x: 0, y: 0, w: 216, d: 148 }} kind="floor" title="Bay 4" caption="Reserved" lod="near">
+              <rect x={24} y={24} width={168} height={70} style={{ fill: "none", stroke: "var(--mach-factory-plate-edge)", strokeDasharray: "5 4" }} aria-hidden="true" />
+            </RegionPlate>
+            <FloorLettering at={{ x: 30, y: 52, z: 8 }} text="SLICE-024 waits on a dependency" font="sans" size={9} tone="wait" weight={600} />
+            <FloorLettering at={{ x: 30, y: 66, z: 8 }} text="LOCAL-035" font="mono" size={10} />
+            <FloorLettering at={{ x: 206, y: 130, z: 8 }} text="Aisle" axis="y" size={8} tone="subtle" />
+            <PlanDimension from={{ x: 24, y: 24, z: 8 }} to={{ x: 192, y: 24, z: 8 }} offset={10} label="168 pu" />
+          </Tile>
+        </div>
+      </Group>
+      <Group title="Findings flags" note="A blocker is a solid pennant with a bar; a note an outlined pennant. The count sits on the pennant; the cited rule is lettered at near zoom.">
+        <div className="flex flex-wrap gap-4">
+          <Tile caption="Blocker" detail="severity blocker, rule INV-02" label="Blocking finding flag" viewBox="-30 -40 90 50" width={150} height={84} grid>
+            <FindingsFlag at={{ x: 0, y: 0, z: 0 }} severity="blocker" rule="INV-02" lod="near" />
+          </Tile>
+          <Tile caption="Three blockers" detail="count 3" label="Flag for three blocking findings" viewBox="-30 -40 90 50" width={150} height={84} grid>
+            <FindingsFlag at={{ x: 0, y: 0, z: 0 }} severity="blocker" count={3} rule="FR-04" lod="near" />
+          </Tile>
+          <Tile caption="Note" detail="severity note" label="Non-blocking note flag" viewBox="-30 -40 90 50" width={150} height={84} grid>
+            <FindingsFlag at={{ x: 0, y: 0, z: 0 }} severity="note" lod="near" />
+          </Tile>
+          <Tile caption="Blueprint" detail="variant blueprint" label="Findings flag in the Blueprint" viewBox="-10 -24 80 30" width={150} height={56}>
+            <FindingsFlag at={{ x: 0, y: 0 }} severity="blocker" count={2} rule="AC-03" variant="blueprint" />
+          </Tile>
+        </div>
+      </Group>
+      <Group title="Red/green task board" note="One cell per plan task: pending dashed, active outlined live, red half filled (its test was seen failing), green full, overridden slashed. At far zoom the board is a single plate, filled when every task is green.">
+        <div className="flex flex-wrap gap-4">
+          <Tile caption="Atlas" detail="Upright beside the build machine" label="Task board standing on the floor" viewBox="-30 -46 90 56" width={170} height={106} grid>
+            <TaskBoard tasks={tasks} at={{ x: -10, y: 0, z: 0 }} columns={6} />
+          </Tile>
+          <Tile caption="Atlas, all green" detail="Far zoom" label="Task board, all green, far zoom" viewBox="-30 -46 90 56" width={170} height={106} grid>
+            <TaskBoard tasks={tasks.map(() => "green")} at={{ x: -10, y: 0, z: 0 }} columns={6} lod="far" />
+          </Tile>
+          <Tile caption="Blueprint" detail="A flat strip under the build node" label="Task board in the Blueprint" viewBox="-6 -6 92 26" width={230} height={66}>
+            <TaskBoard tasks={tasks} at={{ x: 0, y: 0 }} columns={12} variant="blueprint" />
+          </Tile>
+        </div>
       </Group>
     </Section>
   );

@@ -25,6 +25,7 @@ import {
 import { clamp01, lerp, segment } from "./motion";
 import { planeStroke, planeTransform, project, round, uprightTransform, type Vec3 } from "./projection";
 import { Prism } from "./plates";
+import { FloorLettering } from "./lettering";
 import { AgentHead, ArtifactMark, RoleEmblem, StateMark, StationSymbol, ToolCap, artifactCardPath, artifactFoldPath } from "./symbols";
 
 /**
@@ -65,6 +66,8 @@ export interface StationMachineProps extends Common {
   round?: number;
   /** Visible label override (default: the station's name). */
   label?: string;
+  /** Letter the station's name on the machine's front (lit) face, like a maker's plate. Shown at mid and near zoom. */
+  nameplate?: boolean;
 }
 
 /**
@@ -72,7 +75,7 @@ export interface StationMachineProps extends Common {
  * station's symbol inscribed on its top face and, while it works, a progress dial drawn around the
  * symbol on that face. Failed machines show a hatched red top band; idle ones a dashed rim.
  */
-export function StationMachine({ kind, state, progress = 0, round: judging, label, at, variant = "atlas", lod = "mid", dimmed, showLabel }: StationMachineProps) {
+export function StationMachine({ kind, state, progress = 0, round: judging, label, nameplate, at, variant = "atlas", lod = "mid", dimmed, showLabel }: StationMachineProps) {
   const look = stations[kind];
   const st = factoryStates[state];
   const name = `${label ?? look.label}: ${st.label}${judging && judging > 1 ? `, round ${judging} of 3` : ""}`;
@@ -91,7 +94,7 @@ export function StationMachine({ kind, state, progress = 0, round: judging, labe
     <g role="img" aria-label={name} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
       <Prism
         box={box}
-        top={state === "idle" ? "plate-top" : st.soft}
+        top={state === "idle" ? "machine-top" : st.soft}
         weight={state === "failed" || state === "blocked" ? 1.6 : 1}
         edge={state === "idle" ? "plate-edge" : st.ink}
         dash={state === "idle" ? undefined : undefined}
@@ -125,6 +128,13 @@ export function StationMachine({ kind, state, progress = 0, round: judging, labe
           </g>
         ) : null}
       </Prism>
+      {nameplate && lod !== "far" && look.height >= 10 ? (
+        <g transform={uprightTransform({ x: box.x, y: box.y + s, z }, look.height)} aria-hidden="true">
+          <text x={5} y={look.height / 2 + Math.min(7, look.height * 0.5) * 0.36} style={{ fill: "var(--mach-ink-muted)", fontSize: Math.min(7, look.height * 0.5), fontWeight: 650, letterSpacing: "0.04em" }}>
+            {label ?? look.label}
+          </text>
+        </g>
+      ) : null}
       {labelOn(lod, showLabel) ? (
         <g transform={`translate(${round(labelPt.x + 6)} ${round(labelPt.y + 4)})`}>
           <text style={{ fill: "var(--mach-ink)", fontSize: 11, fontWeight: 600 }}>{label ?? look.label}</text>
@@ -193,6 +203,8 @@ export interface AgentMarkerProps extends Common {
   leave?: number;
   /** An agent's own name if it has one (e.g. a run ID); defaults to role and tier. */
   label?: string;
+  /** Where the visible label goes in the Atlas: beside the head (default) or centred below the floor disc. */
+  labelPosition?: "beside" | "below";
 }
 
 /**
@@ -201,7 +213,7 @@ export interface AgentMarkerProps extends Common {
  * triangle). While working, an arc around the head fills with progress. A reviewer carries its seat
  * letter. Arrival grows the post up from the disc; departure sinks it back.
  */
-export function AgentMarker({ agentRole: role, tier, seat, state, progress = 0, arrive = 1, leave = 0, label, at, variant = "atlas", lod = "mid", dimmed, showLabel }: AgentMarkerProps) {
+export function AgentMarker({ agentRole: role, tier, seat, state, progress = 0, arrive = 1, leave = 0, label, labelPosition = "beside", at, variant = "atlas", lod = "mid", dimmed, showLabel }: AgentMarkerProps) {
   const tierLook = modelTiers[tier];
   const st = factoryStates[state];
   const roleLabel = role === "reviewer" && seat ? `${reviewerSeats[seat].label} reviewer` : agentRoles[role].label;
@@ -274,7 +286,7 @@ export function AgentMarker({ agentRole: role, tier, seat, state, progress = 0, 
             {reviewerSeats[seat].letter}
           </text>
         ) : null}
-        {labelOn(lod, showLabel) ? (
+        {labelOn(lod, showLabel) && labelPosition === "beside" ? (
           <g aria-hidden="true">
             <text x={12} y={-1} style={{ fill: "var(--mach-ink)", fontSize: 10.5, fontWeight: 600 }}>
               {label ?? roleLabel}
@@ -285,6 +297,16 @@ export function AgentMarker({ agentRole: role, tier, seat, state, progress = 0, 
           </g>
         ) : null}
       </g>
+      {labelOn(lod, showLabel) && labelPosition === "below" ? (
+        <g aria-hidden="true" transform={`translate(${round(base.x)} ${round(base.y + 16)})`}>
+          <text textAnchor="middle" style={{ fill: "var(--mach-ink)", fontSize: 10, fontWeight: 600 }}>
+            {label ?? roleLabel}
+          </text>
+          <text y={11} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>
+            {tierLook.label}
+          </text>
+        </g>
+      ) : null}
     </g>
   );
 }
@@ -306,6 +328,11 @@ export interface GateGlyphProps extends Common {
   lamps?: GateLamp[];
   /** Which plan axis the gate's span lies along: "y" stands across a route that runs along x. */
   axis?: "x" | "y";
+  /**
+   * Letter a word on the floor beside the gate's footing, downstream, along its span (e.g. "Consensus",
+   * or a ticket ID). Shown at mid and near zoom; use instead of, or with, the upright label.
+   */
+  floorLabel?: string;
 }
 
 const armAngle: Record<GatePosition, number> = { open: 82, closed: 0, refusing: 0, waiting: 0 };
@@ -316,7 +343,7 @@ const armAngle: Record<GatePosition, number> = { open: 82, closed: 0, refusing: 
  * the span; refusing drops it shut with one damped overshoot and lights the plaque in the fail ink;
  * waiting holds it shut with the plaque in the human ink. The state word is in the accessible name.
  */
-export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps, axis = "y", at, variant = "atlas", lod = "mid", dimmed, showLabel }: GateGlyphProps) {
+export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps, axis = "y", floorLabel, at, variant = "atlas", lod = "mid", dimmed, showLabel }: GateGlyphProps) {
   const g = gates[kind];
   const pos = gatePositions[position];
   const st = factoryStates[pos.state];
@@ -386,6 +413,17 @@ export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps
         <StationSymbol kind={g.symbol} size={11} color={fc("ink")} strokeWidth={1.2} />
       </g>
       {lamps ? <Lamps lamps={lamps} x={lintelMid.x} y={lintelMid.y - 23} /> : null}
+      {floorLabel && lod !== "far" ? (
+        <FloorLettering
+          at={axis === "y" ? { x: at.x + 14, y: at.y + span / 2, z } : { x: at.x - span / 2, y: at.y + 14, z }}
+          axis={axis}
+          text={floorLabel}
+          size={8}
+          font="sans"
+          weight={600}
+          decorative
+        />
+      ) : null}
       {labelOn(lod, showLabel) ? (
         <g transform={`translate(${round(Math.max(postA[1].x, postB[1].x) + 8)} ${round(Math.min(postA[1].y, postB[1].y) + 2)})`}>
           <text style={{ fill: "var(--mach-ink)", fontSize: 11, fontWeight: 600 }}>{g.label}</text>

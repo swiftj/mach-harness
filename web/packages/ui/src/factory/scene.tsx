@@ -2,6 +2,17 @@ import { createContext, useContext, useId, useMemo, type ReactNode, type SVGProp
 import { fc } from "./grammar";
 
 /**
+ * The work lamp's falloff: [radius fraction, opacity] stops of a radial gradient over the pool ellipse
+ * (`lampPool`). Defined once so a WebGL layer can draw the same light at the same geometry.
+ */
+export const lampFalloff: ReadonlyArray<readonly [number, number]> = [
+  [0, 1],
+  [0.45, 0.82],
+  [0.75, 0.38],
+  [1, 0],
+];
+
+/**
  * The SVG root for factory drawing. It renders the shared definitions (hatching, the lamp pool,
  * arrowheads) once, with ids unique to this scene, and gives them to every primitive inside.
  * Primitives must be drawn inside a `<FactoryScene>` (or a `<FactoryDefs>` of their own).
@@ -82,9 +93,9 @@ export function FactoryDefs({ children }: { children?: ReactNode }) {
         </pattern>
         {/* The lamp pool on an active cell floor: warm, centred, no hard edge. Lighting, not activity. */}
         <radialGradient id={ids.lamp} cx="50%" cy="50%" r="50%">
-          <stop offset="0%" style={{ stopColor: fc("lamp"), stopOpacity: 1 }} />
-          <stop offset="70%" style={{ stopColor: fc("lamp"), stopOpacity: 0.55 }} />
-          <stop offset="100%" style={{ stopColor: fc("lamp"), stopOpacity: 0 }} />
+          {lampFalloff.map(([offset, opacity]) => (
+            <stop key={offset} offset={`${offset * 100}%`} style={{ stopColor: fc("lamp"), stopOpacity: opacity }} />
+          ))}
         </radialGradient>
         <Arrow id={ids.arrow} color={fc("route")} />
         <Arrow id={ids.arrowLive} color={fc("live")} />

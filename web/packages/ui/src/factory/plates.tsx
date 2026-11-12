@@ -97,12 +97,14 @@ export interface PrismProps {
   weight?: number;
   /** Outline dash (for unsettled things). */
   dash?: string;
+  /** The lit front edge (top face, toward plan +y) catches the light: drawn in `plate-rim`. Default on. */
+  rim?: boolean;
   /** Drawn on the top face, in plan coordinates (the group carries the plane transform at the top). */
   children?: ReactNode;
 }
 
 /** A raised block: contact shadow, lit face, shaded face with hatching, top face, drafted outline. */
-export function Prism({ box, top = "plate-top", lit = "plate-lit", shade = "plate-shade", edge = "plate-edge", hatch = "shade", shadow = true, weight = 1, dash, children }: PrismProps) {
+export function Prism({ box, top = "plate-top", lit = "plate-lit", shade = "plate-shade", edge = "plate-edge", hatch = "shade", shadow = true, weight = 1, dash, rim = true, children }: PrismProps) {
   const ids = useFactoryIds();
   const f = prismFaces(box);
   const h = box.h ?? 0;
@@ -131,6 +133,9 @@ export function Prism({ box, top = "plate-top", lit = "plate-lit", shade = "plat
         }
         style={{ ...outline, fill: "none" }}
       />
+      {rim && h > 0 ? (
+        <line aria-hidden="true" x1={round(f.top[3]!.x)} y1={round(f.top[3]!.y)} x2={round(f.top[2]!.x)} y2={round(f.top[2]!.y)} style={{ stroke: fc("plate-rim"), strokeWidth: weight, strokeLinecap: "round" }} />
+      ) : null}
     </g>
   );
 }
@@ -255,6 +260,16 @@ export function cellAnatomy(origin: { x: number; y: number }, z: number = factor
   };
 }
 
+/**
+ * The light pool of a cell's work lamp, in plan coordinates on the cell floor (elevation `z`): an
+ * ellipse centred a little toward the build machine, filled with the `lampFalloff` gradient at the
+ * lamp's intensity. A WebGL layer replacing it draws the same ellipse, projected with `planeMatrix(z)`.
+ */
+export function lampPool(origin: { x: number; y: number }, z: number = factoryTokens.elevation.regionPlate) {
+  const { x: w, y: d } = factoryTokens.size.cell;
+  return { cx: origin.x + w * 0.52, cy: origin.y + d * 0.5, rx: w * 0.5, ry: d * 0.56, z: z + 4 };
+}
+
 export interface CellPlateProps {
   origin: { x: number; y: number };
   /** The ticket ID, lettered on the floor. */
@@ -266,6 +281,11 @@ export interface CellPlateProps {
   z?: number;
   /** The work lamp: on while any station in the cell is working. */
   lit?: boolean;
+  /**
+   * The lamp's intensity, 0..1, for fading it in and out (stateChange, 260 ms) from the playhead.
+   * Overrides `lit` when given: 0 is off, 1 is full.
+   */
+  lampIntensity?: number;
   /** 0..1, the cell-complete animation: the floor takes the passed wash. */
   completion?: number;
   /** Progress of the current stage, for the mast's working mark. */
@@ -284,20 +304,22 @@ export interface CellPlateProps {
  * height with poché hatching on the cut, so the work inside is always visible. A signal mast at the
  * back corner carries the stage mark. The ticket ID is lettered on the floor.
  */
-export function CellPlate({ origin, ticket, slice, stage, z = factoryTokens.elevation.regionPlate as number, lit, completion = 0, progress, lod = "mid", dimmed, rail = true, children }: CellPlateProps) {
+export function CellPlate({ origin, ticket, slice, stage, z = factoryTokens.elevation.regionPlate as number, lit, lampIntensity, completion = 0, progress, lod = "mid", dimmed, rail = true, children }: CellPlateProps) {
   const ids = useFactoryIds();
   const a = cellAnatomy(origin, z);
   const { x: w, y: d } = a.size;
   const { x, y } = origin;
   const wallH = factoryTokens.elevation.cellRim;
   const look = cellStages[stage];
+  const lamp = Math.min(1, Math.max(0, lampIntensity ?? (lit ? 1 : 0)));
+  const pool = lampPool(origin, z);
   const mast = project(a.mast);
   const mastTop = project({ ...a.mast, z: a.mast.z + 20 });
   return (
     <g role="group" aria-label={`Cell ${ticket}: ${look.label}`} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
       {/* Floor slab. */}
       <Prism box={{ x, y, w, d, z, h: 4 }} top="floor" hatch="none">
-        {lit ? <ellipse aria-hidden="true" cx={x + w * 0.52} cy={y + d * 0.5} rx={w * 0.5} ry={d * 0.56} style={{ fill: `url(#${ids.lamp})` }} /> : null}
+        {lamp > 0 ? <ellipse aria-hidden="true" cx={pool.cx} cy={pool.cy} rx={pool.rx} ry={pool.ry} style={{ fill: `url(#${ids.lamp})`, opacity: lamp }} /> : null}
         {completion > 0 ? <rect aria-hidden="true" x={x} y={y} width={w} height={d} style={{ fill: fc("pass-soft"), opacity: completion * 0.85 }} /> : null}
         {/* Floor lettering: the ticket, and the slice at near zoom. */}
         <text x={x + 14} y={y + d - 9} style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: lod === "far" ? 16 : 11, fontWeight: 500 }} className="notranslate">

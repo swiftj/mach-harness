@@ -83,6 +83,8 @@
   --color-factory-plate-lit: var(--mach-factory-plate-lit);
   --color-factory-plate-shade: var(--mach-factory-plate-shade);
   --color-factory-plate-edge: var(--mach-factory-plate-edge);
+  --color-factory-plate-rim: var(--mach-factory-plate-rim);
+  --color-factory-machine-top: var(--mach-factory-machine-top);
   --color-factory-floor: var(--mach-factory-floor);
   --color-factory-hatch: var(--mach-factory-hatch);
   --color-factory-shadow: var(--mach-factory-shadow);

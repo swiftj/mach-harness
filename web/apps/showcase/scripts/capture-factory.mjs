@@ -17,7 +17,7 @@ const out = join(app, "screenshots", "factory");
 mkdirSync(out, { recursive: true });
 
 const base = "http://127.0.0.1:4174/";
-const sections = ["factory-projection", "factory-studies", "factory-places", "factory-stations", "factory-agents", "factory-gates", "factory-artifacts", "factory-tools", "factory-connections", "factory-states"];
+const sections = ["factory-projection", "factory-studies", "factory-places", "factory-stations", "factory-agents", "factory-gates", "factory-artifacts", "factory-tools", "factory-connections", "factory-lettering", "factory-states"];
 const unclip = `[data-mach-shell]{height:auto!important;overflow:visible!important} main{overflow:visible!important}`;
 const only = process.argv[2]; // optional: one section id
 
@@ -60,6 +60,7 @@ try {
           if (only && id !== only) continue;
           await page.locator(`#${id}`).screenshot({ path: join(out, `${id}-${tag}.png`) });
         }
+        await page.locator("#factory-plant-fit").screenshot({ path: join(out, `plant-fit-${tag}.png`) });
         await style.evaluate((node) => node.remove());
         const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
         violations += axe.violations.length;
