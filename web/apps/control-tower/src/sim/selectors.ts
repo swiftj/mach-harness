@@ -10,6 +10,9 @@ import { EVENT_CATALOG } from "./catalog";
 import { describe } from "./describe";
 import { finalScene, indexFixture, lowerBound, upperBound } from "./engine";
 import type {
+  AnyRef,
+  ActorId,
+  ActorState,
   AgentState,
   ArtifactState,
   CellState,
@@ -26,7 +29,7 @@ import type {
   ToolCallState,
   WaveState,
 } from "./model";
-import { ref, refId, refKind } from "./model";
+import { isActorRef, ref, refId, refKind } from "./model";
 import type { CellStage, StationId } from "./vocabulary";
 
 // ---------------------------------------------------------------- events in time
@@ -82,8 +85,15 @@ export function refsOfEvent(fixture: Fixture, seq: number): readonly EntityRef[]
   return i === undefined ? [] : (index.refsByEvent[i] ?? []);
 }
 
+/** The supervisor or scheduler that wrote an event, or null (intake, the engineer, the stations). */
+export function actorOfEvent(fixture: Fixture, seq: number): AnyRef | null {
+  const index = indexFixture(fixture);
+  const i = index.indexBySeq.get(seq);
+  return i === undefined ? null : (index.actorsByEvent[i] ?? null);
+}
+
 /** The events behind an entity, oldest first; with t, only those that have happened by t. */
-export function eventsFor(fixture: Fixture, entity: EntityRef, t?: number): readonly AnySimEvent[] {
+export function eventsFor(fixture: Fixture, entity: AnyRef, t?: number): readonly AnySimEvent[] {
   const index = indexFixture(fixture);
   const positions = index.eventsByRef.get(entity) ?? [];
   const out: AnySimEvent[] = [];
@@ -96,7 +106,7 @@ export function eventsFor(fixture: Fixture, entity: EntityRef, t?: number): read
 }
 
 /** The latest event behind an entity at time t: what the inspector shows as "why it looks like this". */
-export function latestEventFor(fixture: Fixture, entity: EntityRef, t: number): AnySimEvent | null {
+export function latestEventFor(fixture: Fixture, entity: AnyRef, t: number): AnySimEvent | null {
   const found = eventsFor(fixture, entity, t);
   return found[found.length - 1] ?? null;
 }
@@ -127,7 +137,8 @@ export type EntityState =
   | { kind: "artifact"; value: ArtifactState }
   | { kind: "gate"; value: GateState }
   | { kind: "dependency"; value: DependencyState }
-  | { kind: "finding"; value: FindingState };
+  | { kind: "finding"; value: FindingState }
+  | { kind: "actor"; value: ActorState };
 
 const agentsCache = new WeakMap<Readonly<Record<string, CellState>>, readonly AgentState[]>();
 
@@ -187,8 +198,12 @@ export function cellsAtStation(scene: Scene, station: StationId): readonly CellS
 }
 
 /** Look up any entity by its reference. Null when it does not exist (yet) at this moment. */
-export function entityAt(scene: Scene, entity: EntityRef): EntityState | null {
+export function entityAt(scene: Scene, entity: AnyRef): EntityState | null {
   const id = refId(entity);
+  if (isActorRef(entity)) {
+    const actor = scene.actors[id as ActorId];
+    return actor ? { kind: "actor", value: actor } : null;
+  }
   switch (refKind(entity)) {
     case "wave":
       return scene.waves[id] ? { kind: "wave", value: scene.waves[id] } : null;
@@ -464,4 +479,49 @@ export function chapterAt(fixture: Fixture, t: number): Chapter | null {
   let found: Chapter | null = null;
   for (const chapter of fixture.chapters) if (chapter.t <= t) found = chapter;
   return found;
+}
+
+// ---------------------------------------------------------------- what is known about work in flight
+
+/**
+ * What is actually known about a span of work at time t: when it started, how long it has run, and
+ * when it finished if it has. Nothing predictive: the simulation, like MACH, does not know how long
+ * work will take, so there is no completion fraction for work in flight. Draw elapsed time (a
+ * growing arc, a counter, ticks), never "x% done".
+ */
+export interface KnownTiming {
+  /** False before the work started (t < startedAt). */
+  readonly started: boolean;
+  readonly startedAt: number;
+  /** Milliseconds of work so far: up to t while running, the whole span once finished. */
+  readonly elapsed: number;
+  /** When it finished, if it had by t; otherwise null. */
+  readonly finishedAt: number | null;
+  readonly finished: boolean;
+}
+
+export function timingAt(startedAt: number, finishedAt: number | null, t: number): KnownTiming {
+  const finished = finishedAt !== null && finishedAt <= t;
+  return {
+    started: t >= startedAt,
+    startedAt,
+    elapsed: Math.max(0, (finished ? (finishedAt as number) : t) - startedAt),
+    finishedAt: finished ? finishedAt : null,
+    finished,
+  };
+}
+
+/** An agent's known timing at t (pass the agent from the scene at t, or any later scene). */
+export function agentTimingAt(agent: Pick<AgentState, "startedAt" | "finishedAt">, t: number): KnownTiming {
+  return timingAt(agent.startedAt, agent.finishedAt, t);
+}
+
+/** A tool call's known timing at t. */
+export function toolCallTimingAt(call: Pick<ToolCallState, "startedAt" | "finishedAt">, t: number): KnownTiming {
+  return timingAt(call.startedAt, call.finishedAt, t);
+}
+
+/** A station visit's known timing at t. */
+export function visitTimingAt(visit: Pick<StationVisit, "enteredAt" | "leftAt">, t: number): KnownTiming {
+  return timingAt(visit.enteredAt, visit.leftAt, t);
 }

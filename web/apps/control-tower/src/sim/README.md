@@ -82,10 +82,12 @@ The signature takes the `Fixture`, not a bare event array: titles, risks and app
 | `moments(fixture, atLeast = "major")` | Events at or above a significance, each with a sentence (`describe`) and its refs. Timeline markers. |
 | `chapters(fixture)`, `chapterAt(fixture, t)` | The 14 named chapters (section 8), each with a `focus` ref for the camera. |
 | `describe(event): string` | One plain sentence per event, for the inspector, tooltips and screen readers. |
+| `agentTimingAt(agent, t)`, `toolCallTimingAt(call, t)`, `visitTimingAt(visit, t)`, `timingAt(startedAt, finishedAt, t)` | What is **known** about work at `t`: `{ started, startedAt, elapsed, finishedAt, finished }`. Nothing predictive (see section 5). |
+| `actorOfEvent(fixture, seq): AnyRef \| null` | `actor:supervisor` or `actor:scheduler` for an event they wrote, else `null`. |
 
 ### Motion helpers
 
-`progress(t, start, duration)`, `spanProgress(t, start, end, expected)`, `ease(x)`, `easeOut(x)`, `motionProgress(t, start, duration, reducedMotion)`, and `MOTION` (standard lengths in factory ms: `travel` 20 s, `gate` 8 s, `appear` 6 s, `afterglow` 30 s).
+`progress(t, start, duration)`, `spanProgress(t, start, end, expected)` (deprecated for open spans: its `expected` is a guess), `ease(x)`, `easeOut(x)`, `motionProgress(t, start, duration, reducedMotion)`, and `MOTION` (standard lengths in factory ms: `travel` 20 s, `gate` 8 s, `appear` 6 s, `afterglow` 30 s).
 
 ### Entity references
 
@@ -104,6 +106,21 @@ One string names anything selectable: `` `${kind}:${id}` `` (`EntityRef`). Build
 | `gate` | `gate:LOCAL-031/audit`, `gate:LOCAL-031/verification#1`, `gate:LOCAL-032/review#2`, `gate:LOCAL-032/human-approval`, `gate:LOCAL-031/merge-revalidation`, `gate:LOCAL-031/red-before-green`, `gate:LOCAL-031/plan-check` |
 | `dependency` | `dependency:SLICE-024->SLICE-021` (the first waits for the second) |
 | `finding` | `finding:LOCAL-032/r1/security/1` |
+
+### Actors: the supervisor and the scheduler
+
+The line supervisor and the scheduler act in the record without being agents, so they have identities of their own: `actor:supervisor` and `actor:scheduler` (`ActorRef`; `ref.actor(id)`, `isActorRef(s)`, `ACTORS`). Attribution is by kind, from the real emitters (`ACTOR_KINDS`, `actorOf(event)`):
+
+| Actor | Real code | Kinds |
+|---|---|---|
+| `actor:supervisor` | `supervisor.py` (`Supervisor.once`, `observe`, `decided`, `start`, `recover`, `finish`, `park`) | `revision.discovered`, `scheduling.decided`, `work.claimed`, `execution.started`, `station.observed`, `recovery.started`, `execution.completed`, `execution.failed`; `human.required` when the supervisor parks a ticket |
+| `actor:scheduler` | `intake.py` (`Factory.plan`, `record`, `dispatch`, `open_cell`) | `dependency.resolved`, `dependency.blocked`, `slice.integrated`, `work.scheduled`; `human.required` from the recorded plan (reason `waiting for ...`) |
+
+Intake's own kinds (`wave.discovered`, `intake.validated`, `slice.materialized`), the engineer's commands and the stations' facts belong to no actor. In the fixture every attributed event has `source: "supervisor"`, because both act inside the supervisor's tick.
+
+`scene.actors.supervisor` and `scene.actors.scheduler` hold `{ id, title, code, acts, lastActedAt, lastSeq, lastKind }`. `entityAt(scene, "actor:scheduler")` returns `{ kind: "actor", value }`; `eventsFor(fixture, "actor:scheduler", t?)` and `latestEventFor` work as for any entity, so a figure can light on its own events and the inspector can say why.
+
+`ActorRef` is not (yet) part of `EntityRef`. Adding `"actor"` to `EntityKind` would break exhaustive switches in four view files (`atlas/locate.ts`, `shell/inspector/entity.ts`, `shell/inspector/Inspector.tsx`, `shell/vocab.ts`), which the simulation owner does not own. Until those handle an `actor` case, the store's `selection` stays `EntityRef`, so an actor cannot be the store's selection; once they do, adding `"actor"` to `ENTITY_KINDS` makes `actor:*` an ordinary `EntityRef` with no other change.
 
 ## 3. The event model
 
@@ -167,7 +184,7 @@ Rule: **factory motion is a function of `t - event.t`**. Never animate factory p
 1. Read state from `sceneAt` (or `useScene`): where things are now.
 2. Read recent events with `eventsInWindow(SCENARIO, t, MOTION.travel, kinds)`: what is moving now, and since when.
 3. Compute `progress(t, event.t, duration)` and draw that frame. When `t` moves backwards past `event.t`, the event drops out of the window and the motion is undone automatically.
-4. For spans (an agent at work, a tool call in flight), use the start and end in the state: `spanProgress(t, call.startedAt, call.finishedAt, expectedMs)`. Open spans never reach 1.
+4. **Work in flight has no completion fraction.** Neither MACH nor the simulation knows how long an agent, a tool call or a station visit will take, so a view must not draw "x% done" (a filling arc, a progress bar) for open work, and must not divide elapsed time by an expected length per role or station. Show what is known: `agentTimingAt(agent, t)`, `toolCallTimingAt(call, t)` and `visitTimingAt(visit, t)` give `started`, `startedAt`, `elapsed` and, once it has happened, `finishedAt`. Draw elapsed time (a counter, ticks per minute, an arc that grows without a fixed end) or a plain "at work" state. A completed span may be drawn whole. `spanProgress` is deprecated for open spans.
 5. After a seek, `changesBetween(SCENARIO, previousT, t)` says what appeared or disappeared, in which direction, for a single cross-fade.
 6. Under `prefers-reduced-motion` (`store.reducedMotion`), use `motionProgress(..., true)`: anything started is shown at its end state, with no travel or looping.
 7. Every visible change must trace to an event: show `latestEventFor(SCENARIO, ref, t)` (and `describe(event)`) in the inspector.
@@ -186,9 +203,11 @@ Examples: a packet travelling from build to verify is the `station.entered` (ver
 | `usePlaybackKeys(enabled?)` | Optional defaults: Space plays or pauses, Shift+Left and Shift+Right step by event. The shell owns the keyboard map and may ignore this. |
 | `SceneStoreProvider` | Give a subtree its own store (tests, previews). |
 
-State (`SceneStoreState`): `fixture`, `playhead` (factory ms), `liveAt` (the simulated now), `following` (live-follow), `playing`, `speed` (0.5, 1, 2, 4, 8 or 16), `cursor`, `selection`, `focus` (`{ target: EntityRef | "overview", reason, nonce }`), `hovered`, `highlighted`, `view` (`"atlas" | "blueprint"`), `theater`, `reducedMotion`.
+State (`SceneStoreState`): `fixture`, `playhead` (factory ms), `liveAt` (the simulated now), `following` (live-follow), `playing`, `speed` (0.5, 1, 2, 4, 8 or 16), `cursor`, `selection`, `focus` (`{ target: EntityRef | "overview", reason, nonce }`), `hovered`, `highlighted`, `view` (`"atlas" | "blueprint"`), `theater`, `reducedMotion`, `follow` (camera follow).
 
-Actions: `play()`, `pause()`, `toggle()`, `seek(t)`, `seekToSeq(seq)`, `seekToChapter(id)`, `stepNext()`, `stepPrevious()` (by event; pause playback), `setSpeed(s)`, `followLive()`, `select(ref | null, { focus? })` (selecting also requests focus unless `focus: false`), `focusOn(ref | "overview", reason?)`, `hover(ref | null)`, `setView(v)`, `setTheater(on)`, `setReducedMotion(on)`, `dispose()`.
+Actions: `play()`, `pause()`, `toggle()`, `seek(t)`, `seekToSeq(seq)`, `seekToChapter(id)`, `stepNext()`, `stepPrevious()` (by event; pause playback), `setSpeed(s)`, `followLive()`, `select(ref | null, { focus? })` (selecting also requests focus unless `focus: false`), `focusOn(ref | "overview", reason?)`, `hover(ref | null)`, `setView(v)`, `setTheater(on)`, `setReducedMotion(on)`, `setFollow(on)`, `dispose()`.
+
+Camera follow (one flag for both views and the Shell): `follow` is on by default. It goes off when the person pans or zooms (the view calls `setFollow(false)`) and when the camera is asked to frame something (`focusOn` with any reason but `"follow"`, so also `select` with focus and `seekToChapter`). It comes back on with `followLive()` (return to live) or `setFollow(true)`. The camera follows the live action only when `cameraFollows(state)` is true: `follow` is on **and** the playhead is live (`following`). Whether it also needs `playing` is the view's choice. Theater Mode changes neither `follow` nor `following`: it does not force live. A view's own follow camera should request focus with reason `"follow"`, which leaves the flag on.
 
 Playback: at 1x, one wall second is `PLAYBACK_BASE_RATE` (10) factory seconds, so the 55:50 run plays in about 5.5 minutes at 1x and 21 seconds at 16x. The clock is driven by `requestAnimationFrame` through an injectable `Clock` (`browserClock()`, or `manualClock()` for tests and capture). A frame gap is capped at 250 ms so a background tab does not leap.
 
@@ -200,10 +219,11 @@ Hover and selection: `highlighted` is `relatedRefs` of the hovered entity, or el
 
 ### `window.__machSim` (development and capture builds only)
 
-Installed when `import.meta.env.DEV` or the build mode is `capture` (`vite build --mode capture`); never in a production build. For seeking and reading only:
+Installed when `import.meta.env.DEV` or the build mode is `capture` (`vite build --mode capture`); never in a production build, which also keeps the plain browser clock. In development and capture builds the store runs on a `switchableClock(browserClock())`, which the capture script can switch to manual time.
 
 ```js
 const sim = window.__machSim;
+// Version 1: seeking and reading (unchanged)
 sim.version;            // 1
 sim.duration;           // factory ms
 sim.eventCount;
@@ -213,8 +233,25 @@ sim.seekToSeq(seq);
 sim.seekToChapter("human-gate");
 sim.step(n);            // n events forward, or back if negative; pauses
 sim.play(); sim.pause(); sim.setSpeed(4);
-sim.state();            // { playhead, liveAt, following, playing, speed, cursor, view, theater, selection }
+sim.state();            // { playhead, liveAt, following, playing, speed, cursor, view, theater, selection,
+                        //   follow, focus, reducedMotion, clock: "live" | "manual" | "fixed" }
+// Driving the app (pass 2)
+sim.select("cell:LOCAL-031");   // or null; also frames it (and releases camera follow)
+sim.focus("gate:LOCAL-032/human-approval");  // or "overview"
+sim.setMode("blueprint");       // or "atlas"
+sim.setTheater(true);
+sim.setFollow(true); sim.followLive();
+// Rendering frame by frame
+sim.useManualClock();           // browser frames no longer move time
+sim.clockMode();                // "manual"
+sim.play();
+sim.advance(0);                 // first frame: sets the reference time
+sim.advance(1000 / 30);         // one 30 fps frame: factory time += 33.3 ms x 10 x speed
+sim.advance(5000, 1000 / 60);   // 5 s of wall time in 60 fps frames
+sim.useLiveClock();             // back to browser frames; time continues without a leap
 ```
+
+`advance(ms, frameMs = 250)` delivers frames of at most `frameMs` (the store treats a frame longer than 250 ms as 250 ms), so the total moved is exactly `ms` of wall time, which is `ms x PLAYBACK_BASE_RATE x speed` of factory time while playing. The same calls from the same state always give the same frames. Rendering between frames is the capture script's job (for example, wait for the next animation frame after each `advance`). `advance` and the clock switches throw when the store's clock cannot be switched (`clockMode()` is then `"fixed"`).
 
 ## 7. The event catalog
 
@@ -333,5 +370,5 @@ Exact times are in `SCENARIO.chapters` (use those, not this table, in the captur
 
 - **Cost** (measured by `test/reducer.test.mjs`, Node 25, Apple silicon): indexing the 2,126-event fixture takes about 5 ms, once, on first use; `sceneAt` is a binary search into precomputed scenes, about 0.07 µs per call; the index keeps about 4 MB of heap (scenes share every part an event did not touch). Calling it every frame for the whole run is free.
 - **Determinism**: no `Math.random`, `Date.now`, timers or wall clock anywhere in `src/sim` (source-scanned by test); hashes and IDs come from FNV-1a over labels. `buildScenario()` twice gives identical JSON. Scenes are identical forwards and backwards and after arbitrary seeks.
-- **Tests** (`pnpm --filter @mach/control-tower test`, `node --test`, no dependencies): `test/scenario.test.mjs` (envelope, seq, causes, real data fields, catalog coverage, every beat, durations, agent and tool-call lifetimes, artifact writers, station order against `run.py`'s table, stage transitions, three-round limit and round numbering, vote and decision rules, dependency dispatch order, the human gate, commit-bound merges, supervisor ticks); `test/reducer.test.mjs`; `test/store.test.mjs`; `test/purity.test.mjs` (source scans, and the catalog and agents checked against MACH's own files).
+- **Tests** (`pnpm --filter @mach/control-tower test`, `node --test`, no dependencies): `test/scenario.test.mjs` (envelope, seq, causes, real data fields, catalog coverage, every beat, durations, agent and tool-call lifetimes, artifact writers, station order against `run.py`'s table, stage transitions, three-round limit and round numbering, vote and decision rules, dependency dispatch order, the human gate, commit-bound merges, supervisor ticks); `test/reducer.test.mjs`; `test/store.test.mjs`; `test/pass2.test.mjs` (the capture hook's driving controls and manual clock, camera follow, the actors, known timing); `test/purity.test.mjs` (source scans, and the catalog and agents checked against MACH's own files).
 - **TypeScript for node**: the sources use erasable syntax only and import without extensions (the app's tsconfig has `allowImportingTsExtensions: false`). `test/_load.mjs` registers a resolve hook that adds `.ts`, so node runs the same files tsc checks.

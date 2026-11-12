@@ -132,7 +132,7 @@ test("hover highlights the dependency set; view and theater are one state each",
   off();
 });
 
-test("window.__machSim: seeking and reading only", () => {
+test("window.__machSim: seeking and reading (version 1 members)", () => {
   const { store } = make();
   const target = {};
   const remove = installMachSimHook(store, target);
@@ -148,7 +148,6 @@ test("window.__machSim: seeking and reading only", () => {
   assert.ok(hook.state().cursor > cursor);
   hook.step(-3);
   assert.equal(hook.state().cursor, cursor);
-  assert.equal(typeof hook.select, "undefined");
   remove();
   assert.equal(target.__machSim, undefined);
 });

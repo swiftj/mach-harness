@@ -9,7 +9,7 @@ import type { Chapter, EntityRef, Fixture } from "../sim/model";
 import { cursorAt } from "../sim/engine";
 import { eventBySeq, nextEventTime, previousEventTime, relatedRefs } from "../sim/selectors";
 import { sceneAt } from "../sim/engine";
-import type { Clock } from "./clock";
+import type { Clock, SwitchableClock } from "./clock";
 
 /** Factory milliseconds per wall millisecond at 1x: the 55-minute run plays in about 5.5 minutes. */
 export const PLAYBACK_BASE_RATE = 10;
@@ -44,6 +44,19 @@ export interface SceneStoreState {
   readonly view: ViewMode;
   readonly theater: boolean;
   readonly reducedMotion: boolean;
+  /**
+   * Camera follow, one flag for both views and the Shell. On by default. Off as soon as the person
+   * pans or zooms (the view calls setFollow(false)) or asks the camera to frame something
+   * (focusOn with any reason but "follow"); back on with followLive() or setFollow(true). The camera
+   * follows only while this is on and the playhead is live: see cameraFollows(). Theater Mode
+   * does not change it.
+   */
+  readonly follow: boolean;
+}
+
+/** Whether the camera should follow the live action now: follow is on and the playhead is live. */
+export function cameraFollows(state: Pick<SceneStoreState, "follow" | "following">): boolean {
+  return state.follow && state.following;
 }
 
 export interface SceneStore {
@@ -67,6 +80,8 @@ export interface SceneStore {
   setView(view: ViewMode): void;
   setTheater(on: boolean): void;
   setReducedMotion(on: boolean): void;
+  /** Camera follow on or off. A view calls setFollow(false) when the person pans or zooms. */
+  setFollow(on: boolean): void;
   dispose(): void;
 }
 
@@ -104,6 +119,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     view: options.view ?? "atlas",
     theater: false,
     reducedMotion: options.reducedMotion ?? false,
+    follow: true,
   };
   const listeners = new Set<() => void>();
   let frame: number | null = null;
@@ -203,7 +219,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       if (SPEEDS.includes(speed)) set({ speed });
     },
     followLive() {
-      set({ following: true, playhead: state.liveAt });
+      set({ following: true, playhead: state.liveAt, follow: true });
     },
     select(entity, opts) {
       set({ selection: entity });
@@ -211,7 +227,8 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     },
     focusOn(target, reason = "api") {
       nonce += 1;
-      set({ focus: { target, reason, nonce } });
+      // Framing something the person asked for takes the camera off the live action.
+      set({ focus: { target, reason, nonce }, ...(reason === "follow" ? {} : { follow: false }) });
     },
     hover(entity) {
       if (entity !== state.hovered) set({ hovered: entity });
@@ -225,6 +242,9 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     setReducedMotion(on) {
       if (on !== state.reducedMotion) set({ reducedMotion: on });
     },
+    setFollow(on) {
+      if (on !== state.follow) set({ follow: on });
+    },
     dispose() {
       stopLoop();
       listeners.clear();
@@ -236,7 +256,10 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
 
 // ---------------------------------------------------------------- the development and capture hook
 
-/** What window.__machSim offers: seeking and reading, nothing else. */
+/**
+ * What window.__machSim offers. Version 1 members (seeking and reading) are unchanged; the rest
+ * were added for the capture script to drive the app deterministically.
+ */
 export interface MachSimHook {
   readonly version: 1;
   readonly fixtureId: string;
@@ -250,7 +273,41 @@ export interface MachSimHook {
   play(): void;
   pause(): void;
   setSpeed(speed: PlaybackSpeed): void;
-  state(): { playhead: number; liveAt: number; following: boolean; playing: boolean; speed: number; cursor: number; view: ViewMode; theater: boolean; selection: EntityRef | null };
+  state(): MachSimHookState;
+  // ---- driving the app (added in pass 2)
+  select(entity: EntityRef | null): void;
+  focus(target: EntityRef | "overview"): void;
+  setMode(view: ViewMode): void;
+  setTheater(on: boolean): void;
+  setFollow(on: boolean): void;
+  followLive(): void;
+  /** The clock: "live" (browser frames), "manual" (only advance() moves time), or "fixed" (cannot be switched). */
+  clockMode(): "live" | "manual" | "fixed";
+  /** Switch to the manual clock: playback then moves only through advance(). */
+  useManualClock(): void;
+  /** Back to browser frames. */
+  useLiveClock(): void;
+  /**
+   * Manual clock: move wall time on by exactly `ms`, in frames of at most `frameMs` (default 250).
+   * While playing, factory time moves by ms x PLAYBACK_BASE_RATE x speed.
+   */
+  advance(ms: number, frameMs?: number): void;
+}
+
+export interface MachSimHookState {
+  playhead: number;
+  liveAt: number;
+  following: boolean;
+  playing: boolean;
+  speed: number;
+  cursor: number;
+  view: ViewMode;
+  theater: boolean;
+  selection: EntityRef | null;
+  follow: boolean;
+  focus: EntityRef | "overview" | null;
+  reducedMotion: boolean;
+  clock: "live" | "manual" | "fixed";
 }
 
 /** Whether this build exposes window.__machSim: Vite development, or a build made with `--mode capture`. */
@@ -259,8 +316,16 @@ export function shouldExposeHook(): boolean {
   return Boolean(env && (env.DEV || env.MODE === "capture"));
 }
 
-export function installMachSimHook(store: SceneStore, target: object = globalThis): () => void {
+/**
+ * Install window.__machSim on `target`. Pass the store's clock when it is a SwitchableClock to get
+ * the manual clock controls; without one, they report the clock as "fixed" and refuse.
+ */
+export function installMachSimHook(store: SceneStore, target: object = globalThis, clock?: SwitchableClock): () => void {
   const fixture = store.getState().fixture;
+  const needClock = (): SwitchableClock => {
+    if (!clock) throw new Error("This store's clock cannot be switched to manual.");
+    return clock;
+  };
   const hook: MachSimHook = {
     version: 1,
     fixtureId: fixture.id,
@@ -278,8 +343,32 @@ export function installMachSimHook(store: SceneStore, target: object = globalThi
     setSpeed: (speed) => store.setSpeed(speed),
     state() {
       const s = store.getState();
-      return { playhead: s.playhead, liveAt: s.liveAt, following: s.following, playing: s.playing, speed: s.speed, cursor: s.cursor, view: s.view, theater: s.theater, selection: s.selection };
+      return {
+        playhead: s.playhead,
+        liveAt: s.liveAt,
+        following: s.following,
+        playing: s.playing,
+        speed: s.speed,
+        cursor: s.cursor,
+        view: s.view,
+        theater: s.theater,
+        selection: s.selection,
+        follow: s.follow,
+        focus: s.focus?.target ?? null,
+        reducedMotion: s.reducedMotion,
+        clock: clock ? clock.mode : "fixed",
+      };
     },
+    select: (entity) => store.select(entity),
+    focus: (target) => store.focusOn(target, "api"),
+    setMode: (view) => store.setView(view),
+    setTheater: (on) => store.setTheater(on),
+    setFollow: (on) => store.setFollow(on),
+    followLive: () => store.followLive(),
+    clockMode: () => (clock ? clock.mode : "fixed"),
+    useManualClock: () => needClock().manual(),
+    useLiveClock: () => needClock().live(),
+    advance: (ms, frameMs) => needClock().advance(ms, frameMs),
   };
   Object.defineProperty(target, "__machSim", { value: hook, configurable: true, enumerable: false, writable: false });
   return () => {

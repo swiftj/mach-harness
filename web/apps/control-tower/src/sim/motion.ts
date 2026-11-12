@@ -10,7 +10,14 @@ export function progress(t: number, start: number, duration: number): number {
   return Math.min(1, Math.max(0, (t - start) / duration));
 }
 
-/** Progress through a span that may still be open (`end` null: not finished at t). */
+/**
+ * Progress through a span that may still be open (`end` null: not finished at t).
+ *
+ * @deprecated for work in flight: `expected` is a guess, and neither the simulation nor MACH knows
+ * how long work will take. Do not draw a completion fraction for an open span; show what is known
+ * with agentTimingAt / toolCallTimingAt / visitTimingAt (elapsed time). Kept unchanged for spans
+ * whose end is known.
+ */
 export function spanProgress(t: number, start: number, end: number | null, expected: number): number {
   if (end !== null && t >= end) return 1;
   return Math.min(0.98, progress(t, start, end !== null ? end - start : expected));

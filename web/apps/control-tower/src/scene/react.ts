@@ -13,7 +13,7 @@ import { createContext, createElement, useContext, useEffect, useSyncExternalSto
 import type { Scene } from "../sim/model";
 import { sceneAt } from "../sim/engine";
 import { SCENARIO } from "../sim/scenario";
-import { browserClock } from "./clock";
+import { browserClock, switchableClock } from "./clock";
 import { createSceneStore, installMachSimHook, shouldExposeHook, type SceneStore, type SceneStoreState } from "./store";
 
 let defaultStore: SceneStore | null = null;
@@ -22,9 +22,11 @@ let defaultStore: SceneStore | null = null;
 export function getSceneStore(): SceneStore {
   if (defaultStore) return defaultStore;
   const media = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
-  const store = createSceneStore({ fixture: SCENARIO, clock: browserClock(), reducedMotion: media?.matches ?? false });
+  // Development and capture builds run on a clock the capture script can switch to manual; production uses the browser's.
+  const switchable = shouldExposeHook() ? switchableClock(browserClock()) : null;
+  const store = createSceneStore({ fixture: SCENARIO, clock: switchable ?? browserClock(), reducedMotion: media?.matches ?? false });
   media?.addEventListener("change", (e) => store.setReducedMotion(e.matches));
-  if (shouldExposeHook()) installMachSimHook(store, window);
+  if (switchable) installMachSimHook(store, window, switchable);
   defaultStore = store;
   return store;
 }

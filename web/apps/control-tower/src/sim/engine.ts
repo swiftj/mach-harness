@@ -8,9 +8,10 @@
  * first use. Scrubbing backwards and forwards returns identical scenes for identical times.
  */
 import type { AnySimEvent } from "./events";
-import type { EntityRef, Fixture, Scene } from "./model";
+import type { AnyRef, EntityRef, Fixture, Scene } from "./model";
 import { gateId, ref } from "./model";
 import { emptyScene, reduce } from "./reducer";
+import { actorOf } from "./actors";
 
 export interface SimIndex {
   readonly fixture: Fixture;
@@ -19,10 +20,12 @@ export interface SimIndex {
   readonly times: readonly number[];
   /** scenes[k] is the scene after the first k events; scenes[0] is before any. */
   readonly scenes: readonly Scene[];
-  /** The entities each event touches (same order as events). */
+  /** The entities each event touches (same order as events). Actors are listed in actorsByEvent. */
   readonly refsByEvent: readonly (readonly EntityRef[])[];
-  /** For each entity, the indexes of the events that touch it, ascending. */
-  readonly eventsByRef: ReadonlyMap<EntityRef, readonly number[]>;
+  /** The actor behind each event, if any (same order as events). */
+  readonly actorsByEvent: readonly (AnyRef | null)[];
+  /** For each entity or actor, the indexes of the events that touch it, ascending. */
+  readonly eventsByRef: ReadonlyMap<AnyRef, readonly number[]>;
   readonly indexBySeq: ReadonlyMap<number, number>;
 }
 
@@ -37,7 +40,8 @@ export function indexFixture(fixture: Fixture): SimIndex {
   scenes[0] = scene;
   const times: number[] = new Array(events.length);
   const refsByEvent: EntityRef[][] = new Array(events.length);
-  const eventsByRef = new Map<EntityRef, number[]>();
+  const eventsByRef = new Map<AnyRef, number[]>();
+  const actorsByEvent: (AnyRef | null)[] = new Array(events.length);
   const indexBySeq = new Map<number, number>();
   const sliceDeps = new Map<string, readonly string[]>();
   for (let i = 0; i < events.length; i++) {
@@ -48,7 +52,9 @@ export function indexFixture(fixture: Fixture): SimIndex {
     if (event.type === "slice.materialized" && event.slice_id) sliceDeps.set(event.slice_id, event.data.dependencies);
     const refs = refsOf(event, sliceDeps);
     refsByEvent[i] = refs;
-    for (const r of refs) {
+    const actor = actorOf(event);
+    actorsByEvent[i] = actor ? ref.actor(actor) : null;
+    for (const r of actor ? [...refs, ref.actor(actor)] : refs) {
       const list = eventsByRef.get(r);
       if (list) list.push(i);
       else eventsByRef.set(r, [i]);
@@ -56,7 +62,7 @@ export function indexFixture(fixture: Fixture): SimIndex {
     scene = reduce(scene, event, fixture.definitions);
     scenes[i + 1] = scene;
   }
-  const index: SimIndex = { fixture, events, times, scenes, refsByEvent, eventsByRef, indexBySeq };
+  const index: SimIndex = { fixture, events, times, scenes, refsByEvent, actorsByEvent, eventsByRef, indexBySeq };
   cache.set(fixture, index);
   return index;
 }

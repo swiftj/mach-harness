@@ -51,10 +51,22 @@ export type EntityKind = (typeof ENTITY_KINDS)[number];
  */
 export type EntityRef = `${EntityKind}:${string}`;
 
+/**
+ * The supervisor and the scheduler: `actor:supervisor`, `actor:scheduler`. Kept apart from
+ * EntityRef for now, because adding a kind to EntityKind breaks exhaustive switches in the views;
+ * entityAt and eventsFor accept both. See README section 2, "Actors".
+ */
+export type ActorRef = `actor:${ActorId}`;
+/** Everything that has an identity in the record. */
+export type AnyRef = EntityRef | ActorRef;
+export function isActorRef(value: string): value is ActorRef {
+  return value === "actor:supervisor" || value === "actor:scheduler";
+}
+
 export function refKind(ref: EntityRef): EntityKind {
   return ref.slice(0, ref.indexOf(":")) as EntityKind;
 }
-export function refId(ref: EntityRef): string {
+export function refId(ref: AnyRef): string {
   return ref.slice(ref.indexOf(":") + 1);
 }
 export const ref = {
@@ -69,7 +81,18 @@ export const ref = {
   gate: (id: string): EntityRef => `gate:${id}`,
   dependency: (from: string, to: string): EntityRef => `dependency:${from}->${to}`,
   finding: (id: string): EntityRef => `finding:${id}`,
+  actor: (id: ActorId): ActorRef => `actor:${id}`,
 };
+
+/**
+ * The parts of MACH that act in the event record without being Claude agents:
+ * - `supervisor`: the line supervisor (skills/run/scripts/supervisor.py), which ticks, observes
+ *   stages, claims and starts executions, records their end, and decides what to start;
+ * - `scheduler`: intake's dependency-aware plan and dispatch (intake.py Factory.plan, record,
+ *   open_cell), which decides what is ready, what waits and why, records integration, and opens cells.
+ */
+export const ACTORS = ["supervisor", "scheduler"] as const;
+export type ActorId = (typeof ACTORS)[number];
 
 /** Gate IDs: `<ticket>/<gate>`, with `#<round>` for verification and review. */
 export function gateId(ticketId: string, gate: GateKind, round?: number): string {
@@ -142,7 +165,21 @@ export interface Scene {
   readonly cells: Readonly<Record<string, CellState>>;
   readonly executions: Readonly<Record<string, ExecutionState>>;
   readonly gates: Readonly<Record<string, GateState>>;
+  /** The supervisor and the scheduler: who they are and when they last acted. */
+  readonly actors: Readonly<Record<ActorId, ActorState>>;
   readonly counters: Counters;
+}
+
+export interface ActorState {
+  readonly id: ActorId;
+  readonly title: string;
+  /** The real code that acts: file and functions. */
+  readonly code: string;
+  /** Events this actor has written so far. */
+  readonly acts: number;
+  readonly lastActedAt: number | null;
+  readonly lastSeq: number | null;
+  readonly lastKind: string | null;
 }
 
 export interface FactoryState {

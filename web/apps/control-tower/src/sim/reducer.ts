@@ -21,6 +21,7 @@ import type {
   VerificationState,
 } from "./model";
 import { gateId } from "./model";
+import { actorOf, emptyActors } from "./actors";
 import type { GateKind, SchedulerState } from "./vocabulary";
 import { MAX_ROUNDS } from "./vocabulary";
 
@@ -60,6 +61,7 @@ export function emptyScene(definitions: ProductDefinitions): Scene {
     cells: {},
     executions: {},
     gates: {},
+    actors: emptyActors(),
     counters: EMPTY_COUNTERS,
   };
 }
@@ -159,6 +161,14 @@ function newCell(ticketId: string, sliceId: string, definitions: ProductDefiniti
 // ---------------------------------------------------------------- the reducer
 
 export function reduce(scene: Scene, event: AnySimEvent, definitions: ProductDefinitions): Scene {
+  const actor = actorOf(event);
+  if (!actor) return reduceEvent(scene, event, definitions);
+  const next = reduceEvent(scene, event, definitions);
+  const before = next.actors[actor];
+  return { ...next, actors: { ...next.actors, [actor]: { ...before, acts: before.acts + 1, lastActedAt: event.t, lastSeq: event.seq, lastKind: event.type } } };
+}
+
+function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefinitions): Scene {
   const t = event.t;
   const seq = event.seq;
   let s: Scene = { ...scene, cursor: scene.cursor + 1, at: t, lastSeq: seq, counters: bump(scene.counters, { events: 1 }) };
