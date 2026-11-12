@@ -1,6 +1,7 @@
 /**
- * The MACH Control Tower frame around the two views (M6.0 Shell): top bar with identity and the
- * permanent simulation stamp, the stage, the contextual inspector, the synchronized timeline, Theater
+ * The MACH Control Tower frame around the two views (M6.0 Shell, M6.2 sources): top bar with
+ * identity, the permanent source badge (Live Factory, Historical replay or Simulation), the
+ * connection and completeness badges, the stage, the contextual inspector, the synchronized timeline, Theater
  * Mode, the keyboard map and its help sheet, and the screen-reader announcer.
  *
  * Owned here: panel sizes, open and closed panels, the help sheet. Everything about the factory and
@@ -12,7 +13,9 @@ import { cn, useTheme, type ThemePreference } from "@mach/ui";
 import { refKind, type EntityRef } from "../sim";
 import { useSceneStore, useStore } from "../scene";
 import { Announcer } from "./Announcer";
-import { Brand, ModeSwitch, RunIdentity, SimulationStamp } from "./chrome";
+import { Brand, ModeSwitch, RunIdentity } from "./chrome";
+import { CompletenessBadge, ConnectionBadge, SOURCE_WORDS, SourceBadge, StageNotice } from "./SourceBadge";
+import { useSource } from "./source/context";
 import { HelpSheet } from "./HelpSheet";
 import { Inspector } from "./inspector/Inspector";
 import { useShellKeys } from "./keyboard";
@@ -114,16 +117,20 @@ function ThemeChoice() {
   );
 }
 
-function TopBar({ inspectorOpen, onInspector, onHelp }: { inspectorOpen: boolean; onInspector: () => void; onHelp: () => void }) {
+function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { inspectorOpen: boolean; onInspector: () => void; onHelp: () => void; sourceOpen: boolean; onSource: (open: boolean) => void }) {
   const view = useSceneStore((s) => s.view);
   const store = useStore();
   // Reflows down to 960 CSS px (a 1920 px screen at 200% zoom) without cutting anything off: the
   // brand's second word and the Theater word give way first; the run's title truncates; the
-  // simulation stamp, the panel buttons and the mode switch never shrink.
+  // source badge, the panel buttons and the mode switch never shrink.
   return (
     <div className="flex h-full min-w-0 items-center gap-3 border-b border-line bg-canvas px-3 min-[1100px]:gap-4 min-[1100px]:px-4">
       <Brand />
-      <SimulationStamp />
+      <div className="flex shrink-0 items-center gap-1.5">
+        <SourceBadge open={sourceOpen} onOpenChange={onSource} />
+        <ConnectionBadge />
+        <CompletenessBadge />
+      </div>
       <span className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
       <div className="min-w-0 flex-1 overflow-hidden">
         <RunIdentity />
@@ -172,9 +179,21 @@ function defaultOpenHeight(viewportH: number): number {
   return Math.round(Math.max(180, Math.min(300, viewportH * 0.4)));
 }
 
+/** The page title names the source, so a window or tab can never pass a simulation off as real. */
+function usePageTitle() {
+  const source = useSceneStore((s) => s.source);
+  const { project } = useSource();
+  useEffect(() => {
+    const words = SOURCE_WORDS[source].label;
+    document.title = source === "simulation" ? "Simulation (not real execution) · MACH Control Tower" : `${words}${project ? `: ${project}` : ""} · MACH Control Tower`;
+  }, [source, project]);
+}
+
 export function Shell() {
   const store = useStore();
   useHashSync();
+  usePageTitle();
+  const source = useSceneStore((s) => s.source);
   const theater = useSceneStore((s) => s.theater);
   const view = useSceneStore((s) => s.view);
   const selection = useSceneStore((s) => s.selection);
@@ -191,11 +210,12 @@ export function Shell() {
   const [timelineH, setTimelineH] = useState(() => defaultOpenHeight(typeof window !== "undefined" ? window.innerHeight : 900));
   const [resizing, setResizing] = useState(false);
   const [help, setHelp] = useState(false);
+  const [sourceOpen, setSourceOpen] = useState(false);
   const helpOpener = useRef<Element | null>(null);
   const helpRef = useRef(help);
   useEffect(() => {
-    helpRef.current = help;
-  }, [help]);
+    helpRef.current = help || sourceOpen;
+  }, [help, sourceOpen]);
 
   // On a narrow window the inspector is an overlay: it opens when something is selected and closes
   // when the selection is cleared (derived during render, not in an effect).
@@ -228,6 +248,7 @@ export function Shell() {
         helpOpener.current = document.activeElement;
         setHelp(true);
       },
+      openSource: () => setSourceOpen(true),
       modalOpen: () => helpRef.current,
     }),
     [toggleInspector, toggleTimeline],
@@ -302,17 +323,18 @@ export function Shell() {
       </a>
 
       <header className="min-w-0 overflow-hidden [grid-area:top]" inert={theater}>
-        <TopBar inspectorOpen={inspectorOpen} onInspector={toggleInspector} onHelp={() => {
+        <TopBar sourceOpen={sourceOpen} onSource={setSourceOpen} inspectorOpen={inspectorOpen} onInspector={toggleInspector} onHelp={() => {
           helpOpener.current = document.activeElement;
           setHelp(true);
         }} />
       </header>
 
-      <main id="stage" tabIndex={-1} aria-label={`${stageLabel} (simulation)`} className="relative min-h-0 min-w-0 overflow-hidden bg-factory-ground outline-none [grid-area:stage]">
+      <main id="stage" tabIndex={-1} aria-label={`${stageLabel} (${SOURCE_WORDS[source].label})`} className="relative min-h-0 min-w-0 overflow-hidden bg-factory-ground outline-none [grid-area:stage]">
         {/* In Theater Mode the views are inset by two strips that hold the Theater chrome. */}
         <div className="absolute inset-x-0" style={{ top: theater ? THEATER_TOP : 0, bottom: theater ? THEATER_BOTTOM : 0 }}>
           <Stage />
         </div>
+        {theater ? null : <StageNotice />}
         {theater ? <TheaterOverlay /> : null}
       </main>
 

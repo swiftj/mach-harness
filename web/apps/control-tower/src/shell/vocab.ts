@@ -18,8 +18,40 @@ import { ENTITY_KINDS, isoAt, MODELS, type ActorId, type AgentRole, type AnyRef,
 
 // ---------------------------------------------------------------- time
 
-/** Factory time as mm:ss.s from the scenario start (the spec's time code). */
+/**
+ * What a time `t` means, set once by the app when it chooses its source (App.tsx):
+ * - `scenario`: the simulation's ms from the scenario start, printed as a time code (mm:ss.s);
+ * - `wall`: real history's `order_ms` (Unix ms), printed as wall-clock UTC (HH:MM:SS).
+ * Only one source is shown at a time, so one module-wide base is enough and every caller of
+ * `timecode` prints the right kind of time without being told.
+ */
+export type TimeBase = "scenario" | "wall";
+let timeBase: TimeBase = "scenario";
+export function setTimeBase(base: TimeBase): void {
+  timeBase = base;
+}
+export function getTimeBase(): TimeBase {
+  return timeBase;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Wall-clock UTC of a Unix ms time: HH:MM:SS (with tenths: HH:MM:SS.s). */
+export function utcClock(t: number, tenths = false): string {
+  const d = new Date(Math.max(0, t));
+  const base = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
+  return tenths ? `${base}.${Math.floor(d.getUTCMilliseconds() / 100)}` : base;
+}
+
+/** The UTC date of a Unix ms time, in words: 12 Nov 2026. */
+export function utcDate(t: number): string {
+  const d = new Date(Math.max(0, t));
+  return `${d.getUTCDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+/** Factory time as mm:ss.s from the scenario start (the spec's time code); for real history, wall-clock UTC. */
 export function timecode(t: number, tenths = true): string {
+  if (timeBase === "wall") return utcClock(t, tenths);
   const total = Math.max(0, t) / 1000;
   const m = Math.floor(total / 60);
   const s = total - m * 60;
@@ -27,8 +59,9 @@ export function timecode(t: number, tenths = true): string {
   return `${String(m).padStart(2, "0")}:${ss}`;
 }
 
-/** The simulated wall clock at factory time t (UTC, HH:MM:SS). */
+/** The wall clock at time t (UTC, HH:MM:SS): simulated for the simulation, real for real history. */
 export function clockAt(t: number): string {
+  if (timeBase === "wall") return utcClock(t);
   return isoAt(Math.max(0, Math.floor(t / 1000) * 1000)).slice(11, 19);
 }
 
@@ -43,6 +76,10 @@ export function duration(ms: number): string {
 
 /** Spoken form of a time code, for screen readers. */
 export function spokenTime(t: number): string {
+  if (timeBase === "wall") {
+    const d = new Date(Math.max(0, t));
+    return `${d.getUTCHours()} ${pad2(d.getUTCMinutes())} and ${d.getUTCSeconds()} seconds UTC`;
+  }
   const total = Math.floor(Math.max(0, t) / 1000);
   const m = Math.floor(total / 60);
   const s = total % 60;

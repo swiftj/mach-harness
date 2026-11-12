@@ -7,7 +7,8 @@ import { useMemo, type ReactNode } from "react";
 import { stations as stationLooks, type StationKind } from "@mach/ui";
 import {
   ACTOR_KINDS,
-  describe,
+  describeEntry,
+  isKnown,
   MAX_ROUNDS,
   ref,
   type ActorState,
@@ -43,7 +44,7 @@ import {
   timecode,
   toolFamily,
 } from "../vocab";
-import { Elapsed, Facts, JumpButton, Mono, RefLink, RefList, Section, useEntityEvents } from "./parts";
+import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
 
@@ -97,8 +98,8 @@ export function WaveAnatomy({ wave }: { wave: WaveState }) {
       <Section title="Facts">
         <Facts
           facts={[
-            ["Epic", wave.epicTitle],
-            ["Approved by", `${wave.approvedBy}, ${wave.approvedAt.slice(11, 16)} UTC`],
+            ["Epic", isKnown(wave.meta, "epicTitle") && wave.epicTitle ? wave.epicTitle : <NotRecorded key="e" />],
+            ["Approved by", wave.approvedAt ? `${wave.approvedBy}, ${wave.approvedAt.slice(11, 16)} UTC` : <span key="a">{wave.approvedBy}, time <NotRecorded /></span>],
             ["Intake", wave.state === "validated" ? "Verified against its source commit" : "Seen, not yet verified"],
             ["Arrived", at(wave.discoveredAt)],
             ["Slices", wave.sliceIds.length],
@@ -138,8 +139,8 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
           facts={[
             ["State", <StateWord key="s" state={look.state} mark={look.mark} label={look.label} />],
             ["Since", at(slice.since)],
-            ["Risk", slice.risk],
-            ["Ticket", <Mono key="t">{slice.ticketId}</Mono>],
+            ["Risk", isKnown(slice.meta, "risk") ? slice.risk : <NotRecorded key="r" />],
+            ["Ticket", slice.ticketId ? <Mono key="t">{slice.ticketId}</Mono> : <NotRecorded key="t" />],
             slice.integratedCommit ? ["Integrated", <Mono key="c">{slice.integratedCommit.slice(0, 7)}</Mono>] : null,
           ]}
         />
@@ -153,7 +154,7 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
             </ul>
           </div>
         ) : null}
-        <p className="mt-3 text-body-sm text-ink-muted">{slice.summary}</p>
+        {slice.summary ? <p className="mt-3 text-body-sm text-ink-muted">{slice.summary}</p> : null}
       </Section>
       <Section title="Related">
         <RefList>
@@ -206,12 +207,12 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
             ["Stage", <StateWord key="s" state={look.state} mark={look.mark} label={look.label} />],
             ["Round", `${cell.round} of ${MAX_ROUNDS}`],
             ["Slice", <Mono key="sl">{cell.sliceId}</Mono>],
-            ["Risk", cell.risk],
-            ["App type", cell.appType],
+            ["Risk", isKnown(cell.meta, "risk") ? cell.risk : <NotRecorded key="r" />],
+            ["App type", isKnown(cell.meta, "appType") ? cell.appType : <NotRecorded key="a" />],
             ["Worktree", <Mono key="w" muted>{`.factory/worktrees/${cell.ticketId}/repo`}</Mono>],
             ["Branch", <Mono key="b" muted>{cell.branch}</Mono>],
             ["At station", cell.station ? <span key="st">{STATION_WORDS[cell.station as StationKind]}, <Elapsed startedAt={cell.stationSince ?? 0} finishedAt={null} /></span> : "Between stations"],
-            ["Suite", cell.lastTest ? `${cell.suite}, ${cell.lastTest.passed} passed, ${cell.lastTest.failed} failed` : cell.suite],
+            ["Suite", cell.lastTest ? `${cell.suite}, ${cell.lastTest.passed} passed, ${cell.lastTest.failed} failed` : cell.suite === "unknown" ? <NotRecorded key="s" /> : cell.suite],
             ["Agents", `${active.length} working, ${cell.agentOrder.length} so far`],
             ["Artifacts", cell.artifacts.length],
             cell.merged ? ["Merged", <Mono key="m">{`${cell.merged.commit.slice(0, 7)} at ${timecode(cell.merged.at, false)}`}</Mono>] : null,
@@ -339,7 +340,7 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
                     {timecode(v.enteredAt, false)} to {v.leftAt === null ? "now" : timecode(v.leftAt, false)}
                   </p>
                 </div>
-                <JumpButton seq={v.enteredSeq} label="Go" />
+                <JumpButton t={v.enteredAt} label="Go" />
               </li>
             );
           })}
@@ -380,7 +381,56 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
 
 // ---------------------------------------------------------------- agent
 
+/**
+ * A Dynamic Workflow agent (count-only, contract 8.1): its label, phase, model, elapsed time, token
+ * total, tool-call count and last tool name. Its individual tool calls are not observable, so none is
+ * listed, ticked or timed; no cost is shown for it (no per-agent cost exists).
+ */
+function CountOnlyAgent({ agent }: { agent: AgentState }) {
+  const cell = useScene((s) => s.cells[agent.ticketId] ?? null);
+  const known = (field: string) => isKnown(agent.meta, field);
+  return (
+    <>
+      <Section title="Facts">
+        <Facts
+          facts={[
+            ["Label", agent.label || <NotRecorded key="l" />],
+            ["Phase", known("phase") && agent.phase ? agent.phase : <NotRecorded key="p" />],
+            ["Model", known("model") ? `${modelName(agent.model)}${agent.modelName && agent.modelName !== agent.model ? ` (${agent.modelName})` : ""}` : agent.modelName ? <Mono key="m">{agent.modelName}</Mono> : <NotRecorded key="m" />],
+            agent.agentType ? ["Agent type", <Mono key="t">{agent.agentType}</Mono>] : null,
+            ["State", agent.lifecycle === "queued" ? "Queued in its workflow" : agent.lifecycle === "unknown" ? "Ended; how is not recorded" : agent.lifecycle === "running" ? "Running" : agent.lifecycle === "error" ? "Ended in an error" : "Finished"],
+            agent.lifecycle === "queued" ? null : ["Started", known("startedAt") ? at(agent.startedAt) : <NotRecorded key="s" />],
+            agent.lifecycle === "queued" ? null : ["Elapsed", agent.durationMs !== null ? `took ${durationOf(agent.durationMs)} (measured)` : <Elapsed key="e" startedAt={agent.startedAt} finishedAt={agent.finishedAt} />],
+            ["Tokens", agent.tokens !== null ? agent.tokens.toLocaleString("en-GB") : <NotRecorded key="k" />],
+            ["Tool calls", agent.toolCallCount !== null ? agent.toolCallCount.toLocaleString("en-GB") : <NotRecorded key="c" />],
+            ["Last tool", agent.lastTool ? <Mono key="lt">{agent.lastTool}</Mono> : <NotRecorded key="lt" />],
+            agent.refused.length ? ["Refused tools", agent.refused.join(", ")] : null,
+          ]}
+        />
+        <p className="mt-3 text-body-sm text-ink-muted">Individual tool calls are not observable for workflow agents. The count and the last tool's name come from the workflow's progress snapshots.</p>
+      </Section>
+      <Section title="Related">
+        <RefList>
+          {cell ? <CellLink cell={cell} /> : null}
+          {agent.executionId ? (
+            <RefLink to={ref.execution(agent.executionId)} glyph={<ExecutionGlyph size={18} />} detail="execution">
+              <span className="font-mono text-[12px]">{agent.executionId}</span>
+            </RefLink>
+          ) : null}
+        </RefList>
+      </Section>
+    </>
+  );
+}
+
+const durationOf = (ms: number) => (ms < 1000 ? `${ms} ms` : ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`);
+
 export function AgentAnatomy({ agent }: { agent: AgentState }) {
+  if (agent.observation === "count-only") return <CountOnlyAgent agent={agent} />;
+  return <PerCallAgent agent={agent} />;
+}
+
+function PerCallAgent({ agent }: { agent: AgentState }) {
   const cell = useScene((s) => s.cells[agent.ticketId] ?? null);
   const parent = agent.parentId && cell ? (cell.agents[agent.parentId] ?? null) : null;
   const children = cell ? cell.agentOrder.map((id) => cell.agents[id]).filter((a): a is AgentState => Boolean(a && a.parentId === agent.id)) : [];
@@ -400,11 +450,11 @@ export function AgentAnatomy({ agent }: { agent: AgentState }) {
           facts={[
             ["Role", ROLE_WORDS[agent.role]],
             agent.seat ? ["Seat", agent.seat] : null,
-            ["Model", `${modelName(agent.model)} (${agent.tier} tier)`],
-            ["Effort", agent.effort],
+            ["Model", isKnown(agent.meta, "model") ? `${modelName(agent.model)} (${agent.tier} tier)` : agent.modelName ? <Mono key="m">{agent.modelName}</Mono> : <NotRecorded key="m" />],
+            ["Effort", isKnown(agent.meta, "effort") ? agent.effort : <NotRecorded key="ef" />],
             agent.agentType ? ["Agent type", <Mono key="t">{agent.agentType}</Mono>] : null,
             ["Working on", agent.label],
-            ["Belt phase", agent.phase],
+            ["Belt phase", isKnown(agent.meta, "phase") ? agent.phase : <NotRecorded key="ph" />],
             agent.station ? ["Station", STATION_WORDS[agent.station as StationKind]] : null,
             ["Started", at(agent.startedAt)],
             ["Finished", agent.finishedAt === null ? "not yet" : at(agent.finishedAt)],
@@ -477,11 +527,11 @@ export function ToolAnatomy({ call }: { call: ToolCallState }) {
         </figure>
         <Facts
           facts={[
-            ["Tool", call.tool],
+            ["Tool", call.toolName || call.tool],
             ["Family", toolFamily(call.tool, call.target)],
             ["Started", at(call.startedAt)],
             ["Time", <Elapsed key="e" startedAt={call.startedAt} finishedAt={call.finishedAt} />],
-            ["Outcome", call.status === "running" ? "Running" : call.status === "ok" ? "Returned" : "Returned an error"],
+            ["Outcome", call.result === "unknown" ? "Not recorded: its execution ended before it returned" : call.status === "running" ? "Running" : call.status === "ok" ? "Returned" : "Returned an error"],
             call.summary ? ["Result", call.summary] : null,
           ]}
         />
@@ -532,10 +582,11 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
             ["Written", at(artifact.writtenAt)],
             artifact.station ? ["At station", STATION_WORDS[artifact.station as StationKind]] : null,
             artifact.round ? ["Round", artifact.round] : null,
-            ["Written by", writer ? `${ROLE_WORDS[writer.role]} (${writer.label})` : artifact.writer.script ? <Mono key="w">{artifact.writer.script}</Mono> : "unknown"],
+            ["Written by", writer ? `${ROLE_WORDS[writer.role]} (${writer.label})` : artifact.writer.script ? <Mono key="w">{artifact.writer.script}</Mono> : <NotRecorded key="w" />],
+            artifact.record ? ["Integrity", `${artifact.record.integrity}, ${artifact.record.nature}${artifact.record.bytes !== null ? `, ${artifact.record.bytes.toLocaleString("en-GB")} bytes` : ""}`] : null,
           ]}
         />
-        <p className="mt-3 text-body-sm text-ink-muted">{artifact.summary}</p>
+        {artifact.summary && isKnown(artifact.meta, "summary") ? <p className="mt-3 text-body-sm text-ink-muted">{artifact.summary}</p> : null}
       </Section>
       <Section title="Writer and readers">
         <RefList>
@@ -756,9 +807,9 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
             ]}
           />
         </div>
-        {dependency.satisfiedSeq !== null ? (
+        {dependency.satisfiedAt !== null ? (
           <div className="mt-2">
-            <JumpButton seq={dependency.satisfiedSeq} label="Go to when it cleared" />
+            <JumpButton t={dependency.satisfiedAt} label="Go to when it cleared" />
           </div>
         ) : null}
       </Section>
@@ -779,9 +830,38 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
 
 // ---------------------------------------------------------------- execution
 
+/** Recorded spend per model, from the execution's own usage record (never per agent). */
+function useModelCosts(executionId: string): Array<[string, number | null]> {
+  const { all } = useEntityEvents(ref.execution(executionId));
+  return useMemo(() => {
+    const usage = [...all].reverse().find((e) => e.event.type === "execution.usage");
+    if (!usage) return [];
+    const models = ((usage.event as { data?: { models?: Record<string, { cost_usd?: number | null }> } }).data?.models ?? {}) as Record<string, { cost_usd?: number | null }>;
+    return Object.entries(models).map(([name, m]): [string, number | null] => [name, typeof m.cost_usd === "number" ? m.cost_usd : null]);
+  }, [all]);
+}
+
+/** A cost the record says may be low: a budget stop killed work in flight. */
+export function mayBeUnderReported(x: ExecutionState): boolean {
+  return Boolean(x.usage?.budgetExhausted || x.stopReason === "budget" || x.workflowStatus === "killed");
+}
+
+/** The execution's recorded cost, or null when none is recorded (never 0 for "not recorded"). */
+export function recordedCost(x: ExecutionState): number | null {
+  if (x.usage && x.usage.costUsd !== null) return x.usage.costUsd;
+  if (x.outcome && isKnown(x.meta, "costUsd")) return x.outcome.costUsd;
+  return null;
+}
+
+const usd = (n: number) => `$${n.toFixed(2)}`;
+
 export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
   const agents = useScene((s) => s.cells);
   const count = useMemo(() => allAgentsOf(agents, execution.id), [agents, execution.id]);
+  const real = execution.meta.authority !== "simulated";
+  const cost = recordedCost(execution);
+  const models = useModelCosts(execution.id);
+  const under = mayBeUnderReported(execution);
   return (
     <>
       <Section title="Facts">
@@ -789,19 +869,44 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
           facts={[
             ["Ticket", <Mono key="t">{execution.ticketId}</Mono>],
             ["State", execution.state],
-            ["Attempt", execution.attempt],
-            ["Asked to", execution.next],
+            ["Attempt", isKnown(execution.meta, "attempt") ? execution.attempt : <NotRecorded key="at" />],
+            ["Asked to", isKnown(execution.meta, "next") ? execution.next : <NotRecorded key="n" />],
             execution.workflow ? ["Workflow", <Mono key="w">{execution.workflow}</Mono>] : null,
+            execution.workflowStatus ? ["Workflow ended", execution.workflowStatus === "running" ? "Still running" : execution.workflowStatus] : null,
             execution.phase ? ["Belt phase", execution.phase] : null,
-            ["Claimed", at(execution.claimedAt)],
+            execution.phases.length ? ["Declared phases", execution.phases.join(", ")] : null,
+            ["Claimed", isKnown(execution.meta, "claimedAt") ? at(execution.claimedAt) : <NotRecorded key="c" />],
             ["Started", at(execution.startedAt)],
             ["Ended", at(execution.endedAt)],
+            real && execution.processStartedAt !== null
+              ? ["Process", `${timecode(execution.processStartedAt, false)} to ${execution.processEndedAt === null ? "now" : timecode(execution.processEndedAt, false)}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
+              : null,
+            execution.recovery ? ["Recovery", execution.recovery] : null,
             execution.outcome ? ["Outcome", `${execution.outcome.stage ?? "?"}, next ${execution.outcome.next}${execution.outcome.waitingFor ? `, waiting for ${execution.outcome.waitingFor}` : ""}`] : null,
-            execution.outcome ? ["Cost", `$${execution.outcome.costUsd.toFixed(2)}`] : null,
+            [
+              "Cost",
+              cost === null ? (
+                <NotRecorded key="cost" />
+              ) : (
+                <span key="cost">
+                  {usd(cost)}
+                  {real ? " (recorded)" : " (simulated)"}
+                  {under ? <span className="block text-caption text-warning-ink">May be under-reported: a budget stop ended work in flight.</span> : null}
+                </span>
+              ),
+            ],
             ["Agents", count],
+            execution.claudeCodeVersion ? ["Claude Code", <Mono key="v">{execution.claudeCodeVersion}</Mono>] : null,
+            execution.refused.length ? ["Refused tools", execution.refused.map((r) => r.tool).join(", ")] : null,
           ]}
         />
       </Section>
+      {models.length ? (
+        <Section title="Cost by model" aside={<span className="text-caption text-ink-subtle">recorded; never per agent</span>}>
+          <Facts facts={models.map(([name, cost]): [string, ReactNode] => [name, cost === null ? <NotRecorded key={name} /> : usd(cost)])} />
+          {under ? <p className="mt-2 text-caption text-warning-ink">These may be under-reported: a budget stop ended work in flight.</p> : null}
+        </Section>
+      ) : null}
       <Section title="Related">
         <RefList>
           <RefLink to={ref.cell(execution.ticketId)} glyph={<CellGlyph size={18} />}>
@@ -828,11 +933,12 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
   const past = useMemo(() => all.slice(0, happened), [all, happened]);
   const byKind = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const e of past) counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+    for (const e of past) counts.set(e.event.type, (counts.get(e.event.type) ?? 0) + 1);
     return ACTOR_KINDS[actor.id].map((k) => [k, counts.get(k) ?? 0] as const);
   }, [past, actor.id]);
   const decisionKinds = actor.id === "supervisor" ? ["scheduling.decided"] : ["work.scheduled", "dependency.resolved", "dependency.blocked"];
-  const decision = [...past].reverse().find((e) => decisionKinds.includes(e.type)) ?? null;
+  const decision = [...past].reverse().find((e) => decisionKinds.includes(e.event.type)) ?? null;
+  const held = decision?.event.type === "scheduling.decided" ? ((decision.event as { data?: { held?: Array<{ slice_id?: string | null; ticket_id?: string | null; why: string }> } }).data?.held ?? []) : [];
   const words = ACTOR_WORDS[actor.id];
   return (
     <>
@@ -852,12 +958,12 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
         {decision ? (
           <div className="border-l-2 border-factory-select pl-3">
             <p className="font-mono text-[11px] text-ink-subtle tabular">
-              {decision.type}, {timecode(decision.t)}
+              {decision.event.type}, {timecode(decision.t)}
             </p>
-            <p className="mt-0.5 text-body-sm text-ink">{describe(decision)}</p>
-            {decision.type === "scheduling.decided" && decision.data.held.length ? (
+            <p className="mt-0.5 text-body-sm text-ink">{describeEntry(decision)}</p>
+            {held.length ? (
               <ul className="mt-1 list-disc pl-4 text-caption text-ink-muted">
-                {decision.data.held.map((h) => (
+                {held.map((h) => (
                   <li key={`${h.slice_id ?? h.ticket_id}`}>
                     <span className="font-mono">{h.slice_id ?? h.ticket_id}</span>: {h.why}
                   </li>
@@ -865,7 +971,7 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
               </ul>
             ) : null}
             <div className="mt-1">
-              <JumpButton seq={decision.seq} />
+              <JumpButton eventId={decision.id} />
             </div>
           </div>
         ) : (

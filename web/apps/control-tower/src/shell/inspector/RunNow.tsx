@@ -1,30 +1,24 @@
 /**
- * The inspector with nothing selected: the run at the playhead. What chapter this is, the latest
- * significant moment, what is working now, who is waiting and why, and the run's counts.
+ * The inspector with nothing selected: the run at the playhead. What chapter this is (simulation) or
+ * the latest landmark (real history), the latest significant moment, the connection (live), what is
+ * working now, who is waiting and why, and the counts so far, from received facts only.
  */
 import { useMemo } from "react";
-import { chapterAt, moments, ref, SCENARIO, type CellStage, type Moment } from "../../sim";
+import { isKnown, ref, type CellStage } from "../../sim";
 import { useScene, useSceneStore } from "../../scene";
 import { ActorGlyph, CellGlyph, SliceGlyph } from "../glyphs";
+import { indexFor, lastAtOrBefore } from "../history";
+import { ConnectionFacts } from "../SourceBadge";
 import { ACTOR_WORDS, schedulerLook, stageLook, timecode } from "../vocab";
-import { Facts, JumpButton, RefLink, RefList, Section } from "./parts";
-
-const MAJOR = moments(SCENARIO, "major");
-
-function latestMoment(list: readonly Moment[], t: number): Moment | null {
-  let lo = 0;
-  let hi = list.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if ((list[mid] as Moment).t <= t) lo = mid + 1;
-    else hi = mid;
-  }
-  return list[lo - 1] ?? null;
-}
+import { mayBeUnderReported, recordedCost } from "./anatomies";
+import { Facts, JumpButton, NotRecorded, RefLink, RefList, Section } from "./parts";
 
 export function RunNow() {
-  const chapter = useSceneStore((s) => chapterAt(s.fixture, s.playhead));
-  const moment = useSceneStore((s) => latestMoment(MAJOR, s.playhead));
+  const index = useSceneStore(indexFor);
+  const source = useSceneStore((s) => s.source);
+  const connection = useSceneStore((s) => s.connection);
+  const chapter = useSceneStore((s) => lastAtOrBefore(indexFor(s).landmarks, s.playhead));
+  const moment = useSceneStore((s) => lastAtOrBefore(indexFor(s).moments, s.playhead));
   // A key per cell (stage and how many agents work): the list re-renders when one of those changes,
   // not on every tool call.
   const cellKey = useScene((s) =>
@@ -37,30 +31,44 @@ export function RunNow() {
   const attention = useScene((s) => s.supervisor.attention);
   const cellList = useMemo(() => (cellKey ? cellKey.split("|").map((k) => k.split(":") as [string, CellStage, string]) : []), [cellKey]);
   const waiting = Object.values(slices).filter((s) => s.scheduler === "waiting-on-dependency" || s.scheduler === "eligible");
-  const n = chapter ? SCENARIO.chapters.indexOf(chapter) + 1 : 0;
+  const n = chapter ? index.landmarks.indexOf(chapter) + 1 : 0;
   return (
     <div>
       <div className="px-5 pb-4 pt-5">
-        <p className="text-caption text-ink-subtle">Nothing selected. The run at the playhead.</p>
-        {chapter ? (
+        <p className="text-caption text-ink-subtle">{source === "simulation" ? "Nothing selected. The run at the playhead." : "Nothing selected. What has been received, as of the playhead."}</p>
+        {chapter && index.storyboard ? (
           <>
             <p className="mt-3 text-caption text-ink-subtle tabular">
-              Chapter {n} of {SCENARIO.chapters.length}, from {timecode(chapter.t, false)}
+              Chapter {n} of {index.landmarks.length}, from {timecode(chapter.t, false)}
             </p>
             <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">{chapter.title}</h2>
-            <p className="mt-1.5 text-body-sm text-ink-muted">{chapter.summary}</p>
+            {chapter.summary ? <p className="mt-1.5 text-body-sm text-ink-muted">{chapter.summary}</p> : null}
+          </>
+        ) : chapter ? (
+          <>
+            <p className="mt-3 text-caption text-ink-subtle tabular">Last landmark, {timecode(chapter.t, false)} UTC</p>
+            <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">{chapter.title}</h2>
+            <div className="mt-1">
+              <JumpButton eventId={chapter.id} label="Go to event" />
+            </div>
           </>
         ) : null}
-        {moment ? (
+        {moment && moment.id !== chapter?.id ? (
           <div className="mt-4 border-l-2 border-factory-select pl-3">
             <p className="font-mono text-[11px] text-ink-subtle tabular">Latest significant moment, {timecode(moment.t)}</p>
             <p className="mt-0.5 text-body-sm text-ink">{moment.text}</p>
             <div className="mt-1">
-              <JumpButton seq={moment.seq} />
+              <JumpButton eventId={moment.id} label={source === "simulation" ? "Go to this moment" : "Go to event"} />
             </div>
           </div>
         ) : null}
+        {!chapter && !moment && source !== "simulation" ? <p className="mt-3 text-body-sm text-ink-muted">No significant moment has been received yet.</p> : null}
       </div>
+      {connection ? (
+        <Section title="Connection">
+          <ConnectionFacts connection={connection} />
+        </Section>
+      ) : null}
       <Section title="Cells">
         {cellList.length ? (
           <RefList>
@@ -95,7 +103,7 @@ export function RunNow() {
         </Section>
       ) : null}
       <Actors />
-      <RunCounts />
+      {source === "simulation" ? <RunCounts /> : <ReceivedCounts />}
     </div>
   );
 }
@@ -125,11 +133,77 @@ function RunCounts() {
   );
 }
 
-const TITLES = Object.fromEntries(Object.values(SCENARIO.definitions.slices).map((d) => [d.id, d.title]));
+/**
+ * Real history's counts, from received facts only: what each count is made of is said, and what no
+ * record says is "Not recorded" (never 0). Workflow agents' tool calls are their reported counts.
+ */
+function ReceivedCounts() {
+  const counters = useScene((s) => s.counters);
+  const executions = useScene((s) => s.executions);
+  const cells = useScene((s) => s.cells);
+  const events = useSceneStore((s) => s.cursor);
+  const { perCall, counted, countOnly, cost, costed, under } = useMemo(() => {
+    let perCallN = 0;
+    let countedN = 0;
+    let countOnlyN = 0;
+    for (const cell of Object.values(cells)) {
+      for (const id of cell.agentOrder) {
+        const a = cell.agents[id];
+        if (!a) continue;
+        if (a.observation === "count-only") {
+          countOnlyN += 1;
+          countedN += a.toolCallCount ?? 0;
+        } else perCallN += a.toolCalls.length;
+      }
+    }
+    let total = 0;
+    let costedN = 0;
+    let underAny = false;
+    for (const x of Object.values(executions)) {
+      const c = recordedCost(x);
+      if (c === null) continue;
+      total += c;
+      costedN += 1;
+      underAny = underAny || mayBeUnderReported(x);
+    }
+    return { perCall: perCallN, counted: countedN, countOnly: countOnlyN, cost: total, costed: costedN, under: underAny };
+  }, [cells, executions]);
+  const executionCount = Object.keys(executions).length;
+  return (
+    <Section title="So far">
+      <Facts
+        facts={[
+          ["Events", `${events.toLocaleString("en-GB")} received up to the playhead`],
+          ["Executions", `${counters.executionsRunning} running, ${executionCount} seen`],
+          ["Agents", `${counters.agentsActive} working, ${counters.agentsStarted} started`],
+          ["Tool calls", countOnly ? `${perCall.toLocaleString("en-GB")} observed one by one; ${counted.toLocaleString("en-GB")} reported as counts by ${countOnly} workflow agent${countOnly === 1 ? "" : "s"}` : `${perCall.toLocaleString("en-GB")} observed`],
+          ["Review rounds", `${counters.reviewRounds}, ${counters.blockers} blockers, ${counters.notes} notes`],
+          ["People", `${counters.humanApprovals} approval${counters.humanApprovals === 1 ? "" : "s"} by a person`],
+          ["Landed", `${counters.merged} merged, ${counters.integrated} integrated`],
+          [
+            "Cost",
+            costed ? (
+              <span key="c">
+                ${cost.toFixed(2)} recorded, over {costed} of {executionCount} execution{executionCount === 1 ? "" : "s"}
+                {under ? <span className="block text-caption text-warning-ink">May be under-reported: a budget stop ended work in flight.</span> : null}
+              </span>
+            ) : (
+              <NotRecorded key="c" />
+            ),
+          ],
+        ]}
+      />
+    </Section>
+  );
+}
 
 function CellRow({ ticketId, stage, working }: { ticketId: string; stage: CellStage; working: number }) {
   const look = stageLook(stage);
-  const title = useScene((s) => s.cells[ticketId]?.title ?? TITLES[s.cells[ticketId]?.sliceId ?? ""] ?? "");
+  const title = useScene((s) => {
+    const cell = s.cells[ticketId];
+    if (!cell) return "";
+    return isKnown(cell.meta, "title") ? cell.title : (s.slices[cell.sliceId]?.title ?? "");
+  });
   return (
     <RefLink to={ref.cell(ticketId)} glyph={<CellGlyph size={20} state={look.state} />} detail={working ? `${look.label}, ${working} working` : look.label}>
       <span className="font-mono text-[12px]">{ticketId}</span> <span className="text-ink-muted">{title}</span>

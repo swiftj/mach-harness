@@ -7,8 +7,9 @@
 import { ChevronRight } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from "react";
 import { cn, useTheme } from "@mach/ui";
-import { SCENARIO, type EntityRef } from "../../sim";
+import { type EntityRef } from "../../sim";
 import { useScene, useSceneStore, useStore } from "../../scene";
+import { useHistoryIndex } from "../source/context";
 import { StateGlyph } from "../glyphs";
 import { schedulerLook, selectable, stageLook, timecode, duration as words } from "../vocab";
 import { drawTracks, hitTest, layoutTracks, readPalette, SUMMARY_ROW, tOf, xOf, type Hit, type View } from "./draw";
@@ -18,14 +19,13 @@ import { usePlayheadEffect } from "./playhead";
 
 export const GUTTER = 176;
 const AXIS_H = 24;
-const CHAPTER_TIMES = SCENARIO.chapters.map((c) => c.t);
 
 export interface TimeWindow {
   v0: number;
   v1: number;
 }
 
-const TICK_STEPS = [5_000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000];
+const TICK_STEPS = [5_000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000, 10_800_000, 21_600_000, 43_200_000, 86_400_000];
 
 function TrackHeader({ track, expanded, onToggle, height, focused }: { track: Track; expanded: boolean; onToggle: () => void; height: number; focused: boolean }) {
   const stage = useScene((s) => (track.ticketId ? s.cells[track.ticketId]?.stage : undefined));
@@ -71,6 +71,8 @@ function TrackHeader({ track, expanded, onToggle, height, focused }: { track: Tr
 
 export const Tracks = memo(function Tracks({
   model,
+  extent,
+  zoomed,
   window: win,
   onWindow,
   expanded,
@@ -79,6 +81,10 @@ export const Tracks = memo(function Tracks({
   onSummary,
 }: {
   model: TimelineModel;
+  /** Everything the window may show: the run (simulation) or start to the live edge (real history). */
+  extent: TimeWindow;
+  /** The person zoomed or panned: otherwise the window is the whole extent and grows by itself. */
+  zoomed: boolean;
   window: TimeWindow;
   onWindow: (w: TimeWindow) => void;
   expanded: ReadonlySet<string>;
@@ -89,6 +95,10 @@ export const Tracks = memo(function Tracks({
 }) {
   const store = useStore();
   const { resolved: theme } = useTheme();
+  const index = useHistoryIndex();
+  const soFar = model.kind === "so-far";
+  // Faint guides through every track: the storyboard's chapters, or for real history the waves arriving and the Factory's changes.
+  const guides = useMemo(() => index.landmarks.filter((l) => l.kind === "chapter" || l.kind === "wave" || l.kind === "factory").map((l) => l.t), [index, index.version]); // eslint-disable-line react-hooks/exhaustive-deps
   const selection = useSceneStore((s) => s.selection);
   const hovered = useSceneStore((s) => s.hovered);
   // Only the related cells and slices are drawn (as bands), so subscribe to just those: a string,
@@ -152,7 +162,8 @@ export const Tracks = memo(function Tracks({
     const ctx = canvas.getContext("2d");
     if (ctx) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawTracks({ ctx, model, rows: layout.rows, view, height: layout.height, palette, selection, hovered, highlighted: highlightSet, focusedTrack, chapters: CHAPTER_TIMES, liveAt: store.getState().liveAt });
+      const liveAt = store.getState().liveAt;
+      drawTracks({ ctx, model, rows: layout.rows, view, height: layout.height, palette, selection, hovered, highlighted: highlightSet, focusedTrack, chapters: guides, liveAt, openEnd: soFar ? liveAt : model.end });
     }
     axis.width = Math.round(width * dpr);
     axis.height = Math.round(AXIS_H * dpr);
@@ -163,7 +174,7 @@ export const Tracks = memo(function Tracks({
       actx.setTransform(dpr, 0, 0, dpr, 0, 0);
       actx.clearRect(0, 0, width, AXIS_H);
       const span = view.v1 - view.v0;
-      const step = TICK_STEPS.find((s) => (s / span) * width >= 64) ?? 600_000;
+      const step = TICK_STEPS.find((s) => (s / span) * width >= (soFar ? 72 : 64)) ?? 86_400_000;
       actx.font = `11px ${palette.mono}`;
       actx.fillStyle = palette.inkSubtle;
       actx.strokeStyle = palette.lineStrong;
@@ -172,7 +183,7 @@ export const Tracks = memo(function Tracks({
         const x = Math.round(xOf(view, t)) + 0.5;
         actx.moveTo(x, AXIS_H - 6);
         actx.lineTo(x, AXIS_H);
-        if (x + 36 < width) actx.fillText(timecode(t, step < 60_000), x + 3, 14);
+        if (x + 36 < width) actx.fillText(timecode(t, !soFar && step < 60_000), x + 3, 14);
       }
       // Minor ticks.
       const minor = step / 5;
@@ -183,7 +194,7 @@ export const Tracks = memo(function Tracks({
       }
       actx.stroke();
     }
-  }, [width, layout, view, model, selection, hovered, highlightSet, focusedTrack, theme, endsKnown, store]);
+  }, [width, layout, view, model, selection, hovered, highlightSet, focusedTrack, theme, endsKnown, store, guides, soFar]);
 
   // The playhead cursor and the live edge: direct DOM writes, every frame, no render.
   usePlayheadEffect(
@@ -194,15 +205,18 @@ export const Tracks = memo(function Tracks({
         cursorRef.current.style.transform = `translateX(${x}px)`;
         cursorRef.current.style.visibility = x < -1 || x > view.width + 1 ? "hidden" : "visible";
       }
+      // The simulation's recorded future is hatched; real history has none, so there is no mask.
       if (maskRef.current) maskRef.current.style.transform = `translateX(${Math.max(0, Math.min(view.width, live))}px)`;
-      // Page the window along with playback when zoomed in.
+      // Page the window along with playback (or, live, with the edge) when zoomed in.
       const spanMs = win.v1 - win.v0;
-      if (s.playing && spanMs < model.duration && s.playhead > win.v1) {
-        const v0 = Math.min(model.duration - spanMs, s.playhead - spanMs * 0.1);
+      const moving = s.playing || (s.source === "live" && s.following);
+      const end = s.source === "simulation" ? extent.v1 : Math.max(extent.v1, s.liveAt);
+      if (zoomed && moving && spanMs < end - extent.v0 && s.playhead > win.v1) {
+        const v0 = Math.min(end - spanMs, s.playhead - spanMs * 0.1);
         onWindow({ v0, v1: v0 + spanMs });
       }
     },
-    [view, win.v0, win.v1, model.duration, onWindow],
+    [view, win.v0, win.v1, extent.v0, extent.v1, zoomed, onWindow],
   );
 
   const pointAt = useCallback(
@@ -233,8 +247,8 @@ export const Tracks = memo(function Tracks({
       setTip(null);
       return;
     }
-    const hit = hitTest(layout.rows, view, p.x, p.y, model.duration, store.getState().liveAt);
     const liveAt = store.getState().liveAt;
+    const hit = hitTest(layout.rows, view, p.x, p.y, soFar ? liveAt : model.end, liveAt);
     const t = tOf(view, p.x);
     // Nothing is known past the live edge: no hover there.
     const shown = hit && t <= liveAt ? hit : null;
@@ -249,7 +263,8 @@ export const Tracks = memo(function Tracks({
     if (!d || d.moved) return;
     const p = pointAt(e);
     if (!p) return;
-    const hit = hitTest(layout.rows, view, p.x, p.y, model.duration, store.getState().liveAt);
+    const liveAt = store.getState().liveAt;
+    const hit = hitTest(layout.rows, view, p.x, p.y, soFar ? liveAt : model.end, liveAt);
     const target = selectable(hit?.ref ?? null);
     if (hit && target && tOf(view, p.x) <= store.getState().liveAt) {
       store.select(target);
@@ -264,14 +279,15 @@ export const Tracks = memo(function Tracks({
   const zoomAround = useCallback(
     (factor: number, atX: number) => {
       const span = win.v1 - win.v0;
-      const next = Math.min(model.duration, Math.max(30_000, span * factor));
+      const whole = extent.v1 - extent.v0;
+      const next = Math.min(whole, Math.max(30_000, span * factor));
       const anchor = tOf(view, atX);
       const ratio = view.width > 0 ? atX / view.width : 0.5;
       let v0 = anchor - next * ratio;
-      v0 = Math.max(0, Math.min(model.duration - next, v0));
+      v0 = Math.max(extent.v0, Math.min(extent.v1 - next, v0));
       onWindow({ v0, v1: v0 + next });
     },
-    [win, model.duration, view, onWindow],
+    [win, extent.v0, extent.v1, view, onWindow],
   );
 
   const onWheel = (e: WheelEvent<HTMLDivElement>) => {
@@ -281,9 +297,9 @@ export const Tracks = memo(function Tracks({
       zoomAround(Math.pow(1.0025, e.deltaY), p.x);
     } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) {
       const span = win.v1 - win.v0;
-      if (span >= model.duration) return;
+      if (span >= extent.v1 - extent.v0) return;
       const d = ((e.shiftKey ? e.deltaY : e.deltaX) / view.width) * span;
-      const v0 = Math.max(0, Math.min(model.duration - span, win.v0 + d));
+      const v0 = Math.max(extent.v0, Math.min(extent.v1 - span, win.v0 + d));
       onWindow({ v0, v1: v0 + span });
     }
   };
@@ -316,7 +332,7 @@ export const Tracks = memo(function Tracks({
       if (focusedTrack) onToggle(focusedTrack, false);
     } else if (e.key === "+" || e.key === "=") zoomAround(1 / 1.5, xOf(view, store.getState().playhead));
     else if (e.key === "-") zoomAround(1.5, xOf(view, store.getState().playhead));
-    else if (e.key === "0") onWindow({ v0: 0, v1: model.duration });
+    else if (e.key === "0") onWindow(extent);
     else handled = false;
     if (handled) {
       e.preventDefault();
@@ -376,7 +392,8 @@ export const Tracks = memo(function Tracks({
             {summary ? (
               <div style={{ height: SUMMARY_ROW }} className="flex items-center border-b border-line px-3">
                 <span className="min-w-0 truncate text-caption text-ink-muted">
-                  All {sliceCount} slices<span className="text-ink-subtle">, one strip each</span>
+                  {soFar ? (sliceCount ? `${sliceCount} track${sliceCount === 1 ? "" : "s"} so far` : "Nothing received yet") : `All ${sliceCount} slices`}
+                  <span className="text-ink-subtle">{sliceCount ? ", one strip each" : ""}</span>
                 </span>
               </div>
             ) : (
@@ -437,7 +454,7 @@ export const Tracks = memo(function Tracks({
       </p>
       {/* Overlays over the time area: the live edge (nothing beyond it has happened) and the playhead. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 overflow-hidden" style={{ left: GUTTER }}>
-        <div ref={maskRef} className="mach-future absolute inset-y-0 left-0 w-full border-l border-dashed border-line-strong" />
+        {soFar ? null : <div ref={maskRef} className="mach-future absolute inset-y-0 left-0 w-full border-l border-dashed border-line-strong" />}
         <div ref={cursorRef} className="absolute inset-y-0 left-0 w-0">
           <div className="absolute inset-y-0 -left-px w-0.5 bg-ink" />
           <div className="absolute -left-[5px] top-0 size-0 border-x-[5px] border-t-[6px] border-x-transparent border-t-ink" />

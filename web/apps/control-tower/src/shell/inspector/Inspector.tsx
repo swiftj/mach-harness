@@ -7,8 +7,8 @@ import { Crosshair, X } from "lucide-react";
 import { type ReactNode } from "react";
 import { stations as stationLooks, type FactoryMarkShape, type FactoryState, type StationKind } from "@mach/ui";
 import {
-  describe,
-  eventsFor,
+  describeEntry,
+  finalScene,
   refId,
   SCENARIO,
   type ActorState,
@@ -20,6 +20,7 @@ import {
   type ExecutionState,
   type FindingState,
   type GateState,
+  type Scene,
   type SliceState,
   type ToolCallState,
   type WaveState,
@@ -43,7 +44,8 @@ import {
   WaveAnatomy,
 } from "./anatomies";
 import { identityOf, parseStation, selectEntity } from "./entity";
-import { Evidence, JumpButton, useEntityEvents } from "./parts";
+import { AuthorityBadge, Evidence, JumpButton, precisionWords, useEntityEvents } from "./parts";
+import { Provenance } from "./Provenance";
 import { RunNow } from "./RunNow";
 import { cellTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
 
@@ -86,8 +88,10 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     }
     case "agent": {
       const a = value as AgentState;
-      const state = runState(a.status);
-      return { glyph: <AgentGlyph tier={tierOf(a.model)} agentRole={roleOf(a.role)} size={28} state={state} />, state, word: a.status === "running" ? "Working" : a.status === "error" ? "Failed" : "Finished", phase: a.status === "running" ? "running" : "finished", since: a.status === "running" ? a.startedAt : a.finishedAt };
+      // The honest lifecycle: queued, running, done, error, or ended with no record of how.
+      const state: FactoryState = a.lifecycle === "queued" ? "waiting" : a.lifecycle === "unknown" ? "idle" : runState(a.status);
+      const word = a.lifecycle === "queued" ? "Queued in its workflow" : a.lifecycle === "unknown" ? "Ended; how is not recorded" : a.status === "running" ? "Working" : a.status === "error" ? "Failed" : "Finished";
+      return { glyph: <AgentGlyph tier={tierOf(a.model)} agentRole={roleOf(a.role)} size={28} state={state} />, state, word, phase: a.status === "running" || a.lifecycle === "queued" ? "running" : "finished", since: a.status === "running" ? a.startedAt : a.finishedAt };
     }
     case "tool": {
       const c = value as ToolCallState;
@@ -169,7 +173,7 @@ function TimeStatus({ look, entity }: { look: Look | null; entity: AnyRef }) {
     return (
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-dashed border-line-strong px-3 py-2 text-body-sm">
         <span className="text-ink">Not started at this moment.</span>
-        {first ? <JumpButton seq={first.seq} label={`It starts at ${timecode(first.t, false)}`} /> : null}
+        {first ? <JumpButton eventId={first.id} label={`It starts at ${timecode(first.t, false)}`} /> : null}
       </div>
     );
   }
@@ -196,24 +200,35 @@ function Why({ entity }: { entity: AnyRef }) {
   return (
     <div className="mx-5 mb-4 rounded-sm bg-surface-sunken px-3 py-2.5">
       <p className="text-caption text-ink-subtle">Why it looks like this</p>
-      <p className="mt-0.5 text-body-sm text-ink">{describe(latest)}</p>
+      <p className="mt-0.5 text-body-sm text-ink">{describeEntry(latest)}</p>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-mono text-[11px] text-ink-subtle tabular">
-          {latest.type}, seq {latest.seq}, {timecode(latest.t)}, {latest.source}
+          {latest.event.type}, {timecode(latest.t)}
         </span>
-        <JumpButton seq={latest.seq} label="Go to event" />
+        {latest.event.schema_version === 3 ? <AuthorityBadge authority={latest.authority} /> : null}
+        {latest.event.schema_version === 3 ? <span className="text-caption text-ink-subtle">{precisionWords(latest.precision)}</span> : null}
+        <JumpButton eventId={latest.id} label="Go to event" />
       </div>
     </div>
   );
 }
 
+/** The scene names are read from: the simulation's final scene, or the newest scene received. */
+function namingScene(s: { source: string; log: { head(): Scene } }): Scene {
+  return s.source === "simulation" ? finalScene(SCENARIO) : s.log.head();
+}
+
 function Selected({ entity }: { entity: AnyRef }) {
   const value = useScene((s) => selectEntity(s, entity));
   const store = useStore();
-  const identity = identityOf(entity);
+  // Strings, so a new event re-renders the header only when the name itself changes.
+  const name = useSceneStore((s) => identityOf(entity, namingScene(s)).name);
+  const kindWord = useSceneStore((s) => identityOf(entity, namingScene(s)).kindWord);
+  const identity = { name, kindWord, id: refId(entity) };
   const focusable = selectable(entity);
   const look = value ? lookOf(entity, value) : null;
-  const unknown = eventsFor(SCENARIO, entity).length === 0 && !value;
+  const { all } = useEntityEvents(entity);
+  const unknown = all.length === 0 && !value;
   return (
     <div>
       <header className="sticky top-0 z-10 border-b border-line bg-surface px-5 pb-4 pt-4">
@@ -244,13 +259,14 @@ function Selected({ entity }: { entity: AnyRef }) {
         ) : null}
         <TimeStatus look={look} entity={entity} />
       </header>
-      {unknown ? <p className="px-5 py-4 text-body-sm text-ink-muted">This run has no record of that entity.</p> : null}
+      {unknown ? <p className="px-5 py-4 text-body-sm text-ink-muted">No record of that entity has been received. If it appears, this shows it.</p> : null}
       {value ? (
         <div className="pt-4">
           <Why entity={entity} />
           <Anatomy entity={entity} value={value} />
         </div>
       ) : null}
+      {value || all.length ? <Provenance entity={entity} value={value} /> : null}
       <Evidence entity={entity} />
     </div>
   );
