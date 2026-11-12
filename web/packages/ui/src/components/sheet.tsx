@@ -47,7 +47,7 @@ export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(functi
           escape.onKeyDown(event);
         }}
         onOpenAutoFocus={(event) => {
-          returnFocus.remember();
+          returnFocus.remember(event.currentTarget instanceof Element ? event.currentTarget : null);
           onOpenAutoFocus?.(event);
         }}
         onCloseAutoFocus={(event) => {
