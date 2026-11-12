@@ -10,20 +10,9 @@ export function tierOf(model: ModelId): GrammarTier {
   return model;
 }
 
-/** The grammar has emblems for six roles; the belt's own workers borrow the nearest one. */
+/** The grammar now has an emblem for each of the belt's roles (pass 3), so roles map one to one. */
 export function grammarRole(agent: Pick<AgentState, "role">): GrammarRole {
-  switch (agent.role) {
-    case "contract-engineer":
-      return "contract-engineer";
-    case "builder":
-      return "builder";
-    case "verifier":
-      return "verifier";
-    case "reviewer":
-      return "reviewer";
-    default:
-      return "supervisor";
-  }
+  return agent.role;
 }
 
 const ROLE_WORDS: Record<AgentState["role"], string> = {
@@ -109,11 +98,12 @@ export function stationKind(station: string): StationKind {
   return station as StationKind;
 }
 
-/** Simulation gate kinds to the grammar's glyphs. `plan-check` has no glyph of its own: it borrows the audit gauge. */
+/** Simulation gate kinds to the grammar's glyphs (pass 3 added `plan-check`). */
 export function grammarGate(gate: GateState["gate"]): GrammarGate {
   switch (gate) {
-    case "audit":
     case "plan-check":
+      return "plan-check";
+    case "audit":
       return "audit";
     case "red-before-green":
       return "red-green";
@@ -211,36 +201,9 @@ export function stageWords(stage: CellStage): string {
   return STAGE_WORDS[stage];
 }
 
-/** The grammar's artifact marks are coarser than MACH's artifact kinds. */
+/** Pass 3 gave the grammar one kind for each of MACH's artifact kinds; the only rename is the review diff. */
 export function grammarArtifact(kind: ArtifactState["kind"]): GrammarArtifact {
-  switch (kind) {
-    case "intent":
-    case "spec":
-    case "contract":
-    case "plan":
-    case "commit":
-    case "build-report":
-    case "evidence":
-    case "vote":
-    case "decision":
-    case "merge-commit":
-      return kind;
-    case "build-state":
-      return "build-report";
-    case "verification-results":
-    case "verification-summary":
-      return "results";
-    case "findings-copy":
-    case "verification-findings":
-    case "review-findings":
-      return "findings";
-    case "review-packet":
-    case "review-diff":
-      return "spec";
-    case "archive":
-    case "run-record":
-      return "decision";
-  }
+  return kind;
 }
 
 export function artifactFile(a: Pick<ArtifactState, "kind" | "path" | "label" | "sha">): string {

@@ -22,8 +22,8 @@ import { BlueprintSheet, FactoryScene, fc } from "@mach/ui";
 import type { EntityRef, Scene, WaveState } from "../sim";
 import { finalScene, refKind } from "../sim";
 import { cameraFollows, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
-import { useColumns, type ColumnTemplate } from "./columns";
-import { computeLayout, SHEET, type Lane, type Layout, type Rect } from "./layout";
+import { spreadTemplate, useColumns, type ColumnTemplate } from "./columns";
+import { computeLayout, drawingWidthFor, SHEET, type Lane, type Layout, type Rect } from "./layout";
 import { DependencyLayer, LaneView } from "./Lane";
 import { clamp, fitCamera, focusCamera, type Camera } from "./camera";
 import { leafBounds } from "./bounds";
@@ -34,6 +34,7 @@ import { CameraContext, createCameraStore, createHitRegistry, HitContext, Layers
 import { ColumnHead, furnitureBox, Legend, Revisions } from "./furniture";
 import { Minimap, PinnedTitle, ZoneRulers, zoneCounts } from "./overlays";
 import { Gutter } from "./gutter";
+import { PlaceholderBelt } from "./Placeholder";
 import "./blueprint.css";
 
 const DEEP = new Set(["agent", "tool", "artifact", "finding"]);
@@ -130,7 +131,7 @@ export function BlueprintView() {
   const fixture = useSceneStore((s) => s.fixture);
   const scene = useScene();
   const tree = treeOf(scene);
-  const template = useColumns(fixture);
+  const baseTemplate = useColumns(fixture);
   const reduced = useSceneStore((s) => s.reducedMotion);
   const theater = useSceneStore((s) => s.theater);
   const focusReq = useSceneStore((s) => s.focus);
@@ -172,7 +173,10 @@ export function BlueprintView() {
     }
   }
 
-  const planned = useMemo(() => (template ? plannedHeight(template, finalScene(fixture)) : 0), [template, fixture]);
+  // The sheet is cut once for the whole run: its height from the run at the default expansion, its
+  // width landscape to the stage's proportion, and the belt's columns spread across that width.
+  const planned = useMemo(() => (baseTemplate ? plannedHeight(baseTemplate, finalScene(fixture)) : 0), [baseTemplate, fixture]);
+  const template = useMemo(() => (baseTemplate ? spreadTemplate(baseTemplate, drawingWidthFor(planned, baseTemplate.width)) : null), [baseTemplate, planned]);
   const layout: Layout | null = useMemo(() => (template ? computeLayout(scene, tree, expanded, template, planned) : null), [scene, tree, expanded, template, planned]);
   const layoutRef = useRef<Layout | null>(layout);
   useLayoutEffect(() => {
@@ -699,11 +703,12 @@ export function BlueprintView() {
                   width={layout.width}
                   height={layout.height}
                   title="Execution Blueprint"
-                  subtitle={`${waveId} · ${title}`}
+                  subtitle={waveId ? `${waveId} · ${title}` : "Waiting for an approved wave"}
                   simulationLabel="Simulation"
                   zonesX={zoneCounts(layout).zx}
                   zonesY={zoneCounts(layout).zy}
                   facts={facts}
+                  titleBlock="strip"
                 >
                   <LodContext.Provider value={lodState}>
                   <LayersContext.Provider value={layers}>
@@ -711,6 +716,7 @@ export function BlueprintView() {
                       <TreeContext.Provider value={ctx}>
                         <g role="tree" aria-label="Execution hierarchy: wave, slices, executions, station visits, agents, tool calls" onKeyDown={onKeyDown} onFocus={(e) => setFocusedId((e.target as Element).getAttribute("data-tid"))} onBlur={() => setFocusedId(null)}>
                           {tree.root ? <WaveItem layout={layout} tree={tree} template={template} animate={animating} /> : null}
+                          {!tree.root ? <PlaceholderBelt layout={layout} template={template} /> : null}
                         </g>
                         <DependencyLayer scene={scene} lanes={layout.lanes} ax={layout.ax} aw={layout.aw} template={template} />
                         {/* Pinned layers, drawn last: the gutters, then the column head above them. */}
@@ -733,7 +739,7 @@ export function BlueprintView() {
           {layout && template ? (
             <div className="bp-chrome" aria-hidden={theater ? true : undefined}>
               <ZoneRulers layout={layout} />
-              {theater ? null : <PinnedTitle layout={layout} title={title} wave={waveId} />}
+              <PinnedTitle layout={layout} theater={theater} />
               {theater ? null : <Minimap layout={layout} template={template} centreOn={centreOn} frameLane={frameLane} />}
             </div>
           ) : null}

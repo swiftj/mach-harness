@@ -160,3 +160,24 @@ export function useColumns(fixture: Fixture): ColumnTemplate | null {
   }, [fixture]);
   return template && ready.get(fixture) === template ? template : (ready.get(fixture) ?? template);
 }
+
+const spreadCache = new WeakMap<ColumnTemplate, Map<number, ColumnTemplate>>();
+
+/**
+ * The template spread to a wider drawing: every column's x scaled so the workflow occupies the
+ * sheet's full width (the sheet is cut landscape to the stage's proportion). The seats' offsets keep
+ * their size. Cached per template and width.
+ */
+export function spreadTemplate(t: ColumnTemplate, width: number): ColumnTemplate {
+  if (width <= t.width) return t;
+  let m = spreadCache.get(t);
+  if (!m) spreadCache.set(t, (m = new Map()));
+  const hit = m.get(width);
+  if (hit) return hit;
+  const k = width / t.width;
+  const x: Partial<Record<ColumnKey, number>> = {};
+  for (const [key, v] of Object.entries(t.x)) x[key as ColumnKey] = Math.round((v as number) * k);
+  const out: ColumnTemplate = { ...t, x, width };
+  m.set(width, out);
+  return out;
+}

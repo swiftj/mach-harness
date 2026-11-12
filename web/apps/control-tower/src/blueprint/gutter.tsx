@@ -10,11 +10,14 @@ import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import { fc } from "@mach/ui";
 import type { EntityRef } from "../sim";
-import { useLayers } from "./context";
+import { useContext } from "react";
+import { LaneDimContext, useLayers } from "./context";
 import { SHEET } from "./layout";
 
 export function Gutter({ id, entity, y, h, ax, band = 0.55, row = false, dimmed = false, children }: { id: string; entity: EntityRef; y: number; h: number; ax: number; band?: number; row?: boolean; dimmed?: boolean; children: ReactNode }) {
   const layers = useLayers();
+  const laneDimmed = useContext(LaneDimContext);
+  const dim = dimmed || (row && laneDimmed);
   const host = row ? layers.rows : layers.gutter;
   if (!host) return null;
   const right = ax - 14;
@@ -25,7 +28,7 @@ export function Gutter({ id, entity, y, h, ax, band = 0.55, row = false, dimmed 
       data-tid={id}
       data-ref={entity}
       aria-hidden="true"
-      style={{ transform: `translate(var(--bp-gx, 0px), ${y}px)`, transition: layers.animate ? "transform 400ms cubic-bezier(0.2, 0, 0, 1)" : "none", opacity: dimmed ? 0.4 : 1 }}
+      style={{ transform: `translate(var(--bp-gx, 0px), ${y}px)`, transition: layers.animate ? "transform 400ms cubic-bezier(0.2, 0, 0, 1)" : "none", opacity: dim ? 0.4 : 1 }}
     >
       <rect x={SHEET.left - 4} y={0} width={right - SHEET.left + 4} height={h} style={{ fill: fc("ground") }} />
       {band > 0 ? <rect x={SHEET.left} y={0} width={right - SHEET.left} height={h} style={{ fill: fc("floor"), opacity: band }} /> : null}

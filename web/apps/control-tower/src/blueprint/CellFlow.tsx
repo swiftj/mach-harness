@@ -17,7 +17,6 @@ import {
   RoutePath,
   StateMark,
   StationMachine,
-  StationSymbol,
   TaskBoard,
   FindingsFlag,
   type FactoryState,
@@ -27,13 +26,13 @@ import {
 } from "@mach/ui";
 import type { AgentState, ArtifactState, CellState, EntityRef, GateState, ReviewRoundState, SliceState } from "../sim";
 import { ref } from "../sim";
+import { useSceneStore } from "../scene";
 import type { ColumnTemplate } from "./columns";
 import type { Flow, FlowNode } from "./flow";
 import { useEventProgress, usePlayhead } from "./motion";
 import { clock, duration } from "./time";
 import { artifactFile, agentState, grammarArtifact, grammarGate, grammarSeat, stationKind, tierOf } from "./vocab";
 
-const UNBUILT = 0.42;
 const SEAT_KEYS = ["architecture", "security", "product"] as const;
 
 const SHORT_GATE: Record<GateState["gate"], string> = {
@@ -122,12 +121,8 @@ function Route({ from, to }: { from: FlowNode; to: FlowNode }) {
   const draw = useEventProgress(startT, "pathDraw");
   const pts = routePoints(from, to);
   if (!built) {
-    // Not reached yet: the grammar's planned route (a dashed hairline), at the unbuilt opacity.
-    return (
-      <g style={{ opacity: UNBUILT }}>
-        <RoutePath variant="blueprint" points={pts} planned arrow={false} />
-      </g>
-    );
+    // Not reached yet: the grammar's planned route, a dashed hairline at full contrast (spec c.3.1).
+    return <RoutePath variant="blueprint" points={pts} planned />;
   }
   const active = (to.visit && to.visit.leftAt === null && to.visit.station !== "human-approval") || (to.gate?.state === "open" && to.gate.gate !== "red-before-green");
   const state: FactoryState = active ? "active" : "succeeded";
@@ -185,7 +180,7 @@ function Join({ from, to, seats, cell }: { from: FlowNode; to: FlowNode; seats: 
 
 function UnbuiltBranches({ origin, targets, join }: { origin: { x: number; y: number }; targets: readonly { x: number; y: number }[]; join?: boolean }) {
   return (
-    <g aria-hidden="true" style={{ opacity: UNBUILT }}>
+    <g aria-hidden="true">
       {targets.map((t, i) => {
         const dx = (t.x - origin.x) * 0.55;
         const d = join
@@ -270,12 +265,13 @@ function EndMark({ node, slice }: { node: FlowNode; slice: SliceState }) {
   );
 }
 
-function FutureEnd({ node }: { node: FlowNode }) {
+export function FutureEnd({ node }: { node: FlowNode }) {
+  // Unbuilt at full contrast: dashed outline in ink-soft, ground fill, label in ink-subtle (spec c.3.1).
   return (
-    <g transform={`translate(${node.x} ${node.y})`} aria-hidden="true" style={{ opacity: UNBUILT }}>
-      <circle r={9} style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 1, strokeDasharray: "3 2.5" }} />
+    <g transform={`translate(${node.x} ${node.y})`} aria-hidden="true">
+      <circle r={9} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 1, strokeDasharray: "3 2.5" }} />
       <circle r={5.5} style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 1, strokeDasharray: "3 2.5" }} />
-      <Label y={24} text="Integrated" opacity={0.9} />
+      <Label y={24} text="Integrated" tone="var(--mach-ink-subtle)" />
     </g>
   );
 }
@@ -288,12 +284,13 @@ const FUTURE_LABEL: Partial<Record<string, string>> = {
   cleanup: "Cleanup",
 };
 
-function FutureMark({ node, seats }: { node: FlowNode; seats: readonly number[] }) {
+/** A column the belt has not reached: the grammar's `planned` station, gate or seats, at full contrast. */
+export function FutureMark({ node, seats }: { node: FlowNode; seats: readonly number[] }) {
   if (node.col === "review") {
     return (
-      <g aria-hidden="true" style={{ opacity: UNBUILT }}>
+      <g aria-hidden="true">
         {seats.map((dy, i) => (
-          <circle key={i} cx={node.x} cy={node.y + dy} r={7} style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 1, strokeDasharray: "3 2.5" }} />
+          <circle key={i} cx={node.x} cy={node.y + dy} r={7} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 1, strokeDasharray: "3 2.5" }} />
         ))}
       </g>
     );
@@ -301,32 +298,38 @@ function FutureMark({ node, seats }: { node: FlowNode; seats: readonly number[] 
   const station = FUTURE_LABEL[node.col];
   if (station) {
     return (
-      <g aria-hidden="true" style={{ opacity: UNBUILT }}>
-        <StationMachine variant="blueprint" kind={stationKind(node.col)} state="idle" at={{ x: node.x, y: node.y }} label={station} />
+      <g aria-hidden="true">
+        <StationMachine variant="blueprint" kind={stationKind(node.col)} state="idle" planned at={{ x: node.x, y: node.y }} label={station} />
       </g>
     );
   }
   const gate = node.col as GateState["gate"] | "consensus";
   const kind = gate === "consensus" ? "consensus" : grammarGate(gate as GateState["gate"]);
   return (
-    <g aria-hidden="true" style={{ opacity: UNBUILT }} transform={`translate(${node.x} ${node.y})`}>
-      <path d="M0 -14L14 0L0 14L-14 0Z" style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 1, strokeDasharray: "3 2.5" }} />
-      <StationSymbol kind={kind === "red-green" ? "red-green" : kind === "consensus" ? "review" : kind === "human" ? "human-approval" : kind === "revalidation" ? "merge" : kind === "verification" ? "verify" : "audit"} size={12} color={fc("ink-soft")} strokeWidth={1.2} />
-      <Label y={30} text={gate === "consensus" ? "Consensus" : SHORT_GATE[gate as GateState["gate"]]} opacity={0.9} />
+    <g aria-hidden="true">
+      <GateGlyph variant="blueprint" kind={kind} position="closed" planned at={{ x: node.x, y: node.y }} showLabel={false} />
+      <g transform={`translate(${node.x} ${node.y})`}>
+        <Label y={30} text={gate === "consensus" ? "Consensus" : SHORT_GATE[gate as GateState["gate"]]} tone="var(--mach-ink-subtle)" />
+      </g>
     </g>
   );
 }
 
-/** Progress of a visit's work where the record says how far it is: checks decided, votes cast. */
-function visitProgress(cell: CellState, node: FlowNode): number | undefined {
+/**
+ * What the record can measure about a visit in flight (principle 7: never a fraction of an unknown
+ * end): at verification, checks decided of checks declared; nothing elsewhere. Elapsed is shown instead.
+ */
+function visitFraction(cell: CellState, node: FlowNode): { done: number; of: number } | undefined {
   const v = node.visit;
-  if (!v || v.leftAt !== null) return undefined;
-  if (v.station === "verify") {
-    const ver = cell.verifications.find((x) => x.round === node.round);
-    if (!ver || !ver.checks.length) return 0;
-    return ver.checks.filter((c) => c.result !== "pending").length / ver.checks.length;
-  }
-  return undefined;
+  if (!v || v.leftAt !== null || v.station !== "verify") return undefined;
+  const ver = cell.verifications.find((x) => x.round === node.round);
+  if (!ver || !ver.checks.length) return undefined;
+  return { done: ver.checks.filter((c) => c.result !== "pending").length, of: ver.checks.length };
+}
+
+/** Elapsed time of work in flight, to the second (its own subscription: it ticks). */
+function useElapsed(since: number | null): number | undefined {
+  return useSceneStore((s) => (since === null ? undefined : Math.max(0, Math.floor((s.playhead - since) / 1000) * 1000)));
 }
 
 function headlineArtifacts(cell: CellState, node: FlowNode): ArtifactState[] {
@@ -342,6 +345,7 @@ function VisitMark({ node, cell, next }: { node: FlowNode; cell: CellState; next
   const v = node.visit!;
   const state: FactoryState = v.leftAt === null ? "active" : v.outcome === "failed" ? "failed" : "succeeded";
   const appear = useEventProgress(v.enteredAt, "stateChange");
+  const elapsed = useElapsed(v.leftAt === null ? v.enteredAt : null);
   const arts = headlineArtifacts(cell, node);
   const head = [...arts].sort((a, b) => HEADLINE_ORDER.indexOf(a.kind) - HEADLINE_ORDER.indexOf(b.kind))[0];
   const task = v.station === "build" && v.leftAt === null ? cell.tasks[cell.tasks.length - 1] : undefined;
@@ -353,7 +357,7 @@ function VisitMark({ node, cell, next }: { node: FlowNode; cell: CellState; next
     <>
       <Pick entity={ref.station(v.station, cell.ticketId)}>
         <g style={{ opacity: 0.35 + 0.65 * appear }}>
-          <StationMachine variant="blueprint" kind={stationKind(v.station)} state={state} progress={visitProgress(cell, node)} round={node.round > 1 ? node.round : undefined} at={{ x: node.x, y: node.y }} label={label} showLabel />
+          <StationMachine variant="blueprint" kind={stationKind(v.station)} state={state} elapsed={elapsed} fraction={visitFraction(cell, node)} settled={state === "succeeded"} round={node.round > 1 ? node.round : undefined} at={{ x: node.x, y: node.y }} label={label} showLabel />
         </g>
         {task ? (
           <text x={node.x} y={node.y + 41} textAnchor="middle" style={{ fill: fc("live"), fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }} className="tabular" aria-hidden="true">
@@ -534,6 +538,7 @@ function Seat({ index, node, cell, round, dy }: { index: number; node: FlowNode;
   const seat = round?.seats.find((s) => s.seat === SEAT_KEYS[index]) ?? null;
   const agent = seatAgent(cell, round, index);
   const arrive = useEventProgress(agent?.startedAt, "agentArrive");
+  const seatElapsed = useElapsed(agent && agent.finishedAt === null ? agent.startedAt : null);
   const findings = round?.findings.filter((f) => f.seat === SEAT_KEYS[index]) ?? [];
   const x = node.x;
   const y = node.y + dy;
@@ -548,7 +553,7 @@ function Seat({ index, node, cell, round, dy }: { index: number; node: FlowNode;
   return (
     <>
       <Pick entity={agent ? ref.agent(agent.id) : ref.gate(`${cell.ticketId}/review#${round?.round ?? 1}`)}>
-        <AgentMarker variant="blueprint" agentRole="reviewer" seat={grammarSeat(seat.seat)} tier={tierOf(seat.model)} state={state} arrive={agent ? arrive : 0.35} at={{ x, y }} showLabel={false} />
+        <AgentMarker variant="blueprint" agentRole="reviewer" seat={grammarSeat(seat.seat)} tier={tierOf(seat.model)} state={state} elapsed={seatElapsed} arrive={agent ? arrive : 0.35} at={{ x, y }} showLabel={false} />
         {/* The seat's findings as the grammar's flag, planted beside it: a blocker flag (with its rule) when
             the seat filed one, otherwise a note flag counting its notes. */}
         {flag ? <FindingsFlag variant="blueprint" at={{ x: x + 10, y: y - 5 }} severity={flag.severity} count={flag.count} rule={flag.rule} lod="near" /> : null}

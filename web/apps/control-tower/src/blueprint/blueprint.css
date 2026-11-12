@@ -115,22 +115,14 @@
   position: absolute;
   right: 16px;
   bottom: 56px;
-  width: 214px;
-  padding: 6px 9px 6px;
-  border: 1.25px solid var(--mach-factory-ink-soft);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 9px;
+  border: 1px solid var(--mach-factory-ink-soft);
   background: var(--mach-factory-plate-top);
   font-family: var(--mach-font-sans);
   pointer-events: none !important;
-}
-.bp-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.bp-title-name {
-  font-family: var(--mach-font-serif);
-  font-size: 13px;
-  color: var(--mach-ink);
 }
 .bp-title-stamp {
   padding: 1px 6px;
@@ -141,19 +133,11 @@
   font-size: 10px;
   font-weight: 700;
 }
-.bp-title-sub {
-  margin-top: 2px;
-  color: var(--mach-ink-muted);
-  font-size: 10px;
-}
 .bp-title-fact {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 0.75px solid var(--mach-factory-plate-edge);
+  display: inline-flex;
+  gap: 8px;
   color: var(--mach-ink-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .bp-title-fact .tabular {
   color: var(--mach-ink);
@@ -161,8 +145,8 @@
 }
 .bp-minimap {
   position: absolute;
-  right: 246px;
-  bottom: 16px;
+  right: 16px;
+  bottom: 92px;
   padding: 6px;
   border: 1px solid var(--mach-line);
   border-radius: var(--mach-radius-sm);
@@ -190,4 +174,7 @@
 .bp-minimap-lane:focus-visible {
   outline: 2px solid var(--mach-focus);
   outline-offset: 1px;
+}
+.bp-viewport[data-theater="1"] .bp-title {
+  bottom: 96px;
 }

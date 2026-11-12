@@ -7,7 +7,7 @@
  * rendered (their tree items mount when the camera or the keyboard comes near).
  */
 import { memo, useContext, type ReactNode } from "react";
-import { AgentHead, ArtifactCard, DimensionLine, fc, StateMark, StationSymbol, type FactoryState } from "@mach/ui";
+import { AgentHead, ArtifactCard, DimensionLine, fc, StateMark, StationSymbol, TimeRuler, type FactoryState } from "@mach/ui";
 import type { AgentState, CellState, ExecutionState, FindingState, GateState, StationVisit } from "../sim";
 import { useSceneStore } from "../scene";
 import { execAxis, xOn, type ExecAxis } from "./axis";
@@ -16,7 +16,7 @@ import type { Flow } from "./flow";
 import { Gutter } from "./gutter";
 import { SHEET, type Row } from "./layout";
 import { useEventProgress } from "./motion";
-import { clock, duration, rulerStep } from "./time";
+import { clock, duration } from "./time";
 import { ToolTrace } from "./ticks";
 import type { TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, useSelected, useTreeCtx } from "./treeitem";
@@ -168,65 +168,41 @@ const ExecItem = memo(function ExecItem({ row, pos, size, laneY, ax, width, flow
 });
 
 /**
- * The execution's ruler, drawn once: a baseline across every segment; in each visit's segment, ticks
- * at a step chosen for its width with run-time labels (mm:ss, as the timeline writes them) and the
- * station's name; in each pause, a break mark.
+ * The execution's ruler, drawn once: for each visit's segment the grammar's `TimeRuler` (factory time,
+ * majors at least 72 px apart, the playhead while it is inside), labelled with the station; for each
+ * pause between visits, a break mark.
  */
 const ExecRuler = memo(function ExecRuler({ axis, y }: { axis: ExecAxis; y: number }) {
-  const base = y + 16;
-  let ticks = "";
+  const base = y + 12;
   let breaks = "";
-  const labels: ReactNode[] = [];
   for (const s of axis.segments) {
-    if (s.kind === "gap") {
-      const cx = s.x0 + s.w / 2;
-      breaks += `M${cx - 3.5} ${base + 3}l3 -6M${cx + 0.5} ${base + 3}l3 -6`;
-      continue;
-    }
-    const span = s.end - s.start;
-    const step = rulerStep(span, Math.max(1, Math.floor(s.w / 70)));
-    const minor = step / 5;
-    for (let t = Math.ceil(s.start / minor) * minor; t <= s.end; t += minor) {
-      const x = Math.round((s.x0 + ((t - s.start) / span) * s.w) * 2) / 2;
-      const major = Math.abs(t / step - Math.round(t / step)) < 1e-6;
-      ticks += major ? `M${x} ${base}v-4` : `M${x} ${base}v-1.8`;
-      if (major && s.w > 34) {
-        labels.push(
-          <text key={`${s.start}-${t}`} x={x} y={base + 9} textAnchor="middle" className="bp-fine tabular" style={{ fill: "var(--mach-ink-subtle)", fontFamily: "var(--mach-font-mono)", fontSize: 7.5 }}>
-            {clock(t)}
-          </text>,
-        );
-      }
-    }
-    labels.push(
-      <text key={`h${s.start}`} x={s.x0 + 2} y={base - 6} className="bp-fine" style={{ fill: s.open ? fc("live") : "var(--mach-ink-muted)", fontSize: 8.5, fontWeight: 600 }}>
-        {s.w > 44 ? `${STATION_WORDS[s.station ?? ""] ?? s.station}${s.round && s.round > 1 ? ` · r${s.round}` : ""}` : ""}
-      </text>,
-    );
+    if (s.kind !== "gap") continue;
+    const cx = s.x0 + s.w / 2;
+    breaks += `M${cx - 3.5} ${base + 3}l3 -6M${cx + 0.5} ${base + 3}l3 -6`;
   }
   return (
-    <g aria-hidden="true">
+    <g aria-hidden="true" className="bp-fine">
       {axis.segments.map((s, i) =>
-        s.kind === "visit" ? <line key={i} x1={s.x0 + 1} y1={base} x2={s.x0 + s.w - 1} y2={base} style={{ stroke: fc("plate-edge"), strokeWidth: 0.8, strokeDasharray: s.open ? "2 2" : undefined }} /> : null,
+        s.kind === "visit" ? (
+          <g key={i}>
+            <SegmentRuler x={s.x0 + 1} y={base} width={Math.max(1, s.w - 2)} from={s.start} to={s.end} />
+            {s.w > 44 ? (
+              <text x={s.x0 + 2} y={base - 4} style={{ fill: s.open ? fc("live") : "var(--mach-ink-muted)", fontSize: 8.5, fontWeight: 600 }}>
+                {`${STATION_WORDS[s.station ?? ""] ?? s.station}${s.round && s.round > 1 ? ` · r${s.round}` : ""}`}
+              </text>
+            ) : null}
+          </g>
+        ) : null,
       )}
-      <path d={ticks} style={{ stroke: fc("plate-edge"), strokeWidth: 0.7 }} />
       <path d={breaks} style={{ stroke: fc("ink-soft"), strokeWidth: 0.9 }} />
-      {labels}
-      <AxisPlayhead axis={axis} y1={y + 2} y2={base + 1} />
     </g>
   );
 });
 
-/** The playhead on an execution's axis: same ink as the timeline's playhead, only while it is on it. */
-function AxisPlayhead({ axis, y1, y2 }: { axis: ExecAxis; y1: number; y2: number }) {
-  const x = useSceneStore((s) => (s.playhead < axis.start || s.playhead > axis.end ? null : Math.round(xOn(axis, s.playhead) * 2) / 2));
-  if (x === null) return null;
-  return (
-    <g aria-hidden="true">
-      <line x1={x} y1={y1} x2={x} y2={y2} style={{ stroke: "var(--mach-ink)", strokeWidth: 1 }} />
-      <path d={`M${x - 3} ${y1 - 3}h6l-3 3.5z`} style={{ fill: "var(--mach-ink)" }} />
-    </g>
-  );
+/** One visit's stretch of the ruler; the playhead is drawn on it only while the playhead is inside. */
+function SegmentRuler({ x, y, width, from, to }: { x: number; y: number; width: number; from: number; to: number }) {
+  const playhead = useSceneStore((s) => (s.playhead >= from && s.playhead <= to ? Math.floor(s.playhead / 1000) * 1000 : undefined));
+  return <TimeRuler x={x} y={y} width={width} from={from} to={to} playhead={playhead} side="bottom" />;
 }
 
 /** A span that is still open, drawn to the playhead (its own component: it moves). */

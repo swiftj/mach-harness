@@ -78,8 +78,12 @@ export function ZoneRulers({ layout }: { layout: Layout }) {
   );
 }
 
-/** The title block, pinned to the stage's lower left when the sheet's own one is not fully on screen. */
-export function PinnedTitle({ layout, title, wave }: { layout: Layout; title: string; wave: string }) {
+/**
+ * The title block's live fact, pinned to the stage when the sheet's own block is off screen. It shows
+ * only what the Shell's header does not: the playhead, and the simulation label while in Theater (where
+ * the header is hidden).
+ */
+export function PinnedTitle({ layout, theater }: { layout: Layout; theater: boolean }) {
   const cam = useCamera();
   const store = useContext(CameraContext);
   const view = store?.size() ?? { w: 0, h: 0 };
@@ -92,16 +96,11 @@ export function PinnedTitle({ layout, title, wave }: { layout: Layout; title: st
   if (visible) return null;
   return (
     <div className="bp-title" aria-hidden="true">
-      <div className="bp-title-row">
-        <span className="bp-title-name">Execution Blueprint</span>
-        <span className="bp-title-stamp">Simulation</span>
-      </div>
-      <div className="bp-title-fact">
-        <span>
-          {wave} · {title.length > 22 ? `${title.slice(0, 21)}…` : title}
-        </span>
+      {theater ? <span className="bp-title-stamp">Simulation</span> : null}
+      <span className="bp-title-fact">
+        <span>Playhead</span>
         <span className="tabular">{clockTenths(t)}</span>
-      </div>
+      </span>
     </div>
   );
 }

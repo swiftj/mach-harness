@@ -19,6 +19,7 @@ import { clock } from "./time";
 import type { TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, useSelected, useTreeCtx } from "./treeitem";
 import { Gutter } from "./gutter";
+import { LaneDimContext } from "./context";
 import { artifactFile, gateState, grammarArtifact, stageState, stageWords } from "./vocab";
 
 /** Whether a lane is outside the highlighted dependency chain (only slice-level subjects dim the sheet). */
@@ -112,17 +113,17 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   // Overview lettering: the title and the lane's story set large, for the establishing view.
   // The lane's header area: down to its first execution row (the rows' own gutters lie below).
   const headH = (lane.rows[0]?.y ?? lane.y + h) - lane.y;
-  const overSize = Math.max(22, Math.min(42, headH / 6.5));
-  const overLines = wrap(slice.title, Math.floor((SHEET.gutter - 66) / (overSize * 0.46))).slice(0, headH > 200 ? 4 : 2);
+  const overSize = Math.max(30, Math.min(44, headH / 6));
+  const overLines = wrap(slice.title, Math.floor((SHEET.gutter - 66) / (overSize * 0.46))).slice(0, headH > 200 ? 4 : 3);
   const story = storyOf(lane);
   const group = (
-    <>
+    <LaneDimContext.Provider value={dimmed}>
       {lane.expanded ? deps.map((d) => <DependencyItem key={d.id} node={d} pos={at(d)} size={kids} />) : null}
       {lane.expanded && cell && flow ? scriptArtifacts.map((a, i) => <ScriptArtifact key={a.id} node={a} pos={at(a)} size={kids} x={ax + flow.start.x - 30 + i * 17} y={row0 - 34} />) : null}
       {lane.expanded && cell && flow
         ? execRows.map((r) => <ExecutionRows key={r.id} exec={r} pos={at(r.node)} size={kids} rows={rows} laneY={lane.y} ax={ax} aw={aw} width={width} flow={flow} cell={cell} />)
         : null}
-    </>
+    </LaneDimContext.Provider>
   );
   return (
     <g style={{ transform: `translate(0px, ${lane.y}px)`, transition: animate ? "transform 400ms cubic-bezier(0.2, 0, 0, 1)" : "none", opacity: dimmed ? 0.28 : 1 }}>
@@ -148,7 +149,7 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
         <g transform={`translate(${gx + 20} 18)`}>
           <circle r={10} style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 1 }} />
           <line x1={-10} y1={0} x2={10} y2={0} style={{ stroke: fc("ink-soft"), strokeWidth: 0.6 }} />
-          <text y={-1.5} textAnchor="middle" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 8.5, fontWeight: 600 }}>
+          <text y={-1.5} textAnchor="middle" className="bp-fine" style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-serif)", fontSize: 8.5, fontWeight: 600 }}>
             {pos}
           </text>
           <g transform="translate(0 5.5)">
@@ -192,18 +193,18 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
             </text>
           ))}
           {(() => {
-            // Story lines: sized to the gutter's width, and set only where they fit above the lane's end.
-            const width = SHEET.gutter - 70;
-            const longest = Math.max(1, ...story.map((l) => l.length));
-            const size = Math.min(overSize * 0.68, width / (longest * 0.55));
-            const first = overSize + 4 + (overLines.length - 1) * overSize * 1.12 + size * 1.5;
-            return story.map((line, i) => {
-              const at = first + i * size * 1.25;
+            // Story lines: at least 29 sheet px (11 px on screen at fit), wrapped to the gutter's width,
+            // and set only where they fit above the lane's first execution row.
+            const size = Math.max(29, overSize * 0.68);
+            const lines = story.flatMap((line, k) => wrap(line, Math.floor((SHEET.gutter - 66) / (size * 0.47))).map((l) => ({ l, k })));
+            const first = overSize + 4 + (overLines.length - 1) * overSize * 1.12 + size * 1.4;
+            return lines.map(({ l, k }, i) => {
+              const at = first + i * size * 1.18;
               if (at + 4 > headH) return null;
-              const tone = /failed|Rejected|outvoted/.test(line) ? fc("fail") : /person|Approved/.test(line) ? fc("human") : i === 0 ? "var(--mach-ink-muted)" : fc("wait");
+              const tone = /failed|Rejected|outvoted/.test(story[k] ?? "") ? fc("fail") : /person|Approved/.test(story[k] ?? "") ? fc("human") : k === 0 ? "var(--mach-ink-muted)" : fc("wait");
               return (
                 <text key={i} x={tx} y={at} style={{ fill: tone, fontSize: size, fontWeight: 600 }}>
-                  {line}
+                  {l}
                 </text>
               );
             });
@@ -239,9 +240,9 @@ const Strip = memo(function Strip({ nodes, ax, y }: { nodes: readonly FlowNode[]
         const st: FactoryState | null = n.kind === "future" ? null : n.kind === "start" ? "succeeded" : n.gate ? gateState(n.gate) : n.visit ? (n.visit.leftAt === null ? (n.visit.station === "human-approval" ? "human" : "active") : n.visit.outcome === "failed" ? "failed" : "succeeded") : n.kind === "end" && !n.key.startsWith("f:") ? "succeeded" : null;
         return (
           <g key={n.col} transform={`translate(${ax + n.x} ${y})`}>
-            {st ? <StateMark state={st} r={4.2} progress={0} mark={n.kind === "end" ? "double-ring" : undefined} /> : <circle r={3.6} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 0.9, strokeDasharray: "2 1.8", opacity: 0.7 }} />}
+            {st ? <StateMark state={st} r={4.2} progress={0} mark={n.kind === "end" ? "double-ring" : undefined} /> : <circle r={3.6} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 0.9, strokeDasharray: "2 1.8" }} />}
             {n.round > 1 && n.kind !== "future" ? (
-              <text x={-6} y={-6} textAnchor="end" style={{ fill: fc("fail"), fontSize: 8, fontWeight: 700 }}>
+              <text x={-6} y={-6} textAnchor="end" className="bp-fine" style={{ fill: fc("fail"), fontSize: 8, fontWeight: 700 }}>
                 ×{n.round}
               </text>
             ) : null}
@@ -258,14 +259,14 @@ const WaitingStrip = memo(function WaitingStrip({ template, ax, y, reason }: { t
   const x0 = ax + (template.x.start ?? 0);
   return (
     <g aria-hidden="true">
-      <line x1={x0} y1={y} x2={ax + (template.x.end ?? 0)} y2={y} style={{ stroke: fc("route"), strokeWidth: 0.75, strokeDasharray: "3 3", opacity: 0.5 }} />
+      <line x1={x0} y1={y} x2={ax + (template.x.end ?? 0)} y2={y} style={{ stroke: fc("route"), strokeWidth: 0.75, strokeDasharray: "3 3" }} />
       {cols.map((c) =>
-        c === "start" ? null : <circle key={c} cx={ax + (template.x[c] ?? 0)} cy={y} r={3.6} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 0.9, strokeDasharray: "2 1.8", opacity: 0.55 }} />,
+        c === "start" ? null : <circle key={c} cx={ax + (template.x[c] ?? 0)} cy={y} r={3.6} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 0.9, strokeDasharray: "2 1.8" }} />,
       )}
       <g transform={`translate(${x0} ${y})`}>
         <StateMark state="waiting" r={6} />
       </g>
-      <text x={x0 + 14} y={y - 8} style={{ fill: fc("wait"), fontSize: 9.5 }}>
+      <text x={x0 + 14} y={y - 8} className="bp-fine" style={{ fill: fc("wait"), fontSize: 9.5 }}>
         {clip(reason, 90)}
       </text>
     </g>
@@ -327,7 +328,7 @@ export const DependencyLayer = memo(function DependencyLayer({ scene, lanes, ax,
   const anchorY = (l: Lane): number => l.row0;
   return (
     <g>
-      <text x={x0 - 6} y={(lanes[0]?.y ?? 0) - 20} style={{ fill: "var(--mach-ink-subtle)", fontSize: 9, fontWeight: 600, letterSpacing: "0.08em" }} aria-hidden="true">
+      <text x={x0 - 6} y={(lanes[0]?.y ?? 0) - 20} className="bp-fine" style={{ fill: "var(--mach-ink-subtle)", fontSize: 9, fontWeight: 600, letterSpacing: "0.08em" }} aria-hidden="true">
         DEPENDENCIES
       </text>
       {deps.map((dep, i) => {
@@ -354,10 +355,16 @@ function Dependency({ id, stubFrom, x, fromY, toY, labelX, satisfiedAt, state, f
       {/* The grammar's channel form: out of the prerequisite's integrated mark, down its own track in the
           channel, and into the dependent lane, with the padlock at the channel's middle. */}
       <DependencyLink variant="blueprint" from={{ x: stubFrom, y: fromY }} to={{ x: x + 14, y: toY }} channelX={x} state={state} progress={state === "satisfied" ? p : 0} highlighted={highlighted} dimmed={dimmed} />
-      <text x={labelX} y={midY - 1} style={{ fill: ink, fontSize: 9.5, fontWeight: 600, opacity: dimmed ? 0.3 : 1 }} className="tabular">
+      <text x={labelX} y={midY - 1} className="bp-fine tabular" style={{ fill: ink, fontSize: 9.5, fontWeight: 600, opacity: dimmed ? 0.3 : 1 }}>
         {toSlice.replace("SLICE-", "")} waits for {fromSlice.replace("SLICE-", "")}
         <tspan x={labelX} dy={12} style={{ fontWeight: 400, fontFamily: "var(--mach-font-mono)", fontSize: 9 }}>
           {state === "satisfied" && satisfiedAt !== null ? `unlocked ${clock(satisfiedAt)}` : "blocking"}
+        </tspan>
+      </text>
+      <text x={labelX - 4} y={midY + 8} className="bp-over" style={{ fill: ink, fontSize: 30, fontWeight: 700, opacity: dimmed ? 0.3 : 1 }}>
+        {toSlice.replace("SLICE-", "")} ← {fromSlice.replace("SLICE-", "")}
+        <tspan x={labelX - 4} dy={34} style={{ fontWeight: 600 }}>
+          {state === "satisfied" ? "unlocked" : "blocking"}
         </tspan>
       </text>
     </g>

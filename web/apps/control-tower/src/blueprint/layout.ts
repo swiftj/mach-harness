@@ -14,12 +14,12 @@ export const SHEET = {
   left: 40,
   top: 40,
   /** The gutter: titles, IDs and state marks. The drawing starts after it. */
-  gutter: 340,
+  gutter: 400,
   /** The dependency channel at the right edge of the drawing. */
   channel: 170,
   right: 24,
-  /** Space kept below the content for the title block. */
-  titleBlock: 150,
+  /** Space kept below the content for the title-block strip (BlueprintSheet titleBlock="strip", 4 facts). */
+  titleBlock: 152,
   waveHeader: 64,
   cellCollapsed: 80,
   sliceWaiting: 78,
@@ -30,7 +30,7 @@ export const SHEET = {
   gateRow: 24,
   agentRow: 28,
   agentExpanded: 78,
-  dimBand: 21,
+  dimBand: 19,
 } as const;
 
 export interface Rect {
@@ -149,7 +149,7 @@ export function computeLayout(scene: Scene, tree: Tree, expanded: ReadonlySet<st
         y += h;
         continue;
       }
-      const row0 = laneY + 92;
+      const row0 = laneY + 88;
       const { rowsBottom, dimRows } = flowHeight(flow);
       const dimsY = row0 + rowsBottom + 6;
       let cy = Math.max(laneY + 128, dimsY + dimRows * SHEET.dimBand + 2);
@@ -209,4 +209,13 @@ function placeExecution(node: TreeNode, y: number, expanded: ReadonlySet<string>
     }
   }
   return y + 4;
+}
+
+/** The sheet's proportion: cut landscape to the stage (16:10 to 16:9, with the inspector open about 1.85). */
+export const SHEET_ASPECT = 1.8;
+
+/** The drawing width that makes a sheet of this height landscape at SHEET_ASPECT. */
+export function drawingWidthFor(height: number, min: number): number {
+  const chrome = SHEET.left * 2 + SHEET.gutter + SHEET.channel + SHEET.right;
+  return Math.max(min, Math.round(height * SHEET_ASPECT - chrome));
 }

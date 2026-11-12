@@ -101,3 +101,6 @@ export function nearestHit(hits: TickHits, x: number, tolerance: number): number
 
 /** The level of detail, as React state (it changes only when the camera crosses a threshold). */
 export const LodContext = createContext<"overview" | "detail" | "near">("detail");
+
+/** Whether the lane a row belongs to is dimmed by a dependency highlight (row gutters dim with it). */
+export const LaneDimContext = createContext(false);

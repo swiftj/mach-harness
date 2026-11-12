@@ -11,7 +11,7 @@
 import type { CellState, GateState, SliceState, StationVisit } from "../sim";
 import { COLUMN_ORDER, columnOfGate, columnOfStation, type ColumnKey, type ColumnTemplate } from "./columns";
 
-export const ROW = 88;
+export const ROW = 80;
 
 export type FlowNodeKind = "start" | "visit" | "seats" | "gate" | "end" | "future";
 
