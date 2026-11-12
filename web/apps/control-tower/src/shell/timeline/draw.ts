@@ -3,7 +3,7 @@
  * cost a few draw calls, not DOM nodes. Colours come from the design tokens (CSS variables read at
  * draw time), so both themes work and nothing is hard-coded.
  */
-import type { EntityRef } from "../../sim";
+import type { AnyRef, EntityRef } from "../../sim";
 import { STATION_WORDS, outcomeState } from "../vocab";
 import type { AgentItem, Track, TimelineModel } from "./model";
 
@@ -194,6 +194,8 @@ export interface DrawInput {
   focusedTrack: string | null;
   /** Chapter start times: faint guides through every track. */
   chapters: readonly number[];
+  /** The live edge: a visit that has not ended by then is drawn as work in progress, with no outcome. */
+  liveAt: number;
 }
 
 /** Draw every track. The live edge is a DOM mask laid over this, so the canvas is redrawn only when its inputs change. */
@@ -218,10 +220,10 @@ export function drawTracks(input: DrawInput): void {
 
   const boxes: { selected: Box | null; hovered: Box | null } = { selected: null, hovered: null };
   const union = (a: Box | null, b: Box): Box => (a ? [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])] : b);
-  const note = (r: EntityRef | null, box: Box) => {
+  const note = (r: AnyRef | null, box: Box) => {
     if (!r) return;
-    if (r === selection) boxes.selected = union(boxes.selected, box);
-    if (r === hovered) boxes.hovered = union(boxes.hovered, box);
+    if (r === (selection as string | null)) boxes.selected = union(boxes.selected, box);
+    if (r === (hovered as string | null)) boxes.hovered = union(boxes.hovered, box);
   };
 
   for (const row of rows) {
@@ -302,7 +304,8 @@ export function drawTracks(input: DrawInput): void {
       const x0 = xOf(view, s.start);
       const x1 = Math.max(x0 + 2, span(s.end));
       if (x1 < 0 || x0 > W) continue;
-      const c = stateColors(p, s.outcome);
+      const ended = s.end !== null && s.end <= input.liveAt;
+      const c = stateColors(p, ended ? s.outcome : null);
       ctx.fillStyle = c.soft;
       ctx.fillRect(x0, cy - 4, x1 - x0, 8);
       ctx.strokeStyle = c.ink;
@@ -310,7 +313,7 @@ export function drawTracks(input: DrawInput): void {
       ctx.strokeRect(x0 + 0.5, cy - 3.5, x1 - x0 - 1, 7);
       ctx.fillStyle = c.ink;
       ctx.fillRect(x0, cy - 5.5, 2, 11);
-      if (s.end !== null) ctx.fillRect(x1 - 2, cy - 5.5, 2, 11);
+      if (ended) ctx.fillRect(x1 - 2, cy - 5.5, 2, 11);
       const word = STATION_WORDS[s.station];
       const label = s.round > 1 ? `${word} ×${s.round}` : word;
       const w = ctx.measureText(label).width;
@@ -398,7 +401,7 @@ export function drawTracks(input: DrawInput): void {
 }
 
 type Box = [number, number, number, number];
-type Note = (r: EntityRef | null, box: Box) => void;
+type Note = (r: AnyRef | null, box: Box) => void;
 
 function drawFactory(ctx: CanvasRenderingContext2D, track: Track, y: number, view: View, p: Palette, note: Note) {
   const cy = y + 13;
@@ -489,7 +492,7 @@ function drawAgents(ctx: CanvasRenderingContext2D, track: Track, top: number, vi
 }
 
 export interface Hit {
-  ref: EntityRef | null;
+  ref: AnyRef | null;
   trackId: string;
   title: string;
   detail: string;
@@ -498,7 +501,9 @@ export interface Hit {
 }
 
 /** What is under the pointer: the most specific thing at (x, y), else the track. */
-export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, end: number): Hit | null {
+export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, end: number, liveAt = end): Hit | null {
+  // Nothing after the live edge is known: a span still open there reads as open, with no outcome.
+  const known = (e: number | null) => (e !== null && e <= liveAt ? e : null);
   const row = rows.find((r) => y >= r.y && y < r.y + r.height);
   if (!row) return null;
   const { track } = row;
@@ -519,8 +524,9 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
     for (const a of agents) {
       if (t < a.start - 4 * slack || t > (a.end ?? end) + slack) continue;
       const tool = a.tools.find((c) => t >= c.start - 2 * slack && t <= (c.end ?? end) + 2 * slack);
-      if (tool) return { ref: tool.ref, trackId: track.id, title: `${tool.tool} ${tool.target}`, detail: `${a.agent.label}`, start: tool.start, end: tool.end };
-      return { ref: a.ref, trackId: track.id, title: a.agent.label, detail: `${a.tools.length} tool call${a.tools.length === 1 ? "" : "s"}, ${a.agent.model}`, start: a.start, end: a.end };
+      if (tool) return { ref: tool.ref, trackId: track.id, title: `${tool.tool} ${tool.target}`, detail: `${a.agent.label}`, start: tool.start, end: known(tool.end) };
+      const calls = a.tools.filter((c) => c.start <= liveAt).length;
+      return { ref: a.ref, trackId: track.id, title: a.agent.label, detail: `${calls} tool call${calls === 1 ? "" : "s"}, ${a.agent.model}`, start: a.start, end: known(a.end) };
     }
     return null;
   }
@@ -533,11 +539,12 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
   }
   for (const s of track.stations) {
     if (t >= s.start - slack && t <= (s.end ?? end) + slack) {
-      return { ref: s.ref, trackId: track.id, title: `${STATION_WORDS[s.station]}, round ${s.round}`, detail: s.outcome ? `Ended: ${s.outcome}` : "In progress", start: s.start, end: s.end };
+      const ended = known(s.end);
+      return { ref: s.ref, trackId: track.id, title: `${STATION_WORDS[s.station]}, round ${s.round}`, detail: ended !== null && s.outcome ? `Ended: ${s.outcome}` : "At work", start: s.start, end: ended };
     }
   }
   for (const w of track.waits) {
-    if (t >= w.start && t <= (w.end ?? end)) return { ref: w.ref, trackId: track.id, title: w.kind === "dependency" ? "Waiting on a dependency" : "Eligible, not yet dispatched", detail: track.sliceId ?? "", start: w.start, end: w.end };
+    if (t >= w.start && t <= (w.end ?? end)) return { ref: w.ref, trackId: track.id, title: w.kind === "dependency" ? "Waiting on a dependency" : "Eligible, not yet dispatched", detail: track.sliceId ?? "", start: w.start, end: known(w.end) };
   }
   return { ref: track.ref, trackId: track.id, title: track.ticketId ?? track.title, detail: track.title, start: t, end: t };
 }

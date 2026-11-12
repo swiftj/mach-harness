@@ -3,11 +3,12 @@
  * list (the fixture events behind an entity, each with its telemetry class).
  */
 import { CornerDownRight } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@mach/ui";
-import { describe, EVENT_CATALOG, eventsFor, SCENARIO, type AnySimEvent, type EntityRef, type Telemetry } from "../../sim";
+import { describe, EVENT_CATALOG, eventsFor, SCENARIO, timingAt, type AnyRef, type AnySimEvent, type Telemetry } from "../../sim";
 import { useSceneStore, useStore } from "../../scene";
-import { TELEMETRY_WORDS, timecode } from "../vocab";
+import { usePlayheadEffect } from "../timeline/playhead";
+import { duration as durationWords, selectable, TELEMETRY_WORDS, timecode } from "../vocab";
 
 export function Section({ title, children, aside, id }: { title: string; children: ReactNode; aside?: ReactNode; id?: string }) {
   return (
@@ -44,12 +45,23 @@ export function Mono({ children, muted }: { children: ReactNode; muted?: boolean
 }
 
 /** A related entity: a link that selects it (and asks the view to focus it). */
-export function RefLink({ to, glyph, children, detail }: { to: EntityRef; glyph?: ReactNode; children: ReactNode; detail?: ReactNode }) {
+export function RefLink({ to, glyph, children, detail }: { to: AnyRef; glyph?: ReactNode; children: ReactNode; detail?: ReactNode }) {
   const { select } = useStore();
+  const target = selectable(to);
+  if (!target) {
+    // Not yet a selection the store can hold (an actor, before "actor" is an entity kind): plain text.
+    return (
+      <span className="flex w-full min-w-0 items-center gap-2 px-1.5 py-1 text-body-sm">
+        {glyph ? <span className="inline-flex shrink-0">{glyph}</span> : null}
+        <span className="min-w-0 flex-1 truncate text-ink">{children}</span>
+        {detail ? <span className="shrink-0 text-caption text-ink-subtle">{detail}</span> : null}
+      </span>
+    );
+  }
   return (
     <button
       type="button"
-      onClick={() => select(to)}
+      onClick={() => select(target)}
       className="group flex w-full min-w-0 items-center gap-2 rounded-sm px-1.5 py-1 text-left text-body-sm hover:bg-surface-sunken"
     >
       {glyph ? <span className="inline-flex shrink-0">{glyph}</span> : null}
@@ -166,14 +178,14 @@ function upperBoundByT(events: readonly AnySimEvent[], t: number): number {
  * the only thing subscribed to, so this changes when the entity's own next event happens, not on
  * every tick.
  */
-export function useEntityEvents(entity: EntityRef): { all: readonly AnySimEvent[]; happened: number } {
+export function useEntityEvents(entity: AnyRef): { all: readonly AnySimEvent[]; happened: number } {
   const all = useMemo(() => eventsFor(SCENARIO, entity), [entity]);
   const happened = useSceneStore((s) => upperBoundByT(all, s.playhead));
   return { all, happened };
 }
 
 /** "Why it looks like this" and the evidence: every event behind the entity up to the playhead. */
-export function Evidence({ entity }: { entity: EntityRef }) {
+export function Evidence({ entity }: { entity: AnyRef }) {
   const { all, happened } = useEntityEvents(entity);
   const [showAll, setShowAll] = useState(false);
   const past = all.slice(0, happened);
@@ -226,4 +238,22 @@ export function Evidence({ entity }: { entity: EntityRef }) {
       )}
     </Section>
   );
+}
+
+/**
+ * Elapsed time of work, as known at the playhead: "for 2 min 10 s" while it runs, the whole span once
+ * it has finished. Never a fraction or a time left (nobody knows how long work in flight will take).
+ * Written straight to the DOM on each frame, so it never re-renders the inspector.
+ */
+export function Elapsed({ startedAt, finishedAt }: { startedAt: number; finishedAt: number | null }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  usePlayheadEffect(
+    (s) => {
+      const timing = timingAt(startedAt, finishedAt, s.playhead);
+      const text = !timing.started ? "not started" : timing.finished ? `took ${durationWords(timing.elapsed)}` : `at work for ${durationWords(timing.elapsed)}`;
+      if (ref.current && ref.current.textContent !== text) ref.current.textContent = text;
+    },
+    [startedAt, finishedAt],
+  );
+  return <span ref={ref} data-frame="" className="tabular" />;
 }

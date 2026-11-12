@@ -5,8 +5,8 @@
 import { useMemo } from "react";
 import { chapterAt, moments, ref, SCENARIO, type CellStage, type Moment } from "../../sim";
 import { useScene, useSceneStore } from "../../scene";
-import { CellGlyph, SliceGlyph } from "../glyphs";
-import { schedulerLook, stageLook, timecode } from "../vocab";
+import { ActorGlyph, CellGlyph, SliceGlyph } from "../glyphs";
+import { ACTOR_WORDS, schedulerLook, stageLook, timecode } from "../vocab";
 import { Facts, JumpButton, RefLink, RefList, Section } from "./parts";
 
 const MAJOR = moments(SCENARIO, "major");
@@ -94,6 +94,7 @@ export function RunNow() {
           </RefList>
         </Section>
       ) : null}
+      <Actors />
       <RunCounts />
     </div>
   );
@@ -133,5 +134,24 @@ function CellRow({ ticketId, stage, working }: { ticketId: string; stage: CellSt
     <RefLink to={ref.cell(ticketId)} glyph={<CellGlyph size={20} state={look.state} />} detail={working ? `${look.label}, ${working} working` : look.label}>
       <span className="font-mono text-[12px]">{ticketId}</span> <span className="text-ink-muted">{title}</span>
     </RefLink>
+  );
+}
+
+/** The two actors that are not agents: the line supervisor and the scheduler, with their last act. */
+function Actors() {
+  const actors = useScene((s) => s.actors);
+  return (
+    <Section title="Actors">
+      <RefList>
+        {(["supervisor", "scheduler"] as const).map((id) => {
+          const a = actors[id];
+          return (
+            <RefLink key={id} to={ref.actor(id)} glyph={<ActorGlyph actor={id} size={20} />} detail={a.lastActedAt !== null ? `${a.acts} acts, last ${timecode(a.lastActedAt, false)}` : "not yet"}>
+              {ACTOR_WORDS[id].role} {a.lastKind ? <span className="font-mono text-[12px] text-ink-muted">{a.lastKind}</span> : null}
+            </RefLink>
+          );
+        })}
+      </RefList>
+    </Section>
   );
 }

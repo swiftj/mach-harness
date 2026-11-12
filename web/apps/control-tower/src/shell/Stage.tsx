@@ -6,11 +6,15 @@
  * (0–300 ms the outgoing view loses height, 300–700 ms the incoming one fades in).
  *
  * Only the active view is mounted; during the 700 ms both exist, then the outgoing one unmounts, so
- * an inactive view costs nothing. Under reduced motion the switch is a cut.
+ * an inactive view costs nothing. Under reduced motion the switch is the spec's 160 ms cross-fade
+ * (f.12, c.6): opacity only, no travel.
+ *
+ * The Atlas's optional WebGL light layer (src/effects) is passed in only when the person switches it
+ * on in the help sheet; its code is a separate chunk, loaded the first time it is switched on.
  */
 import { AnimatePresence, motion, type Variants } from "motion/react";
-import { memo } from "react";
-import { AtlasView } from "../atlas";
+import { lazy, memo, Suspense } from "react";
+import { AtlasView, type AtlasEffects } from "../atlas";
 import { BlueprintView } from "../blueprint";
 import { useSceneStore, type ViewMode } from "../scene";
 
@@ -35,34 +39,41 @@ const variants: Variants = {
       : { opacity: 0, transition: { duration: 0.3, ease: STANDARD } },
 };
 
-const View = memo(function View({ mode }: { mode: ViewMode }) {
-  return mode === "atlas" ? <AtlasView /> : <BlueprintView />;
+const fade: Variants = {
+  enter: { opacity: 0 },
+  shown: { opacity: 1, transition: { duration: 0.16, ease: "linear" } },
+  leave: { opacity: 0, transition: { duration: 0.16, ease: "linear" } },
+};
+
+const LazyLight = lazy(() => import("../effects").then((m) => ({ default: m.PixiEffects })));
+/** The light layer behind a Suspense boundary, so the Atlas draws at once while the chunk loads. */
+const LightLayer: AtlasEffects = (props) => (
+  <Suspense fallback={null}>
+    <LazyLight {...props} />
+  </Suspense>
+);
+
+const View = memo(function View({ mode, light }: { mode: ViewMode; light: boolean }) {
+  return mode === "atlas" ? <AtlasView effects={light ? LightLayer : undefined} /> : <BlueprintView />;
 });
 
-export function Stage() {
+export function Stage({ light = false }: { light?: boolean }) {
   const view = useSceneStore((s) => s.view);
   const reduced = useSceneStore((s) => s.reducedMotion);
-  if (reduced) {
-    return (
-      <div className="absolute inset-0" data-stage-view={view}>
-        <View key={view} mode={view} />
-      </div>
-    );
-  }
   return (
     <div className="absolute inset-0 [perspective:1600px]">
       <AnimatePresence initial={false}>
         <motion.div
           key={view}
           custom={view}
-          variants={variants}
+          variants={reduced ? fade : variants}
           initial="enter"
           animate="shown"
           exit="leave"
           data-stage-view={view}
           className="absolute inset-0 origin-[50%_85%]"
         >
-          <View mode={view} />
+          <View mode={view} light={light} />
         </motion.div>
       </AnimatePresence>
     </div>

@@ -2,7 +2,9 @@
  * The keyboard help (`?`): every shortcut, rendered from the same table the handler uses, plus the
  * legend of the timeline's marks.
  */
-import { Dialog, DialogContent, Kbd } from "@mach/ui";
+import { useId } from "react";
+import { cn, Dialog, DialogContent, Kbd } from "@mach/ui";
+import { useSceneStore } from "../scene";
 import { KEYMAP, type KeyBinding } from "./keyboard";
 import { StateGlyph } from "./glyphs";
 import { TelemetryBadge } from "./inspector/parts";
@@ -27,10 +29,42 @@ function Keys({ keys }: { keys: string[] }) {
   );
 }
 
-export function HelpSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+function LightSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  const reduced = useSceneStore((s) => s.reducedMotion);
+  const id = useId();
+  return (
+    <div className="flex items-start justify-between gap-6 rounded-sm border border-dashed border-line-strong px-4 py-3">
+      <div className="min-w-0">
+        <label htmlFor={id} className="text-label text-ink">
+          Experimental light layer (WebGL)
+        </label>
+        <p id={`${id}-d`} className="mt-0.5 text-body-sm text-ink-muted">
+          Draws the Atlas's work lamps, packet trails and gate flashes on a WebGL canvas instead of in the drawing, for comparison. Decoration only: the drawing is complete without it. Loaded only when switched on.
+          {reduced ? " Your system asks for reduced motion, so the layer stays off." : ""}
+        </p>
+      </div>
+      <button
+        id={id}
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-describedby={`${id}-d`}
+        onClick={() => onChange(!on)}
+        className={cn(
+          "relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors duration-[var(--mach-duration-fast)]",
+          on ? "border-accent-fill bg-accent-fill" : "border-line-strong bg-surface-sunken",
+        )}
+      >
+        <span className={cn("inline-block size-3.5 rounded-full shadow-1 transition-transform duration-[var(--mach-duration-fast)]", on ? "translate-x-[17px] bg-ink-on-accent" : "translate-x-[2px] bg-ink-muted")} />
+      </button>
+    </div>
+  );
+}
+
+export function HelpSheet({ open, onOpenChange, light, onLight }: { open: boolean; onOpenChange: (open: boolean) => void; light: boolean; onLight: (on: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent width="lg" title="Keyboard and legend" description="Every shortcut in the Control Tower prototype. Keys marked for a view work while that view or the timeline tracks have focus.">
+      <DialogContent width="lg" title="Keyboard, legend and display" description="Every shortcut in the Control Tower prototype. Keys marked for a view work while that view or the timeline tracks have focus.">
         {/* Scrolls on short windows, so it takes focus for keyboard scrolling. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
         <div tabIndex={0} role="region" aria-label="Shortcuts and legend" className="grid min-h-0 gap-x-8 gap-y-5 overflow-y-auto px-6 pb-6 pt-4 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus md:grid-cols-2">
@@ -51,6 +85,12 @@ export function HelpSheet({ open, onOpenChange }: { open: boolean; onOpenChange:
               </dl>
             </section>
           ))}
+          <section aria-labelledby="display" className="md:col-span-2">
+            <h3 id="display" className="mb-2 text-label text-ink">
+              Display
+            </h3>
+            <LightSwitch on={light} onChange={onLight} />
+          </section>
           <section aria-labelledby="legend" className="md:col-span-2">
             <h3 id="legend" className="mb-2 text-label text-ink">
               Reading the timeline and the inspector

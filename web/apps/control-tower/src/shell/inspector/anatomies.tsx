@@ -6,8 +6,11 @@
 import { useMemo, type ReactNode } from "react";
 import { stations as stationLooks, type StationKind } from "@mach/ui";
 import {
+  ACTOR_KINDS,
+  describe,
   MAX_ROUNDS,
   ref,
+  type ActorState,
   type AgentState,
   type ArtifactState,
   type CellState,
@@ -22,8 +25,8 @@ import {
 import { useScene } from "../../scene";
 import { AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateGlyph, StateWord, StationGlyph, ToolGlyph } from "../glyphs";
 import {
+  ACTOR_WORDS,
   artifactOf,
-  duration,
   GATE_STATE_WORDS,
   GATE_WORDS,
   gateOf,
@@ -40,7 +43,7 @@ import {
   timecode,
   toolFamily,
 } from "../vocab";
-import { Facts, JumpButton, Mono, RefLink, RefList, Section } from "./parts";
+import { Elapsed, Facts, JumpButton, Mono, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 
 const at = (t: number | null | undefined) => (t === null || t === undefined ? "not yet" : <Mono>{timecode(t, false)}</Mono>);
@@ -206,7 +209,7 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
             ["App type", cell.appType],
             ["Worktree", <Mono key="w" muted>{`.factory/worktrees/${cell.ticketId}/repo`}</Mono>],
             ["Branch", <Mono key="b" muted>{cell.branch}</Mono>],
-            ["At station", cell.station ? `${STATION_WORDS[cell.station as StationKind]} since ${timecode(cell.stationSince ?? 0, false)}` : "Between stations"],
+            ["At station", cell.station ? <span key="st">{STATION_WORDS[cell.station as StationKind]}, <Elapsed startedAt={cell.stationSince ?? 0} finishedAt={null} /></span> : "Between stations"],
             ["Suite", cell.lastTest ? `${cell.suite}, ${cell.lastTest.passed} passed, ${cell.lastTest.failed} failed` : cell.suite],
             ["Agents", `${active.length} working, ${cell.agentOrder.length} so far`],
             ["Artifacts", cell.artifacts.length],
@@ -326,7 +329,10 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
                 <div className="min-w-0 flex-1">
                   <p className="text-body-sm text-ink">
                     Round {v.round}, {v.action}
-                    <span className="text-ink-muted"> {v.leftAt === null ? "in progress" : `${v.outcome ?? "ended"} after ${duration(v.leftAt - v.enteredAt)}`}</span>
+                    <span className="text-ink-muted">
+                      {" "}
+                      {v.leftAt === null ? "at work" : v.outcome ?? "ended"}, <Elapsed startedAt={v.enteredAt} finishedAt={v.leftAt} />
+                    </span>
                   </p>
                   <p className="font-mono text-[11px] text-ink-subtle tabular">
                     {timecode(v.enteredAt, false)} to {v.leftAt === null ? "now" : timecode(v.leftAt, false)}
@@ -400,7 +406,8 @@ export function AgentAnatomy({ agent }: { agent: AgentState }) {
             ["Belt phase", agent.phase],
             agent.station ? ["Station", STATION_WORDS[agent.station as StationKind]] : null,
             ["Started", at(agent.startedAt)],
-            ["Finished", agent.finishedAt === null ? "still working" : <Mono key="f">{`${timecode(agent.finishedAt, false)}, after ${duration(agent.finishedAt - agent.startedAt)}`}</Mono>],
+            ["Finished", agent.finishedAt === null ? "not yet" : at(agent.finishedAt)],
+            ["Time at work", <Elapsed key="e" startedAt={agent.startedAt} finishedAt={agent.finishedAt} />],
             agent.summary ? ["Reported", agent.summary] : null,
           ]}
         />
@@ -472,7 +479,7 @@ export function ToolAnatomy({ call }: { call: ToolCallState }) {
             ["Tool", call.tool],
             ["Family", toolFamily(call.tool, call.target)],
             ["Started", at(call.startedAt)],
-            ["Duration", call.finishedAt === null ? "still running" : duration(call.finishedAt - call.startedAt)],
+            ["Time", <Elapsed key="e" startedAt={call.startedAt} finishedAt={call.finishedAt} />],
             ["Outcome", call.status === "running" ? "Running" : call.status === "ok" ? "Returned" : "Returned an error"],
             call.summary ? ["Result", call.summary] : null,
           ]}
@@ -575,7 +582,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
             gate.round ? ["Round", `${gate.round} of ${MAX_ROUNDS}`] : null,
             ["Reached", at(gate.openedAt)],
             ["Decided", gate.decidedAt === null ? "not yet" : at(gate.decidedAt)],
-            waitingFor !== null ? ["Waiting since", at(waitingFor)] : null,
+            waitingFor !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingFor} finishedAt={null} />] : null,
           ]}
         />
         <p className="mt-3 text-body-sm text-ink-muted">{gate.detail}</p>
@@ -809,4 +816,71 @@ function allAgentsOf(cells: Readonly<Record<string, CellState>>, executionId: st
   let n = 0;
   for (const cell of Object.values(cells)) for (const id of cell.agentOrder) if (cell.agents[id]?.executionId === executionId) n += 1;
   return n;
+}
+
+// ---------------------------------------------------------------- actor
+
+/** The line supervisor or the scheduler: who it is, the real code that acts, its acts so far, its last decision. */
+export function ActorAnatomy({ actor }: { actor: ActorState }) {
+  const entity = ref.actor(actor.id);
+  const { all, happened } = useEntityEvents(entity);
+  const past = useMemo(() => all.slice(0, happened), [all, happened]);
+  const byKind = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of past) counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+    return ACTOR_KINDS[actor.id].map((k) => [k, counts.get(k) ?? 0] as const);
+  }, [past, actor.id]);
+  const decisionKinds = actor.id === "supervisor" ? ["scheduling.decided"] : ["work.scheduled", "dependency.resolved", "dependency.blocked"];
+  const decision = [...past].reverse().find((e) => decisionKinds.includes(e.type)) ?? null;
+  const words = ACTOR_WORDS[actor.id];
+  return (
+    <>
+      <Section title="Who it is">
+        <p className="mb-3 text-body-sm text-ink-muted">{words.does}</p>
+        <Facts
+          facts={[
+            ["Code", <Mono key="c">{actor.code}</Mono>],
+            ["Acts so far", actor.acts],
+            ["Last acted", at(actor.lastActedAt)],
+            actor.lastKind ? ["Last event", <Mono key="k">{actor.lastKind}</Mono>] : null,
+          ]}
+        />
+        <p className="mt-3 text-caption text-ink-subtle">Not a Claude agent: a script that runs inside the supervisor's tick and writes events of its own.</p>
+      </Section>
+      <Section title="Last decision">
+        {decision ? (
+          <div className="border-l-2 border-factory-select pl-3">
+            <p className="font-mono text-[11px] text-ink-subtle tabular">
+              {decision.type}, {timecode(decision.t)}
+            </p>
+            <p className="mt-0.5 text-body-sm text-ink">{describe(decision)}</p>
+            {decision.type === "scheduling.decided" && decision.data.held.length ? (
+              <ul className="mt-1 list-disc pl-4 text-caption text-ink-muted">
+                {decision.data.held.map((h) => (
+                  <li key={`${h.slice_id ?? h.ticket_id}`}>
+                    <span className="font-mono">{h.slice_id ?? h.ticket_id}</span>: {h.why}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="mt-1">
+              <JumpButton seq={decision.seq} />
+            </div>
+          </div>
+        ) : (
+          <Empty>No decision yet at the playhead.</Empty>
+        )}
+      </Section>
+      <Section title="What it writes">
+        <ul className="flex flex-col gap-1">
+          {byKind.map(([kind, n]) => (
+            <li key={kind} className="flex items-center justify-between gap-3 text-body-sm">
+              <span className="font-mono text-[12px] text-ink">{kind}</span>
+              <span className="tabular text-ink-muted">{n}</span>
+            </li>
+          ))}
+        </ul>
+      </Section>
+    </>
+  );
 }

@@ -3,11 +3,11 @@
  * factory time code, the current chapter, and the reduced-motion note. Re-renders only when the
  * transport's own state changes; the time code is written directly every frame.
  */
-import { ChevronsLeft, ChevronsRight, PanelBottomClose, PanelBottomOpen, Pause, Play, StepBack, StepForward } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, LocateFixed, PanelBottomClose, PanelBottomOpen, Pause, Play, StepBack, StepForward } from "lucide-react";
 import { memo, useId, useRef, type ReactNode } from "react";
 import { cn, Tooltip } from "@mach/ui";
 import { chapterAt, SCENARIO } from "../../sim";
-import { SPEEDS, useSceneStore, useStore, type PlaybackSpeed } from "../../scene";
+import { cameraFollows, SPEEDS, useSceneStore, useStore, type PlaybackSpeed } from "../../scene";
 import { stepChapter } from "../keyboard";
 import { clockAt, duration as words, timecode } from "../vocab";
 import { usePlayheadEffect } from "./playhead";
@@ -43,10 +43,10 @@ export function TimeCode({ size = "md" }: { size?: "md" | "lg" }) {
   }, []);
   return (
     <span className="flex items-baseline gap-2 tabular" aria-hidden="true">
-      <span ref={codeRef} className={cn("font-mono text-ink tabular", size === "lg" ? "text-[13px]" : "text-[15px] font-semibold")}>
+      <span ref={codeRef} data-frame="" className={cn("font-mono text-ink tabular", size === "lg" ? "text-[13px]" : "text-[15px] font-semibold")}>
         00:00.0
       </span>
-      {size === "md" ? <span ref={clockRef} className="font-mono text-[11px] text-ink-subtle tabular" /> : null}
+      {size === "md" ? <span ref={clockRef} data-frame="" className="font-mono text-[11px] text-ink-subtle tabular" /> : null}
     </span>
   );
 }
@@ -114,6 +114,37 @@ function LiveState() {
   );
 }
 
+/**
+ * Camera follow, the store's one flag: "Following" while the views keep the live action in frame;
+ * it goes off when the person pans, zooms or focuses something, and this turns it back on. In replay
+ * the flag can be on but waits for the live edge, and says so.
+ */
+export function FollowState({ compact }: { compact?: boolean }) {
+  const follow = useSceneStore((s) => s.follow);
+  const active = useSceneStore((s) => cameraFollows(s));
+  const { setFollow } = useStore();
+  const label = active ? "Following" : follow ? "Follow at live" : "Follow off";
+  return (
+    <Tooltip content={follow ? "The camera keeps the live work in view. Panning or zooming stops it. (Shift+F turns it back on)" : "Turn camera follow back on (Shift+F)"}>
+      <button
+        type="button"
+        onClick={() => setFollow(!follow)}
+        aria-pressed={follow}
+        aria-keyshortcuts="Shift+F"
+        data-follow-state={active ? "following" : follow ? "armed" : "off"}
+        className={cn(
+          "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-caption font-semibold transition-colors duration-[var(--mach-duration-fast)] [&_svg]:size-3.5",
+          active ? "border-factory-live text-factory-live" : follow ? "border-line-strong text-ink-muted" : "border-dashed border-line-strong text-ink-muted hover:text-ink",
+        )}
+      >
+        <LocateFixed aria-hidden="true" className={active ? undefined : "opacity-70"} />
+        {compact && !active ? (follow ? "Follow" : "Follow off") : label}
+        <span className="sr-only">: camera follow {follow ? "on" : "off"}</span>
+      </button>
+    </Tooltip>
+  );
+}
+
 function ChapterName() {
   const chapter = useSceneStore((s) => chapterAt(s.fixture, s.playhead));
   if (!chapter) return null;
@@ -165,6 +196,9 @@ export const Transport = memo(function Transport({ collapsed, onCollapse }: { co
       </div>
       <div className="mx-3 h-5 w-px shrink-0 bg-line" aria-hidden="true" />
       <LiveState />
+      <span className="ml-2">
+        <FollowState />
+      </span>
       <div className="mx-3 hidden h-5 w-px shrink-0 bg-line min-[1280px]:block" aria-hidden="true" />
       <div className="hidden min-w-0 flex-1 min-[1280px]:flex">
         <ChapterName />

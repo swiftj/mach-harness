@@ -38,7 +38,8 @@ export function Glyph({ size = 24, children, className }: { size?: number; child
 export function StateGlyph({ state, mark, size = 14, progress }: { state: FactoryState; mark?: FactoryMarkShape; size?: number; progress?: number }) {
   return (
     <svg aria-hidden="true" width={size} height={size} viewBox="-7 -7 14 14" className="shrink-0 overflow-visible">
-      <StateMark state={state} r={6} mark={mark} progress={progress} surface="var(--mach-surface)" />
+      {/* Work in flight has no known fraction: "working" is the plain ring, never a part-filled sector. */}
+      <StateMark state={state} r={6} mark={mark} progress={progress ?? 0} surface="var(--mach-surface)" />
     </svg>
   );
 }
@@ -125,7 +126,7 @@ export function CellGlyph({ size, state = "idle" }: { size?: number; state?: Fac
       <path d="M0 1V8" style={{ stroke: fc("plate-edge"), strokeWidth: 0.8 }} />
       <path d="M-6 -3.2V-10" style={{ stroke: fc("ink"), strokeWidth: 1.2 }} />
       <g transform="translate(-6 -10.5)">
-        <StateMark state={state} r={2.8} surface="var(--mach-surface)" />
+        <StateMark state={state} r={2.8} progress={0} surface="var(--mach-surface)" />
       </g>
       <path d="M-5 -2.5L5 -5.5" style={{ stroke: state === "active" ? ink : fc("route"), strokeWidth: 1.1 }} />
     </Glyph>
@@ -151,7 +152,7 @@ export function SliceGlyph({ size, state = "idle", mark }: { size?: number; stat
     <Glyph size={size}>
       <path d="M-11 0L0 -6L11 0L0 6Z" style={{ fill: state === "idle" ? fc("plate-top") : soft, stroke: fc("ink-soft"), strokeWidth: 1 }} />
       <g transform="translate(0 -1)">
-        <StateMark state={state} r={3.6} mark={mark} surface="var(--mach-surface)" />
+        <StateMark state={state} r={3.6} mark={mark} progress={0} surface="var(--mach-surface)" />
       </g>
     </Glyph>
   );
@@ -174,6 +175,19 @@ export function ExecutionGlyph({ size, state = "idle" }: { size?: number; state?
     <Glyph size={size}>
       <path d="M-10 6H10" style={{ stroke: fc("route"), strokeWidth: 1.2 }} />
       <path d="M-6 6V-6M0 6V-2M6 6V-8" style={{ stroke: state === "idle" ? fc("ink") : ink, strokeWidth: 1.6, strokeLinecap: "round" }} />
+    </Glyph>
+  );
+}
+
+/** An actor (the line supervisor, the scheduler): not an agent, so no head; its emblem on a desk. */
+export function ActorGlyph({ actor, size, acting }: { actor: "supervisor" | "scheduler"; size?: number; acting?: boolean }) {
+  return (
+    <Glyph size={size}>
+      <rect x={-10} y={2} width={20} height={6} rx={1} style={{ fill: fc("plate-top"), stroke: fc("ink-soft"), strokeWidth: 1 }} />
+      <circle r={7.5} cy={-4} style={{ fill: acting ? fc("live-soft") : fc("floor"), stroke: acting ? fc("live") : fc("ink"), strokeWidth: 1.2 }} />
+      <g transform="translate(0 -4) scale(1.7)">
+        <RoleEmblem role={actor} color={fc("ink")} />
+      </g>
     </Glyph>
   );
 }

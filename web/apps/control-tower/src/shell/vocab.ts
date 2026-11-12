@@ -14,7 +14,7 @@ import {
   type StationKind,
   type ToolFamily,
 } from "@mach/ui";
-import { isoAt, MODELS, type AgentRole, type ArtifactKind, type CellStage, type EntityKind, type GateKind, type GateState, type ModelId, type SchedulerState, type StationOutcome, type Telemetry, type ToolName } from "../sim";
+import { ENTITY_KINDS, isoAt, MODELS, type ActorId, type AgentRole, type AnyRef, type EntityRef, type ArtifactKind, type CellStage, type EntityKind, type GateKind, type GateState, type ModelId, type SchedulerState, type StationOutcome, type Telemetry, type ToolName } from "../sim";
 
 // ---------------------------------------------------------------- time
 
@@ -237,7 +237,35 @@ export const STATION_WORDS: Record<StationKind, string> = {
   observe: "Observe",
 };
 
-export const KIND_WORDS: Record<EntityKind, string> = {
+/**
+ * Every kind the shell can show: the store's entity kinds plus the actors (actor:supervisor,
+ * actor:scheduler). Written so it compiles whether or not "actor" is already in EntityKind.
+ */
+export type ShellKind = EntityKind | "actor";
+
+export function kindOf(entity: AnyRef): ShellKind {
+  return entity.slice(0, entity.indexOf(":")) as ShellKind;
+}
+
+/** The ref as a store selection, if the store can hold it (actors only once "actor" is an EntityKind). */
+export function selectable(entity: AnyRef | null): EntityRef | null {
+  if (!entity) return null;
+  return (ENTITY_KINDS as readonly string[]).includes(kindOf(entity)) ? (entity as EntityRef) : null;
+}
+
+export const ACTOR_WORDS: Record<ActorId, { role: string; does: string }> = {
+  supervisor: {
+    role: "Line supervisor",
+    does: "Ticks once a minute: reads each cell's stage, claims and starts executions, records how they ended, and decides what to start next.",
+  },
+  scheduler: {
+    role: "Scheduler",
+    does: "Intake's dependency-aware plan: decides which slices are ready and which wait and why, opens a cell for each dispatched slice, and records integration.",
+  },
+};
+
+export const KIND_WORDS: Record<ShellKind, string> = {
+  actor: "Actor",
   wave: "Delivery wave",
   slice: "Slice",
   cell: "Cell",

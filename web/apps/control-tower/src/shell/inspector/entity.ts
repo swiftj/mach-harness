@@ -9,15 +9,14 @@ import {
   findArtifact,
   findToolCall,
   refId,
-  refKind,
   SCENARIO,
-  type EntityKind,
-  type EntityRef,
+  type ActorId,
+  type AnyRef,
   type FindingState,
   type Scene,
   type StationId,
 } from "../../sim";
-import { GATE_WORDS, KIND_WORDS, ROLE_WORDS, STATION_WORDS } from "../vocab";
+import { ACTOR_WORDS, GATE_WORDS, kindOf, KIND_WORDS, ROLE_WORDS, STATION_WORDS, type ShellKind } from "../vocab";
 
 export function findFinding(scene: Scene, id: string): FindingState | null {
   const ticket = id.split("/")[0] ?? "";
@@ -35,9 +34,11 @@ export function parseStation(id: string): { ticketId: string | null; station: St
 }
 
 /** The entity's own object at the playhead (stable while it does not change), or null if it does not exist yet. */
-export function selectEntity(scene: Scene, entity: EntityRef): unknown {
+export function selectEntity(scene: Scene, entity: AnyRef): unknown {
   const id = refId(entity);
-  switch (refKind(entity)) {
+  switch (kindOf(entity)) {
+    case "actor":
+      return scene.actors[id as ActorId] ?? null;
     case "wave":
       return scene.waves[id] ?? null;
     case "slice":
@@ -70,19 +71,21 @@ export function selectEntity(scene: Scene, entity: EntityRef): unknown {
 }
 
 export interface Identity {
-  kind: EntityKind;
+  kind: ShellKind;
   kindWord: string;
   name: string;
   id: string;
 }
 
 /** What an entity is called. Names are fixed for the whole run, so they come from the final scene. */
-export function identityOf(entity: EntityRef): Identity {
-  const kind = refKind(entity);
+export function identityOf(entity: AnyRef): Identity {
+  const kind = kindOf(entity);
   const id = refId(entity);
   const scene = finalScene(SCENARIO);
   const base = { kind, kindWord: KIND_WORDS[kind], id };
   switch (kind) {
+    case "actor":
+      return { ...base, name: ACTOR_WORDS[id as ActorId]?.role ?? id };
     case "wave":
       return { ...base, name: scene.waves[id]?.title ?? id };
     case "slice":

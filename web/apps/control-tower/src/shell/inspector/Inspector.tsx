@@ -10,13 +10,13 @@ import {
   describe,
   eventsFor,
   refId,
-  refKind,
   SCENARIO,
+  type ActorState,
   type AgentState,
+  type AnyRef,
   type ArtifactState,
   type CellState,
   type DependencyState,
-  type EntityRef,
   type ExecutionState,
   type FindingState,
   type GateState,
@@ -25,10 +25,11 @@ import {
   type WaveState,
 } from "../../sim";
 import { useScene, useSceneStore, useStore } from "../../scene";
-import { AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
+import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
 import { IconButton } from "../timeline/Transport";
-import { artifactOf, gateOf, GATE_STATE_WORDS, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
+import { artifactOf, selectable, gateOf, kindOf, GATE_STATE_WORDS, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
 import {
+  ActorAnatomy,
   AgentAnatomy,
   ArtifactAnatomy,
   CellAnatomy,
@@ -56,9 +57,13 @@ interface Look {
 }
 
 /** Glyph, state and phase of an entity that exists at the playhead. */
-function lookOf(entity: EntityRef, value: unknown): Look {
+function lookOf(entity: AnyRef, value: unknown): Look {
   const id = refId(entity);
-  switch (refKind(entity)) {
+  switch (kindOf(entity)) {
+    case "actor": {
+      const a = value as ActorState;
+      return { glyph: <ActorGlyph actor={a.id} size={28} />, state: "idle", word: a.acts ? `${a.acts} acts so far` : "Not acted yet", phase: "running", since: a.lastActedAt };
+    }
     case "wave": {
       const w = value as WaveState;
       return { glyph: <WaveGlyph size={28} />, state: w.state === "validated" ? "succeeded" : "active", word: w.state === "validated" ? "Verified" : "Arrived", phase: "finished", since: w.discoveredAt };
@@ -116,8 +121,10 @@ function lookOf(entity: EntityRef, value: unknown): Look {
   }
 }
 
-function Anatomy({ entity, value }: { entity: EntityRef; value: unknown }) {
-  switch (refKind(entity)) {
+function Anatomy({ entity, value }: { entity: AnyRef; value: unknown }) {
+  switch (kindOf(entity)) {
+    case "actor":
+      return <ActorAnatomy actor={value as ActorState} />;
     case "wave":
       return <WaveAnatomy wave={value as WaveState} />;
     case "slice":
@@ -157,7 +164,7 @@ function GlobalStation({ id }: { id: string }) {
 }
 
 /** Where the entity stands at the playhead: not yet, in progress, or finished. */
-function TimeStatus({ look, entity }: { look: Look | null; entity: EntityRef }) {
+function TimeStatus({ look, entity }: { look: Look | null; entity: AnyRef }) {
   const { all } = useEntityEvents(entity);
   if (!look) {
     const first = all[0];
@@ -182,7 +189,7 @@ function TimeStatus({ look, entity }: { look: Look | null; entity: EntityRef }) 
   );
 }
 
-function Why({ entity }: { entity: EntityRef }) {
+function Why({ entity }: { entity: AnyRef }) {
   const { all, happened } = useEntityEvents(entity);
   const latest = all[happened - 1];
   if (!latest) return null;
@@ -200,10 +207,11 @@ function Why({ entity }: { entity: EntityRef }) {
   );
 }
 
-function Selected({ entity }: { entity: EntityRef }) {
+function Selected({ entity }: { entity: AnyRef }) {
   const value = useScene((s) => selectEntity(s, entity));
   const store = useStore();
   const identity = identityOf(entity);
+  const focusable = selectable(entity);
   const look = value ? lookOf(entity, value) : null;
   const unknown = eventsFor(SCENARIO, entity).length === 0 && !value;
   return (
@@ -219,9 +227,11 @@ function Selected({ entity }: { entity: EntityRef }) {
             </p>
           </div>
           <div className="-mr-2 -mt-1 flex shrink-0 items-center">
-            <IconButton label="Focus in the view" shortcut="F" onClick={() => store.focusOn(entity, "api")}>
-              <Crosshair aria-hidden="true" />
-            </IconButton>
+            {focusable ? (
+              <IconButton label="Focus in the view" shortcut="F" onClick={() => store.focusOn(focusable, "api")}>
+                <Crosshair aria-hidden="true" />
+              </IconButton>
+            ) : null}
             <IconButton label="Clear the selection" shortcut="Escape" onClick={() => store.select(null)}>
               <X aria-hidden="true" />
             </IconButton>

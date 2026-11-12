@@ -10,7 +10,7 @@ import { cn, useTheme } from "@mach/ui";
 import { SCENARIO, type EntityRef } from "../../sim";
 import { useScene, useSceneStore, useStore } from "../../scene";
 import { StateGlyph } from "../glyphs";
-import { schedulerLook, stageLook, timecode, duration as words } from "../vocab";
+import { schedulerLook, selectable, stageLook, timecode, duration as words } from "../vocab";
 import { drawTracks, hitTest, layoutTracks, readPalette, tOf, xOf, type Hit, type View } from "./draw";
 import type { TimelineModel, Track } from "./model";
 import { usePlayheadEffect } from "./playhead";
@@ -87,6 +87,18 @@ export const Tracks = memo(function Tracks({
   // Only the related cells and slices are drawn (as bands), so subscribe to just those: a string,
   // stable while they stay the same, so an agent's changing tool call does not redraw the tracks.
   const highlightKey = useSceneStore((s) => s.highlighted.filter((r) => r.startsWith("cell:") || r.startsWith("slice:")).join("|"));
+  // How many station visits have ended by the live edge: changes a few dozen times in the run, and
+  // is the only reason the live edge redraws the canvas (an open visit has no outcome yet).
+  const endsKnown = useSceneStore((s) => {
+    let lo = 0;
+    let hi = model.stationEnds.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((model.stationEnds[mid] as number) <= s.liveAt) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  });
   const wrapRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLCanvasElement>(null);
   const axisRef = useRef<HTMLCanvasElement>(null);
@@ -132,7 +144,7 @@ export const Tracks = memo(function Tracks({
     const ctx = canvas.getContext("2d");
     if (ctx) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawTracks({ ctx, model, rows: layout.rows, view, height: layout.height, palette, selection, hovered, highlighted: highlightSet, focusedTrack, chapters: CHAPTER_TIMES });
+      drawTracks({ ctx, model, rows: layout.rows, view, height: layout.height, palette, selection, hovered, highlighted: highlightSet, focusedTrack, chapters: CHAPTER_TIMES, liveAt: store.getState().liveAt });
     }
     axis.width = Math.round(width * dpr);
     axis.height = Math.round(AXIS_H * dpr);
@@ -163,7 +175,7 @@ export const Tracks = memo(function Tracks({
       }
       actx.stroke();
     }
-  }, [width, layout, view, model, selection, hovered, highlightSet, focusedTrack, theme]);
+  }, [width, layout, view, model, selection, hovered, highlightSet, focusedTrack, theme, endsKnown, store]);
 
   // The playhead cursor and the live edge: direct DOM writes, every frame, no render.
   usePlayheadEffect(
@@ -212,13 +224,13 @@ export const Tracks = memo(function Tracks({
       setTip(null);
       return;
     }
-    const hit = hitTest(layout.rows, view, p.x, p.y, model.duration);
+    const hit = hitTest(layout.rows, view, p.x, p.y, model.duration, store.getState().liveAt);
     const liveAt = store.getState().liveAt;
     const t = tOf(view, p.x);
     // Nothing is known past the live edge: no hover there.
     const shown = hit && t <= liveAt ? hit : null;
     setTip(shown ? { x: p.x, y: p.y, hit: shown, t } : null);
-    const ref = shown?.ref ?? null;
+    const ref = selectable(shown?.ref ?? null);
     if (store.getState().hovered !== ref) store.hover(ref);
   };
   const onPointerUp = (e: PointerEvent<HTMLCanvasElement>) => {
@@ -227,9 +239,10 @@ export const Tracks = memo(function Tracks({
     if (!d || d.moved) return;
     const p = pointAt(e);
     if (!p) return;
-    const hit = hitTest(layout.rows, view, p.x, p.y, model.duration);
-    if (hit?.ref && tOf(view, p.x) <= store.getState().liveAt) {
-      store.select(hit.ref);
+    const hit = hitTest(layout.rows, view, p.x, p.y, model.duration, store.getState().liveAt);
+    const target = selectable(hit?.ref ?? null);
+    if (hit && target && tOf(view, p.x) <= store.getState().liveAt) {
+      store.select(target);
       setFocusedTrack(hit.trackId);
     }
   };
@@ -311,8 +324,18 @@ export const Tracks = memo(function Tracks({
     else if (row.y + row.height > el.scrollTop + el.clientHeight) el.scrollTop = row.y + row.height - el.clientHeight;
   }, [focusedTrack, layout]);
 
-  const tipText = tip ? `${tip.hit.start !== tip.hit.end && tip.hit.end !== tip.hit.start ? `${timecode(tip.hit.start, false)} to ${tip.hit.end === null ? "now" : timecode(tip.hit.end, false)}` : timecode(tip.hit.start)}` : "";
-  const tipDur = tip && tip.hit.end !== null && tip.hit.end - tip.hit.start >= 1000 ? words(tip.hit.end - tip.hit.start) : null;
+  const liveAt = store.getState().liveAt;
+  const tipText = tip ? `${tip.hit.start !== tip.hit.end && tip.hit.end !== tip.hit.start ? `${timecode(tip.hit.start, false)} to ${tip.hit.end === null || tip.hit.end > liveAt ? "now" : timecode(tip.hit.end, false)}` : timecode(tip.hit.start)}` : "";
+  // Known timing only: a finished span's length, or how long open work has been at it so far.
+  const tipDur = !tip
+    ? null
+    : tip.hit.end !== null && tip.hit.end <= liveAt
+      ? tip.hit.end - tip.hit.start >= 1000
+        ? words(tip.hit.end - tip.hit.start)
+        : null
+      : tip.hit.start < liveAt
+        ? `at work for ${words(liveAt - tip.hit.start)} so far`
+        : null;
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">

@@ -32,11 +32,11 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["[", "]"], action: "Previous / next chapter", group: "Playback" },
   { keys: ["{", "}"], action: "Slower / faster (0.5× to 16×)", group: "Playback" },
   { keys: ["Home", "End"], action: "Start of the run / live edge", group: "Playback" },
-  { keys: ["L"], action: "Return to live", group: "Playback" },
+  { keys: ["L"], action: "Return to live (and follow)", group: "Playback" },
   { keys: ["1", "2"], action: "Factory Atlas / Execution Blueprint", group: "Views" },
   { keys: ["T"], action: "Theater Mode", group: "Views" },
   { keys: ["F"], action: "Focus the selection", group: "Views" },
-  { keys: ["Shift+F"], action: "Resume live-follow", group: "Views" },
+  { keys: ["Shift+F"], action: "Camera follow back on", group: "Views" },
   { keys: ["Escape"], action: "Clear highlight, then selection, then leave Theater Mode", group: "Views" },
   { keys: ["I"], action: "Show or hide the inspector", group: "Panels" },
   { keys: ["Shift+T"], action: "Expand or collapse the timeline", group: "Panels" },
@@ -157,7 +157,7 @@ export function useShellKeys(commands: ShellCommands): void {
           else store.focusOn("overview", "api");
           break;
         case "F":
-          store.followLive();
+          store.setFollow(true);
           break;
         case "i":
         case "I":

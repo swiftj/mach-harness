@@ -10,6 +10,7 @@ import {
   ref,
   SCENARIO,
   type AgentState,
+  type AnyRef,
   type EntityRef,
   type GateKind,
   type GateState,
@@ -36,7 +37,8 @@ export interface GateItem {
   round: number | null;
 }
 export interface MarkItem {
-  ref: EntityRef | null;
+  /** Actors (actor:supervisor, actor:scheduler) are named here even before the store can select them. */
+  ref: AnyRef | null;
   t: number;
   kind: "fail" | "person" | "attention" | "merge" | "decision" | "integrated" | "wave";
   text: string;
@@ -93,6 +95,8 @@ export interface Track {
 export interface TimelineModel {
   duration: number;
   tracks: Track[];
+  /** Every station visit's end time, ascending: the tracks redraw when the live edge passes one. */
+  stationEnds: readonly number[];
   /** Major and chapter moments, for the ruler. */
   moments: readonly Moment[];
   /** Where each entity is drawn: track id, row (-1: the main row) and span. */
@@ -135,7 +139,7 @@ export function timelineModel(): TimelineModel {
         factory.marks.push({ ref: ref.wave(e.wave_id ?? ""), t: e.t, kind: "wave", text: `${e.wave_id} arrived, approved by ${e.data.approval.actor}` });
         break;
       case "scheduling.decided":
-        factory.marks.push({ ref: null, t: e.t, kind: "decision", text: `Scheduler: dispatched ${e.data.dispatched.length}, started ${e.data.started.length}, held ${e.data.held.length}` });
+        factory.marks.push({ ref: ref.actor("supervisor"), t: e.t, kind: "decision", text: `Line supervisor: dispatched ${e.data.dispatched.length}, started ${e.data.started.length}, held ${e.data.held.length}` });
         break;
       case "slice.integrated":
         factory.marks.push({ ref: ref.slice(e.slice_id ?? ""), t: e.t, kind: "integrated", text: `${e.slice_id} integrated` });
@@ -252,6 +256,7 @@ export function timelineModel(): TimelineModel {
   cached = {
     duration: fixture.duration,
     tracks,
+    stationEnds: tracks.flatMap((tr) => tr.stations.map((x) => x.end).filter((e): e is number => e !== null)).sort((a, b) => a - b),
     moments: moments(fixture, "major"),
     locate: (entity) => {
       const found = where.get(entity);
