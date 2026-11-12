@@ -1,7 +1,10 @@
 /**
  * The synchronized execution timeline, docked at the bottom (spec f.8): transport, the run-wide
- * scrubber with chapters and moments, and the tracks. Its size, collapse, time window and which
- * tracks are expanded are the shell's own interface state; time, selection and focus are the store's.
+ * scrubber with chapters and moments, and the tracks. It starts low, with every track folded into one
+ * summary row, so the stage keeps the room; the person opens the tracks (or drags the timeline
+ * taller) to see each slice and its agents. Its size, collapse, time window, whether the tracks are
+ * open and which are expanded are the shell's own interface state; time, selection and focus are the
+ * store's.
  */
 import { useCallback, useMemo, useState } from "react";
 import { Ruler } from "./Ruler";
@@ -9,7 +12,7 @@ import { Tracks, type TimeWindow } from "./Tracks";
 import { Transport } from "./Transport";
 import { timelineModel } from "./model";
 
-export function Timeline({ collapsed, onCollapse }: { collapsed: boolean; onCollapse: () => void }) {
+export function Timeline({ collapsed, onCollapse, tracksOpen, onTracks }: { collapsed: boolean; onCollapse: () => void; tracksOpen: boolean; onTracks: (open: boolean) => void }) {
   const model = useMemo(() => timelineModel(), []);
   const [win, setWin] = useState<TimeWindow>({ v0: 0, v1: model.duration });
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
@@ -29,7 +32,7 @@ export function Timeline({ collapsed, onCollapse }: { collapsed: boolean; onColl
       {collapsed ? null : (
         <>
           <Ruler moments={model.moments} duration={model.duration} window={win} onWindow={setWin} />
-          <Tracks model={model} window={win} onWindow={setWin} expanded={expanded} onToggle={onToggle} />
+          <Tracks model={model} window={win} onWindow={setWin} expanded={expanded} onToggle={onToggle} summary={!tracksOpen} onSummary={(summary) => onTracks(!summary)} />
         </>
       )}
     </div>

@@ -11,12 +11,12 @@ import { SCENARIO, type EntityRef } from "../../sim";
 import { useScene, useSceneStore, useStore } from "../../scene";
 import { StateGlyph } from "../glyphs";
 import { schedulerLook, selectable, stageLook, timecode, duration as words } from "../vocab";
-import { drawTracks, hitTest, layoutTracks, readPalette, tOf, xOf, type Hit, type View } from "./draw";
+import { drawTracks, hitTest, layoutTracks, readPalette, SUMMARY_ROW, tOf, xOf, type Hit, type View } from "./draw";
 import type { TimelineModel, Track } from "./model";
 import { usePlayheadEffect } from "./playhead";
 
 export const GUTTER = 176;
-const AXIS_H = 22;
+const AXIS_H = 24;
 const CHAPTER_TIMES = SCENARIO.chapters.map((c) => c.t);
 
 export interface TimeWindow {
@@ -74,12 +74,17 @@ export const Tracks = memo(function Tracks({
   onWindow,
   expanded,
   onToggle,
+  summary,
+  onSummary,
 }: {
   model: TimelineModel;
   window: TimeWindow;
   onWindow: (w: TimeWindow) => void;
   expanded: ReadonlySet<string>;
   onToggle: (trackId: string, open?: boolean) => void;
+  /** Every slice folded into one summary row (the default), or every track with its own row. */
+  summary: boolean;
+  onSummary: (summary: boolean) => void;
 }) {
   const store = useStore();
   const { resolved: theme } = useTheme();
@@ -111,7 +116,8 @@ export const Tracks = memo(function Tracks({
   const [tip, setTip] = useState<{ x: number; y: number; hit: Hit; t: number } | null>(null);
   const drag = useRef<{ x: number; moved: boolean; id: number } | null>(null);
 
-  const layout = useMemo(() => layoutTracks(model, expanded), [model, expanded]);
+  const layout = useMemo(() => layoutTracks(model, expanded, summary), [model, expanded, summary]);
+  const sliceCount = useMemo(() => model.tracks.filter((t) => t.kind === "slice").length, [model]);
   const view: View = useMemo(() => ({ v0: win.v0, v1: win.v1, width: Math.max(1, width) }), [win.v0, win.v1, width]);
   const highlightSet = useMemo(() => new Set(highlightKey ? (highlightKey.split("|") as EntityRef[]) : []), [highlightKey]);
 
@@ -165,7 +171,7 @@ export const Tracks = memo(function Tracks({
         const x = Math.round(xOf(view, t)) + 0.5;
         actx.moveTo(x, AXIS_H - 6);
         actx.lineTo(x, AXIS_H);
-        if (x + 36 < width) actx.fillText(timecode(t, step < 60_000), x + 3, 13);
+        if (x + 36 < width) actx.fillText(timecode(t, step < 60_000), x + 3, 14);
       }
       // Minor ticks.
       const minor = step / 5;
@@ -342,8 +348,19 @@ export const Tracks = memo(function Tracks({
     <div className="relative flex min-h-0 flex-1 flex-col">
       {/* The time axis. */}
       <div className="flex shrink-0 border-b border-line">
-        <div style={{ width: GUTTER }} className="flex shrink-0 items-center px-3 text-[11px] text-ink-subtle">
-          Factory time, from start
+        <div style={{ width: GUTTER }} className="flex shrink-0 items-center px-1.5">
+          {/* Open every track, or fold them back into the summary row. A 24 px target. */}
+          <button
+            type="button"
+            onClick={() => onSummary(!summary)}
+            aria-expanded={!summary}
+            title={summary ? "Show every track: each slice, and the factory's own" : "Fold the tracks into one summary row"}
+            className="inline-flex h-6 items-center gap-1 rounded-xs px-1.5 text-[11px] text-ink-muted hover:bg-surface-sunken hover:text-ink"
+          >
+            <ChevronRight aria-hidden="true" className={cn("size-3.5 transition-transform duration-[var(--mach-duration-fast)]", !summary && "rotate-90")} />
+            <span className="font-semibold">Tracks</span>
+            <span className="text-ink-subtle">{summary ? "· folded" : "· open"}</span>
+          </button>
         </div>
         <div className="relative min-w-0 flex-1 overflow-hidden">
           <canvas ref={axisRef} aria-hidden="true" className="block" />
@@ -353,9 +370,17 @@ export const Tracks = memo(function Tracks({
       <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden" onWheel={onWheel}>
         <div className="flex">
           <div style={{ width: GUTTER }} className="shrink-0 border-r border-line">
-            {layout.rows.map((r) => (
-              <TrackHeader key={r.track.id} track={r.track} height={r.height} expanded={r.expanded} focused={focusedTrack === r.track.id} onToggle={() => onToggle(r.track.id)} />
-            ))}
+            {summary ? (
+              <div style={{ height: SUMMARY_ROW }} className="flex items-center border-b border-line px-3">
+                <span className="min-w-0 truncate text-caption text-ink-muted">
+                  All {sliceCount} slices<span className="text-ink-subtle">, one strip each</span>
+                </span>
+              </div>
+            ) : (
+              layout.rows.map((r) => (
+                <TrackHeader key={r.track.id} track={r.track} height={r.height} expanded={r.expanded} focused={focusedTrack === r.track.id} onToggle={() => onToggle(r.track.id)} />
+              ))
+            )}
           </div>
           <div ref={wrapRef} className="relative min-w-0 flex-1">
             {/* One tab stop for every track, with its own arrow keys: an application region, which the
@@ -369,7 +394,7 @@ export const Tracks = memo(function Tracks({
               aria-label="Execution tracks. Left and right arrows step between events; up and down choose a track; Enter selects it."
               aria-describedby="mach-tracks-hint"
               onKeyDown={onKeyDown}
-              onFocus={() => setFocusedTrack((f) => f ?? layout.rows[1]?.track.id ?? null)}
+              onFocus={() => setFocusedTrack((f) => (f && layout.rows.some((r) => r.track.id === f) ? f : (layout.rows[summary ? 0 : 1]?.track.id ?? null)))}
               className="relative outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
             >
               <canvas

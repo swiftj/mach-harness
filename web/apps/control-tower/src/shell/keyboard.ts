@@ -200,7 +200,7 @@ function useFocusKeeper(): void {
         const stranded = !now || now === document.body || Boolean((now as HTMLElement).closest?.("[inert]"));
         if (!stranded || (had.isConnected && !had.closest("[inert]"))) return;
         const live = home && home.isConnected && !home.closest("[inert]") ? home : null;
-        const canvas = document.querySelector<HTMLElement>("[data-stage-view] [tabindex='0']");
+        const canvas = document.querySelector<HTMLElement>("[data-stage-active] [tabindex='0']");
         const next = live?.querySelector<HTMLElement>("[data-inspector-heading]") ?? (live?.tagName === "MAIN" ? canvas : null) ?? live ?? canvas ?? document.getElementById("stage");
         next?.focus({ preventScroll: true });
       });

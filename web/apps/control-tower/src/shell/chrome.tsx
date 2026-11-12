@@ -45,7 +45,7 @@ export function Brand() {
     <div className="flex shrink-0 items-center gap-2.5">
       <MachMark size={18} />
       <span className="text-label text-ink">
-        MACH <span className="font-normal text-ink-muted">Control Tower</span>
+        MACH <span className="font-normal text-ink-muted max-[899px]:sr-only">Control Tower</span>
       </span>
     </div>
   );
@@ -59,7 +59,7 @@ export function RunIdentity({ compact }: { compact?: boolean }) {
         {RUN.waveTitle}
         <span className="sr-only">, a simulated run of the MACH Factory</span>
       </h1>
-      <span className="shrink-0 font-mono text-caption text-ink-subtle">{RUN.waveId}</span>
+      <span className="shrink-0 font-mono text-caption text-ink-subtle max-[799px]:hidden">{RUN.waveId}</span>
       {compact ? null : (
         <span className="hidden shrink-0 text-caption text-ink-subtle min-[1360px]:inline">
           {RUN.project}, {RUN.date} from {RUN.startClock} UTC

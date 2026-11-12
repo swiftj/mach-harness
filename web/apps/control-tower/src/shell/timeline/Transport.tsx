@@ -46,7 +46,7 @@ export function TimeCode({ size = "md" }: { size?: "md" | "lg" }) {
       <span ref={codeRef} data-frame="" className={cn("font-mono text-ink tabular", size === "lg" ? "text-[13px]" : "text-[15px] font-semibold")}>
         00:00.0
       </span>
-      {size === "md" ? <span ref={clockRef} data-frame="" className="font-mono text-[11px] text-ink-subtle tabular" /> : null}
+      {size === "md" ? <span ref={clockRef} data-frame="" className="font-mono text-[11px] text-ink-subtle tabular max-[1099px]:hidden" /> : null}
     </span>
   );
 }
@@ -98,7 +98,7 @@ function LiveState() {
           <circle cx="4" cy="4" r="3" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.4 }} />
         </svg>
         Replay
-        {behind >= 10_000 ? <span className="font-normal text-ink-subtle">{words(behind)} behind</span> : null}
+        {behind >= 10_000 ? <span className="font-normal text-ink-subtle max-[1099px]:hidden">{words(behind)} behind</span> : null}
       </span>
       <Tooltip content="Return to live (L)">
         <button
@@ -164,8 +164,15 @@ export const Transport = memo(function Transport({ collapsed, onCollapse }: { co
   const reduced = useSceneStore((s) => s.reducedMotion);
   const store = useStore();
   return (
-    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-line px-2" role="toolbar" aria-label="Transport">
-      <IconButton label="Previous chapter" shortcut="[" onClick={() => stepChapter(store, -1)}>
+    // The bar lies over the timeline's 24 px resize handle: only its controls take the pointer, so the
+    // bar's empty space is the handle.
+    <div
+      className="pointer-events-none relative z-[1] flex h-10 shrink-0 items-center gap-1 border-b border-line px-2 [&_button]:pointer-events-auto [&_fieldset]:pointer-events-auto [&_[title]]:pointer-events-auto"
+      role="toolbar"
+      aria-label="Transport"
+    >
+      {/* On a very narrow window the chapter buttons give way; [ and ] still step by chapter. */}
+      <IconButton label="Previous chapter" shortcut="[" onClick={() => stepChapter(store, -1)} className="max-[759px]:hidden">
         <ChevronsLeft aria-hidden="true" />
       </IconButton>
       <IconButton label="Previous event" shortcut="," onClick={store.stepPrevious}>
@@ -186,7 +193,7 @@ export const Transport = memo(function Transport({ collapsed, onCollapse }: { co
       <IconButton label="Next event" shortcut="." onClick={store.stepNext}>
         <StepForward aria-hidden="true" />
       </IconButton>
-      <IconButton label="Next chapter" shortcut="]" onClick={() => stepChapter(store, 1)}>
+      <IconButton label="Next chapter" shortcut="]" onClick={() => stepChapter(store, 1)} className="max-[759px]:hidden">
         <ChevronsRight aria-hidden="true" />
       </IconButton>
 
@@ -194,7 +201,7 @@ export const Transport = memo(function Transport({ collapsed, onCollapse }: { co
         <TimeCode />
         <span className="sr-only">Simulated factory time</span>
       </div>
-      <div className="mx-3 h-5 w-px shrink-0 bg-line" aria-hidden="true" />
+      <div className="mx-2 h-5 w-px shrink-0 bg-line min-[1100px]:mx-3" aria-hidden="true" />
       <LiveState />
       <span className="ml-2">
         <FollowState />

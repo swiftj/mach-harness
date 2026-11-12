@@ -39,7 +39,7 @@ function LightSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) =>
           Experimental light layer (WebGL)
         </label>
         <p id={`${id}-d`} className="mt-0.5 text-body-sm text-ink-muted">
-          Draws the Atlas's work lamps, packet trails and gate flashes on a WebGL canvas instead of in the drawing, for comparison. Decoration only: the drawing is complete without it. Loaded only when switched on.
+          Optional, off by default, decoration only. Adds soft light to the Atlas on a WebGL canvas: a glow under working cells' lamps (standing in for the drawing's own lamp pools while it is on), short trails behind travelling packets, and a wash on a gate that refuses. It shows nothing the drawing does not already say. Loaded only when switched on.
           {reduced ? " Your system asks for reduced motion, so the layer stays off." : ""}
         </p>
       </div>
@@ -76,7 +76,7 @@ export function HelpSheet({ open, onOpenChange, light, onLight, opener }: { open
             return;
           }
           // The opener was re-rendered away (a view's entity): back to that view's canvas.
-          const canvas = document.querySelector<HTMLElement>("[data-stage-view] [tabindex='0']");
+          const canvas = document.querySelector<HTMLElement>("[data-stage-active] [tabindex='0']");
           if (back instanceof HTMLElement && !back.isConnected && canvas) {
             event.preventDefault();
             canvas.focus();

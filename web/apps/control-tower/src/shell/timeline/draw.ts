@@ -73,9 +73,25 @@ export interface TrackLayout {
   y: number;
   height: number;
   expanded: boolean;
+  /** Drawn as one thin strip of the summary row. */
+  summary?: boolean;
 }
 
-export function layoutTracks(model: TimelineModel, expanded: ReadonlySet<string>): { rows: TrackLayout[]; height: number } {
+/** Height of the summary row: every slice's track as a thin strip, one above the other. */
+export const SUMMARY_ROW = 38;
+
+export function layoutTracks(model: TimelineModel, expanded: ReadonlySet<string>, summary = false): { rows: TrackLayout[]; height: number } {
+  if (summary) {
+    const slices = model.tracks.filter((t) => t.kind === "slice");
+    const strip = Math.max(3, Math.min(6, Math.floor((SUMMARY_ROW - 8) / Math.max(1, slices.length))));
+    let y = Math.floor((SUMMARY_ROW - strip * slices.length) / 2);
+    const rows = slices.map((track) => {
+      const row = { track, y, height: strip, expanded: false, summary: true };
+      y += strip;
+      return row;
+    });
+    return { rows, height: SUMMARY_ROW };
+  }
   let y = 0;
   const rows = model.tracks.map((track) => {
     const open = expanded.has(track.id) && track.agentRows > 0;
@@ -242,6 +258,10 @@ export function drawTracks(input: DrawInput): void {
       ctx.strokeRect(0.5, y + 0.5, W - 1, row.height - 1);
       ctx.setLineDash([]);
     }
+    if (row.summary) {
+      drawStrip(ctx, track, y, row.height, view, p, note, input.liveAt, end);
+      continue;
+    }
     ctx.fillStyle = p.line;
     ctx.fillRect(0, y + row.height - 1, W, 1);
 
@@ -403,6 +423,52 @@ export function drawTracks(input: DrawInput): void {
 type Box = [number, number, number, number];
 type Note = (r: AnyRef | null, box: Box) => void;
 
+/**
+ * One slice's track as a strip of the summary row: its station visits in their state's tint (an
+ * outcome only once the live edge has passed its end), its waits as a dashed line, its failures as a
+ * stroke across the strip.
+ */
+function drawStrip(ctx: CanvasRenderingContext2D, track: Track, y: number, h: number, view: View, p: Palette, note: Note, liveAt: number, end: number) {
+  const W = view.width;
+  const span = (t: number | null) => xOf(view, t ?? end);
+  const inner = Math.max(1, h - 2);
+  for (const w of track.waits) {
+    const x0 = xOf(view, w.start);
+    const x1 = span(w.end);
+    if (x1 < 0 || x0 > W) continue;
+    ctx.strokeStyle = w.kind === "dependency" ? p.wait : p.fInkSoft;
+    ctx.lineWidth = 1;
+    ctx.setLineDash(w.kind === "dependency" ? [3, 2] : [1, 2]);
+    ctx.beginPath();
+    ctx.moveTo(x0, y + h / 2);
+    ctx.lineTo(x1, y + h / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    note(w.ref, [x0, y, x1, y + h]);
+  }
+  for (const s of track.stations) {
+    const x0 = xOf(view, s.start);
+    const x1 = Math.max(x0 + 1.5, span(s.end));
+    if (x1 < 0 || x0 > W) continue;
+    const ended = s.end !== null && s.end <= liveAt;
+    const c = stateColors(p, ended ? s.outcome : null);
+    ctx.fillStyle = c.soft;
+    ctx.fillRect(x0, y + 1, x1 - x0, inner);
+    ctx.fillStyle = c.ink;
+    ctx.fillRect(x0, y + 1, 1.5, inner);
+    if (ended) ctx.fillRect(x1 - 1.5, y + 1, 1.5, inner);
+    note(s.ref, [x0, y, x1, y + h]);
+  }
+  for (const m of track.marks) {
+    if (m.kind !== "fail") continue;
+    const x = xOf(view, m.t);
+    if (x < -2 || x > W + 2) continue;
+    ctx.fillStyle = p.fail;
+    ctx.fillRect(Math.round(x) - 1, y, 2, h);
+  }
+  note(track.ref, [Math.max(-4, xOf(view, track.stations[0]?.start ?? track.waits[0]?.start ?? 0)), y, Math.min(W + 4, span(track.stations[track.stations.length - 1]?.end ?? track.waits[track.waits.length - 1]?.end ?? null)), y + h]);
+}
+
 function drawFactory(ctx: CanvasRenderingContext2D, track: Track, y: number, view: View, p: Palette, note: Note) {
   const cy = y + 13;
   for (const m of track.marks) {
@@ -505,13 +571,29 @@ export interface Hit {
 export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, end: number, liveAt = end): Hit | null {
   // Nothing after the live edge is known: a span still open there reads as open, with no outcome.
   const known = (e: number | null) => (e !== null && e <= liveAt ? e : null);
-  const row = rows.find((r) => y >= r.y && y < r.y + r.height);
+  // In the summary row the strips are thin: the pad above and below belongs to the nearest one.
+  const row =
+    rows.find((r) => y >= r.y && y < r.y + r.height) ??
+    (rows[0]?.summary ? rows.reduce((best, r) => (Math.abs(r.y + r.height / 2 - y) < Math.abs(best.y + best.height / 2 - y) ? r : best)) : undefined);
   if (!row) return null;
   const { track } = row;
   const t = tOf(view, x);
   const slack = (view.v1 - view.v0) / view.width; // ms per px
   const near = (at: number, px: number) => Math.abs(at - t) <= px * slack;
   const local = y - row.y;
+
+  if (row.summary) {
+    for (const s of track.stations) {
+      if (t >= s.start - slack && t <= (s.end ?? end) + slack) {
+        const ended = known(s.end);
+        return { ref: s.ref, trackId: track.id, title: `${track.ticketId ?? track.sliceId}: ${STATION_WORDS[s.station]}, round ${s.round}`, detail: ended !== null && s.outcome ? `Ended: ${s.outcome}` : "At work", start: s.start, end: ended };
+      }
+    }
+    for (const w of track.waits) {
+      if (t >= w.start && t <= (w.end ?? end)) return { ref: w.ref, trackId: track.id, title: w.kind === "dependency" ? "Waiting on a dependency" : "Eligible, not yet dispatched", detail: track.sliceId ?? "", start: w.start, end: known(w.end) };
+    }
+    return { ref: track.ref, trackId: track.id, title: track.ticketId ?? track.title, detail: track.title, start: t, end: t };
+  }
 
   if (track.kind === "factory") {
     const m = [...track.marks].sort((a, b) => Math.abs(a.t - t) - Math.abs(b.t - t))[0];

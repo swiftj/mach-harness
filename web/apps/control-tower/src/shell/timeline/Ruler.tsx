@@ -1,7 +1,9 @@
 /**
- * The scrubber over the whole run: chapters as numbered, labelled flags, the run's significant
- * moments as ticks, the live edge, the playhead, and (when the tracks are zoomed) the window they
- * show. A slider for assistive technology: its value is written directly on every frame.
+ * The scrubber over the whole run: chapters as numbered flags, the run's significant moments as
+ * ticks, the live edge, the playhead, and (when the tracks are zoomed) the window they show. A
+ * chapter's title appears only once the playhead has reached it: before that its flag is a number,
+ * so the ruler never names what has not happened yet. A slider for assistive technology: its value
+ * is written directly on every frame.
  */
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { cn } from "@mach/ui";
@@ -17,6 +19,8 @@ const CHAPTERS = SCENARIO.chapters;
 export const Ruler = memo(function Ruler({ moments, duration, window: win, onWindow }: { moments: readonly Moment[]; duration: number; window: TimeWindow; onWindow: (w: TimeWindow) => void }) {
   const store = useStore();
   const current = useSceneStore((s) => chapterAt(s.fixture, s.playhead));
+  // Chapters up to this index have been reached by the playhead; later ones are numbers only.
+  const reached = current ? CHAPTERS.findIndex((c) => c.id === current.id) : -1;
   const trackRef = useRef<HTMLDivElement>(null);
   const sliderRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
@@ -49,7 +53,7 @@ export const Ruler = memo(function Ruler({ moments, duration, window: win, onWin
     [duration],
   );
 
-  // Chapter labels: numbered always; a label only where it fits before the next one.
+  // Chapter labels: numbered always; a title only once reached, and only where it fits before the next one.
   const labels = useMemo(() => {
     const out: Array<{ number: boolean; title: boolean }> = [];
     let lastEnd = -Infinity;
@@ -60,13 +64,13 @@ export const Ruler = memo(function Ruler({ moments, duration, window: win, onWin
       const numW = i + 1 >= 10 ? 20 : 13;
       const number = x >= lastEnd + 2;
       const w = c.title.length * 6.1 + numW + 8;
-      const title = number && x + w < nextX - 4 && x + w < width;
+      const title = i <= reached && number && x + w < nextX - 4 && x + w < width;
       out.push({ number, title });
       if (title) lastEnd = x + w;
       else if (number) lastEnd = x + numW;
     });
     return out;
-  }, [width, duration]);
+  }, [width, duration, reached]);
 
   const ticks = useMemo(() => {
     let major = "";
@@ -176,12 +180,13 @@ export const Ruler = memo(function Ruler({ moments, duration, window: win, onWin
         {CHAPTERS.map((c, i) => {
           const left = (c.t / duration) * 100;
           const isCurrent = current?.id === c.id;
+          const known = i <= reached;
           return (
             <button
               key={c.id}
               type="button"
               onClick={() => store.seekToChapter(c.id)}
-              title={`${i + 1}. ${c.title} (${timecode(c.t, false)})`}
+              title={known ? `${i + 1}. ${c.title} (${timecode(c.t, false)})` : `Chapter ${i + 1} (${timecode(c.t, false)}): not reached yet`}
               aria-current={isCurrent ? "step" : undefined}
               className={cn(
                 "absolute top-[3px] flex h-[16px] items-center gap-1 whitespace-nowrap rounded-xs pl-[3px] pr-1 text-[11px] leading-none",
@@ -192,8 +197,14 @@ export const Ruler = memo(function Ruler({ moments, duration, window: win, onWin
               <span aria-hidden="true" className="absolute -left-px top-0 h-[20px] w-px bg-current opacity-60" />
               <span className="sr-only">Chapter </span>
               <span className={cn("font-mono tabular", isCurrent && "font-semibold", !labels[i]?.number && "sr-only")}>{i + 1}</span>
-              <span className="sr-only">: </span>
-              <span className={cn("truncate", isCurrent && "font-semibold", !labels[i]?.title && "sr-only")}>{c.title}</span>
+              {known ? (
+                <>
+                  <span className="sr-only">: </span>
+                  <span className={cn("truncate", isCurrent && "font-semibold", !labels[i]?.title && "sr-only")}>{c.title}</span>
+                </>
+              ) : (
+                <span className="sr-only">, not reached yet</span>
+              )}
               <span className="sr-only">, at {timecode(c.t, false)}</span>
             </button>
           );
