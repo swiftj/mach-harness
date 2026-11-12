@@ -40,3 +40,6 @@ export * from "./shell";
 export * from "./lifecycle";
 export * from "./spec";
 export * from "./api";
+
+// Factory grammar (M6). Additive; a `./factory` export path is proposed to the lead.
+export * from "./factory";

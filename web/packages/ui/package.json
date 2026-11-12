@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "description": "MACH design system: tokens, themes, primitives, shell, lifecycle visuals, graph foundation and API-client conventions. Shared by Product Studio and Control Tower.",
-  "sideEffects": ["*.css"],
+  "sideEffects": [
+    "*.css"
+  ],
   "exports": {
     ".": "./src/index.ts",
     "./api": "./src/api/index.ts",
     "./graph": "./src/graph/index.ts",
+    "./factory": "./src/factory/index.ts",
     "./tokens": "./src/tokens/tokens.ts",
     "./styles.css": "./src/styles/index.css",
     "./graph.css": "./src/graph/graph.css"
