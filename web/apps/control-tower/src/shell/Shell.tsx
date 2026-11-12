@@ -143,6 +143,7 @@ export function Shell() {
   const [timelineH, setTimelineH] = useState(() => (typeof window !== "undefined" ? Math.round(Math.min(320, Math.max(250, window.innerHeight * 0.3))) : 260));
   const [resizing, setResizing] = useState(false);
   const [help, setHelp] = useState(false);
+  const helpOpener = useRef<Element | null>(null);
   // The Atlas's experimental WebGL light layer: off by default, switched on in the help sheet.
   const [light, setLight] = useState(false);
   const helpRef = useRef(help);
@@ -177,7 +178,10 @@ export function Shell() {
     () => ({
       toggleInspector,
       toggleTimeline: () => setTimelineCollapsed((v) => !v),
-      openHelp: () => setHelp(true),
+      openHelp: () => {
+        helpOpener.current = document.activeElement;
+        setHelp(true);
+      },
       modalOpen: () => helpRef.current,
     }),
     [toggleInspector],
@@ -231,7 +235,10 @@ export function Shell() {
       </a>
 
       <header className="min-w-0 overflow-hidden [grid-area:top]" inert={theater}>
-        <TopBar inspectorOpen={inspectorOpen} onInspector={toggleInspector} onHelp={() => setHelp(true)} />
+        <TopBar inspectorOpen={inspectorOpen} onInspector={toggleInspector} onHelp={() => {
+          helpOpener.current = document.activeElement;
+          setHelp(true);
+        }} />
       </header>
 
       <main id="stage" tabIndex={-1} aria-label={`${stageLabel} (simulation)`} className="relative min-h-0 min-w-0 overflow-hidden bg-factory-ground outline-none [grid-area:stage]">
@@ -243,10 +250,11 @@ export function Shell() {
       </main>
 
       <aside
+        tabIndex={-1}
         aria-label={selectionWord ? `Inspector: ${selectionWord}` : "Inspector: the run now"}
         inert={theater || !inspectorOpen}
         className={cn(
-          "min-h-0 min-w-0 overflow-hidden border-line bg-surface [grid-area:inspector]",
+          "min-h-0 min-w-0 overflow-hidden border-line bg-surface outline-none [grid-area:inspector]",
           wide
             ? "border-l"
             : cn(
@@ -277,7 +285,7 @@ export function Shell() {
       </section>
 
       <Announcer />
-      <HelpSheet open={help} onOpenChange={setHelp} light={light} onLight={setLight} />
+      <HelpSheet open={help} onOpenChange={setHelp} light={light} onLight={setLight} opener={helpOpener} />
     </div>
   );
 }

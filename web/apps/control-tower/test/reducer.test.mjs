@@ -137,7 +137,7 @@ test("selectors: any entity resolves, and hover sets cover the dependency graph"
 });
 
 test("selectors: timelines and moments", () => {
-  const lanes = cellTimelines(SCENARIO);
+  const lanes = cellTimelines(SCENARIO, SCENARIO.duration);
   assert.deepEqual(lanes.map((l) => l.ticketId), ["LOCAL-031", "LOCAL-032", "LOCAL-033", "LOCAL-034"]);
   const a = lanes[0];
   assert.deepEqual(a.stations.map((s) => s.station), ["plan", "build", "verify", "build", "verify", "review", "merge", "cleanup"]);
@@ -145,7 +145,7 @@ test("selectors: timelines and moments", () => {
     const overlapping = a.agents.filter((o) => o !== span && o.row === span.row && o.start < (span.end ?? Infinity) && span.start < (o.end ?? Infinity));
     assert.equal(overlapping.length, 0, "agents on one row never overlap");
   }
-  const reviewer = agentTimeline(SCENARIO, a.agents.find((x) => x.role === "reviewer").agentId);
+  const reviewer = agentTimeline(SCENARIO, a.agents.find((x) => x.role === "reviewer").agentId, SCENARIO.duration);
   assert.ok(reviewer.tools.length >= 5);
   const major = moments(SCENARIO);
   assert.ok(major.length > 20 && major.every((m) => m.significance === "major" || m.significance === "chapter"));

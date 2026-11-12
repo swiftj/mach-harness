@@ -221,7 +221,7 @@ function Selected({ entity }: { entity: AnyRef }) {
           <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-sm border border-line bg-factory-ground">{look?.glyph ?? <span className="size-4 rounded-full border border-dashed border-line-strong" />}</span>
           <div className="min-w-0 flex-1">
             <p className="text-caption text-ink-subtle">{identity.kindWord}</p>
-            <h2 className="font-serif text-title-3 leading-snug text-ink [overflow-wrap:anywhere]">{identity.name}</h2>
+            <h2 tabIndex={-1} data-inspector-heading="" className="font-serif text-title-3 leading-snug text-ink outline-none [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--mach-focus)]">{identity.name}</h2>
             <p className="mt-0.5 truncate font-mono text-[12px] text-ink-muted" title={identity.id}>
               {identity.id}
             </p>

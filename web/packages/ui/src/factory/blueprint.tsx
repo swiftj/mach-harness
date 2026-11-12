@@ -263,16 +263,19 @@ export interface TimeRulerProps {
   playhead?: number;
   /** Ticks point down (a ruler above the drawing, default) or up (below it). */
   side?: "top" | "bottom";
+  /** Label format: "m:ss" (default) or "mm:ss", zero-padded minutes, to match a host that uses it. */
+  format?: "m:ss" | "mm:ss";
 }
 
 const STEPS = [1, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600].map((s) => s * 1000);
 
-function clock(ms: number): string {
+function clockOf(ms: number, format: "m:ss" | "mm:ss" = "m:ss"): string {
   const s = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+  const mm = format === "mm:ss" ? String(m).padStart(2, "0") : String(m);
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${mm}:${String(sec).padStart(2, "0")}`;
 }
 
 /**
@@ -280,7 +283,8 @@ function clock(ms: number): string {
  * ticks between, chosen so majors are at least 72 px apart, and the playhead. Precise and quiet; the
  * drawing's columns stay fixed and the ruler states when things happened.
  */
-export function TimeRuler({ x, y, width, from, to, playhead, side = "top" }: TimeRulerProps) {
+export function TimeRuler({ x, y, width, from, to, playhead, side = "top", format = "m:ss" }: TimeRulerProps) {
+  const clock = (ms: number) => clockOf(ms, format);
   const span = Math.max(1, to - from);
   const pxPerMs = width / span;
   const major = STEPS.find((s) => s * pxPerMs >= 72) ?? STEPS[STEPS.length - 1]!;

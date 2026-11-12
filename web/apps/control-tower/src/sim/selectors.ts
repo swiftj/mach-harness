@@ -8,7 +8,7 @@ import type { AnySimEvent, EventKind } from "./events";
 import type { Significance } from "./catalog";
 import { EVENT_CATALOG } from "./catalog";
 import { describe } from "./describe";
-import { finalScene, indexFixture, lowerBound, upperBound } from "./engine";
+import { indexFixture, lowerBound, sceneAt, upperBound } from "./engine";
 import type {
   AnyRef,
   ActorId,
@@ -200,11 +200,11 @@ export function cellsAtStation(scene: Scene, station: StationId): readonly CellS
 /** Look up any entity by its reference. Null when it does not exist (yet) at this moment. */
 export function entityAt(scene: Scene, entity: AnyRef): EntityState | null {
   const id = refId(entity);
-  if (isActorRef(entity)) {
-    const actor = scene.actors[id as ActorId];
-    return actor ? { kind: "actor", value: actor } : null;
-  }
   switch (refKind(entity)) {
+    case "actor": {
+      const actor = isActorRef(entity) ? scene.actors[id as ActorId] : undefined;
+      return actor ? { kind: "actor", value: actor } : null;
+    }
     case "wave":
       return scene.waves[id] ? { kind: "wave", value: scene.waves[id] } : null;
     case "slice":
@@ -382,14 +382,19 @@ export interface AgentTimeline extends AgentSpan {
   readonly tools: readonly ToolSpan[];
 }
 
-const timelineCache = new WeakMap<Fixture, readonly CellTimeline[]>();
+const timelineCache = new WeakMap<Scene, readonly CellTimeline[]>();
 
-/** One timeline per cell, in the order the cells were opened. */
-export function cellTimelines(fixture: Fixture): readonly CellTimeline[] {
-  const cached = timelineCache.get(fixture);
+/**
+ * One timeline per cell, in the order the cells were opened, as known at playhead time t: spans
+ * still open at t have `end: null` and no outcome, and nothing that starts after t is listed. Pass
+ * `fixture.duration` for the whole recorded run (then hide what lies beyond the live edge).
+ * Cached per scene: the same object for every t between two events.
+ */
+export function cellTimelines(fixture: Fixture, t: number): readonly CellTimeline[] {
+  const scene = sceneAt(fixture, t);
+  const cached = timelineCache.get(scene);
   if (cached) return cached;
-  const scene = finalScene(fixture);
-  const all = moments(fixture, "minor");
+  const all = moments(fixture, "minor", t);
   const out = Object.values(scene.cells)
     .sort((a, b) => a.openedAt - b.openedAt)
     .map((cell): CellTimeline => {
@@ -413,19 +418,20 @@ export function cellTimelines(fixture: Fixture): readonly CellTimeline[] {
         moments: all.filter((m) => m.ticketId === cell.ticketId),
       };
     });
-  timelineCache.set(fixture, out);
+  timelineCache.set(scene, out);
   return out;
 }
 
-export function cellTimeline(fixture: Fixture, ticketId: string): CellTimeline | null {
-  return cellTimelines(fixture).find((x) => x.ticketId === ticketId) ?? null;
+export function cellTimeline(fixture: Fixture, ticketId: string, t: number): CellTimeline | null {
+  return cellTimelines(fixture, t).find((x) => x.ticketId === ticketId) ?? null;
 }
 
-export function agentTimeline(fixture: Fixture, agentId: string): AgentTimeline | null {
-  for (const cell of cellTimelines(fixture)) {
+/** An agent's span and tool calls as known at t (open calls have `end: null` and status "running"). */
+export function agentTimeline(fixture: Fixture, agentId: string, t: number): AgentTimeline | null {
+  for (const cell of cellTimelines(fixture, t)) {
     const span = cell.agents.find((a) => a.agentId === agentId);
     if (!span) continue;
-    const agent = findAgent(finalScene(fixture), agentId) as AgentState;
+    const agent = findAgent(sceneAt(fixture, t), agentId) as AgentState;
     return {
       ...span,
       ticketId: cell.ticketId,
@@ -450,8 +456,11 @@ export interface Moment {
 const RANK: Record<Significance, number> = { chapter: 3, major: 2, minor: 1, ambient: 0 };
 const momentCache = new WeakMap<Fixture, readonly Moment[]>();
 
-/** Events at or above a significance, with a sentence each, for timeline markers. */
-export function moments(fixture: Fixture, atLeast: Significance = "major"): readonly Moment[] {
+/**
+ * Events at or above a significance, with a sentence each, for timeline markers. With t, only the
+ * moments that have happened by t (a view showing what is known at t should pass it).
+ */
+export function moments(fixture: Fixture, atLeast: Significance = "major", t?: number): readonly Moment[] {
   let all = momentCache.get(fixture);
   if (!all) {
     const index = indexFixture(fixture);
@@ -467,7 +476,7 @@ export function moments(fixture: Fixture, atLeast: Significance = "major"): read
     momentCache.set(fixture, all);
   }
   const floor = RANK[atLeast];
-  return all.filter((m) => RANK[m.significance] >= floor);
+  return all.filter((m) => RANK[m.significance] >= floor && (t === undefined || m.t <= t));
 }
 
 export function chapters(fixture: Fixture): readonly Chapter[] {

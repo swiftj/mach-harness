@@ -57,7 +57,8 @@ export interface ToolItem {
   target: string;
   start: number;
   end: number | null;
-  error: boolean;
+  /** When the call is known to have failed (its end), or null: never draw it as failed before this time. */
+  failedAt: number | null;
 }
 export interface AgentItem {
   ref: EntityRef;
@@ -95,7 +96,7 @@ export interface Track {
 export interface TimelineModel {
   duration: number;
   tracks: Track[];
-  /** Every station visit's end time, ascending: the tracks redraw when the live edge passes one. */
+  /** Every time an outcome becomes known (station visits ending, tool calls failing), ascending: the tracks redraw when the live edge passes one. */
   stationEnds: readonly number[];
   /** Major and chapter moments, for the ruler. */
   moments: readonly Moment[];
@@ -109,7 +110,9 @@ export function timelineModel(): TimelineModel {
   if (cached) return cached;
   const fixture = SCENARIO;
   const scene = finalScene(fixture);
-  const cells = cellTimelines(fixture);
+  // The whole recorded run; the live edge hides what has not happened, and anything coloured by how
+  // it ends carries the time that end is known, so the drawing never shows it earlier.
+  const cells = cellTimelines(fixture, fixture.duration);
   const tracks: Track[] = [];
   const where = new Map<EntityRef, { trackId: string; row: number; start: number; end: number | null }>();
 
@@ -241,7 +244,7 @@ export function timelineModel(): TimelineModel {
           target: c.target,
           start: c.startedAt,
           end: c.finishedAt,
-          error: c.status === "error",
+          failedAt: c.status === "error" ? c.finishedAt : null,
         }));
         track.agents.push({ ref: ref.agent(agent.id), agent, row: span.row, start: span.start, end: span.end, tools });
         put(ref.agent(agent.id), span.row, span.start, span.end);
@@ -256,7 +259,10 @@ export function timelineModel(): TimelineModel {
   cached = {
     duration: fixture.duration,
     tracks,
-    stationEnds: tracks.flatMap((tr) => tr.stations.map((x) => x.end).filter((e): e is number => e !== null)).sort((a, b) => a - b),
+    stationEnds: tracks
+      .flatMap((tr) => [...tr.stations.map((x) => x.end), ...tr.agents.flatMap((a) => a.tools.map((c) => c.failedAt))])
+      .filter((e): e is number => e !== null)
+      .sort((a, b) => a - b),
     moments: moments(fixture, "major"),
     locate: (entity) => {
       const found = where.get(entity);

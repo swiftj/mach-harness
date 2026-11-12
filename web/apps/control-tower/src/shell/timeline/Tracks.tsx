@@ -50,12 +50,13 @@ function TrackHeader({ track, expanded, onToggle, height, focused }: { track: Tr
       <button
         type="button"
         onClick={() => select(track.ref)}
-        className={cn("mt-1 flex min-w-0 flex-1 items-center gap-1.5 rounded-xs px-1 py-0.5 text-left hover:bg-surface-sunken", !exists && "opacity-55")}
+        className="mt-1 flex min-w-0 flex-1 items-center gap-1.5 rounded-xs px-1 py-0.5 text-left hover:bg-surface-sunken"
       >
         <span className="sr-only">Select </span>
         {look ? <StateGlyph state={look.state} mark={look.mark} size={11} /> : null}
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-caption leading-tight text-ink">{track.kind === "factory" ? "Factory" : track.ticketId}</span>
+          {/* A slice with no cell yet reads quieter, in a muted ink that still meets AA (never by opacity). */}
+          <span className={cn("block truncate font-mono text-caption leading-tight", exists ? "text-ink" : "text-ink-muted")}>{track.kind === "factory" ? "Factory" : track.ticketId}</span>
           {track.kind === "slice" && height > 26 ? <span className="block truncate text-[11px] leading-tight text-ink-subtle">{track.sliceId}</span> : null}
           <span className="sr-only">
             {track.kind === "factory" ? ": the wave and its people" : `, ${track.title}`}

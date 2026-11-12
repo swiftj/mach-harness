@@ -2,7 +2,7 @@
  * The keyboard help (`?`): every shortcut, rendered from the same table the handler uses, plus the
  * legend of the timeline's marks.
  */
-import { useId } from "react";
+import { useId, type RefObject } from "react";
 import { cn, Dialog, DialogContent, Kbd } from "@mach/ui";
 import { useSceneStore } from "../scene";
 import { KEYMAP, type KeyBinding } from "./keyboard";
@@ -61,10 +61,27 @@ function LightSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) =>
   );
 }
 
-export function HelpSheet({ open, onOpenChange, light, onLight }: { open: boolean; onOpenChange: (open: boolean) => void; light: boolean; onLight: (on: boolean) => void }) {
+export function HelpSheet({ open, onOpenChange, light, onLight, opener }: { open: boolean; onOpenChange: (open: boolean) => void; light: boolean; onLight: (on: boolean) => void; opener?: RefObject<Element | null> }) {
+  // Opened by a key, the sheet has no trigger, and DialogContent's own return target is taken when the
+  // app mounts (the page). The shell records what had focus as it opens; focus goes back there on close.
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent width="lg" title="Keyboard, legend and display" description="Every shortcut in the Control Tower prototype. Keys marked for a view work while that view or the timeline tracks have focus.">
+      <DialogContent
+        width="lg"
+        onCloseAutoFocus={(event) => {
+          const back = opener?.current;
+          if (back instanceof HTMLElement && back.isConnected && back !== document.body && !back.closest("[inert]")) {
+            event.preventDefault();
+            back.focus();
+            return;
+          }
+          // The opener was re-rendered away (a view's entity): back to that view's canvas.
+          const canvas = document.querySelector<HTMLElement>("[data-stage-view] [tabindex='0']");
+          if (back instanceof HTMLElement && !back.isConnected && canvas) {
+            event.preventDefault();
+            canvas.focus();
+          }
+        }} title="Keyboard, legend and display" description="Every shortcut in the Control Tower prototype. Keys marked for a view work while that view or the timeline tracks have focus.">
         {/* Scrolls on short windows, so it takes focus for keyboard scrolling. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
         <div tabIndex={0} role="region" aria-label="Shortcuts and legend" className="grid min-h-0 gap-x-8 gap-y-5 overflow-y-auto px-6 pb-6 pt-4 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus md:grid-cols-2">

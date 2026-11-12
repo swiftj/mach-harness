@@ -37,6 +37,7 @@ export const ENTITY_KINDS = [
   "gate",
   "dependency",
   "finding",
+  "actor",
 ] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
@@ -48,13 +49,13 @@ export type EntityKind = (typeof ENTITY_KINDS)[number];
  * - `gate:LOCAL-031/review#2` (round-numbered gates: verification, review), `gate:LOCAL-031/audit`
  * - `dependency:SLICE-024->SLICE-021` (the first waits for the second)
  * - `finding:LOCAL-032/r1/security/1`
+ * - `actor:supervisor`, `actor:scheduler`
  */
 export type EntityRef = `${EntityKind}:${string}`;
 
 /**
- * The supervisor and the scheduler: `actor:supervisor`, `actor:scheduler`. Kept apart from
- * EntityRef for now, because adding a kind to EntityKind breaks exhaustive switches in the views;
- * entityAt and eventsFor accept both. See README section 2, "Actors".
+ * The supervisor and the scheduler: `actor:supervisor`, `actor:scheduler`. An EntityRef of kind
+ * "actor", narrowed to the two actors. See README section 2, "Actors".
  */
 export type ActorRef = `actor:${ActorId}`;
 /** Everything that has an identity in the record. */

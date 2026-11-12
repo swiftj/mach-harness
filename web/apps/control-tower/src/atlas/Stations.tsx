@@ -279,7 +279,7 @@ function Findings({ occ, roundIndex, L, t, reduced, lod }: { occ: CellState; rou
         const appear = anim("artifactMaterialise", t - f.at, reduced);
         const foot = project(at);
         return (
-          <Hit key={f.id} entity={ref.finding(f.id)} label={`${blocker ? "Blocker" : "Note"} from the ${f.seat} seat${f.rule ? ` (${f.rule})` : ""}: ${f.title}${f.outvoted ? ". Outvoted, reported" : ""}`}>
+          <Hit key={f.id} entity={ref.finding(f.id)} label={`${blocker ? "Blocking finding" : "Note"}${f.rule ? ` citing ${f.rule}` : ""}, from the ${f.seat} seat: ${f.title}${f.outvoted ? ". Outvoted, reported" : ""}`}>
             <g style={{ opacity: Math.min(1, appear * 1.6) }}>
               <FindingsFlag at={at} severity={f.severity} rule={f.rule ?? undefined} lod={lod} />
               {/* An outvoted blocker keeps its flag, struck through: reported, not hidden. */}

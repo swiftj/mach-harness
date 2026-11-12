@@ -1,6 +1,7 @@
 /**
  * Screen-reader announcements. Two polite live regions:
- * - the transport's state when it changes (playing, paused, speed, live or replay), never per tick;
+ * - the transport's state when it changes (playing, paused, speed, live or replay), never per tick,
+ *   and the view when the mode switches ("Factory Atlas", "Execution Blueprint"; spec c.6);
  * - significant moments while playing, at a sensible rate: chapters always, other major moments at
  *   most one per few seconds of wall time, folding any in between into "and n more".
  * The words come from the simulation (describe), never invented here.
@@ -36,6 +37,7 @@ export function Announcer() {
     last.current.chapter = chapterAt(SCENARIO, prev.playhead)?.id ?? "";
     return store.subscribe(() => {
       const s = store.getState();
+      if (s.view !== prev.view) setStatus(s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint");
       if (s.playing !== prev.playing || s.speed !== prev.speed || s.following !== prev.following) {
         const words = s.playing ? `Playing at ${s.speed} times` : `Paused at ${spokenTime(s.playhead)}`;
         setStatus(`${words}${s.following ? ", live" : ", replay"}.`);

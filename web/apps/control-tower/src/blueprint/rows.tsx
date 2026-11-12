@@ -202,7 +202,7 @@ const ExecRuler = memo(function ExecRuler({ axis, y }: { axis: ExecAxis; y: numb
 /** One visit's stretch of the ruler; the playhead is drawn on it only while the playhead is inside. */
 function SegmentRuler({ x, y, width, from, to }: { x: number; y: number; width: number; from: number; to: number }) {
   const playhead = useSceneStore((s) => (s.playhead >= from && s.playhead <= to ? Math.floor(s.playhead / 1000) * 1000 : undefined));
-  return <TimeRuler x={x} y={y} width={width} from={from} to={to} playhead={playhead} side="bottom" />;
+  return <TimeRuler x={x} y={y} width={width} from={from} to={to} playhead={playhead} side="bottom" format="mm:ss" />;
 }
 
 /** A span that is still open, drawn to the playhead (its own component: it moves). */

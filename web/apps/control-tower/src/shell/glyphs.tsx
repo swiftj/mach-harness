@@ -35,11 +35,10 @@ export function Glyph({ size = 24, children, className }: { size?: number; child
   );
 }
 
-export function StateGlyph({ state, mark, size = 14, progress }: { state: FactoryState; mark?: FactoryMarkShape; size?: number; progress?: number }) {
+export function StateGlyph({ state, mark, size = 14 }: { state: FactoryState; mark?: FactoryMarkShape; size?: number }) {
   return (
     <svg aria-hidden="true" width={size} height={size} viewBox="-7 -7 14 14" className="shrink-0 overflow-visible">
-      {/* Work in flight has no known fraction: "working" is the plain ring, never a part-filled sector. */}
-      <StateMark state={state} r={6} mark={mark} progress={progress ?? 0} surface="var(--mach-surface)" />
+      <StateMark state={state} r={6} mark={mark} surface="var(--mach-surface)" />
     </svg>
   );
 }
@@ -126,7 +125,7 @@ export function CellGlyph({ size, state = "idle" }: { size?: number; state?: Fac
       <path d="M0 1V8" style={{ stroke: fc("plate-edge"), strokeWidth: 0.8 }} />
       <path d="M-6 -3.2V-10" style={{ stroke: fc("ink"), strokeWidth: 1.2 }} />
       <g transform="translate(-6 -10.5)">
-        <StateMark state={state} r={2.8} progress={0} surface="var(--mach-surface)" />
+        <StateMark state={state} r={2.8} surface="var(--mach-surface)" />
       </g>
       <path d="M-5 -2.5L5 -5.5" style={{ stroke: state === "active" ? ink : fc("route"), strokeWidth: 1.1 }} />
     </Glyph>
@@ -152,7 +151,7 @@ export function SliceGlyph({ size, state = "idle", mark }: { size?: number; stat
     <Glyph size={size}>
       <path d="M-11 0L0 -6L11 0L0 6Z" style={{ fill: state === "idle" ? fc("plate-top") : soft, stroke: fc("ink-soft"), strokeWidth: 1 }} />
       <g transform="translate(0 -1)">
-        <StateMark state={state} r={3.6} mark={mark} progress={0} surface="var(--mach-surface)" />
+        <StateMark state={state} r={3.6} mark={mark} surface="var(--mach-surface)" />
       </g>
     </Glyph>
   );

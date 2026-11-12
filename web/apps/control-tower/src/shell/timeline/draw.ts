@@ -383,7 +383,7 @@ export function drawTracks(input: DrawInput): void {
     for (const ex of track.executions) note(ex.ref, [xOf(view, ex.start), y + 3, span(ex.end), y + ROW.main - 3]);
     note(track.ref, [Math.max(-4, xOf(view, track.stations[0]?.start ?? track.waits[0]?.start ?? 0)), y + 2, Math.min(W + 4, span(track.stations[track.stations.length - 1]?.end ?? track.waits[track.waits.length - 1]?.end ?? null)), y + ROW.main - 2]);
 
-    if (row.expanded) drawAgents(ctx, track, y + ROW.main, view, p, note, end);
+    if (row.expanded) drawAgents(ctx, track, y + ROW.main, view, p, note, end, input.liveAt);
   }
 
   if (boxes.hovered && hovered !== selection) {
@@ -454,7 +454,7 @@ function drawFactory(ctx: CanvasRenderingContext2D, track: Track, y: number, vie
   }
 }
 
-function drawAgents(ctx: CanvasRenderingContext2D, track: Track, top: number, view: View, p: Palette, note: Note, end: number) {
+function drawAgents(ctx: CanvasRenderingContext2D, track: Track, top: number, view: View, p: Palette, note: Note, end: number, liveAt: number) {
   const W = view.width;
   const msPerPx = (view.v1 - view.v0) / W;
   for (const a of track.agents) {
@@ -472,7 +472,8 @@ function drawAgents(ctx: CanvasRenderingContext2D, track: Track, top: number, vi
       const tx0 = xOf(view, t.start);
       if (tx0 < -2 || tx0 > W + 2) continue;
       const tx1 = xOf(view, t.end ?? end);
-      ctx.fillStyle = t.error ? p.fail : p.fInk;
+      // A failure is known only from the call's end: before the live edge passes it, the call is plain work.
+      ctx.fillStyle = t.failedAt !== null && t.failedAt <= liveAt ? p.fail : p.fInk;
       if (tx1 - tx0 >= 4) {
         ctx.globalAlpha = 0.35;
         ctx.fillRect(tx0, cy - 2.5, tx1 - tx0, 5);

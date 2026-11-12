@@ -366,7 +366,11 @@ export function BlueprintView() {
       return;
     }
     const rect = boundsFor(layout, tree, focusReq.target, store.getState().playhead);
-    if (!rect) return;
+    if (!rect) {
+      // The supervisor and the scheduler have no mark on the sheet: nothing to frame, so no camera move.
+      if (focusReq.target.startsWith("actor:")) handledFocus.current = focusReq.nonce;
+      return;
+    }
     handledFocus.current = focusReq.nonce;
     fitted.current = false;
     moveTo(focusCamera(v, rect), true);

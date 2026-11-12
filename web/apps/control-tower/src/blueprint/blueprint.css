@@ -129,7 +129,8 @@
   border: 1px solid var(--mach-factory-wait);
   border-radius: 2px;
   background: var(--mach-factory-wait-soft);
-  color: var(--mach-warning-ink);
+  /* Ink, not warning ink: warning ink on the wait tint falls below AA in the light theme. */
+  color: var(--mach-ink);
   font-size: 10px;
   font-weight: 700;
 }

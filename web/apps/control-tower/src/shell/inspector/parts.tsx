@@ -49,7 +49,7 @@ export function RefLink({ to, glyph, children, detail }: { to: AnyRef; glyph?: R
   const { select } = useStore();
   const target = selectable(to);
   if (!target) {
-    // Not yet a selection the store can hold (an actor, before "actor" is an entity kind): plain text.
+    // Not a selection the store can hold: plain text.
     return (
       <span className="flex w-full min-w-0 items-center gap-2 px-1.5 py-1 text-body-sm">
         {glyph ? <span className="inline-flex shrink-0">{glyph}</span> : null}
@@ -61,7 +61,11 @@ export function RefLink({ to, glyph, children, detail }: { to: AnyRef; glyph?: R
   return (
     <button
       type="button"
-      onClick={() => select(target)}
+      onClick={() => {
+        select(target);
+        // The link unmounts with the old entity's anatomy: keep focus in the inspector, on the new heading.
+        requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-inspector-heading]")?.focus({ preventScroll: true }));
+      }}
       className="group flex w-full min-w-0 items-center gap-2 rounded-sm px-1.5 py-1 text-left text-body-sm hover:bg-surface-sunken"
     >
       {glyph ? <span className="inline-flex shrink-0">{glyph}</span> : null}

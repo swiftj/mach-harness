@@ -77,9 +77,9 @@ The signature takes the `Fixture`, not a bare event array: titles, risks and app
 | `allAgents(scene)`, `activeAgents(scene)`, `toolCallsInFlight(scene)` | Flattened across cells (cached per `scene.cells` object). |
 | `findAgent`, `findToolCall`, `findArtifact`, `cellsAtStation(scene, station)` | Lookups. |
 | `relatedRefs(scene, ref): EntityRef[]` | The highlight set: a slice's full upstream and downstream dependency set with edges and cells; an agent's cell, parent, children and current call; an artifact's writer. The store uses it for `highlighted`. |
-| `cellTimelines(fixture)`, `cellTimeline(fixture, ticket)` | Static per fixture: station spans, stage changes, agent spans with a non-overlapping `row`, and the cell's moments. For the synchronized timeline. |
-| `agentTimeline(fixture, agentId)` | An agent's span and its tool-call spans. |
-| `moments(fixture, atLeast = "major")` | Events at or above a significance, each with a sentence (`describe`) and its refs. Timeline markers. |
+| `cellTimelines(fixture, t)`, `cellTimeline(fixture, ticket, t)` | As known at `t`: station spans, stage changes, agent spans with a non-overlapping `row`, and the cell's moments. A span still open at `t` has `end: null` and no outcome; nothing that starts after `t` is listed. Pass `fixture.duration` for the whole recorded run, and then hide what lies beyond the live edge, never colouring a span by an outcome later than the edge. Cached per scene. |
+| `agentTimeline(fixture, agentId, t)` | An agent's span and its tool-call spans as known at `t` (open calls `running`, `end: null`). |
+| `moments(fixture, atLeast = "major", t?)` | Events at or above a significance, each with a sentence (`describe`) and its refs. Timeline markers. With `t`, only those that have happened. |
 | `chapters(fixture)`, `chapterAt(fixture, t)` | The 14 named chapters (section 8), each with a `focus` ref for the camera. |
 | `describe(event): string` | One plain sentence per event, for the inspector, tooltips and screen readers. |
 | `agentTimingAt(agent, t)`, `toolCallTimingAt(call, t)`, `visitTimingAt(visit, t)`, `timingAt(startedAt, finishedAt, t)` | What is **known** about work at `t`: `{ started, startedAt, elapsed, finishedAt, finished }`. Nothing predictive (see section 5). |
@@ -120,7 +120,9 @@ Intake's own kinds (`wave.discovered`, `intake.validated`, `slice.materialized`)
 
 `scene.actors.supervisor` and `scene.actors.scheduler` hold `{ id, title, code, acts, lastActedAt, lastSeq, lastKind }`. `entityAt(scene, "actor:scheduler")` returns `{ kind: "actor", value }`; `eventsFor(fixture, "actor:scheduler", t?)` and `latestEventFor` work as for any entity, so a figure can light on its own events and the inspector can say why.
 
-`ActorRef` is not (yet) part of `EntityRef`. Adding `"actor"` to `EntityKind` would break exhaustive switches in four view files (`atlas/locate.ts`, `shell/inspector/entity.ts`, `shell/inspector/Inspector.tsx`, `shell/vocab.ts`), which the simulation owner does not own. Until those handle an `actor` case, the store's `selection` stays `EntityRef`, so an actor cannot be the store's selection; once they do, adding `"actor"` to `ENTITY_KINDS` makes `actor:*` an ordinary `EntityRef` with no other change.
+`"actor"` is an `EntityKind`, so `actor:supervisor` and `actor:scheduler` are ordinary `EntityRef`s: the store can select and focus them. The Atlas frames the supervisor's console and the scheduler's desk; the Blueprint has no actor mark, so a focus request for an actor is a no-op there (no camera move).
+
+**No early outcomes.** At playhead `t`, nothing the scene or the timeline selectors expose is derived from an event later than `t`: no outcome, end time, verdict, vote or decision shows before its event (`test/no-early-outcomes.test.mjs` walks every time field and outcome for a sample of times, including one millisecond before each deciding event). `finalScene` is the end of the run; read it only for what does not change (names, which stations a layout needs), never to colour or label work at an earlier time.
 
 ## 3. The event model
 

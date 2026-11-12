@@ -180,4 +180,32 @@ export function useShellKeys(commands: ShellCommands): void {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [commands, store]);
+  useFocusKeeper();
+}
+
+/**
+ * Keep focus in its region when a key removes what had it (Escape clears the selection the inspector
+ * showed; a view re-renders an entity) or makes its region inert (Theater Mode): instead of falling to
+ * the page, focus goes to the inspector's heading, the view's canvas, or the stage. Browsers fire no
+ * blur when a focused node is removed, so this looks after every key, in the capture phase.
+ */
+function useFocusKeeper(): void {
+  useEffect(() => {
+    const onKey = () => {
+      const had = document.activeElement as HTMLElement | null;
+      if (!had || had === document.body) return;
+      const home = had.closest<HTMLElement>("aside, main, section, header");
+      requestAnimationFrame(() => {
+        const now = document.activeElement;
+        const stranded = !now || now === document.body || Boolean((now as HTMLElement).closest?.("[inert]"));
+        if (!stranded || (had.isConnected && !had.closest("[inert]"))) return;
+        const live = home && home.isConnected && !home.closest("[inert]") ? home : null;
+        const canvas = document.querySelector<HTMLElement>("[data-stage-view] [tabindex='0']");
+        const next = live?.querySelector<HTMLElement>("[data-inspector-heading]") ?? (live?.tagName === "MAIN" ? canvas : null) ?? live ?? canvas ?? document.getElementById("stage");
+        next?.focus({ preventScroll: true });
+      });
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 }
