@@ -1,0 +1,36 @@
+{
+  "name": "@mach/control-tower",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "MACH Control Tower, M6.0: the Living Factory visual-experience prototype. A simulation driven by a fixture; it reads no real Factory state.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview --port 4176 --strictPort",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "capture": "node scripts/capture.mjs"
+  },
+  "dependencies": {
+    "@mach/ui": "workspace:*",
+    "@xyflow/react": "12.12.1",
+    "elkjs": "0.12.1",
+    "lucide-react": "1.72.0",
+    "motion": "14.12.0",
+    "pixi.js": "8.23.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@tailwindcss/vite": "4.3.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "playwright": "1.58.2",
+    "tailwindcss": "4.3.5",
+    "typescript": "6.0.3",
+    "vite": "8.3.8"
+  }
+}

@@ -1,0 +1,5 @@
+screenshots/*
+!screenshots/README.md
+recordings/*
+!recordings/README.md
+dist
