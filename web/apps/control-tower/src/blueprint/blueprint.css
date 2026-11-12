@@ -78,7 +78,7 @@
   display: none;
 }
 .bp-stage[data-lod="overview"] .bp-fine,
-.bp-stage[data-lod="overview"] .bp-flow text {
+.bp-stage[data-lod="overview"] .bp-flow text:not(.bp-keep) {
   display: none;
 }
 .bp-stage[data-lod="overview"] .bp-over {

@@ -15,7 +15,15 @@ import type { FlowNode } from "./flow";
 import { SHEET, type Layout } from "./layout";
 import { clockTenths } from "./time";
 
-const MARGIN = 18;
+/** The sheet's border margin, where its own zone strip is drawn. */
+export const MARGIN = 18;
+/** The rulers' depth on the stage, in px: pinned parts sit just inside them. */
+export const RULER = 14;
+
+/** Whether the top and left rulers are shown: when the sheet's own border has scrolled off that edge. */
+export function rulersShown(cam: Camera): { top: boolean; left: boolean } {
+  return { top: cam.y + MARGIN * cam.k < 0, left: cam.x + MARGIN * cam.k < 0 };
+}
 
 export function zoneCounts(layout: Layout): { zx: number; zy: number } {
   return { zx: Math.max(8, Math.round(layout.width / 196)), zy: Math.max(4, Math.round(layout.height / 260)) };
@@ -29,8 +37,7 @@ export function ZoneRulers({ layout }: { layout: Layout }) {
   const { zx, zy } = zoneCounts(layout);
   const innerW = layout.width - MARGIN * 2;
   const innerH = layout.height - MARGIN * 2;
-  const showTop = cam.y + MARGIN * cam.k < 0;
-  const showLeft = cam.x + MARGIN * cam.k < 0;
+  const { top: showTop, left: showLeft } = rulersShown(cam);
   if (!showTop && !showLeft) return null;
   const zw = (innerW / zx) * cam.k;
   const zh = (innerH / zy) * cam.k;
@@ -40,14 +47,14 @@ export function ZoneRulers({ layout }: { layout: Layout }) {
     <svg className="bp-rulers" aria-hidden="true" width={view.w} height={view.h}>
       {showTop ? (
         <g>
-          <rect x={0} y={0} width={view.w} height={14} style={{ fill: fc("ground") }} />
-          <line x1={0} y1={14} x2={view.w} y2={14} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
+          <rect x={0} y={0} width={view.w} height={RULER} style={{ fill: fc("ground") }} />
+          <line x1={0} y1={RULER} x2={view.w} y2={RULER} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
           {Array.from({ length: zx }, (_, i) => {
             const x = ox + i * zw;
             if (x + zw < 0 || x > view.w) return null;
             return (
               <g key={i}>
-                <line x1={x} y1={0} x2={x} y2={14} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
+                <line x1={x} y1={0} x2={x} y2={RULER} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
                 <text x={x + zw / 2} y={10.5} textAnchor="middle" style={{ fill: "var(--mach-ink-subtle)", fontSize: 9, fontWeight: 600 }}>
                   {String.fromCharCode(65 + i)}
                 </text>
@@ -58,15 +65,15 @@ export function ZoneRulers({ layout }: { layout: Layout }) {
       ) : null}
       {showLeft ? (
         <g>
-          <rect x={0} y={showTop ? 14 : 0} width={14} height={view.h} style={{ fill: fc("ground") }} />
-          <line x1={14} y1={0} x2={14} y2={view.h} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
+          <rect x={0} y={showTop ? RULER : 0} width={RULER} height={view.h} style={{ fill: fc("ground") }} />
+          <line x1={RULER} y1={0} x2={RULER} y2={view.h} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
           {Array.from({ length: zy }, (_, i) => {
             const y = oy + i * zh;
             if (y + zh < 0 || y > view.h) return null;
             return (
               <g key={i}>
-                <line x1={0} y1={y} x2={14} y2={y} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
-                <text x={7} y={y + zh / 2 + 3} textAnchor="middle" style={{ fill: "var(--mach-ink-subtle)", fontSize: 9, fontWeight: 600 }}>
+                <line x1={0} y1={y} x2={RULER} y2={y} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
+                <text x={RULER / 2} y={y + zh / 2 + 3} textAnchor="middle" style={{ fill: "var(--mach-ink-subtle)", fontSize: 9, fontWeight: 600 }}>
                   {i + 1}
                 </text>
               </g>

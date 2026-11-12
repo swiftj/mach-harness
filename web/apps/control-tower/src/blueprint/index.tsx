@@ -25,14 +25,14 @@ import { cameraFollows, useScene, useSceneActions, useSceneStore, useStore } fro
 import { spreadTemplate, useColumns, type ColumnTemplate } from "./columns";
 import { computeLayout, drawingWidthFor, SHEET, type Lane, type Layout, type Rect } from "./layout";
 import { DependencyLayer, LaneView } from "./Lane";
-import { clamp, fitCamera, focusCamera, type Camera } from "./camera";
+import { clamp, fitCamera, focusCamera, type Camera, type Reserve } from "./camera";
 import { leafBounds } from "./bounds";
 import { PlayheadFact } from "./TitleBlock";
 import { ancestors, nodeForRef, treeOf, type Tree, type TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, TreeContext, type TreeCtx } from "./treeitem";
 import { CameraContext, createCameraStore, createHitRegistry, HitContext, LayersContext, LodContext, nearestHit, useCamera } from "./context";
-import { ColumnHead, furnitureBox, Legend, Revisions } from "./furniture";
-import { Minimap, PinnedTitle, ZoneRulers, zoneCounts } from "./overlays";
+import { ColumnHead, furnitureBox, HEAD_H, Legend, Revisions } from "./furniture";
+import { Minimap, PinnedTitle, RULER, rulersShown, ZoneRulers, zoneCounts } from "./overlays";
 import { Gutter } from "./gutter";
 import { PlaceholderBelt } from "./Placeholder";
 import "./blueprint.css";
@@ -41,6 +41,44 @@ const DEEP = new Set(["agent", "tool", "artifact", "finding"]);
 
 /** Levels of detail by camera zoom, with hysteresis: overview swaps fine text for large lettering. */
 const LOD = { overviewIn: 0.55, overviewOut: 0.6, near: 1.4 } as const;
+
+/** Screen px between a ruler and the pinned part below or beside it. */
+const PIN_GAP = 1;
+
+/** The column head's top on the sheet: under the wave header. */
+const headTopOf = (L: Layout): number => L.waveY + 48;
+
+/**
+ * Where the pinned gutter and column head stand for a camera, as the offsets (in sheet units) the CSS
+ * variables carry. Once the sheet's edge has scrolled off, a pinned part sits just inside the ruler that
+ * then appears on that edge (never under it: defect D13, where the ruler cut the stage names in half).
+ */
+function pinOffsets(c: Camera, L: Layout): { gx: number; hy: number } {
+  const shown = rulersShown(c);
+  const leftAt = shown.left ? RULER + PIN_GAP : 2;
+  const topAt = shown.top ? RULER + PIN_GAP : 2;
+  // The gutter's backing starts 4 units left of SHEET.left; the head's at its own top.
+  const gx = Math.min(Math.max(0, (leftAt - c.x) / c.k - SHEET.left + 4), L.width - SHEET.gutter - 40);
+  const headTop = headTopOf(L);
+  const hy = Math.max(0, Math.min((topAt - c.y) / c.k - headTop, L.height - headTop - 200));
+  return { gx, hy };
+}
+
+/**
+ * What a framed target must stay clear of: the top ruler and the pinned column head, and (for a target
+ * in the drawing, right of the gutters) the pinned gutter with the left ruler.
+ */
+function reserveFor(L: Layout): Reserve {
+  return { topPx: RULER + PIN_GAP + 6, top: HEAD_H, leftPx: RULER + PIN_GAP + 6, left: L.ax - 14 - SHEET.left + 4, leftFrom: L.ax - 14 };
+}
+
+/**
+ * The camera that frames a target (focus, a chapter, the overview's lane buttons): clear of the pinned
+ * parts, and never so far out that the target drops to the overview's simplified drawing.
+ */
+function frameOf(view: { w: number; h: number }, L: Layout, rect: Rect): Camera {
+  return focusCamera(view, rect, reserveFor(L), LOD.overviewOut + 0.02);
+}
 
 /** Follow (spec f.3), made calm. See `followMove` for the rule. */
 const FOLLOW = { everyMs: 4000, everyReducedMs: 6000, graceMs: 90_000, inner: 0.15, minMove: 0.12, easeMs: 900 } as const;
@@ -253,11 +291,9 @@ export function BlueprintView() {
       if (el) {
         el.style.transform = `translate(${c.x}px, ${c.y}px) scale(${c.k})`;
         // Pinned gutter and column head: how far the sheet's left edge and the head have scrolled off.
-        const gx = L ? Math.min(Math.max(0, -c.x / c.k - SHEET.left + 6), L.width - SHEET.gutter - 40) : 0;
-        const headTop = L ? L.waveY + 48 : 0;
-        const hy = L ? Math.min(Math.max(0, -c.y / c.k - headTop + 2), L.height - headTop - 200) : 0;
+        const { gx, hy } = L ? pinOffsets(c, L) : { gx: 0, hy: 0 };
         el.style.setProperty("--bp-gx", `${gx}px`);
-        el.style.setProperty("--bp-hy", `${Math.max(0, hy)}px`);
+        el.style.setProperty("--bp-hy", `${hy}px`);
         const prev = lod.current;
         const next = c.k > LOD.near ? "near" : prev === "overview" ? (c.k > LOD.overviewOut ? "detail" : "overview") : c.k < LOD.overviewIn ? "overview" : "detail";
         if (next !== prev || !el.dataset.lod) {
@@ -320,7 +356,7 @@ export function BlueprintView() {
     if (!v.w) return;
     const sel = store.getState().selection;
     const rect = sel ? boundsFor(layout, tree, sel, store.getState().playhead) : null;
-    const first = clamp(rect ? focusCamera(v, rect) : fitCam(layout), v, { w: layout.width, h: layout.height });
+    const first = clamp(rect ? frameOf(v, layout, rect) : fitCam(layout), v, { w: layout.width, h: layout.height });
     fitted.current = !rect;
     if (stage.current) stage.current.style.transform = `translate(${first.x}px, ${first.y}px) scale(${first.k})`;
     const id = requestAnimationFrame(() => {
@@ -373,7 +409,7 @@ export function BlueprintView() {
     }
     handledFocus.current = focusReq.nonce;
     fitted.current = false;
-    moveTo(focusCamera(v, rect), true);
+    moveTo(frameOf(v, layout, rect), true);
   });
 
   // Follow during live playback (rule above), checked against the store, never more than every 4 s.
@@ -432,23 +468,38 @@ export function BlueprintView() {
     [moveTo, size, manual],
   );
 
-  // Keys that belong to the view even when focus is not inside it (+, -, 0). The
-  // Shell listens on window too; it skips events already handled (defaultPrevented).
+  /** +, - and 0 (spec f.10, "in a view"). True when the key was one of them. */
+  const zoomKey = useCallback(
+    (key: string): boolean => {
+      if (key === "+" || key === "=") zoomBy(1.2);
+      else if (key === "-") zoomBy(1 / 1.2);
+      else if (key === "0") fit();
+      else return false;
+      return true;
+    },
+    [zoomBy, fit],
+  );
+
+  // The zoom keys are the view's, as in the Shell's map: they act when focus is in the Blueprint (its
+  // tree handles them itself; this covers its toolbar and overview buttons), or when nothing holds focus
+  // (the page or the stage itself) and the Blueprint is the view on the stage. Never from a text field,
+  // a dialog, the timeline, the inspector or the top bar: there focus is elsewhere, so the key is theirs.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
-      const t = e.target as HTMLElement | null;
-      if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
-      if (t && t.closest?.("[data-view]") && !t.closest?.('[data-view="blueprint"]')) return;
-      if (e.key === "+" || e.key === "=") zoomBy(1.2);
-      else if (e.key === "-") zoomBy(1 / 1.2);
-      else if (e.key === "0") fit();
-      else return;
-      e.preventDefault();
+      const vp = viewport.current;
+      if (!vp) return;
+      const active = document.activeElement;
+      const inside = Boolean(active && vp.contains(active));
+      const idle = !active || active === document.body || active.id === "stage";
+      if (!inside && !(idle && store.getState().view === "blueprint")) return;
+      if (active instanceof HTMLElement && (/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) || active.isContentEditable)) return;
+      if (document.querySelector("dialog[open], [aria-modal='true']")) return;
+      if (zoomKey(e.key)) e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [zoomBy, fit]);
+  }, [zoomKey, store]);
 
   // ---------------------------------------------------------------- pointer: pan, select, hover, toggle
   const drag = useRef<{ x: number; y: number; cx: number; cy: number; moved: boolean; id: number } | null>(null);
@@ -554,9 +605,11 @@ export function BlueprintView() {
         const c = cam.current;
         const top = c.y + r.y * c.k;
         const bottom = c.y + (r.y + Math.min(r.h, 120)) * c.k;
-        if (top < 40 || bottom > v.h - 40) {
+        // Clear of the ruler and the pinned column head, which cover the top of the stage.
+        const clear = RULER + PIN_GAP + HEAD_H * c.k + 12;
+        if (top < clear || bottom > v.h - 40) {
           manual();
-          moveTo({ ...c, y: v.h * 0.35 - r.y * c.k }, true);
+          moveTo({ ...c, y: Math.max(clear + 8, v.h * 0.35) - r.y * c.k }, true);
         }
       }
     }
@@ -622,18 +675,9 @@ export function BlueprintView() {
         else handled = false;
         break;
       }
-      case "+":
-      case "=":
-        zoomBy(1.2);
-        break;
-      case "-":
-        zoomBy(1 / 1.2);
-        break;
-      case "0":
-        fit();
-        break;
       default:
-        handled = false;
+        // + - 0, unless with Ctrl or Meta: those are the browser's own zoom, not the view's.
+        handled = !e.metaKey && !e.ctrlKey && !e.altKey && zoomKey(e.key);
     }
     if (!handled && e.shiftKey && e.key.startsWith("Arrow") && layout) {
       const c = cam.current;
@@ -666,7 +710,7 @@ export function BlueprintView() {
       const lane = L?.lanes.find((l) => l.id === laneId);
       if (!L || !lane) return;
       manual();
-      moveTo(focusCamera(size(), { x: SHEET.left, y: lane.y, w: L.width - SHEET.left * 2, h: lane.h }), true);
+      moveTo(frameOf(size(), L, { x: SHEET.left, y: lane.y, w: L.width - SHEET.left * 2, h: lane.h }), true);
       setActiveId(laneId);
     },
     [manual, moveTo, size],
@@ -731,7 +775,7 @@ export function BlueprintView() {
                     </BandContext.Provider>
                   </LayersContext.Provider>
                   </LodContext.Provider>
-                  <Legend x={furniture.legend.x} y={furniture.legend.y} />
+                  <Legend x={furniture.legend.x} y={furniture.legend.y} overview={lodState === "overview" || (theater && lodState !== "near")} />
                   <Revisions x={furniture.rev.x} y={furniture.rev.y} w={furniture.rev.w} h={furniture.rev.h} />
                 </BlueprintSheet>
                 <PlayheadFact width={layout.width} height={layout.height} factIndex={2} factCount={facts.length} />
@@ -819,6 +863,9 @@ function WaveTreeItem({ node, expanded, ring, layout, selected, wave, template, 
   );
 }
 
+/** Sheet units framed around a focused station or gate: the node and two or three columns either side. */
+const NEIGHBOURHOOD = 760;
+
 /** Where an entity is on the sheet, for the camera. */
 function boundsFor(layout: Layout, tree: Tree, entity: EntityRef, playhead: number): Rect | null {
   const id = nodeForRef(tree, entity);
@@ -828,7 +875,15 @@ function boundsFor(layout: Layout, tree: Tree, entity: EntityRef, playhead: numb
   const direct = layout.bounds.get(id);
   if (node.kind === "visit" || node.kind === "gate" || node.kind === "execution" || node.kind === "relay") {
     const lane = layout.lanes.find((l) => l.cell?.ticketId === node.ticketId);
-    if (lane) return { x: SHEET.left, y: lane.y, w: layout.width - SHEET.left * 2, h: Math.max(140, lane.dimsY + lane.dimRows * SHEET.dimBand - lane.y) };
+    if (lane) {
+      const h = Math.max(140, lane.dimsY + lane.dimRows * SHEET.dimBand - lane.y);
+      // A station visit or a gate: its node in the lane's drawing with the columns either side, so it
+      // is read at a working zoom rather than as one mark in a whole-width lane.
+      const d = node.data;
+      const n = lane.expanded ? lane.flow?.nodes.find((f) => (d.kind === "gate" ? f.gate?.id === d.gate.id : d.kind === "visit" ? f.visitIndex === d.index : false)) : undefined;
+      if (n) return { x: layout.ax + n.x - NEIGHBOURHOOD / 2, y: lane.y, w: NEIGHBOURHOOD, h };
+      return { x: SHEET.left, y: lane.y, w: layout.width - SHEET.left * 2, h };
+    }
   }
   if (node.kind === "tool" || node.kind === "artifact" || node.kind === "finding") return leafBounds(layout, tree, node, playhead) ?? direct ?? null;
   if (node.kind === "slice") {

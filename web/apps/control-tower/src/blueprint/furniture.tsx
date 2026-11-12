@@ -82,7 +82,7 @@ function Swatch({ state, x, y, word, mark }: { state: FactoryState; x: number; y
 }
 
 /** The legend: every mark the sheet uses, with its word, in the lower left corner. */
-export const Legend = memo(function Legend({ x, y }: { x: number; y: number }) {
+export const Legend = memo(function Legend({ x, y, overview = false }: { x: number; y: number; overview?: boolean }) {
   const w = 600;
   const h = 112;
   const row = (i: number): number => y + 30 + i * 26;
@@ -93,8 +93,9 @@ export const Legend = memo(function Legend({ x, y }: { x: number; y: number }) {
       <text x={x + 8} y={y + 11.5} className="bp-fine" style={{ fill: "var(--mach-ink)", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em" }}>
         LEGEND
       </text>
-      <LegendOverview x={x} y={y} />
-      <g className="bp-fine">
+      {/* One of the two legends is drawn, by level of detail (the other would be hidden elements). */}
+      {overview ? <LegendOverview x={x} y={y} /> : null}
+      {overview ? null : <g className="bp-fine">
       {/* Row 1: states (shape first, colour second), unbuilt. */}
       <Swatch state="active" x={x + 16} y={row(0)} word="Working" />
       <Swatch state="succeeded" x={x + 86} y={row(0)} word="Passed" />
@@ -161,7 +162,7 @@ export const Legend = memo(function Legend({ x, y }: { x: number; y: number }) {
       <text x={x + 538} y={row(2) + 3.5} className="bp-fine" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>
         Duration
       </text>
-      </g>
+      </g>}
     </g>
   );
 });

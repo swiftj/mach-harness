@@ -161,6 +161,10 @@ const ExecItem = memo(function ExecItem({ row, pos, size, laneY, ax, width, flow
             one time axis for the execution · broken scale
           </text>
         ) : null}
+        {/* The row's title at the overview, set large enough to read at fit. */}
+        <text x={gx + 24} y={25} className="bp-over" style={{ fill: "var(--mach-ink-muted)", fontSize: 24, fontWeight: 600 }}>
+          Execution {index + 1} of {count}
+        </text>
       </Gutter>
       <title>{`${node.name}. Opened by the supervisor on ${cell.ticketId}.`}</title>
     </Item>

@@ -19,7 +19,7 @@ import { clock } from "./time";
 import type { TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, useSelected, useTreeCtx } from "./treeitem";
 import { Gutter } from "./gutter";
-import { LaneDimContext } from "./context";
+import { LaneDimContext, LodContext } from "./context";
 import { artifactFile, gateState, grammarArtifact, stageState, stageWords } from "./vocab";
 
 /** Whether a lane is outside the highlighted dependency chain (only slice-level subjects dim the sheet). */
@@ -230,17 +230,20 @@ function CollapsedSummary({ ticket, x, y, lane }: { scene: Scene | null; ticket:
 
 /** A closed cell's workflow on one line: a state mark at each column it has run, unbuilt rings for the rest. */
 const Strip = memo(function Strip({ nodes, ax, y }: { nodes: readonly FlowNode[]; ax: number; y: number }) {
+  // At the overview the strip's marks are set large enough to read (same marks, same meaning).
+  const big = useContext(LodContext) === "overview";
+  const r = big ? 13 : 4.2;
   const latest = new Map<string, FlowNode>();
   for (const n of nodes) latest.set(n.col, n);
   const list = [...latest.values()].sort((a, b) => a.x - b.x);
   return (
     <g aria-hidden="true">
-      <line x1={ax + (list[0]?.x ?? 0)} y1={y} x2={ax + (list[list.length - 1]?.x ?? 0)} y2={y} style={{ stroke: fc("route"), strokeWidth: 0.75 }} />
+      <line x1={ax + (list[0]?.x ?? 0)} y1={y} x2={ax + (list[list.length - 1]?.x ?? 0)} y2={y} style={{ stroke: fc("route"), strokeWidth: big ? 2.4 : 0.75 }} />
       {list.map((n) => {
         const st: FactoryState | null = n.kind === "future" ? null : n.kind === "start" ? "succeeded" : n.gate ? gateState(n.gate) : n.visit ? (n.visit.leftAt === null ? (n.visit.station === "human-approval" ? "human" : "active") : n.visit.outcome === "failed" ? "failed" : "succeeded") : n.kind === "end" && !n.key.startsWith("f:") ? "succeeded" : null;
         return (
           <g key={n.col} transform={`translate(${ax + n.x} ${y})`}>
-            {st ? <StateMark state={st} r={4.2} progress={0} mark={n.kind === "end" ? "double-ring" : undefined} /> : <circle r={3.6} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 0.9, strokeDasharray: "2 1.8" }} />}
+            {st ? <StateMark state={st} r={r} progress={0} mark={n.kind === "end" ? "double-ring" : undefined} /> : <circle r={r * 0.86} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: big ? 2 : 0.9, strokeDasharray: big ? "5 4" : "2 1.8" }} />}
             {n.round > 1 && n.kind !== "future" ? (
               <text x={-6} y={-6} textAnchor="end" className="bp-fine" style={{ fill: fc("fail"), fontSize: 8, fontWeight: 700 }}>
                 ×{n.round}
@@ -255,16 +258,17 @@ const Strip = memo(function Strip({ nodes, ax, y }: { nodes: readonly FlowNode[]
 
 /** A slice with no cell yet: the belt it will run, all unbuilt, held at the start. */
 const WaitingStrip = memo(function WaitingStrip({ template, ax, y, reason }: { template: ColumnTemplate; ax: number; y: number; reason: string }) {
+  const big = useContext(LodContext) === "overview";
   const cols = COLUMN_ORDER.filter((c) => template.x[c] !== undefined);
   const x0 = ax + (template.x.start ?? 0);
   return (
     <g aria-hidden="true">
-      <line x1={x0} y1={y} x2={ax + (template.x.end ?? 0)} y2={y} style={{ stroke: fc("route"), strokeWidth: 0.75, strokeDasharray: "3 3" }} />
+      <line x1={x0} y1={y} x2={ax + (template.x.end ?? 0)} y2={y} style={{ stroke: fc("route"), strokeWidth: big ? 2.4 : 0.75, strokeDasharray: big ? "8 7" : "3 3" }} />
       {cols.map((c) =>
-        c === "start" ? null : <circle key={c} cx={ax + (template.x[c] ?? 0)} cy={y} r={3.6} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 0.9, strokeDasharray: "2 1.8" }} />,
+        c === "start" ? null : <circle key={c} cx={ax + (template.x[c] ?? 0)} cy={y} r={big ? 11 : 3.6} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: big ? 2 : 0.9, strokeDasharray: big ? "5 4" : "2 1.8" }} />,
       )}
       <g transform={`translate(${x0} ${y})`}>
-        <StateMark state="waiting" r={6} />
+        <StateMark state="waiting" r={big ? 16 : 6} />
       </g>
       <text x={x0 + 14} y={y - 8} className="bp-fine" style={{ fill: fc("wait"), fontSize: 9.5 }}>
         {clip(reason, 90)}
@@ -300,11 +304,13 @@ function DependencyLine({ node, x, y }: { node: TreeNode; x: number; y: number }
 function ScriptArtifact({ node, pos, size, x, y }: { node: TreeNode; pos: number; size: number; x: number; y: number }) {
   const at = node.data.kind === "artifact" ? node.data.artifact.writtenAt : 0;
   const p = useEventProgress(at, "artifactMaterialise");
+  // At the overview the cards are specks: the tree item stays (it is reachable and named), the card goes.
+  const overview = useContext(LodContext) === "overview";
   if (node.data.kind !== "artifact") return null;
   const a = node.data.artifact;
   return (
     <Item node={node} pos={pos} size={size} ring={{ x: x - 9, y: y - 11, w: 18, h: 22, r: 2 }}>
-      <ArtifactCard variant="blueprint" kind={grammarArtifact(a.kind)} progress={Math.max(0.001, p)} at={{ x, y }} showLabel={false} />
+      {overview ? null : <ArtifactCard variant="blueprint" kind={grammarArtifact(a.kind)} progress={Math.max(0.001, p)} at={{ x, y }} showLabel={false} />}
       <title>{`${artifactFile(a)} · ${a.writer.script ?? ""} · ${clock(a.writtenAt)}`}</title>
     </Item>
   );

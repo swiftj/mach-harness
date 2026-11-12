@@ -4,7 +4,7 @@
  * consensus gate, the human gate, merge revalidation, cleanup and integration. Columns the belt has
  * not reached are drawn unbuilt. Every mark has a `data-ref` naming the entity it draws.
  */
-import { memo, type ReactNode } from "react";
+import { memo, useContext, type ReactNode } from "react";
 import {
   AgentMarker,
   ArtifactCard,
@@ -31,6 +31,8 @@ import type { ColumnTemplate } from "./columns";
 import type { Flow, FlowNode } from "./flow";
 import { useEventProgress, usePlayhead } from "./motion";
 import { clock, duration } from "./time";
+import { LodContext } from "./context";
+import { OverviewFlow } from "./overview";
 import { artifactFile, agentState, grammarArtifact, grammarGate, grammarSeat, stationKind, tierOf } from "./vocab";
 
 const SEAT_KEYS = ["architecture", "security", "product"] as const;
@@ -60,6 +62,15 @@ export interface CellFlowProps {
 
 export const CellFlow = memo(function CellFlow({ cell, slice, flow, template, ax, row0, dimsY, laneH }: CellFlowProps) {
   const seats = template.seats;
+  // At the overview the full drawing would be specks: the same nodes are drawn large and simple instead.
+  const overview = useContext(LodContext) === "overview";
+  if (overview) {
+    return (
+      <g transform={`translate(${ax} ${row0})`}>
+        <OverviewFlow cell={cell} flow={flow} seats={seats} />
+      </g>
+    );
+  }
   return (
     <g>
       {/* Centre lines: one per column, the drafted datum every round row and lane hangs from. */}
