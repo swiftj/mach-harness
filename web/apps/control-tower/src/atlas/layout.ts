@@ -1,11 +1,20 @@
 /**
- * The plant's fixed layout: where every region, bay, machine, gate, pad and track stands, in plan
- * units (M6_0_VISUAL_SPEC.md b.2 and b.3). Computed once per fixture from its product definitions
- * and the slice.materialized events, so a bay keeps its place for the whole run (spatial memory) and
- * nothing reflows while playing. Pure; no React.
+ * The plant's layout: where every region, bay, machine, gate, pad and track stands, in plan units
+ * (M6_0_VISUAL_SPEC.md b.2 and b.3). Pure; no React.
+ *
+ * Laid out from what is known so far, never from the end of the run (M6.2): the bays are the slices
+ * of the waves received (in the order the waves arrived), then any other slice received, then any
+ * cell opened whose slice is not known. A bay's place is a function of its index alone, so a bay
+ * keeps its place as more arrive (spatial memory): the first nine fill columns of three, the next
+ * ones a fourth row across the three columns. The floor is always at least three rows deep, so the
+ * intake's centre line does not move as the first slices arrive. What grows when a wave arrives is
+ * the floor's width (a new column) or depth (the fourth row), and with it the regions downstream.
+ *
+ * The simulation's head scene holds its whole wave from the start, so its plant is the same as when
+ * it was laid out from the fixture's definitions.
  */
 import { cellAnatomy, factoryTokens, type PlanBox, type Vec3 } from "@mach/ui";
-import type { Fixture } from "../sim";
+import type { Scene } from "../sim";
 
 const SIZE = factoryTokens.size;
 export const PLATE_Z: number = factoryTokens.elevation.regionPlate; // 8
@@ -83,14 +92,56 @@ export interface PlantLayout {
   extent: Rect;
 }
 
-const cache = new WeakMap<Fixture, PlantLayout>();
-
-/** Slices in wave order with their tickets, from the fixture's definitions and intake events. */
-function slots(fixture: Fixture): { sliceId: string; ticketId: string }[] {
-  const ticketOf = new Map<string, string>();
-  for (const e of fixture.events) if (e.type === "slice.materialized" && e.slice_id && e.ticket_id) ticketOf.set(e.slice_id, e.ticket_id);
-  return Object.values(fixture.definitions.slices).map((s) => ({ sliceId: s.id, ticketId: ticketOf.get(s.id) ?? s.id }));
+/** One bay's claim: the slice it is for and the ticket its cell has (the slice's ID until one is known). */
+export interface PlantSlot {
+  sliceId: string;
+  ticketId: string;
 }
+
+/**
+ * The bays known in a scene, in a stable order: the slices of each wave in the order the waves were
+ * discovered, then slices outside any received wave, then cells whose slice is not known. Read it
+ * from the head scene (everything received), so scrubbing back never moves a bay.
+ */
+export function slotsOf(scene: Scene): PlantSlot[] {
+  const out: PlantSlot[] = [];
+  const seen = new Set<string>();
+  const ticketOfSlice = new Map<string, string>();
+  for (const c of Object.values(scene.cells)) if (c.sliceId) ticketOfSlice.set(c.sliceId, c.ticketId);
+  const add = (sliceId: string) => {
+    if (!sliceId || seen.has(sliceId)) return;
+    seen.add(sliceId);
+    const slice = scene.slices[sliceId];
+    out.push({ sliceId, ticketId: ticketOfSlice.get(sliceId) ?? (slice?.ticketId || sliceId) });
+  };
+  const waves = Object.values(scene.waves).sort((a, b) => a.discoveredAt - b.discoveredAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const w of waves) for (const id of w.sliceIds) add(id);
+  const firstAt = (id: string) => scene.slices[id]?.history[0]?.at ?? scene.slices[id]?.since ?? 0;
+  for (const id of Object.keys(scene.slices).sort((a, b) => firstAt(a) - firstAt(b) || (a < b ? -1 : 1))) add(id);
+  const tickets = new Set(out.map((s) => s.ticketId));
+  for (const c of Object.values(scene.cells).sort((a, b) => a.openedAt - b.openedAt || (a.ticketId < b.ticketId ? -1 : 1))) {
+    if (tickets.has(c.ticketId)) continue;
+    const sliceId = c.sliceId && !seen.has(c.sliceId) ? c.sliceId : `cell:${c.ticketId}`;
+    seen.add(sliceId);
+    tickets.add(c.ticketId);
+    out.push({ sliceId, ticketId: c.ticketId });
+  }
+  return out;
+}
+
+/** A key that changes exactly when the plant's layout would. */
+export function slotsKey(slots: readonly PlantSlot[]): string {
+  return slots.map((s) => `${s.sliceId}=${s.ticketId}`).join("|");
+}
+
+/** A bay's column and row from its index alone (spec b.2, made stable under growth). */
+export function bayCell(index: number): { col: number; row: number } {
+  if (index < 9) return { col: Math.floor(index / 3), row: index % 3 };
+  const k = index - 9;
+  return { col: k % 3, row: 3 + Math.floor(k / 3) };
+}
+
+const cache = new Map<string, PlantLayout>();
 
 /**
  * The plant as a U (M6_0_VISUAL_SPEC.md b.2, pass 2): the back row flows along +x (intake, the
@@ -98,14 +149,15 @@ function slots(fixture: Fixture): { sliceId: string; ticketId: string }[] {
  * approval gatehouse into the integration yard, whose main line runs back along -x across the front
  * to the archive. Any plan rectangle projects to about 2:1, so a near-square plan fills the stage.
  */
-export function plantLayout(fixture: Fixture): PlantLayout {
-  const hit = cache.get(fixture);
+export function plantLayout(list: readonly PlantSlot[], waveIds: readonly string[] = []): PlantLayout {
+  const key = `${slotsKey(list)}#${waveIds.join(",")}`;
+  const hit = cache.get(key);
   if (hit) return hit;
-  const list = slots(fixture);
   const n = Math.max(1, list.length);
-  // Columns of three (up to nine bays), then four.
-  const rows = n <= 3 ? n : n <= 9 ? 3 : 4;
-  const cols = Math.ceil(n / rows);
+  // Columns of three (up to nine bays), then a fourth row across three columns, and so on; at least
+  // three rows, so nothing upstream moves while the first slices arrive.
+  const rows = n <= 9 ? 3 : 3 + Math.ceil((n - 9) / 3);
+  const cols = n <= 9 ? Math.ceil(n / 3) : 3;
   const C = SIZE.cell;
   const W = 48 + cols * C.x + (cols - 1) * SIZE.aisle;
   const D = 48 + 40 + rows * C.y + (rows - 1) * SIZE.cellGap; // the extra 40 is the lettering strip
@@ -129,8 +181,7 @@ export function plantLayout(fixture: Fixture): PlantLayout {
 
   const padY = (i: number) => mid + (i - (n - 1) / 2) * 56;
   const bays: BaySlot[] = list.map((s, index) => {
-    const col = Math.floor(index / rows);
-    const row = index % rows;
+    const { col, row } = bayCell(index);
     const origin = { x: floor.x + 24 + col * (C.x + SIZE.aisle), y: 24 + row * (C.y + SIZE.cellGap) };
     const a = cellAnatomy(origin, PLATE_Z);
     const railY = origin.y + 58;
@@ -186,7 +237,8 @@ export function plantLayout(fixture: Fixture): PlantLayout {
     const top = Math.min(...bays.filter((b) => b.aisleX === x).map((b) => b.railY));
     tracks[`aisle:${x}`] = [P(x, top), P(x, transferY)];
   }
-  tracks.transfer = [P(Math.min(...aisles), transferY), P(riserX, transferY), P(riserX, ry), P(entry.x, ry)];
+  // No bays yet (a live plant before its first slice): the transfer starts at the riser, never at Math.min() of nothing.
+  tracks.transfer = [P(aisles.length ? Math.min(...aisles) : riserX, transferY), P(riserX, transferY), P(riserX, ry), P(entry.x, ry)];
   // The column: out of the chamber, down through the gatehouse, into the yard to the merge machine.
   tracks.column = [P(consensus.x, ry), P(cx, ry), P(cx, human.y), P(cx, human.y + human.d), P(cx, merge.y - 22)];
   // The main line runs back along the front, over the bridge, and on through the archive.
@@ -214,13 +266,14 @@ export function plantLayout(fixture: Fixture): PlantLayout {
     regions: { intake, floor, review, human, integration, archive },
     dock,
     bays,
-    freeBays: Array.from({ length: rows * cols - n }, (_, k) => {
-      const index = n + k;
-      return { x: floor.x + 24 + Math.floor(index / rows) * (C.x + SIZE.aisle), y: 24 + (index % rows) * (C.y + SIZE.cellGap), index };
+    freeBays: Array.from({ length: rows * cols - list.length }, (_, k) => {
+      const index = list.length + k;
+      const { col, row } = bayCell(index);
+      return { x: floor.x + 24 + col * (C.x + SIZE.aisle), y: 24 + row * (C.y + SIZE.cellGap), index };
     }),
     bayByTicket: new Map(bays.map((b) => [b.ticketId, b])),
     bayBySlice: new Map(bays.map((b) => [b.sliceId, b])),
-    waveIds: Object.keys(fixture.definitions.waves),
+    waveIds,
     intake: {
       hopper,
       dockEdge: P(dock.x + 6, mid),
@@ -247,7 +300,9 @@ export function plantLayout(fixture: Fixture): PlantLayout {
     bridges,
     extent: { x: dock.x - 96, y: -96, w: review.x + review.w + 96 - (dock.x - 96), d: yardY + 132 + 192 },
   };
-  cache.set(fixture, layout);
+  // Layouts are few (one per growth step) and immutable; keep the recent ones.
+  if (cache.size > 64) cache.delete(cache.keys().next().value as string);
+  cache.set(key, layout);
   return layout;
 }
 

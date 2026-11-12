@@ -35,7 +35,10 @@ export type FactoryColor =
   | "human"
   | "human-soft"
   | "select"
-  | "lamp";
+  | "lamp"
+  // M6.2, live execution.
+  | "halt"
+  | "stale";
 
 export function fc(name: FactoryColor): string {
   return `var(--mach-factory-${name})`;
@@ -52,7 +55,7 @@ export function fc(name: FactoryColor): string {
 export type FactoryState = "idle" | "active" | "succeeded" | "failed" | "waiting" | "human" | "blocked";
 
 /** The shape that carries a state without colour. */
-export type FactoryMarkShape = "ring-dashed" | "ring-working" | "ring-sector" | "disc-tick" | "disc-cross" | "ring-hourglass" | "ring-dot" | "octagon-bar" | "double-ring";
+export type FactoryMarkShape = "ring-dashed" | "ring-working" | "ring-sector" | "disc-tick" | "disc-cross" | "ring-hourglass" | "ring-dot" | "octagon-bar" | "double-ring" | "ring-cut" | "ring-last-seen" | "ring-query";
 
 export interface FactoryStateLook {
   label: string;
@@ -79,6 +82,39 @@ export const factoryStates: Record<FactoryState, FactoryStateLook> = {
   human: { label: "Waiting for a person", description: "Held until a person decides.", ink: "human", soft: "human-soft", mark: "ring-dot", weight: 1.5 },
   blocked: { label: "Blocked", description: "Escalated: cannot move until a person intervenes.", ink: "fail", soft: "fail-soft", mark: "octagon-bar", weight: 2 },
 };
+
+/**
+ * M6.2: three conditions live execution has and the simulation never had. They are not states of
+ * the work (the seven above are): they say what is known about it. Kept apart from `FactoryState`
+ * so every existing table and switch over the seven stays exhaustive; marks and markers that accept
+ * a state accept a condition too (`MarkState`).
+ *
+ * - `interrupted`: its process was killed or timed out (recorded). A ring cut open, with a bar
+ *   across the cut: work stopped from outside, not a verdict.
+ * - `stale`: it was executing when the connection went quiet; it is drawn as last seen. A ring of
+ *   dots with a clock hand: "as of then", never "paused".
+ * - `unknown`: nothing recorded says what it is doing (or how it ended). An open ring with a
+ *   question mark: never a zero, never idle.
+ */
+export type FactoryCondition = "interrupted" | "stale" | "unknown";
+
+/** A state or a condition: what a mark, a marker or a mast may show. */
+export type MarkState = FactoryState | FactoryCondition;
+
+export const factoryConditions: Record<FactoryCondition, FactoryStateLook> = {
+  interrupted: { label: "Interrupted", description: "Its process was interrupted or timed out.", ink: "halt", soft: "plate-top", mark: "ring-cut", dash: "4 2", weight: 1.5 },
+  stale: { label: "As last seen", description: "It was working when the connection went quiet; it may have moved on.", ink: "stale", soft: "plate-top", mark: "ring-last-seen", dash: "1.2 2", weight: 1.25 },
+  unknown: { label: "Not known", description: "Nothing recorded says what it is doing.", ink: "ink-soft", soft: "plate-top", mark: "ring-query", dash: "0.1 2.4", weight: 1 },
+};
+
+export function isFactoryCondition(state: MarkState): state is FactoryCondition {
+  return state === "interrupted" || state === "stale" || state === "unknown";
+}
+
+/** How a state or a condition looks. */
+export function markLook(state: MarkState): FactoryStateLook {
+  return isFactoryCondition(state) ? factoryConditions[state] : factoryStates[state];
+}
 
 /** Opacity of a dimmed thing (not on the highlighted path). Text in a dimmed thing stays at least 0.55. */
 export const dimmedOpacity = 0.28;

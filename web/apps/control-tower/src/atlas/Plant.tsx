@@ -185,7 +185,7 @@ function Ruler({ y, x0, x1 }: { y: number; x0: number; x1: number }) {
 export function conduitPath(L: PlantLayout): Vec3[] {
   const s = L.intake.supervisor;
   const z = PLATE_Z + 1;
-  const lastRow = Math.max(...L.bays.map((b) => b.origin.y + 10));
+  const lastRow = L.bays.length ? Math.max(...L.bays.map((b) => b.origin.y + 10)) : 34;
   return [
     { x: s.x + 14, y: s.y, z },
     { x: s.x + 14, y: 7, z },

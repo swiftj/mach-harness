@@ -29,25 +29,25 @@ import {
   type Vec3,
 } from "@mach/ui";
 import { FloorLettering } from "@mach/ui";
-import { PANELS, eventsInWindow, ref, sceneAt, type Risk, type CellState, type EntityRef, type EventKind, type Fixture, type Scene, type SliceState } from "../sim";
+import { PANELS, eventsInWindow, isKnown, ref, type Risk, type CellState, type EntityRef, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
 import { AFTERGLOW, RATE, agentsElapsedKey, animating, anim, chamberOccupant, gateView, latestGate, placeAgents, q, type PlacedAgent } from "./derive";
 import { PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
-import { AgentFigure, onShelf } from "./Bay";
+import { AgentFigure, AgentPost, agentLabel, onShelf } from "./Bay";
 import { Card } from "./reduced";
 
 /** The playhead keyed to a part's own animations (see usePlayheadKeyed), with the scene and flags. */
-function useFrame(key: (fixture: Fixture, t: number) => string | number) {
-  const t = usePlayheadKeyed((s) => key(s.fixture, s.playhead));
+function useFrame(key: (log: SceneLog, t: number) => string | number) {
+  const t = usePlayheadKeyed((s) => key(s.log, s.playhead));
   const reduced = useSceneStore((s) => s.reducedMotion);
   const scene = useScene();
-  const fixture = useSceneStore((s) => s.fixture);
-  return { t, reduced, scene, fixture };
+  const log = useSceneStore((s) => s.log);
+  return { t, reduced, scene, log };
 }
 
-const has = (...kinds: string[]) => (e: { type: string }) => kinds.includes(e.type);
-const recentOf = (fixture: Fixture, t: number, kinds: Parameters<typeof eventsInWindow>[3], ms: number) => eventsInWindow(fixture, t, ms, kinds).length > 0;
+const has = (...kinds: string[]) => (e: LogEntry) => kinds.includes(e.event.type);
+const recentOf = (log: SceneLog, t: number, kinds: readonly string[], ms: number) => eventsInWindow(log, t, ms, kinds).length > 0;
 
 // ---------------------------------------------------------------- intake
 
@@ -56,29 +56,32 @@ type Actors = Partial<Record<"scheduler" | "supervisor", { lastActedAt: number |
 function actorsOf(scene: Scene): Actors | undefined {
   return (scene as Scene & { actors?: Actors }).actors;
 }
-function actorKey(f: Fixture, t: number): string {
-  const a = actorsOf(sceneAt(f, t));
+function actorKey(log: SceneLog, t: number): string {
+  const a = actorsOf(log.sceneAt(t));
   if (!a) return "";
   return Object.values(a)
     .map((x) => (x && x.lastActedAt !== null && t - x.lastActedAt < AFTERGLOW ? 1 : 0))
     .join("");
 }
 
-const INTAKE_KINDS: EventKind[] = ["wave.discovered", "slice.materialized", "intake.validated"];
-const DECISION_KINDS: EventKind[] = ["scheduling.decided", "dependency.blocked", "dependency.resolved", "work.scheduled"];
+const INTAKE_KINDS: readonly string[] = ["wave.discovered", "slice.materialized", "intake.validated"];
+const DECISION_KINDS: readonly string[] = ["scheduling.decided", "dependency.blocked", "dependency.resolved", "work.scheduled"];
+const GATE_KINDS: readonly string[] = ["gate.checked", "gate.evaluated"];
 
 export function IntakeWorks() {
   const { lod, layout: L } = useAtlas();
-  const { t, reduced, scene, fixture } = useFrame((f, now) =>
-    animating(f, now, has("wave.discovered", "slice.materialized", "gate.checked", "work.scheduled"))
+  const { t, reduced, scene, log } = useFrame((f, now) =>
+    animating(f, now, has("wave.discovered", "slice.materialized", "gate.checked", "gate.evaluated", "work.scheduled"))
       ? now
-      : `${recentOf(f, now, INTAKE_KINDS, 14_000)}${recentOf(f, now, DECISION_KINDS, AFTERGLOW)}${recentOf(f, now, ["gate.checked"], AFTERGLOW)}|${actorKey(f, now)}`,
+      : `${recentOf(f, now, INTAKE_KINDS, 14_000)}${recentOf(f, now, DECISION_KINDS, AFTERGLOW)}${recentOf(f, now, GATE_KINDS, AFTERGLOW)}|${actorKey(f, now)}`,
   );
   const highlight = useHighlight();
   const I = L.intake;
-  const recent = (kinds: Parameters<typeof eventsInWindow>[3], ms = AFTERGLOW) => eventsInWindow(fixture, t, ms, kinds);
+  const recent = (kinds: readonly string[], ms = AFTERGLOW) => eventsInWindow(log, t, ms, kinds);
   const intakeBusy = recent(INTAKE_KINDS, 14_000).length > 0;
-  const anyWave = Object.values(scene.waves)[0];
+  // The manifest on the dock is the latest wave received (each wave stacks its own sheets).
+  const waves = Object.values(scene.waves).sort((a, b) => a.discoveredAt - b.discoveredAt);
+  const anyWave = waves[waves.length - 1];
   const hopperState: FactoryState = intakeBusy ? "active" : anyWave ? "succeeded" : "idle";
   const decided = recent(DECISION_KINDS);
   // The two actors of the record that are not agents: lit while their last act is recent.
@@ -94,7 +97,7 @@ export function IntakeWorks() {
     <g>
       {/* The wave's manifest: one sheet per slice, stacked on the dock. */}
       {anyWave ? (
-        <Hit entity={ref.wave(anyWave.id)} label={`Wave ${anyWave.id}, ${anyWave.title}: ${anyWave.sliceIds.length} slices, approved by ${anyWave.approvedBy}`}>
+        <Hit entity={ref.wave(anyWave.id)} label={`Wave ${anyWave.id}, ${isKnown(anyWave.meta, "title") ? anyWave.title : "title not recorded"}: ${anyWave.sliceIds.length} slices, approved by ${isKnown(anyWave.meta, "approvedBy") ? anyWave.approvedBy : "(not recorded)"}${waves.length > 1 ? `; ${waves.length} waves received` : ""}`}>
           <g style={{ opacity: isDimmed(highlight, ref.wave(anyWave.id)) ? 0.28 : 1 }}>
             {/* At far zoom the stack is one sheet (spec b.7: artifacts as a count only; the name says how many). */}
             {(lod === "far" ? anyWave.sliceIds.slice(0, 1) : anyWave.sliceIds).map((s, i) => (
@@ -155,7 +158,7 @@ function HoldingPad({ bay, slice, cell, t, reduced, lod, dimmed }: { bay: BaySlo
   const word = !slice ? "" : waiting ? `WAITS · ${slice.dependsOn.map((d) => d.replace("SLICE-", "")).join(", ")}` : gone ? `→ ${cell?.ticketId ?? slice.ticketId}` : "ELIGIBLE";
   const mat = slice ? slice.history[0] : undefined;
   const cardP = mat ? q(anim("artifactMaterialise", t - mat.at - 900 * RATE, reduced)) : 0;
-  const label = slice ? `Slice ${slice.id}, ${slice.title}: ${state}${slice.reasons.length ? `. ${slice.reasons.join(" ")}` : ""}` : `Holding pad ${bay.index + 1}: empty`;
+  const label = slice ? `Slice ${slice.id}, ${isKnown(slice.meta, "title") ? slice.title : "title not recorded"}: ${state}${slice.reasons.length ? `. ${slice.reasons.join(" ")}` : ""}` : `Holding pad ${bay.index + 1}: empty`;
   const pin = project({ x: p.x + 16, y: p.y - 16, z: PLATE_Z + 2 });
   const flat = gone && lod === "far";
   // The pad's lettering is drawn outside its hit target, so the target's name is the whole sentence.
@@ -192,8 +195,8 @@ const SEATS = ["architecture", "security", "product"] as const;
 export function ChamberWorks() {
   const { lod, layout: L, visibleBays } = useAtlas();
   const { t, reduced, scene } = useFrame((f, now) => {
-    if (animating(f, now, (e) => e.type.startsWith("review.") || e.type === "artifact.written" || e.type === "station.entered")) return now;
-    const occ = chamberOccupant(sceneAt(f, now), now);
+    if (animating(f, now, (e) => e.event.type.startsWith("review.") || e.event.type === "artifact.written" || e.event.type === "artifact.recorded" || e.event.type === "station.entered")) return now;
+    const occ = chamberOccupant(f.sceneAt(now), now);
     return occ ? `${occ.cell.ticketId}/${occ.roundIndex}` : "empty";
   });
   const highlight = useHighlight();
@@ -224,6 +227,9 @@ export function ChamberWorks() {
   const packet = occ ? occ.cell.artifacts.find((a) => a.kind === "review-packet" && a.round === round_?.round) : undefined;
   const gateRef: EntityRef = gate ? `gate:${gate.id}` : "gate:review";
   const anyReview = Object.values(scene.cells).some((c) => c.reviews.length > 0);
+  const others = Object.values(scene.cells)
+    .filter((c) => c.station === "review" && c.ticketId !== occ?.cell.ticketId)
+    .map((c) => c.ticketId);
   const consensusText = round_?.outcome ? `Consensus · ${round_.outcome === "AWAITING_HUMAN" ? "needs a person" : round_.outcome.toLowerCase()}` : "Consensus";
   return (
     <g style={{ opacity: dim ? 0.28 : 1 }}>
@@ -274,6 +280,10 @@ export function ChamberWorks() {
           <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 31, z: PLATE_Z }} text={`${round_.approvalsNeeded} OF ${round_.seats.length} NEEDED`} size={7.5} font="mono" tone={round_.delta ? "live" : "muted"} weight={600} decorative />
         </>
       ) : null}
+      {others.length > 0 && lod !== "far" ? (
+        // Live: other panels sitting at the same time (their seats are the occupant's while it sits).
+        <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 52, z: PLATE_Z }} text={`ALSO SITTING · ${others.slice(0, 2).join(", ")}${others.length > 2 ? ` +${others.length - 2}` : ""}`} size={7} font="mono" tone="muted" weight={500} decorative />
+      ) : null}
       {round_?.delta && lod !== "far" ? (
         <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 41, z: PLATE_Z }} text={`DELTA ${round_.delta.sinceCommit.slice(0, 7)} · ${round_.delta.filesChanged.length} FILES`} size={7} font="mono" tone="live" weight={500} decorative />
       ) : null}
@@ -320,7 +330,7 @@ function Findings({ occ, roundIndex, L, t, reduced, lod }: { occ: CellState; rou
 
 export function GatehouseWorks() {
   const { lod, layout: L } = useAtlas();
-  const { t, reduced, scene } = useFrame((f, now) => (animating(f, now, has("human.approval_recorded", "review.decided", "station.entered", "human.required")) ? now : "settled"));
+  const { t, reduced, scene } = useFrame((f, now) => (animating(f, now, has("human.approval_recorded", "review.decided", "station.entered", "station.exited", "human.required")) ? now : "settled"));
   const highlight = useHighlight();
   const gate = latestGate(scene, "human-approval");
   const v = gateView(gate, t, reduced);
@@ -360,7 +370,7 @@ export function GatehouseWorks() {
 
 export function IntegrationWorks() {
   const { lod, layout: L, visibleBays } = useAtlas();
-  const { t, reduced, scene } = useFrame((f, now) => (animating(f, now, has("merge.completed", "merge.revalidated", "station.entered", "slice.integrated")) ? now : "settled"));
+  const { t, reduced, scene } = useFrame((f, now) => (animating(f, now, has("merge.completed", "merge.revalidated", "station.entered", "station.exited", "gate.evaluated", "slice.integrated")) ? now : "settled"));
   const highlight = useHighlight();
   const I = L.integration;
   const gate = latestGate(scene, "merge-revalidation");
@@ -435,7 +445,7 @@ export function IntegrationWorks() {
 
 export function ArchiveWorks() {
   const { lod, layout: L, visibleBays } = useAtlas();
-  const { t, reduced, scene } = useFrame((f, now) => (animating(f, now, has("cleanup.completed", "artifact.written", "station.entered")) ? now : "settled"));
+  const { t, reduced, scene } = useFrame((f, now) => (animating(f, now, has("cleanup.completed", "run.recorded", "artifact.written", "artifact.recorded", "station.entered")) ? now : "settled"));
   const A = L.archive;
   const archived = Object.values(scene.cells).filter((c) => c.archived).sort((a, b) => a.archived!.at - b.archived!.at);
   const cleaning = Object.values(scene.cells).some((c) => c.station === "cleanup");
@@ -481,22 +491,39 @@ export function ArchiveWorks() {
 
 /** Reviewers at their seats, merge and cleanup workers at their machines. */
 export function AwayAgents() {
-  const { lod, layout: L } = useAtlas();
+  const { lod, layout: L, mode } = useAtlas();
   const { t, reduced, scene } = useFrame((f, now) => {
     if (animating(f, now, has("agent.started", "agent.finished"))) return now;
     // Each working reviewer, merge or cleanup worker names its elapsed time to the second (its
     // accessible name), so re-render at each of those seconds (findings D8).
-    return agentsElapsedKey(sceneAt(f, now), now, (a) => a.station === "review" || a.station === "merge" || a.station === "cleanup");
+    return agentsElapsedKey(f.sceneAt(now), now, (a) => a.station === "review" || a.station === "merge" || a.station === "cleanup");
   });
   const highlight = useHighlight();
   const placed: PlacedAgent[] = [];
-  for (const cell of Object.values(scene.cells)) for (const a of placeAgents(scene, L, cell, t, reduced)) if (a.at.z === PLATE_Z) placed.push(a);
+  // Live and replay: several panels can sit at once. The seats show the chamber's occupant's panel
+  // (the latest round to start); the others are lettered in the chamber, not stacked on its seats.
+  const occ = mode.live ? chamberOccupant(scene, t) : null;
+  for (const cell of Object.values(scene.cells)) {
+    for (const a of placeAgents(L, cell, t, reduced, mode)) {
+      if (a.at.z !== PLATE_Z) continue;
+      if (occ && a.agent.role === "reviewer" && a.agent.seat && a.agent.seat !== "general" && cell.ticketId !== occ.cell.ticketId) continue;
+      placed.push(a);
+    }
+  }
   placed.sort((a, b) => depthOf(a.at) - depthOf(b.at));
+  // A dense plant at far zoom: agents as posts and heads (spec b.6), each still selectable by name.
+  const posts = lod === "far" && L.bays.length > 6;
   return (
     <g>
-      {placed.map((a) => (
-        <AgentFigure key={a.agent.id} placed={a} lod={lod} dimmed={isDimmed(highlight, ref.agent(a.agent.id), ref.cell(a.agent.ticketId))} />
-      ))}
+      {placed.map((a) =>
+        posts ? (
+          <Hit key={a.agent.id} entity={ref.agent(a.agent.id)} label={agentLabel(a)}>
+            <AgentPost placed={a} />
+          </Hit>
+        ) : (
+          <AgentFigure key={a.agent.id} placed={a} lod={lod} dimmed={isDimmed(highlight, ref.agent(a.agent.id), ref.cell(a.agent.ticketId))} />
+        ),
+      )}
     </g>
   );
 }

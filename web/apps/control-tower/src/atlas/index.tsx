@@ -12,12 +12,13 @@
  *   └ L4 DOM: zoom controls, dev frame meter
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { FactoryScene, factoryTokens, lodForZoom, screenBounds, type Lod, type RegionKind } from "@mach/ui";
-import { cameraFollows, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
-import { refKind, sceneAt, type EntityRef, type Scene } from "../sim";
+import { FactoryScene, StateMark, factoryTokens, lodForZoom, screenBounds, type Lod, type RegionKind } from "@mach/ui";
+import { cameraFollows, isStale, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
+import { refKind, type EntityRef, type Scene } from "../sim";
 import { AtlasContext, useHighlight, type AtlasContextValue } from "./context";
 import { createCamera, frame, visibleRect, zoomAt, type Camera, type ScreenRect } from "./camera";
-import { PLATE_Z, plantLayout, type PlantLayout } from "./layout";
+import { PLATE_Z, plantLayout, slotsOf, type PlantLayout } from "./layout";
+import { setMotionSource, type ViewMode } from "./derive";
 import { Plant } from "./Plant";
 import { Bay, FreeBay } from "./Bay";
 import { ArchiveWorks, AwayAgents, ChamberWorks, GatehouseWorks, IntakeWorks, IntegrationWorks } from "./Stations";
@@ -38,11 +39,14 @@ export interface AtlasViewProps {
 const Z = factoryTokens.zoom;
 const SVG_PAD = 120;
 
-function captionsOf(scene: Scene): { captions: Partial<Record<RegionKind, string>>; active: Partial<Record<RegionKind, boolean>> } {
+function captionsOf(scene: Scene, stale: boolean): { captions: Partial<Record<RegionKind, string>>; active: Partial<Record<RegionKind, boolean>> } {
   const cells = Object.values(scene.cells);
-  const working = cells.filter((c) => c.station && ["plan", "groom", "build", "verify", "audit"].includes(c.station) && c.activeAgentIds.length > 0);
+  // On a stale connection nothing is said to be working: the floor is "as last seen".
+  const working = stale ? [] : cells.filter((c) => c.station && ["plan", "groom", "build", "verify", "audit"].includes(c.station) && c.activeAgentIds.length > 0);
   const waiting = Object.values(scene.slices).filter((s) => s.scheduler === "waiting-on-dependency").length;
-  const wave = Object.values(scene.waves)[0];
+  const waves = Object.values(scene.waves).sort((a, b) => a.discoveredAt - b.discoveredAt);
+  const wave = waves[waves.length - 1];
+  const sliceCount = waves.reduce((n, w) => n + w.sliceIds.length, 0);
   const merged = cells.filter((c) => c.merged).length;
   const archived = cells.filter((c) => c.archived).length;
   const reviewing = cells.find((c) => c.station === "review");
@@ -52,8 +56,8 @@ function captionsOf(scene: Scene): { captions: Partial<Record<RegionKind, string
   const human = cells.find((c) => c.stage === "awaiting-human");
   return {
     captions: {
-      intake: wave ? `${wave.id} · ${wave.sliceIds.length} slices · ${waiting} waiting` : "Waiting for an approved wave",
-      floor: `${cells.length} cell${cells.length === 1 ? "" : "s"} · ${working.length} working`,
+      intake: wave ? `${waves.length > 1 ? `${waves.length} waves, latest ${wave.id}` : wave.id} · ${sliceCount} slices · ${waiting} waiting` : "Waiting for an approved wave",
+      floor: `${cells.length} cell${cells.length === 1 ? "" : "s"} · ${stale ? "as last seen" : `${working.length} working`}`,
       review: reviewing ? `${reviewing.ticketId} under review` : lastDecided ? `Last: ${lastDecided.c.ticketId} ${lastDecided.r.outcome?.toLowerCase().replace("_", " ")}` : "No panel sitting yet",
       human: human ? `${human.ticketId} held` : "Clear",
       integration: `main · ${merged} merged`,
@@ -70,10 +74,10 @@ function captionsOf(scene: Scene): { captions: Partial<Record<RegionKind, string
 }
 
 /** Plates and tracks re-render only when a caption, an active rule, the level of detail or dimming changes. */
-function PlantLayer({ layout, lod }: { layout: PlantLayout; lod: Lod }) {
+function PlantLayer({ layout, lod, stale }: { layout: PlantLayout; lod: Lod; stale: boolean }) {
   const scene = useScene();
   const highlight = useHighlight();
-  const { captions, active } = captionsOf(scene);
+  const { captions, active } = captionsOf(scene, stale);
   const key = JSON.stringify([captions, active]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the caption text, not object identity
   const stable = useMemo(() => ({ captions, active }), [key]);
@@ -93,16 +97,36 @@ function FreeBays({ layout }: { layout: PlantLayout }) {
 
 export function AtlasView({ meter }: AtlasViewProps = {}) {
   const store = useStore();
-  const fixture = useSceneStore((s) => s.fixture);
-  const layout = useMemo(() => plantLayout(fixture), [fixture]);
+  // A store never changes source: the motion rate (live time is real time) is set before anything draws.
+  const source = useSceneStore((s) => s.source);
+  setMotionSource(source);
+  const log = useSceneStore((s) => s.log);
+  const logVersion = useSceneStore((s) => s.logVersion);
+  const stale = useSceneStore((s) => isStale(s.connection));
+  // What the stale stamp says: the connection's state and the last confirmed moment (factory time).
+  const staleSince = useSceneStore((s) => (isStale(s.connection) ? `${s.connection!.state}|${s.connection!.staleSince ?? s.liveAt}` : null));
+  const provenanceLabel = log.provenance.label;
+  // The plant from what is known so far (the head scene: every event received), never from the end
+  // of a run. plantLayout returns the same object while the bays known are the same.
+  const layout = useMemo(() => {
+    const head = log.head();
+    const waveIds = Object.values(head.waves).sort((a, b) => a.discoveredAt - b.discoveredAt).map((w) => w.id);
+    return plantLayout(slotsOf(head), waveIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- logVersion is the log's change signal
+  }, [log, logVersion]);
+  const mode = useMemo<ViewMode>(() => ({ live: source !== "simulation", stale }), [source, stale]);
   const { select, hover, focusOn } = useSceneActions();
 
-  // Projected bounds of the whole plant: the SVGs' coordinate frame.
+  // Projected bounds of the whole plant: the SVGs' coordinate frame. It grows with the plant; the
+  // camera is made once and only its clamping bounds follow, so a growing plant never moves the view.
   const bounds = useMemo<ScreenRect>(() => {
     const e = layout.extent;
     return screenBounds([{ x: e.x, y: e.y, w: e.w, d: e.d, z: 0, h: 60 }], SVG_PAD);
   }, [layout]);
-  const camera = useMemo(() => createCamera(bounds), [bounds]);
+  const [camera] = useState(() => createCamera(bounds));
+  useEffect(() => {
+    camera.setBounds(bounds);
+  }, [camera, bounds]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -110,6 +134,8 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
   const [zoom, setZoom] = useState(1);
   const [lod, setLod] = useState<Lod>("mid");
   const [visibleBays, setVisibleBays] = useState<string>("*");
+  // A dense plant (more than six bays): the bays drawn whole (the rest are summaries). "*": all visible.
+  const [detailBays, setDetailBays] = useState<string>("*");
   const [focused, setFocused] = useState<EntityRef | null>(null);
   const [dragging, setDragging] = useState(false);
   // Follow is the store's one flag (cameraFollows); the Atlas keeps only how it follows: the sticky
@@ -145,14 +171,24 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
         setZoom(Math.round(cam.zoom * 100) / 100);
         const view = visibleRect(cam, camera.viewport);
         const m = 64 / cam.zoom;
-        const vis = layout.bays
-          .filter((b) => {
-            const r = screenBounds([{ x: b.origin.x, y: b.origin.y, w: 216, d: 148, z: 8, h: 60 }]);
-            return r.x + r.width > view.x - m && r.x < view.x + view.width + m && r.y + r.height > view.y - m && r.y < view.y + view.height + m;
-          })
-          .map((b) => b.ticketId)
-          .join(",");
-        setVisibleBays(vis);
+        const inView = layout.bays.filter((b) => {
+          const r = screenBounds([{ x: b.origin.x, y: b.origin.y, w: 216, d: 148, z: 8, h: 60 }]);
+          return r.x + r.width > view.x - m && r.x < view.x + view.width + m && r.y + r.height > view.y - m && r.y < view.y + view.height + m;
+        });
+        setVisibleBays(inView.map((b) => b.ticketId).join(","));
+        // Level of detail for a dense plant (spec b.6, b.7; the element budgets: 2,500 at mid, 1,200
+        // at far, for twelve cells): at far zoom every bay is a summary; at mid or near zoom, while
+        // more than six bays are in view, the three nearest the centre of the view are drawn whole.
+        if (layout.bays.length > 6) {
+          const cx = view.x + view.width / 2;
+          const cy = view.y + view.height / 2;
+          const centre = (b: (typeof inView)[number]) => {
+            const c = screenBounds([{ x: b.origin.x, y: b.origin.y, w: 216, d: 148, z: 8, h: 0 }]);
+            return Math.hypot(c.x + c.width / 2 - cx, c.y + c.height / 2 - cy);
+          };
+          const whole = lodNow === "far" ? [] : inView.length > 6 ? [...inView].sort((a, b) => centre(a) - centre(b)).slice(0, 3) : inView;
+          setDetailBays(whole.map((b) => b.ticketId).sort().join(","));
+        } else setDetailBays("*");
         const step = 24 / cam.zoom;
         const snap = (v: number) => Math.round(v / step) * step;
         setViewKey([snap(view.x), snap(view.y), snap(view.x + view.width), snap(view.y + view.height), Math.round(cam.zoom * 1000)].map((v) => Math.round(v * 10) / 10).join(","));
@@ -189,6 +225,14 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
     },
     [camera, layout],
   );
+
+  // The plant grew (a wave arrived, a cell opened): if the camera was at fit, frame the new plant.
+  const lastLayout = useRef(layout);
+  useEffect(() => {
+    if (lastLayout.current === layout) return;
+    lastLayout.current = layout;
+    if (camera.fitted && camera.viewport.width > 1) fitAll(store.getState().reducedMotion ? 0 : factoryTokens.motion.cameraFocus);
+  }, [layout, camera, fitAll, store]);
 
   // Size: track the container. The first measurement opens on the store's selection if there is one
   // (the shell switches modes and expects the view on it), else on the fit. Later resizes (inspector,
@@ -231,7 +275,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
     let wasFollowing = cameraFollows(store.getState());
     const followNow = (s: ReturnType<typeof store.getState>) => {
       followBase.current ??= camera.get().zoom;
-      const members = withGrace(activeMembers(layout, sceneAt(s.fixture, s.playhead), s.playhead), s.playhead, followSeen.current);
+      const members = withGrace(activeMembers(layout, s.log.sceneAt(s.playhead), s.playhead), s.playhead, followSeen.current);
       const d = followDecision(camera.get(), camera.viewport, members, followPrimary.current, followBase.current);
       followPrimary.current = d.primary;
       return { d, members };
@@ -257,10 +301,10 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
           fitAll(ms);
         } else {
           camera.setFitted(false);
-          const scene = sceneAt(s.fixture, s.playhead);
+          const scene = s.log.sceneAt(s.playhead);
           const kind = refKind(s.focus.target);
           const pad = kind === "cell" || kind === "slice" ? 40 * 0.9 : 8;
-          const r = locateScreen(layout, scene, s.playhead, s.focus.target, pad);
+          const r = locateScreen(layout, scene, s.playhead, s.focus.target, pad, mode);
           if (r) {
             const minZoom = kind === "cell" || kind === "slice" || kind === "wave" || kind === "dependency" ? Z.far + 0.06 : kind === "gate" ? Z.far + 0.06 : Z.near + 0.06;
             camera.animateTo(frame(r, camera.viewport, 2.2, Math.min(minZoom, camera.get().zoom > minZoom ? camera.get().zoom : minZoom)), ms);
@@ -279,7 +323,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
         store.focusOn(ref, "follow");
       }
     });
-  }, [store, camera, layout, fitAll]);
+  }, [store, camera, layout, fitAll, mode]);
 
   // Development and capture only: read and drive the camera (the follow check in the capture script).
   useEffect(() => {
@@ -443,7 +487,8 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
   const theater = useSceneStore((s) => s.theater);
   const showMeter = meter ?? (import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).has("meter"));
   const visible = useMemo(() => new Set(visibleBays === "*" ? layout.bays.map((b) => b.ticketId) : visibleBays.split(",")), [visibleBays, layout]);
-  const ctx = useMemo<AtlasContextValue>(() => ({ lod, layout, visibleBays: visible }), [lod, layout, visible]);
+  const detailed = useMemo(() => (detailBays === "*" ? null : new Set(detailBays ? detailBays.split(",") : [])), [detailBays]);
+  const ctx = useMemo<AtlasContextValue>(() => ({ lod, layout, visibleBays: visible, mode }), [lod, layout, visible, mode]);
   // The stage inside the sheet's border (28 px) and clear of the camera toolbar, in projected units.
   const overlayView = useMemo<OverlayView | null>(() => {
     if (!viewKey) return null;
@@ -463,8 +508,10 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
         data-view="atlas"
         data-lod={lod}
         data-dragging={dragging}
+        data-source={source}
+        data-connection={stale ? "stale" : undefined}
         role="application"
-        aria-label="Factory Atlas, a simulation: the plant drawn in axonometric. Arrow keys move to the nearest part in that direction; Enter selects; Shift with arrows pans; plus and minus zoom; 0 fits."
+        aria-label={`Factory Atlas, ${source === "simulation" ? "a simulation" : provenanceLabel}${stale ? ", as last seen: the connection is not live" : ""}: the plant drawn in axonometric. Arrow keys move to the nearest part in that direction; Enter selects; Shift with arrows pans; plus and minus zoom; 0 fits.`}
         aria-roledescription="plant drawing"
         tabIndex={0}
         onPointerDown={onPointerDown}
@@ -480,7 +527,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
         {/* eslint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
         <div ref={wrapperRef} className="atlas-camera">
           <FactoryScene
-            label="Factory Atlas (simulation)"
+            label={`Factory Atlas (${provenanceLabel.toLowerCase()})`}
             interactive
             ground={false}
             width={bounds.width}
@@ -488,12 +535,12 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
             viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`}
             style={{ left: bounds.x, top: bounds.y }}
           >
-            <PlantLayer layout={layout} lod={lod} />
+            <PlantLayer layout={layout} lod={lod} stale={stale} />
             <LiveConduits />
             <IntakeWorks />
             <FreeBays layout={layout} />
             {layout.bays.map((b) => (
-              <Bay key={b.ticketId} bay={b} visible={visible.has(b.ticketId)} />
+              <Bay key={b.ticketId} bay={b} visible={visible.has(b.ticketId)} summary={detailed !== null && !(visible.has(b.ticketId) && detailed.has(b.ticketId))} />
             ))}
             <ChamberWorks />
             <GatehouseWorks />
@@ -509,7 +556,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
             <Overlay zoom={zoom} lod={lod} focused={focused} theater={theater} view={overlayView} />
           </svg>
         </div>
-        <Sheet width={viewportSize.width} height={viewportSize.height} lod={lod} fixture={fixture} titled={atFit && !theater} />
+        <Sheet width={viewportSize.width} height={viewportSize.height} lod={lod} titled={atFit && !theater} />
         {theater ? null : (
         <div className="atlas-controls" role="toolbar" aria-label="Atlas camera">
           <button type="button" aria-label="Zoom out" onClick={(e) => (e.stopPropagation(), zoomBy(1 / Z.step))} onPointerDown={(e) => e.stopPropagation()}>
@@ -526,9 +573,29 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
           </button>
         </div>
         )}
+        {staleSince ? <StaleStamp info={staleSince} /> : null}
         {showMeter ? <Meter /> : null}
       </div>
     </AtlasContext.Provider>
+  );
+}
+
+/**
+ * The plant as last seen: one stamp on the sheet while the connection is stale or lost, saying since
+ * when. A status, so it is announced politely once (the shell's badge carries the detail).
+ */
+function StaleStamp({ info }: { info: string }) {
+  const [state = "", at = "0"] = info.split("|");
+  const d = new Date(Number(at));
+  const time = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")} UTC`;
+  return (
+    <div className="atlas-stale-stamp" role="status">
+      <svg width="14" height="14" viewBox="-7 -7 14 14" aria-hidden="true">
+        <StateMark state="stale" r={6} />
+      </svg>
+      As last seen at {time}
+      <span>· connection {state}: work may have moved on</span>
+    </div>
   );
 }
 

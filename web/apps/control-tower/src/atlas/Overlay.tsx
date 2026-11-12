@@ -13,10 +13,10 @@
  */
 import { memo, type ReactNode } from "react";
 import { Callout, SelectionBrackets, fc, modelTiers, project, regions, round, screenBounds, type Lod, type PlanBox, type RegionKind } from "@mach/ui";
-import { refId, refKind, sceneAt, type EntityRef, type Scene } from "../sim";
+import { isKnown, refId, refKind, type EntityRef, type Scene } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { useAtlas, usePlayheadKeyed } from "./context";
-import { AFTERGLOW, agentsElapsedKey, animating, anim, fmtElapsed, chamberOccupant, latestGate, placeAgents, q, uiTier } from "./derive";
+import { AFTERGLOW, agentsElapsedKey, animating, anim, fmtElapsed, fmtElapsedKnown, chamberOccupant, latestGate, placeAgents, q, uiTier, type ViewMode } from "./derive";
 import { agentName } from "./Bay";
 import { PLATE_Z, FLOOR_Z, boxAt, type PlantLayout } from "./layout";
 import { locateScreen } from "./locate";
@@ -45,7 +45,7 @@ function shortName(scene: Scene, entity: EntityRef): string {
     case "agent": {
       for (const c of Object.values(scene.cells)) {
         const a = c.agents[id];
-        if (a) return `${a.label} · ${modelTiers[uiTier(a.model)].label}`;
+        if (a) return `${a.label} · ${isKnown(a.meta, "model") ? modelTiers[uiTier(a.model)].label : "model not recorded"}`;
       }
       return id;
     }
@@ -76,15 +76,16 @@ interface Offer extends Upright {
 }
 
 export const Overlay = memo(function Overlay({ zoom, lod, focused, theater, view }: OverlayProps) {
-  const { layout: L } = useAtlas();
+  const { layout: L, mode } = useAtlas();
   const t = usePlayheadKeyed((s) => {
     const now = s.playhead;
-    if (animating(s.fixture, now, (e) => e.type === "verification.verdict" || e.type === "review.decided" || e.type === "human.approval_recorded" || e.type === "dependency.resolved")) return now;
-    if (lod === "near" && animating(s.fixture, now, (e) => e.type === "agent.started" || e.type === "agent.finished")) return now;
-    const scene = sceneAt(s.fixture, now);
+    if (animating(s.log, now, (e) => e.event.type === "verification.verdict" || e.event.type === "gate.evaluated" || e.event.type === "review.decided" || e.event.type === "human.approval_recorded" || e.event.type === "dependency.resolved")) return now;
+    if (lod === "near" && animating(s.log, now, (e) => e.event.type === "agent.started" || e.event.type === "agent.finished")) return now;
+    const scene = s.log.sceneAt(now);
     // At near zoom the agents' elapsed time is lettered: re-render exactly when one of them changes
     // (keyed on each agent's own elapsed second, not the playhead's, so no route can leave it stale).
-    const elapsedKey = lod === "near" ? agentsElapsedKey(scene, now) : "";
+    // A count-only agent's label also carries its tool-call count and last tool: re-render when one changes.
+    const elapsedKey = lod === "near" ? `${agentsElapsedKey(scene, now)}${mode.live ? countsKey(scene) : ""}` : "";
     const occ = chamberOccupant(scene, now);
     // Unlock callouts expire after their afterglow.
     const deps = Object.values(scene.dependencies).filter((d) => d.satisfiedAt !== null && now - d.satisfiedAt <= AFTERGLOW * 3).length;
@@ -95,15 +96,15 @@ export const Overlay = memo(function Overlay({ zoom, lod, focused, theater, view
   const hovered = useSceneStore((s) => s.hovered);
   const scene = useScene();
   const k = Math.min(2.4, Math.max(0.9, 1 / zoom));
-  const sel = selection ? locateScreen(L, scene, t, selection) : null;
-  const hov = hovered && hovered !== selection && !theater ? locateScreen(L, scene, t, hovered, 3) : null;
-  const foc = focused ? locateScreen(L, scene, t, focused, 5) : null;
+  const sel = selection ? locateScreen(L, scene, t, selection, 0, mode) : null;
+  const hov = hovered && hovered !== selection && !theater ? locateScreen(L, scene, t, hovered, 3, mode) : null;
+  const foc = focused ? locateScreen(L, scene, t, focused, 5, mode) : null;
   const stage = view ?? null;
   const labelK = Math.min(1.1, LEVEL_K[lod]);
 
   // What labels should leave clear when they can: machines, gates, agents and findings flags.
-  const fixed = lod === "far" ? [] : obstacles(L, scene, t);
-  const agents = lod === "near" ? agentOffers(L, scene, t, labelK) : { offers: [], home: [] };
+  const fixed = lod === "far" ? [] : obstacles(L, scene, t, mode);
+  const agents = lod === "near" ? agentOffers(L, scene, t, labelK, mode) : { offers: [], home: [] };
   // Callouts also leave each agent's own label spot (under its disc) to the agent, when they can.
   const callouts = calloutOffers(L, scene, t, reduced, LEVEL_K[lod], lod, [...fixed, ...agents.home]);
   const selText = sel && selection ? shortName(scene, selection) : "";
@@ -200,10 +201,10 @@ function selectionOffer(sel: { x: number; y: number; width: number; height: numb
 const ROW = 27;
 const ELAPSED_RESERVE = " · 59 min".length;
 
-function agentOffers(L: PlantLayout, scene: Scene, t: number, k: number): { offers: Offer[]; home: Box[] } {
+function agentOffers(L: PlantLayout, scene: Scene, t: number, k: number, mode: ViewMode): { offers: Offer[]; home: Box[] } {
   const groups = new Map<string, { base: { x: number; y: number }; head: number; a: ReturnType<typeof placeAgents>[number] }[]>();
   for (const cell of Object.values(scene.cells)) {
-    for (const a of placeAgents(scene, L, cell, t, true)) {
+    for (const a of placeAgents(L, cell, t, true, mode)) {
       if (a.leave > 0.5) continue;
       const key = a.at.z === FLOOR_Z ? `${cell.ticketId}:${Math.round(a.at.x / 40)}:${Math.round(a.at.y)}` : `${a.agent.id}`;
       const list = groups.get(key) ?? [];
@@ -218,12 +219,23 @@ function agentOffers(L: PlantLayout, scene: Scene, t: number, k: number): { offe
     const shown = list.slice(0, 3);
     const more = list.length - shown.length;
     const rows = shown.map(({ base, a }) => {
-      const name = agentName(a);
-      const tierLabel = modelTiers[uiTier(a.agent.model)].label;
+      const name = mode.live ? trim(a.agent.label || agentName(a), 30) : agentName(a);
+      const tierLabel = a.tierKnown ? modelTiers[uiTier(a.agent.model)].label : "model not recorded";
       const active = a.state === "active";
-      const tier = `${tierLabel}${active ? ` · ${fmtElapsed(a.elapsed)}` : ""}`;
-      const w = Math.max(name.length * 10 * EM, (tierLabel.length + (active ? ELAPSED_RESERVE : 0)) * 9 * EM);
-      return { base, a, name, tier, w };
+      if (!mode.live) {
+        const tier = `${tierLabel}${active ? ` · ${fmtElapsed(a.elapsed)}` : ""}`;
+        const w = Math.max(name.length * 10 * EM, (tierLabel.length + (active ? ELAPSED_RESERVE : 0)) * 9 * EM);
+        return { base, a, name, tier, tools: null as string | null, w };
+      }
+      // Live and replay: the label, the model, the phase and how long it has run (measured, placed
+      // "≈", or not recorded); then what is known of its tools: a count and the last tool's name.
+      const phase = isKnown(a.agent.meta, "phase") && a.agent.phase ? ` · ${a.agent.phase}` : "";
+      const when = active ? ` · ${fmtElapsedKnown(a.elapsed, a.elapsedKnown, a.elapsedInferred)}` : a.state === "stale" ? " · as last seen" : "";
+      const tier = `${tierLabel}${phase}${when}`;
+      const n = a.agent.toolCallCount;
+      const tools = `${n === null ? "tool calls not reported" : `${n} tool call${n === 1 ? "" : "s"}`}${a.agent.lastTool ? ` · last ${a.agent.lastTool}` : ""}`;
+      const w = Math.max(name.length * 10 * EM, (tier.length + (active ? 3 : 0)) * 9 * EM, tools.length * 9 * EM);
+      return { base, a, name, tier, tools, w };
     });
     const bx0 = Math.min(...list.map((m) => m.base.x));
     const bx1 = Math.max(...list.map((m) => m.base.x));
@@ -232,7 +244,10 @@ function agentOffers(L: PlantLayout, scene: Scene, t: number, k: number): { offe
     const single = list.length === 1;
     const wMax = Math.max(...rows.map((r) => r.w), more ? 9 * 9 * EM : 0);
     const nRows = rows.length + (more ? 1 : 0);
-    const height = (nRows - 1) * ROW + 25; // from the first row's chip top to the last row's chip bottom
+    // Live labels carry a third line (the tool count): a taller chip and a longer pitch.
+    const extra = mode.live ? 11 : 0;
+    const pitch = ROW + extra;
+    const height = (nRows - 1) * pitch + 25 + extra; // from the first row's chip top to the last row's chip bottom
     // A slot: where the first row's baseline sits, and how the text is aligned to x.
     type Place = { x: number; y: number; align: "middle" | "start" | "end" };
     const places: Place[] = single
@@ -263,27 +278,32 @@ function agentOffers(L: PlantLayout, scene: Scene, t: number, k: number): { offe
         const p = places[i]!;
         return (
           <g key={`agents-${key}`}>
-            {rows.map(({ base, a, name, tier, w }, r) => {
-              const ly = p.y + r * ROW * k;
+            {rows.map(({ base, a, name, tier, tools, w }, r) => {
+              const ly = p.y + r * pitch * k;
               const far = !single && Math.hypot(p.x - base.x, ly - base.y) > 20 * k;
               const chipX = p.align === "middle" ? -w / 2 : p.align === "end" ? -w : 0;
               return (
                 <g key={a.agent.id}>
                   {far ? <line x1={base.x} y1={base.y + 3 * k} x2={p.x} y2={ly - 9 * k} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 * k }} /> : null}
                   <Scaled x={p.x} y={ly} k={k}>
-                    <rect className="atlas-chip" x={chipX - 3} y={-10.5} width={w + 6} height={25} rx={2} />
+                    <rect className="atlas-chip" x={chipX - 3} y={-10.5} width={w + 6} height={25 + extra} rx={2} />
                     <text textAnchor={p.align} className="atlas-halo" style={{ fill: "var(--mach-ink)", fontSize: 10, fontWeight: 600 }}>
                       {name}
                     </text>
                     <text y={11} textAnchor={p.align} className="atlas-halo" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>
                       {tier}
                     </text>
+                    {tools !== null ? (
+                      <text y={22} textAnchor={p.align} className="atlas-halo notranslate" style={{ fill: "var(--mach-ink-muted)", fontSize: 9, fontFamily: "var(--mach-font-mono)" }}>
+                        {tools}
+                      </text>
+                    ) : null}
                   </Scaled>
                 </g>
               );
             })}
             {more ? (
-              <Scaled x={p.x} y={p.y + rows.length * ROW * k} k={k}>
+              <Scaled x={p.x} y={p.y + rows.length * pitch * k} k={k}>
                 <text textAnchor={p.align} className="atlas-halo" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>{`+${more} more`}</text>
               </Scaled>
             ) : null}
@@ -310,7 +330,7 @@ const REGION_TITLES: Array<[keyof PlantLayout["regions"], RegionKind, string?]> 
  * floor names with their captions, in projected units. A name runs diagonally on screen, so it is
  * offered as short pieces along its run rather than one box around the whole diagonal.
  */
-function obstacles(L: PlantLayout, scene: Scene, t: number): Box[] {
+function obstacles(L: PlantLayout, scene: Scene, t: number, mode: ViewMode): Box[] {
   const out: Box[] = [];
   const add = (b: PlanBox) => {
     const r = screenBounds([b]);
@@ -331,7 +351,7 @@ function obstacles(L: PlantLayout, scene: Scene, t: number): Box[] {
   }
   for (const p of [L.review.gate, L.human.gate, L.integration.gate, L.integration.merge, L.intake.auditGate, L.intake.hopper]) add(boxAt(p, 40, 40, 40));
   for (const cell of Object.values(scene.cells)) {
-    for (const a of placeAgents(scene, L, cell, t, true)) {
+    for (const a of placeAgents(L, cell, t, true, mode)) {
       if (a.leave > 0.5) continue;
       add(boxAt(a.at, 18, 18, 34));
     }
@@ -485,6 +505,18 @@ function calloutOffers(L: PlantLayout, scene: Scene, t: number, reduced: boolean
         },
       };
     });
+}
+
+/** Each agent's reported tool count and last tool (live): a label's third line changes with them. */
+function countsKey(scene: Scene): string {
+  let k = "";
+  for (const c of Object.values(scene.cells)) {
+    for (const id of c.activeAgentIds) {
+      const a = c.agents[id];
+      if (a) k += `${a.toolCallCount ?? "-"}${a.lastTool ?? ""},`;
+    }
+  }
+  return k;
 }
 
 function trim(s: string, n: number): string {

@@ -5,6 +5,9 @@ import {
   dimmedOpacity,
   factoryStates,
   fc,
+  isFactoryCondition,
+  markLook,
+  type MarkState,
   gatePositions,
   gates,
   modelTiers,
@@ -67,7 +70,8 @@ export interface Fraction {
 
 export interface StationMachineProps extends Common {
   kind: StationKind;
-  state: FactoryState;
+  /** A state, or (M6.2, live) a condition: the station's work interrupted, as last seen, not known. */
+  state: MarkState;
   /**
    * Deprecated: kept for compatibility and no longer drawn. A station's work in flight has no known
    * end, so it is shown by `elapsed`; a measured fraction goes in `fraction`.
@@ -101,7 +105,7 @@ function fractionWords(f: Fraction | undefined): string {
  */
 export function StationMachine({ kind, state, elapsed, fraction, round: judging, label, nameplate, settled, planned, at, variant = "atlas", lod = "mid", dimmed, showLabel }: StationMachineProps) {
   const look = stations[kind];
-  const st = factoryStates[state];
+  const st = markLook(state);
   const fw = fractionWords(fraction);
   const timing = state === "active" && elapsed !== undefined ? `, for ${formatElapsed(elapsed)}` : "";
   const name = `${label ?? look.label}: ${planned ? "not reached yet" : st.label}${timing}${fw ? `, ${fw}` : ""}${judging && judging > 1 ? `, round ${judging} of 3` : ""}`;
@@ -123,7 +127,7 @@ export function StationMachine({ kind, state, elapsed, fraction, round: judging,
   const ticks = working && elapsed !== undefined ? elapsedTicks(elapsed) : 0;
   return (
     <g role="img" aria-label={name} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
-      <Prism box={box} top={top} weight={!quiet && (state === "failed" || state === "blocked") ? 1.6 : 1} edge={edge} dash={planned ? "3 2.5" : undefined} hatch={planned ? "none" : "shade"} shadow={!planned}>
+      <Prism box={box} top={top} weight={!quiet && (state === "failed" || state === "blocked") ? 1.6 : 1} edge={edge} dash={planned ? "3 2.5" : isFactoryCondition(state) ? st.dash : undefined} hatch={planned ? "none" : "shade"} shadow={!planned}>
         {/* Inscribed rim, dashed while unsettled. */}
         <rect
           aria-hidden="true"
@@ -202,7 +206,7 @@ function ProcessSymbol({
   planned,
 }: {
   kind: StationKind;
-  state: FactoryState;
+  state: MarkState;
   elapsed?: number;
   fraction?: Fraction;
   round?: number;
@@ -214,7 +218,7 @@ function ProcessSymbol({
   settled?: boolean;
   planned?: boolean;
 }) {
-  const st = factoryStates[state];
+  const st = markLook(state);
   const ink = fc(st.ink);
   const r = 15;
   const quiet = settled && state === "succeeded";
@@ -282,7 +286,18 @@ export interface AgentMarkerProps extends Common {
   agentRole: AgentRole;
   tier: ModelTier;
   seat?: ReviewerSeat;
-  state: FactoryState;
+  /** A state, or (M6.2, live) a condition: interrupted, stale (as last seen), unknown. */
+  state: MarkState;
+  /**
+   * M6.2: false when the agent's model is not recorded. `tier` then only sets the post's height; the
+   * head is drawn open and dashed with no tier shape, and the name says "model not recorded".
+   */
+  tierKnown?: boolean;
+  /**
+   * M6.2: drawn open (dashed post and head, no fill): what is shown was reconstructed by the
+   * observer, not recorded by the agent's own source.
+   */
+  open?: boolean;
   /**
    * Deprecated: kept for compatibility and no longer drawn. An agent's run has no known end; pass
    * `elapsed` and the head shows one tick per minute it has worked.
@@ -307,21 +322,28 @@ export interface AgentMarkerProps extends Common {
  * has worked (never a fill toward an unknown end). A reviewer carries its seat
  * letter. Arrival grows the post up from the disc; departure sinks it back.
  */
-export function AgentMarker({ agentRole: role, tier, seat, state, elapsed, arrive = 1, leave = 0, label, labelPosition = "beside", at, variant = "atlas", lod = "mid", dimmed, showLabel }: AgentMarkerProps) {
+export function AgentMarker({ agentRole: role, tier, seat, state, tierKnown = true, open = false, elapsed, arrive = 1, leave = 0, label, labelPosition = "beside", at, variant = "atlas", lod = "mid", dimmed, showLabel }: AgentMarkerProps) {
   const tierLook = modelTiers[tier];
-  const st = factoryStates[state];
+  const st = markLook(state);
   const roleLabel = role === "reviewer" && seat ? `${reviewerSeats[seat].label} reviewer` : agentRoles[role].label;
-  const name = `${label ?? roleLabel}, ${tierLook.label}: ${st.label}${state === "active" && elapsed !== undefined ? `, for ${formatElapsed(elapsed)}` : ""}`;
+  const tierWord = tierKnown ? tierLook.label : "model not recorded";
+  const name = `${label ?? roleLabel}, ${tierWord}: ${st.label}${state === "active" && elapsed !== undefined ? `, for ${formatElapsed(elapsed)}` : ""}`;
   const ink = fc(st.ink);
   const present = clamp01(arrive) * (1 - clamp01(leave));
   const ticks = state === "active" && elapsed !== undefined ? elapsedTicks(elapsed) : 0;
-  const headFill = state === "active" ? fc("live") : state === "idle" ? fc("plate-top") : fc(st.soft);
+  const condition = isFactoryCondition(state);
+  const headFill = open || condition || !tierKnown ? fc("plate-top") : state === "active" ? fc("live") : state === "idle" ? fc("plate-top") : fc(st.soft);
   const headStroke = state === "idle" ? fc("ink") : ink;
+  // Open (reconstructed) and unknown-model heads are dashed; a stale agent's post is dotted, as last seen.
+  const headDash = open || !tierKnown ? "1.6 1.4" : undefined;
+  const postDash = open ? "2 2" : state === "stale" ? "0.1 2.6" : undefined;
+  const head = tierKnown ? <AgentHead tier={tier} fill={headFill} stroke={headStroke} /> : <circle aria-hidden="true" r={4.4} style={{ fill: headFill, stroke: headStroke, strokeWidth: 1.2 }} />;
+  const headDrawn = headDash ? <g style={{ strokeDasharray: headDash }}>{head}</g> : head;
 
   if (variant === "blueprint") {
     return (
       <g role="img" aria-label={name} transform={`translate(${round(at.x)} ${round(at.y)})`} style={{ opacity: (dimmed ? dimmedOpacity : 1) * present }}>
-        <AgentHead tier={tier} fill={headFill} stroke={headStroke} />
+        {headDrawn}
         {state === "active" ? (
           <g aria-hidden="true">
             <circle r={8.5} style={{ fill: "none", stroke: fc("live"), strokeWidth: 1, strokeOpacity: 0.6 }} />
@@ -335,7 +357,7 @@ export function AgentMarker({ agentRole: role, tier, seat, state, elapsed, arriv
         ) : null}
         {labelOn(lod, showLabel) ? (
           <text x={10} y={3.5} style={{ fill: "var(--mach-ink-muted)", fontSize: 10 }}>
-            {roleLabel} · {tierLook.label}
+            {roleLabel} · {tierWord}
           </text>
         ) : null}
       </g>
@@ -358,9 +380,9 @@ export function AgentMarker({ agentRole: role, tier, seat, state, elapsed, arriv
         </g>
       </g>
       {/* Post. */}
-      <line x1={base.x} y1={base.y} x2={top.x} y2={top.y} aria-hidden="true" style={{ stroke: headStroke, strokeWidth: 1.6, strokeLinecap: "round" }} />
+      <line x1={base.x} y1={base.y} x2={top.x} y2={top.y} aria-hidden="true" style={{ stroke: headStroke, strokeWidth: 1.6, strokeLinecap: "round", strokeDasharray: postDash }} />
       <g transform={`translate(${round(top.x)} ${round(top.y - 4)})`}>
-        <AgentHead tier={tier} fill={headFill} stroke={headStroke} />
+        {headDrawn}
         {state === "active" ? (
           <g aria-hidden="true">
             <circle r={rr} style={{ fill: "none", stroke: fc("live"), strokeOpacity: 0.6, strokeWidth: 1.1 }} />
@@ -369,7 +391,7 @@ export function AgentMarker({ agentRole: role, tier, seat, state, elapsed, arriv
         ) : null}
         {state !== "active" && state !== "idle" ? (
           <g transform="translate(7 -7)">
-            <StateMark state={state} r={3.8} />
+            <StateMark state={state} r={condition ? 4.6 : 3.8} />
           </g>
         ) : null}
         {seat && lod !== "far" ? (
@@ -383,7 +405,7 @@ export function AgentMarker({ agentRole: role, tier, seat, state, elapsed, arriv
               {label ?? roleLabel}
             </text>
             <text x={12} y={10} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }}>
-              {tierLook.label}
+              {tierWord}
             </text>
           </g>
         ) : null}
@@ -394,7 +416,7 @@ export function AgentMarker({ agentRole: role, tier, seat, state, elapsed, arriv
             {label ?? roleLabel}
           </text>
           <text y={11} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>
-            {tierLook.label}
+            {tierWord}
           </text>
         </g>
       ) : null}
@@ -571,6 +593,11 @@ export interface ArtifactCardProps extends Common {
   progress?: number;
   /** The file name, if more specific than the kind's (e.g. "SLICE-007-invite.md"). */
   file?: string;
+  /**
+   * M6.2: drawn open (dashed outline, no fill): the artifact is known from the observer's
+   * reconstruction (it found the file), not from a record its writer made.
+   */
+  open?: boolean;
 }
 
 /**
@@ -579,18 +606,19 @@ export interface ArtifactCardProps extends Common {
  * curve) as its outline and mark fade in. A handoff is the same card carried along a route by the
  * caller (`at` from `pointAlong`).
  */
-export function ArtifactCard({ kind, state = "succeeded", progress = 1, file, at, variant = "atlas", lod = "mid", dimmed, showLabel }: ArtifactCardProps) {
+export function ArtifactCard({ kind, state = "succeeded", progress = 1, file, open = false, at, variant = "atlas", lod = "mid", dimmed, showLabel }: ArtifactCardProps) {
   const look = artifacts[kind];
   const st = factoryStates[state];
   const p = clamp01(progress);
-  const name = `${look.label} (${file ?? look.file})${state === "failed" ? `: ${st.label}` : ""}`;
+  const name = `${look.label} (${file ?? look.file})${state === "failed" ? `: ${st.label}` : ""}${open ? ", reconstructed" : ""}`;
   const stroke = state === "failed" ? fc("fail") : state === "active" ? fc("live") : fc("ink");
-  const fill = state === "failed" ? fc("fail-soft") : fc("plate-top");
+  const fill = open ? "none" : state === "failed" ? fc("fail-soft") : fc("plate-top");
+  const dash = open ? "2 1.4" : undefined;
   const { w, h } = factoryTokens.size.artifact;
   if (variant === "blueprint") {
     return (
       <g role="img" aria-label={name} transform={`translate(${round(at.x - w / 2)} ${round(at.y - h / 2)})`} style={{ opacity: (dimmed ? dimmedOpacity : 1) * p }}>
-        <path d={artifactCardPath} style={{ fill, stroke, strokeWidth: 1.1, strokeLinejoin: "round" }} />
+        <path d={artifactCardPath} style={{ fill, stroke, strokeWidth: 1.1, strokeLinejoin: "round", strokeDasharray: dash }} />
         <path d={artifactFoldPath} aria-hidden="true" style={{ fill: "none", stroke, strokeWidth: 0.9 }} />
         <ArtifactMark kind={kind} color={state === "failed" ? fc("fail") : fc("ink")} />
         {artifactProvenance[kind] ? <ProvenanceBadge from={artifactProvenance[kind]!} color={state === "failed" ? fc("fail") : fc("ink")} /> : null}
@@ -611,7 +639,7 @@ export function ArtifactCard({ kind, state = "succeeded", progress = 1, file, at
       {/* Transforms sit on the drawing itself, not on wrapper groups: the Atlas draws dozens of cards. */}
       <path transform={planeTransform(z)} aria-hidden="true" d={`M${at.x - w / 2} ${at.y}h${w}l${height * 0.5} ${-height * 0.18}h${-w}z`} style={{ fill: fc("shadow") }} />
       <g transform={`${uprightTransform({ x: at.x - w / 2, y: at.y, z }, height)} scale(1 ${round(s)})`}>
-        <path d={artifactCardPath} style={{ fill, stroke, strokeWidth: 1, strokeLinejoin: "round" }} />
+        <path d={artifactCardPath} style={{ fill, stroke, strokeWidth: 1, strokeLinejoin: "round", strokeDasharray: dash }} />
         <path d={artifactFoldPath} aria-hidden="true" style={{ fill: "none", stroke, strokeWidth: 0.8 }} />
         <g style={{ opacity: segment(p, 0.4, 1) }}>
           <ArtifactMark kind={kind} color={state === "failed" ? fc("fail") : fc("ink")} />
