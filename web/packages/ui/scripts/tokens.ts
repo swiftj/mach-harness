@@ -71,10 +71,9 @@ function render(): string {
 ${roleBlock(themes.light, "  ")}
 ${shadowBlock("light", "  ")}
 
-  --mach-font-serif: ${fonts.serif};
   --mach-font-sans: ${fonts.sans};
   --mach-font-mono: ${fonts.mono};
-  --mach-font-display: var(--mach-font-serif);
+  --mach-font-display: var(--mach-font-sans);
   --mach-density: 1;
 
 ${scale}
@@ -109,9 +108,8 @@ ${roleBlock(themes.dark, "  ")}
 ${shadowBlock("dark", "  ")}
 }
 
-/* Control Tower: same roles, technical display face, denser controls. */
+/* Control Tower: same roles and faces, denser controls. */
 :root[data-product="control-tower"] {
-  --mach-font-display: var(--mach-font-sans);
   --mach-density: 0.875;
 }
 

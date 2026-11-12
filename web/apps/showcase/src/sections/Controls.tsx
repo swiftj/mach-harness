@@ -75,7 +75,7 @@ export function Controls() {
       </Specimen>
 
       <div className="grid grid-cols-2 gap-6">
-        <Specimen title="Fields" source="project.init.json" note="Label above, hint under the label, error under the control. Product writing uses the serif.">
+        <Specimen title="Fields" source="project.init.json" note="Label above, hint under the label, error under the control. Product writing uses the larger reading size.">
           <div className="flex flex-col gap-5">
             <Field label="Project name" hint="What people call the product.">
               <Input defaultValue={project.name} />

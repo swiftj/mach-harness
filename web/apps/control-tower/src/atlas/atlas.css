@@ -1,0 +1,113 @@
+/* Factory Atlas: interaction affordances only. Colours are tokens. */
+.atlas-viewport {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  background: var(--mach-factory-ground);
+  cursor: grab;
+}
+.atlas-viewport[data-dragging="true"] {
+  cursor: grabbing;
+}
+/* The canvas's focus ring is a box drawn over it, not an outline: an outline on the viewport made the
+   GPU re-raster the whole plant every frame while focus was in it (Chromium; GPU raster time 1.8 s
+   in 5 s of 4x playback against 1.2 s without focus, about 40 fps). The ring looks the same: the
+   same 2 px inside the edge, above everything in the canvas. Promoting the camera with
+   will-change: transform also removed the cost but rastered the plant at the zoom it was promoted
+   at, so text and lines were soft after zooming. */
+.atlas-viewport:focus-visible {
+  outline: none;
+}
+.atlas-viewport:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--mach-focus);
+  pointer-events: none;
+}
+.atlas-camera {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+.atlas-camera > svg {
+  position: absolute;
+  overflow: visible;
+}
+.atlas-overlay,
+.atlas-camera-overlay {
+  pointer-events: none;
+}
+.atlas-hit {
+  cursor: pointer;
+}
+.atlas-hit:focus {
+  outline: none;
+}
+.atlas-halo,
+.atlas-halo-group text {
+  paint-order: stroke;
+  stroke: var(--mach-factory-ground);
+  stroke-width: 3.2px;
+  stroke-linejoin: round;
+}
+/* A label's chip: the ground under near-zoom labels, so no line of the drawing strikes through the text. */
+.atlas-chip {
+  fill: var(--mach-factory-ground);
+  fill-opacity: 0.86;
+}
+/* The selection's label: fully opaque, so floor lettering under it never reads through (findings D7). */
+.atlas-chip-solid {
+  fill-opacity: 1;
+}
+.atlas-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--mach-surface-raised);
+  border: 1px solid var(--mach-line);
+}
+.atlas-controls button {
+  min-width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--mach-ink);
+  font: 600 13px/1 var(--mach-font-sans);
+}
+.atlas-controls button:hover {
+  background: var(--mach-factory-plate-lit);
+}
+.atlas-controls button:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 2px;
+}
+.atlas-controls .atlas-lod {
+  align-self: center;
+  padding: 0 6px;
+  color: var(--mach-ink-muted);
+  font: 500 11px/1 var(--mach-font-mono);
+}
+.atlas-meter {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--mach-factory-plate-top);
+  border: 1px solid var(--mach-factory-plate-edge);
+  color: var(--mach-ink-muted);
+  font: 500 11px/1.4 var(--mach-font-mono);
+  pointer-events: none;
+  white-space: pre;
+}
+.atlas-sheet {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

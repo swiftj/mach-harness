@@ -24,7 +24,7 @@ export interface SheetContentProps extends Omit<ComponentPropsWithoutRef<typeof 
  * comparison, reviewer remarks. Modal: focus is trapped and Escape closes.
  */
 export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(function SheetContent(
-  { title, description, footer, width = 480, className, children, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
+  { title, description, footer, width = 480, className, children, onOpenAutoFocus, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
   ref,
 ) {
   const returnFocus = useFocusReturn();
@@ -46,6 +46,10 @@ export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(functi
           onKeyDown?.(event);
           escape.onKeyDown(event);
         }}
+        onOpenAutoFocus={(event) => {
+          returnFocus.remember(event.currentTarget instanceof Element ? event.currentTarget : null);
+          onOpenAutoFocus?.(event);
+        }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (!event.defaultPrevented) returnFocus(event);
@@ -53,7 +57,7 @@ export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(functi
       >
         <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
           <div className="flex min-w-0 flex-col gap-1">
-            <DialogPrimitive.Title className="font-display text-title-2 text-ink">{title}</DialogPrimitive.Title>
+            <DialogPrimitive.Title className="font-display text-title-2 font-[650] text-ink">{title}</DialogPrimitive.Title>
             {description ? (
               <DialogPrimitive.Description className="text-body-sm text-ink-muted">{description}</DialogPrimitive.Description>
             ) : (

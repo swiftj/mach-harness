@@ -47,7 +47,7 @@ function blocks(text: string): Block[] {
  */
 export function RichText({ text, className, editorial = false }: { text: string; className?: string; editorial?: boolean }) {
   return (
-    <div className={cn("flex flex-col gap-3 break-words", editorial ? "font-serif text-body-lg" : "text-body", className)}>
+    <div className={cn("flex flex-col gap-3 break-words", editorial ? "text-body-lg" : "text-body", className)}>
       {blocks(text).map((block, index) => {
         if (block.type === "p") {
           return (

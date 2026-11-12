@@ -1,0 +1,188 @@
+/* The Blueprint's viewport and its fixed controls. Colours are tokens only. */
+.bp-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--mach-factory-ground);
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+.bp-viewport:active {
+  cursor: grabbing;
+}
+.bp-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.bp-stage [data-ref],
+.bp-stage [data-toggle] {
+  cursor: pointer;
+}
+.bp-stage [role="treeitem"]:focus {
+  outline: none;
+}
+.bp-pending {
+  padding: 24px;
+  color: var(--mach-ink-muted);
+  font-size: 13px;
+}
+/* The stage's bottom-right corner: overview, playhead chip and zoom toolbar in one column, so they can
+   never overlap, kept left of a drawer that covers the stage (--bp-cover-r, written by the view). The
+   camera may take the sheet past its right edge by the corner's width (CORNER_W in index.tsx), so the
+   last column can be brought clear of it. */
+.bp-corner.bp-chrome {
+  inset: auto calc(16px + var(--bp-cover-r, 0px)) 16px auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.bp-viewport[data-theater="1"] .bp-corner.bp-chrome {
+  bottom: 96px;
+}
+.bp-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--mach-line);
+  border-radius: var(--mach-radius-sm);
+  background: var(--mach-surface-raised);
+  box-shadow: var(--mach-shadow-2);
+  font-family: var(--mach-font-sans);
+}
+.bp-controls button {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--mach-ink-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.bp-controls button:hover {
+  background: var(--mach-surface-sunken);
+  color: var(--mach-ink);
+}
+.bp-controls button:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: -2px;
+}
+.bp-zoom {
+  min-width: 40px;
+  text-align: center;
+  color: var(--mach-ink-muted);
+  font-size: 11px;
+  font-family: var(--mach-font-mono);
+}
+
+/* Levels of detail. Overview (the establishing view, zoom under 0.55): fine lettering gives way
+   to large lettering, so the whole sheet stays legible. Theater Mode hides labels below near zoom. */
+.bp-stage .bp-over {
+  display: none;
+}
+.bp-stage[data-lod="overview"] .bp-fine,
+.bp-stage[data-lod="overview"] .bp-flow text:not(.bp-keep) {
+  display: none;
+}
+.bp-stage[data-lod="overview"] .bp-over {
+  display: inline;
+}
+.bp-viewport[data-theater="1"] .bp-stage:not([data-lod="near"]) .bp-fine,
+.bp-viewport[data-theater="1"] .bp-stage:not([data-lod="near"]) .bp-flow text {
+  display: none;
+}
+.bp-viewport[data-theater="1"] .bp-stage:not([data-lod="near"]) .bp-over {
+  display: inline;
+}
+
+/* Stage chrome (not under the camera). */
+.bp-chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.bp-chrome > * {
+  pointer-events: auto;
+}
+.bp-rulers {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none !important;
+  font-family: var(--mach-font-sans);
+}
+.bp-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 9px;
+  border: 1px solid var(--mach-factory-ink-soft);
+  background: var(--mach-factory-plate-top);
+  font-family: var(--mach-font-sans);
+  pointer-events: none !important;
+}
+.bp-title-stamp {
+  padding: 1px 6px;
+  border: 1px solid var(--mach-factory-wait);
+  border-radius: 2px;
+  background: var(--mach-factory-wait-soft);
+  /* Ink, not warning ink: warning ink on the wait tint falls below AA in the light theme. */
+  color: var(--mach-ink);
+  font-size: 10px;
+  font-weight: 700;
+}
+.bp-title-fact {
+  display: inline-flex;
+  gap: 8px;
+  color: var(--mach-ink-muted);
+  font-size: 11px;
+}
+.bp-title-fact .tabular {
+  color: var(--mach-ink);
+  font-family: var(--mach-font-mono);
+}
+.bp-minimap {
+  padding: 6px;
+  border: 1px solid var(--mach-line);
+  border-radius: var(--mach-radius-sm);
+  background: var(--mach-surface-raised);
+  box-shadow: var(--mach-shadow-2);
+}
+.bp-minimap-plot {
+  position: relative;
+  cursor: crosshair;
+  touch-action: none;
+  border-radius: 2px;
+}
+.bp-minimap-plot:focus {
+  outline: none;
+}
+.bp-minimap-plot:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 2px;
+}
+/* The minimap is one control (a listbox, findings N1): its lanes are options, not separate targets.
+   The strip at a lane's left edge marks it; the active one is drawn in the selection ink. */
+.bp-minimap-lane {
+  position: absolute;
+  left: 0;
+  width: 10px;
+  border-left: 3px solid var(--mach-factory-plate-edge);
+  cursor: pointer;
+}
+.bp-minimap-lane:hover {
+  border-left-color: var(--mach-factory-select);
+}
+.bp-minimap-plot:focus-visible .bp-minimap-lane[aria-selected="true"] {
+  width: 100%;
+  border-left-color: var(--mach-factory-select);
+  box-shadow: inset 0 0 0 1.5px var(--mach-focus);
+}

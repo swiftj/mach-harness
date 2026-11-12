@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, Boxes, Layers, MousePointerClick, Network, Palette, PanelsTopLeft, SquareStack } from "lucide-react";
+import { Activity, Boxes, Factory, Layers, MousePointerClick, Network, Palette, PanelsTopLeft, SquareStack } from "lucide-react";
 import { AppShell, Brand, ConnectionIndicator, Heading, NavItem, NavRail, NavSection, Page, Text, ThemeSwitch, TopBar, type ProductName } from "@mach/ui";
 import { Foundations } from "./sections/Foundations";
 import { Controls } from "./sections/Controls";
@@ -8,6 +8,7 @@ import { States } from "./sections/States";
 import { Lifecycle } from "./sections/Lifecycle";
 import { GraphSection } from "./sections/Graph";
 import { ShellSection } from "./sections/Shell";
+import { FactoryGrammar } from "./sections/factory/FactoryGrammar";
 import { fx } from "./fixtures";
 
 const sections = [
@@ -34,6 +35,8 @@ export function App({ product }: { product: ProductName }) {
   const hash = useHash() || "foundations";
   const other: ProductName = product === "control-tower" ? "product-studio" : "control-tower";
   const status = fx.statusPublished;
+  // The factory grammar (M6) is its own page, so the design-system page above stays exactly as it was.
+  const factory = hash === "factory" || hash.startsWith("factory-");
   return (
     <AppShell
       nav={
@@ -42,6 +45,9 @@ export function App({ product }: { product: ProductName }) {
             {sections.map((s) => (
               <NavItem key={s.id} href={`#${s.id}`} icon={s.icon} label={s.label} current={hash === s.id} />
             ))}
+          </NavSection>
+          <NavSection title="Control Tower">
+            <NavItem href="#factory" icon={<Factory />} label="Factory grammar" current={factory} />
           </NavSection>
         </NavRail>
       }
@@ -71,6 +77,11 @@ export function App({ product }: { product: ProductName }) {
         />
       }
     >
+      {factory ? (
+        <Page>
+          <FactoryGrammar />
+        </Page>
+      ) : (
       <Page>
         <header className="mb-14 flex max-w-reading flex-col gap-3">
           <Heading level={1} size="display">
@@ -91,6 +102,7 @@ export function App({ product }: { product: ProductName }) {
           <ShellSection />
         </div>
       </Page>
+      )}
     </AppShell>
   );
 }

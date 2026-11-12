@@ -75,7 +75,36 @@
   --color-graph-edge: var(--mach-graph-edge);
   --color-graph-edge-dependency: var(--mach-graph-edge-dependency);
 
-  --font-serif: var(--mach-font-serif);
+  /* Factory (M6): the drawn plant. */
+  --color-factory-ground: var(--mach-factory-ground);
+  --color-factory-grid: var(--mach-factory-grid);
+  --color-factory-grid-major: var(--mach-factory-grid-major);
+  --color-factory-plate-top: var(--mach-factory-plate-top);
+  --color-factory-plate-lit: var(--mach-factory-plate-lit);
+  --color-factory-plate-shade: var(--mach-factory-plate-shade);
+  --color-factory-plate-edge: var(--mach-factory-plate-edge);
+  --color-factory-plate-rim: var(--mach-factory-plate-rim);
+  --color-factory-machine-top: var(--mach-factory-machine-top);
+  --color-factory-floor: var(--mach-factory-floor);
+  --color-factory-done: var(--mach-factory-done);
+  --color-factory-hatch: var(--mach-factory-hatch);
+  --color-factory-shadow: var(--mach-factory-shadow);
+  --color-factory-ink: var(--mach-factory-ink);
+  --color-factory-ink-soft: var(--mach-factory-ink-soft);
+  --color-factory-route: var(--mach-factory-route);
+  --color-factory-live: var(--mach-factory-live);
+  --color-factory-live-soft: var(--mach-factory-live-soft);
+  --color-factory-pass: var(--mach-factory-pass);
+  --color-factory-pass-soft: var(--mach-factory-pass-soft);
+  --color-factory-fail: var(--mach-factory-fail);
+  --color-factory-fail-soft: var(--mach-factory-fail-soft);
+  --color-factory-wait: var(--mach-factory-wait);
+  --color-factory-wait-soft: var(--mach-factory-wait-soft);
+  --color-factory-human: var(--mach-factory-human);
+  --color-factory-human-soft: var(--mach-factory-human-soft);
+  --color-factory-select: var(--mach-factory-select);
+  --color-factory-lamp: var(--mach-factory-lamp);
+
   --font-sans: var(--mach-font-sans);
   --font-mono: var(--mach-font-mono);
   --font-display: var(--mach-font-display);
@@ -173,13 +202,21 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /*
+   * Reduced motion removes CSS transitions and keyframe animations outright. A near-zero duration
+   * (the old 0.01ms) still starts a transition for every changed property, which on a live SVG
+   * scene is hundreds of invisible transitions a second. Nothing here waits for transitionend or
+   * animationend: Radix's Presence unmounts at once when a closing element has no animation, and
+   * every keyframe in this file ends on the element's own resting style, so removing it shows the
+   * same end state. WAAPI and motion/react animations are not CSS animations and check the media
+   * query themselves.
+   */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
+      animation: none !important;
+      transition: none !important;
       scroll-behavior: auto !important;
     }
   }

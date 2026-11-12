@@ -130,7 +130,6 @@ Text pairs need 4.5:1, non-text UI (control borders, focus ring, graph edges) 3:
 
 | Face | Package | Role |
 |------|---------|------|
-| **Newsreader** (variable, optical size 6–72, weights 200–800, roman and italic) | `@fontsource-variable/newsreader` 5.3.0 | Display and titles in Product Studio; long-form product writing (vision, the why, spec reading); quotations |
 | **Source Sans 3** (variable, 200–900, roman and italic) | `@fontsource-variable/source-sans-3` 5.3.1 | All interface text |
 | **JetBrains Mono** (variable, 100–800) | `@fontsource-variable/jetbrains-mono` 5.3.0 | Engine identifiers (`SLICE-001`, `FR-01`), paths, digests, code |
 
@@ -142,14 +141,14 @@ Mono is used only where the content *is* an identifier or code; it is never a de
 | `title-1` | 30 / 38 | 450 | display | Page titles, section titles |
 | `title-2` | 23 / 30 | 500 | display | Dialog and sheet titles, empty-state titles |
 | `title-3` | 18 / 26 | 600 | sans | Panel and group headings |
-| `body-lg` | 17 / 28 | 400 | serif | Product writing; serif gets the extra leading |
+| `body-lg` | 17 / 28 | 400 | sans | Product writing; the reading size keeps the extra leading |
 | `body` | 16 / 24 | 400 | sans | Default interface text |
 | `body-sm` | 14 / 20 | 400 | sans | Dense rows, buttons, hints |
 | `label` | 14 / 20 | 600 | sans | Field labels, banner titles |
 | `caption` | 13 / 18 | 400 | sans | Metadata, timestamps, legends |
 | `mono` | 13 / 20 | 450 | mono | Identifiers |
 
-Rules: sentence case everywhere; no all-caps labels; no eyebrow above a heading; reading text is kept to `68ch` (`max-w-reading`); numbers that line up use `.tabular`. Headings use `<Heading level size>` so the document outline and the visual step are chosen separately. `display` and `title-*` use `--mach-font-display`, which is the serif in Product Studio and the sans in Control Tower.
+Rules: sentence case everywhere; no all-caps labels; no eyebrow above a heading; reading text is kept to `68ch` (`max-w-reading`); numbers that line up use `.tabular`. Headings use `<Heading level size>` so the document outline and the visual step are chosen separately. `display` and `title-*` use `--mach-font-display`, which is Source Sans 3 in both products, set bold; there is no serif face.
 
 ## 4. Space, size and layout
 
@@ -197,7 +196,7 @@ Shadows are tinted charcoal, never grey-blue. In dark, elevation shows mainly as
 ## 7. Controls, dialogs, sheets, popovers
 
 - **Button** variants: `primary` (one per region; approve, send, save), `secondary` (default), `ghost` (toolbars), `danger` (reopen, withdraw; always confirmed), `link`. `loading` keeps the width, shows a spinner and sets `aria-busy`. Labels say what happens: "Approve SLICE-001", "Send WAVE-001 to engineering", not "Submit". The toast that follows uses the same verb: "Approved SLICE-001".
-- **Field** wraps label, hint, control and error and wires `id`, `aria-describedby` and `aria-invalid` into `Input`, `Textarea` and `Select`. Errors say what to do ("Use lowercase words joined by hyphens, such as team-space."). `Textarea editorial` sets product writing in the serif.
+- **Field** wraps label, hint, control and error and wires `id`, `aria-describedby` and `aria-invalid` into `Input`, `Textarea` and `Select`. Errors say what to do ("Use lowercase words joined by hyphens, such as team-space."). `Textarea editorial` sets product writing at the larger reading size.
 - **Select** for short lists (Radix). **Checkbox** with label and description; disabled options say why they are disabled.
 - **Dialog**: a decision. Title is a question, description says what the act means (both required), the confirming button is last. Focus is trapped, Escape closes, focus returns to the trigger.
 - **ConfirmDialog**: the one way a personal act (`personalActs`: approve, send, reconcile) is confirmed. `onConfirm` performs the act and resolves `false` to stay open; a refusal is shown inside the dialog in the engine's own words (`error`). The confirming button shows progress and blocks a second click.
@@ -315,7 +314,7 @@ MACH targets laptops: 1280–1728px wide, and a narrower 1100px layout.
 | Who | Product managers, founders | Engineers running the Factory |
 | Character | Warm, calm, editorial, legible | Dark, cinematic, technical, precise |
 | Default theme | System (light paper) | Dark (`product="control-tower"` defaults to dark) |
-| Display face | Newsreader serif | Source Sans 3 (the `data-product` override) |
+| Display face | Source Sans 3, bold | Source Sans 3, bold |
 | Density | Comfortable | Compact (`--mach-density: 0.875`) |
 | Mono | Identifiers only | Identifiers, logs, durations, event streams |
 | Accent | Terracotta for the act and the place | The same; live activity uses `info` (blue), never the accent |
@@ -360,7 +359,6 @@ All three faces are under the **SIL Open Font License 1.1**, which permits bundl
 
 | Face | Copyright | Licence | Source |
 |------|-----------|---------|--------|
-| Newsreader | Copyright 2020 The Newsreader Project Authors (Production Type) | OFL 1.1 | `@fontsource-variable/newsreader` 5.3.0 |
 | Source Sans 3 | Copyright 2010–2020 Adobe (the Fontsource package's `LICENSE` header names Google Inc. as distributor) | OFL 1.1 | `@fontsource-variable/source-sans-3` 5.3.1 |
 | JetBrains Mono | Copyright 2020 The JetBrains Mono Project Authors | OFL 1.1 | `@fontsource-variable/jetbrains-mono` 5.3.0 |
 

@@ -49,7 +49,7 @@ export function QuestionCard({ question, onAnswer, busy }: QuestionCardProps) {
           <span className="shrink-0 font-mono text-mono text-ink-subtle" translate="no" title="Question numbers restart in each session">
             Q{question.number}
           </span>
-          <h2 id={titleId} className="font-display text-title-2 text-ink">
+          <h2 id={titleId} className="font-display text-title-2 font-[650] text-ink">
             {question.title}
           </h2>
         </div>

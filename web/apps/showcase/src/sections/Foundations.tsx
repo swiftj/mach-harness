@@ -127,11 +127,11 @@ export function Foundations() {
         </table>
       </Specimen>
 
-      <Specimen title="Typography" note="Newsreader for headings and product writing, Source Sans 3 for the interface, JetBrains Mono for identifiers. All three are bundled; nothing loads from a font service.">
+      <Specimen title="Typography" note="Source Sans 3 for every word, set bold for headings, and JetBrains Mono for identifiers. Both are bundled; nothing loads from a font service.">
         <div className="flex flex-col divide-y divide-line">
           {(Object.keys(typeScale) as Array<keyof typeof typeScale>).map((step) => {
             const t = typeScale[step];
-            const family = t.family === "serif" ? "var(--mach-font-display)" : t.family === "mono" ? "var(--mach-font-mono)" : "var(--mach-font-sans)";
+            const family = t.family === "mono" ? "var(--mach-font-mono)" : "var(--mach-font-sans)";
             const sample =
               step === "mono"
                 ? "SLICE-001  EPIC-001  WAVE-002  FR-01"
@@ -151,7 +151,7 @@ export function Foundations() {
                 <p
                   className="min-w-0 truncate text-ink"
                   style={{
-                    fontFamily: step === "body-lg" ? "var(--mach-font-serif)" : family,
+                    fontFamily: family,
                     fontSize: t.size,
                     lineHeight: t.line,
                     fontWeight: t.weight,
@@ -165,7 +165,6 @@ export function Foundations() {
           })}
         </div>
         <dl className="mt-6 border-t border-line pt-4">
-          <Row term="serif">{fonts.serif}</Row>
           <Row term="sans">{fonts.sans}</Row>
           <Row term="mono">{fonts.mono}</Row>
         </dl>

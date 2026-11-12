@@ -81,7 +81,7 @@ export function Overlays() {
                 ).map(([label, n]) => (
                   <div key={label} className="flex flex-col">
                     <dt className="text-caption text-ink-muted">{label}</dt>
-                    <dd className="font-display text-title-2 text-ink tabular">{n}</dd>
+                    <dd className="font-display text-title-2 font-[650] text-ink tabular">{n}</dd>
                   </div>
                 ))}
               </dl>
@@ -117,12 +117,12 @@ export function Overlays() {
                       <div className="grid grid-cols-2 gap-3">
                         <div className="flex flex-col gap-2 rounded-md border border-line p-3">
                           <span className="text-caption font-semibold text-ink-muted">Your draft</span>
-                          <span className="font-serif text-body-lg text-ink">{show(values.mine)}</span>
+                          <span className="text-body-lg text-ink">{show(values.mine)}</span>
                           <Button size="sm">Keep mine</Button>
                         </div>
                         <div className="flex flex-col gap-2 rounded-md border border-line p-3">
                           <span className="text-caption font-semibold text-ink-muted">Shared project</span>
-                          <span className="font-serif text-body-lg text-ink">{show(values.theirs)}</span>
+                          <span className="text-body-lg text-ink">{show(values.theirs)}</span>
                           <Button size="sm">Take theirs</Button>
                         </div>
                       </div>

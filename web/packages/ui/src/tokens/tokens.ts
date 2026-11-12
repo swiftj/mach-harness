@@ -97,6 +97,36 @@ export const roleNames = [
   "graph-dot",
   "graph-edge",
   "graph-edge-dependency",
+  // Factory (M6, the Living Factory). The drawn plant: ground sheet, plates with lit and shaded faces,
+  // drafting ink, conveyor routes, and the state inks used on the plant. See M6_0_VISUAL_SPEC.md.
+  "factory-ground",
+  "factory-grid",
+  "factory-grid-major",
+  "factory-plate-top",
+  "factory-plate-lit",
+  "factory-plate-shade",
+  "factory-plate-edge",
+  "factory-plate-rim",
+  "factory-machine-top",
+  "factory-floor",
+  "factory-done",
+  "factory-hatch",
+  "factory-shadow",
+  "factory-ink",
+  "factory-ink-soft",
+  "factory-route",
+  "factory-live",
+  "factory-live-soft",
+  "factory-pass",
+  "factory-pass-soft",
+  "factory-fail",
+  "factory-fail-soft",
+  "factory-wait",
+  "factory-wait-soft",
+  "factory-human",
+  "factory-human-soft",
+  "factory-select",
+  "factory-lamp",
 ] as const;
 
 export type Role = (typeof roleNames)[number];
@@ -155,6 +185,35 @@ const light: Theme = {
   "graph-dot": palette.paper300,
   "graph-edge": palette.paper500,
   "graph-edge-dependency": "#A9482A",
+
+  "factory-ground": "#EFEBE2",
+  "factory-grid": "#E3DFD3",
+  "factory-grid-major": "#D3CEBF",
+  "factory-plate-top": "#FDFCF9",
+  "factory-plate-lit": "#ECE8DD",
+  "factory-plate-shade": "#D5CFC0",
+  "factory-plate-edge": "#8A8679",
+  "factory-plate-rim": "#FFFFFF",
+  "factory-machine-top": "#FFFFFF",
+  "factory-floor": "#F6F3EC",
+  "factory-done": "#EEF0E7",
+  "factory-hatch": "#B5AF9E",
+  "factory-shadow": "rgba(58, 52, 40, 0.13)",
+  "factory-ink": "#3A3833",
+  "factory-ink-soft": "#7A766B",
+  "factory-route": "#858175",
+  "factory-live": "#2F6AA3",
+  "factory-live-soft": "#DCE7F3",
+  "factory-pass": "#56683F",
+  "factory-pass-soft": "#E6EBDB",
+  "factory-fail": "#A12F3A",
+  "factory-fail-soft": "#F5DEDF",
+  "factory-wait": "#86621A",
+  "factory-wait-soft": "#F3E6C6",
+  "factory-human": "#A9482A",
+  "factory-human-soft": "#F6E3D9",
+  "factory-select": "#B5512F",
+  "factory-lamp": "#FFF0D6",
 };
 
 const dark: Theme = {
@@ -209,6 +268,35 @@ const dark: Theme = {
   "graph-dot": "#2A2927",
   "graph-edge": "#75736A",
   "graph-edge-dependency": "#E8957A",
+
+  "factory-ground": "#0B0B0A",
+  "factory-grid": "#181816",
+  "factory-grid-major": "#24231F",
+  "factory-plate-top": "#211F1D",
+  "factory-plate-lit": "#1A1917",
+  "factory-plate-shade": "#121110",
+  "factory-plate-edge": "#78756C",
+  "factory-plate-rim": "#57534C",
+  "factory-machine-top": "#3D3C37",
+  "factory-floor": "#2A2925",
+  "factory-done": "#272924",
+  "factory-hatch": "#3E3C37",
+  "factory-shadow": "rgba(0, 0, 0, 0.62)",
+  "factory-ink": "#DAD6CA",
+  "factory-ink-soft": "#A19E93",
+  "factory-route": "#8C897F",
+  "factory-live": "#8DB4DD",
+  "factory-live-soft": "#1E3046",
+  "factory-pass": "#A7B98A",
+  "factory-pass-soft": "#26301E",
+  "factory-fail": "#EC8F96",
+  "factory-fail-soft": "#3E2024",
+  "factory-wait": "#D9B061",
+  "factory-wait-soft": "#362C17",
+  "factory-human": "#E8957A",
+  "factory-human-soft": "#42291F",
+  "factory-select": "#E48B6C",
+  "factory-lamp": "#4A3A27",
 };
 
 export const themes: Record<ThemeName, Theme> = { light, dark };
@@ -246,25 +334,143 @@ export const contrastPairs: ReadonlyArray<{ fg: Role; bg: Role; min: 3 | 4.5; us
   { fg: "neutral-ink", bg: "neutral-soft", min: 4.5, use: "Neutral pill" },
   { fg: "graph-edge", bg: "canvas", min: 3, use: "Graph hierarchy edge" },
   { fg: "graph-edge-dependency", bg: "canvas", min: 3, use: "Graph dependency edge" },
+  // Factory (M6). Labels on the ground and on plates; marks that carry meaning at 3:1.
+  { fg: "ink", bg: "factory-ground", min: 4.5, use: "Factory label on the ground" },
+  { fg: "ink-muted", bg: "factory-ground", min: 4.5, use: "Factory secondary label on the ground" },
+  { fg: "ink-muted", bg: "factory-plate-top", min: 4.5, use: "Factory label on a plate" },
+  { fg: "ink-muted", bg: "factory-floor", min: 4.5, use: "Factory label on a cell floor" },
+  { fg: "factory-ink", bg: "factory-plate-top", min: 4.5, use: "Station and glyph ink on a plate" },
+  { fg: "factory-ink", bg: "factory-floor", min: 4.5, use: "Station and glyph ink on a cell floor" },
+  { fg: "factory-ink-soft", bg: "factory-plate-top", min: 3, use: "Secondary glyph strokes" },
+  { fg: "factory-route", bg: "factory-ground", min: 3, use: "Workflow route on the ground" },
+  { fg: "factory-route", bg: "factory-floor", min: 3, use: "Workflow route on a cell floor" },
+  { fg: "factory-live", bg: "factory-ground", min: 3, use: "Live work on the ground" },
+  { fg: "factory-live", bg: "factory-floor", min: 3, use: "Live work on a cell floor" },
+  { fg: "factory-live", bg: "factory-live-soft", min: 3, use: "Live mark on its tint" },
+  { fg: "factory-pass", bg: "factory-floor", min: 3, use: "Passed mark" },
+  { fg: "factory-pass", bg: "factory-pass-soft", min: 3, use: "Passed mark on its tint" },
+  { fg: "factory-fail", bg: "factory-floor", min: 3, use: "Failed mark" },
+  { fg: "factory-fail", bg: "factory-fail-soft", min: 3, use: "Failed mark on its tint" },
+  { fg: "factory-wait", bg: "factory-floor", min: 3, use: "Waiting mark" },
+  { fg: "factory-wait", bg: "factory-wait-soft", min: 3, use: "Waiting mark on its tint" },
+  { fg: "factory-human", bg: "factory-floor", min: 3, use: "Human gate mark" },
+  { fg: "factory-human", bg: "factory-human-soft", min: 3, use: "Human gate mark on its tint" },
+  { fg: "factory-select", bg: "factory-ground", min: 3, use: "Selection bracket on the ground" },
+  { fg: "factory-select", bg: "factory-plate-top", min: 3, use: "Selection bracket on a plate" },
+  // Factory, pass 2: edges that carry depth, machines, and lettering under the work lamp.
+  { fg: "factory-plate-edge", bg: "factory-ground", min: 3, use: "Plate outline against the ground" },
+  { fg: "factory-plate-edge", bg: "factory-plate-top", min: 3, use: "Plate outline on its own top" },
+  { fg: "factory-ink", bg: "factory-machine-top", min: 4.5, use: "Station symbol on a machine top" },
+  { fg: "factory-ink-soft", bg: "factory-machine-top", min: 3, use: "Idle station symbol on a machine top" },
+  { fg: "ink-muted", bg: "factory-lamp", min: 4.5, use: "Floor lettering under the work lamp" },
+  { fg: "factory-ink", bg: "factory-lamp", min: 4.5, use: "Glyph ink under the work lamp" },
+  { fg: "factory-live", bg: "factory-lamp", min: 3, use: "Live work under the work lamp" },
+  { fg: "factory-live", bg: "factory-machine-top", min: 3, use: "Working dial on a machine top" },
+  { fg: "ink-muted", bg: "factory-plate-lit", min: 4.5, use: "Name plate on a machine's front face" },
+  // Factory, pass 3: the calm floor of finished work.
+  { fg: "ink-muted", bg: "factory-done", min: 4.5, use: "Floor lettering in a finished bay" },
+  { fg: "factory-ink", bg: "factory-done", min: 4.5, use: "Glyph ink in a finished bay" },
+  { fg: "factory-pass", bg: "factory-done", min: 3, use: "Passed mark in a finished bay" },
 ];
 
-/** Font stacks. Every face is bundled from npm (`@fontsource-variable/*`); nothing loads from a CDN. */
+/**
+ * Factory geometry and motion (M6, the Living Factory). Plain numbers, so the factory primitives,
+ * the Atlas, the Blueprint and the WebGL layer read one set. Units: plan units (pu) on the ground
+ * plane; 1pu is 1 CSS pixel at camera zoom 1. Durations in ms. See docs/mach-next/M6_0_VISUAL_SPEC.md.
+ */
+export const factoryTokens = {
+  projection: {
+    /** 2:1 dimetric. Plan x runs down-right, plan y runs down-left, z runs up. */
+    angleDeg: 26.565,
+    /** cos and sin of the angle: a plan unit along either axis keeps its length on screen. */
+    cos: 0.894427,
+    sin: 0.447214,
+    /** Vertical scale: a unit of elevation is drawn this many screen pixels tall. */
+    zScale: 0.82,
+  },
+  grid: { minor: 24, major: 96 },
+  elevation: {
+    ground: 0,
+    regionPlate: 8,
+    cellRim: 14,
+    stationLow: 12,
+    stationHigh: 22,
+    gate: 34,
+    gatehouse: 46,
+    agent: 26,
+    dais: 12,
+    trunkCut: -6,
+  },
+  size: {
+    cell: { x: 216, y: 148 },
+    cellGap: 32,
+    /** Gap between columns of cells: the aisle their doors open onto. */
+    aisle: 56,
+    /** Gap between regions, bridged by every track. */
+    regionGap: 56,
+    stationPad: 40,
+    agentFootprint: 14,
+    artifact: { w: 14, h: 18 },
+    packet: { x: 12, y: 8, z: 6 },
+    gateSpan: 44,
+  },
+  stroke: {
+    hairline: 0.75,
+    fine: 1,
+    regular: 1.5,
+    strong: 2,
+    route: 1.5,
+    routeLive: 2.25,
+    select: 1.75,
+  },
+  shadow: { dx: 7, dy: 4, blur: 0 },
+  zoom: { min: 0.35, max: 3, far: 0.6, near: 1.4, hysteresis: 0.05, step: 1.2 },
+  motion: {
+    packetTravel: 1400,
+    pathDraw: 600,
+    agentArrive: 480,
+    agentLeave: 360,
+    toolTick: 240,
+    artifactMaterialise: 520,
+    artifactHandoff: 900,
+    gateClose: 420,
+    gateOpen: 520,
+    gateRefuse: 640,
+    testResult: 160,
+    testStagger: 60,
+    verifyReturn: 1600,
+    fanOut: 700,
+    fanOutStagger: 90,
+    voteConverge: 600,
+    humanRelease: 700,
+    mergeIntegrate: 1100,
+    dependencyUnlock: 800,
+    cellComplete: 900,
+    stateChange: 260,
+    cameraFocus: 650,
+    modeSwitch: 700,
+  },
+  budget: { travelling: 12, drawing: 6, materialising: 8, gates: 4, lit: 4 },
+} as const;
+
+export type FactoryTokens = typeof factoryTokens;
+
+/** Font stacks: one sans for words and one mono for identifiers; there is no serif. Every face is bundled from npm (`@fontsource-variable/*`); nothing loads from a CDN. */
 export const fonts = {
-  serif: "'Newsreader Variable', 'Iowan Old Style', Georgia, serif",
   sans: "'Source Sans 3 Variable', 'Segoe UI', system-ui, sans-serif",
   mono: "'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace",
 } as const;
 
 /**
- * Type scale. Sizes in rem (1rem = 16px). `family` is the default face for that step;
- * Control Tower swaps the display steps to the sans face (see `productOverrides`).
+ * Type scale. Sizes in rem (1rem = 16px). `family` is the default face for that step. Titles are
+ * the interface sans set bold; weight and size carry the hierarchy, not a second typeface.
  */
 export const typeScale = {
-  display: { size: "2.5rem", line: "2.875rem", weight: 450, tracking: "-0.015em", family: "serif" },
-  "title-1": { size: "1.875rem", line: "2.375rem", weight: 450, tracking: "-0.01em", family: "serif" },
-  "title-2": { size: "1.4375rem", line: "1.875rem", weight: 500, tracking: "-0.005em", family: "serif" },
+  display: { size: "2.5rem", line: "2.875rem", weight: 700, tracking: "-0.02em", family: "sans" },
+  "title-1": { size: "1.875rem", line: "2.375rem", weight: 700, tracking: "-0.015em", family: "sans" },
+  "title-2": { size: "1.4375rem", line: "1.875rem", weight: 650, tracking: "-0.01em", family: "sans" },
   "title-3": { size: "1.125rem", line: "1.625rem", weight: 600, tracking: "0", family: "sans" },
-  "body-lg": { size: "1.0625rem", line: "1.75rem", weight: 400, tracking: "0", family: "serif" },
+  "body-lg": { size: "1.0625rem", line: "1.75rem", weight: 400, tracking: "0", family: "sans" },
   body: { size: "1rem", line: "1.5rem", weight: 400, tracking: "0", family: "sans" },
   "body-sm": { size: "0.875rem", line: "1.25rem", weight: 400, tracking: "0", family: "sans" },
   label: { size: "0.875rem", line: "1.25rem", weight: 600, tracking: "0", family: "sans" },
@@ -348,7 +554,6 @@ export const layout = {
 export const productOverrides = {
   "product-studio": {},
   "control-tower": {
-    "--mach-font-display": "var(--mach-font-sans)",
     "--mach-density": "0.875",
   },
 } as const;

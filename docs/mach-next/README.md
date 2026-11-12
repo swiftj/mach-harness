@@ -38,6 +38,7 @@ The example is a structural fixture, **not** a factory-executable product specif
 - **M3** Factory intake and dependency-aware scheduling: `M3_DESIGN.md`, with the event and ledger schemas in `schemas/`
 - **M4** the Factory Supervisor, opt-in and machine-local: `M4_DESIGN.md`, with the runner policy schema in `schemas/`
 - **M5** the visual Product Studio: `M5_DESIGN.md`, with the working contract in `M5_CONTRACT.md`, the design system in `DESIGN_SYSTEM.md` and the interview proof in `M5_INTERVIEW_POC.md`
+- **M6.0** the Living Factory prototype (a simulation, shown for visual review before the Control Tower is built): the working contract in `M6_0_CONTRACT.md`, the visual, grammar and camera specification in `M6_0_VISUAL_SPEC.md`, the rendering architecture and its tradeoffs in `M6_0_ARCHITECTURE.md`, performance, accessibility and honesty findings in `M6_0_FINDINGS.md`, and what the Factory does not yet report in `M6_0_TELEMETRY_GAPS.md`
 
 ## Critical integration invariant
 

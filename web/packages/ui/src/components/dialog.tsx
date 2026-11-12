@@ -39,7 +39,7 @@ export interface DialogContentProps extends Omit<ComponentPropsWithoutRef<typeof
  * Focus is trapped, Escape closes, focus returns to the trigger.
  */
 export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(function DialogContent(
-  { title, description, footer, width = "md", className, children, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
+  { title, description, footer, width = "md", className, children, onOpenAutoFocus, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
   ref,
 ) {
   const returnFocus = useFocusReturn();
@@ -63,6 +63,10 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(func
           onKeyDown?.(event);
           escape.onKeyDown(event);
         }}
+        onOpenAutoFocus={(event) => {
+          returnFocus.remember(event.currentTarget instanceof Element ? event.currentTarget : null);
+          onOpenAutoFocus?.(event);
+        }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (!event.defaultPrevented) returnFocus(event);
@@ -70,7 +74,7 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(func
       >
         <div className="flex items-start justify-between gap-4 px-6 pt-5">
           <div className="flex flex-col gap-1.5">
-            <DialogPrimitive.Title className="font-display text-title-2 text-ink">{title}</DialogPrimitive.Title>
+            <DialogPrimitive.Title className="font-display text-title-2 font-[650] text-ink">{title}</DialogPrimitive.Title>
             <DialogPrimitive.Description className="text-body text-ink-muted">{description}</DialogPrimitive.Description>
           </div>
           <DialogPrimitive.Close asChild>

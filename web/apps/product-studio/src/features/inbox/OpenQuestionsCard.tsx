@@ -38,7 +38,7 @@ export function OpenQuestionsCard({ slice, status }: { slice: StatusSliceRow; st
             {questions.map((q, i) => (
               <li key={i} className="flex items-start gap-2.5 text-body text-ink">
                 <MessageCircleQuestion aria-hidden="true" className="mt-1 size-4 shrink-0 text-info-ink" />
-                <span className="font-serif text-body-lg">{q}</span>
+                <span className="text-body-lg">{q}</span>
               </li>
             ))}
           </ol>

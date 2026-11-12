@@ -33,7 +33,7 @@ export function EmptyState({ title, description, action, icon, className, layout
     >
       {icon ? <span className="text-ink-subtle [&_svg]:size-5" aria-hidden="true">{icon}</span> : null}
       <div className="flex flex-col gap-1">
-        <Title className="font-display text-title-2 text-ink">{title}</Title>
+        <Title className="font-display text-title-2 font-[650] text-ink">{title}</Title>
         {description ? <p className="max-w-reading text-body text-ink-muted">{description}</p> : null}
       </div>
       {action ? <div className="pt-1">{action}</div> : null}

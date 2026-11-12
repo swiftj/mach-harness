@@ -64,7 +64,7 @@ export function SummarySection({ model, diagnostics }: { model: SpecModel; diagn
         {rows.map(([label, value]) => (
           <div key={label} className="contents">
             <dt className="text-label text-ink-muted">{label}</dt>
-            <dd className="font-serif text-body-lg text-ink">{value ?? <Missing>Not stated.</Missing>}</dd>
+            <dd className="text-body-lg text-ink">{value ?? <Missing>Not stated.</Missing>}</dd>
           </div>
         ))}
       </dl>
@@ -337,12 +337,12 @@ export function WhySection({ why, diagnostics }: { why: WhyDocument | null; diag
                   {Object.entries(section.fields).map(([label, value]) => (
                     <div key={label} className="contents">
                       <dt className="text-label text-ink-muted">{label}</dt>
-                      <dd className="font-serif text-body-lg text-ink">{value}</dd>
+                      <dd className="text-body-lg text-ink">{value}</dd>
                     </div>
                   ))}
                 </dl>
               ) : (
-                <p className="font-serif text-body-lg text-ink">{section.text.replace(/^-\s*/gm, "")}</p>
+                <p className="text-body-lg text-ink">{section.text.replace(/^-\s*/gm, "")}</p>
               )}
             </div>
           ))}
