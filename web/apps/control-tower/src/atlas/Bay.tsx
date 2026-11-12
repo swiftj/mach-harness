@@ -43,8 +43,9 @@ import { FloorLettering, PlanDimension, TaskBoard as TaskBoardMark, type TaskCel
 import { BELT_PHASES, agentTimingAt, ref, sceneAt, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
-import { animating, anim, callsOf, minuteOf, lampLevel, gateView, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PlacedAgent } from "./derive";
+import { animating, anim, callsOf, secondOf, lampLevel, gateView, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PlacedAgent } from "./derive";
 import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot } from "./layout";
+import { Card } from "./reduced";
 
 const CELL_W = 216;
 const CELL_D = 148;
@@ -144,11 +145,14 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
     if (animating(s.fixture, now, (e) => e.ticket_id === ticket)) return now;
     const c = sceneAt(s.fixture, now).cells[ticket];
     if (!c) return "none";
-    // Settled: the picture changes only at the next event, or when a working agent or the current
-    // station passes another minute (one elapsed tick per minute, spec principle 7).
+    // Settled: the picture changes only at the next event, or when the elapsed time of a working
+    // agent or of the current station passes another second. The ticks change once a minute, but the
+    // elapsed time is also lettered and in the accessible names ("Build: Working, for 6 min 56 s"),
+    // so it is re-rendered at every second it shows; otherwise the name would depend on how the
+    // playhead got here (findings D8). Keyed on what is shown, so this is still a pure function of t.
     const visit = c.station ? c.visits[c.visits.length - 1] : undefined;
-    let k = visit ? String(minuteOf(visitTimingAt(visit, now).elapsed)) : "-";
-    for (const id of c.activeAgentIds) k += `,${minuteOf(agentTimingAt(c.agents[id]!, now).elapsed)}`;
+    let k = visit && visit.leftAt === null ? String(secondOf(visitTimingAt(visit, now).elapsed)) : "-";
+    for (const id of c.activeAgentIds) k += `,${secondOf(agentTimingAt(c.agents[id]!, now).elapsed)}`;
     return k;
   });
   const reduced = useSceneStore((s) => s.reducedMotion);
@@ -176,13 +180,26 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   const intent = machineState(cell, ["groom", "plan"]);
   const build = machineState(cell, ["build", "audit"]);
   const verify = machineState(cell, ["verify"]);
+
+  // At far zoom a finished bay, once settled, is its plate alone: the calm done floor, its ticket and
+  // the mast's double ring say all there is to say from that distance (spec b.3, "finished work is
+  // calm"; the far element budget). Its parts stay selectable and keep their names.
+  if (lod === "far" && finished && completion >= 1) {
+    return (
+      <g>
+        <CellPlate origin={bay.origin} ticket={cell.ticketId} slice={cell.sliceId} stage={uiStage(cell.stage)} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} rail />
+        <BayHits items={bayHits(bay, cell, inBay, vgate, lod, t, reduced, { intent, build, verify })} />
+      </g>
+    );
+  }
   const ver = cell.verifications[cell.verifications.length - 1];
   // A real denominator: checks proven of checks declared.
   const verifyFraction = ver ? { done: ver.checks.filter((c) => c.result === "pass").length, of: ver.checks.length } : undefined;
 
   // Children in painter's order: things at the back (shelf, panel) first, then machines, agents.
   const kids: { depth: number; node: ReactNode }[] = [];
-  kids.push({ depth: depthOf({ x: x + 16, y: y + 26 }), node: <Console key="console" bay={bay} cell={cell} exec={exec} t={t} reduced={reduced} lod={lod} /> });
+  // The line console and its phase panel are detail: not at far zoom (spec b.7; the far element budget).
+  if (lod !== "far") kids.push({ depth: depthOf({ x: x + 16, y: y + 26 }), node: <Console key="console" bay={bay} cell={cell} exec={exec} t={t} reduced={reduced} lod={lod} /> });
   kids.push({ depth: depthOf({ x, y: y + 18 }), node: <Shelf key="shelf" bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} highlight={highlight} /> });
   kids.push({ depth: depthOf({ x: x + 62, y: y + 82 }), node: <TaskBoard key="tasks" bay={bay} cell={cell} lod={lod} /> });
   kids.push({ depth: depthOf({ x: x + 168, y: y + 24 }), node: <ResultsRack key="results" bay={bay} cell={cell} lod={lod} t={t} reduced={reduced} /> });
@@ -224,7 +241,8 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
       <CellPlate origin={bay.origin} ticket={cell.ticketId} slice={cell.sliceId} stage={uiStage(cell.stage)} lampIntensity={lamp} completion={completion} elapsed={stationElapsed} lod={lod} dimmed={dimCell} rail>
         {kids.map((k) => k.node)}
       </CellPlate>
-      <VerificationGate bay={bay} gate={vgate} t={t} reduced={reduced} lod={lod} dimmed={dimCell} />
+      {/* An unbuilt verdict gate (the cell has not reached verification) is not drawn at far zoom. */}
+      {vgate || lod !== "far" ? <VerificationGate bay={bay} gate={vgate} t={t} reduced={reduced} lod={lod} dimmed={dimCell} /> : null}
       <VerifyLoop bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} dimmed={dimCell} />
       <BayHits items={bayHits(bay, cell, inBay, vgate, lod, t, reduced, { intent, build, verify })} />
     </g>
@@ -277,7 +295,7 @@ function bayHits(bay: BaySlot, cell: CellState, agents: PlacedAgent[], gate: Gat
 
 function BayHits({ items }: { items: HitItem[] }) {
   return (
-    <g>
+    <>
       {items.map((it) => {
         const f = prismFaces(it.box);
         const pts = (it.box.h ?? 0) > 0 ? [f.top[0]!, f.top[1]!, f.shade[3]!, f.shade[2]!, f.lit[3]!, f.top[3]!] : f.top;
@@ -287,7 +305,7 @@ function BayHits({ items }: { items: HitItem[] }) {
           </Hit>
         );
       })}
-    </g>
+    </>
   );
 }
 
@@ -355,7 +373,7 @@ function Shelf({ bay, cell, t, reduced, lod, highlight }: { bay: BaySlot; cell: 
         const p = q(anim("artifactMaterialise", t - a.writtenAt, reduced));
         const aref = ref.artifact(a.id);
         const failed = a.kind === "verification-findings" || (a.kind === "review-findings" && cell.reviews.some((r) => r.outcome === "REJECTED" && r.round === a.round));
-        return <ArtifactCard key={a.id} kind={uiArtifact(a.kind)} state={failed ? "failed" : "succeeded"} progress={p} file={a.label} at={at} lod={lod} showLabel={false} dimmed={highlight.size > 0 && !highlight.has(aref) && !highlight.has(ref.cell(cell.ticketId))} />;
+        return <Card key={a.id} reduced={reduced} kind={uiArtifact(a.kind)} state={failed ? "failed" : "succeeded"} progress={p} file={a.label} at={at} lod={lod} showLabel={false} dimmed={highlight.size > 0 && !highlight.has(aref) && !highlight.has(ref.cell(cell.ticketId))} />;
       })}
     </g>
   );
@@ -455,8 +473,9 @@ function Branch({ bay, cell, t, reduced, lod }: { bay: BaySlot; cell: CellState;
         style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 0.9 * planeStroke }}
       />
       {commits.map((c, i) => {
-        const p = anim("artifactMaterialise", t - c.writtenAt, reduced);
-        return p < 1 ? <circle key={c.id} cx={x0 + 4 + i * step} cy={by} r={1.9 * Math.max(0.2, p)} style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 0.9 * planeStroke }} /> : null;
+        const p = q(anim("artifactMaterialise", t - c.writtenAt, reduced));
+        // Reduced motion: the ring appears at its size and fades in; it does not grow.
+        return p < 1 ? <circle key={c.id} cx={x0 + 4 + i * step} cy={by} r={reduced ? 1.9 : 1.9 * Math.max(0.2, p)} style={{ fill: fc("plate-top"), stroke: fc("ink"), strokeWidth: 0.9 * planeStroke, opacity: reduced ? p : 1 }} /> : null;
       })}
       {lod === "near" ? (
         <text x={x0 - 3} y={by + 1.8} textAnchor="end" style={{ fill: "var(--mach-ink-subtle)", fontSize: 5.5, fontFamily: "var(--mach-font-mono)" }} className="notranslate">
@@ -476,7 +495,10 @@ export function agentName(placed: PlacedAgent): string {
 export function AgentFigure({ placed, lod, dimmed, proxied }: { placed: PlacedAgent; lod: Lod; dimmed: boolean; proxied?: boolean }) {
   const a = placed.agent;
   const seat = a.seat && a.seat !== "general" ? a.seat : undefined;
-  const figure = <AgentMarker agentRole={uiRole(a)} tier={uiTier(a.model)} seat={seat} state={placed.state} elapsed={placed.state === "active" ? placed.elapsed : undefined} arrive={placed.arrive} leave={placed.leave} at={placed.at} lod={lod} dimmed={dimmed} showLabel={false} />;
+  // Reduced motion (spec e: agentArrive / agentLeave "fade"): the figure stands at full height and
+  // only its opacity follows arrival and departure; the post never grows or sinks.
+  const marker = <AgentMarker agentRole={uiRole(a)} tier={uiTier(a.model)} seat={seat} state={placed.state} elapsed={placed.state === "active" ? placed.elapsed : undefined} arrive={placed.reduced ? 1 : placed.arrive} leave={placed.reduced ? 0 : placed.leave} at={placed.at} lod={lod} dimmed={dimmed} showLabel={false} />;
+  const figure = placed.reduced ? <g style={{ opacity: q(Math.max(0, Math.min(1, placed.arrive * (1 - placed.leave)))) }}>{marker}</g> : marker;
   if (proxied) return figure;
   return (
     <Hit entity={ref.agent(a.id)} label={`${agentName(placed)}${a.role === "reviewer" ? " reviewer" : ""}, ${modelTiers[uiTier(a.model)].label}, ${a.ticketId}: ${a.status === "running" ? "working" : a.status}`}>

@@ -24,38 +24,34 @@ export const Sheet = memo(function Sheet({ width, height, lod, fixture, titled }
   const ink = "var(--mach-ink-subtle)";
   const zx = (k: number) => i + ((width - 2 * i) * k) / nx;
   const zy = (k: number) => i + ((height - 2 * i) * k) / ny;
+  let zoneTicks = "";
+  for (let k = 1; k < nx; k++) zoneTicks += `M${round(zx(k))} ${o}V${i}M${round(zx(k))} ${height - i}V${height - o}`;
+  for (let k = 1; k < ny; k++) zoneTicks += `M${o} ${round(zy(k))}H${i}M${width - i} ${round(zy(k))}H${width - o}`;
+  for (const [x, y] of [
+    [i + 14, i + 14],
+    [width - i - 14, i + 14],
+    [i + 14, height - i - 14],
+    [width - i - 14, height - i - 14],
+  ] as const) {
+    zoneTicks += `M${x - 9} ${y}h18M${x} ${y - 9}v18M${x - 5} ${y}a5 5 0 1 0 10 0a5 5 0 1 0 -10 0`;
+  }
   return (
     <svg className="atlas-sheet" aria-hidden="true" width={width} height={height} style={{ opacity: quiet ? 0.45 : 1 }}>
       <rect x={o} y={o} width={width - 2 * o} height={height - 2 * o} style={{ fill: "none", stroke: ink, strokeWidth: 0.75 }} />
       <rect x={i} y={i} width={width - 2 * i} height={height - 2 * i} style={{ fill: "none", stroke: "var(--mach-ink-muted)", strokeWidth: 1.25 }} />
-      {/* Zone ticks and letters along the top and left margins. */}
+      {/* Zone ticks (one path) and letters along the top and left margins; the registration crosses
+          just inside the four corners (one path). Batched: the sheet is chrome, not the drawing, and
+          should not spend the element budget. */}
+      <path d={zoneTicks} style={{ fill: "none", stroke: ink, strokeWidth: 0.75 }} />
       {Array.from({ length: nx }, (_, k) => (
-        <g key={`x${k}`}>
-          {k > 0 ? <path d={`M${round(zx(k))} ${o}V${i}M${round(zx(k))} ${height - i}V${height - o}`} style={{ stroke: ink, strokeWidth: 0.75 }} /> : null}
-          <text x={round((zx(k) + zx(k + 1)) / 2)} y={o + 7.5} textAnchor="middle" style={{ fill: ink, fontSize: 8, fontFamily: "var(--mach-font-mono)" }}>
-            {ZONES_X[k]}
-          </text>
-        </g>
+        <text key={`x${k}`} x={round((zx(k) + zx(k + 1)) / 2)} y={o + 7.5} textAnchor="middle" style={{ fill: ink, fontSize: 8, fontFamily: "var(--mach-font-mono)" }}>
+          {ZONES_X[k]}
+        </text>
       ))}
       {Array.from({ length: ny }, (_, k) => (
-        <g key={`y${k}`}>
-          {k > 0 ? <path d={`M${o} ${round(zy(k))}H${i}M${width - i} ${round(zy(k))}H${width - o}`} style={{ stroke: ink, strokeWidth: 0.75 }} /> : null}
-          <text x={o + 5} y={round((zy(k) + zy(k + 1)) / 2 + 3)} textAnchor="middle" style={{ fill: ink, fontSize: 8, fontFamily: "var(--mach-font-mono)" }}>
-            {k + 1}
-          </text>
-        </g>
-      ))}
-      {/* Registration crosses just inside the four corners. */}
-      {[
-        [i + 14, i + 14],
-        [width - i - 14, i + 14],
-        [i + 14, height - i - 14],
-        [width - i - 14, height - i - 14],
-      ].map(([x, y]) => (
-        <g key={`${x}-${y}`}>
-          <circle cx={x} cy={y} r={5} style={{ fill: "none", stroke: ink, strokeWidth: 0.75 }} />
-          <path d={`M${x! - 9} ${y}h18M${x} ${y! - 9}v18`} style={{ stroke: ink, strokeWidth: 0.75 }} />
-        </g>
+        <text key={`y${k}`} x={o + 5} y={round((zy(k) + zy(k + 1)) / 2 + 3)} textAnchor="middle" style={{ fill: ink, fontSize: 8, fontFamily: "var(--mach-font-mono)" }}>
+          {k + 1}
+        </text>
       ))}
       {quiet || !titled ? null : (
         <>

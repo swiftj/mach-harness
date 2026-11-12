@@ -404,6 +404,8 @@ export interface PlacedAgent {
   elapsed: number;
   /** Order among agents sharing one spot (label stacking). */
   stack: number;
+  /** Reduced motion: arrival and departure are opacity only, never a growing or sinking post. */
+  reduced: boolean;
 }
 
 /** Agents present at t (running, or leaving): where they stand and how far they have arrived. */
@@ -448,6 +450,7 @@ export function placeAgents(_scene: Scene | null, L: PlantLayout, cell: CellStat
       state: agentState(a),
       elapsed: agentTimingAt(a, t).elapsed,
       stack,
+      reduced,
     });
   }
   return out;
@@ -485,4 +488,26 @@ export function lampLevel(cell: CellState, t: number, reduced = false): number {
 /** Minutes of elapsed work: the grammar draws one tick per minute, so pictures change only at these steps. */
 export function minuteOf(ms: number): number {
   return Math.min(12, Math.floor(ms / 60_000));
+}
+
+/** Whole seconds of elapsed work: the step at which a lettered or named elapsed time changes. */
+export function secondOf(ms: number): number {
+  return Math.floor(ms / 1000);
+}
+
+/**
+ * A render key that changes exactly when any shown elapsed time changes: the whole seconds of every
+ * working agent (optionally only those `which` accepts). Parts that letter or name an elapsed time
+ * re-render on it, so the same playhead gives the same text however it was reached.
+ */
+export function agentsElapsedKey(scene: Scene, t: number, which?: (a: AgentState) => boolean): string {
+  let k = "";
+  for (const c of Object.values(scene.cells)) {
+    for (const id of c.activeAgentIds) {
+      const a = c.agents[id];
+      if (!a || (which && !which(a))) continue;
+      k += `${secondOf(agentTimingAt(a, t).elapsed)},`;
+    }
+  }
+  return k;
 }

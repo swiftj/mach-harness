@@ -7,7 +7,6 @@
  */
 import {
   AgentMarker,
-  ArtifactCard,
   Branches,
   FindingsFlag,
   PlanDimension,
@@ -20,20 +19,23 @@ import {
   fc,
   planeStroke,
   planeTransform,
+  prismFaces,
   project,
   round,
+  toPoints,
   type FactoryState,
   type GateLamp,
   type Lod,
   type Vec3,
 } from "@mach/ui";
 import { FloorLettering } from "@mach/ui";
-import { PANELS, agentTimingAt, eventsInWindow, ref, sceneAt, type Risk, type CellState, type EntityRef, type EventKind, type Fixture, type Scene, type SliceState } from "../sim";
+import { PANELS, eventsInWindow, ref, sceneAt, type Risk, type CellState, type EntityRef, type EventKind, type Fixture, type Scene, type SliceState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
-import { AFTERGLOW, RATE, animating, minuteOf, anim, chamberOccupant, gateView, latestGate, placeAgents, q, type PlacedAgent } from "./derive";
+import { AFTERGLOW, RATE, agentsElapsedKey, animating, anim, chamberOccupant, gateView, latestGate, placeAgents, q, type PlacedAgent } from "./derive";
 import { PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
 import { AgentFigure } from "./Bay";
+import { Card } from "./reduced";
 
 /** The playhead keyed to a part's own animations (see usePlayheadKeyed), with the scene and flags. */
 function useFrame(key: (fixture: Fixture, t: number) => string | number) {
@@ -94,8 +96,9 @@ export function IntakeWorks() {
       {anyWave ? (
         <Hit entity={ref.wave(anyWave.id)} label={`Wave ${anyWave.id}, ${anyWave.title}: ${anyWave.sliceIds.length} slices, approved by ${anyWave.approvedBy}`}>
           <g style={{ opacity: isDimmed(highlight, ref.wave(anyWave.id)) ? 0.28 : 1 }}>
-            {anyWave.sliceIds.map((s, i) => (
-              <ArtifactCard key={s} kind="spec" progress={q(anim("artifactMaterialise", t - anyWave.discoveredAt - i * 60 * RATE, reduced))} at={{ x: I.manifest.x - i * 2.4, y: I.manifest.y - i * 2, z: PLATE_Z - 2 }} lod={lod} showLabel={false} />
+            {/* At far zoom the stack is one sheet (spec b.7: artifacts as a count only; the name says how many). */}
+            {(lod === "far" ? anyWave.sliceIds.slice(0, 1) : anyWave.sliceIds).map((s, i) => (
+              <Card key={s} reduced={reduced} kind="spec" progress={q(anim("artifactMaterialise", t - anyWave.discoveredAt - i * 60 * RATE, reduced))} at={{ x: I.manifest.x - i * 2.4, y: I.manifest.y - i * 2, z: PLATE_Z - 2 }} lod={lod} showLabel={false} />
             ))}
           </g>
           {lod !== "far" ? (
@@ -119,10 +122,13 @@ export function IntakeWorks() {
         <StationMachine nameplate showLabel={false} kind="intake" state={hopperState} at={I.hopper} lod={lod} planned={!anyWave} />
       </Hit>
       {/* The scheduler at its desk. Not an agent in the record: it lights only on scheduling events. */}
-      <Prism box={{ x: I.schedulerDesk.x - 14, y: I.schedulerDesk.y - 9, w: 28, d: 18, z: PLATE_Z, h: 8 }} hatch="shade">
-        <rect x={I.schedulerDesk.x - 10} y={I.schedulerDesk.y - 5} width={20} height={10} style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 0.8 * planeStroke }} />
-        <path d={`M${I.schedulerDesk.x - 10} ${I.schedulerDesk.y}h20M${I.schedulerDesk.x} ${I.schedulerDesk.y - 5}v10`} style={{ stroke: fc("ink-soft"), strokeWidth: 0.6 * planeStroke }} />
-      </Prism>
+      {/* Furniture is detail: dropped at far zoom (spec b.7, the far element budget). */}
+      {lod !== "far" ? (
+        <Prism box={{ x: I.schedulerDesk.x - 14, y: I.schedulerDesk.y - 9, w: 28, d: 18, z: PLATE_Z, h: 8 }} hatch="shade">
+          <rect x={I.schedulerDesk.x - 10} y={I.schedulerDesk.y - 5} width={20} height={10} style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 0.8 * planeStroke }} />
+          <path d={`M${I.schedulerDesk.x - 10} ${I.schedulerDesk.y}h20M${I.schedulerDesk.x} ${I.schedulerDesk.y - 5}v10`} style={{ stroke: fc("ink-soft"), strokeWidth: 0.6 * planeStroke }} />
+        </Prism>
+      ) : null}
       <Hit entity={"actor:scheduler" as EntityRef} label={`Scheduler: ${schedulerBusy ? "deciding" : "idle"}`}>
         <AgentMarker agentRole="scheduler" tier="haiku" state={schedulerBusy ? "active" : "idle"} at={I.scheduler} lod={lod} showLabel={false} />
       </Hit>
@@ -151,19 +157,25 @@ function HoldingPad({ bay, slice, cell, t, reduced, lod, dimmed }: { bay: BaySlo
   const cardP = mat ? q(anim("artifactMaterialise", t - mat.at - 900 * RATE, reduced)) : 0;
   const label = slice ? `Slice ${slice.id}, ${slice.title}: ${state}${slice.reasons.length ? `. ${slice.reasons.join(" ")}` : ""}` : `Holding pad ${bay.index + 1}: empty`;
   const pin = project({ x: p.x + 16, y: p.y - 16, z: PLATE_Z + 2 });
+  const flat = gone && lod === "far";
   // The pad's lettering is drawn outside its hit target, so the target's name is the whole sentence.
   return (
     <g style={{ opacity: dimmed ? 0.28 : 1 }}>
       <Hit entity={ref.slice(bay.sliceId)} label={label}>
-        <Prism box={{ x: p.x - 20, y: p.y - 20, w: 40, d: 40, z: PLATE_Z, h: 2 }} top={waiting ? "wait-soft" : gone ? "floor" : "plate-top"} edge={waiting ? "wait" : "plate-edge"} dash={waiting ? "5 2.5" : undefined} hatch="none" shadow={false} />
+        {/* At far zoom a pad whose slice has left for the floor is only its outline (the far element budget). */}
+        {flat ? (
+          <polygon points={toPoints(prismFaces({ x: p.x - 20, y: p.y - 20, w: 40, d: 40, z: PLATE_Z + 2, h: 0 }).top)} style={{ fill: fc("floor"), stroke: fc("plate-edge"), strokeWidth: 0.8 }} />
+        ) : (
+          <Prism box={{ x: p.x - 20, y: p.y - 20, w: 40, d: 40, z: PLATE_Z, h: 2 }} top={waiting ? "wait-soft" : gone ? "floor" : "plate-top"} edge={waiting ? "wait" : "plate-edge"} dash={waiting ? "5 2.5" : undefined} hatch="none" shadow={false} />
+        )}
       </Hit>
       <FloorLettering at={{ x: p.x - 17, y: p.y - 11, z: PLATE_Z + 2 }} text={slice ? bay.sliceId : `Pad ${bay.index + 1}`} size={lod === "far" ? 9 : 7} font="mono" tone="muted" weight={600} decorative />
       {lod !== "far" ? (
         <FloorLettering at={{ x: p.x - 17, y: p.y + 16, z: PLATE_Z + 2 }} text={word} size={6.2} font="mono" tone={waiting ? "wait" : "subtle"} weight={600} decorative />
       ) : null}
       <g aria-hidden="true" style={{ pointerEvents: "none" }}>
-        {slice && !gone ? <ArtifactCard kind="spec" progress={cardP} file={`${slice.ticketId}.md`} at={{ x: p.x - 2, y: p.y + 2, z: PLATE_Z + 2 }} lod={lod} showLabel={false} /> : null}
-        {slice ? (
+        {slice && !gone && lod !== "far" ? <Card reduced={reduced} kind="spec" progress={cardP} file={`${slice.ticketId}.md`} at={{ x: p.x - 2, y: p.y + 2, z: PLATE_Z + 2 }} lod={lod} showLabel={false} /> : null}
+        {slice && !flat ? (
           <g transform={`translate(${round(pin.x)} ${round(pin.y)})`}>
             <StateMark state={mark} r={lod === "far" ? 6 : 4.4} />
           </g>
@@ -220,7 +232,7 @@ export function ChamberWorks() {
         {SEATS.map((s) => (
           <g key={s}>
             <circle cx={R.seats[s].x} cy={R.seats[s].y} r={13} style={{ fill: fc("floor"), stroke: fc("plate-edge"), strokeWidth: planeStroke }} />
-            <circle cx={R.seats[s].x} cy={R.seats[s].y} r={9.5} style={{ fill: "none", stroke: fc("grid-major"), strokeWidth: 0.7 * planeStroke, strokeDasharray: "2 2" }} />
+            {lod !== "far" ? <circle cx={R.seats[s].x} cy={R.seats[s].y} r={9.5} style={{ fill: "none", stroke: fc("grid-major"), strokeWidth: 0.7 * planeStroke, strokeDasharray: "2 2" }} /> : null}
           </g>
         ))}
         {/* The panel's dashed triangle between the seats: the review symbol, inlaid. */}
@@ -231,8 +243,8 @@ export function ChamberWorks() {
             <FloorLettering key={s} at={{ x: R.seats[s].x - 30, y: R.seats[s].y + 4, z: PLATE_Z }} text={s === "architecture" ? "A" : s === "security" ? "S" : "P"} size={8} font="mono" tone="subtle" weight={600} decorative />
           ))
         : null}
-      {/* A reading desk beside each seat, facing the consensus gate. */}
-      {SEATS.map((s) => (
+      {/* A reading desk beside each seat, facing the consensus gate (furniture: not at far zoom). */}
+      {(lod === "far" ? [] : SEATS).map((s) => (
         <Prism key={`desk-${s}`} box={{ x: R.seats[s].x + 16, y: R.seats[s].y - 11, w: 9, d: 22, z: PLATE_Z, h: 7 }} hatch="shade" top={round_ ? "plate-top" : "plate-lit"}>
           <path d={`M${R.seats[s].x + 18} ${R.seats[s].y - 7}h5M${R.seats[s].x + 18} ${R.seats[s].y - 3}h5M${R.seats[s].x + 18} ${R.seats[s].y + 1}h3`} style={{ stroke: fc("ink-soft"), strokeWidth: 0.6 * planeStroke }} />
         </Prism>
@@ -241,19 +253,29 @@ export function ChamberWorks() {
       <RuleBoard L={L} lod={lod} risk={round_?.risk ?? null} />
       {/* The packet table at the entry: the review packet stands on it while the panel sits. */}
       <Prism box={{ x: R.packetTable.x - 12, y: R.packetTable.y - 8, w: 24, d: 16, z: PLATE_Z, h: 6 }} hatch="shade" />
-      {packet ? (
+      {packet && lod !== "far" ? (
         <Hit entity={ref.artifact(packet.id)} label={`Review packet ${packet.label}`}>
-          <ArtifactCard kind="review-packet" progress={q(anim("artifactMaterialise", t - packet.writtenAt, reduced))} at={{ ...R.packetTable, z: PLATE_Z + 6 }} lod={lod} showLabel={false} />
+          <Card reduced={reduced} kind="review-packet" progress={q(anim("artifactMaterialise", t - packet.writtenAt, reduced))} at={{ ...R.packetTable, z: PLATE_Z + 6 }} lod={lod} showLabel={false} />
         </Hit>
       ) : null}
-      {round_ ? <Branches origin={R.entry} targets={targets} mode="fan-out" progress={fan} states={fanStates} label={`Review panel, ${occ?.cell.ticketId} round ${round_.round}: three seats`} /> : null}
+      {/* Reduced motion: fanOut "fades" (spec e): the branches are drawn whole and only their opacity ramps. */}
+      {round_ ? (
+        <g style={{ opacity: reduced ? q(Math.min(...fan)) : 1 }}>
+          <Branches origin={R.entry} targets={targets} mode="fan-out" progress={reduced ? fan.map((p) => (p > 0 ? 1 : 0)) : fan} states={fanStates} label={`Review panel, ${occ?.cell.ticketId} round ${round_.round}: three seats`} />
+        </g>
+      ) : null}
       {round_ ? <Branches origin={R.gate} targets={targets} mode="join" progress={joinP} states={joinStates} label={`Votes, ${occ?.cell.ticketId} round ${round_.round}`} /> : null}
       {round_ ? <Findings occ={occ!.cell} roundIndex={occ!.roundIndex} L={L} t={t} reduced={reduced} lod={lod} /> : null}
+      {/* The chamber's plaque: two short lines at the back-left corner, clear of the rule board at x + 132
+          (one long line ran into it and overprinted "High · 3 of 3 + a person", findings D7). */}
       {round_ && lod !== "far" ? (
-        <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 22, z: PLATE_Z }} text={`${occ!.cell.ticketId} · R${round_.round} · ${round_.approvalsNeeded}/3 NEEDED`} size={8.5} font="mono" tone={round_.delta ? "live" : "muted"} weight={600} decorative />
+        <>
+          <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 20, z: PLATE_Z }} text={`${occ!.cell.ticketId} · R${round_.round}`} size={8.5} font="mono" tone={round_.delta ? "live" : "muted"} weight={600} decorative />
+          <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 31, z: PLATE_Z }} text={`${round_.approvalsNeeded} OF 3 NEEDED`} size={7.5} font="mono" tone={round_.delta ? "live" : "muted"} weight={600} decorative />
+        </>
       ) : null}
       {round_?.delta && lod !== "far" ? (
-        <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 34, z: PLATE_Z }} text={`DELTA SINCE ${round_.delta.sinceCommit.slice(0, 7)} · ${round_.delta.filesChanged.length} FILES`} size={7.5} font="mono" tone="live" weight={500} decorative />
+        <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 41, z: PLATE_Z }} text={`DELTA ${round_.delta.sinceCommit.slice(0, 7)} · ${round_.delta.filesChanged.length} FILES`} size={7} font="mono" tone="live" weight={500} decorative />
       ) : null}
       <Hit entity={gateRef} label={`${consensusText}: review consensus gate${occ ? `, ${occ.cell.ticketId} round ${round_?.round}` : ""}: ${v.position}${round_?.outcome ? `, ${round_.outcome}` : ""}`}>
         <GateGlyph kind="consensus" position={v.position} from={v.from} progress={v.progress} lamps={lamps} at={R.gate} axis="y" lod={lod} showLabel={false} floorLabel={consensusText} planned={!anyReview} />
@@ -271,6 +293,8 @@ function Findings({ occ, roundIndex, L, t, reduced, lod }: { occ: CellState; rou
     <g>
       {r.findings.map((f) => {
         if (f.seat === "general") return null;
+        // At far zoom only blocking findings are planted; notes are detail (the far element budget).
+        if (lod === "far" && f.severity !== "blocker") return null;
         const k = counts.get(f.seat) ?? 0;
         counts.set(f.seat, k + 1);
         const seat = L.review.seats[f.seat];
@@ -316,9 +340,9 @@ export function GatehouseWorks() {
         <FloorLettering at={{ x: L.regions.human.x + 12, y: L.regions.human.y + 18, z: PLATE_Z }} text={waiting ? `HELD FOR A PERSON · ${gate?.ticketId ?? ""}` : "HIGH RISK STOPS HERE"} size={7.5} font="mono" tone={waiting ? "human" : "subtle"} weight={600} decorative />
       ) : null}
       {/* The register: who approved what, as review.py approve-human records it. */}
-      <Prism box={{ x: L.regions.human.x + 16, y: L.regions.human.y + 26, w: 46, d: 16, z: PLATE_Z, h: 4 }} top="machine-top" hatch="shade" rim={false} />
       {lod !== "far" ? (
         <>
+          <Prism box={{ x: L.regions.human.x + 16, y: L.regions.human.y + 26, w: 46, d: 16, z: PLATE_Z, h: 4 }} top="machine-top" hatch="shade" rim={false} />
           <FloorLettering at={{ x: L.regions.human.x + 19, y: L.regions.human.y + 33, z: PLATE_Z + 4 }} text={`Register · ${approvals.length} approval${approvals.length === 1 ? "" : "s"}`} size={5.6} font="sans" tone="muted" weight={600} decorative />
           {approvals.slice(-1).map((a) => (
             <FloorLettering key={a.ticket} at={{ x: L.regions.human.x + 19, y: L.regions.human.y + 39, z: PLATE_Z + 4 }} text={`${a.ticket} · ${a.by}`} size={5.2} font="sans" tone="human" weight={600} decorative />
@@ -379,7 +403,8 @@ export function IntegrationWorks() {
       <Hit entity={ref.station("merge")} label={`Merge machine: ${merging.length ? `merging ${merging.map((c) => c.ticketId).join(", ")}` : state}`}>
         <StationMachine nameplate showLabel={false} kind="merge" state={state} at={I.merge} lod={lod} planned={state === "idle"} />
       </Hit>
-      {merged.map((c) => {
+      {/* The merge commits on the main line are artifacts: at far zoom only their count, in the yard's caption (spec b.7). */}
+      {(lod === "far" ? [] : merged).map((c) => {
         const art = c.artifacts.find((a) => a.kind === "merge-commit");
         const at: Vec3 = berth(L.bayByTicket.get(c.ticketId)?.index ?? 0);
         const p = q(anim("artifactMaterialise", t - c.merged!.at - 1100 * RATE, reduced));
@@ -388,7 +413,7 @@ export function IntegrationWorks() {
           <g key={c.ticketId} style={{ opacity: isDimmed(highlight, ref.cell(c.ticketId)) ? 0.28 : 1 }}>
             {art ? (
               <Hit entity={ref.artifact(art.id)} label={`Merge commit for ${c.ticketId} on main: ${c.merged!.commit.slice(0, 7)}${c.merged!.revalidated ? ", revalidated" : ""}`}>
-                <ArtifactCard kind="merge-commit" progress={p} at={at} lod={lod} showLabel={false} />
+                <Card reduced={reduced} kind="merge-commit" progress={p} at={at} lod={lod} showLabel={false} />
               </Hit>
             ) : null}
             {lod !== "far" ? (
@@ -432,13 +457,14 @@ export function ArchiveWorks() {
       {lod !== "far" ? (
         <FloorLettering at={{ x: shelfAt(0).x - 8, y: shelfAt(0).y - 10, z: PLATE_Z }} text={`runs.jsonl · ${archived.length} of ${L.bays.length} recorded`} size={7.5} font="mono" tone="subtle" weight={500} decorative />
       ) : null}
-      {archived.map((c) => {
+      {/* Archives are artifacts: at far zoom only their count, in the region's caption (spec b.7). */}
+      {(lod === "far" ? [] : archived).map((c) => {
         const art = c.artifacts.find((a) => a.kind === "archive");
         const p = q(anim("artifactMaterialise", t - c.archived!.at, reduced));
         const at = shelfAt(L.bayByTicket.get(c.ticketId)?.index ?? 0);
         return art ? (
           <Hit key={c.ticketId} entity={ref.artifact(art.id)} label={`Archive ${art.label}`}>
-            <ArtifactCard kind="archive" progress={p} at={at} lod={lod} showLabel={false} />
+            <Card reduced={reduced} kind="archive" progress={p} at={at} lod={lod} showLabel={false} />
           </Hit>
         ) : null;
       })}
@@ -453,13 +479,9 @@ export function AwayAgents() {
   const { lod, layout: L } = useAtlas();
   const { t, reduced, scene } = useFrame((f, now) => {
     if (animating(f, now, has("agent.started", "agent.finished"))) return now;
-    // One elapsed tick per minute on each working reviewer, merge or cleanup worker.
-    let k = "";
-    for (const c of Object.values(sceneAt(f, now).cells)) for (const id of c.activeAgentIds) {
-      const a = c.agents[id]!;
-      if (a.station === "review" || a.station === "merge" || a.station === "cleanup") k += `${minuteOf(agentTimingAt(a, now).elapsed)},`;
-    }
-    return k;
+    // Each working reviewer, merge or cleanup worker names its elapsed time to the second (its
+    // accessible name), so re-render at each of those seconds (findings D8).
+    return agentsElapsedKey(sceneAt(f, now), now, (a) => a.station === "review" || a.station === "merge" || a.station === "cleanup");
   });
   const highlight = useHighlight();
   const placed: PlacedAgent[] = [];
@@ -485,17 +507,15 @@ function RuleBoard({ L, lod, risk }: { L: PlantLayout; lod: Lod; risk: Risk | nu
     const p = PANELS[r];
     return [r, `${r} · ${p.approvals} of ${p.reviewers}${p.human_approval ? " + a person" : ""}`];
   });
+  // At far zoom its lettering is not drawn, so neither is the board (the far element budget).
+  if (lod === "far") return null;
   return (
     <g aria-hidden="true">
       <Prism box={{ x, y, w: 74, d: 30, z: PLATE_Z, h: 3 }} top="machine-top" hatch="shade" rim={false} />
-      {lod !== "far" ? (
-        <>
-          <FloorLettering at={{ x: x + 4, y: y + 8, z: PLATE_Z + 3 }} text="Panel rules · review.py" size={6} font="sans" tone="subtle" weight={600} decorative />
-          {rows.map(([r, text], i) => (
-            <FloorLettering key={r} at={{ x: x + 4, y: y + 15 + i * 6.5, z: PLATE_Z + 3 }} text={text} size={5.6} font="sans" tone={risk === r ? "live" : "muted"} weight={risk === r ? 700 : 500} decorative />
-          ))}
-        </>
-      ) : null}
+      <FloorLettering at={{ x: x + 4, y: y + 8, z: PLATE_Z + 3 }} text="Panel rules · review.py" size={6} font="sans" tone="subtle" weight={600} decorative />
+      {rows.map(([r, text], i) => (
+        <FloorLettering key={r} at={{ x: x + 4, y: y + 15 + i * 6.5, z: PLATE_Z + 3 }} text={text} size={5.6} font="sans" tone={risk === r ? "live" : "muted"} weight={risk === r ? 700 : 500} decorative />
+      ))}
     </g>
   );
 }

@@ -23,9 +23,10 @@ import { Plant } from "./Plant";
 import { Bay, FreeBay } from "./Bay";
 import { ArchiveWorks, AwayAgents, ChamberWorks, GatehouseWorks, IntakeWorks, IntegrationWorks } from "./Stations";
 import { Dependencies, LiveConduits, Transit } from "./Air";
-import { Overlay } from "./Overlay";
+import { Overlay, type OverlayView } from "./Overlay";
 import { Meter } from "./Meter";
 import { locateScreen } from "./locate";
+import { nearestInDirection, type Direction } from "./spatial";
 import { activeMembers, followDecision, withGrace } from "./follow";
 import { Sheet } from "./Sheet";
 import "./atlas.css";
@@ -126,6 +127,9 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [lightLayer, setLightLayer] = useState(false);
   const [atFit, setAtFit] = useState(true);
+  // The visible stage for the overlay (callouts stay inside it), quantised to 24 screen px so the
+  // overlay re-places only when an edge has moved that far, not with every pixel of a pan.
+  const [viewKey, setViewKey] = useState("");
 
   // The camera writes its transform straight to the wrapper: panning never re-renders React.
   useEffect(() => {
@@ -156,6 +160,9 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
           .map((b) => b.ticketId)
           .join(",");
         setVisibleBays(vis);
+        const step = 24 / cam.zoom;
+        const snap = (v: number) => Math.round(v / step) * step;
+        setViewKey([snap(view.x), snap(view.y), snap(view.x + view.width), snap(view.y + view.height), Math.round(cam.zoom * 1000)].map((v) => Math.round(v * 10) / 10).join(","));
       });
     };
     const off = camera.subscribe((cam, user) => {
@@ -371,20 +378,31 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
     camera.set(zoomAt(c, factor, camera.viewport.width / 2, camera.viewport.height / 2), { user: true });
   };
 
-  // Roving focus (spec f.11): the view is one tab stop; inside it, arrows move between entities in
-  // reading order (region by region; within a cell: cell, machines, agents, artifacts). Shift+arrows pan.
+  // Roving focus (spec f.11): the view is one tab stop; inside it, an arrow moves to the nearest
+  // entity in that screen direction (spatial navigation, nearestInDirection); ties go to reading order
+  // (region by region; within a cell: cell, machines, agents, artifacts). Shift+arrows pan.
   const lastEntity = useRef<EntityRef | null>(null);
   const entities = () => [...(viewportRef.current?.querySelectorAll<SVGGElement>('[data-ref][role="button"]') ?? [])];
-  const moveFocus = (step: number) => {
+  const moveFocus = (dir: Direction) => {
     const list = entities();
     if (!list.length) return;
     const active = document.activeElement as Element | null;
-    let i = list.findIndex((el) => el === active);
-    if (i < 0) {
-      const remembered = lastEntity.current ? list.findIndex((el) => el.getAttribute("data-ref") === lastEntity.current) : -1;
-      i = remembered >= 0 ? remembered - step : step > 0 ? -1 : list.length;
+    const from = list.findIndex((el) => el === active);
+    let next: SVGGElement | undefined;
+    if (from < 0) {
+      // Entering: the remembered entity, else the selection, else the first in reading order.
+      const sel = store.getState().selection;
+      const want = [lastEntity.current, sel].find((r) => r && list.some((el) => el.getAttribute("data-ref") === r));
+      next = want ? list.find((el) => el.getAttribute("data-ref") === want) : list[0];
+    } else {
+      const centres = list.map((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      const i = nearestInDirection(centres, from, dir);
+      if (i === null) return;
+      next = list[i];
     }
-    const next = list[Math.max(0, Math.min(list.length - 1, i + step))];
     if (!next) return;
     next.focus({ preventScroll: true });
     lastEntity.current = next.getAttribute("data-ref") as EntityRef;
@@ -412,7 +430,7 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
     if (arrow && e.shiftKey) {
       const c = camera.get();
       camera.set({ ...c, x: c.x + arrow[0], y: c.y + arrow[1] }, { user: true });
-    } else if (arrow) moveFocus(e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1);
+    } else if (arrow) moveFocus(e.key === "ArrowRight" ? "right" : e.key === "ArrowLeft" ? "left" : e.key === "ArrowUp" ? "up" : "down");
     else if (e.key === "+" || e.key === "=") zoomBy(Z.step);
     else if (e.key === "-" || e.key === "_") zoomBy(1 / Z.step);
     else if (e.key === "0") fitAll(store.getState().reducedMotion ? 0 : factoryTokens.motion.cameraFocus);
@@ -433,10 +451,18 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
   const ctx = useMemo<AtlasContextValue>(() => ({ lod, layout, lightLayer: Boolean(Effects) && lightLayer }), [lod, layout, lightLayer, Effects]);
   const showMeter = meter ?? (import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).has("meter"));
   const visible = useMemo(() => new Set(visibleBays === "*" ? layout.bays.map((b) => b.ticketId) : visibleBays.split(",")), [visibleBays, layout]);
+  // The stage inside the sheet's border (28 px) and clear of the camera toolbar, in projected units.
+  const overlayView = useMemo<OverlayView | null>(() => {
+    if (!viewKey) return null;
+    const [x0 = 0, y0 = 0, x1 = 0, y1 = 0, z1000 = 1000] = viewKey.split(",").map(Number);
+    const z = z1000 / 1000;
+    const m = 28 / z;
+    return { x0: x0 + m, y0: y0 + m, x1: x1 - m, y1: y1 - m, controls: theater ? null : { x0: x1 - 250 / z, y0: y1 - 64 / z, x1, y1 } };
+  }, [viewKey, theater]);
 
   return (
     <AtlasContext.Provider value={ctx}>
-      {/* The canvas is one tab stop with its own keys (pan, zoom, fit); its entities follow in reading order, region by region (spec f.11). */}
+      {/* The canvas is one tab stop with its own keys (pan, zoom, fit); arrows move to the nearest entity in their direction (spec f.11). */}
       {/* eslint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
       <div
         ref={viewportRef}
@@ -445,7 +471,7 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
         data-lod={lod}
         data-dragging={dragging}
         role="application"
-        aria-label="Factory Atlas, a simulation: the plant drawn in axonometric. Arrow keys move between its parts, region by region; Enter selects; Shift with arrows pans; plus and minus zoom; 0 fits."
+        aria-label="Factory Atlas, a simulation: the plant drawn in axonometric. Arrow keys move to the nearest part in that direction; Enter selects; Shift with arrows pans; plus and minus zoom; 0 fits."
         aria-roledescription="plant drawing"
         tabIndex={0}
         onPointerDown={onPointerDown}
@@ -491,7 +517,7 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
         </div>
         <div ref={overlayRef} className="atlas-camera atlas-camera-overlay">
           <svg className="atlas-overlay" aria-hidden="true" width={bounds.width} height={bounds.height} viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`} style={{ left: bounds.x, top: bounds.y }}>
-            <Overlay zoom={zoom} lod={lod} focused={focused} theater={theater} />
+            <Overlay zoom={zoom} lod={lod} focused={focused} theater={theater} view={overlayView} />
           </svg>
         </div>
         <Sheet width={viewportSize.width} height={viewportSize.height} lod={lod} fixture={fixture} titled={atFit && !theater} />

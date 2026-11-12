@@ -7,7 +7,8 @@
  * - the work lamp's light pool on the floor of each working cell, with a soft falloff past its walls
  *   (fading in and out with the station's start and end, as the SVG lamp does);
  * - a short fading light trail behind each travelling packet (at most 40 px on screen);
- * - a brief wash of light when a gate opens (pass ink) or refuses (fail ink).
+ * - a brief wash of light on a gate's plaque when it refuses (fail ink). Only on refusal: the
+ *   visual spec (g, L2) permits "the gate plaque flash on refusal" and nothing for a pass.
  *
  * It is off under reduced motion and when WebGL is unavailable; the SVG drawing is complete without
  * it. CSP: `pixi.js/unsafe-eval` (no `eval`), no workers, no images (the glow is drawn on a canvas),
@@ -104,7 +105,12 @@ function PixiLayer({ camera, layout, onActive }: EffectsProps) {
         const PIXI: Pixi = await import("pixi.js");
         if (disposed) return;
         const app = new PIXI.Application();
-        await app.init({ preference: "webgl", backgroundAlpha: 0, antialias: true, autoDensity: true, resolution: Math.min(2, window.devicePixelRatio || 1), resizeTo: el, autoStart: false, sharedTicker: false });
+        // Sized to the Atlas stage (the viewport the layer covers), not through Pixi's resizeTo: that
+        // listens only to window resizes, so a canvas created while the stage was still settling kept
+        // its first size (1352 x 22 px, findings D12). A ResizeObserver follows the stage itself.
+        const stage = (el.closest(".atlas-viewport") as HTMLElement | null) ?? el;
+        const size = () => ({ width: Math.max(1, stage.clientWidth), height: Math.max(1, stage.clientHeight) });
+        await app.init({ preference: "webgl", backgroundAlpha: 0, antialias: true, autoDensity: true, resolution: Math.min(2, window.devicePixelRatio || 1), ...size(), autoStart: false, sharedTicker: false });
         if (disposed) {
           app.destroy(true);
           return;
@@ -112,6 +118,14 @@ function PixiLayer({ camera, layout, onActive }: EffectsProps) {
         app.canvas.setAttribute("aria-hidden", "true");
         app.canvas.style.pointerEvents = "none";
         el.appendChild(app.canvas);
+        let last = "";
+        const resized = new ResizeObserver(() => {
+          const { width, height } = size();
+          if (width === app.renderer.width / app.renderer.resolution && height === app.renderer.height / app.renderer.resolution) return;
+          app.renderer.resize(width, height);
+          last = "";
+        });
+        resized.observe(stage);
         // A soft round glow, drawn once on a canvas (no image, no data URL).
         const glowCanvas = document.createElement("canvas");
         glowCanvas.width = glowCanvas.height = 128;
@@ -146,7 +160,6 @@ function PixiLayer({ camera, layout, onActive }: EffectsProps) {
         const washPool: InstanceType<Pixi["Sprite"]>[] = [];
         let palette = readPalette(el);
         let paletteKey = "";
-        let last = "";
 
         const frame = () => {
           raf = requestAnimationFrame(frame);
@@ -226,7 +239,7 @@ function PixiLayer({ camera, layout, onActive }: EffectsProps) {
             }
           }
 
-          // 3. A brief wash of light when a gate opens or refuses.
+          // 3. A brief wash of light on a gate's plaque when it refuses (never on a pass).
           let used = 0;
           for (const gate of Object.values(scene.gates)) {
             const w = washOf(gate, t);
@@ -245,7 +258,7 @@ function PixiLayer({ camera, layout, onActive }: EffectsProps) {
             sprite.visible = true;
             sprite.position.set(p.x, p.y);
             sprite.width = sprite.height = 96;
-            sprite.tint = w.kind === "fail" ? palette.fail : w.kind === "human" ? palette.human : palette.pass;
+            sprite.tint = palette.fail;
             sprite.alpha = w.alpha * (palette.dark ? 1 : 0.7);
           }
           for (let i = used; i < washPool.length; i++) washPool[i]!.visible = false;
@@ -254,6 +267,7 @@ function PixiLayer({ camera, layout, onActive }: EffectsProps) {
         raf = requestAnimationFrame(frame);
         onActive?.(true);
         destroy = () => {
+          resized.disconnect();
           onActive?.(false);
           cancelAnimationFrame(raf);
           app.destroy(true, { children: true, texture: true });
@@ -271,17 +285,13 @@ function PixiLayer({ camera, layout, onActive }: EffectsProps) {
   return <div ref={host} className="atlas-effects-layer" aria-hidden="true" />;
 }
 
-/** A gate's wash: a pass or refusal within its animation window, fading out. */
-function washOf(gate: GateState, t: number): { kind: "pass" | "fail" | "human"; alpha: number } | null {
+/** A gate's wash: a refusal within its animation window, fading out. A pass gets none (spec g, L2). */
+function washOf(gate: GateState, t: number): { alpha: number } | null {
   if (gate.decidedAt === null || t < gate.decidedAt) return null;
   const elapsed = t - gate.decidedAt;
-  if (gate.state === "passed") {
-    const p = anim(gate.gate === "human-approval" ? "humanRelease" : "gateOpen", elapsed, false);
-    return p < 1 ? { kind: gate.gate === "human-approval" ? "human" : "pass", alpha: 0.32 * (1 - p) } : null;
-  }
   if (gate.state === "failed") {
     const p = anim("gateRefuse", elapsed, false);
-    return p < 1 ? { kind: "fail", alpha: 0.4 * (1 - p) } : null;
+    return p < 1 ? { alpha: 0.4 * (1 - p) } : null;
   }
   return null;
 }

@@ -4,7 +4,7 @@
  * changes only with the level of detail and the regions' captions (which change at events).
  */
 import { memo, type ReactNode } from "react";
-import { GroundGrid, Prism, RegionPlate, RoutePath, fc, planeStroke, planeTransform, project, round, type Lod, type RegionKind, type Vec3 } from "@mach/ui";
+import { GroundGrid, Prism, RegionPlate, RoutePath, factoryTokens, fc, offsetPolyline, planeStroke, planeTransform, project, round, roundedPath, type Lod, type RegionKind, type Vec3 } from "@mach/ui";
 import { FloorLettering } from "@mach/ui";
 import type { PlantLayout, Rect } from "./layout";
 import { PLATE_Z } from "./layout";
@@ -36,8 +36,32 @@ export function Plant({ layout, lod, captions, active, dimRoutes }: PlantProps) 
 const Ground = memo(function Ground({ layout: L, lod }: { layout: PlantLayout; lod: Lod }) {
   const e = L.extent;
   // The grid runs 96 pu past the plant and fades out; the stage beyond is plain ground (spec b.2).
+  if (lod === "far") return <FarGrid x={e.x} y={e.y} w={e.w} d={e.d} fade={0.7} />;
   return <GroundGrid x={e.x} y={e.y} w={e.w} d={e.d} lod={lod} fade={0.7} />;
 });
+
+/**
+ * The ground grid at far zoom: GroundGrid's far drawing (major lines only, no crosses, fading toward
+ * the extent's edges) batched into one path per fade band instead of one line each, so the far view
+ * spends 4 elements on the ground instead of 26 (the far element budget). Each line takes the band
+ * nearest its own fade, so the picture is the same to within a few percent of opacity.
+ */
+const BANDS = [0.45, 0.65, 0.85, 1];
+function FarGrid({ x, y, w, d, fade }: { x: number; y: number; w: number; d: number; fade: number }) {
+  const step = factoryTokens.grid.major;
+  const cx = x + w / 2;
+  const cy = y + d / 2;
+  const alpha = (u: number, half: number) => Math.max(0, 1 - fade * Math.pow(Math.abs(u) / half, 2));
+  const band = (a: number) => BANDS.reduce((best, b, i) => (Math.abs(b - a) < Math.abs(BANDS[best]! - a) ? i : best), 0);
+  const paths = BANDS.map(() => "");
+  for (let gx = Math.ceil(x / step) * step; gx <= x + w; gx += step) paths[band(alpha(gx - cx, w / 2))] += `M${gx} ${y}V${y + d}`;
+  for (let gy = Math.ceil(y / step) * step; gy <= y + d; gy += step) paths[band(alpha(gy - cy, d / 2))] += `M${x} ${gy}H${x + w}`;
+  return (
+    <g aria-hidden="true" transform={planeTransform(0)}>
+      {paths.map((p, i) => (p ? <path key={i} d={p} style={{ fill: "none", stroke: fc("grid-major"), strokeWidth: planeStroke, opacity: BANDS[i] }} /> : null))}
+    </g>
+  );
+}
 
 /** 3. Plates, bridges, the dock and the conduit: re-drawn only when a caption or an active rule changes. */
 const Regions = memo(function Regions({ layout: L, lod, captions, active }: Omit<PlantProps, "dimRoutes">) {
@@ -85,8 +109,9 @@ const Regions = memo(function Regions({ layout: L, lod, captions, active }: Omit
         <TrunkCut y={I.trunkY} x0={I.trunkTo - 8} x1={I.trunkFrom + 8} lod={lod} />
       </RegionPlate>
       <RegionPlate box={regionBox(R.archive)} kind="archive" title="Archive" caption={captions.archive} lod={lod} active={active.archive} />
+      {/* Bridges; their poché is detail too small to read at far zoom (the far element budget). */}
       {L.bridges.map((b, i) => (
-        <Prism key={i} box={b} hatch="lit" top="plate-top" />
+        <Prism key={i} box={b} hatch={lod === "far" ? "none" : "lit"} top="plate-top" />
       ))}
       {/* The supervisor's conduit: from its console, over the catwalk, down the floor's left edge. */}
       <Conduit points={conduitPath(L)} />
@@ -100,8 +125,9 @@ const Infrastructure = memo(function Infrastructure({ layout: L, lod, dimRoutes 
   return (
     <g>
       <g style={{ opacity: dimRoutes ? 0.4 : 1 }}>
+        {lod === "far" ? <FarRails tracks={L.tracks} /> : null}
         {Object.entries(L.tracks).map(([name, pts]) =>
-          name === "trunk" ? null : <RoutePath key={name} points={pts} lod={lod} label={undefined} arrow={name === "transfer" || name === "toArchive"} />,
+          name === "trunk" || (lod === "far" && !ARROWED.has(name)) ? null : <RoutePath key={name} points={pts} lod={lod} label={undefined} arrow={ARROWED.has(name)} />,
         )}
         <RoutePath points={L.tracks.trunk ?? []} lod={lod} state="succeeded" chevrons={lod !== "far"} />
       </g>
@@ -111,6 +137,22 @@ const Infrastructure = memo(function Infrastructure({ layout: L, lod, dimRoutes 
     </g>
   );
 });
+
+const ARROWED = new Set(["transfer", "toArchive"]);
+
+/**
+ * At far zoom (no chevrons, no sleepers) an idle track is just its two rails, so every idle track
+ * without an arrowhead is drawn as one path: the same rails, gauge, corner radius, ink and weight as
+ * RoutePath draws them, in one element instead of three per track (the far element budget).
+ */
+function FarRails({ tracks }: { tracks: Record<string, Vec3[]> }) {
+  let d = "";
+  for (const [name, pts] of Object.entries(tracks)) {
+    if (name === "trunk" || ARROWED.has(name) || pts.length < 2) continue;
+    d += roundedPath(offsetPolyline(pts, 3).map(project), 5) + roundedPath(offsetPolyline(pts, -3).map(project), 5);
+  }
+  return <path aria-hidden="true" d={d} style={{ fill: "none", stroke: fc("route"), strokeWidth: factoryTokens.stroke.route * 0.8, strokeLinecap: "round", strokeLinejoin: "round" }} />;
+}
 
 function TrunkCut({ y, x0, x1, lod }: { y: number; x0: number; x1: number; lod: Lod }) {
   // A channel cut 6 deep into the plate: dark bed, hatched cheeks on both sides.
