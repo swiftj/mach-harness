@@ -363,19 +363,23 @@ function VisitMark({ node, cell, next }: { node: FlowNode; cell: CellState; next
   // The build's tasks as the grammar's red/green board, for this build loop (round 1 is loop 0).
   const board: TaskCell[] | null = v.station === "build" ? cell.tasks.filter((t) => t.loop === node.round - 1).map((t) => (t.status === "active" ? "active" : t.status === "red" ? "red" : "green")) : null;
   const label = v.action === "revise" ? "Build" : undefined;
+  const fraction = visitFraction(cell, node);
+  // The symbol prints its own line (elapsed, measured fraction) under its name while it works or has
+  // a fraction; this mark's line and the task board then sit one line lower, never on top of it.
+  const drop = v.leftAt === null || (fraction !== null && fraction !== undefined) ? 12 : 0;
   const cardX = next ? (node.x + next.x) / 2 : node.x + 30;
   return (
     <>
       <Pick entity={ref.station(v.station, cell.ticketId)}>
         <g style={{ opacity: 0.35 + 0.65 * appear }}>
-          <StationMachine variant="blueprint" kind={stationKind(v.station)} state={state} elapsed={elapsed} fraction={visitFraction(cell, node)} settled={state === "succeeded"} round={node.round > 1 ? node.round : undefined} at={{ x: node.x, y: node.y }} label={label} showLabel />
+          <StationMachine variant="blueprint" kind={stationKind(v.station)} state={state} elapsed={elapsed} fraction={fraction} settled={state === "succeeded"} round={node.round > 1 ? node.round : undefined} at={{ x: node.x, y: node.y }} label={label} showLabel />
         </g>
         {task ? (
-          <text x={node.x} y={node.y + 41} textAnchor="middle" style={{ fill: fc("live"), fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }} className="tabular" aria-hidden="true">
+          <text x={node.x} y={node.y + 41 + drop} textAnchor="middle" style={{ fill: fc("live"), fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }} className="tabular" aria-hidden="true">
             {task.id} {task.status}
           </text>
         ) : v.leftAt !== null ? (
-          <text x={node.x} y={node.y + 41} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }} className="tabular" aria-hidden="true">
+          <text x={node.x} y={node.y + 41 + drop} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }} className="tabular" aria-hidden="true">
             {duration(v.leftAt - v.enteredAt)}
           </text>
         ) : null}
@@ -383,7 +387,7 @@ function VisitMark({ node, cell, next }: { node: FlowNode; cell: CellState; next
       {head ? <HandoffCard artifact={head} count={arts.length} x={cardX} y={node.y - 25} ticket={cell.ticketId} /> : null}
       {board && board.length ? (
         <g data-ref={ref.station(v.station, cell.ticketId)}>
-          <TaskBoard variant="blueprint" tasks={board} columns={8} at={{ x: node.x - (Math.min(8, board.length) * 5.8 + 2.6) / 2, y: node.y + 46 }} />
+          <TaskBoard variant="blueprint" tasks={board} columns={8} at={{ x: node.x - (Math.min(8, board.length) * 5.8 + 2.6) / 2, y: node.y + 46 + drop }} />
         </g>
       ) : null}
     </>
