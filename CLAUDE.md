@@ -48,7 +48,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 ├── CLAUDE.md                   # Core workspace rules & factory specification (this file)
 ├── README.md                   # Install, quick start, and uninstall
 ├── install.sh                  # One-line installer (downloads this repo, runs bin/mach)
-├── .github/workflows/release.yml  # On a version tag: builds the Product Studio host per platform and publishes the release
+├── .github/workflows/release.yml  # On a version tag: builds the Product Studio host and the Control Tower's observer per platform, smoke-tests both, publishes the release
 ├── Makefile                    # make test / make validate
 ├── .claude-plugin/
 │   ├── plugin.json             # Plugin manifest: the plugin is named "mach"
@@ -75,6 +75,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 ├── workflows/
 │   └── belt.js                 # Dynamic Workflow `mach:belt` (`mach-belt` in a project): several tickets in parallel
 ├── apps/studio/                # Experimental (MACH Next M5). Go host for the visual Product Studio: loopback only, embeds the web app
+├── apps/observer/              # Experimental (MACH Next M6.1). mach-observer: the Control Tower's read-only observer; loopback only, GET only, embeds the Control Tower
 ├── web/                        # Experimental (MACH Next M5). pnpm workspace: @mach/ui design system, showcase, product-studio app, fixtures, e2e; and control-tower, the M6.0 Living Factory prototype (a simulation that reads no Factory state)
 ├── templates/                  # What gets scaffolded into a project
 ├── tests/                      # unittest suites and fixtures
@@ -104,6 +105,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── .mach-manifest.json     # What the installer wrote, with hashes, so uninstall is exact
     ├── bin/mach                # Copy of the installer, for status and uninstall
     ├── bin/mach-studio         # Experimental. The visual Product Studio's host, downloaded for this machine; git-ignored
+    ├── bin/mach-observer       # Experimental. The Control Tower's read-only observer, downloaded for this machine; git-ignored
     ├── tickets/                # Local Markdown ticket queue (the default provider)
     ├── inbox/                  # Normalized incoming ticket payloads and telemetry traces
     ├── archive/                # <ticket_id>.tar.gz per finished cell, and runs.jsonl, one line per ticket
@@ -112,6 +114,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── studio/                 # Experimental. Product Studio's drafts, session and publication ledger; git-ignored, never read by a station
     ├── intake/                 # Experimental. The Factory's intake ledger (ledger.json) and its event log (events.jsonl); git-ignored
     ├── local/                  # Experimental. Machine-local authorization (runner.json), the supervisor's lease, and each execution's output; git-ignored, never shared
+    │   └── observer/           # Experimental. The observer's redacted index, its lock and the next one-time link; the only place it writes
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
             ├── cell.json       # Cell state: stage, mode, slice ID, risk tier, app type, contracts
@@ -121,6 +124,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
             ├── plan.md         # How: contracts, test-first task checklist, file touch map
             ├── build.json      # Build state: task progress, suite state, recorded deviations
             ├── build-report.json  # What was built, how, and every gate override, for verify and review
+            ├── lifecycle.jsonl # Experimental (M6.1). One line per station decision, written after the station's own files; observational, never changes a result
             ├── evidence/       # Captured verification artifacts, results.json and the summary.json verdict
             ├── review/         # round-N/: packet, diff, votes, findings.md, decision.json
             └── repo/           # Git worktree on feature/<ticket_id>: code, contracts, specs/slices/
@@ -319,6 +323,17 @@ On a machine whose engineer has enabled it, a supervisor keeps approved product 
 * **Recovery**: a claim is on disk before a process exists. A restarted supervisor tells apart a claim that never started, an execution still running, one that ended unwatched and one whose outcome is unknown. Unknown outcomes are counted or raised to a person; a lost merge or cleanup is never retried automatically.
 * **One runner per project, per machine**: an ownership lease with a heartbeat. Nothing coordinates two engineers' machines.
 * **Optional, each on explicit request**: advisory Git hooks (a wake-up note, never authorization), fetching on a timer, and a per-user macOS LaunchAgent. None is installed by cloning, installing or running a ticket.
+
+### Experimental: the Control Tower (MACH Next M6.1/M6.2)
+
+A read-only view of the Factory in the browser. Code: `apps/observer` (Go, standard library only) and `web/apps/control-tower`. Design: `docs/mach-next/M6_1_OBSERVER_DESIGN.md`, `M6_1_EVENT_CONTRACT.md`, `M6_1_SHARED_CONTRACTS.md`, `M6_1_STATION_TELEMETRY.md`.
+
+* **Lifecycle log (M6.1)**: each station appends one line to `.factory/worktrees/<ticket_id>/lifecycle.jsonl` (`station.entered`/`exited`, `gate.evaluated`, build tasks, verification checks, review rounds and verdicts, human approval, merge, cleanup) through one helper, `skills/intent/scripts/lifecycle.py`, after the station's own write. A failure to record changes no exit code, output or station file; the station files win on any disagreement. Cleanup's records go only into the archived copy.
+* **The observer (`mach-observer`)**: follows the intake event log, every cell's lifecycle log, execution streams and the archive; normalises them to event schema 3, redacts before indexing, and keeps its index under `.factory/local/observer/`. It serves a versioned GET-only API (`/api/v1/...`), a server-sent event stream and the embedded Control Tower on `127.0.0.1` behind a one-time link. It starts no process, runs no MACH script, takes no MACH lock and connects to nothing, so stopping it never affects the line. Evidence images and video are served only when `tower.evidence_media` is true in `.factory/config.json`.
+* **Started by a skill step, not a command**: asked to "open the Control Tower", the run skill starts `.factory/bin/mach-observer --project <root>` (or a checkout's own build), relays the printed link, and reads `.factory/local/observer/link` for a second browser. `run.py` has no command for it; no station, agent or workflow calls it (`tests/test_mach_tower.py`).
+* **Shipping**: built per platform by the `release` workflow with the Control Tower embedded, smoke-tested with `apps/observer/smoke.sh`, listed in `SHA256SUMS` and attested; the installer fetches it like `mach-studio` (`--no-tower`, `MACH_TOWER=skip`, `MACH_TOWER_URL`). Releases before it (up to v0.12.0) have none; the install then succeeds with a one-line note.
+* **Not finished**: no published release carries the observer yet. M6.2, the Control Tower reading the observer (labelled Live Factory or Historical replay) instead of its fixture (labelled Simulation), is in progress.
+* **Never**: enables, starts, pauses, dispatches, approves or merges anything; writes outside `.factory/local/observer/`; listens on anything but `127.0.0.1`.
 
 ### Merge station: `/mach-merge`
 

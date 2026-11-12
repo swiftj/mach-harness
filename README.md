@@ -45,6 +45,12 @@ Product Studio also has a visual app that runs on your own machine. Its host is 
 
 If the download is not possible (offline, no build for your machine, or a version with no release yet), the install still succeeds and says so; everything else works without the app. Pass `--no-studio` to skip it. Each release's files also carry a build provenance attestation: `gh attestation verify .factory/bin/mach-studio --repo swiftj/mach-harness`.
 
+### The Control Tower (experimental)
+
+The Control Tower is a read-only view of the Factory in your browser: delivery waves, cells moving through the stations, review rounds, executions and their evidence. Its program, `mach-observer`, is published beside the Product Studio host, for the same machines, and the installers fetch it the same way: checked against the release's `SHA256SUMS` and put at `.factory/bin/mach-observer` (git-ignored). Releases made before it shipped have no such file; the install then says so in one line and succeeds. Pass `--no-tower` (or set `MACH_TOWER=skip`) to skip it; `MACH_TOWER_URL` fetches it from another place, as `MACH_STUDIO_URL` does for the studio. `bin/mach status` says whether each program is installed.
+
+Ask the run skill to "open the Control Tower" (or "watch the factory"). It starts the observer for the session, which prints a one-time link to `127.0.0.1`; the link for a second browser is kept in `.factory/local/observer/link`. There is no new command. The observer only reads the Factory's files: it cannot enable, start, pause, approve or merge anything, holds no MACH lock, and stopping it never affects the line. With no Factory state on the machine, it shows a clearly labelled Simulation instead of Live Factory.
+
 ## Quick start
 
 ```
@@ -111,7 +117,7 @@ This moves one ticket from wherever it is to the next point where a person is ne
 - the merge, if your project keeps it for a person (`merge.mode` or `merge.auto` in `.factory/config.json`);
 - a person to take over a ticket that failed three rounds.
 
-`/mach-run board` shows every open ticket, its stage and its next step, without starting anything.
+`/mach-run board` shows every open ticket, its stage and its next step, without starting anything. To watch the line in a browser instead, ask the run skill to open the Control Tower (experimental, read-only; see Install).
 
 To move several tickets at once, unattended and in parallel, run the MACH Dynamic Workflow with their IDs, for example by asking Claude Code to "run the mach-belt workflow for LOCAL-002 and LOCAL-003". The workflow is named `mach-belt` in a project install and `mach:belt` with the plugin. Each ticket is built, verified and reviewed in its own cell; the run ends with a list of what each ticket is waiting for.
 
@@ -315,6 +321,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `agents/builder.md` | The build station, pinned to the `sonnet` tier. |
 | `agents/verifier.md` | The verify station, pinned to the `sonnet` tier, always a fresh context. |
 | `agents/reviewer.md` | One seat on the review panel; the review script sets its model per seat. |
+| `apps/studio/`, `apps/observer/` | Experimental. The Product Studio host and the Control Tower's read-only observer (Go), each with `build.sh` (embeds its web app) and `smoke.sh`. |
 | `bin/mach`, `install.sh` | The installer. |
 | `templates/` | What gets scaffolded into a project. |
 | `docs/` | The original design notes for each station, and the prd-slice skill the interview is adapted from. |
@@ -323,9 +330,9 @@ When you change the validator, change its references, the fixture in `tests/fixt
 
 ### Releasing
 
-Set the new version in `.claude-plugin/plugin.json`, merge to `main`, then push a tag `v<version>`. The `release` workflow tests, builds the Product Studio host for each machine with the web app embedded, writes `SHA256SUMS`, and publishes the GitHub release the installer downloads from. The tag must match the plugin's version or the workflow stops.
+Set the new version in `.claude-plugin/plugin.json`, merge to `main`, then push a tag `v<version>`. The `release` workflow tests, builds the Product Studio host and the Control Tower's observer for each machine with their web apps embedded, writes `SHA256SUMS` for both, attests their build provenance, and publishes the GitHub release the installer downloads from. The tag must match the plugin's version or the workflow stops.
 
-Before publishing, each program is started on a runner of its own kind (`apps/studio/smoke.sh`: open the one-time link, load the app, ask the engine for status). Running the workflow by hand from the Actions tab builds and smoke-tests everything and publishes nothing.
+Before publishing, each program is started on a runner of its own kind (`apps/studio/smoke.sh`: open the one-time link, load the app, ask the engine for status; `apps/observer/smoke.sh`: open the link, read the API, check that only GET is answered, stop cleanly). Running the workflow by hand from the Actions tab builds and smoke-tests everything and publishes nothing.
 
 ## License
 

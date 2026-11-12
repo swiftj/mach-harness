@@ -55,6 +55,31 @@ STUDIO_MACHINES = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64", "amd
 # What each release publishes. Intel Macs and Windows have no build.
 STUDIO_BUILDS = ("darwin-arm64", "linux-arm64", "linux-amd64")
 STUDIO_MAX_BYTES = 200 * 1024 * 1024
+# The Control Tower's read-only observer (MACH Next M6.1): published beside mach-studio, for the same
+# machines, in the same SHA256SUMS. Releases before it have no such file; that is never an error.
+TOWER_DEST = ".factory/bin/mach-observer"
+TOWER_LOCAL_BUILD = "apps/observer/bin/mach-observer"
+SKIP_WORDS = ("skip", "off", "0", "no")
+
+
+class Program(NamedTuple):
+    """A prebuilt program the installer fetches from the release into .factory/bin/."""
+    name: str          # file name prefix in the release: <name>-<os>-<arch>
+    title: str         # how the installer's notes name it
+    dest: str          # where it goes in the project
+    local: str         # module global naming a copy built in this MACH checkout (read at call time)
+    flag: str          # argparse attribute that skips it
+    env: str           # environment variable that skips it (MACH_STUDIO=skip)
+    url_env: str       # environment variable naming another place to fetch the release's files
+    without: str       # what still works without it
+    optional: bool     # a release that does not list it is normal, not a failure (it came later)
+
+
+STUDIO = Program("mach-studio", "The visual Product Studio app", STUDIO_DEST, "STUDIO_LOCAL_BUILD", "no_studio", "MACH_STUDIO", "MACH_STUDIO_URL",
+                 "Everything else works without it, including Product Studio in the terminal.", False)
+TOWER = Program("mach-observer", "The Control Tower", TOWER_DEST, "TOWER_LOCAL_BUILD", "no_tower", "MACH_TOWER", "MACH_TOWER_URL",
+                "Everything else works without it; the Control Tower only watches the Factory.", True)
+PROGRAMS = (STUDIO, TOWER)
 
 
 class Item(NamedTuple):
@@ -124,20 +149,42 @@ def skill_items(root: Path) -> List[Item]:
     return items
 
 
-def studio_asset() -> Optional[str]:
+def program_asset(program: Program) -> Optional[str]:
     """The release file for this machine, or None when no build is published for it."""
     system = STUDIO_SYSTEMS.get(platform.system().lower())
     machine = STUDIO_MACHINES.get(platform.machine().lower())
-    return f"mach-studio-{system}-{machine}" if f"{system}-{machine}" in STUDIO_BUILDS else None
+    return f"{program.name}-{system}-{machine}" if f"{system}-{machine}" in STUDIO_BUILDS else None
 
 
-def studio_base(version: str) -> str:
-    """Where a version's release files are. MACH_STUDIO_URL replaces it (a mirror, or a folder as file://...)."""
-    override = os.environ.get("MACH_STUDIO_URL")
+def program_base(program: Program, version: str) -> str:
+    """Where a version's release files are. MACH_STUDIO_URL (or MACH_TOWER_URL for the Control Tower)
+    replaces it: a mirror, or a folder as file://... The Control Tower falls back to MACH_STUDIO_URL,
+    since both programs are files of the same release."""
+    override = os.environ.get(program.url_env) or os.environ.get(STUDIO.url_env)
     if override:
         return override.rstrip("/")
     repo = os.environ.get("MACH_REPO") or STUDIO_REPO
     return f"https://github.com/{repo}/releases/download/v{version}"
+
+
+def studio_asset() -> Optional[str]:
+    return program_asset(STUDIO)
+
+
+def studio_base(version: str) -> str:
+    return program_base(STUDIO, version)
+
+
+def tower_asset() -> Optional[str]:
+    return program_asset(TOWER)
+
+
+def tower_base(version: str) -> str:
+    return program_base(TOWER, version)
+
+
+class NotPublished(Fail):
+    """The release exists but does not carry this program: an older release, before the program shipped."""
 
 
 def fetch(url: str) -> bytes:
@@ -151,20 +198,23 @@ def fetch(url: str) -> bytes:
     return data
 
 
-def download_studio(version: str) -> bytes:
-    """This machine's host program for this version, checked against the release's published SHA-256."""
-    asset = studio_asset()
+def download_program(program: Program, version: str) -> bytes:
+    """This machine's build of a program for this version, checked against the release's published SHA-256."""
+    asset = program_asset(program)
     if asset is None:
         raise Fail(f"no build is published for {platform.system()} {platform.machine()}")
-    base = studio_base(version)
+    base = program_base(program, version)
     try:
         sums = fetch(f"{base}/{STUDIO_SUMS}").decode("utf-8", "replace")
         expected = {parts[1].lstrip("*"): parts[0].lower() for parts in (line.split() for line in sums.splitlines()) if len(parts) == 2}
         if asset not in expected:
+            if program.optional and not any(name.startswith(f"{program.name}-") for name in expected):
+                raise NotPublished(f"MACH {version}'s release does not include it; it is published from a later release")
             raise Fail(f"release v{version} does not list {asset}")
         data = fetch(f"{base}/{asset}")
     except urllib.error.HTTPError as exc:
-        raise Fail(f"release v{version} has no visual app to download yet (HTTP {exc.code})")
+        raise Fail(f"release v{version} has no {program.name} to download yet (HTTP {exc.code})"
+                   if program.optional else f"release v{version} has no visual app to download yet (HTTP {exc.code})")
     except (urllib.error.URLError, OSError) as exc:
         raise Fail(f"the download did not complete ({getattr(exc, 'reason', exc)})")
     if sha(data) != expected[asset]:
@@ -172,30 +222,51 @@ def download_studio(version: str) -> bytes:
     return data
 
 
-def studio_item(root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[Optional[Item], str]:
-    """The visual app's host for this project, and one line saying what happened.
+def download_studio(version: str) -> bytes:
+    return download_program(STUDIO, version)
+
+
+def program_item(program: Program, root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[Optional[Item], str]:
+    """A prebuilt program for this project, and a note saying what happened.
 
     A copy built in this MACH checkout is used as it is. Otherwise the release's build for this
-    machine is downloaded and checked. A failure never fails the install: the terminal Product
-    Studio and the rest of MACH do not need the program. A copy already installed is kept when a
-    newer one cannot be fetched.
+    machine is downloaded and checked. A failure never fails the install: the rest of MACH does not
+    need the program. A copy already installed is kept when a newer one cannot be fetched.
     """
-    current = project / STUDIO_DEST
-    kept = Item(STUDIO_DEST, current.read_bytes(), "managed", True) if current.is_file() else None
-    if getattr(args, "no_studio", False) or os.environ.get("MACH_STUDIO", "").lower() in ("skip", "off", "0", "no"):
-        return kept, "The visual Product Studio app was not installed (skipped)."
-    local = root / STUDIO_LOCAL_BUILD
+    current = project / program.dest
+    kept = Item(program.dest, current.read_bytes(), "managed", True) if current.is_file() else None
+    lower = program.title[0].lower() + program.title[1:]
+    if getattr(args, program.flag, False) or os.environ.get(program.env, "").lower() in SKIP_WORDS:
+        return kept, f"{program.title} was not installed (skipped)."
+    local = root / globals()[program.local]
     if local.is_file():
-        return Item(STUDIO_DEST, local.read_bytes(), "managed", True), "The visual Product Studio app was installed from this MACH checkout's own build."
+        return Item(program.dest, local.read_bytes(), "managed", True), f"{program.title} was installed from this MACH checkout's own build."
     if args.dry_run:
-        return kept, f"Would download the visual Product Studio app ({studio_asset() or 'no build for this machine'}) from {studio_base(version)}."
+        return kept, f"Would download {lower} ({program_asset(program) or 'no build for this machine'}) from {program_base(program, version)}."
     try:
-        data = download_studio(version)
+        data = download_program(program, version)
+    except NotPublished as exc:
+        tail = " The copy already installed was kept." if kept else ""
+        return kept, f"{program.title} was not installed: {exc}.{tail} {program.without}"
     except Fail as exc:
         tail = " The copy already installed was kept." if kept else ""
-        return kept, (f"The visual Product Studio app was not installed: {exc}.{tail}\n"
-                      "Everything else works without it, including Product Studio in the terminal. Run the installer again to retry.")
-    return Item(STUDIO_DEST, data, "managed", True), f"The visual Product Studio app was downloaded and checked ({studio_asset()}, MACH {version})."
+        return kept, f"{program.title} was not installed: {exc}.{tail}\n{program.without} Run the installer again to retry."
+    return Item(program.dest, data, "managed", True), f"{program.title} was downloaded and checked ({program_asset(program)}, MACH {version})."
+
+
+def studio_item(root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[Optional[Item], str]:
+    return program_item(STUDIO, root, project, version, args)
+
+
+def program_items(root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[List[Item], str]:
+    """Every prebuilt program (the visual Product Studio app, the Control Tower), and their notes."""
+    items: List[Item] = []
+    notes: List[str] = []
+    for program in PROGRAMS:
+        item, note = program_item(program, root, project, version, args)
+        items += [item] if item else []
+        notes.append(note)
+    return items, "\n".join(notes)
 
 
 def scaffold_items(root: Path, project: Path) -> List[Item]:
@@ -361,8 +432,8 @@ def cmd_install(args: argparse.Namespace) -> int:
     if not args.no_scaffold:
         items += scaffold_items(root, project)
         components.append("scaffold")
-        studio, note = studio_item(root, project, version, args)
-        items += [studio] if studio else []
+        programs, note = program_items(root, project, version, args)
+        items += programs
     code = apply(project, items, components, version, args)
     print(f"\n{note}" if note else "", end="\n" if note else "")
     return code
@@ -374,8 +445,8 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
     project = args.project.resolve()
     if not project.is_dir():
         raise Fail(f"{project} is not a folder.")
-    studio, note = studio_item(root, project, version, args)
-    code = apply(project, scaffold_items(root, project) + ([studio] if studio else []), ["scaffold"], version, args)
+    programs, note = program_items(root, project, version, args)
+    code = apply(project, scaffold_items(root, project) + programs, ["scaffold"], version, args)
     print(f"\n{note}")
     return code
 
@@ -483,6 +554,15 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"    changed  {dest}")
     for dest in missing:
         print(f"    missing  {dest}")
+    for program in PROGRAMS:
+        path = project / program.dest
+        if program.dest not in files:
+            state = "present, not installed by MACH" if path.is_file() else "not installed"
+        elif not path.is_file():
+            state = "missing"
+        else:
+            state = "installed" if sha(path.read_bytes()) == files[program.dest] else "installed, changed since"
+        print(f"  {program.name + ':':<15} {state} ({program.dest})")
     print(f"  Cells:      {len(cells)}")
     for path in cells:
         try:
@@ -507,10 +587,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     common(p)
     p.add_argument("--no-scaffold", action="store_true", help="install only the skills and agents")
     p.add_argument("--no-studio", action="store_true", help="do not download the visual Product Studio app")
+    p.add_argument("--no-tower", action="store_true", help="do not download the Control Tower (the Factory's read-only observer)")
     p.set_defaults(func=cmd_install)
     p = sub.add_parser("scaffold", help="create only the factory files (for projects that use the MACH plugin)")
     common(p)
     p.add_argument("--no-studio", action="store_true", help="do not download the visual Product Studio app")
+    p.add_argument("--no-tower", action="store_true", help="do not download the Control Tower (the Factory's read-only observer)")
     p.set_defaults(func=cmd_scaffold)
     p = sub.add_parser("uninstall", help="remove what MACH installed; your tickets, specs and cells are kept")
     common(p)

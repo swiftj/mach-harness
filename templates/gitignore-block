@@ -21,3 +21,5 @@
 .factory/bin/__pycache__/
 # The visual Product Studio's host program: built for one machine, fetched by the installer.
 .factory/bin/mach-studio
+# The Control Tower's read-only observer: built for one machine, fetched by the installer.
+.factory/bin/mach-observer
