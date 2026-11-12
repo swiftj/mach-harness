@@ -192,8 +192,6 @@ export function Shell() {
   const [resizing, setResizing] = useState(false);
   const [help, setHelp] = useState(false);
   const helpOpener = useRef<Element | null>(null);
-  // The Atlas's experimental WebGL light layer: off by default, switched on in the help sheet.
-  const [light, setLight] = useState(false);
   const helpRef = useRef(help);
   useEffect(() => {
     helpRef.current = help;
@@ -313,7 +311,7 @@ export function Shell() {
       <main id="stage" tabIndex={-1} aria-label={`${stageLabel} (simulation)`} className="relative min-h-0 min-w-0 overflow-hidden bg-factory-ground outline-none [grid-area:stage]">
         {/* In Theater Mode the views are inset by two strips that hold the Theater chrome. */}
         <div className="absolute inset-x-0" style={{ top: theater ? THEATER_TOP : 0, bottom: theater ? THEATER_BOTTOM : 0 }}>
-          <Stage light={light} />
+          <Stage />
         </div>
         {theater ? <TheaterOverlay /> : null}
       </main>
@@ -362,7 +360,7 @@ export function Shell() {
       </section>
 
       <Announcer />
-      <HelpSheet open={help} onOpenChange={setHelp} light={light} onLight={setLight} opener={helpOpener} />
+      <HelpSheet open={help} onOpenChange={setHelp} opener={helpOpener} />
     </div>
   );
 }

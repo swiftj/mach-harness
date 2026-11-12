@@ -11,8 +11,6 @@ import type { PlantLayout } from "./layout";
 export interface AtlasContextValue {
   lod: Lod;
   layout: PlantLayout;
-  /** The WebGL light layer is drawing the lamp pools; the SVG pools switch off. */
-  lightLayer: boolean;
   /** Tickets whose bays are drawn whole, with their hit targets (bays out of view are plates only). */
   visibleBays: ReadonlySet<string>;
 }

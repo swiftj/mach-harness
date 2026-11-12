@@ -2,9 +2,8 @@
  * The keyboard help (`?`): every shortcut, rendered from the same table the handler uses, plus the
  * legend of the timeline's marks.
  */
-import { useId, type RefObject } from "react";
-import { cn, Dialog, DialogContent, Kbd } from "@mach/ui";
-import { useSceneStore } from "../scene";
+import { type RefObject } from "react";
+import { Dialog, DialogContent, Kbd } from "@mach/ui";
 import { KEYMAP, type KeyBinding } from "./keyboard";
 import { StateGlyph } from "./glyphs";
 import { TelemetryBadge } from "./inspector/parts";
@@ -29,39 +28,7 @@ function Keys({ keys }: { keys: string[] }) {
   );
 }
 
-function LightSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
-  const reduced = useSceneStore((s) => s.reducedMotion);
-  const id = useId();
-  return (
-    <div className="flex items-start justify-between gap-6 rounded-sm border border-dashed border-line-strong px-4 py-3">
-      <div className="min-w-0">
-        <label htmlFor={id} className="text-label text-ink">
-          Experimental light layer (WebGL)
-        </label>
-        <p id={`${id}-d`} className="mt-0.5 text-body-sm text-ink-muted">
-          Optional, off by default, decoration only. Adds soft light to the Atlas on a WebGL canvas: a glow under working cells' lamps (standing in for the drawing's own lamp pools while it is on), short trails behind travelling packets, and a wash on a gate that refuses. It shows nothing the drawing does not already say. Loaded only when switched on.
-          {reduced ? " Your system asks for reduced motion, so the layer stays off." : ""}
-        </p>
-      </div>
-      <button
-        id={id}
-        type="button"
-        role="switch"
-        aria-checked={on}
-        aria-describedby={`${id}-d`}
-        onClick={() => onChange(!on)}
-        className={cn(
-          "relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors duration-[var(--mach-duration-fast)]",
-          on ? "border-accent-fill bg-accent-fill" : "border-line-strong bg-surface-sunken",
-        )}
-      >
-        <span className={cn("inline-block size-3.5 rounded-full shadow-1 transition-transform duration-[var(--mach-duration-fast)]", on ? "translate-x-[17px] bg-ink-on-accent" : "translate-x-[2px] bg-ink-muted")} />
-      </button>
-    </div>
-  );
-}
-
-export function HelpSheet({ open, onOpenChange, light, onLight, opener }: { open: boolean; onOpenChange: (open: boolean) => void; light: boolean; onLight: (on: boolean) => void; opener?: RefObject<Element | null> }) {
+export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpenChange: (open: boolean) => void; opener?: RefObject<Element | null> }) {
   // DialogContent returns focus to whatever had it when the sheet opened, by key or by button, but only
   // to an HTML element (@mach/ui focus-return.ts checks `instanceof HTMLElement`). The views' entities
   // and the Blueprint's tree items are SVG elements, so the shell's record of the opener is used for
@@ -110,7 +77,6 @@ export function HelpSheet({ open, onOpenChange, light, onLight, opener }: { open
             <h3 id="display" className="mb-2 text-label text-ink">
               Display
             </h3>
-            <LightSwitch on={light} onChange={onLight} />
           </section>
           <section aria-labelledby="legend" className="md:col-span-2">
             <h3 id="legend" className="mb-2 text-label text-ink">

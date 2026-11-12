@@ -18,12 +18,9 @@
  *
  * Under reduced motion the switch is a cut (spec c.6, f.12): the prepared view replaces the old one in
  * the same frame, and the announcer's live region says which view is up.
- *
- * The Atlas's optional WebGL light layer (src/effects) is passed in only when the person switches it
- * on in the help sheet; its code is a separate chunk, loaded the first time it is switched on.
  */
-import { lazy, memo, startTransition, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AtlasView, type AtlasEffects } from "../atlas";
+import { memo, startTransition, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { AtlasView } from "../atlas";
 import { BlueprintView } from "../blueprint";
 import { SceneStoreProvider, useSceneStore, useStore, type SceneStore, type ViewMode } from "../scene";
 import { isScrubbing, onScrubbing } from "./scrub";
@@ -48,16 +45,8 @@ function entering(mode: ViewMode): { frames: Keyframe[]; options: KeyframeAnimat
     : { frames: [{ opacity: 0, transform: "scale(0.985)" }, { opacity: 1, transform: "scale(1)" }], options: { duration: 400, delay: 300, easing: EASE, fill: "both" } };
 }
 
-const LazyLight = lazy(() => import("../effects").then((m) => ({ default: m.PixiEffects })));
-/** The light layer behind a Suspense boundary, so the Atlas draws at once while the chunk loads. */
-const LightLayer: AtlasEffects = (props) => (
-  <Suspense fallback={null}>
-    <LazyLight {...props} />
-  </Suspense>
-);
-
-const View = memo(function View({ mode, light }: { mode: ViewMode; light: boolean }) {
-  return mode === "atlas" ? <AtlasView effects={light ? LightLayer : undefined} /> : <BlueprintView />;
+const View = memo(function View({ mode }: { mode: ViewMode }) {
+  return mode === "atlas" ? <AtlasView /> : <BlueprintView />;
 });
 
 /**
@@ -168,7 +157,7 @@ function clearLayer(el: HTMLElement | null) {
   el.style.opacity = "";
 }
 
-export function Stage({ light = false }: { light?: boolean }) {
+export function Stage() {
   const view = useSceneStore((s) => s.view);
   const reduced = useSceneStore((s) => s.reducedMotion);
   const store = useStore();
@@ -355,7 +344,7 @@ export function Stage({ light = false }: { light?: boolean }) {
             style={{ visibility: visible ? "visible" : "hidden", zIndex: active ? 1 : 0 }}
           >
             <SceneStoreProvider store={stores[m]}>
-              <View mode={m} light={light} />
+              <View mode={m} />
             </SceneStoreProvider>
           </div>
         );

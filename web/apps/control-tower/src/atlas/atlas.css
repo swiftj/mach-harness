@@ -62,11 +62,6 @@
 .atlas-chip-solid {
   fill-opacity: 1;
 }
-.atlas-effects {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
 .atlas-controls {
   position: absolute;
   right: 16px;
@@ -114,18 +109,5 @@
 .atlas-sheet {
   position: absolute;
   inset: 0;
-  pointer-events: none;
-}
-.atlas-effects-layer {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-.atlas-effects-layer canvas {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: block;
   pointer-events: none;
 }

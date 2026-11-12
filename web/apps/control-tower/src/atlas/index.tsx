@@ -8,16 +8,15 @@
  *   ├ camera wrapper (one CSS transform)
  *   │ ├ L1 <svg> scene: ground, plates, tracks, bays, works, air
  *   │ └ L3 <svg> overlay: brackets, focus ring, labels, callouts (pointer-events: none)
- *   ├ L2 effects slot (optional, src/effects): a light layer between scene and overlay, given the camera
  *   ├ overlay wrapper (the same transform)
  *   └ L4 DOM: zoom controls, dev frame meter
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { FactoryScene, factoryTokens, lodForZoom, screenBounds, type Lod, type RegionKind } from "@mach/ui";
 import { cameraFollows, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
 import { refKind, sceneAt, type EntityRef, type Scene } from "../sim";
 import { AtlasContext, useHighlight, type AtlasContextValue } from "./context";
-import { createCamera, frame, visibleRect, zoomAt, type Camera, type CameraStore, type ScreenRect } from "./camera";
+import { createCamera, frame, visibleRect, zoomAt, type Camera, type ScreenRect } from "./camera";
 import { PLATE_Z, plantLayout, type PlantLayout } from "./layout";
 import { Plant } from "./Plant";
 import { Bay, FreeBay } from "./Bay";
@@ -31,12 +30,7 @@ import { activeMembers, followDecision, withGrace } from "./follow";
 import { Sheet } from "./Sheet";
 import "./atlas.css";
 
-/** A later light layer (WebGL) mounts here: it gets the camera store and must stay decoration only. */
-export type AtlasEffects = ComponentType<{ camera: CameraStore; layout: PlantLayout; onActive?: (on: boolean) => void }>;
-
 export interface AtlasViewProps {
-  /** Optional decoration layer drawn between the scene and the overlay, aligned to the same camera. */
-  effects?: AtlasEffects;
   /** Show the development frame meter (default: development builds with `?meter`). */
   meter?: boolean;
 }
@@ -97,7 +91,7 @@ function FreeBays({ layout }: { layout: PlantLayout }) {
   );
 }
 
-export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
+export function AtlasView({ meter }: AtlasViewProps = {}) {
   const store = useStore();
   const fixture = useSceneStore((s) => s.fixture);
   const layout = useMemo(() => plantLayout(fixture), [fixture]);
@@ -125,7 +119,6 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
   const followBase = useRef<number | null>(null);
   const followSeen = useRef(new Map<string, { t: number; rect: ScreenRect }>());
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
-  const [lightLayer, setLightLayer] = useState(false);
   const [atFit, setAtFit] = useState(true);
   // The visible stage for the overlay (callouts stay inside it), quantised to 24 screen px so the
   // overlay re-places only when an edge has moved that far, not with every pixel of a pan.
@@ -450,7 +443,7 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
   const theater = useSceneStore((s) => s.theater);
   const showMeter = meter ?? (import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).has("meter"));
   const visible = useMemo(() => new Set(visibleBays === "*" ? layout.bays.map((b) => b.ticketId) : visibleBays.split(",")), [visibleBays, layout]);
-  const ctx = useMemo<AtlasContextValue>(() => ({ lod, layout, lightLayer: Boolean(Effects) && lightLayer, visibleBays: visible }), [lod, layout, lightLayer, Effects, visible]);
+  const ctx = useMemo<AtlasContextValue>(() => ({ lod, layout, visibleBays: visible }), [lod, layout, visible]);
   // The stage inside the sheet's border (28 px) and clear of the camera toolbar, in projected units.
   const overlayView = useMemo<OverlayView | null>(() => {
     if (!viewKey) return null;
@@ -510,10 +503,6 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
             <Transit />
             <Dependencies />
           </FactoryScene>
-        </div>
-        {/* L2: the optional light layer, between the scene and the overlay; it takes the camera itself. */}
-        <div className="atlas-effects" aria-hidden="true">
-          {Effects ? <Effects camera={camera} layout={layout} onActive={setLightLayer} /> : null}
         </div>
         <div ref={overlayRef} className="atlas-camera atlas-camera-overlay">
           <svg className="atlas-overlay" aria-hidden="true" width={bounds.width} height={bounds.height} viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`} style={{ left: bounds.x, top: bounds.y }}>

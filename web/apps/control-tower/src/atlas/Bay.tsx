@@ -136,7 +136,7 @@ export function FreeBay({ slot, maxParallel }: { slot: { x: number; y: number; i
 }
 
 function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visible: boolean }) {
-  const { lod, layout: L, lightLayer } = useAtlas();
+  const { lod, layout: L } = useAtlas();
   const highlight = useHighlight();
   const ticket = cell.ticketId;
   // Re-render with the playhead only while one of this cell's animations runs.
@@ -164,7 +164,7 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   const { x, y } = bay.origin;
   const cellRef = ref.cell(cell.ticketId);
   const dimCell = isDimmed(highlight, cellRef);
-  const lamp = lightLayer ? 0 : q(lampLevel(cell, t, reduced));
+  const lamp = q(lampLevel(cell, t, reduced));
   // Work in flight is "working, for this long" (spec principle 7): elapsed, never a fill.
   const visit = cell.station ? cell.visits[cell.visits.length - 1] : undefined;
   const stationElapsed = visit && visit.leftAt === null ? visitTimingAt(visit, t).elapsed : undefined;

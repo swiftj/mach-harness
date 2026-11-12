@@ -271,7 +271,7 @@ export function ChamberWorks() {
       {round_ && lod !== "far" ? (
         <>
           <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 20, z: PLATE_Z }} text={`${occ!.cell.ticketId} · R${round_.round}`} size={8.5} font="mono" tone={round_.delta ? "live" : "muted"} weight={600} decorative />
-          <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 31, z: PLATE_Z }} text={`${round_.approvalsNeeded} OF 3 NEEDED`} size={7.5} font="mono" tone={round_.delta ? "live" : "muted"} weight={600} decorative />
+          <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 31, z: PLATE_Z }} text={`${round_.approvalsNeeded} OF ${round_.seats.length} NEEDED`} size={7.5} font="mono" tone={round_.delta ? "live" : "muted"} weight={600} decorative />
         </>
       ) : null}
       {round_?.delta && lod !== "far" ? (
