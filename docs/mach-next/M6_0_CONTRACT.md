@@ -40,7 +40,7 @@ Lifecycle states of a cell follow the real stages: `interview`, `spec-ready`, `p
 
 ## 4. Events
 
-The fixture is a list of events in the envelope of the real Factory event (`docs/mach-next/schemas/factory-event.schema.json`, version 2): `event_version`, `seq`, `at`, `kind`, `wave_id`, `slice_id`, `ticket_id`, `runner_id`, `execution_id`, `source`, `cause`, `refs`.
+The fixture is a list of events in the envelope of the real Factory event (`docs/mach-next/schemas/factory-event.schema.json`, version 2): `schema_version`, `seq`, `at`, `type`, `wave_id`, `slice_id`, `ticket_id`, `runner_id`, `execution_id`, `source`, `cause`, `refs`.
 
 - Where a real event kind exists (M3 intake and scheduling, M4 supervisor and executions), the fixture uses it unchanged.
 - Where the experience needs something the Factory does not emit today (station progress inside an execution, agent start and stop, tool calls, artifacts written, test results, votes), the simulation owner defines a kind and records it in an **event catalog** with `telemetry: "exists" | "derivable" | "missing"` and where it could come from. That catalog is the input to the telemetry-gap findings.
