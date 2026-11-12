@@ -76,7 +76,6 @@ Wording follows the skill's first guardrail: no Git, branch, commit, JSON or has
 - It does not enable, start, schedule or observe Factory execution. That stays `run.py factory …` on an engineer's machine, off by default (M4).
 - It does not install a background service, a login item or a Git hook. The host runs while the session that started it runs.
 - It does not add product state. Everything is the M1/M2 workspace under `.factory/studio/`, git-ignored, plus `interviews/` beside it.
-- It does not ship a prebuilt binary. See section 7.
 
 ## 6. Verification
 
@@ -84,8 +83,8 @@ Recorded in the M5 completion report. In short: Python suites for the engine and
 
 ## 7. Open decisions
 
-1. **Distribution.** A product manager without Go and Node cannot build the host. Options: prebuilt, signed binaries per platform attached to MACH releases and fetched by the installer; or building at install time where the tools exist. Until decided, the app is available from a checkout of this repository after `make build` in `apps/studio`, and the skill says so plainly when the program is absent.
-2. **Supervisor hardening on M4.** The restricted-mode execution fix (`bbe5aee`) is on this branch only. The pushed M4 branch still has the weaker flags.
+1. **Distribution: decided.** Prebuilt host programs for macOS and Linux (arm64 and amd64) are attached to each GitHub release by the `release` workflow, with `SHA256SUMS` and a build provenance attestation. `bin/mach install` and `scaffold` download the one for the machine from the release matching the installed version, check its SHA-256, and place it at `.factory/bin/mach-studio`; a failed download never fails the install. The checksum comes from the same release, so it proves the file arrived intact, not who built it; the attestation covers that for anyone who wants to check. Windows has no build.
+2. **Supervisor hardening.** The restricted-mode execution fix (`bbe5aee`) reached `main` with the MACH Next merge. The separate M4 branch still has the weaker flags and should not be used on its own.
 3. **Conversation history.** The specification is the record of an interview. Whether the full conversation should also be kept, and for how long, is a product and privacy choice.
 
 ## 8. For M6

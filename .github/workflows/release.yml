@@ -1,0 +1,65 @@
+# Publishes a MACH release when a version tag is pushed: the visual Product Studio's host program,
+# built for each supported machine with the web app embedded, plus SHA256SUMS. The installer
+# (bin/mach) downloads the file for the person's machine from this release and checks it against
+# SHA256SUMS, so the file names here and in bin/mach must stay the same.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write        # create the release and attach files
+  id-token: write        # sign the build provenance
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag must match the plugin's version
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match .claude-plugin/plugin.json version $version" >&2
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/studio/go.mod
+          cache-dependency-path: apps/studio/go.mod
+
+      - name: Test the engine, the installer and the host
+        run: |
+          python3 -m unittest tests.test_installer tests.test_mach_product_studio tests.test_mach_product_host
+          cd apps/studio && go vet ./... && go test ./...
+
+      - name: Build the host for every supported machine
+        run: |
+          mkdir -p dist
+          (cd web && pnpm install --frozen-lockfile)
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
+            SKIP_INSTALL=1 CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} \
+              OUT="$PWD/dist/mach-studio-${target%/*}-${target#*/}" sh apps/studio/build.sh
+          done
+          (cd dist && sha256sum mach-studio-* > SHA256SUMS && cat SHA256SUMS)
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/mach-studio-*
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "MACH ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag

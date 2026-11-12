@@ -63,7 +63,7 @@ export function createWorld({ claude = "fake", turns, clones = ["pm"] } = {}) {
   writeFileSync(join(eng, "app.py"), "print('hello')\n");
   git(eng, env, "add", "-A");
   git(eng, env, "commit", "-q", "-m", "start");
-  execFileSync(python, [machCli, "scaffold", "--project", eng], { env, stdio: "ignore" });
+  execFileSync(python, [machCli, "scaffold", "--no-studio", "--project", eng], { env, stdio: "ignore" });
   git(eng, env, "add", "-A");
   git(eng, env, "commit", "-q", "-m", "scaffold MACH");
   git(eng, env, "push", "-q", "origin", "main");
