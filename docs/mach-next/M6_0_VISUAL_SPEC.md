@@ -258,13 +258,13 @@ The Blueprint draws the whole belt from the start, so most of it is, at first, n
 
 Shared: every symbol, head shape, state mark, ink, tint, type face and role; selection is the terracotta bracket (Atlas) or bar (Blueprint); the playhead is one.
 
-**The mode switch** ("the drawing folds flat"), 700 ms in all (`modeSwitch`), standard easing, interface motion (`motion/react`). M6.0 moves the two views **as wholes**; no entity travels on its own:
+**The mode switch** ("the drawing folds flat"), 700 ms in all (`modeSwitch`), standard easing, interface motion. M6.0 moves the two views **as wholes**; no entity travels on its own. The fold is **flat**: it animates only opacity and a 2D transform (no 3D tilt, no perspective), so it runs on the compositor:
 
-1. 0–300 ms: the outgoing view leaves. Atlas to Blueprint: the Atlas folds down onto the sheet (it tilts back and flattens) and fades. Blueprint to Atlas: the sheet fades.
-2. From about 300 ms, ending at 700 ms: the incoming view arrives (it may start while the outgoing one is still fading). The Blueprint sheet fades in over the folded Atlas; on the way back, the Atlas unfolds from the flat sheet and fades in.
-3. Both views exist only during the switch; then the outgoing one unmounts.
+1. 0–300 ms: the outgoing view leaves. Atlas to Blueprint: the Atlas folds down onto the sheet (it sinks a little and squashes towards its front edge) and fades. Blueprint to Atlas: the sheet fades.
+2. Ending at 700 ms: the incoming view arrives, overlapping the outgoing one's fade. Atlas to Blueprint: from 300 ms the sheet fades in over the folded Atlas, settling from a scale of 0.985. Blueprint to Atlas: from 200 ms the Atlas unfolds from its folded pose and fades in.
+3. **Both views stay mounted.** The view not on the stage is prepared while the browser is idle, kept laid out but hidden and inert, and receives the store's changes at most once every 500 ms; a switch therefore never mounts a view or computes its layout. Shown again, it is brought up to date at once.
 
-How the fold is drawn (a 3D tilt and flatten, or a flat squash and cross-fade) is the shell's choice within these phases and the mode-switch budget of section g (no frame over 24 ms). The selected entity stays selected and is kept in view on both sides: after the switch the incoming view frames the selection, and keyboard focus moves to its canvas if it was in the outgoing view. **Reduced motion: a cut.** The new mode replaces the old in one frame, with no travel and no cross-fade; focus stays on the selected entity (or the canvas) and the polite live region announces "Factory Atlas" or "Execution Blueprint". A cut is the honest reading of "reduce motion": a cross-fade is still motion, and the announcement carries the change.
+The selected entity stays selected and is kept in view on both sides: after the switch the incoming view frames the selection, and keyboard focus moves to its canvas if it was in the outgoing view. **Reduced motion: a cut.** The new mode replaces the old in one frame, with no travel and no cross-fade; focus stays on the selected entity (or the canvas) and the polite live region announces "Factory Atlas" or "Execution Blueprint". A cut is the honest reading of "reduce motion": a cross-fade is still motion, and the announcement carries the change.
 
 > **Deferred: per-entity travel.** An earlier draft of this section had each entity's screen position interpolate from `project(atlasPoint)` to its Blueprint position (a FLIP on entity centres), with Atlas glyphs cross-fading into their Blueprint forms in place. It is not built in M6.0 and may be taken up later. Its cost: both views' layouts must be available to one coordinator at the same moment (today each view keeps its layout, camera and culling to itself, and the Blueprint's layout is computed when it mounts); every entity needs a matching form in both views, though many have none (tool ticks, the ticker, the sheet's furniture); several hundred elements would move under transforms each frame, against a budget the whole-view fold already misses on the first switch (`M6_0_FINDINGS.md` 2.4); and the moving layer would have to keep its accessible names and focus valid mid-flight. Until it is built, nothing in this file or in the views may depend on it.
 
@@ -329,7 +329,7 @@ Labels never overlap a machine or another label. In order of preference:
 
 **Agent labels in the overlay.** Agent labels are drawn in the overlay layer (L3), never in the depth-sorted scene. Each label is two lines, role (sans 10 semibold) and tier (sans 9 `ink-muted`), anchored 16 px under the agent's floor disc. When two or more agents share a machine, their labels **stack** under the machine's agent spot: ordered by seat from left to right on screen (then by start time), 24 px per label pitch, the first at 16 px under the leftmost disc, left-aligned on a common x; at most three labels, then one line "+n more" in `ink-muted`. A stacked label is joined to its agent by a hairline leader (0.75 px `plate-edge`) only when the label is more than 20 px from its disc.
 
-**Callout placement** (deterministic, so the same frame always looks the same). Callouts are placed in priority order: escalation, failure, waiting for a person, selection, event under the playhead. For each callout, try these leader directions in order, with leader lengths 36 then 64 px: up-right (45°), up-left, right (horizontal, shoulder only), left, down-right, down-left. Take the first whose leader and label box (estimated as 6.2 px per character at 10.5 px, two lines 30 px tall) intersect none of: machines, gates, agents, agent labels and callouts already placed (screen bounds, 4 px padding). If none is clear, use up-right at 64 px. Never move a callout because the camera moved within the same zoom level; re-place only on a zoom-level change or when its target moves.
+**Callout placement** (deterministic, so the same frame always looks the same). Callouts are placed in priority order: escalation, failure, waiting for a person, selection, event under the playhead. For each callout, try these leader directions in order, with leader lengths 36 then 64 px: up-right (45°), up-left, right (horizontal, shoulder only), left, down-right, down-left. Take the first whose leader and label box (estimated as 6.2 px per character at 10.5 px, two lines 30 px tall) stay inside the visible stage and intersect none of: machines, gates, agents, agent labels, findings flags and callouts already placed (screen bounds, 4 px padding). Failing that, take the first that stays inside the stage; then the first that is clear; then up-right at 64 px. A callout is never clipped by the stage edge. Never move a callout with every pixel of a pan: re-place it on a zoom-level change, when its target moves, or when panning brings a stage edge across it (the visible stage is measured in 24 px steps, so a callout moves only at those steps).
 
 **Plan dimensions** (`PlanDimension`) letter real measures on the floor (a bay's width, the parallel limit across a row, "max 3 parallel"): extension lines, slash ticks and the value in mono 8 along the line. Never decorative.
 
@@ -385,7 +385,7 @@ Reduced motion: `snap` means the end state appears at the event time (progress 1
 | `cellComplete` | Cell merged / archived | 900 | settle | Floor settles to `done` (opacity 0 to 1); lamp off; machines settle; mast to double ring | fade |
 | `stateChange` | Any state change without its own animation | 260 | standard | Cross-fade of tint and mark | snap |
 
-**Interface motion** (motion/react, not factory progress): camera focus 650 ms standard; mode switch 700 ms; inspector open 260 ms enter; lane expand 400 ms standard; hover 120 ms.
+**Interface motion** (not factory progress; drawn with `motion/react`, the Web Animations API or CSS): camera focus 650 ms standard; mode switch 700 ms; inspector open 260 ms enter; lane expand 400 ms standard; hover 120 ms.
 
 ### e.1 Motion budget
 
@@ -411,13 +411,14 @@ One camera `{ x, y, zoom }` (screen translation and scale) applied as a CSS `tra
 
 - **Zoom** 0.35 to 3 (`factoryTokens.zoom`). Wheel/pinch: zoom × 1.0015^(−deltaY), clamped. Buttons and keys: × or ÷ 1.2.
 - **Zoom to cursor**: the world point under the pointer stays fixed: `x' = cx − (cx − x) × zoom'/zoom`, same for y.
-- **Pan**: drag with the primary button on empty ground, or two-finger scroll; Shift + arrow keys pan 80 px. Pan is clamped so at least 20% of the plant's bounds stays on screen.
-- **Semantic zoom**: thresholds 0.6 and 1.4 with hysteresis 0.05 (b.7).
+- **Pan**: drag with the primary button on empty ground, or two-finger scroll; Shift + arrow keys pan 80 px. Atlas: pan is clamped so at least 20% of the plant's bounds stays on screen.
+- **Blueprint: the sheet is paper on a desk.** Along each axis, a sheet longer than the stage at the current zoom is clamped so its edges never come inside the stage's edges (no empty desk on one side while there is drawing beyond the other); a sheet shorter than the stage is centred on that axis.
+- **Semantic zoom**: Atlas thresholds 0.6 and 1.4 with hysteresis 0.05 (b.7). Blueprint: below 0.55 (where "Fit" lands on a landscape stage) the sheet draws a simplified overview: the same nodes in the same places as the grammar's state marks set large, heavy routes, and a word only on the outcomes that matter; the full drawing returns above 0.6; near detail above 1.4.
 
 ### f.2 Focus and selection
 
 - **Selection** (click, Enter, Space) marks one entity: brackets in the Atlas, lane bar or ring in the Blueprint, the inspector shows it. Selection never moves the camera.
-- **Focus** (double-click, F, or "Focus" in the inspector) moves the camera to frame the selection: bounds of the entity (a cell: its plate plus 40 pu; a station: its cell; an agent: its station and the agent), padded by 64 px or 12% of the viewport (whichever is larger), zoom = min(fit, 2.2) and not below the current level's lower threshold for that entity type (cells mid, stations and agents near). Duration 650 ms, standard ease, interpolating x, y and log(zoom). Reduced motion: instant.
+- **Focus** (double-click, F, or "Focus" in the inspector) moves the camera to frame the selection: bounds of the entity (a cell: its plate plus 40 pu; a station: its cell; an agent: its station and the agent), padded by 64 px or 12% of the viewport (whichever is larger), zoom = min(fit, 2.2) and not below the current level's lower threshold for that entity type (cells mid, stations and agents near). In the Blueprint the framed target is kept clear of the parts pinned over the stage (the zone ruler and column head along the top, the lanes' gutter along the left), focus never zooms out below 0.62 (so a focused target never drops to the overview drawing), a target taller than the stage is anchored at its top, and the result is clamped as in f.1. Duration 650 ms, standard ease, interpolating x, y and log(zoom). Reduced motion: instant.
 - **Hover** shows the upright label at any zoom and a 120 ms outline +0.5 px.
 
 ### f.3 Follow mode (live playback)
@@ -437,7 +438,7 @@ Hovering or selecting a cell, slice or dependency link highlights its **dependen
 
 ### f.5 Blueprint expansion
 
-Click the disclosure chevron to expand or collapse a lane. By keyboard (the Blueprint is a tree, f.10): `→` opens a closed lane or moves into an open one, `←` closes it or moves to its parent, and `Alt+→` / `Alt+←` open and close the focused lane without moving; `Enter` selects, as everywhere. There is no expand-all key (f.10). Expansion animates per c.2.
+Click the disclosure chevron to expand or collapse a lane. By keyboard the Blueprint is a standard ARIA tree (f.10): `↑` / `↓` move through the visible items in reading order; `→` opens a closed item or moves into an open one; `←` closes an open item or moves out to its parent; `Alt+→` / `Alt+←` open and close the focused item without moving; `Home` / `End` go to the first and last visible item; `Enter` or `Space` selects; `*` opens every sibling of the focused item (on a lane, every lane of the wave). Expansion animates per c.2.
 
 ### f.6 Mode switch
 
@@ -451,7 +452,7 @@ Key `T` or the button in the top bar. Hidden: the top bar, the inspector, entity
 
 ### f.8 Timeline
 
-Docked at the bottom. **By default it is a compact summary**: the transport and one summary track of the whole run (chapter flags and the playhead), low enough that the stage keeps most of the window. The person can **expand** it to show the per-cell tracks below, **resize** it by dragging its top edge or with the up and down arrow keys on that edge (whose target is at least 24 px tall, WCAG 2.2 target size), and **collapse** it to the transport row alone. `Shift+T` expands or collapses it. Its exact heights are the shell's; none of them may hide the transport or the playhead.
+Docked at the bottom. **By default it is a compact summary**: the transport, the chapter ruler (the playhead slider with numbered chapter flags), the time axis and one summary row of every track, low enough that the stage keeps most of the window. A chapter's title appears on its flag only once the playhead has reached it; before that the flag is a number (its tooltip and accessible name say "not reached yet"), so no future chapter is named early. The person can **expand** it to show the per-cell tracks below, **resize** it by dragging its top edge or with the up and down arrow keys on that edge (whose target is at least 24 px tall, WCAG 2.2 target size), and **collapse** it to the transport row alone (on a window under 600 px high it starts collapsed). `Shift+T` expands or collapses it. Its exact heights are the shell's; none of them may hide the transport or the playhead.
 
 - **Tracks** (expanded): one per cell (ticket ID in mono at the left, 160 px gutter), a gates track, a people track. Station spans are bars 6 px high in the station's state tint with the state ink at their ends; gate events are diamonds; people's acts are terracotta triangles; failures are fail-ink ticks that extend through the track.
 - **Markers**: the scenario's chapter marks (wave arrives, first failure, human gate, merge) as labelled flags above the tracks.
@@ -461,7 +462,7 @@ Docked at the bottom. **By default it is a compact summary**: the transport and 
 
 ### f.9 Inspector
 
-A right sheet, 400 px, opening over 260 ms (`slow`, enter). Anatomy for every entity:
+A column at the right, beside the stage: 344 px wide, 368 px on windows 1680 px and wider. Below 1280 px it is a drawer over the stage, at most 392 px wide (and never wider than the window less 32 px), stopping at the timeline so the transport stays in reach, opening when something is selected, sliding in over 260 ms (`slow`, enter). `I` or the top bar's button shows and hides it. Anatomy for every entity:
 
 1. **Header**: its glyph at 24, its name (ticket title, station name, agent role), its ID (mono), the state mark and word.
 2. **Why it looks like this**: the event that set its current state: kind, `seq`, `at`, source; and a "Go to event" button that moves the playhead to it.
@@ -478,7 +479,7 @@ A right sheet, 400 px, opening over 260 ms (`slow`, enter). Anatomy for every en
 
 ### f.10 Keyboard map
 
-This is the map that ships (`src/shell/keyboard.ts` generates the help sheet from the same list). Keys in the last group act when a view (Atlas or Blueprint canvas, or the timeline tracks) has focus.
+This is the map that ships (`src/shell/keyboard.ts` generates the help sheet from the same list). The first group works anywhere except in a text field or the open help sheet; the others act when the part they name has focus, and that part's own handling comes first.
 
 | Key | Action |
 |---|---|
@@ -497,22 +498,51 @@ This is the map that ships (`src/shell/keyboard.ts` generates the help sheet fro
 | `I` | Show or hide the inspector |
 | `Shift+T` | Expand or collapse the timeline |
 | `?` | Keyboard help |
-| `+` / `-` / `0` | Zoom in / out / fit (in a view) |
-| `Shift+Arrows` | Pan (in a view) |
-| `Arrows` | Move to the neighbouring entity (in a view): the spatial neighbour in the Atlas, the next node in the lane in the Blueprint |
-| `Enter` | Select the focused entity |
-| `Alt+→` / `Alt+←` | Expand / collapse a lane (Blueprint) |
-| `←` / `→` | Previous / next event (timeline tracks focused) |
 
-Dropped from the first draft: `Tab` between entities (each view is one tab stop; arrows move inside it, f.11) and `*` (expand all; the Blueprint has no need for it with depth defaults).
+In either view (Atlas or Blueprint focused):
+
+| Key | Action |
+|---|---|
+| `+` / `-` / `0` | Zoom in / out / fit |
+| `Shift+Arrows` | Pan |
+| `Enter` / `Space` | Select the focused entity |
+
+Atlas: `Arrows` move to the nearest entity in that direction on screen (f.11).
+
+Blueprint (a tree, f.5):
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Previous / next visible item |
+| `→` | Open the item, or move into it |
+| `←` | Close the item, or move out to its parent |
+| `Alt+→` / `Alt+←` | Open / close without moving |
+| `Home` / `End` | First / last item |
+| `*` | Open every sibling of the focused item (on a lane: every lane of the wave) |
+
+Timeline:
+
+| Key | Action |
+|---|---|
+| `←` / `→` | Previous / next event (playhead slider or tracks focused) |
+| `PageUp` / `PageDown` | Previous / next chapter (playhead slider focused) |
+| `↑` / `↓` | Previous / next track (tracks focused) |
+| `Enter` | Select the focused track's entity (tracks focused) |
+| `Alt+→` (or `*`) / `Alt+←` | Expand / collapse the focused track |
+| `+` / `-` / `0` | Narrow / widen the time window, or show the whole run (tracks focused) |
+| `↑` / `↓`, `Enter` | Taller / shorter timeline; collapse or restore it (its top edge focused) |
+
+Dropped from the first draft: `Tab` between entities (each view is one tab stop; arrows move inside it, f.11).
 
 ### f.11 Focus order
 
-Skip link → top bar (title, mode switch, Theater, theme) → canvas (**one tab stop**; inside it, arrow keys move between entities: in the Atlas to the nearest entity in the arrow's screen direction, ties broken by reading order (regions left to right, then each region's cells by row then column, then within a cell machines in belt order, agents, artifacts); in the Blueprint along and across lanes; the first focus lands on the selection, or else the first active place) → timeline controls → timeline tracks (one tab stop; arrows move between events) → inspector. The focus ring is the design system's (2 px `--mach-focus`, 2 px offset); on SVG entities it is drawn as an extra rounded rectangle around the entity's screen bounds.
+The order in the document, which is the Tab order: skip link → top bar (Theater, inspector, help, the three theme choices, then the mode switch; the title is not a stop) → canvas (**one tab stop**, then the view's own zoom controls) → inspector (its controls and links) → timeline (the resize edge, the transport, the playhead slider and its chapter flags, then the tracks as one tab stop). The inspector comes before the timeline because it follows the stage in the document; Theater Mode makes the top bar, inspector and timeline inert, and a closed inspector is inert.
+
+Inside the canvas, arrow keys move between entities. **Atlas**: to the nearest entity in the arrow's 90° direction on screen (within 45° either side of it), ties broken by reading order (the drawing's order: region by region; within a cell, the cell, its machines, agents and artifacts); if nothing lies in that cone, to the nearest entity in that half of the screen, so an arrow still moves when something lies that way. The view pans just enough to keep the focused entity on screen. **Blueprint**: the tree keys of f.5. Tab lands on the canvas (Atlas) or on the tree's current item (Blueprint: the last item focused or clicked, else the first). In the Atlas the first arrow goes to the entity last focused, else the selection, else the first in reading order. The focus ring is the design system's (2 px `--mach-focus`, 2 px offset); on SVG entities it is drawn as an extra rounded rectangle around the entity's screen bounds.
 
 ### f.12 Reduced motion
 
-All factory animations follow the `reduced` column of section e (no travel, no sweeping arcs, no drawing; end states appear at the event time; fades of 160 ms at most). The camera jumps instead of easing; follow mode re-frames by jumping and at most every 6 s (f.3). The mode switch is a cut (c.6). Playback still runs and the playhead can be stepped event by event with `,` and `.`. Nothing loops in either mode.
+All factory animations follow the `reduced` column of section e (no travel, no sweeping arcs, no drawing; end states appear at the event time; fades of 160 ms at most). The camera jumps instead of easing; follow mode re-frames by jumping and at most every 6 s (f.3). The mode switch is a cut (c.6). Interface CSS motion is removed outright, not shortened: the design system sets `animation: none` and `transition: none` under `prefers-reduced-motion: reduce` (a near-zero duration would still start a transition for every changed SVG property). Playback still runs and the playhead can be stepped event by event with `,` and `.`. Nothing loops in either mode.
 
 ---
 

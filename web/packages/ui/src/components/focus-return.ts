@@ -43,7 +43,8 @@ export function useFocusReturn(): FocusReturn {
     const restore = ((event: Event) => {
       event.preventDefault();
       const target = opener;
-      if (target instanceof HTMLElement && target.isConnected && target !== document.body && !target.closest("[inert]")) {
+      // Openers can be SVG (a tree item or an entity in a drawing), which take focus like any element.
+      if ((target instanceof HTMLElement || target instanceof SVGElement) && target.isConnected && target !== document.body && !target.closest("[inert]")) {
         target.focus();
         // The act the dialog confirmed often replaces its opener a moment later (an Approve button
         // becomes the approved state). Focus would then fall to the page body, so watch briefly.

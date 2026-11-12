@@ -87,22 +87,48 @@ Generated from `src/shell/keyboard.ts` (`KEYMAP`); `?` shows it in the app.
 | `Shift+T` | Expand or collapse the timeline |
 | `?` | This list |
 
-In a view (Atlas or Blueprint focused, or the timeline tracks):
+In either view (Atlas or Blueprint focused):
 
 | Keys | Action |
 |---|---|
 | `+` / `-` / `0` | Zoom in / out / fit |
 | `Shift+Arrows` | Pan |
-| `Arrows` | Move to the neighbouring entity |
-| `Enter` | Select the focused entity |
-| `Alt+→` / `Alt+←` | Expand / collapse a lane (Blueprint) |
-| `←` / `→` | Previous / next event (timeline tracks focused) |
+| `Enter` / `Space` | Select the focused entity |
 
-Each view is one tab stop; arrow keys move inside it. In the Blueprint the arrows follow the ARIA tree pattern (Up and Down through visible items, Right opens or descends, Left closes or ascends).
+Atlas:
+
+| Keys | Action |
+|---|---|
+| `Arrows` | Move to the nearest entity in that direction on screen |
+
+Blueprint (an ARIA tree):
+
+| Keys | Action |
+|---|---|
+| `↑` / `↓` | Previous / next visible item |
+| `→` | Open the item, or move into it |
+| `←` | Close the item, or move out to its parent |
+| `Alt+→` / `Alt+←` | Open / close without moving |
+| `Home` / `End` | First / last item |
+| `*` | Open every sibling of the focused item (on a lane: every lane of the wave) |
+
+Timeline:
+
+| Keys | Action |
+|---|---|
+| `←` / `→` | Previous / next event (playhead or tracks focused) |
+| `PageUp` / `PageDown` | Previous / next chapter (playhead focused) |
+| `↑` / `↓` | Previous / next track (tracks focused) |
+| `Enter` | Select the focused track's entity |
+| `Alt+→` / `Alt+←` | Expand / collapse the focused track (`*` also expands) |
+| `+` / `-` / `0` | Narrow / widen the time window, or show the whole run (tracks focused) |
+| `↑` / `↓` | Taller / shorter timeline (its top edge focused; `Enter` collapses or restores it) |
+
+Each view is one tab stop; arrow keys move inside it. The Tab order is skip link, top bar, the view, the inspector, the timeline.
 
 ## The experimental light layer
 
-The Atlas has an optional WebGL light layer (PixiJS 8, `src/effects`): work-lamp pools with a bloom, packet trails and gate flashes. It is **off by default**; switch it on in the keyboard help sheet (`?`, "Experimental light layer (WebGL)"). Its code is a separate chunk loaded only then. It is decoration only, off under reduced motion and without WebGL, and the drawing is complete without it. The visual design and Atlas owners recommend not shipping it; why, and what would change that, is in `docs/mach-next/M6_0_ARCHITECTURE.md` section 6.2.
+The Atlas has an optional WebGL light layer (PixiJS 8, `src/effects`): work-lamp pools with a bloom, packet trails, and a brief wash on a gate when it refuses (never when it opens). It is **off by default**; switch it on in the keyboard help sheet (`?`, "Experimental light layer (WebGL)"). Its code is a separate chunk loaded only then. It is decoration only, off under reduced motion and without WebGL, and the drawing is complete without it. The visual design and Atlas owners recommend not shipping it; why, and what would change that, is in `docs/mach-next/M6_0_ARCHITECTURE.md` section 6.2.
 
 ## Documents
 

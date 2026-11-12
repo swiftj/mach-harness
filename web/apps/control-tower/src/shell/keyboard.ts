@@ -2,8 +2,11 @@
  * The global keyboard map (M6_0_VISUAL_SPEC.md f.10), implemented once. The help sheet renders the
  * same table, so what is listed is what works.
  *
- * Keys the views own (arrows, Shift+arrows, + - 0, Tab, Enter on an entity, Alt+arrows) are listed
- * for discovery but never handled here, so the views receive them untouched.
+ * Keys the views own (marked `view`: the Atlas's and the Blueprint's arrows, Shift+arrows, + - 0,
+ * Enter and Space on an entity, the Blueprint tree's Home, End, Alt+arrows and `*`, and the timeline's
+ * playhead, tracks and resize edge) are listed for discovery but never handled here: each is bound in
+ * the element that owns it (src/atlas, src/blueprint, src/shell/timeline, the resize edge in Shell.tsx),
+ * which prevents the default so this map skips the event.
  */
 import { useEffect } from "react";
 import { chapterAt, SCENARIO } from "../sim";
@@ -20,7 +23,7 @@ export interface ShellCommands {
 export interface KeyBinding {
   keys: string[];
   action: string;
-  group: "Playback" | "Views" | "Panels" | "In a view";
+  group: "Playback" | "Views" | "Panels" | "In a view" | "Atlas" | "Blueprint" | "Timeline";
   /** Handled by the views, listed for discovery only. */
   view?: true;
 }
@@ -43,10 +46,21 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["?"], action: "This list", group: "Panels" },
   { keys: ["+", "-", "0"], action: "Zoom in / out / fit", group: "In a view", view: true },
   { keys: ["Shift+Arrows"], action: "Pan", group: "In a view", view: true },
-  { keys: ["Arrows"], action: "Move to the neighbouring entity", group: "In a view", view: true },
-  { keys: ["Enter"], action: "Select the focused entity", group: "In a view", view: true },
-  { keys: ["Alt+→", "Alt+←"], action: "Expand / collapse a lane (Blueprint)", group: "In a view", view: true },
-  { keys: ["←", "→"], action: "Previous / next event (timeline tracks focused)", group: "In a view", view: true },
+  { keys: ["Enter", "Space"], action: "Select the focused entity", group: "In a view", view: true },
+  { keys: ["Arrows"], action: "Move to the nearest entity in that direction on screen", group: "Atlas", view: true },
+  { keys: ["↑", "↓"], action: "Previous / next visible item", group: "Blueprint", view: true },
+  { keys: ["→"], action: "Open the item, or move into it", group: "Blueprint", view: true },
+  { keys: ["←"], action: "Close the item, or move out to its parent", group: "Blueprint", view: true },
+  { keys: ["Alt+→", "Alt+←"], action: "Open / close without moving", group: "Blueprint", view: true },
+  { keys: ["Home", "End"], action: "First / last item", group: "Blueprint", view: true },
+  { keys: ["*"], action: "Open every sibling of the focused item (on a lane: every lane of the wave)", group: "Blueprint", view: true },
+  { keys: ["←", "→"], action: "Previous / next event (playhead or tracks focused)", group: "Timeline", view: true },
+  { keys: ["PageUp", "PageDown"], action: "Previous / next chapter (playhead focused)", group: "Timeline", view: true },
+  { keys: ["↑", "↓"], action: "Previous / next track (tracks focused)", group: "Timeline", view: true },
+  { keys: ["Enter"], action: "Select the focused track's entity", group: "Timeline", view: true },
+  { keys: ["Alt+→", "Alt+←"], action: "Expand / collapse the focused track (* also expands)", group: "Timeline", view: true },
+  { keys: ["+", "-", "0"], action: "Narrow / widen the time window, or show the whole run (tracks focused)", group: "Timeline", view: true },
+  { keys: ["↑", "↓"], action: "Taller / shorter timeline (its top edge focused; Enter collapses or restores it)", group: "Timeline", view: true },
 ];
 
 const TYPING = /^(INPUT|TEXTAREA|SELECT)$/;

@@ -9,7 +9,7 @@ import { KEYMAP, type KeyBinding } from "./keyboard";
 import { StateGlyph } from "./glyphs";
 import { TelemetryBadge } from "./inspector/parts";
 
-const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view"];
+const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view", "Atlas", "Blueprint", "Timeline"];
 
 function Keys({ keys }: { keys: string[] }) {
   return (
@@ -62,32 +62,36 @@ function LightSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) =>
 }
 
 export function HelpSheet({ open, onOpenChange, light, onLight, opener }: { open: boolean; onOpenChange: (open: boolean) => void; light: boolean; onLight: (on: boolean) => void; opener?: RefObject<Element | null> }) {
-  // Opened by a key, the sheet has no trigger, and DialogContent's own return target is taken when the
-  // app mounts (the page). The shell records what had focus as it opens; focus goes back there on close.
+  // DialogContent returns focus to whatever had it when the sheet opened, by key or by button, but only
+  // to an HTML element (@mach/ui focus-return.ts checks `instanceof HTMLElement`). The views' entities
+  // and the Blueprint's tree items are SVG elements, so the shell's record of the opener is used for
+  // those: without it, `?` pressed on a Blueprint tree item sent focus to the whole stage on close
+  // (checked with Playwright on a capture build). An opener a view re-rendered away goes back to that
+  // view's canvas rather than to the design system's fallback (<main>, here the whole stage).
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         width="lg"
         onCloseAutoFocus={(event) => {
           const back = opener?.current;
-          if (back instanceof HTMLElement && back.isConnected && back !== document.body && !back.closest("[inert]")) {
+          if (back instanceof SVGElement && back.isConnected && !back.closest("[inert]")) {
             event.preventDefault();
             back.focus();
             return;
           }
-          // The opener was re-rendered away (a view's entity): back to that view's canvas.
           const canvas = document.querySelector<HTMLElement>("[data-stage-active] [tabindex='0']");
-          if (back instanceof HTMLElement && !back.isConnected && canvas) {
+          if (back instanceof Element && !back.isConnected && canvas) {
             event.preventDefault();
             canvas.focus();
           }
-        }} title="Keyboard, legend and display" description="Every shortcut in the Control Tower prototype. Keys marked for a view work while that view or the timeline tracks have focus.">
+        }}
+        title="Keyboard, legend and display" description="Every shortcut in the Control Tower prototype. The keys under In a view, Atlas, Blueprint and Timeline work while that part has focus.">
         {/* Scrolls on short windows, so it takes focus for keyboard scrolling. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
         <div tabIndex={0} role="region" aria-label="Shortcuts and legend" className="grid min-h-0 gap-x-8 gap-y-5 overflow-y-auto px-6 pb-6 pt-4 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus md:grid-cols-2">
           {GROUPS.map((group) => (
-            <section key={group} aria-labelledby={`keys-${group}`}>
-              <h3 id={`keys-${group}`} className="mb-2 text-label text-ink">
+            <section key={group} aria-labelledby={`keys-${group.replace(/\s+/g, "-")}`}>
+              <h3 id={`keys-${group.replace(/\s+/g, "-")}`} className="mb-2 text-label text-ink">
                 {group}
               </h3>
               <dl className="flex flex-col gap-1.5">
