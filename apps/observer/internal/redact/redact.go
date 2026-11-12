@@ -24,8 +24,13 @@ import (
 	"unicode/utf8"
 )
 
-// Version of the redaction and normalisation rules.
-const Version = 3
+// Version of the redaction and normalisation rules. 4: one text scrubber for events and served
+// artifact content; long hex runs inside text are redacted (a whole value that is a digest or a
+// commit is not).
+const Version = 4
+
+// pathRest is the rest of a path in text: up to white space, a quote, a backtick or a bracket.
+const pathRest = "[^\\s\"'`<>|;,()\\[\\]{}]*"
 
 var (
 	idRe     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:#-]{0,127}$`)
@@ -45,29 +50,40 @@ var (
 		regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}`), // JWT
 		regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@`),                  // URL credentials
 	}
-	// A long opaque run: a key, token or blob. Checked separately so hex digests stay.
+	// A long opaque run: a key, token, blob, or a long hex string (a hex API key looks exactly like
+	// a digest). A value that is wholly a digest or a commit is exempt (Sensitive); so are the
+	// known hash keys of a served JSON record (ScrubDocument's HashKeys).
 	opaqueRe = regexp.MustCompile(`[A-Za-z0-9+/_=-]{40,}`)
 	emailRe  = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
-	// Absolute and home paths, in text: at the start or after a separator.
-	absPathRe = regexp.MustCompile(`(^|[\s"'=(,;\[{<>|])((~|\$HOME|%USERPROFILE%)[/\\]|/[A-Za-z0-9._~-]|[A-Za-z]:[/\\]|file://)[^\s"'<>|;,()\[\]{}]*`)
-	homeRe    = regexp.MustCompile(`(?i)(/Users/|/home/|/root/|\\Users\\|/private/var/|/var/folders/|/tmp/)`)
+	// Absolute and home paths, in text: at the start, or after any character that cannot be part
+	// of a word, a relative path or a URL (so "src/a.go" and "https://host/x" stay, and a path in
+	// backticks, quotes, brackets or after "=" does not).
+	absPathRe = regexp.MustCompile(`(^|[^A-Za-z0-9._~:/\\@%+$-])((~|\$HOME|%USERPROFILE%)[/\\]|/[A-Za-z0-9._~-]|[A-Za-z]:[/\\]|file://)` + pathRest)
+	// A home or temporary folder anywhere, replaced to the end of the path (the user name and
+	// what follows are the sensitive part).
+	homeRe = regexp.MustCompile(`(?i)(/Users/|/home/|/root/|\\Users\\|/private/var/|/var/folders/|/tmp/)` + pathRest)
 )
 
 // TextReplaced counts every span the text rules replaced, across all filters.
 var TextReplaced atomic.Int64
 
-// opaque reports a long run that is not a plain hex digest and mixes letters and digits.
+// opaqueRun: a long run that mixes letters and digits (hex included).
+func opaqueRun(m string) bool {
+	return strings.ContainsAny(m, "0123456789") && strings.IndexFunc(m, unicode.IsLetter) >= 0
+}
+
+// opaque reports a long opaque run in s.
 func opaque(s string) bool {
 	for _, m := range opaqueRe.FindAllString(s, -1) {
-		if commitRe.MatchString(m) || strings.Trim(m, "0123456789abcdef") == "" {
-			continue
-		}
-		if strings.ContainsAny(m, "0123456789") && strings.IndexFunc(m, unicode.IsLetter) >= 0 {
+		if opaqueRun(m) {
 			return true
 		}
 	}
 	return false
 }
+
+// wholeDigest: the whole value is a hex digest or commit id, as a typed field holds it.
+func wholeDigest(s string) bool { return commitRe.MatchString(s) || digestRe.MatchString(s) }
 
 // keywords is a cheap prefilter: a string none of the patterns can match is let through
 // without running them. Every pattern needs one of these characters, one of these words, or a
@@ -88,9 +104,10 @@ func mayBeSensitive(s string) bool {
 	return false
 }
 
-// Sensitive reports whether s contains anything the scrubber would replace.
+// Sensitive reports whether s contains anything the scrubber would replace. A value that is
+// wholly a hex digest or commit id is not sensitive: that is what a commit or sha256 field holds.
 func Sensitive(s string) bool {
-	if !mayBeSensitive(s) {
+	if !mayBeSensitive(s) || wholeDigest(s) {
 		return false
 	}
 	for _, re := range secretPatterns {
@@ -225,7 +242,8 @@ func Scrub(s, projectRoot string) string {
 	return out
 }
 
-// scrubText replaces every sensitive span in s and returns how many it replaced.
+// scrubText is the field form of the text rules (Text, Scrub, ScrubEvent): one line, cut to max
+// characters, and replaced whole when it is far longer than any field allows.
 func scrubText(s, projectRoot string, max int) (string, int) {
 	n := 0
 	defer func() { TextReplaced.Add(int64(n)) }()
@@ -237,50 +255,9 @@ func scrubText(s, projectRoot string, max int) (string, int) {
 		n++
 		return "[withheld]", n
 	}
-	if projectRoot != "" && projectRoot != "/" {
-		root := strings.TrimRight(projectRoot, "/")
-		if strings.Contains(s, root) {
-			s = strings.ReplaceAll(s, root+"/", "")
-			s = strings.ReplaceAll(s, root, "<project>")
-		}
-	}
-	for _, re := range secretPatterns {
-		if re.MatchString(s) {
-			n += len(re.FindAllStringIndex(s, -1))
-			s = re.ReplaceAllString(s, "[redacted]")
-		}
-	}
-	if opaque(s) {
-		s = opaqueRe.ReplaceAllStringFunc(s, func(m string) string {
-			if commitRe.MatchString(m) || !strings.ContainsAny(m, "0123456789") || strings.IndexFunc(m, unicode.IsLetter) < 0 {
-				return m
-			}
-			n++
-			return "[redacted]"
-		})
-	}
-	if emailRe.MatchString(s) {
-		n += len(emailRe.FindAllStringIndex(s, -1))
-		s = emailRe.ReplaceAllString(s, "[email]")
-	}
-	if absPathRe.MatchString(s) {
-		n += len(absPathRe.FindAllStringIndex(s, -1))
-		s = absPathRe.ReplaceAllString(s, "${1}[path]")
-	}
-	if homeRe.MatchString(s) {
-		n++
-		s = homeRe.ReplaceAllString(s, "[path]/")
-	}
-	s = strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' || r == '\r' {
-			return ' '
-		}
-		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069') || r == '\u200b' || r == '\ufeff' {
-			return -1
-		}
-		return r
-	}, s)
-	s = strings.TrimSpace(s)
+	s, k := replaceSensitive(rootRelative(s, projectRoot), true)
+	n += k
+	s = strings.TrimSpace(stripControls(s, false))
 	if utf8.RuneCountInString(s) > max {
 		runes := []rune(s)
 		s = string(runes[:max-1]) + "…"

@@ -360,21 +360,52 @@ func TestArchiveMembers(t *testing.T) {
 	}
 }
 
-// The text scrubber here and the field scrubber in internal/redact agree on what is a secret.
-func TestScrubberAgreesWithRedact(t *testing.T) {
-	for _, secret := range []string{"sk-ant-api03-abcdefghijklmnop", "ghp_abcdefghijklmnopqrstuvwxyz0123", "AKIAABCDEFGHIJKLMNOP",
-		"Bearer abcdefghijklmnop", "API_TOKEN=supersecretvalue", "xoxb-1234567890-abcdef", "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----",
-		strings.Repeat("Ab1", 20), "/home/user/.ssh/id_ed25519"} {
-		mine, n := ScrubText("x "+secret+" y", "")
-		theirs := redact.Scrub("x "+secret+" y", "")
-		if n == 0 || strings.Contains(mine, secret) {
-			t.Errorf("ScrubText kept %q: %q", secret, mine)
-		}
-		if strings.Contains(theirs, secret) {
-			t.Errorf("redact.Scrub kept %q (the two have drifted)", secret)
-		}
+// Served text goes through the one scrubber in internal/redact (no copy here). In a JSON
+// record, the hex values under the keys the catalog knows (sha256, head, ...) are hashes and
+// stay; a long hex run anywhere else, in the same record or in plain text, is scrubbed.
+func TestServedTextUsesTheSharedScrubber(t *testing.T) {
+	hexKey := strings.Repeat("0123456789abcdef", 4) // could be a hex API key as well as a digest
+	commit := strings.Repeat("abcdef12", 5)
+	f := project(t, map[string]string{"plain.txt": "sha256 " + hexKey + "\nbidi \u202egnp.exe\u202c and a bell\a\n"})
+	record := []byte(`{"decision":"APPROVED","head":"` + commit + `","note":"key ` + hexKey + `","api_key":"` + hexKey + `"}`)
+	write(t, filepath.Join(f.root, ".factory/worktrees/T-1/review/round-1/decision.json"), record)
+	c := New(f.root)
+	results, err := c.Read(byPath(c)["cell:evidence/results.json"])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if out, n := ScrubText("bidi ‮gnp.exe‬ and a bell\a", ""); strings.ContainsAny(out, "‮‬\a") || n < 3 {
-		t.Fatalf("%q %d", out, n)
+	var parsed struct {
+		Head    string `json:"head"`
+		Records map[string]struct {
+			Evidence []struct {
+				SHA256 string `json:"sha256"`
+			} `json:"evidence"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(results.Data, &parsed); err != nil || parsed.Records["AC-01"].Evidence[0].SHA256 != sum(f.text) {
+		t.Fatalf("a recorded evidence hash was scrubbed: %v %s", err, results.Data)
+	}
+	decision, err := c.Read(byPath(c)["cell:review/round-1/decision.json"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := string(decision.Data); !strings.Contains(d, `"head":"`+commit+`"`) || strings.Contains(d, hexKey) || decision.Redacted != 2 {
+		t.Fatalf("decision.json: %d %s", decision.Redacted, d)
+	}
+	text, err := c.Read(byPath(c)["cell:evidence/plain.txt"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := string(text.Data); strings.Contains(d, hexKey) || strings.ContainsAny(d, "\u202e\u202c\a") || !strings.HasPrefix(d, "sha256 [redacted]\n") {
+		t.Fatalf("plain text: %q", d)
+	}
+	// The same rules as the event path: a field and a document agree on every secret.
+	for _, secret := range []string{"sk-ant-api03-abcdefghijklmnop", "ghp_abcdefghijklmnopqrstuvwxyz0123", "AKIAABCDEFGHIJKLMNOP",
+		"Bearer abcdefghijklmnop", "API_TOKEN=supersecretvalue", "xoxb-1234567890-abcdef", strings.Repeat("Ab1", 20), hexKey, "/home/user/.ssh/id_ed25519"} {
+		doc, n := redact.ScrubDocument("x "+secret+" y", "", redact.DocOptions{HashKeys: HashKeys})
+		field := redact.Scrub("x "+secret+" y", "")
+		if n == 0 || strings.Contains(doc, secret) || strings.Contains(field, secret) {
+			t.Errorf("%q survived: document %q, field %q", secret, doc, field)
+		}
 	}
 }

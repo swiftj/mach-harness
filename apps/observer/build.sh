@@ -3,7 +3,7 @@
 #   1. install the web workspace's locked dependencies (skip with SKIP_INSTALL=1),
 #   2. build web/apps/control-tower,
 #   3. check the build can run under the observer's Content-Security-Policy,
-#   4. copy it over internal/webui/dist and build the binary,
+#   4. copy it (without source maps) over internal/webui/dist and build the binary,
 #   5. put the committed placeholder back, so the working tree is unchanged.
 # Output: bin/mach-observer (override with OUT=...). Without this script (`make host`), the binary
 # serves a placeholder page that says it was built without the app; the API is the same.
@@ -52,7 +52,10 @@ fi
 
 rm -rf "$DIST"
 cp -R "$APP_DIST" "$DIST"
+# Source maps stay out of the binary (about 9 MB of it): the observer serves the app, not its
+# sources. A browser's developer tools then get a 404 for a map, nothing else changes.
+find "$DIST" -name '*.map' -type f -exec rm -f {} +
 cd "$HERE"
 mkdir -p "$(dirname "$OUT")"
 go build -trimpath -o "$OUT" ./cmd/mach-observer
-echo "built $OUT with the Control Tower from $APP_DIST"
+echo "built $OUT ($(du -k "$OUT" | cut -f1) KiB) with the Control Tower from $APP_DIST, no source maps"

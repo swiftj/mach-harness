@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +90,10 @@ func TestBudgetKilledWorkflowThatReportsSuccess(t *testing.T) {
 	if use.Data["subtype"] != "success" || use.Data["budget_exhausted"] != false {
 		t.Fatalf("%+v", use.Data)
 	}
+	// The agents were killed with requests in flight: the reported spend may be low (proof 3.5).
+	if use.Data["cost_complete"] != false || fmt.Sprint(use.Data["cost_incomplete_reasons"]) != "[agents-killed-in-flight]" {
+		t.Fatalf("cost completeness %+v", use.Data)
+	}
 	for _, a := range ofType(evs, "agent.finished") {
 		if a.Data["status"] != "error" {
 			t.Fatalf("killed agents report error: %+v", a.Data)
@@ -106,12 +111,9 @@ func TestBudgetKilledWorkflowThatReportsSuccess(t *testing.T) {
 	if wf2.Data["stop_reason"] != "budget" || wf2.Inferred["data.stop_reason"] != "stderr-line" {
 		t.Fatalf("%+v %+v", wf2.Data, wf2.Inferred)
 	}
-	flagged := false
-	for _, s := range h2.o.Stats().Sources {
-		flagged = flagged || s.CostMayBeUnderReported
-	}
-	if !flagged {
-		t.Fatal("a budget-killed workflow's cost is flagged as possibly under-reported")
+	use2 := ofType(h2.events(), "execution.usage")[0]
+	if use2.Data["cost_complete"] != false || fmt.Sprint(use2.Data["cost_incomplete_reasons"]) != "[budget-stop agents-killed-in-flight]" {
+		t.Fatalf("a budget-killed workflow's cost is flagged as possibly under-reported: %+v", use2.Data)
 	}
 	for _, raw := range h2.raws() {
 		if strings.Contains(string(raw), "secret path") {
@@ -128,7 +130,7 @@ func TestBudgetExceededResult(t *testing.T) {
 	h.validate()
 	evs := h.events()
 	use := ofType(evs, "execution.usage")[0]
-	if use.Data["budget_exhausted"] != true || use.Data["terminal_reason"] != "budget_exhausted" {
+	if use.Data["budget_exhausted"] != true || use.Data["terminal_reason"] != "budget_exhausted" || use.Data["cost_complete"] != false {
 		t.Fatalf("%+v", use.Data)
 	}
 	wf := ofType(evs, "workflow.finished")
@@ -177,6 +179,9 @@ func TestBeltParallelAgentsAndLabels(t *testing.T) {
 	h.drain()
 	h.validate()
 	evs := h.events()
+	if use := ofType(evs, "execution.usage"); len(use) != 1 || use[0].Data["cost_complete"] != true || fmt.Sprint(use[0].Data["cost_incomplete_reasons"]) != "[]" {
+		t.Fatalf("a completed belt reports its cost complete: %+v", use)
+	}
 	seats := map[string]string{}
 	for _, e := range ofType(evs, "agent.started") {
 		label := e.Data["label"].(string)

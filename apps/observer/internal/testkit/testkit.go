@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Project makes a project folder with an empty Factory tree and returns its absolute,
@@ -253,4 +254,17 @@ func WriteArchive(t testing.TB, path, prefix string, files map[string][]byte) {
 	tw.Close()
 	gz.Close()
 	f.Close()
+}
+
+// RaceFactor is how much longer a time limit may be under the race detector.
+const RaceFactor = 8
+
+// Slow scales a test's time limit: as given normally, RaceFactor times longer under -race. A
+// limit is a bound on waiting, never the expected time, so scaling it loses no strictness about
+// what the test proves (an append that waited for a stalled client would never finish at all).
+func Slow(d time.Duration) time.Duration {
+	if Race {
+		return d * RaceFactor
+	}
+	return d
 }

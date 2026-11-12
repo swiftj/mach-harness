@@ -32,7 +32,7 @@
                   "schema_revision": {
                                        "type": "integer",
                                        "minimum": 0,
-                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know."
+                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons."
                                      },
                   "id": {
                           "type": "string",
@@ -301,6 +301,7 @@
                                 "description": "Fields the observer filled by inference, with the rule. cause is never inferred."
                               },
                   "provenance": {
+                                  "description": "How the event came to be. Required for reconstructed events (basis event ids, the rule, the files read). On any other event it is null, except {basis: [], rule: 'backfill', files: []} when the event was read during catch-up (contract 6.5).",
                                   "oneOf": [
                                              {"type": "null"},
                                              {
@@ -315,7 +316,7 @@
                                              }
                                            ]
                                 },
-                  "late": {"type": "boolean", "description": "Delivered after events that sort after it in history order."},
+                  "late": {"type": "boolean", "description": "Read live and delivered after the observer had already delivered an event that sorts after it in history order. Never true for backfill (history read while catching a source up with what was written before the observer started, or after an index rebuild); backfill carries provenance rule 'backfill' instead. Contract section 6.5."},
                   "withheld": {
                                 "type": "integer",
                                 "minimum": 0,
@@ -1867,6 +1868,16 @@
                                                        "is_error": {"type": ["boolean", "null"]},
                                                        "terminal_reason": {"type": ["string", "null"], "maxLength": 40},
                                                        "budget_exhausted": {"type": "boolean"},
+                                                       "cost_complete": {
+                                                                          "type": "boolean",
+                                                                          "description": "Revision 1. False when the reported spend may be lower than what was spent: a budget stop, or a killed workflow's agents still running when it was killed. Optional so revision-0 events still validate; the observer always writes it."
+                                                                        },
+                                                       "cost_incomplete_reasons": {
+                                                                                    "type": "array",
+                                                                                    "items": {"enum": ["budget-stop", "agents-killed-in-flight"]},
+                                                                                    "uniqueItems": true,
+                                                                                    "description": "Revision 1. Why cost_complete is false; empty when it is true."
+                                                                                  },
                                                        "models": {
                                                                    "type": "object",
                                                                    "additionalProperties": {

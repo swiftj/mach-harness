@@ -9,6 +9,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,6 +23,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -53,7 +59,7 @@ const IndexDir = ".factory/local/observer"
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("mach-observer", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	projectFlag := flags.String("project", "", "the project folder (default: the nearest folder above the current one that holds .factory)")
+	projectFlag := flags.String("project", "", "the project folder, used exactly as given (default: the nearest folder at or above the current one that holds .factory or .git)")
 	port := flags.Int("port", 0, "the loopback port to listen on (default: a free one)")
 	memory := flags.Int("memory-events", store.DefaultMaxMemory, "how many recent events to hold in memory and serve by cursor")
 	if err := flags.Parse(args); err != nil {
@@ -89,11 +95,31 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	defer st.Close()
 
-	listener, err := security.Listen("127.0.0.1", *port)
+	// The last port is bound again when it is free, so a Control Tower page left open across a
+	// restart reaches the observer at the same origin; its cookie is still valid (sessions below).
+	want, remembered := *port, false
+	if want == 0 && indexDir != "" {
+		if p := readPort(indexDir); p > 0 {
+			want, remembered = p, true
+		}
+	}
+	listener, err := security.Listen("127.0.0.1", want)
+	if err != nil && remembered {
+		fmt.Fprintf(stdout, "The last port, %d, is in use: listening on a new one. A page left open must be opened again.\n", want)
+		listener, err = security.Listen("127.0.0.1", 0)
+	}
 	if err != nil {
 		return fmt.Errorf("could not listen on 127.0.0.1: %w", err)
 	}
-	guard, err := security.NewGuard(listener.Addr().(*net.TCPAddr).Port)
+	bound := listener.Addr().(*net.TCPAddr).Port
+	opts := security.GuardOptions{}
+	if indexDir != "" {
+		if err := writePrivate(filepath.Join(indexDir, PortName), []byte(strconv.Itoa(bound)+"\n")); err != nil {
+			logger.Printf("could not remember the port: %v", err)
+		}
+		opts = keptSessions(root, indexDir, logger, stderr)
+	}
+	guard, err := security.NewGuardWith(bound, opts)
 	if err != nil {
 		listener.Close()
 		return err
@@ -154,6 +180,97 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+// Files in the observer's folder that let a browser survive a restart.
+const (
+	PortName     = "port"           // the last port bound
+	SecretName   = "session-secret" // 32 random bytes; with the project folder, the key sessions are hashed under
+	SessionsName = "sessions.json"  // keyed hashes of session tokens and their expiry; never a token
+)
+
+// readPort returns the port remembered from the last run, or 0.
+func readPort(indexDir string) int {
+	b, ok := readPrivate(filepath.Join(indexDir, PortName), 16)
+	if !ok {
+		return 0
+	}
+	p, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || p < 1024 || p > 65535 {
+		return 0
+	}
+	return p
+}
+
+// readPrivate reads a small regular file that only this user can read or write. ok is false
+// when it is missing; insecure is reported separately by privateMode.
+func readPrivate(path string, max int64) ([]byte, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > max || info.Mode().Perm()&0o077 != 0 {
+		return nil, false
+	}
+	b, err := os.ReadFile(path)
+	return b, err == nil
+}
+
+// insecure: the path exists and is not a regular file private to this user.
+func insecure(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && (!info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0)
+}
+
+type sessionFile struct {
+	Version  int                      `json:"version"`
+	Project  string                   `json:"project"` // a hash of the project folder the sessions belong to
+	Sessions []security.SessionRecord `json:"sessions"`
+}
+
+func projectTag(root string) string {
+	h := sha256.Sum256([]byte("mach-observer-project\x00" + root))
+	return hex.EncodeToString(h[:8])
+}
+
+// keptSessions loads the per-project secret (making one if there is none) and the session records
+// of the last run, and returns guard options that keep them up to date. A secret or a session file
+// that another user could read or change, or that is a link, is not trusted: both are discarded
+// and made again (every browser then needs a new link), and stderr says so. Records written for
+// another project folder are ignored.
+func keptSessions(root, indexDir string, logger *log.Logger, stderr io.Writer) security.GuardOptions {
+	secretPath, sessionsPath := filepath.Join(indexDir, SecretName), filepath.Join(indexDir, SessionsName)
+	if insecure(secretPath) || insecure(sessionsPath) {
+		fmt.Fprintln(stderr, "mach-observer: the kept browser sessions are readable by others or not plain files; discarding them (open a new link)")
+		os.Remove(secretPath)
+		os.Remove(sessionsPath)
+	}
+	secret, ok := readPrivate(secretPath, 256)
+	if !ok || len(secret) < 32 {
+		secret = make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return security.GuardOptions{}
+		}
+		if err := writePrivate(secretPath, secret); err != nil {
+			logger.Printf("could not keep the session secret: %v", err)
+			return security.GuardOptions{} // sessions last this run only
+		}
+		os.Remove(sessionsPath) // records hashed under another secret match nothing
+	}
+	opts := security.GuardOptions{Key: security.SessionKey(secret, root)}
+	if b, ok := readPrivate(sessionsPath, 64<<10); ok {
+		var f sessionFile
+		if json.Unmarshal(b, &f) == nil && f.Version == 1 && f.Project == projectTag(root) {
+			opts.Sessions = f.Sessions
+		} else {
+			fmt.Fprintln(stderr, "mach-observer: the kept browser sessions belong to another project folder; ignoring them")
+		}
+	}
+	tag := projectTag(root)
+	opts.OnSessions = func(recs []security.SessionRecord) {
+		b, _ := json.Marshal(sessionFile{Version: 1, Project: tag, Sessions: recs})
+		if err := writePrivate(sessionsPath, b); err != nil {
+			logger.Printf("could not keep the browser sessions: %v", err)
+		}
+	}
+	return opts
 }
 
 func projectionDir(indexDir string) string {
@@ -225,10 +342,13 @@ func prepareIndexDir(root, dir string) error {
 	return nil
 }
 
-// findProject walks up from start (or the working folder) to the first folder holding .factory
-// or .git.
+// findProject: --project names the project folder exactly (it need not hold .factory or a Git
+// repository; nothing above it is ever considered, so a folder inside another repository is not
+// mistaken for it). Without the flag, the walk goes up from the working folder to the first folder
+// holding .factory or .git, else the working folder itself.
 func findProject(start string) (string, error) {
-	if start == "" {
+	explicit := start != ""
+	if !explicit {
 		wd, err := os.Getwd()
 		if err != nil {
 			return "", err
@@ -241,6 +361,9 @@ func findProject(start string) (string, error) {
 	}
 	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
 		return "", fmt.Errorf("%s is not a folder", abs)
+	}
+	if explicit {
+		return abs, nil
 	}
 	for dir := abs; ; dir = filepath.Dir(dir) {
 		for _, marker := range []string{".factory", ".git"} {

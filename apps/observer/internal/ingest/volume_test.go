@@ -17,13 +17,17 @@ import (
 // TestLargeVolume ingests well over 200,000 events from all three line sources at once (the
 // intake log, 100 cells' lifecycle logs, 40 real belt streams) into a persisted index with the
 // default memory window, and reports throughput and memory. It checks the result is complete,
-// in order and duplicate-free, and that memory stays bounded by the window, not the history.
+// in order and duplicate-free, that memory stays bounded by the window, not the history, and
+// that reading existing history marks nothing late (it is all backfill).
+//
+// Full size normally; a tenth of it under -short or the race detector (which slows ingest about
+// twentyfold), so `go test -race ./...` finishes in reasonable time and still crosses many ticks.
 func TestLargeVolume(t *testing.T) {
-	if testing.Short() {
-		t.Skip("large volume")
+	intake, cells, visits, streams := 90000, 100, 100, 40
+	if testing.Short() || testkit.Race {
+		intake, cells, visits, streams = 9000, 20, 50, 8
 	}
 	root := testkit.Project(t)
-	const intake = 90000
 	var buf bytes.Buffer
 	for i := 1; i <= intake; i++ {
 		switch i % 3 {
@@ -38,7 +42,7 @@ func TestLargeVolume(t *testing.T) {
 	}
 	testkit.WriteFile(t, testkit.LedgerPath(root), buf.Bytes())
 	lifecycle := 0
-	for c := 0; c < 100; c++ {
+	for c := 0; c < cells; c++ {
 		ticket := fmt.Sprintf("C-%03d", c)
 		buf.Reset()
 		seq := 0
@@ -49,7 +53,7 @@ func TestLargeVolume(t *testing.T) {
 			buf.Write(testkit.Record{Seq: seq, At: at.Format("2006-01-02T15:04:05.000Z"), Ticket: ticket, Type: typ, Station: station, Visit: visit, Round: 1, Data: data}.Line())
 			lifecycle++
 		}
-		for v := 1; v <= 100; v++ {
+		for v := 1; v <= visits; v++ {
 			rec("station.entered", "build", v, map[string]any{"stage": "building", "tasks": 5})
 			for k := 0; k < 8; k++ {
 				rec("gate.evaluated", "build", v, map[string]any{"gate": "build.green", "outcome": "refuse", "reason_code": "suite-red", "task": "T1"})
@@ -60,7 +64,7 @@ func TestLargeVolume(t *testing.T) {
 		testkit.WriteFile(t, testkit.CellLog(root, ticket), buf.Bytes())
 	}
 	belt, _ := os.ReadFile(testkit.StreamFixture("belt-build-verify-review.jsonl"))
-	for x := 0; x < 40; x++ {
+	for x := 0; x < streams; x++ {
 		dir := testkit.ExecDir(root, fmt.Sprintf("x%012x", x+1))
 		testkit.WriteFile(t, filepath.Join(dir, "stream.jsonl"), belt)
 		testkit.WriteFile(t, filepath.Join(dir, "started.json"), mustJSON(map[string]any{"started_at": "2023-11-14T22:13:18Z"}))
@@ -102,16 +106,16 @@ func TestLargeVolume(t *testing.T) {
 	}
 	elapsed := time.Since(start)
 	head := st.Head()
-	if head < 200000 {
-		t.Fatalf("only %d events", head)
+	if head < uint64(intake+lifecycle) {
+		t.Fatalf("only %d events from %d intake and %d lifecycle lines", head, intake, lifecycle)
 	}
 	runtime.GC()
 	runtime.ReadMemStats(&ms)
 	info := st.Info()
-	t.Logf("volume: %d events (%d intake lines, %d lifecycle lines, 40 belt streams) in %s over %d ticks: %.0f events/s; heap peak %.1f MiB above baseline, %.1f MiB after GC; index %d segments, %.1f MiB on disk, %d in memory",
-		head, intake, lifecycle, elapsed.Round(time.Millisecond), ticks, float64(head)/elapsed.Seconds(),
+	t.Logf("volume: %d events (%d intake lines, %d lifecycle lines, %d belt streams; race detector %v) in %s over %d ticks: %.0f events/s; heap peak %.1f MiB above baseline, %.1f MiB after GC; index %d segments, %.1f MiB on disk, %d in memory",
+		head, intake, lifecycle, streams, testkit.Race, elapsed.Round(time.Millisecond), ticks, float64(head)/elapsed.Seconds(),
 		float64(peak-base)/(1<<20), float64(ms.HeapAlloc-min(ms.HeapAlloc, base))/(1<<20), info.Segments, float64(info.DiskBytes)/(1<<20), info.InMemory)
-	if info.InMemory != store.DefaultMaxMemory {
+	if info.InMemory != min(int(head), store.DefaultMaxMemory) {
 		t.Fatalf("memory window %d", info.InMemory)
 	}
 	// Complete and duplicate-free, read back across the segments.
@@ -143,5 +147,9 @@ func TestLargeVolume(t *testing.T) {
 	if uint64(len(seen)) != head {
 		t.Fatalf("%d read back, head %d", len(seen), head)
 	}
-	t.Logf("volume: %d late (backfill across sources read in different ticks)", late)
+	st2 := o.Stats()
+	t.Logf("volume: %d late, %d backfill", late, st2.Backfill)
+	if late != 0 || st2.Late != 0 || uint64(st2.Backfill) != head || st2.CatchingUp {
+		t.Fatalf("existing history is backfill, never late: %d late (stats %d), %d backfill of %d, catching up %v", late, st2.Late, st2.Backfill, head, st2.CatchingUp)
+	}
 }

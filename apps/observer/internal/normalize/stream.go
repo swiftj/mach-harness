@@ -84,6 +84,7 @@ type agentState struct {
 	toolCalls, tokens          any
 	lastTool                   any
 	lastProgressMS             int64
+	status                     string // done | error, once finished
 	ticket, station, seat      string
 	labelled                   bool
 }
@@ -113,17 +114,45 @@ func (s *Stream) Key() string { return s.key }
 // Version is the Claude Code version from the first init, and whether the parser knows it.
 func (s *Stream) Version() (string, bool) { return s.version, s.version == "" || !s.restricted }
 
-// CostMayBeUnderReported: a workflow was killed by a budget stop, so requests in flight may be
-// missing from the reported spend (stream proof 3.5; contract open question 5). The schema has
-// no field for it on execution.usage, so it is reported with the source's state.
-func (s *Stream) CostMayBeUnderReported() bool {
+// Reasons the reported spend may be incomplete (execution.usage.cost_incomplete_reasons,
+// schema revision 1). The stream proof (section 3.5) saw a budget stop kill agents with requests
+// in flight and the result report less than the agents had used.
+const (
+	CostBudgetStop     = "budget-stop"             // a result says the budget ran out, or a killed workflow's stderr has the budget line
+	CostKilledInFlight = "agents-killed-in-flight" // a killed workflow's agents were still running (ended in error, or never reported an end)
+)
+
+// CostIncomplete lists why the execution's reported cost may be lower than what was spent; empty
+// when nothing suggests so.
+func (s *Stream) CostIncomplete() []string {
+	reasons := []string{}
+	budget := false
+	for _, res := range s.results {
+		budget = budget || res.budget
+	}
+	killedInFlight, killed := false, false
 	for _, taskID := range s.taskOrder {
-		if wf := s.tasks[taskID]; wf.status == "killed" {
-			budget, _ := s.budgetStop()
-			return budget
+		wf := s.tasks[taskID]
+		if wf.status != "killed" {
+			continue
+		}
+		killed = true
+		for _, st := range wf.agents {
+			if st.started && (!st.finished || st.status == "error") {
+				killedInFlight = true
+			}
 		}
 	}
-	return false
+	if !budget && killed && s.StderrBudget != nil && s.StderrBudget() {
+		budget = true
+	}
+	if budget {
+		reasons = append(reasons, CostBudgetStop)
+	}
+	if killedInFlight {
+		reasons = append(reasons, CostKilledInFlight)
+	}
+	return reasons
 }
 
 // Finished reports whether Finish has run.
@@ -651,6 +680,7 @@ func (s *Stream) agent(wf *workflow, m map[string]any, r Read) []*event.Event {
 	switch state := m["state"]; state {
 	case "done", "error":
 		st.finished = true
+		st.status = state.(string)
 		ev := s.agentEvent("agent.finished", wf, st, m, r)
 		var duration any
 		if d, ok := intField(m, "durationMs"); ok && d >= 0 {
@@ -927,8 +957,14 @@ func (s *Stream) Finish(r Read) []*event.Event {
 		for _, res := range s.results {
 			budget = budget || res.budget
 		}
+		reasons := s.CostIncomplete()
+		list := make([]any, len(reasons))
+		for i, r := range reasons {
+			list[i] = r
+		}
 		ev.Data = map[string]any{"total_cost_usd": last.cost, "subtype": last.subtype, "is_error": last.isError,
-			"terminal_reason": last.terminal, "budget_exhausted": last.budget, "models": last.models}
+			"terminal_reason": last.terminal, "budget_exhausted": last.budget, "models": last.models,
+			"cost_complete": len(reasons) == 0, "cost_incomplete_reasons": list}
 		out = append(out, ev)
 	}
 	// Spans still open when the process ended.

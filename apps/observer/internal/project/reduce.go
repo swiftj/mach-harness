@@ -1141,13 +1141,15 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 			TerminalReason  *string                `json:"terminal_reason"`
 			BudgetExhausted bool                   `json:"budget_exhausted"`
 			Models          map[string]*ModelUsage `json:"models"`
+			CostComplete    *bool                  `json:"cost_complete"`
+			Reasons         []string               `json:"cost_incomplete_reasons"`
 		}
 		e.DataAs(&d)
 		if d.Models == nil {
 			d.Models = map[string]*ModelUsage{}
 		}
 		x.Usage = &Usage{TotalCostUSD: d.TotalCostUSD, Subtype: feed.Str(d.Subtype), IsError: d.IsError, TerminalReason: feed.Str(d.TerminalReason),
-			BudgetExhausted: d.BudgetExhausted, Models: d.Models, At: st}
+			BudgetExhausted: d.BudgetExhausted, Models: d.Models, CostComplete: d.CostComplete, CostIncompleteReasons: d.Reasons, At: st}
 		models := make([]string, 0, len(d.Models))
 		for model := range d.Models {
 			models = append(models, model)

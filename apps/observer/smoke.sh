@@ -33,12 +33,36 @@ echo "$PAGE" | grep -q 'id="root"' || { echo "smoke: the page is not the app (or
 curl -fsS -D "$WORK/headers" -o /dev/null -b "$JAR" "$ORIGIN/"
 grep -qi "^content-security-policy: default-src 'none'" "$WORK/headers" || { echo "smoke: no CSP on the page" >&2; exit 1; }
 
+# The app loads under the CSP: every script and stylesheet index.html names is same-origin,
+# served with its type and the CSP, and no source map is in the binary.
+ASSETS=$(echo "$PAGE" | python3 -c "
+import re, sys
+html = sys.stdin.read()
+assert not re.search(r'<script(?![^>]*\\bsrc=)[^>]*>\\s*\\S', html), 'an inline script'
+assert 'style=\"' not in html, 'an inline style attribute'
+refs = re.findall(r'<script[^>]+src=\"([^\"]+)\"', html) + re.findall(r'<link[^>]+rel=\"(?:stylesheet|modulepreload)\"[^>]+href=\"([^\"]+)\"', html) + re.findall(r'<link[^>]+href=\"([^\"]+)\"[^>]+rel=\"(?:stylesheet|modulepreload)\"', html)
+for r in refs:
+    assert r.startswith('/') and not r.startswith('//'), 'not same-origin: ' + r
+print(' '.join(sorted(set(refs))))
+") || { echo "smoke: index.html does not load under the CSP" >&2; exit 1; }
+for asset in $ASSETS; do
+    curl -fsS -D "$WORK/ah" -o /dev/null -b "$JAR" "$ORIGIN$asset" || { echo "smoke: $asset was not served" >&2; exit 1; }
+    case "$asset" in
+        *.js) grep -qi '^content-type: text/javascript' "$WORK/ah" || { echo "smoke: $asset is not served as JavaScript" >&2; exit 1; } ;;
+        *.css) grep -qi '^content-type: text/css' "$WORK/ah" || { echo "smoke: $asset is not served as CSS" >&2; exit 1; } ;;
+    esac
+    grep -qi "^content-security-policy: default-src 'none'" "$WORK/ah" || { echo "smoke: $asset has no CSP" >&2; exit 1; }
+    code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$ORIGIN$asset.map")
+    [ "$code" = 404 ] || { echo "smoke: a source map is served for $asset ($code)" >&2; exit 1; }
+done
+
 check() { # check <path> <python assertion on d>
     curl -fsS -b "$JAR" "$ORIGIN$1" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['ok'], d; d=d['data']; assert $2, d"
 }
 check /api/v1/session "d['read_only'] is True and d['versions']['event']['schema'] == 3 and d['capabilities']['execution'] is False"
 check /api/v1/health "d['status'] in ('ok', 'degraded') and 'freshness' in d"
 check "/api/v1/events?schema=3&limit=5" "'events' in d and 'next' in d"
+check "/api/v1/history?limit=5" "'events' in d and 'complete' in d"
 check /api/v1/snapshot "'cursor' in d and 'state' in d"
 check /api/v1/factory/status "d['factory_present'] is True"
 check /api/v1/analytics/metrics "len(d['metrics']) > 40"
@@ -57,4 +81,4 @@ wait "$PID" || STATUS=$?
 PID=""
 [ "$STATUS" = 0 ] || { echo "smoke: the observer exited $STATUS" >&2; cat "$WORK/log" >&2; exit 1; }
 [ ! -f "$WORK/project/.factory/local/observer/link" ] || { echo "smoke: the link file outlived the observer" >&2; exit 1; }
-echo "smoke: ok ($(basename "$BIN"): page, session, events, snapshot, status, metrics, CSP, GET only on $ORIGIN)"
+echo "smoke: ok ($(basename "$BIN"): page and $(echo $ASSETS | wc -w | tr -d ' ') assets under the CSP, no source maps, session, events, history, snapshot, status, metrics, GET only on $ORIGIN)"

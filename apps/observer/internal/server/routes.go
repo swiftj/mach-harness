@@ -13,7 +13,8 @@ import (
 	"mach/observer/internal/project"
 )
 
-// Kinds are the version 3 event kinds (schemas/factory-event.v3.schema.json), revision 0.
+// Kinds are the version 3 event kinds (schemas/factory-event.v3.schema.json). Revision 1 added
+// no kind.
 var Kinds = []string{
 	"wave.discovered", "intake.validated", "intake.refused", "slice.materialized", "slice.integrated", "dependency.resolved", "dependency.blocked",
 	"work.scheduled", "revision.superseded", "human.required", "factory.activated", "factory.disabled", "factory.paused", "factory.resumed",
@@ -58,14 +59,14 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, ok(map[string]any{
 		"project":        map[string]any{"folder": projectFolder(s.opts.Root)},
-		"versions":       map[string]any{"observer": Version, "api": APIVersion, "event": map[string]any{"schema": feed.SchemaVersion, "revision": 0, "kinds": Kinds}},
+		"versions":       map[string]any{"observer": Version, "api": APIVersion, "event": map[string]any{"schema": feed.SchemaVersion, "revision": feed.SchemaRevision, "kinds": Kinds}},
 		"generation":     s.opts.Log.Epoch(),
 		"read_only":      true,
 		"display_policy": map[string]any{"people": "role"},
 		"capabilities": map[string]any{"execution": false, "snapshot": true, "artifacts": true, "analytics": true,
 			"evidence_media": set.EvidenceMedia, "evidence_media_setting": `.factory/config.json "tower": {"evidence_media": true}`,
 			"stream_observations": streamObs},
-		"limits": map[string]any{"page_default": DefaultPage, "page_max": MaxPage, "scan_cap": ScanCap, "spans_max": MaxSpans,
+		"limits": map[string]any{"page_default": DefaultPage, "page_max": MaxPage, "scan_cap": ScanCap, "spans_max": MaxSpans, "history_max": MaxHistory,
 			"stream_batch": s.opts.StreamBatch, "streams_max": s.opts.MaxStreams, "stream_write_timeout_ms": s.opts.WriteTimeout.Milliseconds(),
 			"heartbeat_ms": s.opts.Heartbeat.Milliseconds(), "content_reads_max": MaxContentReads,
 			"artifact_text_bytes": 256 << 10, "artifact_image_bytes": 16 << 20, "artifact_video_bytes": 64 << 20},
@@ -109,9 +110,10 @@ func (s *Server) freshness(now time.Time, in IngestState) map[string]any {
 		"observer_time": now.UTC().Format(time.RFC3339Nano),
 		"head":          s.cursor(head),
 		"floor":         s.cursor(floor),
-		"ingest":        map[string]any{"last_tick_at": ms(in.LastTickAt), "last_tick_age_ms": age, "stale": stale, "stale_after_ms": IngestStaleAfter.Milliseconds(), "watermark_ms": in.WatermarkMS},
-		"projection":    map[string]any{"cursor": s.cursor(ps.Pos), "lag_events": head - min(head, ps.Pos), "partial": ps.Partial},
-		"sources":       sources,
+		"ingest": map[string]any{"last_tick_at": ms(in.LastTickAt), "last_tick_age_ms": age, "stale": stale, "stale_after_ms": IngestStaleAfter.Milliseconds(),
+			"watermark_ms": in.WatermarkMS, "catching_up": in.CatchingUp},
+		"projection": map[string]any{"cursor": s.cursor(ps.Pos), "lag_events": head - min(head, ps.Pos), "partial": ps.Partial},
+		"sources":    sources,
 	}
 }
 
@@ -134,7 +136,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		"index":          map[string]any{"generation": s.opts.Log.Epoch(), "head": s.cursor(head), "floor": s.cursor(floor)},
 		"projection":     ps,
 		"ingest": map[string]any{"ticks": in.Ticks, "last_tick_at": ms(in.LastTickAt), "last_tick_ms": in.LastTickMS, "interval_ms": in.IntervalMS,
-			"errors": in.Errors, "last_error": in.LastError, "factory_found": in.FactoryFound},
+			"errors": in.Errors, "last_error": in.LastError, "factory_found": in.FactoryFound, "catching_up": in.CatchingUp, "late": in.Late, "backfill": in.Backfill},
 		"freshness": fresh,
 		"streams":   map[string]any{"active": s.streams.Load(), "max": s.opts.MaxStreams},
 		"sessions":  s.opts.Guard.Sessions(),

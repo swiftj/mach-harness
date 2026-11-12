@@ -167,13 +167,26 @@ func Run(x *Execution) RunView {
 		if seen {
 			v.Tokens = &total
 		}
-		if x.Usage.BudgetExhausted {
-			v.UnderReasons = append(v.UnderReasons, "budget exhausted: agents in flight may not have reported their spend")
-		}
 	}
-	for _, ref := range sortedKeys(x.Workflows) {
-		if w := x.Workflows[ref]; w.Status == "killed" {
-			v.UnderReasons = append(v.UnderReasons, "a workflow was killed: agents in flight may not have reported their spend")
+	// The stream's own verdict on its usage (execution.usage.cost_complete) decides; before
+	// revision 1, or with no usage at all, the workflow's recorded end stands in for it.
+	switch {
+	case x.Usage != nil && x.Usage.CostComplete != nil:
+		for _, r := range x.Usage.CostIncompleteReasons {
+			v.UnderReasons = append(v.UnderReasons, costReason(r))
+		}
+		if !*x.Usage.CostComplete && len(x.Usage.CostIncompleteReasons) == 0 {
+			v.UnderReasons = append(v.UnderReasons, "the stream reported its cost as incomplete")
+		}
+	default:
+		if x.Usage != nil && x.Usage.BudgetExhausted {
+			v.UnderReasons = append(v.UnderReasons, costReason("budget-stop"))
+		}
+		for _, ref := range sortedKeys(x.Workflows) {
+			if w := x.Workflows[ref]; w.Status == "killed" {
+				v.UnderReasons = append(v.UnderReasons, costReason("agents-killed-in-flight"))
+				break
+			}
 		}
 	}
 	switch v.State {
@@ -184,6 +197,17 @@ func Run(x *Execution) RunView {
 	}
 	v.UnderReported = len(v.UnderReasons) > 0
 	return v
+}
+
+// costReason words a cost_incomplete_reasons code for a person.
+func costReason(code string) string {
+	switch code {
+	case "budget-stop":
+		return "a budget stop ended the run: requests in flight may not have reported their spend"
+	case "agents-killed-in-flight":
+		return "a workflow was killed with agents still running: their last requests may not be counted"
+	}
+	return "the stream reported its cost as incomplete (" + code + ")"
 }
 
 func sortedKeys[V any](m map[string]V) []string {

@@ -3,6 +3,8 @@ package ingest
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"mach/observer/internal/artifact"
 	"mach/observer/internal/redact"
 	"mach/observer/internal/testkit"
 )
@@ -158,7 +161,7 @@ func TestRedactionCoverage(t *testing.T) {
 			"message": map[string]any{"content": []any{map[string]any{"type": "tool_use", "id": fmt.Sprintf("toolu_%02d", i), "name": name, "input": input}}}})
 		planted.Write(append(b, '\n'))
 		b, _ = json.Marshal(map[string]any{"type": "user", "timestamp": "2026-11-12T10:00:02.000Z",
-			"message": map[string]any{"content": []any{map[string]any{"type": "tool_result", "tool_use_id": fmt.Sprintf("toolu_%02d", i), "content": "MARKER file contents", "is_error": false}}},
+			"message":         map[string]any{"content": []any{map[string]any{"type": "tool_result", "tool_use_id": fmt.Sprintf("toolu_%02d", i), "content": "MARKER file contents", "is_error": false}}},
 			"tool_use_result": map[string]any{"originalFile": "MARKER original"}})
 		planted.Write(append(b, '\n'))
 		c.records += 2
@@ -245,4 +248,68 @@ func TestRedactionCoverage(t *testing.T) {
 	h2 := newHarness(t, root, "", false)
 	h2.drain()
 	h2.validate()
+
+	// Served artifact content: the same corpus in text evidence, a JSON record (including under
+	// the hash keys, where only a hex value is exempt) and Markdown findings, read through the
+	// catalog exactly as GET /artifacts/{id}/content reads it. Prose is what a text document is
+	// for, so the long free-text entry is the one corpus string a document may keep.
+	docs, served, docLeaks := writeEvidenceCorpus(t, root, "T-9"), 0, 0
+	cat := artifact.New(root)
+	entries, _ := cat.Snapshot()
+	for _, e := range entries {
+		if e.ContentAccess != "text" {
+			continue
+		}
+		got, err := cat.Read(e)
+		if err != nil {
+			t.Fatalf("%s: %v", e.Path, err)
+		}
+		served++
+		if k := leaks(got.Data); k > 0 {
+			docLeaks += k
+			t.Errorf("leak in served %s: %s", e.Path, got.Data)
+		}
+	}
+	t.Logf("redaction coverage, served content: %d documents written, %d served, leaks = %d", docs, served, docLeaks)
+	if served < docs {
+		t.Fatalf("only %d of %d documents were served", served, docs)
+	}
+}
+
+// writeEvidenceCorpus puts every corpus secret but the long prose into evidence files and a
+// review record of ticket's cell, names them in results.json, and returns how many documents
+// there are to serve.
+func writeEvidenceCorpus(t *testing.T, root, ticket string) int {
+	t.Helper()
+	cell := testkit.CellDir(root, ticket)
+	var plain, md bytes.Buffer
+	record := map[string]any{}
+	for i, s := range secrets {
+		if strings.HasPrefix(s, "MARKERlong free text") {
+			continue
+		}
+		fmt.Fprintf(&plain, "step %d: %s\n", i, s)
+		fmt.Fprintf(&md, "- **%d** `%s` [link](%s)\n", i, s, s)
+		record[fmt.Sprintf("field_%d", i)] = s
+		record[[]string{"sha256", "head", "commit", "since_commit"}[i%4]] = s // a hash key with a value that is not a hash
+	}
+	// A long hex run outside a hash key: could be a key as well as a digest.
+	plain.WriteString("hex MARKER" + strings.Repeat("0123456789abcdef", 4) + "\n")
+	recordJSON := mustJSON(record)
+	files := map[string][]byte{"evidence/terminal.txt": plain.Bytes(), "evidence/dump.json": recordJSON, "evidence/notes.md": md.Bytes()}
+	var evidence []any
+	for name, b := range files {
+		testkit.WriteFile(t, filepath.Join(cell, name), b)
+		evidence = append(evidence, map[string]any{"file": strings.TrimPrefix(name, "evidence/"), "sha256": sha256Hex(b)})
+	}
+	testkit.WriteFile(t, filepath.Join(cell, "review", "round-1", "findings.md"), md.Bytes())
+	testkit.WriteFile(t, filepath.Join(cell, "review", "round-1", "decision.json"), recordJSON)
+	testkit.WriteFile(t, filepath.Join(cell, "evidence", "results.json"), mustJSON(map[string]any{"head": "abcdef1", "review_loop": 0,
+		"records": map[string]any{"AC-01": map[string]any{"kind": "scenario", "result": "pass", "evidence": evidence}}}))
+	return len(files) + 3 // the three files, results.json, findings.md, decision.json
+}
+
+func sha256Hex(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
 }

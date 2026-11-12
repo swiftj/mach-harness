@@ -78,19 +78,33 @@ type Tailer struct {
 	CP      Checkpoint
 	MaxRead int64
 	MaxLine int64
+	// Size is the file's size at the last poll that found it (-1 before the first, or while it is
+	// gone or refused): with the offset, how far behind the reader is.
+	Size int64
+	// LiveFromStart makes every line live, including what is already on disk at the first poll: for
+	// a file that appeared while the observer was already following the Factory, whose lines were
+	// all written after the observer started.
+	LiveFromStart bool
 
 	startSize int64
 	started   bool
+	readToEnd bool // the last poll read every complete line the file had
 }
 
 // New makes a tailer that resumes from cp.
 func New(abs string, cp Checkpoint) *Tailer {
-	return &Tailer{Abs: abs, CP: cp, MaxRead: DefaultMaxRead, MaxLine: DefaultMaxLine}
+	return &Tailer{Abs: abs, CP: cp, MaxRead: DefaultMaxRead, MaxLine: DefaultMaxLine, Size: -1}
 }
+
+// CaughtUp reports whether every complete line that was in the file when the tailer first looked
+// has been read (or the file has not been looked at yet). Lines read before that are backfill. A
+// torn last line does not hold it back: it is not a line until its newline arrives.
+func (t *Tailer) CaughtUp() bool { return !t.started || t.CP.Offset >= t.startSize || t.readToEnd }
 
 // Poll reads what is new. It never blocks on the file and never holds it open between calls.
 func (t *Tailer) Poll() ([]Line, []Note, error) {
 	var notes []Note
+	t.Size = -1
 	info, err := os.Lstat(t.Abs)
 	if errors.Is(err, fs.ErrNotExist) {
 		if !t.CP.Gone && (t.CP.Offset > 0 || t.CP.Ino != 0) {
@@ -138,9 +152,13 @@ func (t *Tailer) Poll() ([]Line, []Note, error) {
 	t.CP.Blocked = false
 	t.CP.Gone = false
 	size := st.Size()
+	t.Size = size
 	if !t.started {
 		t.started = true
 		t.startSize = size
+		if t.LiveFromStart {
+			t.startSize = 0
+		}
 	}
 	dev, ino := fileID(st)
 	replaced := t.CP.Ino != 0 && (dev != t.CP.Dev || ino != t.CP.Ino)
@@ -163,7 +181,9 @@ func (t *Tailer) Poll() ([]Line, []Note, error) {
 		}
 	}
 	t.CP.Dev, t.CP.Ino = dev, ino
+	t.readToEnd = false
 	if size <= t.CP.Offset {
+		t.readToEnd = true
 		return nil, notes, nil
 	}
 	want := min(size-t.CP.Offset, t.MaxRead)
@@ -215,6 +235,7 @@ func (t *Tailer) Poll() ([]Line, []Note, error) {
 		lines = append(lines, Line{Bytes: bytes.Clone(raw), Offset: offset, Number: t.CP.LineNo, Live: offset >= t.startSize})
 	}
 	t.CP.Offset = base + int64(pos)
+	t.readToEnd = base+int64(len(buf)) >= size
 	return lines, notes, nil
 }
 

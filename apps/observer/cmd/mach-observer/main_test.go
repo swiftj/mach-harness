@@ -63,6 +63,7 @@ func fixture(t *testing.T) string {
 }
 
 type running struct {
+	link   string
 	base   string
 	client *http.Client
 	cancel context.CancelFunc
@@ -71,11 +72,21 @@ type running struct {
 
 func launch(t *testing.T, root string) *running {
 	t.Helper()
+	return launchWith(t, root, nil, true)
+}
+
+// launchWith starts the observer (stderr to errs when given) and, when exchange is set, opens the
+// printed link with a fresh cookie jar; otherwise the client has no cookie and link is kept.
+func launchWith(t *testing.T, root string, errs io.Writer, exchange bool) *running {
+	t.Helper()
+	if errs == nil {
+		errs = io.Discard
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, []string{"--project", root}, pw, io.Discard)
+		done <- run(ctx, []string{"--project", root}, pw, errs)
 		pw.Close()
 	}()
 	link := ""
@@ -93,12 +104,15 @@ func launch(t *testing.T, root string) *running {
 	}
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, Timeout: 5 * time.Second}
-	resp, err := client.Get(link)
-	if err != nil {
-		t.Fatal(err)
+	r := &running{base: strings.SplitN(link, "/?", 2)[0], client: client, cancel: cancel, done: done, link: link}
+	if exchange {
+		resp, err := client.Get(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
 	}
-	resp.Body.Close()
-	return &running{base: strings.SplitN(link, "/?", 2)[0], client: client, cancel: cancel, done: done}
+	return r
 }
 
 func (r *running) get(t *testing.T, path string) []byte {
@@ -158,6 +172,7 @@ func TestReadOnlyOverAFactoryTree(t *testing.T) {
 	r := launch(t, root)
 	waitEvents(t, r, 7) // five ledger lines and two lifecycle lines
 	touchEveryEndpoint(t, r)
+	checkFreshness(t, r)
 	r.stop(t)
 
 	again := launch(t, root) // a restart reads its own index, still writes nothing else
@@ -185,11 +200,59 @@ func TestReadOnlyOverAFactoryTree(t *testing.T) {
 	}
 }
 
+// checkFreshness: /health reports each tailed source's real size, lag and read time, and the
+// history read on start as backfill (nothing late), through the real ingest loop.
+func checkFreshness(t *testing.T, r *running) {
+	t.Helper()
+	var health struct {
+		Data struct {
+			Ingest struct {
+				Late       int64 `json:"late"`
+				Backfill   int64 `json:"backfill"`
+				CatchingUp bool  `json:"catching_up"`
+			} `json:"ingest"`
+			Freshness struct {
+				Sources []struct {
+					Path       string  `json:"path"`
+					Size       *int64  `json:"size"`
+					Lag        *int64  `json:"lag_bytes"`
+					LastReadAt *string `json:"last_read_at"`
+				} `json:"sources"`
+			} `json:"freshness"`
+		} `json:"data"`
+	}
+	deadline := time.Now().Add(testkit.Slow(5 * time.Second))
+	for {
+		json.Unmarshal(r.get(t, "/api/v1/health"), &health)
+		if !health.Data.Ingest.CatchingUp || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if health.Data.Ingest.CatchingUp || health.Data.Ingest.Late != 0 || health.Data.Ingest.Backfill < 7 {
+		t.Fatalf("ingest %+v", health.Data.Ingest)
+	}
+	found := false
+	for _, src := range health.Data.Freshness.Sources {
+		if src.Path != ".factory/intake/events.jsonl" {
+			continue
+		}
+		found = true
+		// The torn last line is not read yet: the lag is exactly its bytes.
+		if src.Size == nil || src.Lag == nil || *src.Lag != int64(len(`{"schema_version":2,"seq":6,"at`)) || src.LastReadAt == nil {
+			t.Fatalf("ledger freshness: size %v lag %v read %v", src.Size, src.Lag, src.LastReadAt)
+		}
+	}
+	if !found {
+		t.Fatalf("no ledger in %+v", health.Data.Freshness.Sources)
+	}
+}
+
 // touchEveryEndpoint reads every route, an artifact's content, a snapshot at a cursor, and a stream.
 func touchEveryEndpoint(t *testing.T, r *running) {
 	t.Helper()
 	for _, path := range []string{"/api/v1/health", "/api/v1/factory/status", "/api/v1/session", "/api/v1/events?limit=1000",
-		"/api/v1/snapshot", "/api/v1/project", "/api/v1/waves", "/api/v1/slices", "/api/v1/cells", "/api/v1/runs", "/api/v1/spans",
+		"/api/v1/snapshot", "/api/v1/project", "/api/v1/waves", "/api/v1/slices", "/api/v1/cells", "/api/v1/runs", "/api/v1/spans", "/api/v1/history",
 		"/api/v1/artifacts", "/api/v1/cells/T-1/evidence", "/api/v1/analytics/metrics?group_by=day", "/api/v1/analytics/runs", "/", "/some/app/route"} {
 		r.get(t, path)
 	}
@@ -252,15 +315,21 @@ func TestOneObserverPerProject(t *testing.T) {
 	}
 }
 
-// Source boundary: no package starts a process, dials out, or loads code; and only the index,
-// the lock and start-up may call a function that writes to the file system.
+// Source boundary: no package starts a process, signals one, dials out (directly or through an
+// HTTP client or a resolver), locks anything but its own lock file, or loads code; and only the
+// index, the lock and start-up may call a function that writes to the file system.
 func TestSourceBoundary(t *testing.T) {
 	_, here, _, _ := runtime.Caller(0)
 	module := filepath.Join(filepath.Dir(here), "..", "..")
 	forbiddenImports := map[string]bool{"os/exec": true, "plugin": true, "unsafe": true, "net/http/httputil": true, "net/rpc": true, "net/smtp": true}
 	writers := map[string]bool{"WriteFile": true, "Create": true, "CreateTemp": true, "OpenFile": true, "Remove": true, "RemoveAll": true,
 		"Rename": true, "Mkdir": true, "MkdirAll": true, "MkdirTemp": true, "Truncate": true, "Chmod": true, "Chtimes": true, "Chown": true,
-		"Symlink": true, "Link": true, "StartProcess": true}
+		"Symlink": true, "Link": true}
+	// Calls that would start or signal a process, or reach another machine, whatever the file.
+	forbidden := map[string]bool{"os.StartProcess": true, "os.FindProcess": true, "http.Get": true, "http.Post": true, "http.PostForm": true,
+		"http.Head": true, "http.DefaultClient": true, "http.DefaultTransport": true, "http.Client": true, "http.Transport": true,
+		"http.NewRequest": true, "http.NewRequestWithContext": true, "net.Dialer": true, "net.Resolver": true, "net.LookupHost": true,
+		"net.LookupIP": true, "net.LookupAddr": true, "tls.Dial": true, "syscall.ForkExec": true, "syscall.Exec": true}
 	allowedWriters := map[string]bool{"internal/store/store.go": true, "internal/lock/lock_unix.go": true, "cmd/mach-observer/main.go": true,
 		"internal/project/persist.go":  true,                                                                                // the saved projection, in the observer's own folder
 		"internal/tail/fileid_unix.go": true, "internal/factory/pid_unix.go": true, "internal/normalize/open_unix.go": true} // these open read-only (checked below)
@@ -294,7 +363,12 @@ func TestSourceBoundary(t *testing.T) {
 			if !ok {
 				return true
 			}
+			if forbidden[pkg.Name+"."+sel.Sel.Name] {
+				t.Errorf("%s: %s.%s: the observer starts no process and connects to nothing", rel, pkg.Name, sel.Sel.Name)
+			}
 			switch {
+			case pkg.Name == "syscall" && sel.Sel.Name == "Flock" && rel != "internal/lock/lock_unix.go":
+				t.Errorf("%s: syscall.Flock: only the observer's own lock (internal/lock) may lock a file", rel)
 			case pkg.Name == "os" && writers[sel.Sel.Name] && !allowedWriters[rel]:
 				t.Errorf("%s: os.%s outside the files allowed to write", rel, sel.Sel.Name)
 			case pkg.Name == "os" && sel.Sel.Name == "OpenFile" && readOnlyOpeners[rel]:
@@ -303,6 +377,21 @@ func TestSourceBoundary(t *testing.T) {
 				t.Errorf("%s: net.%s: the observer never connects out", rel, sel.Sel.Name)
 			case pkg.Name == "syscall" && (sel.Sel.Name == "Exec" || sel.Sel.Name == "ForkExec"):
 				t.Errorf("%s: syscall.%s", rel, sel.Sel.Name)
+			}
+			return true
+		})
+		// syscall.Kill only as kill(pid, 0), which delivers nothing (a liveness check).
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "syscall" && sel.Sel.Name == "Kill" {
+					if lit, ok := call.Args[1].(*ast.BasicLit); !ok || lit.Value != "0" {
+						t.Errorf("%s: syscall.Kill with a signal: the observer signals no process", rel)
+					}
+				}
 			}
 			return true
 		})
@@ -316,5 +405,49 @@ func TestSourceBoundary(t *testing.T) {
 	})
 	if files < 10 {
 		t.Fatalf("only %d source files scanned", files)
+	}
+}
+
+// Started in a folder with no Git repository and no Factory: the folder given is the project,
+// exactly (a repository above it is never taken instead), nothing is written, and a Factory that
+// appears later is observed from memory, still without writing anything.
+func TestNoGitRepositoryAndAFactoryThatAppearsLater(t *testing.T) {
+	outer, _ := filepath.EvalSymlinks(t.TempDir())
+	os.Mkdir(filepath.Join(outer, ".git"), 0o755) // a repository above the project folder
+	root := filepath.Join(outer, "plain folder")
+	os.Mkdir(root, 0o755)
+	if got, err := findProject(root); err != nil || got != root {
+		t.Fatalf("--project %s resolved to %s (%v)", root, got, err)
+	}
+	r := launch(t, root)
+	var session struct {
+		Data struct {
+			Project struct {
+				Folder string `json:"folder"`
+			} `json:"project"`
+		} `json:"data"`
+	}
+	json.Unmarshal(r.get(t, "/api/v1/session"), &session)
+	if session.Data.Project.Folder != "plain folder" {
+		t.Fatalf("observing %q", session.Data.Project.Folder)
+	}
+	if body := r.get(t, "/api/v1/factory/status"); !strings.Contains(string(body), `"factory_present":false`) {
+		t.Fatalf("%s", body)
+	}
+	// The Factory appears while the observer runs.
+	testkit.Append(t, testkit.LedgerPath(root), append(testkit.LedgerLine(1, "work.claimed", "T-1", map[string]any{"stage": "planned"}),
+		testkit.LedgerLine(2, "work.claimed", "T-1", map[string]any{"stage": "planned"})...))
+	before := testkit.HashTree(t, root, "")
+	waitEvents(t, r, 2)
+	for _, path := range []string{"/api/v1/health", "/api/v1/factory/status", "/api/v1/snapshot", "/api/v1/history", "/api/v1/cells",
+		"/api/v1/runs", "/api/v1/spans", "/api/v1/artifacts", "/api/v1/analytics/metrics"} {
+		r.get(t, path)
+	}
+	r.stop(t)
+	if diffs := testkit.DiffTrees(before, testkit.HashTree(t, root, "")); len(diffs) > 0 {
+		t.Fatalf("an observer started without a Factory wrote into the one that appeared: %v", diffs)
+	}
+	if _, err := os.Lstat(filepath.Join(root, IndexDir)); err == nil {
+		t.Fatal("the observer made its folder in a Factory it did not find at start")
 	}
 }

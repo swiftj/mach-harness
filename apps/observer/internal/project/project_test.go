@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -355,6 +356,50 @@ func TestScenarioMetrics(t *testing.T) {
 				}
 				t.Errorf("%s = %s, want %v", id, got, want)
 			}
+		}
+	})
+}
+
+// cost_may_be_under_reported follows the stream's own verdict (execution.usage.cost_complete,
+// revision 1) when there is one, and the workflow's recorded end only for a revision-0 event.
+func TestCostCompletenessDecidesUnderReporting(t *testing.T) {
+	usage := func(x string, extra map[string]any) map[string]any {
+		d := map[string]any{"total_cost_usd": 1.0, "subtype": "success", "is_error": false, "terminal_reason": nil, "budget_exhausted": false, "models": map[string]any{}}
+		for k, v := range extra {
+			d[k] = v
+		}
+		return feedtest.New("execution-stream", "execution.usage", 2000).Exec(x).Data(d).Build()
+	}
+	ran := func(x string) []map[string]any {
+		return []map[string]any{feedtest.New("execution-record", "execution.process_started", 1000).Exec(x).Data(map[string]any{}).Build(),
+			feedtest.New("execution-record", "execution.process_ended", 2500).Exec(x).Data(map[string]any{"ended": "exited", "exit_code": 0, "seconds": 2}).Build()}
+	}
+	killed := func(x string) map[string]any {
+		return feedtest.New("execution-stream", "workflow.finished", 1500).Exec(x).Entity("workflow:" + x + "/task1").Data(map[string]any{
+			"status": "killed", "notification_status": "stopped", "total_tokens": nil, "tool_uses": nil, "duration_ms": nil, "stop_reason": "unknown",
+			"workflow_json": false, "tickets": []map[string]any{}}).Build()
+	}
+	const incomplete, complete, legacy = "x00000000000a", "x00000000000b", "x00000000000c"
+	m := feedtest.NewMem("", 0)
+	for _, x := range []string{incomplete, complete, legacy} {
+		m.Append(ran(x)...)
+	}
+	m.Append(
+		killed(incomplete), usage(incomplete, map[string]any{"cost_complete": false, "cost_incomplete_reasons": []any{"budget-stop", "agents-killed-in-flight"}}),
+		killed(complete), usage(complete, map[string]any{"cost_complete": true, "cost_incomplete_reasons": []any{}}),
+		killed(legacy), usage(legacy, nil),
+	)
+	p := New(Options{Log: m})
+	p.View(func(s *State) {
+		a, b, c := Run(s.Executions[incomplete]), Run(s.Executions[complete]), Run(s.Executions[legacy])
+		if !a.UnderReported || len(a.UnderReasons) != 2 || !strings.Contains(a.UnderReasons[0], "budget") {
+			t.Fatalf("incomplete: %v %v", a.UnderReported, a.UnderReasons)
+		}
+		if b.UnderReported {
+			t.Fatalf("the stream said its cost is complete, the view must not override it: %v", b.UnderReasons)
+		}
+		if !c.UnderReported || len(c.UnderReasons) != 1 {
+			t.Fatalf("a revision-0 event falls back to the workflow's end: %v %v", c.UnderReported, c.UnderReasons)
 		}
 	})
 }

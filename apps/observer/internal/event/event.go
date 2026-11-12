@@ -20,9 +20,10 @@ import (
 )
 
 // Version is the schema version; Revision the additive revision within it.
+// Revision 1 added execution.usage's cost_complete and cost_incomplete_reasons.
 const (
 	Version  = 3
-	Revision = 0
+	Revision = 1
 )
 
 // Authority (contract section 7).
@@ -160,6 +161,10 @@ type Event struct {
 	// belongs next to (a gap in that partition). Ingest only; never stored.
 	AnchorKey string
 	AnchorSeq int64
+	// Backfill: read while catching a source up with what was written before the observer started
+	// (or before an index rebuild), not as it was written. Such an event is never late; it carries
+	// provenance rule "backfill" instead (contract 6.5). Ingest only; never stored.
+	Backfill bool
 
 	hash string // ContentHash, once computed
 }

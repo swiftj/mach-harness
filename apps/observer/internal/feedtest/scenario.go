@@ -86,7 +86,7 @@ func Scenario() []map[string]any {
 		"tool_uses": 40, "duration_ms": 20000, "stop_reason": nil, "workflow_json": true, "tickets": []map[string]any{}}))
 	add(s("tool.returned", 26600).ID("agent_id", x1+"/main").ID("tool_call_id", "toolu_01").Data(map[string]any{"status": "ok", "duration_ms": 20300}))
 	add(s("execution.usage", 27000).Data(map[string]any{"total_cost_usd": 4.5, "subtype": "success", "is_error": false, "terminal_reason": nil, "budget_exhausted": false,
-		"models": map[string]any{"claude-sonnet-5-5": map[string]any{"cost_usd": 3.0, "input_tokens": 1000, "output_tokens": 2000, "cache_read_tokens": 50000, "cache_creation_tokens": 4000},
+		"cost_complete": true, "cost_incomplete_reasons": []any{}, "models": map[string]any{"claude-sonnet-5-5": map[string]any{"cost_usd": 3.0, "input_tokens": 1000, "output_tokens": 2000, "cache_read_tokens": 50000, "cache_creation_tokens": 4000},
 			"claude-opus-5-5": map[string]any{"cost_usd": 1.5, "input_tokens": 500, "output_tokens": 700, "cache_read_tokens": 9000, "cache_creation_tokens": 800}}}))
 	add(New("execution-record", "execution.process_ended", 28000).Exec(x1).Ticket("T-1").Data(map[string]any{"ended": "exited", "exit_code": 0, "seconds": 22}))
 	add(i("execution.completed", 30000).Ticket("T-1").Exec(x1).Data(map[string]any{"stage": "awaiting-human", "next": "stop", "waiting_for": "a person's approval", "how": "exited",

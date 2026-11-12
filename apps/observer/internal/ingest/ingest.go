@@ -89,16 +89,25 @@ type Options struct {
 	MaxPending int
 	// StaleAfter: a running execution whose stream has not grown for this long is "stale".
 	StaleAfter time.Duration
+	// TickBudget: events one tick reads at most (0: TickBudget).
+	TickBudget int
 }
 
 // SourceStat is one source's state, for the status endpoint. Only the key, the
 // project-relative path and counts.
 type SourceStat struct {
-	Key        string `json:"key"`
-	Path       string `json:"path"`
-	State      string `json:"state"` // live, idle, stale, ended, unreadable
-	Offset     int64  `json:"offset"`
+	Key    string `json:"key"`
+	Path   string `json:"path"`
+	State  string `json:"state"` // live, idle, stale, ended, unreadable
+	Offset int64  `json:"offset"`
+	// Size is the file's size when it was last read (nil while it is missing or refused), so
+	// size - offset is how many bytes are still to be read.
+	Size *int64 `json:"size"`
+	// LastReadAt is when the file was last read (RFC 3339, "" before the first read). A tick that
+	// reached its read budget leaves some sources unread, so this can be older than the last tick.
+	LastReadAt string `json:"last_read_at,omitempty"`
 	Lines      int64  `json:"lines"`
+	Refused    int64  `json:"refused"`
 	Duplicates int64  `json:"duplicates"`
 	Oversized  int64  `json:"oversized"`
 	Resets     int64  `json:"resets"`
@@ -108,24 +117,26 @@ type SourceStat struct {
 	ClaudeVersion string           `json:"claude_code_version,omitempty"`
 	StreamKnown   *bool            `json:"stream_observations,omitempty"`
 	Unrecognised  map[string]int64 `json:"unrecognised,omitempty"`
-	// CostMayBeUnderReported: a budget stop killed the workflow; the recorded spend may be low.
-	CostMayBeUnderReported bool `json:"cost_may_be_under_reported,omitempty"`
 }
 
 // Stats is a snapshot of the loop's health.
 type Stats struct {
-	Ticks        int64            `json:"ticks"`
-	LastTickAt   string           `json:"last_tick_at,omitempty"`
-	LastTickMS   float64          `json:"last_tick_ms"`
-	Errors       int64            `json:"errors"`
-	LastError    string           `json:"last_error,omitempty"`
-	IntervalMS   int64            `json:"interval_ms"`
-	Sources      []SourceStat     `json:"sources"`
-	FactoryFound bool             `json:"factory_found"`
-	Pending      int              `json:"pending"`
-	Watermark    int64            `json:"watermark_ms"`
-	Committed    int64            `json:"committed"`
-	Late         int64            `json:"late"`
+	Ticks        int64        `json:"ticks"`
+	LastTickAt   string       `json:"last_tick_at,omitempty"`
+	LastTickMS   float64      `json:"last_tick_ms"`
+	Errors       int64        `json:"errors"`
+	LastError    string       `json:"last_error,omitempty"`
+	IntervalMS   int64        `json:"interval_ms"`
+	Sources      []SourceStat `json:"sources"`
+	FactoryFound bool         `json:"factory_found"`
+	Pending      int          `json:"pending"`
+	Watermark    int64        `json:"watermark_ms"`
+	Committed    int64        `json:"committed"`
+	Late         int64        `json:"late"`
+	// CatchingUp: the observer is still reading what was written before it started (or before an
+	// index rebuild). Events committed meanwhile are backfill: delivered in read order, never late.
+	CatchingUp   bool             `json:"catching_up"`
+	Backfill     int64            `json:"backfill"`
 	Duplicates   int64            `json:"duplicates"`
 	Conflicts    int64            `json:"conflicts"`
 	Suppressed   int64            `json:"replayed"`
@@ -159,7 +170,12 @@ type source struct {
 	suppress  int64  // committed before a restart: replay and discard up to this line
 	saved     string // the generation those lines belonged to
 	lastLine  time.Time
+	lastRead  time.Time // the last poll that found the file
 	gone      bool
+	// preexisting: found while catching up (it was there before the observer started); liveSeen:
+	// a line written since has been read. Events derived from a preexisting source before any
+	// live line (a stream's closings, a cell's history.began) are backfill too.
+	preexisting, liveSeen bool
 
 	// cells
 	cellSize, cellMTime int64
@@ -191,6 +207,9 @@ type Observer struct {
 	queue    []pending
 	lastTick time.Time
 	red      redact.Counters
+	// catchingUp is true from start until a tick reads within its budget and every source has
+	// read past what was in it when first looked at. Until then every event is backfill.
+	catchingUp bool
 
 	mu       sync.RWMutex
 	stats    Stats
@@ -220,11 +239,15 @@ func New(opts Options) *Observer {
 	if opts.MaxPending <= 0 {
 		opts.MaxPending = 100000
 	}
+	if opts.TickBudget <= 0 {
+		opts.TickBudget = TickBudget
+	}
 	if opts.StaleAfter <= 0 {
 		opts.StaleAfter = time.Minute
 	}
 	o := &Observer{opts: opts, identity: normalize.NewIdentity(), seq: normalize.NewSequencer(), sources: map[string]*source{},
-		records: map[string]tail.Checkpoint{}, interval: opts.PollMin}
+		records: map[string]tail.Checkpoint{}, interval: opts.PollMin, catchingUp: true}
+	o.stats.CatchingUp = true
 	o.stats.Unrecognised = map[string]int64{}
 	for key, cp := range opts.Store.Checkpoints() {
 		switch {
@@ -258,6 +281,10 @@ func (o *Observer) resume(src *source, cp tail.Checkpoint) {
 func (o *Observer) addSource(key string, k kind, ticket, execution, rel string) *source {
 	src := &source{key: key, kind: k, ticket: ticket, execution: execution, rel: rel, mismatch: map[string]bool{},
 		tailer: tail.New(filepath.Join(o.opts.Root, filepath.FromSlash(rel)), tail.Checkpoint{Path: rel})}
+	// A file first found after the catch-up was written while the observer was watching: all of
+	// it is live.
+	src.tailer.LiveFromStart = !o.catchingUp
+	src.preexisting = o.catchingUp
 	o.sources[key] = src
 	return src
 }
@@ -286,14 +313,15 @@ type tickCtx struct {
 	out       []*event.Event
 	cps       map[string]tail.Checkpoint
 	suppress  int64
+	budget    int
 	err       error
 }
 
-// TickBudget bounds the events one tick reads; the rest of a backlog is read by the next ticks,
-// so memory stays bounded however much history is waiting.
+// TickBudget bounds the events one tick reads (Options.TickBudget, default this); the rest of a
+// backlog is read by the next ticks, so memory stays bounded however much history is waiting.
 const TickBudget = 20000
 
-func (t *tickCtx) full() bool { return len(t.out)+int(t.suppress) >= TickBudget }
+func (t *tickCtx) full() bool { return len(t.out)+int(t.suppress) >= t.budget }
 
 func (t *tickCtx) read(line int64, live bool) normalize.Read {
 	return normalize.Read{Line: line, At: t.now, Prev: t.prev, Live: live}
@@ -319,9 +347,18 @@ func (o *Observer) emit(t *tickCtx, evs []*event.Event, discard bool) {
 			// show nothing of it.
 			o.red.Dropped++
 			if ev.Origin.Stream != event.StreamObserver {
-				o.emit(t, []*event.Event{invalidGap(ev, t.read(ev.Origin.Seq, false))}, false)
+				g := invalidGap(ev, t.read(ev.Origin.Seq, false))
+				g.Backfill = ev.Backfill
+				o.emit(t, []*event.Event{g}, false)
 			}
 			continue
+		}
+		if o.catchingUp {
+			ev.Backfill = true
+		}
+		if ev.Backfill && ev.Provenance == nil {
+			// Catch-up is recorded where the envelope already has room for how an event came to be.
+			ev.Provenance = &event.Provenance{Basis: []string{}, Rule: "backfill", Files: []string{}}
 		}
 		redact.ScrubEvent(ev, o.opts.Root, &o.red)
 		ev.OrderBasis = nil
@@ -334,7 +371,7 @@ func (o *Observer) emit(t *tickCtx, evs []*event.Event, discard bool) {
 // were committed.
 func (o *Observer) Tick() (int, error) {
 	now := o.opts.Now()
-	t := &tickCtx{now: now, prev: o.lastTick, cps: map[string]tail.Checkpoint{}}
+	t := &tickCtx{now: now, prev: o.lastTick, cps: map[string]tail.Checkpoint{}, budget: o.opts.TickBudget}
 	o.lastTick = now
 	factory := realDir(o.abs(".factory"))
 	if factory {
@@ -349,8 +386,33 @@ func (o *Observer) Tick() (int, error) {
 		o.queue = append(o.queue, pending{at: now, events: t.out, cps: t.cps})
 	}
 	n, err := o.release(now)
+	if o.catchingUp && !t.full() && o.caughtUp() {
+		o.catchingUp = false
+	}
 	o.record(now, factory, errors.Join(t.err, err), t.suppress)
 	return n, errors.Join(t.err, err)
+}
+
+// backfill: what the source yields now still describes history from before the observer started.
+func (src *source) backfill() bool { return src.preexisting && !src.liveSeen }
+
+func markBackfill(evs []*event.Event) []*event.Event {
+	for _, ev := range evs {
+		if ev != nil {
+			ev.Backfill = true
+		}
+	}
+	return evs
+}
+
+// caughtUp: every tailed source has read past what was in it when it was first looked at.
+func (o *Observer) caughtUp() bool {
+	for _, src := range o.sources {
+		if !src.tailer.CaughtUp() {
+			return false
+		}
+	}
+	return true
 }
 
 // Flush commits everything held, whatever its age (shutdown, tests).
@@ -377,6 +439,8 @@ func (o *Observer) pollTailed(t *tickCtx, src *source, make func(gen string) lin
 	lines, notes, err := src.tailer.Poll()
 	if err != nil {
 		t.err = errors.Join(t.err, errors.New("could not read "+src.rel))
+	} else if src.tailer.Size >= 0 {
+		src.lastRead = t.now
 	}
 	for _, n := range notes {
 		reason := map[string]string{tail.NoteReset: "rewritten", tail.NoteTruncated: "truncated"}[n.Kind]
@@ -405,7 +469,13 @@ func (o *Observer) pollTailed(t *tickCtx, src *source, make func(gen string) lin
 			src.norm = make(cp.Epoch)
 		}
 		discard := line.Number <= src.suppress && cp.Epoch == src.saved
-		o.emit(t, src.norm.Line(line.Bytes, t.read(line.Number, line.Live)), discard)
+		evs := src.norm.Line(line.Bytes, t.read(line.Number, line.Live))
+		if line.Live {
+			src.liveSeen = true
+		} else {
+			markBackfill(evs)
+		}
+		o.emit(t, evs, discard)
 		src.lastLine = t.now
 	}
 	if src.tailer.CP != before {
@@ -586,8 +656,11 @@ func (o *Observer) pollCell(t *tickCtx, src *source) {
 	}
 	if life == nil && cp.Ino == 0 && cp.Flags&flagBegan == 0 && src.cellInfo.Present && t.now.Sub(src.firstSeen) >= 2*time.Second {
 		if _, err := os.Lstat(filepath.Join(cellDir, LifecycleFile)); errors.Is(err, fs.ErrNotExist) {
-			o.emit(t, []*event.Event{normalize.Began(src.ticket, "no-lifecycle-log", src.cellInfo, o.identity, t.read(0, true),
-				[]string{"cell.json"})}, false)
+			began := []*event.Event{normalize.Began(src.ticket, "no-lifecycle-log", src.cellInfo, o.identity, t.read(0, true), []string{"cell.json"})}
+			if src.preexisting {
+				markBackfill(began)
+			}
+			o.emit(t, began, false)
 			cp.Flags |= flagBegan
 			t.cps[src.key] = *cp
 		}
@@ -680,7 +753,11 @@ func (o *Observer) pollExecution(t *tickCtx, x string) {
 		}
 		if size < 0 || size == src.tailer.CP.Offset {
 			if src.stream != nil {
-				o.emit(t, src.stream.Finish(t.read(src.tailer.CP.LineNo, false)), false)
+				closing := src.stream.Finish(t.read(src.tailer.CP.LineNo, false))
+				if src.backfill() {
+					markBackfill(closing)
+				}
+				o.emit(t, closing, false)
 			}
 			rec.Flags |= flagFinished
 		}
@@ -906,6 +983,7 @@ func (o *Observer) release(now time.Time) (int, error) {
 		remaining[i] = rest
 	}
 	seen := map[string]string{}
+	var dupes int64
 	kept := events[:0]
 	var conflicts []*event.Event
 	for _, ev := range events {
@@ -914,14 +992,14 @@ func (o *Observer) release(now time.Time) (int, error) {
 			if prev != h {
 				conflicts = append(conflicts, o.conflict(ev, now))
 			}
-			o.stats.Duplicates++
+			dupes++
 			continue
 		}
 		if stored, ok := o.opts.Store.Lookup(ev.ID); ok {
 			if stored != h {
 				conflicts = append(conflicts, o.conflict(ev, now))
 			}
-			o.stats.Duplicates++
+			dupes++
 			continue
 		}
 		seen[ev.ID] = h
@@ -934,12 +1012,19 @@ func (o *Observer) release(now time.Time) (int, error) {
 		}
 	}
 	sort.SliceStable(kept, func(i, j int) bool { return kept[i].Order < kept[j].Order })
+	// Late (contract 6.5): delivered after an event that sorts after it. Backfill is never late:
+	// catching up delivers older history in read order by nature, and says so in its provenance.
 	max := o.opts.Store.MaxOrder()
+	var late, backfill int64
 	for _, ev := range kept {
-		if ev.Order < max {
+		switch {
+		case ev.Backfill:
+			backfill++
+		case ev.Order < max:
 			ev.Late = true
-			o.stats.Late++
-		} else {
+			late++
+		}
+		if ev.Order > max {
 			max = ev.Order
 		}
 	}
@@ -951,8 +1036,13 @@ func (o *Observer) release(now time.Time) (int, error) {
 		o.queue[i].events = remaining[i]
 	}
 	o.queue = append([]pending(nil), o.queue[k:]...)
+	o.mu.Lock()
 	o.stats.Committed += int64(n)
 	o.stats.Conflicts += int64(len(conflicts))
+	o.stats.Late += late
+	o.stats.Backfill += backfill
+	o.stats.Duplicates += dupes
+	o.mu.Unlock()
 	o.setWatermark(now)
 	return n, nil
 }
@@ -999,12 +1089,15 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 	o.stats.LastTickAt = normalize.Stamp(started)
 	o.stats.LastTickMS = float64(o.opts.Now().Sub(started).Microseconds()) / 1000
 	o.stats.FactoryFound = factory
+	o.stats.CatchingUp = o.catchingUp
 	o.stats.Suppressed += suppressed
 	o.stats.Redaction = o.red
 	if err != nil {
 		o.stats.Errors++
 		o.stats.LastError = err.Error()
 		o.opts.Logger.Printf("ingest: %v", err)
+	} else {
+		o.stats.LastError = "" // health reports the current state; the count keeps the history
 	}
 	pend := 0
 	for _, p := range o.queue {
@@ -1015,8 +1108,14 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 	unrec := map[string]int64{}
 	for _, src := range o.sources {
 		cp := src.tailer.CP
-		st := SourceStat{Key: src.key, Path: cp.Path, Offset: cp.Offset, Lines: cp.Lines, Duplicates: cp.Dupes,
+		st := SourceStat{Key: src.key, Path: cp.Path, Offset: cp.Offset, Lines: cp.Lines, Refused: cp.Refused, Duplicates: cp.Dupes,
 			Oversized: cp.Oversize, Resets: cp.Resets, Gone: cp.Gone || src.gone, Blocked: cp.Blocked}
+		if size := src.tailer.Size; size >= 0 && !st.Gone && !st.Blocked {
+			st.Size = &size
+		}
+		if !src.lastRead.IsZero() {
+			st.LastReadAt = normalize.Stamp(src.lastRead)
+		}
 		switch {
 		case cp.Blocked:
 			st.State = "unreadable"
@@ -1038,7 +1137,6 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 			if s := src.stream; s != nil {
 				v, ok := s.Version()
 				st.ClaudeVersion, st.StreamKnown = v, &ok
-				st.CostMayBeUnderReported = s.CostMayBeUnderReported()
 				if len(s.Unrecognised) > 0 {
 					st.Unrecognised = map[string]int64{}
 					for k, n := range s.Unrecognised {

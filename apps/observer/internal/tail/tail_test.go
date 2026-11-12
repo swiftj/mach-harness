@@ -79,6 +79,41 @@ func TestBackfillIsNotLive(t *testing.T) {
 	}
 }
 
+// Caught up: every complete line that was there at the first look has been read. A torn last
+// line does not count (it is not a line yet); a read capped by MaxRead does not catch up; a file
+// found later with LiveFromStart is live from its first byte; Size follows the file.
+func TestCaughtUpSizeAndLiveFromStart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "log.jsonl")
+	appendTo(t, path, "one\ntwo\nthree\n{\"torn")
+	tl := New(path, Checkpoint{})
+	if !tl.CaughtUp() || tl.Size != -1 {
+		t.Fatal("before the first look there is nothing to catch up")
+	}
+	tl.MaxRead = 6 // "one\ntw": one line per poll at most
+	poll(t, tl)
+	if tl.CaughtUp() || tl.Size != 20 {
+		t.Fatalf("one line of three read: caught up %v, size %d", tl.CaughtUp(), tl.Size)
+	}
+	tl.MaxRead = DefaultMaxRead
+	poll(t, tl)
+	if !tl.CaughtUp() || tl.CP.Offset != 14 {
+		t.Fatalf("every complete line read, the torn tail is not a line: caught up %v, offset %d", tl.CaughtUp(), tl.CP.Offset)
+	}
+	later := filepath.Join(dir, "later.jsonl")
+	appendTo(t, later, "a\n")
+	fresh := New(later, Checkpoint{})
+	fresh.LiveFromStart = true
+	if lines, _, _ := fresh.Poll(); len(lines) != 1 || !lines[0].Live {
+		t.Fatalf("a file that appeared while watching is live from its first line: %+v", lines)
+	}
+	os.Remove(later)
+	fresh.Poll()
+	if fresh.Size != -1 {
+		t.Fatal("a removed file has no size")
+	}
+}
+
 func TestTruncationSameEpochRereads(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "log.jsonl")
 	appendTo(t, path, "one\ntwo\nthree\n")

@@ -112,7 +112,7 @@ The client's reducer stays the one authority on scene state (M6.0 contract rule 
 
 ### 2.8 What the Timeline asks the observer for
 
-`GET /api/v1/spans?entity=<ref>&kinds=&from_order=&to_order=` → spans as in 2.1; `GET /api/v1/series?metric=<counts series>&bucket=minute&from=&to=` → counts; both cursor-aware (`<epoch>.<pos>`) so a live Timeline appends.
+`GET /api/v1/spans?entity=<ref>&kinds=&ticket=&execution=&wave=` → spans as in 2.1 (built); `GET /api/v1/history?from_order=&to_order=&entities=` → the events of a window in history order (built); `GET /api/v1/series?metric=<counts series>&bucket=minute&from=&to=` → counts (**deferred**: a client computes them from `/spans` and `/history` until the Timeline names the series it needs).
 
 ---
 
@@ -164,8 +164,18 @@ Every artifact links to: project, wave, slice and revision (from the cell's prod
 
 ### 3.5 What the browser may see of an artifact
 
+Decided in the M6.1 hardening (open question 4), as the observer serves it (`apps/observer/README.md`, "Artifact content"):
+
 | `content_access` | Applies to | Browser receives |
 |---|---|---|
+| `text` (default for text) | text files of the catalog: evidence named in `results.json` (terminal transcripts, `curl` dumps, `exit-codes.json`), `results.json`, `summary.json`, `findings.md`, `decision.json` | the text, by catalog id through `GET /api/v1/artifacts/<id>/content`, after an integrity check, never by path: always `text/plain; charset=utf-8`, cut to 256 KiB, scrubbed by the same text scrubber as every event field (credentials, long opaque and long hex runs, e-mail addresses, absolute paths, control and bidirectional characters), with the count in `X-MACH-Redacted`; in a JSON record the hex values of the known hash keys (`sha256`, `head`, `since_commit`, `commit`) are kept |
+| `media` | evidence images and video (`image/png`, `image/jpeg`, `image/gif`, `image/webp`, `video/webm`, `video/mp4`) **when the project opts in** with `.factory/config.json` `{"tower": {"evidence_media": true}}` | the bytes, by catalog id, after an integrity check, with `Content-Type` from the observer's own sniffing, `Content-Security-Policy: sandbox`, range requests for video |
+| `media-disabled` | the same images and video without the opt-in (the default) | metadata only; the content route answers 403 `media-disabled` |
+| `none` | anything whose sniffed type is not served (HTML, SVG, binaries), and everything outside the catalog's roots (`repo/`, `.factory/local/`, execution streams, `packet.json`, `diff.patch`, `test-suite.log`, `contract-check.log`) | nothing beyond metadata (outside the roots: not even that); a person opens it locally |
+
+Text is served by default because the scrubber can read it: what it cannot recognise as a secret is shown, which is why the rules are shared with the event path and held by the adversarial corpus test. Images and video cannot be scrubbed, so they wait for a project's explicit opt-in.
+
+---|---|---|
 | `metadata` (default) | everything | the record in 3.1, without content |
 | `media` | `evidence` files of media type `image/png`, `image/jpeg`, `image/gif`, `video/webm`, `video/mp4` | the bytes, by `ref` through `GET /api/v1/artifacts/<ref>/content` (the observer design's artifact route), after an integrity check, never by path, with `Content-Type` from the observer's own sniffing and `Content-Security-Policy: sandbox` |
 | `none` | text evidence (terminal transcripts, `curl` dumps, `exit-codes.json`), logs, `.env`-like names, anything outside the cell or repository | nothing beyond metadata; a person opens it locally |

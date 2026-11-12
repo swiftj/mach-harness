@@ -19,6 +19,10 @@ import (
 // SchemaVersion is the event schema the serving side reads and serves.
 const SchemaVersion = 3
 
+// SchemaRevision is the additive revision within version 3 that this observer serves (1:
+// execution.usage.cost_complete and cost_incomplete_reasons).
+const SchemaRevision = 1
+
 // Errors a Log read returns.
 var (
 	// ErrExpired: the position is older than what the log still holds.
@@ -46,6 +50,31 @@ type Log interface {
 	After(pos uint64, limit int) ([]Record, error)
 	// Changed returns a channel closed at the next append. Take it before reading.
 	Changed() <-chan struct{}
+}
+
+// HistoryQuery asks for a window of history in ORDER (the events' `order` key), the replay
+// window of the event contract (section 14, "/history").
+type HistoryQuery struct {
+	FromOrder, ToOrder string   // [from, to); "" is open
+	Entities           []string // events touching any of these refs (none: all)
+	Ticket, Execution  string
+	TypePrefix         string
+	Limit              int
+}
+
+// HistoryPage is one window. Next is the FromOrder of the next page when More (a page never
+// splits events that share an order key). Complete is false when events of the window may no
+// longer be held (only the most recent ones are kept in memory).
+type HistoryPage struct {
+	Records  []Record
+	Next     string
+	More     bool
+	Complete bool
+}
+
+// Historian is a Log that can serve history in order as well as in delivery order.
+type Historian interface {
+	History(HistoryQuery) HistoryPage
 }
 
 // ---- cursors ----

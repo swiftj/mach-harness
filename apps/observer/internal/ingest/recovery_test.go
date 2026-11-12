@@ -37,7 +37,9 @@ func prints(h *harness) []fingerprint {
 	for _, e := range h.events() {
 		out = append(out, fingerprint{e.ID, e.Order, e.ContentHash()})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].order < out[j].order || out[i].order == out[j].order && out[i].id < out[j].id })
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].order < out[j].order || out[i].order == out[j].order && out[i].id < out[j].id
+	})
 	return out
 }
 

@@ -466,7 +466,11 @@ type Usage struct {
 	TerminalReason  string                 `json:"terminal_reason,omitempty"`
 	BudgetExhausted bool                   `json:"budget_exhausted"`
 	Models          map[string]*ModelUsage `json:"models"`
-	At              *Stamp                 `json:"at"`
+	// CostComplete (schema revision 1): false when the stream says the reported spend may be
+	// lower than what was spent; nil from a revision-0 event, which did not say.
+	CostComplete          *bool    `json:"cost_complete"`
+	CostIncompleteReasons []string `json:"cost_incomplete_reasons"`
+	At                    *Stamp   `json:"at"`
 }
 
 // ModelUsage is one model's recorded use within one execution.

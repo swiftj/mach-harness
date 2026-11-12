@@ -23,8 +23,8 @@ func TestEveryKindHasAnAllowlist(t *testing.T) {
 // drops what is not named, and the scrubber replaces what looks sensitive in what is.
 func TestEnforceAndScrubBehindACarelessNormaliser(t *testing.T) {
 	ev := &event.Event{Type: "agent.started", Authority: event.Observed,
-		Origin: event.Origin{Stream: event.StreamClaude, Key: "s:x", Writer: "claude", Script: "/bin/sh -c"},
-		IDs:    event.IDs{ExecutionID: "x0123456789ab", AgentID: "x0123456789ab/a1", TicketID: "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAA"},
+		Origin:   event.Origin{Stream: event.StreamClaude, Key: "s:x", Writer: "claude", Script: "/bin/sh -c"},
+		IDs:      event.IDs{ExecutionID: "x0123456789ab", AgentID: "x0123456789ab/a1", TicketID: "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAA"},
 		Entities: []string{"agent:x0123456789ab/a1", "cell:/Users/alice/p"},
 		Data: map[string]any{
 			"index": 1.0, "label": "deploy with password=hunter2 to alice@example.com", "phase": "/home/bob/.ssh/id_rsa",
@@ -71,5 +71,32 @@ func TestFiltersRefuseRatherThanRepair(t *testing.T) {
 	digest := strings.Repeat("ab", 32)
 	if Sensitive(digest) || Sensitive("agent:x0123456789ab/a0000000000000001") || Sensitive("artifact:T-1:evidence/a.png@9f2c0a1b3d4e") {
 		t.Fatal("a digest or a reference read as sensitive")
+	}
+}
+
+func TestScrubDocumentKeepsLinesAndKnownHashesOnly(t *testing.T) {
+	sha := strings.Repeat("ab12", 16)
+	doc := "line one\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END OPENSSH PRIVATE KEY-----\n" +
+		`{"sha256": "` + sha + `", "x_sha256": "` + sha + `", "head":"not hex at all", "commit": "` + sha + `"}` + "\n" +
+		"/work/p/src/a.go and 0 forged\n"
+	out, n := ScrubDocument(doc, "/work/p", DocOptions{HashKeys: []string{"sha256", "commit"}})
+	want := "line one\n[redacted]\n" +
+		`{"sha256": "` + sha + `", "x_sha256": "[redacted]", "head":"not hex at all", "commit": "` + sha + `"}` + "\n" +
+		"src/a.go and 0 forged\n"
+	if out != want || n != 2 {
+		t.Fatalf("%d\n%q\nwant\n%q", n, out, want)
+	}
+	// Without hash keys every long hex run goes, and a whole-value digest is still not "sensitive"
+	// for a typed event field.
+	if out, _ := ScrubDocument(`{"sha256":"`+sha+`"}`, "", DocOptions{}); strings.Contains(out, sha) {
+		t.Fatalf("%q", out)
+	}
+	if Sensitive(sha) || !Sensitive("see "+sha) {
+		t.Fatal("a digest field is a hash; a digest inside prose is scrubbed")
+	}
+	// A very long line is bounded, not scanned whole.
+	long := strings.Repeat("a", MaxDocumentLine+10) + "\nnext"
+	if out, n := ScrubDocument(long, "", DocOptions{}); len(out) != MaxDocumentLine+5 || n != 1 {
+		t.Fatalf("%d %d", len(out), n)
 	}
 }

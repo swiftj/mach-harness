@@ -22,6 +22,7 @@ import (
 	"mach/observer/internal/feedtest"
 	"mach/observer/internal/project"
 	"mach/observer/internal/security"
+	"mach/observer/internal/testkit"
 	"mach/observer/internal/webui"
 )
 
@@ -162,7 +163,7 @@ func routes() []string {
 		"/api/v1/waves", "/api/v1/waves/WAVE-001", "/api/v1/slices", "/api/v1/slices/SLICE-001", "/api/v1/cells", "/api/v1/cells/T-1",
 		"/api/v1/cells/T-1/visits/build%231", "/api/v1/cells/T-1/evidence", "/api/v1/runs", "/api/v1/runs/x0123456789ab",
 		"/api/v1/runs/x0123456789ab/agents", "/api/v1/runs/x0123456789ab/tools", "/api/v1/spans", "/api/v1/artifacts",
-		"/api/v1/analytics/metrics", "/api/v1/analytics/runs"}
+		"/api/v1/analytics/metrics", "/api/v1/analytics/runs", "/api/v1/history"}
 }
 
 // ---- security ----
@@ -267,6 +268,7 @@ func TestEveryEndpointShape(t *testing.T) {
 		"/api/v1/health":                     {"status", "observer_time", "index", "projection", "ingest", "freshness", "streams"},
 		"/api/v1/factory/status":             {"factory_present", "report", "summary", "supervisor", "recorded_mode", "freshness"},
 		"/api/v1/events":                     {"events", "next", "head", "floor", "more", "scanned"},
+		"/api/v1/history":                    {"events", "next_from_order", "more", "complete", "head", "watermark_ms", "limits"},
 		"/api/v1/snapshot":                   {"cursor", "generation", "reconstructed", "state"},
 		"/api/v1/project":                    {"counts_by_state", "factory", "active_cells", "human_gates_open", "cursor"},
 		"/api/v1/waves":                      {"items", "cursor"},
@@ -583,6 +585,101 @@ func controlEvents(t *testing.T, h *harness, path string, headers map[string]str
 	return ""
 }
 
+// /history serves a window in history order (contract 14), filtered and paged, for replay of
+// histories longer than one page; /events stays the delivery-order feed.
+func TestHistoryWindowInOrder(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	type page struct {
+		Events []struct {
+			ID       string   `json:"id"`
+			Order    string   `json:"order"`
+			Type     string   `json:"type"`
+			Entities []string `json:"entities"`
+		} `json:"events"`
+		Next     *string `json:"next_from_order"`
+		More     bool    `json:"more"`
+		Complete bool    `json:"complete"`
+	}
+	read := func(path string) page {
+		t.Helper()
+		var p page
+		b, _ := json.Marshal(h.get(t, path))
+		json.Unmarshal(b, &p)
+		return p
+	}
+	all := read("/api/v1/history?limit=5000")
+	if len(all.Events) != len(feedtest.Scenario()) || all.More || !all.Complete {
+		t.Fatalf("%d events, more %v, complete %v", len(all.Events), all.More, all.Complete)
+	}
+	for i := 1; i < len(all.Events); i++ {
+		if all.Events[i].Order < all.Events[i-1].Order {
+			t.Fatalf("not in history order at %d", i)
+		}
+	}
+	// Paged: every event exactly once, in the same order.
+	var paged []string
+	next := ""
+	for k := 0; k < 100; k++ {
+		p := read("/api/v1/history?limit=7" + next)
+		for _, e := range p.Events {
+			paged = append(paged, e.ID)
+		}
+		if !p.More {
+			break
+		}
+		next = "&from_order=" + *p.Next
+	}
+	if len(paged) != len(all.Events) || paged[0] != all.Events[0].ID || paged[len(paged)-1] != all.Events[len(all.Events)-1].ID {
+		t.Fatalf("paged %d of %d", len(paged), len(all.Events))
+	}
+	// Filters: one cell's events, one kind, a time window.
+	for _, e := range read("/api/v1/history?entities=cell:T-1&type=station.").Events {
+		if !strings.HasPrefix(e.Type, "station.") || !slicesContains(e.Entities, "cell:T-1") {
+			t.Fatalf("filter let through %+v", e)
+		}
+	}
+	mid := all.Events[len(all.Events)/2].Order[:15]
+	for _, e := range read("/api/v1/history?to_order=" + mid).Events {
+		if e.Order >= mid {
+			t.Fatalf("to_order is exclusive: %s >= %s", e.Order, mid)
+		}
+	}
+	for _, bad := range []string{"from_order=yesterday", "from_ms=-1", "from_ms=5&from_order=000000000000005", "limit=0", "limit=5001",
+		"to_order=000000000000001&from_order=000000000000002", "entities=a,,b", "ticket=../x"} {
+		if resp, env, _ := h.do(t, "GET", "/api/v1/history?"+bad, nil); resp.StatusCode != 400 || env.Error.Kind != KindInvalid {
+			t.Fatalf("%s: %d", bad, resp.StatusCode)
+		}
+	}
+}
+
+// The observer offers no Factory capability: it says so, it reports the event revision it serves,
+// and its session lists nothing that starts, stops or changes work.
+func TestSessionOffersNoFactoryCapability(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	s := h.get(t, "/api/v1/session")
+	caps := s["capabilities"].(map[string]any)
+	ev := s["versions"].(map[string]any)["event"].(map[string]any)
+	if s["read_only"] != true || caps["execution"] != false || ev["revision"].(float64) != feed.SchemaRevision || ev["schema"].(float64) != 3 {
+		t.Fatalf("session %v", s)
+	}
+	for k := range caps {
+		for _, verb := range []string{"dispatch", "enable", "start", "stop", "pause", "approve", "merge", "write"} {
+			if strings.Contains(k, verb) {
+				t.Fatalf("a capability named %q", k)
+			}
+		}
+	}
+}
+
+func slicesContains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 func TestStreamHeartbeatGapAndReset(t *testing.T) {
 	h := start(t, config{events: feedtest.Scenario(), window: 10, heartbeat: 50 * time.Millisecond})
 	if hb := controlEvents(t, h, "/api/v1/stream", nil, "heartbeat"); !strings.Contains(hb, `"scanned"`) || !strings.Contains(hb, `"head"`) {
@@ -621,7 +718,7 @@ func TestSixteenClientsOneStalled(t *testing.T) {
 			defer wg.Done()
 			req, _ := http.NewRequest("GET", h.base+"/api/v1/stream?after="+h.server.cursor(0), nil)
 			req.AddCookie(h.cookie)
-			resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+			resp, err := (&http.Client{Timeout: testkit.Slow(30 * time.Second)}).Do(req)
 			if err != nil {
 				t.Error(err)
 				ready <- struct{}{}
@@ -641,7 +738,7 @@ func TestSixteenClientsOneStalled(t *testing.T) {
 	for i := 0; i < 15; i++ {
 		<-ready
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testkit.Slow(5 * time.Second))
 	for h.server.streams.Load() < 16 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -660,9 +757,12 @@ func TestSixteenClientsOneStalled(t *testing.T) {
 	for _, batch := range batches {
 		h.log.Append(batch...)
 	}
-	// The stalled client never drains: an append that waited for it would never finish. The
-	// bound is loose because appending here also encodes 20,000 events under -race.
-	if took := time.Since(began); took > 10*time.Second {
+	// The stalled client never drains: an append that waited for it would never finish. 3 s
+	// (scaled under -race, where encoding 20,000 events is itself slow) is far above the time
+	// appending takes.
+	took := time.Since(began)
+	t.Logf("appending %d events with one stalled and fifteen reading clients took %s (race detector: %v)", total, took.Round(time.Millisecond), testkit.Race)
+	if took > testkit.Slow(3*time.Second) {
 		t.Fatalf("appending waited for clients: %s", took)
 	}
 	wg.Wait()
@@ -671,7 +771,7 @@ func TestSixteenClientsOneStalled(t *testing.T) {
 			t.Fatalf("client %d got %d events", i, len(ids))
 		}
 	}
-	deadline = time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(testkit.Slow(5 * time.Second))
 	for h.server.streams.Load() > 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}

@@ -4,7 +4,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestListenRefusesEverythingButLoopback(t *testing.T) {
@@ -128,5 +130,46 @@ func TestSecondBrowserGetsTheNextLink(t *testing.T) {
 	r.AddCookie(first)
 	if g.Authenticated(r) || g.Sessions() != MaxSessions {
 		t.Fatalf("the cap was not applied: %d", g.Sessions())
+	}
+}
+
+// Sessions kept across a restart: only a keyed hash is handed out to be kept; the same key and
+// records accept the cookie again; another key (another project folder) does not; a session
+// expires after its lifetime and is then dropped from what is kept; at most 16 are kept.
+func TestKeptSessionsHashExpireAndBind(t *testing.T) {
+	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	key := SessionKey([]byte("0123456789abcdef0123456789abcdef"), "/work/a")
+	var kept []SessionRecord
+	g, _ := NewGuardWith(4000, GuardOptions{Key: key, Now: clock, OnSessions: func(r []SessionRecord) { kept = r }})
+	cookie, _ := g.Exchange(g.startToken)
+	if len(kept) != 1 || kept[0].Hash == cookie.Value || len(kept[0].Hash) != 64 || !kept[0].Expires.Equal(now.Add(SessionLifetime)) {
+		t.Fatalf("kept %+v", kept)
+	}
+	if cookie.Domain != "" || cookie.MaxAge != 0 || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("cookie %+v", cookie)
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.AddCookie(cookie)
+	restarted, _ := NewGuardWith(4000, GuardOptions{Key: key, Sessions: kept, Now: clock})
+	if !restarted.Authenticated(req) {
+		t.Fatal("the same key and records refuse the cookie")
+	}
+	other, _ := NewGuardWith(4000, GuardOptions{Key: SessionKey([]byte("0123456789abcdef0123456789abcdef"), "/work/copy"), Sessions: kept, Now: clock})
+	if other.Authenticated(req) {
+		t.Fatal("a record from another project folder was accepted")
+	}
+	now = now.Add(SessionLifetime + time.Second)
+	if g.Authenticated(req) || len(kept) != 0 || g.Sessions() != 0 {
+		t.Fatalf("expired: still accepted or kept (%d)", len(kept))
+	}
+	if late, _ := NewGuardWith(4000, GuardOptions{Key: key, Sessions: []SessionRecord{{Hash: strings.Repeat("a", 64), Expires: now.Add(-time.Second)}}, Now: clock}); late.Sessions() != 0 {
+		t.Fatal("an expired record was loaded")
+	}
+	for i := 0; i < MaxSessions+4; i++ {
+		g.Exchange(g.startToken)
+	}
+	if len(kept) != MaxSessions {
+		t.Fatalf("%d kept", len(kept))
 	}
 }

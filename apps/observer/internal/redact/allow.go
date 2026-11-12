@@ -101,7 +101,8 @@ var Allow = map[string]*Shape{
 	"tool.returned":    obj("status", "duration_ms"),
 	"tool.refused":     obj("tool", "summary"),
 	"execution.usage": obj("total_cost_usd", "subtype", "is_error", "terminal_reason", "budget_exhausted",
-		"models", anyKeys(obj("cost_usd", "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"))),
+		"models", anyKeys(obj("cost_usd", "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")),
+		"cost_complete", "cost_incomplete_reasons", leafList), // revision 1
 
 	"review.finding":        obj("seat", "n", "severity", "rule", "file_rel", "title"),
 	"artifact.recorded":     obj("kind", "path_rel", "sha256", "bytes", "media_type", "commit", "nature", "integrity"),

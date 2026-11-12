@@ -217,9 +217,9 @@ func TestQueriesAndHistoryOrder(t *testing.T) {
 	if len(p.Entries) != 2 {
 		t.Fatal("type prefix after a cursor")
 	}
-	h := s.History("", "", []string{"cell:T-1"}, 10)
-	if len(h) != 2 || h[0].Event.ID != "c" {
-		t.Fatalf("history in order: %v", h)
+	h := s.History(HistoryQuery{Entities: []string{"cell:T-1"}, Limit: 10})
+	if len(h.Entries) != 2 || h.Entries[0].Event.ID != "c" || h.More || !h.Complete {
+		t.Fatalf("history in order: %+v", h)
 	}
 	if s.MaxOrder() != "000000000000003~2~c~000000000001~0000" {
 		t.Fatal(s.MaxOrder())
@@ -249,5 +249,38 @@ func TestOldFormatIndexIsRebuilt(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "events.log")); err == nil {
 		t.Fatal("the old log was kept")
+	}
+}
+
+// /history pages through a window in order, never splits a tie between pages, filters by ticket,
+// execution, type and entity, and says when the window may have lost events to eviction.
+func TestHistoryPagesFiltersAndCompleteness(t *testing.T) {
+	s, _ := Open("", 6)
+	order := func(ms int) string { return event.OrderKey(int64(ms), 2, "c:T-1:g", int64(ms), 0) }
+	var evs []*event.Event
+	for i, ms := range []int{5, 1, 3, 3, 3, 2, 4, 9} { // delivered out of order; three share ms 3
+		e := evAt("e"+strconv.Itoa(i), "T-1", order(ms), "cell:T-1")
+		if ms == 9 {
+			e.IDs.TicketID, e.IDs.ExecutionID, e.Entities = "T-2", "xT-2", []string{"cell:T-2"}
+		}
+		evs = append(evs, e)
+	}
+	s.Append(evs, nil) // 8 events, memory window 6: the first two delivered (ms 5 and 1) are evicted
+	p := s.History(HistoryQuery{Limit: 2})
+	if p.Complete || len(p.Entries) != 1 || p.Entries[0].Event.Order != order(2) || !p.More || p.Next != order(3) {
+		t.Fatalf("first page: %+v", p) // two requested, but the second would split the three at ms 3
+	}
+	p = s.History(HistoryQuery{FromOrder: p.Next, Limit: 2})
+	if len(p.Entries) != 3 || !p.More || p.Next != order(4) {
+		t.Fatalf("ties come whole: %+v", p)
+	}
+	if p := s.History(HistoryQuery{FromOrder: order(6), Ticket: "T-2"}); !p.Complete || len(p.Entries) != 1 || p.More {
+		t.Fatalf("after everything evicted, filtered: %+v", p)
+	}
+	if p := s.History(HistoryQuery{FromOrder: order(4), ToOrder: order(9), Execution: "xT-1", TypePrefix: "station."}); len(p.Entries) != 1 {
+		t.Fatalf("[4, 9): %+v", p)
+	}
+	if p := s.History(HistoryQuery{FromOrder: order(5)}); p.Complete {
+		t.Fatal("ms 5 was evicted: a window from it is not complete")
 	}
 }

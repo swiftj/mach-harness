@@ -7,6 +7,7 @@ package feedtest
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -97,6 +98,63 @@ func (m *Mem) Append(events ...map[string]any) []uint64 {
 	close(m.changed)
 	m.changed = make(chan struct{})
 	return out
+}
+
+// History serves a window in order, like the store: filters, ties kept whole across pages.
+// Everything appended and still in the window is held, so it is complete unless the window
+// dropped something.
+func (m *Mem) History(q feed.HistoryQuery) feed.HistoryPage {
+	if q.Limit <= 0 {
+		q.Limit = 1000
+	}
+	m.mu.RLock()
+	recs := append([]feed.Record(nil), m.recs...)
+	dropped := m.first > 1
+	m.mu.RUnlock()
+	type item struct {
+		rec   feed.Record
+		order string
+	}
+	want := map[string]bool{}
+	for _, e := range q.Entities {
+		want[e] = true
+	}
+	var items []item
+	for _, r := range recs {
+		ev, err := feed.Decode(r)
+		if err != nil || q.FromOrder != "" && ev.Order < q.FromOrder || q.ToOrder != "" && ev.Order >= q.ToOrder ||
+			q.Ticket != "" && feed.Str(ev.IDs.TicketID) != q.Ticket || q.Execution != "" && feed.Str(ev.IDs.ExecutionID) != q.Execution ||
+			!strings.HasPrefix(ev.Type, q.TypePrefix) {
+			continue
+		}
+		hit := len(want) == 0
+		for _, ref := range ev.Entities {
+			hit = hit || want[ref]
+		}
+		if hit {
+			items = append(items, item{r, ev.Order})
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].order < items[j].order })
+	page := feed.HistoryPage{Complete: !dropped}
+	if len(items) > q.Limit {
+		cut := q.Limit
+		for cut > 0 && items[cut-1].order == items[cut].order {
+			cut--
+		}
+		if cut == 0 {
+			for cut = q.Limit; cut < len(items) && items[cut].order == items[q.Limit-1].order; cut++ {
+			}
+		}
+		if cut < len(items) {
+			page.Next, page.More = items[cut].order, true
+		}
+		items = items[:cut]
+	}
+	for _, it := range items {
+		page.Records = append(page.Records, it.rec)
+	}
+	return page
 }
 
 // AppendRaw adds a record whose body is given as is (for "not a v3 event" tests).

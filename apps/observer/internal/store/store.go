@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -119,6 +120,7 @@ type Store struct {
 	dupes       int64
 	dropped     int64
 	maxOrder    string
+	evictedMax  string // the largest order of any event that left the memory window
 	watermark   int64
 	closed      bool
 }
@@ -338,7 +340,7 @@ func (s *Store) reset() error {
 		}
 	}
 	s.meta = newMeta()
-	s.entries, s.first, s.head, s.diskFloor, s.segs, s.maxOrder = nil, 1, 0, 0, nil, ""
+	s.entries, s.first, s.head, s.diskFloor, s.segs, s.maxOrder, s.evictedMax = nil, 1, 0, 0, nil, "", ""
 	s.ids = map[string]held{}
 	s.byTicket, s.byExec, s.byEntity = map[string][]uint64{}, map[string][]uint64{}, map[string][]uint64{}
 	s.checkpoints = map[string]tail.Checkpoint{}
@@ -383,6 +385,9 @@ func (s *Store) push(e Entry) {
 	if over := len(s.entries) - s.opts.MaxMemory; over > 0 {
 		for _, old := range s.entries[:over] {
 			delete(s.ids, old.Event.ID)
+			if old.Event.Order > s.evictedMax {
+				s.evictedMax = old.Event.Order
+			}
 		}
 		if cap(s.entries) > 2*s.opts.MaxMemory {
 			s.entries = append([]Entry(nil), s.entries[over:]...)
@@ -865,27 +870,57 @@ func (s *Store) ByEntity(ref string, after uint64, limit int) (Page, error) {
 	return s.Run(Query{After: after, Limit: limit, Entity: ref})
 }
 
-// History returns the events held in memory whose order is in [fromOrder, toOrder) (an empty
-// bound is open) and that touch any of entities (none: all), sorted by order, at most limit.
-// It is the replay window of contract 14 ("/history"); late events appear where they belong.
-func (s *Store) History(fromOrder, toOrder string, entities []string, limit int) []Entry {
-	if limit <= 0 || limit > 50000 {
-		limit = 5000
+// HistoryQuery selects a window of history in ORDER (the `order` key), for replay and the
+// Timeline (contract 14, "/history").
+type HistoryQuery struct {
+	FromOrder, ToOrder string   // [from, to); "" is open
+	Entities           []string // any of these refs (none: all)
+	Ticket, Execution  string   // ids.ticket_id, ids.execution_id
+	TypePrefix         string
+	Limit              int // default 1,000, at most MaxHistory
+}
+
+// MaxHistory is the most events one History call returns.
+const MaxHistory = 5000
+
+// HistoryPage is a window of history. Next is the FromOrder of the next page when More; a page
+// never ends in the middle of events that share an order key. Complete is false when events of
+// the window may have left the memory window (it then holds only the most recent ones).
+type HistoryPage struct {
+	Entries  []Entry
+	Next     string
+	More     bool
+	Complete bool
+}
+
+// History returns the memory window's events whose order is in [FromOrder, ToOrder) and that
+// match the filters, sorted by order (late events appear where they belong, not where they were
+// delivered).
+func (s *Store) History(q HistoryQuery) HistoryPage {
+	if q.Limit <= 0 {
+		q.Limit = 1000
 	}
+	q.Limit = min(q.Limit, MaxHistory)
 	want := map[string]bool{}
-	for _, e := range entities {
+	for _, e := range q.Entities {
 		want[e] = true
 	}
 	s.mu.RLock()
+	complete := s.evictedMax == "" || q.FromOrder != "" && q.FromOrder > s.evictedMax
 	var out []Entry
 	for _, e := range s.entries {
-		o := e.Event.Order
-		if fromOrder != "" && o < fromOrder || toOrder != "" && o >= toOrder {
+		ev := e.Event
+		o := ev.Order
+		if q.FromOrder != "" && o < q.FromOrder || q.ToOrder != "" && o >= q.ToOrder {
+			continue
+		}
+		if q.Ticket != "" && ev.IDs.TicketID != q.Ticket || q.Execution != "" && ev.IDs.ExecutionID != q.Execution ||
+			q.TypePrefix != "" && !strings.HasPrefix(ev.Type, q.TypePrefix) {
 			continue
 		}
 		if len(want) > 0 {
 			hit := false
-			for _, ref := range e.Event.Entities {
+			for _, ref := range ev.Entities {
 				if want[ref] {
 					hit = true
 					break
@@ -899,10 +934,24 @@ func (s *Store) History(fromOrder, toOrder string, entities []string, limit int)
 	}
 	s.mu.RUnlock()
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Event.Order < out[j].Event.Order })
-	if len(out) > limit {
-		out = out[:limit]
+	page := HistoryPage{Complete: complete}
+	if len(out) > q.Limit {
+		cut := q.Limit
+		// Do not split events that share an order key: the next page starts at that key.
+		for cut > 0 && out[cut-1].Event.Order == out[cut].Event.Order {
+			cut--
+		}
+		if cut == 0 { // more ties than a page: take them all
+			for cut = q.Limit; cut < len(out) && out[cut].Event.Order == out[q.Limit-1].Event.Order; cut++ {
+			}
+		}
+		if cut < len(out) {
+			page.Next, page.More = out[cut].Event.Order, true
+		}
+		out = out[:cut]
 	}
-	return out
+	page.Entries = out
+	return page
 }
 
 // Info summarises the store.

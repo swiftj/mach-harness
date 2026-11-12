@@ -29,8 +29,9 @@
 //	ByTicket(t, after, limit)              Run with a ticket filter
 //	ByExecution(x, after, limit)           Run with an execution filter
 //	ByEntity(ref, after, limit)            Run with an entity-reference filter
-//	History(fromOrder, toOrder, refs, n)   the memory window's events in history ORDER (the `order` key), for
-//	                                       replay and the Timeline; late events sort where they belong
+//	History(HistoryQuery) HistoryPage      the memory window's events in history ORDER (the `order` key), for
+//	                                       replay and the Timeline (/api/v1/history): filters, pages that never split
+//	                                       an order key, and Complete=false when evicted events may belong to the window
 //	Get(id) (Entry, bool)                  one event in the memory window by id
 //	Changed() <-chan struct{}              closed at the next append; take it before reading
 //	Wait(ctx, after) error                 returns when the head passes after (wait-for-new)

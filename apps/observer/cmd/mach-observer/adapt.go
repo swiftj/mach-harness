@@ -39,13 +39,24 @@ func (l storeLog) After(pos uint64, limit int) ([]feed.Record, error) {
 	return out, nil
 }
 
+// History serves the store's memory window in history order (feed.Historian).
+func (l storeLog) History(q feed.HistoryQuery) feed.HistoryPage {
+	p := l.s.History(store.HistoryQuery{FromOrder: q.FromOrder, ToOrder: q.ToOrder, Entities: q.Entities, Ticket: q.Ticket,
+		Execution: q.Execution, TypePrefix: q.TypePrefix, Limit: q.Limit})
+	out := feed.HistoryPage{Next: p.Next, More: p.More, Complete: p.Complete, Records: make([]feed.Record, len(p.Entries))}
+	for i, e := range p.Entries {
+		out.Records[i] = feed.Record{Pos: e.Event.Pos, Raw: e.Raw}
+	}
+	return out
+}
+
 // ingestSource is the ingest loop as a server.IngestSource.
 type ingestSource struct{ o *ingest.Observer }
 
 func (a ingestSource) Ingest() server.IngestState {
 	st := a.o.Stats()
 	out := server.IngestState{Ticks: st.Ticks, LastTickMS: st.LastTickMS, IntervalMS: st.IntervalMS, Errors: st.Errors,
-		LastError: st.LastError, FactoryFound: st.FactoryFound}
+		LastError: st.LastError, FactoryFound: st.FactoryFound, CatchingUp: st.CatchingUp, Late: st.Late, Backfill: st.Backfill}
 	if t, err := time.Parse(time.RFC3339Nano, st.LastTickAt); err == nil {
 		out.LastTickAt = t
 	}
@@ -63,12 +74,10 @@ func (a ingestSource) Ingest() server.IngestState {
 		case state == "":
 			state = "unknown"
 		}
-		s := server.SourceState{Key: src.Key, Path: src.Path, State: state, Offset: src.Offset, Lines: src.Lines,
-			Duplicates: src.Duplicates, Oversized: src.Oversized, Resets: src.Resets}
-		// Every tick checks every source it holds, so a source that is neither gone nor blocked was
-		// last read at the last tick. Ingest does not report a source's size, so lag stays null.
-		if !src.Gone && !src.Blocked {
-			s.LastReadAt = out.LastTickAt
+		s := server.SourceState{Key: src.Key, Path: src.Path, State: state, Offset: src.Offset, Size: src.Size, Lines: src.Lines,
+			Refused: src.Refused, Duplicates: src.Duplicates, Oversized: src.Oversized, Resets: src.Resets}
+		if t, err := time.Parse(time.RFC3339Nano, src.LastReadAt); err == nil {
+			s.LastReadAt = t
 		}
 		out.Sources = append(out.Sources, s)
 	}

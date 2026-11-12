@@ -6,7 +6,15 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"strings"
+
+	"mach/observer/internal/redact"
 )
+
+// HashKeys are the keys under which MACH's served JSON records (results.json, summary.json,
+// decision.json) hold a hash: evidence sha256 sums and the commits a verification or review was
+// made against. Their hex values are exempt from the scrubber's long-hex rule; nothing else is.
+var HashKeys = []string{"sha256", "head", "since_commit", "commit"}
 
 // Content is what may be served of one artifact.
 type Content struct {
@@ -68,7 +76,11 @@ func (c *Catalog) Read(e Entry) (*Content, error) {
 	}
 	out := &Content{MediaType: media, Class: class, Name: baseName(e.Path)}
 	if class == ClassText {
-		text, n := ScrubText(string(data), c.root)
+		var opt redact.DocOptions
+		if strings.HasSuffix(e.Path, ".json") {
+			opt.HashKeys = HashKeys // a MACH record: its known hashes are not mistaken for secrets
+		}
+		text, n := redact.ScrubDocument(string(data), c.root, opt)
 		if len(text) > ServedText {
 			text, out.Truncated = text[:ServedText], true
 		}

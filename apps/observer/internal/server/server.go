@@ -11,6 +11,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -41,6 +42,8 @@ const (
 	MaxPage          = 1000  // events, runs, cells, slices, spans, artifacts per page
 	ScanCap          = 10000 // events examined per filtered /events request
 	MaxSpans         = 5000
+	DefaultHistory   = 1000 // events per /history page
+	MaxHistory       = 5000
 	MaxContentReads  = 4 // artifact content reads at once
 	IngestStaleAfter = 5 * time.Second
 	statusTTL        = time.Second
@@ -55,7 +58,12 @@ type IngestState struct {
 	Errors       int64
 	LastError    string
 	FactoryFound bool
-	Sources      []SourceState
+	// CatchingUp: ingest is still reading history written before it started; events delivered
+	// meanwhile are backfill, in read order, and never marked late.
+	CatchingUp bool
+	Late       int64 // events committed late (contract 6.5)
+	Backfill   int64 // events committed while catching up
+	Sources    []SourceState
 	// WatermarkMS is the order_ms up to which ingest asserts history is complete (contract 6.6);
 	// nil when ingest does not publish one.
 	WatermarkMS *int64
@@ -168,6 +176,7 @@ func New(opts Options) *Server {
 		"health":                        s.health,
 		"factory/status":                s.factoryStatus,
 		"events":                        s.events,
+		"history":                       s.history,
 		"stream":                        s.stream,
 		"snapshot":                      s.snapshot,
 		"project":                       s.project,
@@ -552,6 +561,127 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		"scanned":    page.Scanned,
 		"limits":     map[string]int{"page_max": MaxPage, "scan_cap": ScanCap},
 	}))
+}
+
+// ---- history ----
+
+// orderBoundRe: an order key, or a prefix of one (at least its 15-digit order_ms).
+var orderBoundRe = regexp.MustCompile(`^[0-9]{15}(~[A-Za-z0-9.:%~_-]{0,240})?$`)
+
+// history: GET /api/v1/history?from_order&to_order (or from_ms&to_ms)&entities=<ref,ref>&ticket&execution&type&limit
+// A window of history in ORDER, for replay and the Timeline (contract 14): late events appear
+// where they belong. It reads the memory window; complete is false when part of the window may
+// have left it. Page on with from_order=next while more is true.
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	h, ok2 := s.opts.Log.(feed.Historian)
+	if !ok2 {
+		writeJSON(w, http.StatusServiceUnavailable, fail(KindUnavailable, "This observer cannot serve history in order."))
+		return
+	}
+	q := r.URL.Query()
+	invalid := func(msg string) { writeJSON(w, http.StatusBadRequest, fail(KindInvalid, msg)) }
+	var hq feed.HistoryQuery
+	bound := func(order, msName string) (string, bool) {
+		if v := q.Get(order); v != "" {
+			if !orderBoundRe.MatchString(v) {
+				invalid(order + " must be an order key (or its first 15 digits).")
+				return "", false
+			}
+			if q.Get(msName) != "" {
+				invalid("Give " + order + " or " + msName + ", not both.")
+				return "", false
+			}
+			return v, true
+		}
+		if v := q.Get(msName); v != "" {
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || n < 0 || n > 999_999_999_999_999 {
+				invalid(msName + " must be milliseconds since 1970.")
+				return "", false
+			}
+			return fmt.Sprintf("%015d", n), true
+		}
+		return "", true
+	}
+	var okb bool
+	if hq.FromOrder, okb = bound("from_order", "from_ms"); !okb {
+		return
+	}
+	if hq.ToOrder, okb = bound("to_order", "to_ms"); !okb {
+		return
+	}
+	if hq.FromOrder != "" && hq.ToOrder != "" && hq.ToOrder <= hq.FromOrder {
+		invalid("The window is empty: to must be after from.")
+		return
+	}
+	if raw := q.Get("entities"); raw != "" {
+		for _, ref := range strings.Split(raw, ",") {
+			if ref == "" || len(ref) > 300 || strings.ContainsAny(ref, "\x00\n\r ") {
+				invalid("entities is a comma-separated list of entity references.")
+				return
+			}
+			hq.Entities = append(hq.Entities, ref)
+		}
+		if len(hq.Entities) > 32 {
+			invalid("At most 32 entities.")
+			return
+		}
+	}
+	var bad *Envelope
+	if hq.Ticket, bad = optIdent(q, "ticket"); bad != nil {
+		writeJSON(w, http.StatusBadRequest, *bad)
+		return
+	}
+	if hq.Execution, bad = optIdent(q, "execution"); bad != nil {
+		writeJSON(w, http.StatusBadRequest, *bad)
+		return
+	}
+	if hq.TypePrefix = q.Get("type"); len(hq.TypePrefix) > 64 || strings.ContainsAny(hq.TypePrefix, "\x00\n\r") {
+		invalid("type is a kind or a prefix of one.")
+		return
+	}
+	hq.Limit = DefaultHistory
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > MaxHistory {
+			invalid(fmt.Sprintf("limit must be between 1 and %d.", MaxHistory))
+			return
+		}
+		hq.Limit = n
+	}
+	page := h.History(hq)
+	events := make([]json.RawMessage, 0, len(page.Records))
+	for _, rec := range page.Records {
+		events = append(events, rec.Raw)
+	}
+	var next any
+	if page.More {
+		next = page.Next
+	}
+	floor, head := s.opts.Log.Bounds()
+	in := s.ingestState()
+	writeJSON(w, http.StatusOK, ok(map[string]any{
+		"generation":      s.opts.Log.Epoch(),
+		"schema":          feed.SchemaVersion,
+		"events":          events,
+		"from_order":      nullable(hq.FromOrder),
+		"to_order":        nullable(hq.ToOrder),
+		"next_from_order": next,
+		"more":            page.More,
+		"complete":        page.Complete,
+		"head":            s.cursor(head),
+		"floor":           s.cursor(floor),
+		"watermark_ms":    in.WatermarkMS,
+		"catching_up":     in.CatchingUp,
+		"limits":          map[string]int{"page_default": DefaultHistory, "page_max": MaxHistory, "entities_max": 32},
+	}))
+}
+
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // recorder notes the status for the log line and keeps Flush and write deadlines working for
