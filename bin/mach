@@ -14,9 +14,13 @@ and archives are your project's data and are never touched. Standard library onl
 import argparse
 import hashlib
 import json
+import os
+import platform
 import re
 import shutil
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
@@ -41,6 +45,14 @@ PLUGIN_ONLY_SKILLS = {"init"}
 SKIP_NAMES = {"__pycache__", ".DS_Store"}
 MAKEFILE_NAMES = ("Makefile", "makefile", "GNUmakefile")
 NAME_LINE_RE = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
+# The visual Product Studio's host: one prebuilt program per platform, attached to each MACH release.
+STUDIO_DEST = ".factory/bin/mach-studio"
+STUDIO_LOCAL_BUILD = "apps/studio/bin/mach-studio"
+STUDIO_REPO = "swiftj/mach-harness"
+STUDIO_SUMS = "SHA256SUMS"
+STUDIO_SYSTEMS = {"darwin": "darwin", "linux": "linux"}
+STUDIO_MACHINES = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64", "amd64": "amd64"}
+STUDIO_MAX_BYTES = 200 * 1024 * 1024
 
 
 class Item(NamedTuple):
@@ -108,6 +120,80 @@ def skill_items(root: Path) -> List[Item]:
         text = path.read_text(encoding="utf-8").replace("/mach:", "/mach-").replace(f"  name: '{path.stem}',", f"  name: 'mach-{path.stem}',", 1)
         items.append(Item(f".claude/workflows/mach-{path.name}", text.encode("utf-8"), "managed"))
     return items
+
+
+def studio_asset() -> Optional[str]:
+    """The release file for this machine, or None when no build is published for it."""
+    system = STUDIO_SYSTEMS.get(platform.system().lower())
+    machine = STUDIO_MACHINES.get(platform.machine().lower())
+    return f"mach-studio-{system}-{machine}" if system and machine else None
+
+
+def studio_base(version: str) -> str:
+    """Where a version's release files are. MACH_STUDIO_URL replaces it (a mirror, or a folder as file://...)."""
+    override = os.environ.get("MACH_STUDIO_URL")
+    if override:
+        return override.rstrip("/")
+    repo = os.environ.get("MACH_REPO") or STUDIO_REPO
+    return f"https://github.com/{repo}/releases/download/v{version}"
+
+
+def fetch(url: str) -> bytes:
+    if not url.startswith(("https://", "file://")):
+        raise Fail(f"refusing to download from {url}: only https:// (or a local file://) is used")
+    request = urllib.request.Request(url, headers={"User-Agent": "mach-installer"})
+    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 - scheme checked above
+        data = response.read(STUDIO_MAX_BYTES + 1)
+    if len(data) > STUDIO_MAX_BYTES:
+        raise Fail(f"{url} is larger than expected")
+    return data
+
+
+def download_studio(version: str) -> bytes:
+    """This machine's host program for this version, checked against the release's published SHA-256."""
+    asset = studio_asset()
+    if asset is None:
+        raise Fail(f"no build is published for {platform.system()} {platform.machine()}")
+    base = studio_base(version)
+    try:
+        sums = fetch(f"{base}/{STUDIO_SUMS}").decode("utf-8", "replace")
+        expected = {parts[1].lstrip("*"): parts[0].lower() for parts in (line.split() for line in sums.splitlines()) if len(parts) == 2}
+        if asset not in expected:
+            raise Fail(f"release v{version} does not list {asset}")
+        data = fetch(f"{base}/{asset}")
+    except urllib.error.HTTPError as exc:
+        raise Fail(f"release v{version} has no visual app to download yet (HTTP {exc.code})")
+    except (urllib.error.URLError, OSError) as exc:
+        raise Fail(f"the download did not complete ({getattr(exc, 'reason', exc)})")
+    if sha(data) != expected[asset]:
+        raise Fail(f"{asset} does not match the release's published checksum; nothing was installed")
+    return data
+
+
+def studio_item(root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[Optional[Item], str]:
+    """The visual app's host for this project, and one line saying what happened.
+
+    A copy built in this MACH checkout is used as it is. Otherwise the release's build for this
+    machine is downloaded and checked. A failure never fails the install: the terminal Product
+    Studio and the rest of MACH do not need the program. A copy already installed is kept when a
+    newer one cannot be fetched.
+    """
+    current = project / STUDIO_DEST
+    kept = Item(STUDIO_DEST, current.read_bytes(), "managed", True) if current.is_file() else None
+    if getattr(args, "no_studio", False) or os.environ.get("MACH_STUDIO", "").lower() in ("skip", "off", "0", "no"):
+        return kept, "The visual Product Studio app was not installed (skipped)."
+    local = root / STUDIO_LOCAL_BUILD
+    if local.is_file():
+        return Item(STUDIO_DEST, local.read_bytes(), "managed", True), "The visual Product Studio app was installed from this MACH checkout's own build."
+    if args.dry_run:
+        return kept, f"Would download the visual Product Studio app ({studio_asset() or 'no build for this machine'}) from {studio_base(version)}."
+    try:
+        data = download_studio(version)
+    except Fail as exc:
+        tail = " The copy already installed was kept." if kept else ""
+        return kept, (f"The visual Product Studio app was not installed: {exc}.{tail}\n"
+                      "Everything else works without it, including Product Studio in the terminal. Run the installer again to retry.")
+    return Item(STUDIO_DEST, data, "managed", True), f"The visual Product Studio app was downloaded and checked ({studio_asset()}, MACH {version})."
 
 
 def scaffold_items(root: Path, project: Path) -> List[Item]:
@@ -269,10 +355,15 @@ def cmd_install(args: argparse.Namespace) -> int:
         raise Fail("Run this from the project you want MACH in, or pass --project. This folder is the MACH repository itself.")
     items = skill_items(root)
     components = ["skills"]
+    note = ""
     if not args.no_scaffold:
         items += scaffold_items(root, project)
         components.append("scaffold")
-    return apply(project, items, components, version, args)
+        studio, note = studio_item(root, project, version, args)
+        items += [studio] if studio else []
+    code = apply(project, items, components, version, args)
+    print(f"\n{note}" if note else "", end="\n" if note else "")
+    return code
 
 
 def cmd_scaffold(args: argparse.Namespace) -> int:
@@ -281,7 +372,10 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
     project = args.project.resolve()
     if not project.is_dir():
         raise Fail(f"{project} is not a folder.")
-    return apply(project, scaffold_items(root, project), ["scaffold"], version, args)
+    studio, note = studio_item(root, project, version, args)
+    code = apply(project, scaffold_items(root, project) + ([studio] if studio else []), ["scaffold"], version, args)
+    print(f"\n{note}")
+    return code
 
 
 def prune(project: Path, folders: Sequence[Path], dry: bool) -> None:
@@ -410,9 +504,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p = sub.add_parser("install", help="install or update the skills, agents and factory files in a project")
     common(p)
     p.add_argument("--no-scaffold", action="store_true", help="install only the skills and agents")
+    p.add_argument("--no-studio", action="store_true", help="do not download the visual Product Studio app")
     p.set_defaults(func=cmd_install)
     p = sub.add_parser("scaffold", help="create only the factory files (for projects that use the MACH plugin)")
     common(p)
+    p.add_argument("--no-studio", action="store_true", help="do not download the visual Product Studio app")
     p.set_defaults(func=cmd_scaffold)
     p = sub.add_parser("uninstall", help="remove what MACH installed; your tickets, specs and cells are kept")
     common(p)

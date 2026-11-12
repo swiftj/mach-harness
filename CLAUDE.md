@@ -48,6 +48,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 ├── CLAUDE.md                   # Core workspace rules & factory specification (this file)
 ├── README.md                   # Install, quick start, and uninstall
 ├── install.sh                  # One-line installer (downloads this repo, runs bin/mach)
+├── .github/workflows/release.yml  # On a version tag: builds the Product Studio host per platform and publishes the release
 ├── Makefile                    # make test / make validate
 ├── .claude-plugin/
 │   ├── plugin.json             # Plugin manifest: the plugin is named "mach"
@@ -102,6 +103,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── audit-report.json       # Latest readiness scorecard; the gate other stations read
     ├── .mach-manifest.json     # What the installer wrote, with hashes, so uninstall is exact
     ├── bin/mach                # Copy of the installer, for status and uninstall
+    ├── bin/mach-studio         # Experimental. The visual Product Studio's host, downloaded for this machine; git-ignored
     ├── tickets/                # Local Markdown ticket queue (the default provider)
     ├── inbox/                  # Normalized incoming ticket payloads and telemetry traces
     ├── archive/                # <ticket_id>.tar.gz per finished cell, and runs.jsonl, one line per ticket
@@ -250,7 +252,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Sending (M2)**: `send <WAVE-ID>` publishes one approved wave as one pull request on `product/<WAVE-ID>`. It shares only the wave's closure of product files, built as an ordinary commit in a temporary worktree (so signing and hooks apply), validated as engineering will see it, and recorded in a ledger so a repeated or interrupted send never duplicates. `feedback` reports review in the PM's terms; reviewer text is passed on as data.
 * **Never**: touches the PM's checkout, branch, index or stash; pushes anywhere but `product/...`; force-pushes, rewrites history or merges a pull request; publishes a file outside `product/` and `specs/slices/`; creates a ticket or cell; reads the machine-local Factory policy; or starts any station. Every report carries `factory_authorized: false`, and tests hold the exact Git and `gh` commands it may use and that no station, agent or workflow calls its scripts. Intake and the supervisor are later milestones.
 * **Commands**: `/mach-product-studio` with no argument shows where things stand and the next step.
-* **Visual app (M5)**: the same workspace in a browser, served by `apps/studio` on `127.0.0.1` only and started by the skill ("open the app"), never by a new command. The host runs a fixed list of `studio.py` operations and adds no product rule; the app shows what the engine returns, and a conformance suite holds the terminal and the app to the same artifacts. The guided interview runs through the person's own Claude Code, one restricted turn per reply, able to edit only that slice's spec and why and unable to approve, send or reconcile. No credential reaches the browser, nothing is loaded from another origin, and no route can enable Factory execution or start a station. Design: `docs/mach-next/M5_DESIGN.md`.
+* **Visual app (M5)**: the same workspace in a browser, served by `apps/studio` on `127.0.0.1` only and started by the skill ("open the app"), never by a new command. The host runs a fixed list of `studio.py` operations and adds no product rule; the app shows what the engine returns, and a conformance suite holds the terminal and the app to the same artifacts. The guided interview runs through the person's own Claude Code, one restricted turn per reply, able to edit only that slice's spec and why and unable to approve, send or reconcile. No credential reaches the browser, nothing is loaded from another origin, and no route can enable Factory execution or start a station. The host program is prebuilt per platform, attached to each GitHub release, and fetched and checksum-checked by the installer into `.factory/bin/mach-studio`. Design: `docs/mach-next/M5_DESIGN.md`.
 
 ---
 

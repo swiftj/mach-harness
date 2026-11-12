@@ -51,8 +51,8 @@ Everything you produce is a **draft in the PM's own workspace** until they appro
 
 The same workspace has a visual interface that runs on the PM's own machine. It works on the same drafts through the same `STUDIO`, so the PM can move between it and this conversation freely.
 
-1. Look for the program at `${CLAUDE_SKILL_DIR}/../../apps/studio/bin/mach-studio`. If it is not there, say that the visual app is not installed with this copy of MACH and carry on here; do not build it, download it or look for it elsewhere unless the PM asks.
-2. Start it in the background from the project: `<that path> --project "<project folder>" --no-open`. It prints one line, `Open: http://127.0.0.1:<port>/?t=...`. Give the PM that link exactly as printed. It works once, and only on this machine.
+1. Find the program. Use the first of these that exists: `${CLAUDE_SKILL_DIR}/../../apps/studio/bin/mach-studio` (a copy built in a MACH checkout), then `.factory/bin/mach-studio` in the project (the copy MACH's installer downloads). If neither exists, say that the visual app is not installed on this machine yet and that running MACH's installer again fetches it, then carry on here. Do not build it, download it yourself or look for it elsewhere.
+2. Start it in the background from the project: `<that path> --project "<project folder>" --engine "${CLAUDE_SKILL_DIR}/scripts/studio.py" --no-open`. It prints one line, `Open: http://127.0.0.1:<port>/?t=...`. Give the PM that link exactly as printed. It works once, and only on this machine.
 3. It serves this machine only and stops when this session ends or the PM asks you to stop it. Never start it with any other address, and never pass the link to anyone or anything else.
 
 The app follows the same guardrails as this skill: approving, sending and reconciling happen only when the PM presses the button for them, and nothing in it starts engineering work.

@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.11.1.** Every station is built and tested (ticket, audit, intent, build, verify, review, merge, cleanup, observe), with an orchestrator that moves a ticket from station to station. A new project is set to merge approved tickets itself; set `merge.mode` to `manual` to keep the merge for a person. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.12.0.** Every station is built and tested (ticket, audit, intent, build, verify, review, merge, cleanup, observe), with an orchestrator that moves a ticket from station to station. A new project is set to merge approved tickets itself; set `merge.mode` to `manual` to keep the merge for a person. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
 ## Install
 
@@ -38,6 +38,12 @@ python3 /path/to/mach-harness/bin/mach install
 ```
 
 Add `--dry-run` to see what would change first. Running install again updates MACH in place.
+
+### The visual Product Studio app (experimental)
+
+Product Studio also has a visual app that runs on your own machine. Its host is one small program, built for macOS and Linux (Apple silicon and Intel/AMD) and attached to each [MACH release](https://github.com/swiftj/mach-harness/releases). Both installs fetch it for you: the one-command installer and `/mach:init` download the file for your machine from the release that matches the installed MACH version, check it against the release's published SHA-256, and put it at `.factory/bin/mach-studio` (git-ignored). Nothing else is downloaded, and nothing runs until you ask Product Studio to "open the app".
+
+If the download is not possible (offline, no build for your machine, or a version with no release yet), the install still succeeds and says so; everything else works without the app. Pass `--no-studio` to skip it. Each release's files also carry a build provenance attestation: `gh attestation verify .factory/bin/mach-studio --repo swiftj/mach-harness`.
 
 ## Quick start
 
@@ -314,6 +320,10 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `docs/` | The original design notes for each station, and the prd-slice skill the interview is adapted from. |
 
 When you change the validator, change its references, the fixture in `tests/fixtures/`, and the tests together: a test fails if any rule code the validator can emit is missing from `skills/intent/references/`.
+
+### Releasing
+
+Set the new version in `.claude-plugin/plugin.json`, merge to `main`, then push a tag `v<version>`. The `release` workflow tests, builds the Product Studio host for each machine with the web app embedded, writes `SHA256SUMS`, and publishes the GitHub release the installer downloads from. The tag must match the plugin's version or the workflow stops.
 
 ## License
 

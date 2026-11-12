@@ -19,3 +19,5 @@
 # Python's cache, written when a MACH script runs.
 .claude/skills/mach-*/scripts/__pycache__/
 .factory/bin/__pycache__/
+# The visual Product Studio's host program: built for one machine, fetched by the installer.
+.factory/bin/mach-studio
