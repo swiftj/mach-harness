@@ -5,7 +5,7 @@
  * off screen, and the overview, a thumbnail of the sheet's lanes with how far each has been built
  * and the camera's view, which can be dragged and whose lanes are buttons.
  */
-import { memo, useContext, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useContext, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { fc } from "@mach/ui";
 import { useSceneStore } from "../scene";
 import type { Camera } from "./camera";
@@ -137,8 +137,13 @@ export interface MinimapProps {
 /**
  * The overview: the sheet's outline, each lane as a band with a stroke as long as it has been built
  * (live ink while a station works, pass ink once integrated), and the camera's view as a frame. Drag
- * or click to move the view; each lane is a button that frames it. It appears only while the camera
- * shows less than most of the sheet.
+ * or click to move the view. It appears only while the camera shows less than most of the sheet.
+ *
+ * It is one control, a listbox of the lanes (findings N1): the lanes are its options, never separate
+ * targets, because a lane here is a few px tall and no row of lane buttons could meet the 24 px target
+ * size (WCAG 2.5.8) without making the overview bigger. Tab reaches it once; Up and Down (Home, End)
+ * choose a lane, Enter or Space frames it. With a pointer, a click on a lane's strip at the left edge
+ * frames it, and a click or drag anywhere else moves the view there.
  */
 export const Minimap = memo(function Minimap({ layout, template, centreOn, frameLane }: MinimapProps) {
   const cam = useCamera();
@@ -149,6 +154,10 @@ export const Minimap = memo(function Minimap({ layout, template, centreOn, frame
   const H = Math.min(180, layout.height * s);
   const sy = H / layout.height;
   const dragging = useRef(false);
+  const id = useId();
+  const [chosen, setChosen] = useState(0);
+  const lanes = layout.lanes;
+  const active = Math.min(chosen, Math.max(0, lanes.length - 1));
   const vx = (-cam.x / cam.k) * s;
   const vy = (-cam.y / cam.k) * sy;
   const vw = (view.w / cam.k) * s;
@@ -160,13 +169,42 @@ export const Minimap = memo(function Minimap({ layout, template, centreOn, frame
     return { x: (e.clientX - box.left) / s, y: (e.clientY - box.top) / sy };
   };
   const ax = layout.ax;
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (!lanes.length || e.altKey || e.ctrlKey || e.metaKey) return;
+    let next = active;
+    if (e.key === "ArrowDown") next = Math.min(lanes.length - 1, active + 1);
+    else if (e.key === "ArrowUp") next = Math.max(0, active - 1);
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = lanes.length - 1;
+    else if (e.key === "Enter" || e.key === " ") {
+      const lane = lanes[active];
+      if (lane) frameLane(lane.id);
+    } else return;
+    setChosen(next);
+    e.preventDefault();
+    e.stopPropagation();
+  };
   return (
-    <div className="bp-minimap" role="group" aria-label="Overview of the sheet: choose a lane to frame it">
+    <div className="bp-minimap">
       <div
         className="bp-minimap-plot"
+        role="listbox"
+        tabIndex={lanes.length ? 0 : -1}
+        aria-label="Overview of the sheet: Up and Down choose a lane, Enter frames it"
+        aria-activedescendant={lanes.length ? `${id}-${active}` : undefined}
         style={{ width: W, height: H }}
+        onKeyDown={onKeyDown}
         onPointerDown={(e) => {
-          if ((e.target as Element).closest("button")) return;
+          const option = (e.target as Element).closest("[role=option]");
+          if (option) {
+            const i = Number(option.getAttribute("data-index"));
+            const lane = lanes[i];
+            if (lane) {
+              setChosen(i);
+              frameLane(lane.id);
+            }
+            return;
+          }
           dragging.current = true;
           e.currentTarget.setPointerCapture(e.pointerId);
           const p = toSheet(e);
@@ -198,14 +236,16 @@ export const Minimap = memo(function Minimap({ layout, template, centreOn, frame
           })}
           <rect x={vx} y={vy} width={vw} height={vh} style={{ fill: "none", stroke: fc("select"), strokeWidth: 1.4 }} />
         </svg>
-        {layout.lanes.map((lane) => (
-          <button
+        {lanes.map((lane, i) => (
+          <div
             key={lane.id}
-            type="button"
+            id={`${id}-${i}`}
+            role="option"
+            aria-selected={i === active}
+            data-index={i}
             className="bp-minimap-lane"
-            style={{ top: lane.y * sy, height: Math.max(8, lane.h * sy) - 1 }}
-            aria-label={`Frame ${lane.slice.title}${lane.cell ? `, ${lane.cell.ticketId}` : ""}`}
-            onClick={() => frameLane(lane.id)}
+            style={{ top: lane.y * sy, height: Math.max(3, lane.h * sy - 1) }}
+            aria-label={`${lane.slice.title}${lane.cell ? `, ${lane.cell.ticketId}` : ""}`}
           />
         ))}
       </div>

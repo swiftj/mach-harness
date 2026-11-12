@@ -114,7 +114,8 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   // The lane's header area: down to its first execution row (the rows' own gutters lie below).
   const headH = (lane.rows[0]?.y ?? lane.y + h) - lane.y;
   const overSize = Math.max(30, Math.min(44, headH / 6));
-  const overLines = wrap(slice.title, Math.floor((SHEET.gutter - 66) / (overSize * 0.46))).slice(0, headH > 200 ? 4 : 3);
+  // Characters per line at Source Sans 3 bold: about 0.5 em each (measured 0.48 on the fixture's titles).
+  const overLines = wrap(slice.title, Math.floor((SHEET.gutter - 66) / (overSize * 0.5))).slice(0, headH > 200 ? 4 : 3);
   const story = storyOf(lane);
   const group = (
     <LaneDimContext.Provider value={dimmed}>

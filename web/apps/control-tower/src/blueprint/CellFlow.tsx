@@ -9,7 +9,6 @@ import {
   AgentMarker,
   ArtifactCard,
   Branches,
-  Callout,
   DimensionLine,
   fc,
   GateGlyph,
@@ -32,6 +31,7 @@ import type { Flow, FlowNode } from "./flow";
 import { useEventProgress, usePlayhead } from "./motion";
 import { clock, duration } from "./time";
 import { LodContext } from "./context";
+import { PlacedCallout } from "./callout";
 import { OverviewFlow } from "./overview";
 import { artifactFile, agentState, grammarArtifact, grammarGate, grammarSeat, stationKind, tierOf } from "./vocab";
 
@@ -453,9 +453,10 @@ function gateSub(cell: CellState, g: GateState): string {
     }
   }
   if (g.gate === "review") {
+    // Approvals and the threshold are two counts, never a fraction ("3 of 2" was read as one).
     const r = cell.reviews.find((x) => x.round === g.round);
-    if (r && r.approvals !== null) return `${r.approvals} of ${r.approvalsNeeded} · ${clock(at)}`;
-    if (r) return `${r.risk} · ${r.approvalsNeeded} of 3`;
+    if (r && r.approvals !== null) return `${r.approvals} approve · ${r.approvalsNeeded} needed · ${clock(at)}`;
+    if (r) return `${r.risk} · ${r.approvalsNeeded} needed`;
   }
   if (g.state === "skipped") return "not needed";
   if (g.state === "open") return `since ${clock(g.openedAt)}`;
@@ -522,7 +523,7 @@ function GateCallout({ node, gate, text, detail, tone, at }: { node: FlowNode; g
   if (p <= 0) return null;
   return (
     <g style={{ opacity: p }} role="note" aria-label={`${text}. ${detail}`}>
-      {left ? <Callout x={node.x - 7} y={node.y - 9} dx={-18} dy={dy} text={text} detail={detail} tone={tone} /> : <Callout x={node.x + 7} y={node.y - 9} dx={18} dy={dy} text={text} detail={detail} tone={tone} />}
+      <PlacedCallout cx={node.x} cy={node.y} ox={left ? -7 : 7} oy={-9} dx={left ? -18 : 18} dy={dy} text={text} detail={detail} tone={tone} />
     </g>
   );
 }
@@ -591,7 +592,7 @@ function OutvotedCallout({ x, y, rule, title, seat, at }: { x: number; y: number
   if (p <= 0) return null;
   return (
     <g style={{ opacity: p }} role="note" aria-label={`Outvoted ${seat} blocker ${rule ?? ""}: ${title}`}>
-      <Callout x={x - 15} y={y + 4} dx={-22} dy={30} text={`Blocker outvoted · ${seat} ${rule ?? ""}`} detail={clip(title, 60)} tone="fail" />
+      <PlacedCallout cx={x} cy={y} ox={-15} oy={4} dx={-22} dy={30} text={`Blocker outvoted · ${seat} ${rule ?? ""}`} detail={clip(title, 60)} tone="fail" />
     </g>
   );
 }

@@ -26,14 +26,19 @@ export const ZOOM = { min: 0.35, max: 3, focusMax: 2.2 } as const;
  * pan to). This is what a document viewer does, and it is why a focus near the top of the sheet sits at
  * the top of the stage rather than under a band of empty ground.
  */
-export function clamp(c: Camera, view: Size, sheet: Size): Camera {
+export function clamp(c: Camera, view: Size, sheet: Size, padRight = 0): Camera {
   const k = Math.min(ZOOM.max, Math.max(ZOOM.min, c.k));
-  return { x: axis(c.x, view.w, sheet.w * k), y: axis(c.y, view.h, sheet.h * k), k };
+  return { x: axis(c.x, view.w, sheet.w * k, padRight), y: axis(c.y, view.h, sheet.h * k), k };
 }
 
-function axis(at: number, view: number, length: number): number {
+/**
+ * `pad`: screen px past the sheet's far edge the camera may still go when the sheet is longer than the
+ * stage, so the last column can be brought out from under what stands over that edge of the stage
+ * (the corner with the overview and the zoom toolbar, a drawer).
+ */
+function axis(at: number, view: number, length: number, pad = 0): number {
   if (length <= view) return (view - length) / 2;
-  return Math.min(0, Math.max(view - length, at));
+  return Math.min(0, Math.max(view - length - pad, at));
 }
 
 export function fitCamera(view: Size, rect: Rect): Camera {

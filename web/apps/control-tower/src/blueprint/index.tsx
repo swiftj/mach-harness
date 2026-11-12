@@ -30,7 +30,7 @@ import { leafBounds } from "./bounds";
 import { PlayheadFact } from "./TitleBlock";
 import { ancestors, nodeForRef, treeOf, type Tree, type TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, TreeContext, type TreeCtx } from "./treeitem";
-import { CameraContext, createCameraStore, createHitRegistry, HitContext, LayersContext, LodContext, nearestHit, useCamera } from "./context";
+import { CameraContext, ClearContext, createCameraStore, createHitRegistry, HitContext, LayersContext, LodContext, nearestHit, useCamera, type ClearArea, type ClearAreaSource } from "./context";
 import { ColumnHead, furnitureBox, HEAD_H, Legend, Revisions } from "./furniture";
 import { Minimap, PinnedTitle, RULER, rulersShown, ZoneRulers, zoneCounts } from "./overlays";
 import { Gutter } from "./gutter";
@@ -62,6 +62,33 @@ function pinOffsets(c: Camera, L: Layout): { gx: number; hy: number } {
   const headTop = headTopOf(L);
   const hy = Math.max(0, Math.min((topAt - c.y) / c.k - headTop, L.height - headTop - 200));
   return { gx, hy };
+}
+
+/**
+ * The stage's bottom-right corner (findings N3): the overview, the playhead chip and the zoom toolbar
+ * stack there (`.bp-corner`), never over one another. The camera may take the sheet this far past its
+ * right edge, so the last column can always be brought out from under the corner.
+ */
+const CORNER_W = 196;
+
+/**
+ * How much of the stage's right side an overlay drawer covers, in px: the Shell's inspector, which on a
+ * window under 1280 px is a fixed panel over the stage rather than a column beside it. Measured from
+ * the page (the Shell exposes no variable for it): any fixed or absolute `aside` outside the stage
+ * whose box reaches the stage's right edge. A closed drawer is translated off the edge and covers 0.
+ */
+function coveredRight(vp: HTMLElement): number {
+  const box = vp.getBoundingClientRect();
+  let cover = 0;
+  for (const el of document.querySelectorAll<HTMLElement>("aside")) {
+    if (el.contains(vp) || el.inert) continue;
+    const cs = getComputedStyle(el);
+    if ((cs.position !== "fixed" && cs.position !== "absolute") || cs.visibility === "hidden") continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.left >= box.right - 1 || r.right < box.right - 1 || r.bottom <= box.top || r.top >= box.bottom) continue;
+    cover = Math.max(cover, box.right - Math.max(r.left, box.left));
+  }
+  return Math.round(cover);
 }
 
 /**
@@ -277,8 +304,28 @@ export function BlueprintView() {
   /** The last focus request the camera honoured (the Shell's request at mount counts as honoured by the first placement). */
   const handledFocus = useRef<number | null>(null);
   const size = useCallback(() => ({ w: viewport.current?.clientWidth ?? 0, h: viewport.current?.clientHeight ?? 0 }), []);
+  /** Px of the stage's right side under a drawer (the narrow-window inspector). */
+  const cover = useRef(0);
+  /** The part of the stage nothing covers: where a framed target is centred and the follow camera aims. */
+  const open = useCallback(() => {
+    const v = size();
+    return { w: Math.max(1, v.w - cover.current), h: v.h };
+  }, [size]);
+  /**
+   * Keep the sheet readable (camera.ts `clamp`) in the part of the stage nothing covers, with room past
+   * its right edge for the corner, so the last column can be brought clear of it.
+   */
+  const keep = useCallback(
+    (c: Camera): Camera => {
+      const L = layoutRef.current;
+      return clamp(c, open(), L ? { w: L.width, h: L.height } : { w: 1, h: 1 }, CORNER_W);
+    },
+    [open],
+  );
   const [camStore] = useState(() => createCameraStore());
-  useLayoutEffect(() => camStore.setSize(size), [camStore, size]);
+  // The overlays see the part of the stage a drawer leaves: the overview's view frame, the rulers' length
+  // and whether the sheet's own title block is in view are about what can be seen.
+  useLayoutEffect(() => camStore.setSize(open), [camStore, open]);
   const [hits] = useState(() => createHitRegistry());
   const [band, setBand] = useState<readonly [number, number]>([-Infinity, Infinity]);
   const [lodState, setLodState] = useState<"overview" | "detail" | "near">("detail");
@@ -314,9 +361,7 @@ export function BlueprintView() {
   const moveTo = useCallback(
     (target: Camera, smooth: boolean, ms = 650) => {
       anim.current?.stop();
-      const L = layoutRef.current;
-      const sheet = L ? { w: L.width, h: L.height } : { w: 1, h: 1 };
-      const goal = clamp(target, size(), sheet);
+      const goal = keep(target);
       if (!smooth || reduced) {
         apply(goal);
         return;
@@ -331,13 +376,13 @@ export function BlueprintView() {
         },
       });
     },
-    [apply, reduced, size],
+    [apply, reduced, keep],
   );
-  /** The establishing view: the whole sheet, composed in the stage (the container, not the window). */
+  /** The establishing view: the whole sheet, composed in the part of the stage nothing covers. */
   const fitCam = useCallback((L: Layout) => {
-    const v = size();
+    const v = open();
     return fitCamera(v, { x: 0, y: 0, w: L.width, h: L.height });
-  }, [size]);
+  }, [open]);
   const fit = useCallback(() => {
     const L = layoutRef.current;
     if (!L) return;
@@ -352,11 +397,11 @@ export function BlueprintView() {
   // First placement: framed on the selection the Shell brings us up with, else the whole sheet.
   useLayoutEffect(() => {
     if (!layout || placed.current) return;
-    const v = size();
-    if (!v.w) return;
+    const v = open();
+    if (!size().w) return;
     const sel = store.getState().selection;
     const rect = sel ? boundsFor(layout, tree, sel, store.getState().playhead) : null;
-    const first = clamp(rect ? frameOf(v, layout, rect) : fitCam(layout), v, { w: layout.width, h: layout.height });
+    const first = keep(rect ? frameOf(v, layout, rect) : fitCam(layout));
     fitted.current = !rect;
     if (stage.current) stage.current.style.transform = `translate(${first.x}px, ${first.y}px) scale(${first.k})`;
     const id = requestAnimationFrame(() => {
@@ -365,7 +410,7 @@ export function BlueprintView() {
       apply(first);
     });
     return () => cancelAnimationFrame(id);
-  }, [layout, apply, size, fitCam, store, tree]);
+  }, [layout, apply, size, open, keep, fitCam, store, tree]);
 
   // Keep the composition when the stage resizes (inspector, timeline, Theater): re-fit if fitted, else
   // keep the sheet point at the centre where it was.
@@ -378,19 +423,104 @@ export function BlueprintView() {
       const L = layoutRef.current;
       if (!L || !placed.current || (now.w === last.w && now.h === last.h)) return;
       const c = cam.current;
-      if (fitted.current) apply(clamp(fitCamera(now, { x: 0, y: 0, w: L.width, h: L.height }), now, { w: L.width, h: L.height }));
-      else apply(clamp({ x: c.x + (now.w - last.w) / 2, y: c.y + (now.h - last.h) / 2, k: c.k }, now, { w: L.width, h: L.height }));
+      if (fitted.current) apply(keep(fitCam(L)));
+      else apply(keep({ x: c.x + (now.w - last.w) / 2, y: c.y + (now.h - last.h) / 2, k: c.k }));
       last = now;
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [apply]);
+  }, [apply, keep, fitCam]);
+
+  // A drawer over the stage (the inspector below 1280 px): the corner moves left of it as it slides
+  // (`--bp-cover-r`, every frame of its transition), notes re-place themselves, and once it has settled
+  // the camera keeps what it framed in the part the drawer leaves: a fitted sheet is re-fitted, and a
+  // selection whose mark is now under the drawer is brought out from under it.
+  const treeRef = useRef(tree);
+  useLayoutEffect(() => {
+    treeRef.current = tree;
+  }, [tree]);
+  useEffect(() => {
+    const vp = viewport.current;
+    if (!vp) return;
+    let raf = 0;
+    let until = 0;
+    let settled = cover.current;
+    const react = (): void => {
+      const L = layoutRef.current;
+      const prev = settled;
+      settled = cover.current;
+      if (!L || !placed.current || settled === prev) return;
+      if (fitted.current) {
+        moveTo(fitCam(L), true);
+        return;
+      }
+      const sel = store.getState().selection;
+      const rect = sel && settled > prev ? boundsFor(L, treeRef.current, sel, store.getState().playhead) : null;
+      if (!rect) return;
+      const c = cam.current;
+      const v = open();
+      const markX = c.x + (rect.x + rect.w / 2) * c.k;
+      const markY = c.y + (rect.y + Math.min(rect.h, 160) / 2) * c.k;
+      if (markX <= v.w - 48 || markX > v.w + settled || markY < 0 || markY > v.h) return;
+      moveTo({ ...c, x: c.x + (v.w * 0.6 - markX) }, true);
+    };
+    const measure = (): void => {
+      raf = 0;
+      const next = coveredRight(vp);
+      if (next !== cover.current) {
+        cover.current = next;
+        vp.style.setProperty("--bp-cover-r", `${next}px`);
+        camStore.set(cam.current);
+      }
+      if (performance.now() < until) raf = requestAnimationFrame(measure);
+      else react();
+    };
+    const kick = (): void => {
+      until = performance.now() + 700;
+      if (!raf) raf = requestAnimationFrame(measure);
+    };
+    const watch = new MutationObserver(kick);
+    for (const aside of document.querySelectorAll("aside")) if (!aside.contains(vp)) watch.observe(aside, { attributes: true, attributeFilter: ["class", "style", "inert"] });
+    window.addEventListener("resize", kick);
+    kick();
+    return () => {
+      watch.disconnect();
+      window.removeEventListener("resize", kick);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [camStore, fitCam, moveTo, open, store]);
+
+  /** Where a note on the drawing can be read (callout.tsx), in client px. */
+  const clearArea: ClearAreaSource = useMemo(
+    () => ({
+      subscribe: camStore.subscribe,
+      get(): ClearArea | null {
+        const vp = viewport.current;
+        const L = layoutRef.current;
+        if (!vp || !L) return null;
+        const box = vp.getBoundingClientRect();
+        const c = cam.current;
+        const { gx, hy } = pinOffsets(c, L);
+        const left = box.left + c.x + (L.ax - 14 + gx) * c.k + 4;
+        const top = box.top + c.y + (headTopOf(L) + hy + HEAD_H) * c.k + 2;
+        const corner = vp.querySelector(".bp-corner")?.getBoundingClientRect();
+        return {
+          left: Math.max(box.left, left),
+          top: Math.max(box.top, top),
+          right: box.right - cover.current,
+          bottom: box.bottom,
+          corner: corner && corner.height > 0 ? { left: corner.left - 6, top: corner.top - 6 } : null,
+        };
+      },
+    }),
+    [camStore],
+  );
 
   // Honour focus requests once the layout shows the target.
   useLayoutEffect(() => {
     if (!focusReq || !layout || !placed.current || handledFocus.current === focusReq.nonce) return;
-    const v = size();
-    if (!v.w) return;
+    const v = open();
+    if (!size().w) return;
     if (focusReq.reason === "follow") {
       handledFocus.current = focusReq.nonce;
       return;
@@ -424,11 +554,11 @@ export function BlueprintView() {
       lastCheck = now;
       const L = layoutRef.current;
       if (!L) return;
-      const d = followMove(L, s.playhead, cam.current, size(), primary);
+      const d = followMove(L, s.playhead, cam.current, open(), primary);
       primary = d.primary;
       if (d.camera) moveTo(d.camera, !s.reducedMotion, FOLLOW.easeMs);
     });
-  }, [store, size, moveTo]);
+  }, [store, open, moveTo]);
 
   // Wheel: pinch or Ctrl/Cmd + wheel zooms to the cursor; plain wheel and two-finger scroll pan.
   useEffect(() => {
@@ -439,33 +569,31 @@ export function BlueprintView() {
       anim.current?.stop();
       manual();
       const c = cam.current;
-      const L = layoutRef.current;
-      const sheet = L ? { w: L.width, h: L.height } : { w: 1, h: 1 };
       if (e.ctrlKey || e.metaKey) {
         const box = el.getBoundingClientRect();
         const cx = e.clientX - box.left;
         const cy = e.clientY - box.top;
         const k = Math.min(3, Math.max(0.35, c.k * Math.pow(1.0015, -e.deltaY * (e.deltaMode === 1 ? 16 : 1))));
-        apply(clamp({ x: cx - (cx - c.x) * (k / c.k), y: cy - (cy - c.y) * (k / c.k), k }, size(), sheet));
+        apply(keep({ x: cx - (cx - c.x) * (k / c.k), y: cy - (cy - c.y) * (k / c.k), k }));
       } else {
         const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
         const dy = e.shiftKey && !e.deltaX ? 0 : e.deltaY;
-        apply(clamp({ x: c.x - dx, y: c.y - dy, k: c.k }, size(), sheet));
+        apply(keep({ x: c.x - dx, y: c.y - dy, k: c.k }));
       }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [apply, size, manual]);
+  }, [apply, keep, manual]);
 
   const zoomBy = useCallback(
     (f: number) => {
       manual();
-      const v = size();
+      const v = open();
       const c = cam.current;
       const k = Math.min(3, Math.max(0.35, c.k * f));
       moveTo({ x: v.w / 2 - (v.w / 2 - c.x) * (k / c.k), y: v.h / 2 - (v.h / 2 - c.y) * (k / c.k), k }, true);
     },
-    [moveTo, size, manual],
+    [moveTo, open, manual],
   );
 
   /** +, - and 0 (spec f.10, "in a view"). True when the key was one of them. */
@@ -535,7 +663,7 @@ export function BlueprintView() {
         viewport.current?.setPointerCapture(d.id);
       }
       const L = layoutRef.current;
-      if (d.moved && L) apply(clamp({ x: d.cx + dx, y: d.cy + dy, k: cam.current.k }, size(), { w: L.width, h: L.height }));
+      if (d.moved && L) apply(keep({ x: d.cx + dx, y: d.cy + dy, k: cam.current.k }));
       return;
     }
     if ((e.target as Element).closest?.(".bp-chrome")) return;
@@ -698,11 +826,11 @@ export function BlueprintView() {
   const centreOn = useCallback(
     (x: number, y: number) => {
       manual();
-      const v = size();
+      const v = open();
       const c = cam.current;
       moveTo({ x: v.w / 2 - x * c.k, y: v.h / 2 - y * c.k, k: c.k }, false);
     },
-    [manual, moveTo, size],
+    [manual, moveTo, open],
   );
   const frameLane = useCallback(
     (laneId: string) => {
@@ -710,10 +838,10 @@ export function BlueprintView() {
       const lane = L?.lanes.find((l) => l.id === laneId);
       if (!L || !lane) return;
       manual();
-      moveTo(frameOf(size(), L, { x: SHEET.left, y: lane.y, w: L.width - SHEET.left * 2, h: lane.h }), true);
+      moveTo(frameOf(open(), L, { x: SHEET.left, y: lane.y, w: L.width - SHEET.left * 2, h: lane.h }), true);
       setActiveId(laneId);
     },
-    [manual, moveTo, size],
+    [manual, moveTo, open],
   );
 
   // ---------------------------------------------------------------- render
@@ -731,6 +859,7 @@ export function BlueprintView() {
   const furniture = layout ? furnitureBox(layout) : null;
   return (
     <CameraContext.Provider value={camStore}>
+      <ClearContext.Provider value={clearArea}>
       <HitContext.Provider value={hits}>
         <div
           ref={viewport}
@@ -787,26 +916,31 @@ export function BlueprintView() {
           {layout && template ? (
             <div className="bp-chrome" aria-hidden={theater ? true : undefined}>
               <ZoneRulers layout={layout} />
-              <PinnedTitle layout={layout} theater={theater} />
-              {theater ? null : <Minimap layout={layout} template={template} centreOn={centreOn} frameLane={frameLane} />}
             </div>
           ) : null}
-          {theater ? null : (
-            <div className="bp-controls bp-chrome" role="toolbar" aria-label="Blueprint camera">
-              <button type="button" onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out">
-                −
-              </button>
-              <ZoomWord />
-              <button type="button" onClick={() => zoomBy(1.2)} aria-label="Zoom in">
-                +
-              </button>
-              <button type="button" onClick={fit} aria-label="Fit the whole sheet">
-                Fit
-              </button>
-            </div>
-          )}
+          {/* The corner: overview, playhead chip and zoom toolbar stacked, never over one another, and
+              kept left of a drawer that covers the stage (--bp-cover-r). */}
+          <div className="bp-corner bp-chrome">
+            {layout && template && !theater ? <Minimap layout={layout} template={template} centreOn={centreOn} frameLane={frameLane} /> : null}
+            {layout ? <PinnedTitle layout={layout} theater={theater} /> : null}
+            {theater ? null : (
+              <div className="bp-controls" role="toolbar" aria-label="Blueprint camera">
+                <button type="button" onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out">
+                  −
+                </button>
+                <ZoomWord />
+                <button type="button" onClick={() => zoomBy(1.2)} aria-label="Zoom in">
+                  +
+                </button>
+                <button type="button" onClick={fit} aria-label="Fit the whole sheet">
+                  Fit
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </HitContext.Provider>
+      </ClearContext.Provider>
     </CameraContext.Provider>
   );
 }

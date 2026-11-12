@@ -99,6 +99,27 @@ export function nearestHit(hits: TickHits, x: number, tolerance: number): number
   return best < 0 ? null : best;
 }
 
+/**
+ * The part of the stage a note on the drawing can be read in, in client px: right of the pinned
+ * gutter, below the pinned column head, left of a drawer that covers the stage, and outside the
+ * bottom-right corner that holds the overview, the playhead chip and the zoom toolbar. `subscribe`
+ * fires when the camera moves or any of those changes.
+ */
+export interface ClearArea {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+  readonly corner: { readonly left: number; readonly top: number } | null;
+}
+
+export interface ClearAreaSource {
+  get(): ClearArea | null;
+  subscribe(fn: () => void): () => void;
+}
+
+export const ClearContext = createContext<ClearAreaSource | null>(null);
+
 /** The level of detail, as React state (it changes only when the camera crosses a threshold). */
 export const LodContext = createContext<"overview" | "detail" | "near">("detail");
 

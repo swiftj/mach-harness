@@ -31,10 +31,21 @@
   color: var(--mach-ink-muted);
   font-size: 13px;
 }
+/* The stage's bottom-right corner: overview, playhead chip and zoom toolbar in one column, so they can
+   never overlap, kept left of a drawer that covers the stage (--bp-cover-r, written by the view). The
+   camera may take the sheet past its right edge by the corner's width (CORNER_W in index.tsx), so the
+   last column can be brought clear of it. */
+.bp-corner.bp-chrome {
+  inset: auto calc(16px + var(--bp-cover-r, 0px)) 16px auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.bp-viewport[data-theater="1"] .bp-corner.bp-chrome {
+  bottom: 96px;
+}
 .bp-controls {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -101,9 +112,6 @@
 .bp-chrome > * {
   pointer-events: auto;
 }
-.bp-controls.bp-chrome {
-  inset: auto 16px 16px auto;
-}
 .bp-rulers {
   position: absolute;
   left: 0;
@@ -112,9 +120,6 @@
   font-family: var(--mach-font-sans);
 }
 .bp-title {
-  position: absolute;
-  right: 16px;
-  bottom: 56px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -145,9 +150,6 @@
   font-family: var(--mach-font-mono);
 }
 .bp-minimap {
-  position: absolute;
-  right: 16px;
-  bottom: 92px;
   padding: 6px;
   border: 1px solid var(--mach-line);
   border-radius: var(--mach-radius-sm);
@@ -158,24 +160,29 @@
   position: relative;
   cursor: crosshair;
   touch-action: none;
+  border-radius: 2px;
 }
+.bp-minimap-plot:focus {
+  outline: none;
+}
+.bp-minimap-plot:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 2px;
+}
+/* The minimap is one control (a listbox, findings N1): its lanes are options, not separate targets.
+   The strip at a lane's left edge marks it; the active one is drawn in the selection ink. */
 .bp-minimap-lane {
   position: absolute;
   left: 0;
   width: 10px;
-  padding: 0;
-  border: 0;
   border-left: 3px solid var(--mach-factory-plate-edge);
-  background: transparent;
   cursor: pointer;
 }
 .bp-minimap-lane:hover {
   border-left-color: var(--mach-factory-select);
 }
-.bp-minimap-lane:focus-visible {
-  outline: 2px solid var(--mach-focus);
-  outline-offset: 1px;
-}
-.bp-viewport[data-theater="1"] .bp-title {
-  bottom: 96px;
+.bp-minimap-plot:focus-visible .bp-minimap-lane[aria-selected="true"] {
+  width: 100%;
+  border-left-color: var(--mach-factory-select);
+  box-shadow: inset 0 0 0 1.5px var(--mach-focus);
 }
