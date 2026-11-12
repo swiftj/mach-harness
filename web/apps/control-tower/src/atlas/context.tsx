@@ -2,7 +2,7 @@
  * What every Atlas part shares: the level of detail, the layout, the highlight set and the
  * interaction wrapper. Selection and hover live in the scene store; the Atlas only reads them.
  */
-import { createContext, memo, useContext, useMemo, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, memo, useContext, useMemo, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import type { Lod } from "@mach/ui";
 import { useSceneActions, useSceneStore, useStore, type SceneStoreState } from "../scene";
 import type { EntityRef } from "../sim";
@@ -13,6 +13,8 @@ export interface AtlasContextValue {
   layout: PlantLayout;
   /** The WebGL light layer is drawing the lamp pools; the SVG pools switch off. */
   lightLayer: boolean;
+  /** Tickets whose bays are drawn whole, with their hit targets (bays out of view are plates only). */
+  visibleBays: ReadonlySet<string>;
 }
 
 export const AtlasContext = createContext<AtlasContextValue | null>(null);
@@ -49,7 +51,21 @@ export function isDimmed(highlight: ReadonlySet<EntityRef>, ...refs: EntityRef[]
 export interface HitProps {
   entity: EntityRef;
   label: string;
-  children: ReactNode;
+  /** What is drawn and pointed at. Omit when `points` gives the target's outline instead. */
+  children?: ReactNode;
+  /**
+   * A transparent proxy outline (SVG `points`) instead of children: the target is then that one
+   * polygon, carrying the role, name and handlers itself (one element instead of a group and its
+   * polygon; a bay draws a dozen of these).
+   */
+  points?: string;
+  /**
+   * A second picture of an entity whose own target is drawn elsewhere (a cell's work parked at a
+   * station, an artifact on the review table that also stands on its cell's shelf). Pointing at it
+   * selects and highlights the entity as usual, but it is not a second button: no accessible name,
+   * no keyboard stop, no `data-ref`, so every entity is reached and announced exactly once.
+   */
+  alias?: boolean;
 }
 
 /**
@@ -57,40 +73,55 @@ export interface HitProps {
  * Space selects (without moving the camera, spec f.2); double-click focuses; hover highlights.
  * Entities are not tab stops: the view is one, and arrows rove between them (see AtlasView).
  */
-export const Hit = memo(function Hit({ entity, label, children }: HitProps) {
+export const Hit = memo(function Hit({ entity, label, children, points, alias = false }: HitProps) {
   const selected = useSceneStore((s) => s.selection === entity);
   const { select, hover, focusOn } = useSceneActions();
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
+  const pointer = {
+    className: "atlas-hit",
+    onClick: (e: MouseEvent) => {
       e.stopPropagation();
       select(entity, { focus: false });
-    }
+    },
+    onDoubleClick: (e: MouseEvent) => {
+      e.stopPropagation();
+      focusOn(entity, "select");
+    },
+    onPointerEnter: () => hover(entity),
+    onPointerLeave: () => hover(null),
   };
-  return (
-    <g
-      role="button"
-      tabIndex={-1}
-      aria-label={label}
-      aria-pressed={selected}
-      data-ref={entity}
-      className="atlas-hit"
-      onClick={(e) => {
+  if (alias) {
+    // Pointer-only by design: the entity's keyboard stop and name are its primary target's.
+    return points !== undefined ? (
+      <polygon aria-hidden="true" data-alias-of={entity} points={points} style={PROXY} {...pointer} />
+    ) : (
+      <g aria-hidden="true" data-alias-of={entity} {...pointer}>
+        {children}
+      </g>
+    );
+  }
+  const button = {
+    role: "button",
+    tabIndex: -1,
+    "aria-label": label,
+    "aria-pressed": selected,
+    "data-ref": entity,
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
         e.stopPropagation();
         select(entity, { focus: false });
-      }}
-      onDoubleClick={(e) => {
-        e.stopPropagation();
-        focusOn(entity, "select");
-      }}
-      onKeyDown={onKey}
-      onPointerEnter={() => hover(entity)}
-      onPointerLeave={() => hover(null)}
-    >
-      {children}
-    </g>
+      }
+    },
+    ...pointer,
+  };
+  return points !== undefined ? (
+    <polygon points={points} style={PROXY} {...button} />
+  ) : (
+    <g {...button}>{children}</g>
   );
 });
+
+const PROXY = { fill: "transparent" } as const;
 
 /**
  * The playhead, for a part that should re-render only when `key` changes. `key` returns the

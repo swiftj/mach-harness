@@ -28,7 +28,7 @@ import { clamp01, elapsedTicks, formatElapsed, lerp, segment } from "./motion";
 import { planeStroke, planeTransform, project, round, uprightTransform, type Vec3 } from "./projection";
 import { Prism } from "./plates";
 import { FloorLettering } from "./lettering";
-import { AgentHead, ArtifactMark, ElapsedTicks, ProvenanceBadge, RoleEmblem, StateMark, StationSymbol, ToolCap, artifactCardPath, artifactFoldPath } from "./symbols";
+import { AgentHead, ArtifactMark, ElapsedTicks, ProvenanceBadge, RoleEmblem, StateMark, StationSymbol, artifactCardPath, artifactFoldPath } from "./symbols";
 
 /**
  * The things that work on the plant: station machines, agents, gates, artifacts, tool-call ticks and
@@ -608,17 +608,14 @@ export function ArtifactCard({ kind, state = "succeeded", progress = 1, file, at
   const foot = project({ x: at.x - w / 2, y: at.y, z });
   return (
     <g role="img" aria-label={name} style={{ opacity: (dimmed ? dimmedOpacity : 1) * Math.min(1, p * 1.4) }}>
-      <g transform={planeTransform(z)} aria-hidden="true">
-        <path d={`M${at.x - w / 2} ${at.y}h${w}l${height * 0.5} ${-height * 0.18}h${-w}z`} style={{ fill: fc("shadow") }} />
-      </g>
-      <g transform={uprightTransform({ x: at.x - w / 2, y: at.y, z }, height)}>
-        <g transform={`scale(1 ${round(s)})`}>
-          <path d={artifactCardPath} style={{ fill, stroke, strokeWidth: 1, strokeLinejoin: "round" }} />
-          <path d={artifactFoldPath} aria-hidden="true" style={{ fill: "none", stroke, strokeWidth: 0.8 }} />
-          <g style={{ opacity: segment(p, 0.4, 1) }}>
-            <ArtifactMark kind={kind} color={state === "failed" ? fc("fail") : fc("ink")} />
-            {artifactProvenance[kind] ? <ProvenanceBadge from={artifactProvenance[kind]!} color={state === "failed" ? fc("fail") : fc("ink")} /> : null}
-          </g>
+      {/* Transforms sit on the drawing itself, not on wrapper groups: the Atlas draws dozens of cards. */}
+      <path transform={planeTransform(z)} aria-hidden="true" d={`M${at.x - w / 2} ${at.y}h${w}l${height * 0.5} ${-height * 0.18}h${-w}z`} style={{ fill: fc("shadow") }} />
+      <g transform={`${uprightTransform({ x: at.x - w / 2, y: at.y, z }, height)} scale(1 ${round(s)})`}>
+        <path d={artifactCardPath} style={{ fill, stroke, strokeWidth: 1, strokeLinejoin: "round" }} />
+        <path d={artifactFoldPath} aria-hidden="true" style={{ fill: "none", stroke, strokeWidth: 0.8 }} />
+        <g style={{ opacity: segment(p, 0.4, 1) }}>
+          <ArtifactMark kind={kind} color={state === "failed" ? fc("fail") : fc("ink")} />
+          {artifactProvenance[kind] ? <ProvenanceBadge from={artifactProvenance[kind]!} color={state === "failed" ? fc("fail") : fc("ink")} /> : null}
         </g>
       </g>
       {labelOn(lod, showLabel) ? (
@@ -657,15 +654,48 @@ export function ToolTick({ family, state = "succeeded", progress = 1, detail, at
   const name = `${f.label} tool call${detail ? ` (${detail})` : ""}: ${st.label}`;
   const stem = (variant === "blueprint" ? 9 : 11) * p;
   const base = variant === "blueprint" ? { x: at.x, y: at.y } : project(at);
-  return (
-    <g role="img" aria-label={name} transform={`translate(${round(base.x)} ${round(base.y)})`} style={{ opacity: (dimmed ? dimmedOpacity : 1) * Math.min(1, p * 2) }}>
-      <line x1={0} y1={0} x2={0} y2={-stem} aria-hidden="true" style={{ stroke: color, strokeWidth: 1.1 }} />
-      {state === "failed" ? <line x1={-2.2} y1={-stem * 0.45} x2={2.2} y2={-stem * 0.45} aria-hidden="true" style={{ stroke: color, strokeWidth: 1.1 }} /> : null}
-      <g transform={`translate(0 ${round(-stem - 3)})`}>
-        <ToolCap family={family} color={color} filled={state !== "idle"} />
+  // One element per tick (a cell's ticker holds up to 24 of them): stem, cross-bar and cap are one
+  // path, the same drawing ToolCap makes (see toolTickPath). The test family's check alone has round
+  // caps, so its tick keeps the stem and the check apart, in a group.
+  const { stem: stemD, cap, fill, roundCap } = toolTickPath(family, stem, state === "failed", state !== "idle");
+  const transform = `translate(${round(base.x)} ${round(base.y)})`;
+  const opacity = (dimmed ? dimmedOpacity : 1) * Math.min(1, p * 2);
+  const ink = { stroke: color, strokeWidth: 1.1, strokeLinejoin: "round" as const, fill: fill ? color : "none" };
+  if (roundCap) {
+    return (
+      <g role="img" aria-label={name} transform={transform} style={{ opacity }}>
+        <path d={stemD} aria-hidden="true" style={{ stroke: color, strokeWidth: 1.1, fill: "none" }} />
+        <path d={cap} aria-hidden="true" style={{ ...ink, strokeLinecap: "round" }} />
       </g>
-    </g>
-  );
+    );
+  }
+  return <path role="img" aria-label={name} transform={transform} d={stemD + cap} style={{ ...ink, opacity }} />;
+}
+
+/**
+ * A tool-call tick in tick coordinates (the floor at 0, 0): the stem with a failed call's cross-bar,
+ * and the family's cap (ToolCap's shapes, centred `stem + 3` above the floor). Open sub-paths enclose
+ * no area, so in one path a filled cap fills only itself.
+ */
+function toolTickPath(family: ToolFamily, stem: number, failed: boolean, filled: boolean): { stem: string; cap: string; fill: boolean; roundCap: boolean } {
+  const n = (v: number) => round(v);
+  const c = n(-stem - 3);
+  let s = `M0 0V${n(-stem)}`;
+  if (failed) s += `M-2.2 ${n(-stem * 0.45)}H2.2`;
+  switch (family) {
+    case "read":
+      return { stem: s, cap: `M2.3 ${c}A2.3 2.3 0 1 0 -2.3 ${c}A2.3 2.3 0 1 0 2.3 ${c}Z`, fill: false, roundCap: false };
+    case "write":
+      return { stem: s, cap: `M-2.2 ${n(c - 2.2)}H2.2V${n(c + 2.2)}H-2.2Z`, fill: filled, roundCap: false };
+    case "run":
+      return { stem: s, cap: `M-2 ${n(c - 2.6)}L2.8 ${c}L-2 ${n(c + 2.6)}Z`, fill: filled, roundCap: false };
+    case "search":
+      return { stem: s, cap: `M0 ${n(c - 2.8)}L2.8 ${c}L0 ${n(c + 2.8)}L-2.8 ${c}Z`, fill: false, roundCap: false };
+    case "test":
+      return { stem: s, cap: `M-2.4 ${n(c - 0.2)}L-0.6 ${n(c + 1.8)}L2.6 ${n(c - 2)}`, fill: false, roundCap: true };
+    case "git":
+      return { stem: s, cap: `M1.7 ${c}A1.7 1.7 0 1 0 -1.7 ${c}A1.7 1.7 0 1 0 1.7 ${c}ZM0 ${n(c - 3.2)}V${n(c - 1.7)}M0 ${n(c + 1.7)}V${n(c + 3.2)}`, fill: false, roundCap: false };
+  }
 }
 
 /* ------------------------------------------------------------------------------------------------ */

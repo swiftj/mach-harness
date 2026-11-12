@@ -35,52 +35,54 @@ export function GroundGrid({ x, y, w, d, lod = "mid", fade = 0.85 }: GroundGridP
   const { minor, major } = factoryTokens.grid;
   const cx = x + w / 2;
   const cy = y + d / 2;
-  const lines: ReactNode[] = [];
   const alpha = (u: number, half: number) => Math.max(0, 1 - fade * Math.pow(Math.abs(u) / half, 2));
   const step = lod === "far" ? major : minor;
+  // Lines of one kind (direction, weight) and one opacity are drawn as one path: the fade is
+  // symmetric and quantised to GRID_ALPHA_STEP (at most 0.02 of opacity off, under one 8-bit level
+  // of these low-contrast inks against the ground), so a mid-zoom grid is a few dozen paths instead
+  // of a few hundred lines.
+  // Directions stay apart so crossings still darken where two lines overlap, as they did when each
+  // line was its own element; parallel lines never overlap.
+  const batches = new Map<string, { kind: "grid" | "grid-major" | "plate-edge"; width: number; opacity: number; d: string }>();
+  const add = (kind: "grid" | "grid-major" | "plate-edge", width: number, dir: string, a: number, seg: string) => {
+    const opacity = quantiseAlpha(a);
+    const key = `${kind}|${dir}|${opacity}`;
+    const b = batches.get(key);
+    if (b) b.d += seg;
+    else batches.set(key, { kind, width, opacity, d: seg });
+  };
   for (let gx = Math.ceil(x / step) * step; gx <= x + w; gx += step) {
     const isMajor = gx % major === 0;
-    lines.push(
-      <line
-        key={`x${gx}`}
-        x1={gx}
-        y1={y}
-        x2={gx}
-        y2={y + d}
-        style={{ stroke: fc(isMajor ? "grid-major" : "grid"), strokeWidth: (isMajor ? 1 : 0.75) * planeStroke, opacity: alpha(gx - cx, w / 2) }}
-      />,
-    );
+    add(isMajor ? "grid-major" : "grid", isMajor ? 1 : 0.75, "x", alpha(gx - cx, w / 2), `M${gx} ${y}V${y + d}`);
   }
   for (let gy = Math.ceil(y / step) * step; gy <= y + d; gy += step) {
     const isMajor = gy % major === 0;
-    lines.push(
-      <line
-        key={`y${gy}`}
-        x1={x}
-        y1={gy}
-        x2={x + w}
-        y2={gy}
-        style={{ stroke: fc(isMajor ? "grid-major" : "grid"), strokeWidth: (isMajor ? 1 : 0.75) * planeStroke, opacity: alpha(gy - cy, d / 2) }}
-      />,
-    );
+    add(isMajor ? "grid-major" : "grid", isMajor ? 1 : 0.75, "y", alpha(gy - cy, d / 2), `M${x} ${gy}H${x + w}`);
   }
-  const crosses: ReactNode[] = [];
   if (lod !== "far") {
+    // Registration crosses never touch one another, so one path per opacity.
     for (let gx = Math.ceil(x / major) * major; gx <= x + w; gx += major) {
       for (let gy = Math.ceil(y / major) * major; gy <= y + d; gy += major) {
-        const a = Math.min(alpha(gx - cx, w / 2), alpha(gy - cy, d / 2));
-        crosses.push(
-          <path key={`c${gx}-${gy}`} d={`M${gx - 4} ${gy}h8M${gx} ${gy - 4}v8`} style={{ stroke: fc("plate-edge"), strokeWidth: 0.9 * planeStroke, opacity: a }} />,
-        );
+        add("plate-edge", 0.9, "c", Math.min(alpha(gx - cx, w / 2), alpha(gy - cy, d / 2)), `M${gx - 4} ${gy}h8M${gx} ${gy - 4}v8`);
       }
     }
   }
+  const paths: ReactNode[] = [];
+  for (const [key, b] of batches) {
+    if (b.opacity <= 0) continue;
+    paths.push(<path key={key} d={b.d} style={{ fill: "none", stroke: fc(b.kind), strokeWidth: b.width * planeStroke, opacity: b.opacity }} />);
+  }
   return (
     <g aria-hidden="true" transform={planeTransform(0)}>
-      {lines}
-      {crosses}
+      {paths}
     </g>
   );
+}
+
+/** The ground grid's opacity resolution (see GroundGrid). */
+const GRID_ALPHA_STEP = 0.04;
+function quantiseAlpha(a: number): number {
+  return Math.round(Math.round(a / GRID_ALPHA_STEP) * GRID_ALPHA_STEP * 1000) / 1000;
 }
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -111,8 +113,10 @@ export function Prism({ box, top = "plate-top", lit = "plate-lit", shade = "plat
   const h = box.h ?? 0;
   const zTop = (box.z ?? 0) + h;
   const outline = { stroke: fc(edge), strokeWidth: weight, strokeLinejoin: "round" as const, strokeDasharray: dash };
+  // A fragment, not a group: prisms are the most numerous blocks on the plant, and a wrapper with no
+  // attributes changes nothing in the picture.
   return (
-    <g>
+    <>
       {shadow && h > 0 ? <polygon aria-hidden="true" points={toPoints(shadowPolygon(box).map(project))} style={{ fill: fc("shadow") }} /> : null}
       {h > 0 ? (
         <>
@@ -137,7 +141,7 @@ export function Prism({ box, top = "plate-top", lit = "plate-lit", shade = "plat
       {rim && h > 0 ? (
         <line aria-hidden="true" x1={round(f.top[3]!.x)} y1={round(f.top[3]!.y)} x2={round(f.top[2]!.x)} y2={round(f.top[2]!.y)} style={{ stroke: fc("plate-rim"), strokeWidth: weight, strokeLinecap: "round" }} />
       ) : null}
-    </g>
+    </>
   );
 }
 

@@ -762,7 +762,7 @@ export function BlueprintView() {
                   <LayersContext.Provider value={layers}>
                     <BandContext.Provider value={band}>
                       <TreeContext.Provider value={ctx}>
-                        <g role="tree" aria-label="Execution hierarchy: wave, slices, executions, station visits, agents, tool calls" onKeyDown={onKeyDown} onFocus={(e) => setFocusedId((e.target as Element).getAttribute("data-tid"))} onBlur={() => setFocusedId(null)}>
+                        <g role="tree" aria-label={tree.root ? "Execution hierarchy: wave, slices, executions, station visits, agents, tool calls" : "Execution hierarchy: empty, the wave has not arrived yet"} tabIndex={tree.root ? undefined : 0} onKeyDown={onKeyDown} onFocus={(e) => setFocusedId((e.target as Element).getAttribute("data-tid"))} onBlur={() => setFocusedId(null)}>
                           {tree.root ? <WaveItem layout={layout} tree={tree} template={template} animate={animating} /> : null}
                           {!tree.root ? <PlaceholderBelt layout={layout} template={template} /> : null}
                         </g>

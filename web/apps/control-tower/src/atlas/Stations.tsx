@@ -34,7 +34,7 @@ import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
 import { AFTERGLOW, RATE, agentsElapsedKey, animating, anim, chamberOccupant, gateView, latestGate, placeAgents, q, type PlacedAgent } from "./derive";
 import { PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
-import { AgentFigure } from "./Bay";
+import { AgentFigure, onShelf } from "./Bay";
 import { Card } from "./reduced";
 
 /** The playhead keyed to a part's own animations (see usePlayheadKeyed), with the scene and flags. */
@@ -190,7 +190,7 @@ function HoldingPad({ bay, slice, cell, t, reduced, lod, dimmed }: { bay: BaySlo
 const SEATS = ["architecture", "security", "product"] as const;
 
 export function ChamberWorks() {
-  const { lod, layout: L } = useAtlas();
+  const { lod, layout: L, visibleBays } = useAtlas();
   const { t, reduced, scene } = useFrame((f, now) => {
     if (animating(f, now, (e) => e.type.startsWith("review.") || e.type === "artifact.written" || e.type === "station.entered")) return now;
     const occ = chamberOccupant(sceneAt(f, now), now);
@@ -254,7 +254,7 @@ export function ChamberWorks() {
       {/* The packet table at the entry: the review packet stands on it while the panel sits. */}
       <Prism box={{ x: R.packetTable.x - 12, y: R.packetTable.y - 8, w: 24, d: 16, z: PLATE_Z, h: 6 }} hatch="shade" />
       {packet && lod !== "far" ? (
-        <Hit entity={ref.artifact(packet.id)} label={`Review packet ${packet.label}`}>
+        <Hit entity={ref.artifact(packet.id)} label={`Review packet ${packet.label}`} alias={onShelf(L, visibleBays, lod, occ!.cell, packet.id)}>
           <Card reduced={reduced} kind="review-packet" progress={q(anim("artifactMaterialise", t - packet.writtenAt, reduced))} at={{ ...R.packetTable, z: PLATE_Z + 6 }} lod={lod} showLabel={false} />
         </Hit>
       ) : null}
@@ -359,7 +359,7 @@ export function GatehouseWorks() {
 // ---------------------------------------------------------------- integration
 
 export function IntegrationWorks() {
-  const { lod, layout: L } = useAtlas();
+  const { lod, layout: L, visibleBays } = useAtlas();
   const { t, reduced, scene } = useFrame((f, now) => (animating(f, now, has("merge.completed", "merge.revalidated", "station.entered", "slice.integrated")) ? now : "settled"));
   const highlight = useHighlight();
   const I = L.integration;
@@ -412,7 +412,7 @@ export function IntegrationWorks() {
         return (
           <g key={c.ticketId} style={{ opacity: isDimmed(highlight, ref.cell(c.ticketId)) ? 0.28 : 1 }}>
             {art ? (
-              <Hit entity={ref.artifact(art.id)} label={`Merge commit for ${c.ticketId} on main: ${c.merged!.commit.slice(0, 7)}${c.merged!.revalidated ? ", revalidated" : ""}`}>
+              <Hit alias={onShelf(L, visibleBays, lod, c, art.id)} entity={ref.artifact(art.id)} label={`Merge commit for ${c.ticketId} on main: ${c.merged!.commit.slice(0, 7)}${c.merged!.revalidated ? ", revalidated" : ""}`}>
                 <Card reduced={reduced} kind="merge-commit" progress={p} at={at} lod={lod} showLabel={false} />
               </Hit>
             ) : null}
@@ -429,7 +429,7 @@ export function IntegrationWorks() {
 // ---------------------------------------------------------------- archive and observe
 
 export function ArchiveWorks() {
-  const { lod, layout: L } = useAtlas();
+  const { lod, layout: L, visibleBays } = useAtlas();
   const { t, reduced, scene } = useFrame((f, now) => (animating(f, now, has("cleanup.completed", "artifact.written", "station.entered")) ? now : "settled"));
   const A = L.archive;
   const archived = Object.values(scene.cells).filter((c) => c.archived).sort((a, b) => a.archived!.at - b.archived!.at);
@@ -463,7 +463,7 @@ export function ArchiveWorks() {
         const p = q(anim("artifactMaterialise", t - c.archived!.at, reduced));
         const at = shelfAt(L.bayByTicket.get(c.ticketId)?.index ?? 0);
         return art ? (
-          <Hit key={c.ticketId} entity={ref.artifact(art.id)} label={`Archive ${art.label}`}>
+          <Hit key={c.ticketId} entity={ref.artifact(art.id)} label={`Archive ${art.label}`} alias={onShelf(L, visibleBays, lod, c, art.id)}>
             <Card reduced={reduced} kind="archive" progress={p} at={at} lod={lod} showLabel={false} />
           </Hit>
         ) : null;

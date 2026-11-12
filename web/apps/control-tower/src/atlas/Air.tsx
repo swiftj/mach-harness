@@ -46,7 +46,7 @@ export function Dependencies() {
 }
 
 export function Transit() {
-  const { layout: L, lod } = useAtlas();
+  const { layout: L, lod, visibleBays } = useAtlas();
   const fixture = useSceneStore((s) => s.fixture);
   const t = usePlayheadKeyed((s) => {
     const now = s.playhead;
@@ -111,7 +111,7 @@ export function Transit() {
       })}
       {parked.map((k) => (
         <g key={`park-${k.ticket}`} style={{ opacity: isDimmed(highlight, ref.cell(k.ticket)) ? 0.28 : 1 }}>
-          <Hit entity={ref.cell(k.ticket)} label={`${k.ticket}'s work, at ${k.state === "human" ? "the approval gate, waiting for a person" : "its station"}`}>
+          <Hit entity={ref.cell(k.ticket)} alias={visibleBays.has(k.ticket) && L.bayByTicket.has(k.ticket)} label={`${k.ticket}'s work, at ${k.state === "human" ? "the approval gate, waiting for a person" : "its station"}`}>
             <Packet at={k.at} angle={k.angle} state={k.state} ticket={k.ticket} lod={lod} />
           </Hit>
         </g>

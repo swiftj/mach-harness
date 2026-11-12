@@ -10,9 +10,21 @@
 .atlas-viewport[data-dragging="true"] {
   cursor: grabbing;
 }
+/* The canvas's focus ring is a box drawn over it, not an outline: an outline on the viewport made the
+   GPU re-raster the whole plant every frame while focus was in it (Chromium; GPU raster time 1.8 s
+   in 5 s of 4x playback against 1.2 s without focus, about 40 fps). The ring looks the same: the
+   same 2 px inside the edge, above everything in the canvas. Promoting the camera with
+   will-change: transform also removed the cost but rastered the plant at the zoom it was promoted
+   at, so text and lines were soft after zooming. */
 .atlas-viewport:focus-visible {
-  outline: 2px solid var(--mach-focus);
-  outline-offset: -2px;
+  outline: none;
+}
+.atlas-viewport:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--mach-focus);
+  pointer-events: none;
 }
 .atlas-camera {
   position: absolute;

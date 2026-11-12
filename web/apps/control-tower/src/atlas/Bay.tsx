@@ -44,7 +44,7 @@ import { BELT_PHASES, agentTimingAt, ref, sceneAt, visitTimingAt, type CellState
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
 import { animating, anim, callsOf, secondOf, lampLevel, gateView, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PlacedAgent } from "./derive";
-import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot } from "./layout";
+import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot, type PlantLayout } from "./layout";
 import { Card } from "./reduced";
 
 const CELL_W = 216;
@@ -300,13 +300,22 @@ function BayHits({ items }: { items: HitItem[] }) {
         const f = prismFaces(it.box);
         const pts = (it.box.h ?? 0) > 0 ? [f.top[0]!, f.top[1]!, f.shade[3]!, f.shade[2]!, f.lit[3]!, f.top[3]!] : f.top;
         return (
-          <Hit key={it.entity} entity={it.entity} label={it.label}>
-            <polygon points={toPoints(pts)} style={{ fill: "transparent" }} />
-          </Hit>
+          <Hit key={it.entity} entity={it.entity} label={it.label} points={toPoints(pts)} />
         );
       })}
     </>
   );
+}
+
+/**
+ * The artifact has its own hit target on its cell's shelf right now: the bay is drawn whole, at mid
+ * or near zoom, and the artifact is among the files standing on the shelf. A station showing the
+ * same artifact then draws it as an alias (Hit `alias`), so it is one keyboard stop with one name.
+ */
+export function onShelf(L: PlantLayout, visibleBays: ReadonlySet<string>, lod: Lod, cell: CellState, artifactId: string): boolean {
+  const bay = L.bayByTicket.get(cell.ticketId);
+  if (!bay || lod === "far" || !visibleBays.has(cell.ticketId)) return false;
+  return shelfSlots(bay, cell).some((s) => s.artifact.id === artifactId);
 }
 
 /** The artifacts standing on the shelf and where: the most recent ones, oldest first. */

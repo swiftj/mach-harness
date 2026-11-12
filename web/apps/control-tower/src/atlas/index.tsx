@@ -448,9 +448,9 @@ export function AtlasView({ effects: Effects, meter }: AtlasViewProps = {}) {
 
 
   const theater = useSceneStore((s) => s.theater);
-  const ctx = useMemo<AtlasContextValue>(() => ({ lod, layout, lightLayer: Boolean(Effects) && lightLayer }), [lod, layout, lightLayer, Effects]);
   const showMeter = meter ?? (import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).has("meter"));
   const visible = useMemo(() => new Set(visibleBays === "*" ? layout.bays.map((b) => b.ticketId) : visibleBays.split(",")), [visibleBays, layout]);
+  const ctx = useMemo<AtlasContextValue>(() => ({ lod, layout, lightLayer: Boolean(Effects) && lightLayer, visibleBays: visible }), [lod, layout, lightLayer, Effects, visible]);
   // The stage inside the sheet's border (28 px) and clear of the camera toolbar, in projected units.
   const overlayView = useMemo<OverlayView | null>(() => {
     if (!viewKey) return null;
