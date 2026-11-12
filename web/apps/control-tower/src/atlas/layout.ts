@@ -234,9 +234,8 @@ export function plantLayout(fixture: Fixture): PlantLayout {
     floor: { spineX, transferY, riserX, conduitX },
     review: {
       entry,
-      // The three seats stand on one screen-horizontal line (equal x + y), so no seat is in front of
-      // another and each reviewer's label under its disc is clear of its neighbours (see the report).
-      seats: { architecture: P(review.x + 44, ry + 40), security: P(review.x + 84, ry), product: P(review.x + 124, ry - 40) },
+      // Spec b.2: the seats in a row on one screen line, S + k·(30, −30) for k = −1, 0, 1, S = entry + (96, 0).
+      seats: { architecture: P(entry.x + 66, ry + 30), security: P(entry.x + 96, ry), product: P(entry.x + 126, ry - 30) },
       gate: consensus,
       exit: P(cx, ry),
       packetTable: P(review.x + 40, ry - 56),

@@ -147,15 +147,6 @@ export function agentState(agent: AgentState): FactoryState {
   return agent.status === "running" ? "active" : agent.status === "error" ? "failed" : "succeeded";
 }
 
-/**
- * What is known about an agent's work at t (sim README section 5): started and elapsed, and finished
- * once it has. There is no completion fraction for open work, because nothing knows how long it will
- * take: a working agent is drawn "at work" (live head, no arc); finished work is drawn whole.
- */
-export function agentArc(agent: AgentState, t: number): number {
-  return agentTimingAt(agent, t).finished ? 1 : 0;
-}
-
 /** Elapsed time, as lettered beside work in flight: "40 s", "6 min", "1 h 12". */
 export function fmtElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -409,7 +400,8 @@ export interface PlacedAgent {
   arrive: number;
   leave: number;
   state: FactoryState;
-  progress: number;
+  /** How long the agent has worked by t (factory ms): known, never a fraction. */
+  elapsed: number;
   /** Order among agents sharing one spot (label stacking). */
   stack: number;
 }
@@ -454,7 +446,7 @@ export function placeAgents(_scene: Scene | null, L: PlantLayout, cell: CellStat
       arrive: q(anim("agentArrive", t - a.startedAt, reduced)),
       leave: a.finishedAt !== null ? q(anim("agentLeave", t - a.finishedAt, reduced)) : 0,
       state: agentState(a),
-      progress: agentArc(a, t),
+      elapsed: agentTimingAt(a, t).elapsed,
       stack,
     });
   }
@@ -488,4 +480,9 @@ export function lampLevel(cell: CellState, t: number, reduced = false): number {
   const last = cell.visits[cell.visits.length - 1];
   if (last && floor(last.station) && last.leftAt !== null && t - last.leftAt < 260 * RATE) return 1 - anim("stateChange", t - last.leftAt, reduced);
   return 0;
+}
+
+/** Minutes of elapsed work: the grammar draws one tick per minute, so pictures change only at these steps. */
+export function minuteOf(ms: number): number {
+  return Math.min(12, Math.floor(ms / 60_000));
 }

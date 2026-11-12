@@ -10,6 +10,7 @@ import {
   ArtifactCard,
   Branches,
   FindingsFlag,
+  PlanDimension,
   GateGlyph,
   StationMachine,
   Prism,
@@ -27,10 +28,10 @@ import {
   type Vec3,
 } from "@mach/ui";
 import { FloorLettering } from "@mach/ui";
-import { eventsInWindow, ref, sceneAt, type CellState, type EntityRef, type EventKind, type Fixture, type Scene, type SliceState } from "../sim";
+import { PANELS, agentTimingAt, eventsInWindow, ref, sceneAt, type Risk, type CellState, type EntityRef, type EventKind, type Fixture, type Scene, type SliceState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
-import { AFTERGLOW, RATE, animating, anim, chamberOccupant, gateView, latestGate, placeAgents, q, type PlacedAgent } from "./derive";
+import { AFTERGLOW, RATE, animating, minuteOf, anim, chamberOccupant, gateView, latestGate, placeAgents, q, type PlacedAgent } from "./derive";
 import { PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
 import { AgentFigure } from "./Bay";
 
@@ -115,7 +116,7 @@ export function IntakeWorks() {
       ) : null}
       {/* Inbound: the hopper where the wave is validated and cut into tickets. */}
       <Hit entity={ref.station("intake")} label={`Intake: ${hopperState}`}>
-        <StationMachine nameplate showLabel={false} kind="intake" state={hopperState} at={I.hopper} lod={lod} progress={0} />
+        <StationMachine nameplate showLabel={false} kind="intake" state={hopperState} at={I.hopper} lod={lod} planned={!anyWave} />
       </Hit>
       {/* The scheduler at its desk. Not an agent in the record: it lights only on scheduling events. */}
       <Prism box={{ x: I.schedulerDesk.x - 14, y: I.schedulerDesk.y - 9, w: 28, d: 18, z: PLATE_Z, h: 8 }} hatch="shade">
@@ -123,17 +124,17 @@ export function IntakeWorks() {
         <path d={`M${I.schedulerDesk.x - 10} ${I.schedulerDesk.y}h20M${I.schedulerDesk.x} ${I.schedulerDesk.y - 5}v10`} style={{ stroke: fc("ink-soft"), strokeWidth: 0.6 * planeStroke }} />
       </Prism>
       <Hit entity={"actor:scheduler" as EntityRef} label={`Scheduler: ${schedulerBusy ? "deciding" : "idle"}`}>
-        <AgentMarker agentRole="scheduler" tier="haiku" state={schedulerBusy ? "active" : "idle"} progress={0} at={I.scheduler} lod={lod} showLabel={false} />
+        <AgentMarker agentRole="scheduler" tier="haiku" state={schedulerBusy ? "active" : "idle"} at={I.scheduler} lod={lod} showLabel={false} />
       </Hit>
       {L.bays.map((b) => (
         <HoldingPad key={b.sliceId} bay={b} slice={scene.slices[b.sliceId]} cell={scene.cells[b.ticketId]} t={t} reduced={reduced} lod={lod} dimmed={isDimmed(highlight, ref.slice(b.sliceId), ref.cell(b.ticketId))} />
       ))}
       {/* Audit: the readiness gauge and the gate across intake's exit. */}
       <Hit entity={ref.station("audit")} label={`Audit: ${auditGate ? auditGate.detail : "not run yet"}`}>
-        <StationMachine nameplate showLabel={false} kind="audit" state={auditBusy ? "active" : auditGate ? "succeeded" : "idle"} progress={0} at={I.audit} lod={lod} />
+        <StationMachine nameplate showLabel={false} kind="audit" state={auditBusy ? "active" : auditGate ? "succeeded" : "idle"} at={I.audit} lod={lod} planned={!auditGate} />
       </Hit>
       <Hit entity={auditGate ? `gate:${auditGate.id}` : "gate:audit"} label={`Audit gate: ${auditView.position}${auditGate ? `, ${auditGate.ticketId}` : ""}`}>
-        <GateGlyph kind="audit" position={auditView.position} from={auditView.from} progress={auditView.progress} at={I.auditGate} axis="y" lod={lod} showLabel={false} floorLabel="Audit gate" />
+        <GateGlyph kind="audit" position={auditView.position} from={auditView.from} progress={auditView.progress} at={I.auditGate} axis="y" lod={lod} showLabel={false} floorLabel="Audit gate" planned={!auditGate} />
       </Hit>
     </g>
   );
@@ -156,7 +157,7 @@ function HoldingPad({ bay, slice, cell, t, reduced, lod, dimmed }: { bay: BaySlo
       <Hit entity={ref.slice(bay.sliceId)} label={label}>
         <Prism box={{ x: p.x - 20, y: p.y - 20, w: 40, d: 40, z: PLATE_Z, h: 2 }} top={waiting ? "wait-soft" : gone ? "floor" : "plate-top"} edge={waiting ? "wait" : "plate-edge"} dash={waiting ? "5 2.5" : undefined} hatch="none" shadow={false} />
       </Hit>
-      <FloorLettering at={{ x: p.x - 17, y: p.y - 11, z: PLATE_Z + 2 }} text={bay.sliceId} size={lod === "far" ? 9 : 7} font="mono" tone="muted" weight={600} decorative />
+      <FloorLettering at={{ x: p.x - 17, y: p.y - 11, z: PLATE_Z + 2 }} text={slice ? bay.sliceId : `Pad ${bay.index + 1}`} size={lod === "far" ? 9 : 7} font="mono" tone="muted" weight={600} decorative />
       {lod !== "far" ? (
         <FloorLettering at={{ x: p.x - 17, y: p.y + 16, z: PLATE_Z + 2 }} text={word} size={6.2} font="mono" tone={waiting ? "wait" : "subtle"} weight={600} decorative />
       ) : null}
@@ -210,6 +211,7 @@ export function ChamberWorks() {
   const dim = occ ? isDimmed(highlight, ref.cell(occ.cell.ticketId)) : false;
   const packet = occ ? occ.cell.artifacts.find((a) => a.kind === "review-packet" && a.round === round_?.round) : undefined;
   const gateRef: EntityRef = gate ? `gate:${gate.id}` : "gate:review";
+  const anyReview = Object.values(scene.cells).some((c) => c.reviews.length > 0);
   const consensusText = round_?.outcome ? `Consensus · ${round_.outcome === "AWAITING_HUMAN" ? "needs a person" : round_.outcome.toLowerCase()}` : "Consensus";
   return (
     <g style={{ opacity: dim ? 0.28 : 1 }}>
@@ -235,6 +237,8 @@ export function ChamberWorks() {
           <path d={`M${R.seats[s].x + 18} ${R.seats[s].y - 7}h5M${R.seats[s].x + 18} ${R.seats[s].y - 3}h5M${R.seats[s].x + 18} ${R.seats[s].y + 1}h3`} style={{ stroke: fc("ink-soft"), strokeWidth: 0.6 * planeStroke }} />
         </Prism>
       ))}
+      {/* The rule board: the panel thresholds by risk tier, as review.py PANELS sets them. */}
+      <RuleBoard L={L} lod={lod} risk={round_?.risk ?? null} />
       {/* The packet table at the entry: the review packet stands on it while the panel sits. */}
       <Prism box={{ x: R.packetTable.x - 12, y: R.packetTable.y - 8, w: 24, d: 16, z: PLATE_Z, h: 6 }} hatch="shade" />
       {packet ? (
@@ -252,7 +256,7 @@ export function ChamberWorks() {
         <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 34, z: PLATE_Z }} text={`DELTA SINCE ${round_.delta.sinceCommit.slice(0, 7)} · ${round_.delta.filesChanged.length} FILES`} size={7.5} font="mono" tone="live" weight={500} decorative />
       ) : null}
       <Hit entity={gateRef} label={`${consensusText}: review consensus gate${occ ? `, ${occ.cell.ticketId} round ${round_?.round}` : ""}: ${v.position}${round_?.outcome ? `, ${round_.outcome}` : ""}`}>
-        <GateGlyph kind="consensus" position={v.position} from={v.from} progress={v.progress} lamps={lamps} at={R.gate} axis="y" lod={lod} showLabel={false} floorLabel={consensusText} />
+        <GateGlyph kind="consensus" position={v.position} from={v.from} progress={v.progress} lamps={lamps} at={R.gate} axis="y" lod={lod} showLabel={false} floorLabel={consensusText} planned={!anyReview} />
       </Hit>
     </g>
   );
@@ -298,6 +302,7 @@ export function GatehouseWorks() {
   const v = gateView(gate, t, reduced);
   const H = L.human;
   const waiting = gate?.state === "waiting";
+  const approvals = Object.values(scene.cells).flatMap((c) => c.reviews.filter((r) => r.humanApproval).map((r) => ({ ticket: c.ticketId, by: r.humanApproval!.by, at: r.humanApproval!.at }))).sort((a, b) => a.at - b.at);
   const dim = gate ? isDimmed(highlight, ref.cell(gate.ticketId)) : false;
   return (
     <g style={{ opacity: dim ? 0.28 : 1 }}>
@@ -310,8 +315,18 @@ export function GatehouseWorks() {
       {lod !== "far" ? (
         <FloorLettering at={{ x: L.regions.human.x + 12, y: L.regions.human.y + 18, z: PLATE_Z }} text={waiting ? `HELD FOR A PERSON · ${gate?.ticketId ?? ""}` : "HIGH RISK STOPS HERE"} size={7.5} font="mono" tone={waiting ? "human" : "subtle"} weight={600} decorative />
       ) : null}
+      {/* The register: who approved what, as review.py approve-human records it. */}
+      <Prism box={{ x: L.regions.human.x + 16, y: L.regions.human.y + 26, w: 46, d: 16, z: PLATE_Z, h: 4 }} top="machine-top" hatch="shade" rim={false} />
+      {lod !== "far" ? (
+        <>
+          <FloorLettering at={{ x: L.regions.human.x + 19, y: L.regions.human.y + 33, z: PLATE_Z + 4 }} text={`Register · ${approvals.length} approval${approvals.length === 1 ? "" : "s"}`} size={5.6} font="sans" tone="muted" weight={600} decorative />
+          {approvals.slice(-1).map((a) => (
+            <FloorLettering key={a.ticket} at={{ x: L.regions.human.x + 19, y: L.regions.human.y + 39, z: PLATE_Z + 4 }} text={`${a.ticket} · ${a.by}`} size={5.2} font="sans" tone="human" weight={600} decorative />
+          ))}
+        </>
+      ) : null}
       <Hit entity={gate ? `gate:${gate.id}` : "gate:human-approval"} label={`Human approval gate${gate ? `, ${gate.ticketId}` : ""}: ${waiting ? "waiting for a person" : v.position}`}>
-        <GateGlyph kind="human" position={v.position} from={v.from} progress={v.progress} at={H.gate} axis="x" lod={lod} showLabel={false} floorLabel="Human approval" />
+        <GateGlyph kind="human" position={v.position} from={v.from} progress={v.progress} at={H.gate} axis="x" lod={lod} showLabel={false} floorLabel="Human approval" planned={!gate} />
       </Hit>
     </g>
   );
@@ -331,17 +346,42 @@ export function IntegrationWorks() {
   const lastMerge = Object.values(scene.cells).reduce((m, c) => Math.max(m, c.merged?.at ?? -1), -1);
   const state: FactoryState = merging.length ? "active" : lastMerge >= 0 && t - lastMerge < AFTERGLOW ? "succeeded" : lastMerge >= 0 ? "succeeded" : "idle";
   const merged = Object.values(scene.cells).filter((c) => c.merged).sort((a, b) => (a.merged!.at - b.merged!.at));
+  const waveKnown = Object.values(scene.waves).length > 0;
+  const berth = (index: number): Vec3 => ({ x: I.merge.x - 130 - index * 120, y: I.trunkY, z: PLATE_Z });
   return (
     <g>
+      {/* Berths on the main line, one per slice of the wave (the merges this run expects), drawn
+          dashed until their merge commit lands; lettered only once intake knows the slices. */}
+      <g aria-hidden="true">
+        <g transform={planeTransform(PLATE_Z)}>
+          {L.bays.map((b) => {
+            const at = berth(b.index);
+            const landed = Boolean(scene.cells[b.ticketId]?.merged);
+            return landed ? null : <rect key={b.ticketId} x={at.x - 11} y={at.y - 9} width={22} height={18} rx={1.5} style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: planeStroke, strokeDasharray: "3 2.5" }} />;
+          })}
+        </g>
+        {lod !== "far"
+          ? L.bays.map((b) => {
+              const at = berth(b.index);
+              const known = Boolean(scene.slices[b.sliceId]);
+              const cell = scene.cells[b.ticketId];
+              if (cell?.merged) return null;
+              return <FloorLettering key={b.ticketId} at={{ x: at.x - 10, y: at.y + 18, z: PLATE_Z }} text={known ? `${b.ticketId} · berth` : `Berth ${b.index + 1}`} size={7.5} font={known ? "mono" : "sans"} tone="subtle" weight={500} decorative />;
+            })
+          : null}
+        {lod !== "far" && waveKnown ? (
+          <PlanDimension from={{ ...berth(L.bays.length - 1), x: berth(L.bays.length - 1).x - 11, y: I.trunkY + 30 }} to={{ ...berth(0), x: berth(0).x + 11, y: I.trunkY + 30 }} offset={8} label={`${L.bays.length} berths · one per slice of the wave`} />
+        ) : null}
+      </g>
       <Hit entity={gate ? `gate:${gate.id}` : "gate:merge-revalidation"} label={`${revalText}: merge revalidation gate${gate ? `, ${gate.ticketId}: ${gate.state === "skipped" ? "skipped, main had not moved" : gate.state}` : ": idle"}`}>
-        <GateGlyph kind="revalidation" position={v.position} from={v.from} progress={v.progress} at={I.gate} axis="x" lod={lod} dimmed={gate ? isDimmed(highlight, ref.cell(gate.ticketId)) : false} showLabel={false} floorLabel={revalText} />
+        <GateGlyph kind="revalidation" position={v.position} from={v.from} progress={v.progress} at={I.gate} axis="x" lod={lod} dimmed={gate ? isDimmed(highlight, ref.cell(gate.ticketId)) : false} showLabel={false} floorLabel={revalText} planned={!gate} />
       </Hit>
       <Hit entity={ref.station("merge")} label={`Merge machine: ${merging.length ? `merging ${merging.map((c) => c.ticketId).join(", ")}` : state}`}>
-        <StationMachine nameplate showLabel={false} kind="merge" state={state} progress={0} at={I.merge} lod={lod} />
+        <StationMachine nameplate showLabel={false} kind="merge" state={state} at={I.merge} lod={lod} planned={state === "idle"} />
       </Hit>
-      {merged.map((c, k) => {
+      {merged.map((c) => {
         const art = c.artifacts.find((a) => a.kind === "merge-commit");
-        const at: Vec3 = { x: I.merge.x - 130 - k * 120, y: I.trunkY, z: PLATE_Z };
+        const at: Vec3 = berth(L.bayByTicket.get(c.ticketId)?.index ?? 0);
         const p = q(anim("artifactMaterialise", t - c.merged!.at - 1100 * RATE, reduced));
         const sl = scene.slices[c.sliceId];
         return (
@@ -369,30 +409,39 @@ export function ArchiveWorks() {
   const A = L.archive;
   const archived = Object.values(scene.cells).filter((c) => c.archived).sort((a, b) => a.archived!.at - b.archived!.at);
   const cleaning = Object.values(scene.cells).some((c) => c.station === "cleanup");
+  const shelfAt = (i: number): Vec3 => ({ x: L.regions.archive.x + 26 + i * 30, y: A.stack.y, z: PLATE_Z });
   return (
     <g>
       <Hit entity={ref.station("cleanup")} label={`Cleanup: ${cleaning ? "archiving" : `${archived.length} cells archived`}`}>
-        <StationMachine nameplate showLabel={false} kind="cleanup" state={cleaning ? "active" : archived.length ? "succeeded" : "idle"} progress={0} at={A.cleanup} lod={lod} />
+        <StationMachine nameplate showLabel={false} kind="cleanup" state={cleaning ? "active" : archived.length ? "succeeded" : "idle"} at={A.cleanup} lod={lod} planned={!cleaning && archived.length === 0} />
       </Hit>
       <Hit entity={ref.station("observe")} label={`Observe: next pass after 5 finished tickets, ${archived.length} of 5`}>
-        <StationMachine nameplate showLabel={false} kind="observe" state="idle" at={A.observe} lod={lod} />
+        <StationMachine nameplate showLabel={false} kind="observe" state="idle" at={A.observe} lod={lod} planned />
       </Hit>
       {lod !== "far" ? (
-        <FloorLettering at={{ x: A.observe.x - 20, y: A.observe.y + 34, z: PLATE_Z }} text={`NEXT PASS · ${archived.length} OF 5 FINISHED`} size={7.5} font="mono" tone="subtle" weight={500} decorative />
+        <FloorLettering at={{ x: A.observe.x - 40, y: A.observe.y - 28, z: PLATE_Z }} text={`Observe pass after 5 finished · ${archived.length} of 5`} size={7.5} font="sans" tone="subtle" weight={500} decorative />
       ) : null}
-      {archived.map((c, k) => {
+      {/* The runs.jsonl shelf: one slot per slice of the wave, dashed until that ticket's run is archived. */}
+      <g aria-hidden="true" transform={planeTransform(PLATE_Z)}>
+        {L.bays.map((b) =>
+          scene.cells[b.ticketId]?.archived ? null : (
+            <rect key={b.ticketId} x={shelfAt(b.index).x - 8} y={shelfAt(b.index).y - 2} width={16} height={4} style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: planeStroke, strokeDasharray: "2 2" }} />
+          ),
+        )}
+      </g>
+      {lod !== "far" ? (
+        <FloorLettering at={{ x: shelfAt(0).x - 8, y: shelfAt(0).y - 10, z: PLATE_Z }} text={`runs.jsonl · ${archived.length} of ${L.bays.length} recorded`} size={7.5} font="mono" tone="subtle" weight={500} decorative />
+      ) : null}
+      {archived.map((c) => {
         const art = c.artifacts.find((a) => a.kind === "archive");
         const p = q(anim("artifactMaterialise", t - c.archived!.at, reduced));
-        const at = { x: A.stack.x - k * 2.6, y: A.stack.y - k * 2.2, z: PLATE_Z };
+        const at = shelfAt(L.bayByTicket.get(c.ticketId)?.index ?? 0);
         return art ? (
           <Hit key={c.ticketId} entity={ref.artifact(art.id)} label={`Archive ${art.label}`}>
             <ArtifactCard kind="archive" progress={p} at={at} lod={lod} showLabel={false} />
           </Hit>
         ) : null;
       })}
-      {lod !== "far" && archived.length ? (
-        <FloorLettering at={{ x: A.stack.x - 22, y: A.stack.y + 14, z: PLATE_Z }} text={`${archived.length} RUN RECORD${archived.length === 1 ? "" : "S"} · runs.jsonl`} size={7.5} font="mono" tone="subtle" weight={500} decorative />
-      ) : null}
     </g>
   );
 }
@@ -404,7 +453,13 @@ export function AwayAgents() {
   const { lod, layout: L } = useAtlas();
   const { t, reduced, scene } = useFrame((f, now) => {
     if (animating(f, now, has("agent.started", "agent.finished"))) return now;
-    return "settled";
+    // One elapsed tick per minute on each working reviewer, merge or cleanup worker.
+    let k = "";
+    for (const c of Object.values(sceneAt(f, now).cells)) for (const id of c.activeAgentIds) {
+      const a = c.agents[id]!;
+      if (a.station === "review" || a.station === "merge" || a.station === "cleanup") k += `${minuteOf(agentTimingAt(a, now).elapsed)},`;
+    }
+    return k;
   });
   const highlight = useHighlight();
   const placed: PlacedAgent[] = [];
@@ -420,3 +475,27 @@ export function AwayAgents() {
 }
 
 export type { Scene };
+
+/** The chamber's rule board: what each risk tier needs to pass, lettered from review.py's PANELS. */
+function RuleBoard({ L, lod, risk }: { L: PlantLayout; lod: Lod; risk: Risk | null }) {
+  const R = L.regions.review;
+  const x = R.x + 132;
+  const y = R.y + 14;
+  const rows: Array<[Risk, string]> = (["High", "Medium", "Low"] as const).map((r) => {
+    const p = PANELS[r];
+    return [r, `${r} · ${p.approvals} of ${p.reviewers}${p.human_approval ? " + a person" : ""}`];
+  });
+  return (
+    <g aria-hidden="true">
+      <Prism box={{ x, y, w: 74, d: 30, z: PLATE_Z, h: 3 }} top="machine-top" hatch="shade" rim={false} />
+      {lod !== "far" ? (
+        <>
+          <FloorLettering at={{ x: x + 4, y: y + 8, z: PLATE_Z + 3 }} text="Panel rules · review.py" size={6} font="sans" tone="subtle" weight={600} decorative />
+          {rows.map(([r, text], i) => (
+            <FloorLettering key={r} at={{ x: x + 4, y: y + 15 + i * 6.5, z: PLATE_Z + 3 }} text={text} size={5.6} font="sans" tone={risk === r ? "live" : "muted"} weight={risk === r ? 700 : 500} decorative />
+          ))}
+        </>
+      ) : null}
+    </g>
+  );
+}

@@ -11,7 +11,7 @@
  */
 import { memo, type ReactNode } from "react";
 import { Callout, SelectionBrackets, fc, modelTiers, project, round, screenBounds, type Lod, type PlanBox } from "@mach/ui";
-import { agentTimingAt, refId, refKind, sceneAt, type EntityRef, type Scene } from "../sim";
+import { refId, refKind, sceneAt, type EntityRef, type Scene } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { useAtlas, usePlayheadKeyed } from "./context";
 import { AFTERGLOW, animating, anim, fmtElapsed, chamberOccupant, latestGate, placeAgents, q, uiTier } from "./derive";
@@ -59,6 +59,9 @@ export interface OverlayProps {
   theater?: boolean;
 }
 
+/** Text scale per zoom level (the inverse of a zoom near the level's lower bound, at least 0.9). */
+const LEVEL_K: Record<Lod, number> = { far: 2.2, mid: 1.33, near: 0.9 };
+
 export const Overlay = memo(function Overlay({ zoom, lod, focused, theater }: OverlayProps) {
   const { layout: L } = useAtlas();
   const t = usePlayheadKeyed((s) => {
@@ -82,8 +85,9 @@ export const Overlay = memo(function Overlay({ zoom, lod, focused, theater }: Ov
   const foc = focused ? locateScreen(L, scene, t, focused, 5) : null;
   return (
     <g>
-      {lod === "near" ? <AgentLabels L={L} scene={scene} t={t} k={Math.min(1.1, k)} /> : null}
-      <Callouts L={L} scene={scene} t={t} reduced={reduced} k={k} lod={lod} labelK={Math.min(1.1, k)} />
+      {lod === "near" ? <AgentLabels L={L} scene={scene} t={t} k={Math.min(1.1, LEVEL_K[lod])} /> : null}
+      {/* Callouts and their obstacles use one scale per zoom level, so they never move while the camera moves within a level. */}
+      <Callouts L={L} scene={scene} t={t} reduced={reduced} k={LEVEL_K[lod]} lod={lod} labelK={Math.min(1.1, LEVEL_K[lod])} />
       {hov && hovered ? (
         <g aria-hidden="true">
           <rect x={hov.x} y={hov.y} width={hov.width} height={hov.height} rx={3} style={{ fill: "none", stroke: "var(--mach-ink-muted)", strokeWidth: 0.9 / zoom, strokeDasharray: `${3 / zoom} ${2 / zoom}` }} />
@@ -109,20 +113,53 @@ export const Overlay = memo(function Overlay({ zoom, lod, focused, theater }: Ov
   );
 });
 
+/**
+ * Agent labels (spec b.7, "Agent labels in the overlay"): two lines, role (sans 10 semibold) and tier
+ * (sans 9 muted), 16 px under the floor disc. Agents sharing a machine stack under its agent spot,
+ * ordered left to right on screen, 24 px apart, left-aligned on a common x, at most three and then
+ * "+n more"; a stacked label more than 20 px from its disc gets a hairline leader. The tier line also
+ * carries how long the agent has worked (known, never a fraction): our one addition to the rule.
+ */
 function AgentLabels({ L, scene, t, k }: { L: PlantLayout; scene: Scene; t: number; k: number }) {
-  const out: ReactNode[] = [];
+  const groups = new Map<string, { base: { x: number; y: number }; a: ReturnType<typeof placeAgents>[number] }[]>();
   for (const cell of Object.values(scene.cells)) {
     for (const a of placeAgents(scene, L, cell, t, true)) {
       if (a.leave > 0.5) continue;
-      const base = project(a.at);
-      // Elapsed, never a fraction: how long this agent has been at work (or worked, once finished).
-      const timing = agentTimingAt(a.agent, t);
-      const line = `${agentName(a)} · ${modelTiers[uiTier(a.agent.model)].label} · ${fmtElapsed(timing.elapsed)}`;
+      const key = a.at.z === FLOOR_Z ? `${cell.ticketId}:${Math.round(a.at.x / 40)}:${Math.round(a.at.y)}` : `${a.agent.id}`;
+      const list = groups.get(key) ?? [];
+      list.push({ base: project(a.at), a });
+      groups.set(key, list);
+    }
+  }
+  const out: ReactNode[] = [];
+  for (const [key, list] of groups) {
+    list.sort((m, n) => m.base.x - n.base.x || m.a.agent.startedAt - n.a.agent.startedAt);
+    const x0 = Math.min(...list.map((m) => m.base.x));
+    const y0 = Math.max(...list.map((m) => m.base.y)) + 16 * k;
+    const shown = list.slice(0, 3);
+    const single = list.length === 1;
+    shown.forEach(({ base, a }, i) => {
+      const lx = single ? base.x : x0 - 6 * k;
+      const ly = single ? base.y + 16 * k : y0 + i * 24 * k;
+      const far = Math.hypot(lx - base.x, ly - base.y) > 20 * k;
       out.push(
-        <Scaled key={a.agent.id} x={base.x} y={base.y + 11 + a.stack * 11 * k} k={k}>
-          <text textAnchor="middle" className="atlas-halo" style={{ fill: a.state === "active" ? "var(--mach-ink)" : "var(--mach-ink-muted)", fontSize: 9.5, fontWeight: a.state === "active" ? 600 : 400 }}>
-            {line.length > 34 ? `${line.slice(0, 33)}…` : line}
-          </text>
+        <g key={a.agent.id}>
+          {!single && far ? <line x1={base.x} y1={base.y + 3 * k} x2={lx} y2={ly - 9 * k} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 * k }} /> : null}
+          <Scaled x={lx} y={ly} k={k}>
+            <text textAnchor={single ? "middle" : "start"} className="atlas-halo" style={{ fill: "var(--mach-ink)", fontSize: 10, fontWeight: 600 }}>
+              {agentName(a)}
+            </text>
+            <text y={11} textAnchor={single ? "middle" : "start"} className="atlas-halo" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>
+              {`${modelTiers[uiTier(a.agent.model)].label}${a.state === "active" ? ` · ${fmtElapsed(a.elapsed)}` : ""}`}
+            </text>
+          </Scaled>
+        </g>,
+      );
+    });
+    if (list.length > 3) {
+      out.push(
+        <Scaled key={`${key}-more`} x={x0 - 6 * k} y={y0 + 3 * 24 * k} k={k}>
+          <text className="atlas-halo" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>{`+${list.length - 3} more`}</text>
         </Scaled>,
       );
     }
@@ -160,8 +197,8 @@ function obstacles(L: PlantLayout, scene: Scene, t: number, lod: Lod, labelK: nu
       if (lod === "near") {
         const base = project(a.at);
         const w = 130 * labelK;
-        const y = base.y + 11 + a.stack * 11 * labelK;
-        out.push({ x0: base.x - w / 2, y0: y - 9 * labelK, x1: base.x + w / 2, y1: y + 3 * labelK });
+        const y = base.y + 16 * labelK + a.stack * 24 * labelK;
+        out.push({ x0: base.x - w / 2, y0: y - 10 * labelK, x1: base.x + w / 2, y1: y + 14 * labelK });
       }
     }
   }
@@ -169,50 +206,37 @@ function obstacles(L: PlantLayout, scene: Scene, t: number, lod: Lod, labelK: nu
 }
 
 /**
- * Callouts, placed by one deterministic rule: try the leader directions in a fixed order (opening away
- * from the plant's centre first, then the other side, then longer leaders, then below) and take the
- * first whose text block covers no machine, gate, agent, agent label or earlier callout. The leader
- * line carries the eye from the thing to the clear space. If none is clear, the last candidate stands.
+ * Callouts (spec b.7, "Callout placement"), deterministic: placed in priority order (escalation,
+ * failure, waiting for a person, then the event under the playhead); for each, try leader directions
+ * up-right (45°), up-left, right, left, down-right, down-left, with leader lengths 36 then 64 px, and
+ * take the first whose leader and label box (6.2 px per character, two lines 30 px tall, 4 px padding)
+ * meet no machine, gate, agent, agent label or callout already placed; if none is clear, up-right at
+ * 64 px. Sizes are in screen px at the zoom level's own scale, so a callout never moves while the
+ * camera moves within a level.
  */
+type Priority = 0 | 1 | 2 | 3;
+interface Pending {
+  key: string;
+  at: { x: number; y: number; z?: number };
+  text: string;
+  detail: string | undefined;
+  tone: "ink" | "fail" | "human" | "select";
+  opacity: number;
+  priority: Priority;
+}
+const DIRECTIONS: Array<[number, number]> = [
+  [Math.SQRT1_2, -Math.SQRT1_2],
+  [-Math.SQRT1_2, -Math.SQRT1_2],
+  [1, 0],
+  [-1, 0],
+  [Math.SQRT1_2, Math.SQRT1_2],
+  [-Math.SQRT1_2, Math.SQRT1_2],
+];
+
 function Callouts({ L, scene, t, reduced, k, lod, labelK }: { L: PlantLayout; scene: Scene; t: number; reduced: boolean; k: number; lod: Lod; labelK: number }) {
-  const out: ReactNode[] = [];
-  const centreX = project({ x: (L.regions.intake.x + L.regions.review.x + L.regions.review.w) / 2, y: L.D / 2 }).x;
-  const blocked = lod === "far" ? [] : obstacles(L, scene, t, lod, labelK);
-  const put = (key: string, at: { x: number; y: number; z?: number }, text: string, detail: string | undefined, tone: "ink" | "fail" | "human" | "select", opacity = 1) => {
-    const p = project(at);
-    const away = p.x > centreX ? -1 : 1;
-    const candidates: Array<[number, number]> = [
-      [26 * away, -30],
-      [-26 * away, -30],
-      [44 * away, -62],
-      [-44 * away, -62],
-      [70 * away, -96],
-      [-70 * away, -96],
-      [40 * away, 46],
-      [-40 * away, 46],
-    ];
-    const width = Math.max(text.length * 5.9, (detail?.length ?? 0) * 5.1) + 22;
-    let chosen = candidates[0]!;
-    let box: Box | null = null;
-    for (const [dx, dy] of candidates) {
-      const ex = p.x + dx * k;
-      const ey = p.y + dy * k;
-      const b: Box = dx >= 0 ? { x0: ex, y0: ey - 11 * k, x1: ex + width * k, y1: ey + (detail ? 20 : 6) * k } : { x0: ex - width * k, y0: ey - 11 * k, x1: ex, y1: ey + (detail ? 20 : 6) * k };
-      chosen = [dx, dy];
-      box = b;
-      if (!blocked.some((o) => hits(o, b))) break;
-    }
-    if (box) blocked.push(box);
-    const [dx, dy] = chosen;
-    out.push(
-      <g key={key} style={{ opacity }}>
-        <Scaled x={p.x} y={p.y} k={k}>
-          <g className="atlas-halo-group">
-            <Callout x={0} y={0} dx={dx} dy={dy} text={text} detail={detail} tone={tone} />
-          </g>
-        </Scaled>
-      </g>,
-    );
+  const pending: Pending[] = [];
+  const put = (key: string, at: Pending["at"], text: string, detail: string | undefined, tone: Pending["tone"], opacity = 1, priority: Priority = 3) => {
+    pending.push({ key, at, text, detail, tone, opacity, priority });
   };
   if (lod !== "far") {
     // Verification failed: at the verdict gate, until the next verification starts.
@@ -221,7 +245,7 @@ function Callouts({ L, scene, t, reduced, k, lod, labelK }: { L: PlantLayout; sc
       const bay = L.bayByTicket.get(cell.ticketId);
       if (!v || !bay || v.status !== "FAIL_WITH_EVIDENCE" || v.decidedAt === null) continue;
       const failed = v.checks.filter((c) => c.result === "fail");
-      put(`vf-${cell.ticketId}`, { ...bay.gate, z: PLATE_Z + 36 }, `Verification failed · ${failed.map((c) => c.targetId).join(", ")}`, `${v.checks.length - failed.length} of ${v.checks.length} proven; back to build, round ${v.round + 1} of 3`, "fail", q(anim("stateChange", t - v.decidedAt, reduced)));
+      put(`vf-${cell.ticketId}`, { ...bay.gate, z: PLATE_Z + 36 }, `Verification failed · ${failed.map((c) => c.targetId).join(", ")}`, `${v.checks.length - failed.length} of ${v.checks.length} proven; back to build, round ${v.round + 1} of 3`, "fail", q(anim("stateChange", t - v.decidedAt, reduced)), 1);
     }
   }
   // The chamber: a rejection, an outvoted blocker.
@@ -231,13 +255,13 @@ function Callouts({ L, scene, t, reduced, k, lod, labelK }: { L: PlantLayout; sc
     const op = q(anim("stateChange", t - r.decidedAt, reduced));
     if (r.outcome === "REJECTED") {
       const b = r.findings.find((f) => f.severity === "blocker");
-      put(`rej-${occ.cell.ticketId}`, { ...L.review.gate, z: PLATE_Z + 40 }, `Rejected · ${b?.seat ?? ""} blocker ${b?.rule ?? ""}`, b ? trim(b.title, 58) : undefined, "fail", op);
+      put(`rej-${occ.cell.ticketId}`, { ...L.review.gate, z: PLATE_Z + 40 }, `Rejected · ${b?.seat ?? ""} blocker ${b?.rule ?? ""}`, b ? trim(b.title, 58) : undefined, "fail", op, 1);
     } else {
       put(`dec-${occ.cell.ticketId}`, { ...L.review.gate, z: PLATE_Z + 40 }, `${r.outcome === "AWAITING_HUMAN" ? "Passed panel · needs a person" : "Approved"} · ${r.approvals} of ${r.seats.length}`, `${occ.cell.ticketId}, round ${r.round}${r.delta ? ", delta review" : ""}`, r.outcome === "AWAITING_HUMAN" ? "human" : "ink", op);
     }
     for (const f of r.findings.filter((x) => x.outvoted)) {
       if (f.seat === "general") continue;
-      put(`out-${f.id}`, { ...L.review.seats[f.seat], z: PLATE_Z + 14 }, `Blocker outvoted · ${f.seat} seat ${f.rule ?? ""}`, `${trim(f.title, 50)} (reported, not hidden)`, "fail", op);
+      put(`out-${f.id}`, { ...L.review.seats[f.seat], z: PLATE_Z + 14 }, `Blocker outvoted · ${f.seat} seat ${f.rule ?? ""}`, `${trim(f.title, 50)} (reported, not hidden)`, "fail", op, 1);
     }
   }
   // The person's gate: held (still, no pulsing), then released by name.
@@ -247,7 +271,7 @@ function Callouts({ L, scene, t, reduced, k, lod, labelK }: { L: PlantLayout; sc
     const at = { ...L.human.gate, z: PLATE_Z + 50 };
     if (hg.state === "waiting") {
       const reasons = cell?.reviews[cell.reviews.length - 1]?.humanApprovalReasons ?? [];
-      put("hw", at, `${hg.ticketId} waits for a person`, reasons.length ? `Because ${reasons.join("; ")}` : "Human approval required", "human", 1);
+      put("hw", at, `${hg.ticketId} waits for a person`, reasons.length ? `Because ${reasons.join("; ")}` : "Human approval required", "human", 1, 2);
     } else if (hg.state === "passed" && hg.decidedAt !== null && !(cell?.archived)) {
       const by = cell?.reviews.find((x) => x.humanApproval)?.humanApproval?.by ?? "a person";
       put("ha", at, `Approved by ${by}`, `${hg.ticketId} released to merge`, "human", q(anim("humanRelease", t - hg.decidedAt, reduced)));
@@ -266,7 +290,47 @@ function Callouts({ L, scene, t, reduced, k, lod, labelK }: { L: PlantLayout; sc
       put(`dep-${d.id}`, anchor, text, detail, still.length ? "ink" : "ink", q(anim("dependencyUnlock", t - d.satisfiedAt, reduced)));
     }
   }
+  const blocked = lod === "far" ? [] : obstacles(L, scene, t, lod, labelK);
+  const pad = 4 * k;
+  const out: ReactNode[] = [];
+  for (const c of [...pending].sort((a, b) => a.priority - b.priority)) {
+    const p = project(c.at);
+    const width = Math.max(c.text.length, c.detail?.length ?? 0) * 6.2 + 18;
+    let chosen: [number, number] = [64 * Math.SQRT1_2, -64 * Math.SQRT1_2];
+    let chosenBox: Box | null = null;
+    search: for (const len of [36, 64]) {
+      for (const [ux, uy] of DIRECTIONS) {
+        const dx = ux * len;
+        const dy = uy * len;
+        const ex = p.x + dx * k;
+        const ey = p.y + dy * k;
+        const left = dx < -0.01;
+        const box: Box = { x0: (left ? ex - width * k : ex) - pad, y0: ey - 12 * k - pad, x1: (left ? ex : ex + width * k) + pad, y1: ey + 18 * k + pad };
+        const leader: Box = { x0: Math.min(p.x, ex), y0: Math.min(p.y, ey), x1: Math.max(p.x, ex), y1: Math.max(p.y, ey) };
+        if (!blocked.some((o) => hits(o, box) || (Math.abs(dx) > 1 && Math.abs(dy) > 1 && hits(o, shrink(leader, 6 * k))))) {
+          chosen = [dx, dy];
+          chosenBox = box;
+          break search;
+        }
+      }
+    }
+    if (!chosenBox) chosenBox = { x0: p.x, y0: p.y - 60 * k, x1: p.x + width * k + 60 * k, y1: p.y };
+    blocked.push(chosenBox);
+    out.push(
+      <g key={c.key} style={{ opacity: c.opacity }}>
+        <Scaled x={p.x} y={p.y} k={k}>
+          <g className="atlas-halo-group">
+            <Callout x={0} y={0} dx={chosen[0]} dy={chosen[1]} text={c.text} detail={c.detail} tone={c.tone} />
+          </g>
+        </Scaled>
+      </g>,
+    );
+  }
   return <g aria-hidden="true">{out}</g>;
+}
+
+function shrink(b: Box, by: number): Box {
+  return { x0: b.x0 + by, y0: b.y0 + by, x1: b.x1 - by, y1: b.y1 - by };
 }
 
 function trim(s: string, n: number): string {
