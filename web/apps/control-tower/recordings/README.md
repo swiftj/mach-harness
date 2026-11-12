@@ -2,6 +2,8 @@
 
 Everything in this folder except this README is generated and git-ignored. **Every frame shows a simulation**: the recorder checks that the "Simulation" stamp is visible in each frame it writes and reports any frame without it (none in the current set).
 
+> **The current films are not of the final build.** They were rendered before the change to an all-sans typeface (`19b6e20`), so their titles, region lettering and Blueprint wave and lane titles are still in the former serif, and before the second fix round (`3d6c463` to `575790e`) and the removal of the light layer (`f9fe87e`). They were not re-recorded: the product owner chose to review the app by hand. The shot list below describes what the films show, not the current app in every detail.
+
 ## Regenerate
 
 From `web/apps/control-tower`:

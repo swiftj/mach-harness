@@ -20,7 +20,7 @@ This fits MACH's existing identity (warm neutrals, bold sans display, one terrac
 
 1. **Everything is a place or a thing in a place.** Stations are machines standing on a floor; agents are figures standing at machines; artifacts are sheets standing on shelves; gates are frames across the track. No floating cards.
 2. **Two projections, one alphabet.** The same symbol for a station kind appears on a machine's top face in the Atlas and inside a process bubble in the Blueprint; the same head shape marks a model tier in both; the same state mark, ink and tint mean the same state in both.
-3. **Drafting discipline.** Three line weights only on structure (0.75, 1, 1.5 px), plus 2 to 2.6 px for things that act (gate arms, live routes, posts). Section hatching (45 degrees, 5 px pitch) only on faces in shade or cut. Text is either lettering on the floor (bold sans for regions, mono for IDs, projected into the plane) or upright labels (sans), never both for one thing.
+3. **Drafting discipline.** Three line weights only on structure (0.75, 1, 1.5 px), plus 2 to 2.6 px for things that act (gate arms, live routes, posts). Section hatching (45 degrees, 5 px pitch) only on faces in shade or cut. Text is either lettering on the floor (the sans at weight 650 for regions, mono for IDs, projected into the plane) or upright labels (sans), never both for one thing.
 4. **Light means work, nothing else glows.** Light comes from the upper left, fixed. The only light that changes is a cell's work lamp (on while a station in it works). The only colour that means "now" is the live ink (blue, `factory-live`). Terracotta is selection (the place), and the human gate's ink is the terracotta family because a person's act is MACH's primary act.
 5. **Motion has a cause.** Every movement is the visible consequence of one event and is a pure function of `playhead - event.at`. Nothing idles, breathes, shimmers or pulses.
 6. **Shape before colour.** Every state has a mark whose shape alone distinguishes it; every position of a gate is an arm angle; every tier is a head shape. Colour reinforces.
@@ -30,7 +30,7 @@ This fits MACH's existing identity (warm neutrals, bold sans display, one terrac
 
 - Not a dashboard: no KPI tiles, no charts in the scene, no card grid.
 - Not a node-link diagram of rectangles; the Blueprint uses process bubbles, diamonds, lanes and dimension lines, the Atlas uses solids.
-- No particles, bloom, neon, scan lines, holograms, glass, gradients as decoration, random flicker, idle pulsing, camera shake, or game HUD chrome. (The one exception is the optional light layer of section g: off by default, decoration only, and the drawing is complete without it.)
+- No particles, bloom, neon, scan lines, holograms, glass, gradients as decoration, random flicker, idle pulsing, camera shake, or game HUD chrome. (An optional WebGL light layer with a bloom was tried as an experiment and removed; section g.)
 - No isometric "cute" illustration: no characters with faces, no props that do not correspond to a MACH entity.
 
 ---
@@ -132,7 +132,7 @@ The reference sheet's "plant at fit zoom" study (`PlantStudy`) is this compositi
 - **Artifacts** stand on the back shelf in the order written; the eight most recent are shown, older ones collapse into a stack mark with a count at slot 0.
 - **Tool calls** accumulate as ticks along the ticker from left to right in time order. At most 24 ticks; beyond that the oldest 12 merge into a density bar (a 1.5 px line with tick marks every 2 pu).
 - **Signal mast** at (10, 10), rising 20 above the wall top, carrying the stage mark (`cellStages[stage]`), with the stage word at near zoom.
-- **Lamp**: while any station in the cell is working, the cell's light pool is on. Geometry: `lampPool(origin)`, an ellipse on the floor centred at (0.52 w, 0.5 d) with rx = 0.5 w and ry = 0.56 d. Falloff: `lampFalloff`, radial stops (0, 1), (0.45, 0.82), (0.75, 0.38), (1, 0) of `factory-lamp`. Intensity: `CellPlate lampIntensity` 0..1, which multiplies the pool's opacity; it is driven from the playhead: `animationProgress("stateChange", t − start.at)` rising at the first station start, `1 − animationProgress("stateChange", t − end.at)` falling at the last station end. It never flickers or breathes. A WebGL layer may replace the SVG pool by drawing the same ellipse (projected with `planeMatrix(pool.z)`) with the same stops and intensity; it must then switch the SVG pool off for that cell (`lampIntensity={0}`), never draw both.
+- **Lamp**: while any station in the cell is working, the cell's light pool is on. Geometry: `lampPool(origin)`, an ellipse on the floor centred at (0.52 w, 0.5 d) with rx = 0.5 w and ry = 0.56 d. Falloff: `lampFalloff`, radial stops (0, 1), (0.45, 0.82), (0.75, 0.38), (1, 0) of `factory-lamp`. Intensity: `CellPlate lampIntensity` 0..1, which multiplies the pool's opacity; it is driven from the playhead: `animationProgress("stateChange", t − start.at)` rising at the first station start, `1 − animationProgress("stateChange", t − end.at)` falling at the last station end. It never flickers or breathes. There is no WebGL layer (section g). Should one ever be added, it may replace the SVG pool only by drawing the same ellipse (projected with `planeMatrix(pool.z)`) with the same stops and intensity, and must then switch the SVG pool off for that cell (`lampIntensity={0}`), never draw both.
 - **Completion**: on `cellComplete`, the floor settles to `factory-done` (a neutral barely tinted toward the pass family, #272924 dark / #EEF0E7 light) at opacity = progress, the mast shows the double ring, and the bay's machines are drawn `settled` (machine-top fill, plain edge, a small passed mark): **finished work is calm**. The saturated pass tints are for the moment of passing, not for rest. (The first draft's 0.85 `pass-soft` wash read as an alarm-green block in the dark far view.)
 - **Mast**: the stage mark, and at near zoom the stage word and, while the stage is working, how long it has run ("Building · 6 min 40 s", `CellPlate elapsed`). No fill.
 - **Floor lettering**: ticket ID in mono 11 (16 at far), slice ID in mono 9 at near only, both in `ink-muted` / `ink-subtle`, drawn in the plane.
@@ -165,7 +165,7 @@ One fixed light from the upper left (plan −x, +y, above). It decides face tone
 | 4. Machine top | #3D3C37 | #FFFFFF | `factory-machine-top`: the brightest neutral |
 | 5. Work | live, lamp, state tints | live, lamp, state tints | `factory-live`, `factory-lamp` (#4A3A27 / #FFF0D6) and the `*-soft` tints, which are the only warm or saturated areas |
 
-Finished bays use `factory-done` (#272924 / #EEF0E7), not a pass tint (b.3). Faces: lit #1A1917 / #ECE8DD, shade #121110 / #D5CFC0 with poché; edges #78756C / #8A8679, which now carry depth and meet 3:1 against the ground and the plate top; rim #57534C (dark only; in light the rim is white on white and invisible by design). Shadows: rgba(0, 0, 0, 0.62) in dark, warm rgba(58, 52, 40, 0.13) in light. No specular highlights, and no glow in the drawing (a bloom may appear only in the optional light layer, which is off by default; section g).
+Finished bays use `factory-done` (#272924 / #EEF0E7), not a pass tint (b.3). Faces: lit #1A1917 / #ECE8DD, shade #121110 / #D5CFC0 with poché; edges #78756C / #8A8679, which now carry depth and meet 3:1 against the ground and the plate top; rim #57534C (dark only; in light the rim is white on white and invisible by design). Shadows: rgba(0, 0, 0, 0.62) in dark, warm rgba(58, 52, 40, 0.13) in light. No specular highlights, and no glow in the drawing.
 
 ### b.6 Density, 3 to 12 cells
 
@@ -294,7 +294,7 @@ Cell stages map to states in `cellStages` (`waiting-on-dependency` waiting, `eli
 
 | Type | Atlas form and size | Blueprint form | Fill / stroke tokens | Icon | Label rule | States |
 |---|---|---|---|---|---|---|
-| **Region** (`RegionPlate`) | Plate 8 high, rim inset 8, corner registration marks 12, poché both sides | Wave lane (c.2) | top `plate-top`, faces `plate-lit`/`plate-shade`, edge `plate-edge`, rim `plate-edge` | none | Floor lettering, bold sans 19 (26 far), `--mach-ink-muted`; caption sans 10.5 | active (live rule along the front edge), dimmed |
+| **Region** (`RegionPlate`) | Plate 8 high, rim inset 8, corner registration marks 12, poché both sides | Wave lane (c.2) | top `plate-top`, faces `plate-lit`/`plate-shade`, edge `plate-edge`, rim `plate-edge` | none | Floor lettering, sans 19 (26 far) at weight 650, `--mach-ink-muted`; caption sans 10.5 | active (live rule along the front edge), dimmed |
 | **Cell** (`CellPlate`) | 216 × 148 section model (b.3) | Cell lane | floor `floor` (finished: `done`), walls `plate-*`, cut poché | stage mark on mast | Ticket ID on floor (mono 11); stage word and elapsed at near | every cell stage; lamp 0..1; completion; elapsed; dimmed; selected |
 | **Station** (`StationMachine`) | 36 × 36 block, height by kind (intake 16, groom/plan 12, audit 14, build 22, verify 18, review 12, human-approval 30, merge 16, cleanup 10, observe 20); symbol 18 on top (22 far); while working, a live ring r 13 around the symbol with one tick per elapsed minute (`elapsed`); a measured `fraction` fills the ring in the state ink | Process bubble r 15 | top: tint of state (idle `machine-top`); outline: state ink (idle `plate-edge`); front edge `plate-rim` | station symbol | Name plate on the front face (`nameplate`); upright name + "Working · 4 min 12 s · 7 of 8" at near | idle, active (+elapsed, +fraction), succeeded, failed (+round), waiting, human, blocked; settled; planned |
 | **Agent** (`AgentMarker`) | Floor disc r 8 with role emblem; post 1.6 px; head by tier; height by tier (Fable 32, Opus 28, Sonnet 24, Haiku 18); while working, the head filled live inside a thin ring r 8.5 with one tick per elapsed minute (`elapsed`) | Head at 1:1 + label | head fill: `live` when working, tint otherwise; stroke: state ink | head = tier, emblem = role, seat letter A/S/P | Role (or name) 10.5 + tier 9.5 at near | idle, active, succeeded, failed, waiting, human, blocked; arrive 0..1; leave 0..1 |
@@ -322,7 +322,7 @@ Artifact marks: intent (four lines of prose), spec (braces), contract (double fr
 Labels never overlap a machine or another label. In order of preference:
 
 1. **Name plate** (`StationMachine nameplate`): the station's name lettered on the machine's front (lit) face, sans 7 (or half the machine's height) semibold, `ink-muted`, shown at mid and near on machines at least 10 high. Use for every machine inside a bay; then the upright label is not needed.
-2. **Floor lettering** (`FloorLettering`, `GateGlyph floorLabel`): words painted on the floor. Gates: the label runs along the span on the downstream side, 14 pu from the posts, sans 8 semibold. Region names: bold sans in the lettering strip. Engine IDs: mono. Text along plan y always reads from lower left to upper right.
+2. **Floor lettering** (`FloorLettering`, `GateGlyph floorLabel`): words painted on the floor. Gates: the label runs along the span on the downstream side, 14 pu from the posts, sans 8 semibold. Region names: sans at weight 650 in the lettering strip. Engine IDs: mono. Text along plan y always reads from lower left to upper right.
 3. **Below the disc** (`AgentMarker labelPosition="below"`): an agent's role and tier centred 16 px under its floor disc, used whenever the space beside its head holds a machine (always, inside a bay).
 4. **Upright label** beside the thing, at near zoom only, for things standing on open floor (gates, packets, region machines).
 5. **Callout** with a leader, for the selected thing and for failures, in the overlay layer.
@@ -407,7 +407,7 @@ Over a cap, the lowest-priority animations **snap** to their end state (they are
 
 ### f.1 Camera
 
-One camera `{ x, y, zoom }` (screen translation and scale) applied as a CSS `transform: translate(x px, y px) scale(zoom)` with `transform-origin: 0 0` on the scene wrapper (both SVG layers), and as the stage transform of the optional WebGL layer.
+One camera `{ x, y, zoom }` (screen translation and scale) applied as a CSS `transform: translate(x px, y px) scale(zoom)` with `transform-origin: 0 0` on the scene wrapper (both SVG layers).
 
 - **Zoom** 0.35 to 3 (`factoryTokens.zoom`). Wheel/pinch: zoom × 1.0015^(−deltaY), clamped. Buttons and keys: × or ÷ 1.2.
 - **Zoom to cursor**: the world point under the pointer stays fixed: `x' = cx − (cx − x) × zoom'/zoom`, same for y.
@@ -555,17 +555,14 @@ All factory animations follow the `reduced` column of section e (no travel, no s
 │  │                       gates, loops, cables (layers 1–6 of b.4)      │  │
 │  │  L3  <svg> OVERLAY    selection, focus ring, callouts, near labels  │  │
 │  └─────────────────────────────────────────────────────────────────────┘  │
-│  L2  <canvas> LIGHT (optional, PixiJS 8)  between L1 and L3 in z-order,  │
-│       not CSS-transformed: its stage takes the same camera each frame;   │
-│       aria-hidden, pointer-events: none                                  │
 │  L4  DOM: simulation stamp, zoom controls, minimap (fixed, not cameraed) │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **L1 Scene (SVG)**: all structure and all meaning. Primitives from `@mach/ui` only. React components memoised per entity; their props are the entity's state and progress values computed by the selectors for the current playhead, **quantised to 1/240** so unchanged things do not re-render. Culling: entities whose screen bounds (with 64 px margin) are outside the viewport are not rendered.
-- **L2 Light (WebGL): optional, off by default, decoration only.** The drawing (L1, L3) is complete and correct without it, and every screenshot, recording and review is of the drawing alone unless it says otherwise. A person can switch it on in the keyboard help sheet ("Experimental light layer"), for comparison; its code loads only then. It is `aria-hidden`, takes no pointer events, reads the same selectors at the playhead, and decides nothing. It is off under reduced motion and when WebGL is unavailable. What it may draw, and nothing else: the cell lamp's pool at the same geometry and stops as the SVG pool (`lampPool`, `lampFalloff`, b.3), replacing the SVG pool while it draws so there is one light, not two, with a soft bloom (radius about 120 px, max alpha 0.18 dark / 0.10 light); a short fading trail behind travelling packets (length ≤ 40 px on screen, alpha ≤ 0.25, a pure function of the packet's progress); and **a brief wash on a gate only when it refuses** (fail ink, a pure function of the refusal event; a gate that opens gets no wash). PixiJS: `import "pixi.js/unsafe-eval"`, no workers (contract rule 6). Why it is not on by default: in the owner's side-by-sides (`cmp-*.png`) the bloom lays a veil over the bay floor's machines in dark, which are the meaning, while the SVG pool already says "work is here" at the right tone, and it costs about 0.8 ms more per frame. To be turned on by default in a later milestone it would have to (1) light only floors (a floor SVG and a solids SVG with the canvas between them, so no light lies on a machine, agent or label), (2) stay under 0.3 ms a frame, and (3) show something the SVG cannot.
+- **L2 Light (WebGL): removed; there is no L2.** The brief asked for a WebGL light-layer experiment. It was built on PixiJS 8 (`pixi.js/unsafe-eval`, no workers), switchable from the help sheet, off by default, drawing lamp pools with a bloom, packet trails and a wash on a gate that refused. It was measured and rejected: its canvas sat above the whole drawing, so its glow covered machines, agents and text, which are the meaning (the owner's side-by-sides showed the veil in dark), it cost about 0.8 ms more per frame, and as decoration it could carry no information the drawing did not already have. On the product owner's decision on 2026-11-12 it was removed with the PixiJS dependency (commit "chore(control-tower): remove the WebGL light layer experiment and the PixiJS dependency"); the code is in Git history. If a WebGL renderer is ever wanted, the most plausible reason is scale (many more cells than SVG can hold), which was never measured. Rules for any such layer: decoration only unless it carries meaning the drawing has; `aria-hidden`, no pointer events; reads the same selectors at the playhead and decides nothing; off under reduced motion and without WebGL; never lies on a machine, agent or label (a floor SVG and a solids SVG with the canvas between them); and meets the M5 CSP (contract rules 6 and 8).
 - **L3 Overlay (SVG)**: not depth-sorted, never occluded. Hit targets for entities are in L1 (each entity's group carries `role="button"`, `tabIndex`, `aria-label`, `aria-pressed`); L3 only draws.
-- **One camera, one playhead**: both come from the scene store (`src/scene`). L1 and L3 share the CSS transform of one wrapper, so they cannot drift; L2 copies the camera into its stage in the same animation frame (`requestAnimationFrame` reads the store once per frame and updates L2; React updates L1/L3 from the same snapshot).
+- **One camera, one playhead**: both come from the scene store (`src/scene`). L1 and L3 share the CSS transform of one wrapper, so they cannot drift; React updates both from the same snapshot.
 - **Interaction**: pointer events on the viewport; hit testing by the SVG (L1 groups); `unproject` for ground positions.
 
 > **Prototype allowance: layouts and the timeline see the whole run.** Some things in M6.0 are laid out from the whole recorded run, not from the events up to the playhead: the timeline's extent, the Atlas plant and its routes (b.2), and the Blueprint's columns and sheet size (c.2). The timeline also draws the future of the run and hides it under a mask beyond the live edge. Nothing is *shown* before it happens, so the picture never reflows. This is acceptable only because the run is a recording, whose future already exists. A live observer cannot do it: it does not know how many slices, cells, rounds or stations are coming or how long the run will last, so the production Control Tower must grow these layouts as events arrive, and must never draw what has not happened yet.
@@ -578,7 +575,7 @@ Performance budgets (12 cells, 1440 × 900, Apple M1, Chromium):
 | SVG elements in the DOM | ≤ 2500 at mid zoom, ≤ 1200 at far |
 | Upright text elements | ≤ 160 |
 | React commits while playing | ≤ 1 per frame |
-| L2 draw calls | ≤ 40 per frame |
+| L2 draw calls | ≤ 40 per frame (no L2 exists; kept for any future WebGL layer) |
 | Mode switch | no frame over 24 ms |
 | First paint of the Atlas | ≤ 400 ms after the app's JavaScript has run |
 
@@ -630,7 +627,7 @@ All in `@mach/ui`, pure, props only, no timers or randomness. Atlas `at` is a pl
 | `Prism` | `box, top?, lit?, shade?, edge?, hatch?, shadow?, weight?, dash?, rim? (default true), children` (drawn on the top face in plan coordinates) |
 | `RegionPlate` | `box, kind, title?, caption?, height?, lod?, dimmed?, active?, children` |
 | `CellPlate` | `origin, ticket, slice?, stage, z?, lit?, lampIntensity? (0..1, overrides lit), completion?, elapsed? (ms), lod?, dimmed?, rail?, children`; `progress` deprecated, not drawn |
-| `lampPool(origin, z?)`, `lampFalloff` | The lamp's ellipse on the floor `{cx, cy, rx, ry, z}` and its gradient stops `[offset, opacity][]`, shared with any WebGL layer |
+| `lampPool(origin, z?)`, `lampFalloff` | The lamp's ellipse on the floor `{cx, cy, rx, ry, z}` and its gradient stops `[offset, opacity][]`, shared with any future WebGL layer (none exists) |
 | `cellAnatomy(origin, z?)` | returns `floorZ, size, rail, pads, agentSpot(pad, seat), shelf(i), ticker(f), tickerLine, door, mast` |
 | `StationMachine` | `kind, state, elapsed? (ms), fraction? ({done, of}), round?, label?, nameplate?, settled?, planned?, at, variant?, lod?, dimmed?, showLabel?`; `progress` deprecated, not drawn |
 | `AgentMarker` | `agentRole, tier, seat?, state, elapsed? (ms), arrive?, leave?, label?, labelPosition? ("beside" \| "below"), at, variant?, lod?, dimmed?, showLabel?`; `progress` deprecated, not drawn |

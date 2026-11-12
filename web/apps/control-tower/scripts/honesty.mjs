@@ -19,7 +19,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { chromium } from "playwright";
-import { app, args, ensureBuild, frames, log, openApp, S, sim, sleep, startCspServer } from "./lib.mjs";
+import { app, ensureBuild, frames, log, openApp, S, sim, sleep, startCspServer } from "./lib.mjs";
 
 const out = join(app, "screenshots", "_honesty");
 mkdirSync(out, { recursive: true });
@@ -106,52 +106,6 @@ async function playThrough(page) {
   return page.evaluate(() => window.__machSim.state());
 }
 
-/**
- * Switch the light layer on from the help sheet and read its canvas: `.atlas-effects-layer canvas`
- * (the first canvas on the page is the timeline's). Its size is compared with the Atlas stage. WebGL
- * may be missing in headless Chromium (software), in which case the layer must stay off.
- */
-async function lightLayerCheck(page) {
-  await sim(page, "setMode", "atlas");
-  await sleep(900);
-  await page.locator("body").click({ position: { x: 900, y: 20 } });
-  await page.keyboard.press("?");
-  await page.getByRole("dialog").waitFor({ timeout: 5000 }).catch(() => {});
-  const lightSwitch = page.getByRole("dialog").getByRole("switch").first();
-  if (!(await lightSwitch.count())) return { result: "switch not found" };
-  await lightSwitch.click();
-  const switchedOn = await lightSwitch.getAttribute("aria-checked");
-  await page.keyboard.press("Escape");
-  await sim(page, "seek", S(640));
-  await sim(page, "play");
-  await sleep(3000);
-  const read = () =>
-    page.evaluate(() => {
-      const gl = document.createElement("canvas").getContext("webgl2") ?? document.createElement("canvas").getContext("webgl");
-      const ext = gl?.getExtension("WEBGL_debug_renderer_info");
-      const c = document.querySelector("[data-stage-active] .atlas-effects-layer canvas") ?? document.querySelector(".atlas-effects-layer canvas");
-      const stage = document.querySelector("[data-stage-active] .atlas-viewport") ?? document.querySelector("[data-stage-active] [data-view=atlas]");
-      const sb = stage?.getBoundingClientRect();
-      const cb = c?.getBoundingClientRect();
-      return {
-        webgl: gl ? (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "yes") : "no WebGL",
-        layerHost: Boolean(document.querySelector(".atlas-effects-layer")),
-        canvas: c ? { backing: [c.width, c.height], css: [Math.round(cb.width), Math.round(cb.height)], ariaHidden: c.closest("[aria-hidden=true]") ? "yes" : c.getAttribute("aria-hidden"), pointerEvents: getComputedStyle(c).pointerEvents } : null,
-        stage: sb ? [Math.round(sb.width), Math.round(sb.height)] : null,
-        timelineCanvasesFirst: document.querySelector("canvas")?.closest("section") ? "the first canvas on the page is the timeline's" : "the first canvas is not the timeline's",
-      };
-    });
-  const first = await read();
-  // Resize the window: the canvas must follow the stage.
-  await page.setViewportSize({ width: 1600, height: 900 });
-  await sleep(1200);
-  const resized = await read();
-  await page.setViewportSize({ width: 1920, height: 1080 });
-  await sleep(600);
-  await sim(page, "pause");
-  return { switchedOn, first, afterResizeTo1600x900: resized };
-}
-
 const rawHash = (png) => execFileSync(FFMPEG, ["-v", "error", "-i", png, "-f", "rawvideo", "-pix_fmt", "rgba", "-"], { maxBuffer: 1 << 28 });
 const md5 = (b) => createHash("md5").update(b).digest("hex");
 
@@ -172,10 +126,7 @@ try {
     await page.goto(`${origin}/?theme=dark#atlas`, { waitUntil: "load" });
     await page.waitForFunction(() => Boolean(window.__machSim));
     const end = await playThrough(page);
-    // The optional WebGL light layer (off by default) is switched on in the help sheet: check it too,
-    // under the same policy, recording its requests with the rest.
-    const lightLayer = await lightLayerCheck(page);
-    report.a_network_b_csp = { origin, csp: "M5 host policy (lib.mjs M5_CSP)", endState: end, lightLayer, ...w.summary() };
+    report.a_network_b_csp = { origin, csp: "M5 host policy (lib.mjs M5_CSP)", endState: end, ...w.summary() };
     await context.close();
     log("network/CSP:", report.a_network_b_csp.total, "requests,", report.a_network_b_csp.external.length, "external,", report.a_network_b_csp.violations.length, "CSP violations,", report.a_network_b_csp.errors.length, "errors");
   }
@@ -350,25 +301,6 @@ try {
     }
     report.f_stamp = states;
   }
-  // The light layer again in a headed Chromium on the real GPU (headless may have no WebGL), under the
-  // same policy, with its requests, CSP violations and errors.
-  if (!args.has("--headless-only")) {
-    const headed = await chromium.launch({ headless: false, args: ["--ignore-gpu-blocklist", "--window-size=1920,1180"] });
-    try {
-      const context = await headed.newContext({ viewport: { width: 1920, height: 1080 }, colorScheme: "dark" });
-      const page = await context.newPage();
-      const w = await watch(page, origin);
-      await page.goto(`${origin}/?theme=dark#atlas`, { waitUntil: "load" });
-      await page.waitForFunction(() => Boolean(window.__machSim));
-      await sim(page, "useLiveClock");
-      const lightLayer = await lightLayerCheck(page);
-      const sum = w.summary();
-      report.lightLayerHeaded = { lightLayer, requests: sum.total, external: sum.external, violations: sum.violations, errors: sum.errors, urls: sum.urls };
-      await context.close();
-    } finally {
-      await headed.close();
-    }
-  }
 } finally {
   await browser.close();
   await server.stop();
@@ -466,8 +398,6 @@ console.log(
       stamp: report.f_stamp?.filter((s) => !s.visibleStamps).map((s) => `${s.theme}/${s.state}`),
       stampStates: report.f_stamp?.length,
       determinismSameRouteTwice: `${det.filter((d) => d.sameRouteTwiceIdentical).length} of ${det.length}`,
-      lightHeadless: report.a_network_b_csp?.lightLayer,
-      lightHeaded: report.lightLayerHeaded?.lightLayer,
     },
     null,
     2,

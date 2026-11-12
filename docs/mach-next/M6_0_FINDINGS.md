@@ -1,14 +1,104 @@
-# MACH Next — M6.0 findings: performance, accessibility and honesty (re-measured)
+# MACH Next — M6.0 findings: performance, accessibility and honesty
 
-Independent re-measure of the Living Factory prototype after the defect-fix round (branch `feature/mach-next-m6-living-factory`, HEAD `8a83ab0`; the fixes are `b124554..8a83ab0`). The first report measured `34e5f39`; where both exist, the tables give **before → after**. Everything was measured on the **capture build** (`vite build --mode capture`: the production build plus the `window.__machSim` hook; the production build has the same bundle size). The prototype is a simulation; so is everything in the screenshots and recordings.
+**How to read this document.** Section 0 is the current status, at `f9fe87e`, after a second fix round and two product-owner decisions. Sections 1 to 7 are the independent re-measure made at `8a83ab0`, before that round; their numbers were **measured at `8a83ab0` and not re-measured since**, and are kept as the record. Where a later change made a statement in them untrue, it is marked.
+
+## 0. Status at `f9fe87e` (current)
+
+### 0.1 What changed after the re-measure
+
+| Commit | Subject |
+|---|---|
+| `19b6e20` | feat(ui): no serif face; titles and place names are the sans set bold |
+| `3d6c463` | fix(control-tower): Blueprint station lines no longer print on top of each other |
+| `2cb599e` | fix(control-tower): Blueprint callouts stay in view, corner controls never overlap, minimap is one keyboard control, consensus counts read true |
+| `6c348ef` | fix(control-tower): one placement pass for Atlas labels; no overlapping callouts; opaque selection label |
+| `575790e` | fix(control-tower): inspector times and review counts read true; hidden view catches up after a jump and rests while scrubbing |
+| `f9fe87e` | chore(control-tower): remove the WebGL light layer experiment and the PixiJS dependency |
+
+In detail:
+
+- **Typeface.** There is no serif any more. Everything that was set in the serif (titles, region lettering on the Atlas floor, the Blueprint's wave and lane titles, the title blocks) is Source Sans 3 set bold: 700 for titles, 650 for second-level titles and for floor lettering. Newsreader is no longer bundled (`19b6e20`; it applies to Product Studio and the showcase too).
+- **Blueprint.** In a working station the task line and the board sit one line lower, so the station's lines no longer print over each other. Callouts are placed against the part of the stage that is visible (clear of the pinned gutter and column head, a drawer and the bottom-right corner). The minimap, the playhead chip and the zoom toolbar are stacked in that corner and never overlap; the sheet can pan 196 px past its right edge so the last column can be brought out from under them. The minimap is one keyboard-operable control, a `listbox` whose options are the lanes. Below 1280 px, where the inspector is a drawer over the stage, framing allows for the drawer. A consensus node reads "N approve · M needed".
+- **Atlas.** Upright labels (callouts, the selection's label, agents' labels) go through one deterministic placement pass (`src/atlas/place.ts`); the selection label has an opaque backing. The review plaque counts the round's real seats ("M OF N NEEDED", with N the round's seats, not a fixed 3).
+- **Inspector.** "Finished at" uses the time the cell merged or left the station, not its dispatch; review tallies read "3 of 3 approved, 2 needed". Held by `test/inspector-wording.test.mjs`; the app's tests are now 70.
+- **Stage.** After a playhead jump the hidden view catches up once the browser is idle (at most 400 ms later); a switch that finds it still stale lets it catch up and waits, up to 300 ms, until it stops changing before folding; while the playhead is dragged the hidden view is not updated at all, and catches up when the drag ends.
+
+### 0.2 Decisions
+
+- **The WebGL light layer was removed.** The brief asked for the experiment. It was built on PixiJS 8 and measured (sections 1 and 4 below record it). It was rejected because its glow sat above the whole drawing, covering machines, agents and text; it cost about 0.8 ms per frame; and as decoration it could carry no information the drawing did not already have. It was removed with the PixiJS dependency on the product owner's decision on 2026-11-12, in the commit "chore(control-tower): remove the WebGL light layer experiment and the PixiJS dependency". The code is in Git history if a WebGL renderer is ever wanted, most plausibly for scale (many more cells than SVG can hold), which was never measured.
+- **React Flow (`@xyflow/react`) stays installed although nothing in the app imports it.** The Blueprint remains one hand-drawn SVG. It was kept on the product owner's decision, to be considered for future features where it adds real value (editing a graph, free-form layouts, very large graphs), not adopted by default.
+
+### 0.3 The 14 earlier defects, now
+
+| # | Defect | Status at `f9fe87e` |
+|---|---|---|
+| D1, D2, D3 | Reduced motion: travelling manifest, sinking posts, settling merge card | Fixed (measured at `8a83ab0`) |
+| D4 | Mode switch drops frames | **Improved, not closed.** See 0.5 and 0.6 |
+| D5 | SVG over budget at far zoom | Fixed (measured at `8a83ab0`) |
+| D6 | Callouts clipped at the stage's right edge | Fixed (measured at `8a83ab0`); placement now also covers the Blueprint (0.1) |
+| D7 | Text collisions | **Closed for labels**: the placement pass keeps upright labels off each other (0.5). Overlaps with text drawn in the scene remain and are listed in 0.6 |
+| D8 | Station names stale during playback | Fixed (measured at `8a83ab0`) |
+| D9 | `target-size` on the resize handle | Fixed (measured at `8a83ab0`) |
+| D10 | No reflow at 200% | Fixed at 960 x 540; partial at 640 x 400 (measured at `8a83ab0`) |
+| D11 | Reduced motion creates hundreds of transitions | Fixed (measured at `8a83ab0`) |
+| D12 | Light canvas 1352 x 22 | **Moot**: the light layer was removed (it had been fixed at `8a83ab0`) |
+| D13 | Blueprint column head cut by the zone strip | Fixed (measured at `8a83ab0`) |
+| D14 | Selecting a dependency dims its dependent | Fixed (measured at `8a83ab0`) |
+
+### 0.4 The four defects found in the re-measure, now
+
+| # | Defect | Status at `f9fe87e` |
+|---|---|---|
+| N1 | `target-size` on the minimap's lane buttons | **Closed** by the single-control minimap: the lanes are options of one `listbox`, not separate targets. It relies on WCAG 2.5.8's equivalent-control exception for the small lane strips, which a pointer can still click (the listbox and the tree reach every lane by keyboard). Reported axe `target-size` clean by the fix owner; the independent audit script was not re-run |
+| N2 | First switch to the Blueprint after a jump drops frames | **Improved, not closed** (0.5) |
+| N3 | Clipping by panels | **Closed** except that at 960–1100 px wide there is little drawing room left beside the drawer |
+| N4 | Inspector wording for a merged cell ("Finished at 00:31", "3 of 2") | **Closed** (`test/inspector-wording.test.mjs`) |
+
+### 0.5 Measured in the second fix round
+
+These were measured by the second round's fix owners while fixing, not by this document's independent scripts (`scripts/measure.mjs`, `audit.mjs`, `honesty.mjs` were not re-run; no report file for them is in `screenshots/`).
+
+- **Mode switch** (headed Chromium, Apple M3 GPU, 1920 x 1080; 20 switches in each direction per delay, each made right after a jump to another chapter): switching **1000 ms** after the jump, runs with a frame over 33 ms in the fold went from **5 to 0**; switching **150 ms** after the jump, from **15 to 7**, with one unexplained **433 ms** frame remaining. When the hidden view is stale, the fold starts about **325 ms** after the key.
+- **Scrubbing**: the 33–50 ms frames reported at `8a83ab0` (2.3) were not reproduced in sweeps 2 to 5, before or after the round's changes (max 17.7–18.7 ms). The only slow frame is one of about 33 ms in the first sweep after load, in both builds; its cause was not traced.
+- **Atlas labels**: over a 30 s sweep of the run, overlapping upright labels went from 2 to 0 at the fit and from 12–28 to 0 at near zoom.
+- **Tests**: the app's 70 tests pass. **Product Studio**'s end-to-end suites pass on the final design system, the typeface change included: 177 of 177.
+
+### 0.6 Known issues carried into full M6
+
+1. **Mode switch soon after a jump** (D4, N2): a switch 150 ms after a jump still dropped frames over 33 ms in 7 of 20 runs, one of them a 433 ms frame not explained; a stale hidden view delays the fold by about 325 ms; under software rendering most switches had 33–50 ms frames (measured at `8a83ab0`). The budget of no frame over 24 ms is not met in these cases.
+2. **One slow scrub frame** of about 33 ms in the first sweep after load; cause not traced.
+3. **Text drawn on the scene still meets labels or other scene text** (D7 remainder): the "Audit" plate over a pad's lettering at the fit; a stage plate touching "N calls" in the bay in front at near zoom; the supervisor tally over "SLICE-021"; a callout possibly over floor lettering when no clear slot exists; the retry loop's "Round 2 of 3" label at the gutter edge.
+4. **Narrow windows**: at 960–1100 px wide there is little drawing room beside the drawer (N3 remainder); at 640 x 400 @2 the chapter-step buttons are hidden and the run title truncates to "I." (D10 remainder).
+5. **Carried from the re-measure, unchanged**: the inspector precedes the timeline in Tab order (spec f.11 has the reverse); the Atlas zoom readout is a live region, so each wheel step is announced; memory and DOM are about double the single-view figures because both views stay mounted; the element budgets have 5% headroom with 4 cells, which says nothing about 12 (all measured at `8a83ab0`).
+6. **The development entry `dev/atlas.tsx` still imports the removed `src/effects`** (and documents `?fx=1`), so `/dev/atlas.html` will not load. `dev/` is outside the app's `tsconfig` (`include: ["src"]`), so typecheck and build do not catch it.
+7. **Evidence is older than the build** (0.7).
+
+### 0.7 Screenshots, recordings and reports were not re-captured
+
+The 94 screenshots were re-taken after the typeface change but **before** the second round's Blueprint, Atlas and shell fixes and before the light layer was removed (the help-sheet shots still show its switch). The recordings **pre-date the typeface change** and still show the serif. The reports in `screenshots/_perf/`, `_a11y/` and `_honesty/` are from the re-measure at `8a83ab0`. None was re-captured; the product owner chose to review the app by hand. Both folders' READMEs say so.
+
+### 0.8 Not measured
+
+- **A 12-cell scenario**: the scenario has at most 4 cells; every budget here is for this scenario.
+- **Screen readers** (VoiceOver, NVDA), **Firefox and Safari**, real users, switch access, voice control, Windows forced colours, touch and trackpad pinch (the wheel was used).
+- **The CSP** was checked on a stand-in server (`lib.mjs`'s static server with the M5 header), not on the M5 Go host.
+- **This round's changes were not re-measured by the independent scripts**: no new axe run, keyboard walkthrough, reduced-motion check, honesty run, element counts or frame-time sweep; the figures in 0.5 are the fix owners'.
+- **React commits per frame** (needs a profiling build). (L2 draw calls, also never measured, no longer apply: there is no L2 layer.)
+- **The 1440 x 900 / M1 reference** of the budgets: measured at 1920 x 1080 on an M3.
+- **A trace-level profile** of the 433 ms mode-switch frame, the earlier 466 ms one and the slow scrub frames.
+- Element counts at near zoom over the whole run; pixel-exact determinism (markup only); the 640 x 400 at 200% case by keyboard; the "early switch" before the hidden view is prepared (not provoked at `8a83ab0`).
+
+---
+
+The rest of this document is the independent re-measure of the Living Factory prototype after the first defect-fix round (branch `feature/mach-next-m6-living-factory`, HEAD `8a83ab0`; the fixes are `b124554..8a83ab0`). The first report measured `34e5f39`; where both exist, the tables give **before → after**. Everything was measured on the **capture build** (`vite build --mode capture`: the production build plus the `window.__machSim` hook; the production build has the same bundle size). The prototype is a simulation; so is everything in the screenshots and recordings.
 
 Evidence: `web/apps/control-tower/screenshots/` (README lists every file), `screenshots/_perf/report.json`, `_a11y/report.json`, `_honesty/report.json`, `_layout/report.json`, and `web/apps/control-tower/recordings/`. Scripts: `web/apps/control-tower/scripts/{lib,capture,record,measure,audit,honesty}.mjs`.
 
-**What changed in the app that the scripts had to follow.** The stage now keeps both views mounted; the inactive one is `visibility: hidden`, `inert` and `aria-hidden`, but still has layout boxes and DOM, so every selector, box and count is scoped to `[data-stage-active]`. The light layer's canvas is `.atlas-effects-layer canvas` (the first canvas on the page is the timeline's). Atlas arrows are spatial, so reachability is now proved by building the arrow graph (every arrow from every entity) and searching it from the entry point. The timeline starts as a one-row summary, the inspector is narrower (344 / 368 px), the mode switch is a flat 700 ms fold (a cut under reduced motion), and the Blueprint at Fit draws simplified marks.
+**What changed in the app that the scripts had to follow.** The stage now keeps both views mounted; the inactive one is `visibility: hidden`, `inert` and `aria-hidden`, but still has layout boxes and DOM, so every selector, box and count is scoped to `[data-stage-active]`. The light layer's canvas was `.atlas-effects-layer canvas` (the first canvas on the page is the timeline's); the layer has since been removed (section 0.2). Atlas arrows are spatial, so reachability is now proved by building the arrow graph (every arrow from every entity) and searching it from the entry point. The timeline starts as a one-row summary, the inspector is narrower (344 / 368 px), the mode switch is a flat 700 ms fold (a cut under reduced motion), and the Blueprint at Fit draws simplified marks.
 
-## 1. Summary
+## 1. Summary (measured at `8a83ab0`)
 
-| Area | Check | Before (34e5f39) | After (8a83ab0) | Verdict now |
+| Area | Check | Before (34e5f39) | After (8a83ab0) | Verdict at `8a83ab0` |
 |---|---|---|---|---|
 | Performance | Scrubbing: 60 fps, scene update ≤ 8 ms/frame | script 1.8–2.2 ms/frame; max 183 ms (Atlas, headed); 0.4% of frames > 33 ms | script 1.8–2.3 ms/frame, all main-thread work 4.0–5.3 ms/frame; max **50 ms** (Atlas, headed, one frame), 33 ms elsewhere; ≤ 0.2% > 33 ms | Update cost **pass**; 60 fps **still missed by one or two frames per sweep** |
 | | SVG elements ≤ 2500 mid, ≤ 1200 far | at 10:40: far **1371**, mid 2340, near 2737 | at 10:40: far 929, mid 1848, near 2248. **Whole run** (every minute, then every 5 s near peaks): far max **1116** (27:15), mid (fit, 94%) max **2375** (46:45) | **Pass** both (mid with 5% headroom, 4 cells not 12) |
@@ -29,14 +119,14 @@ Evidence: `web/apps/control-tower/screenshots/` (README lists every file), `scre
 | | Greyscale | readable | readable (`_a11y/grey-*.png`, judged by eye) | **Pass** |
 | | Screen-reader semantics (no screen reader) | 1 stale name | stale-name probe: 0 of the Atlas's names differ between play-to and seek | **Pass** (tree level only) |
 | | 200% zoom (960 x 540 @2) | no reflow, controls cut off | **Reflows**: no horizontal scroll, every control on screen, Simulation stamp visible, axe clean except N1. At 640 x 400 @2 the chapter-step buttons are hidden and the run title shrinks to "I." | **Pass at 960** (the WCAG case for a 1920 screen); 640 partial |
-| Honesty | (a) No network at run time | 10 same-origin requests | 10 same-origin requests (document, 4 scripts incl. lazy ELK and effects, 1 CSS, 4 fonts) | **Pass** |
-| | (b) M5 CSP | 0 violations; light canvas 1352 x 22 | 0 violations, 0 console errors; light layer on the real GPU: canvas **1552 x 890 = the stage**, follows a resize to 1256 x 710; headless has no WebGL and the layer correctly stays off | **Pass** |
+| Honesty | (a) No network at run time | 10 same-origin requests | 10 same-origin requests (document, 4 scripts incl. lazy ELK and the light layer's `effects` chunk, since removed, 1 CSS, 4 fonts) | **Pass** |
+| | (b) M5 CSP | 0 violations; light canvas 1352 x 22 | 0 violations, 0 console errors; the light layer (since removed) on the real GPU: canvas **1552 x 890 = the stage**, followed a resize to 1256 x 710; headless had no WebGL and the layer stayed off | **Pass** |
 | | (c) No randomness / wall clock driving progress | none | none: no `Math.random`, no `Date.now`; timers and `performance.now` only in the clock and interface code (now also `Stage.tsx`: idle preparation and the fold) | **Pass** |
 | | (d) Determinism (markup) | same route 60/60; across routes 12/20 and 2/20 | same route twice **20/20**; **seek = play-to = scrub-back in 20/20** (canonical markup, see 4 (d)) | **Pass** |
 | | (e) Every moving thing has an event | 0 unattributed | 20 frame pairs, 0 unattributed | **Pass** |
 | | (f) "Simulation" in every state/frame | 94 shots, 5,994 frames, 14 states | 94 shots, every film frame (section 5), 24 states (adds 200%, reduced motion, Theater at 200%) | **Pass** |
 
-Defects: of the 14 earlier ones, **12 fixed, 2 partly fixed (D4 mode switch, D7 text collisions), 0 untouched** (section 6). **4 new** defects, none blocking the review (section 7).
+Defects at `8a83ab0`: of the 14 earlier ones, **12 fixed, 2 partly fixed (D4 mode switch, D7 text collisions), 0 untouched** (section 6). **4 new** defects, none blocking the review (section 7). Their status now is in section 0.
 
 ## 2. Performance
 
@@ -160,10 +250,10 @@ Landmarks and roles as before (`_a11y/aria-*.txt`). Live regions over one minute
 ## 4. Honesty verification
 
 ### (a) Network
-A fresh page under the M5 policy, played 00:00 to the end at 16x with mode switches, a selection, Theater, help, both themes, then the light layer: **10 requests, all same-origin static assets** (`/`, `index`, `rolldown-runtime`, lazy `elk.bundled` and `effects`, one stylesheet, 4 woff2). The headed light-layer page made 25 requests, all same-origin (PixiJS chunks included). No fetch, XHR, WebSocket, beacon, external origin or `data:` asset.
+A fresh page under the M5 policy, played 00:00 to the end at 16x with mode switches, a selection, Theater, help, both themes, then the light layer (since removed): **10 requests, all same-origin static assets** (`/`, `index`, `rolldown-runtime`, lazy `elk.bundled` and `effects`, one stylesheet, 4 woff2). The headed light-layer page made 25 requests, all same-origin (PixiJS chunks included). `honesty.mjs` no longer switches the layer on or looks for it. No fetch, XHR, WebSocket, beacon, external origin or `data:` asset.
 
 ### (b) M5 Content-Security-Policy
-Served by `lib.mjs` with the M5 host's header verbatim, on 127.0.0.1:4187: **0 violations, 0 console errors**, headless and headed. Light layer (`.atlas-effects-layer canvas`): on the real GPU it is **1552 x 890, exactly the Atlas stage**, `aria-hidden`, `pointer-events: none`, and after resizing the window it is **1256 x 710, again the stage** (D12 fixed). Headless has no WebGL: the switch turns on but no layer is created, as the spec requires.
+Served by `lib.mjs` with the M5 host's header verbatim, on 127.0.0.1:4187: **0 violations, 0 console errors**, headless and headed. The light layer (`.atlas-effects-layer canvas`, since removed): on the real GPU it was **1552 x 890, exactly the Atlas stage**, `aria-hidden`, `pointer-events: none`, and after resizing the window **1256 x 710, again the stage** (D12 fixed then). Headless had no WebGL: the switch turned on but no layer was created, as the spec then required.
 
 ### (c) Source scan
 No `Math.random`, no `Date.now`. `new Date` only in `shell/chrome.tsx` and `sim/scenario/recorder.ts` (formatting fixture times). `performance.now`, rAF and `setTimeout` in the clock module and interface code; new since the first report: `shell/Stage.tsx` (idle preparation of the hidden view, the 500 ms batching of its updates, the fold's frame waits). None computes factory progress.
@@ -183,11 +273,14 @@ Present and visible in all 94 screenshots (the capture script refuses otherwise)
 
 ## 5. Screenshots and recordings
 
+As of `8a83ab0`. They were not re-captured for the final build: see section 0.7.
+
+
 - **Screenshots**: 94, the same set and names as before (`screenshots/README.md`), re-shot on the manual clock. Framing fixed in `capture.mjs` after looking at the output: `09-integration` was half empty ground below the plant's edge (now nudged to show the yard, the approval and review regions and the selected cell); the 1100 set reused one page, so `23-…-d` inherited `c`'s selection and drawer (now cleared per shot), and in `23-…-c` the selected gate sat under the drawer (now framed in the part of the stage the drawer leaves). A machine check of each shot is in `_layout/report.json` (callouts outside the visible stage, overlapping text boxes, how much of the selection is in view); its text-overlap count is a loose heuristic (rotated floor lettering has loose boxes) and was used only to point at shots to look at.
 - **Recordings** (frame-exact on the virtual clock, as before; `recordings/README.md`): the main dark 1080p film at **2:49** (5,074 frames; target 2:45–3:15; it was 2:28), a 720p copy of 14.3 MB, the light clip (0:35, 1,060 frames) and the reduced-motion clip (0:20, 600 frames). New beats: the whole plant at far zoom, the timeline's tracks opened and folded, LOCAL-033's review fan-out at 1x, the verdict inspected by a click, and the Blueprint at Fit (its simplified marks) before F frames the selection. The Simulation label was visible in every frame of all three films (the recorder checks each frame).
 - **A recorder problem found by looking at the output, and how it was handled.** The first render of the main film had a **blank Atlas from 1:24 to the end** (every frame after the return from the Blueprint, Theater included); the light clip had the same after its return. The DOM was intact; the Atlas layer's computed opacity was stuck at the fold's start value (0) with no animation listed on it, in headless Chromium under the recorder's held animation timeline. The same key and pointer path on the real clock, headless and headed, ends with the Atlas at opacity 1 (checked twice), so this is not counted as an app defect. The recorder now holds animations with a playback rate of 0 instead of `pause()`, and, if a resting visible layer is still below opacity 1, gives it an `!important` opacity of 1 until the app animates it again; it counts these repairs: **2** in the final main film, **3** in the light clip, **0** in the reduced clip (it fired 0 times in one main render and 2 in the next, so the glitch is intermittent). The films were re-rendered and their contact sheets checked: the stage is drawn throughout.
 
-## 6. The 14 earlier defects
+## 6. The 14 earlier defects (status at `8a83ab0`; current status in 0.3)
 
 | # | Defect | Status | Evidence now |
 |---|---|---|---|
@@ -202,12 +295,13 @@ Present and visible in all 94 screenshots (the capture script refuses otherwise)
 | D9 | `target-size` on the resize handle | **Fixed** | 24 px target; no longer reported (but see N1) |
 | D10 | No reflow at 200% | **Fixed at 960 x 540**; partial at 640 x 400 | 3.7 |
 | D11 | Reduced motion creates hundreds of 0.01 ms transitions | **Fixed** | 0 Web Animations running under reduction |
-| D12 | Light canvas 1352 x 22 | **Fixed** | 1552 x 890 = the stage, follows a resize (GPU) |
+| D12 | Light canvas 1352 x 22 | **Fixed** (layer since removed) | 1552 x 890 = the stage, followed a resize (GPU) |
 | D13 | Blueprint column head cut by the zone strip | **Fixed** | `11-human-gate-held-blueprint-*`: the stage names show whole when scrolled |
 | D14 | Selecting a dependency dims its dependent | **Fixed** | at 43:42 with `dependency:SLICE-024->SLICE-021` selected, SLICE-021, SLICE-024 and SLICE-025 and both of 025's cables are at opacity 1; unrelated SLICE-022/023 at 0.28 |
 
 The earlier "also observed" items: the 1100-wide framing that centres a selection under the drawer **remains** (the app's own focus centres in the whole stage; `23-…-c` is now framed by the script); the zoom readout is still a live region; the inspector still precedes the timeline in Tab order; ELK still loads at start-up (now because the hidden Blueprint is prepared while idle; it is in the 10 requests).
-## 7. New defects (found in this pass)
+
+## 7. New defects (found in this pass; current status in 0.4)
 
 | # | Severity | Owner | Defect | Evidence |
 |---|---|---|---|---|
@@ -220,14 +314,4 @@ Also noted, not counted: memory and DOM roughly doubled because both views stay 
 
 ## 8. Not measured or not done
 
-- **12-cell density**: the scenario has at most 4 cells; all budgets here are for this scenario.
-- **React commits per frame** (needs a profiling build) and **L2 draw calls** (layer off by default): not measured.
-- **The 1440 x 900 / M1 reference**: measured at 1920 x 1080 on an M3.
-- **A trace-level profile** of the 466 ms mode-switch frame and the 50 ms scrub frame: attributed only by long tasks and LoAF (neither showed it as script), not to a process.
-- Element counts over the whole run were taken in headless only (they are DOM counts) and not at near zoom; the hidden Blueprint's 845 elements are reported, not budgeted.
-- **The "early switch"** before the hidden view is prepared could not be provoked: both views were already mounted 300 ms after load in both browsers.
-- **Real screen readers and real users**, Windows forced colours, touch and trackpad pinch (wheel used), Firefox and Safari: not done.
-- **Pixel-exact determinism**: markup only; pixels vary with Chromium's rasteriser.
-- The CSP check ran against `lib.mjs`'s static server with the M5 header, not the M5 Go host.
-- The 640 x 400 at 200% case was looked at in screenshots, not walked through by keyboard.
-- `_layout/report.json` for `09-…` and `23-…` describes the first capture pass; those shots were re-taken with `--only` after the framing fixes (the script writes the layout report only on a full run).
+Merged into section 0.8, which is the current list.

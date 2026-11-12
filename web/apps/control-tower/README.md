@@ -24,7 +24,7 @@ pnpm --filter @mach/control-tower typecheck
 pnpm --filter @mach/control-tower test       # node --test test/*.test.mjs, no browser, no dependencies
 ```
 
-The tests cover the simulation and the store: the scenario against MACH's own rules, the reducer's determinism, scrubbing, the clock, the capture hook, and that nothing is shown before it happens (`test/no-early-outcomes.test.mjs`). From `web/`, `pnpm lint`, `pnpm typecheck` and `pnpm build` check the whole workspace.
+The 70 tests cover the simulation and the store: the scenario against MACH's own rules, the reducer's determinism, scrubbing, the clock, the capture hook, that nothing is shown before it happens (`test/no-early-outcomes.test.mjs`), and the inspector's time and review-tally wording (`test/inspector-wording.test.mjs`). From `web/`, `pnpm lint`, `pnpm typecheck` and `pnpm build` check the whole workspace.
 
 ## Capture and record
 
@@ -34,6 +34,8 @@ Screenshots and recordings are made by the scripts in `scripts/`, which build th
 - `recordings/README.md`
 
 The package's `capture` script (`pnpm --filter @mach/control-tower capture`) runs `scripts/capture.mjs`; see the two READMEs for the others. Outputs in `screenshots/` and `recordings/` are git-ignored except their READMEs.
+
+**The current outputs are not of the final build.** The screenshots were taken after the change to an all-sans typeface but before the last round of Blueprint, Atlas and shell fixes and before the light layer was removed (so the help-sheet shots still show its switch). The recordings are older still: they pre-date the typeface change and show the former serif. They were not re-captured; the product owner chose to review the app by hand. Details in each folder's README.
 
 ## URL parameters
 
@@ -46,7 +48,7 @@ Main app (`/`):
 | `#blueprint?sel=cell:LOCAL-031` | Select an entity (any `EntityRef`, such as `gate:LOCAL-032/human-approval`) and frame it. Kept in step with the app |
 | `#atlas?theater=1` | Open in Theater Mode |
 
-Development entries (`/dev/atlas.html`, `/dev/blueprint.html`): `?theme=`, `?t=<factory ms>` (seek), `?play=<speed>` (play at that speed), `?meter` (frame-time meter); the Atlas entry also takes `?fx=1` (mount the light layer). In the main app's development build, `?meter` shows the Atlas's frame meter.
+Development entries (`/dev/atlas.html`, `/dev/blueprint.html`): `?theme=`, `?t=<factory ms>` (seek), `?play=<speed>` (play at that speed), `?meter` (frame-time meter). In the main app's development build, `?meter` shows the Atlas's frame meter.
 
 ## Development hook
 
@@ -126,9 +128,12 @@ Timeline:
 
 Each view is one tab stop; arrow keys move inside it. The Tab order is skip link, top bar, the view, the inspector, the timeline.
 
-## The experimental light layer
+## Rendering choices
 
-The Atlas has an optional WebGL light layer (PixiJS 8, `src/effects`): work-lamp pools with a bloom, packet trails, and a brief wash on a gate when it refuses (never when it opens). It is **off by default**; switch it on in the keyboard help sheet (`?`, "Experimental light layer (WebGL)"). Its code is a separate chunk loaded only then. It is decoration only, off under reduced motion and without WebGL, and the drawing is complete without it. The visual design and Atlas owners recommend not shipping it; why, and what would change that, is in `docs/mach-next/M6_0_ARCHITECTURE.md` section 6.2.
+- **SVG only.** The brief asked for a WebGL light-layer experiment. It was built on PixiJS 8 and measured, then rejected: its glow sat above the whole drawing (covering machines, agents and text), it cost about 0.8 ms per frame, and as decoration it could carry no information the drawing did not already have. It was removed with the PixiJS dependency on the product owner's decision on 2026-11-12 (commit "chore(control-tower): remove the WebGL light layer experiment and the PixiJS dependency"). The code is in Git history if a WebGL renderer is ever wanted, most plausibly for scale (many more cells than SVG can hold), which was never measured.
+- **React Flow is installed but not used.** `@xyflow/react` stays a dependency on the product owner's decision; the Blueprint is one hand-drawn SVG. It is to be considered for future features where it adds real value (editing a graph, free-form layouts, very large graphs), not adopted by default.
+
+Both are explained in `docs/mach-next/M6_0_ARCHITECTURE.md` section 6.
 
 ## Documents
 

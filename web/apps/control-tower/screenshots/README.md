@@ -2,6 +2,8 @@
 
 Everything in this folder except this README is generated and git-ignored. **Every image shows a simulation**: the "Simulation" stamp is on screen in each one (the capture script refuses to save a shot without it).
 
+> **The current set is not of the final build.** The 94 screenshots were re-taken after the change to an all-sans typeface (`19b6e20`), but before the second fix round's Blueprint, Atlas and shell fixes (`3d6c463` to `575790e`) and before the light layer was removed (`f9fe87e`). So they do not show: the Blueprint station lines no longer overprinting, callouts placed against the visible area, the stacked corner controls and single-control minimap, drawer-aware framing below 1280 px, "N approve · M needed" consensus, the Atlas's single label-placement pass, the corrected inspector times and tallies, or the review plaque's real seat count; and the `21-help-sheet-*` shots still show the light-layer switch, which no longer exists. The reports in `_a11y/`, `_perf/` and `_honesty/` are older than the screenshots (they pre-date the typeface change too). Nothing was re-captured after these changes: the product owner chose to review the app by hand.
+
 ## Regenerate
 
 From `web/apps/control-tower`:
@@ -46,7 +48,7 @@ Variants of each beat: `-atlas-dark`, `-atlas-light`, `-blueprint-dark`, `-bluep
 | Extra | What it shows |
 |---|---|
 | `20-mode-switch-a-atlas-*`, `20-mode-switch-b-blueprint-*` | The same selection (`cell:LOCAL-032` at 32:20) before and after the real key "2". |
-| `21-help-sheet-*` | The keyboard, legend and display sheet, opened with "?". |
+| `21-help-sheet-*` | The keyboard, legend and display sheet, opened with "?" (still with the removed light-layer switch; see the note above). |
 | `22-reduced-motion-a-off-atlas-*`, `22-reduced-motion-b-on-atlas-*`, `22-reduced-motion-c-on-blueprint-*` | 27:26, mid-way through the return-to-build loop: with motion (the loop drawing) and with `prefers-reduced-motion` (end state at the event time; "Motion reduced" in the transport). |
 | `23-narrow-1100-{a,b,c,d}-*-atlas-*` | 1100 x 800: the opening, three bays, the verification failure with the inspector as a drawer (the selection framed in the part of the stage the drawer leaves; the app itself centres it in the whole stage, under the drawer), the human gate. Each shot clears the previous one's selection. |
 
@@ -55,7 +57,7 @@ Variants of each beat: `-atlas-dark`, `-atlas-light`, `-blueprint-dark`, `-bluep
 | Folder | Written by | Contents |
 |---|---|---|
 | `_sheets/` | `capture.mjs --sheets` | Contact sheets, four shots each, in file-name order (the script logs which four). |
-| `_honesty/` | `honesty.mjs` | `report.json`; `det-*.png`, the stage renders compared for determinism; `det-dom-*.html`, the canonical markup of the first pass of each route. |
+| `_honesty/` | `honesty.mjs` | `report.json` (the current one still has the light-layer entries the script no longer writes); `det-*.png`, the stage renders compared for determinism; `det-dom-*.html`, the canonical markup of the first pass of each route. |
 | `_a11y/` | `audit.mjs` | `report.json` (axe, keyboard, the Atlas arrow graph, focus return after help, the hidden view, reduced motion, contrast, live regions, 200%); `aria-*.txt`; `focus-*.png`; `zoom200-<size>-<state>.png`; `grey-*.png` (regenerated from this capture set). |
 | `_perf/` | `measure.mjs` | `report.json` (playback, scrub, 36 mode switches per browser with every frame interval, element counts over the whole run, memory, load, bundle). |
 | `_layout/` | `capture.mjs` (full run only) | `report.json`: per shot, Atlas callouts outside the visible stage, overlapping text boxes (a loose heuristic) and how much of the selection is in view. |
