@@ -41,7 +41,7 @@ Add `--dry-run` to see what would change first. Running install again updates MA
 
 ### The visual Product Studio app (experimental)
 
-Product Studio also has a visual app that runs on your own machine. Its host is one small program, built for macOS and Linux (Apple silicon and Intel/AMD) and attached to each [MACH release](https://github.com/swiftj/mach-harness/releases). Both installs fetch it for you: the one-command installer and `/mach:init` download the file for your machine from the release that matches the installed MACH version, check it against the release's published SHA-256, and put it at `.factory/bin/mach-studio` (git-ignored). Nothing else is downloaded, and nothing runs until you ask Product Studio to "open the app".
+Product Studio also has a visual app that runs on your own machine. Its host is one small program, built for Apple silicon Macs and for Linux (arm64 and amd64) and attached to each [MACH release](https://github.com/swiftj/mach-harness/releases). There is no build for Intel Macs or Windows. Both installs fetch it for you: the one-command installer and `/mach:init` download the file for your machine from the release that matches the installed MACH version, check it against the release's published SHA-256, and put it at `.factory/bin/mach-studio` (git-ignored). Nothing else is downloaded, and nothing runs until you ask Product Studio to "open the app".
 
 If the download is not possible (offline, no build for your machine, or a version with no release yet), the install still succeeds and says so; everything else works without the app. Pass `--no-studio` to skip it. Each release's files also carry a build provenance attestation: `gh attestation verify .factory/bin/mach-studio --repo swiftj/mach-harness`.
 
@@ -325,7 +325,7 @@ When you change the validator, change its references, the fixture in `tests/fixt
 
 Set the new version in `.claude-plugin/plugin.json`, merge to `main`, then push a tag `v<version>`. The `release` workflow tests, builds the Product Studio host for each machine with the web app embedded, writes `SHA256SUMS`, and publishes the GitHub release the installer downloads from. The tag must match the plugin's version or the workflow stops.
 
-Before publishing, each program is started on a runner of its own kind (`apps/studio/smoke.sh`: open the one-time link, load the app, ask the engine for status). There is no hosted Intel Mac runner in the workflow, so check that one by hand on an Apple silicon Mac, where it runs under Rosetta: `sh apps/studio/smoke.sh <path to mach-studio-darwin-amd64>`. Running the workflow by hand from the Actions tab builds and smoke-tests everything and publishes nothing.
+Before publishing, each program is started on a runner of its own kind (`apps/studio/smoke.sh`: open the one-time link, load the app, ask the engine for status). Running the workflow by hand from the Actions tab builds and smoke-tests everything and publishes nothing.
 
 ## License
 

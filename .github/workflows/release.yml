@@ -51,7 +51,7 @@ jobs:
         run: |
           mkdir -p dist
           (cd web && pnpm install --frozen-lockfile)
-          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
+          for target in darwin/arm64 linux/arm64 linux/amd64; do
             SKIP_INSTALL=1 CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} \
               OUT="$PWD/dist/mach-studio-${target%/*}-${target#*/}" sh apps/studio/build.sh
           done
@@ -64,7 +64,6 @@ jobs:
           if-no-files-found: error
 
   # Each program is started on a machine of its own kind before anything is published.
-  # darwin-amd64 has no hosted runner here; it is checked by hand under Rosetta (see README).
   smoke:
     needs: build
     strategy:
