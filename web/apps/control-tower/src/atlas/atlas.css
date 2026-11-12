@@ -1,0 +1,91 @@
+/* Factory Atlas: interaction affordances only. Colours are tokens. */
+.atlas-viewport {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  background: var(--mach-factory-ground);
+  cursor: grab;
+}
+.atlas-viewport[data-dragging="true"] {
+  cursor: grabbing;
+}
+.atlas-viewport:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: -2px;
+}
+.atlas-camera {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+.atlas-camera > svg {
+  position: absolute;
+  overflow: visible;
+}
+.atlas-overlay {
+  pointer-events: none;
+}
+.atlas-hit {
+  cursor: pointer;
+}
+.atlas-hit:focus {
+  outline: none;
+}
+.atlas-halo,
+.atlas-halo-group text {
+  paint-order: stroke;
+  stroke: var(--mach-factory-ground);
+  stroke-width: 3.2px;
+  stroke-linejoin: round;
+}
+.atlas-effects {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.atlas-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--mach-surface-raised);
+  border: 1px solid var(--mach-line);
+}
+.atlas-controls button {
+  min-width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--mach-ink);
+  font: 600 13px/1 var(--mach-font-sans);
+}
+.atlas-controls button:hover {
+  background: var(--mach-factory-plate-lit);
+}
+.atlas-controls button:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 2px;
+}
+.atlas-controls .atlas-lod {
+  align-self: center;
+  padding: 0 6px;
+  color: var(--mach-ink-muted);
+  font: 500 11px/1 var(--mach-font-mono);
+}
+.atlas-meter {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--mach-factory-plate-top);
+  border: 1px solid var(--mach-factory-plate-edge);
+  color: var(--mach-ink-muted);
+  font: 500 11px/1.4 var(--mach-font-mono);
+  pointer-events: none;
+  white-space: pre;
+}
