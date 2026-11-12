@@ -203,13 +203,21 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /*
+   * Reduced motion removes CSS transitions and keyframe animations outright. A near-zero duration
+   * (the old 0.01ms) still starts a transition for every changed property, which on a live SVG
+   * scene is hundreds of invisible transitions a second. Nothing here waits for transitionend or
+   * animationend: Radix's Presence unmounts at once when a closing element has no animation, and
+   * every keyframe in this file ends on the element's own resting style, so removing it shows the
+   * same end state. WAAPI and motion/react animations are not CSS animations and check the media
+   * query themselves.
+   */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
+      animation: none !important;
+      transition: none !important;
       scroll-behavior: auto !important;
     }
   }

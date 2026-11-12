@@ -39,7 +39,7 @@ export interface DialogContentProps extends Omit<ComponentPropsWithoutRef<typeof
  * Focus is trapped, Escape closes, focus returns to the trigger.
  */
 export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(function DialogContent(
-  { title, description, footer, width = "md", className, children, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
+  { title, description, footer, width = "md", className, children, onOpenAutoFocus, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
   ref,
 ) {
   const returnFocus = useFocusReturn();
@@ -62,6 +62,10 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(func
         onKeyDown={(event) => {
           onKeyDown?.(event);
           escape.onKeyDown(event);
+        }}
+        onOpenAutoFocus={(event) => {
+          returnFocus.remember();
+          onOpenAutoFocus?.(event);
         }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);

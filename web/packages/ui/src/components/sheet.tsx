@@ -24,7 +24,7 @@ export interface SheetContentProps extends Omit<ComponentPropsWithoutRef<typeof 
  * comparison, reviewer remarks. Modal: focus is trapped and Escape closes.
  */
 export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(function SheetContent(
-  { title, description, footer, width = 480, className, children, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
+  { title, description, footer, width = 480, className, children, onOpenAutoFocus, onCloseAutoFocus, onEscapeKeyDown, onKeyDown, ...props },
   ref,
 ) {
   const returnFocus = useFocusReturn();
@@ -45,6 +45,10 @@ export const SheetContent = forwardRef<HTMLDivElement, SheetContentProps>(functi
         onKeyDown={(event) => {
           onKeyDown?.(event);
           escape.onKeyDown(event);
+        }}
+        onOpenAutoFocus={(event) => {
+          returnFocus.remember();
+          onOpenAutoFocus?.(event);
         }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
