@@ -53,6 +53,7 @@ class InstallTest(Base):
         self.assertEqual(code, 0, out)
         files = snapshot(self.project)
         for expected in (SKILL, ".claude/skills/mach-intent/scripts/cell.py", ".claude/skills/mach-intent/scripts/validate_slice.py",
+                         ".claude/skills/mach-intent/scripts/lifecycle.py",
                          ".claude/skills/mach-intent/assets/slice-template.md", ".claude/skills/mach-intent/references/headless.md",
                          ".claude/skills/mach-ticket/SKILL.md", ".claude/skills/mach-ticket/scripts/ticket.py",
                          ".claude/skills/mach-audit/SKILL.md", ".claude/skills/mach-audit/scripts/audit.py",

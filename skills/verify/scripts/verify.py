@@ -65,7 +65,27 @@ def is_byproduct(name: str) -> bool:
 
 
 class VerifyError(Exception):
-    """A gate refused. Printed without a traceback; exit code 1."""
+    """A gate refused. Printed without a traceback; exit code 1. `code` names the gate's reason for the lifecycle log."""
+
+    def __init__(self, message: str = "", code: str = "refused") -> None:
+        super().__init__(message)
+        self.code = code
+
+# M6.1 station telemetry. The shared helper lives with the intent station. It is observational only: if it
+# cannot be loaded, nothing is recorded and this station behaves exactly as before.
+try:
+    _SKILL = Path(__file__).resolve().parent.parent
+    sys.path.append(str(_SKILL.parent / ("mach-intent" if _SKILL.name.startswith("mach-") else "intent") / "scripts"))
+    import lifecycle  # noqa: E402
+except Exception:  # noqa: BLE001
+    lifecycle = None
+
+
+def telemetry(*args: Any, **kwargs: Any) -> None:
+    """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
+    if lifecycle is not None:
+        lifecycle.record(*args, **kwargs)
+
 
 
 def now() -> str:
@@ -139,7 +159,7 @@ class Cell:
 
     def require_started(self) -> None:
         if not self.results.get("started_at") or self.results.get("head") != self.head():
-            raise VerifyError(f"Verification has not started for this build of {self.ticket_id}. Run: verify.py start {self.ticket_id}")
+            raise VerifyError(f"Verification has not started for this build of {self.ticket_id}. Run: verify.py start {self.ticket_id}", code="not-started")
 
     def head(self) -> str:
         return git(self.work, "rev-parse", "HEAD").stdout.strip()
@@ -281,15 +301,15 @@ def changed_files(cell: Cell) -> List[str]:
 def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     stage = cell.info.get("stage")
     if stage not in ("built", "verified"):
-        raise VerifyError(f"The cell's stage is '{stage}'. Only a built cell can be verified; the build station must finish first.")
+        raise VerifyError(f"The cell's stage is '{stage}'. Only a built cell can be verified; the build station must finish first.", code="wrong-stage")
     if not cell.build or cell.build.get("status") != "BUILT":
-        raise VerifyError("build-report.json is missing from the cell, so there is nothing certified as built to verify.")
+        raise VerifyError("build-report.json is missing from the cell, so there is nothing certified as built to verify.", code="not-built")
     head = cell.head()
     if cell.build.get("head") != head:
-        raise VerifyError("The cell's code changed after the build finished. Finish the build again before verifying.")
+        raise VerifyError("The cell's code changed after the build finished. Finish the build again before verifying.", code="code-changed")
     dirty = changed_files(cell)
     if dirty:
-        raise VerifyError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}). Verification runs exactly what was built.")
+        raise VerifyError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}). Verification runs exactly what was built.", code="uncommitted-changes")
     app_type = cell.info.get("app_type")
     if app_type not in REQUIRED_EVIDENCE:
         raise VerifyError(f"The cell has no usable app type ('{app_type}'). The plan sets it; regroom the ticket.")
@@ -299,6 +319,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
 
     cell.evidence.mkdir(exist_ok=True)
     stale = [p for p in cell.evidence.iterdir() if not p.name.startswith("previous-")]
+    archive = None
     if stale:
         archive = cell.evidence / f"previous-{len(list(cell.evidence.glob('previous-*'))) + 1}"
         archive.mkdir()
@@ -317,6 +338,10 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "suite": suite, "contracts": contracts, "records": {},
     }
     cell.save()
+    telemetry(cell.root, "gate.evaluated", "verify", lambda: {"gate": "verify.start", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
+    telemetry(cell.root, "station.entered", "verify", lambda: {
+        "stage": stage, "head": lifecycle.short(head), "items": len(targets), "suite_passed": bool(suite["passed"]), "contracts_valid": bool(contracts["valid"]),
+        "previous_evidence": f"evidence/{archive.name}" if archive else None})
     print(json.dumps({
         "status": "STARTED", "ticket_id": cell.ticket_id, "app_type": app_type, "workdir": str(cell.work), "evidence_dir": str(cell.evidence),
         "suite": suite, "contracts": contracts,
@@ -333,7 +358,7 @@ def cmd_record(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     known = {target["id"]: target for target in cell.targets()}
     if args.target not in known:
-        raise VerifyError(f"{args.target} is not something this verification must prove. Expected one of: {', '.join(known)}.")
+        raise VerifyError(f"{args.target} is not something this verification must prove. Expected one of: {', '.join(known)}.", code="unknown-item")
     note = " ".join(args.note.split())
     if len(note) < 20:
         raise VerifyError("The note must say what you did and what you observed, in a sentence; for a failure, what was expected and what happened instead.")
@@ -345,15 +370,18 @@ def cmd_record(cell: Cell, args: argparse.Namespace) -> int:
         if not path.is_file() or path.stat().st_size == 0:
             raise VerifyError(f"Evidence file '{name}' does not exist or is empty.")
         if path.stat().st_mtime < cell.results["started_epoch"] - 1:
-            raise VerifyError(f"Evidence file '{name}' is older than this verification run. Capture it again; old evidence proves nothing about this build.")
+            raise VerifyError(f"Evidence file '{name}' is older than this verification run. Capture it again; old evidence proves nothing about this build.", code="stale-evidence")
         relative = path.relative_to(cell.evidence.resolve()).as_posix()
         if relative == "test-suite.log":
-            raise VerifyError("The builder's own test run is not evidence for a check. Exercise the behavior yourself and capture that.")
+            raise VerifyError("The builder's own test run is not evidence for a check. Exercise the behavior yourself and capture that.", code="builder-evidence")
         if relative in AUTO_FILES:
-            raise VerifyError(f"'{relative}' is written by this script and cannot stand as your evidence.")
+            raise VerifyError(f"'{relative}' is written by this script and cannot stand as your evidence.", code="station-file-as-evidence")
         files.append({"file": relative, "sha256": sha(path), "bytes": path.stat().st_size})
     cell.results["records"][args.target] = {"kind": known[args.target]["kind"], "result": args.result, "note": note, "evidence": files, "at": now()}
     cell.save()
+    telemetry(cell.root, "verify.check_recorded", "verify", lambda: {
+        "item": args.target, "kind": known[args.target]["kind"], "result": args.result,
+        "evidence": [{"path": f"evidence/{entry['file']}", "sha256": entry["sha256"]} for entry in files]})
     remaining = [target for target in known if target not in cell.results["records"]]
     print(json.dumps({"status": "RECORDED", "id": args.target, "result": args.result, "remaining": remaining or "none; run finish"}, indent=2))
     return 0
@@ -391,6 +419,8 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
 
     status = "FAIL_WITH_EVIDENCE" if failures else "INCOMPLETE_EVIDENCE" if incomplete else "PASS"
     if status == "INCOMPLETE_EVIDENCE":
+        telemetry(cell.root, "gate.evaluated", "verify", lambda: {"gate": "verify.finish", "outcome": "refuse", "reason_code": "incomplete-evidence",
+                                                                  "overridden_by_reason": False, "problems": len(incomplete), "unproven": missing})
         print("INCOMPLETE_EVIDENCE:\n- " + "\n- ".join(incomplete))
         return 1
 
@@ -418,6 +448,11 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     cell.info["stage"] = "verified" if status == "PASS" else "built"
     cell.info["verification"] = status
     cell.save_info()
+    telemetry(cell.root, "gate.evaluated", "verify", lambda: {"gate": "verify.verdict", "outcome": "pass" if status == "PASS" else "refuse",
+                                                              "reason_code": status, "overridden_by_reason": False})
+    telemetry(cell.root, "station.exited", "verify", lambda: {
+        "outcome": status, "stage": cell.info["stage"], "checks_passed": sum(1 for r in records.values() if r["result"] == "pass"),
+        "checks_failed": sum(1 for r in records.values() if r["result"] == "fail"), "suite_passed": bool(suite["passed"]), "contracts_valid": bool(contracts["valid"])})
     passed = sum(1 for r in records.values() if r["result"] == "pass")
     print(json.dumps({
         "status": status, "summary": str(cell.evidence / "summary.json"), "checks_passed": passed, "checks_failed": len(records) - passed,
@@ -462,11 +497,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
         return args.func(Cell(project, args.ticket_id), args)
     except VerifyError as exc:
         print(f"refused: {exc}", file=sys.stderr)
+        if project is not None and args.command != "status":
+            telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", "verify", lambda: {
+                "gate": f"verify.{args.command}", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False, "item": getattr(args, "target", None)})
         return 1
 
 

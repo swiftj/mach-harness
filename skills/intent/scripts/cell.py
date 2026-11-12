@@ -24,6 +24,17 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validate_slice  # noqa: E402
 
+try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
+    import lifecycle  # noqa: E402
+except Exception:  # noqa: BLE001
+    lifecycle = None
+
+
+def telemetry(*args: Any, **kwargs: Any) -> None:
+    """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
+    if lifecycle is not None:
+        lifecycle.record(*args, **kwargs)
+
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 SLICE_FILE_RE = re.compile(r"^SLICE-(\d{3,})-.*\.md$")
 SLICE_ID_RE = re.compile(r"SLICE-(\d{3,})")
@@ -202,6 +213,8 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
         if cell.get("mode") != mode:  # a person may resume a ticket that was groomed headless
             cell["mode"] = mode
             write_cell(project, cell)
+        if cell.get("stage") in ("interview", "spec-open"):  # grooming resumes; a session already under way is the same visit
+            telemetry(root, "station.entered", "groom", lambda: {"stage": cell.get("stage"), "mode": mode, "resumed": True}, once=True)
         print(json.dumps(describe(project, cell), indent=2))
         return 0
 
@@ -240,6 +253,7 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
     if note:
         cell["note"] = note
     write_cell(project, cell)
+    telemetry(root, "station.entered", "groom", lambda: {"stage": "interview", "mode": cell["mode"], "isolation": isolation})
     (workdir(project, cell) / "specs" / "slices").mkdir(parents=True, exist_ok=True)
     print(json.dumps(describe(project, cell), indent=2))
     return 0
@@ -423,6 +437,8 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     for problem in intent_problems:
         print(f"error: {problem}")
     if hard or intent_problems:
+        telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "refuse", "reason_code": "spec-invalid",
+                                                            "overridden_by_reason": False, "errors": len(hard) + len(intent_problems)})
         print(f"FAILED: {len(hard) + len(intent_problems)} error(s). Nothing was finalized.")
         return 1
 
@@ -447,6 +463,9 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         if spec_json.exists():
             spec_json.unlink()
         write_cell(project, cell)
+        telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "refuse", "reason_code": "open-questions",
+                                                            "overridden_by_reason": False, "open_questions": counts["open_questions"]})
+        telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-open", "stage": "spec-open", "slice_id": cell["slice_id"]})
         report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): save draft with open questions [{cell['ticket_id']}]", args.no_commit))
         print(json.dumps({"status": "SAVED_NOT_READY", "slice_id": cell["slice_id"], **counts}, indent=2))
         print("SAVED: the spec is valid but open questions remain, so it is not ready for contracts or building.")
@@ -456,6 +475,8 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     spec_json.write_text(json.dumps(export, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     cell["stage"] = "spec-ready"
     write_cell(project, cell)
+    telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
+    telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-ready", "stage": "spec-ready", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts})
     report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): {cell['title']} [{cell['ticket_id']}]", args.no_commit))
     print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts}, indent=2))
     print(f"READY: wrote {root / 'spec.md'} and {spec_json}.")
@@ -465,6 +486,8 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
 def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
+    if cell.get("stage") in ("spec-ready", "planned"):  # the plan station's first check opens its visit; later checks belong to it
+        telemetry(root, "station.entered", "plan", lambda: {"stage": cell.get("stage")}, once=True)
     work = workdir(project, cell)
     spec_json = root / "spec.json"
     if not spec_json.is_file():
@@ -532,6 +555,8 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     if problems:
         for problem in problems:
             print(f"error: plan.md: {problem}")
+        telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.check", "outcome": "refuse", "reason_code": "plan-invalid",
+                                                           "overridden_by_reason": False, "errors": len(problems)})
         print(f"FAILED: {len(problems)} error(s)")
         return 1
     cell.update({"app_type": app_type, "risk": risk, "contracts": contracts, "stage": "planned"})
@@ -540,6 +565,9 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
         model.update({"risk": risk, "app_type": app_type})
         spec_json.write_text(json.dumps(model, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     write_cell(project, cell)
+    telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.check", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
+    telemetry(root, "station.exited", "plan", lambda: {"outcome": "planned", "stage": "planned", "app_type": app_type, "risk": risk,
+                                                       "contracts": len(contracts), "tasks": len(task_lines)})
     report(commit(project, cell, contracts, f"contract({cell.get('slice_id')}): boundary contracts [{cell['ticket_id']}]", args.no_commit))
     print(json.dumps({"status": "PLANNED", "app_type": app_type, "risk": risk, "contracts": contracts, "tasks": len(task_lines)}, indent=2))
     return 0
@@ -703,6 +731,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return args.func(project, args)
     except CellError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        station, gate = {"finalize": ("groom", "groom.finalize"), "check-plan": ("plan", "plan.check")}.get(args.command, (None, None))
+        if station:
+            telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", station, lambda: {
+                "gate": gate, "outcome": "refuse", "reason_code": "refused", "overridden_by_reason": False})
         return 2
 
 

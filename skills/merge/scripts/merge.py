@@ -45,7 +45,27 @@ TIERS = ("High", "Medium", "Low")
 
 
 class MergeError(Exception):
-    """A gate refused. Printed without a traceback; exit code 1."""
+    """A gate refused. Printed without a traceback; exit code 1. `code` names the gate's reason for the lifecycle log."""
+
+    def __init__(self, message: str = "", code: str = "refused") -> None:
+        super().__init__(message)
+        self.code = code
+
+# M6.1 station telemetry. The shared helper lives with the intent station. It is observational only: if it
+# cannot be loaded, nothing is recorded and this station behaves exactly as before.
+try:
+    _SKILL = Path(__file__).resolve().parent.parent
+    sys.path.append(str(_SKILL.parent / ("mach-intent" if _SKILL.name.startswith("mach-") else "intent") / "scripts"))
+    import lifecycle  # noqa: E402
+except Exception:  # noqa: BLE001
+    lifecycle = None
+
+
+def telemetry(*args: Any, **kwargs: Any) -> None:
+    """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
+    if lifecycle is not None:
+        lifecycle.record(*args, **kwargs)
+
 
 
 def now() -> str:
@@ -241,12 +261,14 @@ def revalidate(cell: Cell, main: str) -> Optional[Dict[str, Any]]:
         conflicts = git(cell.work, "diff", "--name-only", "--diff-filter=U").stdout.split()
         git(cell.work, "merge", "--abort")
         raise MergeError(f"{main} has moved on since this ticket was approved, and bringing the branch up to date conflicts in {', '.join(conflicts) or 'some files'}. "
-                         f"A person must merge {main} into {cell.branch} in {cell.work} and resolve it; the ticket then needs verifying and reviewing again.")
+                         f"A person must merge {main} into {cell.branch} in {cell.work} and resolve it; the ticket then needs verifying and reviewing again.",
+                         code="revalidation-conflict")
     suite = run_suite(cell)
     if not suite["passed"]:
         path = send_back(cell, f"The test suite fails once {main} is merged in.",
                          f"The ticket passed on its own, but with the current {main} merged into it `{suite['command']}` fails:\n\n```\n{suite['output_tail']}\n```")
-        raise MergeError(f"With the current {main} merged in, the test suite fails, so nothing was merged. The ticket goes back to the build station: findings are in {path}.")
+        raise MergeError(f"With the current {main} merged in, the test suite fails, so nothing was merged. The ticket goes back to the build station: findings are in {path}.",
+                         code="sent-back")
     cell.info["revalidated"] = {"head": cell.head(), "onto": main_head, "at": now(), "tests": suite["command"]}
     cell.save_info()
     return cell.info["revalidated"]
@@ -336,9 +358,22 @@ def cmd_run(cell: Cell, args: argparse.Namespace) -> int:
     plan = survey(cell, args.by_person)
     if plan.get("approval_void"):
         void_approval(cell)
-        raise MergeError(plan["refusals"][-1] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]))
+        raise MergeError(plan["refusals"][-1] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="approval-void")
     if plan["refusals"]:
-        raise MergeError(plan["refusals"][0] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]))
+        raise MergeError(plan["refusals"][0] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="merge-refused")
+    telemetry(cell.root, "gate.evaluated", "merge", lambda: {"gate": "merge.run", "outcome": "pass", "reason_code": None, "overridden_by_reason": False,
+                                                             "by_person": bool(args.by_person)})
+    telemetry(cell.root, "station.entered", "merge", lambda: {"stage": plan["stage"], "method": cell.method, "behind_main": bool(plan["behind_main"])})
+    try:
+        return land(cell, args, plan)
+    except MergeError as exc:
+        telemetry(cell.root, "gate.evaluated", "merge", lambda: {"gate": "merge.land", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False})
+        telemetry(cell.root, "station.exited", "merge", lambda: {"outcome": exc.code, "stage": cell.info.get("stage")})
+        exc.recorded = True
+        raise
+
+
+def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
     main = plan["into"]
     revalidated = revalidate(cell, main)
     head = cell.head()
@@ -349,7 +384,8 @@ def cmd_run(cell: Cell, args: argparse.Namespace) -> int:
         merged = git(cell.project, "merge", "--no-ff", "-m", f"Merge {cell.ticket_id}: {title}", cell.branch)
         if merged.returncode != 0:
             git(cell.project, "merge", "--abort")
-            raise MergeError("git could not merge the branch into the main checkout: " + ((merged.stderr.strip() or merged.stdout.strip()).splitlines() or ["merge failed"])[-1])
+            raise MergeError("git could not merge the branch into the main checkout: " + ((merged.stderr.strip() or merged.stdout.strip()).splitlines() or ["merge failed"])[-1],
+                             code="merge-failed")
         result.update({"status": "MERGED", "merge_commit": git(cell.project, "rev-parse", "HEAD").stdout.strip()})
     else:
         landed = land_by_pr(cell, main, merge_now=cell.mode == "auto" or args.by_person)
@@ -358,8 +394,15 @@ def cmd_run(cell: Cell, args: argparse.Namespace) -> int:
     if result["status"] == "MERGED":
         cell.info.update({"stage": "merged", "merged": {"commit": result.get("merge_commit"), "at": now(), "method": cell.method, "landed_commit": head}})
         cell.save_info()
+        telemetry(cell.root, "merge.completed", "merge", lambda: {
+            "method": cell.method, "approved_commit": lifecycle.short(result["approved_commit"]), "landed_commit": lifecycle.short(head),
+            "merge_commit": lifecycle.short(result.get("merge_commit")), "revalidated": revalidated is not None,
+            "pull_request": int(re.search(r"/pull/(\d+)", result["pull_request"]).group(1)) if result.get("pull_request") else None})
+        telemetry(cell.root, "station.exited", "merge", lambda: {"outcome": "merged", "stage": "merged"})
         result["next"] = f"Merged. Clean up with the cleanup skill for {cell.ticket_id}."
     else:
+        telemetry(cell.root, "station.exited", "merge", lambda: {"outcome": "pr-open", "stage": cell.info.get("stage"),
+                                                                 "pull_request": int(re.search(r"/pull/(\d+)", result["pull_request"]).group(1))})
         result["next"] = "The pull request is open. Run this again once it can be merged, or merge it on the platform; then clean up."
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0 if result["status"] == "MERGED" else 3
@@ -388,11 +431,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
         return args.func(Cell(project, args.ticket_id), args)
     except MergeError as exc:
         print(f"refused: {exc}", file=sys.stderr)
+        if project is not None and args.command == "run" and not getattr(exc, "recorded", False):
+            telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", "merge", lambda: {
+                "gate": "merge.run", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False})
         return 1
 
 

@@ -69,7 +69,27 @@ def is_byproduct(name: str) -> bool:
 
 
 class ReviewError(Exception):
-    """A gate refused. Printed without a traceback; exit code 1."""
+    """A gate refused. Printed without a traceback; exit code 1. `code` names the gate's reason for the lifecycle log."""
+
+    def __init__(self, message: str = "", code: str = "refused") -> None:
+        super().__init__(message)
+        self.code = code
+
+# M6.1 station telemetry. The shared helper lives with the intent station. It is observational only: if it
+# cannot be loaded, nothing is recorded and this station behaves exactly as before.
+try:
+    _SKILL = Path(__file__).resolve().parent.parent
+    sys.path.append(str(_SKILL.parent / ("mach-intent" if _SKILL.name.startswith("mach-") else "intent") / "scripts"))
+    import lifecycle  # noqa: E402
+except Exception:  # noqa: BLE001
+    lifecycle = None
+
+
+def telemetry(*args: Any, **kwargs: Any) -> None:
+    """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
+    if lifecycle is not None:
+        lifecycle.record(*args, **kwargs)
+
 
 
 def now() -> str:
@@ -140,7 +160,7 @@ class Cell:
 
     def require_started(self) -> None:
         if not self.packet or self.packet.get("head") != self.head():
-            raise ReviewError(f"Review has not started for this build of {self.ticket_id}. Run: review.py start {self.ticket_id}")
+            raise ReviewError(f"Review has not started for this build of {self.ticket_id}. Run: review.py start {self.ticket_id}", code="not-started")
 
     def max_loops(self) -> int:
         value = self.section("review").get("max_loops", MAX_LOOPS)
@@ -192,18 +212,18 @@ def panel_for(cell: Cell, risk: str, tuning: bool = False) -> Dict[str, Any]:
 def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     stage = cell.info.get("stage")
     if stage != "verified":
-        raise ReviewError(f"The cell's stage is '{stage}'. Only a verified cell can be reviewed; the verify station must pass it first.")
+        raise ReviewError(f"The cell's stage is '{stage}'. Only a verified cell can be reviewed; the verify station must pass it first.", code="wrong-stage")
     head = cell.head()
     if cell.summary.get("status") != "PASS":
-        raise ReviewError("There is no passing verification for this cell (evidence/summary.json). Review needs evidence, not claims.")
+        raise ReviewError("There is no passing verification for this cell (evidence/summary.json). Review needs evidence, not claims.", code="no-passing-verification")
     if cell.summary.get("head") != head or cell.build.get("head") != head:
-        raise ReviewError("The cell's code changed after it was built or verified. Build and verify it again before review.")
+        raise ReviewError("The cell's code changed after it was built or verified. Build and verify it again before review.", code="code-changed")
     dirty = [line[3:].strip().strip('"') for line in git(cell.work, "status", "--porcelain", "--untracked-files=all").stdout.splitlines() if line.strip()]
     if [name for name in dirty if not is_byproduct(name)]:
-        raise ReviewError("The cell has uncommitted changes. Review covers exactly what was built and verified.")
+        raise ReviewError("The cell has uncommitted changes. Review covers exactly what was built and verified.", code="uncommitted-changes")
     missing = [entry["file"] for entry in cell.summary.get("evidence_files") or [] if not (cell.root / "evidence" / entry["file"]).is_file()]
     if missing:
-        raise ReviewError(f"Evidence listed in the verification summary is missing: {', '.join(missing[:5])}. Verify the ticket again.")
+        raise ReviewError(f"Evidence listed in the verification summary is missing: {', '.join(missing[:5])}. Verify the ticket again.", code="evidence-missing")
     risk = cell.info.get("risk") if cell.info.get("risk") in PANELS else "High"
     tuning = TUNING_LABEL in ticket_labels(cell)
     rules = panel_for(cell, risk, tuning)
@@ -261,6 +281,12 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
             cell.packet["human_approval_required"] = True
     cell.packet["tuning"] = tuning
     write_json(cell.folder / "packet.json", cell.packet)
+    telemetry(cell.root, "gate.evaluated", "review", lambda: {"gate": "review.start", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
+    telemetry(cell.root, "station.entered", "review", lambda: {"stage": stage, "head": lifecycle.short(head), "round": cell.packet["round"]})
+    telemetry(cell.root, "review.round_started", "review", lambda: {
+        "round": cell.packet["round"], "max_rounds": cell.packet["max_rounds"], "risk": risk, "tuning": tuning,
+        "seats": [seat["role"] for seat in rules["panel"]], "models": {seat["role"]: seat["model"] for seat in rules["panel"]},
+        "approvals_needed": rules["approvals"], "human_approval_required": cell.packet["human_approval_required"], "delta": delta is not None})
     print(json.dumps({"status": "STARTED", "packet": str(cell.folder / "packet.json"), **{k: cell.packet[k] for k in (
         "round", "max_rounds", "risk", "tuning", "approvals_needed", "human_approval_required", "human_approval_reasons", "panel", "diff_stat")},
         "next": "Start one fresh reviewer per panel seat, in parallel, each on its seat's model. Then run tally."}, indent=2))
@@ -316,7 +342,7 @@ def cmd_submit(cell: Cell, args: argparse.Namespace) -> int:
         raise ReviewError(f"'{args.reviewer}' is not a seat on this panel. Seats: {', '.join(sorted(seats))}.")
     target = cell.folder / "votes" / f"{args.reviewer}.json"
     if target.is_file():
-        raise ReviewError(f"The {args.reviewer} reviewer has already voted in this round. A vote is not revised; a new round follows a new build.")
+        raise ReviewError(f"The {args.reviewer} reviewer has already voted in this round. A vote is not revised; a new round follows a new build.", code="already-voted")
     source = Path(args.findings)
     data = load_json(source)
     if data is None:
@@ -326,6 +352,9 @@ def cmd_submit(cell: Cell, args: argparse.Namespace) -> int:
     vote = "REJECT" if blockers else "APPROVE"
     write_json(target, {"reviewer": args.reviewer, "vote": vote, "summary": " ".join(data["summary"].split()), "findings": findings,
                         "head": cell.packet["head"], "at": now()})
+    telemetry(cell.root, "review.verdict_submitted", "review", lambda: {
+        "round": cell.packet["round"], "seat": args.reviewer, "vote": vote, "blockers": blockers, "notes": len(findings) - blockers,
+        "rules": sorted({rule for finding in findings if finding["severity"] == "blocker" for rule in lifecycle.rule_ids(finding.get("rule"))})})
     print(json.dumps({"status": "RECORDED", "reviewer": args.reviewer, "vote": vote, "blockers": blockers, "notes": len(findings) - blockers}, indent=2))
     return 0
 
@@ -350,11 +379,11 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     earlier = load_json(cell.folder / "decision.json")
     if isinstance(earlier, dict) and earlier.get("head") == cell.packet["head"]:
-        raise ReviewError(f"This round was already tallied: {earlier.get('outcome')}. A decision is not recounted; a new round follows a new build.")
+        raise ReviewError(f"This round was already tallied: {earlier.get('outcome')}. A decision is not recounted; a new round follows a new build.", code="already-tallied")
     votes = cell.votes()
     absent = [seat["role"] for seat in cell.packet["panel"] if seat["role"] not in votes]
     if absent:
-        raise ReviewError(f"No vote yet from: {', '.join(absent)}. Every seat must submit findings before the tally.")
+        raise ReviewError(f"No vote yet from: {', '.join(absent)}. Every seat must submit findings before the tally.", code="votes-missing")
     approvals = sum(1 for vote in votes.values() if vote["vote"] == "APPROVE")
     needed = cell.packet["approvals_needed"]
     blockers = sum(1 for vote in votes.values() for finding in vote["findings"] if finding["severity"] == "blocker")
@@ -380,6 +409,12 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     cell.info["stage"] = {"APPROVED": "approved", "AWAITING_HUMAN": "awaiting-human", "REJECTED": "built", "ESCALATE": "blocked"}[outcome]
     cell.info["review"] = outcome
     cell.save_info()
+    telemetry(cell.root, "review.decided", "review", lambda: {
+        "round": decision["round"], "decision": outcome, "approvals": approvals, "needed": needed, "votes": decision["votes"],
+        "blockers": blockers, "security_veto": bool(vetoed), "human_approval_required": decision["human_approval_required"]})
+    telemetry(cell.root, "station.exited", "review", lambda: {"outcome": outcome, "stage": cell.info["stage"], "round": decision["round"]})
+    if outcome == "AWAITING_HUMAN":
+        telemetry(cell.root, "station.entered", "human-approval", lambda: {"stage": "awaiting-human", "round": decision["round"]})
     overruled = [role for role, vote in votes.items() if vote["vote"] == "REJECT"] if approvals >= needed and not vetoed else []
     next_step = {
         "APPROVED": f"Approved. The branch {cell.info.get('branch')} may be merged.",
@@ -396,9 +431,9 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
 def cmd_approve_human(cell: Cell, args: argparse.Namespace) -> int:
     decision = load_json(cell.folder / "decision.json")
     if not isinstance(decision, dict) or decision.get("outcome") != "AWAITING_HUMAN" or cell.info.get("stage") != "awaiting-human":
-        raise ReviewError("This ticket is not waiting for a person's approval. A person signs off only after the panel has approved.")
+        raise ReviewError("This ticket is not waiting for a person's approval. A person signs off only after the panel has approved.", code="not-awaiting-human")
     if decision.get("head") != cell.head():
-        raise ReviewError("The cell's code changed after the panel voted. Review it again.")
+        raise ReviewError("The cell's code changed after the panel voted. Review it again.", code="code-changed")
     name = " ".join(args.by.split())
     if len(name) < 2:
         raise ReviewError("--by must name the person who approved.")
@@ -409,6 +444,8 @@ def cmd_approve_human(cell: Cell, args: argparse.Namespace) -> int:
     write_json(cell.root / "review" / "decision.json", decision)
     cell.info.update({"stage": "approved", "review": "APPROVED"})
     cell.save_info()
+    telemetry(cell.root, "human.approval_recorded", "human-approval", lambda: {"round": decision.get("round"), "decision": "APPROVED", "note_given": bool(args.note)})
+    telemetry(cell.root, "station.exited", "human-approval", lambda: {"outcome": "approved", "stage": "approved"})
     print(json.dumps({"outcome": "APPROVED", "approved_by": name, "next": f"Approved. The branch {cell.info.get('branch')} may be merged."}, indent=2))
     return 0
 
@@ -447,11 +484,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
         return args.func(Cell(project, args.ticket_id), args)
     except ReviewError as exc:
         print(f"refused: {exc}", file=sys.stderr)
+        if project is not None and args.command != "status":
+            telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated",
+                      "human-approval" if args.command == "approve-human" else "review", lambda: {
+                          "gate": f"review.{args.command}", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False,
+                          "seat": getattr(args, "reviewer", None)})
         return 1
 
 

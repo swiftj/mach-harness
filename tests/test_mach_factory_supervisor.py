@@ -408,9 +408,12 @@ class SupervisedTest(Base):
         self.assertEqual(tools, policy.read(self.eng)["allowed_tools"])  # exactly what the person consented to, and last
         self.assertIn(f"Bash({sys.executable} *)", tools)
         self.assertFalse([part for part in argv if "dangerously" in part or part in ("Bash", "Bash(*)", "bypassPermissions", "--bare", "--setting-sources")])
-        self.assertTrue(set(call["env"]) - OS_ADDED_ENV <= set(executor.PASSED_ENV) | set(executor.PROXY_ENV) | set(executor.ENV), sorted(call["env"]))
+        allowed_env = set(executor.PASSED_ENV) | set(executor.PROXY_ENV) | set(executor.ENV) | {executor.EXECUTION_ENV}
+        self.assertTrue(set(call["env"]) - OS_ADDED_ENV <= allowed_env, sorted(call["env"]))
         self.assertEqual((call["env"]["HOME"], call["env"]["GIT_TERMINAL_PROMPT"]), (str(self.home), "0"))
         record = list(self.executions().values())[0]
+        # M6.1: the run carries its own execution ID, so the station scripts it starts stamp their lifecycle records with it.
+        self.assertEqual(call["env"][executor.EXECUTION_ENV], record["execution_id"])
         self.assertEqual(argv[argv.index("--session-id") + 1], record["session_id"])
         self.assertEqual((record["stage_at_start"], record["action_at_start"], record["until"], record["attempt"]), ("spec-ready", "plan", "merge", 1))
         # The next pass reads the cell's own record of where the ticket stands.
@@ -1003,7 +1006,7 @@ class BoundaryTest(Base):
                 if "leak" in value:
                     self.assertNotIn(value, json.dumps(env))
             self.assertEqual((env["LANG"], env["NO_PROXY"], env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"]), ("en_US.UTF-8", "localhost", "0"))
-            self.assertTrue(set(env) - OS_ADDED_ENV <= set(executor.PASSED_ENV) | set(executor.PROXY_ENV) | set(executor.ENV), sorted(env))
+            self.assertTrue(set(env) - OS_ADDED_ENV <= set(executor.PASSED_ENV) | set(executor.PROXY_ENV) | set(executor.ENV) | {executor.EXECUTION_ENV}, sorted(env))
         self.assertEqual(executor.environment({"PATH": "/bin", "HTTPS_PROXY": "http://proxy.test:3128", "MY_API_KEY": "k"}),
                          {"PATH": "/bin", "HTTPS_PROXY": "http://proxy.test:3128", **executor.ENV})
 
