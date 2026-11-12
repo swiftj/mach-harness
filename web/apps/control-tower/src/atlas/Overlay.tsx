@@ -5,12 +5,14 @@
  * a person's gate, a dependency unlocking). Text is counter-scaled against the camera so it stays
  * legible at every zoom.
  *
- * Agent labels follow one deterministic rule, so they never collide with the next machine on the
- * rail: a label sits centred under its agent's floor disc (where the floor in front of a machine is
- * always clear), never beside the head; agents sharing a spot stack their labels in seat order.
+ * The upright labels (callouts, the selection's label, agents' labels) are placed in one
+ * deterministic pass per frame (`placeUpright`, findings D7): in priority order, each takes the first
+ * of its allowed positions that covers no label already placed and stays on the stage. Callouts go
+ * first (their anchors are fixed machines, so they hold still), then the selection's label, then
+ * agents' labels, whose first choice is still centred under the agent's floor disc.
  */
 import { memo, type ReactNode } from "react";
-import { Callout, SelectionBrackets, fc, modelTiers, project, round, screenBounds, type Lod, type PlanBox } from "@mach/ui";
+import { Callout, SelectionBrackets, fc, modelTiers, project, regions, round, screenBounds, type Lod, type PlanBox, type RegionKind } from "@mach/ui";
 import { refId, refKind, sceneAt, type EntityRef, type Scene } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { useAtlas, usePlayheadKeyed } from "./context";
@@ -18,6 +20,7 @@ import { AFTERGLOW, agentsElapsedKey, animating, anim, fmtElapsed, chamberOccupa
 import { agentName } from "./Bay";
 import { PLATE_Z, FLOOR_Z, boxAt, type PlantLayout } from "./layout";
 import { locateScreen } from "./locate";
+import { placeUpright, type Box, type Slot, type Stage, type Upright } from "./place";
 
 /** Text and callouts keep a readable size: scaled by 1/zoom, within limits. */
 function Scaled({ x, y, k, children }: { x: number; y: number; k: number; children: ReactNode }) {
@@ -51,15 +54,8 @@ function shortName(scene: Scene, entity: EntityRef): string {
   }
 }
 
-/** The stage as seen by the camera, in projected units, inset by the sheet's margin; what callouts must stay inside. */
-export interface OverlayView {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-  /** The camera toolbar in the stage's corner, which callouts must not sit under. */
-  controls: { x0: number; y0: number; x1: number; y1: number } | null;
-}
+/** The stage as seen by the camera, in projected units, inset by the sheet's margin; what labels must stay inside. */
+export type OverlayView = Stage;
 
 export interface OverlayProps {
   zoom: number;
@@ -73,6 +69,11 @@ export interface OverlayProps {
 
 /** Text scale per zoom level (the inverse of a zoom near the level's lower bound, at least 0.9). */
 const LEVEL_K: Record<Lod, number> = { far: 2.2, mid: 1.33, near: 0.9 };
+
+/** A label offered to the placement pass, with how to draw it in the slot it is given. */
+interface Offer extends Upright {
+  draw: (slot: number) => ReactNode;
+}
 
 export const Overlay = memo(function Overlay({ zoom, lod, focused, theater, view }: OverlayProps) {
   const { layout: L } = useAtlas();
@@ -97,18 +98,26 @@ export const Overlay = memo(function Overlay({ zoom, lod, focused, theater, view
   const sel = selection ? locateScreen(L, scene, t, selection) : null;
   const hov = hovered && hovered !== selection && !theater ? locateScreen(L, scene, t, hovered, 3) : null;
   const foc = focused ? locateScreen(L, scene, t, focused, 5) : null;
+  const stage = view ?? null;
   const labelK = Math.min(1.1, LEVEL_K[lod]);
-  // One placement pass, in priority order: agent labels, then callouts (clear of the labels), then the
-  // selection's own label (clear of both). Every box is in projected units.
-  const labels = lod === "near" ? agentLabels(L, scene, t, labelK) : { nodes: [], boxes: [] };
-  const callouts = layoutCallouts(L, scene, t, reduced, LEVEL_K[lod], lod, labels.boxes, view ?? null);
+
+  // What labels should leave clear when they can: machines, gates, agents and findings flags.
+  const fixed = lod === "far" ? [] : obstacles(L, scene, t);
+  const agents = lod === "near" ? agentOffers(L, scene, t, labelK) : { offers: [], home: [] };
+  // Callouts also leave each agent's own label spot (under its disc) to the agent, when they can.
+  const callouts = calloutOffers(L, scene, t, reduced, LEVEL_K[lod], lod, [...fixed, ...agents.home]);
   const selText = sel && selection ? shortName(scene, selection) : "";
-  const selLabel = sel && selection ? placeSelectionLabel(sel, selText, k, zoom, [...callouts.obstacles, ...callouts.boxes], view ?? null) : null;
+  const selOffer = sel && selection ? selectionOffer(sel, selText, k, zoom, fixed) : null;
+  const offers: Offer[] = [...callouts, ...(selOffer ? [selOffer] : []), ...agents.offers];
+  const slots = placeUpright(offers, stage);
+  const drawn = new Map(offers.map((o, i) => [o.key, o.draw(slots[i]!)]));
+  const pick = (list: Offer[]) => list.map((o) => drawn.get(o.key));
+
   return (
     <g>
-      {labels.nodes.length ? <g aria-hidden="true">{labels.nodes}</g> : null}
-      {/* Callouts and their obstacles use one scale per zoom level, so they never move while the camera moves within a level. */}
-      <g aria-hidden="true">{callouts.nodes}</g>
+      {agents.offers.length ? <g aria-hidden="true">{pick(agents.offers)}</g> : null}
+      {/* Callouts use one scale per zoom level, so they never move while the camera moves within a level. */}
+      <g aria-hidden="true">{pick(callouts)}</g>
       {hov && hovered ? (
         <g aria-hidden="true">
           <rect x={hov.x} y={hov.y} width={hov.width} height={hov.height} rx={3} style={{ fill: "none", stroke: "var(--mach-ink-muted)", strokeWidth: 0.9 / zoom, strokeDasharray: `${3 / zoom} ${2 / zoom}` }} />
@@ -119,15 +128,10 @@ export const Overlay = memo(function Overlay({ zoom, lod, focused, theater, view
           </Scaled>
         </g>
       ) : null}
-      {sel && selection && selLabel ? (
+      {sel && selOffer ? (
         <g aria-hidden="true">
           <SelectionBrackets bounds={sel} pad={5} arm={Math.max(8, 10 / zoom)} />
-          <Scaled x={selLabel.x} y={selLabel.y} k={k}>
-            <rect className="atlas-chip" x={-3} y={-10.5} width={selLabel.w + 6} height={14} rx={2} />
-            <text className="atlas-halo" style={{ fill: fc("select"), fontSize: 10.5, fontWeight: 600 }}>
-              {selText}
-            </text>
-          </Scaled>
+          {drawn.get(selOffer.key)}
         </g>
       ) : null}
       {foc ? <rect aria-hidden="true" x={foc.x} y={foc.y} width={foc.width} height={foc.height} rx={4} style={{ fill: "none", stroke: "var(--mach-focus)", strokeWidth: 2 / zoom }} /> : null}
@@ -135,115 +139,189 @@ export const Overlay = memo(function Overlay({ zoom, lod, focused, theater, view
   );
 });
 
+/** Width of upright sans text, per character at its size (Source Sans 3 semibold runs about 0.45 em; this keeps a margin). */
+const EM = 0.59;
+
 /**
- * The selection's label: above its brackets at the left by default; if that would cover an agent, a
- * label, a callout, a machine or a findings flag, or leave the stage, below them, then right-aligned
- * above, then right-aligned below (findings D7). Deterministic, and only a function of what is drawn.
+ * The selection's label: above its brackets at the left by default; then below, right-aligned above,
+ * right-aligned below, beside on the right, beside on the left. It sits on an opaque ground-coloured
+ * chip, so floor lettering under it never reads through (findings D7).
  */
-function placeSelectionLabel(sel: { x: number; y: number; width: number; height: number }, text: string, k: number, zoom: number, obstacles: Box[], view: OverlayView | null): { x: number; y: number; w: number } {
-  const w = text.length * 6.2;
+function selectionOffer(sel: { x: number; y: number; width: number; height: number }, text: string, k: number, zoom: number, fixed: Box[]): Offer {
+  const w = text.length * 10.5 * EM;
   const cx = sel.x + sel.width / 2;
   const cy = sel.y + sel.height / 2;
-  // Obstacles that are the selected thing itself (its own machine or gate box) do not count.
-  const others = obstacles.filter((o) => !(o.x0 <= cx && cx <= o.x1 && o.y0 <= cy && cy <= o.y1));
   const above = sel.y - 10 / zoom;
   const below = sel.y + sel.height + 8 / zoom + 10.5 * k;
   const left = sel.x - 5;
   const right = sel.x + sel.width + 5 - w * k;
-  // Slid along its line to stay on the stage when the selection sits at an edge.
-  const clampX = (x: number) => (view ? Math.max(view.x0 + 3 * k, Math.min(view.x1 - (w + 3) * k, x)) : x);
-  const candidates: Array<[number, number]> = [
-    [clampX(left), above],
-    [clampX(left), below],
-    [clampX(right), above],
-    [clampX(right), below],
+  const positions: Array<[number, number]> = [
+    [left, above],
+    [left, below],
+    [right, above],
+    [right, below],
+    [sel.x + sel.width + 10 / zoom + 3 * k, cy + 3.5 * k],
+    [sel.x - 10 / zoom - (w + 3) * k, cy + 3.5 * k],
   ];
   const boxOf = ([x, y]: [number, number]): Box => ({ x0: x - 3 * k, y0: y - 11 * k, x1: x + (w + 3) * k, y1: y + 4 * k });
-  const fits = (b: Box) => !view || inside(b, view);
-  const pick = candidates.find((c) => fits(boxOf(c)) && !others.some((o) => hits(o, boxOf(c)))) ?? candidates.find((c) => fits(boxOf(c))) ?? candidates[0]!;
-  return { x: pick[0], y: pick[1], w };
+  return {
+    key: "selection",
+    anchor: { x: cx, y: cy },
+    slots: positions.map((p) => ({ box: boxOf(p) })),
+    // Obstacles that are the selected thing itself (its own machine or gate box) do not count.
+    soft: fixed.filter((o) => !(o.x0 <= cx && cx <= o.x1 && o.y0 <= cy && cy <= o.y1)),
+    draw: (i) => {
+      const [x, y] = positions[i]!;
+      return (
+        <Scaled key="selection" x={x} y={y} k={k}>
+          <rect className="atlas-chip atlas-chip-solid" x={-3} y={-11} width={w + 6} height={15} rx={2} />
+          <text data-label="selection" className="atlas-halo" style={{ fill: fc("select"), fontSize: 10.5, fontWeight: 600 }}>
+            {text}
+          </text>
+        </Scaled>
+      );
+    },
+  };
 }
 
 /**
  * Agent labels (spec b.7, "Agent labels in the overlay"): two lines, role (sans 10 semibold) and tier
  * (sans 9 muted), 16 px under the floor disc. Agents sharing a machine stack under its agent spot,
- * ordered left to right on screen, 24 px apart, left-aligned on a common x, at most three and then
- * "+n more"; a stacked label more than 20 px from its disc gets a hairline leader. The tier line also
- * carries how long the agent has worked (known, never a fraction): our one addition to the rule. Each
- * label sits on a ground-coloured chip, so a post, a gate or a route behind it cannot strike through
- * its text (findings D7). Returns the drawn labels and their boxes, for the callouts to avoid.
+ * ordered left to right on screen, left-aligned on a common x, at most three and then "+n more"; a
+ * stacked label more than 20 px from its disc gets a hairline leader. The tier line also carries how
+ * long the agent has worked (known, never a fraction): our one addition to the rule. Each label sits
+ * on a ground-coloured chip, so a post, a gate or a route behind it cannot strike through its text.
+ *
+ * Under the disc is the first choice; when a callout or the selection's label already holds that
+ * floor, the label (or the whole stack) goes above the agent's head, then beside it. The tier line's
+ * box reserves its widest elapsed time, so the label never shifts as seconds pass. Returns the offers
+ * and each label's first-choice box (the floor callouts leave to agents when they can).
  */
-function agentLabels(L: PlantLayout, scene: Scene, t: number, k: number): { nodes: ReactNode[]; boxes: Box[] } {
-  const groups = new Map<string, { base: { x: number; y: number }; a: ReturnType<typeof placeAgents>[number] }[]>();
+const ROW = 27;
+const ELAPSED_RESERVE = " · 59 min".length;
+
+function agentOffers(L: PlantLayout, scene: Scene, t: number, k: number): { offers: Offer[]; home: Box[] } {
+  const groups = new Map<string, { base: { x: number; y: number }; head: number; a: ReturnType<typeof placeAgents>[number] }[]>();
   for (const cell of Object.values(scene.cells)) {
     for (const a of placeAgents(scene, L, cell, t, true)) {
       if (a.leave > 0.5) continue;
       const key = a.at.z === FLOOR_Z ? `${cell.ticketId}:${Math.round(a.at.x / 40)}:${Math.round(a.at.y)}` : `${a.agent.id}`;
       const list = groups.get(key) ?? [];
-      list.push({ base: project(a.at), a });
+      list.push({ base: project(a.at), head: project({ ...a.at, z: (a.at.z ?? 0) + 40 }).y, a });
       groups.set(key, list);
     }
   }
-  const out: ReactNode[] = [];
-  const boxes: Box[] = [];
+  const offers: Offer[] = [];
+  const home: Box[] = [];
   for (const [key, list] of groups) {
     list.sort((m, n) => m.base.x - n.base.x || m.a.agent.startedAt - n.a.agent.startedAt);
-    const x0 = Math.min(...list.map((m) => m.base.x));
-    const y0 = Math.max(...list.map((m) => m.base.y)) + 16 * k;
     const shown = list.slice(0, 3);
-    const single = list.length === 1;
-    shown.forEach(({ base, a }, i) => {
-      const lx = single ? base.x : x0 - 6 * k;
-      const ly = single ? base.y + 16 * k : y0 + i * 24 * k;
-      const far = Math.hypot(lx - base.x, ly - base.y) > 20 * k;
+    const more = list.length - shown.length;
+    const rows = shown.map(({ base, a }) => {
       const name = agentName(a);
-      const tier = `${modelTiers[uiTier(a.agent.model)].label}${a.state === "active" ? ` · ${fmtElapsed(a.elapsed)}` : ""}`;
-      const w = Math.max(name.length * 6, tier.length * 5.2);
-      const left = single ? -w / 2 : 0;
-      boxes.push({ x0: lx + (left - 3) * k, y0: ly - 10.5 * k, x1: lx + (left + w + 3) * k, y1: ly + 14.5 * k });
-      out.push(
-        <g key={a.agent.id}>
-          {!single && far ? <line x1={base.x} y1={base.y + 3 * k} x2={lx} y2={ly - 9 * k} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 * k }} /> : null}
-          <Scaled x={lx} y={ly} k={k}>
-            <rect className="atlas-chip" x={left - 3} y={-10.5} width={w + 6} height={25} rx={2} />
-            <text textAnchor={single ? "middle" : "start"} className="atlas-halo" style={{ fill: "var(--mach-ink)", fontSize: 10, fontWeight: 600 }}>
-              {name}
-            </text>
-            <text y={11} textAnchor={single ? "middle" : "start"} className="atlas-halo" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>
-              {tier}
-            </text>
-          </Scaled>
-        </g>,
-      );
+      const tierLabel = modelTiers[uiTier(a.agent.model)].label;
+      const active = a.state === "active";
+      const tier = `${tierLabel}${active ? ` · ${fmtElapsed(a.elapsed)}` : ""}`;
+      const w = Math.max(name.length * 10 * EM, (tierLabel.length + (active ? ELAPSED_RESERVE : 0)) * 9 * EM);
+      return { base, a, name, tier, w };
     });
-    if (list.length > 3) {
-      boxes.push({ x0: x0 - 9 * k, y0: y0 + 3 * 24 * k - 10 * k, x1: x0 + 60 * k, y1: y0 + 3 * 24 * k + 4 * k });
-      out.push(
-        <Scaled key={`${key}-more`} x={x0 - 6 * k} y={y0 + 3 * 24 * k} k={k}>
-          <text className="atlas-halo" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>{`+${list.length - 3} more`}</text>
-        </Scaled>,
-      );
-    }
+    const bx0 = Math.min(...list.map((m) => m.base.x));
+    const bx1 = Math.max(...list.map((m) => m.base.x));
+    const by = Math.max(...list.map((m) => m.base.y));
+    const head = Math.min(...list.map((m) => m.head));
+    const single = list.length === 1;
+    const wMax = Math.max(...rows.map((r) => r.w), more ? 9 * 9 * EM : 0);
+    const nRows = rows.length + (more ? 1 : 0);
+    const height = (nRows - 1) * ROW + 25; // from the first row's chip top to the last row's chip bottom
+    // A slot: where the first row's baseline sits, and how the text is aligned to x.
+    type Place = { x: number; y: number; align: "middle" | "start" | "end" };
+    const places: Place[] = single
+      ? [
+          { x: bx0, y: by + 16 * k, align: "middle" },
+          { x: bx0, y: head - (25 - 10.5 + 4) * k, align: "middle" },
+          { x: bx1 + 16 * k, y: by - 4 * k, align: "start" },
+          { x: bx0 - 16 * k, y: by - 4 * k, align: "end" },
+        ]
+      : [
+          { x: bx0 - 6 * k, y: by + 16 * k, align: "start" },
+          { x: bx0 - 6 * k, y: head - (height - 10.5 + 4) * k, align: "start" },
+          { x: bx1 + 16 * k, y: by - 10.5 * k, align: "start" },
+          { x: bx0 - 16 * k, y: by - 10.5 * k, align: "end" },
+        ];
+    const boxOf = (p: Place): Box => {
+      const left = p.align === "middle" ? -wMax / 2 : p.align === "end" ? -wMax : 0;
+      return { x0: p.x + (left - 3) * k, y0: p.y - 10.5 * k, x1: p.x + (left + wMax + 3) * k, y1: p.y + (height - 10.5) * k };
+    };
+    const slots: Slot[] = places.map((p) => ({ box: boxOf(p) }));
+    home.push(slots[0]!.box);
+    offers.push({
+      key: `agents-${key}`,
+      anchor: { x: (bx0 + bx1) / 2, y: by },
+      slots,
+      soft: [],
+      draw: (i) => {
+        const p = places[i]!;
+        return (
+          <g key={`agents-${key}`}>
+            {rows.map(({ base, a, name, tier, w }, r) => {
+              const ly = p.y + r * ROW * k;
+              const far = !single && Math.hypot(p.x - base.x, ly - base.y) > 20 * k;
+              const chipX = p.align === "middle" ? -w / 2 : p.align === "end" ? -w : 0;
+              return (
+                <g key={a.agent.id}>
+                  {far ? <line x1={base.x} y1={base.y + 3 * k} x2={p.x} y2={ly - 9 * k} style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 * k }} /> : null}
+                  <Scaled x={p.x} y={ly} k={k}>
+                    <rect className="atlas-chip" x={chipX - 3} y={-10.5} width={w + 6} height={25} rx={2} />
+                    <text textAnchor={p.align} className="atlas-halo" style={{ fill: "var(--mach-ink)", fontSize: 10, fontWeight: 600 }}>
+                      {name}
+                    </text>
+                    <text y={11} textAnchor={p.align} className="atlas-halo" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>
+                      {tier}
+                    </text>
+                  </Scaled>
+                </g>
+              );
+            })}
+            {more ? (
+              <Scaled x={p.x} y={p.y + rows.length * ROW * k} k={k}>
+                <text textAnchor={p.align} className="atlas-halo" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>{`+${more} more`}</text>
+              </Scaled>
+            ) : null}
+          </g>
+        );
+      },
+    });
   }
-  return { nodes: out, boxes };
+  return { offers, home };
 }
 
-interface Box {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-}
-const hits = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
-const inside = (b: Box, v: OverlayView) => b.x0 >= v.x0 && b.x1 <= v.x1 && b.y0 >= v.y0 && b.y1 <= v.y1 && !(v.controls && hits(b, v.controls));
+/** The regions' names as Plant letters them (RegionPlate: Source Sans 3, 19 at 650, along the plate's front edge). */
+const REGION_TITLES: Array<[keyof PlantLayout["regions"], RegionKind, string?]> = [
+  ["intake", "intake"],
+  ["floor", "floor"],
+  ["review", "review"],
+  ["human", "human", "Approval"],
+  ["integration", "integration", "Integration yard"],
+  ["archive", "archive", "Archive"],
+];
 
-/** What a callout must not cover: machines, gates, agents, findings flags and the agents' labels, in projected units. */
-function obstacles(L: PlantLayout, scene: Scene, t: number, labelBoxes: Box[]): Box[] {
-  const out: Box[] = [...labelBoxes];
+/**
+ * What a label should not cover when it can: machines, gates, agents, findings flags, and the regions'
+ * floor names with their captions, in projected units. A name runs diagonally on screen, so it is
+ * offered as short pieces along its run rather than one box around the whole diagonal.
+ */
+function obstacles(L: PlantLayout, scene: Scene, t: number): Box[] {
+  const out: Box[] = [];
   const add = (b: PlanBox) => {
     const r = screenBounds([b]);
     out.push({ x0: r.x, y0: r.y, x1: r.x + r.width, y1: r.y + r.height });
   };
+  for (const [key, kind, title] of REGION_TITLES) {
+    const box = L.regions[key];
+    const run = (title ?? regions[kind].label).length * 19 * EM;
+    const front = box.y + box.d - 8;
+    for (let x = box.x + 18; x < box.x + 18 + run; x += 24) add({ x, y: front - 22 - 17, w: Math.min(24, box.x + 18 + run - x), d: 22 + 17 + 2, z: PLATE_Z, h: 0 });
+  }
   for (const bay of L.bays) {
     if (!scene.cells[bay.ticketId]) continue;
     add(boxAt(bay.pads.intent, 40, 40, 14));
@@ -276,13 +354,10 @@ function obstacles(L: PlantLayout, scene: Scene, t: number, labelBoxes: Box[]): 
 }
 
 /**
- * Callouts (spec b.7, "Callout placement"), deterministic: placed in priority order (escalation,
- * failure, waiting for a person, then the event under the playhead); for each, try leader directions
- * up-right (45°), up-left, right, left, down-right, down-left, with leader lengths 36 then 64 px, and
- * take the first whose leader and label box (6.2 px per character, two lines 30 px tall, 4 px padding)
- * stays inside the visible stage and meets no machine, gate, agent, agent label, findings flag or
- * callout already placed. Then, in order: the first that stays inside the stage; the first that is
- * clear (the anchor itself is off the stage); up-right at 64 px. Keeping the label inside the stage
+ * Callouts (spec b.7, "Callout placement"): offered in priority order (escalation, failure, waiting
+ * for a person, then the event under the playhead). Each may take a leader up-right (45°), up-left,
+ * right, left, down-right, down-left, straight up or straight down, at 36, 64 then 96 px; its label box
+ * is 6.2 px per character, two lines 30 px tall, 4 px padding. Keeping the label inside the stage
  * (flipping it left at the right edge, spec c.5) is what stops "Rejected · security bl…" being cut off
  * at the stage edge (findings D6); the view is quantised, so a callout re-places only when the camera
  * brings an edge across it, never with every pixel of a pan. Sizes are in screen px at the zoom
@@ -305,9 +380,12 @@ const DIRECTIONS: Array<[number, number]> = [
   [-1, 0],
   [Math.SQRT1_2, Math.SQRT1_2],
   [-Math.SQRT1_2, Math.SQRT1_2],
+  [0, -1],
+  [0, 1],
 ];
+const LEADERS = [36, 64, 96];
 
-function layoutCallouts(L: PlantLayout, scene: Scene, t: number, reduced: boolean, k: number, lod: Lod, labelBoxes: Box[], view: OverlayView | null): { nodes: ReactNode[]; boxes: Box[]; obstacles: Box[] } {
+function calloutOffers(L: PlantLayout, scene: Scene, t: number, reduced: boolean, k: number, lod: Lod, soft: Box[]): Offer[] {
   const pending: Pending[] = [];
   const put = (key: string, at: Pending["at"], text: string, detail: string | undefined, tone: Pending["tone"], opacity = 1, priority: Priority = 3) => {
     pending.push({ key, at, text, detail, tone, opacity, priority });
@@ -361,50 +439,55 @@ function layoutCallouts(L: PlantLayout, scene: Scene, t: number, reduced: boolea
       const still = Object.values(scene.dependencies).filter((o) => o.from === d.from && o.state === "blocking").map((o) => o.to);
       const text = still.length ? `${d.to} done · ${d.from} still waits` : `${d.from} unblocked`;
       const detail = still.length ? `${d.to} integrated; ${d.from} waits for ${still.join(", ")}` : `${d.to} integrated; ${d.from} is eligible`;
-      put(`dep-${d.id}`, anchor, text, detail, still.length ? "ink" : "ink", q(anim("dependencyUnlock", t - d.satisfiedAt, reduced)));
+      put(`dep-${d.id}`, anchor, text, detail, "ink", q(anim("dependencyUnlock", t - d.satisfiedAt, reduced)));
     }
   }
-  const fixed = lod === "far" ? [] : obstacles(L, scene, t, labelBoxes);
-  const placed: Box[] = [];
   const pad = 4 * k;
-  const out: ReactNode[] = [];
-  for (const c of [...pending].sort((a, b) => a.priority - b.priority)) {
-    const p = project(c.at);
-    const width = Math.max(c.text.length, c.detail?.length ?? 0) * 6.2 + 18;
-    const blocked = [...fixed, ...placed];
-    const options: Array<{ d: [number, number]; box: Box; clear: boolean; within: boolean }> = [];
-    for (const len of [36, 64]) {
-      for (const [ux, uy] of DIRECTIONS) {
-        const dx = ux * len;
-        const dy = uy * len;
-        const ex = p.x + dx * k;
-        const ey = p.y + dy * k;
-        const left = dx < -0.01;
-        const box: Box = { x0: (left ? ex - width * k : ex) - pad, y0: ey - 12 * k - pad, x1: (left ? ex : ex + width * k) + pad, y1: ey + 18 * k + pad };
-        const leader: Box = { x0: Math.min(p.x, ex), y0: Math.min(p.y, ey), x1: Math.max(p.x, ex), y1: Math.max(p.y, ey) };
-        const clear = !blocked.some((o) => hits(o, box) || (Math.abs(dx) > 1 && Math.abs(dy) > 1 && hits(o, shrink(leader, 6 * k))));
-        options.push({ d: [dx, dy], box, clear, within: !view || inside(box, view) });
+  // Stable sort: equal priorities keep the order above.
+  return [...pending]
+    .sort((a, b) => a.priority - b.priority)
+    .map((c): Offer => {
+      const p = project(c.at);
+      const width = Math.max(c.text.length, c.detail?.length ?? 0) * 6.2 + 18;
+      const dirs: Array<[number, number]> = [];
+      const slots: Slot[] = [];
+      for (const len of LEADERS) {
+        for (const [ux, uy] of DIRECTIONS) {
+          const dx = ux * len;
+          const dy = uy * len;
+          const ex = p.x + dx * k;
+          const ey = p.y + dy * k;
+          const left = dx < -0.01;
+          dirs.push([dx, dy]);
+          slots.push({
+            box: { x0: (left ? ex - width * k : ex) - pad, y0: ey - 12 * k - pad, x1: (left ? ex : ex + width * k) + pad, y1: ey + 18 * k + pad },
+            leader: { x0: p.x, y0: p.y, x1: ex, y1: ey },
+          });
+        }
       }
-    }
-    const pick = options.find((o) => o.clear && o.within) ?? options.find((o) => o.within) ?? options.find((o) => o.clear) ?? options[DIRECTIONS.length]!;
-    placed.push(pick.box);
-    out.push(
-      <g key={c.key} style={{ opacity: c.opacity }}>
-        <Scaled x={p.x} y={p.y} k={k}>
-          <g className="atlas-halo-group">
-            <Callout x={0} y={0} dx={pick.d[0]} dy={pick.d[1]} text={c.text} detail={c.detail} tone={c.tone} />
-          </g>
-        </Scaled>
-      </g>,
-    );
-  }
-  return { nodes: out, boxes: placed, obstacles: fixed };
-}
-
-function shrink(b: Box, by: number): Box {
-  return { x0: b.x0 + by, y0: b.y0 + by, x1: b.x1 - by, y1: b.y1 - by };
+      return {
+        key: c.key,
+        anchor: p,
+        slots,
+        // The machine the callout points at is not in its way.
+        soft: soft.filter((o) => !(o.x0 <= p.x && p.x <= o.x1 && o.y0 <= p.y && p.y <= o.y1)),
+        draw: (i) => {
+          const [dx, dy] = dirs[i]!;
+          return (
+            <g key={c.key} data-label="callout" style={{ opacity: c.opacity }}>
+              <Scaled x={p.x} y={p.y} k={k}>
+                <g className="atlas-halo-group">
+                  <Callout x={0} y={0} dx={dx} dy={dy} text={c.text} detail={c.detail} tone={c.tone} />
+                </g>
+              </Scaled>
+            </g>
+          );
+        },
+      };
+    });
 }
 
 function trim(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
+

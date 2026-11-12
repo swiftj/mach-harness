@@ -58,6 +58,10 @@
   fill: var(--mach-factory-ground);
   fill-opacity: 0.86;
 }
+/* The selection's label: fully opaque, so floor lettering under it never reads through (findings D7). */
+.atlas-chip-solid {
+  fill-opacity: 1;
+}
 .atlas-effects {
   position: absolute;
   inset: 0;

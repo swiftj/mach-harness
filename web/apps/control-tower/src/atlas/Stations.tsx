@@ -394,7 +394,8 @@ export function IntegrationWorks() {
             })
           : null}
         {lod !== "far" && waveKnown ? (
-          <PlanDimension from={{ ...berth(L.bays.length - 1), x: berth(L.bays.length - 1).x - 11, y: I.trunkY + 30 }} to={{ ...berth(0), x: berth(0).x + 11, y: I.trunkY + 30 }} offset={8} label={`${L.bays.length} berths · one per slice of the wave`} />
+          // Behind the main line, clear of the berths' lettering in front of it.
+          <PlanDimension from={{ ...berth(L.bays.length - 1), x: berth(L.bays.length - 1).x - 11, y: I.trunkY - 14 }} to={{ ...berth(0), x: berth(0).x + 11, y: I.trunkY - 14 }} offset={8} label={`${L.bays.length} berths · one per slice of the wave`} />
         ) : null}
       </g>
       <Hit entity={gate ? `gate:${gate.id}` : "gate:merge-revalidation"} label={`${revalText}: merge revalidation gate${gate ? `, ${gate.ticketId}: ${gate.state === "skipped" ? "skipped, main had not moved" : gate.state}` : ": idle"}`}>
@@ -417,7 +418,11 @@ export function IntegrationWorks() {
               </Hit>
             ) : null}
             {lod !== "far" ? (
-              <FloorLettering at={{ x: at.x - 10, y: at.y + 18, z: PLATE_Z }} text={`${c.ticketId} · ${c.merged!.commit.slice(0, 7)}${sl?.scheduler === "integrated" ? " · integrated" : ""}`} size={7.5} font="mono" tone={sl?.scheduler === "integrated" ? "pass" : "muted"} weight={500} decorative />
+              // Two lines, so the lettering stays within its own berth (berths are 120 apart).
+              <>
+                <FloorLettering at={{ x: at.x - 10, y: at.y + 18, z: PLATE_Z }} text={`${c.ticketId} · ${c.merged!.commit.slice(0, 7)}`} size={7.5} font="mono" tone={sl?.scheduler === "integrated" ? "pass" : "muted"} weight={500} decorative />
+                {sl?.scheduler === "integrated" ? <FloorLettering at={{ x: at.x - 10, y: at.y + 27, z: PLATE_Z }} text="integrated" size={7.5} font="mono" tone="pass" weight={500} decorative /> : null}
+              </>
             ) : null}
           </g>
         );
