@@ -429,7 +429,7 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     cell.save_info()
     telemetry(cell.root, "review.decided", "review", lambda: {
         "round": decision["round"], "decision": outcome, "approvals": approvals, "needed": needed, "votes": decision["votes"],
-        "blockers": blockers, "security_veto": bool(vetoed), "human_approval_required": decision["human_approval_required"]})
+        "blockers": blockers, "security_veto": decision["security_veto"], "human_approval_required": decision["human_approval_required"]})
     telemetry(cell.root, "station.exited", "review", lambda: {"outcome": outcome, "stage": cell.info["stage"], "round": decision["round"]})
     if outcome == "AWAITING_HUMAN":
         telemetry(cell.root, "station.entered", "human-approval", lambda: {"stage": "awaiting-human", "round": decision["round"]})
