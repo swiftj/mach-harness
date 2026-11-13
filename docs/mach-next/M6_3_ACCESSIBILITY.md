@@ -49,11 +49,20 @@ handled (`defaultPrevented`), any event with Ctrl or Cmd, and typing in inputs.
 | Left, Right | Previous / next span on the row |
 | Enter | Select the span, or open or close a group row |
 | Alt+Right or `*`, Alt+Left | Expand / collapse |
-| `+` `=`, `-` `_`, `0` | Narrow / widen the window, or frame the span |
+| `+` `=`, `-` `_` | Narrow / widen the window about the cursor |
+| `0` | Back to the workspace's default window (the recorded activity); without one, frame the span or row |
 | Shift+Left, Shift+Right | Pan by a tenth of the window |
 | PageUp, PageDown | A screen of rows |
 
 The tracks do not handle Home and End: there they keep their global meaning (start of history, live edge).
+
+The label column beside the tracks is for the pointer: each row is one target, its full width and height
+(a press on the disclosure triangle opens or closes the row, anywhere else selects it), out of the Tab order
+(`tabIndex={-1}`), named by its visible words. The tracks' keys do the same from the one tab stop. Rows
+thinner than 24 px (rounds, waits, seats, agents, claims: 18 px; tools: 12 px) never overlap their
+neighbours; their target-size case is WCAG 2.5.8's equivalent-control exception, and the audit reports them
+as such (`data-target-equivalent="tracks"`). The column's width separator is a 24 px target centred on its right
+edge, after the tracks in Tab order.
 
 ### The overview's brush (three sliders: "Move window", "Window start", "Window end")
 
@@ -100,6 +109,13 @@ with children in the table expands it in the canvas too; a leaf's span list is t
 - Virtualisation: rows are 32 px; only the rows in view plus 8 either side, and the focused row, are in the
   DOM. `aria-rowcount` is the full count (plus the header), each row carries its `aria-rowindex`. The header
   row is sticky.
+- Narrower than 1,080 px (`STACK_BELOW`: 200% zoom, a narrow window, the inspector open on a laptop) each
+  row stacks its columns: a track row reads its label, then its summary, then from / to; a span row reads
+  what it was, then its state mark, from, to, duration, outcome and authority. Rows are then 68 px and the
+  column headers are for screen readers only, so a row reads without scrolling sideways (WCAG 1.4.10).
+- The store's selection is marked (`aria-selected`, a bar in the selection ink): the span row that is it
+  (or the span the selection stands for, `selectionDetail`), else the track that is it or shows it. It is
+  scrolled into view when it changes, wherever it was made.
 - A caption above the grid (`windowSummary`) says the window in words; the grid is described by it.
 
 Cost, measured in node on 60,000 spans (300 tracks of 200, `test/timeline-a11y.test.mjs`): building the
@@ -110,7 +126,8 @@ proportional to the number of spans.
 ## 3. The screen-reader model
 
 1. **One tab stop for the tracks**: the canvas is `role="application"` with its keys as its description,
-   and a polite live region that says the row or span under the keyboard cursor.
+   and a polite live region that says the row or span under the keyboard cursor: a span by `describeSpan`,
+   a row by `rowSummary` (the same words as the table) and whether it is expanded.
 2. **The live region's words** come from `src/timeline/a11y/describe.ts`, shared with the table:
    `rowSummary(node, window, liveAt)` ("LOCAL-031, cell, 129 spans in this window, one failed; from
    23:18:00 UTC to still open") and `windowSummary(tree, window, liveAt)` (bounds; spans by kind; failures
@@ -137,51 +154,39 @@ says "not run: <why>" instead of failing.
 |---|---|
 | axe | WCAG 2.2 A/AA tags on the workspace; dark and light; 1512×982, 1280×800 and 200% zoom (756×491 at DPR 2); both groupings; table off and on; a lens open when the Investigate menu offers one |
 | keyboard | Tab from the top until focus comes back round: the region order, Tab stops in the tracks, a visible ring at every stop (outline or shadow, or pixels that change on focus), Tab and Shift+Tab leave the canvas, the grid is one stop |
-| targets | Every interactive element in the workspace 24 px or more, or spaced (WCAG 2.5.8) |
+| targets | Every interactive element in the workspace 24 px or more, or spaced, or (reported separately) a label row out of the Tab order whose function the tracks give, overlapping nothing (WCAG 2.5.8) |
 | contrast | The drawn marks (3:1) and canvas text (4.5:1) against the ground and plate tokens, as rendered |
 | reduced motion | No running animation or transition, and a still canvas, after a zoom, a brush drag and a workspace switch |
 | shortcuts | No key bound twice in the same context (the global map and `TIMELINE_KEYS` read from the code); in the browser, Home/End in the grid move the row and not the playhead |
 
-### Results, 2026-11-13 (the workspace as it stood; other parts were still changing)
+### Results, 2026-11-13, second run (after the round 3 fixes; other parts were still changing)
 
 | Check | Result | Details |
 |---|---|---|
-| axe | fail | 16 violations in 26 states: `label-content-name-mismatch` (toolbar, lens figures), `target-size` (label column, execution grouping) |
-| keyboard | fail | 92 stops; order header > transport > toolbar > overview > tracks > inspector; 57 stops in the tracks; 3 without a visible ring; Tab comes back round; Tab and Shift+Tab leave the canvas; the grid is one stop with a visible ring |
-| targets | fail | 18 undersized and crowded (label column); 14 small but spaced |
-| contrast | pass | lowest: light `ink-subtle` on `factory-ground` 4.62 (needs 4.5), light `factory-route` 3.27 (needs 3) |
+| axe | pass | 0 violations in 26 states |
+| keyboard | pass | 36 stops; order header > transport > toolbar > overview > tracks > inspector; 2 stops in the tracks (the canvas, then the label column's width separator); every stop with a visible ring; Tab comes back round; Tab and Shift+Tab leave the canvas; the grid is one stop |
+| targets | pass | 0 undersized and crowded; 0 small but spaced; 20 thin label rows under the equivalent-control exception |
+| contrast | pass | 0 pairs under their minimum |
 | reduced motion | pass | zoom, brush drag, workspace switch: nothing running, canvas still |
 | shortcuts | pass | no duplicate in the global map, no `TIMELINE_KEYS` key shadowed; grid Home/End keep the playhead; `.` still steps in the grid |
 
-Findings, for the owners of those files (selector, rule, fix):
+What the first run found and how it was fixed:
 
-1. `src/timeline/overview/TemporalOverview.tsx`, `[role=slider][data-brush]` and "Move window": no visible
-   focus. The classes `outline-none focus-visible:outline-2` give no outline in Tailwind 4 (`outline-none`
-   sets `--tw-outline-style: none`, which `outline-2` then uses). Fix: `outline-hidden` instead of
-   `outline-none` (or drop it).
-2. `src/timeline/render/TrackLabels.tsx`, every label row's select and disclosure buttons are Tab stops
-   (57 at 1512×982), against design section 9's one stop for the tracks. Fix: `tabIndex={-1}` on the label
-   buttons (the canvas's keys already move, open and select rows) and keep them for the pointer.
-3. `src/timeline/render/TrackLabels.tsx`, `.mach-tl-hit` disclosure buttons and the 18 px label buttons in
-   thin rows (`button.relative.z-[1].flex` on rounds, waits, seats), WCAG 2.5.8 target size: the 24 px
-   hit area overlaps the next row's button. Fix: make the hit area of thin rows the row's full height and
-   not overlap the neighbours, or take the buttons out of the tab order (2) and rely on the row height.
-4. `src/timeline/controls/TimelineToolbar.tsx`, `button[aria-label="Fit the recorded activity"]` (visible
-   "Fit activity") and the Table button when pressed (`aria-label="Show the tracks"`, visible "Table"),
-   `label-content-name-mismatch`. Fix: start the label with the visible words ("Fit activity: the recorded
-   activity"; keep "Table" in the name and use `aria-pressed` alone for the state).
-5. `src/timeline/investigate/figures.tsx`, `g[data-fig]` (round and visit figures with the
-   "Verification failures and retries" lens), `label-content-name-mismatch`. Fix: include the drawn text in
-   the `aria-label`, or mark the drawn text `aria-hidden`.
+1. The brush's sliders had no visible focus. In this Tailwind 4 build `outline-hidden` sets
+   `--tw-outline-style: none` too, so `focus-visible:outline-2` alone still drew nothing; the sliders now add
+   `focus-visible:outline-solid`, and "Move window" draws its ring inside (it can span the whole plot).
+2. Every label row's buttons were Tab stops (57): now one target per row, `tabIndex={-1}`.
+3. Label-column targets under 24 px overlapped the next row: the row is now the target, full width and
+   height, overlapping nothing; the separator is 24 px.
+4. Toolbar names that omitted their visible words ("Fit activity", "Table"): fixed in the toolbar.
+5. Lens figures (`g[data-fig]`) whose names omitted their drawn words: the name now starts with the drawn
+   words when the description lacks them (`figureName`), and a visit chip's two words are spaced.
 
 ## 6. Known gaps
 
-- The canvas's live region does not yet use `rowSummary`; it says the row in its own words.
-- The workspace does not yet place `windowSummary` in a visually hidden summary next to the canvas; the
-  table shows it as its caption.
-- The table does not mark the store's selection (`aria-selected`) or follow hover.
+- The table does not follow hover.
 - The table's leaf expansion is its own and is not kept across a workspace switch.
-- At 200% zoom the table scrolls sideways inside its region (seven columns need 1,220 px); the page itself
-  does not.
+- A label row's disclosure is reached by the pointer and by the tracks' keys; a screen reader's virtual
+  cursor activating the row button selects it (open or close a row from the tracks or the table).
 - Contrast is computed from tokens, not from pixels: a mark drawn at reduced opacity (density runs) is not
   covered.

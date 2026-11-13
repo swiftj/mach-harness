@@ -302,6 +302,7 @@ function Selected({ entity }: { entity: AnyRef }) {
         <TimeStatus look={look} entity={entity} />
       </header>
       {unknown ? <p className="px-5 py-4 text-body-sm text-ink-muted">No record of that entity has been received. If it appears, this shows it.</p> : null}
+      <PickedThrough entity={entity} kindWord={identity.kindWord} />
       {value ? (
         <div className="pt-4">
           <Why entity={entity} />
@@ -312,6 +313,32 @@ function Selected({ entity }: { entity: AnyRef }) {
       {value || all.length ? <Provenance entity={entity} value={value} /> : null}
       <Evidence entity={entity} />
     </div>
+  );
+}
+
+/** What a Timeline span picked through an ancestor is called, by its ref's grammar. */
+function pickedWords(detail: string): string {
+  if (/^visit:.*\/task:/.test(detail)) return "a build task";
+  if (detail.startsWith("visit:")) return "a station visit";
+  if (/^gate:.*\/round#/.test(detail)) return "a review round";
+  if (detail.startsWith("workflow:")) return "a workflow";
+  if (detail.startsWith("seat:")) return "a review seat";
+  if (detail.startsWith("gate:")) return "a wait at a gate";
+  return "a span";
+}
+
+/**
+ * When the Timeline picked something the store cannot select itself (a visit, a round, a build task in
+ * the simulation), the selection is its nearest selectable ancestor: said here, so the inspector never
+ * looks as if a different thing was picked.
+ */
+function PickedThrough({ entity, kindWord }: { entity: AnyRef; kindWord: string }) {
+  const detail = useSceneStore((s) => (s.selection === entity ? s.selectionDetail : null));
+  if (!detail) return null;
+  return (
+    <p className="mx-5 mt-4 rounded-sm border border-dashed border-line-strong px-3 py-2 text-body-sm text-ink-muted" data-inspector-picked={detail}>
+      You picked {pickedWords(detail)} on the Timeline (<span className="font-mono text-[12px] text-ink">{detail}</span>). No further detail is recorded for that kind here, so its {kindWord.toLowerCase()} is shown.
+    </p>
   );
 }
 

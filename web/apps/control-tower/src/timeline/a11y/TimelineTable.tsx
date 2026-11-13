@@ -6,6 +6,11 @@
  *
  * Columns: Track, What (describeSpan), Started, Ended, Duration and how it is known (durationWords),
  * Outcome (only once outcomeKnownAt allows it), Authority (the AuthorityBadge's word and glyph).
+ * Narrower than STACK_BELOW (200% zoom, a narrow window) the columns stack in each row, so a row reads
+ * without scrolling sideways; the column headers are then for screen readers only.
+ *
+ * The store's selection is marked (aria-selected and a bar in the selection ink) and scrolled into view
+ * when it changes, wherever it was made.
  *
  * Keyboard (row focus, roving tabindex): Up/Down, Left/Right (close or go to the parent / open or go to
  * the first child), Home/End and Ctrl+Home/End, PageUp/PageDown, Enter (select a span; open or close a
@@ -13,16 +18,34 @@
  * skips defaultPrevented events) never also acts on it; the playback keys stay global.
  */
 import { ChevronRight } from "lucide-react";
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn, StateMark, type MarkState } from "@mach/ui";
 import { AuthorityBadge, NotRecorded } from "../../shell/inspector/parts";
 import { getTimeBase, spokenTime, timecode } from "../../shell/vocab";
 import { attentionOf, outcomeKnownAt, type SpanEnd, type TimelineSpan, type TimelineTableProps } from "../contract";
 import { describeSpan, durationWords } from "../render";
 import { attentionWords, countWords, heldEnd, momentWords, summaryWords, windowSummary, type Attention, type TrackSummary } from "./describe";
-import { buildGridRows, GRID_HEADER_HEIGHT, GRID_ROW_HEIGHT, gridKey, indexWindow, scrollToShow, visibleRange, type GridRow } from "./model";
+import { useSceneStore } from "../../scene";
+import { buildGridRows, gridKey, indexWindow, scrollToShow, STACK_BELOW, STACKED, visibleRange, WIDE, type GridGeometry, type GridRow } from "./model";
 
-const COLUMNS = "minmax(300px,1.6fr) minmax(260px,2fr) 104px 104px minmax(170px,1.1fr) 112px 140px";
+const COLUMNS = "minmax(240px,1.6fr) minmax(220px,2fr) 96px 96px minmax(150px,1.1fr) 104px 132px";
+/** Stacked (narrow): the track, then what, then the times, duration, outcome and authority on one line. */
+const STACKED_GRID = {
+  gridTemplateColumns: "auto auto minmax(0,1fr) auto auto",
+  gridTemplateRows: "20px 20px 20px",
+  gridTemplateAreas: '"track track track track track" "what what what what what" "start end dur outcome auth"',
+  alignContent: "center",
+} as const;
+/** A span row stacked: what it was, then its state mark and the times; the indent is the row's. */
+const STACKED_SPAN = {
+  gridTemplateColumns: "auto auto auto minmax(0,1fr) auto auto",
+  gridTemplateRows: "20px 20px",
+  gridTemplateAreas: '"what what what what what what" "track start end dur outcome auth"',
+  alignContent: "center",
+} as const;
+type Area = "track" | "what" | "start" | "end" | "dur" | "outcome" | "auth";
+/** In a stacked row the time cells say which end they are (the column headers are for screen readers only). */
+const AREA_PREFIX: Partial<Record<Area, string>> = { start: "from", end: "to" };
 const COLCOUNT = 7;
 const INDENT = 14;
 
@@ -78,9 +101,18 @@ function outcomeText(span: TimelineSpan, liveAt: number): string {
   return words[0]!.toUpperCase() + words.slice(1);
 }
 
-function Cell({ children, className }: { children?: ReactNode; className?: string }) {
+const Stacked = createContext(false);
+
+function Cell({ children, className, area }: { children?: ReactNode; className?: string; area: Area }) {
+  const stacked = useContext(Stacked);
+  const prefix = stacked ? AREA_PREFIX[area] : undefined;
   return (
-    <div role="gridcell" className={cn("flex min-w-0 items-center overflow-hidden px-2", className)}>
+    <div role="gridcell" className={cn("flex min-w-0 items-center overflow-hidden", stacked ? "gap-1 px-1 first:pl-0" : "px-2", className)} style={stacked ? { gridArea: area } : undefined}>
+      {prefix && children ? (
+        <span aria-hidden="true" className="shrink-0 text-caption text-ink-subtle">
+          {prefix}
+        </span>
+      ) : null}
       {children}
     </div>
   );
@@ -92,11 +124,15 @@ interface RowProps {
   readonly active: boolean;
   readonly liveAt: number;
   readonly summary: TrackSummary | null;
+  /** The store's selection is this row (aria-selected). */
+  readonly selected: boolean;
+  readonly geometry: GridGeometry;
   onActivate(index: number, row: GridRow): void;
 }
 
-const Row = memo(function Row({ row, index, active, liveAt, summary, onActivate }: RowProps) {
-  const pad = 8 + (row.level - 1) * INDENT;
+const Row = memo(function Row({ row, index, active, liveAt, summary, selected, geometry, onActivate }: RowProps) {
+  const stacked = geometry.header === 0;
+  const pad = (stacked ? 4 : 8) + (row.level - 1) * INDENT;
   const common = {
     role: "row",
     "aria-rowindex": index + 2,
@@ -105,10 +141,18 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, onActivate 
     "aria-posinset": row.posInSet,
     tabIndex: active ? 0 : -1,
     "data-key": row.key,
+    "aria-selected": row.type === "more" ? undefined : selected,
     onClick: () => onActivate(index, row),
-    style: { top: index * GRID_ROW_HEIGHT, height: GRID_ROW_HEIGHT, gridTemplateColumns: COLUMNS },
+    style: {
+      top: index * geometry.row,
+      height: geometry.row,
+      ...(stacked ? { ...(row.type === "span" ? STACKED_SPAN : STACKED_GRID), paddingLeft: pad + (row.type === "track" ? 4 : 22), paddingRight: 8 } : { gridTemplateColumns: COLUMNS }),
+      // The selection: a bar in the selection ink at the row's start.
+      boxShadow: selected ? "inset 3px 0 0 var(--mach-factory-select)" : undefined,
+    },
     className: cn(
       "absolute inset-x-0 grid cursor-default border-b border-line text-body-sm text-ink hover:bg-surface-sunken",
+      selected && "bg-surface-sunken",
       "focus-visible:bg-surface-sunken focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus",
     ),
   } as const;
@@ -116,7 +160,7 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, onActivate 
   if (row.type === "more") {
     return (
       <div {...common}>
-        <div role="gridcell" aria-colspan={COLCOUNT} className="col-span-full flex items-center italic text-ink-subtle" style={{ paddingLeft: pad + 18 }}>
+        <div role="gridcell" aria-colspan={COLCOUNT} className="col-span-full row-span-full flex items-center italic text-ink-subtle" style={{ paddingLeft: stacked ? 0 : pad + 18 }}>
           {row.hidden > 0 ? `${row.hidden.toLocaleString("en-GB")} more: narrow the window` : "Nothing of this track in this window"}
         </div>
       </div>
@@ -132,30 +176,30 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, onActivate 
     const sentence = describeSpan(span, liveAt);
     return (
       <div {...common}>
-        <Cell>
-          <span className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: pad + 18 }}>
+        <Cell area="track">
+          <span className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: stacked ? 0 : pad + 18 }}>
             <Mark attention={attention} />
             {word ? <span className="truncate text-caption text-ink-muted">{word}</span> : null}
           </span>
         </Cell>
-        <Cell>
+        <Cell area="what">
           <span className="truncate" title={sentence}>
             {sentence}
           </span>
         </Cell>
-        <Cell>
+        <Cell area="start">
           <EndCell end={span.start} which="start" liveAt={liveAt} />
         </Cell>
-        <Cell>
+        <Cell area="end">
           <EndCell end={span.end} which="end" liveAt={liveAt} open={open} />
         </Cell>
-        <Cell>
+        <Cell area="dur">
           <span className="truncate" title={durationWords(span, liveAt)}>
             {durationWords(span, liveAt)}
           </span>
         </Cell>
-        <Cell>{outcome ? <span className="truncate">{outcome}</span> : null}</Cell>
-        <Cell>
+        <Cell area="outcome">{outcome ? <span className="truncate">{outcome}</span> : null}</Cell>
+        <Cell area="auth">
           <AuthorityBadge authority={span.authority} />
         </Cell>
       </div>
@@ -168,8 +212,8 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, onActivate 
   const what = s ? summaryWords(node, s) : node.label;
   return (
     <div {...common} aria-expanded={row.expandable ? row.expanded : undefined}>
-      <Cell>
-        <span className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: pad }}>
+      <Cell area="track">
+        <span className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: stacked ? 0 : pad }}>
           {row.expandable ? <ChevronRight aria-hidden="true" className={cn("size-3.5 shrink-0 text-ink-subtle", row.expanded && "rotate-90")} /> : <span aria-hidden="true" className="w-3.5 shrink-0" />}
           <Mark attention={node.attention} />
           <span className={cn("min-w-0 truncate", row.level <= 2 && "font-semibold")}>{node.label}</span>
@@ -177,16 +221,16 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, onActivate 
           {word ? <span className="shrink-0 text-caption text-ink-muted">· {word}</span> : null}
         </span>
       </Cell>
-      <Cell>
+      <Cell area="what">
         <span className="truncate text-ink-muted" title={what}>
           {s ? countWords(s) : ""}
         </span>
       </Cell>
-      <Cell>{s && s.firstStart !== null ? <Moment t={s.firstStart} /> : null}</Cell>
-      <Cell>{s && s.count > 0 ? s.stillOpen ? <span className="text-ink-muted">Still open</span> : s.lastEnd !== null ? <Moment t={s.lastEnd} /> : <NotRecorded /> : null}</Cell>
-      <Cell />
-      <Cell />
-      <Cell />
+      <Cell area="start">{s && s.firstStart !== null ? <Moment t={s.firstStart} /> : null}</Cell>
+      <Cell area="end">{s && s.count > 0 ? s.stillOpen ? <span className="text-ink-muted">Still open</span> : s.lastEnd !== null ? <Moment t={s.lastEnd} /> : <NotRecorded /> : null}</Cell>
+      <Cell area="dur" />
+      <Cell area="outcome" />
+      <Cell area="auth" />
     </div>
   );
 });
@@ -198,6 +242,11 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
   const [active, setActive] = useState<{ key: string | null; index: number }>({ key: null, index: 0 });
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(600);
+  const [narrow, setNarrow] = useState(false);
+  const geometry: GridGeometry = narrow ? STACKED : WIDE;
+  const selection = useSceneStore((st) => st.selection);
+  // When the selection went to a span's nearest selectable ancestor, the span itself is the detail.
+  const detail = useSceneStore((st) => st.selectionDetail);
   const grid = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef(false);
   const summaryId = useId();
@@ -214,9 +263,13 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
   useEffect(() => {
     const el = grid.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setHeight(el.clientHeight));
+    const measure = () => {
+      setHeight(el.clientHeight);
+      setNarrow(el.clientWidth < STACK_BELOW);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setHeight(el.clientHeight);
+    measure();
     return () => ro.disconnect();
   }, []);
 
@@ -227,7 +280,7 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
       setActive({ key: row.key, index: i });
       const el = grid.current;
       if (el) {
-        const next = scrollToShow(i, el.scrollTop, el.clientHeight);
+        const next = scrollToShow(i, el.scrollTop, el.clientHeight, geometry);
         if (next !== el.scrollTop) {
           el.scrollTop = next;
           setScrollTop(next);
@@ -235,8 +288,37 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
       }
       pendingFocus.current = true;
     },
-    [model],
+    [model, geometry],
   );
+
+  // The store's selection: the span row that is it, else the track row that is it, else the track that
+  // shows it (its most specific). Marked aria-selected and scrolled into view when it changes.
+  const selectedIndex = useMemo(() => {
+    if (!selection) return -1;
+    let track = -1;
+    let span = -1;
+    for (let i = 0; i < model.rows.length; i++) {
+      const r = model.rows[i] as GridRow;
+      if (r.type === "span" && detail && (r.span.entity === detail || r.span.id === detail)) return i;
+      if (span < 0 && r.type === "span" && (r.span.entity === selection || r.span.id === selection)) span = i;
+      if (track < 0 && r.type === "track" && r.node.ref === selection) track = i;
+    }
+    if (span >= 0) return span;
+    if (track >= 0) return track;
+    const id = tree.tracksOf(selection)[0];
+    return id ? (model.indexOf.get(`track:${id}`) ?? -1) : -1;
+  }, [selection, detail, model, tree]);
+  useEffect(() => {
+    const el = grid.current;
+    if (!el || selectedIndex < 0) return;
+    const next = scrollToShow(selectedIndex, el.scrollTop, el.clientHeight, geometry);
+    if (next !== el.scrollTop) {
+      el.scrollTop = next;
+      setScrollTop(next);
+    }
+    // Only when the selection (or what it lands on) changes, not on every scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, detail, selectedIndex, narrow]);
 
   useLayoutEffect(() => {
     if (!pendingFocus.current) return;
@@ -274,7 +356,7 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (activeIndex < 0) return;
-    const page = Math.max(1, Math.floor((height - GRID_HEADER_HEIGHT) / GRID_ROW_HEIGHT) - 1);
+    const page = Math.max(1, Math.floor((height - geometry.header) / geometry.row) - 1);
     const action = gridKey(model, activeIndex, e, page);
     if (!action) return;
     e.preventDefault();
@@ -287,7 +369,7 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
     } else if (row.type === "span") onSelect(row.span);
   };
 
-  const range = visibleRange(scrollTop, height, count);
+  const range = visibleRange(scrollTop, height, count, 8, geometry);
   const shown: number[] = [];
   for (let i = range.start; i < range.end; i++) shown.push(i);
   // The focused row stays in the DOM when scrolled away, so focus is never lost to the page.
@@ -317,9 +399,9 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
           onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
           onKeyDown={onKeyDown}
         >
-          <div className="min-w-[1220px]">
-            <div role="rowgroup" className="sticky top-0 z-[1] border-b border-line-strong bg-surface">
-              <div role="row" aria-rowindex={1} className="grid text-label text-ink-muted" style={{ gridTemplateColumns: COLUMNS, height: GRID_HEADER_HEIGHT }}>
+          <div className={narrow ? undefined : "min-w-[1080px]"}>
+            <div role="rowgroup" className={narrow ? "sr-only" : "sticky top-0 z-[1] border-b border-line-strong bg-surface"}>
+              <div role="row" aria-rowindex={1} className="grid text-label text-ink-muted" style={{ gridTemplateColumns: COLUMNS, height: WIDE.header }}>
                 {["Track", "What", wall ? "Started (UTC)" : "Started", wall ? "Ended (UTC)" : "Ended", "Duration, and how it is known", "Outcome", "Authority"].map((h) => (
                   <div key={h} role="columnheader" className="flex items-center px-2 text-[12px] font-semibold">
                     {h}
@@ -327,11 +409,25 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
                 ))}
               </div>
             </div>
-            <div role="rowgroup" className="relative" style={{ height: count * GRID_ROW_HEIGHT }}>
-              {shown.map((i) => {
-                const row = model.rows[i] as GridRow;
-                return <Row key={row.key} row={row} index={i} active={i === activeIndex} liveAt={liveAt} summary={row.type === "track" ? index.summaryOf(row.node) : null} onActivate={onActivate} />;
-              })}
+            <div role="rowgroup" className="relative" style={{ height: count * geometry.row }}>
+              <Stacked.Provider value={narrow}>
+                {shown.map((i) => {
+                  const row = model.rows[i] as GridRow;
+                  return (
+                    <Row
+                      key={row.key}
+                      row={row}
+                      index={i}
+                      active={i === activeIndex}
+                      liveAt={liveAt}
+                      summary={row.type === "track" ? index.summaryOf(row.node) : null}
+                      selected={i === selectedIndex}
+                      geometry={geometry}
+                      onActivate={onActivate}
+                    />
+                  );
+                })}
+              </Stacked.Provider>
             </div>
           </div>
         </div>

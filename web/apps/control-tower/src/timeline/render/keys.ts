@@ -6,7 +6,8 @@
  *   Left / Right         previous / next span or instant on the row; nothing at the row's ends
  *   Enter                select the span under the cursor, or open / close a group row
  *   Alt+Right, *         expand the row;  Alt+Left  collapse it
- *   + or =, -, 0         zoom in / out about the cursor; frame the cursor's span (or its row's spans)
+ *   + or =, -, 0         zoom in / out about the cursor; 0 returns to the default window when the caller
+ *                        gives one (TrackCanvasProps.defaultWindow), else frames the cursor's span or row
  *   Shift+Left / Right   pan by a tenth of the window
  *   PageUp / PageDown    a screen of rows up / down
  *
@@ -34,6 +35,8 @@ export interface KeyModel {
   readonly scrollTop: number;
   /** The tracks' visible height, CSS px. */
   readonly height: number;
+  /** The window `0` returns to; absent, `0` frames the cursor's span (or its row's spans). */
+  readonly defaultWindow?: TimeWindow;
 }
 
 export interface KeyResult {
@@ -200,6 +203,7 @@ export function keyAction(input: KeyInput, model: KeyModel): KeyResult {
       return { handled: true, cursor: here, window: clampWindow(zoomAbout(win, factor, cursorTime(model, span))) };
     }
     case "0": {
+      if (model.defaultWindow) return { handled: true, cursor: here, window: model.defaultWindow };
       // Frame the cursor's span, or every span on its row up to the live edge.
       let from = Infinity;
       let to = -Infinity;

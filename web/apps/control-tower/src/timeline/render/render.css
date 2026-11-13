@@ -10,20 +10,6 @@
   font-family: var(--mach-font-sans);
 }
 
-/* A label row's disclosure keeps a 24 px target even in a 12 or 18 px row: its hit area extends past the row. */
-.mach-tl-hit {
-  position: relative;
-}
-.mach-tl-hit::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 24px;
-  height: 24px;
-  transform: translate(-50%, -50%);
-}
-
 /* The tracks' focus ring: 2 px of the focus token, 2 px in from the edge (the workspace clips outside it). */
 .mach-tl-tracks:focus-visible::after {
   content: "";

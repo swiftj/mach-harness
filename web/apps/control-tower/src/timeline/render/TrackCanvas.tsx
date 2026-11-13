@@ -28,6 +28,7 @@ import { cursorRow, keyAction, panToShow, rowSpans } from "./keys";
 import { hitRow, spanTimes } from "./lod";
 import { readPalette, type Palette } from "./palette";
 import { clampWindow, dateChanges, frameWindow, isWallTime, panBy, scaleOf, tAt, tickLabel, ticksFor, xAt, zoomAbout, type Scale } from "./scale";
+import { rowSummary } from "../a11y/describe";
 import { AUTHORITY_WORDS, describeSpan, durationText, durationWords, precisionLine, rowWords } from "./words";
 import "./render.css";
 
@@ -86,7 +87,7 @@ export function hitAt(out: DrawOutput | null, layout: TrackCanvasProps["layout"]
 
 /** The keys, said once for screen readers (the element's description). */
 export const TRACK_KEYS_WORDS =
-  "Up and Down move between rows. Left and Right move to the previous or next span on the row. Enter selects the span, or opens or closes a group. Alt+Right or * expands, Alt+Left collapses. Plus, minus and 0 zoom in, out, or frame the span. Shift+Left and Shift+Right pan. Page Up and Page Down move a screen of rows.";
+  "Up and Down move between rows. Left and Right move to the previous or next span on the row. Enter selects the span, or opens or closes a group. Alt+Right or * expands, Alt+Left collapses. Plus and minus zoom in and out; 0 returns to the default window. Shift+Left and Shift+Right pan. Page Up and Page Down move a screen of rows.";
 
 /** The hit the cursor stands for, or null on a row without a span. */
 function cursorHit(row: FlatRow, cursor: TimelineCursor | null, liveAt: number): TimelineHit | null {
@@ -95,6 +96,14 @@ function cursorHit(row: FlatRow, cursor: TimelineCursor | null, liveAt: number):
   const t = span ? spanTimes(span, liveAt) : null;
   if (!span || !t) return null;
   return { trackId: row.node.id, lane: row.lane, span, mark: null, count: 1, from: t.from, to: t.to };
+}
+
+/** A row for the live region: its summary in the window (shared with the table), then open or closed. */
+function rowSpoken(row: FlatRow, window: TimeWindow, liveAt: number): string {
+  const words = [rowSummary(row.node, window, liveAt)];
+  if (row.hasChildren && row.lane === 0) words.push(row.expanded ? "expanded" : "collapsed");
+  if (row.lane > 0) words.push(`lane ${row.lane + 1}`);
+  return `${words.join(", ")}.`;
 }
 
 /** Whether motion should cut: the store's flag or the media query. */
@@ -588,7 +597,8 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     }
     const [x0, , x1, y1] = c.box;
     showCard({ row: c.row, hit: c.hit }, c.hit ? Math.max(0, Math.min(P.viewport.width - 8, (Math.max(0, x0) + Math.min(P.viewport.width, x1)) / 2)) : 24, y1 - 8);
-    say(c.hit?.span ? describeSpan(c.hit.span, P.viewport.liveAt) : `${rowWords(c.row).title}. ${rowWords(c.row).detail}.`);
+    // A row: the same summary of it in the window as the table gives, and whether it is open.
+    say(c.hit?.span ? describeSpan(c.hit.span, P.viewport.liveAt) : rowSpoken(c.row, P.viewport.window, P.viewport.liveAt));
   }
   useLayoutEffect(() => {
     showCursor();
@@ -597,7 +607,7 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const P = latest.current;
-    const result = keyAction(e, { tree: P.tree, layout: P.layout, cursor: P.cursor, window: currentWin(), liveAt: P.viewport.liveAt, scrollTop: currentTop(), height: P.height });
+    const result = keyAction(e, { tree: P.tree, layout: P.layout, cursor: P.cursor, window: currentWin(), liveAt: P.viewport.liveAt, scrollTop: currentTop(), height: P.height, defaultWindow: P.defaultWindow });
     if (!result.handled) return;
     e.preventDefault();
     e.stopPropagation();

@@ -4,7 +4,8 @@
  * the presets are tested in node. A preset only adds to what the person has expanded; they may change
  * any of it afterwards.
  */
-import type { LensDefinition, SpanKind, TimelineSpan, TimelineViewState, TrackNode, TrackTree } from "../contract";
+import type { LensDefinition, SpanKind, TimelineFilters, TimelineSpan, TimelineViewState, TrackNode, TrackTree } from "../contract";
+import { buildTrackTree } from "../tracks/build";
 import { ladderOf, hasRetries, sliceOf, ticketOf } from "./model";
 
 /** Every span on the tree's rows (lanes and ribbons), once. */
@@ -43,6 +44,15 @@ function slicePath(slice: string, spans: readonly TimelineSpan[]): string[] {
 
 const merge = (view: TimelineViewState, add: readonly string[]): string[] => [...new Set([...view.expanded, ...add])];
 
+/**
+ * Of `ids`, the product rows that exist under `filters` (attention aside: it changes with the live edge,
+ * and a row it hides now is shown when the person clears it): a preset never stores a row that cannot be.
+ */
+function productRows(spans: readonly TimelineSpan[], filters: TimelineFilters, ids: readonly string[]): string[] {
+  const tree = buildTrackTree(spans, "product", { ...filters, attentionOnly: false }, Number.MAX_SAFE_INTEGER);
+  return ids.filter((id) => tree.byId.has(id));
+}
+
 function ticketsWith(spans: readonly TimelineSpan[], kind: SpanKind): string[] {
   const out: string[] = [];
   for (const s of spans) {
@@ -64,7 +74,7 @@ export const LENSES: readonly LensDefinition[] = [
       const spans = spansOfTree(tree);
       const focus = view.filters.tickets.length ? view.filters.tickets : ticketsWith(spans, "visit").filter((t) => hasRetries(ladderOf(t, spans, [], Number.POSITIVE_INFINITY)));
       const add = focus.flatMap((t) => [...cellPath(t, spans), `station:${t}/build`, `station:${t}/verify`, `cell:${t}/review`]);
-      return { grouping: "product", expanded: merge(view, add) };
+      return { grouping: "product", expanded: merge(view, productRows(spans, view.filters, add)) };
     },
   },
   {
@@ -89,7 +99,8 @@ export const LENSES: readonly LensDefinition[] = [
         if (t) add.push(...cellPath(t, spans), `cell:${t}/waits`);
         else if (sl) add.push(...slicePath(sl, spans), `slice:${sl}/waits`);
       }
-      return { grouping: "product", expanded: merge(view, add), filters: { ...view.filters, kinds: WAIT_KINDS } };
+      const filters = { ...view.filters, kinds: WAIT_KINDS };
+      return { grouping: "product", expanded: merge(view, productRows(spans, filters, add)), filters };
     },
   },
   {
@@ -99,15 +110,17 @@ export const LENSES: readonly LensDefinition[] = [
     preset(tree, view) {
       const spans = spansOfTree(tree);
       const add = ticketsWith(spans, "seat").flatMap((t) => [...cellPath(t, spans), `cell:${t}/review`]);
-      return { grouping: "product", expanded: merge(view, add) };
+      return { grouping: "product", expanded: merge(view, productRows(spans, view.filters, add)) };
     },
   },
   {
     id: "recovery",
     label: "Recovery and interruption",
     about: "Executions interrupted or with an outcome not known, visits ended without an exit record, the supervisor's recoveries and what took the work up again, from execution and visit spans and recovery marks.",
+    // Every execution, not only those needing attention: what was interrupted reads against what took
+    // the work up again (and failures elsewhere, rounds and seats, have no row in this grouping).
     preset(_tree, view) {
-      return { grouping: "execution", filters: { ...view.filters, attentionOnly: true } };
+      return { grouping: "execution", filters: { ...view.filters, attentionOnly: false } };
     },
   },
 ];

@@ -796,3 +796,9 @@ export function recoveryItems(spans: readonly TimelineSpan[], marks: readonly Ti
   }
   return { items, looseRecoveries: recoveries.filter((m) => !used.has(m.id)) };
 }
+
+/** A figure's name: its visible words first when the description does not already hold them. */
+export function figureName(name: string, visible: string): string {
+  if (!visible || name.toLowerCase().includes(visible.toLowerCase())) return name;
+  return `${visible}: ${name}`;
+}

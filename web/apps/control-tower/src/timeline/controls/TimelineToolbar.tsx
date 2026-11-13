@@ -23,7 +23,6 @@ import { IconButton } from "../../shell/timeline/Transport";
 import { NO_FILTERS, type Grouping, type LensDefinition, type LensId, type SpanKind, type TimelineFilters, type TimelineSpan, type TimelineToolbarProps, type TimeWindow } from "../contract";
 import {
   ALL_WINDOW,
-  applyLens,
   clampWindow,
   extentOfSpans,
   filterChips,
@@ -37,10 +36,18 @@ import {
   panToInclude,
   spanIdForRef,
   spansOfRef,
+  switchLens,
   toggled,
   windowLengthWords,
   type JumpKind,
+  type LensMemo,
 } from "./frame";
+
+/**
+ * Per store: what the lens in use changed and what was there before it, so choosing another lens (or
+ * none, here or in the band) gives the person's own filters and grouping back. Shared with the workspace.
+ */
+export const lensMemos = new WeakMap<object, LensMemo>();
 
 const REF = /^[a-z]+:.+/;
 /** One zoom step: the window's length is divided or multiplied by this. */
@@ -111,7 +118,11 @@ function GroupingSwitch({ value, onChange }: { value: Grouping; onChange: (g: Gr
   );
 }
 
-/** A button whose words give way to its icon when the row is narrow (the words stay its accessible name). */
+/**
+ * A button whose words give way to its icon when the row is narrow. The visible words are its
+ * accessible name at every width (visually hidden when narrow, never removed), so a person who says
+ * what they see reaches it; the longer `label` is its description (title).
+ */
 function LabelledButton({ label, words, shortcut, onClick, pressed, children, collapseBelow = "lg", disabled }: { label: string; words: string; shortcut?: string; onClick: () => void; pressed?: boolean; children: ReactNode; collapseBelow?: "md" | "lg"; disabled?: boolean }) {
   return (
     <button
@@ -119,7 +130,6 @@ function LabelledButton({ label, words, shortcut, onClick, pressed, children, co
       onClick={onClick}
       aria-pressed={pressed}
       aria-keyshortcuts={shortcut}
-      aria-label={label}
       disabled={disabled}
       title={shortcut ? `${label} (${shortcut})` : label}
       className={cn(
@@ -128,9 +138,7 @@ function LabelledButton({ label, words, shortcut, onClick, pressed, children, co
       )}
     >
       {children}
-      <span aria-hidden="true" className={collapseBelow === "lg" ? "@max-[1199px]:hidden" : "@max-[879px]:hidden"}>
-        {words}
-      </span>
+      <span className={collapseBelow === "lg" ? "@max-[1199px]:sr-only" : "@max-[879px]:sr-only"}>{words}</span>
     </button>
   );
 }
@@ -243,15 +251,13 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
   const chooseLens = useCallback(
     (lens: LensDefinition | null) => {
       setLensOpen(false);
-      if (!lens) {
-        onView({ lens: null });
-        setSaid("No investigation lens.");
-        return;
-      }
-      onView(applyLens(lens, tree, view, shown()));
-      setSaid(`${lens.label}: ${lens.about}`);
+      const next = switchLens(lens, tree, view, shown(), lensMemos.get(store));
+      if (next.memo) lensMemos.set(store, next.memo);
+      else lensMemos.delete(store);
+      onView(next.patch);
+      setSaid(lens ? `${lens.label}: ${lens.about}` : "No investigation lens.");
     },
-    [onView, tree, view, shown],
+    [onView, tree, view, shown, store],
   );
 
   useEffect(
@@ -303,7 +309,6 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
             <button
               type="button"
               aria-keyshortcuts="/"
-              aria-label={count > 0 ? `Filters, ${count} on` : "Filters"}
               title="Filters (/)"
               className={cn(
                 "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2 text-body-sm text-ink-muted hover:bg-surface-sunken hover:text-ink [&_svg]:size-4",
@@ -311,12 +316,11 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
               )}
             >
               <ListFilter aria-hidden="true" />
-              <span aria-hidden="true" className="@max-[879px]:hidden">
-                Filters
-              </span>
+              <span className="@max-[879px]:sr-only">Filters</span>
               {count > 0 ? (
-                <span aria-hidden="true" className="rounded-full bg-ink px-1.5 text-caption leading-4 text-ink-inverse">
+                <span className="rounded-full bg-ink px-1.5 text-caption leading-4 text-ink-inverse">
                   {count}
+                  <span className="sr-only"> on</span>
                 </span>
               ) : null}
             </button>
@@ -359,7 +363,7 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
             ))}
             {chips.length > MAX_CHIPS ? (
               <li className="shrink-0 text-caption text-ink-subtle">
-                <button type="button" onClick={() => setFiltersOpen(true)} className="rounded-sm px-1 hover:text-ink" aria-label={`${chips.length - MAX_CHIPS} more filters: open the filters`}>
+                <button type="button" onClick={() => setFiltersOpen(true)} className="rounded-sm px-1 hover:text-ink" aria-label={`+${chips.length - MAX_CHIPS} more filters: open the filters`}>
                   +{chips.length - MAX_CHIPS}
                 </button>
               </li>
@@ -373,7 +377,6 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
           <PopoverTrigger asChild>
             <button
               type="button"
-              aria-label={view.lens ? `Investigate: ${lensName(view.lens)} lens on` : "Investigate"}
               title={lenses ? "Investigate: retries, concurrency, waits, review, recovery" : "Investigation lenses are not available in this build"}
               className={cn(
                 "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2 text-body-sm text-ink-muted hover:bg-surface-sunken hover:text-ink [&_svg]:size-4",
@@ -382,9 +385,8 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
               data-timeline-investigate=""
             >
               <Microscope aria-hidden="true" />
-              <span aria-hidden="true" className="max-w-40 truncate @max-[879px]:hidden">
-                {view.lens ? lensName(view.lens) : "Investigate"}
-              </span>
+              <span className={cn("max-w-40 truncate", view.lens ? "@max-[1099px]:sr-only" : "@max-[879px]:sr-only")}>{view.lens ? lensName(view.lens) : "Investigate"}</span>
+              {view.lens ? <span className="sr-only"> lens on: investigate</span> : null}
               <ChevronDown aria-hidden="true" className="!size-3.5" />
             </button>
           </PopoverTrigger>
@@ -430,14 +432,14 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
           <PopoverTrigger asChild>
             <button
               type="button"
-              aria-label={`Jump to: ${last.plural.toLowerCase()}. Choose another kind`}
               title="Jump to a failure, retry, gate decision, human intervention or gap"
               className="inline-flex h-8 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm text-ink-muted hover:bg-surface-sunken hover:text-ink [&_svg]:size-3.5"
             >
-              <span aria-hidden="true" className="whitespace-nowrap">
-                <span className="@max-[1179px]:hidden">Jump: </span>
+              <span className="whitespace-nowrap">
+                <span className="@max-[1179px]:sr-only">Jump: </span>
                 {last.plural}
               </span>
+              <span className="sr-only">, choose another kind</span>
               <ChevronDown aria-hidden="true" />
             </button>
           </PopoverTrigger>

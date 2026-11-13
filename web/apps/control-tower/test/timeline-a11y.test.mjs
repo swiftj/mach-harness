@@ -226,6 +226,12 @@ test("virtualisation: only rows in view plus overscan; scrolling to show a row m
   assert.equal(model.scrollToShow(5, 0, view), 0);
   assert.equal(model.scrollToShow(12, 0, view), 3 * H);
   assert.equal(model.scrollToShow(2, 5 * H, view), 2 * H);
+  // Stacked (narrow, 200% zoom): taller rows and no visible header; the same arithmetic.
+  const g = model.STACKED;
+  assert.equal(g.header, 0);
+  assert.ok(g.row >= 60, "three lines");
+  assert.deepEqual(model.visibleRange(10 * g.row, 5 * g.row, 1000, 2, g), { start: 8, end: 17 });
+  assert.equal(model.scrollToShow(20, 0, 5 * g.row, g), 16 * g.row);
 });
 
 test("60,000 spans: building, a keystroke and the drawn rows' summaries stay within budget", () => {

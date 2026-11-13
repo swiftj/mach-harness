@@ -1,11 +1,14 @@
 /**
  * The sticky label column: the same rows as the canvas, in DOM, virtualised (one screen of overscan).
- * Each row: depth rails, a disclosure triangle (a 24 px target even in a thin row), the state mark of
- * the subtree's worst condition, the label, a quieter detail (or the row's note, in italic subtle ink),
- * and the span count. Resizable from 176 to 320 px by pointer or by arrow keys on the separator.
+ * Each row is one target, its full width and height (never overlapping the next row): depth rails, a
+ * disclosure triangle (a press there opens or closes the row, anywhere else selects it), the state
+ * mark of the subtree's worst condition, the label, a quieter detail (or the row's note, in italic
+ * subtle ink), and the span count. The rows are out of the Tab order: the tracks are one tab stop and
+ * their keys do the same (the equivalent control under WCAG 2.5.8 for rows thinner than 24 px).
+ * Resizable from 176 to 320 px by pointer or by arrow keys on the separator, a 24 px target.
  */
 import { ChevronRight } from "lucide-react";
-import { memo, useEffect, useLayoutEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { cn, StateMark, type MarkState } from "@mach/ui";
 import type { FlatRow, TrackKind, TrackLabelsProps, TrackNode } from "../contract";
 import { DETAIL_MIN_CHARS, showDetail } from "./words";
@@ -14,6 +17,11 @@ import "./render.css";
 export const LABEL_MIN = 176;
 export const LABEL_MAX = 320;
 const INDENT = 12;
+/**
+ * The width separator's target is 24 px (WCAG 2.5.8), centred on the column's edge: 12 px inside, where the
+ * rows stop, and 12 px over the tracks' edge.
+ */
+const SEPARATOR = 12;
 
 const ATTENTION: Readonly<Record<TrackNode["attention"], { state: MarkState; words: string } | null>> = {
   none: null,
@@ -59,7 +67,7 @@ function Rails({ depth }: { depth: number }) {
   return (
     <>
       {Array.from({ length: depth }, (_, d) => (
-        <span key={d} aria-hidden="true" className="absolute inset-y-0 w-px" style={{ left: 14 + d * INDENT, background: "var(--mach-factory-grid-major)" }} />
+        <span key={d} aria-hidden="true" className="pointer-events-none absolute inset-y-0 z-[2] w-px" style={{ left: 14 + d * INDENT, background: "var(--mach-factory-grid-major)" }} />
       ))}
     </>
   );
@@ -71,12 +79,29 @@ function fonts(): { sans: string; mono: string } {
   return { sans: cs.getPropertyValue("--mach-font-sans").trim() || "sans-serif", mono: cs.getPropertyValue("--mach-font-mono").trim() || "monospace" };
 }
 
-const LabelRow = memo(function LabelRow({ row, width, onToggle, onSelect }: { row: FlatRow; width: number; onToggle: (id: string) => void; onSelect: (node: TrackNode) => void }) {
+/**
+ * The full words of a label the tracks shortened: an agent or workflow under an execution drops the
+ * execution's ticket from its label ("LOCAL-001: build" reads "build"), and its title says it again.
+ */
+function fullTitle(layout: TrackLabelsProps["layout"], node: TrackNode): string | null {
+  if (node.kind !== "agent") return null;
+  let id = node.parentId;
+  while (id) {
+    const parent = layout.rowOf(id, 0)?.node;
+    if (!parent) return null;
+    if (parent.kind === "execution") return node.label.startsWith(parent.label) ? null : `${parent.label}: ${node.label}`;
+    id = parent.parentId;
+  }
+  return null;
+}
+
+const LabelRow = memo(function LabelRow({ row, width, title, onToggle, onSelect }: { row: FlatRow; width: number; title: string | null; onToggle: (id: string) => void; onSelect: (node: TrackNode) => void }) {
   const { node } = row;
   const h = row.height;
   const group = row.hasChildren && node.depth <= 1;
   const style = { top: row.y, height: h };
   const indent = 6 + node.depth * INDENT;
+  const disclosure = useRef<HTMLSpanElement>(null);
   if (row.lane > 0) {
     // A further lane of the same track: the rails continue, the label is on the first lane.
     return (
@@ -95,33 +120,39 @@ const LabelRow = memo(function LabelRow({ row, width, onToggle, onSelect }: { ro
   const labelFont = `${group && !thin ? 600 : 400} ${labelPx}px ${mono ? f.mono : f.sans}`;
   const detailFont = `${node.note ? "italic " : ""}400 ${thin ? 10.5 : 11}px ${f.sans}`;
   const countW = node.spanCount > 0 && !thin ? textWidth(node.spanCount.toLocaleString("en-GB"), `400 10.5px ${f.mono}`) + 8 : 0;
-  const available = width - indent - 16 - 4 - 2 - 12 - 6 - 8 - countW;
-  const detailShown = quiet ? showDetail(available, textWidth(node.label, labelFont), textWidth(quiet, detailFont), textWidth(`${quiet.slice(0, DETAIL_MIN_CHARS)}…`, detailFont)) : false;
-  const full = [node.label, quiet, node.spanCount > 0 ? `${node.spanCount} span${node.spanCount === 1 ? "" : "s"}` : null].filter(Boolean).join(" · ");
+  const available = width - indent - 16 - 4 - 2 - 12 - 6 - SEPARATOR - 4 - countW;
+  // An execution's detail (attempt and start) is what tells executions of one cell apart: it takes a
+  // second line under the ticket, starting below the triangle, rather than whatever is left beside it.
+  const twoLines = node.kind === "execution" && Boolean(quiet) && h >= 26;
+  const detailShown = twoLines ? true : quiet ? showDetail(available, textWidth(node.label, labelFont), textWidth(quiet, detailFont), textWidth(`${quiet.slice(0, DETAIL_MIN_CHARS)}…`, detailFont)) : false;
+  const full = [title ?? node.label, quiet, node.spanCount > 0 ? `${node.spanCount} span${node.spanCount === 1 ? "" : "s"}` : null].filter(Boolean).join(" · ");
+  // One target per row, the row's full width and height: a press on the disclosure triangle (or the
+  // indent before it) opens or closes the row, anywhere else selects it. Out of the Tab order: the
+  // tracks are one tab stop and their keys do both (Enter, Alt+Left / Alt+Right).
+  const onClick = (e: MouseEvent<HTMLButtonElement>) => {
+    const tri = disclosure.current;
+    if (row.hasChildren && tri && e.clientX <= tri.getBoundingClientRect().right + 2) onToggle(node.id);
+    else onSelect(node);
+  };
   return (
-    <div className={cn("absolute inset-x-0 flex items-center gap-1 pr-2", group && "border-t")} style={{ ...style, paddingLeft: indent, borderColor: group ? "var(--mach-factory-grid-major)" : undefined }}>
+    <div className={cn("absolute inset-x-0", group && "border-t")} style={{ ...style, borderColor: group ? "var(--mach-factory-grid-major)" : undefined }}>
       <Rails depth={node.depth} />
-      {row.hasChildren ? (
-        <button
-          type="button"
-          onClick={() => onToggle(node.id)}
-          aria-expanded={row.expanded}
-          aria-label={`${row.expanded ? "Collapse" : "Expand"} ${node.label}`}
-          className="mach-tl-hit relative z-[1] inline-flex size-4 shrink-0 items-center justify-center rounded-xs text-ink-subtle hover:bg-surface-sunken hover:text-ink focus-visible:outline-2 focus-visible:outline-focus"
-        >
-          <ChevronRight aria-hidden="true" className={cn("size-3.5", row.expanded && "rotate-90")} />
-        </button>
-      ) : (
-        <span aria-hidden="true" className="size-4 shrink-0" />
-      )}
       <button
         type="button"
-        onClick={() => onSelect(node)}
+        tabIndex={-1}
+        onClick={onClick}
         title={full}
-        className={cn("relative z-[1] flex min-w-0 flex-1 items-center gap-1.5 rounded-xs px-0.5 text-left hover:bg-surface-sunken focus-visible:outline-2 focus-visible:outline-focus", thin ? "h-full" : "py-0.5")}
+        data-target-equivalent="tracks"
+        className={cn("absolute inset-y-0 left-0 right-3 z-[1] flex text-left hover:bg-surface-sunken focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus", twoLines ? "flex-col justify-center" : "items-center gap-1")}
+        data-two-lines={twoLines || undefined}
+        style={{ paddingLeft: indent }}
       >
+        <span className={cn("flex w-full min-w-0 items-center gap-1", twoLines && "h-[13px]")}>
+        <span ref={disclosure} aria-hidden="true" className="inline-flex size-4 shrink-0 items-center justify-center text-ink-subtle">
+          {row.hasChildren ? <ChevronRight className={cn("size-3.5", row.expanded && "rotate-90")} /> : null}
+        </span>
         <AttentionMark attention={node.attention} />
-        <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 pl-0.5">
           <span
             className={cn(
               "block min-w-0 max-w-full shrink-0 truncate leading-tight",
@@ -132,7 +163,7 @@ const LabelRow = memo(function LabelRow({ row, width, onToggle, onSelect }: { ro
           >
             {node.label}
           </span>
-          {quiet && detailShown ? (
+          {quiet && detailShown && !twoLines ? (
             <span className={cn("block min-w-0 flex-1 truncate leading-tight text-ink-subtle", thin ? "text-[10.5px]" : "text-[11px]", node.note && "italic")}>
               {quiet}
             </span>
@@ -140,12 +171,20 @@ const LabelRow = memo(function LabelRow({ row, width, onToggle, onSelect }: { ro
             <span className="sr-only">, {quiet}</span>
           ) : null}
           {attention ? <span className="sr-only">, {attention.words}</span> : null}
+          {row.hasChildren ? <span className="sr-only">, {row.expanded ? "expanded" : "collapsed"}</span> : null}
         </span>
         {node.spanCount > 0 && !thin ? (
-          <span className="min-w-[3ch] shrink-0 text-right font-mono text-[10.5px] text-ink-subtle tabular-nums" title={`${node.spanCount} span${node.spanCount === 1 ? "" : "s"} in this track and below`}>
+          <span className="min-w-[3ch] shrink-0 pr-1 text-right font-mono text-[10.5px] text-ink-subtle tabular-nums" title={`${node.spanCount} span${node.spanCount === 1 ? "" : "s"} in this track and below`}>
             <span className="sr-only">, </span>
             {node.spanCount.toLocaleString("en-GB")}
             <span className="sr-only"> spans</span>
+          </span>
+        ) : null}
+        </span>
+        {twoLines ? (
+          <span className="block h-[12px] min-w-0 truncate text-[10.5px] leading-[12px] text-ink-subtle tabular-nums">
+            <span className="sr-only">, </span>
+            {quiet}
           </span>
         ) : null}
       </button>
@@ -202,11 +241,13 @@ export const TrackLabels = memo(function TrackLabels({ layout, height, scrollTop
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
   return (
-    <div ref={box} className="relative shrink-0 overflow-hidden" style={{ width, height, background: "var(--mach-factory-ground)", borderRight: "1px solid var(--mach-factory-plate-edge)" }}>
+    <div ref={box} className="relative shrink-0" style={{ width, height, background: "var(--mach-factory-ground)", borderRight: "1px solid var(--mach-factory-plate-edge)" }}>
+      <div className="absolute inset-0 overflow-hidden">
       <div className="absolute inset-x-0 top-0" style={{ transform: `translateY(${-scrollTop}px)`, height: layout.totalHeight }}>
         {rows.map((r) => (
-          <LabelRow key={`${r.node.id}#${r.lane}`} row={r} width={width} onToggle={onToggle} onSelect={onSelect} />
+          <LabelRow key={`${r.node.id}#${r.lane}`} row={r} width={width} title={fullTitle(layout, r.node)} onToggle={onToggle} onSelect={onSelect} />
         ))}
+      </div>
       </div>
       {/* A focusable separator is a widget (WAI-ARIA window splitter); the lint rule counts it as static. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
@@ -224,8 +265,10 @@ export const TrackLabels = memo(function TrackLabels({ layout, height, scrollTop
         onPointerUp={() => (drag.current = null)}
         onPointerCancel={() => (drag.current = null)}
         onKeyDown={onKey}
-        className="absolute inset-y-0 right-0 z-[2] w-1.5 cursor-col-resize touch-none hover:bg-line-strong focus-visible:bg-focus focus-visible:outline-none"
-      />
+        className="group absolute inset-y-0 -right-3 z-[2] flex w-6 cursor-col-resize touch-none justify-center outline-hidden"
+      >
+        <span aria-hidden="true" className="h-full w-1 group-hover:bg-line-strong group-focus-visible:bg-focus" />
+      </div>
     </div>
   );
 });

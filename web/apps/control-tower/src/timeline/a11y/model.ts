@@ -134,19 +134,33 @@ export function buildGridRows(layout: RowLayout, index: WindowIndex, openLeaves:
 
 // ---------------------------------------------------------------- virtualisation
 
+/** The grid's geometry: one row height (constant, for constant-time virtualisation) and the sticky header's. */
+export interface GridGeometry {
+  readonly row: number;
+  readonly header: number;
+}
+export const WIDE: GridGeometry = { row: GRID_ROW_HEIGHT, header: GRID_HEADER_HEIGHT };
+/**
+ * Below this width the columns stack (track; what; the times, duration, outcome and authority on a
+ * third line), so a row reads without scrolling sideways, at 200% zoom too (WCAG 1.4.10).
+ */
+export const STACK_BELOW = 1080;
+/** Stacked: three 20 px lines and room; the column headers are for screen readers only. */
+export const STACKED: GridGeometry = { row: 68, header: 0 };
+
 /** The rows to put in the DOM for a scroll position: those in view plus `overscan` on each side. */
-export function visibleRange(scrollTop: number, height: number, count: number, overscan = 8): { start: number; end: number } {
+export function visibleRange(scrollTop: number, height: number, count: number, overscan = 8, g: GridGeometry = WIDE): { start: number; end: number } {
   const body = Math.max(0, scrollTop);
-  const first = Math.floor(body / GRID_ROW_HEIGHT);
-  const last = Math.ceil((body + Math.max(0, height - GRID_HEADER_HEIGHT)) / GRID_ROW_HEIGHT);
+  const first = Math.floor(body / g.row);
+  const last = Math.ceil((body + Math.max(0, height - g.header)) / g.row);
   return { start: Math.max(0, first - overscan), end: Math.min(count, last + overscan) };
 }
 
 /** The scroll position that shows row `index` whole under the sticky header, moving as little as possible. */
-export function scrollToShow(index: number, scrollTop: number, height: number): number {
-  const top = index * GRID_ROW_HEIGHT;
-  const bottom = top + GRID_ROW_HEIGHT;
-  const view = Math.max(GRID_ROW_HEIGHT, height - GRID_HEADER_HEIGHT);
+export function scrollToShow(index: number, scrollTop: number, height: number, g: GridGeometry = WIDE): number {
+  const top = index * g.row;
+  const bottom = top + g.row;
+  const view = Math.max(g.row, height - g.header);
   if (top < scrollTop) return top;
   if (bottom > scrollTop + view) return bottom - view;
   return scrollTop;

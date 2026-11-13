@@ -380,6 +380,10 @@ test("keys: + - 0 zoom about the cursor; Shift+arrows pan a tenth; PageDown a sc
   assert.ok(zout.to - zout.from > 10 * M);
   const framed = keys.keyAction({ key: "0" }, { ...w, cursor: c }).window;
   assert.ok(framed.from <= T0 + 4 * M && framed.to >= T0 + 5 * M && framed.to - framed.from < 2 * M);
+  // With the caller's default window, 0 returns to it (the recorded activity), wherever the cursor is.
+  const home = { from: T0, to: T0 + 30 * M };
+  assert.deepEqual(keys.keyAction({ key: "0" }, { ...w, cursor: c, defaultWindow: home }).window, home);
+  assert.deepEqual(keys.keyAction({ key: "0" }, { ...w, cursor: null, defaultWindow: home }).window, home);
   const pan = keys.keyAction({ key: "ArrowRight", shiftKey: true }, { ...w, cursor: c }).window;
   assert.equal(pan.from - w.window.from, M);
   const page = keys.keyAction({ key: "PageDown" }, { ...w, cursor: { trackId: "g", lane: 0, spanId: null } });

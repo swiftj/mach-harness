@@ -481,7 +481,7 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
             aria-valuetext={`From ${spokenTime(c.from)} to ${spokenTime(c.to)}, ${len}`}
             onKeyDown={onKey("move")}
             className={cn(
-              "absolute top-0 cursor-grab rounded-[2px] border border-factory-select outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus active:cursor-grabbing",
+              "absolute top-0 cursor-grab rounded-[2px] border border-factory-select outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus active:cursor-grabbing",
               "data-[whole=true]:cursor-default data-[whole=true]:border-transparent",
             )}
             style={{ height: brushH }}
@@ -580,7 +580,7 @@ function BrushHandle({ ref, ...props }: {
       aria-valuenow={Math.round(props.now / 1000)}
       aria-valuetext={props.text}
       onKeyDown={props.onKeyDown}
-      className="group absolute top-0 z-[2] cursor-ew-resize rounded-xs outline-none focus-visible:outline-2 focus-visible:outline-focus"
+      className="group absolute top-0 z-[2] cursor-ew-resize rounded-xs outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus"
       style={{ width: HANDLE_W, height: props.height }}
     >
       {/* Geometry (left of the handle and of this grip) is written by applyBrush. */}

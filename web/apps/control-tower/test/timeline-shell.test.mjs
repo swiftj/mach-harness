@@ -357,12 +357,13 @@ test("framing: clamp, frame, pan; refs from spans", () => {
   const w = { from: 0, to: 60_000 };
   assert.equal(frame.panToInclude(w, { from: 30_000, to: 90_000 }), w, "already in view: unchanged");
   assert.deepEqual(frame.panToInclude(w, { from: 600_000, to: 600_000 }), { from: 570_000, to: 630_000 });
-  const span = (id, entity, parent) => ({ id, kind: id.slice(0, id.indexOf(":")), entity, parent, start: { at: 0, notBefore: null, notAfter: null }, end: null });
-  const agent = span("agent:agent:x/7", "agent:x/7", "workflow:workflow:x/w");
-  const wf = span("workflow:workflow:x/w", "workflow:x/w", "execution:execution:x");
-  const byId = new Map([[wf.id, wf]]);
+  // A span's parent is an ENTITY ref (contract): climbed through the loaded spans by entity.
+  const span = (id, entity, parent, ids = {}) => ({ id, kind: id.slice(0, id.indexOf(":")), entity, parent, ids, start: { at: 0, notBefore: null, notAfter: null }, end: null });
+  const agent = span("agent:agent:x/7", "agent:x/7", "workflow:x/w");
+  const wf = span("workflow:workflow:x/w", "workflow:x/w", "execution:x");
+  const byId = frame.spanLookup([wf, agent]);
   assert.equal(frame.refForSpan(agent, byId, (r) => r === "agent:x/7"), "agent:x/7");
-  assert.equal(frame.refForSpan(agent, byId, (r) => r === "execution:x"), "execution:x", "up through a loaded parent and one known only by id");
+  assert.equal(frame.refForSpan(agent, byId, (r) => r === "execution:x"), "execution:x", "up through a loaded parent to one known only by its ref");
   assert.equal(frame.refForSpan(agent, byId, () => false), null);
   assert.equal(frame.spanIdForRef("cell:LOCAL-031"), "cell:cell:LOCAL-031");
   assert.equal(frame.spanIdForRef("finding:x"), null);
@@ -418,6 +419,65 @@ test("default window: frames the recorded activity, not the wall clock (the real
   // Never narrower than the minimum.
   const tiny = frame.activityWindow({ whole, dataFrom: null, density: null, spans: [sp("x:x", T0 + H, T0 + H + 100)], lastMark: null, followingLive: false });
   assert.ok(tiny.to - tiny.from >= MIN_WINDOW_MS);
+});
+
+test("default window: only open executions, workflows, agents and station visits other than human approval count as running", () => {
+  const open = (id, kind, ids = {}) => sp(id, T0, null, ids, kind);
+  for (const [id, kind, ids] of [
+    ["execution:execution:x1", "execution"],
+    ["workflow:workflow:x1/w", "workflow"],
+    ["agent:agent:x1/7", "agent"],
+    ["visit:visit:LOCAL-1/build#2", "visit", { station: "build" }],
+    ["visit:visit:LOCAL-1/verify#1", "visit"],
+  ]) assert.equal(frame.isRunning(open(id, kind, ids)), true, `${kind} open is running`);
+  for (const [id, kind, ids] of [
+    ["person-wait:wait:LOCAL-1", "person-wait"],
+    ["gate-wait:gate:LOCAL-1/review", "gate-wait"],
+    ["cell:cell:LOCAL-1", "cell"],
+    ["round:round:LOCAL-1#3", "round"],
+    ["wave:wave:WAVE-1", "wave"],
+    ["slice-eligible:slice:SLICE-1", "slice-eligible"],
+    ["slice-wait:slice:SLICE-1", "slice-wait"],
+    ["capacity-wait:slice:SLICE-2", "capacity-wait"],
+    ["claim:claim:x1", "claim"],
+    ["visit:visit:LOCAL-1/human-approval#1", "visit", { station: "human-approval" }],
+    ["visit:visit:LOCAL-1/human-approval#2", "visit"],
+  ]) assert.equal(frame.isRunning(open(id, kind, ids)), false, `${id} open is not running`);
+  assert.equal(frame.isRunning(sp("execution:execution:x1", T0, T0 + 1000, {}, "execution")), false, "an ended execution is not running");
+});
+
+test("default window: the real case, one cell parked for a person seven hours after its last event, live and following, frames the recorded activity", () => {
+  const lastEvent = T0 + 73 * 60_000;
+  const whole = { from: T0, to: lastEvent + 7 * H };
+  const density = { from: whole.from, to: whole.to, bucketMs: 60_000, buckets: [{ from: T0, count: 9 }, { from: lastEvent - 60_000, count: 3 }], complete: true };
+  const spans = [
+    sp("cell:cell:LOCAL-1", T0 + 5_000, null, { ticket_id: "LOCAL-1" }, "cell"),
+    sp("round:round:LOCAL-1#3", lastEvent - 20 * 60_000, null, { ticket_id: "LOCAL-1" }, "round"),
+    sp("visit:visit:LOCAL-1/human-approval#1", lastEvent - 60_000, null, { ticket_id: "LOCAL-1", station: "human-approval" }),
+    sp("person-wait:wait:LOCAL-1/human-approval", lastEvent - 60_000, null, { ticket_id: "LOCAL-1" }, "person-wait"),
+    sp("execution:execution:x3", lastEvent - 30 * 60_000, lastEvent - 2 * 60_000, { ticket_id: "LOCAL-1" }, "execution"),
+    sp("visit:visit:LOCAL-1/review#3", lastEvent - 20 * 60_000, lastEvent - 60_000, { ticket_id: "LOCAL-1", station: "review" }),
+  ];
+  const len = lastEvent - T0;
+  const live = frame.activityWindow({ whole, dataFrom: T0, density, recorded: { from: T0, to: lastEvent }, spans, lastMark: null, followingLive: true });
+  assert.equal(live.from, T0);
+  assert.equal(live.to, lastEvent + len * frame.ACTIVITY_PAD, "ends at the last recorded event, padded 2%: not the live edge seven hours later");
+  assert.ok(live.to < whole.to - 6 * H, "the seven idle hours are not in the default window");
+  const reviewed = frame.activityWindow({ whole, dataFrom: T0, density, recorded: { from: T0, to: lastEvent }, spans, lastMark: null, followingLive: false });
+  assert.deepEqual(reviewed, live, "the same whether following or not");
+  // The moment an execution is open again (and the source follows the live edge), the window runs to it.
+  const again = [...spans, sp("execution:execution:x4", whole.to - 60_000, null, { ticket_id: "LOCAL-1" }, "execution")];
+  assert.equal(frame.activityWindow({ whole, dataFrom: T0, density, recorded: { from: T0, to: lastEvent }, spans: again, lastMark: null, followingLive: true }).to, whole.to);
+  // An open wait alone, with the source live and following: still the recorded activity.
+  const waitOnly = [sp("person-wait:wait:LOCAL-1/human-approval", lastEvent - 60_000, null, {}, "person-wait")];
+  assert.equal(frame.activityWindow({ whole, dataFrom: T0, density, spans: waitOnly, lastMark: null, followingLive: true }).to, lastEvent + len * frame.ACTIVITY_PAD);
+  // An open wave or cell alone: the same.
+  const shelf = [sp("wave:wave:W1", T0, null, {}, "wave"), sp("cell:cell:LOCAL-1", T0, null, {}, "cell")];
+  assert.equal(frame.activityWindow({ whole, dataFrom: T0, density, spans: shelf, lastMark: null, followingLive: true }).to, lastEvent + len * frame.ACTIVITY_PAD);
+  // An open agent or workflow, live and following: the live edge.
+  for (const kind of ["agent", "workflow"]) {
+    assert.equal(frame.activityWindow({ whole, dataFrom: T0, density, spans: [sp(`${kind}:${kind}:x/1`, lastEvent - 1000, null, {}, kind)], lastMark: null, followingLive: true }).to, whole.to, kind);
+  }
 });
 
 test("default window: null frames the activity, ALL the whole history, a chosen window itself", () => {
@@ -636,4 +696,158 @@ test("cross-experience: 3 frames the selection in the Timeline; 1 and 2 return t
   assert.equal(s.selection, "cell:LOCAL-031");
   assert.equal(s.playhead, 900_000);
   assert.ok(s.focus.nonce > nonce && s.focus.target === "cell:LOCAL-031", "the floor frames it with the existing focusOn");
+});
+
+// ---------------------------------------------------------------- the real lenses, end to end on the simulation
+
+const { LENSES } = await import("../src/timeline/investigate/lenses.ts");
+const { buildTrackTree, defaultExpanded } = await import("../src/timeline/tracks/index.ts");
+const { createSimulationTimelineData } = await import("../src/timeline/data/simulation.ts");
+const { INITIAL_TIMELINE_VIEW } = await import("../src/timeline/contract.ts");
+
+async function simulationAtEnd() {
+  const store = make();
+  store.seek(store.getState().extent.end);
+  const data = createSimulationTimelineData(store);
+  const s = store.getState();
+  const whole = { from: s.extent.start, to: s.extent.end };
+  const page = await data.spans({ window: { from: whole.from, to: whole.to + 1 } });
+  return { store, data, whole, spans: page.spans, liveAt: s.liveAt };
+}
+
+test("lens: each of the five real lenses applies its preset through the store; No lens clears it and keeps the preset", async () => {
+  const { store, spans, whole, liveAt } = await simulationAtEnd();
+  assert.deepEqual(LENSES.map((l) => l.id), ["retries", "concurrency", "waits", "review", "recovery"]);
+  const emptied = [];
+  for (const lens of LENSES) {
+    store.setTimelineView({ ...INITIAL_TIMELINE_VIEW, lens: null });
+    const view = store.getState().timeline;
+    const tree = buildTrackTree(spans, view.grouping, view.filters, liveAt);
+    const patch = frame.applyLens(lens, tree, view, whole);
+    assert.equal(patch.lens, lens.id);
+    store.setTimelineView(patch);
+    const after = store.getState().timeline;
+    assert.equal(after.lens, lens.id, `${lens.id}: the lens is on`);
+    assert.ok(after.grouping === "product" || after.grouping === "execution");
+    if (patch.grouping) assert.equal(after.grouping, patch.grouping, `${lens.id}: grouping`);
+    if (patch.filters) assert.deepEqual(after.filters, patch.filters, `${lens.id}: filters`);
+    if (patch.expanded) {
+      for (const id of view.expanded) assert.ok(after.expanded.includes(id), `${lens.id}: a preset only adds to what is expanded`);
+      // Every row it expands exists in its grouping (unfiltered: a filter may hide a row it opens).
+      const t2 = buildTrackTree(spans, after.grouping, INITIAL_TIMELINE_VIEW.filters, liveAt);
+      const added = after.expanded.filter((id) => !view.expanded.includes(id));
+      if (added.length) assert.ok(added.some((id) => t2.byId.has(id)), `${lens.id}: opens rows of the ${after.grouping} grouping`);
+    }
+    assert.equal(after.window, view.window, `${lens.id}: the window the person chose (none) is left alone`);
+    // The tree of the preset still draws something (no lens empties the simulated run).
+    const t3 = buildTrackTree(spans, after.grouping, after.filters, liveAt);
+    if (t3.roots.length === 0) emptied.push(lens.id);
+    // No lens: the lens goes; the person's view stays as the preset left it.
+    store.setTimelineView({ lens: null });
+    assert.equal(store.getState().timeline.lens, null);
+    assert.equal(store.getState().timeline.grouping, after.grouping);
+  }
+  // Known (reported to the lenses' owner): Recovery's preset (execution grouping, attention only) leaves no
+  // track in the simulated run, whose failures are rounds, visits and seats, not executions; the workspace
+  // then shows its designed "Nothing matches these filters" state with Clear filters. No other lens empties it.
+  assert.ok(emptied.every((id) => id === "recovery"), `lenses that empty the tracks: ${emptied.join(", ")}`);
+  // The review lens expands the cells that held review rounds, and the retries lens those that ran again.
+  store.setTimelineView({ ...INITIAL_TIMELINE_VIEW });
+  const tree = buildTrackTree(spans, "product", INITIAL_TIMELINE_VIEW.filters, liveAt);
+  const review = frame.applyLens(LENSES.find((l) => l.id === "review"), tree, store.getState().timeline, whole);
+  assert.ok((review.expanded ?? []).length > 0, "review expands rows to its rounds");
+  void defaultExpanded;
+});
+
+test("selection: every span kind of the simulated run selects something the inspector resolves; the span itself stays marked", async () => {
+  const { store, spans } = await simulationAtEnd();
+  const s = store.getState();
+  const head = s.log.head();
+  const now = s.log.sceneAt(s.playhead);
+  const known = (r) => {
+    try {
+      return sim.stableEntityAt(head, r) !== null || sim.entityAt(now, r) !== null;
+    } catch {
+      return false;
+    }
+  };
+  const lookup = frame.spanLookup(spans);
+  const kinds = new Map();
+  for (const span of spans) {
+    const ref = frame.refForSpan(span, lookup, known);
+    assert.ok(ref, `${span.kind} ${span.entity} selects something`);
+    assert.ok(known(ref));
+    if (!kinds.has(span.kind)) kinds.set(span.kind, { entity: span.entity, ref });
+  }
+  // In the simulation, visits, build tasks and rounds are not entities of the scene: their station or cell is.
+  assert.match(kinds.get("visit").ref, /^station:LOCAL-\d+\//);
+  assert.match(kinds.get("task").ref, /^station:LOCAL-\d+\/build$/);
+  assert.match(kinds.get("round").ref, /^cell:/);
+  assert.match(kinds.get("workflow").ref, /^execution:/);
+  for (const k of ["wave", "cell", "execution", "agent", "tool", "seat", "gate-wait"]) assert.equal(kinds.get(k).ref, kinds.get(k).entity, `${k} selects itself`);
+  // Selecting through an ancestor keeps the span as the detail, highlighted until another selection.
+  const visit = kinds.get("visit");
+  store.select(visit.ref, { focus: false, detail: visit.entity });
+  assert.equal(store.getState().selection, visit.ref);
+  assert.equal(store.getState().selectionDetail, visit.entity);
+  assert.ok(store.getState().highlighted.includes(visit.entity), "the visit itself stays marked");
+  store.hover("cell:LOCAL-033");
+  assert.ok(!store.getState().highlighted.includes(visit.entity), "a hover shows its own relations");
+  store.hover(null);
+  assert.ok(store.getState().highlighted.includes(visit.entity));
+  store.select("cell:LOCAL-031", { focus: false });
+  assert.equal(store.getState().selectionDetail, null, "any other selection clears the detail");
+  assert.ok(!store.getState().highlighted.includes(visit.entity));
+  store.select("execution:x", { focus: false, detail: "execution:x" });
+  assert.equal(store.getState().selectionDetail, null, "a detail equal to the selection is not kept");
+});
+
+test("default window: the simulation and a replay have no 'now': nothing follows a live edge", () => {
+  const sim0 = make();
+  assert.equal(sim0.getState().source, "simulation");
+  // The workspace frames the simulation on its whole run and passes followingLive only for a live source;
+  // activityWindow without following never runs to the edge, whatever is open.
+  const whole = { from: T0, to: T0 + 8 * H };
+  const open = [sp("execution:execution:x1", T0, null, {}, "execution"), sp("visit:visit:LOCAL-1/build#1", T0 + 60_000, null, { station: "build" })];
+  const w = frame.activityWindow({ whole, dataFrom: T0, density: null, recorded: { from: T0, to: T0 + H }, spans: open, lastMark: null, followingLive: false });
+  assert.ok(w.to < whole.to);
+  assert.equal(w.to, T0 + H + H * frame.ACTIVITY_PAD);
+});
+
+test("lens: switching lenses starts from the person's own view; No lens gives back the filters and grouping a lens set, unless the person changed them", async () => {
+  const { spans, whole, liveAt } = await simulationAtEnd();
+  const lens = (id) => LENSES.find((l) => l.id === id);
+  let view = { ...INITIAL_TIMELINE_VIEW };
+  const tree = () => buildTrackTree(spans, view.grouping, view.filters, liveAt);
+  // Waits narrows the kinds; Review after it must not inherit that filter (the real defect: Review showed only waits).
+  let step = frame.switchLens(lens("waits"), tree(), view, whole, null);
+  view = { ...view, ...step.patch };
+  assert.equal(view.lens, "waits");
+  assert.ok(view.filters.kinds.length > 0, "waits filters the kinds");
+  step = frame.switchLens(lens("review"), tree(), view, whole, step.memo);
+  view = { ...view, ...step.patch };
+  assert.equal(view.lens, "review");
+  assert.deepEqual(view.filters, INITIAL_TIMELINE_VIEW.filters, "review starts from the person's filters, not waits'");
+  // Recovery sets the execution grouping; No lens gives it back.
+  step = frame.switchLens(lens("recovery"), tree(), view, whole, step.memo);
+  view = { ...view, ...step.patch };
+  assert.equal(view.grouping, "execution");
+  step = frame.switchLens(null, tree(), view, whole, step.memo);
+  view = { ...view, ...step.patch };
+  assert.equal(view.lens, null);
+  assert.equal(view.grouping, "product");
+  assert.deepEqual(view.filters, INITIAL_TIMELINE_VIEW.filters);
+  assert.equal(step.memo, null);
+  // A filter the person changed while the lens was on is theirs: it stays (and the lens's part of it with it).
+  step = frame.switchLens(lens("waits"), tree(), view, whole, null);
+  const waitKinds = step.patch.filters.kinds;
+  view = { ...view, ...step.patch, grouping: "execution" };
+  view = { ...view, filters: { ...view.filters, tickets: ["LOCAL-031"] } };
+  step = frame.switchLens(null, tree(), view, whole, step.memo);
+  view = { ...view, ...step.patch };
+  assert.deepEqual(view.filters.tickets, ["LOCAL-031"]);
+  assert.deepEqual(view.filters.kinds, waitKinds, "kept with the person's change");
+  assert.equal(view.grouping, "execution", "a grouping the person chose stays");
+  // A lens applied from the address (no memo) is simply cleared.
+  assert.deepEqual(frame.switchLens(null, tree(), { ...view, lens: "waits" }, whole, undefined).patch, { lens: null });
 });

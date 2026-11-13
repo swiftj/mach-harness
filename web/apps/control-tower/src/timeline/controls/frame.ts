@@ -152,21 +152,48 @@ export function entityOfSpanId(id: string): string {
   return i < 0 ? id : id.slice(i + 1);
 }
 
-/**
- * Which store ref a span stands for: its entity when the store knows it (`known`), else the nearest
- * parent span's entity that it knows. Null when none is known.
- */
-export function refForSpan(span: TimelineSpan, byId: ReadonlyMap<string, TimelineSpan>, known: (ref: string) => boolean): string | null {
-  let entity: string | null = span.entity;
-  let parent: string | null = span.parent;
-  for (let depth = 0; depth < 8 && entity !== null; depth++) {
-    if (REF.test(entity) && known(entity)) return entity;
-    if (!parent) return null;
-    const p = byId.get(parent);
-    entity = p ? p.entity : entityOfSpanId(parent);
-    parent = p ? p.parent : null;
+/** The spans loaded, by entity ref (a span's `parent` is an ENTITY ref) and by span id. */
+export function spanLookup(spans: readonly TimelineSpan[]): Map<string, TimelineSpan> {
+  const out = new Map<string, TimelineSpan>();
+  for (const s of spans) {
+    if (!out.has(s.entity)) out.set(s.entity, s);
+    out.set(s.id, s);
   }
-  return null;
+  return out;
+}
+
+/** The station a visit or a build task belongs to, as the store names it (`station:<ticket>/<station>`). */
+function stationRefOf(span: TimelineSpan): string | null {
+  if (span.kind !== "visit" && span.kind !== "task" && span.kind !== "seat") return null;
+  const ticket = span.ids.ticket_id;
+  const station = span.ids.station ?? (span.kind === "seat" ? "review" : undefined);
+  return ticket && station ? `station:${ticket}/${station}` : null;
+}
+
+/**
+ * Which store ref a span stands for: its entity when the store knows it (`known`); else, climbing
+ * through its parents (entity refs, looked up in `lookup` to keep climbing), the first one the store
+ * knows, trying a visit's, task's or seat's station on the way; else its cell from `ids.ticket_id`.
+ * Null when none is known. `lookup` is keyed by entity (and may also hold span ids, see `spanLookup`).
+ */
+export function refForSpan(span: TimelineSpan, lookup: ReadonlyMap<string, TimelineSpan>, known: (ref: string) => boolean): string | null {
+  const ok = (ref: string | null): ref is string => ref !== null && REF.test(ref) && known(ref);
+  let at: TimelineSpan | null = span;
+  let entity: string | null = span.entity;
+  const seen = new Set<string>();
+  for (let depth = 0; depth < 8 && entity !== null && !seen.has(entity); depth++) {
+    seen.add(entity);
+    if (ok(entity)) return entity;
+    const station = at ? stationRefOf(at) : null;
+    if (ok(station)) return station;
+    const parent: string | null = at ? at.parent : null;
+    if (!parent) break;
+    at = lookup.get(parent) ?? null;
+    entity = at ? at.entity : parent;
+  }
+  const ticket = span.ids.ticket_id;
+  const cell = ticket ? `cell:${ticket}` : null;
+  return ok(cell) ? cell : null;
 }
 
 /** The span id the observer gives the main span of an entity, by its ref kind (for loading it when it is outside the window). */
@@ -276,6 +303,21 @@ export interface ActivityInput {
 /** Each side of the default window is padded by this share of its length. */
 export const ACTIVITY_PAD = 0.02;
 
+/** The span kinds whose being open means work is under way (a visit only when it is not a wait on a person). */
+const RUNNING_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["execution", "workflow", "agent", "visit"]);
+
+/**
+ * Whether an open span means something is running: an open execution, workflow or agent, or an open
+ * station visit other than human approval (that one is a wait on a person). Open waits, cells,
+ * rounds, waves, claims and eligibility do not count: a cell parked for a person is not running.
+ */
+export function isRunning(span: TimelineSpan): boolean {
+  if (span.end !== null || !RUNNING_KINDS.has(span.kind)) return false;
+  if (span.kind !== "visit") return true;
+  const station = span.ids.station ?? span.entity.slice(span.entity.lastIndexOf("/") + 1).replace(/#.*$/, "");
+  return station !== "human-approval";
+}
+
 /**
  * The default window, when the person has not chosen one (finding 1 of the real run: 73 minutes of
  * activity were squeezed into the left tenth of the tracks because the window ran to the wall clock).
@@ -286,8 +328,10 @@ export const ACTIVITY_PAD = 0.02;
  * - It ends at the last thing recorded: the latest of the data layer's recorded extent
  *   (`recordedExtent(data)`: density, else marks and span bounds), the last non-empty density
  *   bucket's end, the last recorded span end, and the last mark (its `until` when it is an interval).
- * - While something is still open and the source is live and following, it ends at the live edge
- *   instead (it follows the live edge as before).
+ * - While something is running (`isRunning`: an open execution, workflow, agent, or station visit
+ *   other than human approval) and the source is live and following, it ends at the live edge
+ *   instead. An open wait, cell, round or wave alone is not running: a cell parked for a person
+ *   hours after its last event is framed on its recorded activity, live or not.
  * - 2% of its length is added on each side, never beyond the whole history; never narrower than
  *   MIN_WINDOW_MS. With nothing recorded at all it is the whole history.
  * "Show all" (ALL_WINDOW) still shows the whole history held, and the overview always does.
@@ -296,7 +340,7 @@ export function activityWindow(input: ActivityInput): TimeWindow {
   const { whole } = input;
   let first = Number.POSITIVE_INFINITY;
   let last = Number.NEGATIVE_INFINITY;
-  let open = false;
+  let running = false;
   const d = input.density;
   if (d) {
     for (const b of d.buckets) {
@@ -309,7 +353,7 @@ export function activityWindow(input: ActivityInput): TimeWindow {
     const x = extentOf(span);
     if (!x) continue;
     first = Math.min(first, x.from);
-    if (span.end === null) open = true;
+    if (isRunning(span)) running = true;
     if (Number.isFinite(x.to)) last = Math.max(last, x.to);
     else last = Math.max(last, x.from);
   }
@@ -323,7 +367,7 @@ export function activityWindow(input: ActivityInput): TimeWindow {
     last = Math.max(last, m.until ?? m.at);
   }
   if (input.dataFrom !== null && Number.isFinite(input.dataFrom)) first = input.dataFrom;
-  if (open && input.followingLive) last = whole.to;
+  if (running && input.followingLive) last = whole.to;
   if (!Number.isFinite(first) || !Number.isFinite(last)) return whole;
   let from = Math.max(whole.from, first);
   let to = Math.min(whole.to, Math.max(last, from));
@@ -433,4 +477,46 @@ export function cellsInInterval(spans: readonly TimelineSpan[], window: TimeWind
 export function applyLens(lens: Pick<LensDefinition, "id" | "preset">, tree: TrackTree, view: TimelineViewState, drawn: TimeWindow): Partial<TimelineViewState> {
   const preset = lens.preset(tree, { ...view, window: view.window === null ? null : drawn });
   return { ...preset, lens: lens.id };
+}
+
+/** What a lens changed, and what was there before it: so the next lens (or none) starts from the person's own view. */
+export interface LensMemo {
+  readonly base: Pick<TimelineViewState, "filters" | "grouping">;
+  readonly applied: Pick<TimelineViewState, "filters" | "grouping">;
+}
+
+const sameList = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
+export function sameFilters(a: TimelineFilters, b: TimelineFilters): boolean {
+  return a.attentionOnly === b.attentionOnly && sameList(a.tickets, b.tickets) && sameList(a.executions, b.executions) && sameList(a.slices, b.slices) && sameList(a.stations, b.stations) && sameList(a.kinds, b.kinds);
+}
+
+/**
+ * Leaving a lens: the filters and grouping it set go back to what they were before it, unless the
+ * person has changed them since (then theirs stay). Expansion stays (a preset only adds to it).
+ */
+export function leaveLens(view: TimelineViewState, memo: LensMemo | null | undefined): Partial<TimelineViewState> {
+  if (!memo || view.lens === null) return {};
+  const out: { filters?: TimelineFilters; grouping?: TimelineViewState["grouping"] } = {};
+  if (sameFilters(view.filters, memo.applied.filters)) out.filters = memo.base.filters;
+  if (view.grouping === memo.applied.grouping) out.grouping = memo.base.grouping;
+  return out;
+}
+
+/**
+ * Choosing a lens (or none) from the current view: the previous lens is left first (`leaveLens`), then
+ * the new one's preset applies. Returns the patch and the memo to keep for the next change.
+ */
+export function switchLens(
+  lens: Pick<LensDefinition, "id" | "preset"> | null,
+  tree: TrackTree,
+  view: TimelineViewState,
+  drawn: TimeWindow,
+  memo: LensMemo | null | undefined,
+): { patch: Partial<TimelineViewState>; memo: LensMemo | null } {
+  const left = leaveLens(view, memo);
+  const start: TimelineViewState = { ...view, ...left };
+  if (!lens) return { patch: { ...left, lens: null }, memo: null };
+  const preset = applyLens(lens, tree, start, drawn);
+  const applied = { filters: preset.filters ?? start.filters, grouping: preset.grouping ?? start.grouping };
+  return { patch: { ...left, ...preset }, memo: { base: { filters: start.filters, grouping: start.grouping }, applied } };
 }

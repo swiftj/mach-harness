@@ -337,7 +337,10 @@ const measureTargets = (sel) => {
     if (cs.visibility === "hidden" || cs.display === "none") continue;
     const name = (el.getAttribute("aria-label") ?? el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40);
     const cls = typeof el.className === "string" ? el.className.split(/\s+/).slice(0, 3).join(".") : "";
-    items.push({ el, sel: `${el.tagName.toLowerCase()}${el.getAttribute("role") ? `[role=${el.getAttribute("role")}]` : ""}${cls ? `.${cls}` : ""}`, name, box: { x: box.left, y: box.top, w: box.width, h: box.height } });
+    // WCAG 2.5.8's "equivalent" exception: a label-column row out of the Tab order whose function the
+    // tracks' own keys and pointer give (marked data-target-equivalent); reported, not failed.
+    const equivalent = el.getAttribute("data-target-equivalent") ?? null;
+    items.push({ el, equivalent, sel: `${el.tagName.toLowerCase()}${el.getAttribute("role") ? `[role=${el.getAttribute("role")}]` : ""}${cls ? `.${cls}` : ""}`, name, box: { x: box.left, y: box.top, w: box.width, h: box.height } });
   }
   const small = [];
   for (const t of items) {
@@ -347,7 +350,8 @@ const measureTargets = (sel) => {
     const cy = t.box.y + t.box.h / 2;
     const sq = { x: cx - 12, y: cy - 12, w: 24, h: 24 };
     const clash = items.find((o) => o !== t && !o.el.contains(t.el) && !t.el.contains(o.el) && o.box.x < sq.x + sq.w && o.box.x + o.box.w > sq.x && o.box.y < sq.y + sq.h && o.box.y + o.box.h > sq.y);
-    small.push({ sel: t.sel, name: t.name, size: `${Math.round(t.box.w)}x${Math.round(t.box.h)}`, at: `${Math.round(t.box.x)},${Math.round(t.box.y)}`, spaced: !clash, near: clash ? `${clash.sel} "${clash.name}"` : null });
+    const overlaps = items.some((o) => o !== t && !o.el.contains(t.el) && !t.el.contains(o.el) && o.box.x < t.box.x + t.box.w && o.box.x + o.box.w > t.box.x && o.box.y < t.box.y + t.box.h && o.box.y + o.box.h > t.box.y);
+    small.push({ sel: t.sel, name: t.name, size: `${Math.round(t.box.w)}x${Math.round(t.box.h)}`, at: `${Math.round(t.box.x)},${Math.round(t.box.y)}`, spaced: !clash, near: clash ? `${clash.sel} "${clash.name}"` : null, equivalent: t.equivalent !== null && t.el.tabIndex < 0 && !overlaps ? t.equivalent : null });
   }
   return { targets: items.length, undersized: small };
 };
@@ -361,8 +365,9 @@ async function checkTargets(browser) {
     results.push({ table, ...r });
     await context.close();
   }
-  const failing = results.flatMap((r) => r.undersized.filter((u) => !u.spaced).map((u) => ({ table: r.table, ...u })));
-  record("targets", "Interactive targets at least 24 px (or spaced, WCAG 2.5.8)", failing.length === 0 ? "pass" : "fail", { failing, spacedButSmall: results.flatMap((r) => r.undersized.filter((u) => u.spaced).map((u) => ({ table: r.table, ...u }))), counted: results.map((r) => ({ table: r.table, targets: r.targets })) });
+  const failing = results.flatMap((r) => r.undersized.filter((u) => !u.spaced && !u.equivalent).map((u) => ({ table: r.table, ...u })));
+  const equivalent = results.flatMap((r) => r.undersized.filter((u) => !u.spaced && u.equivalent).map((u) => ({ table: r.table, ...u })));
+  record("targets", "Interactive targets at least 24 px (or spaced, or an equivalent control: WCAG 2.5.8)", failing.length === 0 ? "pass" : "fail", { failing, equivalent: { count: equivalent.length, examples: equivalent.slice(0, 5) }, spacedButSmall: results.flatMap((r) => r.undersized.filter((u) => u.spaced).map((u) => ({ table: r.table, ...u }))), counted: results.map((r) => ({ table: r.table, targets: r.targets })) });
 }
 
 // ------------------------------------------------------------ 4. contrast
@@ -616,7 +621,7 @@ function brief(c) {
     case "keyboard":
       return `${d.stops} stops, order ${d.regionOrder.join(" > ")}; ${d.tabStopsInTracks} stops in the tracks; ${d.withoutVisibleFocus.length} without visible focus; came back round ${d.wrapped}; canvas exits ${d.shiftTabFromTracks?.ok}`;
     case "targets":
-      return `${d.failing.length} undersized and crowded; ${d.spacedButSmall.length} small but spaced`;
+      return `${d.failing.length} undersized and crowded; ${d.spacedButSmall.length} small but spaced; ${d.equivalent?.count ?? 0} thin label rows under the equivalent-control exception`;
     case "contrast":
       return `${d.failing.length} pairs under their minimum`;
     case "reduced-motion":

@@ -124,6 +124,8 @@ function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal
           {word}
         </text>
         <text x={a} y={CHIP_Y + CHIP_H + 11} style={{ ...MONO, fontSize: 9.5, fill: SUBTLE }}>
+          {/* The space keeps the figure's text "Build 4 min", not "Build4 min", for its accessible name; SVG collapses it. */}
+          {" "}
           {shortLength(span, liveAt)}
         </text>
         <Ring x={a} y={CHIP_Y} w={b - a} h={CHIP_H} />

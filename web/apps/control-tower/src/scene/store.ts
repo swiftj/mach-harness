@@ -147,6 +147,13 @@ export interface SceneStoreState {
   /** Events applied at the playhead (log.cursorAt(playhead)), for cheap change detection. */
   readonly cursor: number;
   readonly selection: EntityRef | null;
+  /**
+   * What was picked when it is more precise than the selection: a Timeline span whose own entity the
+   * store cannot select (a visit, a round, a build task in the simulation) selects its nearest
+   * selectable ancestor, and the span's entity is kept here so the Timeline can keep it marked.
+   * Null otherwise; cleared by any other selection.
+   */
+  readonly selectionDetail: string | null;
   readonly focus: FocusRequest | null;
   readonly hovered: EntityRef | null;
   /**
@@ -252,7 +259,7 @@ export interface SceneStore {
   setSpeed(speed: PlaybackSpeed): void;
   /** Jump to the live edge and stay pinned to it. */
   followLive(): void;
-  select(entity: EntityRef | null, options?: { focus?: boolean }): void;
+  select(entity: EntityRef | null, options?: { focus?: boolean; detail?: string | null }): void;
   focusOn(target: EntityRef | "overview", reason?: FocusRequest["reason"]): void;
   hover(entity: EntityRef | null): void;
   /** The Timeline's chosen interval and the cells active in it, or null. Feeds `highlighted` only while nothing is hovered or selected. */
@@ -375,6 +382,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     speed: options.speed ?? 1,
     cursor: log.cursorAt(start),
     selection: null,
+    selectionDetail: null,
     focus: null,
     hovered: null,
     highlighted: [],
@@ -396,7 +404,12 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
 
   const highlightFor = (s: SceneStoreState): readonly EntityRef[] => {
     const subject = s.hovered ?? s.selection;
-    if (subject) return relatedRefs(s.log.sceneAt(s.playhead), subject);
+    if (subject) {
+      const related = relatedRefs(s.log.sceneAt(s.playhead), subject);
+      // The precise thing picked (a span selected through its ancestor) stays marked while nothing is hovered.
+      const detail = s.hovered === null && s.selectionDetail !== null && s.selectionDetail !== s.selection ? (s.selectionDetail as EntityRef) : null;
+      return detail && !related.includes(detail) ? [...related, detail] : related;
+    }
     return s.interval ? s.interval.refs : [];
   };
 
@@ -406,7 +419,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     if (next.following !== state.following) next = { ...next, arrivedAtLeave: next.following || isSim ? null : next.arrived };
     if (!isSim && windows) next = route(next);
     if (patch.playhead !== undefined || patch.logVersion !== undefined || next.log !== state.log) next = { ...next, cursor: next.log.cursorAt(next.playhead) };
-    const subjectChanged = next.hovered !== state.hovered || next.selection !== state.selection || next.interval !== state.interval;
+    const subjectChanged = next.hovered !== state.hovered || next.selection !== state.selection || next.selectionDetail !== state.selectionDetail || next.interval !== state.interval;
     if (subjectChanged || next.cursor !== state.cursor || next.logVersion !== state.logVersion) {
       const highlighted = highlightFor(next);
       const same = highlighted.length === state.highlighted.length && highlighted.every((r, i) => r === state.highlighted[i]);
@@ -620,7 +633,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       if (loopWanted()) startLoop();
     },
     select(entity, opts) {
-      set({ selection: entity });
+      set({ selection: entity, selectionDetail: entity && opts?.detail && opts.detail !== entity ? opts.detail : null });
       if (entity && opts?.focus !== false) store.focusOn(entity, "select");
     },
     focusOn(target, reason = "api") {

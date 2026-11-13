@@ -7,6 +7,7 @@ import "./_load.mjs";
 import { span, at, changed, lcg } from "./fixtures/spans.mjs";
 
 const tracks = await import("../src/timeline/tracks/index.ts");
+const buildModule = await import("../src/timeline/tracks/build.ts");
 const contract = await import("../src/timeline/contract.ts");
 const { buildTrackTree, layoutRows, defaultExpanded } = tracks;
 const { NO_FILTERS, extentOf, ROW_HEIGHT } = contract;
@@ -266,8 +267,11 @@ test("execution grouping: execution → claim → workflow → agents → tools;
   const tree = buildTrackTree(fixture(), "execution", NO_FILTERS, LIVE);
   assert.deepEqual(ids(tree.roots), ["execution:E4", "execution:E1", "execution:E3", "execution:E2"], "by start time");
   const e1 = tree.byId.get("execution:E1");
-  assert.equal(e1.label, "Attempt 1 · T1");
-  assert.equal(tree.byId.get("execution:E2").label, "Attempt 2 · T1");
+  // The ticket first; what tells executions of one cell apart (attempt, start) in the detail.
+  assert.equal(e1.label, "T1");
+  assert.equal(e1.detail, "attempt 1 · started 09:19");
+  assert.equal(tree.byId.get("execution:E2").label, "T1");
+  assert.equal(tree.byId.get("execution:E2").detail, "attempt 2 · started 10:29");
   assert.equal(e1.attention, "interrupted");
   assert.deepEqual(ids(e1.children), ["execution:E1/claim"]);
   assert.deepEqual(e1.ribbons.map((s) => s.entity), ["visit:T1/build#1", "visit:T1/verify#1", "visit:T1/review#1", "visit:T1/build#2"]);
@@ -697,4 +701,20 @@ test("lens helpers: spansOnTrack, ancestorsOf, roundsOf, attemptsOf (an attempt 
   // An open attempt has no end.
   const t2 = attemptsOf(spans, "T2");
   assert.deepEqual([t2[0].execution, t2[0].bounds.to, t2[0].bounds.basis], ["E3", null, "open"]);
+});
+
+test("execution grouping: an agent or workflow label drops the ticket its execution already shows", () => {
+  const { withoutTicket, startWords } = buildModule;
+  assert.equal(withoutTicket("LOCAL-001: build", "LOCAL-001"), "build");
+  assert.equal(withoutTicket("LOCAL-001 · review architecture", "LOCAL-001"), "review architecture");
+  assert.equal(withoutTicket("LOCAL-0012: build", "LOCAL-001"), "LOCAL-0012: build", "another ticket is not cut");
+  assert.equal(withoutTicket("LOCAL-001", "LOCAL-001"), "LOCAL-001", "nothing would remain");
+  assert.equal(withoutTicket("builder", undefined), "builder");
+  assert.equal(startWords(Date.UTC(2026, 10, 12, 5, 29, 40)), "05:29");
+  assert.equal(startWords(125_000), "02:05", "simulation time is elapsed");
+  const spans = fixture().map((s) => (s.kind === "agent" && s.entity === "agent:E3-builder" ? { ...s, attrs: { ...s.attrs, label: "T2: builder" } } : s));
+  const tree = buildTrackTree(spans, "execution", NO_FILTERS, LIVE);
+  assert.equal(tree.byId.get("agent:E3-builder").label, "builder");
+  const attempt = buildTrackTree(fixture().filter((s) => !(s.kind === "execution" && s.entity.includes("E3"))), "execution", NO_FILTERS, LIVE);
+  assert.match(attempt.byId.get("execution:E3")?.detail ?? "attempt 1", /^attempt 1$/, "no execution span: no start said");
 });

@@ -8,7 +8,7 @@ import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRe
 import { Button, fc, StateMark, type MarkState } from "@mach/ui";
 import { timecode } from "../../shell/time";
 import type { TimelineViewport } from "../contract";
-import type { Source } from "./model";
+import { figureName, type Source } from "./model";
 
 // ---------------------------------------------------------------- type
 
@@ -145,16 +145,22 @@ function TipCard({ tip, width, height }: { tip: Tip; width: number; height: numb
  */
 export function Fig({ id, name, sources, onActivate, selected, children }: { id: string; name: string; sources: readonly Source[]; onActivate(shift: boolean): void; selected?: boolean; children: ReactNode }) {
   const ctx = useContext(Ctx);
+  const ref = useRef<SVGGElement>(null);
+  // The accessible name starts with the figure's visible words (WCAG 2.5.3), then says the rest.
+  useLayoutEffect(() => {
+    const g = ref.current;
+    if (g) g.setAttribute("aria-label", figureName(name, visibleText(g)));
+  });
   const show = (el: Element, x?: number, y?: number) => {
     const r = el.getBoundingClientRect();
     ctx?.show({ name, sources, x: x ?? r.left + r.width / 2, y: y ?? r.bottom - 8 });
   };
   return (
     <g
+      ref={ref}
       data-fig={id}
       role="button"
       tabIndex={-1}
-      aria-label={name}
       aria-pressed={selected === undefined ? undefined : selected}
       className="mach-inv-fig"
       style={{ cursor: "pointer", outline: "none" }}
@@ -174,6 +180,17 @@ export function Fig({ id, name, sources, onActivate, selected, children }: { id:
       {children}
     </g>
   );
+}
+
+/** The words a figure shows: its `text` elements outside anything hidden from assistive technology. */
+function visibleText(g: SVGGElement): string {
+  const parts: string[] = [];
+  for (const t of g.querySelectorAll("text")) {
+    if (t.closest("[aria-hidden='true']")) continue;
+    const words = (t.textContent ?? "").replace(/\s+/g, " ").trim();
+    if (words) parts.push(words);
+  }
+  return parts.join(" ");
 }
 
 /** A transparent hit area so thin figures keep a 24 px target. */

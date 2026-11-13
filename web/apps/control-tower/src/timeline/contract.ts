@@ -414,6 +414,8 @@ export interface TrackCanvasProps {
   /** Keyboard position: the track and, when on a span, the span. The canvas is one tab stop; the caller owns the cursor. */
   readonly cursor: TimelineCursor | null;
   onCursor(next: TimelineCursor | null): void;
+  /** The window the `0` key returns to (the workspace's default: the recorded activity). Absent: `0` frames the cursor's row. */
+  readonly defaultWindow?: TimeWindow;
   onScroll(top: number): void;
   /** Pan or zoom asked for by wheel, drag or keys. */
   onWindow(next: TimeWindow): void;

@@ -193,21 +193,13 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
   const { width, height, layout: L } = frame;
   ctx.clearRect(0, 0, width, height);
 
-  // Gaps first: what is not held is hatched through the plot and the landmark band.
-  // A person wait shows quietly through the plot, so what ran meanwhile reads against it.
+  // Gaps first: what is not held is hatched through the plot and the landmark band. A wait on a person
+  // stays in the landmark row (a thin line with its start mark, below): an open one can last hours, and
+  // a wash over the whole plot would hide what ran meanwhile.
   for (const b of frame.bars) {
+    if (b.family !== "gap") continue;
     const x0 = Math.floor(b.x0);
-    if (b.family === "gap") hatch(ctx, x0, Math.max(x0 + 3, Math.ceil(b.x1)), L.bandTop, L.plotBottom, p);
-    else {
-      const x1 = Math.max(x0 + 2, Math.ceil(b.x1));
-      if (b.open) fadeRect(ctx, x0, x1, L.plotTop, L.plotBottom - L.plotTop, p.humanSoft, 0.4);
-      else {
-        ctx.fillStyle = p.humanSoft;
-        ctx.globalAlpha = 0.4;
-        ctx.fillRect(x0, L.plotTop, x1 - x0, L.plotBottom - L.plotTop);
-        ctx.globalAlpha = 1;
-      }
-    }
+    hatch(ctx, x0, Math.max(x0 + 3, Math.ceil(b.x1)), L.bandTop, L.plotBottom, p);
   }
 
   // Baseline.

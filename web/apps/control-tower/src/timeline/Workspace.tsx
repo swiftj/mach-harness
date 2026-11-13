@@ -12,8 +12,7 @@
  * selection, hover, focus and playback are the store's; the window, grouping, expansion, filters,
  * lens and the table are the Timeline's interface state, kept in the store (`timeline`).
  */
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType, type KeyboardEvent } from "react";
 import { Button, LoadingState } from "@mach/ui";
 import { entityAt, stableEntityAt, type EntityRef } from "../sim";
 import { useSceneStore, useStore, type SceneStore } from "../scene";
@@ -41,8 +40,9 @@ import {
   type TrackNode,
   type TrackTree,
 } from "./contract";
-import { TimelineToolbar } from "./controls";
-import { activityWindow, ancestorsOf, anyInWindow, cellsInInterval, clampWindow, extentOfSpans, isAll, panToInclude, refForSpan, resolveWindow, spanIdForRef, spansOfRef } from "./controls/frame";
+import { lensMemos, TimelineToolbar } from "./controls";
+import { activityWindow, ancestorsOf, anyInWindow, cellsInInterval, clampWindow, extentOfSpans, isAll, panToInclude, refForSpan, resolveWindow, spanIdForRef, spanLookup, spansOfRef, switchLens } from "./controls/frame";
+import { windowSummary } from "./a11y/describe";
 import { recordedExtent, useTimelineData } from "./data";
 import { TemporalOverview } from "./overview";
 import { TrackCanvas, TrackLabels, WindowRuler } from "./render";
@@ -51,8 +51,6 @@ import { buildTrackTree, defaultExpanded, layoutRows } from "./tracks";
 /** The overview is shorter on a short window (design section 3A). */
 const SHORT_OVERVIEW = 72;
 const MAX_GUTTER = 320;
-/** The investigation band's most height. */
-const MAX_BAND = 220;
 /** How often new events may re-query the window's spans. */
 const REQUERY_MS = 500;
 /** How often new events may re-read the activity the default window is framed on. */
@@ -264,7 +262,7 @@ function useActivity(data: TimelineData, whole: TimeWindow): { recorded: TimeWin
 
 /** Which ref a span selects or hovers: its entity when the history knows it, else its nearest known parent's. */
 function makeRefOf(store: SceneStore, spans: readonly TimelineSpan[]) {
-  const byId = new Map(spans.map((s) => [s.id, s] as const));
+  const byId = spanLookup(spans);
   return (span: TimelineSpan): EntityRef | null => {
     const s = store.getState();
     const head = s.log.head();
@@ -290,11 +288,10 @@ const seeded = new WeakMap<SceneStore, Set<Grouping>>();
 interface Kept {
   scrollTop: number;
   gutter: number;
-  bandOpen: boolean;
 }
 const kept = new WeakMap<SceneStore, Kept>();
 function keptFor(store: SceneStore): Kept {
-  return kept.get(store) ?? { scrollTop: 0, gutter: LABEL_GUTTER, bandOpen: true };
+  return kept.get(store) ?? { scrollTop: 0, gutter: LABEL_GUTTER };
 }
 
 const LENS_WORDS: Record<NonNullable<TimelineViewState["lens"]>, string> = { retries: "Retries", concurrency: "Concurrency", waits: "Waits", review: "Review", recovery: "Recovery" };
@@ -326,9 +323,10 @@ export function TimelineWorkspace() {
   // It is framed from the spans loaded for the previous default, so it settles in a query or two.
   const activity = useActivity(data, whole);
   const [framedOn, setFramedOn] = useState<readonly TimelineSpan[]>(NO_SPANS);
+  // The simulation's whole run is recorded from the start (its future is only hidden): its default is the whole run.
   const fallback = useMemo(
-    () => activityWindow({ whole, dataFrom, density: null, recorded: activity.recorded, spans: framedOn, lastMark: null, followingLive }),
-    [whole, dataFrom, activity, framedOn, followingLive],
+    () => (source === "simulation" ? whole : activityWindow({ whole, dataFrom, density: null, recorded: activity.recorded, spans: framedOn, lastMark: null, followingLive })),
+    [source, whole, dataFrom, activity, framedOn, followingLive],
   );
   const win = resolveWindow(view.window, whole, fallback);
 
@@ -363,7 +361,6 @@ export function TimelineWorkspace() {
   const [frameRef, frameSize] = useSize<HTMLDivElement>();
   const [measure, size] = useSize<HTMLDivElement>();
   const [gutter, setGutter] = useState(keep.gutter);
-  const [bandOpen, setBandOpen] = useState(keep.bandOpen);
   const fullWidth = frameSize.width;
   const timeWidth = Math.max(0, (size.width || fullWidth) - gutter);
   const tracksH = Math.max(0, size.height - RULER_HEIGHT);
@@ -371,8 +368,8 @@ export function TimelineWorkspace() {
   const maxScroll = Math.max(0, layout.totalHeight - tracksH);
   const top = layout.rows.length ? Math.min(scrollTop, maxScroll) : scrollTop;
   useEffect(() => {
-    kept.set(store, { scrollTop, gutter, bandOpen });
-  }, [store, scrollTop, gutter, bandOpen]);
+    kept.set(store, { scrollTop, gutter });
+  }, [store, scrollTop, gutter]);
 
   const viewport = useMemo<TimelineViewport>(() => ({ window: win, width: timeWidth, liveAt }), [win, timeWidth, liveAt]);
 
@@ -408,12 +405,14 @@ export function TimelineWorkspace() {
   const refOf = useMemo(() => makeRefOf(store, spans), [store, spans]);
   const spanById = useMemo(() => new Map(spans.map((s) => [s.id, s] as const)), [spans]);
   const selectRef = useCallback(
-    (ref: EntityRef | null) => {
+    (ref: EntityRef | null, detail?: string) => {
       ownSelection.current = ref;
-      store.select(ref, { focus: false });
+      store.select(ref, { focus: false, detail: detail ?? null });
     },
     [store],
   );
+  /** A span selects its own entity, or its nearest selectable ancestor with the span kept as the detail (still marked on the canvas). */
+  const selectSpan = useCallback((span: TimelineSpan) => selectRef(refOf(span), span.entity), [refOf, selectRef]);
   const onHover = useCallback(
     (hit: TimelineHit | null) => {
       const ref = hit?.span ? refOf(hit.span) : hit?.mark?.entity && /^[a-z]+:.+/.test(hit.mark.entity) ? (hit.mark.entity as EntityRef) : null;
@@ -424,7 +423,7 @@ export function TimelineWorkspace() {
   const onSelect = useCallback(
     (hit: TimelineHit) => {
       if (hit.span) {
-        selectRef(refOf(hit.span));
+        selectSpan(hit.span);
         return;
       }
       if (hit.mark) {
@@ -437,7 +436,7 @@ export function TimelineWorkspace() {
       // An aggregate of spans too small to draw one by one: zoom to it.
       if (hit.count > 0 && hit.to > hit.from) onWindow({ from: hit.from, to: hit.to });
     },
-    [onWindow, refOf, selectRef, store],
+    [onWindow, selectSpan, selectRef, store],
   );
 
   // The keyboard cursor: the canvas moves it, the workspace keeps it; on a span, that span is hovered.
@@ -455,7 +454,7 @@ export function TimelineWorkspace() {
 
   const onLabelSelect = useCallback((node: TrackNode) => selectRef(node.ref), [selectRef]);
   const onGutter = useCallback((w: number) => setGutter(Math.round(Math.max(LABEL_GUTTER, Math.min(MAX_GUTTER, w)))), []);
-  const onTableSelect = useCallback((span: TimelineSpan) => selectRef(refOf(span)), [refOf, selectRef]);
+  const onTableSelect = selectSpan;
 
   /** From the investigation band: select, seek when a moment is given, and frame it in the Timeline. */
   const onReveal = useCallback(
@@ -563,7 +562,39 @@ export function TimelineWorkspace() {
   const empty = !fetched.loading && fetched.page !== null && fetched.page.total === 0 && spans.length === 0;
   const nothingHere = !fetched.loading && spans.length > 0 && !anyInWindow(tree, win);
   const disconnected = source === "live" && (connection === "disconnected" || connection === "stale" || connection === "reconnecting");
-  const bandH = Math.min(MAX_BAND, Math.max(0, Math.round((frameSize.height || 0) * 0.3)));
+
+  // ---- accessibility: the window in words (aria-describedby of the tracks), and Escape out of the band
+  const summaryId = useId();
+  const summary = useMemo(() => windowSummary(tree, win, liveAt), [tree, win, liveAt]);
+  const tracksBox = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // The canvas names its keys in aria-describedby; the window's summary is added beside them.
+    const app = tracksBox.current?.querySelector<HTMLElement>("[role=application]");
+    if (!app) return;
+    const ids = (app.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean);
+    if (!ids.includes(summaryId)) app.setAttribute("aria-describedby", [...ids, summaryId].join(" "));
+  });
+  /** The band's own changes; closing the lens there gives back the filters and grouping it set, as the toolbar's "No lens" does. */
+  const onBandView = useCallback(
+    (patch: Partial<TimelineViewState>) => {
+      if (patch.lens === null && store.getState().timeline.lens !== null) {
+        const next = switchLens(null, tree, store.getState().timeline, win, lensMemos.get(store));
+        lensMemos.delete(store);
+        store.setTimelineView({ ...patch, ...next.patch });
+        return;
+      }
+      store.setTimelineView(patch);
+    },
+    [store, tree, win],
+  );
+  const onBandKey = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Escape") return;
+    const button = document.querySelector<HTMLElement>("[data-timeline-workspace] [data-timeline-investigate]");
+    if (!button) return;
+    e.preventDefault();
+    e.stopPropagation();
+    button.focus();
+  }, []);
 
   return (
     <div ref={frameRef} className="flex h-full min-h-0 flex-col bg-surface" data-timeline-workspace="" data-timeline-ready={ready ? "" : undefined} data-timeline-spans={spans.length}>
@@ -604,30 +635,18 @@ export function TimelineWorkspace() {
       </section>
 
       {/* The investigation band, when a lens is on. */}
+      {/* The investigation band, when a lens is on: the panel draws its own header, collapse and close (at most 220 px). Escape returns to Investigate. */}
       {view.lens ? (
-        <section aria-label={`Investigation: ${LENS_WORDS[view.lens]}`} className="shrink-0 border-b border-line bg-surface" data-timeline-band="">
-          <button
-            type="button"
-            aria-expanded={bandOpen}
-            onClick={() => setBandOpen((o) => !o)}
-            className="flex h-7 w-full items-center gap-1.5 px-3 text-left text-label text-ink hover:bg-surface-sunken [&_svg]:size-3.5"
-          >
-            {bandOpen ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
-            {lenses?.find((l) => l.id === view.lens)?.label ?? LENS_WORDS[view.lens]}
-            <span className="text-caption font-normal text-ink-subtle">{bandOpen ? "Hide the lens's findings" : "Show the lens's findings"}</span>
-          </button>
-          {bandOpen ? (
-            <div className="overflow-y-auto overflow-x-hidden" style={{ maxHeight: Math.max(96, bandH) }}>
-              {LazyPanel ? (
-                <Suspense fallback={<LoadingState label="Preparing the lens" className="px-3 py-2" />}>
-                  <LazyPanel lens={view.lens} data={data} tree={tree} spans={spans} viewport={viewport} width={fullWidth} onView={store.setTimelineView} onReveal={onReveal} />
-                </Suspense>
-              ) : (
-                <PanelUnavailable />
-              )}
-            </div>
-          ) : null}
-        </section>
+        // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+        <div className="shrink-0" data-timeline-band={view.lens} onKeyDown={onBandKey}>
+          {LazyPanel ? (
+            <Suspense fallback={<LoadingState label={`Preparing the ${LENS_WORDS[view.lens].toLowerCase()} lens`} className="border-b border-line px-3 py-2" />}>
+              <LazyPanel lens={view.lens} data={data} tree={tree} spans={spans} viewport={viewport} width={fullWidth} onView={onBandView} onReveal={onReveal} />
+            </Suspense>
+          ) : (
+            <PanelUnavailable />
+          )}
+        </div>
       ) : null}
 
       <section aria-label={view.table ? "Timeline as a table" : "Tracks"} ref={measure} className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -647,11 +666,11 @@ export function TimelineWorkspace() {
             )}
           </div>
         ) : (
-          <div className="flex min-h-0 flex-1">
-            <div className="shrink-0 border-r border-line" style={{ width: gutter }}>
-              <TrackLabels layout={layout} height={tracksH} scrollTop={top} width={gutter} onToggle={onToggle} onSelect={onLabelSelect} onResize={onGutter} onScroll={onScroll} />
-            </div>
-            <div className="relative min-w-0 flex-1">
+          // The canvas comes first in the document so the tracks are reached by Tab before the label
+          // column's resize separator (the label buttons are not Tab stops: the canvas keys cover them);
+          // the row is reversed so the labels still sit on the left.
+          <div className="flex min-h-0 flex-1 flex-row-reverse">
+            <div ref={tracksBox} className="relative min-w-0 flex-1">
               {timeWidth > 0 && tracksH > 0 ? (
                 <TrackCanvas
                   tree={tree}
@@ -668,8 +687,15 @@ export function TimelineWorkspace() {
                   onHover={onHover}
                   onSelect={onSelect}
                   onToggle={onToggle}
+                  defaultWindow={fallback}
                 />
               ) : null}
+              <p id={summaryId} className="sr-only" aria-live="off" data-timeline-summary="">
+                {summary}
+              </p>
+            </div>
+            <div className="shrink-0 border-r border-line" style={{ width: gutter }}>
+              <TrackLabels layout={layout} height={tracksH} scrollTop={top} width={gutter} onToggle={onToggle} onSelect={onLabelSelect} onResize={onGutter} onScroll={onScroll} />
             </div>
           </div>
         )}

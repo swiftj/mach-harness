@@ -8,6 +8,7 @@ import "./_load.mjs";
 
 const M = await import("../src/timeline/investigate/model.ts");
 const L = await import("../src/timeline/investigate/lenses.ts");
+const { buildTrackTree } = await import("../src/timeline/tracks/build.ts");
 
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 10, 12, 5, 0, 0);
@@ -241,8 +242,21 @@ test("lens definitions: five, each with one sentence, and presets set the groupi
   const view = { window: null, grouping: "execution", expanded: ["keep"], filters: { tickets: [], executions: [], slices: [], stations: [], kinds: [], attentionOnly: true }, table: false, lens: null };
   const r = L.LENSES[0].preset(tree, view);
   assert.equal(r.grouping, "product");
-  for (const id of ["keep", `cell:${TK}`, `station:${TK}/build`, `station:${TK}/verify`, `cell:${TK}/review`]) assert.ok(r.expanded.includes(id), id);
+  for (const id of ["keep", `cell:${TK}`, `station:${TK}/build`, `station:${TK}/verify`]) assert.ok(r.expanded.includes(id), id);
+  assert.ok(!r.expanded.includes(`cell:${TK}/review`), "no review row without seats: not stored");
   assert.equal(L.LENSES[1].preset(tree, view).filters.attentionOnly, false);
-  assert.equal(L.LENSES[4].preset(tree, { ...view, filters: { ...view.filters, attentionOnly: false } }).filters.attentionOnly, true);
+  // Recovery shows every execution: failures elsewhere (rounds, seats) have no row in that grouping.
+  assert.equal(L.LENSES[4].preset(tree, view).filters.attentionOnly, false);
+  // A preset stores only rows that exist: the waits lens opens no row its own kinds filter removes.
+  const waits = L.LENSES[2].preset(tree, { ...view, expanded: [] });
+  const shown = buildTrackTree(L.spansOfTree(tree), "product", { ...waits.filters, attentionOnly: false }, Number.MAX_SAFE_INTEGER);
+  for (const id of waits.expanded) assert.ok(shown.byId.has(id), id);
   assert.equal(L.LENSES[4].preset(tree, view).grouping, "execution");
+});
+
+test("figures: the accessible name starts with the visible words when the description lacks them (WCAG 2.5.3)", async () => {
+  const { figureName } = M;
+  assert.equal(figureName("Round 1 of LOCAL-031, rejected", "Round 1"), "Round 1 of LOCAL-031, rejected");
+  assert.equal(figureName("Build visit, 4 min", "build #2"), "build #2: Build visit, 4 min");
+  assert.equal(figureName("A wait", ""), "A wait");
 });

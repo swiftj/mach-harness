@@ -46,6 +46,8 @@ interface Draft {
   readonly ref: EntityRef | null;
   label: string;
   detail: string | null;
+  /** An execution's detail before its start is known to the finisher ("attempt 2"). */
+  base?: string;
   note: string | null;
   /** Children sort by order, then (when byTime) by their earliest instant, then by id. */
   readonly order: number;
@@ -147,6 +149,24 @@ function stationWords(station: string): string {
 
 function agentLabel(span: TimelineSpan | undefined): string {
   return span?.attrs.label ?? span?.attrs.agentType ?? "Agent";
+}
+
+/** Words without a leading ticket ("LOCAL-001: build", "LOCAL-001 · build" → "build"); unchanged when nothing would remain. */
+export function withoutTicket(words: string, ticket: string | undefined): string {
+  if (!ticket || !words.startsWith(ticket)) return words;
+  const rest = words.slice(ticket.length).replace(/^[\s:·\-–—/]+/, "");
+  return rest && rest !== words.slice(ticket.length) ? rest : words;
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+/** A start time for a label: HH:MM UTC for wall time, mm:ss elapsed for the simulation. */
+export function startWords(t: number): string {
+  if (t > 86_400_000) {
+    const d = new Date(t);
+    return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+  }
+  const s = Math.max(0, Math.floor(t / 1000));
+  return `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`;
 }
 
 function countOnlyNote(span: TimelineSpan): string {
@@ -322,12 +342,18 @@ function executionPlacer(rel: Relations): Placer {
     const id = `execution:${x}`;
     const existing = d.get(id);
     if (existing) return existing;
+    // What tells executions apart comes first: the ticket as the label; the attempt and the start time
+    // (added by the finisher) as the detail, so three executions of one cell differ in both.
     const attempt = rel.execAttempt.get(x);
     const ticket = rel.execTicket.get(x);
-    const head = attempt ? `Attempt ${attempt}` : "Attempt not recorded";
-    return d.make(id, "execution", null, { ref: asRef(id), label: ticket ? `${head} · ${ticket}` : head, order: 0, byTime: true });
+    const base = attempt ? `attempt ${attempt}` : "attempt not recorded";
+    const draft = d.make(id, "execution", null, { ref: asRef(id), label: ticket ?? "Ticket not recorded", detail: base, order: 0, byTime: true });
+    draft.base = base;
+    return draft;
   };
   const claim = (x: string): Draft => d.get(`execution:${x}/claim`) ?? d.make(`execution:${x}/claim`, "claim", execution(x), { label: "Claim", order: 0 });
+  /** An agent's or workflow's words without the ticket its execution already shows ("LOCAL-001: build" → "build"). */
+  const local = (words: string, x: string): string => withoutTicket(words, rel.execTicket.get(x));
   const toolsOf = (owner: Draft): Draft => (owner.tools ??= d.make(`${owner.id}/tools`, "tools", owner, { label: "Tools", order: 100 }));
   const workflow = (ref: string, x: string): Draft => d.get(ref) ?? d.make(ref, "workflow", execution(x), { ref: asRef(ref), label: "Workflow", order: 10, byTime: true });
   const groupNode = (group: AgentGroup): Draft => {
@@ -339,8 +365,8 @@ function executionPlacer(rel: Relations): Placer {
     if (!individual(group)) for (const member of group.members) if (rel.agentSpan.get(member)?.attrs.toolsCountOnly) node.note = COUNT_ONLY_GROUP_NOTE;
     return node;
   };
-  const labelAgent = (node: Draft, span: TimelineSpan | undefined): void => {
-    node.label = agentLabel(span);
+  const labelAgent = (node: Draft, span: TimelineSpan | undefined, x: string): void => {
+    node.label = local(agentLabel(span), x);
     node.detail = span?.attrs.model ?? null;
     node.note = span?.attrs.toolsCountOnly ? countOnlyNote(span) : null;
   };
@@ -348,7 +374,7 @@ function executionPlacer(rel: Relations): Placer {
     const existing = d.get(entity);
     if (existing) return existing;
     const node = d.make(entity, "agent", groupNode(group), { ref: asRef(entity), label: "Agent", order: 0, byTime: true });
-    labelAgent(node, rel.agentSpan.get(entity));
+    labelAgent(node, rel.agentSpan.get(entity), group.execution);
     return node;
   };
 
@@ -364,7 +390,7 @@ function executionPlacer(rel: Relations): Placer {
           return { draft: claim(x), section: 0 };
         case "workflow": {
           const node = workflow(span.entity, x);
-          if (span.attrs.label) node.label = span.attrs.label;
+          if (span.attrs.label) node.label = local(span.attrs.label, x);
           return { draft: node, section: 0 };
         }
         case "agent":
@@ -393,11 +419,13 @@ function executionPlacer(rel: Relations): Placer {
     relabel(span) {
       if (span.kind === "workflow" && span.attrs.label) {
         const draft = d.get(span.entity);
-        if (draft) draft.label = span.attrs.label;
+        const x = execOf(span);
+        if (draft) draft.label = x ? local(span.attrs.label, x) : span.attrs.label;
       } else if (span.kind === "agent" || span.kind === "agent-queue") {
         if (span.kind === "agent" || rel.agentSpan.get(span.entity)?.kind !== "agent") rel.agentSpan.set(span.entity, span);
         const draft = d.get(span.entity);
-        if (draft) labelAgent(draft, rel.agentSpan.get(span.entity));
+        const group = rel.agentGroup.get(span.entity);
+        if (draft && group) labelAgent(draft, rel.agentSpan.get(span.entity), group.execution);
       }
     },
   };
@@ -567,6 +595,11 @@ class Finisher {
       return a.node.id < b.node.id ? -1 : a.node.id > b.node.id ? 1 : 0;
     });
     const memo = this.lanesOf(draft);
+    if (draft.kind === "execution" && draft.base !== undefined) {
+      let start: number | null = null;
+      for (const lane of memo.lanes) for (const span of lane.spans) if (span.kind === "execution" && span.start?.at != null && (start === null || span.start.at < start)) start = span.start.at;
+      draft.detail = start === null ? draft.base : `${draft.base} · started ${startWords(start)}`;
+    }
     if (draft.kind === "verification") {
       let n = 0;
       for (const lane of memo.lanes) n += lane.spans.length;
