@@ -2,7 +2,8 @@
  * Screen-reader announcements. Two polite live regions:
  * - the transport's state when it changes (playing, paused, speed, live or replay, back at the live
  *   edge), never per tick; the view when the mode switches ("Factory Atlas", "Execution Blueprint";
- *   spec c.6); and, live, the connection when it changes state (once per change: live, stale,
+ *   spec c.6) and the workspace when it switches ("Execution Timeline", "Factory floor: ..."; under
+ *   reduced motion the switch is a cut, so this is how it is noticed); and, live, the connection when it changes state (once per change: live, stale,
  *   reconnecting, disconnected), never its counters;
  * - significant moments while time moves (playing, or following the live edge): chapters or real
  *   landmarks always, other major moments at most one per few seconds of wall time, folding any in
@@ -32,7 +33,9 @@ export function Announcer() {
     return store.subscribe(() => {
       const s = store.getState();
       const index = indexFor(s);
-      if (s.view !== prev.view) setStatus(s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint");
+      // A workspace switch is said once, with where it lands (the floor's view when returning to it).
+      if (s.workspace !== prev.workspace) setStatus(s.workspace === "timeline" ? "Execution Timeline" : `Factory floor: ${s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint"}`);
+      else if (s.view !== prev.view) setStatus(s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint");
       if (s.source === "simulation" && (s.playing !== prev.playing || s.speed !== prev.speed || s.following !== prev.following)) {
         const words = s.playing ? `Playing at ${playbackFactorWords(s.source, s.speed)}` : `Paused at ${spokenTime(s.playhead)}`;
         setStatus(`${words}${s.following ? ", live" : ", replay"}.`);

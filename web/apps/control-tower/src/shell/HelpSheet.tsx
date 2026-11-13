@@ -4,12 +4,17 @@
  */
 import { type RefObject } from "react";
 import { Dialog, DialogContent, Kbd } from "@mach/ui";
-import { KEYMAP, type KeyBinding } from "./keyboard";
+import { activeCanvas, KEYMAP, type KeyBinding } from "./keyboard";
 import { StateGlyph } from "./glyphs";
 import { AuthorityBadge, TelemetryBadge } from "./inspector/parts";
 import { SourceGlyph } from "./SourceBadge";
 
-const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view", "Atlas", "Blueprint", "Timeline"];
+const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view", "Atlas", "Blueprint", "Timeline", "Timeline workspace"];
+/** What each group is, where it is not obvious. */
+const GROUP_NOTES: Partial<Record<KeyBinding["group"], string>> = {
+  Timeline: "The timeline docked under the Factory floor.",
+  "Timeline workspace": "While the Timeline (3) is up. Space, the arrows and the playback keys work there as everywhere; T does nothing.",
+};
 
 function Keys({ keys }: { keys: string[] }) {
   return (
@@ -47,13 +52,13 @@ export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpe
             back.focus();
             return;
           }
-          const canvas = document.querySelector<HTMLElement>("[data-stage-active] [tabindex='0']");
+          const canvas = activeCanvas();
           if (back instanceof Element && !back.isConnected && canvas) {
             event.preventDefault();
             canvas.focus();
           }
         }}
-        title="Keyboard, legend and display" description="Every shortcut in the Control Tower prototype. The keys under In a view, Atlas, Blueprint and Timeline work while that part has focus.">
+        title="Keyboard, legend and display" description="Every shortcut in the Control Tower prototype. The keys under In a view, Atlas, Blueprint and Timeline work while that part has focus; those under Timeline workspace while the Timeline is up.">
         {/* Scrolls on short windows, so it takes focus for keyboard scrolling. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
         <div tabIndex={0} role="region" aria-label="Shortcuts and legend" className="grid min-h-0 gap-x-8 gap-y-5 overflow-y-auto px-6 pb-6 pt-4 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus md:grid-cols-2">
@@ -62,6 +67,7 @@ export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpe
               <h3 id={`keys-${group.replace(/\s+/g, "-")}`} className="mb-2 text-label text-ink">
                 {group}
               </h3>
+              {GROUP_NOTES[group] ? <p className="-mt-1 mb-2 text-caption text-ink-subtle">{GROUP_NOTES[group]}</p> : null}
               <dl className="flex flex-col gap-1.5">
                 {KEYMAP.filter((k) => k.group === group).map((k) => (
                   <div key={k.action} className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-line pb-1.5 last:border-b-0">

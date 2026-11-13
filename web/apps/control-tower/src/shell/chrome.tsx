@@ -1,10 +1,10 @@
 /**
- * Frame pieces: the source stamp, the brand and run identity, the mode switch.
+ * Frame pieces: the source stamp, the brand and run identity, the workspace switch and the mode switch.
  */
 import { useId } from "react";
 import { cn, MachMark, fc } from "@mach/ui";
 import { SCENARIO, WAVE } from "../sim";
-import { useScene, useSceneStore, type ViewMode } from "../scene";
+import { useScene, useSceneStore, type ViewMode, type Workspace } from "../scene";
 import { SourceStamp } from "./SourceBadge";
 import { useSource } from "./source/context";
 import { utcClock, utcDate } from "./vocab";
@@ -142,6 +142,58 @@ export function ModeSwitch({ value, onChange }: { value: ViewMode; onChange: (v:
           <input type="radio" name={name} value={m.value} checked={value === m.value} onChange={() => onChange(m.value)} className="sr-only" />
           <ModeIcon mode={m.value} />
           <span>{m.label}</span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+const WORKSPACE_CHOICES: Array<{ value: Workspace; label: string; keys: string; hint: string }> = [
+  { value: "floor", label: "Factory floor", keys: "1, 2", hint: "Factory floor: the plant now, as the Atlas or the Blueprint" },
+  { value: "timeline", label: "Timeline", keys: "3", hint: "Execution Timeline: what the Factory did, when, and how it is known" },
+];
+
+function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
+  return (
+    <svg aria-hidden="true" width="16" height="14" viewBox="0 0 16 14" className="shrink-0">
+      {workspace === "floor" ? (
+        <>
+          <path d="M1.5 4.5L8 1.5L14.5 4.5L8 7.5Z" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
+          <path d="M1.5 8.5L8 11.5L14.5 8.5" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
+        </>
+      ) : (
+        <>
+          <path d="M1.5 3.5H9M4 7H14.5M1.5 10.5H7.5" style={{ stroke: "currentColor", strokeWidth: 2, strokeLinecap: "butt" }} />
+          <path d="M11 1V13" style={{ stroke: "currentColor", strokeWidth: 0.9 }} />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/**
+ * The primary navigation (M6.3 design section 3): the workspace. A radio group in the same language as
+ * the Atlas/Blueprint switch, which is shown beside it on the floor only. Later experiences are not
+ * drawn until they exist.
+ */
+export function WorkspaceSwitch({ value, onChange }: { value: Workspace; onChange: (w: Workspace) => void }) {
+  const name = useId();
+  return (
+    <fieldset className="flex shrink-0 rounded-sm border border-line bg-surface-sunken p-0.5" data-workspace-switch="">
+      <legend className="sr-only">Workspace</legend>
+      {WORKSPACE_CHOICES.map((w) => (
+        <label
+          key={w.value}
+          title={`${w.hint} (${w.keys})`}
+          className={cn(
+            "relative flex h-7 cursor-pointer items-center gap-1.5 rounded-xs px-2.5 text-body-sm text-ink-muted transition-colors duration-[var(--mach-duration-fast)]",
+            "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-focus",
+            value === w.value ? "bg-surface font-semibold text-ink shadow-1" : "hover:text-ink",
+          )}
+        >
+          <input type="radio" name={name} value={w.value} checked={value === w.value} onChange={() => onChange(w.value)} aria-keyshortcuts={w.value === "timeline" ? "3" : "1 2"} className="sr-only" />
+          <WorkspaceIcon workspace={w.value} />
+          <span className="max-[1099px]:sr-only">{w.label}</span>
         </label>
       ))}
     </fieldset>

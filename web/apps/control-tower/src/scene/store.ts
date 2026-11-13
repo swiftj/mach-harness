@@ -30,12 +30,20 @@ import type { SceneSource } from "../sim/provenance";
 import type { Clock, SwitchableClock } from "./clock";
 import type { ConnectionStatus, FactoryStatus } from "./connection";
 import { INITIAL_CONNECTION } from "./connection";
+import { INITIAL_TIMELINE_VIEW, type TimelineViewState } from "../timeline/contract";
 
 /** Factory milliseconds per wall millisecond at 1x: the 55-minute run plays in about 5.5 minutes. Simulation and replay playback only; live time runs at 1. */
 export const PLAYBACK_BASE_RATE = 10;
 export const SPEEDS = [0.5, 1, 2, 4, 8, 16] as const;
 export type PlaybackSpeed = (typeof SPEEDS)[number];
 export type ViewMode = "atlas" | "blueprint";
+/**
+ * The experience on screen (M6.3 design section 7): the Factory Floor (whose view is `view`) or the
+ * Execution Timeline. A separate field, so `ViewMode` and everything that assumes two views stay as
+ * they are, and the floor's view is remembered while the Timeline is up.
+ */
+export type Workspace = "floor" | "timeline";
+export const WORKSPACES: readonly Workspace[] = ["floor", "timeline"];
 /** How far the live edge may run ahead of the last thing the stream confirmed (a heartbeat comes every 15 s). */
 export const LIVE_EXTRAPOLATION_MS = 20_000;
 /**
@@ -137,6 +145,14 @@ export interface SceneStoreState {
   /** What to highlight with the hovered (or else the selected) entity: its dependency set or relations. */
   readonly highlighted: readonly EntityRef[];
   readonly view: ViewMode;
+  /** Factory Floor or Timeline. The floor's `view` is kept while the Timeline is up. */
+  readonly workspace: Workspace;
+  /**
+   * The Timeline's interface state (window, grouping, expansion, filters, table), kept here so it
+   * survives a workspace switch. Interface state only: nothing in it changes what another view shows.
+   */
+  readonly timeline: TimelineViewState;
+  /** Theater Mode: the Factory Floor only; always off while the Timeline is up. */
   readonly theater: boolean;
   readonly reducedMotion: boolean;
   /**
@@ -224,6 +240,11 @@ export interface SceneStore {
   focusOn(target: EntityRef | "overview", reason?: FocusRequest["reason"]): void;
   hover(entity: EntityRef | null): void;
   setView(view: ViewMode): void;
+  /** Switch the experience. Selection, hover, playhead, playback and `view` are kept; Theater Mode ends on leaving the floor. */
+  setWorkspace(workspace: Workspace): void;
+  /** Merge a change into the Timeline's interface state. No change, no new state. */
+  setTimelineView(patch: Partial<TimelineViewState>): void;
+  /** Theater Mode on or off. Asking for it while the Timeline is up does nothing: it belongs to the floor. */
   setTheater(on: boolean): void;
   setReducedMotion(on: boolean): void;
   /** Camera follow on or off. A view calls setFollow(false) when the person pans or zooms. */
@@ -252,6 +273,7 @@ interface CommonOptions {
   reducedMotion?: boolean;
   speed?: PlaybackSpeed;
   view?: ViewMode;
+  workspace?: Workspace;
   /** Start at this factory time (default: the start for the simulation, the live edge otherwise). */
   at?: number;
   autoplay?: boolean;
@@ -339,6 +361,8 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     hovered: null,
     highlighted: [],
     view: options.view ?? "atlas",
+    workspace: options.workspace ?? "floor",
+    timeline: INITIAL_TIMELINE_VIEW,
     theater: false,
     reducedMotion: options.reducedMotion ?? false,
     follow: true,
@@ -590,7 +614,20 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     setView(view) {
       if (view !== state.view) set({ view });
     },
+    setWorkspace(workspace) {
+      if (workspace === state.workspace || !WORKSPACES.includes(workspace)) return;
+      set({ workspace, ...(workspace !== "floor" && state.theater ? { theater: false } : {}) });
+    },
+    setTimelineView(patch) {
+      const current = state.timeline;
+      const changed = (Object.keys(patch) as Array<keyof TimelineViewState>).some((k) => patch[k] !== undefined && patch[k] !== current[k]);
+      if (!changed) return;
+      const next: Record<string, unknown> = { ...current };
+      for (const [k, v] of Object.entries(patch)) if (v !== undefined) next[k] = v;
+      set({ timeline: next as unknown as TimelineViewState });
+    },
     setTheater(on) {
+      if (on && state.workspace !== "floor") return;
       if (on !== state.theater) set({ theater: on });
     },
     setReducedMotion(on) {
@@ -655,6 +692,83 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   if (windows) set({});
   if (options.autoplay) store.play();
   return store;
+}
+
+// ---------------------------------------------------------------- workspaces
+
+/**
+ * "Show in Timeline" (M6.3 design section 7), for the inspector's anatomies, the Atlas, the
+ * Blueprint and key `3`: select `ref` when one is given (without moving the floor's camera), leave
+ * Theater Mode, switch to the Timeline, and ask for the selection to be framed (the Timeline reveals
+ * the store's focus request: it expands the selection's tracks, scrolls to them and pans to its span).
+ * The playhead, playback and the floor's view are untouched.
+ */
+export function showInTimeline(store: SceneStore, ref?: EntityRef | null): void {
+  if (ref && ref !== store.getState().selection) store.select(ref, { focus: false });
+  store.setWorkspace("timeline");
+  const selection = store.getState().selection;
+  if (selection) store.focusOn(selection, "api");
+}
+
+/** "Show on the floor": back to the Factory Floor (keeping its view), framing the selection through the existing focusOn. */
+export function showOnFloor(store: SceneStore, view?: ViewMode): void {
+  if (view) store.setView(view);
+  store.setWorkspace("floor");
+  const selection = store.getState().selection;
+  if (selection) store.focusOn(selection, "api");
+}
+
+/** A view of the store that can be held still: what a hidden workspace reads. */
+export interface HeldStore extends SceneStore {
+  /** Held: getState() keeps returning the state as of the moment it was held, and no listener is told of changes. Released: brought up to date at once, then follows every change. */
+  hold(held: boolean): void;
+  held(): boolean;
+}
+
+/**
+ * The store as a hidden workspace sees it. While held, a subtree reading it renders nothing new and
+ * runs no effect a change would start (no camera framing, no drawing, no catching up), so a hidden
+ * Factory Floor costs nothing while the Timeline is up, and is exactly where it was when it returns.
+ * Actions go straight to the one store. It listens to the store only while it has listeners itself.
+ */
+export function heldStore(store: SceneStore): HeldStore {
+  const listeners = new Set<() => void>();
+  let isHeld = false;
+  let snapshot = store.getState();
+  let off: (() => void) | null = null;
+  const notify = () => {
+    snapshot = store.getState();
+    for (const l of [...listeners]) l();
+  };
+  const onChange = () => {
+    if (!isHeld) notify();
+  };
+  return {
+    ...store,
+    getState: () => (isHeld ? snapshot : store.getState()),
+    subscribe(listener) {
+      listeners.add(listener);
+      off ??= store.subscribe(onChange);
+      return () => {
+        listeners.delete(listener);
+        if (!listeners.size && off) {
+          off();
+          off = null;
+        }
+      };
+    },
+    hold(next) {
+      if (next === isHeld) return;
+      if (next) {
+        snapshot = store.getState();
+        isHeld = true;
+        return;
+      }
+      isHeld = false;
+      if (snapshot !== store.getState()) notify();
+    },
+    held: () => isHeld,
+  };
 }
 
 // ---------------------------------------------------------------- the development and capture hook
