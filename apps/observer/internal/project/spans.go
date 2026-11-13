@@ -1,6 +1,7 @@
 package project
 
 import (
+	"math"
 	"sort"
 	"strings"
 )
@@ -35,11 +36,54 @@ type Span struct {
 	Outcome   *string           `json:"outcome"`
 	Lane      int               `json:"lane"`
 	Authority string            `json:"authority"`
+	Attrs     SpanAttrs         `json:"attrs"`
 
 	group    string
 	startKey [2]int64
 	endKey   int64 // -1 while open
+	meta     spanMeta
+	from, to int64 // the earliest and latest instant the span can touch (to: MaxInt64 while open)
 }
+
+// SpanAttrs are facts about a span that other routes already serve. A key is left out when
+// nothing recorded it; a recorded zero is sent.
+type SpanAttrs struct {
+	Label          string   `json:"label,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	AgentType      string   `json:"agent_type,omitempty"`
+	ToolCalls      *int64   `json:"tool_calls,omitempty"`
+	ToolsCountOnly bool     `json:"tools_count_only,omitempty"` // a workflow agent: only a count of its tool calls is observable
+	LastTool       string   `json:"last_tool,omitempty"`
+	Tokens         *int64   `json:"tokens,omitempty"`
+	Action         string   `json:"action,omitempty"`
+	Round          *int64   `json:"round,omitempty"`
+	Attempt        *int64   `json:"attempt,omitempty"`
+	State          string   `json:"state,omitempty"`
+	CostUSD        *float64 `json:"cost_usd,omitempty"`
+	Vote           string   `json:"vote,omitempty"`
+	Reasons        []string `json:"reasons,omitempty"`
+	DependsOn      []string `json:"depends_on,omitempty"`
+}
+
+// spanMeta is what the filters need to know about where a span came from.
+type spanMeta struct {
+	src    byte // srcCell | srcExec | srcSlice | srcWave
+	ticket string
+	wave   string
+	execs  []string
+}
+
+const (
+	srcCell byte = iota + 1
+	srcExec
+	srcSlice // slice waits and eligibility, capacity waits: never under an execution filter
+	srcWave
+)
+
+// From and To are the span's extent in Unix milliseconds: the start's earliest bound and the
+// end's latest bound. To is math.MaxInt64 while the span is open.
+func (sp *Span) From() int64 { return sp.from }
+func (sp *Span) To() int64   { return sp.to }
 
 func endOf(st *Stamp, basis, rule, reason string) *SpanEnd {
 	if st == nil {
@@ -56,7 +100,10 @@ func strp(s string) *string {
 	return &s
 }
 
-type spanBuilder struct{ out []*Span }
+type spanBuilder struct {
+	out []*Span
+	cur spanMeta
+}
 
 func (b *spanBuilder) add(kind, entity, parent, group string, ids map[string]string, start, end *Stamp, outcome, reason string, inferredStart bool, rule string) *Span {
 	if start == nil && end == nil {
@@ -88,96 +135,229 @@ func (b *spanBuilder) add(kind, entity, parent, group string, ids map[string]str
 	if inferredStart && sp.Authority == "authoritative" {
 		sp.Authority = "reconstructed"
 	}
+	sp.meta = b.cur
+	edge := start
+	if edge == nil {
+		edge = end
+	}
+	if lo, ok := edge.lo(); ok {
+		sp.from = lo
+	} else {
+		sp.from = edge.OrderMS
+	}
+	sp.to = math.MaxInt64
+	if end != nil {
+		if hi, ok := end.hi(); ok {
+			sp.to = hi
+		} else {
+			sp.to = end.OrderMS
+		}
+		sp.to = max(sp.to, sp.from)
+	}
 	b.out = append(b.out, sp)
 	return sp
 }
 
-// SpanFilter selects spans.
+// SpanFilter selects spans. FromMS and ToMS select spans overlapping the window (an open span
+// overlaps everything after its start); SpanID selects one span exactly.
 type SpanFilter struct {
-	Ticket, Execution, Wave, Entity string
-	Kinds                           map[string]bool
+	Ticket, Execution, Wave, Entity, SpanID string
+	Kinds                                   map[string]bool
+	FromMS, ToMS                            *int64
 }
 
 func (f SpanFilter) wantTicket(t string) bool { return f.Ticket == "" || f.Ticket == t }
 
-// Spans builds every span the projection supports, filtered, with lanes assigned.
+func (f SpanFilter) match(sp *Span) bool {
+	m := sp.meta
+	switch m.src {
+	case srcCell:
+		if !f.wantTicket(m.ticket) || (f.Wave != "" && m.wave != f.Wave) || (f.Execution != "" && !contains(m.execs, f.Execution)) {
+			return false
+		}
+	case srcExec:
+		if (f.Execution != "" && (len(m.execs) == 0 || m.execs[0] != f.Execution)) || !f.wantTicket(m.ticket) || (f.Wave != "" && m.wave != f.Wave) {
+			return false
+		}
+	case srcSlice:
+		if f.Execution != "" || !f.wantTicket(m.ticket) || (f.Wave != "" && m.wave != f.Wave) {
+			return false
+		}
+	case srcWave:
+		if f.Execution != "" || f.Ticket != "" || (f.Wave != "" && m.wave != f.Wave) {
+			return false
+		}
+	}
+	if f.SpanID != "" && sp.SpanID != f.SpanID {
+		return false
+	}
+	if len(f.Kinds) > 0 && !f.Kinds[sp.Kind] {
+		return false
+	}
+	if f.Entity != "" && sp.Entity != f.Entity && feedStr(sp.Parent) != f.Entity && !strings.HasPrefix(sp.Entity, f.Entity+"/") {
+		return false
+	}
+	if f.FromMS != nil && sp.to < *f.FromMS {
+		return false
+	}
+	return true
+}
+
+// spanSet is every span of one projection position, sorted by start, with lanes assigned over
+// the whole set (so a filtered reply keeps the lanes of the full picture).
+type spanSet struct {
+	pos     uint64
+	applied int64
+	spans   []*Span
+}
+
+// allSpans returns the spans of the state's current position, building them once per position.
+// The spans are shared by every caller: they must not be changed.
+func allSpans(s *State) []*Span {
+	if c := s.spanCache; c != nil && c.pos == s.Pos && c.applied == s.Applied {
+		return c.spans
+	}
+	spans := buildSpans(s)
+	s.spanCache = &spanSet{pos: s.Pos, applied: s.Applied, spans: spans}
+	return spans
+}
+
+// Spans returns the spans that match f, sorted by start (earliest bound first).
 func Spans(s *State, f SpanFilter) []*Span {
+	all := allSpans(s)
+	end := len(all)
+	if f.ToMS != nil {
+		to := *f.ToMS
+		end = sort.Search(len(all), func(i int) bool { return all[i].from > to })
+	}
+	out := []*Span{}
+	for _, sp := range all[:end] {
+		if f.match(sp) {
+			out = append(out, sp)
+		}
+	}
+	return out
+}
+
+// buildSpans builds every span the projection supports.
+func buildSpans(s *State) []*Span {
 	b := &spanBuilder{}
 	for _, t := range sortedKeys(s.Cells) {
 		c := s.Cells[t]
-		if !f.wantTicket(t) || (f.Wave != "" && c.WaveID != f.Wave) || (f.Execution != "" && !contains(c.Executions, f.Execution)) {
-			continue
-		}
-		cellSpans(b, s, c, f)
+		b.cur = spanMeta{src: srcCell, ticket: t, wave: c.WaveID, execs: c.Executions}
+		cellSpans(b, s, c)
 	}
 	for _, id := range sortedKeys(s.Executions) {
 		x := s.Executions[id]
-		if (f.Execution != "" && f.Execution != id) || !f.wantTicket(x.TicketID) || (f.Wave != "" && !waveHas(s, f.Wave, x.TicketID)) {
-			continue
+		wave := ""
+		if c := s.Cells[x.TicketID]; c != nil {
+			wave = c.WaveID
 		}
+		b.cur = spanMeta{src: srcExec, ticket: x.TicketID, wave: wave, execs: []string{id}}
 		execSpans(b, x)
 	}
-	if f.Execution == "" {
-		for _, id := range sortedKeys(s.Slices) {
-			sl := s.Slices[id]
-			if (f.Wave != "" && sl.WaveID != f.Wave) || !f.wantTicket(sl.TicketID) {
-				continue
-			}
-			ids := map[string]string{"slice_id": sl.SliceID, "wave_id": sl.WaveID, "ticket_id": sl.TicketID}
-			ref := "slice:" + sl.SliceID
-			if sl.Blocked != nil {
-				var end *Stamp
-				if sl.Resolved != nil && sl.Resolved.Pos > sl.Blocked.Pos {
-					end = sl.Resolved
-				}
-				b.add("slice-wait", ref, ref, ref, ids, sl.Blocked, end, "", "completed", false, "")
-			}
-			if el := sl.eligible(); el != nil {
-				reason := "completed"
-				end := sl.Scheduled
-				if end == nil && sl.Superseded != nil {
-					end, reason = sl.Superseded, "superseded"
-				}
-				b.add("slice-eligible", ref, ref, ref, ids, el, end, "", reason, false, "")
+	for _, id := range sortedKeys(s.Slices) {
+		sl := s.Slices[id]
+		b.cur = spanMeta{src: srcSlice, ticket: sl.TicketID, wave: sl.WaveID}
+		ids := map[string]string{"slice_id": sl.SliceID}
+		for k, v := range map[string]string{"wave_id": sl.WaveID, "ticket_id": sl.TicketID} {
+			if v != "" {
+				ids[k] = v
 			}
 		}
-		if f.Ticket == "" {
-			for _, id := range sortedKeys(s.Waves) {
-				w := s.Waves[id]
-				if f.Wave != "" && f.Wave != id {
-					continue
+		ref := "slice:" + sl.SliceID
+		// Every dependency wait, oldest first: the first keeps the plain id, later ones "#n"
+		// (n counts the waits no longer kept, so an id never moves to another wait).
+		for i, w := range sl.Waits {
+			n := sl.WaitsDropped + int64(i) + 1
+			var end *Stamp
+			reason := "completed"
+			if w.Resolved != nil {
+				end = w.Resolved
+			} else if w.Superseded != nil {
+				end, reason = w.Superseded, "superseded"
+			}
+			sp := b.add("slice-wait", ref, ref, ref, ids, w.Blocked, end, "", reason, false, "")
+			if sp != nil {
+				if n > 1 {
+					sp.SpanID += "#" + itoa(&n)
 				}
-				var last *Stamp
-				done := len(w.Slices) > 0
-				for _, sid := range w.Slices {
-					sl := s.Slices[sid]
-					if sl == nil || (sl.Integrated == nil && sl.Superseded == nil) {
-						done = false
-						break
-					}
-					if sl.Integrated != nil && (last == nil || sl.Integrated.Pos > last.Pos) {
-						last = sl.Integrated
-					}
-				}
-				if !done {
-					last = nil
-				}
-				b.add("wave", "wave:"+id, "", "wave:"+id, map[string]string{"wave_id": id}, w.FirstSeen, last, "", "completed", false, "")
+				sp.Attrs.Reasons, sp.Attrs.DependsOn = nonEmpty(w.Reasons), nonEmpty(w.DependsOn)
+			}
+		}
+		if el := sl.eligible(); el != nil {
+			reason := "completed"
+			end := sl.Scheduled
+			if end == nil && sl.Superseded != nil {
+				end, reason = sl.Superseded, "superseded"
+			}
+			sp := b.add("slice-eligible", ref, ref, ref, ids, el, end, "", reason, false, "")
+			if sp != nil {
+				sp.Attrs.DependsOn = nonEmpty(sl.DependsOn)
 			}
 		}
 	}
-	var out []*Span
-	for _, sp := range b.out {
-		if len(f.Kinds) > 0 && !f.Kinds[sp.Kind] {
-			continue
+	// Execution-capacity waits, closed then open, keyed by the event that opened them.
+	capacity := func(t string, opened, released *Stamp) {
+		wave := ""
+		if c := s.Cells[t]; c != nil {
+			wave = c.WaveID
 		}
-		if f.Entity != "" && sp.Entity != f.Entity && feedStr(sp.Parent) != f.Entity && !strings.HasPrefix(sp.Entity, f.Entity+"/") {
-			continue
+		b.cur = spanMeta{src: srcSlice, ticket: t, wave: wave}
+		ref := "cell:" + t
+		if sp := b.add("capacity-wait", ref, ref, ref, map[string]string{"ticket_id": t}, opened, released, "", "completed", false, ""); sp != nil {
+			sp.SpanID += "@" + opened.EventID
 		}
-		out = append(out, sp)
 	}
-	assignLanes(out)
-	return out
+	for _, w := range s.CapacityWaits {
+		capacity(w.TicketID, w.Opened, w.Released)
+	}
+	for _, t := range sortedKeys(s.Pending.Capacity) {
+		capacity(t, s.Pending.Capacity[t], nil)
+	}
+	for _, id := range sortedKeys(s.Waves) {
+		w := s.Waves[id]
+		b.cur = spanMeta{src: srcWave, wave: id}
+		b.add("wave", "wave:"+id, "", "wave:"+id, map[string]string{"wave_id": id}, w.FirstSeen, waveDone(s, w), "", "completed", false, "")
+	}
+	assignLanes(b.out)
+	sort.SliceStable(b.out, func(i, j int) bool {
+		x, y := b.out[i], b.out[j]
+		if x.from != y.from {
+			return x.from < y.from
+		}
+		if x.startKey != y.startKey {
+			return x.startKey[1] < y.startKey[1]
+		}
+		return x.SpanID < y.SpanID
+	})
+	return b.out
+}
+
+// waveDone is when a wave's last slice was integrated, once every slice is integrated or
+// superseded; nil before.
+func waveDone(s *State, w *Wave) *Stamp {
+	var last *Stamp
+	if len(w.Slices) == 0 {
+		return nil
+	}
+	for _, sid := range w.Slices {
+		sl := s.Slices[sid]
+		if sl == nil || (sl.Integrated == nil && sl.Superseded == nil) {
+			return nil
+		}
+		if sl.Integrated != nil && (last == nil || sl.Integrated.Pos > last.Pos) {
+			last = sl.Integrated
+		}
+	}
+	return last
+}
+
+func nonEmpty(list []string) []string {
+	if len(list) == 0 {
+		return nil
+	}
+	return append([]string(nil), list...)
 }
 
 func feedStr(p *string) string {
@@ -187,12 +367,7 @@ func feedStr(p *string) string {
 	return *p
 }
 
-func waveHas(s *State, wave, ticket string) bool {
-	c := s.Cells[ticket]
-	return c != nil && c.WaveID == wave
-}
-
-func cellSpans(b *spanBuilder, s *State, c *Cell, f SpanFilter) {
+func cellSpans(b *spanBuilder, s *State, c *Cell) {
 	t := c.TicketID
 	cellRef := "cell:" + t
 	base := map[string]string{"ticket_id": t, "cell_instance": c.CellInstance, "slice_id": c.SliceID}
@@ -275,7 +450,9 @@ func cellSpans(b *spanBuilder, s *State, c *Cell, f SpanFilter) {
 		if r.outcome != "" && r.outcome != "APPROVED" && r.outcome != "AWAITING_HUMAN" {
 			reason = "failed"
 		}
-		b.add("round", "gate:"+t+"/round#"+itoa(&n), cellRef, cellRef, with("round", itoa(&n)), r.start, r.end, r.outcome, reason, false, "")
+		if sp := b.add("round", "gate:"+t+"/round#"+itoa(&n), cellRef, cellRef, with("round", itoa(&n)), r.start, r.end, r.outcome, reason, false, ""); sp != nil {
+			sp.Attrs.Round = ptr(n)
+		}
 	}
 
 	// visits, and the build tasks inside them (start inferred: the previous completion).
@@ -288,15 +465,19 @@ func cellSpans(b *spanBuilder, s *State, c *Cell, f SpanFilter) {
 		if v.ClosedBy == "cleanup" {
 			reason = "unknown"
 		}
-		b.add("visit", "visit:"+v.VisitID, parent, cellRef, with("visit_id", v.VisitID, "station", v.Station, "round", itoa(v.Round), "execution_id", v.ExecutionID),
-			v.Entered, v.Exited, v.Outcome, reason, false, "")
+		if sp := b.add("visit", "visit:"+v.VisitID, parent, cellRef, with("visit_id", v.VisitID, "station", v.Station, "round", itoa(v.Round), "execution_id", v.ExecutionID),
+			v.Entered, v.Exited, v.Outcome, reason, false, ""); sp != nil {
+			sp.Attrs.Action, sp.Attrs.Round = v.Action, v.Round
+		}
 		prev := v.Entered
 		for _, task := range c.Tasks {
 			if task.VisitID != v.VisitID {
 				continue
 			}
-			b.add("task", "visit:"+v.VisitID+"/task:"+task.TaskID+"#"+task.Step, "visit:"+v.VisitID, "visit:"+v.VisitID,
-				with("visit_id", v.VisitID, "task_id", task.TaskID, "round", itoa(task.Round)), prev, task.At, task.Step, "completed", true, "previous-completion")
+			if sp := b.add("task", "visit:"+v.VisitID+"/task:"+task.TaskID+"#"+task.Step, "visit:"+v.VisitID, "visit:"+v.VisitID,
+				with("visit_id", v.VisitID, "task_id", task.TaskID, "round", itoa(task.Round)), prev, task.At, task.Step, "completed", true, "previous-completion"); sp != nil {
+				sp.Attrs.Round = task.Round
+			}
 			prev = task.At
 		}
 	}
@@ -306,14 +487,19 @@ func cellSpans(b *spanBuilder, s *State, c *Cell, f SpanFilter) {
 		gate := "gate:" + t + "/review#" + itoa(rv.Round)
 		for _, seat := range rv.Panel {
 			var end *Stamp
-			vote := ""
+			vote, model := "", seat.Model
 			for _, vd := range rv.Verdicts {
 				if vd.Seat == seat.Seat {
 					end, vote = vd.At, vd.Vote
+					if vd.Model != "" {
+						model = vd.Model
+					}
 				}
 			}
-			b.add("seat", "seat:"+t+"/review#"+itoa(rv.Round)+"/"+seat.Seat, gate, gate, with("round", itoa(rv.Round), "seat", seat.Seat),
-				rv.Started, end, vote, "completed", false, "")
+			if sp := b.add("seat", "seat:"+t+"/review#"+itoa(rv.Round)+"/"+seat.Seat, gate, gate, with("round", itoa(rv.Round), "seat", seat.Seat),
+				rv.Started, end, vote, "completed", false, ""); sp != nil {
+				sp.Attrs.Model, sp.Attrs.Vote, sp.Attrs.Round = model, vote, rv.Round
+			}
 		}
 	}
 
@@ -327,9 +513,13 @@ func cellSpans(b *spanBuilder, s *State, c *Cell, f SpanFilter) {
 		if g.Kind == "required" {
 			kind = "person-wait"
 		}
-		b.add(kind, "gate:"+t+"/"+g.Key, cellRef, cellRef, with("round", itoa(g.Round)), g.Opened, g.Closed, g.ClosedBy, "completed", false, "")
+		if sp := b.add(kind, "gate:"+t+"/"+g.Key, cellRef, cellRef, with("round", itoa(g.Round)), g.Opened, g.Closed, g.ClosedBy, "completed", false, ""); sp != nil {
+			sp.Attrs.Round = g.Round
+			if g.Reason != "" {
+				sp.Attrs.Reasons = []string{g.Reason}
+			}
+		}
 	}
-	_ = f
 }
 
 func execSpans(b *spanBuilder, x *Execution) {
@@ -351,20 +541,28 @@ func execSpans(b *spanBuilder, x *Execution) {
 		if end == nil {
 			end = x.Started
 		}
-		b.add("claim", ref, cellParent, group, ids, x.Claimed, end, "", "completed", false, "")
+		if sp := b.add("claim", ref, cellParent, group, ids, x.Claimed, end, "", "completed", false, ""); sp != nil {
+			sp.Attrs.Attempt = x.Attempt
+		}
 	}
 	state := ExecState(x)
+	execAttrs := SpanAttrs{Attempt: x.Attempt, State: state, CostUSD: costOf(x).USD}
 	reason := map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "failed", "unknown": "unknown"}[state]
 	if x.ProcessStarted != nil {
-		b.add("execution", ref, cellParent, group, ids, x.ProcessStarted, x.ProcessEnded, state, orDefault(reason, "completed"), false, "")
+		if sp := b.add("execution", ref, cellParent, group, ids, x.ProcessStarted, x.ProcessEnded, state, orDefault(reason, "completed"), false, ""); sp != nil {
+			sp.Attrs = execAttrs
+		}
 	} else if x.Started != nil {
 		end := x.Completed
 		if end == nil {
 			end = x.Failed
 		}
 		sp := b.add("execution", ref, cellParent, group, ids, x.Started, end, state, orDefault(reason, "completed"), false, "")
-		if sp != nil && sp.Duration.Basis == "measured" {
-			sp.Duration.Basis = "bounded" // the supervisor's own stamps, up to a poll late
+		if sp != nil {
+			sp.Attrs = execAttrs
+			if sp.Duration.Basis == "measured" {
+				sp.Duration.Basis = "bounded" // the supervisor's own stamps, up to a poll late
+			}
 		}
 	}
 	for _, wref := range sortedKeys(x.Workflows) {
@@ -390,13 +588,20 @@ func execSpans(b *spanBuilder, x *Execution) {
 		}
 		parent := orDefault(a.Workflow, ref)
 		if a.Queued != nil {
-			b.add("agent-queue", aref, parent, parent, aids, a.Queued, a.Started, "", "completed", false, "")
+			if sp := b.add("agent-queue", aref, parent, parent, aids, a.Queued, a.Started, "", "completed", false, ""); sp != nil {
+				sp.Attrs = SpanAttrs{Label: a.Label, Model: a.Model, AgentType: a.AgentType}
+			}
 		}
 		if a.Started != nil {
 			reason := map[string]string{"error": "failed", "unknown": "unknown"}[a.Status]
 			sp := b.add("agent", aref, parent, parent, aids, a.Started, a.Finished, a.Status, orDefault(reason, "completed"), false, "")
 			if sp != nil && a.Finished != nil && a.DurationMS != nil && a.Started.Precision == "ms" {
 				sp.Duration = Duration{MS: a.DurationMS, MinMS: a.DurationMS, MaxMS: a.DurationMS, Basis: "measured"}
+			}
+			if sp != nil {
+				// A workflow agent's calls are seen only as a count; an Agent-tool sub-agent's one by one.
+				sp.Attrs = SpanAttrs{Label: a.Label, Model: a.Model, AgentType: a.AgentType, ToolCalls: a.ToolCalls, ToolsCountOnly: a.Workflow != "",
+					LastTool: a.LastTool, Tokens: a.Tokens}
 			}
 		}
 	}

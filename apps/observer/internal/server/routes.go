@@ -105,6 +105,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 			"evidence_media": set.EvidenceMedia, "evidence_media_setting": `.factory/config.json "tower": {"evidence_media": true}`,
 			"stream_observations": streamObs},
 		"limits": map[string]any{"page_default": DefaultPage, "page_max": MaxPage, "scan_cap": ScanCap, "spans_max": MaxSpans, "history_max": MaxHistory,
+			"marks_default": DefaultMarks, "marks_max": MaxMarks, "concurrency_buckets_default": DefaultSeriesBuckets, "concurrency_buckets_max": MaxSeriesBuckets,
 			"stream_batch": s.opts.StreamBatch, "streams_max": s.opts.MaxStreams, "stream_write_timeout_ms": s.opts.WriteTimeout.Milliseconds(),
 			"heartbeat_ms": s.opts.Heartbeat.Milliseconds(), "content_reads_max": MaxContentReads,
 			"artifact_text_bytes": 256 << 10, "artifact_image_bytes": 16 << 20, "artifact_video_bytes": 64 << 20},
@@ -553,61 +554,6 @@ func (s *Server) tools(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---- timeline ----
-
-var spanKinds = map[string]bool{"wave": true, "slice-wait": true, "slice-eligible": true, "cell": true, "round": true, "visit": true, "gate-wait": true,
-	"person-wait": true, "seat": true, "claim": true, "execution": true, "workflow": true, "agent-queue": true, "agent": true, "tool": true, "task": true}
-
-// spans: GET /api/v1/spans?ticket|execution|wave|entity&kinds=visit,agent&limit&offset
-func (s *Server) spans(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	var f project.SpanFilter
-	var bad *Envelope
-	if f.Ticket, bad = optIdent(q, "ticket"); bad == nil {
-		if f.Execution, bad = optIdent(q, "execution"); bad == nil {
-			f.Wave, bad = optIdent(q, "wave")
-		}
-	}
-	if bad != nil {
-		writeJSON(w, http.StatusBadRequest, *bad)
-		return
-	}
-	f.Entity = q.Get("entity")
-	if len(f.Entity) > 300 {
-		writeJSON(w, http.StatusBadRequest, fail(KindInvalid, "entity is too long."))
-		return
-	}
-	if k := q.Get("kinds"); k != "" {
-		f.Kinds = map[string]bool{}
-		for _, kind := range strings.Split(k, ",") {
-			if !spanKinds[kind] {
-				writeJSON(w, http.StatusBadRequest, fail(KindInvalid, "unknown span kind "+kindQuote(kind)+"."))
-				return
-			}
-			f.Kinds[kind] = true
-		}
-	}
-	limit, bad := pageLimit(r, MaxPage)
-	if bad != nil {
-		writeJSON(w, http.StatusBadRequest, *bad)
-		return
-	}
-	off, bad := offset(r)
-	if bad != nil {
-		writeJSON(w, http.StatusBadRequest, *bad)
-		return
-	}
-	s.view(w, func(st *project.State) (int, Envelope) {
-		all := project.Spans(st, f)
-		if len(all) > MaxSpans {
-			all = all[:MaxSpans]
-		}
-		v := pageOf(all, off, limit, s.cursor(st.Pos))
-		v["basis_vocabulary"] = []string{"measured", "bounded", "inferred", "open", "unknown"}
-		return http.StatusOK, ok(v)
-	})
-}
-
 func kindQuote(s string) string {
 	if len(s) > 40 {
 		s = s[:40]
@@ -694,9 +640,10 @@ var seriesSteps = []int64{1_000, 5_000, 10_000, 30_000, 60_000, 300_000, 600_000
 
 // series: GET /api/v1/series?from_ms&to_ms&bucket_ms&ticket&execution (shared contracts 2.8).
 // Event counts per time bucket, by kind and authority, placed by order_ms (a late event counts
-// where it belongs): enough to draw a long timeline without fetching every event. With no
-// filter and whole-minute buckets the counts cover everything indexed (kept per minute); finer
-// buckets or a filter are counted from the memory window. complete says whether every event of
+// where it belongs): enough to draw a long timeline without fetching every event. With
+// whole-minute buckets and no filter, or one filter (ticket or execution), the counts cover
+// everything indexed (kept per minute; source "minutes"); finer buckets, or both filters, are
+// counted from the memory window (source "memory-window"). complete says whether every event of
 // the range was counted. Empty buckets are left out.
 func (s *Server) series(w http.ResponseWriter, r *http.Request) {
 	sr, ok2 := s.opts.Log.(feed.Serieser)

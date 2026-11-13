@@ -208,6 +208,8 @@ func New(opts Options) *Server {
 		"runs/{execution}/agents":       s.agents,
 		"runs/{execution}/tools":        s.tools,
 		"spans":                         s.spans,
+		"concurrency":                   s.concurrency,
+		"marks":                         s.marks,
 		"artifacts":                     s.artifacts,
 		"artifacts/{id}":                s.artifact,
 		"artifacts/{id}/content":        s.content,
@@ -588,8 +590,10 @@ var orderBoundRe = regexp.MustCompile(`^[0-9]{15}(~[A-Za-z0-9.:%~_-]{0,240})?$`)
 
 // history: GET /api/v1/history?from_order&to_order (or from_ms&to_ms)&entities=<ref,ref>&ticket&execution&type&limit
 // A window of history in ORDER, for replay and the Timeline (contract 14): late events appear
-// where they belong. It reads the memory window; complete is false when part of the window may
-// have left it. Page on with from_order=next while more is true.
+// where they belong. It reads the memory window and, for what has left it, the index's segments
+// on disk; complete is false when retention may have dropped part of the window. A page reads at
+// most ScanCap lines from disk and may then stop early, short of limit, with more true. Page on
+// with from_order=next_from_order while more is true.
 func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 	h, ok2 := s.opts.Log.(feed.Historian)
 	if !ok2 {
@@ -691,7 +695,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 		"floor":           s.cursor(floor),
 		"watermark_ms":    in.WatermarkMS,
 		"catching_up":     in.CatchingUp,
-		"limits":          map[string]int{"page_default": DefaultHistory, "page_max": MaxHistory, "entities_max": 32},
+		"limits":          map[string]int{"page_default": DefaultHistory, "page_max": MaxHistory, "entities_max": 32, "scan_cap": ScanCap},
 	}))
 }
 

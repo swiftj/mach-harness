@@ -17,7 +17,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 2 // 2: gap classes
+const FormatVersion = 3 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -27,6 +27,10 @@ const (
 	maxAgentsPerExec  = 1000
 	maxRefusedPerExec = 500
 	maxGapsKept       = 200
+	maxWaitsPerSlice  = 200 // dependency waits kept per slice (oldest dropped, counted)
+	maxCapacityWaits  = 500 // closed capacity waits kept (oldest dropped, counted)
+	maxRecoveries     = 1000
+	maxLimitHistory   = 200
 )
 
 // State is the projection at one position.
@@ -53,6 +57,19 @@ type State struct {
 	Stream     StreamInfo            `json:"stream"`
 	Metrics    *metrics.Table        `json:"metrics"`
 	Pending    Pending               `json:"pending"`
+	// CapacityWaits are closed execution-capacity waits (capacity.wait_changed waiting to released),
+	// oldest first; the open ones are Pending.Capacity.
+	CapacityWaits        []CapacityWait `json:"capacity_waits"`
+	CapacityWaitsDropped int64          `json:"capacity_waits_dropped"`
+	// Recoveries are recovery.started events with their time, oldest first.
+	Recoveries        []Recovery `json:"recoveries"`
+	RecoveriesDropped int64      `json:"recoveries_dropped"`
+	// LastMS is the latest order time of any event applied: what the projection holds up to.
+	LastMS int64 `json:"last_ms"`
+
+	// Derived lists cached for the position they were built at (never encoded).
+	spanCache *spanSet
+	markCache *markSet
 
 	// dirty names the entities (cells, slices, executions, waves) an event has touched since the
 	// last checkpoint, so a checkpoint re-encodes only those and shares the rest (checkpoint.go).
@@ -166,6 +183,32 @@ type Factory struct {
 	Held           []Held             `json:"held"`
 	Dispatched     []string           `json:"dispatched"`
 	Started        []string           `json:"started"`
+	// LimitHistory is every limit factory.activated recorded and when it applied, oldest first.
+	LimitHistory []LimitSpan `json:"limit_history"`
+}
+
+// LimitSpan is one recorded Factory limit (max_parallel, ...) from the activation that set it to
+// the next activation or disablement (open while it still applies).
+type LimitSpan struct {
+	Name  string  `json:"name"`
+	Value float64 `json:"value"`
+	From  *Stamp  `json:"from"`
+	To    *Stamp  `json:"to"`
+}
+
+// CapacityWait is one closed execution-capacity wait for a ticket.
+type CapacityWait struct {
+	TicketID string `json:"ticket_id"`
+	Opened   *Stamp `json:"opened"`
+	Released *Stamp `json:"released"`
+}
+
+// Recovery is one recovery.started, with its time.
+type Recovery struct {
+	Kind        string `json:"kind"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	TicketID    string `json:"ticket_id,omitempty"`
+	At          *Stamp `json:"at"`
 }
 
 // Held is one item the scheduler held, with its recorded reason (MACH-written prose, scrubbed).
@@ -213,7 +256,24 @@ type Slice struct {
 	Superseded   *Stamp          `json:"superseded"`
 	Revisions    []SliceRevision `json:"revisions"`
 	History      []StateChange   `json:"history"`
+	// Waits is every dependency wait (dependency.blocked to dependency.resolved), oldest first;
+	// an unresolved one has no end. WaitsDropped counts the oldest ones no longer kept.
+	Waits        []*DependencyWait `json:"waits"`
+	WaitsDropped int64             `json:"waits_dropped"`
 }
+
+// DependencyWait is one recorded dependency wait of a slice.
+type DependencyWait struct {
+	Revision   *int64   `json:"revision"`
+	Blocked    *Stamp   `json:"blocked"`
+	Resolved   *Stamp   `json:"resolved"`
+	Superseded *Stamp   `json:"superseded"` // a new revision (or a supersession) replaced the slice while it waited
+	Reasons    []string `json:"reasons"`
+	DependsOn  []string `json:"depends_on"`
+}
+
+// open reports a wait with no recorded end.
+func (w *DependencyWait) open() bool { return w.Resolved == nil && w.Superseded == nil }
 
 // SliceRevision is an earlier revision of a slice, as it stood when the next one arrived.
 type SliceRevision struct {
@@ -626,4 +686,5 @@ type Gap struct {
 	Count     *int64 `json:"count"`
 	EventID   string `json:"event_id"`
 	Pos       uint64 `json:"pos"`
+	At        *Stamp `json:"at"`
 }

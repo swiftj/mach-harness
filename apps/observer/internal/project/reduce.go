@@ -22,6 +22,9 @@ func (s *State) Apply(e *feed.Event) {
 	s.Applied++
 	s.Kinds[e.Type]++
 	st := stampOf(e)
+	if st.OrderMS > s.LastMS {
+		s.LastMS = st.OrderMS
+	}
 	switch e.Origin.Stream {
 	case "intake-log":
 		s.applyIntake(e, st)
@@ -189,6 +192,30 @@ func (sl *Slice) recompute(st *Stamp) {
 	}
 }
 
+// openWait is the slice's dependency wait with no recorded end, if any (only the last can be).
+func (sl *Slice) openWait() *DependencyWait {
+	if n := len(sl.Waits); n > 0 && sl.Waits[n-1].open() {
+		return sl.Waits[n-1]
+	}
+	return nil
+}
+
+// endWait closes an open dependency wait because the slice it belonged to was replaced.
+func (sl *Slice) endWait(st *Stamp) {
+	if w := sl.openWait(); w != nil {
+		w.Superseded = st
+	}
+}
+
+// closeLimits ends every recorded limit that still applies.
+func (s *State) closeLimits(st *Stamp) {
+	for i := range s.Factory.LimitHistory {
+		if s.Factory.LimitHistory[i].To == nil {
+			s.Factory.LimitHistory[i].To = st
+		}
+	}
+}
+
 // eligible is when the slice became ready: its dependencies resolved, or materialized with none.
 func (sl *Slice) eligible() *Stamp {
 	if sl.Resolved != nil {
@@ -253,6 +280,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		if sl.Materialized != nil && !sameRev(sl.Revision, e.IDs.Revision) {
 			sl.Revisions = append(sl.Revisions, SliceRevision{Revision: sl.Revision, TicketID: sl.TicketID, State: sl.State, At: sl.Materialized})
+			sl.endWait(st) // a new revision replaced the slice while it waited
 			sl.Blocked, sl.Resolved, sl.Scheduled, sl.Integrated, sl.Superseded = nil, nil, nil, nil, nil
 			sl.Reasons, sl.DependsOn, sl.Commit = []string{}, []string{}, ""
 		}
@@ -293,6 +321,9 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 				m.Duration("W1", dims("wave", sl.WaveID), day(st), ms)
 			}
 		}
+		if w := sl.openWait(); w != nil {
+			w.Resolved, w.DependsOn = st, nonNilS(d.DependsOn)
+		}
 		sl.Resolved = st
 		if d.DependsOn != nil {
 			sl.DependsOn = d.DependsOn
@@ -314,6 +345,17 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		if d.Reasons != nil {
 			sl.Reasons = d.Reasons
+		}
+		if w := sl.openWait(); w != nil {
+			if d.Reasons != nil {
+				w.Reasons = d.Reasons
+			}
+		} else {
+			sl.Waits = append(sl.Waits, &DependencyWait{Revision: sl.Revision, Blocked: st, Reasons: nonNilS(d.Reasons)})
+			if len(sl.Waits) > maxWaitsPerSlice {
+				sl.WaitsDropped += int64(len(sl.Waits) - maxWaitsPerSlice)
+				sl.Waits = append([]*DependencyWait(nil), sl.Waits[len(sl.Waits)-maxWaitsPerSlice:]...)
+			}
 		}
 		sl.recompute(st)
 	case "work.scheduled":
@@ -345,6 +387,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 	case "revision.superseded":
 		if sl := s.slice(e); sl != nil {
 			sl.Superseded = st
+			sl.endWait(st)
 			sl.recompute(st)
 		}
 	case "human.required":
@@ -364,9 +407,17 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		s.Factory.State, s.Factory.Autonomy, s.Factory.Limits = orUnknown(d.Autonomy), d.Autonomy, d.Limits
+		s.closeLimits(st)
+		for _, name := range sortedKeys(d.Limits) {
+			s.Factory.LimitHistory = append(s.Factory.LimitHistory, LimitSpan{Name: name, Value: d.Limits[name], From: st})
+		}
+		if n := len(s.Factory.LimitHistory); n > maxLimitHistory {
+			s.Factory.LimitHistory = append([]LimitSpan(nil), s.Factory.LimitHistory[n-maxLimitHistory:]...)
+		}
 		s.Factory.AllowMerge, s.Factory.Persistent, s.Factory.Since, s.Factory.PausedReason = d.AllowMerge, d.Persistent, st, ""
 	case "factory.disabled":
 		s.Factory.State, s.Factory.Since = "disabled", st
+		s.closeLimits(st)
 	case "factory.paused":
 		var d struct {
 			Reason *string `json:"reason"`
@@ -439,6 +490,11 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		if x := s.execution(e); x != nil {
 			x.Recovery = append(x.Recovery, d.Kind)
+		}
+		s.Recoveries = append(s.Recoveries, Recovery{Kind: d.Kind, ExecutionID: e.Execution(), TicketID: e.Ticket(), At: st})
+		if n := len(s.Recoveries); n > maxRecoveries {
+			s.RecoveriesDropped += int64(n - maxRecoveries)
+			s.Recoveries = append([]Recovery(nil), s.Recoveries[n-maxRecoveries:]...)
 		}
 		m.Rate("S1", dims("kind", d.Kind), day(st), 1, 0)
 		if d.Kind == "outcome-unknown" {
@@ -1219,7 +1275,7 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 		s.GapCounts[d.Reason]++
 		s.GapClasses[class]++
 		s.Gaps = append(s.Gaps, Gap{SourceKey: d.SourceKey, FromSeq: d.FromSeq, ToSeq: d.ToSeq, Reason: d.Reason, Class: class, Lost: lost,
-			Count: d.Count, EventID: e.ID, Pos: e.Pos})
+			Count: d.Count, EventID: e.ID, Pos: e.Pos, At: st})
 		if len(s.Gaps) > maxGapsKept {
 			s.Gaps = append([]Gap(nil), s.Gaps[len(s.Gaps)-maxGapsKept:]...)
 		}
@@ -1305,6 +1361,11 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 					m.Duration("W2b", nil, day(st), ms)
 				}
 				delete(s.Pending.Capacity, t)
+				s.CapacityWaits = append(s.CapacityWaits, CapacityWait{TicketID: t, Opened: open, Released: st})
+				if n := len(s.CapacityWaits); n > maxCapacityWaits {
+					s.CapacityWaitsDropped += int64(n - maxCapacityWaits)
+					s.CapacityWaits = append([]CapacityWait(nil), s.CapacityWaits[n-maxCapacityWaits:]...)
+				}
 			}
 		}
 	}

@@ -169,14 +169,7 @@ func Run(x *Execution) RunView {
 	if x.Completed != nil || x.Failed != nil {
 		v.Moved = ptr(x.Completed != nil)
 	}
-	switch {
-	case x.Usage != nil && x.Usage.TotalCostUSD != nil:
-		v.Cost = Cost{USD: x.Usage.TotalCostUSD, Source: "execution.usage", Authority: "observed"}
-	case x.CostUSD != nil:
-		v.Cost = Cost{USD: x.CostUSD, Source: "execution.completed", Authority: "authoritative"}
-	default:
-		v.Cost.NullReason = "no cost was recorded for this execution (no result was read)"
-	}
+	v.Cost = costOf(x)
 	if x.Usage != nil {
 		var total int64
 		seen := false
@@ -222,6 +215,17 @@ func Run(x *Execution) RunView {
 	}
 	v.UnderReported = len(v.UnderReasons) > 0
 	return v
+}
+
+// costOf is an execution's recorded cost: the stream's usage, else the supervisor's record.
+func costOf(x *Execution) Cost {
+	switch {
+	case x.Usage != nil && x.Usage.TotalCostUSD != nil:
+		return Cost{USD: x.Usage.TotalCostUSD, Source: "execution.usage", Authority: "observed"}
+	case x.CostUSD != nil:
+		return Cost{USD: x.CostUSD, Source: "execution.completed", Authority: "authoritative"}
+	}
+	return Cost{NullReason: "no cost was recorded for this execution (no result was read)"}
 }
 
 // costReason words a cost_incomplete_reasons code for a person.
