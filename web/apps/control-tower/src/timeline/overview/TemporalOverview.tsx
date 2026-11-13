@@ -13,15 +13,16 @@
  * The playhead and the live edge are written to the DOM from the store on every frame
  * (`usePlayheadEffect`); nothing here re-renders per frame.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type Ref } from "react";
+import { createPortal } from "react-dom";
 import { cn, useTheme } from "@mach/ui";
 import { isStale, useSceneStore, useStore } from "../../scene";
 import { setScrubbing } from "../../shell/scrub";
-import { spokenTime, timecode, duration, getTimeBase, utcClock } from "../../shell/time";
+import { spokenTime, timecode, getTimeBase, utcClock } from "../../shell/time";
 import { usePlayheadEffect } from "../../shell/timeline/playhead";
 import "../../shell/shell.css";
-import { LABEL_GUTTER, MIN_WINDOW_MS, type TemporalOverviewProps, type TimeWindow } from "../contract";
-import { drawOverview, overviewLayout, readOverviewPalette, type ActivityLayer } from "./draw";
+import { MIN_WINDOW_MS, type TemporalOverviewProps, type TimeWindow } from "../contract";
+import { activityY, drawOverview, overviewLayout, readOverviewPalette, type ActivityLayer, type TailLayer } from "./draw";
 import {
   aggregateMarks,
   centreWindow,
@@ -30,28 +31,43 @@ import {
   concurrencyUnavailable,
   countText,
   densityColumns,
+  describeColumn,
+  describeWindow,
+  familyCounts,
+  idleTail,
   isWhole,
   keyStep,
+  lastRecorded,
+  lastRecordedWords,
+  lengthWords,
+  limitSegments,
   moveWindow,
+  peakWords,
+  placeLimitLabels,
   resizeWindow,
   tOf,
+  trimTrailingZero,
+  waitWords,
   windowBetween,
   windowWords,
   xOf,
   zoomWindow,
+  type Box,
   type BrushPart,
-  type MarkBar,
   type MarkPoint,
 } from "./model";
 import { useOverviewData } from "./useOverviewData";
 
 /** Room on the right so the end handle can be grabbed at the live edge. */
 const RIGHT_PAD = 12;
-/** Below this width the legend column is left out and the plot takes the whole width. */
+/** Below this total width the legend is left out (the plot still starts at the caller's gutter). */
 const LEGEND_MIN_WIDTH = 720;
 /** Pixels a press must travel before it is a drag. */
 const DRAG_PX = 4;
 const DOUBLE_CLICK_MS = 450;
+/** During a brush drag the window is reported at most this often; the brush itself follows every frame. */
+export const DRAG_COMMIT_MS = 120;
+const HANDLE_W = 24;
 
 interface Drag {
   readonly mode: "start" | "end" | "move" | "draw" | "seek";
@@ -60,63 +76,90 @@ interface Drag {
   readonly t0: number;
   readonly win0: TimeWindow;
   moved: boolean;
+  /** Where the brush is drawn now; reported to the caller at most every DRAG_COMMIT_MS. */
+  live: TimeWindow | null;
+  sent: TimeWindow | null;
+  sentAt: number;
+  timer: number | null;
 }
 
 interface Tip {
-  readonly x: number;
-  readonly text: string;
-  readonly when: string;
+  /** Viewport coordinates: the pointer's x, and the plot's top and bottom. */
+  readonly ax: number;
+  readonly top: number;
+  readonly bottom: number;
+  readonly title: string;
+  readonly lines: readonly string[];
 }
 
-const FAMILY_WORDS: Record<MarkPoint["family"], [string, string]> = {
-  failure: ["failure", "failures"],
-  halt: ["recovery or interruption", "recoveries and interruptions"],
-  gate: ["gate refusal or override", "gate refusals and overrides"],
-  human: ["person needed", "people needed"],
-  gap: ["gap in history", "gaps in history"],
-};
-
-/** "/min" for a minute's bucket, else " per 5 min". */
-function perBucket(ms: number): string {
-  if (ms === 1000) return "/s";
-  if (ms === 60_000) return "/min";
-  if (ms === 3_600_000) return "/h";
-  return ` per ${duration(ms)}`;
+/** One 2D context for measuring label text before drawing (placement feeds the legend). */
+let measureCtx: CanvasRenderingContext2D | null = null;
+function labelMeasure(): (text: string) => number {
+  if (typeof document === "undefined") return (t) => t.length * 6;
+  measureCtx ??= document.createElement("canvas").getContext("2d");
+  const ctx = measureCtx;
+  if (!ctx) return (t) => t.length * 6;
+  const mono = getComputedStyle(document.documentElement).getPropertyValue("--mach-font-mono").trim() || "monospace";
+  ctx.font = `500 10px ${mono}`;
+  return (t) => ctx.measureText(t).width;
 }
 
-function limitName(name: string): string {
-  return name.replace(/[_-]+/g, " ").trim();
-}
-
-export function TemporalOverview({ data, extent, window: win, liveAt, width, height, filters, onWindow }: TemporalOverviewProps) {
+export function TemporalOverview({ data, extent, window: win, liveAt, width, height, filters, gutter, onWindow }: TemporalOverviewProps) {
   const store = useStore();
   const { resolved: theme } = useTheme();
   const connection = useSceneStore((s) => s.connection);
   const source = useSceneStore((s) => s.source);
   const stale = isStale(connection);
 
-  const legend = width >= LEGEND_MIN_WIDTH ? LABEL_GUTTER : 0;
-  const pw = Math.max(0, Math.floor(width - legend - RIGHT_PAD));
+  // The plot starts where the tracks' time axis starts: at the caller's gutter. The legend fills that
+  // column when there is width for it; the overview draws no column of its own.
+  const lead = Math.max(0, Math.round(gutter));
+  const legend = width >= LEGEND_MIN_WIDTH && lead > 0;
+  const pw = Math.max(0, Math.floor(width - lead - RIGHT_PAD));
   const L = overviewLayout(height);
   const wall = getTimeBase() === "wall" || source !== "simulation";
+  const clock = useCallback((t: number) => (wall ? utcClock(t) : timecode(t, false)), [wall]);
 
   const got = useOverviewData(data, extent, pw, filters);
 
   // ------------------------------------------------------------ derived drawing (pixel space)
   const density = useMemo(() => (got.density ? densityColumns(got.density, extent, pw) : null), [got.density, extent, pw]);
   const noActivity = concurrencyUnavailable(got.concurrency);
-  const activity = useMemo((): (ActivityLayer & { peaks: { executions: number; visits: number; agents: number } }) | null => {
+  const marks = useMemo(() => aggregateMarks(got.marks, extent, pw, liveAt), [got.marks, extent, pw, liveAt]);
+  const ticks = useMemo(() => chooseTicks(extent, pw, wall, L.compact ? 76 : 84).ticks, [extent, pw, wall, L.compact]);
+
+  // The idle tail: from the last recorded event to the live edge, drawn quiet and named once.
+  const last = useMemo(() => lastRecorded(got.density, got.marks, liveAt), [got.density, got.marks, liveAt]);
+  const tail = useMemo((): (TailLayer & { box: Box | null; words: string }) | null => {
+    const t = idleTail(last, liveAt, extent, pw);
+    if (!t || !last) return null;
+    const minuteClock = (x: number) => (got.density && got.density.bucketMs >= 60_000 ? clock(x).slice(0, -3) : clock(x));
+    const label = lastRecordedWords(last, wall ? minuteClock : clock);
+    const tw = labelMeasure()(label);
+    const lx = Math.round(t.x) + 4;
+    const fits = lx + tw <= t.liveX - 6;
+    const idle = `nothing recorded for ${lengthWords(t.idleMs)}`;
+    return { ...t, label, labelX: fits ? lx : null, idle, box: fits ? { x: lx - 2, y: L.plotBottom - 12, w: tw + 4, h: 11 } : null, words: `${lastRecordedWords(last, clock)}; ${idle} since` };
+  }, [last, liveAt, extent, pw, clock, wall, got.density, L.plotBottom]);
+
+  const activity = useMemo((): (ActivityLayer & { peaks: { executions: number; visits: number; agents: number }; dropped: Array<{ label: string; kind: string; values: number[] }> }) | null => {
     const c = got.concurrency;
     if (!c || noActivity) return null;
     const ex = concurrencySteps(c, "execution", extent, pw);
     const vi = concurrencySteps(c, "visit", extent, pw);
     const ag = concurrencySteps(c, "agent", extent, pw);
-    const limits = c.limits.map((l) => ({ label: limitName(l.name), value: l.value, x0: Math.max(0, xOf(l.from, extent, pw)), x1: Math.min(pw, xOf(l.to ?? extent.to, extent, pw)) })).filter((l) => l.x1 > l.x0);
+    const executions = trimTrailingZero(ex.steps);
+    const visits = trimTrailingZero(vi.steps);
+    const agents = trimTrailingZero(ag.steps);
+    // A limit still in force is drawn as far as anything was recorded or active, not into the idle tail.
+    const activeEnd = Math.max(0, ...[executions, visits, agents].map((s) => (s.length ? s[s.length - 1]!.x1 : 0)));
+    const openEnd = Math.max(last?.until ?? extent.from, tOf(activeEnd, extent, pw));
+    const limits = limitSegments(c.limits, extent, pw, openEnd);
     const top = Math.max(1, ex.peak, vi.peak, ag.peak, ...limits.map((l) => l.value));
-    return { executions: ex.steps, visits: vi.steps, agents: ag.steps, limits, vmax: top + Math.max(0.5, top * 0.08), peaks: { executions: ex.peak, visits: vi.peak, agents: ag.peak } };
-  }, [got.concurrency, noActivity, extent, pw]);
-  const marks = useMemo(() => aggregateMarks(got.marks, extent, pw, liveAt), [got.marks, extent, pw, liveAt]);
-  const ticks = useMemo(() => chooseTicks(extent, pw, wall, L.compact ? 76 : 84).ticks, [extent, pw, wall, L.compact]);
+    const vmax = top + Math.max(0.5, top * 0.08);
+    const placed = placeLimitLabels(limits, activityY(L, vmax), labelMeasure(), { top: L.plotTop, bottom: L.plotBottom, width: pw }, tail?.box ? [tail.box] : []);
+    return { executions, visits, agents, limits, limitLabels: placed.placed, dropped: placed.dropped, vmax, peaks: { executions: ex.peak, visits: vi.peak, agents: ag.peak } };
+  }, [got.concurrency, noActivity, extent, pw, last, L, tail]);
   const empty = !got.loading && !got.failed && (density?.total ?? 0) === 0 && got.marks.length === 0 && !(activity && (activity.peaks.executions || activity.peaks.visits || activity.peaks.agents));
 
   // ------------------------------------------------------------ the canvas
@@ -130,9 +173,9 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawOverview(ctx, { width: pw, height, layout: L, density: empty ? null : density, activity: empty ? null : activity, points: marks.points, bars: marks.bars, ticks }, readOverviewPalette(canvas));
+    drawOverview(ctx, { width: pw, height, layout: L, density: empty ? null : density, activity: empty ? null : activity, points: marks.points, bars: marks.bars, ticks, tail: empty ? null : tail }, readOverviewPalette(canvas));
     // `theme` re-reads the palette when the theme changes.
-  }, [pw, height, L, density, activity, marks, ticks, empty, theme]);
+  }, [pw, height, L, density, activity, marks, ticks, tail, empty, theme]);
 
   // ------------------------------------------------------------ playhead and live edge (per frame, no React)
   const headRef = useRef<HTMLDivElement>(null);
@@ -158,16 +201,81 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
 
   // ------------------------------------------------------------ the brush
   const c = useMemo(() => ({ from: Math.max(extent.from, win.from), to: Math.min(extent.to, win.to) }), [extent.from, extent.to, win.from, win.to]);
-  const bx0 = Math.round(xOf(c.from, extent, pw));
-  const bx1 = Math.max(bx0 + 1, Math.round(xOf(c.to, extent, pw)));
   const whole = isWhole(c, extent);
   const minMs = MIN_WINDOW_MS;
 
   const report = useCallback((next: TimeWindow | null) => onWindow(next === null || isWhole(next, extent) ? null : next), [onWindow, extent]);
 
   const plotRef = useRef<HTMLDivElement>(null);
+  const moveRef = useRef<HTMLDivElement>(null);
+  const startRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const dimLeftRef = useRef<HTMLDivElement>(null);
+  const dimRightRef = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
-  const [tip, setTip] = useState<Tip | null>(null);
+  const tipRef = useRef<((tip: Tip | null) => void) | null>(null);
+  const setTip = (tip: Tip | null) => tipRef.current?.(tip);
+  const bindTip = useCallback((show: ((tip: Tip | null) => void) | null) => {
+    tipRef.current = show;
+  }, []);
+
+  /** Writes the brush's geometry straight to the DOM: used on every render and every drag frame. */
+  const applyBrush = useCallback(
+    (w: TimeWindow) => {
+      const cw = { from: Math.max(extent.from, w.from), to: Math.min(extent.to, w.to) };
+      const x0 = Math.round(xOf(cw.from, extent, pw));
+      const x1 = Math.max(x0 + 1, Math.round(xOf(cw.to, extent, pw)));
+      const wh = String(isWhole(cw, extent));
+      const inner = Math.min(8, Math.max(2, (x1 - x0) / 4));
+      const outer = HANDLE_W - inner;
+      const mv = moveRef.current;
+      if (mv) {
+        mv.style.left = `${x0}px`;
+        mv.style.width = `${x1 - x0}px`;
+        mv.dataset.whole = wh;
+      }
+      for (const [el, left, grip] of [
+        [startRef.current, x0 - outer, outer],
+        [endRef.current, x1 - inner, inner],
+      ] as const) {
+        if (!el) continue;
+        el.style.left = `${left}px`;
+        el.dataset.whole = wh;
+        const g = el.firstElementChild as HTMLElement | null;
+        if (g) g.style.left = `${grip - 2.5}px`;
+      }
+      if (dimLeftRef.current) dimLeftRef.current.style.width = wh === "true" ? "0px" : `${Math.max(0, x0)}px`;
+      if (dimRightRef.current) {
+        dimRightRef.current.style.left = `${x1}px`;
+        dimRightRef.current.style.width = wh === "true" ? "0px" : `${Math.max(0, pw - x1)}px`;
+      }
+    },
+    [extent, pw],
+  );
+  useLayoutEffect(() => applyBrush(drag.current?.live ?? c));
+
+  const flush = useCallback(
+    (d: Drag) => {
+      if (d.timer !== null) {
+        window.clearTimeout(d.timer);
+        d.timer = null;
+      }
+      if (d.live && d.live !== d.sent) {
+        d.sent = d.live;
+        d.sentAt = performance.now();
+        report(d.live);
+      }
+    },
+    [report],
+  );
+  /** A drag frame: the brush follows at once; the caller hears at most every DRAG_COMMIT_MS. */
+  const follow = (d: Drag, next: TimeWindow) => {
+    d.live = next;
+    applyBrush(next);
+    const due = d.sentAt + DRAG_COMMIT_MS - performance.now();
+    if (due <= 0) flush(d);
+    else if (d.timer === null) d.timer = window.setTimeout(() => flush(d), due);
+  };
 
   const tAt = useCallback(
     (clientX: number) => {
@@ -189,7 +297,7 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
     else if (part === "move" && !whole) mode = "move";
     else mode = "draw";
     e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { mode, pointerId: e.pointerId, x0: e.clientX, t0: t, win0: c, moved: false };
+    drag.current = { mode, pointerId: e.pointerId, x0: e.clientX, t0: t, win0: c, moved: false, live: null, sent: null, sentAt: 0, timer: null };
     setTip(null);
     if (mode === "seek") {
       setScrubbing(true);
@@ -205,23 +313,23 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
       if (!d.moved && Math.abs(e.clientX - d.x0) < DRAG_PX) return;
       d.moved = true;
       if (d.mode === "seek") store.seek(t);
-      else if (d.mode === "move") report(moveWindow(d.win0, t - d.t0, extent, minMs));
-      else if (d.mode === "start" || d.mode === "end") report(resizeWindow(d.win0, d.mode, t, extent, minMs));
-      else report(windowBetween(d.t0, t, extent, minMs));
+      else if (d.mode === "move") follow(d, moveWindow(d.win0, t - d.t0, extent, minMs));
+      else if (d.mode === "start" || d.mode === "end") follow(d, resizeWindow(d.win0, d.mode, t, extent, minMs));
+      else follow(d, windowBetween(d.t0, t, extent, minMs));
       return;
     }
     if (e.pointerType === "touch") return;
-    // Hover: name the landmark under the pointer.
+    // Hover: what this column holds.
     const el = plotRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     const x = e.clientX - r.left;
-    const y = e.clientY - r.top;
-    if (y > L.plotBottom) {
-      if (tip) setTip(null);
+    if (x < 0 || x > pw || got.loading) {
+      setTip(null);
       return;
     }
-    setTip(findTip(marks.points, marks.bars, x, y <= L.bandBase + 2));
+    const col = describeColumn({ x, extent, width: pw, liveAt, density: got.density, concurrency: noActivity ? null : got.concurrency, points: marks.points, bars: marks.bars, clock });
+    setTip({ ax: e.clientX, top: r.top, bottom: r.top + L.plotBottom + 18, title: col.title, lines: col.lines });
   };
 
   // A double click (two presses without a drag, close in time and place) shows everything.
@@ -229,15 +337,18 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   const end = (e: PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.pointerId !== e.pointerId) return;
-    drag.current = null;
     if (d.mode === "seek") {
+      drag.current = null;
       setScrubbing(false);
       return;
     }
     if (d.moved) {
+      flush(d);
+      drag.current = null;
       lastClick.current = null;
       return;
     }
+    drag.current = null;
     const prev = lastClick.current;
     if (prev && e.timeStamp - prev.at < DOUBLE_CLICK_MS && Math.abs(e.clientX - prev.x) < 6) {
       lastClick.current = null;
@@ -249,9 +360,19 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   };
 
   const cancel = () => {
-    if (drag.current?.mode === "seek") setScrubbing(false);
+    const d = drag.current;
+    if (!d) return;
+    if (d.mode === "seek") setScrubbing(false);
+    else flush(d);
     drag.current = null;
   };
+  useEffect(
+    () => () => {
+      const d = drag.current;
+      if (d?.timer != null) window.clearTimeout(d.timer);
+    },
+    [],
+  );
 
   // Wheel zooms about the pointer; a sideways wheel pans. Native listener: React's is passive.
   const wheelState = useRef({ c, extent, pw, report });
@@ -290,25 +411,36 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   };
 
   // ------------------------------------------------------------ words
+  const descId = useId();
   const len = windowWords(c.to - c.from);
-  const sliderCommon = { "aria-valuemin": Math.round(extent.from / 1000), "aria-valuemax": Math.round(extent.to / 1000) };
-  const peakText = density && density.peak > 0 && got.density ? `${countText(density.peak)}${perBucket(got.density.bucketMs)}` : null;
+  const sliderCommon = { "aria-valuemin": Math.round(extent.from / 1000), "aria-valuemax": Math.round(extent.to / 1000), "aria-describedby": descId };
+  const peakText = density && density.peak > 0 && got.density ? peakWords(density.peak, got.density.bucketMs) : null;
+  const windowText = useMemo(() => describeWindow(c, got.density, noActivity ? null : got.concurrency, got.marks), [c, got.density, got.concurrency, noActivity, got.marks]);
   const summary = useMemo(() => {
     const counts = new Map<MarkPoint["family"], number>();
     for (const p of marks.points) counts.set(p.family, (counts.get(p.family) ?? 0) + p.count);
     for (const b of marks.bars) counts.set(b.family, (counts.get(b.family) ?? 0) + b.count);
-    const parts = [...counts].map(([f, n]) => `${n} ${FAMILY_WORDS[f][n === 1 ? 0 : 1]}`);
-    return parts.length ? parts.join(", ") : "no failures, waits or gaps";
-  }, [marks]);
+    const parts = counts.size ? [familyCounts(counts)] : [];
+    const waits = got.marks.filter((m) => m.kind === "human" && (m.until !== null || m.verdict === "required"));
+    const waitText = waits.slice(0, 5).map((m) => `${m.label}: ${waitWords(m, liveAt)}`);
+    if (waits.length > 5) waitText.push(`and ${waits.length - 5} more person waits`);
+    return [parts.length ? parts.join(", ") : "no failures, waits or gaps", ...waitText].join("; ");
+  }, [marks, got.marks, liveAt]);
+  const droppedText = activity?.dropped.map((d) => `${d.label} ${d.values.join(", then ")}`).join("; ") ?? "";
+  const droppedByKind = useMemo(() => {
+    const by: Record<string, { text: string; title: string }> = {};
+    for (const d of activity?.dropped ?? []) by[d.kind] = { text: d.values.join("→"), title: `Recorded limit, the dashed line: ${d.label} ${d.values.join(", then ")}` };
+    return by;
+  }, [activity]);
 
-  const handleW = 24;
-  const inner = Math.min(8, Math.max(2, (bx1 - bx0) / 4));
   const brushH = L.plotBottom + 1;
 
   return (
     <div className="relative flex shrink-0 select-none border-b border-line bg-surface" style={{ width, height }}>
       {legend ? (
-        <Legend width={legend} height={height} compact={L.compact} peak={peakText} activity={activity?.peaks ?? null} noActivity={!got.loading && noActivity} unfiltered={got.unfiltered} zoomed={!whole} onShowAll={() => onWindow(null)} />
+        <Legend width={lead} height={height} compact={L.compact} peak={peakText} activity={activity?.peaks ?? null} limits={droppedByKind} noActivity={!got.loading && noActivity} unfiltered={got.unfiltered} zoomed={!whole} onShowAll={() => onWindow(null)} />
+      ) : lead > 0 ? (
+        <div aria-hidden="true" className="shrink-0" style={{ width: lead }} />
       ) : null}
       <div
         ref={plotRef}
@@ -324,15 +456,13 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
         <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0" style={{ width: pw, height }} />
         <div ref={futureRef} aria-hidden="true" className="mach-future pointer-events-none absolute opacity-60" style={{ top: L.bandTop, height: L.plotBottom - L.bandTop, left: pw, width: 0 }} />
 
-        {/* Outside the brush the overview is dimmed, not hidden. */}
-        {!whole ? (
-          <>
-            <div aria-hidden="true" className="pointer-events-none absolute left-0 bg-surface opacity-55" style={{ top: 0, height: brushH, width: Math.max(0, bx0) }} />
-            <div aria-hidden="true" className="pointer-events-none absolute bg-surface opacity-55" style={{ top: 0, height: brushH, left: bx1, width: Math.max(0, pw - bx1) }} />
-          </>
-        ) : null}
+        {/* Outside the brush the overview is dimmed, not hidden. Geometry is written by applyBrush. */}
+        <div ref={dimLeftRef} aria-hidden="true" className="pointer-events-none absolute left-0 bg-surface opacity-55" style={{ top: 0, height: brushH }} />
+        <div ref={dimRightRef} aria-hidden="true" className="pointer-events-none absolute bg-surface opacity-55" style={{ top: 0, height: brushH }} />
 
-        <div ref={liveRef} aria-hidden="true" className="pointer-events-none absolute left-0 w-px bg-factory-live" style={{ top: L.bandTop, height: L.plotBottom - L.bandTop }} />
+        <div ref={liveRef} aria-hidden="true" className="pointer-events-none absolute left-0 w-px bg-factory-live" style={{ top: L.bandTop, height: L.plotBottom - L.bandTop }}>
+          {data.source === "live" ? <span className="absolute right-[3px] top-[-3px] rounded-xs bg-surface px-0.5 font-mono text-[10px] leading-[12px] text-factory-live">now</span> : null}
+        </div>
         <div ref={headRef} aria-hidden="true" className="pointer-events-none absolute left-0 z-[3] w-0" style={{ top: 0, height: L.plotBottom + 6 }}>
           <div className="absolute -left-px top-[2px] bottom-[5px] w-[1.5px] bg-ink" />
           <div className="absolute -left-[4px] bottom-0 size-[8px] rotate-45 rounded-[1px] border-[1.5px] border-ink bg-surface" />
@@ -341,6 +471,7 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
         {/* The brush: a group of three sliders. */}
         <div role="group" aria-label="Detailed window over the whole history" className="absolute inset-x-0 top-0" style={{ height: brushH }}>
           <div
+            ref={moveRef}
             data-brush="move"
             role="slider"
             tabIndex={0}
@@ -350,16 +481,17 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
             aria-valuetext={`From ${spokenTime(c.from)} to ${spokenTime(c.to)}, ${len}`}
             onKeyDown={onKey("move")}
             className={cn(
-              "absolute top-0 rounded-[2px] border outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus",
-              whole ? "border-transparent" : "cursor-grab border-factory-select active:cursor-grabbing",
+              "absolute top-0 cursor-grab rounded-[2px] border border-factory-select outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus active:cursor-grabbing",
+              "data-[whole=true]:cursor-default data-[whole=true]:border-transparent",
             )}
-            style={{ left: bx0, width: bx1 - bx0, height: brushH }}
+            style={{ height: brushH }}
           />
-          <BrushHandle part="start" x={bx0} inner={inner} outer={handleW - inner} height={brushH} whole={whole}
-            label="Window start" common={sliderCommon} now={c.from} text={`${spokenTime(c.from)}, window ${len}`} onKeyDown={onKey("start")} />
-          <BrushHandle part="end" x={bx1} inner={inner} outer={handleW - inner} height={brushH} whole={whole}
-            label="Window end" common={sliderCommon} now={c.to} text={`${spokenTime(c.to)}, window ${len}`} onKeyDown={onKey("end")} />
+          <BrushHandle ref={startRef} part="start" height={brushH} label="Window start" common={sliderCommon} now={c.from} text={`${spokenTime(c.from)}, window ${len}`} onKeyDown={onKey("start")} />
+          <BrushHandle ref={endRef} part="end" height={brushH} label="Window end" common={sliderCommon} now={c.to} text={`${spokenTime(c.to)}, window ${len}`} onKeyDown={onKey("end")} />
         </div>
+        <p id={descId} className="sr-only">
+          {windowText}
+        </p>
 
         {/* States, in words, never a blank band. */}
         {got.loading ? <Note>Reading the whole history</Note> : got.failed ? <Note>The history could not be read. It will be asked for again when anything changes.</Note> : empty ? <Note>No history yet. Events appear here as the Factory records them.</Note> : null}
@@ -370,14 +502,11 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
             {connection.staleSince ? <span className="font-mono tabular">as of {wall ? `${utcClock(connection.staleSince)} UTC` : timecode(connection.staleSince, false)}</span> : null}
           </div>
         ) : null}
-        {tip ? (
-          <div role="presentation" className="pointer-events-none absolute z-10 max-w-80 -translate-x-1/2 rounded-sm border border-line bg-surface-raised px-2.5 py-1.5 shadow-2" style={{ left: Math.max(130, Math.min(pw - 130, tip.x)), top: L.plotBottom + 4 }}>
-            <p className="text-caption text-ink">{tip.text}</p>
-            <p className="font-mono text-[11px] text-ink-subtle tabular">{tip.when}</p>
-          </div>
-        ) : null}
+        <TipLayer bind={bindTip} />
         <p className="sr-only">
           Whole history from {spokenTime(extent.from)} to {spokenTime(extent.to)}: {density ? `${countText(density.total)} events recorded` : "events not yet read"}; {summary}.
+          {tail ? ` ${tail.words}.` : ""}
+          {droppedText ? ` Recorded limit: ${droppedText}.` : ""}
           {got.unfiltered ? " Event counts are for every ticket: the filter has more than one." : ""}
         </p>
       </div>
@@ -385,30 +514,41 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   );
 }
 
-function findTip(points: readonly MarkPoint[], bars: readonly MarkBar[], x: number, inBand: boolean): Tip | null {
-  let best: MarkPoint | null = null;
-  let bestD = 6;
-  if (inBand) {
-    for (const p of points) {
-      const d = Math.abs(p.x + 0.5 - x);
-      if (d < bestD) {
-        best = p;
-        bestD = d;
-      }
-    }
-  }
-  if (best) {
-    const more = best.count > 1 ? ` (and ${best.count - 1} more ${FAMILY_WORDS[best.family][1]} here)` : "";
-    return { x: best.x, text: `${best.first.label}${more}`, when: timecode(best.first.at, false) };
-  }
-  for (const b of bars) {
-    if (x >= b.x0 - 3 && x <= Math.max(b.x0 + 3, b.x1) + 3) {
-      const until = b.first.until !== null ? ` to ${timecode(b.first.until, false)}` : b.open ? ", still waiting" : "";
-      const more = b.count > 1 ? ` (and ${b.count - 1} more)` : "";
-      return { x, text: `${b.first.label}${more}`, when: `${timecode(b.first.at, false)}${until}` };
-    }
-  }
-  return null;
+/**
+ * The hover tooltip, in a portal on the document body so no workspace overflow clips it; below the
+ * plot, or above it when the viewport has no room. Its own state: hovering never re-renders the overview.
+ */
+function TipLayer({ bind }: { bind: (show: ((tip: Tip | null) => void) | null) => void }) {
+  const [tip, setTip] = useState<Tip | null>(null);
+  useLayoutEffect(() => {
+    bind(setTip);
+    return () => bind(null);
+  }, [bind]);
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !tip) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const left = Math.max(8, Math.min(vw - w - 8, tip.ax - w / 2));
+    const top = tip.bottom + h + 8 <= vh ? tip.bottom : Math.max(8, tip.top - h - 6);
+    el.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+    el.style.visibility = "visible";
+  }, [tip]);
+  if (!tip || typeof document === "undefined") return null;
+  return createPortal(
+    <div ref={ref} role="presentation" className="pointer-events-none fixed left-0 top-0 z-50 max-w-80 rounded-sm border border-line bg-surface-raised px-2.5 py-1.5 shadow-2" style={{ visibility: "hidden" }}>
+      <p className="font-mono text-[11px] text-ink-subtle tabular">{tip.title}</p>
+      {tip.lines.map((l, i) => (
+        <p key={i} className="text-caption text-ink">
+          {l}
+        </p>
+      ))}
+    </div>,
+    document.body,
+  );
 }
 
 function Note({ children }: { children: string }) {
@@ -419,25 +559,20 @@ function Note({ children }: { children: string }) {
   );
 }
 
-function BrushHandle(props: {
+function BrushHandle({ ref, ...props }: {
+  ref: Ref<HTMLDivElement>;
   part: "start" | "end";
-  x: number;
-  inner: number;
-  outer: number;
   height: number;
-  whole: boolean;
   label: string;
-  common: Record<string, number>;
+  common: Record<string, number | string>;
   now: number;
   text: string;
   onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
 }) {
-  const { part, x, inner, outer, height, whole } = props;
-  const left = part === "start" ? x - outer : x - inner;
-  const grip = part === "start" ? outer : inner;
   return (
     <div
-      data-brush={part}
+      ref={ref}
+      data-brush={props.part}
       role="slider"
       tabIndex={0}
       aria-label={props.label}
@@ -446,12 +581,12 @@ function BrushHandle(props: {
       aria-valuetext={props.text}
       onKeyDown={props.onKeyDown}
       className="group absolute top-0 z-[2] cursor-ew-resize rounded-xs outline-none focus-visible:outline-2 focus-visible:outline-focus"
-      style={{ left, width: inner + outer, height }}
+      style={{ width: HANDLE_W, height: props.height }}
     >
+      {/* Geometry (left of the handle and of this grip) is written by applyBrush. */}
       <div
         aria-hidden="true"
-        className={cn("absolute top-1/2 h-[18px] w-[5px] -translate-y-1/2 rounded-[2px] border border-factory-select bg-surface", whole && "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100")}
-        style={{ left: grip - 2.5 }}
+        className="absolute top-1/2 h-[18px] w-[5px] -translate-y-1/2 rounded-[2px] border border-factory-select bg-surface group-data-[whole=true]:opacity-0 group-data-[whole=true]:group-hover:opacity-100 group-data-[whole=true]:group-focus-visible:opacity-100"
       />
     </div>
   );
@@ -473,31 +608,61 @@ function Swatch({ kind }: { kind: "density" | "executions" | "visits" | "agents"
   );
 }
 
+/** A limit drawn without its label: its value beside the kind it bounds, the name in the title. */
+function LimitNote({ limit }: { limit: { text: string; title: string } | undefined }) {
+  if (!limit) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-0.5 font-mono text-[10px] tabular text-ink-subtle" title={limit.title}>
+      <svg aria-hidden="true" width="9" height="2" className="shrink-0">
+        <path d="M0 1h3M5 1h3" style={{ stroke: "var(--mach-ink-muted)", strokeWidth: 1 }} />
+      </svg>
+      {limit.text}
+    </span>
+  );
+}
+
 function Legend(props: {
   width: number;
   height: number;
   compact: boolean;
   peak: string | null;
   activity: { executions: number; visits: number; agents: number } | null;
+  /** Recorded limits drawn without a label (no room on the plot), by the kind they bound: named on that kind's row. */
+  limits: Readonly<Record<string, { text: string; title: string }>>;
   noActivity: boolean;
   unfiltered: boolean;
   zoomed: boolean;
   onShowAll: () => void;
 }) {
   const { compact, activity } = props;
-  const row = cn("flex items-center gap-1.5 whitespace-nowrap", compact ? "h-[13px] text-[10px]" : "h-[14px] text-[11px]");
-  const value = "ml-auto font-mono tabular text-ink-muted";
+  const showAll = props.zoomed ? (
+    <button type="button" onClick={props.onShowAll} className="-mr-1 ml-auto flex h-full shrink-0 items-center rounded-xs px-1 text-accent-ink underline underline-offset-2 hover:decoration-2">
+      Show all
+    </button>
+  ) : null;
+  const row = cn("flex min-w-0 items-center gap-1.5 whitespace-nowrap", compact ? "h-[13px] text-[10px]" : "h-[14px] text-[11px]");
+  const value = "ml-auto shrink-0 font-mono tabular text-ink-muted";
   return (
-    <div className="flex shrink-0 flex-col border-r border-line pl-3 pr-2.5" style={{ width: props.width, height: props.height, paddingTop: compact ? 3 : 5 }}>
+    <div className="flex shrink-0 flex-col overflow-hidden border-r border-line pl-3 pr-2.5 [&_span:not(.shrink-0)]:truncate" style={{ width: props.width, height: props.height, paddingTop: compact ? 3 : 5 }}>
       <div className={cn(row, "text-ink-muted")} title={props.unfiltered ? "Events recorded by every ticket: the filter names more than one" : "Events recorded per bucket, on a log scale: never load or utilisation"}>
         <Swatch kind="density" />
         <span>{props.unfiltered ? "events recorded, all tickets" : "events recorded"}</span>
-        {props.peak ? <span className={value}>{props.peak}</span> : null}
+      </div>
+      {/* The peak on its own line, so neither it nor the name is cut. */}
+      <div className={cn(row, "pl-5 text-ink-subtle")} title="The most events recorded in one bucket of the series">
+        {props.peak ? (
+          <span className="shrink-0">
+            peak <span className="font-mono tabular text-ink-muted">{props.peak}</span>
+          </span>
+        ) : null}
       </div>
       {props.noActivity ? (
-        <p className={cn("mt-0.5 italic text-ink-subtle", compact ? "text-[10px] leading-[12px]" : "text-[11px] leading-[14px]")}>Activity is not available from this observer</p>
+        <>
+          <p className={cn("mt-0.5 italic text-ink-subtle", compact ? "text-[10px] leading-[12px]" : "text-[11px] leading-[14px]")}>Activity is not available from this observer</p>
+          {props.zoomed ? <div className={cn(row, "mt-auto mb-1 text-ink-subtle")}>{showAll}</div> : null}
+        </>
       ) : compact ? (
-        <div className={cn(row, "text-ink-muted")} title="Most spans active at once, counted from recorded spans: executions running, cells in a station, agents">
+        <div className={cn(row, "text-ink-muted")} title={`Most spans active at once, counted from recorded spans: executions running, cells in a station, agents${Object.values(props.limits).map((l) => `. ${l.title}`).join("")}`}>
           <span className="text-ink-subtle">spans at once</span>
           <span className="ml-auto flex items-center gap-1 font-mono tabular">
             <Swatch kind="executions" />
@@ -508,31 +673,40 @@ function Legend(props: {
             {activity?.agents ?? "–"}
           </span>
         </div>
-      ) : (
+      ) : null}
+      {compact && props.zoomed ? <div className={cn(row, "text-ink-subtle")}>{showAll}</div> : null}
+      {compact || props.noActivity ? null : (
         <>
-          <div className={cn(row, "text-ink-subtle")}>recorded spans, most at once</div>
+          <div className={cn(row, "text-ink-subtle")} title="Most spans active at once, counted from recorded spans">
+            <span>most at once</span>
+            {showAll}
+          </div>
           <div className={cn(row, "text-ink-muted")}>
             <Swatch kind="executions" />
             <span>executions running</span>
-            <span className={value}>{activity?.executions ?? "–"}</span>
+            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+              <LimitNote limit={props.limits.execution} />
+              <span className={value}>{activity?.executions ?? "–"}</span>
+            </span>
           </div>
           <div className={cn(row, "text-ink-muted")}>
             <Swatch kind="visits" />
             <span>cells in a station</span>
-            <span className={value}>{activity?.visits ?? "–"}</span>
+            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+              <LimitNote limit={props.limits.visit} />
+              <span className={value}>{activity?.visits ?? "–"}</span>
+            </span>
           </div>
           <div className={cn(row, "text-ink-muted")}>
             <Swatch kind="agents" />
             <span>agents</span>
-            <span className={value}>{activity?.agents ?? "–"}</span>
+            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+              <LimitNote limit={props.limits.agent} />
+              <span className={value}>{activity?.agents ?? "–"}</span>
+            </span>
           </div>
         </>
       )}
-      {props.zoomed ? (
-        <button type="button" onClick={props.onShowAll} className="mt-auto mb-0 -ml-1 flex h-6 w-fit items-center rounded-xs px-1 text-[11px] text-accent-ink underline underline-offset-2 hover:decoration-2">
-          Show all
-        </button>
-      ) : null}
     </div>
   );
 }

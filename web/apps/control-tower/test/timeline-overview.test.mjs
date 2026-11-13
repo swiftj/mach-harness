@@ -246,3 +246,176 @@ test("words: window lengths and counts", () => {
   assert.equal(m.countText(1234567), "1,234,567");
   assert.equal(m.countText(12), "12");
 });
+
+// ---------------------------------------------------------------- wave 2: findings 1, 3 and 5; waits; hover
+
+test("density legend: the peak is '<n> in a <bucket length>', for every bucket size from 1 s to 1 day", () => {
+  const S = 1000;
+  const cases = [
+    [S, "a second"],
+    [2 * S, "2 s"],
+    [5 * S, "5 s"],
+    [10 * S, "10 s"],
+    [15 * S, "15 s"],
+    [30 * S, "30 s"],
+    [37 * S, "37 s"],
+    [MIN, "a minute"],
+    [72 * S, "1 min 12 s"],
+    [2 * MIN, "2 min"],
+    [5 * MIN, "5 min"],
+    [10 * MIN, "10 min"],
+    [15 * MIN, "15 min"],
+    [30 * MIN, "30 min"],
+    [HOUR, "an hour"],
+    [2 * HOUR, "2 h"],
+    [90 * MIN, "1 h 30 min"],
+    [3 * HOUR, "3 h"],
+    [6 * HOUR, "6 h"],
+    [12 * HOUR, "12 h"],
+    [24 * HOUR, "a day"],
+  ];
+  for (const [ms, words] of cases) {
+    assert.equal(m.bucketWords(ms), words, `${ms} ms`);
+    const text = m.peakWords(37, ms);
+    assert.equal(text, `37 in ${words}`);
+    assert.doesNotMatch(text, /37 per 37|per/);
+  }
+  assert.equal(m.peakWords(37, MIN), "37 in a minute");
+  assert.equal(m.peakWords(3452, 5 * MIN), "3,452 in 5 min");
+  assert.equal(m.bucketWords(2 * 24 * HOUR), "2 days");
+});
+
+test("limits: only one bounding something counted in the activity band is drawn", () => {
+  const lim = (name, extra = {}) => ({ name, value: 3, from: T0, to: null, ...extra });
+  // Absent applies-to (an older observer): only max_parallel.
+  assert.equal(m.limitBoundsPlot(lim("max_parallel")), true);
+  assert.equal(m.limitBoundsPlot(lim("poll_seconds")), false);
+  assert.equal(m.limitBoundsPlot(lim("max_execution_minutes")), false);
+  assert.equal(m.limitBoundsPlot(lim("max_runs_per_day")), false);
+  // Present: by the kind it names.
+  assert.equal(m.limitBoundsPlot(lim("max_parallel", { appliesTo: "execution" })), true);
+  assert.equal(m.limitBoundsPlot(lim("agents_cap", { appliesTo: "agent" })), true);
+  assert.equal(m.limitBoundsPlot(lim("max_parallel", { appliesTo: null })), false);
+  assert.equal(m.limitBoundsPlot(lim("tools", { appliesTo: "tool" })), false);
+  assert.equal(m.limitBoundsPlot(lim("poll_seconds", { appliesTo: null })), false);
+  // The observer's own spelling is read too.
+  assert.equal(m.limitBoundsPlot(lim("x", { applies_to: "visit" })), true);
+});
+
+test("limits: a limit that changed is drawn per interval at its own level; one in force stops at the last activity", () => {
+  const limits = [
+    { name: "poll_seconds", value: 300, from: T0, to: null },
+    { name: "max_parallel", value: 4, from: T0 + 3 * HOUR, to: null, appliesTo: "execution" },
+    { name: "max_parallel", value: 2, from: T0, to: T0 + 3 * HOUR, appliesTo: "execution" },
+  ];
+  const segs = m.limitSegments(limits, EXT, 600, T0 + 4 * HOUR);
+  assert.deepEqual(
+    segs.map((s) => [s.label, s.value, Math.round(s.x0), Math.round(s.x1), s.first]),
+    [
+      ["max parallel", 2, 0, 300, true],
+      ["max parallel", 4, 300, 400, false],
+    ],
+  );
+});
+
+test("limit labels: once each, at the left, never overlapping each other or blocked space; dropped when there is no room", () => {
+  const measure = (t) => t.length * 6;
+  const yOf = (v) => 74 - v * 10;
+  const bounds = { top: 21, bottom: 74, width: 600 };
+  const seg = (name, value, x0, x1, first = true) => ({ name, label: m.limitName(name), value, kind: "execution", x0, x1, first });
+  // Two limits at the same level: the second shifts right past the first.
+  const two = m.placeLimitLabels([seg("max_parallel", 3, 0, 600), seg("agent_cap", 3, 0, 600)], yOf, measure, bounds);
+  assert.equal(two.placed.length, 2);
+  assert.equal(two.dropped.length, 0);
+  const [a, b] = two.placed;
+  assert.ok(a.box.x + a.box.w <= b.box.x || b.box.x + b.box.w <= a.box.x || a.box.y + a.box.h <= b.box.y || b.box.y + b.box.h <= a.box.y, "no overlap");
+  assert.equal(a.x, 6, "at the left");
+  // A later level of the same limit carries its value alone.
+  const changed = m.placeLimitLabels([seg("max_parallel", 2, 0, 300), seg("max_parallel", 4, 300, 600, false)], yOf, measure, bounds);
+  assert.deepEqual(changed.placed.map((p) => p.text), ["max parallel 2", "4"]);
+  // No room in a short interval, or everything blocked: the name is dropped, its values kept for the legend.
+  const tight = m.placeLimitLabels([seg("max_parallel", 2, 0, 40), seg("max_parallel", 4, 40, 600, false)], yOf, measure, bounds);
+  assert.equal(tight.placed.length, 0);
+  assert.deepEqual(tight.dropped, [{ name: "max_parallel", label: "max parallel", kind: "execution", values: [2, 4] }]);
+  const blocked = m.placeLimitLabels([seg("max_parallel", 3, 0, 600)], yOf, measure, bounds, [{ x: 0, y: 0, w: 600, h: 80 }]);
+  assert.equal(blocked.placed.length, 0);
+  assert.equal(blocked.dropped.length, 1);
+  // Never outside the plot's top and bottom.
+  const high = m.placeLimitLabels([seg("max_parallel", 5.2, 0, 600)], yOf, measure, bounds);
+  for (const p of high.placed) assert.ok(p.box.y >= bounds.top && p.y + 2 <= bounds.bottom);
+});
+
+test("idle tail: the last record is found from density and marks, and only a real tail is named", () => {
+  const density = { from: EXT.from, to: EXT.to, bucketMs: MIN, buckets: [{ from: T0, count: 4 }, { from: T0 + HOUR + 12 * MIN, count: 37 }], complete: true };
+  const liveAt = EXT.to;
+  const last = m.lastRecorded(density, [], liveAt);
+  assert.deepEqual(last, { at: T0 + HOUR + 12 * MIN, until: T0 + HOUR + 13 * MIN });
+  // A later mark is exact.
+  const exact = m.lastRecorded(density, [mark("f", "failure", T0 + 2 * HOUR)], liveAt);
+  assert.deepEqual(exact, { at: T0 + 2 * HOUR, until: T0 + 2 * HOUR });
+  // A mark inside the last bucket narrows its start.
+  const inside = m.lastRecorded(density, [mark("f", "failure", T0 + HOUR + 12 * MIN + 30_000)], liveAt);
+  assert.deepEqual(inside, { at: T0 + HOUR + 12 * MIN + 30_000, until: T0 + HOUR + 13 * MIN });
+  assert.equal(m.lastRecorded(null, [], liveAt), null);
+  const tail = m.idleTail(last, liveAt, EXT, 600);
+  assert.ok(tail);
+  assert.equal(tail.idleMs, liveAt - last.until);
+  assert.equal(Math.round(tail.liveX), 600);
+  // Activity to the edge: no tail.
+  assert.equal(m.idleTail({ at: liveAt - MIN, until: liveAt }, liveAt, EXT, 600), null);
+  const clock = (t) => new Date(t).toISOString().slice(11, 16);
+  assert.equal(m.lastRecordedWords({ at: T0, until: T0 }, clock), "last recorded 08:00");
+  assert.equal(m.lastRecordedWords(last, clock), "last recorded 09:12–09:13");
+  // After the last span ends, the activity series draws nothing.
+  assert.deepEqual(m.trimTrailingZero([{ x0: 0, x1: 10, value: 1 }, { x0: 10, x1: 20, value: 0 }, { x0: 20, x1: 30, value: 0 }]), [{ x0: 0, x1: 10, value: 1 }]);
+});
+
+test("person waits: who is waited for, by role, and for how long", () => {
+  const open = mark("h", "human", T0, { verdict: "required", label: "A person is needed to approve LOCAL-042" });
+  assert.equal(m.waitWords(open, T0 + 7 * HOUR + MIN), "waiting for a person for 7 h 1 min");
+  const ended = mark("h2", "human", T0, { verdict: "approved", until: T0 + 51 * MIN, label: "A person approved LOCAL-033" });
+  assert.equal(m.waitWords(ended, T0 + 9 * HOUR), "waited 51 min for a person");
+  assert.equal(m.roleOf(mark("e", "human", T0, { label: "Waiting for an engineer to merge" })), "an engineer");
+  // An open wait runs to the live edge as an open bar (no end mark); an ended one is closed.
+  const { bars } = m.aggregateMarks([{ ...open, at: T0 + 4.5 * HOUR }, { ...ended, at: T0 + 3 * HOUR, until: T0 + 4 * HOUR }], EXT, 600, T0 + 5 * HOUR);
+  const byOpen = Object.fromEntries(bars.map((b) => [b.first.id, b]));
+  assert.equal(byOpen.h.open, true);
+  assert.equal(Math.round(byOpen.h.x1), 500);
+  assert.equal(byOpen.h2.open, false);
+});
+
+test("hover and keyboard: a column's time, events, spans by kind and landmarks; a window's totals", () => {
+  const density = { from: EXT.from, to: EXT.to, bucketMs: MIN, buckets: [{ from: T0 + HOUR, count: 37 }, { from: T0 + 2 * HOUR, count: 5 }], complete: true };
+  const concurrency = { from: EXT.from, to: EXT.to, bucketMs: MIN, buckets: [{ from: T0 + HOUR, active: { execution: { max: 2, mean: 1 }, agent: { max: 1, mean: 1 } } }], limits: [], complete: true };
+  const marks = [...[0, 1, 2].map((i) => mark(`f${i}`, "failure", T0 + HOUR + i * 1000)), mark("g", "gate", T0 + HOUR, { verdict: "refused" })];
+  const agg = m.aggregateMarks(marks, EXT, 360, EXT.to);
+  const clock = (t) => new Date(t).toISOString().slice(11, 19);
+  const col = m.describeColumn({ x: 60.2, extent: EXT, width: 360, liveAt: EXT.to, density, concurrency, points: agg.points, bars: agg.bars, clock });
+  assert.equal(col.title, "09:00:12");
+  assert.deepEqual(col.lines, ["37 events recorded in the minute from 09:00:00", "Most at once: 2 executions running, 1 agent", "3 failures, 1 gate refusal or override"]);
+  const quiet = m.describeColumn({ x: 300, extent: EXT, width: 360, liveAt: EXT.to, density, concurrency, points: [], bars: [], clock });
+  assert.deepEqual(quiet.lines, ["No events recorded in this minute", "No recorded spans active"]);
+  const after = m.describeColumn({ x: 300, extent: EXT, width: 360, liveAt: T0 + HOUR, density, concurrency, points: [], bars: [], clock });
+  assert.match(after.lines[0], /after the live edge/);
+  const text = m.describeWindow({ from: T0 + 30 * MIN, to: T0 + 90 * MIN }, density, concurrency, marks);
+  assert.equal(text, "In this window: 37 events recorded; at most 2 executions running, 1 agent at once; 3 failures, 1 gate refusal or override.");
+});
+
+test("scale: 20,000 marks and a 30-hour series aggregate well inside a frame", () => {
+  const ext = { from: T0, to: T0 + 30 * HOUR };
+  const marks = Array.from({ length: 20_000 }, (_, i) => mark(`x${i}`, i % 4 === 0 ? "failure" : i % 4 === 1 ? "gate" : i % 4 === 2 ? "interruption" : "human", T0 + ((i * 104_729) % (30 * HOUR)), i % 4 === 1 ? { verdict: "refused" } : i % 4 === 3 ? { until: T0 + ((i * 104_729) % (30 * HOUR)) + 5 * MIN, verdict: "approved" } : {}));
+  const buckets = Array.from({ length: 1500 }, (_, i) => ({ from: T0 + i * 72_000, count: 50 + (i % 300) }));
+  const density = { from: ext.from, to: ext.to, bucketMs: 72_000, buckets, complete: true };
+  // Warm up, then time.
+  m.aggregateMarks(marks, ext, 1300, ext.to);
+  // The best of five, so a busy machine does not fail the test; the browser measurement is in the proof page.
+  let ms = Infinity;
+  for (let r = 0; r < 5; r++) {
+    const start = performance.now();
+    m.densityColumns(density, ext, 1300);
+    m.aggregateMarks(marks, ext, 1300, ext.to);
+    m.lastRecorded(density, marks, ext.to);
+    ms = Math.min(ms, performance.now() - start);
+  }
+  assert.ok(ms < 8, `${ms.toFixed(2)} ms`);
+});

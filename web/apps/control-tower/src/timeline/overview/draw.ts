@@ -3,7 +3,7 @@
  * bottom to top. Colours are the design tokens read at draw time, so both themes work. Everything is
  * already aggregated to pixel columns by model.ts: drawing is a few paths whatever the history holds.
  */
-import { countText, type DensityColumns, type MarkBar, type MarkPoint, type Step, type Tick } from "./model";
+import { countText, type DensityColumns, type LimitSegment, type MarkBar, type MarkPoint, type PlacedLabel, type Step, type Tick } from "./model";
 
 export interface OverviewPalette {
   ink: string;
@@ -68,9 +68,29 @@ export interface ActivityLayer {
   readonly executions: readonly Step[];
   readonly visits: readonly Step[];
   readonly agents: readonly Step[];
-  readonly limits: ReadonlyArray<{ readonly label: string; readonly value: number; readonly x0: number; readonly x1: number }>;
+  /** Recorded limits that bound something counted here, each interval at its own level. */
+  readonly limits: readonly LimitSegment[];
+  /** Their labels, already placed (model.placeLimitLabels). */
+  readonly limitLabels: readonly PlacedLabel[];
   /** The top of the linear scale (a count). */
   readonly vmax: number;
+}
+
+/** The activity band's y for a count: shared by drawing and label placement. */
+export function activityY(L: OverviewLayout, vmax: number): (v: number) => number {
+  const plotH = L.plotBottom - L.plotTop;
+  return (v: number) => Math.round(L.plotBottom - (v / vmax) * (plotH - 4)) + 0.5;
+}
+
+/** The idle stretch after the last recorded event. */
+export interface TailLayer {
+  readonly x: number;
+  readonly liveX: number;
+  /** "last recorded 06:42:10", placed at `labelX` when there was room. */
+  readonly label: string;
+  readonly labelX: number | null;
+  /** "nothing recorded for 7 h 1 min", centred in the tail when there is room. */
+  readonly idle: string;
 }
 
 export interface OverviewFrame {
@@ -82,6 +102,7 @@ export interface OverviewFrame {
   readonly points: readonly MarkPoint[];
   readonly bars: readonly MarkBar[];
   readonly ticks: readonly Tick[];
+  readonly tail: TailLayer | null;
 }
 
 function hatch(ctx: CanvasRenderingContext2D, x0: number, x1: number, top: number, bottom: number, p: OverviewPalette) {
@@ -146,6 +167,27 @@ function stepPath(steps: readonly Step[], y: (v: number) => number, close: numbe
   return path;
 }
 
+/**
+ * Fills [x0, x1] x [y, y + h] with `color` at `alpha`, fading to nothing over the last third (at most
+ * 48 px): an interval still open has no end to draw. Strips, not a gradient, so no colour is mixed in.
+ */
+function fadeRect(ctx: CanvasRenderingContext2D, x0: number, x1: number, y: number, h: number, color: string, alpha: number) {
+  const len = Math.min(48, Math.max(4, (x1 - x0) / 3));
+  const solidEnd = x1 - len;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha;
+  if (solidEnd > x0) ctx.fillRect(x0, y, solidEnd - x0, h);
+  const n = 12;
+  for (let i = 0; i < n; i++) {
+    ctx.globalAlpha = alpha * (1 - (i + 0.5) / n);
+    ctx.fillRect(solidEnd + (i * len) / n, y, len / n + 0.01, h);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** Fewer pixels than this per landmark column on average, and the band draws strips instead of glyphs. */
+export const DENSE_EVERY_PX = 6;
+
 /** Clears the canvas (already scaled for the device pixel ratio) and draws one frame. */
 export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame, p: OverviewPalette): void {
   const { width, height, layout: L } = frame;
@@ -157,10 +199,14 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
     const x0 = Math.floor(b.x0);
     if (b.family === "gap") hatch(ctx, x0, Math.max(x0 + 3, Math.ceil(b.x1)), L.bandTop, L.plotBottom, p);
     else {
-      ctx.fillStyle = p.humanSoft;
-      ctx.globalAlpha = 0.4;
-      ctx.fillRect(x0, L.plotTop, Math.max(2, Math.ceil(b.x1) - x0), L.plotBottom - L.plotTop);
-      ctx.globalAlpha = 1;
+      const x1 = Math.max(x0 + 2, Math.ceil(b.x1));
+      if (b.open) fadeRect(ctx, x0, x1, L.plotTop, L.plotBottom - L.plotTop, p.humanSoft, 0.4);
+      else {
+        ctx.fillStyle = p.humanSoft;
+        ctx.globalAlpha = 0.4;
+        ctx.fillRect(x0, L.plotTop, x1 - x0, L.plotBottom - L.plotTop);
+        ctx.globalAlpha = 1;
+      }
     }
   }
 
@@ -188,7 +234,7 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
   // 2. Activity: counts of recorded spans, linear, stepped.
   const a = frame.activity;
   if (a) {
-    const y = (v: number) => Math.round(L.plotBottom - (v / a.vmax) * (plotH - 4)) + 0.5;
+    const y = activityY(L, a.vmax);
     // Recorded limits: dashed reference lines, behind the series they bound.
     ctx.setLineDash([4, 3]);
     ctx.strokeStyle = p.inkMuted;
@@ -227,18 +273,13 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
     // Limit labels last, on the ground colour, so a series never runs through them.
     ctx.font = `500 10px ${p.mono}`;
     ctx.textBaseline = "alphabetic";
-    for (const l of a.limits) {
-      const text = `${l.label} ${l.value}`;
-      const tw = ctx.measureText(text).width;
-      // At the left end: the right is where the newest history and the connection's state are.
-      const lx = Math.min(l.x0 + 6, Math.max(0, l.x1 - tw - 6));
-      const ly = y(l.value) - 3;
+    for (const l of a.limitLabels) {
       ctx.fillStyle = p.surface;
       ctx.globalAlpha = 0.85;
-      ctx.fillRect(lx - 3, ly - 9, tw + 6, 11);
+      ctx.fillRect(l.box.x, l.box.y, l.box.w, l.box.h);
       ctx.globalAlpha = 1;
       ctx.fillStyle = p.inkMuted;
-      ctx.fillText(text, lx, ly);
+      ctx.fillText(l.text, l.x, l.y);
     }
   }
 
@@ -249,10 +290,14 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
     if (b.family === "human") {
       const x0 = Math.floor(b.x0);
       const x1 = Math.max(x0 + 2, Math.ceil(b.x1));
-      // The wait as a bar on the base.
-      ctx.fillStyle = p.human;
-      ctx.fillRect(x0, base - 3, x1 - x0, 3);
+      // The wait as a bar on the base; one still open fades out towards the live edge.
+      if (b.open) fadeRect(ctx, x0, x1, base - 3, 3, p.human, 1);
+      else {
+        ctx.fillStyle = p.human;
+        ctx.fillRect(x0, base - 3, x1 - x0, 3);
+      }
       // Down-triangle at the start: a person was needed.
+      ctx.fillStyle = p.human;
       ctx.beginPath();
       ctx.moveTo(x0 - 4, base - 9);
       ctx.lineTo(x0 + 4, base - 9);
@@ -266,7 +311,30 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
     }
   }
   const counted: Array<{ x: number; y: number; n: number; color: string }> = [];
-  for (const m of frame.points) {
+  // Too many landmarks for glyphs to stay apart: each family becomes a thin strip whose strength
+  // follows the count in each column (the tooltip still names what is there).
+  if (frame.points.length > width / DENSE_EVERY_PX) {
+    const rows: Record<"failure" | "halt" | "gate" | "human", { y: number; color: string }> = {
+      failure: { y: top, color: p.fail },
+      halt: { y: top + 4, color: p.halt },
+      gate: { y: top + 8, color: p.fInk },
+      human: { y: base - 3, color: p.human },
+    };
+    const peak = new Map<string, number>();
+    for (const m of frame.points) peak.set(m.family, Math.max(peak.get(m.family) ?? 0, m.count));
+    for (const m of frame.points) {
+      if (m.family === "gap") {
+        queryRing(ctx, m.x + 0.5, (top + base) / 2, 5.5, p);
+        continue;
+      }
+      const r = rows[m.family];
+      ctx.fillStyle = r.color;
+      ctx.globalAlpha = 0.3 + 0.7 * (Math.log1p(m.count) / Math.log1p(peak.get(m.family) ?? 1));
+      ctx.fillRect(m.x, r.y, 1, 3);
+    }
+    ctx.globalAlpha = 1;
+  }
+  for (const m of frame.points.length > width / DENSE_EVERY_PX ? [] : frame.points) {
     const x = m.x + 0.5;
     switch (m.family) {
       case "failure":
@@ -348,6 +416,28 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
     ctx.fillStyle = c.color;
     ctx.fillText(text, c.x + 4, c.y + 3);
     lastEnd = c.x + 4 + tw;
+  }
+
+  // 5. The idle tail: a small tick at the last record, its time, and how long nothing was recorded.
+  const tail = frame.tail;
+  if (tail) {
+    const tx = Math.round(tail.x);
+    ctx.fillStyle = p.inkMuted;
+    ctx.fillRect(tx, L.plotBottom - 7, 1, 11);
+    ctx.font = `500 10px ${p.mono}`;
+    ctx.textBaseline = "alphabetic";
+    let end = tx;
+    if (tail.labelX !== null) {
+      ctx.fillText(tail.label, tail.labelX, L.plotBottom - 3);
+      end = tail.labelX + ctx.measureText(tail.label).width;
+    }
+    ctx.font = `11px ${p.sans}`;
+    const iw = ctx.measureText(tail.idle).width;
+    const room = tail.liveX - 8 - (end + 12);
+    if (room >= iw) {
+      ctx.fillStyle = p.inkSubtle;
+      ctx.fillText(tail.idle, Math.round(end + 12 + (room - iw) / 2), Math.round((L.plotTop + L.plotBottom) / 2) + 4);
+    }
   }
 
   // 6. Time labels: ticks on the baseline, mono, tabular.
