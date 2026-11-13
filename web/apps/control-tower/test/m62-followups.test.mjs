@@ -366,24 +366,28 @@ test("12. after N failed attempts the connection is disconnected, still retrying
   source.stop();
 });
 
-test("13. after a gap the snapshot is taken at the observer's floor (its cursor), and history continues from it", async () => {
+test("13. after a gap, history continues from the observer's floor; the summaries seed what the window does not touch (never the whole snapshot)", async () => {
   const { server, store, source, clock, log } = await setupLive({ snapshot: true });
   const stream = server.live()[0];
   stream.closed = true;
   const later = server.commit(EVENTS.slice(200, 260).map(unpos));
   stream.closed = false;
   server.expire(later.at(-1).pos - 20);
-  server.snapshotState = { cells: { "LOCAL-031": { ticket_id: "LOCAL-031", slice_id: "SLICE-021", stage: "verified", round: 2 } }, slices: {}, waves: {}, executions: { x1a2b3c4d5e6f: { run: { execution_id: "x1a2b3c4d5e6f", ticket_id: "LOCAL-031", state: "running", attempt: 1 } } }, gates: [{ key: "g", kind: "approval", ticket_id: "LOCAL-031", round: 3, opened: null, closed: null }] };
+  // The run's own cell is in the window (left to its events); another cell and its ended execution are not.
+  server.summaries.cells = [{ ticket_id: "LOCAL-031", slice_id: "SLICE-021", stage: "verified", round: 2 }, { ticket_id: "LOCAL-040", slice_id: "SLICE-040", stage: "building", round: 1 }];
+  server.summaries.runs = [{ execution_id: "x0000000000aa", ticket_id: "LOCAL-040", state: "ended", attempt: 1 }];
   server.sendGap();
   await settle();
   clock.frames(1, 16);
-  const floor = `${server.generation}.${server.floor}`;
-  assert.deepEqual(server.snapshotsAt, [floor], "the state at the floor, by its cursor");
-  assert.equal(log.size(), 200 + 20 + 2, "then exactly what follows the floor (and the two client markers)");
+  assert.deepEqual(server.snapshotsAt, [], "the observer's whole projected state is never fetched");
+  assert.equal(log.size(), 200 + 20 + 3, "then exactly what follows the floor (and three client markers: the gap, the window, the seed)");
   const head = log.head();
   assert.equal(head.completeness.state, "reconstructed");
-  assert.equal(head.gates["LOCAL-031/human-approval"].state, "waiting", "the snapshot's human gate, in the observer's shape");
-  assert.equal(head.executions.x1a2b3c4d5e6f.meta.authority, "reconstructed");
+  assert.equal(head.cells["LOCAL-040"].stage, "building");
+  assert.equal(head.executions.x0000000000aa.meta.authority, "reconstructed");
+  assert.equal(head.executions.x0000000000aa.ended, "exited", "an execution whose process ended is never seeded as running");
+  assert.notEqual(sim.activityOf(head, "execution:x0000000000aa").state, "executing");
+  assert.ok(!head.cells["LOCAL-031"].meta.eventId.startsWith("k:"), "a summary never stands in for a cell the window's events describe");
   assert.equal(store.getState().connection.state, "live");
   source.stop();
 });

@@ -15,6 +15,7 @@
  * Times are factory time (`t`, Unix ms for live) where a view prints them ("stale since 14:02:10"),
  * so they come from the stream, not the browser's clock.
  */
+import type { ObserverHistory } from "../sim/provenance";
 export type ConnectionState = "connecting" | "live" | "reconnecting" | "stale" | "disconnected" | "no-session";
 
 /** Failed reconnection attempts in a row after which the state is `disconnected` (still retrying). */
@@ -98,6 +99,28 @@ export const INITIAL_CONNECTION: ConnectionStatus = {
  * (`GET /api/v1/factory/status`, apps/observer/README.md). Read tolerantly: anything not reported is
  * null. The Control Tower only reads it; nothing here can enable, pause or schedule anything.
  */
+/** A Claude Code runtime's state as the observer judges its stream records (observer M6.2). */
+export type RuntimeState = "proven" | "compatible-unproven" | "incompatible" | "unknown";
+
+/** One execution stream's runtime (`freshness.sources[].runtime`). */
+export interface SourceRuntimeStatus {
+  readonly state: RuntimeState | null;
+  readonly version: string | null;
+  readonly reason: string | null;
+  /** Stream records accepted and refused for their shape (refused ones are counted, nothing of them shown). Null: not reported. */
+  readonly recordsAccepted?: number | null;
+  readonly recordsRefused?: number | null;
+}
+
+/** Every stream's runtime, summed (`ingest.runtime` / `session.capabilities.stream_observations`). */
+export interface RuntimeSummary {
+  /** The worst state over every stream read (`unknown` before any). */
+  readonly state: RuntimeState;
+  /** The Claude Code versions the observer's fixtures prove. */
+  readonly provenVersions: readonly string[];
+  readonly versions: readonly { readonly version: string | null; readonly state: RuntimeState | null; readonly executions: number | null; readonly recordsRefused: number | null }[];
+}
+
 export interface FactoryStatus {
   /** The project has Factory state (a `.factory/` folder). */
   readonly factoryPresent: boolean | null;
@@ -118,9 +141,16 @@ export interface FactoryStatus {
     readonly state: string | null;
     readonly lagBytes: number | null;
     readonly lastReadAgeMs: number | null;
-    /** Execution streams (`stream/<execution>`): the runtime version's state (observer M6.2). Null: not reported. */
-    readonly runtime: { readonly state: "proven" | "compatible-unproven" | "incompatible" | "unknown" | null; readonly version: string | null; readonly reason: string | null } | null;
+    /** Execution streams (`stream/<execution>`): the runtime version's state (observer M6.2, `runtime {name, version, state, reason, records_accepted, records_refused}`). Null: not reported. */
+    readonly runtime: SourceRuntimeStatus | null;
   }[];
+  /**
+   * The streams' runtimes summed (`/health` `ingest.runtime`, observer M6.2): the worst state over
+   * every stream and each version seen. Null: not reported (an older observer, or `/health` not read).
+   */
+  readonly runtime: RuntimeSummary | null;
+  /** How complete the observer's history is (`/health` `projection.history`, observer M6.2). Null: not reported. */
+  readonly history: ObserverHistory | null;
   /** The observer's ingest: stale, its watermark (Unix ms), catching up. */
   readonly ingest: { readonly stale: boolean | null; readonly watermark: number | null; readonly catchingUp: boolean | null };
   /** The observer's read-to-send hold, last and 95th percentile (`ingest.delivery`, observer M6.2). Null: not reported. */

@@ -8,10 +8,11 @@
  * unknown fields are ignored, missing optional ones are null.
  */
 
-import type { FactoryStatus } from "../scene/connection";
+import type { FactoryStatus, RuntimeState, RuntimeSummary } from "../scene/connection";
+import type { ObserverHistory } from "../sim/provenance";
 import type { ObserverSnapshotState } from "../sim/v3";
 
-export type { FactoryStatus };
+export type { FactoryStatus, RuntimeState, RuntimeSummary };
 
 export interface FetchResponseLike {
   readonly status: number;
@@ -41,7 +42,20 @@ export interface ObserverSession {
   readonly eventRevision: number | null;
   readonly kinds: readonly string[];
   readonly snapshot: boolean;
-  readonly streamObservations: { readonly ok: boolean; readonly reason: string | null } | null;
+  /**
+   * `capabilities.stream_observations` (observer M6.2): `ok` is false only when stream records were
+   * refused (null in the reply before any stream is read, said here as false); `state` is the worst
+   * runtime state over every stream; `versions` each version seen.
+   */
+  readonly streamObservations: {
+    readonly ok: boolean;
+    readonly reason: string | null;
+    readonly policy: string | null;
+    readonly state: RuntimeState | null;
+    readonly claudeCodeVersion: string | null;
+    readonly provenVersions: readonly string[];
+    readonly versions: RuntimeSummary["versions"];
+  } | null;
   readonly people: "role";
   readonly project: string | null;
 }
@@ -97,6 +111,78 @@ export interface ObserverHealth {
   readonly delivery: { readonly lastHoldMs: number | null; readonly p95HoldMs: number | null } | null;
   readonly head: string | null;
   readonly sources: FactoryStatus["sources"];
+  /** `ingest.runtime`: the streams' runtimes summed. */
+  readonly runtime: RuntimeSummary | null;
+  /** `projection.history`: how complete the observer's history is, by gap class. */
+  readonly history: ObserverHistory | null;
+}
+
+/** The plan's facts on a cell (`/cells/{t}` `plan`, observer M6.2, D11); each null when not recorded. */
+export interface ObserverPlanFacts {
+  readonly appType: string | null;
+  readonly risk: string | null;
+  readonly contracts: number | null;
+  readonly tasks: number | null;
+  /** The event that recorded them (the plan's exit), null when a run record gave them. */
+  readonly recordedBy: string | null;
+}
+
+/** The parts of `GET /api/v1/cells/{ticket}` the Control Tower reads. */
+export interface ObserverCell {
+  readonly ticketId: string;
+  readonly sliceId: string | null;
+  readonly stage: string | null;
+  readonly risk: string | null;
+  readonly appType: string | null;
+  readonly round: number | null;
+  readonly plan: ObserverPlanFacts | null;
+  /** The projection's cursor the reply describes. */
+  readonly cursor: string | null;
+}
+
+/**
+ * The station visit an artifact belongs to (observer M6.2, D12): `recorded` when a verification check
+ * names the file with its hash (`rule: check-hash`), `reconstructed` when the observer joined it by
+ * its verification folder (`folder`), its round and file time (`round-and-time`) or its round only
+ * (`round`). For M6.4 (Evidence Theater); nothing draws it yet.
+ */
+export interface ArtifactVisitLink {
+  readonly visitId: string;
+  readonly basis: "recorded" | "reconstructed";
+  readonly rule: string | null;
+}
+
+/** One entry of the observer's evidence catalog (`GET /api/v1/artifacts`), metadata only. */
+export interface ArtifactEntry {
+  readonly id: string;
+  readonly ref: string | null;
+  readonly ticketId: string | null;
+  readonly path: string | null;
+  readonly kind: string | null;
+  readonly nature: string | null;
+  readonly mediaType: string | null;
+  readonly bytes: number | null;
+  readonly sha256: string | null;
+  readonly integrity: string | null;
+  readonly verifiedEvidence: boolean;
+  readonly round: number | null;
+  /** `recorded` when the round came from results.json's review loop or the review folder's number. */
+  readonly roundBasis: string | null;
+  readonly commit: string | null;
+  /** The visit it belongs to; null when no visit fits. */
+  readonly visit: ArtifactVisitLink | null;
+  readonly contentAccess: string | null;
+}
+
+/**
+ * The observer's current summaries (`/waves`, `/slices`, `/cells`, `/runs`), bounded by how many
+ * waves, slices, cells and executions there are, never by how many events: the state a long history
+ * starts from (D17) without the whole snapshot. `cursor` is the projection position they describe
+ * (the highest of the replies).
+ */
+export interface ObserverSummaries {
+  readonly cursor: string | null;
+  readonly state: ObserverSnapshotState;
 }
 
 export interface ObserverClient {
@@ -111,6 +197,12 @@ export interface ObserverClient {
   /** Counts per time bucket; throws not_found on an observer without the route. */
   series(window?: { readonly fromMs?: number | null; readonly toMs?: number | null; readonly bucketMs?: number | null }): Promise<SeriesData>;
   health(): Promise<ObserverHealth>;
+  /** One cell's detail (`/cells/{ticket}`): its plan facts and stage. */
+  cell(ticket: string): Promise<ObserverCell>;
+  /** The evidence catalog, metadata only (`/artifacts`), one page. */
+  artifacts(query?: { readonly ticket?: string; readonly limit?: number; readonly offset?: number }): Promise<{ readonly items: readonly ArtifactEntry[]; readonly more: boolean }>;
+  /** The current waves, slices, cells and executions, paged through (see ObserverSummaries). */
+  summaries(): Promise<ObserverSummaries>;
 }
 
 export const EVENT_SCHEMA = 3;
@@ -150,16 +242,87 @@ export function readFactoryStatus(data: unknown): FactoryStatus {
     ingest: { stale: bool(ingest.stale), watermark: timeOf(ingest.watermark_ms), catchingUp: bool(ingest.catching_up) },
     delivery: ingest.delivery && typeof ingest.delivery === "object" ? { lastHoldMs: num(obj(ingest.delivery).last_hold_ms), p95HoldMs: num(obj(ingest.delivery).hold_ms_p95) } : null,
     readAt: timeOf(d.read_at),
+    // `/factory/status` carries neither; `/health` does (merged by the live source).
+    runtime: null,
+    history: null,
   };
 }
 
 const RUNTIME_STATES = ["proven", "compatible-unproven", "incompatible", "unknown"] as const;
-/** A stream source's runtime (`runtime: {name, version, state, reason, ...}`, observer M6.2), or null when absent. */
+const runtimeState = (value: unknown): RuntimeState | null => (typeof value === "string" && (RUNTIME_STATES as readonly string[]).includes(value) ? (value as RuntimeState) : null);
+
+/** A stream source's runtime (`runtime: {name, version, state, reason, records_accepted, records_refused, ...}`, observer M6.2), or null when absent. */
 function readRuntime(value: unknown): FactoryStatus["sources"][number]["runtime"] {
   if (!value || typeof value !== "object") return null;
   const r = obj(value);
-  const state = typeof r.state === "string" && (RUNTIME_STATES as readonly string[]).includes(r.state) ? (r.state as (typeof RUNTIME_STATES)[number]) : null;
-  return { state, version: str(r.version), reason: str(r.reason) };
+  return { state: runtimeState(r.state), version: str(r.version), reason: str(r.reason), recordsAccepted: num(r.records_accepted), recordsRefused: num(r.records_refused) };
+}
+
+/**
+ * The streams' runtimes summed: `/health` `ingest.runtime` or `/session`
+ * `capabilities.stream_observations` (`{policy, state, proven_versions, versions[{version, state,
+ * executions, records_refused}]}`, observer M6.2), or null when absent.
+ */
+export function readRuntimeSummary(value: unknown): RuntimeSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const r = obj(value);
+  const state = runtimeState(r.state);
+  if (!state) return null;
+  const versions = list(r.versions).map((x) => {
+    const v = obj(x);
+    return { version: str(v.version), state: runtimeState(v.state), executions: num(v.executions), recordsRefused: num(v.records_refused) };
+  });
+  return { state, provenVersions: strings(r.proven_versions), versions };
+}
+
+const counts = (value: unknown): Record<string, number> => {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(obj(value))) if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  return out;
+};
+
+/**
+ * History completeness by gap class (observer M6.2: `/snapshot` `state.history`, `/project`
+ * `history`, `/health` `projection.history`): `{completeness, lost, not_interpreted, classes, gaps,
+ * partial, not_v3}`. Null when absent (an older observer). Partial only when something was lost.
+ */
+export function readObserverHistory(value: unknown): ObserverHistory | null {
+  if (!value || typeof value !== "object") return null;
+  const h = obj(value);
+  const lost = counts(h.lost);
+  const completeness = h.completeness === "partial" || h.completeness === "complete" ? h.completeness : Object.values(lost).some((n) => n > 0) ? "partial" : "complete";
+  return { completeness, lost, notInterpreted: counts(h.not_interpreted), classes: counts(h.classes), partial: str(h.partial) || null };
+}
+
+const planOf = (value: unknown): ObserverPlanFacts | null => {
+  if (!value || typeof value !== "object") return null;
+  const p = obj(value);
+  return { appType: str(p.app_type) || null, risk: str(p.risk) || null, contracts: num(p.contracts), tasks: num(p.tasks), recordedBy: str(p.recorded_by) || null };
+};
+
+/** One catalog entry (`/artifacts` items), with its visit link (observer M6.2). */
+export function readArtifactEntry(value: unknown): ArtifactEntry {
+  const a = obj(value);
+  const v = a.visit && typeof a.visit === "object" ? obj(a.visit) : null;
+  const visit: ArtifactVisitLink | null = v && typeof v.visit_id === "string" && (v.basis === "recorded" || v.basis === "reconstructed") ? { visitId: v.visit_id, basis: v.basis, rule: str(v.rule) } : null;
+  return {
+    id: str(a.id) ?? "",
+    ref: str(a.ref),
+    ticketId: str(a.ticket_id),
+    path: str(a.path_rel),
+    kind: str(a.kind),
+    nature: str(a.nature),
+    mediaType: str(a.media_type),
+    bytes: num(a.bytes),
+    sha256: str(a.sha256),
+    integrity: str(a.integrity),
+    verifiedEvidence: a.verified_evidence === true,
+    round: num(a.round),
+    roundBasis: str(a.round_basis) || null,
+    commit: str(a.commit) || null,
+    visit,
+    contentAccess: str(a.content_access),
+  };
 }
 
 /** A gate state word from a human gate of the snapshot. */
@@ -184,11 +347,24 @@ export function readSnapshotState(data: unknown): ObserverSnapshotState {
   return {
     waves: waves.map((w) => ({ wave_id: w.wave_id as string, slices: strings(w.slices), revision: num(w.revision) })),
     slices: slices.map((x) => ({ slice_id: x.slice_id as string, ticket_id: str(x.ticket_id), state: str(x.state), dependencies: strings(x.dependencies ?? x.depends_on), revision: num(x.revision) })),
-    cells: cells.map((c) => ({ ticket_id: c.ticket_id as string, slice_id: str(c.slice_id), stage: str(c.stage), risk: str(c.risk), current_visit: str(c.current_visit), rounds: num(c.round ?? c.rounds) })),
+    cells: cells.map((c) => {
+      const plan = planOf(c.plan);
+      return {
+        ticket_id: c.ticket_id as string,
+        slice_id: str(c.slice_id),
+        stage: str(c.stage),
+        risk: str(c.risk) || null,
+        current_visit: str(c.current_visit),
+        rounds: num(c.round ?? c.rounds),
+        app_type: str(c.app_type) || null,
+        plan: plan ? { app_type: plan.appType, risk: plan.risk, contracts: plan.contracts, tasks: plan.tasks, recorded_by: plan.recordedBy } : null,
+      };
+    }),
     executions: executions.map((x) => ({ execution_id: x.execution_id as string, ticket_id: str(x.ticket_id), state: str(x.state), attempt: num(x.attempt) })),
     gates: gates
       .filter((g) => typeof g.ticket_id === "string" && (g.gate === undefined ? g.kind === "approval" : true))
       .map((g) => ({ ticket_id: g.ticket_id as string, gate: typeof g.gate === "string" ? g.gate : "human-approval", round: num(g.round), state: typeof g.state === "string" ? g.state : humanGateState(g) })),
+    history: readObserverHistory(d.history),
   };
 }
 
@@ -249,7 +425,17 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
         eventRevision: num(event.revision),
         kinds: Array.isArray(event.kinds) ? (event.kinds.filter((k) => typeof k === "string") as string[]) : [],
         snapshot: capabilities.snapshot === true,
-        streamObservations: observations ? { ok: observations.ok === true, reason: str(observations.reason) } : null,
+        streamObservations: observations
+          ? {
+              ok: observations.ok === true,
+              reason: str(observations.reason),
+              policy: str(observations.policy),
+              state: runtimeState(observations.state),
+              claudeCodeVersion: str(observations.claude_code_version),
+              provenVersions: strings(observations.proven_versions),
+              versions: readRuntimeSummary({ state: "unknown", versions: observations.versions })?.versions ?? [],
+            }
+          : null,
         people: "role",
         project: str(obj(d.project).folder),
       };
@@ -308,7 +494,59 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       const ingest = obj(d.ingest);
       const delivery = ingest.delivery && typeof ingest.delivery === "object" ? obj(ingest.delivery) : null;
       const status = readFactoryStatus({ freshness });
-      return { delivery: delivery ? { lastHoldMs: num(delivery.last_hold_ms), p95HoldMs: num(delivery.hold_ms_p95) } : null, head: str(obj(d.index).head) ?? str(freshness.head), sources: status.sources };
+      return {
+        delivery: delivery ? { lastHoldMs: num(delivery.last_hold_ms), p95HoldMs: num(delivery.hold_ms_p95) } : null,
+        head: str(obj(d.index).head) ?? str(freshness.head),
+        sources: status.sources,
+        runtime: readRuntimeSummary(ingest.runtime),
+        history: readObserverHistory(obj(d.projection).history),
+      };
+    },
+    async cell(ticket) {
+      const d = await get(`/cells/${encodeURIComponent(ticket)}`);
+      return { ticketId: str(d.ticket_id) ?? ticket, sliceId: str(d.slice_id) || null, stage: str(d.stage) || null, risk: str(d.risk) || null, appType: str(d.app_type) || null, round: num(d.round), plan: planOf(d.plan), cursor: str(d.cursor) };
+    },
+    async artifacts(query = {}) {
+      const q = new URLSearchParams();
+      if (query.ticket) q.set("ticket", query.ticket);
+      q.set("limit", String(query.limit ?? 200));
+      if (query.offset) q.set("offset", String(query.offset));
+      const d = await get(`/artifacts?${q.toString()}`);
+      return { items: list(d.items).map(readArtifactEntry), more: d.more === true };
+    },
+    async summaries() {
+      let cursor: string | null = null;
+      const seeCursor = (c: unknown): void => {
+        const pos = parseCursor(str(c))?.pos;
+        if (pos !== undefined && (cursor === null || pos > (parseCursor(cursor)?.pos ?? -1))) cursor = str(c);
+      };
+      /** Every page of a list route (`items`, `more`, `offset`, `cursor`), at most `cap` items. */
+      const all = async (route: string, cap = 50_000): Promise<unknown[]> => {
+        const out: unknown[] = [];
+        for (let offset = 0; out.length < cap; ) {
+          const d = await get(`${route}?limit=1000&offset=${offset}`);
+          seeCursor(d.cursor);
+          const items = list(d.items);
+          out.push(...items);
+          if (d.more !== true || !items.length) break;
+          offset += items.length;
+        }
+        return out;
+      };
+      const waves = await get("/waves");
+      seeCursor(waves.cursor);
+      const [slices, cells, runs] = [await all("/slices"), await all("/cells"), await all("/runs")];
+      // How complete the observer's history is (`/project` `history`, observer M6.2); optional.
+      let history: unknown = null;
+      try {
+        const project = await get("/project");
+        seeCursor(project.cursor);
+        history = project.history;
+      } catch (error) {
+        if (!(error instanceof ObserverError)) throw error;
+      }
+      const state = readSnapshotState({ waves: waves.items, slices, cells, executions: runs, history });
+      return { cursor, state };
     },
   };
 }

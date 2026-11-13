@@ -3,7 +3,7 @@
  * conduit, and the floor lettering and drafting marks that name and dimension things. Static: it
  * changes only with the level of detail and the regions' captions (which change at events).
  */
-import { memo, type ReactNode } from "react";
+import { memo } from "react";
 import { GroundGrid, Prism, RegionPlate, RoutePath, factoryTokens, fc, offsetPolyline, planeStroke, planeTransform, project, round, roundedPath, type Lod, type RegionKind, type Vec3 } from "@mach/ui";
 import { FloorLettering } from "@mach/ui";
 import type { PlantLayout, Rect } from "./layout";
@@ -169,15 +169,17 @@ function TrunkCut({ y, x0, x1, lod }: { y: number; x0: number; x1: number; lod: 
 }
 
 function Ruler({ y, x0, x1 }: { y: number; x0: number; x1: number }) {
-  const ticks: ReactNode[] = [];
+  // Every tick in one path (the element budget): the ticks never touch one another, and the ink is
+  // opaque, so one path of many subpaths draws exactly what one path per tick drew.
+  let ticks = "";
   for (let x = x0; x <= x1; x += 24) {
     const major = Math.round(x - x0) % 96 === 0;
-    ticks.push(<path key={x} d={`M${x} ${y}v${major ? 6 : 3.5}`} />);
+    ticks += `M${x} ${y}v${major ? 6 : 3.5}`;
   }
   return (
     <g transform={planeTransform(PLATE_Z)} aria-hidden="true" style={{ stroke: "var(--mach-ink-subtle)", strokeWidth: 0.8 * planeStroke, fill: "none" }}>
       <path d={`M${x0} ${y}H${x1}`} />
-      {ticks}
+      {ticks ? <path d={ticks} /> : null}
     </g>
   );
 }

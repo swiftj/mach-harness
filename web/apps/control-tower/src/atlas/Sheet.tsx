@@ -120,7 +120,7 @@ function titleOf(log: SceneLog, t: number, connection: string | null): string {
   const heading = wave ? (wave.meta.unknown.includes("title") ? wave.id : wave.title) : project;
   const waveLine = waves.length === 0 ? "no wave received yet" : waves.length === 1 ? wave!.id : `${waves.length} waves, latest ${wave!.id}`;
   const c = log.sceneAt(t).completeness;
-  const complete = c.state === "complete" ? "" : c.state === "reconstructed" ? ` · reconstructed from a snapshot${c.since !== null ? ` at ${hhmm(c.since)}` : ""}` : ` · partial history${c.since !== null ? ` since ${hhmm(c.since)}` : ""}`;
+  const complete = c.state === "complete" ? "" : c.state === "reconstructed" ? ` · reconstructed from the observer's state${c.since !== null ? ` at ${hhmm(c.since)}` : ""}` : ` · partial history${c.since !== null ? ` since ${hhmm(c.since)}` : ""}`;
   // Records received but not interpreted (unknown kinds) lose no history: said as such, never "partial".
   const notRead = Object.values(c.notInterpreted).reduce((n, k) => n + k, 0);
   const uninterpreted = notRead ? ` · ${notRead} record${notRead === 1 ? "" : "s"} received, not interpreted` : "";

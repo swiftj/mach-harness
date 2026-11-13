@@ -52,7 +52,7 @@ async function until(cond, rounds = 400) {
 const SERVER = fakeObserver({ snapshot: true, series: true });
 SERVER.commit(history());
 
-test("D17 live: first render from the snapshot at the window's start, a bounded heap, counts equal to the observer's", async (t) => {
+test("D17 live: first render from the summaries and the newest window (no snapshot), a bounded heap, counts equal to the observer's", async (t) => {
   const before = heapMb();
   const t0 = performance.now();
   const client = live.createObserverClient({ fetch: SERVER.fetch });
@@ -71,8 +71,9 @@ test("D17 live: first render from the snapshot at the window's start, a bounded 
   assert.equal(status.total, TARGET, "the observer's total");
   assert.equal(store.getState().series.total, TARGET, "the series' total");
   assert.ok(status.held <= 20_000 && status.held > 0, `held ${status.held}`);
-  assert.equal(log.head().completeness.state, "reconstructed");
-  assert.ok(SERVER.snapshotsAt.includes(`${SERVER.generation}.${TARGET - 20_000}`));
+  // Bounded start: the summaries and the newest window, never the observer's whole projected state.
+  assert.equal(log.head().completeness.state, "partial", "history before the window is said not loaded");
+  assert.deepEqual(SERVER.snapshotsAt, [], "no /snapshot at all");
   // The stream resumes from the cursor: nothing before the window was fetched page by page.
   assert.ok(SERVER.requests.filter((r) => r.includes("/events?")).length < 40, "no eager paging of the whole history");
 

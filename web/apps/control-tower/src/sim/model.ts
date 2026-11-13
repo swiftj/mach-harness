@@ -517,6 +517,17 @@ export interface ArtifactState {
   readonly meta: EntityMeta;
 }
 
+/** The facts the plan station fixed for a cell (D11), and the record they came from. */
+export interface PlanFacts {
+  readonly appType: string | null;
+  readonly risk: Risk | null;
+  readonly contracts: number | null;
+  readonly tasks: number | null;
+  /** The plan exit's event id (or the observer's `recorded_by`), null when seeded without one. */
+  readonly eventId: string | null;
+  readonly authority: Authority;
+}
+
 export interface CellState {
   readonly ticketId: string;
   readonly sliceId: string;
@@ -550,6 +561,12 @@ export interface CellState {
   readonly artifacts: readonly ArtifactState[];
   /** `artifact.recorded` records received for the cell (a path recorded again counts again); `artifacts` holds the distinct ones. */
   readonly artifactRecords: number;
+  /**
+   * Live: what the plan station fixed (schema revision 2: `station.exited` of the plan carries
+   * `app_type` and `risk`, its counts `contracts` and `tasks`; the observer's `/cells/{t}` `plan`).
+   * Null until a plan exit (or the observer's summary) is received; each part null when not recorded.
+   */
+  readonly plan: PlanFacts | null;
   readonly merged: { readonly commit: string; readonly at: number; readonly revalidated: boolean } | null;
   readonly archived: { readonly archive: string; readonly at: number } | null;
   readonly openedAt: number;

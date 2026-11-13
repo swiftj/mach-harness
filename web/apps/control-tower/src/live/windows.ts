@@ -7,10 +7,12 @@
  * - **A fixed grid.** The history's span is cut into windows of equal length, chosen once from its
  *   size so that a window holds about `windowEvents` events. A moment always maps to the same window,
  *   so the same history gives the same scene at the same moment, however it was scrubbed to.
- * - **One window** is the state at its start (`/snapshot?at=` the cursor just before its first event,
- *   seeded as a reconstructed `client.snapshot_applied`) plus every event in it, in order
- *   (`/history?from_ms&to_ms`), reduced into a scene log of its own. An observer without `/snapshot`
- *   gives a window that says "partial before here" instead.
+ * - **One window** is every event in it, in order (`/history?from_ms&to_ms`, pages of at most
+ *   `pageLimit`), reduced into a scene log of its own, and says "history before here is not loaded"
+ *   (`client.history_missing`, reason `window`) unless it begins the history. It never reads the
+ *   observer's whole projected state (`/snapshot`): at 230,000 events that is about 35 MB of JSON per
+ *   window. What a window does not hold is drawn as not recorded; per-history assignments (the
+ *   Atlas's bays) are kept across windows by the shared lineage.
  * - **A small LRU** of windows (`keep`, default 4): scrubbing back and forth near the playhead costs a
  *   fetch only when a new window is needed; scrubbing within one is the log's own checkpoints.
  *
@@ -52,6 +54,12 @@ export interface WindowedHistoryOptions {
   readonly pageLimit?: number;
   /** A known end of history (live: the newest event held); default: the last event the observer has. */
   readonly end?: number | null;
+  /**
+   * The history's lineage (SceneLogOptions.lineage): every window's log carries it, so per-history
+   * assignments (the Atlas's bays) do not change from window to window. Live: the live log's too.
+   * Default: one object per windowed history.
+   */
+  readonly lineage?: object;
 }
 
 const MIN_WINDOW_MS = 60_000;
@@ -62,10 +70,9 @@ export function createWindowedHistory(options: WindowedHistoryOptions): Windowed
   const keep = Math.max(1, options.keep ?? 4);
   const pageLimit = options.pageLimit ?? 5000;
   const prov = provenanceOf(options.source, options.origin ?? null);
+  const lineage = options.lineage ?? {};
   let span: { start: number; end: number; total: number | null; windowMs: number } | null = null;
   let seriesState: SeriesState | null = null;
-  let snapshots = true;
-  let generation = "";
   const held = new Map<number, HistoryWindow>();
   const pending = new Map<number, Promise<HistoryWindow>>();
   let fetched = 0;
@@ -92,23 +99,14 @@ export function createWindowedHistory(options: WindowedHistoryOptions): Windowed
     }
   };
 
-  /** The state just before the window: the snapshot at the cursor before its first event (or the first event after it). */
+  /** What stands before the window: nothing when it begins the history, else the marker that history before it is not loaded. */
   const seedFor = async (from: number, events: readonly EngineEvent[]): Promise<EngineEvent | null> => {
     let first = events.reduce<number | null>((min, e) => (e.schema_version === 3 && (min === null || e.pos < min) ? e.pos : min), null);
     if (first === null) {
-      // An empty window: the state at its start is the state before the first event after it.
+      // An empty window: whether it begins the history is whether the first event after it does.
       const after = await client.history({ fromMs: from, limit: 1 });
       const next = parse(after.events)[0];
       first = next && next.schema_version === 3 ? next.pos : null;
-    }
-    if (snapshots && first !== null && first > 1) {
-      try {
-        const snapshot = await client.snapshot(`${generation}.${first - 1}`);
-        return clientEvent("client.snapshot_applied", 1, from - 1, { cursor: snapshot.cursor, generation: snapshot.generation, state: snapshot.state } as AnyV3Event["data"]);
-      } catch (error) {
-        if (error instanceof ObserverError && error.kind === "not_found") snapshots = false;
-        else if (!(error instanceof ObserverError && (error.kind === "cursor_expired" || error.kind === "cursor_reset"))) throw error;
-      }
     }
     if (first !== null && first <= 1) return null; // the window begins the history: nothing before it
     return clientEvent("client.history_missing", 1, from - 1, { reason: "window", after: null, resumed_at: null } as AnyV3Event["data"]);
@@ -119,7 +117,7 @@ export function createWindowedHistory(options: WindowedHistoryOptions): Windowed
     fetched += 1;
     const events = await readWindow(from, to);
     const seed = await seedFor(from, events);
-    const log: SceneLog = createSceneLog({ definitions, provenance: prov, checkpointEvery: 128, cacheSize: 256 });
+    const log: SceneLog = createSceneLog({ definitions, provenance: prov, checkpointEvery: 128, cacheSize: 256, lineage });
     log.ingest(seed ? [seed, ...events] : events);
     return { log, from, to };
   };
@@ -132,9 +130,7 @@ export function createWindowedHistory(options: WindowedHistoryOptions): Windowed
 
   const self: WindowedHistory = {
     async init() {
-      const session = await client.session();
-      generation = session.generation;
-      snapshots = session.snapshot;
+      const { generation } = await client.session();
       let data: SeriesData | null = null;
       try {
         data = await client.series();

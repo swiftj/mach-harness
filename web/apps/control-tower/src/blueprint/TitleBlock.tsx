@@ -7,7 +7,7 @@
  */
 import { fc } from "@mach/ui";
 import type { Scene, WaveState } from "../sim";
-import { isKnown } from "../sim";
+import { gapClassWord, isKnown } from "../sim";
 import { useSceneStore } from "../scene";
 import { useStaleSince } from "./motion";
 import { clock, clockTenths } from "./time";
@@ -32,8 +32,11 @@ export function completenessWords(scene: Scene): string {
   if (c.state === "reconstructed") return `${c.since !== null ? `reconstructed, ${clock(c.since)}` : "reconstructed"}${tail}`;
   const began = Object.keys(c.began).length;
   // Only gaps that lost history make it partial.
-  const gaps = c.gaps.filter((g) => g.lost).length;
-  return `partial${c.since !== null ? ` since ${clock(c.since)}` : ""}${gaps ? ` · ${gaps} gap${gaps === 1 ? "" : "s"}` : began ? ` · ${began} begun late` : ""}${tail}`;
+  const lost = c.gaps.filter((g) => g.lost);
+  const gaps = lost.length;
+  // Said by class (observer M6.2): "2 gaps (not received, before the loaded window)".
+  const classes = [...new Set(lost.map((g) => gapClassWord(g.class)))].join(", ");
+  return `partial${c.since !== null ? ` since ${clock(c.since)}` : ""}${gaps ? ` · ${gaps} gap${gaps === 1 ? "" : "s"} (${classes})` : began ? ` · ${began} begun late` : ""}${tail}`;
 }
 
 /** The title block's subtitle, stamp and facts for a scene and the waves it draws. */

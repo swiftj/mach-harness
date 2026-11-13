@@ -101,12 +101,20 @@ export interface SceneLogOptions {
   readonly thinFactor?: number;
   /** Events kept; older ones are compacted into the floor checkpoint (default: all). */
   readonly retain?: number;
+  /**
+   * Logs that show parts of the same history (a live log and the history windows read behind it, or
+   * a replay's windows) share one lineage object, so what a view assigns per history (the Atlas's
+   * bays) stays the same whichever part is shown. Default: the log is its own lineage.
+   */
+  readonly lineage?: object;
 }
 
 export interface SceneLog {
   readonly kind: "scene-log";
   readonly provenance: SceneProvenance;
   readonly definitions: ProductDefinitions;
+  /** The history this log shows part of (SceneLogOptions.lineage); the log itself when it has none. */
+  readonly lineage: object;
   /** Increases whenever the set of events changes. */
   version(): number;
   /** Events applied by the head scene, including those compacted away. */
@@ -483,6 +491,9 @@ export function createSceneLog(options: SceneLogOptions): SceneLog {
     kind: "scene-log",
     provenance,
     definitions,
+    get lineage() {
+      return options.lineage ?? log;
+    },
     version: () => version,
     size: total,
     entries: () => entries,

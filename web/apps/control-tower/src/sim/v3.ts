@@ -11,6 +11,7 @@
  * They never come from the observer and never leave the browser.
  */
 import type { AnySimEvent } from "./events";
+import type { ObserverHistory } from "./provenance";
 import type { CellStage, ReviewSeat, Risk, StationId, StepAction } from "./vocabulary";
 
 export const V3_SCHEMA_VERSION = 3;
@@ -160,7 +161,8 @@ export interface V3DataMap {
   "execution.completed": { stage: Stage | null; next: StepAction | null; waiting_for: string | null; how: string | null; seen_to_end: boolean; cost_usd: number | null; refused_tools: string[] };
   "execution.failed": { stage: Stage | null; next: StepAction | null; how: string | null; claude_error: string | null; exit_code: number | null; attempt: number };
   "station.entered": { station: StationId; stage: Stage | null; action: StepAction | null; resumed: boolean; unclosed_visit: string | null; head: string | null; counts: Counts };
-  "station.exited": { station: StationId; outcome: string; stage: Stage | null; duration_ms: number | null; closed_by: "cleanup" | null; head: string | null; counts: Counts };
+  /** Revision 2: on the plan's exit, `app_type` and `risk` (the plan's own facts); `counts.contracts` and `counts.tasks`. */
+  "station.exited": { station: StationId; outcome: string; stage: Stage | null; duration_ms: number | null; closed_by: "cleanup" | null; head: string | null; counts: Counts; app_type?: string | null; risk?: Risk | null };
   "gate.evaluated": { gate: string; verdict: "passed" | "refused" | "overridden"; reason_code: string | null; subject: string | null; status: "PASS" | "FAIL_WITH_EVIDENCE" | "INCOMPLETE_EVIDENCE" | null; audit_tier: string | null; counts: Counts };
   "build.task_completed": { task_id: string; kind: "test" | "impl" | "contract" | "refactor" | "docs"; step: "red" | "green" | "done"; first_run: "pass" | "fail" | "not-run" | null; suite: "unknown" | "red" | "green" | null; commit: string | null };
   "verify.check_recorded": { target_id: string; target_kind: "scenario" | "matrix rule" | "holdout"; result: "pass" | "fail"; evidence: Array<{ file: string; sha256: string | null; bytes?: number | null }>; rerecorded: boolean };
@@ -250,9 +252,21 @@ export interface ObserverSnapshotState {
   readonly factory?: { readonly enabled?: boolean; readonly paused?: boolean; readonly autonomy?: "observe" | "supervised" | null } | null;
   readonly waves?: ReadonlyArray<{ readonly wave_id: string; readonly slices?: readonly string[]; readonly revision?: number | null }>;
   readonly slices?: ReadonlyArray<{ readonly slice_id: string; readonly ticket_id?: string | null; readonly state?: string | null; readonly dependencies?: readonly string[]; readonly revision?: number | null }>;
-  readonly cells?: ReadonlyArray<{ readonly ticket_id: string; readonly slice_id?: string | null; readonly stage?: string | null; readonly risk?: string | null; readonly current_visit?: string | null; readonly rounds?: number | null }>;
+  readonly cells?: ReadonlyArray<{
+    readonly ticket_id: string;
+    readonly slice_id?: string | null;
+    readonly stage?: string | null;
+    readonly risk?: string | null;
+    readonly current_visit?: string | null;
+    readonly rounds?: number | null;
+    /** Observer M6.2: the cell's app type, and the plan's facts (`plan {app_type, risk, contracts, tasks, recorded_by}`). */
+    readonly app_type?: string | null;
+    readonly plan?: { readonly app_type: string | null; readonly risk: string | null; readonly contracts: number | null; readonly tasks: number | null; readonly recorded_by: string | null } | null;
+  }>;
   readonly executions?: ReadonlyArray<{ readonly execution_id: string; readonly ticket_id?: string | null; readonly state?: string | null; readonly attempt?: number | null }>;
   readonly gates?: ReadonlyArray<{ readonly ticket_id: string; readonly gate: string; readonly round?: number | null; readonly state?: string | null }>;
+  /** Observer M6.2 (`state.history`): how complete the observer's history is, by gap class. */
+  readonly history?: ObserverHistory | null;
 }
 
 /** One v3 event, typed by kind. */

@@ -7,6 +7,7 @@ import { useMemo, type ReactNode } from "react";
 import { stations as stationLooks, type StationKind } from "@mach/ui";
 import {
   ACTOR_KINDS,
+  activityOf,
   artifactCountsOf,
   costCompletenessOf,
   describeEntry,
@@ -58,9 +59,23 @@ import {
 import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
-import { agentsWords, runtimeWords } from "./words";
+import { activityNote, agentsWords, planWords, runtimeWords } from "./words";
 import { useSceneStore } from "../../scene";
-import type { FactoryStatus } from "../../scene/connection";
+import { isStale, type FactoryStatus } from "../../scene/connection";
+
+/**
+ * How a live agent's activity was read (observer M6.2 runtime states): a phrase when its stream's
+ * runtime is not proven (unproven, not stated yet, some records refused), else null. A string, so the
+ * selector stays stable.
+ */
+function useAgentNote(agent: AgentState): string | null {
+  const status = useSceneStore((s) => s.factoryStatus);
+  return useScene((s) => {
+    const x = agent.executionId ? s.executions[agent.executionId] : undefined;
+    if (!x || agent.meta.authority === "simulated") return null;
+    return activityNote(streamObservationOf(s, x.id, sourceRuntimeOf(status?.sources, x.id)));
+  });
+}
 
 /** An execution's agents in words (D7): a count when its stream was read, "Not observed" with the reason otherwise. Strings, so selectors stay stable. */
 function agentsOf(scene: Scene, status: FactoryStatus | null, executionId: string | null, started: number, working?: number): string {
@@ -228,6 +243,11 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
   const factory = useSceneStore((s) => s.factoryStatus);
   const agentsLine = useScene((s) => agentsOf(s, factory, cell.executionId, cell.agentOrder.length, active.length));
   const artifactCounts = artifactCountsOf(cell);
+  // Live: what the cell is doing now, from what is recorded (the nine states; idle between two
+  // executions is said as such, never "working"). A string, so the selector is stable.
+  const live = cell.meta.authority !== "simulated";
+  const stale = useSceneStore((s) => isStale(s.connection));
+  const now = useScene((s) => (live ? activityOf(s, ref.cell(cell.ticketId), { stale }).reason : null));
   return (
     <>
       <Section title="Facts">
@@ -236,8 +256,10 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
             ["Stage", <StateWord key="s" state={look.state} mark={look.mark} label={look.label} />],
             ["Round", `${cell.round} of ${MAX_ROUNDS}`],
             ["Slice", <Mono key="sl">{cell.sliceId}</Mono>],
+            now ? ["Now", now] : null,
             ["Risk", isKnown(cell.meta, "risk") ? cell.risk : <NotRecorded key="r" />],
-            ["App type", isKnown(cell.meta, "appType") ? cell.appType : <NotRecorded key="a" />],
+            ["App type", isKnown(cell.meta, "appType") ? cell.appType : cell.plan?.appType ? <Mono key="a">{cell.plan.appType}</Mono> : <NotRecorded key="a" />],
+            live ? ["Plan", cell.plan ? planWords(cell.plan) : <NotRecorded key="p" />] : null,
             ["Worktree", <Mono key="w" muted>{`.factory/worktrees/${cell.ticketId}/repo`}</Mono>],
             ["Branch", <Mono key="b" muted>{cell.branch}</Mono>],
             ["At station", cell.station ? <span key="st">{STATION_WORDS[cell.station as StationKind]}, <Elapsed startedAt={cell.stationSince ?? 0} finishedAt={null} /></span> : "Between stations"],
@@ -431,6 +453,7 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
 function CountOnlyAgent({ agent }: { agent: AgentState }) {
   const cell = useScene((s) => s.cells[agent.ticketId] ?? null);
   const known = (field: string) => isKnown(agent.meta, field);
+  const note = useAgentNote(agent);
   return (
     <>
       <Section title="Facts">
@@ -447,6 +470,7 @@ function CountOnlyAgent({ agent }: { agent: AgentState }) {
             ["Tool calls", agent.toolCallCount !== null ? agent.toolCallCount.toLocaleString("en-GB") : <NotRecorded key="c" />],
             ["Last tool", agent.lastTool ? <Mono key="lt">{agent.lastTool}</Mono> : <NotRecorded key="lt" />],
             agent.refused.length ? ["Refused tools", agent.refused.join(", ")] : null,
+            note ? ["Read as", note] : null,
           ]}
         />
         <p className="mt-3 text-body-sm text-ink-muted">Individual tool calls are not observable for workflow agents. The count and the last tool's name come from the workflow's progress snapshots.</p>
@@ -485,6 +509,7 @@ function PerCallAgent({ agent }: { agent: AgentState }) {
     return [...c.entries()];
   }, [agent.toolCalls]);
   const produced = cell ? cell.artifacts.filter((a) => a.writer.agentId === agent.id) : [];
+  const note = useAgentNote(agent);
   return (
     <>
       <Section title="Facts">
@@ -502,6 +527,7 @@ function PerCallAgent({ agent }: { agent: AgentState }) {
             ["Finished", agent.finishedAt === null ? "not yet" : at(agent.finishedAt)],
             ["Time at work", <Elapsed key="e" startedAt={agent.startedAt} finishedAt={agent.finishedAt} />],
             agent.summary ? ["Reported", agent.summary] : null,
+            note ? ["Read as", note] : null,
           ]}
         />
       </Section>

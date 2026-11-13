@@ -70,7 +70,7 @@ test("reconnects from the durable cursor after a drop, without re-applying anyth
   source.stop();
 });
 
-test("gap: history missing is marked partial, a snapshot is reloaded; selection, mode, camera and replay playhead survive", async () => {
+test("gap: history missing is marked partial, the bounded start runs again (summaries, never a snapshot); selection, mode, camera and replay playhead survive", async () => {
   const { server, clock, store, source, log } = await setup({ snapshot: true });
   store.select("cell:LOCAL-031");
   store.setView("blueprint");
@@ -84,7 +84,10 @@ test("gap: history missing is marked partial, a snapshot is reloaded; selection,
   const later = server.commit(RUN.slice(SPLIT, SPLIT + 40).map(unpos));
   stream.closed = false;
   server.expire(later.at(-1).pos - 10);
-  server.snapshotState = { cells: [{ ticket_id: "LOCAL-031", stage: "verified", rounds: 2 }] };
+  // The observer's summaries: the run's own cell (its events are in the window: left to them) and one
+  // no event of the window touches (seeded, reconstructed).
+  server.summaries.cells = [{ ticket_id: "LOCAL-031", stage: "verified", round: 2 }, { ticket_id: "LOCAL-099", slice_id: "SLICE-099", stage: "merged", round: 1, risk: "Low", app_type: "cli", plan: { app_type: "cli", risk: "Low", contracts: 1, tasks: 4, recorded_by: "c:LOCAL-099:aa:6" } }];
+  const requested = server.requests.length;
   server.sendGap();
   await settle();
   clock.frames(1, 16);
@@ -96,8 +99,13 @@ test("gap: history missing is marked partial, a snapshot is reloaded; selection,
   assert.equal(s.playhead, replayAt, "the replay's playhead is kept");
   assert.equal(s.following, false);
   const head = log.head();
-  assert.equal(head.completeness.state, "reconstructed", "seeded from a snapshot after missing history");
+  assert.equal(head.completeness.state, "reconstructed", "seeded from the observer's summaries after missing history");
   assert.ok(head.completeness.gaps.some((g) => g.reason === "cursor-expired"));
+  assert.equal(server.requests.slice(requested).filter((r) => r.includes("/snapshot")).length, 0, "the whole projected state is never fetched");
+  assert.equal(head.cells["LOCAL-099"].stage, "merged", "a cell no event of the window touches is seeded");
+  assert.equal(head.cells["LOCAL-099"].meta.authority, "reconstructed");
+  assert.deepEqual({ ...head.cells["LOCAL-099"].plan }, { appType: "cli", risk: "Low", contracts: 1, tasks: 4, eventId: "c:LOCAL-099:aa:6", authority: "reconstructed" });
+  assert.ok(!head.cells["LOCAL-031"].meta.eventId.startsWith("k:"), "a summary never stands in for a cell the window's events describe");
   assert.equal(s.connection.gaps, 1);
   assert.equal(s.connection.state, "live");
   assert.equal(log.sceneAt(replayAt).completeness.state, "complete", "before the gap, history was complete");

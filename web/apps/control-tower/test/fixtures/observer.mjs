@@ -5,7 +5,7 @@
 // Built from M6_1_OBSERVER_DESIGN.md sections 8, 11 and 12 and the contract's section 14. It never
 // starts the Go binary.
 
-export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false, heartbeatMs = 15000, history = true, series = false } = {}) {
+export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false, heartbeatMs = 15000, history = true, series = false, summaries = true } = {}) {
   const server = {
     generation,
     events: [], // in pos order
@@ -21,6 +21,11 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
     },
     historyRoute: history,
     seriesRoute: series,
+    /** `/waves`, `/slices`, `/cells`, `/runs`, `/project`, `/cells/{t}`, `/artifacts` (observer M6.2 summaries). */
+    summaryRoutes: summaries,
+    summaries: { waves: [], slices: [], cells: [], runs: [], artifacts: [], history: { completeness: "complete", lost: {}, not_interpreted: {}, classes: {}, gaps: {}, partial: "", not_v3: 0 } },
+    /** `/health` `ingest.runtime`. */
+    runtime: null,
     /** The events in history order, kept like the observer's index (rebuilt only when events change). */
     inOrder: null,
     /** Cursors snapshots were asked at (null: the default). */
@@ -107,6 +112,26 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
       return ok({ from_ms: fromMs, to_ms: toMs, bucket_ms: bucketMs, buckets: [...counts].map(([from_ms, count]) => ({ from_ms, count, kinds: {}, authorities: {} })), total, kinds: {}, authorities: {}, head: cur(head()), watermark_ms: null, complete: server.floor === 0 });
     }
     if (path === "/factory/status") return ok({ ...server.status, report: {}, recorded_mode: null, read_at: "2026-11-12T09:00:00Z" });
+    // The summaries (observer M6.2 shapes): lists paged with limit/offset and the projection's cursor.
+    if (server.summaryRoutes) {
+      const page = (items) => {
+        const limit = Number(u.searchParams.get("limit") ?? 200);
+        const offset = Number(u.searchParams.get("offset") ?? 0);
+        const slice = items.slice(offset, offset + limit);
+        return ok({ items: slice, total: items.length, offset, more: offset + slice.length < items.length, cursor: cur(head()) });
+      };
+      if (path === "/waves") return ok({ items: server.summaries.waves, cursor: cur(head()) });
+      if (path === "/slices") return page(server.summaries.slices);
+      if (path === "/cells") return page(server.summaries.cells);
+      if (path === "/runs") return page(server.summaries.runs);
+      if (path === "/project") return ok({ history: server.summaries.history, cursor: cur(head()) });
+      if (path.startsWith("/cells/")) {
+        const c = server.summaries.cells.find((x) => x.ticket_id === decodeURIComponent(path.slice(7)));
+        return c ? ok({ ...c, cursor: cur(head()) }) : fail(404, "not_found");
+      }
+      if (path === "/artifacts") return page(server.summaries.artifacts ?? []);
+    }
+    if (path === "/health") return ok({ status: "ok", index: { head: cur(head()), floor: cur(server.floor) }, projection: { history: server.summaries.history }, ingest: { runtime: server.runtime, delivery: { last_hold_ms: 120, hold_ms_p95: 300 } }, freshness: server.status.freshness });
     return fail(404, "not_found");
   };
 

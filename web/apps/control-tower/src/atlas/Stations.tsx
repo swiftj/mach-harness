@@ -68,6 +68,9 @@ const INTAKE_KINDS: readonly string[] = ["wave.discovered", "slice.materialized"
 const DECISION_KINDS: readonly string[] = ["scheduling.decided", "dependency.blocked", "dependency.resolved", "work.scheduled"];
 const GATE_KINDS: readonly string[] = ["gate.checked", "gate.evaluated"];
 
+/** The most sheets the wave's manifest stacks (the simulation's wave has five slices). */
+const MAX_SHEETS = 5;
+
 export function IntakeWorks() {
   const { lod, layout: L } = useAtlas();
   const { t, reduced, scene, log } = useFrame((f, now) =>
@@ -102,13 +105,15 @@ export function IntakeWorks() {
       {anyWave ? (
         <Hit entity={ref.wave(anyWave.id)} label={`Wave ${anyWave.id}, ${isKnown(anyWave.meta, "title") ? anyWave.title : "title not recorded"}: ${anyWave.sliceIds.length} slices, approved by ${isKnown(anyWave.meta, "approvedBy") ? anyWave.approvedBy : "(not recorded)"}${waves.length > 1 ? `; ${waves.length} waves received` : ""}`}>
           <g style={{ opacity: isDimmed(highlight, ref.wave(anyWave.id)) ? 0.28 : 1 }}>
-            {/* At far zoom the stack is one sheet (spec b.7: artifacts as a count only; the name says how many). */}
-            {(lod === "far" ? anyWave.sliceIds.slice(0, 1) : anyWave.sliceIds).map((s, i) => (
+            {/* At far zoom the stack is one sheet (spec b.7: artifacts as a count only; the name says how many).
+                Elsewhere one sheet per slice, at most MAX_SHEETS (the element budget of a dense plant; the
+                simulation's wave never has more): the lettering then says how many slices. */}
+            {anyWave.sliceIds.slice(0, lod === "far" ? 1 : MAX_SHEETS).map((s, i) => (
               <Card key={s} reduced={reduced} kind="spec" progress={q(anim("artifactMaterialise", t - anyWave.discoveredAt - i * 60 * RATE, reduced))} at={{ x: I.manifest.x - i * 2.4, y: I.manifest.y - i * 2, z: PLATE_Z - 2 }} lod={lod} showLabel={false} />
             ))}
           </g>
           {lod !== "far" ? (
-            <FloorLettering at={{ x: L.dock.x + 6, y: L.dock.y + L.dock.d - 16, z: PLATE_Z - 2 }} text={anyWave.id} size={9} font="mono" tone="ink" weight={600} decorative />
+            <FloorLettering at={{ x: L.dock.x + 6, y: L.dock.y + L.dock.d - 16, z: PLATE_Z - 2 }} text={anyWave.sliceIds.length > MAX_SHEETS ? `${anyWave.id} · ${anyWave.sliceIds.length} slices` : anyWave.id} size={9} font="mono" tone="ink" weight={600} decorative />
           ) : null}
         </Hit>
       ) : null}
@@ -147,7 +152,7 @@ export function IntakeWorks() {
         <AgentMarker agentRole="scheduler" tier="haiku" state={schedulerBusy ? "active" : "idle"} at={I.scheduler} lod={lod} showLabel={false} />
       </Hit>
       {L.bays.map((b) => (
-        <HoldingPad key={b.sliceId} bay={b} slice={scene.slices[b.sliceId]} cell={scene.cells[b.ticketId]} wait={scene.cells[b.ticketId] ? null : capacityWaitOf(scene, scene.slices[b.sliceId]?.ticketId ?? b.ticketId)} t={t} reduced={reduced} lod={lod} dimmed={isDimmed(highlight, ref.slice(b.sliceId), ref.cell(b.ticketId))} />
+        <HoldingPad key={b.sliceId} bay={b} slice={scene.slices[b.sliceId]} cell={scene.cells[b.ticketId]} wait={scene.cells[b.ticketId] ? null : capacityWaitOf(scene, scene.slices[b.sliceId]?.ticketId ?? b.ticketId)} t={t} reduced={reduced} lod={lod} dense={L.bays.length > 6} dimmed={isDimmed(highlight, ref.slice(b.sliceId), ref.cell(b.ticketId))} />
       ))}
       {/* Audit: the readiness gauge and the gate across intake's exit. */}
       <Hit entity={ref.station("audit")} label={`Audit: ${auditGate ? `${gateWord(auditGate)}, ${auditGate.detail}` : "not run yet"}`}>
@@ -180,7 +185,7 @@ function gateMark(gate: GateState | null): FactoryState {
   }
 }
 
-function HoldingPad({ bay, slice, cell, wait, t, reduced, lod, dimmed }: { bay: BaySlot; slice: SliceState | undefined; cell: CellState | undefined; wait: CapacityWaitState | null; t: number; reduced: boolean; lod: Lod; dimmed: boolean }) {
+function HoldingPad({ bay, slice, cell, wait, t, reduced, lod, dense, dimmed }: { bay: BaySlot; slice: SliceState | undefined; cell: CellState | undefined; wait: CapacityWaitState | null; t: number; reduced: boolean; lod: Lod; dense: boolean; dimmed: boolean }) {
   const p = bay.pad;
   const state = slice?.scheduler;
   // A recorded wait for an execution place (capacity.wait_changed) before the cell opens: the waiting mark, its own words.
@@ -192,12 +197,14 @@ function HoldingPad({ bay, slice, cell, wait, t, reduced, lod, dimmed }: { bay: 
   const cardP = mat ? q(anim("artifactMaterialise", t - mat.at - 900 * RATE, reduced)) : 0;
   const label = slice ? `Slice ${slice.id}, ${isKnown(slice.meta, "title") ? slice.title : "title not recorded"}: ${state}${wait ? `, waits for an execution place${wait.limit !== null ? ` (at most ${wait.limit} at once)` : ""}` : ""}${slice.reasons.length ? `. ${slice.reasons.join(" ")}` : ""}` : `Holding pad ${bay.index + 1}: empty`;
   const pin = project({ x: p.x + 16, y: p.y - 16, z: PLATE_Z + 2 });
-  const flat = gone && lod === "far";
+  // A pad whose slice has left for the floor is only its outline at far zoom, and at mid zoom on a
+  // dense plant (more than six bays; the element budgets): its slice is drawn in its bay.
+  const flat = gone && (lod === "far" || (lod === "mid" && dense));
   // The pad's lettering is drawn outside its hit target, so the target's name is the whole sentence.
   return (
     <g style={{ opacity: dimmed ? 0.28 : 1 }}>
       <Hit entity={ref.slice(bay.sliceId)} label={label}>
-        {/* At far zoom a pad whose slice has left for the floor is only its outline (the far element budget). */}
+        {/* A pad whose slice has left for the floor, at far zoom or on a dense plant at mid: its outline only. */}
         {flat ? (
           <polygon points={toPoints(prismFaces({ x: p.x - 20, y: p.y - 20, w: 40, d: 40, z: PLATE_Z + 2, h: 0 }).top)} style={{ fill: fc("floor"), stroke: fc("plate-edge"), strokeWidth: 0.8 }} />
         ) : (
@@ -210,7 +217,7 @@ function HoldingPad({ bay, slice, cell, wait, t, reduced, lod, dimmed }: { bay: 
       ) : null}
       <g aria-hidden="true" style={{ pointerEvents: "none" }}>
         {slice && !gone && lod !== "far" ? <Card reduced={reduced} kind="spec" progress={cardP} file={`${slice.ticketId}.md`} at={{ x: p.x - 2, y: p.y + 2, z: PLATE_Z + 2 }} lod={lod} showLabel={false} /> : null}
-        {slice && !flat ? (
+        {slice && !(gone && lod === "far") ? (
           <g transform={`translate(${round(pin.x)} ${round(pin.y)})`}>
             <StateMark state={mark} r={lod === "far" ? 6 : 4.4} />
           </g>
@@ -456,11 +463,8 @@ export function IntegrationWorks() {
           dashed until their merge commit lands; lettered only once intake knows the slices. */}
       <g aria-hidden="true">
         <g transform={planeTransform(PLATE_Z)}>
-          {L.bays.map((b) => {
-            const at = berth(b.index);
-            const landed = Boolean(scene.cells[b.ticketId]?.merged);
-            return landed ? null : <rect key={b.ticketId} x={at.x - 11} y={at.y - 9} width={22} height={18} rx={1.5} style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: planeStroke, strokeDasharray: "3 2.5" }} />;
-          })}
+          {/* A dense plant draws every open berth as one path (the element budget); otherwise one rect each. */}
+          <DashedRects merge={L.bays.length > 6} rects={L.bays.filter((b) => !scene.cells[b.ticketId]?.merged).map((b) => ({ x: berth(b.index).x - 11, y: berth(b.index).y - 9, w: 22, h: 18, r: 1.5 }))} dash="3 2.5" />
         </g>
         {lod !== "far"
           ? L.bays.map((b) => {
@@ -531,11 +535,7 @@ export function ArchiveWorks() {
       ) : null}
       {/* The runs.jsonl shelf: one slot per slice of the wave, dashed until that ticket's run is archived. */}
       <g aria-hidden="true" transform={planeTransform(PLATE_Z)}>
-        {L.bays.map((b) =>
-          scene.cells[b.ticketId]?.archived ? null : (
-            <rect key={b.ticketId} x={shelfAt(b.index).x - 8} y={shelfAt(b.index).y - 2} width={16} height={4} style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: planeStroke, strokeDasharray: "2 2" }} />
-          ),
-        )}
+        <DashedRects merge={L.bays.length > 6} rects={L.bays.filter((b) => !scene.cells[b.ticketId]?.archived).map((b) => ({ x: shelfAt(b.index).x - 8, y: shelfAt(b.index).y - 2, w: 16, h: 4, r: 0 }))} dash="2 2" />
       </g>
       {lod !== "far" ? (
         <FloorLettering at={{ x: shelfAt(0).x - 8, y: shelfAt(0).y - 10, z: PLATE_Z }} text={`runs.jsonl · ${archived.length} of ${L.bays.length} recorded`} size={7.5} font="mono" tone="subtle" weight={500} decorative />
@@ -619,4 +619,22 @@ function RuleBoard({ L, lod, risk }: { L: PlantLayout; lod: Lod; risk: Risk | nu
       ))}
     </g>
   );
+}
+
+/**
+ * Dashed outlines of rectangles, one per bay slot. On a dense plant (`merge`, more than six bays) they
+ * are one path (the element budget): each subpath is the path SVG defines for a <rect> (corners
+ * rounded by r, from the same start point, clockwise), its dashes starting afresh. Otherwise, as the
+ * simulation draws them, one <rect> each.
+ */
+function DashedRects({ rects, dash, merge }: { rects: ReadonlyArray<{ x: number; y: number; w: number; h: number; r: number }>; dash: string; merge: boolean }) {
+  const style = { fill: "none", stroke: fc("plate-edge"), strokeWidth: planeStroke, strokeDasharray: dash };
+  if (!merge) return <>{rects.map(({ x, y, w, h, r }) => <rect key={`${x},${y}`} x={x} y={y} width={w} height={h} rx={r || undefined} style={style} />)}</>;
+  let d = "";
+  for (const { x, y, w, h, r } of rects) {
+    d += r > 0
+      ? `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`
+      : `M${x} ${y}H${x + w}V${y + h}H${x}Z`;
+  }
+  return d ? <path d={d} style={style} /> : null;
 }

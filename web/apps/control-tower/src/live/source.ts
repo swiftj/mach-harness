@@ -11,11 +11,21 @@
  *   frame (contract 14; architecture 7.2), then the store is told once.
  * - **Duplicates and late events** are the log's business: same id is dropped, an earlier `order`
  *   is inserted and the scenes re-derived.
+ * - **Bounded start (D17).** A history longer than `liveWindow` events (or one the observer no longer
+ *   holds from its beginning) is never fetched whole, and neither is the observer's whole projected
+ *   state (`/snapshot`: about 35 MB of JSON at 230,000 events). The source reads the observer's
+ *   summaries (`/waves`, `/slices`, `/cells`, `/runs`, `/project`: bounded by how many there are, not
+ *   by events), then the newest `liveWindow` events (`/events?after=`), and seeds from the summaries
+ *   only what no event of the window touches (its state then held through the window), as a
+ *   reconstructed `client.snapshot_applied`; a `client.history_missing` marker says history before
+ *   the window is not loaded. The timeline's density comes from `/series`; scrubbing back reads
+ *   `/history` windows on demand (`windows.ts`).
  * - **gap** (the cursor fell below the observer's floor): history between is missing. A
- *   `client.history_missing` marker goes into the log (the scene says partial), then a snapshot if
- *   the observer serves one, then history from the snapshot's cursor or the floor.
+ *   `client.history_missing` marker goes into the log (the scene says partial), then the bounded
+ *   start again from the observer's newest window.
  * - **reset** (the index was rebuilt: a new epoch): ids and order are deterministic (contract 6.4),
- *   so history is fetched again from the start of the new epoch; what is already held de-duplicates.
+ *   so history is fetched again (the bounded start for a long history, else from the start of the
+ *   new epoch); what is already held de-duplicates.
  * - Neither touches selection, hover, view, camera follow or a replay's playhead: they live in the
  *   store, and the store keeps them across `logChanged`.
  * - **Staleness.** No message (event or heartbeat) for `staleAfterMs` (default 2.5 heartbeats):
@@ -35,14 +45,14 @@ import { createSceneLog } from "../sim/log";
 import type { SceneLog } from "../sim/log";
 import type { ProductDefinitions } from "../sim/model";
 import { provenance } from "../sim/provenance";
-import type { AnyV3Event, EngineEvent } from "../sim/v3";
+import type { AnyV3Event, EngineEvent, ObserverSnapshotState } from "../sim/v3";
 import { parseV3 } from "../sim/v3";
 import type { Clock } from "../scene/clock";
 import type { ConnectionStatus } from "../scene/connection";
 import { DISCONNECTED_AFTER, INITIAL_CONNECTION } from "../scene/connection";
 import type { SceneStore } from "../scene/store";
 import { createSceneStore } from "../scene/store";
-import type { ObserverClient, ObserverSnapshot } from "./observer";
+import type { ObserverClient } from "./observer";
 import type { SceneSource } from "../sim/provenance";
 import { ObserverError, parseCursor, timeOf } from "./observer";
 import { clientEvent } from "./markers";
@@ -85,8 +95,8 @@ export interface LiveSourceOptions {
   readonly settleMs?: number;
   /**
    * The most recent events loaded at start (default 20,000). A longer history starts from the
-   * observer's snapshot at the window's first cursor (D17); what is before it is read in windows,
-   * on demand, when the person scrubs back (`windows`).
+   * observer's summaries and this many events (D17); what is before them is read in windows, on
+   * demand, when the person scrubs back (`windows`).
    */
   readonly liveWindow?: number;
   /** A long history read in windows: initialised here once connected (its span, the series). */
@@ -281,19 +291,14 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
     try {
       const session = await client.session();
       publish({ generation: session.generation });
-      let after = `${session.generation}.0`;
       if (reason === "expired") {
         markers += 1;
-        apply([clientEvent("client.history_missing", markers, confirmed(), { reason, after: before, resumed_at: null } as AnyV3Event["data"])]);
+        apply([clientEvent("client.history_missing", markers, confirmed(), { reason, after: before, resumed_at: floor } as AnyV3Event["data"])]);
       }
-      if (session.snapshot) {
-        // The state at the observer's floor, with that cursor, when it can still rebuild it: then the
-        // stream continues from exactly there, with no gap and no repeat. Otherwise its current state.
-        const snapshot: ObserverSnapshot = await snapshotAt(reason === "expired" ? floor : null);
-        markers += 1;
-        apply([clientEvent("client.snapshot_applied", markers, confirmed(), { cursor: snapshot.cursor, generation: snapshot.generation, state: snapshot.state } as AnyV3Event["data"])]);
-        after = snapshot.cursor || after;
-      }
+      // The bounded start again: a short history from the epoch's start (what is held de-duplicates),
+      // a long one (or one whose start has expired) from the summaries and its newest window. Never
+      // the observer's whole state.
+      let after = await startWindow(session.generation);
       after = await backfillFrom(after);
       publish({ cursor: after });
       recovering = false;
@@ -302,17 +307,6 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       recovering = false;
       reconnectLater(error instanceof Error ? error.message : "Recovery failed.");
     }
-  };
-
-  const snapshotAt = async (at: string | null): Promise<ObserverSnapshot> => {
-    if (at) {
-      try {
-        return await client.snapshot(at);
-      } catch (error) {
-        if (!(error instanceof ObserverError) || (error.kind !== "cursor_expired" && error.kind !== "cursor_reset")) throw error;
-      }
-    }
-    return client.snapshot();
   };
 
   /** Backfill, starting at the floor when the requested cursor has expired. */
@@ -336,7 +330,7 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
         return;
       }
       publish({ generation: session.generation, state: status.state === "reconnecting" || status.state === "disconnected" ? status.state : "connecting" });
-      const start = status.cursor ?? (await startWindow(session.generation, session.snapshot));
+      const start = status.cursor ?? (await startWindow(session.generation));
       const cursor = await backfill(start);
       publish({ cursor });
       openLive();
@@ -358,11 +352,11 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
   };
 
   /**
-   * Where a fresh page starts (D17): from the beginning when the history is short; otherwise from the
-   * observer's snapshot at the cursor `liveWindow` events before its head, then the events after it.
+   * Where a fresh page starts (D17): from the beginning when the history is short and whole;
+   * otherwise from the observer's summaries and its newest `liveWindow` events (see the header).
    * Returns the cursor to read on from.
    */
-  const startWindow = async (generation: string, snapshot: boolean): Promise<string> => {
+  const startWindow = async (generation: string): Promise<string> => {
     const origin = `${generation}.0`;
     let head: number | null = null;
     let floor = 0;
@@ -377,28 +371,37 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
     }
     seeTotal(head);
     if (head === null || (head <= liveWindow && floor === 0)) return origin;
-    const from = Math.max(floor, head - liveWindow);
-    const cursor = `${generation}.${from}`;
-    const first = await client.events(cursor, pageLimit);
-    const events = parseAll(first.events);
-    if (!events.length) return cursor;
-    const t0 = Math.min(...events.map((e) => (e.schema_version === 3 ? e.time.order_ms : Infinity)));
-    markers += 1;
-    let seeded = false;
-    if (snapshot) {
-      try {
-        const s = await client.snapshot(cursor);
-        apply([clientEvent("client.snapshot_applied", markers, t0 - 1, { cursor: s.cursor, generation: s.generation, state: s.state } as AnyV3Event["data"])]);
-        seeded = true;
-      } catch (error) {
-        if (!(error instanceof ObserverError)) throw error;
-      }
+    // The summaries first: the window's events read next reach at least as far as they describe, so
+    // whatever changed after them is an event of the window, and is left to the events.
+    let summaries: Awaited<ReturnType<ObserverClient["summaries"]>> | null = null;
+    try {
+      summaries = await client.summaries();
+    } catch (error) {
+      if (!(error instanceof ObserverError)) throw error;
     }
-    if (!seeded) apply([clientEvent("client.history_missing", markers, t0 - 1, { reason: "window", after: null, resumed_at: null } as AnyV3Event["data"])]);
-    apply(events);
-    seeTotal(first.head);
-    publish({ cursor: first.next ?? cursor });
-    return first.next ?? cursor;
+    const from = Math.max(floor, head - liveWindow);
+    let cursor = `${generation}.${from}`;
+    const events: EngineEvent[] = [];
+    for (;;) {
+      const page = await client.events(cursor, pageLimit);
+      seeTotal(page.head);
+      events.push(...parseAll(page.events));
+      cursor = page.next ?? cursor;
+      if (!page.more) break;
+    }
+    if (!events.length) return cursor;
+    let t0 = Infinity;
+    for (const e of events) if (e.schema_version === 3 && e.time.order_ms < t0) t0 = e.time.order_ms;
+    markers += 1;
+    const seeds: EngineEvent[] = [clientEvent("client.history_missing", markers, t0 - 1, { reason: "window", after: null, resumed_at: null } as AnyV3Event["data"])];
+    const seed = summaries ? untouched(summaries.state, events) : null;
+    if (seed) {
+      markers += 1;
+      seeds.push(clientEvent("client.snapshot_applied", markers, t0 - 1, { cursor: summaries?.cursor ?? "", generation, state: seed } as AnyV3Event["data"]));
+    }
+    apply([...seeds, ...events]);
+    publish({ cursor });
+    return cursor;
   };
 
   /** The history before what is held: its span and series, so scrubbing back loads windows and the timeline draws it all. */
@@ -434,7 +437,8 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       try {
         // `/health` adds the delivery hold and the per-stream runtime (observer M6.2); optional.
         const h = await client.health();
-        merged = { ...s, delivery: h.delivery ?? s.delivery, sources: s.sources.some((x) => x.runtime) || !h.sources.length ? s.sources : h.sources };
+        // and the streams' runtimes summed and the observer's history completeness (observer M6.2).
+        merged = { ...s, delivery: h.delivery ?? s.delivery, sources: s.sources.some((x) => x.runtime) || !h.sources.length ? s.sources : h.sources, runtime: h.runtime, history: h.history };
         seeTotal(h.head);
       } catch {
         // An older observer: no delivery figure.
@@ -472,6 +476,31 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
   };
 }
 
+/**
+ * The part of the observer's summaries no event of `events` touches (by ids and entity refs): their
+ * state at the summaries' cursor is their state through the whole window, so it may stand at the
+ * window's start. Everything an event of the window touches is left to the events. Null when nothing
+ * is left.
+ */
+export function untouched(state: ObserverSnapshotState, events: readonly EngineEvent[]): ObserverSnapshotState | null {
+  const touched = new Set<string>();
+  for (const e of events) {
+    if (e.schema_version !== 3) continue;
+    const ids = e.ids;
+    if (ids.wave_id) touched.add(`wave:${ids.wave_id}`);
+    if (ids.slice_id) touched.add(`slice:${ids.slice_id}`);
+    if (ids.ticket_id) touched.add(`cell:${ids.ticket_id}`);
+    if (ids.execution_id) touched.add(`execution:${ids.execution_id}`);
+    for (const r of e.entities) touched.add(r);
+  }
+  const waves = (state.waves ?? []).filter((w) => !touched.has(`wave:${w.wave_id}`));
+  const slices = (state.slices ?? []).filter((x) => !touched.has(`slice:${x.slice_id}`) && !(x.ticket_id && touched.has(`cell:${x.ticket_id}`)));
+  const cells = (state.cells ?? []).filter((c) => !touched.has(`cell:${c.ticket_id}`) && !(c.slice_id && touched.has(`slice:${c.slice_id}`)));
+  const executions = (state.executions ?? []).filter((x) => !touched.has(`execution:${x.execution_id}`) && !(x.ticket_id && touched.has(`cell:${x.ticket_id}`)));
+  if (!waves.length && !slices.length && !cells.length && !executions.length) return null;
+  return { waves, slices, cells, executions, gates: [], history: state.history ?? null };
+}
+
 function safeJson(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -484,15 +513,18 @@ function safeJson(text: string): unknown {
 export const LIVE_DEFINITIONS: ProductDefinitions = { project: { id: "", name: "", integrationBranch: "" }, waves: {}, slices: {} };
 
 /** A live log: checkpoints every 128 events, 256 scenes cached, the newest 50,000 events retained (about 60 MB of heap, measured). */
-export function createLiveLog(options: { readonly retain?: number; readonly checkpointEvery?: number; readonly origin?: string | null } = {}): SceneLog {
-  return createSceneLog({ definitions: LIVE_DEFINITIONS, provenance: provenance("live", options.origin ?? null), checkpointEvery: options.checkpointEvery ?? 128, cacheSize: 256, retain: options.retain ?? 50_000 });
+export function createLiveLog(options: { readonly retain?: number; readonly checkpointEvery?: number; readonly origin?: string | null; readonly lineage?: object } = {}): SceneLog {
+  return createSceneLog({ definitions: LIVE_DEFINITIONS, provenance: provenance("live", options.origin ?? null), checkpointEvery: options.checkpointEvery ?? 128, cacheSize: 256, retain: options.retain ?? 50_000, lineage: options.lineage });
 }
 
 /** A store and a source wired together: the Live Factory. The caller starts the source. */
 export function createLiveFactory(options: Omit<LiveSourceOptions, "log" | "store" | "windows"> & { readonly retain?: number; readonly windowEvents?: number }): { readonly store: SceneStore; readonly source: LiveSource; readonly log: SceneLog; readonly windows: WindowedHistory } {
-  const log = createLiveLog({ retain: options.retain });
+  // One history: the live log and the windows read behind it share a lineage, so a ticket keeps its
+  // Atlas bay when the playhead moves between them.
+  const lineage = {};
+  const log = createLiveLog({ retain: options.retain, lineage });
   // Scrubbing back past what the live log holds reads the history in windows (D17).
-  const windows = createWindowedHistory({ client: options.client, definitions: LIVE_DEFINITIONS, source: "live", windowEvents: options.windowEvents });
+  const windows = createWindowedHistory({ client: options.client, definitions: LIVE_DEFINITIONS, source: "live", windowEvents: options.windowEvents, lineage });
   const store = createSceneStore({ source: "live", log, clock: options.clock, windows });
   const source = createLiveSource({ ...options, log, store, windows });
   return { store, source, log, windows };

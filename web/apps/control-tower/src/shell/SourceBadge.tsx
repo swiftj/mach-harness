@@ -19,7 +19,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@mach/ui";
 import { isStale, useSceneStore, type ConnectionStatus } from "../scene";
 import { refId, refKind, sourceRuntimeOf, streamObservationOf, type Completeness, type SceneSource } from "../sim";
-import { completenessWords, deliveryLagWords, receivedWords } from "./inspector/words";
+import { completenessWords, deliveryLagWords, receivedWords, runtimeStateWords, runtimeSummaryWords } from "./inspector/words";
 import { useSource } from "./source/context";
 import type { SourceChoice } from "./source/boot";
 import { duration as durationWords, timecode, utcClock } from "./vocab";
@@ -233,10 +233,10 @@ export function ConnectionFacts({ connection }: { connection: ConnectionStatus }
     const sel = s.selection;
     if (!sel || refKind(sel) !== "execution") return null;
     const id = refId(sel);
-    const o = streamObservationOf(s.log.head(), id, sourceRuntimeOf(s.factoryStatus?.sources, id));
-    const version = o.version ? `Claude Code ${o.version}` : "Claude Code version not recorded";
-    return o.state === "observed" ? `${version}, a proven runtime` : o.state === "unproven" ? `${version}, unproven runtime version` : `${version}: agents and tools not observed`;
+    return runtimeStateWords(streamObservationOf(s.log.head(), id, sourceRuntimeOf(s.factoryStatus?.sources, id)));
   });
+  // Every stream's runtime, summed by the observer (`/health` `ingest.runtime`, observer M6.2).
+  const runtimes = factory?.runtime ? runtimeSummaryWords(factory.runtime) : null;
   const rows: Array<[string, ReactNode]> = [
     ["Connection", look.sentence],
     ["Last confirmed", connection.confirmedAt !== null ? `${utcClock(connection.confirmedAt)} UTC` : "Nothing yet"],
@@ -248,6 +248,7 @@ export function ConnectionFacts({ connection }: { connection: ConnectionStatus }
     ],
     ["Received", receivedWords(connection)],
   ];
+  if (runtimes) rows.push(["Claude Code streams", runtimes]);
   if (runtime) rows.push(["Selected execution", runtime]);
   if (connection.gaps || connection.resets) rows.push(["Recovered", `${connection.gaps} gap${connection.gaps === 1 ? "" : "s"}, ${connection.resets} index rebuild${connection.resets === 1 ? "" : "s"}`]);
   if (connection.refused) rows.push(["Not understood", `${connection.refused} line${connection.refused === 1 ? "" : "s"} were not version 3 events and were left out`]);

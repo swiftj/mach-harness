@@ -5,7 +5,7 @@
  * agents at work, the verification gate outside the door and the retry loop over the line.
  * Before the slice is dispatched the bay stands reserved and empty.
  */
-import { memo, useMemo, type ReactNode } from "react";
+import { Fragment, memo, useMemo, type ReactNode } from "react";
 import {
   AgentMarker,
   ArtifactCard,
@@ -160,8 +160,11 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
   ];
   const gate: MarkState | null = vgate ? (vgate.state === "passed" || vgate.state === "skipped" || vgate.state === "overridden" ? "succeeded" : vgate.state === "failed" ? "failed" : vgate.state === "waiting" ? "human" : "active") : null;
   const gateTop = project({ ...bay.gate, z: (bay.gate.z ?? PLATE_Z) + 30 });
+  // Element budget (a dense plant draws nine or more of these at mid zoom): no wrapper elements that
+  // carry nothing. The bay is a fragment; each machine's footprint and symbol sit directly in the
+  // cell's group (both are aria-hidden, as their wrapper was).
   return (
-    <g>
+    <>
       <g role="group" aria-label={`Cell ${ticket}: ${activity ? activityWord(activity) : stage.label}`} style={{ opacity: dim ? dimmedOpacity : 1 }}>
         <polygon aria-hidden="true" points={toPoints(floor.top)} style={{ fill: fc("floor"), stroke: fc("plate-edge"), strokeWidth: 0.8 }} />
         <g transform={planeTransform(FLOOR_Z)} aria-hidden="true">
@@ -183,10 +186,10 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
           const c = project({ ...at, z: FLOOR_Z + h });
           const idle = st[pad].state === "idle" || finished;
           return (
-            <g key={pad} aria-hidden="true">
-              <polygon points={toPoints(top)} style={{ fill: idle ? fc("machine-top") : fc(look.soft), stroke: idle ? fc("plate-edge") : fc(look.ink), strokeWidth: 1 }} />
+            <Fragment key={pad}>
+              <polygon aria-hidden="true" points={toPoints(top)} style={{ fill: idle ? fc("machine-top") : fc(look.soft), stroke: idle ? fc("plate-edge") : fc(look.ink), strokeWidth: 1 }} />
               <StationSymbol kind={kind} x={round(c.x)} y={round(c.y)} size={lod === "far" ? 18 : 14} color={idle ? fc("ink-soft") : fc(look.ink === "live" ? "live" : "ink")} strokeWidth={1.3} />
-            </g>
+            </Fragment>
           );
         })}
         {gate ? (
@@ -205,7 +208,7 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
       ) : (
         <BayHits items={bayHits(bay, cell, [], vgate, "far", st, activity ? activityWord(activity) : undefined).slice(0, 1)} />
       )}
-    </g>
+    </>
   );
 }
 

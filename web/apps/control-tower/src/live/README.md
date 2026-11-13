@@ -2,8 +2,10 @@
 
 Status: the engine, the store and the observer client are built and tested, and the views (Atlas,
 Blueprint, shell) draw all three sources. Section 8 lists the follow-ups the view owners reported
-after connecting them, and what was done about each. Nothing here writes anything anywhere: the
-client reads the observer's `/api/v1`.
+after connecting them, section 9 the fixes for the M6.2 acceptance run, and section 10 what changed
+when the observer gained its M6.2 fields (commit 0cf50ec). Where an earlier section and a later one
+differ, the later one describes what is built. Nothing here writes anything anywhere: the client
+reads the observer's `/api/v1`.
 
 Read with: `docs/mach-next/M6_1_EVENT_CONTRACT.md` (the v3 envelope, sections 6 to 8, 11, 12, 14),
 `docs/mach-next/M6_1_OBSERVER_DESIGN.md` (sections 8 to 12), `docs/mach-next/M6_0_ARCHITECTURE.md`
@@ -91,7 +93,7 @@ get it wrong.
 
 | | `simulation` | `live` | `replay` |
 |---|---|---|---|
-| Events from | the M6.0 fixture | the observer's stream (`live/source.ts`) | the observer's history, loaded once (`loadHistory`) |
+| Events from | the M6.0 fixture | the observer's stream (`live/source.ts`), after a bounded start (section 10) | the observer's `/history`, one window at a time on demand (`createReplay`, `live/windows.ts`); `loadHistory` only for an observer without `/history` |
 | `liveAt` | moved by the frame loop; seeking past it moves it (the future is recorded) | what the stream confirmed (newest event or the heartbeat's watermark), carried forward by the browser's clock only while the connection is `live` and at most 20 s past the last confirmation; frozen when stale | the last event |
 | `seek` past the edge | allowed | clamped | clamped |
 | `extent` | `whole-run` (duration) | `so-far` (floor to edge, events held) | `so-far` |
@@ -115,26 +117,29 @@ and counters (`received`, `duplicates`, `late`, `gaps`, `resets`, `refused`).
 ## 4. The observer client and the live source
 
 `live/observer.ts`: `session`, `events(after, limit)`, `history(window)`, `snapshot(at?)`,
-`factoryStatus`, behind an injected `fetch`, M5's envelope, `X-MACH-Event-Schema: 3`. The snapshot's
-state (the observer's projection: maps by id, human gates) and `/factory/status` (`summary`,
-`factory_present`, `supervisor`, `freshness`) are read in the shapes `apps/observer/README.md`
-documents (`readSnapshotState`, `readFactoryStatus`). `live/source.ts`, `createLiveSource`:
+`factoryStatus`, `series`, `health`, `cell(ticket)`, `artifacts(query)`, `summaries()`, behind an
+injected `fetch`, M5's envelope, `X-MACH-Event-Schema: 3`. The snapshot's state (the observer's
+projection: maps by id, human gates) and `/factory/status` (`summary`, `factory_present`,
+`supervisor`, `freshness`) are read in the shapes `apps/observer/README.md` documents
+(`readSnapshotState`, `readFactoryStatus`). The live source and the history windows no longer call
+`snapshot` (section 10); it stays in the client for callers that want one state at one cursor.
+`live/source.ts`, `createLiveSource`:
 
 1. `GET /session`; if a held cursor names another epoch, treat it as a reset.
-2. History in pages from the cursor (`/events?after=`), each page applied to the log.
+2. History from the cursor (`/events?after=`), each page applied to the log. With no held cursor and
+   a long history, the bounded start of section 10 first.
 3. `GET /stream?schema=3&after=<cursor>`; messages queued and applied once per animation frame;
-   heartbeats move the edge to the watermark (or `at` minus the 1.5 s settle window when the
-   heartbeat carries none, as the observer's does today).
+   heartbeats (`{head, scanned, at, at_ms, watermark_ms}`) move the edge to `watermark_ms` (or `at`
+   minus the 1.5 s settle window when a heartbeat carries none: an older observer).
 4. A dropped stream: `reconnecting`, back-off 1 s doubling to 30 s, resume from the cursor; after
    `DISCONNECTED_AFTER` (4) failures in a row, `disconnected`, still retrying. The observer keeps its
    sessions, index and port across a restart, so when it answers again the source resumes from its
    cursor. A 401 is `no-session`, not retried.
 5. `gap`: a `client.history_missing` marker enters the log at the last confirmed moment (the scene
-   reads `partial` from there), then `/snapshot?at=<the gap's floor>` (the state at that cursor; the
-   observer's current state if it can no longer rebuild that one), a `client.snapshot_applied` marker
-   seeds what it says (`reconstructed`), then history from the snapshot's cursor.
-6. `reset`: history again from the new epoch's start; ids and order are deterministic, so everything
-   already held de-duplicates and the scene does not change.
+   reads `partial` from there), then the bounded start again (section 10): the summaries and the
+   newest window from the observer's floor; never `/snapshot`.
+6. `reset`: history again from the new epoch (the bounded start when it is long); ids and order are
+   deterministic, so everything already held de-duplicates and the scene does not change.
 7. Silence for 2.5 heartbeats: `stale`; any message: `live`.
 
 Selection, hover, view, Theater, camera follow, focus requests and a replay's playhead live in the
@@ -250,11 +255,11 @@ Shell (`src/shell`):
 - The views are not adapted (section 6); the app runs in simulation mode only, as before. Not
   checked in a browser in this wave: typecheck, lint, tests and the production build pass.
 - The simulation is not re-expressed as v3 (section 1, items 1 to 4).
-- Never run against the real observer: the client is built from the documented API and tested
-  against an in-memory fake (`test/fixtures/observer.mjs`). `/api/v1/snapshot` is designed but not
-  built by the observer; its state is read tolerantly. The heartbeat's watermark field is not yet
-  sent by the observer (`{head, at}` today); the client falls back to `at` minus the settle window.
-- `/api/v1/history?from_order=` (windowed replay) is not used: replay loads the retained history.
+- Never run against the real observer in this wave (the M6.2 acceptance did: section 9). The client
+  is tested against an in-memory fake (`test/fixtures/observer.mjs`) and, for the M6.2 fields, against
+  replies in the Go code's own shapes (`test/m62-observer-followups.test.mjs`).
+- (Superseded: `/snapshot`, the heartbeat's `watermark_ms` and `/history` windows are built by the
+  observer and read by the client; sections 8, 9 and 10.)
 - `Date.parse` and `toISOString` are the only date functions used; a client and observer on
   different clocks are not handled (contract A6).
 - `activityOf` maps an approved, unmerged cell to `unknown` (merge policy is not in the events);
@@ -275,10 +280,10 @@ Shell (`src/shell`):
 | 7 | `scene.capacityWaits` holds recorded waits whether or not the cell exists (`capacityWaits`, `capacityWaitOf`); gate evaluations name the gate state they set (`gateId`, null when none), `gateRefusals(scene, ticket?)` lists refusals no gate state stands for. | `sim/*` |
 | 8 | `project`, `workflow`, `visit`, `seat` are `EntityKind`s; `entityAt` resolves them by identity; `stableEntityAt` keeps the object while it does not change (for React selectors). Inspector sections for the four. | `sim/model.ts`, `sim/selectors.ts`, `shell/inspector/*`, `shell/vocab.ts`, `atlas/locate.ts` |
 | 9 | `timeScaleOf(state)`: 1 at the live edge, `PLAYBACK_BASE_RATE x speed` otherwise (simulation, replay, a live store scrubbed back). Atlas (`setMotionSource`) and Blueprint (`eventProgress`) read it. | `scene/store.ts`, `atlas/derive.ts`, `atlas/index.tsx`, `blueprint/motion.ts` |
-| 10 | `createLogFold` (`sim/fold.ts`): incremental per-log lists (appends read only what is new; a late insert rebuilds once; compaction trims). `moments(log)` uses it; the shell's history index is built from it (its private machinery is gone). The Atlas's `legsOf` still scans the log per version (view code, not changed). | `sim/fold.ts`, `sim/selectors.ts`, `shell/history.ts` |
+| 10 | `createLogFold` (`sim/fold.ts`): incremental per-log lists (appends read only what is new; a late insert rebuilds once; compaction trims). `moments(log)` uses it; the shell's history index is built from it (its private machinery is gone); the Atlas's `legsOf` reads its intake, dispatch and merge events from one too (`legEvents` in `atlas/derive.ts`), and keeps the legs per log version and layout. | `sim/fold.ts`, `sim/selectors.ts`, `shell/history.ts`, `atlas/derive.ts` |
 | 11 | `/factory/status` in the documented shape, in the store (`state.factoryStatus`, `setFactoryStatus`); the shell's own reader (`shell/source/status.ts`) is removed. | `live/observer.ts`, `scene/store.ts`, `App.tsx`, `shell/SourceBadge.tsx` |
 | 12 | `disconnected` after `DISCONNECTED_AFTER` failures (still retrying), resume from the cursor when the observer answers again; `no-session` on 401. The shell's attempt-count workaround and reason regex are gone. | `live/source.ts`, `scene/connection.ts`, `shell/SourceBadge.tsx` |
-| 13 | Snapshot at the gap's floor cursor; replay reads `/history` windows in order (`fromMs`/`toMs`, a `before-window` gap marker when the window starts part-way or `complete: false`), falling back to paged `/events`. Not done: loading further windows on demand while scrubbing a long replay (replay still loads the history it is given in one go). | `live/source.ts`, `live/observer.ts` |
+| 13 | Replay reads `/history` windows in order (`fromMs`/`toMs`, a `before-window` gap marker when the window starts part-way or `complete: false`), falling back to paged `/events`; windows load on demand while scrubbing (section 9, D17). After a gap the source no longer takes a snapshot at the floor: section 10. | `live/source.ts`, `live/observer.ts`, `live/windows.ts` |
 | 14 | `execution.usage.cost_complete` and `cost_incomplete_reasons` (revision 1) on `ExecutionState.usage`; `costCompletenessOf`; the shell's stand-in (budget stop or killed workflow read as under-reported) is gone. | `sim/*`, `shell/inspector/anatomies.tsx` |
 | 15 | A live store's follow loop runs only while it has a subscriber; a store made and dropped unwatched (StrictMode) asks for no frames. | `scene/store.ts` |
 | 16 | Not done. See below. | |
@@ -311,7 +316,7 @@ Tests: `test/m62-acceptance.test.mjs` (each reproduces its defect against the pr
 | D5 | A record naming both a ticket and a slice links them whichever was seen first (`linkSlice`); a cell opened without a slice takes the slice a `slice.materialized` already linked to its ticket. Ids read from a label never link. Property-tested over shuffled delivery. |
 | D4, D14 | `StationVisit.unclosed {reason: superseded \| execution-ended, at, eventId}`: the next entry's `unclosed_visit`, or the end of the execution that entered it (`execution.process_ended`, `execution.completed`, `.failed`), closes a visit that never exited: `leftAt` the bound, outcome `stopped`, no word of the station's, end inferred, authority reconstructed. A human-approval visit is a wait on a person and is never closed by its execution. `visitStatusOf` gives working / waiting for a person / ended / ended without an exit record. An exit record arriving after all wins. |
 | D6 | `GateState.state` `overridden` (with `reasonCode`), from any `gate.evaluated` verdict `overridden` (`red-before-green`, `build.red/green`, `merge.land`, audit, plan, verify); a later task completion never turns it back into a pass. `gateOverrides(scene, ticket?)` lists every override, including those no gate state stands for (`frozen-tests`). |
-| D7 | `ExecutionState.observation {records, structural, runtime, version}` from its stream records and their `origin.runtime_state`; `streamObservationOf(scene, x, sourceRuntime?)`: observed, unproven (a quiet note), or not observed with the reason (no stream, an incompatible runtime, records received and not interpreted). The runtime per source is read from `/factory/status` and `/health` `freshness.sources[].runtime` (`stream/<execution>`). |
+| D7 | `ExecutionState.observation {records, structural, runtime, version}` from its stream records and their `origin.runtime_state`; `streamObservationOf(scene, x, sourceRuntime?)`: observed, unproven, partial (section 10) or not observed with the reason (no stream, every record refused, records received and not interpreted). The runtime per source is read from `/factory/status` and `/health` `freshness.sources[].runtime` (`stream/<execution>`). |
 | D8 | `history.gap` `class` and `history_lost` (observer M6.2; read from the reason otherwise). Only lost history makes a scene partial; `completeness.notInterpreted` counts unknown-type records by source, said "received, not interpreted". |
 | D15 | Stream records (`agent.started`, `tool.called`) never open a cell; such agents stay in `strayAgents` with their execution and are adopted when the ticket's cell is recorded. |
 | D13 | `CellState.artifactRecords` beside `artifacts`: "Artifacts referenced" (distinct) and "Artifact records" (received). |
@@ -320,15 +325,15 @@ Tests: `test/m62-acceptance.test.mjs` (each reproduces its defect against the pr
 | D17 | Below. |
 
 **D17, long histories.** Live: when the observer's head is beyond `liveWindow` (20,000) events, the
-source reads `/snapshot?at=<head - 20,000>`, seeds it as `client.snapshot_applied` just before the
-window's first event, and reads the events after it; the stream resumes from the cursor as before.
-Without `/snapshot` the window says "partial before here". `ConnectionStatus` gains `total` (the
+source starts from the newest 20,000 events; the stream resumes from the cursor as before. (This
+pass read `/snapshot?at=<head - 20,000>` to seed the window and each history window read its own
+snapshot; section 10 replaces both, since the observer's snapshot is its whole projected state.) `ConnectionStatus` gains `total` (the
 observer's head position), `held`, `late` (the observer's own flag), `reordered` (placed before what
 was held; a delivery fact) and `deliveryLagMs` (`/health` `ingest.delivery.last_hold_ms`); the
 popover says "held of total". Replay and scrubbing back past the live window read windows on demand
 (`live/windows.ts`, `createWindowedHistory`): the span is cut once into equal windows of about 5,000
-events (from `/series`, else the first event and a coarse `/history` sampling), each window is the
-snapshot before its first event plus its events in order, four are kept. The store
+events (from `/series`, else the first event and a coarse `/history` sampling), each window is its
+events in order (and, before section 10, the snapshot before its first event), four are kept. The store
 (`options.windows`) shows the window holding the playhead (`state.log`), says `windowLoading` while
 one is fetched, and returns to its own log at the live edge; selection, view and camera are kept.
 The ruler draws the whole history's density from `state.series`. A moment maps to one window, so the
@@ -338,7 +343,84 @@ Measured (Node, the in-memory observer indexed like the real one, 230,853 genera
 no React, so the browser's figures will be higher): live first scene 94 ms (the previous tree on the
 same history: 2.6 s, every event paged and reduced), heap +15 MB (previous +42 MB), held 20,000 of
 230,853; scrub within the held window median 0.2 ms; past it, fetching a window, median 15 ms;
-replay first scene 47 ms, heap +6 MB, scrub median 0.1 ms, 16 ms with a fetch.
+replay first scene 47 ms, heap +6 MB, scrub median 0.1 ms, 16 ms with a fetch. (The in-memory
+observer's snapshot is tiny; the real one's is not: section 10.)
 
-Not done: the Atlas lays out bays per log, so moving between history windows may re-place bays; the
-received counter does not count events refused below a live log's floor.
+Not done in this pass: the received counter does not count events refused below a live log's floor.
+(Bays across history windows: fixed in section 10.)
+
+## 10. After the observer's M6.2 update (commit 0cf50ec)
+
+Field names read from the Go code (`internal/server/routes.go`, `internal/project/views.go`,
+`internal/event/event.go`, `internal/ingest/ingest.go`, `internal/artifact/catalog.go`), not from
+the documents:
+
+| Where | Field | Read into |
+|---|---|---|
+| `history.gap` data | `class`, `history_lost` (`event.GapClass`: `not-received`, `unparsable-line`, `unknown-type`, `state-mismatch`, `evicted`, `source-unreadable`, `conflict`) | `HistoryGapState.class`, `.lost`. Without them the reason is classed as the observer does (`no-timestamps` and unknown reasons are `unknown-type`, not lost) |
+| `/snapshot` `state.history`, `/project` `history`, `/health` `projection.history` | `{completeness, lost, not_interpreted, classes, gaps, partial, not_v3}` (`project.HistoryFacts`) | `readObserverHistory` → `ObserverHistory`; `Completeness.observer` (from what seeded the scene), `FactoryStatus.history` (from `/health`) |
+| events from a stream | `origin.runtime_state` | `ExecutionState.observation.runtime` |
+| `/health` `ingest.runtime`, `/session` `capabilities.stream_observations` | `{policy, state, proven_versions, versions[{version, state, executions, records_refused}]}` (+ `ok`, `claude_code_version`, `reason` in the session) | `RuntimeSummary` (`FactoryStatus.runtime`, `ObserverSession.streamObservations`) |
+| `/health`, `/factory/status` `freshness.sources[].runtime` | `{name, version, state, proven_versions, records_accepted, records_refused, refused_by_class, reason}` (`ingest.RuntimeStat`) | `SourceRuntimeStatus` |
+| `station.exited` of the plan (revision 2) | `app_type`, `risk`, `counts.contracts`, `counts.tasks` | `CellState.plan`, `appType`, `risk` |
+| `/cells`, `/cells/{t}` | `app_type`, `risk`, `plan {app_type, risk, contracts, tasks, recorded_by}` | `ObserverCell.plan`; seeded `CellState.plan` |
+| `/artifacts` items | `visit {visit_id, basis: recorded \| reconstructed, rule}`, `round_basis` | `ArtifactEntry.visit`, `.roundBasis` (types only, for M6.4) |
+
+What changed:
+
+- **History completeness by class.** Only lost history makes a scene partial; `unknown-type` is said
+  "received, not interpreted" and `conflict` "a conflicting copy, the first kept". The header badge,
+  the Blueprint title block (`2 gaps (not received, before the loaded window)`) and the event's own
+  description (`describeEntry`) say the class; the observer's own losses (from `history.lost`) are
+  added to the badge's explanation. `GAP_CLASS_WORDS` moved to `sim/provenance.ts`.
+- **Runtime states.** `streamObservationOf` has four states: `observed` (proven, or an observer that
+  does not judge), `unproven` (`compatible-unproven`, or `unknown`: the stream has not stated its
+  version yet), `partial` (`incompatible`: some records refused; what matched is shown, which the
+  old reading hid as "not observed"), `not-observed`. Each carries `runtime` and `recordsRefused`.
+  Agent counts say "agent activity from an unproven Claude Code version (2.1.324)" or "… some of its
+  records were refused, so some may be missing"; the inspector's Record block has a "Runtime" row for
+  executions, workflows, agents and tool calls; agents say how they were read ("Read as"); the
+  connection facts list every stream's runtime (`/health` `ingest.runtime`).
+- **Plan facts.** The cell inspector shows "Plan: app type library, High risk, 2 contracts, 7 tasks
+  (recorded at the plan's exit)", or not recorded; the app type falls back to the plan's word when it
+  is not one the scene knows.
+- **A bounded start, never the whole state (D17).** Before: the live source read
+  `/snapshot?at=<head - 20,000>` (the observer's whole projected state: every cell's detail, every
+  execution's agents and tools; about 35 MB of JSON at 230,853 events), each history window read
+  `/snapshot?at=` again, and a gap read `/snapshot` at the floor or the head. After: no `/snapshot`
+  anywhere in the live source or the windows. A long history starts from the observer's summaries
+  (`/waves`, `/slices`, `/cells`, `/runs` paged by 1,000, `/project`: bounded by how many there are,
+  never by events) and its newest `liveWindow` events (`/events?after=`), then the stream. Only what no
+  event of the window touches is seeded from the summaries (its state at the summaries' cursor holds
+  through the window, so it may stand at the window's start), as a reconstructed
+  `client.snapshot_applied` after a `client.history_missing` ("before the loaded window"). History
+  windows are their own events with that marker. The timeline's density is `/series` as before. A
+  gap or a reset runs the same bounded start again. Short histories (head within `liveWindow`, floor
+  0) are read whole, as before. `loadHistory` (an observer with no `/history`) still pages the
+  retained history: an older-observer fallback.
+- **Idle between executions (task 3).** `activityOf` on a live cell is `executing` only while the
+  execution doing the work has not ended (no `execution.completed`/`failed`, no
+  `execution.process_ended`); a station visit left open by an ended execution is not work going on.
+  A cell whose last execution has ended and none runs is said from that execution's record
+  (`Activity.between`): "Idle between executions: the last one ended at built. The next step recorded
+  is verify. No execution is running; nothing recorded says when the next starts." (`unknown`), or
+  `waiting-person` when it stopped waiting for one; "Idle: its process ended and the supervisor has not
+  recorded the outcome yet" before the supervisor records it. A claimed execution whose process has
+  not started is still `executing` ("Claimed by the supervisor"). The cell inspector shows the reason
+  ("Now"). The simulation keeps M6.0's reading.
+- **Bays across history windows (task 4).** `SceneLogOptions.lineage`: the live log and the windows
+  read behind it (and a replay's windows) share one object, and `bayOrder` keeps one assignment table
+  per lineage, so a ticket keeps its bay whichever window holds the playhead; a window that has not
+  seen a later ticket draws the bays already given (empty), never moves them, and never takes back a
+  ticket another window learned. Selection lives in the store and is kept.
+- **Atlas element budget (task 5)**, in `atlas/Bay.tsx` (`SummaryBay`), `Plant.tsx` (`Ruler`),
+  `Stations.tsx`: the dense plant's mid-zoom peak on the `twelve` fixture from about 2,600 to 2,401
+  (budget 2,500): summary bays lose their attribute-less wrapper groups, the main-line ruler's ticks
+  are one path, a wave's stack draws at most five sheets (the count is lettered), the merge berths and
+  run-record shelf slots of a dense plant are one dashed path each, and a departed slice's holding pad
+  in a dense plant at mid zoom is its outline. The simulation's Atlas markup at five playheads and two
+  zooms is the same but for the ruler's ticks folded into one path.
+
+Tests: `test/m62-observer-followups.test.mjs` (each defect reproduced against the previous tree
+first); `live-source`, `m62-followups`, `m62-acceptance` and `live-windows-scale` re-baselined where
+they asserted a snapshot.

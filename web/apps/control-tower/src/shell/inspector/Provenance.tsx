@@ -8,9 +8,10 @@
  * The simulation keeps the M6.0 telemetry class of its events (exists, derivable, missing): it says
  * what MACH would know today, which is a different question from where a real value came from.
  */
-import { EVENT_CATALOG, type AnyRef, type AnySimEvent, type EntityMeta } from "../../sim";
-import { useSceneStore } from "../../scene";
+import { EVENT_CATALOG, findAgent, refKind, sourceRuntimeOf, streamObservationOf, type AnyRef, type AnySimEvent, type EntityMeta, type Scene } from "../../sim";
+import { useScene, useSceneStore } from "../../scene";
 import { AuthorityBadge, Facts, JumpButton, Mono, precisionWords, Section, TelemetryBadge, useEntityEvents } from "./parts";
+import { runtimeStateWords } from "./words";
 
 const FIELD_WORDS: Readonly<Record<string, string>> = {
   title: "Title",
@@ -64,11 +65,39 @@ function metaOf(entity: AnyRef, value: unknown): EntityMeta | null {
   return (value as { meta?: EntityMeta }).meta ?? null;
 }
 
+/**
+ * The execution whose stream an entity was read from (an execution, its workflow, an agent, a tool
+ * call), or null: other kinds are not stream records.
+ */
+function streamExecutionOf(scene: Scene, entity: AnyRef, value: unknown): string | null {
+  const v = (value ?? {}) as { id?: string; executionId?: string | null; agentId?: string };
+  switch (refKind(entity)) {
+    case "execution":
+      return v.id ?? null;
+    case "workflow":
+    case "agent":
+      return v.executionId ?? null;
+    case "tool":
+      return v.agentId ? (findAgent(scene, v.agentId)?.executionId ?? null) : null;
+    default:
+      return null;
+  }
+}
+
 export function Provenance({ entity, value }: { entity: AnyRef; value: unknown }) {
   const source = useSceneStore((s) => s.source);
   const { all, happened } = useEntityEvents(entity);
   const latest = all[happened - 1] ?? null;
   const meta = metaOf(entity, value);
+  // Stream records (observer M6.2): the Claude Code runtime that wrote them, as the observer judged
+  // its records (proven, compatible but unproven, some refused, not stated yet). Said, never silent.
+  const factory = useSceneStore((s) => s.factoryStatus);
+  const runtime = useScene((s) => {
+    if (source === "simulation") return null;
+    const x = streamExecutionOf(s, entity, value);
+    if (!x || !s.executions[x] || s.executions[x].meta.authority === "simulated") return null;
+    return runtimeStateWords(streamObservationOf(s, x, sourceRuntimeOf(factory?.sources, x)));
+  });
 
   if (source === "simulation") {
     const kind = latest ? (latest.event as AnySimEvent).type : null;
@@ -103,6 +132,7 @@ export function Provenance({ entity, value }: { entity: AnyRef; value: unknown }
           meta ? ["End time", meta.end === "unknown" ? "Not recorded, or still open" : precisionWords(meta.end)] : null,
           latest ? ["Latest record's time", precisionWords(latest.precision)] : null,
           ["Source record", recordId ? <Mono key="r">{recordId}</Mono> : "Not recorded"],
+          runtime ? ["Runtime", runtime] : null,
           fields.length ? ["Fields from elsewhere", <span key="f">{fields.map(([f, a]) => `${fieldWord(f)}: ${a}`).join("; ")}</span>] : null,
         ]}
       />

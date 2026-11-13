@@ -112,6 +112,23 @@ export interface HistoryGapState {
   readonly lost: boolean;
 }
 
+/** What each gap class means, for people. */
+export const GAP_CLASS_WORDS: Readonly<Record<string, string>> = {
+  "not-received": "not received",
+  "unparsable-line": "unreadable lines",
+  "unknown-type": "received, not interpreted",
+  "state-mismatch": "records probably missing",
+  evicted: "no longer held by the observer",
+  "source-unreadable": "a source could not be read",
+  conflict: "a conflicting copy, the first kept",
+  "cursor-expired": "missed while away",
+  "observer-index-reset": "the observer rebuilt its index",
+  "before-window": "before the loaded window",
+};
+
+/** A gap's class in words, for people: GAP_CLASS_WORDS, else the class itself. */
+export const gapClassWord = (cls: string): string => GAP_CLASS_WORDS[cls] ?? cls.replace(/-/g, " ");
+
 /**
  * How complete the scene's history is, up to this scene's moment:
  * - `complete`: nothing is known to be missing;
@@ -130,9 +147,33 @@ export interface Completeness {
    * or `stream/<execution>`): they lose no history, so they never make the scene partial.
    */
   readonly notInterpreted: Readonly<Record<string, number>>;
+  /**
+   * The observer's own account of its history (observer M6.2 `history`: from `/snapshot`'s
+   * `state.history`, `/project`'s `history` or `/health`'s `projection.history`), when the scene was
+   * seeded from it: what it lost before what this scene holds. Null: not received.
+   */
+  readonly observer: ObserverHistory | null;
 }
 
-export const COMPLETE: Completeness = Object.freeze({ state: "complete", since: null, gaps: Object.freeze([]) as readonly HistoryGapState[], began: Object.freeze({}), notInterpreted: Object.freeze({}) });
+/**
+ * How complete the observer's projected history is, by gap class (observer M6.2,
+ * `{completeness, lost, not_interpreted, classes, gaps, partial, not_v3}`). `partial` only when
+ * history was lost (`lost` is not empty); `unknown-type` records are `notInterpreted` and never
+ * make it partial; a `conflict` keeps the first copy and is in `classes` only.
+ */
+export interface ObserverHistory {
+  readonly completeness: "complete" | "partial";
+  /** History-losing gap classes and their counts (`not-received`, `unparsable-line`, `state-mismatch`, `evicted`, `source-unreadable`). */
+  readonly lost: Readonly<Record<string, number>>;
+  /** Records received and not interpreted, by class (`unknown-type`). */
+  readonly notInterpreted: Readonly<Record<string, number>>;
+  /** Every class seen, with counts. */
+  readonly classes: Readonly<Record<string, number>>;
+  /** The projection's own reason when history before a position is no longer held (else null). */
+  readonly partial: string | null;
+}
+
+export const COMPLETE: Completeness = Object.freeze({ state: "complete", since: null, gaps: Object.freeze([]) as readonly HistoryGapState[], began: Object.freeze({}), notInterpreted: Object.freeze({}), observer: null });
 
 /**
  * The degraded and ordinary states a view may draw for a cell, slice, execution or agent

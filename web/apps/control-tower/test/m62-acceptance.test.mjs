@@ -249,8 +249,9 @@ test("D7: a compatible but unproven runtime shows the agents, with a quiet 'unpr
   const head = logOf(finalize(f.out)).head();
   const o = streamObservationOf(head, x);
   assert.equal(o.state, "unproven");
-  assert.equal(words.agentsWords(o, 1, 1), "1 working, 1 so far (unproven runtime version)");
-  assert.match(words.runtimeWords(o), /unproven runtime version/);
+  assert.equal(o.runtime, "compatible-unproven");
+  assert.equal(words.agentsWords(o, 1, 1), "1 working, 1 so far: agent activity from an unproven Claude Code version (2.1.323)");
+  assert.match(words.runtimeWords(o), /^Claude Code 2\.1\.323: compatible, unproven/);
   // Proven: the plain count.
   assert.equal(words.agentsWords({ ...o, state: "observed", reason: null }, 1), "1");
 });
@@ -397,8 +398,12 @@ test("D17: counts equal the observer's totals ('of N' when only part is held); o
   assert.equal(c.total, 2600);
   assert.equal(c.held, 1000);
   assert.match(words.receivedWords(c), /1,000 held of 2,600/);
-  assert.equal(b.log.head().completeness.state, "reconstructed", "seeded from the observer's snapshot at the window's start");
-  assert.ok(big.snapshotsAt.includes(`${big.generation}.1600`), big.snapshotsAt.join(","));
+  // Before the window: "not loaded" (no summary has anything the window does not touch here); the
+  // observer's whole projected state is never fetched.
+  assert.equal(b.log.head().completeness.state, "partial", "history before the window is said not loaded");
+  assert.equal(b.log.head().completeness.gaps[0].class, "before-window");
+  assert.deepEqual(big.snapshotsAt, []);
+  assert.ok(big.requests.some((r) => r.includes("/cells?")), "the bounded summaries are read instead");
   source.stop();
   b.source.stop();
   void store;

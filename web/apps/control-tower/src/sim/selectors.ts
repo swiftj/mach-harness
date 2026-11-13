@@ -56,7 +56,7 @@ export function sceneAtIn(history: History, t: number): Scene {
   return logOf(history).sceneAt(t);
 }
 const sceneAt = sceneAtIn;
-import type { CellStage, StationId } from "./vocabulary";
+import type { CellStage, StationId, StepAction } from "./vocabulary";
 
 // ---------------------------------------------------------------- events in time
 
@@ -872,6 +872,12 @@ export interface Activity {
    * an event says so (`line`: the Factory's own merge; `person`), else null: not recorded.
    */
   readonly awaiting?: { readonly step: "merge"; readonly label: string; readonly by: "line" | "person" | null; readonly basis: string | null };
+  /**
+   * Live: no execution is running for the cell and its last one has ended (the cell is idle between
+   * executions). What that execution recorded: when it ended, the stage it left, the next step, and
+   * what it stopped waiting for. Nothing says when the next execution starts.
+   */
+  readonly between?: { readonly executionId: string; readonly endedAt: number | null; readonly stage: CellStage | null; readonly next: StepAction | null; readonly waitingFor: string | null; readonly outcomeRecorded: boolean };
 }
 
 export interface ActivityOptions {
@@ -958,12 +964,51 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
     if (x.state === "interrupted" || x.state === "failed" || x.state === "waiting-resources") return x;
   }
   if (cell.capacityWait) return { state: "waiting-resources", reason: "Held: every execution place is in use (recorded).", since: cell.capacityWait.since, authority: "reconstructed" };
-  if (cell.station) return { state: "executing", reason: `At ${cell.station}.`, since: cell.stationSince, authority };
-  if (execution && (execution.state === "running" || execution.state === "claimed")) return { state: "executing", reason: "Its execution is running.", since: execution.startedAt ?? execution.claimedAt, authority: execution.meta.authority };
+  // The simulation keeps M6.0's reading (a cell at a station is at work); its executions never end
+  // without a record.
+  if (authority === "simulated") {
+    if (cell.station) return { state: "executing", reason: `At ${cell.station}.`, since: cell.stationSince, authority };
+    if (execution && (execution.state === "running" || execution.state === "claimed")) return { state: "executing", reason: "Its execution is running.", since: execution.startedAt ?? execution.claimedAt, authority: execution.meta.authority };
+  } else {
+    // Live: at work only while the execution doing the work is running. A station visit left open by
+    // an execution that has ended (no exit record) is not work going on.
+    if (cell.station) {
+      const open = cell.visits.findLast((v) => v.station === cell.station && v.leftAt === null);
+      const owner = open?.executionId ? scene.executions[open.executionId] : execution;
+      if (!owner || !hasEnded(owner)) return { state: "executing", reason: `At ${cell.station}.`, since: cell.stationSince, authority };
+    }
+    if (execution && !hasEnded(execution)) return { state: "executing", reason: execution.state === "claimed" ? "Claimed by the supervisor; its process has not started." : "Its execution is running.", since: execution.startedAt ?? execution.claimedAt, authority: execution.meta.authority };
+  }
   const slice = scene.slices[cell.sliceId];
   if (slice?.scheduler === "waiting-on-dependency") return { state: "waiting-dependency", reason: slice.reasons.join(" ") || "Waiting for what it depends on.", since: slice.since, authority: slice.meta.authority };
   if (cell.stage === "approved" || cell.stage === "pr-open") return awaitingMerge(scene, cell, authority);
+  if (execution && authority !== "simulated") return betweenExecutions(cell, execution);
   return { state: "unknown", reason: "Between stations; nothing recorded says what it waits for.", since: null, authority };
+}
+
+/** The execution has ended: the supervisor recorded its end, or its process ended (D4). */
+const hasEnded = (x: ExecutionState): boolean => x.state === "completed" || x.state === "failed" || x.ended !== null;
+
+/**
+ * A live cell whose last execution has ended and none is running: idle between executions. Said from
+ * what that execution recorded (its end, the stage it left, the next step, what it stopped waiting
+ * for); a recorded wait for a person is `waiting-person`, anything else is `unknown`, because no
+ * record says when the next execution starts or what holds it (silence is never a wait, D16).
+ */
+function betweenExecutions(cell: CellState, x: ExecutionState): Activity {
+  const recorded = x.state === "completed" || x.state === "failed";
+  const endedAt = recorded ? x.endedAt : x.processEndedAt;
+  const between = { executionId: x.id, endedAt, stage: x.outcome?.stage ?? null, next: x.outcome?.next ?? null, waitingFor: x.outcome?.waitingFor ?? null, outcomeRecorded: recorded };
+  const authority = x.meta.authority;
+  if (!recorded) {
+    return { state: "unknown", reason: "Idle: its process ended and the supervisor has not recorded the outcome yet. No execution is running.", since: endedAt, authority, between };
+  }
+  const left = between.stage ? ` at ${between.stage}` : "";
+  if (between.waitingFor && (between.stage === null || between.stage === cell.stage)) {
+    return { state: "waiting-person", reason: `Idle between executions: the last one stopped${left}, waiting for ${between.waitingFor}.`, since: endedAt, authority, between };
+  }
+  const next = between.next && between.next !== "stop" ? ` The next step recorded is ${between.next}.` : "";
+  return { state: "unknown", reason: `Idle between executions: the last one ended${left}.${next} No execution is running; nothing recorded says when the next starts.`, since: endedAt, authority, between };
 }
 
 /**
@@ -1142,13 +1187,15 @@ export interface BayOrder {
 }
 
 interface BayTable {
-  logVersion: number;
+  /** The version of each log of the lineage the table last read. */
+  seen: WeakMap<SceneLog, number>;
   slots: BayClaim[];
   index: Map<string, number>;
   waveIds: string[];
   out: BayOrder;
 }
-const bayTables = new WeakMap<SceneLog, BayTable>();
+/** One table per lineage (SceneLog.lineage): every log showing part of the same history shares it. */
+const bayTables = new WeakMap<object, BayTable>();
 
 /** The order key of the first retained event that touches an entity, or null. */
 function firstOrder(log: SceneLog, entity: EntityRef): string | null {
@@ -1161,14 +1208,20 @@ function firstOrder(log: SceneLog, entity: EntityRef): string | null {
  * wave), then appended. Once a bay index is given it never changes, even when an older wave arrives
  * late. A slice outside any wave and a cell whose slice is not known each get a bay too; when a
  * cell's slice becomes known, its bay is kept and re-keyed to the slice.
+ *
+ * The table belongs to the log's lineage, not to the log: the windows of a long history (and the
+ * live log they are read behind) are separate logs of one history, and a ticket keeps its bay
+ * whichever window holds the playhead. A window that does not know something another one did never
+ * takes it away (a bay stays; a ticket learned stays learned).
  */
 export function bayOrder(log: SceneLog): BayOrder {
-  let table = bayTables.get(log);
+  const lineage = log.lineage ?? log;
+  let table = bayTables.get(lineage);
   const logVersion = log.version();
-  if (table && table.logVersion === logVersion) return table.out;
+  if (table && table.seen.get(log) === logVersion) return table.out;
   if (!table) {
-    table = { logVersion: -1, slots: [], index: new Map(), waveIds: [], out: { version: 0, slots: [], waveIds: [] } };
-    bayTables.set(log, table);
+    table = { seen: new WeakMap(), slots: [], index: new Map(), waveIds: [], out: { version: 0, slots: [], waveIds: [] } };
+    bayTables.set(lineage, table);
   }
   const scene = log.head();
   let changed = false;
@@ -1229,19 +1282,20 @@ export function bayOrder(log: SceneLog): BayOrder {
     slots.push({ sliceId: c.sliceId, ticketId: c.ticketId });
     changed = true;
   }
-  // A ticket learned later (the slice's cell opened) updates the slot; its index stays.
+  // A ticket learned later (the slice's cell opened) updates the slot; its index stays. Only a ticket
+  // this log knows replaces the slice's id: a window from before the cell opened never undoes it.
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i] as BayClaim;
     if (slot.sliceId.startsWith("cell:")) continue;
     const ticketId = ticketFor(slot.sliceId);
-    if (ticketId !== slot.ticketId) {
+    if (ticketId !== slot.ticketId && ticketId !== slot.sliceId) {
       if (slots === table.slots) slots = slots.slice();
       slots[i] = { sliceId: slot.sliceId, ticketId };
       changed = true;
     }
   }
   table.slots = slots;
-  table.logVersion = logVersion;
+  table.seen.set(log, logVersion);
   if (changed) table.out = { version: table.out.version + 1, slots: table.slots, waveIds: table.waveIds };
   return table.out;
 }
@@ -1334,21 +1388,34 @@ export interface SourceRuntime {
   readonly state: "proven" | "compatible-unproven" | "incompatible" | "unknown" | null;
   readonly version: string | null;
   readonly reason: string | null;
+  /** Records refused for their shape (counted by the observer; nothing of them is shown). */
+  readonly recordsRefused?: number | null;
 }
 
 /**
- * What can be said about an execution's agents and tools (D7):
- * - `observed`: its stream was read and described agents, the workflow or tools;
- * - `unproven`: as observed, from a runtime version the observer has not been proved on (say so quietly);
- * - `not-observed`: no stream was received, the runtime is incompatible, or its records were received
+ * What can be said about an execution's agents and tools (D7), with the observer's judgement of the
+ * Claude Code runtime that wrote its stream (observer M6.2: each record is accepted or refused on its
+ * own shape):
+ * - `observed`: its stream was read and described agents, the workflow or tools, from a proven
+ *   runtime (or an observer too old to say);
+ * - `unproven`: as observed, from a runtime version the observer's fixtures do not come from
+ *   (`compatible-unproven`), or whose stream has not said its version yet (`unknown`): every record
+ *   read matched the known shapes. Say so, never silently;
+ * - `partial`: as observed, but some records did not match the known shapes and were refused
+ *   (`incompatible`): what is shown is what matched;
+ * - `not-observed`: no stream was received, every record was refused, or its records were received
  *   and not interpreted: agents and tools are "not observed", never zero.
  */
 export interface StreamObservationState {
-  readonly state: "observed" | "unproven" | "not-observed";
+  readonly state: "observed" | "unproven" | "partial" | "not-observed";
   readonly reason: string | null;
   readonly version: string | null;
   /** Records received and not interpreted. */
   readonly notInterpreted: number;
+  /** The runtime's state as the observer judged it; null when the observer does not say (before M6.2). */
+  readonly runtime: "proven" | "compatible-unproven" | "incompatible" | "unknown" | null;
+  /** Records the observer refused for their shape, when it reports them. */
+  readonly recordsRefused: number | null;
 }
 
 export function streamObservationOf(scene: Scene, executionId: string, source: SourceRuntime | null = null): StreamObservationState {
@@ -1358,12 +1425,20 @@ export function streamObservationOf(scene: Scene, executionId: string, source: S
   for (const [key, n] of Object.entries(scene.completeness.notInterpreted)) if (key === `s:${executionId}` || key === `stream/${executionId}`) notInterpreted += n;
   const version = source?.version ?? o?.version ?? x?.claudeCodeVersion ?? null;
   const runtime = source?.state ?? o?.runtime ?? null;
+  const recordsRefused = source?.recordsRefused ?? null;
   const named = version ? `Claude Code ${version}` : "its Claude Code version";
-  if (runtime === "incompatible") return { state: "not-observed", reason: source?.reason ?? `${named} is not supported by the observer.`, version, notInterpreted };
-  if (o && o.structural > 0) return { state: runtime === "compatible-unproven" ? "unproven" : "observed", reason: runtime === "compatible-unproven" ? "unproven runtime version" : null, version, notInterpreted };
-  if (notInterpreted > 0) return { state: "not-observed", reason: `${notInterpreted} stream record${notInterpreted === 1 ? " was" : "s were"} received but not interpreted (${named} is not supported by the observer).`, version, notInterpreted };
-  if (!o || o.records === 0) return { state: "not-observed", reason: "No stream records were received for this execution.", version, notInterpreted };
-  return { state: runtime === "compatible-unproven" ? "unproven" : "observed", reason: runtime === "compatible-unproven" ? "unproven runtime version" : null, version, notInterpreted };
+  const base = { version, notInterpreted, runtime, recordsRefused };
+  const seen = (): StreamObservationState => {
+    if (runtime === "incompatible") return { ...base, state: "partial", reason: `Some of its stream records did not match the known shapes and were refused${recordsRefused ? ` (${recordsRefused})` : ""}; what is shown is what matched.` };
+    if (runtime === "compatible-unproven") return { ...base, state: "unproven", reason: `${named} is not one the observer has been proved on; every record read matched the known shapes.` };
+    if (runtime === "unknown") return { ...base, state: "unproven", reason: "Its stream has not said which Claude Code version wrote it yet; every record read matched the known shapes." };
+    return { ...base, state: "observed", reason: null };
+  };
+  if (o && o.structural > 0) return seen();
+  if (runtime === "incompatible") return { ...base, state: "not-observed", reason: source?.reason ?? `${named}'s records did not match the known shapes and were refused.` };
+  if (notInterpreted > 0) return { ...base, state: "not-observed", reason: `${notInterpreted} stream record${notInterpreted === 1 ? " was" : "s were"} received but not interpreted (${named} is not supported by the observer).` };
+  if (!o || o.records === 0) return { ...base, state: "not-observed", reason: "No stream records were received for this execution." };
+  return seen();
 }
 
 /** The runtime state of one execution's stream, from `/factory/status` freshness sources (`stream/<execution>`), or null. */

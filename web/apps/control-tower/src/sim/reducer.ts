@@ -219,6 +219,7 @@ export function newCell(ticketId: string, sliceId: string, definitions: ProductD
     activeAgentIds: [],
     artifacts: [],
     artifactRecords: 0,
+    plan: null,
     merged: null,
     archived: null,
     openedAt: t,

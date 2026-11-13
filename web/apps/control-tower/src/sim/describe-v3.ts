@@ -9,6 +9,8 @@ import { describe } from "./describe";
 import type { LogEntry } from "./log";
 import type { AnyV3Event, UnknownV3Event } from "./v3";
 import { isKnownV3Kind } from "./v3";
+import { gapClassWord } from "./provenance";
+import { gapClassOf } from "./reduce-v3";
 
 const SIGNIFICANCE: Readonly<Record<string, Significance>> = {
   "wave.discovered": "chapter",
@@ -125,14 +127,21 @@ export function describeV3(event: AnyV3Event | UnknownV3Event): string {
       return `Finished (${e.data.status}).`;
     case "tool.refused":
       return `${e.data.tool} was refused in ${station}.`;
-    case "history.gap":
-      return `${e.data.count ?? "Some"} record(s) could not be read (${e.data.reason}).`;
+    case "history.gap": {
+      // Said by the gap's class (observer M6.2): only a history-losing class is "lost".
+      const cls = typeof e.data.class === "string" && e.data.class ? e.data.class : gapClassOf(e.data.reason);
+      const lost = typeof e.data.history_lost === "boolean" ? e.data.history_lost : cls !== "unknown-type" && cls !== "conflict";
+      const n = e.data.count ?? "Some";
+      if (cls === "unknown-type") return `${n} record(s) received, not interpreted (${e.data.reason}).`;
+      if (cls === "conflict") return `A record was read again with different content; the first copy was kept (${e.data.reason}).`;
+      return lost ? `${n} record(s) of history lost: ${gapClassWord(cls)} (${e.data.reason}).` : `${n} record(s): ${gapClassWord(cls)} (${e.data.reason}).`;
+    }
     case "history.began":
       return `History for ${who} begins here (${e.data.reason}).`;
     case "client.history_missing":
-      return "History missed while disconnected; the scene was reloaded.";
+      return e.data.reason === "window" ? "History before here is not loaded." : e.data.reason === "reset" ? "The observer rebuilt its index; the scene was reloaded." : "History missed while disconnected; the scene was reloaded.";
     case "client.snapshot_applied":
-      return "The scene was reloaded from the observer's snapshot.";
+      return "Seeded from the observer's projected state (reconstructed), for what no later event here describes.";
     default:
       return `${e.type.replace(/[._]/g, " ")} for ${who}.`;
   }

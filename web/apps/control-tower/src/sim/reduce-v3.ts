@@ -35,8 +35,8 @@ import { gateId } from "./model";
 import type { Authority, EntityMeta, HistoryGapState } from "./provenance";
 import type { AnyV3Event, FactoryEventV3, UnknownV3Event, V3DataMap } from "./v3";
 import { isEntityRefString, isKnownV3Kind, occurredMs, timeQualityOf } from "./v3";
-import type { AgentRole, ArtifactKind, BeltPhase, CellStage, ModelId, StationId, StepAction, ToolName } from "./vocabulary";
-import { ARTIFACT_KINDS, BELT_PHASES, CELL_STAGES, MAX_ROUNDS, TOOLS } from "./vocabulary";
+import type { AgentRole, AppType, ArtifactKind, BeltPhase, CellStage, ModelId, Risk, StationId, StepAction, ToolName } from "./vocabulary";
+import { ARTIFACT_KINDS, BELT_PHASES, CELL_STAGES, MAX_ROUNDS, RISKS, TOOLS } from "./vocabulary";
 import { bump, EMPTY_EXECUTION_EXTRAS, newCell, put, replaceLast, schedule, setGate, withAgent, withCell, withExecution, withSlice } from "./reducer";
 
 type E<K extends keyof V3DataMap> = FactoryEventV3<K>;
@@ -986,12 +986,18 @@ export function gapClassOf(reason: string): string {
     case "conflict":
       return reason;
     case "unexpected-shape":
+    case "no-timestamps":
       return "unknown-type";
     case "unreadable":
     case "source-unreadable":
       return "source-unreadable";
-    default:
+    case "missing-seq":
+    case "truncated":
+    case "rewritten":
       return "not-received";
+    default:
+      // The observer's own default (event.GapClass): an unknown reason is a record not interpreted.
+      return "unknown-type";
   }
 }
 
@@ -1050,10 +1056,46 @@ function stationEntered(input: Scene, e: E<"station.entered">, at: number): Scen
   return s;
 }
 
+const APP_TYPES: readonly string[] = ["web", "cli", "api", "rest", "grpc", "desktop", "mobile", "library"];
+const riskOf = (value: unknown): Risk | null => (typeof value === "string" && (RISKS as readonly string[]).includes(value) ? (value as Risk) : null);
+const countOf = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null);
+
+/**
+ * The plan's facts on a cell (D11, schema revision 2): app type and risk from the plan's exit (or the
+ * observer's summary), the contract and task counts from its counts. The cell's own `appType` and
+ * `risk` take them when they are words the scene knows; an app type it does not know stays in
+ * `plan.appType` only (the cell's field keeps saying "not recorded").
+ */
+function withPlanFacts(cell: CellState, facts: { appType: string | null; risk: Risk | null; contracts: number | null; tasks: number | null }, eventId: string | null, authority: Authority): CellState {
+  if (facts.appType === null && facts.risk === null && facts.contracts === null && facts.tasks === null) return cell;
+  const prior = cell.plan;
+  const plan = {
+    appType: facts.appType ?? prior?.appType ?? null,
+    risk: facts.risk ?? prior?.risk ?? null,
+    contracts: facts.contracts ?? prior?.contracts ?? null,
+    tasks: facts.tasks ?? prior?.tasks ?? null,
+    eventId: eventId ?? prior?.eventId ?? null,
+    authority,
+  };
+  const appType = plan.appType !== null && APP_TYPES.includes(plan.appType) ? (plan.appType as AppType) : null;
+  const known = [...(appType ? ["appType"] : []), ...(facts.risk ? ["risk"] : [])];
+  return {
+    ...cell,
+    plan,
+    appType: appType ?? cell.appType,
+    risk: facts.risk ?? cell.risk,
+    meta: known.length ? { ...cell.meta, unknown: without(cell.meta.unknown, ...known), fields: { ...cell.meta.fields, ...Object.fromEntries(known.map((k) => [k, authority])) } } : cell.meta,
+  };
+}
+
 function stationExited(input: Scene, e: E<"station.exited">, at: number): Scene {
   const ticket = e.ids.ticket_id;
   const d = e.data;
   const stage = stageOf(d.stage);
+  if (d.station === "plan" || d.app_type || d.risk) {
+    const facts = { appType: typeof d.app_type === "string" && d.app_type ? d.app_type : null, risk: riskOf(d.risk), contracts: d.station === "plan" ? countOf(d.counts?.contracts) : null, tasks: d.station === "plan" ? countOf(d.counts?.tasks) : null };
+    input = withCell(input, ticket, (c) => withPlanFacts(c, facts, e.id, e.authority as Authority));
+  }
   // An exit record wins over a closing the scene inferred (an unclosed visit resumed and exited after all).
   const match = (v: CellState["visits"][number]): boolean => (e.ids.visit_id ? v.visitId === e.ids.visit_id && (v.leftAt === null || v.unclosed !== null) : v.leftAt === null && v.station === d.station);
   return withCell(input, ticket, (c) => {
@@ -1331,13 +1373,20 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
     const stage = stageOf(c.stage);
     const prior = s.cells[c.ticket_id];
     const cell: CellState = prior ?? { ...newCell(c.ticket_id, c.slice_id ?? "", definitions, at, meta(["title", "summary", "risk", "appType", "openedAt"])), title: c.slice_id ?? c.ticket_id };
-    s = { ...s, cells: put(s.cells, c.ticket_id, { ...cell, stage: stage ?? cell.stage, round: c.rounds ?? cell.round, meta: { ...cell.meta, authority: "reconstructed", eventId: e.id, fields: stage ? { ...cell.meta.fields, stage: "reconstructed" } : cell.meta.fields } }) };
+    let next: CellState = { ...cell, stage: stage ?? cell.stage, round: c.rounds ?? cell.round, meta: { ...cell.meta, authority: "reconstructed", eventId: e.id, fields: stage ? { ...cell.meta.fields, stage: "reconstructed" } : cell.meta.fields } };
+    // The plan's facts as the observer projected them (`plan`, else the cell's own app type and risk).
+    const plan = c.plan ?? null;
+    next = withPlanFacts(next, { appType: plan?.app_type ?? c.app_type ?? null, risk: riskOf(plan?.risk ?? c.risk), contracts: countOf(plan?.contracts), tasks: countOf(plan?.tasks) }, plan?.recorded_by ?? null, "reconstructed");
+    s = { ...s, cells: put(s.cells, c.ticket_id, next) };
   }
   for (const x of st.executions ?? []) {
     const prior = s.executions[x.execution_id];
     const state = x.state === "running" || x.state === "active" ? "running" : x.state === "claimed" ? "claimed" : x.state === "completed" || x.state === "finished" ? "completed" : x.state === "failed" ? "failed" : null;
+    // The observer's process states (`/runs`): the process ended and the supervisor has not recorded
+    // the outcome (`ended`), or it ended badly. Never read as still running.
+    const ended = x.state === "ended" ? "exited" : x.state === "interrupted" || x.state === "timed-out" || x.state === "could-not-start" ? x.state : null;
     const base = prior ?? newExecution({ ...e, ids: { ...e.ids, ticket_id: x.ticket_id ?? null, execution_id: x.execution_id } } as unknown as AnyV3Event, x.execution_id, { meta: meta(["next", "claimedAt", "startedAt"]) });
-    s = { ...s, executions: put(s.executions, x.execution_id, { ...base, state: state ?? base.state, attempt: x.attempt ?? base.attempt, meta: { ...base.meta, authority: "reconstructed", eventId: e.id } }) };
+    s = { ...s, executions: put(s.executions, x.execution_id, { ...base, state: state ?? (ended ? "running" : base.state), ended: ended ?? base.ended, attempt: x.attempt ?? base.attempt, meta: { ...base.meta, authority: "reconstructed", eventId: e.id } }) };
   }
   for (const g of st.gates ?? []) {
     const kind = g.gate as Parameters<typeof gateId>[1];
@@ -1345,5 +1394,5 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
     if (!state) continue;
     s = setGate(s, g.ticket_id, kind, g.round ?? null, state, "From the observer's snapshot.", at, 0, meta());
   }
-  return { ...s, completeness: { ...s.completeness, state: "reconstructed", since: at } };
+  return { ...s, completeness: { ...s.completeness, state: "reconstructed", since: at, observer: st.history ?? s.completeness.observer } };
 }
