@@ -1,0 +1,106 @@
+/**
+ * What the overview draws, fetched from the Timeline's data provider: density, concurrency and marks
+ * for the whole extent. Asked for on mount, when the extent grows by more than one bucket, when the
+ * filters or the width change, and when the provider says something changed (at most once a second).
+ * A superseded request is aborted; the last good answer stays drawn while the next is in flight.
+ */
+import { useEffect, useState } from "react";
+import type { ConcurrencySeries, DensitySeries, TimelineData, TimelineFilters, TimelineMark, TimeWindow } from "../contract";
+import { OVERVIEW_MARK_KINDS } from "./model";
+
+/** The fewest milliseconds between two re-queries caused by the provider's notifications. */
+export const NOTIFY_THROTTLE_MS = 1000;
+
+export interface OverviewData {
+  readonly density: DensitySeries | null;
+  readonly concurrency: ConcurrencySeries | null;
+  readonly marks: readonly TimelineMark[];
+  /** Nothing has answered yet (the first load). */
+  readonly loading: boolean;
+  /** A newer request is in flight; what is drawn is the previous answer. */
+  readonly pending: boolean;
+  /** The last request failed and nothing earlier answered either. */
+  readonly failed: boolean;
+  /** Filters the density cannot follow (more than one ticket or execution): it is drawn for all. */
+  readonly unfiltered: boolean;
+}
+
+interface Answer {
+  readonly key: string;
+  readonly density: DensitySeries | null;
+  readonly concurrency: ConcurrencySeries | null;
+  readonly marks: readonly TimelineMark[];
+  readonly answered: boolean;
+}
+
+const NONE: Answer = { key: "", density: null, concurrency: null, marks: [], answered: false };
+
+export function useOverviewData(data: TimelineData, extent: TimeWindow, width: number, filters: TimelineFilters): OverviewData {
+  // Re-query when the provider says so, throttled.
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    let last = 0;
+    let timer: number | null = null;
+    const off = data.subscribe(() => {
+      if (timer !== null) return;
+      const wait = Math.max(0, last + NOTIFY_THROTTLE_MS - performance.now());
+      timer = window.setTimeout(() => {
+        timer = null;
+        last = performance.now();
+        setNonce((n) => n + 1);
+      }, wait);
+    });
+    return () => {
+      off();
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [data]);
+
+  // The extent asked for: moved only when the real one grew by more than a bucket (or changed start).
+  const [asked, setAsked] = useState<TimeWindow>(extent);
+  const bucket = (extent.to - extent.from) / Math.max(1, width);
+  if (asked.from !== extent.from || extent.to > asked.to + bucket || extent.to < asked.to) setAsked(extent);
+
+  const ticket = filters.tickets.length === 1 ? filters.tickets[0] : undefined;
+  const execution = filters.executions.length === 1 ? filters.executions[0] : undefined;
+  const unfiltered = filters.tickets.length > 1 || filters.executions.length > 1;
+  const columns = Math.max(0, Math.floor(width));
+  const key = `${asked.from}|${asked.to}|${columns}|${ticket ?? ""}|${execution ?? ""}|${nonce}`;
+
+  const [answer, setAnswer] = useState<Answer>(NONE);
+  useEffect(() => {
+    if (columns <= 0 || asked.to <= asked.from) return;
+    const ac = new AbortController();
+    const filter = ticket || execution ? { ticket, execution } : undefined;
+    const window = { from: asked.from, to: asked.to };
+    void Promise.allSettled([
+      data.density(window, columns, filter, ac.signal),
+      // Two pixels a bucket: steps stay legible and the observer's answer stays small.
+      data.concurrency(window, Math.max(1, Math.floor(columns / 2)), ac.signal),
+      data.marks(window, OVERVIEW_MARK_KINDS, ac.signal),
+    ]).then(([d, c, m]) => {
+      if (ac.signal.aborted) return;
+      setAnswer((prev) => ({
+        key,
+        density: d.status === "fulfilled" ? d.value : prev.density,
+        concurrency: c.status === "fulfilled" ? c.value : prev.concurrency,
+        marks: m.status === "fulfilled" ? m.value : prev.marks,
+        answered: prev.answered || d.status === "fulfilled" || c.status === "fulfilled" || m.status === "fulfilled",
+      }));
+    });
+    return () => ac.abort();
+    // `key` stands for every input above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, key]);
+
+  const settled = answer.key !== "";
+  return {
+    density: answer.density,
+    concurrency: answer.concurrency,
+    marks: answer.marks,
+    loading: !settled,
+    pending: settled && answer.key !== key,
+    failed: settled && !answer.answered,
+    unfiltered,
+  };
+}
