@@ -78,6 +78,7 @@ export interface TimelineSpan {
   readonly kind: SpanKind;
   /** The entity ref this span is about (the store's selection grammar where one exists). */
   readonly entity: string;
+  /** The parent's ENTITY ref (not a span id): `cell:…`, `workflow:…`, `gate:…`. A visit's parent is its execution when one is recorded. */
   readonly parent: string | null;
   readonly ids: Readonly<Record<string, string>>;
   /** Null when only the end is recorded. */
@@ -181,7 +182,19 @@ export interface TimelineData {
   nextMark(t: number, direction: 1 | -1, kinds: readonly MarkKind[], signal?: AbortSignal): Promise<TimelineMark | null>;
   density(window: TimeWindow, buckets: number, filter?: { ticket?: string; execution?: string }, signal?: AbortSignal): Promise<DensitySeries>;
   concurrency(window: TimeWindow, buckets: number, signal?: AbortSignal): Promise<ConcurrencySeries>;
+  /** Whether each kind of answer is served at all: "none recorded" and "not served by this observer" are different things to say. */
+  availability(): TimelineAvailability;
   subscribe(listener: () => void): () => void;
+}
+
+export type Served = "ok" | "unavailable" | "unknown";
+export interface TimelineAvailability {
+  readonly spans: Served;
+  readonly marks: Served;
+  readonly concurrency: Served;
+  readonly density: Served;
+  /** True when the observer answered spans without a time window (an older observer): the view must say the window is not applied. */
+  readonly unwindowed: boolean;
 }
 
 // ---------------------------------------------------------------- tracks
@@ -309,9 +322,13 @@ export interface TimelineViewState {
   readonly expanded: readonly string[];
   readonly filters: TimelineFilters;
   readonly table: boolean;
+  /** The investigation lens in use (design section 4 of the brief: retries, concurrency, waits, review, recovery), or null. */
+  readonly lens: LensId | null;
 }
 
-export const INITIAL_TIMELINE_VIEW: TimelineViewState = { window: null, grouping: "product", expanded: [], filters: NO_FILTERS, table: false };
+export type LensId = "retries" | "concurrency" | "waits" | "review" | "recovery";
+
+export const INITIAL_TIMELINE_VIEW: TimelineViewState = { window: null, grouping: "product", expanded: [], filters: NO_FILTERS, table: false, lens: null };
 
 // ---------------------------------------------------------------- pure helpers every part shares
 
@@ -394,6 +411,9 @@ export interface TrackCanvasProps {
   readonly scrollTop: number;
   /** True when the provider cut the spans of this window: the canvas says so in place. */
   readonly truncated: boolean;
+  /** Keyboard position: the track and, when on a span, the span. The canvas is one tab stop; the caller owns the cursor. */
+  readonly cursor: TimelineCursor | null;
+  onCursor(next: TimelineCursor | null): void;
   onScroll(top: number): void;
   /** Pan or zoom asked for by wheel, drag or keys. */
   onWindow(next: TimeWindow): void;
@@ -401,6 +421,12 @@ export interface TrackCanvasProps {
   onHover(hit: TimelineHit | null): void;
   onSelect(hit: TimelineHit): void;
   onToggle(trackId: string): void;
+}
+
+export interface TimelineCursor {
+  readonly trackId: string;
+  readonly lane: number;
+  readonly spanId: string | null;
 }
 
 export interface TrackLabelsProps {
@@ -411,6 +437,8 @@ export interface TrackLabelsProps {
   onToggle(trackId: string): void;
   onSelect(node: TrackNode): void;
   onResize(width: number): void;
+  /** The wheel over the labels scrolls the rows. */
+  onScroll(top: number): void;
 }
 
 export interface WindowRulerProps {
@@ -426,6 +454,8 @@ export interface TemporalOverviewProps {
   readonly width: number;
   readonly height: number;
   readonly filters: TimelineFilters;
+  /** Width of the legend column, equal to the tracks' label gutter so the plots line up; the overview draws no second gutter. */
+  readonly gutter: number;
   onWindow(next: TimeWindow | null): void;
 }
 
@@ -442,4 +472,29 @@ export interface TimelineTableProps {
   readonly viewport: TimelineViewport;
   onSelect(span: TimelineSpan): void;
   onToggle(trackId: string): void;
+}
+
+// investigate/index.ts
+//   LENSES: readonly LensDefinition[]
+//   InvestigationPanel(props: InvestigationPanelProps)     (a band between the overview and the tracks; null when no lens)
+
+export interface LensDefinition {
+  readonly id: LensId;
+  readonly label: string;
+  /** One sentence: what the lens shows and from which records. */
+  readonly about: string;
+  /** What choosing the lens sets (grouping, filters, expansion); the person may change any of it afterwards. */
+  preset(tree: TrackTree, view: TimelineViewState): Partial<TimelineViewState>;
+}
+
+export interface InvestigationPanelProps {
+  readonly lens: LensId;
+  readonly data: TimelineData;
+  readonly tree: TrackTree;
+  readonly spans: readonly TimelineSpan[];
+  readonly viewport: TimelineViewport;
+  readonly width: number;
+  onView(patch: Partial<TimelineViewState>): void;
+  /** Select in the store and frame in the Timeline. */
+  onReveal(ref: string, at?: number): void;
 }
