@@ -69,8 +69,16 @@ const (
 	flagArchive              // an archive was read
 )
 
-// DefaultSettle is the settle window W (contract 6.5).
+// DefaultSettle is the settle window W (contract 6.5): the upper bound of the adaptive hold.
 const DefaultSettle = 1500 * time.Millisecond
+
+// DefaultPollMax is the longest the loop waits between polls while nothing changes. An idle poll
+// is one stat per source (no open), so this is cheap; it bounds how long the first line after a
+// quiet spell waits to be read.
+const DefaultPollMax = 500 * time.Millisecond
+
+// DefaultSlack: see Options.Slack.
+const DefaultSlack = 10 * time.Millisecond
 
 // Options configure the loop.
 type Options struct {
@@ -80,9 +88,15 @@ type Options struct {
 	PollMax time.Duration // the interval when idle (the interval doubles up to this)
 	Now     func() time.Time
 	Logger  *log.Logger
-	// Settle is how long a read event is held before it is committed, so events of several
-	// sources arriving close together are committed in history order. 0 means DefaultSettle.
+	// Settle is the longest a read event is held before it is committed, so events of several
+	// sources arriving close together are committed in history order. 0 means DefaultSettle. The
+	// hold is adaptive: an event is committed as soon as every source that could still produce an
+	// earlier one has been read through past its time (see horizon); Settle bounds it when a
+	// source is behind or could not be read.
 	Settle time.Duration
+	// Slack is how far before a source's read-through time an event must sort to count as covered
+	// (a writer stamps a record a moment before it appends it). 0 means DefaultSlack.
+	Slack time.Duration
 	// NoSettle commits every event at the tick that read it (tests).
 	NoSettle bool
 	// MaxPending bounds the events held in the settle window; past it they are committed at once.
@@ -113,10 +127,80 @@ type SourceStat struct {
 	Resets     int64  `json:"resets"`
 	Gone       bool   `json:"gone"`
 	Blocked    bool   `json:"blocked"`
-	// For execution streams: the Claude Code version and whether the parser knows it.
+	// For execution streams: the Claude Code version, whether its records are read (false only
+	// when some were refused for their shape), and the runtime's state.
 	ClaudeVersion string           `json:"claude_code_version,omitempty"`
 	StreamKnown   *bool            `json:"stream_observations,omitempty"`
 	Unrecognised  map[string]int64 `json:"unrecognised,omitempty"`
+	Runtime       *RuntimeStat     `json:"runtime,omitempty"`
+}
+
+// RuntimeStat is what one execution stream says about the runtime that wrote it, and how much of
+// it matched the known record shapes (normalize.ShapeOK).
+type RuntimeStat struct {
+	Name            string           `json:"name"`
+	Version         *string          `json:"version"`
+	State           string           `json:"state"` // proven | compatible-unproven | incompatible | unknown
+	ProvenVersions  []string         `json:"proven_versions"`
+	RecordsAccepted int64            `json:"records_accepted"`
+	RecordsRefused  int64            `json:"records_refused"`
+	RefusedByClass  map[string]int64 `json:"refused_by_class"`
+	Reason          string           `json:"reason"`
+}
+
+// RuntimeSummary sums the streams' runtimes: the worst state, and each version seen.
+type RuntimeSummary struct {
+	Policy         string           `json:"policy"` // structural: each record accepted or refused on its own shape
+	ProvenVersions []string         `json:"proven_versions"`
+	State          string           `json:"state"`
+	Versions       []RuntimeVersion `json:"versions"`
+}
+
+// Summary is the summary as the server reports it.
+func (r RuntimeSummary) Summary() (string, []string, []map[string]any) {
+	out := make([]map[string]any, len(r.Versions))
+	for i, v := range r.Versions {
+		var version any
+		if v.Version != "" {
+			version = v.Version
+		}
+		out[i] = map[string]any{"version": version, "state": v.State, "executions": v.Executions, "records_refused": v.RecordsRefused}
+	}
+	return r.State, r.ProvenVersions, out
+}
+
+// DeliveryStats: how long committed events were held between the tick that read them and their
+// commit (the settle hold), over the last DeliverySamples live events. Backfill is not counted.
+type DeliveryStats struct {
+	SettleMaxMS int64   `json:"settle_max_ms"` // the upper bound of the hold (Options.Settle)
+	Adaptive    bool    `json:"adaptive"`      // held only until every source has been read past the event
+	HoldP50MS   float64 `json:"hold_ms_p50"`
+	HoldP95MS   float64 `json:"hold_ms_p95"`
+	LastHoldMS  float64 `json:"last_hold_ms"`
+	Samples     int     `json:"samples"`
+	Bounded     int64   `json:"released_by_bound"` // events released by the upper bound (a source behind or unreadable)
+}
+
+// RuntimeVersion is one runtime version seen across the streams.
+type RuntimeVersion struct {
+	Version        string `json:"version"`
+	State          string `json:"state"`
+	Executions     int    `json:"executions"`
+	RecordsRefused int64  `json:"records_refused"`
+}
+
+var runtimeRank = map[string]int{normalize.RuntimeProven: 0, normalize.RuntimeUnknown: 1, normalize.RuntimeUnproven: 2, normalize.RuntimeIncompatible: 3}
+
+func runtimeReason(state, version string) string {
+	switch state {
+	case normalize.RuntimeProven:
+		return "the stream's records were proven against fixtures from Claude Code " + version
+	case normalize.RuntimeUnproven:
+		return "Claude Code " + version + " is not one the fixtures come from; every record read so far matched the known shapes"
+	case normalize.RuntimeIncompatible:
+		return "some records did not match the known shapes and were refused (counted, nothing of them forwarded)"
+	}
+	return "no init record has been read yet"
 }
 
 // Stats is a snapshot of the loop's health.
@@ -136,6 +220,8 @@ type Stats struct {
 	// CatchingUp: the observer is still reading what was written before it started (or before an
 	// index rebuild). Events committed meanwhile are backfill: delivered in read order, never late.
 	CatchingUp   bool             `json:"catching_up"`
+	Runtime      RuntimeSummary   `json:"runtime"`
+	Delivery     DeliveryStats    `json:"delivery"`
 	Backfill     int64            `json:"backfill"`
 	Duplicates   int64            `json:"duplicates"`
 	Conflicts    int64            `json:"conflicts"`
@@ -171,7 +257,12 @@ type source struct {
 	saved     string // the generation those lines belonged to
 	lastLine  time.Time
 	lastRead  time.Time // the last poll that found the file
-	gone      bool
+	// readThrough is the start of the last tick whose poll read every complete line the file had:
+	// nothing this source writes after it can be in an event already read (the adaptive settle).
+	readThrough time.Time
+	// beforeLines, when set, runs once before a poll's lines are normalised.
+	beforeLines func()
+	gone        bool
 	// preexisting: found while catching up (it was there before the observer started); liveSeen:
 	// a line written since has been read. Events derived from a preexisting source before any
 	// live line (a stream's closings, a cell's history.began) are backfill too.
@@ -207,6 +298,9 @@ type Observer struct {
 	queue    []pending
 	lastTick time.Time
 	red      redact.Counters
+	people   *peopleScan
+	// backlog: the last tick stopped at its read budget; Run ticks again at once.
+	backlog bool
 	// catchingUp is true from start until a tick reads within its budget and every source has
 	// read past what was in it when first looked at. Until then every event is backfill.
 	catchingUp bool
@@ -214,6 +308,39 @@ type Observer struct {
 	mu       sync.RWMutex
 	stats    Stats
 	interval time.Duration
+	delivery holdSamples
+}
+
+// holdSamples keeps the last few hundred live events' settle holds (read to commit), for health.
+type holdSamples struct {
+	ring    [512]float64
+	n, next int
+	last    float64
+	bounded int64
+}
+
+func (h *holdSamples) add(ms []float64, bounded int64) {
+	for _, v := range ms {
+		h.ring[h.next] = v
+		h.next = (h.next + 1) % len(h.ring)
+		if h.n < len(h.ring) {
+			h.n++
+		}
+		h.last = v
+	}
+	h.bounded += bounded
+}
+
+func (h *holdSamples) stats(settle time.Duration) DeliveryStats {
+	d := DeliveryStats{SettleMaxMS: settle.Milliseconds(), Adaptive: true, Samples: h.n, LastHoldMS: h.last, Bounded: h.bounded}
+	if h.n == 0 {
+		return d
+	}
+	vals := append([]float64(nil), h.ring[:h.n]...)
+	sort.Float64s(vals)
+	d.HoldP50MS = vals[h.n/2]
+	d.HoldP95MS = vals[min(h.n-1, h.n*95/100)]
+	return d
 }
 
 // New makes the loop and resumes every source from the store's checkpoints.
@@ -222,7 +349,7 @@ func New(opts Options) *Observer {
 		opts.PollMin = 150 * time.Millisecond
 	}
 	if opts.PollMax < opts.PollMin {
-		opts.PollMax = time.Second
+		opts.PollMax = DefaultPollMax
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -236,6 +363,9 @@ func New(opts Options) *Observer {
 	if opts.NoSettle {
 		opts.Settle = 0
 	}
+	if opts.Slack <= 0 {
+		opts.Slack = DefaultSlack
+	}
 	if opts.MaxPending <= 0 {
 		opts.MaxPending = 100000
 	}
@@ -246,7 +376,7 @@ func New(opts Options) *Observer {
 		opts.StaleAfter = time.Minute
 	}
 	o := &Observer{opts: opts, identity: normalize.NewIdentity(), seq: normalize.NewSequencer(), sources: map[string]*source{},
-		records: map[string]tail.Checkpoint{}, interval: opts.PollMin, catchingUp: true}
+		records: map[string]tail.Checkpoint{}, interval: opts.PollMin, catchingUp: true, people: newPeopleScan(opts.Root)}
 	o.stats.CatchingUp = true
 	o.stats.Unrecognised = map[string]int64{}
 	for key, cp := range opts.Store.Checkpoints() {
@@ -318,8 +448,10 @@ type tickCtx struct {
 }
 
 // TickBudget bounds the events one tick reads (Options.TickBudget, default this); the rest of a
-// backlog is read by the next ticks, so memory stays bounded however much history is waiting.
-const TickBudget = 20000
+// backlog is read by the next ticks, at once (Run does not wait between them), so memory stays
+// bounded however much history is waiting (D18: 5,000 keeps a tick's read lines, events and
+// their encodings to a few tens of MB).
+const TickBudget = 5000
 
 func (t *tickCtx) full() bool { return len(t.out)+int(t.suppress) >= t.budget }
 
@@ -375,6 +507,7 @@ func (o *Observer) Tick() (int, error) {
 	o.lastTick = now
 	factory := realDir(o.abs(".factory"))
 	if factory {
+		o.people.project()
 		o.readLedgerJSON()
 		o.pollLedger(t)
 		o.pollCells(t)
@@ -385,10 +518,11 @@ func (o *Observer) Tick() (int, error) {
 	if len(t.out) > 0 || len(t.cps) > 0 {
 		o.queue = append(o.queue, pending{at: now, events: t.out, cps: t.cps})
 	}
-	n, err := o.release(now)
+	n, err := o.release(now, o.horizon(now))
 	if o.catchingUp && !t.full() && o.caughtUp() {
 		o.catchingUp = false
 	}
+	o.backlog = t.full()
 	o.record(now, factory, errors.Join(t.err, err), t.suppress)
 	return n, errors.Join(t.err, err)
 }
@@ -417,7 +551,31 @@ func (o *Observer) caughtUp() bool {
 
 // Flush commits everything held, whatever its age (shutdown, tests).
 func (o *Observer) Flush() (int, error) {
-	return o.release(o.opts.Now().Add(24 * time.Hour))
+	at := o.opts.Now().Add(24 * time.Hour)
+	return o.release(at, at.UnixMilli())
+}
+
+// horizon is the order time (Unix ms) up to which no source can still produce an event: the
+// earliest read-through time over every tailed source that has a file (contract 6.5, adaptive).
+// A source with a file that this tick did not read to its end (a backlog over the tick budget, a
+// read error, a file refused as a link or not regular) holds the horizon at its last read-through,
+// so the fixed window bounds the hold. A source with no file yet, or one that has ended, holds
+// nothing back.
+func (o *Observer) horizon(now time.Time) int64 {
+	h := now.UnixMilli()
+	for _, src := range o.sources {
+		cp := src.tailer.CP
+		if src.gone || cp.Gone || src.tailer.Size < 0 && !cp.Blocked {
+			continue
+		}
+		if src.readThrough.IsZero() {
+			return 0
+		}
+		if ms := src.readThrough.UnixMilli(); ms < h {
+			h = ms
+		}
+	}
+	return h
 }
 
 func (o *Observer) readLedgerJSON() {
@@ -441,6 +599,9 @@ func (o *Observer) pollTailed(t *tickCtx, src *source, make func(gen string) lin
 		t.err = errors.Join(t.err, errors.New("could not read "+src.rel))
 	} else if src.tailer.Size >= 0 {
 		src.lastRead = t.now
+		if src.tailer.ReadToEnd() {
+			src.readThrough = t.now
+		}
 	}
 	for _, n := range notes {
 		reason := map[string]string{tail.NoteReset: "rewritten", tail.NoteTruncated: "truncated"}[n.Kind]
@@ -456,6 +617,9 @@ func (o *Observer) pollTailed(t *tickCtx, src *source, make func(gen string) lin
 			src.suppress, src.saved = 0, "" // another history: read it whole
 		}
 		src.norm = nil
+	}
+	if len(lines) > 0 && src.beforeLines != nil {
+		src.beforeLines()
 	}
 	for _, line := range lines {
 		cp := &src.tailer.CP
@@ -642,6 +806,9 @@ func (o *Observer) pollCell(t *tickCtx, src *source) {
 		}
 	}
 	files := normalize.DirFiles{Dir: cellDir}
+	// The people the cell's records name are learned before its new lines are normalised, so a
+	// name in a line (or a finding) is scrubbed the first time it is stored.
+	src.beforeLines = func() { o.people.cell(src.ticket, files, src.tailer.CP.Offset+int64(src.tailer.CP.LineNo)) }
 	n := o.pollTailed(t, src, func(gen string) lineNorm {
 		l := normalize.NewLifecycle(src.ticket, gen, o.opts.Root, o.identity)
 		l.Files, l.Holdouts = files, o.holdouts
@@ -668,7 +835,7 @@ func (o *Observer) pollCell(t *tickCtx, src *source) {
 	// Lost lifecycle writes leave no gap; compare the stage the log implies with cell.json's
 	// once the log has been quiet for the settle window and cell.json is newer (contract 6.5).
 	if life != nil && n == 0 && src.cellStage != "" && t.now.Sub(src.lastLine) > o.opts.Settle {
-		if info, err := os.Lstat(src.tailer.Abs); err == nil && src.cellMTime > info.ModTime().UnixNano() {
+		if src.tailer.Size >= 0 && src.cellMTime > src.tailer.ModNS {
 			if ev := life.StateMismatch(src.cellStage, t.read(cp.LineNo, true)); ev != nil && !src.mismatch[ev.ID] {
 				src.mismatch[ev.ID] = true
 				o.emit(t, []*event.Event{ev}, false)
@@ -825,7 +992,8 @@ func readArchive(p string) (*archive, error) {
 		}
 		h256 := newHasher()
 		var keep []byte
-		keepIt := rel == LifecycleFile || rel == "cell.json" || rel == "spec.json" || strings.HasPrefix(rel, "review/") && strings.HasSuffix(rel, ".json")
+		keepIt := rel == LifecycleFile || rel == "cell.json" || rel == "spec.json" || rel == "build-report.json" ||
+			strings.HasPrefix(rel, "review/") && strings.HasSuffix(rel, ".json")
 		var w io.Writer = h256
 		buf := &limitedBuffer{max: 64 << 20}
 		if keepIt {
@@ -917,6 +1085,7 @@ func (o *Observer) catchUp(t *tickCtx, ticket string, a *archive) bool {
 		}
 		suppress = live.tailer.CP.LineNo
 	}
+	o.people.cell("archive:"+ticket, a.files, int64(len(a.lifecycle)))
 	l := normalize.NewLifecycle(ticket, gen, o.opts.Root, o.identity)
 	l.Files, l.Holdouts = a.files, o.holdouts
 	lines := strings.Split(string(a.lifecycle), "\n")
@@ -936,51 +1105,70 @@ func (o *Observer) catchUp(t *tickCtx, ticket string, a *archive) bool {
 
 // ---- commit ----
 
-// release commits every held event read at or before now − W, in history order, marking late
-// ones, dropping duplicates and reporting conflicts.
-func (o *Observer) release(now time.Time) (int, error) {
+// release commits every held event that has settled, in history order, marking late ones,
+// dropping duplicates and reporting conflicts. An event has settled when its order time is at or
+// before the horizon (every source has been read through past it), when it was read at least the
+// settle window ago (the bound), when it is backfill (catching up delivers in read order and is
+// never late), or when too many events are held. Events read later but sorting before what is
+// committed go with it, so delivery stays in history order. A tick's source checkpoints are
+// committed once every event that tick read has been, and every earlier tick's too.
+func (o *Observer) release(now time.Time, horizon int64) (int, error) {
 	cutoff := now.Add(-o.opts.Settle)
+	covered := horizon - o.opts.Slack.Milliseconds()
 	total := 0
 	for _, p := range o.queue {
 		total += len(p.events)
 	}
-	k := 0
-	for k < len(o.queue) && (!o.queue[k].at.After(cutoff) || total > o.opts.MaxPending) {
-		total -= len(o.queue[k].events)
-		k++
-	}
-	if k == 0 {
-		o.setWatermark(now)
-		return 0, nil
-	}
+	over := total > o.opts.MaxPending
 	var events []*event.Event
-	cps := map[string]tail.Checkpoint{}
 	top := ""
-	for _, p := range o.queue[:k] {
-		events = append(events, p.events...)
-		for key, cp := range p.cps {
-			cps[key] = cp
-		}
+	keep := make([][]*event.Event, len(o.queue))
+	holds := []float64{}
+	bounded := int64(0)
+	for i, p := range o.queue {
+		byBound := !p.at.After(cutoff)
 		for _, ev := range p.events {
-			if ev.Order > top {
-				top = ev.Order
+			if over || byBound || ev.Backfill || o.catchingUp || ev.Time.OrderMS <= covered {
+				events = append(events, ev)
+				if ev.Order > top {
+					top = ev.Order
+				}
+				if !ev.Backfill && !o.catchingUp {
+					holds = append(holds, float64(now.Sub(p.at).Microseconds())/1000)
+					if byBound && ev.Time.OrderMS > covered {
+						bounded++
+					}
+				}
+			} else {
+				keep[i] = append(keep[i], ev)
 			}
 		}
 	}
-	// Events read later but sorting before what is committed now go with it, so whatever arrives
-	// within the window is delivered in history order. Their sources' checkpoints stay where they
-	// are until their own tick is committed (a crash re-reads them; their ids drop the repeat).
-	remaining := make([][]*event.Event, len(o.queue))
-	for i := k; i < len(o.queue); i++ {
-		var rest []*event.Event
-		for _, ev := range o.queue[i].events {
+	// What is still held but sorts before something committed now goes with it.
+	for i := range keep {
+		rest := keep[i][:0]
+		for _, ev := range keep[i] {
 			if ev.Order < top {
 				events = append(events, ev)
+				holds = append(holds, float64(now.Sub(o.queue[i].at).Microseconds())/1000)
 			} else {
 				rest = append(rest, ev)
 			}
 		}
-		remaining[i] = rest
+		keep[i] = rest
+	}
+	// Checkpoints: every leading tick whose events are all released.
+	k := 0
+	cps := map[string]tail.Checkpoint{}
+	for k < len(o.queue) && len(keep[k]) == 0 {
+		for key, cp := range o.queue[k].cps {
+			cps[key] = cp
+		}
+		k++
+	}
+	if len(events) == 0 && len(cps) == 0 {
+		o.setWatermark(now, horizon)
+		return 0, nil
 	}
 	seen := map[string]string{}
 	var dupes int64
@@ -1032,18 +1220,28 @@ func (o *Observer) release(now time.Time) (int, error) {
 	if err != nil {
 		return 0, err // everything stays queued and is tried again next tick
 	}
-	for i := k; i < len(o.queue); i++ {
-		o.queue[i].events = remaining[i]
+	queue := o.queue[:0]
+	for i := range o.queue {
+		if i < k {
+			continue
+		}
+		p := o.queue[i]
+		p.events = keep[i]
+		if i < k || len(p.events) == 0 && len(p.cps) == 0 {
+			continue
+		}
+		queue = append(queue, p)
 	}
-	o.queue = append([]pending(nil), o.queue[k:]...)
+	o.queue = queue
 	o.mu.Lock()
 	o.stats.Committed += int64(n)
 	o.stats.Conflicts += int64(len(conflicts))
 	o.stats.Late += late
 	o.stats.Backfill += backfill
 	o.stats.Duplicates += dupes
+	o.delivery.add(holds, bounded)
 	o.mu.Unlock()
-	o.setWatermark(now)
+	o.setWatermark(now, horizon)
 	return n, nil
 }
 
@@ -1066,9 +1264,10 @@ func nullSeq(n int64) any {
 	return n
 }
 
-// setWatermark publishes the live edge: min(now − W, the earliest event still held).
-func (o *Observer) setWatermark(now time.Time) {
-	wm := now.Add(-o.opts.Settle).UnixMilli()
+// setWatermark publishes the live edge: up to where history is asserted complete (the horizon,
+// or now − W where the bound applies), and never past the earliest event still held.
+func (o *Observer) setWatermark(now time.Time, horizon int64) {
+	wm := max(horizon-o.opts.Slack.Milliseconds(), now.Add(-o.opts.Settle).UnixMilli())
 	for _, p := range o.queue {
 		for _, ev := range p.events {
 			if ev.Time.OrderMS < wm {
@@ -1104,8 +1303,12 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 		pend += len(p.events)
 	}
 	o.stats.Pending = pend
+	o.stats.Delivery = o.delivery.stats(o.opts.Settle)
 	o.stats.Sources = o.stats.Sources[:0]
 	unrec := map[string]int64{}
+	versions := map[string]RuntimeVersion{}
+	worst := normalize.RuntimeProven
+	streams := 0
 	for _, src := range o.sources {
 		cp := src.tailer.CP
 		st := SourceStat{Key: src.key, Path: cp.Path, Offset: cp.Offset, Lines: cp.Lines, Refused: cp.Refused, Duplicates: cp.Dupes,
@@ -1127,6 +1330,7 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 			st.State = "idle"
 		}
 		if src.kind == kindStream {
+			streams++
 			rec := o.records[execKey+src.execution]
 			switch {
 			case rec.Flags&flagFinished != 0:
@@ -1135,8 +1339,27 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 				st.State = "stale"
 			}
 			if s := src.stream; s != nil {
-				v, ok := s.Version()
+				v, state := s.Version()
+				ok := state != normalize.RuntimeIncompatible
 				st.ClaudeVersion, st.StreamKnown = v, &ok
+				rt := &RuntimeStat{Name: "claude-code", State: state, ProvenVersions: normalize.ProvenVersions, RecordsAccepted: s.Accepted,
+					RecordsRefused: s.RefusedTotal(), RefusedByClass: map[string]int64{}, Reason: runtimeReason(state, v)}
+				if v != "" {
+					rt.Version = &v
+				}
+				for k, n := range s.Refused {
+					rt.RefusedByClass[k] = n
+				}
+				st.Runtime = rt
+				rv := versions[v]
+				rv.Version, rv.Executions, rv.RecordsRefused = v, rv.Executions+1, rv.RecordsRefused+rt.RecordsRefused
+				if rv.State == "" || runtimeRank[state] > runtimeRank[rv.State] {
+					rv.State = state
+				}
+				versions[v] = rv
+				if runtimeRank[state] > runtimeRank[worst] {
+					worst = state
+				}
 				if len(s.Unrecognised) > 0 {
 					st.Unrecognised = map[string]int64{}
 					for k, n := range s.Unrecognised {
@@ -1149,6 +1372,15 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 		o.stats.Sources = append(o.stats.Sources, st)
 	}
 	o.stats.Unrecognised = unrec
+	if streams == 0 {
+		worst = normalize.RuntimeUnknown
+	}
+	summary := RuntimeSummary{Policy: "structural", ProvenVersions: normalize.ProvenVersions, State: worst, Versions: []RuntimeVersion{}}
+	for _, v := range versions {
+		summary.Versions = append(summary.Versions, v)
+	}
+	sort.Slice(summary.Versions, func(i, j int) bool { return summary.Versions[i].Version < summary.Versions[j].Version })
+	o.stats.Runtime = summary
 	sort.Slice(o.stats.Sources, func(i, j int) bool { return o.stats.Sources[i].Key < o.stats.Sources[j].Key })
 	o.stats.IntervalMS = o.interval.Milliseconds()
 }
@@ -1183,6 +1415,9 @@ func (o *Observer) Run(done <-chan struct{}) {
 			o.interval = min(o.interval*2, o.opts.PollMax)
 		}
 		next := o.interval
+		if o.backlog {
+			next = 0 // more is waiting: read it now, a budget at a time
+		}
 		o.mu.Unlock()
 		timer.Reset(next)
 	}

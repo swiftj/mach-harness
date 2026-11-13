@@ -1,9 +1,14 @@
 package normalize
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"mach/observer/internal/event"
+	"mach/observer/internal/testkit"
 )
 
 func TestClassifyToolKeepsClassesNotContent(t *testing.T) {
@@ -67,4 +72,31 @@ func TestSequencerKeepsEachSourceMonotonic(t *testing.T) {
 	if o.Order[16] != '6' {
 		t.Fatal("observer rank")
 	}
+}
+
+// Every record of every kept fixture (2.1.322 and 2.1.323) matches the known shapes: a shape rule
+// that refused a real record would hide a real run.
+func TestEveryFixtureRecordHasAKnownShape(t *testing.T) {
+	files, _ := filepath.Glob(filepath.Join(testkit.RepoRoot(), "tests", "fixtures", "execution-streams", "*.jsonl"))
+	if len(files) < 7 {
+		t.Fatalf("%d fixtures", len(files))
+	}
+	checked := 0
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			var rec map[string]any
+			if json.Unmarshal([]byte(line), &rec) != nil {
+				continue
+			}
+			if ok, at := ShapeOK(Classify(rec), rec); !ok {
+				t.Errorf("%s line %d (%s): %s", filepath.Base(f), i+1, Classify(rec), at)
+			}
+			checked++
+		}
+	}
+	t.Logf("%d records of %d fixtures checked", checked, len(files))
 }

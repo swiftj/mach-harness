@@ -32,7 +32,7 @@
                   "schema_revision": {
                                        "type": "integer",
                                        "minimum": 0,
-                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons."
+                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events."
                                      },
                   "id": {
                           "type": "string",
@@ -150,7 +150,8 @@
                                                           "maxLength": 40,
                                                           "description": "For station writers: the script, e.g. build.py."
                                                         },
-                                              "source_version": {"type": ["string", "null"], "maxLength": 60}
+                                              "source_version": {"type": ["string", "null"], "maxLength": 60},
+                                              "runtime_state": {"enum": ["proven", "compatible-unproven", "incompatible", "unknown"], "description": "Revision 2. Only on an event read from an execution stream: the state of the Claude Code runtime that wrote it, when the record was read. proven: a version the observer's fixtures come from; compatible-unproven: another version whose records have all matched the known shapes; incompatible: records of this stream were refused for their shape (this one matched); unknown: no init record read yet. Absent on every other event."}
                                             }
                             },
                   "authority": {"enum": ["authoritative", "observed", "reconstructed"]},
@@ -1455,7 +1456,9 @@
                                                                   "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,39}$"},
                                                                   "additionalProperties": {"type": ["integer", "boolean"]},
                                                                   "description": "Integer and boolean facts the station recorded (tasks, items, errors, problems). Never strings."
-                                                                }
+                                                                },
+                                                      "app_type": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_-]{0,39}$", "description": "Revision 2. The app type the plan station recorded on its exit (cell.json app_type); absent on other exits."},
+                                                      "risk": {"enum": ["Low", "Medium", "High", null], "description": "Revision 2. The risk tier the plan station recorded on its exit; absent on other exits."}
                                                     }
                                     },
              "data_gate_evaluated": {
@@ -2045,10 +2048,14 @@
                                                                          "unreadable",
                                                                          "no-timestamps",
                                                                          "state-mismatch",
-                                                                         "unknown-type"
+                                                                         "unknown-type",
+                                                                         "unexpected-shape",
+                                                                         "evicted"
                                                                        ]
                                                              },
-                                                   "count": {"type": ["integer", "null"]}
+                                                   "count": {"type": ["integer", "null"]},
+                                                   "class": {"enum": ["not-received", "unparsable-line", "unknown-type", "state-mismatch", "evicted", "source-unreadable", "conflict"], "description": "Revision 2. What the gap means: not-received (bytes missing: missing-seq, truncated, rewritten), unparsable-line (received, unreadable), unknown-type (received and well formed, not interpreted: unknown-type, unexpected-shape, no-timestamps), state-mismatch (records probably missing), evicted (no longer held), source-unreadable (unreadable), conflict (two differing copies; the first is kept)."},
+                                                   "history_lost": {"type": "boolean", "description": "Revision 2. True when the gap loses history (not-received, unparsable-line, state-mismatch, evicted, source-unreadable); false for unknown-type and conflict, whose records were received."}
                                                  }
                                  }
            }

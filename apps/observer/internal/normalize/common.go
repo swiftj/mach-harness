@@ -29,8 +29,6 @@ import (
 const (
 	IntakeVersion    = "2"
 	LifecycleVersion = "1"
-	// ClaudeVersion is the only Claude Code version the stream parser is pinned to (contract 10.5).
-	ClaudeVersion = "2.1.322"
 )
 
 // Read is what a normaliser knows about a line besides its bytes.
@@ -296,7 +294,9 @@ func gapEvent(id, sourceKey, reason string, from, to, count any, basis []string,
 	ev := observerEvent("history.gap", id, "gap:"+reason, basis, nil)
 	ev.Time.ObservedAt = Stamp(r.At)
 	ev.Time.Precision = event.PrecisionUnknown
-	ev.Data = map[string]any{"source_key": sourceKey, "from_seq": from, "to_seq": to, "reason": reason, "count": count}
+	class, lost := event.GapClass(reason)
+	ev.Data = map[string]any{"source_key": sourceKey, "from_seq": from, "to_seq": to, "reason": reason, "count": count,
+		"class": class, "history_lost": lost}
 	return ev
 }
 

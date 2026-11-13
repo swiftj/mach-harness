@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -38,7 +39,17 @@ import (
 	"mach/observer/internal/webui"
 )
 
+// MemoryLimit is the soft limit the Go runtime keeps the observer's memory under (D18 of the
+// M6.2 acceptance: reading a 230,000-event history peaked at 1.6 GB). It is a target for the
+// garbage collector, not a cap: what the observer must hold is bounded by its own limits (the
+// tick budget, the store's memory window, shared checkpoints); this keeps the collector from
+// letting garbage pile up to twice that. GOMEMLIMIT, when set, wins.
+const MemoryLimit = 208 << 20
+
 func main() {
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(MemoryLimit)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {

@@ -26,8 +26,9 @@ import (
 
 // Version of the redaction and normalisation rules. 4: one text scrubber for events and served
 // artifact content; long hex runs inside text are redacted (a whole value that is a digest or a
-// commit is not).
-const Version = 4
+// commit is not). 5: people by role everywhere (the per-project deny-list, structured records),
+// stream records accepted by shape, gap classes, plan-exit facts.
+const Version = 5
 
 // pathRest is the rest of a path in text: up to white space, a quote, a backtick or a bracket.
 const pathRest = "[^\\s\"'`<>|;,()\\[\\]{}]*"
@@ -256,6 +257,8 @@ func scrubText(s, projectRoot string, max int) (string, int) {
 		return "[withheld]", n
 	}
 	s, k := replaceSensitive(rootRelative(s, projectRoot), true)
+	n += k
+	s, k = PeopleFor(projectRoot).Replace(s)
 	n += k
 	s = strings.TrimSpace(stripControls(s, false))
 	if utf8.RuneCountInString(s) > max {

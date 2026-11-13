@@ -338,7 +338,7 @@ model for the whole execution". It cannot show what each tool call did, how long
 
 ## 7. What could not be determined
 
-- Whether any of this holds on another Claude Code version: one version (2.1.322), one machine, one day. The shapes in section 3 are what a parser should pin to `claude_code_version`.
+- Whether any of this holds on another Claude Code version: one version (2.1.322), one machine, one day. The shapes in section 3 are what a parser should check, record by record (section 8; this document first said "pin to `claude_code_version`", which the M6.2 acceptance showed to be wrong).
 - Whether `workflow_progress` snapshots are emitted on a timer or on events: the cadence (start, finish, then every few seconds) is inferred from timing.
 - Whether `state` has values other than `start`, `progress`, `done`, `error`; whether `attempt` > 1 appears on a retried agent (never seen).
 - Several tickets in one belt (`parallel(runTicket)`): not run. Distinguishing parallel tickets relies on the ticket ID in labels; inferred from the three parallel reviewer seats, not observed for two tickets.
@@ -348,3 +348,57 @@ model for the whole execution". It cannot show what each tool call did, how long
 - The M3/M4 path end to end (`factory enable`, `tick`, a product wave): not run; the executor and wrapper were the real ones, the supervisor and ledger were not.
 - `stream_event` partial messages: none appeared (no `--include-partial-messages`), consistent with M6.0's inference.
 - A new record type, `system/thinking_tokens`, appeared only in run 4 (main loop thinking); its meaning was not examined.
+
+---
+
+## 8. 2.1.323, and acceptance by shape instead of a version pin (M6.2)
+
+**Observed.** The M6.2 end-to-end acceptance (`M6_2_ACCEPTANCE.md`, defect D1) ran three real executions on the same
+machine the same day; Claude Code had auto-updated to **2.1.323** (`system/init.claude_code_version`). The observer was
+pinned to 2.1.322 exactly, so it read only `session.initialized`, `tool.refused` and `execution.usage` and reported
+17 `history.gap reason: unknown-type`: no workflow, agent or tool events for a live run. The format was compatible: a
+copy of the same streams with only the `init` version rewritten parsed whole (13 agents in the first execution, 25 in
+the second, every figure matching). Read through the shape checks below, **none** of the 925 records of the three 2.1.323
+streams was refused (runs A and B, copies in the scratch area). 2.1.323 adds fields the
+parser does not read (`result.origin`, `model_usage_since_last_result`, `usage.iterations`, more `modelUsage` keys)
+and one record type, `system/thinking_tokens` (5 records; also seen once in 2.1.322 run 4), which is not read.
+
+**Fixture.** `tests/fixtures/execution-streams/belt-plan-build-verify-2.1.323.jsonl`: records 1–45, 140–160 and 195–209
+of the acceptance run's first execution (`plan` from `spec-ready`, a 10-task build, two verifications), 83 records,
+made with `sanitize.py --keep 1-45,140-160,195-209`. The raw stream stayed in the scratch area.
+
+**Policy now (the observer, `internal/normalize/streamshape.go`).**
+
+1. Each record is accepted or refused **on its own shape**. For every classification the parser reads, a shape lists
+   the type of each field it reads and of the objects on the way to them (`system/task_progress`:
+   `task_id` string, `workflow_progress` a list of objects, each with `type` string, `index` number, `agentId`
+   string, `startedAt`/`queuedAt`/`durationMs`/`lastProgressAt` numbers, `toolCalls`/`tokens` numbers,
+   `lastToolName` string, …; a message's content blocks by their `type`; each `modelUsage` entry's numbers). A field
+   may be absent or null unless it is required (`task_id`, a `tool_use`'s `id` and `name`, a `tool_result`'s
+   `tool_use_id`, a message's `message` object); when present it must have its type. Fields the parser does not read
+   are not looked at, so a runtime that adds fields stays compatible.
+2. A record whose shape does not match is **refused whole**: nothing of it is read, it is counted per classification,
+   and the first refusal of each classification is a `history.gap` with `reason: unexpected-shape`
+   (`class: unknown-type`, `history_lost: false`: received, not interpreted). A record type the parser does not know
+   is `reason: unknown-type`, as before.
+3. Deny by default per record type and per field is unchanged.
+4. The runtime version is recorded per stream, not used as a gate: `proven` (a version the fixtures come from: 2.1.322,
+   2.1.323), `compatible-unproven` (another version, every record so far matched), `incompatible` (records were refused
+   for their shape: counted; the records that matched are still read), `unknown` (no `init` yet). It is on every stream
+   event as `origin.runtime_state`, on each stream source in `/health` and `/factory/status`
+   (`freshness.sources[].runtime: {name, version, state, proven_versions, records_accepted, records_refused,
+   refused_by_class, reason}`), summed in `health.ingest.runtime`, and in `/session`
+   `capabilities.stream_observations` (`policy: "structural"`). A view can say "observed on an unproven runtime
+   version" instead of showing nothing.
+
+**Held by tests** (`apps/observer`): every record of every fixture matches the shapes
+(`normalize.TestEveryFixtureRecordHasAKnownShape`, 291 records); the 2.1.323 fixture is read whole and `proven`
+(`ingest.TestRealStream2_1_323IsReadWhole`); a made-up 9.9.9 with the known shapes is accepted and flagged
+`compatible-unproven` on the source and every event (`TestUnprovenVersionWithKnownShapesIsAccepted`); 9.9.10 whose
+`task_progress` agents carry `startedAt` as a string has each such record refused and counted, no agent event
+forwarded, one `unexpected-shape` gap, the rest read, the source `incompatible` (`TestChangedShapeIsRefusedPerRecord`).
+On a copy of the acceptance run A the observer now yields 405 events (was 222), 38 agents (13 + 25), one
+`unknown-type` gap (`system/thinking_tokens`), the runtime `proven`, history `complete`.
+
+**To prove a new version:** run a belt on it, sanitize an excerpt with `sanitize.py`, add it to the fixtures and the
+version to `normalize.ProvenVersions` and `feed.ProvenStreamVersions` (a test holds them equal).

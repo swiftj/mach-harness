@@ -448,7 +448,7 @@ func ProjectView(s *State) map[string]any {
 		"waves":             len(s.Waves),
 		"slices":            len(s.Slices),
 		"cells":             len(s.Cells),
-		"history":           map[string]any{"partial": s.Partial, "gaps": s.GapCounts, "not_v3": s.NotV3},
+		"history":           HistoryFacts(s),
 	}
 }
 
@@ -539,7 +539,9 @@ func CellSummary(c *Cell) map[string]any {
 		last = c.Visits[n-1].Outcome
 	}
 	return map[string]any{"ticket_id": c.TicketID, "cell_instance": c.CellInstance, "slice_id": c.SliceID, "wave_id": c.WaveID, "stage": c.Stage,
-		"stage_source": c.StageSource, "risk": c.Risk, "app_type": c.AppType, "created_at": TV(c.FirstSeen), "updated_at": TV(c.Updated),
+		"stage_source": c.StageSource, "risk": c.Risk, "app_type": c.AppType,
+		"plan": map[string]any{"app_type": orNil(c.AppType), "risk": orNil(c.Risk), "contracts": c.Contracts, "tasks": c.TasksPlanned,
+			"recorded_by": orNil(c.AppTypeSource)}, "created_at": TV(c.FirstSeen), "updated_at": TV(c.Updated),
 		"current_visit": c.CurrentVisit, "round": c.Round, "visits": len(c.Visits), "last_outcome": last, "lifecycle": c.Lifecycle,
 		"archived": c.Archived, "merged": c.Merge != nil, "executions": nonNilS(c.Executions)}
 }
@@ -662,7 +664,39 @@ func SnapshotView(s *State) map[string]any {
 		gates = append(gates, s.Gates[k])
 	}
 	return map[string]any{"factory": FactoryView(s), "project": ProjectView(s), "waves": waves, "slices": slices, "cells": cells,
-		"executions": execs, "gates": gates, "gaps": orEmpty(s.Gaps)}
+		"executions": execs, "gates": gates, "gaps": orEmpty(s.Gaps), "history": HistoryFacts(s)}
+}
+
+// HistoryFacts says how complete the projected history is, by gap class (contract 6.5, revision
+// 2). Only the classes that lose history make it partial: not-received, unparsable-line,
+// state-mismatch, evicted (the projection's own partial: history no longer held) and
+// source-unreadable. unknown-type is "received, not interpreted" and conflict keeps the first
+// copy: both are reported, neither marks history as missing.
+func HistoryFacts(s *State) map[string]any {
+	classes := map[string]int64{}
+	lost := map[string]int64{}
+	notInterpreted := map[string]int64{}
+	for c, n := range s.GapClasses {
+		classes[c] = n
+	}
+	if s.Partial != "" {
+		classes["evicted"]++
+	}
+	for c, n := range classes {
+		switch c {
+		case "unknown-type":
+			notInterpreted[c] = n
+		case "conflict":
+		default:
+			lost[c] = n
+		}
+	}
+	completeness := "complete"
+	if len(lost) > 0 {
+		completeness = "partial"
+	}
+	return map[string]any{"completeness": completeness, "partial": s.Partial, "lost": lost, "not_interpreted": notInterpreted,
+		"classes": classes, "gaps": s.GapCounts, "not_v3": s.NotV3}
 }
 
 // HasPrefixAny reports whether v starts with any prefix.
@@ -673,4 +707,12 @@ func HasPrefixAny(v string, prefixes ...string) bool {
 		}
 	}
 	return false
+}
+
+// orNil is s, or nil when it is empty (a JSON null for "not recorded").
+func orNil(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

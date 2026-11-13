@@ -17,8 +17,10 @@ import (
 // Defaults.
 const (
 	DefaultInterval       = 1000 // positions between in-memory checkpoints
-	DefaultMaxCheckpoints = 64
+	DefaultMaxCheckpoints = 32
 	DefaultPersistEvery   = 5000 // positions between saved projections
+
+	DefaultPersistMinInterval = 15 * time.Second
 )
 
 // ErrNotHeld: a snapshot at that cursor cannot be rebuilt because the events before it are no
@@ -34,12 +36,10 @@ type Options struct {
 	// the log's tail and a long history survives the store's memory window.
 	PersistDir   string
 	PersistEvery uint64
-	Logger       *log.Logger
-}
-
-type checkpoint struct {
-	pos  uint64
-	data []byte // the encoded State: immutable, cheap to keep
+	// PersistMinInterval is the least time between two saves (0: DefaultPersistMinInterval; tests
+	// set a negative value to save at every PersistEvery).
+	PersistMinInterval time.Duration
+	Logger             *log.Logger
 }
 
 // Projector keeps the projection up to date with the log. One goroutine (Run) follows the log;
@@ -51,6 +51,8 @@ type Projector struct {
 	mu          sync.Mutex
 	state       *State
 	cps         []checkpoint
+	blobs       blobs // the live state's entity encodings, shared by the checkpoints
+	persistedAt time.Time
 	lastPersist uint64
 	lastErr     string
 	syncs       int64
@@ -66,6 +68,9 @@ func New(opts Options) *Projector {
 	}
 	if opts.PersistEvery == 0 {
 		opts.PersistEvery = DefaultPersistEvery
+	}
+	if opts.PersistMinInterval == 0 {
+		opts.PersistMinInterval = DefaultPersistMinInterval
 	}
 	if opts.Logger == nil {
 		opts.Logger = log.New(io.Discard, "", 0)
@@ -83,6 +88,7 @@ func (p *Projector) start() {
 	epoch := p.opts.Log.Epoch()
 	floor, head := p.opts.Log.Bounds()
 	p.cps = nil
+	p.blobs = blobs{}
 	if saved, err := loadSaved(p.opts.PersistDir); err == nil && saved != nil {
 		if saved.Epoch == epoch && saved.Format == FormatVersion && saved.Metrics != nil && saved.Metrics.Version == metrics.DefinitionsVersion &&
 			saved.Pos <= head && saved.Pos >= floor {
@@ -101,16 +107,17 @@ func (p *Projector) start() {
 }
 
 func (p *Projector) addCheckpoint() {
-	data, err := json.Marshal(p.state)
+	cp, err := p.blobs.snapshot(p.state)
 	if err != nil {
 		p.lastErr = "could not encode a checkpoint"
+		p.blobs.valid = false
 		return
 	}
 	if n := len(p.cps); n > 0 && p.cps[n-1].pos == p.state.Pos {
-		p.cps[n-1].data = data
+		p.cps[n-1] = cp
 		return
 	}
-	p.cps = append(p.cps, checkpoint{pos: p.state.Pos, data: data})
+	p.cps = append(p.cps, cp)
 	p.trimCheckpoints()
 }
 
@@ -160,6 +167,7 @@ func (p *Projector) syncLocked() {
 			p.state.Partial = fmt.Sprintf("events %d to %d were evicted before the projection read them", p.state.Pos+1, floor)
 			p.state.Pos = floor
 			p.cps = nil
+			p.blobs.valid = false
 			p.addCheckpoint()
 			continue
 		}
@@ -181,7 +189,10 @@ func (p *Projector) syncLocked() {
 			}
 		}
 	}
-	if p.opts.PersistDir != "" && p.state.Pos-p.lastPersist >= p.opts.PersistEvery {
+	// The saved projection is a cache for restarts: written every PersistEvery positions, but not
+	// more than every PersistMinInterval (a long history read at start would otherwise write the
+	// whole projection dozens of times).
+	if p.opts.PersistDir != "" && p.state.Pos-p.lastPersist >= p.opts.PersistEvery && time.Since(p.persistedAt) >= p.opts.PersistMinInterval {
 		p.persistLocked()
 	}
 }
@@ -210,6 +221,7 @@ func (p *Projector) persistLocked() {
 		return
 	}
 	p.lastPersist = p.state.Pos
+	p.persistedAt = time.Now()
 }
 
 // Run follows the log until done is closed, then saves the projection.
@@ -249,6 +261,8 @@ type Status struct {
 	Persisted   uint64 `json:"persisted_at"`
 	Partial     string `json:"partial,omitempty"`
 	LastError   string `json:"last_error,omitempty"`
+	// History is HistoryFacts at the projection's position: completeness by gap class.
+	History map[string]any `json:"history"`
 }
 
 // Status reads the projector's health without syncing.
@@ -256,7 +270,7 @@ func (p *Projector) Status() Status {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	st := Status{Pos: p.state.Pos, Applied: p.state.Applied, NotV3: p.state.NotV3, Checkpoints: len(p.cps), Persisted: p.lastPersist,
-		Partial: p.state.Partial, LastError: p.lastErr}
+		Partial: p.state.Partial, LastError: p.lastErr, History: HistoryFacts(p.state)}
 	if len(p.cps) > 0 {
 		st.OldestCP = p.cps[0].pos
 	}
@@ -271,12 +285,12 @@ func (p *Projector) At(at uint64) (*State, bool, error) {
 	p.syncLocked()
 	cur := p.state.Pos
 	if at == 0 || at == cur {
-		data, err := json.Marshal(p.state)
+		// A private copy at the head: the latest checkpoint brought to the head (only what changed
+		// since is encoded again), decoded outside the lock.
+		p.addCheckpoint()
+		base := p.cps[len(p.cps)-1]
 		p.mu.Unlock()
-		if err != nil {
-			return nil, false, err
-		}
-		s, err := decodeState(data)
+		s, err := decodeCheckpoint(base)
 		return s, false, err
 	}
 	if at > cur {
@@ -291,7 +305,7 @@ func (p *Projector) At(at uint64) (*State, bool, error) {
 	base := p.cps[i]
 	p.mu.Unlock()
 
-	s, err := decodeState(base.data)
+	s, err := decodeCheckpoint(base)
 	if err != nil {
 		return nil, false, err
 	}

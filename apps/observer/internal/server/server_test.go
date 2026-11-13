@@ -886,3 +886,39 @@ func sha(b []byte) string {
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])
 }
+
+// GET /api/v1/series: counts per bucket by kind and authority, every event once, bounded buckets.
+func TestSeries(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	all := h.get(t, "/api/v1/series")
+	total := int(all["total"].(float64))
+	head := len(feedtest.Scenario())
+	if total != head || all["bucket_ms"].(float64) < 1000 || len(all["buckets"].([]any)) == 0 {
+		t.Fatalf("series %v (want %d events)", all, head)
+	}
+	sum := 0
+	for _, b := range all["buckets"].([]any) {
+		m := b.(map[string]any)
+		n := 0
+		for _, k := range m["kinds"].(map[string]any) {
+			n += int(k.(float64))
+		}
+		if n != int(m["count"].(float64)) {
+			t.Fatalf("kinds do not add up to the count: %v", m)
+		}
+		sum += n
+	}
+	if sum != total {
+		t.Fatalf("buckets %d, total %d", sum, total)
+	}
+	one := h.get(t, "/api/v1/series?ticket=T-1&bucket_ms=1000")
+	if one["total"].(float64) == 0 || one["total"].(float64) >= float64(total) {
+		t.Fatalf("filtered %v", one["total"])
+	}
+	for _, bad := range []string{"bucket_ms=500", "bucket_ms=1500", "from_ms=10&to_ms=5", "from_ms=0&to_ms=999999999999&bucket_ms=1000", "ticket=..%2f"} {
+		resp, _, _ := h.do(t, "GET", "/api/v1/series?"+bad, nil)
+		if resp.StatusCode != 400 {
+			t.Fatalf("%s: %d", bad, resp.StatusCode)
+		}
+	}
+}

@@ -81,6 +81,9 @@ type Tailer struct {
 	// Size is the file's size at the last poll that found it (-1 before the first, or while it is
 	// gone or refused): with the offset, how far behind the reader is.
 	Size int64
+	// ModNS is the file's modification time at the last poll that found it (Unix ns), so a caller
+	// needs no second stat.
+	ModNS int64
 	// LiveFromStart makes every line live, including what is already on disk at the first poll: for
 	// a file that appeared while the observer was already following the Factory, whose lines were
 	// all written after the observer started.
@@ -88,7 +91,10 @@ type Tailer struct {
 
 	startSize int64
 	started   bool
-	readToEnd bool // the last poll read every complete line the file had
+	// absentFirst: the first poll found no file, so whatever it holds when it appears was written
+	// while the observer watched: all of it is live (D16).
+	absentFirst bool
+	readToEnd   bool // the last poll read every complete line the file had
 }
 
 // New makes a tailer that resumes from cp.
@@ -101,12 +107,18 @@ func New(abs string, cp Checkpoint) *Tailer {
 // torn last line does not hold it back: it is not a line until its newline arrives.
 func (t *Tailer) CaughtUp() bool { return !t.started || t.CP.Offset >= t.startSize || t.readToEnd }
 
+// ReadToEnd reports whether the last poll read every complete line the file had.
+func (t *Tailer) ReadToEnd() bool { return t.readToEnd }
+
 // Poll reads what is new. It never blocks on the file and never holds it open between calls.
 func (t *Tailer) Poll() ([]Line, []Note, error) {
 	var notes []Note
 	t.Size = -1
 	info, err := os.Lstat(t.Abs)
 	if errors.Is(err, fs.ErrNotExist) {
+		if !t.started && t.CP.Offset == 0 && t.CP.Ino == 0 {
+			t.absentFirst = true
+		}
 		if !t.CP.Gone && (t.CP.Offset > 0 || t.CP.Ino != 0) {
 			t.CP.Gone = true
 			notes = append(notes, Note{Kind: NoteGone, OldEpoch: t.CP.Epoch})
@@ -122,6 +134,15 @@ func (t *Tailer) Poll() ([]Line, []Note, error) {
 			notes = append(notes, Note{Kind: NoteBlocked})
 		}
 		return nil, notes, nil
+	}
+	t.ModNS = info.ModTime().UnixNano()
+	// Nothing new: the same file, the same size as read up to. One stat per idle poll, no open
+	// (a project with a thousand cells is polled several times a second for low latency).
+	if dev, ino := fileID(info); t.started && !t.CP.Blocked && !t.CP.Gone && t.CP.Ino != 0 && dev == t.CP.Dev && ino == t.CP.Ino &&
+		info.Size() == t.CP.Offset && !t.CP.Skipping {
+		t.Size = info.Size()
+		t.readToEnd = true
+		return nil, nil, nil
 	}
 	f, err := openReadOnly(t.Abs)
 	if err != nil {
@@ -156,7 +177,7 @@ func (t *Tailer) Poll() ([]Line, []Note, error) {
 	if !t.started {
 		t.started = true
 		t.startSize = size
-		if t.LiveFromStart {
+		if t.LiveFromStart || t.absentFirst {
 			t.startSize = 0
 		}
 	}

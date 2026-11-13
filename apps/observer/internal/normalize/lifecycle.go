@@ -291,6 +291,14 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		d["closed_by"] = enum(get("closed_by"), "cleanup")
 		d["head"] = commitOrNil(get("head"))
 		get("round")
+		// The plan's exit records the facts the plan fixed (D11): app type and risk tier, as
+		// strings; contracts and tasks stay counts.
+		if _, ok := in["app_type"]; ok {
+			d["app_type"] = nullStr(redact.Token(get("app_type")))
+		}
+		if _, ok := in["risk"]; ok {
+			d["risk"] = enum(get("risk"), risks...)
+		}
 		d["counts"] = counts(in, used)
 	case "gate.evaluated":
 		gate, _ := get("gate").(string)

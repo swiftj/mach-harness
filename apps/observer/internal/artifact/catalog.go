@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"mach/observer/internal/redact"
 )
 
 // Caps.
@@ -52,29 +54,45 @@ var excluded = map[string]bool{"test-suite.log": true, "contract-check.log": tru
 
 // Entry is one catalogued artifact (shared contracts, section 3.1).
 type Entry struct {
-	ID             string     `json:"id"`
-	Ref            string     `json:"ref"`
-	Logical        string     `json:"logical"`
-	TicketID       string     `json:"ticket_id"`
-	Origin         string     `json:"origin"` // cell | archive
-	Path           string     `json:"path_rel"`
-	Kind           string     `json:"kind"`
-	Nature         string     `json:"nature"` // evidence | record | prose
-	MediaType      string     `json:"media_type"`
-	Bytes          int64      `json:"bytes"`
-	SHA256         string     `json:"sha256"`
-	RecordedSHA256 string     `json:"recorded_sha256,omitempty"`
-	Integrity      string     `json:"integrity"` // match | mismatch | missing | unchecked
-	Verified       bool       `json:"verified_evidence"`
-	Targets        []Target   `json:"targets"`
-	Round          *int64     `json:"round"`
-	Commit         string     `json:"commit,omitempty"`
-	VisitID        string     `json:"visit_id,omitempty"`
-	ContentAccess  string     `json:"content_access"` // text | media | media-disabled | none
-	AccessReason   string     `json:"access_reason,omitempty"`
-	Provenance     Provenance `json:"provenance"`
+	ID             string   `json:"id"`
+	Ref            string   `json:"ref"`
+	Logical        string   `json:"logical"`
+	TicketID       string   `json:"ticket_id"`
+	Origin         string   `json:"origin"` // cell | archive
+	Path           string   `json:"path_rel"`
+	Kind           string   `json:"kind"`
+	Nature         string   `json:"nature"` // evidence | record | prose
+	MediaType      string   `json:"media_type"`
+	Bytes          int64    `json:"bytes"`
+	SHA256         string   `json:"sha256"`
+	RecordedSHA256 string   `json:"recorded_sha256,omitempty"`
+	Integrity      string   `json:"integrity"` // match | mismatch | missing | unchecked
+	Verified       bool     `json:"verified_evidence"`
+	Targets        []Target `json:"targets"`
+	Round          *int64   `json:"round"`
+	Commit         string   `json:"commit,omitempty"`
+	VisitID        string   `json:"visit_id,omitempty"`
+	// Visit is the station visit the artifact belongs to: "recorded" when a lifecycle record names
+	// this file and its hash (a verification check), "reconstructed" when it is joined by round and
+	// file time (the observer's inference). Null when no visit fits. Set by the server from the
+	// projection; RoundBasis says the same of Round ("recorded" from results.json's review loop or
+	// the review folder's number).
+	Visit      *VisitLink `json:"visit"`
+	RoundBasis string     `json:"round_basis,omitempty"`
+	// ModifiedMS is the file's modification time (Unix ms), for the join; never served.
+	ModifiedMS    int64      `json:"-"`
+	ContentAccess string     `json:"content_access"` // text | media | media-disabled | none
+	AccessReason  string     `json:"access_reason,omitempty"`
+	Provenance    Provenance `json:"provenance"`
 
 	member string // archive member name
+}
+
+// VisitLink links an artifact to a station visit.
+type VisitLink struct {
+	VisitID string `json:"visit_id"`
+	Basis   string `json:"basis"` // recorded | reconstructed
+	Rule    string `json:"rule"`  // how: check-hash, folder, round-and-time
 }
 
 // Target is a check an evidence file proves.
@@ -148,6 +166,32 @@ func (c *Catalog) Snapshot() ([]Entry, Settings) {
 		out = append(out, *e)
 	}
 	return out, c.set
+}
+
+// SafeNames are the names of a ticket's catalogued artifacts as a served text may hold them:
+// cell-relative ("review/round-3/findings.md"), project-relative
+// (".factory/worktrees/T/review/round-3/findings.md") and the bare file names. They are kept by
+// the scrubber (a long relative name looks like an opaque token to it).
+func (c *Catalog) SafeNames(ticket string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seen := map[string]bool{}
+	var out []string
+	add := func(s string) {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, e := range c.order {
+		if e.TicketID != ticket {
+			continue
+		}
+		add(e.Path)
+		add(".factory/worktrees/" + ticket + "/" + e.Path)
+		add(baseName(e.Path))
+	}
+	return out
 }
 
 // Lookup finds an entry by id.
@@ -301,20 +345,17 @@ func roundFolders(names []string) []int {
 // source abstracts a live cell folder and an archive's members.
 type source interface {
 	read(rel string, max int64) ([]byte, error) // a record (results.json)
-	hash(rel string) (sum, media string, size int64, err error)
+	hash(rel string) (sum, media string, size, modMS int64, err error)
 }
 
 // plan lists what a cell's records name, as entries without hashes; fill completes them.
-func plan(src source, ticket string, folders []string, rounds []int) []*Entry {
+func plan(src source, ticket string, folders []string, rounds []int, people *redact.People) []*Entry {
 	var out []*Entry
 	for _, folder := range folders {
 		var res results
-		if data, err := src.read(folder+"/results.json", maxRecord); err == nil {
-			if json.Unmarshal(data, &res) != nil {
-				res = results{}
-			}
-			out = append(out, &Entry{Path: folder + "/results.json", Kind: "verification-results", Nature: "record",
-				Provenance: Provenance{NamedBy: folder + "/results.json", Writer: "verify.py"}})
+		data, err := src.read(folder+"/results.json", maxRecord)
+		if err == nil && json.Unmarshal(data, &res) != nil {
+			res = results{}
 		}
 		var round *int64
 		if res.ReviewLoop != nil && *res.ReviewLoop >= 0 && *res.ReviewLoop < 100 {
@@ -323,6 +364,10 @@ func plan(src source, ticket string, folders []string, rounds []int) []*Entry {
 		commit := ""
 		if commitRe.MatchString(res.Head) {
 			commit = res.Head
+		}
+		if err == nil {
+			out = append(out, &Entry{Path: folder + "/results.json", Kind: "verification-results", Nature: "record", Round: round, Commit: commit,
+				Provenance: Provenance{NamedBy: folder + "/results.json", Writer: "verify.py"}})
 		}
 		for _, name := range []string{"summary.json", "findings.md"} {
 			kind, nature := "verification-summary", "record"
@@ -360,6 +405,11 @@ func plan(src source, ticket string, folders []string, rounds []int) []*Entry {
 		}
 	}
 	for _, r := range rounds {
+		// The people a review records (an approver, whoever recorded the approval) are learned
+		// before anything of the cell is served, so their names are scrubbed from every text.
+		if data, err := src.read(fmt.Sprintf("review/round-%d/decision.json", r), maxRecord); err == nil {
+			people.LearnJSON(data)
+		}
 		for _, name := range []string{"findings.md", "decision.json"} {
 			kind, nature := "review-findings", "prose"
 			if name == "decision.json" {
@@ -374,6 +424,9 @@ func plan(src source, ticket string, folders []string, rounds []int) []*Entry {
 		if e.Targets == nil {
 			e.Targets = []Target{}
 		}
+		if e.Round != nil {
+			e.RoundBasis = "recorded" // results.json's review loop, or the review folder's number
+		}
 	}
 	return out
 }
@@ -386,7 +439,8 @@ func (c *Catalog) fill(src source, origin string, planned []*Entry) []*Entry {
 	var out []*Entry
 	for _, e := range planned {
 		e.Origin = origin
-		sum, media, size, err := src.hash(e.Path)
+		sum, media, size, mod, err := src.hash(e.Path)
+		e.ModifiedMS = mod
 		if errors.Is(err, ErrTooLarge) {
 			e.Integrity, e.Bytes = "unchecked", size
 		} else if err != nil {
@@ -434,24 +488,25 @@ func (s cellSource) read(rel string, max int64) ([]byte, error) {
 	return data, err
 }
 
-func (s cellSource) hash(rel string) (string, string, int64, error) {
+func (s cellSource) hash(rel string) (string, string, int64, int64, error) {
 	full := s.prefix + rel
 	id, err := statFile(s.root, full)
 	if err != nil {
-		return "", "", 0, err
+		return "", "", 0, 0, err
 	}
+	mod := id.ModNS / 1e6
 	key := "cell:" + full
 	if h, ok := s.c.hashes[key]; ok && h.id == id {
-		return h.sum, h.media, id.Size, nil
+		return h.sum, h.media, id.Size, mod, nil
 	}
 	data, id, err := readFile(s.root, full, MaxVideo)
 	if err != nil {
-		return "", "", id.Size, err
+		return "", "", id.Size, mod, err
 	}
 	sum := sha256.Sum256(data)
 	h := hashed{id: id, sum: hex.EncodeToString(sum[:]), media: Sniff(data)}
 	s.c.hashes[key] = h
-	return h.sum, h.media, id.Size, nil
+	return h.sum, h.media, id.Size, mod, nil
 }
 
 func (c *Catalog) scanCell(root *os.Root, ticket string) []*Entry {
@@ -462,7 +517,7 @@ func (c *Catalog) scanCell(root *os.Root, ticket string) []*Entry {
 		folders = nil
 	}
 	rounds := roundFolders(listDir(root, prefix+"review"))
-	return c.fill(src, "cell", plan(src, ticket, folders, rounds))
+	return c.fill(src, "cell", plan(src, ticket, folders, rounds, redact.PeopleFor(c.root)))
 }
 
 // ---- archives ----
@@ -470,6 +525,7 @@ func (c *Catalog) scanCell(root *os.Root, ticket string) []*Entry {
 type member struct {
 	sum, media string
 	size       int64
+	modMS      int64
 	tooLarge   bool
 	data       []byte // records only
 }
@@ -484,15 +540,15 @@ func (s archiveSource) read(rel string, max int64) ([]byte, error) {
 	return m.data, nil
 }
 
-func (s archiveSource) hash(rel string) (string, string, int64, error) {
+func (s archiveSource) hash(rel string) (string, string, int64, int64, error) {
 	m, ok := s.members[rel]
 	if !ok {
-		return "", "", 0, ErrNotHeld
+		return "", "", 0, 0, ErrNotHeld
 	}
 	if m.tooLarge {
-		return "", "", m.size, ErrTooLarge
+		return "", "", m.size, m.modMS, ErrTooLarge
 	}
-	return m.sum, m.media, m.size, nil
+	return m.sum, m.media, m.size, m.modMS, nil
 }
 
 // archived reports whether a cell-relative member name is one the catalog may hold.
@@ -530,7 +586,7 @@ func (c *Catalog) scanArchive(root *os.Root, ticket string) []*Entry {
 			return nil
 		}
 		if hdr.Size > MaxVideo {
-			members[name] = member{size: hdr.Size, tooLarge: true}
+			members[name] = member{size: hdr.Size, tooLarge: true, modMS: hdr.ModTime.UnixMilli()}
 			return nil
 		}
 		data, err := io.ReadAll(io.LimitReader(r, MaxVideo+1))
@@ -538,8 +594,8 @@ func (c *Catalog) scanArchive(root *os.Root, ticket string) []*Entry {
 			return err
 		}
 		sum := sha256.Sum256(data)
-		m := member{sum: hex.EncodeToString(sum[:]), media: Sniff(data), size: int64(len(data))}
-		if strings.HasSuffix(name, "results.json") && len(data) <= maxRecord {
+		m := member{sum: hex.EncodeToString(sum[:]), media: Sniff(data), size: int64(len(data)), modMS: hdr.ModTime.UnixMilli()}
+		if (strings.HasSuffix(name, "results.json") || strings.HasSuffix(name, "decision.json")) && len(data) <= maxRecord {
 			m.data = data
 		}
 		members[name] = m
@@ -559,7 +615,7 @@ func (c *Catalog) scanArchive(root *os.Root, ticket string) []*Entry {
 			roundNames = append(roundNames, parts[1])
 		}
 	}
-	entries := c.fill(src, "archive", plan(src, ticket, evidenceFolders(uniq(folderNames)), roundFolders(uniq(roundNames))))
+	entries := c.fill(src, "archive", plan(src, ticket, evidenceFolders(uniq(folderNames)), roundFolders(uniq(roundNames)), redact.PeopleFor(c.root)))
 	for _, e := range entries {
 		e.member = ticket + "/" + e.Path
 	}

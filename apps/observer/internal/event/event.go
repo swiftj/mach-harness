@@ -20,11 +20,46 @@ import (
 )
 
 // Version is the schema version; Revision the additive revision within it.
-// Revision 1 added execution.usage's cost_complete and cost_incomplete_reasons.
+// Revision 1 added execution.usage's cost_complete and cost_incomplete_reasons. Revision 2 added
+// history.gap's class and history_lost (and the reasons unexpected-shape and evicted), and
+// origin.runtime_state on events read from an execution stream.
 const (
 	Version  = 3
-	Revision = 1
+	Revision = 2
 )
+
+// Gap classes (history.gap data.class, revision 2): what a gap means for the history a reader
+// holds. Only the classes that lose history make it partial.
+const (
+	GapNotReceived      = "not-received"      // bytes missing: a sequence hole, a truncated or rewritten source
+	GapUnparsable       = "unparsable-line"   // received, but not a readable record: its content is lost
+	GapUnknownType      = "unknown-type"      // received and well formed, not interpreted (a type or a shape the observer does not know)
+	GapStateMismatch    = "state-mismatch"    // the station's own file says records are probably missing
+	GapEvicted          = "evicted"           // the observer no longer holds that part of its history (retention)
+	GapSourceUnreadable = "source-unreadable" // the source could not be read at all
+	GapConflict         = "conflict"          // the same record read twice with different content; the first is kept
+)
+
+// GapClass gives a gap reason's class and whether it loses history.
+func GapClass(reason string) (string, bool) {
+	switch reason {
+	case "missing-seq", "truncated", "rewritten":
+		return GapNotReceived, true
+	case "unparsable-line":
+		return GapUnparsable, true
+	case "unknown-type", "unexpected-shape", "no-timestamps":
+		return GapUnknownType, false
+	case "state-mismatch":
+		return GapStateMismatch, true
+	case "evicted":
+		return GapEvicted, true
+	case "unreadable":
+		return GapSourceUnreadable, true
+	case "conflict":
+		return GapConflict, false
+	}
+	return GapUnknownType, false
+}
 
 // Authority (contract section 7).
 const (
@@ -79,6 +114,9 @@ type Origin struct {
 	Writer        string
 	Script        string
 	SourceVersion string
+	// RuntimeState, on an event read from an execution stream: proven, compatible-unproven or
+	// incompatible (normalize.ProvenVersions); "" elsewhere. Revision 2.
+	RuntimeState string
 }
 
 // Time carries when the fact happened, how well that is known, and where it sorts.
@@ -205,6 +243,7 @@ type originWire struct {
 	Writer        string  `json:"writer"`
 	Script        *string `json:"script"`
 	SourceVersion *string `json:"source_version"`
+	RuntimeState  string  `json:"runtime_state,omitempty"`
 }
 
 type timeWire struct {
@@ -270,7 +309,7 @@ func (e *Event) toWire() wire {
 		Order: e.Order, Entities: e.Entities, Parent: nz(e.Parent), Cause: e.Cause, Unknown: e.Unknown,
 		Inferred: e.Inferred, Provenance: e.Provenance, Late: e.Late, Withheld: e.Withheld, Data: e.Data,
 		Origin: originWire{Stream: e.Origin.Stream, Key: e.Origin.Key, Seq: nzi(e.Origin.Seq), Part: e.Origin.Part,
-			Writer: e.Origin.Writer, Script: nz(e.Origin.Script), SourceVersion: nz(e.Origin.SourceVersion)},
+			Writer: e.Origin.Writer, Script: nz(e.Origin.Script), SourceVersion: nz(e.Origin.SourceVersion), RuntimeState: e.Origin.RuntimeState},
 		Time: timeWire{OccurredAt: nz(e.Time.OccurredAt), Precision: e.Time.Precision, NotBefore: nz(e.Time.NotBefore),
 			NotAfter: nz(e.Time.NotAfter), ObservedAt: e.Time.ObservedAt, OrderMS: e.Time.OrderMS},
 		IDs: idsWire{ProjectID: nz(e.IDs.ProjectID), WaveID: nz(e.IDs.WaveID), SliceID: nz(e.IDs.SliceID), Revision: e.IDs.Revision,
@@ -314,7 +353,7 @@ func (e *Event) UnmarshalJSON(b []byte) error {
 		ID: w.ID, Type: w.Type, Pos: w.Pos, Authority: w.Authority, Order: w.Order, Entities: w.Entities, Parent: dz(w.Parent),
 		Cause: w.Cause, Unknown: w.Unknown, Inferred: w.Inferred, Provenance: w.Provenance, Late: w.Late, Withheld: w.Withheld, Data: w.Data,
 		Origin: Origin{Stream: w.Origin.Stream, Key: w.Origin.Key, Seq: dzi(w.Origin.Seq), Part: w.Origin.Part, Writer: w.Origin.Writer,
-			Script: dz(w.Origin.Script), SourceVersion: dz(w.Origin.SourceVersion)},
+			Script: dz(w.Origin.Script), SourceVersion: dz(w.Origin.SourceVersion), RuntimeState: w.Origin.RuntimeState},
 		Time: Time{OccurredAt: dz(w.Time.OccurredAt), Precision: w.Time.Precision, NotBefore: dz(w.Time.NotBefore),
 			NotAfter: dz(w.Time.NotAfter), ObservedAt: w.Time.ObservedAt, OrderMS: w.Time.OrderMS},
 		IDs: IDs{ProjectID: dz(w.IDs.ProjectID), WaveID: dz(w.IDs.WaveID), SliceID: dz(w.IDs.SliceID), Revision: w.IDs.Revision,
@@ -554,4 +593,118 @@ var Kinds = []string{
 	"session.initialized", "workflow.started", "workflow.phases_declared", "workflow.finished", "agent.queued", "agent.started",
 	"agent.progressed", "agent.finished", "tool.called", "tool.returned", "tool.refused", "execution.usage",
 	"review.finding", "artifact.recorded", "history.began", "verify.targets_listed", "capacity.wait_changed", "history.gap",
+}
+
+// ---- the index's compact form ----
+
+// The index on disk keeps each event in a compact form: the version 3 envelope with every null,
+// empty list, empty object, false and zero left out, except inside data, cause and provenance,
+// which are kept exactly. UnmarshalJSON reads it back to the same Event, and MarshalJSON then
+// writes the full envelope again, byte for byte the one served (TestCompactRoundTrip). Most of a
+// stored event's bytes were the envelope's nulls (D18: 1.2 KB per event, 300 MB for 230,000).
+
+type compactOrigin struct {
+	Stream        string  `json:"stream"`
+	Key           string  `json:"key"`
+	Seq           *int64  `json:"seq,omitempty"`
+	Part          *int    `json:"part,omitempty"`
+	Writer        string  `json:"writer,omitempty"`
+	Script        *string `json:"script,omitempty"`
+	SourceVersion *string `json:"source_version,omitempty"`
+	RuntimeState  string  `json:"runtime_state,omitempty"`
+}
+
+type compactTime struct {
+	OccurredAt *string `json:"occurred_at,omitempty"`
+	Precision  string  `json:"precision"`
+	NotBefore  *string `json:"not_before,omitempty"`
+	NotAfter   *string `json:"not_after,omitempty"`
+	ObservedAt string  `json:"observed_at,omitempty"`
+	OrderMS    int64   `json:"order_ms,omitempty"`
+}
+
+type compactIDs struct {
+	ProjectID     *string `json:"project_id,omitempty"`
+	WaveID        *string `json:"wave_id,omitempty"`
+	SliceID       *string `json:"slice_id,omitempty"`
+	Revision      *int64  `json:"revision,omitempty"`
+	TicketID      *string `json:"ticket_id,omitempty"`
+	CellInstance  *string `json:"cell_instance,omitempty"`
+	ExecutionID   *string `json:"execution_id,omitempty"`
+	RunnerID      *string `json:"runner_id,omitempty"`
+	VisitID       *string `json:"visit_id,omitempty"`
+	Station       *string `json:"station,omitempty"`
+	Round         *int64  `json:"round,omitempty"`
+	Attempt       *int64  `json:"attempt,omitempty"`
+	Seat          *string `json:"seat,omitempty"`
+	AgentID       *string `json:"agent_id,omitempty"`
+	ParentAgentID *string `json:"parent_agent_id,omitempty"`
+	ToolCallID    *string `json:"tool_call_id,omitempty"`
+}
+
+type compactArtifact struct {
+	Ref    string  `json:"ref"`
+	SHA256 *string `json:"sha256,omitempty"`
+	Commit *string `json:"commit,omitempty"`
+}
+
+type compactWire struct {
+	SchemaVersion  int               `json:"schema_version"`
+	SchemaRevision int               `json:"schema_revision"`
+	ID             string            `json:"id"`
+	Type           string            `json:"type"`
+	Pos            uint64            `json:"pos"`
+	Origin         compactOrigin     `json:"origin"`
+	Authority      string            `json:"authority"`
+	Time           compactTime       `json:"time"`
+	Order          string            `json:"order"`
+	IDs            compactIDs        `json:"ids"`
+	Entities       []string          `json:"entities,omitempty"`
+	Parent         *string           `json:"parent,omitempty"`
+	Cause          *Cause            `json:"cause,omitempty"`
+	Artifacts      []compactArtifact `json:"artifacts,omitempty"`
+	Unknown        []string          `json:"unknown,omitempty"`
+	Inferred       map[string]string `json:"inferred,omitempty"`
+	Provenance     *Provenance       `json:"provenance,omitempty"`
+	Late           bool              `json:"late,omitempty"`
+	Withheld       int               `json:"withheld,omitempty"`
+	Data           map[string]any    `json:"data"`
+}
+
+// MarshalCompact is the index's form of the event (see above).
+func (e *Event) MarshalCompact() ([]byte, error) {
+	w := e.toWire()
+	c := compactWire{SchemaVersion: w.SchemaVersion, SchemaRevision: w.SchemaRevision, ID: w.ID, Type: w.Type, Pos: w.Pos,
+		Origin: compactOrigin(w.Origin), Authority: w.Authority, Time: compactTime(w.Time), Order: w.Order, IDs: compactIDs(w.IDs),
+		Entities: w.Entities, Parent: w.Parent, Cause: w.Cause, Unknown: w.Unknown, Inferred: w.Inferred, Provenance: w.Provenance,
+		Late: w.Late, Withheld: w.Withheld, Data: w.Data}
+	for _, a := range w.Artifacts {
+		c.Artifacts = append(c.Artifacts, compactArtifact(a))
+	}
+	return json.Marshal(c)
+}
+
+// Head is what the index keeps decoded of a stored event (the rest is in its encoded bytes):
+// what it looks up and filters on, and the event's content hash. About a tenth of an Event's
+// memory (D18).
+type Head struct {
+	ID, Cursor, Type, Authority, Order string
+	Pos                                uint64
+	Time                               struct{ OrderMS int64 }
+	IDs                                struct{ TicketID, ExecutionID string }
+	Entities                           []string
+	Late                               bool
+	hash                               string
+}
+
+// ContentHash is the stored event's content hash (Event.ContentHash).
+func (h *Head) ContentHash() string { return h.hash }
+
+// Slim is the event's Head.
+func (e *Event) Slim() *Head {
+	h := &Head{ID: e.ID, Cursor: e.Cursor, Type: e.Type, Authority: e.Authority, Order: e.Order, Pos: e.Pos, Entities: e.Entities,
+		Late: e.Late, hash: e.ContentHash()}
+	h.Time.OrderMS = e.Time.OrderMS
+	h.IDs.TicketID, h.IDs.ExecutionID = e.IDs.TicketID, e.IDs.ExecutionID
+	return h
 }

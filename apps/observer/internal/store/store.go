@@ -25,8 +25,9 @@ import (
 	"mach/observer/internal/tail"
 )
 
-// Format is the on-disk layout version. 2: numbered segments.
-const Format = 2
+// Format is the on-disk layout version. 2: numbered segments. 3: events in their compact form
+// (event.MarshalCompact), expanded to the full envelope when read.
+const Format = 3
 
 // Defaults.
 const (
@@ -52,9 +53,11 @@ type Meta struct {
 	EventRevision    int    `json:"event_revision"`
 }
 
-// Entry is one stored event: the decoded event and its encoded line, made once.
+// Entry is one stored event: its index fields (event.Slim: id, position, order, ticket,
+// execution, entities, kind, content hash) and its full version 3 envelope, made once. Event is
+// not the whole event: decode Raw for that.
 type Entry struct {
-	Event *event.Event
+	Event *event.Head
 	Raw   []byte
 }
 
@@ -122,6 +125,9 @@ type Store struct {
 	maxOrder    string
 	evictedMax  string // the largest order of any event that left the memory window
 	watermark   int64
+	byOrder     []orderRef // the memory window in history order (entries leave it lazily)
+	orderBuf    []orderRef // appended out of order since the last merge
+	series      seriesAgg  // counts per minute, by kind and authority, of everything indexed
 	closed      bool
 }
 
@@ -220,8 +226,13 @@ func (s *Store) load() (string, error) {
 }
 
 type posLine struct {
-	Pos   uint64 `json:"pos"`
-	Order string `json:"order"`
+	Pos       uint64 `json:"pos"`
+	Order     string `json:"order"`
+	Type      string `json:"type"`
+	Authority string `json:"authority"`
+	Time      struct {
+		OrderMS int64 `json:"order_ms"`
+	} `json:"time"`
 }
 
 // loadSegments scans every retained segment: positions must run on without a hole, a torn last
@@ -272,6 +283,7 @@ func (s *Store) loadSegments() (string, error) {
 				if p.Order > s.maxOrder {
 					s.maxOrder = p.Order
 				}
+				s.series.add(p.Time.OrderMS, p.Type, p.Authority)
 				offset += int64(len(line))
 			}
 			if err == io.EOF {
@@ -344,6 +356,7 @@ func (s *Store) reset() error {
 	s.ids = map[string]held{}
 	s.byTicket, s.byExec, s.byEntity = map[string][]uint64{}, map[string][]uint64{}, map[string][]uint64{}
 	s.checkpoints = map[string]tail.Checkpoint{}
+	s.byOrder, s.orderBuf, s.series = nil, nil, seriesAgg{}
 	data, _ := json.MarshalIndent(s.meta, "", "  ")
 	return writeAtomic(filepath.Join(s.dir, "meta.json"), append(data, '\n'))
 }
@@ -382,12 +395,14 @@ func (s *Store) push(e Entry) {
 	if e.Event.Order > s.maxOrder {
 		s.maxOrder = e.Event.Order
 	}
+	s.indexOrder(e.Event.Order, e.Event.Pos)
 	if over := len(s.entries) - s.opts.MaxMemory; over > 0 {
-		for _, old := range s.entries[:over] {
+		for i, old := range s.entries[:over] {
 			delete(s.ids, old.Event.ID)
 			if old.Event.Order > s.evictedMax {
 				s.evictedMax = old.Event.Order
 			}
+			s.entries[i] = Entry{} // the backing array outlives the window: let the bytes go
 		}
 		if cap(s.entries) > 2*s.opts.MaxMemory {
 			s.entries = append([]Entry(nil), s.entries[over:]...)
@@ -403,6 +418,22 @@ func (s *Store) push(e Entry) {
 
 // trimIndexes drops positions that left the memory window from the secondary indexes.
 func (s *Store) trimIndexes() {
+	kept := s.byOrder[:0]
+	for _, r := range s.byOrder {
+		if r.pos >= s.first {
+			kept = append(kept, r)
+		}
+	}
+	clear(s.byOrder[len(kept):])
+	s.byOrder = kept
+	buf := s.orderBuf[:0]
+	for _, r := range s.orderBuf {
+		if r.pos >= s.first {
+			buf = append(buf, r)
+		}
+	}
+	clear(s.orderBuf[len(buf):])
+	s.orderBuf = buf
 	for _, m := range []map[string][]uint64{s.byTicket, s.byExec, s.byEntity} {
 		for k, list := range m {
 			i := sort.Search(len(list), func(i int) bool { return list[i] >= s.first })
@@ -481,6 +512,7 @@ func (s *Store) Append(batch []*event.Event, checkpoints map[string]tail.Checkpo
 	}
 	var buf bytes.Buffer
 	var fresh []Entry
+	var sizes []int
 	seen := map[string]bool{}
 	next := s.head
 	for _, ev := range batch {
@@ -496,13 +528,18 @@ func (s *Store) Append(batch []*event.Event, checkpoints map[string]tail.Checkpo
 		if err != nil {
 			return 0, err
 		}
-		buf.Write(raw)
+		compact, err := ev.MarshalCompact()
+		if err != nil {
+			return 0, err
+		}
+		buf.Write(compact)
 		buf.WriteByte('\n')
-		fresh = append(fresh, Entry{Event: ev, Raw: raw})
+		sizes = append(sizes, len(compact)+1)
+		fresh = append(fresh, Entry{Event: ev.Slim(), Raw: raw})
 	}
 	if s.cur != nil {
 		if buf.Len() > 0 {
-			if err := s.write(buf.Bytes(), fresh); err != nil {
+			if err := s.write(buf.Bytes(), fresh, sizes); err != nil {
 				return 0, err
 			}
 		}
@@ -530,6 +567,7 @@ func (s *Store) Append(batch []*event.Event, checkpoints map[string]tail.Checkpo
 	}
 	for _, e := range fresh {
 		s.push(e)
+		s.series.add(e.Event.Time.OrderMS, e.Event.Type, e.Event.Authority)
 	}
 	if len(fresh) > 0 {
 		close(s.changed)
@@ -540,7 +578,7 @@ func (s *Store) Append(batch []*event.Event, checkpoints map[string]tail.Checkpo
 
 // write appends encoded lines to the current segment, syncs, keeps the sparse index, rolls to a
 // new segment past the size bound and drops the oldest segments past the retention bound.
-func (s *Store) write(data []byte, fresh []Entry) error {
+func (s *Store) write(data []byte, fresh []Entry, sizes []int) error {
 	seg := s.segs[len(s.segs)-1]
 	if _, err := s.cur.Write(data); err != nil {
 		return fmt.Errorf("could not append to the index log: %w", err)
@@ -553,7 +591,7 @@ func (s *Store) write(data []byte, fresh []Entry) error {
 	if seg.last >= seg.first && seg.last != 0 {
 		count = int(seg.last - seg.first + 1)
 	}
-	for _, e := range fresh {
+	for i, e := range fresh {
 		if seg.first == 0 || count == 0 {
 			seg.first = e.Event.Pos
 		}
@@ -562,7 +600,7 @@ func (s *Store) write(data []byte, fresh []Entry) error {
 		}
 		count++
 		seg.last = e.Event.Pos
-		offset += int64(len(e.Raw)) + 1
+		offset += int64(sizes[i])
 	}
 	seg.size = offset
 	if seg.size < s.opts.SegmentBytes {
@@ -704,7 +742,12 @@ func (s *Store) readDisk(c uint64, limit int) ([]Entry, error) {
 						return nil, err
 					}
 					ev.Cursor = event.Cursor{Generation: s.meta.Generation, Position: ev.Pos}.String()
-					out = append(out, Entry{Event: &ev, Raw: append([]byte(nil), raw...)})
+					full, err := json.Marshal(&ev) // the compact form, expanded to the served envelope
+					if err != nil {
+						f.Close()
+						return nil, err
+					}
+					out = append(out, Entry{Event: ev.Slim(), Raw: full})
 				}
 			}
 			if err != nil {
@@ -751,7 +794,7 @@ type Page struct {
 	More    bool
 }
 
-func (q Query) match(e *event.Event) bool {
+func (q Query) match(e *event.Head) bool {
 	if q.Ticket != "" && e.IDs.TicketID != q.Ticket {
 		return false
 	}
@@ -905,15 +948,29 @@ func (s *Store) History(q HistoryQuery) HistoryPage {
 	for _, e := range q.Entities {
 		want[e] = true
 	}
+	s.mu.Lock()
+	s.sortOrder()
+	s.mu.Unlock()
 	s.mu.RLock()
 	complete := s.evictedMax == "" || q.FromOrder != "" && q.FromOrder > s.evictedMax
+	// The order index makes a window O(log n + what it holds): start at from, stop at to, or one
+	// order key past the page.
+	i := sort.Search(len(s.byOrder), func(i int) bool { return s.byOrder[i].order >= q.FromOrder })
 	var out []Entry
-	for _, e := range s.entries {
-		ev := e.Event
-		o := ev.Order
-		if q.FromOrder != "" && o < q.FromOrder || q.ToOrder != "" && o >= q.ToOrder {
+	cutOrder := ""
+	for ; i < len(s.byOrder); i++ {
+		r := s.byOrder[i]
+		if q.ToOrder != "" && r.order >= q.ToOrder {
+			break
+		}
+		if cutOrder != "" && r.order != cutOrder {
+			break
+		}
+		if r.pos < s.first {
 			continue
 		}
+		e := s.entries[r.pos-s.first]
+		ev := e.Event
 		if q.Ticket != "" && ev.IDs.TicketID != q.Ticket || q.Execution != "" && ev.IDs.ExecutionID != q.Execution ||
 			q.TypePrefix != "" && !strings.HasPrefix(ev.Type, q.TypePrefix) {
 			continue
@@ -931,9 +988,14 @@ func (s *Store) History(q HistoryQuery) HistoryPage {
 			}
 		}
 		out = append(out, e)
+		if len(out) == q.Limit+1 && cutOrder == "" {
+			cutOrder = out[q.Limit-1].Event.Order // read on through the ties of the page's last key
+			if out[q.Limit].Event.Order != cutOrder {
+				break
+			}
+		}
 	}
 	s.mu.RUnlock()
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Event.Order < out[j].Event.Order })
 	page := HistoryPage{Complete: complete}
 	if len(out) > q.Limit {
 		cut := q.Limit
@@ -947,11 +1009,68 @@ func (s *Store) History(q HistoryQuery) HistoryPage {
 		}
 		if cut < len(out) {
 			page.Next, page.More = out[cut].Event.Order, true
+		} else {
+			// Every tie was taken: the next page starts after them, if anything follows.
+			s.mu.RLock()
+			j := sort.Search(len(s.byOrder), func(j int) bool { return s.byOrder[j].order > out[len(out)-1].Event.Order })
+			for ; j < len(s.byOrder) && s.byOrder[j].pos < s.first; j++ {
+			}
+			if j < len(s.byOrder) && (q.ToOrder == "" || s.byOrder[j].order < q.ToOrder) {
+				page.Next, page.More = s.byOrder[j].order, true
+			}
+			s.mu.RUnlock()
 		}
 		out = out[:cut]
 	}
 	page.Entries = out
 	return page
+}
+
+// orderRef is one memory-window event in the order index.
+type orderRef struct {
+	order string
+	pos   uint64
+}
+
+// indexOrder notes an event for the order index. Events arrive mostly in history order, but a
+// catch-up reads one source after another, so most of its events would land in the middle: they
+// are buffered and merged in one pass when a history window is next read (sortOrder).
+func (s *Store) indexOrder(order string, pos uint64) {
+	if len(s.orderBuf) == 0 && (len(s.byOrder) == 0 || s.byOrder[len(s.byOrder)-1].order <= order) {
+		s.byOrder = append(s.byOrder, orderRef{order, pos})
+		return
+	}
+	s.orderBuf = append(s.orderBuf, orderRef{order, pos})
+}
+
+// sortOrder merges the buffered events into the order index (caller holds the write lock).
+func (s *Store) sortOrder() {
+	if len(s.orderBuf) == 0 {
+		return
+	}
+	buf := s.orderBuf[:0]
+	for _, r := range s.orderBuf {
+		if r.pos >= s.first {
+			buf = append(buf, r)
+		}
+	}
+	less := func(a, b orderRef) bool { return a.order < b.order || a.order == b.order && a.pos < b.pos }
+	sort.Slice(buf, func(i, j int) bool { return less(buf[i], buf[j]) })
+	merged := make([]orderRef, 0, len(s.byOrder)+len(buf))
+	i, j := 0, 0
+	for i < len(s.byOrder) || j < len(buf) {
+		switch {
+		case j == len(buf) || i < len(s.byOrder) && !less(buf[j], s.byOrder[i]):
+			if s.byOrder[i].pos >= s.first {
+				merged = append(merged, s.byOrder[i])
+			}
+			i++
+		default:
+			merged = append(merged, buf[j])
+			j++
+		}
+	}
+	s.byOrder, s.orderBuf = merged, nil
 }
 
 // Info summarises the store.

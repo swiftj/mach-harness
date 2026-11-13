@@ -389,7 +389,13 @@ func TestServedTextUsesTheSharedScrubber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d := string(decision.Data); !strings.Contains(d, `"head":"`+commit+`"`) || strings.Contains(d, hexKey) || decision.Redacted != 2 {
+	// A decision record goes through the structured rules: the known hash key keeps its commit,
+	// the note is scrubbed as text, and the unknown key's hex value is withheld.
+	var dec map[string]any
+	if err := json.Unmarshal(decision.Data, &dec); err != nil {
+		t.Fatal(err)
+	}
+	if d := string(decision.Data); dec["head"] != commit || strings.Contains(d, hexKey) || decision.Redacted != 2 || dec["api_key"] != "[withheld]" {
 		t.Fatalf("decision.json: %d %s", decision.Redacted, d)
 	}
 	text, err := c.Read(byPath(c)["cell:evidence/plain.txt"])

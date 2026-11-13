@@ -1,11 +1,14 @@
 package ingest
 
 import (
+	"fmt"
+	"mach/observer/internal/store"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"mach/observer/internal/event"
 	"mach/observer/internal/testkit"
@@ -225,22 +228,31 @@ func TestArchiveCatchUpKeepsIDs(t *testing.T) {
 	}
 }
 
+// The adaptive settle (contract 6.5): an event is committed once every source has been read
+// through past its time, not after a fixed wait. The intake line is stamped 10:00:00.999 but read
+// at 10:00:00.200: it waits until the sources have been read past it; the cell line, stamped
+// .100 and read at .400 when every source has been read through, is committed at once. Both
+// arrive in history order, neither late. A line stamped before what was delivered is late.
 func TestSettleWindowOrdersAcrossSourcesAndMarksLate(t *testing.T) {
 	root := testkit.Project(t)
 	h := newHarness(t, root, "", true)
+	h.tick()                                                                                                                                     // the (empty) history on disk is read: catching up is over
 	testkit.Append(t, testkit.LedgerPath(root), v2(1, "intake.validated", "intake", "", "", map[string]any{"digest": strings.Repeat("ab", 32)})) // 10:00:00.999
 	h.tick()
+	if h.st.Head() != 0 {
+		t.Fatal("an event stamped after the sources' read-through was committed")
+	}
 	testkit.Append(t, testkit.CellLog(root, "T-1"), testkit.Record{Seq: 1, At: "2026-11-12T10:00:00.100Z", Ticket: "T-1", Type: "station.entered", Station: "build", Round: 1, Data: map[string]any{"stage": "building"}}.Line())
 	h.tick()
-	if h.st.Head() != 0 {
-		t.Fatal("committed inside the settle window")
+	if evs := h.events(); len(evs) != 1 || evs[0].Type != "station.entered" {
+		t.Fatalf("the cell line, covered by every source, was held: %v", ids(evs))
 	}
 	for i := 0; i < 10; i++ {
 		h.tick()
 	}
 	evs := h.events()
 	if len(evs) != 2 || evs[0].Type != "station.entered" || evs[0].Late || evs[1].Late {
-		t.Fatalf("history order within the window: %v", ids(evs))
+		t.Fatalf("history order: %v", ids(evs))
 	}
 	testkit.Append(t, testkit.CellLog(root, "T-1"), testkit.Record{Seq: 2, At: "2026-11-12T10:00:00.050Z", Ticket: "T-1", Type: "gate.evaluated", Station: "build", Round: 1, Data: map[string]any{"gate": "build.start", "outcome": "pass"}}.Line())
 	for i := 0; i < 12; i++ {
@@ -252,6 +264,68 @@ func TestSettleWindowOrdersAcrossSourcesAndMarksLate(t *testing.T) {
 	}
 	if h.st.Watermark() == 0 {
 		t.Fatal("no watermark")
+	}
+	if d := h.o.Stats().Delivery; d.Samples == 0 || !d.Adaptive || d.SettleMaxMS != 1500 {
+		t.Fatalf("delivery %+v", d)
+	}
+}
+
+// A lagging source still sorts correctly: a tick's read budget is spent on one cell's backlog, so
+// another cell is not read that tick. Its line, stamped before the backlog's, must not be overtaken:
+// the backlog waits (the horizon stays at the lagging source's last read-through) until the next
+// tick reads it, and then everything is committed in history order, nothing late.
+func TestLaggingSourceStillSortsCorrectly(t *testing.T) {
+	root := testkit.Project(t)
+	st, err := store.Open("", 1_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	o := New(Options{Root: root, Store: st, TickBudget: 10, Now: func() time.Time { return now }})
+	tick := func() {
+		now = now.Add(200 * time.Millisecond)
+		if _, err := o.Tick(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Both cells exist and have been read through before anything is written.
+	testkit.Append(t, testkit.CellLog(root, "T-1"), testkit.Record{Seq: 1, At: "2026-11-12T09:59:00.000Z", Ticket: "T-1", Type: "station.entered", Station: "build", Round: 1, Data: map[string]any{"stage": "building"}}.Line())
+	testkit.Append(t, testkit.CellLog(root, "T-2"), testkit.Record{Seq: 1, At: "2026-11-12T09:59:00.000Z", Ticket: "T-2", Type: "station.entered", Station: "build", Round: 1, Data: map[string]any{"stage": "building"}}.Line())
+	for i := 0; i < 5; i++ {
+		tick()
+	}
+	base := st.Head()
+	// Both were read through at 10:00:01.000. T-2 (the lagging one) gets a line stamped 01.050;
+	// T-1 gets 30 lines stamped 01.060 to 01.089, more than one tick's budget.
+	testkit.Append(t, testkit.CellLog(root, "T-2"), testkit.Record{Seq: 2, At: "2026-11-12T10:00:01.050Z", Ticket: "T-2", Type: "gate.evaluated", Station: "build", Round: 1, Data: map[string]any{"gate": "build.start", "outcome": "pass"}}.Line())
+	var backlog []byte
+	for i := 0; i < 30; i++ {
+		backlog = append(backlog, testkit.Record{Seq: 2 + i, At: fmt.Sprintf("2026-11-12T10:00:01.%03dZ", 60+i), Ticket: "T-1", Type: "gate.evaluated", Station: "build", Round: 1,
+			Data: map[string]any{"gate": "build.green", "outcome": "pass", "task": fmt.Sprintf("T%d", i)}}.Line()...)
+	}
+	testkit.Append(t, testkit.CellLog(root, "T-1"), backlog)
+	tick() // 01.200: reads T-1's backlog, the budget is spent, T-2 is not read
+	if got := st.Head() - base; got != 0 {
+		t.Fatalf("%d events committed while T-2 was behind", got)
+	}
+	for i := 0; i < 3; i++ {
+		tick()
+	}
+	var evs []*event.Event
+	batch, _ := st.After(base, 100)
+	for _, e := range batch {
+		evs = append(evs, full(t, e.Raw))
+	}
+	if len(evs) != 31 {
+		t.Fatalf("%d events", len(evs))
+	}
+	for i, e := range evs {
+		if e.Late || i > 0 && e.Order < evs[i-1].Order {
+			t.Fatalf("out of order or late at %d: %s %v", i, e.ID, e.Late)
+		}
+	}
+	if evs[0].IDs.TicketID != "T-2" {
+		t.Fatalf("the lagging source's earlier line was not first: %s", evs[0].ID)
 	}
 }
 

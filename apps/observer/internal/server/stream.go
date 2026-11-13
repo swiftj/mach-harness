@@ -22,7 +22,7 @@ import (
 //
 //	hello      {generation, cursor, head, floor, heartbeat_ms, schema, filter, limits}   first, always
 //	(message)  id: <cursor>, data: <version 3 event>                                    one per event
-//	heartbeat  {head, scanned, at, watermark}                                            when idle
+//	heartbeat  {head, scanned, at, at_ms, watermark_ms}                                  when idle
 //	gap        {reason:"expired", after, floor, head}                                    stream ends
 //	reset      {reason:"generation"|"ahead", generation, head}                           stream ends
 //
@@ -134,7 +134,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 					watermark = *wm
 				}
 			}
-			if !control("heartbeat", map[string]any{"head": s.cursor(head), "scanned": s.cursor(scanned), "at": s.opts.Now().UTC().Format(time.RFC3339Nano), "watermark_ms": watermark}) {
+			if !control("heartbeat", map[string]any{"head": s.cursor(head), "scanned": s.cursor(scanned), "at": s.opts.Now().UTC().Format(time.RFC3339Nano), "at_ms": s.opts.Now().UnixMilli(), "watermark_ms": watermark}) {
 				return
 			}
 		case <-r.Context().Done():

@@ -143,8 +143,8 @@ func TestFactoryAppearsAfterStart(t *testing.T) {
 	}
 	entries, _ := st.After(0, 10)
 	for _, e := range entries {
-		if e.Event.Provenance != nil || e.Event.Late {
-			t.Fatalf("written while watched, read as backfill or late: %+v", e.Event.Provenance)
+		if ev := full(t, e.Raw); ev.Provenance != nil || ev.Late {
+			t.Fatalf("written while watched, read as backfill or late: %+v", ev.Provenance)
 		}
 	}
 	if _, err := os.Lstat(filepath.Join(root, ".factory", "local")); err == nil {

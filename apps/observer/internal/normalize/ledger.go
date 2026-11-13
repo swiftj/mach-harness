@@ -1,6 +1,7 @@
 package normalize
 
 import (
+	"bytes"
 	"encoding/json"
 	"regexp"
 	"strconv"
@@ -62,6 +63,11 @@ var heldSentence = regexp.MustCompile(`^all ([0-9]{1,4}) place\(s\) are in use$`
 
 // Line normalises one line.
 func (l *Ledger) Line(line []byte, r Read) []*event.Event {
+	// Whoever a line names ("by", an approval's actor) joins the project's people, before any of
+	// the line's text is kept: the name is then replaced wherever it appears (redact.People).
+	if bytes.Contains(line, []byte(`"by"`)) || bytes.Contains(line, []byte(`"actor"`)) || bytes.Contains(line, []byte(`_by"`)) {
+		redact.PeopleFor(l.Root).LearnJSON(line)
+	}
 	var in ledgerLine
 	if err := json.Unmarshal(line, &in); err != nil || in.SchemaVersion == nil || *in.SchemaVersion != 2 || in.Seq == nil || *in.Seq < 1 {
 		ev := gapEvent(event.ObserverID("gap", l.key, int(r.Line)), l.key, "unparsable-line", nil, nil, 1, nil, r)

@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -242,7 +243,10 @@ func TestWorkflowToolRefusedAndUnknownRecordType(t *testing.T) {
 	}
 }
 
-func TestUnknownClaudeVersionIsRestricted(t *testing.T) {
+// A version the fixtures do not come from is read record by record (M6_1_STREAM_COMPATIBILITY.md
+// section 8): when every record has a known shape, everything is forwarded and the runtime is
+// flagged compatible-unproven, on the source and on each event.
+func TestUnprovenVersionWithKnownShapesIsAccepted(t *testing.T) {
 	root := testkit.Project(t)
 	execution(t, root, x1, "probe-workflow.jsonl", true)
 	p := filepath.Join(testkit.ExecDir(root, x1), "stream.jsonl")
@@ -251,13 +255,79 @@ func TestUnknownClaudeVersionIsRestricted(t *testing.T) {
 	h := newHarness(t, root, "", false)
 	h.drain()
 	h.validate()
-	k := kinds(h.events())
-	if k["agent.started"] != 0 || k["workflow.started"] != 0 || k["session.initialized"] != 1 || k["tool.refused"] != 1 || k["execution.usage"] != 1 {
-		t.Fatalf("restricted mode: %v", k)
+	evs := h.events()
+	k := kinds(evs)
+	if k["agent.started"] == 0 || k["workflow.started"] != 1 || k["workflow.finished"] != 1 || k["session.initialized"] != 1 || k["history.gap"] != 0 {
+		t.Fatalf("an unproven version with known shapes: %v", k)
+	}
+	for _, e := range evs {
+		if e.Origin.Stream == event.StreamClaude && e.Origin.RuntimeState != "compatible-unproven" {
+			t.Fatalf("%s carries runtime_state %q", e.ID, e.Origin.RuntimeState)
+		}
+	}
+	st := h.o.Stats()
+	for _, s := range st.Sources {
+		if s.Key == "stream/"+x1 && (s.StreamKnown == nil || !*s.StreamKnown || s.ClaudeVersion != "9.9.9" || s.Runtime == nil ||
+			s.Runtime.State != "compatible-unproven" || s.Runtime.RecordsRefused != 0 || s.Runtime.RecordsAccepted == 0) {
+			t.Fatalf("%+v %+v", s, s.Runtime)
+		}
+	}
+	if st.Runtime.State != "compatible-unproven" || len(st.Runtime.Versions) != 1 || st.Runtime.Versions[0].Version != "9.9.9" {
+		t.Fatalf("runtime summary %+v", st.Runtime)
+	}
+}
+
+// The same future version whose task_progress records changed shape (a time became a string):
+// each such record is refused on its own, counted, and nothing of it is forwarded: no agent
+// events, one unexpected-shape gap that does not mark history as lost. The other records are
+// still read; the source says incompatible.
+func TestChangedShapeIsRefusedPerRecord(t *testing.T) {
+	root := testkit.Project(t)
+	execution(t, root, x1, "probe-workflow.jsonl", true)
+	p := filepath.Join(testkit.ExecDir(root, x1), "stream.jsonl")
+	b, _ := os.ReadFile(p)
+	var out []string
+	progress := 0
+	for _, line := range strings.Split(strings.TrimRight(strings.ReplaceAll(string(b), `"2.1.322"`, `"9.9.10"`), "\n"), "\n") {
+		var rec map[string]any
+		if json.Unmarshal([]byte(line), &rec) == nil && rec["subtype"] == "task_progress" {
+			changed := false
+			if items, ok := rec["workflow_progress"].([]any); ok {
+				for _, it := range items {
+					if m, ok := it.(map[string]any); ok && m["type"] == "workflow_agent" {
+						m["startedAt"] = "2026-11-12T10:00:00Z"
+						changed = true
+					}
+				}
+			}
+			if changed {
+				progress++ // a heartbeat with no agent list keeps its shape
+			}
+			nb, _ := json.Marshal(rec)
+			line = string(nb)
+		}
+		out = append(out, line)
+	}
+	os.WriteFile(p, []byte(strings.Join(out, "\n")+"\n"), 0o644)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	evs := h.events()
+	k := kinds(evs)
+	if k["agent.queued"]+k["agent.started"]+k["agent.progressed"]+k["agent.finished"] != 0 || k["workflow.phases_declared"] != 0 ||
+		k["workflow.started"] != 1 || k["session.initialized"] != 1 || k["execution.usage"] != 1 {
+		t.Fatalf("changed shape: %v", k)
+	}
+	gaps := ofType(evs, "history.gap")
+	if len(gaps) != 1 || gaps[0].Data["reason"] != "unexpected-shape" || gaps[0].Data["class"] != "unknown-type" || gaps[0].Data["history_lost"] != false {
+		t.Fatalf("gaps %+v", gaps)
 	}
 	for _, s := range h.o.Stats().Sources {
-		if s.Key == "stream/"+x1 && (s.StreamKnown == nil || *s.StreamKnown || s.ClaudeVersion != "9.9.9") {
-			t.Fatalf("%+v", s)
+		if s.Key == "stream/"+x1 {
+			if s.Runtime == nil || s.Runtime.State != "incompatible" || s.Runtime.RecordsRefused != int64(progress) ||
+				s.Runtime.RefusedByClass["system/task_progress"] != int64(progress) || s.StreamKnown == nil || *s.StreamKnown {
+				t.Fatalf("%+v %+v (progress records %d)", s, s.Runtime, progress)
+			}
 		}
 	}
 }
@@ -340,5 +410,37 @@ func TestOldLifecycleFilesNameTheRoundAttempt(t *testing.T) {
 	e := ofType(h.events(), "station.entered")[0]
 	if e.IDs.Round != 2 || e.IDs.Attempt != 0 {
 		t.Fatalf("%+v", e.IDs)
+	}
+}
+
+// The acceptance run's Claude Code, 2.1.323 (a sanitized excerpt of a real belt execution), is a
+// proven version: its workflow, agents and tool calls are read, every record matches the known
+// shapes, and the one record type 2.1.323 added (system/thinking_tokens) is a gap that is
+// received, not interpreted, and loses no history.
+func TestRealStream2_1_323IsReadWhole(t *testing.T) {
+	root := testkit.Project(t)
+	execution(t, root, x1, "belt-plan-build-verify-2.1.323.jsonl", true)
+	h := newHarness(t, root, "", false)
+	h.drain()
+	h.validate()
+	evs := h.events()
+	k := kinds(evs)
+	if k["workflow.started"] != 1 || k["agent.started"] < 5 || k["agent.queued"] < 5 || k["tool.called"] == 0 || k["tool.refused"] == 0 || k["execution.usage"] != 1 {
+		t.Fatalf("2.1.323: %v", k)
+	}
+	for _, g := range ofType(evs, "history.gap") {
+		if g.Data["reason"] != "unknown-type" || g.Data["history_lost"] != false {
+			t.Fatalf("gap %+v", g.Data)
+		}
+	}
+	for _, s := range h.o.Stats().Sources {
+		if s.Key == "stream/"+x1 && (s.Runtime == nil || s.Runtime.State != "proven" || s.Runtime.RecordsRefused != 0 || s.ClaudeVersion != "2.1.323") {
+			t.Fatalf("%+v %+v", s, s.Runtime)
+		}
+	}
+	for _, e := range evs {
+		if e.Origin.Stream == event.StreamClaude && e.Origin.RuntimeState != "proven" {
+			t.Fatalf("%s: runtime_state %q", e.ID, e.Origin.RuntimeState)
+		}
 	}
 }

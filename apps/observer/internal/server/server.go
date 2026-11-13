@@ -27,6 +27,7 @@ import (
 	"mach/observer/internal/artifact"
 	"mach/observer/internal/feed"
 	"mach/observer/internal/project"
+	"mach/observer/internal/redact"
 	"mach/observer/internal/security"
 )
 
@@ -67,6 +68,11 @@ type IngestState struct {
 	// WatermarkMS is the order_ms up to which ingest asserts history is complete (contract 6.6);
 	// nil when ingest does not publish one.
 	WatermarkMS *int64
+	// Runtime sums the execution streams' runtime versions and states (any JSON value; nil when
+	// ingest does not report one).
+	Runtime any
+	// Delivery: how long events were held between being read and being committed.
+	Delivery any
 }
 
 // SourceState is one tailed source.
@@ -82,6 +88,7 @@ type SourceState struct {
 	Duplicates int64     `json:"duplicates"`
 	Oversized  int64     `json:"oversized"`
 	Resets     int64     `json:"resets"`
+	Runtime    any       `json:"runtime,omitempty"` // execution streams: the runtime's version and state
 }
 
 // IngestSource reports the ingest loop's state.
@@ -142,6 +149,13 @@ type Server struct {
 	statusMu   sync.Mutex
 	statusAt   time.Time
 	statusData FactoryState
+
+	// The snapshot at the head, encoded once per projection position: a client reloading a long
+	// history asks for the same bytes again until something new is applied.
+	snapMu    sync.Mutex
+	snapEpoch string
+	snapPos   uint64
+	snapData  []byte
 }
 
 // New wires the routes.
@@ -177,6 +191,7 @@ func New(opts Options) *Server {
 		"factory/status":                s.factoryStatus,
 		"events":                        s.events,
 		"history":                       s.history,
+		"series":                        s.series,
 		"stream":                        s.stream,
 		"snapshot":                      s.snapshot,
 		"project":                       s.project,
@@ -277,6 +292,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if env, ok := checkSchema(r); !ok {
 		writeJSON(rec, http.StatusBadRequest, env)
 		return
+	}
+	if !strings.HasSuffix(r.URL.Path, "/content") {
+		rec.people = redact.PeopleFor(s.opts.Root)
 	}
 	s.api.ServeHTTP(rec, r)
 }
@@ -690,6 +708,10 @@ type recorder struct {
 	http.ResponseWriter
 	status int
 	wrote  bool
+	// people, when set, is the last filter on every API reply body: a person the project's
+	// records name never reaches the browser, even through a string written before the name was
+	// learned (artifact content is filtered before its length is set, and media is never touched).
+	people *redact.People
 }
 
 func (r *recorder) WriteHeader(status int) {
@@ -701,6 +723,14 @@ func (r *recorder) WriteHeader(status int) {
 
 func (r *recorder) Write(b []byte) (int, error) {
 	r.wrote = true
+	if r.people != nil && r.people.Len() > 0 {
+		if out, n := r.people.ReplaceBytes(b); n > 0 {
+			if _, err := r.ResponseWriter.Write(out); err != nil {
+				return 0, err
+			}
+			return len(b), nil
+		}
+	}
 	return r.ResponseWriter.Write(b)
 }
 

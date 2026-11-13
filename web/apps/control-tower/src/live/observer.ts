@@ -294,7 +294,7 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       const q = new URLSearchParams();
       if (typeof window.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(window.fromMs))));
       if (typeof window.toMs === "number") q.set("to_ms", String(Math.max(0, Math.floor(window.toMs))));
-      if (typeof window.bucketMs === "number") q.set("bucket_ms", String(Math.max(1000, Math.floor(window.bucketMs))));
+      if (typeof window.bucketMs === "number") q.set("bucket_ms", String(Math.max(1000, Math.round(window.bucketMs / 1000) * 1000))); // whole seconds (observer M6.2)
       const d = await get(`/series${q.size ? `?${q.toString()}` : ""}`);
       const buckets = list(d.buckets)
         .map((x) => obj(x))

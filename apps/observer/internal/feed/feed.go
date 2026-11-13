@@ -21,7 +21,7 @@ const SchemaVersion = 3
 
 // SchemaRevision is the additive revision within version 3 that this observer serves (1:
 // execution.usage.cost_complete and cost_incomplete_reasons).
-const SchemaRevision = 1
+const SchemaRevision = 2
 
 // Errors a Log read returns.
 var (
@@ -75,6 +75,40 @@ type HistoryPage struct {
 // Historian is a Log that can serve history in order as well as in delivery order.
 type Historian interface {
 	History(HistoryQuery) HistoryPage
+}
+
+// SeriesQuery asks for event counts per time bucket ([FromMS, ToMS), BucketMS a multiple of
+// 1,000), optionally of one ticket or execution.
+type SeriesQuery struct {
+	FromMS, ToMS, BucketMS int64
+	Ticket, Execution      string
+}
+
+// SeriesBucket is one bucket's counts, by kind and by authority.
+type SeriesBucket struct {
+	FromMS      int64            `json:"from_ms"`
+	Count       int64            `json:"count"`
+	Kinds       map[string]int64 `json:"kinds"`
+	Authorities map[string]int64 `json:"authorities"`
+}
+
+// Series is the answer: non-empty buckets in time order, totals, whether every event of the range
+// was counted, and where the counts came from ("minutes": kept per minute for the whole index;
+// "memory-window": counted from the events held in memory).
+type Series struct {
+	Buckets     []SeriesBucket
+	Total       int64
+	Kinds       map[string]int64
+	Authorities map[string]int64
+	Complete    bool
+	Source      string
+}
+
+// Serieser is a Log that can count its events per time bucket (GET /api/v1/series).
+type Serieser interface {
+	Series(SeriesQuery) Series
+	// SeriesBounds is the order time of the earliest and latest event it can count (0, 0: none).
+	SeriesBounds() (int64, int64)
 }
 
 // ---- cursors ----
@@ -341,3 +375,34 @@ func Scan(log Log, pos uint64, f Filter, limit, scanCap int) (Page, error) {
 	}
 	return page, nil
 }
+
+// GapClass gives a history.gap reason's class and whether it loses history (contract 6.5,
+// revision 2). The ingest side's event.GapClass is the same table; a test holds them equal.
+// Events written before revision 2 carry only the reason, so readers derive the class here.
+func GapClass(reason string) (string, bool) {
+	switch reason {
+	case "missing-seq", "truncated", "rewritten":
+		return "not-received", true
+	case "unparsable-line":
+		return "unparsable-line", true
+	case "unknown-type", "unexpected-shape", "no-timestamps":
+		return "unknown-type", false
+	case "state-mismatch":
+		return "state-mismatch", true
+	case "evicted":
+		return "evicted", true
+	case "unreadable":
+		return "source-unreadable", true
+	case "conflict":
+		return "conflict", false
+	}
+	return "unknown-type", false
+}
+
+// GapReasons are every history.gap reason of revision 2.
+var GapReasons = []string{"missing-seq", "unparsable-line", "truncated", "rewritten", "conflict", "unreadable", "no-timestamps",
+	"state-mismatch", "unknown-type", "unexpected-shape", "evicted"}
+
+// ProvenStreamVersions are the Claude Code versions the stream fixtures come from (the ingest
+// side's normalize.ProvenVersions; a test holds them equal).
+var ProvenStreamVersions = []string{"2.1.322", "2.1.323"}

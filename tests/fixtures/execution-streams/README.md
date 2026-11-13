@@ -12,6 +12,7 @@ tested against the shape Claude Code actually writes, without keeping anything p
 | `workflow-tool-refused.jsonl` | the probe with `Workflow` removed from the tool list | the Workflow tool does not exist: no refusal, `success`, no workflow records at all |
 | `budget-exceeded.jsonl` | the probe with a $0.03 budget, less than the first turn | `error_max_budget_usd`, the workflow `killed` right after launch, exit code 1 |
 | `budget-stops-workflow.jsonl` | the probe with Opus agents and a $0.15 budget the agents cross mid-workflow | the workflow and its agents stopped (`killed`, `stopped`, agent `state: "error"`), yet the result is `success` and the exit code 0 |
+| `belt-plan-build-verify-2.1.323.jsonl` | **Claude Code 2.1.323** (M6.2 acceptance, `M6_2_ACCEPTANCE.md`): the real `mach:belt` from `spec-ready` through MACH's supervisor and executor | **an excerpt**: records 1–45, 140–160 and 195–209 (`sanitize.py --keep 1-45,140-160,195-209`) of the first execution: plan, a 10-task build, two verifications, refusals, `system/thinking_tokens`, both `result` records. Proves 2.1.323 for the observer's per-record shape checks (`M6_1_STREAM_COMPATIBILITY.md` section 8) |
 
 See the compatibility document for the runtime version, the exact command lines and the date.
 

@@ -409,3 +409,48 @@ None. `go.mod` has no `require`; there is no `go.sum`.
 7. **Screenshots as evidence.** Decided: images and video only when the project opts in (`.factory/config.json` `{"tower": {"evidence_media": true}}`); text evidence is served by default, scrubbed (shared contracts 3.5). The first draft's question: images can show secrets the scrubber cannot see. Serve evidence images by default, or only when the project opts in?
 8. **People's names.** The design shows roles, never names. M6_0 §5.7 allows names for "that machine's engineer"; is that wanted at all in the Control Tower?
 9. **Execution streams on disk.** The observer will read `stream.jsonl`, which holds everything. Should MACH (not the observer) prune or encrypt execution folders, since the observer's redaction does nothing for the raw files themselves?
+
+---
+
+## 21. After the M6.2 acceptance (built)
+
+What the real end-to-end run (`M6_2_ACCEPTANCE.md`) changed in the observer. Where this section and an earlier one
+differ, this one describes what is built.
+
+- **People by role, everywhere (D2).** A served JSON record of a known kind goes through structured redaction
+  (`redact.ScrubRecord`: decision, vote, results, summary, build report, cell, run record): person-bearing keys become
+  `"a person"`, unknown keys are kept only when their value passes the scrubber, key order is kept; any other text goes
+  through the text scrubber. A per-project deny-list (`redact.People`) holds the names and e-mails MACH's own files
+  give for people (approvals, the intake log's `by` and `actor`, `runner.json` `enabled_by`, cell records' person
+  fields, the `[user]` of `.git/config` and the identities in `.git/logs/HEAD` and each worktree's reflog, read as
+  files, never through git); every event string, every served document and every API reply body is filtered with it.
+  The catalog's relative names are kept by the scrubber (D25).
+- **Stream records by shape (D1).** Section 4.4's version pin is gone: `M6_1_STREAM_COMPATIBILITY.md` section 8.
+- **Gap classes.** `history.gap` gains `class` and `history_lost`; only history-losing classes make history partial
+  (contract 6.5).
+- **Adaptive settle (section 9).** An event is committed once every tailed source with a file has been read through
+  past its time; the 1.5 s window is only the bound for a source that is behind or unreadable. An idle poll is one
+  `lstat` per source (no open); the idle poll interval is at most 500 ms.
+- **Memory (D18).** Reading the 230,853-event history of the acceptance (93 MB of sources) peaked at 1.6 GB: projection
+  checkpoints were full copies of a 20 MB state (64 of them), a tick read up to 20,000 events, the store kept every
+  event of its memory window decoded, and the window's evicted slots kept their bytes. Now: a checkpoint is the state's
+  top level plus one encoded blob per cell, slice, execution and wave, re-encoded only when an event touched it and
+  shared by every checkpoint in which it did not change (32 checkpoints); a tick reads at most 5,000 events and the
+  next tick follows at once while a backlog remains; the store keeps an event's index fields (`event.Head`) and its
+  encoded bytes only; evicted slots are cleared; the saved projection is written at most every 15 s; and the Go
+  runtime is given a soft memory limit of 208 MB (`GOMEMLIMIT` overrides). Peak RSS 283–295 MB, catch-up 26–27 s at
+  load average 10 (was 1.6 GB, 16–20 s).
+- **Index format 3 (section 7.2).** Segments hold each event in a compact form (the envelope without its nulls, empty
+  lists and objects, `false` and zeros; `data`, `cause` and `provenance` exact), expanded to the full envelope when
+  read: 213 MB of segments for that history instead of 281 MB. A format change rebuilds the index.
+- **History in order (section 12).** The store keeps an order index of its memory window (appended, or inserted where a
+  late event belongs), so a `/history` window costs its size plus a binary search, not a scan and sort of the window.
+- **Series.** `GET /api/v1/series`: counts per bucket by kind and authority, kept per minute for everything the index
+  has held (rebuilt from the segments on a restart), finer buckets from the memory window.
+- **Snapshot at the head** is built from the live projection under its lock and kept until the projection moves (no
+  copy of the state): about 0.6 s for that history the first time, then the encoded bytes.
+- **Plan facts and evidence visits (D11, D12).** The plan's exit carries `app_type` and `risk` (revision 2); the cell
+  shows them with the contract and task counts. Each catalogued artifact is linked to a visit: `recorded` when a
+  verification check names it with its hash, otherwise `reconstructed` by its folder, round and file time.
+- **A file created while the observer watches is live from its first line (D16)**, also when it did not exist at the
+  first poll.

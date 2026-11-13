@@ -18,6 +18,7 @@ const MaxString = 600
 // the observer from values that already passed these filters and are not rewritten.
 func ScrubEvent(ev *event.Event, projectRoot string, c *Counters) {
 	n := 0
+	people := PeopleFor(projectRoot)
 	scan := func(s string) (string, bool) {
 		if c != nil {
 			c.Strings++
@@ -27,6 +28,14 @@ func ScrubEvent(ev *event.Event, projectRoot string, c *Counters) {
 			return "[withheld]", true
 		}
 		if !Sensitive(s) {
+			if people.Hit(s) {
+				out, k := people.Replace(s)
+				n += max(k, 1)
+				if c != nil {
+					c.People += int64(max(k, 1))
+				}
+				return out, true
+			}
 			return s, false
 		}
 		out, k := scrubText(s, projectRoot, MaxString)

@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,7 +160,7 @@ func evAt(id, ticket, order string, refs ...string) *event.Event {
 
 func TestSegmentsRollRetainAndServeBelowMemory(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenWith(dir, Options{MaxMemory: 50, SegmentBytes: 40 << 10, RetainBytes: 400 << 10})
+	s, err := OpenWith(dir, Options{MaxMemory: 50, SegmentBytes: 20 << 10, RetainBytes: 200 << 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +168,7 @@ func TestSegmentsRollRetainAndServeBelowMemory(t *testing.T) {
 		s.Append(batch(i, i+9), map[string]tail.Checkpoint{"ledger": {Offset: int64(i)}})
 	}
 	info := s.Info()
-	if info.Segments < 3 || info.Dropped == 0 || info.DiskBytes > 480<<10 {
+	if info.Segments < 3 || info.Dropped == 0 || info.DiskBytes > 240<<10 {
 		t.Fatalf("segments %+v", info)
 	}
 	floor, head := s.Bounds()
@@ -181,7 +183,7 @@ func TestSegmentsRollRetainAndServeBelowMemory(t *testing.T) {
 		t.Fatalf("below the retained floor: %v", err)
 	}
 	s.Close()
-	r, err := OpenWith(dir, Options{MaxMemory: 50, SegmentBytes: 40 << 10, RetainBytes: 400 << 10})
+	r, err := OpenWith(dir, Options{MaxMemory: 50, SegmentBytes: 20 << 10, RetainBytes: 200 << 10})
 	if err != nil || r.Info().Rebuilt != "" {
 		t.Fatalf("%v %q", err, r.Info().Rebuilt)
 	}
@@ -282,5 +284,117 @@ func TestHistoryPagesFiltersAndCompleteness(t *testing.T) {
 	}
 	if p := s.History(HistoryQuery{FromOrder: order(5)}); p.Complete {
 		t.Fatal("ms 5 was evicted: a window from it is not complete")
+	}
+}
+
+// The index keeps events in their compact form on disk and serves the full envelope: an event
+// read back from a segment is byte for byte the one appended, and the compact line is smaller.
+func TestCompactRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenWith(dir, Options{MaxMemory: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq, part := int64(7), 0
+	ev := &event.Event{ID: "c:T-1:abc:7", Type: "station.exited", Authority: event.Authoritative, Order: "001~2~c~000000000007~0000",
+		Origin: event.Origin{Stream: "cell-lifecycle", Key: "c:T-1:abc", Seq: seq, Part: &part, Writer: "build.py", RuntimeState: ""},
+		Time:   event.Time{OccurredAt: "2026-11-12T10:00:00.000Z", Precision: "ms", ObservedAt: "2026-11-12T10:00:00.100Z", OrderMS: 1794477600000},
+		IDs:    event.IDs{TicketID: "T-1", Station: "plan", Round: 1}, Entities: []string{"cell:T-1"},
+		Data:       map[string]any{"station": "plan", "outcome": "planned", "stage": "planned", "duration_ms": nil, "closed_by": nil, "head": nil, "counts": map[string]any{"tasks": 3.0}},
+		Provenance: &event.Provenance{Basis: []string{}, Rule: "backfill", Files: []string{}}}
+	s.Append([]*event.Event{ev, evAt("b", "T-2", "002~2~c~000000000001~0000")}, nil)
+	want, _ := json.Marshal(ev)
+	got, err := s.After(0, 1) // below the memory window of one: read from disk
+	if err != nil || len(got) != 1 || string(got[0].Raw) != string(want) {
+		t.Fatalf("%v\n got %s\nwant %s", err, got[0].Raw, want)
+	}
+	compact, _ := ev.MarshalCompact()
+	if len(compact) >= len(want) {
+		t.Fatalf("compact %d >= full %d", len(compact), len(want))
+	}
+	s.Close()
+}
+
+// History reads a window through the order index: late arrivals sit where they belong, pages
+// never split a tie, and a page is O(window): a narrow window of a long history touches only it.
+func TestHistoryOrderIndexPagesAndLateArrivals(t *testing.T) {
+	s, _ := Open("", 100000)
+	key := func(ms int, seq int) string { return fmt.Sprintf("%015d~2~c~%012d~0000", ms, seq) }
+	var b []*event.Event
+	for i := 1; i <= 3000; i++ {
+		b = append(b, evAt(fmt.Sprintf("e%d", i), "T-1", key(i*10, i)))
+	}
+	s.Append(b, nil)
+	// Late: three events that sort inside the history, one a tie with an existing key.
+	s.Append([]*event.Event{evAt("late1", "T-2", key(15, 1)), evAt("late2", "T-2", key(20, 2)), evAt("late3", "T-2", key(29995, 0))}, nil)
+	h := s.History(HistoryQuery{FromOrder: key(10, 0), ToOrder: key(31, 0), Limit: 10})
+	var ids []string
+	for _, e := range h.Entries {
+		ids = append(ids, e.Event.ID)
+	}
+	if strings.Join(ids, ",") != "e1,late1,e2,late2,e3" || h.More {
+		t.Fatalf("window %v more %v", ids, h.More)
+	}
+	// Paging through everything gives every event once, in order.
+	seen, from, pages := 0, "", 0
+	prev := ""
+	for {
+		p := s.History(HistoryQuery{FromOrder: from, Limit: 250})
+		for _, e := range p.Entries {
+			if e.Event.Order < prev {
+				t.Fatalf("out of order at %s", e.Event.ID)
+			}
+			prev = e.Event.Order
+			seen++
+		}
+		pages++
+		if !p.More {
+			break
+		}
+		from = p.Next
+	}
+	if seen != 3003 || pages < 12 {
+		t.Fatalf("%d events in %d pages", seen, pages)
+	}
+	// Ties are not split: 5 events at one key, a page of 3 takes all 5.
+	t2, _ := Open("", 100)
+	var ties []*event.Event
+	for i := 0; i < 5; i++ {
+		ties = append(ties, evAt(fmt.Sprintf("t%d", i), "T-1", "000000000000100~2~c~000000000001~0000"))
+	}
+	ties = append(ties, evAt("after", "T-1", "000000000000200~2~c~000000000001~0000"))
+	t2.Append(ties, nil)
+	p := t2.History(HistoryQuery{Limit: 3})
+	if len(p.Entries) != 5 || !p.More || p.Next != "000000000000200~2~c~000000000001~0000" {
+		t.Fatalf("ties: %d more %v next %q", len(p.Entries), p.More, p.Next)
+	}
+}
+
+// Series: counts per minute by kind and authority over everything indexed (also after a restart
+// and beyond the memory window), finer buckets from the memory window.
+func TestSeriesCountsAndSurvivesARestart(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := OpenWith(dir, Options{MaxMemory: 10})
+	var b []*event.Event
+	for i := 0; i < 100; i++ {
+		e := evAt(fmt.Sprintf("e%d", i), "T-1", fmt.Sprintf("%015d~2~c~%012d~0000", 1_800_000_000_000+int64(i)*30_000, i))
+		e.Time.OrderMS = 1_800_000_000_000 + int64(i)*30_000 // one every 30 s: two per minute
+		b = append(b, e)
+	}
+	s.Append(b, map[string]tail.Checkpoint{"ledger": {Offset: 1}})
+	r := s.Series(SeriesQuery{FromMS: 1_800_000_000_000 - 1_800_000_000_000%60_000, ToMS: 1_800_000_000_000 + 3_000_000, BucketMS: 600_000})
+	if r.Total != 100 || r.Source != "minutes" || len(r.Buckets) != 5 || r.Buckets[0].Count != 20 || r.Kinds["station.entered"] != 100 || r.Authorities["authoritative"] != 100 || !r.Complete {
+		t.Fatalf("%+v", r)
+	}
+	fine := s.Series(SeriesQuery{FromMS: 1_800_000_000_000, ToMS: 1_800_000_000_000 + 3_000_000, BucketMS: 1000})
+	if fine.Source != "memory-window" || fine.Total != 10 || fine.Complete {
+		t.Fatalf("fine %+v", fine)
+	}
+	s.Close()
+	r2, _ := OpenWith(dir, Options{MaxMemory: 10})
+	defer r2.Close()
+	again := r2.Series(SeriesQuery{FromMS: 1_800_000_000_000 - 1_800_000_000_000%60_000, ToMS: 1_800_000_000_000 + 3_000_000, BucketMS: 600_000})
+	if again.Total != 100 {
+		t.Fatalf("after a restart %+v", again)
 	}
 }

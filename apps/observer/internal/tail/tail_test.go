@@ -244,3 +244,19 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		t.Fatalf("resume: %v %v", got, notes)
 	}
 }
+
+// A file that was not there at the first poll is live from its first line, even when it appears
+// with several lines at once (D16: the intake log created after the observer started).
+func TestFileCreatedAfterTheFirstPollIsLive(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "events.jsonl")
+	tl := New(p, Checkpoint{Path: "events.jsonl"})
+	if lines, _, err := tl.Poll(); err != nil || len(lines) != 0 {
+		t.Fatal(lines, err)
+	}
+	os.WriteFile(p, []byte("{\"a\":1}\n{\"a\":2}\n"), 0o644)
+	lines, _, err := tl.Poll()
+	if err != nil || len(lines) != 2 || !lines[0].Live || !lines[1].Live {
+		t.Fatalf("%+v %v", lines, err)
+	}
+}

@@ -95,10 +95,20 @@ func (h *harness) events() []*event.Event {
 			return out
 		}
 		for _, e := range batch {
-			out = append(out, e.Event)
+			out = append(out, full(h.t, e.Raw))
 			pos = e.Event.Pos
 		}
 	}
+}
+
+// full decodes a stored event's envelope (the store keeps only index fields decoded).
+func full(t testing.TB, raw []byte) *event.Event {
+	t.Helper()
+	var ev event.Event
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		t.Fatal(err)
+	}
+	return &ev
 }
 
 func (h *harness) raws() [][]byte {

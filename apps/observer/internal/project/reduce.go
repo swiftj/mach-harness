@@ -94,6 +94,7 @@ func (s *State) cell(e *feed.Event, st *Stamp) *Cell {
 		c = &Cell{TicketID: t, FirstSeen: st}
 		s.Cells[t] = c
 	}
+	s.touch(entCell, t)
 	c.Updated = st
 	if v := feed.Str(e.IDs.CellInstance); v != "" {
 		c.CellInstance = v
@@ -132,6 +133,7 @@ func (s *State) slice(e *feed.Event) *Slice {
 		sl = &Slice{SliceID: id, State: "unknown", Dependencies: []string{}, DependsOn: []string{}, Reasons: []string{}}
 		s.Slices[id] = sl
 	}
+	s.touch(entSlice, id)
 	if v := feed.Str(e.IDs.WaveID); v != "" {
 		sl.WaveID = v
 	}
@@ -149,6 +151,7 @@ func (s *State) execution(e *feed.Event) *Execution {
 			Tools: map[string]*Tool{}, RefusedTools: []string{}, Recovery: []string{}, Refused: []Refusal{}, Visits: []string{}}
 		s.Executions[id] = x
 	}
+	s.touch(entExecution, id)
 	if t := e.Ticket(); t != "" && x.TicketID == "" && e.Origin.Stream != "execution-stream" {
 		x.TicketID = t // a stream event's ticket may be a workflow agent's own (from its label)
 	}
@@ -227,6 +230,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			w = &Wave{WaveID: id, FirstSeen: st}
 			s.Waves[id] = w
 		}
+		s.touch(entWave, id)
 		w.Revision = e.IDs.Revision
 		if d.Slices != nil {
 			w.Slices = d.Slices
@@ -595,20 +599,41 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			c.Stage, c.StageSource = d.Stage, e.Type
 		}
 		if x := s.Executions[e.Execution()]; x != nil && visitID != "" && !contains(x.Visits, visitID) {
+			s.touch(entExecution, e.Execution())
 			x.Visits = append(x.Visits, visitID)
 		}
 	case "station.exited":
 		var d struct {
-			Station    string `json:"station"`
-			Outcome    string `json:"outcome"`
-			Stage      string `json:"stage"`
-			DurationMS *int64 `json:"duration_ms"`
-			ClosedBy   string `json:"closed_by"`
-			Head       string `json:"head"`
+			Station    string         `json:"station"`
+			Outcome    string         `json:"outcome"`
+			Stage      string         `json:"stage"`
+			DurationMS *int64         `json:"duration_ms"`
+			ClosedBy   string         `json:"closed_by"`
+			Head       string         `json:"head"`
+			AppType    *string        `json:"app_type"`
+			Risk       *string        `json:"risk"`
+			Counts     map[string]any `json:"counts"`
 		}
 		e.DataAs(&d)
 		if station == "" {
 			station = d.Station
+		}
+		// The facts the plan fixed (D11): recorded on the plan station's exit.
+		if v := feed.Str(d.AppType); v != "" {
+			c.AppType, c.AppTypeSource = v, e.ID
+		}
+		if v := feed.Str(d.Risk); v != "" {
+			c.Risk = v
+		}
+		if station == "plan" {
+			if n, ok := d.Counts["contracts"].(float64); ok {
+				k := int64(n)
+				c.Contracts = &k
+			}
+			if n, ok := d.Counts["tasks"].(float64); ok {
+				k := int64(n)
+				c.TasksPlanned = &k
+			}
 		}
 		v := c.visit(visitID)
 		if v == nil && len(c.Visits) < maxListPerCell {
@@ -1190,8 +1215,11 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 			Count     *int64 `json:"count"`
 		}
 		e.DataAs(&d)
+		class, lost := feed.GapClass(d.Reason)
 		s.GapCounts[d.Reason]++
-		s.Gaps = append(s.Gaps, Gap{SourceKey: d.SourceKey, FromSeq: d.FromSeq, ToSeq: d.ToSeq, Reason: d.Reason, Count: d.Count, EventID: e.ID, Pos: e.Pos})
+		s.GapClasses[class]++
+		s.Gaps = append(s.Gaps, Gap{SourceKey: d.SourceKey, FromSeq: d.FromSeq, ToSeq: d.ToSeq, Reason: d.Reason, Class: class, Lost: lost,
+			Count: d.Count, EventID: e.ID, Pos: e.Pos})
 		if len(s.Gaps) > maxGapsKept {
 			s.Gaps = append([]Gap(nil), s.Gaps[len(s.Gaps)-maxGapsKept:]...)
 		}

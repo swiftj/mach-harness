@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,16 +24,28 @@ var artifactIDRe = regexp.MustCompile(`^a[0-9a-f]{24}$`)
 // linkVisits fills each evidence entry's visit from the projection: the verify visit of its round.
 func (s *Server) linkVisits(entries []artifact.Entry) {
 	s.opts.Projector.View(func(st *project.State) {
+		// Recorded links first; then a verification folder's records (results.json, summary.json,
+		// findings.md) take the visit an evidence file of the same folder was recorded in.
+		folder := map[string]string{} // ticket + folder -> recorded visit
 		for i := range entries {
 			e := &entries[i]
-			c := st.Cells[e.TicketID]
-			if c == nil || e.Round == nil || !strings.HasPrefix(e.Path, "evidence/") {
+			id, basis, rule := project.LinkArtifact(st.Cells[e.TicketID], e.Path, e.SHA256, e.Round, e.ModifiedMS)
+			if basis == "recorded" {
+				e.VisitID, e.Visit = id, &artifact.VisitLink{VisitID: id, Basis: basis, Rule: rule}
+				folder[e.TicketID+"\x00"+path.Dir(e.Path)] = id
+			}
+		}
+		for i := range entries {
+			e := &entries[i]
+			if e.Visit != nil {
 				continue
 			}
-			for _, v := range c.Visits {
-				if v.Station == "verify" && v.Round != nil && *v.Round == *e.Round {
-					e.VisitID = v.VisitID
-				}
+			if id, ok := folder[e.TicketID+"\x00"+path.Dir(e.Path)]; ok {
+				e.VisitID, e.Visit = id, &artifact.VisitLink{VisitID: id, Basis: "reconstructed", Rule: "folder"}
+				continue
+			}
+			if id, basis, rule := project.LinkArtifact(st.Cells[e.TicketID], e.Path, "", e.Round, e.ModifiedMS); id != "" {
+				e.VisitID, e.Visit = id, &artifact.VisitLink{VisitID: id, Basis: basis, Rule: rule}
 			}
 		}
 	})

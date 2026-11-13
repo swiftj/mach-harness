@@ -76,11 +76,7 @@ func (c *Catalog) Read(e Entry) (*Content, error) {
 	}
 	out := &Content{MediaType: media, Class: class, Name: baseName(e.Path)}
 	if class == ClassText {
-		var opt redact.DocOptions
-		if strings.HasSuffix(e.Path, ".json") {
-			opt.HashKeys = HashKeys // a MACH record: its known hashes are not mistaken for secrets
-		}
-		text, n := redact.ScrubDocument(string(data), c.root, opt)
+		text, n := c.scrubText(e, data)
 		if len(text) > ServedText {
 			text, out.Truncated = text[:ServedText], true
 		}
@@ -89,6 +85,25 @@ func (c *Catalog) Read(e Entry) (*Content, error) {
 	}
 	out.Data = data
 	return out, nil
+}
+
+// scrubText scrubs a text artifact for serving. A MACH record of a known kind (decision.json,
+// results.json, summary.json, ...) goes through the structured rules of its kind: people by
+// role, unknown keys only when clean. Anything else goes through the text scrubber. Both keep the
+// relative names of the artifacts the catalog holds for this ticket, and both replace every
+// person the project's records name (redact.People).
+func (c *Catalog) scrubText(e Entry, data []byte) (string, int) {
+	safe := c.SafeNames(e.TicketID)
+	if kind := redact.KindOf(e.Path); kind != redact.KindUnknown {
+		if text, n, err := redact.ScrubRecord(data, kind, c.root, redact.RecordOptions{HashKeys: HashKeys, SafeNames: safe}); err == nil {
+			return text, n
+		}
+	}
+	opt := redact.DocOptions{SafeNames: safe}
+	if strings.HasSuffix(e.Path, ".json") {
+		opt.HashKeys = HashKeys // a JSON evidence file: its hashes are not mistaken for secrets
+	}
+	return redact.ScrubDocument(string(data), c.root, opt)
 }
 
 func baseName(p string) string {

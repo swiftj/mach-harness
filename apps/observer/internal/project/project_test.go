@@ -403,3 +403,65 @@ func TestCostCompletenessDecidesUnderReporting(t *testing.T) {
 		}
 	})
 }
+
+// D11: the plan's exit records app type, risk and the contracts and tasks counts; the cell shows
+// them, and says which event recorded the app type.
+func TestPlanExitFactsReachTheCell(t *testing.T) {
+	m := feedtest.NewMem("", 0)
+	c := func(typ string, ms int64, visit string) *feedtest.Ev {
+		return feedtest.New("cell-lifecycle", typ, ms).Ticket("T-9").Visit("T-9", visit, 1)
+	}
+	m.Append(c("station.entered", 1000, "plan#1").Data(map[string]any{"station": "plan", "stage": "spec-ready", "action": "plan", "resumed": false,
+		"unclosed_visit": nil, "head": nil, "counts": map[string]any{}}).Set("id", "c:T-9:g:1").Build(),
+		c("station.exited", 2000, "plan#1").Data(map[string]any{"station": "plan", "outcome": "planned", "stage": "planned", "duration_ms": 1000,
+			"closed_by": nil, "head": nil, "counts": map[string]any{"contracts": 1, "tasks": 10}, "app_type": "library", "risk": "High"}).Set("id", "c:T-9:g:2").Build())
+	p := New(Options{Log: m})
+	p.View(func(s *State) {
+		d := CellDetail(s, s.Cells["T-9"])
+		plan := d["plan"].(map[string]any)
+		if d["app_type"] != "library" || d["risk"] != "High" || plan["app_type"] != "library" || *plan["contracts"].(*int64) != 1 ||
+			*plan["tasks"].(*int64) != 10 || plan["recorded_by"] != "c:T-9:g:2" {
+			t.Fatalf("cell %v plan %v", d["app_type"], plan)
+		}
+	})
+}
+
+// D12: an evidence file named by a recorded check, with its hash, is linked to that check's visit
+// ("recorded"); a file only known by round and time is joined to the visit of its round that had
+// begun when it was written ("reconstructed").
+func TestLinkArtifactToVisits(t *testing.T) {
+	m, _ := scenarioLog(t)
+	p := New(Options{Log: m})
+	p.View(func(s *State) {
+		c := s.Cells["T-1"]
+		var sha, file string
+		for _, k := range c.Checks {
+			for _, ev := range k.Evidence {
+				sha, file = ev.SHA256, ev.File
+			}
+		}
+		if sha == "" {
+			t.Fatal("the scenario has no evidence with a hash")
+		}
+		round := int64(1)
+		if v, basis, rule := LinkArtifact(c, "evidence/"+file, sha, &round, 0); v != "T-1/verify#1" || basis != "recorded" || rule != "check-hash" {
+			t.Fatalf("recorded: %q %q %q", v, basis, rule)
+		}
+		r2 := int64(2)
+		var at int64
+		for _, v := range c.Visits {
+			if v.VisitID == "T-1/verify#2" {
+				at, _ = v.Entered.lo()
+			}
+		}
+		if v, basis, rule := LinkArtifact(c, "evidence/results.json", "", &r2, at+500); v != "T-1/verify#2" || basis != "reconstructed" || rule != "round-and-time" {
+			t.Fatalf("by round and time: %q %q %q", v, basis, rule)
+		}
+		if v, _, _ := LinkArtifact(c, "review/round-2/decision.json", "", &r2, 0); v != "T-1/review#1" {
+			t.Fatalf("review: %q", v)
+		}
+		if v, _, _ := LinkArtifact(c, "intent.md", "", &r2, 0); v != "" {
+			t.Fatal("a cell file is not an evidence or review artifact")
+		}
+	})
+}

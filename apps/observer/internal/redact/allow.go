@@ -71,7 +71,7 @@ var Allow = map[string]*Shape{
 	"execution.failed":    obj("stage", "next", "how", "claude_error", "exit_code", "attempt"),
 
 	"station.entered":          obj("station", "stage", "action", "resumed", "unclosed_visit", "head", "counts", anyKeys(scalar)),
-	"station.exited":           obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar)),
+	"station.exited":           obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar), "app_type", "risk"), // revision 2: app_type, risk (plan exit)
 	"gate.evaluated":           obj("gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts", anyKeys(scalar)),
 	"build.task_completed":     obj("task_id", "kind", "step", "first_run", "suite", "commit"),
 	"verify.check_recorded":    obj("target_id", "target_kind", "result", "evidence", list(obj("file", "sha256", "bytes")), "rerecorded"),
@@ -109,7 +109,7 @@ var Allow = map[string]*Shape{
 	"verify.targets_listed": obj("targets", list(obj("id", "kind")), "source"),
 	"capacity.wait_changed": obj("state", "scope", "limit"),
 	"history.began":         obj("reason", "snapshot", obj("stage", "round", "station", "state")),
-	"history.gap":           obj("source_key", "from_seq", "to_seq", "reason", "count"),
+	"history.gap":           obj("source_key", "from_seq", "to_seq", "reason", "count", "class", "history_lost"), // revision 2: class, history_lost
 }
 
 // RequiredIDs are the ids each kind must carry (the schema's allOf); an event without one of
@@ -191,6 +191,7 @@ type Counters struct {
 	FieldsDropped int64 // data keys the allowlist does not name
 	Strings       int64 // string values scanned by the scrubber
 	Replaced      int64 // sensitive spans replaced
+	People        int64 // of which: mentions of a listed person (People), replaced by the role form
 }
 
 // Enforce applies the kind's allowlist to ev. It returns false when the event must not be

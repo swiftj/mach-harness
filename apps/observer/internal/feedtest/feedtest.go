@@ -157,6 +157,58 @@ func (m *Mem) History(q feed.HistoryQuery) feed.HistoryPage {
 	return page
 }
 
+// Series counts the held events per bucket, by order time (feed.Serieser).
+func (m *Mem) Series(q feed.SeriesQuery) feed.Series {
+	m.mu.RLock()
+	recs := append([]feed.Record(nil), m.recs...)
+	dropped := m.first > 1
+	m.mu.RUnlock()
+	out := feed.Series{Kinds: map[string]int64{}, Authorities: map[string]int64{}, Complete: !dropped, Source: "memory-window"}
+	byStart := map[int64]*feed.SeriesBucket{}
+	for _, r := range recs {
+		ev, err := feed.Decode(r)
+		ms := ev.Time.OrderMS
+		if err != nil || ms < q.FromMS || ms >= q.ToMS || q.Ticket != "" && feed.Str(ev.IDs.TicketID) != q.Ticket ||
+			q.Execution != "" && feed.Str(ev.IDs.ExecutionID) != q.Execution {
+			continue
+		}
+		k := q.FromMS + (ms-q.FromMS)/q.BucketMS*q.BucketMS
+		b := byStart[k]
+		if b == nil {
+			b = &feed.SeriesBucket{FromMS: k, Kinds: map[string]int64{}, Authorities: map[string]int64{}}
+			byStart[k] = b
+		}
+		b.Count++
+		b.Kinds[ev.Type]++
+		b.Authorities[ev.Authority]++
+		out.Total++
+		out.Kinds[ev.Type]++
+		out.Authorities[ev.Authority]++
+	}
+	for _, b := range byStart {
+		out.Buckets = append(out.Buckets, *b)
+	}
+	sort.Slice(out.Buckets, func(i, j int) bool { return out.Buckets[i].FromMS < out.Buckets[j].FromMS })
+	return out
+}
+
+// SeriesBounds is the order time of the earliest and latest held event.
+func (m *Mem) SeriesBounds() (int64, int64) {
+	m.mu.RLock()
+	recs := append([]feed.Record(nil), m.recs...)
+	m.mu.RUnlock()
+	var lo, hi int64
+	for _, r := range recs {
+		if ev, err := feed.Decode(r); err == nil {
+			if lo == 0 || ev.Time.OrderMS < lo {
+				lo = ev.Time.OrderMS
+			}
+			hi = max(hi, ev.Time.OrderMS)
+		}
+	}
+	return lo, hi
+}
+
 // AppendRaw adds a record whose body is given as is (for "not a v3 event" tests).
 func (m *Mem) AppendRaw(raw string) uint64 {
 	m.mu.Lock()

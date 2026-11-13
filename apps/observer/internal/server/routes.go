@@ -3,8 +3,10 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,8 +28,56 @@ var Kinds = []string{
 	"review.finding", "artifact.recorded", "history.began", "verify.targets_listed", "capacity.wait_changed", "history.gap",
 }
 
-// ProvenStreamVersion is the Claude Code version the stream mapping was proven against.
-const ProvenStreamVersion = "2.1.322"
+// streamObservations is session.capabilities.stream_observations: the policy (each stream record
+// is accepted or refused on its own shape), the versions the fixtures prove, the worst state over
+// every stream read, and each version seen. ok is false only when records were refused.
+func (s *Server) streamObservations() map[string]any {
+	in := s.ingestState()
+	out := map[string]any{"policy": "structural", "ok": nil, "claude_code_version": nil, "state": "unknown", "versions": []any{},
+		"reason": "no execution stream has been read yet"}
+	rt, ok := in.Runtime.(interface {
+		Summary() (string, []string, []map[string]any)
+	})
+	if !ok {
+		// No ingest summary (a reader of a log only): what the projection recorded from the
+		// streams' init records.
+		var v string
+		s.opts.Projector.View(func(st *project.State) { v = st.Stream.ClaudeCodeVersion })
+		out["proven_versions"] = feed.ProvenStreamVersions
+		if v != "" {
+			state := "compatible-unproven"
+			for _, p := range feed.ProvenStreamVersions {
+				if p == v {
+					state = "proven"
+				}
+			}
+			out["claude_code_version"], out["state"], out["ok"] = v, state, true
+			out["versions"] = []any{map[string]any{"version": v, "state": state}}
+			out["reason"] = "read from the streams' init records; records refused for their shape are counted by the ingest loop only"
+		}
+		return out
+	}
+	{
+		state, proven, versions := rt.Summary()
+		out["state"], out["proven_versions"] = state, proven
+		vs := make([]any, len(versions))
+		for i, v := range versions {
+			vs[i] = v
+		}
+		out["versions"] = vs
+		if len(versions) > 0 {
+			out["claude_code_version"] = versions[len(versions)-1]["version"]
+			out["ok"] = state != "incompatible"
+			out["reason"] = map[string]string{
+				"proven":              "every stream was written by a Claude Code version the observer's fixtures come from",
+				"compatible-unproven": "observed on a Claude Code version the fixtures do not come from; every record matched the known shapes",
+				"incompatible":        "some stream records did not match the known shapes and were refused (counted; nothing of them is shown)",
+				"unknown":             "a stream has not said which Claude Code wrote it yet",
+			}[state]
+		}
+	}
+	return out
+}
 
 func ms(t time.Time) any {
 	if t.IsZero() {
@@ -40,19 +90,7 @@ func ms(t time.Time) any {
 
 func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 	_, set := s.opts.Catalog.Snapshot()
-	var streamObs map[string]any
-	s.opts.Projector.View(func(st *project.State) {
-		v := st.Stream.ClaudeCodeVersion
-		switch {
-		case v == "":
-			streamObs = map[string]any{"ok": nil, "claude_code_version": nil, "reason": "no execution stream has been read yet"}
-		case v == ProvenStreamVersion:
-			streamObs = map[string]any{"ok": true, "claude_code_version": v, "reason": nil}
-		default:
-			streamObs = map[string]any{"ok": false, "claude_code_version": v,
-				"reason": "the stream mapping was proven for Claude Code " + ProvenStreamVersion + "; other versions yield only what the parser knows"}
-		}
-	})
+	streamObs := s.streamObservations()
 	var link any
 	if s.opts.LinkFile != "" {
 		link = map[string]any{"file": s.opts.LinkFile, "note": "a fresh one-time link for another browser is kept here, readable only by you"}
@@ -104,6 +142,9 @@ func (s *Server) freshness(now time.Time, in IngestState) map[string]any {
 		sources = append(sources, map[string]any{"key": src.Key, "path": src.Path, "state": src.State, "last_read_at": ms(src.LastReadAt),
 			"last_read_age_ms": readAge, "offset": src.Offset, "size": src.Size, "lag_bytes": lag, "lines": src.Lines, "refused": src.Refused,
 			"duplicates": src.Duplicates, "oversized": src.Oversized, "resets": src.Resets})
+		if src.Runtime != nil {
+			sources[len(sources)-1]["runtime"] = src.Runtime
+		}
 	}
 	ps := s.opts.Projector.Status()
 	return map[string]any{
@@ -136,7 +177,8 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		"index":          map[string]any{"generation": s.opts.Log.Epoch(), "head": s.cursor(head), "floor": s.cursor(floor)},
 		"projection":     ps,
 		"ingest": map[string]any{"ticks": in.Ticks, "last_tick_at": ms(in.LastTickAt), "last_tick_ms": in.LastTickMS, "interval_ms": in.IntervalMS,
-			"errors": in.Errors, "last_error": in.LastError, "factory_found": in.FactoryFound, "catching_up": in.CatchingUp, "late": in.Late, "backfill": in.Backfill},
+			"errors": in.Errors, "last_error": in.LastError, "factory_found": in.FactoryFound, "catching_up": in.CatchingUp, "late": in.Late, "backfill": in.Backfill,
+			"runtime": in.Runtime, "delivery": in.Delivery},
 		"freshness": fresh,
 		"streams":   map[string]any{"active": s.streams.Load(), "max": s.opts.MaxStreams},
 		"sessions":  s.opts.Guard.Sessions(),
@@ -194,6 +236,10 @@ func (s *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		at = pos
 	}
+	if at == 0 {
+		s.snapshotHead(w)
+		return
+	}
 	st, reconstructed, err := s.opts.Projector.At(at)
 	switch {
 	case errors.Is(err, project.ErrNotHeld):
@@ -224,6 +270,35 @@ func (s *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 		"applied":       st.Applied,
 		"state":         project.SnapshotView(st),
 	}))
+}
+
+// snapshotHead is the snapshot at the projection's own position: built from the live projection
+// under its lock (no copy of the state) and encoded there, then kept until the projection moves.
+func (s *Server) snapshotHead(w http.ResponseWriter) {
+	s.snapMu.Lock()
+	defer s.snapMu.Unlock()
+	var data []byte
+	status := http.StatusOK
+	s.opts.Projector.View(func(st *project.State) {
+		if s.snapData != nil && s.snapEpoch == st.Epoch && s.snapPos == st.Pos {
+			data = s.snapData
+			return
+		}
+		var bad int
+		data, bad = encode(ok(map[string]any{
+			"cursor": s.cursor(st.Pos), "generation": st.Epoch, "pos": st.Pos, "reconstructed": false, "authority": "projection",
+			"partial": st.Partial, "applied": st.Applied, "state": project.SnapshotView(st),
+		}))
+		data = append(data, '\n')
+		if bad != 0 {
+			status = bad
+			return
+		}
+		s.snapEpoch, s.snapPos, s.snapData = st.Epoch, st.Pos, data
+	})
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	w.Write(data)
 }
 
 // ---- project, waves, slices, cells ----
@@ -602,4 +677,115 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// ---- series ----
+
+// Series limits: buckets are at least a second, at most MaxSeriesBuckets per reply, and by
+// default as few seconds as keep the range within DefaultSeriesBuckets.
+const (
+	MaxSeriesBuckets     = 2000
+	DefaultSeriesBuckets = 500
+)
+
+// seriesSteps are the bucket sizes chosen when none is asked for: whole seconds and minutes,
+// then hours and days, so buckets line up with a clock.
+var seriesSteps = []int64{1_000, 5_000, 10_000, 30_000, 60_000, 300_000, 600_000, 1_800_000, 3_600_000, 10_800_000, 21_600_000, 43_200_000, 86_400_000}
+
+// series: GET /api/v1/series?from_ms&to_ms&bucket_ms&ticket&execution (shared contracts 2.8).
+// Event counts per time bucket, by kind and authority, placed by order_ms (a late event counts
+// where it belongs): enough to draw a long timeline without fetching every event. With no
+// filter and whole-minute buckets the counts cover everything indexed (kept per minute); finer
+// buckets or a filter are counted from the memory window. complete says whether every event of
+// the range was counted. Empty buckets are left out.
+func (s *Server) series(w http.ResponseWriter, r *http.Request) {
+	sr, ok2 := s.opts.Log.(feed.Serieser)
+	if !ok2 {
+		writeJSON(w, http.StatusServiceUnavailable, fail(KindUnavailable, "This observer cannot count events per time bucket."))
+		return
+	}
+	q := r.URL.Query()
+	invalid := func(msg string) { writeJSON(w, http.StatusBadRequest, fail(KindInvalid, msg)) }
+	num := func(name string) (int64, bool, bool) {
+		v := q.Get(name)
+		if v == "" {
+			return 0, false, true
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 || n > 999_999_999_999_999 {
+			invalid(name + " must be a whole number of milliseconds.")
+			return 0, false, false
+		}
+		return n, true, true
+	}
+	lo, hi := sr.SeriesBounds()
+	from, hasFrom, good := num("from_ms")
+	if !good {
+		return
+	}
+	to, hasTo, good := num("to_ms")
+	if !good {
+		return
+	}
+	bucket, hasBucket, good := num("bucket_ms")
+	if !good {
+		return
+	}
+	if !hasFrom {
+		from = lo
+	}
+	if !hasTo {
+		to = hi + 1
+	}
+	if to <= from {
+		if hasFrom || hasTo {
+			invalid("The range is empty: to_ms must be after from_ms.")
+			return
+		}
+		to = from + 1 // nothing indexed yet
+	}
+	if hasBucket {
+		if bucket < 1000 || bucket%1000 != 0 {
+			invalid("bucket_ms must be a whole number of seconds (at least 1000).")
+			return
+		}
+	} else {
+		bucket = seriesSteps[len(seriesSteps)-1]
+		for _, step := range seriesSteps {
+			if (to-from+step-1)/step <= DefaultSeriesBuckets {
+				bucket = step
+				break
+			}
+		}
+	}
+	if !hasFrom {
+		from -= from % bucket // align an open start to the bucket
+	}
+	if n := (to - from + bucket - 1) / bucket; n > MaxSeriesBuckets {
+		invalid(fmt.Sprintf("That would be %d buckets; at most %d. Ask for a larger bucket_ms or a shorter range.", n, MaxSeriesBuckets))
+		return
+	}
+	var fq feed.SeriesQuery
+	fq.FromMS, fq.ToMS, fq.BucketMS = from, to, bucket
+	var bad *Envelope
+	if fq.Ticket, bad = optIdent(q, "ticket"); bad != nil {
+		writeJSON(w, http.StatusBadRequest, *bad)
+		return
+	}
+	if fq.Execution, bad = optIdent(q, "execution"); bad != nil {
+		writeJSON(w, http.StatusBadRequest, *bad)
+		return
+	}
+	res := sr.Series(fq)
+	buckets := make([]map[string]any, 0, len(res.Buckets))
+	for _, b := range res.Buckets {
+		buckets = append(buckets, map[string]any{"from_ms": b.FromMS, "count": b.Count, "kinds": b.Kinds, "authorities": b.Authorities})
+	}
+	floor, head := s.opts.Log.Bounds()
+	in := s.ingestState()
+	writeJSON(w, http.StatusOK, ok(map[string]any{
+		"from_ms": from, "to_ms": to, "bucket_ms": bucket, "buckets": buckets, "total": res.Total, "kinds": res.Kinds,
+		"authorities": res.Authorities, "complete": res.Complete, "source": res.Source, "head": s.cursor(head), "floor": s.cursor(floor),
+		"watermark_ms": in.WatermarkMS, "limits": map[string]int64{"buckets_max": MaxSeriesBuckets, "bucket_ms_min": 1000},
+	}))
 }

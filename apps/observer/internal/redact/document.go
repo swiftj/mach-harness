@@ -2,6 +2,7 @@ package redact
 
 import (
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -108,6 +109,11 @@ type DocOptions struct {
 	// hex digest or commit id (7 to 64 hex characters) is kept: the long-hex rule does not apply
 	// to it. Everything else in the document is scrubbed as usual.
 	HashKeys []string
+	// SafeNames are relative file names the caller knows to be safe to show as they are (the
+	// cell-relative and project-relative paths of the artifacts the catalog holds). An exact
+	// occurrence of one, after the project root has been made relative, is kept: the long-run rule
+	// would otherwise take "factory/worktrees/T-1/review/round-3/findings" for an opaque token.
+	SafeNames []string
 }
 
 // ScrubDocument applies the text rules to a whole text, keeping its lines: credential-shaped
@@ -134,6 +140,10 @@ func ScrubDocument(s, projectRoot string, opt DocOptions) (string, int) {
 		s, kept = protectHashes(s, opt.HashKeys)
 	}
 	s = rootRelative(s, projectRoot)
+	if len(opt.SafeNames) > 0 {
+		s, kept = protectLiterals(s, opt.SafeNames, kept)
+	}
+	people := PeopleFor(projectRoot)
 	// A PEM block spans lines: remove whole blocks before going line by line.
 	if secretPatterns[0].MatchString(s) {
 		n += len(secretPatterns[0].FindAllStringIndex(s, -1))
@@ -146,6 +156,8 @@ func ScrubDocument(s, projectRoot string, opt DocOptions) (string, int) {
 			n++
 		}
 		line, k := replaceSensitive(line, false)
+		n += k
+		line, k = people.Replace(line)
 		n += k
 		before := len(line)
 		line = stripControls(line, true)
@@ -179,6 +191,21 @@ func protectHashes(s string, keys []string) (string, []string) {
 		kept = append(kept, sub[2])
 		return sub[1] + string(protectOpen) + strconv.Itoa(len(kept)-1) + string(protectClose) + `"`
 	})
+	return s, kept
+}
+
+// protectLiterals swaps exact occurrences of the given names (longest first) for numbered
+// placeholders, appending them to kept.
+func protectLiterals(s string, names []string, kept []string) (string, []string) {
+	sorted := append([]string(nil), names...)
+	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i]) > len(sorted[j]) })
+	for _, name := range sorted {
+		if len(name) < 3 || !strings.Contains(s, name) {
+			continue
+		}
+		kept = append(kept, name)
+		s = strings.ReplaceAll(s, name, string(protectOpen)+strconv.Itoa(len(kept)-1)+string(protectClose))
+	}
 	return s, kept
 }
 

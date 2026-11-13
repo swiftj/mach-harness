@@ -50,13 +50,28 @@ func (l storeLog) History(q feed.HistoryQuery) feed.HistoryPage {
 	return out
 }
 
+// Series counts the store's events per time bucket (feed.Serieser).
+func (l storeLog) Series(q feed.SeriesQuery) feed.Series {
+	r := l.s.Series(store.SeriesQuery{FromMS: q.FromMS, ToMS: q.ToMS, BucketMS: q.BucketMS, Ticket: q.Ticket, Execution: q.Execution})
+	out := feed.Series{Total: r.Total, Kinds: r.Kinds, Authorities: r.Authorities, Complete: r.Complete, Source: r.Source,
+		Buckets: make([]feed.SeriesBucket, len(r.Buckets))}
+	for i, b := range r.Buckets {
+		out.Buckets[i] = feed.SeriesBucket{FromMS: b.FromMS, Count: b.Count, Kinds: b.Kinds, Authorities: b.Authorities}
+	}
+	return out
+}
+
+// SeriesBounds is the store's counted range.
+func (l storeLog) SeriesBounds() (int64, int64) { return l.s.SeriesBounds() }
+
 // ingestSource is the ingest loop as a server.IngestSource.
 type ingestSource struct{ o *ingest.Observer }
 
 func (a ingestSource) Ingest() server.IngestState {
 	st := a.o.Stats()
 	out := server.IngestState{Ticks: st.Ticks, LastTickMS: st.LastTickMS, IntervalMS: st.IntervalMS, Errors: st.Errors,
-		LastError: st.LastError, FactoryFound: st.FactoryFound, CatchingUp: st.CatchingUp, Late: st.Late, Backfill: st.Backfill}
+		LastError: st.LastError, FactoryFound: st.FactoryFound, CatchingUp: st.CatchingUp, Late: st.Late, Backfill: st.Backfill,
+		Runtime: st.Runtime, Delivery: st.Delivery}
 	if t, err := time.Parse(time.RFC3339Nano, st.LastTickAt); err == nil {
 		out.LastTickAt = t
 	}
@@ -76,6 +91,9 @@ func (a ingestSource) Ingest() server.IngestState {
 		}
 		s := server.SourceState{Key: src.Key, Path: src.Path, State: state, Offset: src.Offset, Size: src.Size, Lines: src.Lines,
 			Refused: src.Refused, Duplicates: src.Duplicates, Oversized: src.Oversized, Resets: src.Resets}
+		if src.Runtime != nil {
+			s.Runtime = src.Runtime
+		}
 		if t, err := time.Parse(time.RFC3339Nano, src.LastReadAt); err == nil {
 			s.LastReadAt = t
 		}

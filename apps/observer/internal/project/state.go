@@ -17,7 +17,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 1
+const FormatVersion = 2 // 2: gap classes
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -49,9 +49,30 @@ type State struct {
 	Runs       []*RunRecord          `json:"runs"`
 	Gaps       []Gap                 `json:"gaps"`
 	GapCounts  map[string]int64      `json:"gap_counts"`
+	GapClasses map[string]int64      `json:"gap_classes"`
 	Stream     StreamInfo            `json:"stream"`
 	Metrics    *metrics.Table        `json:"metrics"`
 	Pending    Pending               `json:"pending"`
+
+	// dirty names the entities (cells, slices, executions, waves) an event has touched since the
+	// last checkpoint, so a checkpoint re-encodes only those and shares the rest (checkpoint.go).
+	dirty map[string]struct{}
+}
+
+// Entity keys for checkpoints: one letter for the map, NUL, the id.
+const (
+	entCell      = "c\x00"
+	entSlice     = "s\x00"
+	entExecution = "x\x00"
+	entWave      = "w\x00"
+)
+
+// touch notes that an entity may have changed.
+func (s *State) touch(prefix, id string) {
+	if s.dirty == nil {
+		s.dirty = map[string]struct{}{}
+	}
+	s.dirty[prefix+id] = struct{}{}
 }
 
 // NewState is the empty projection.
@@ -83,6 +104,9 @@ func (s *State) fill() {
 	}
 	if s.GapCounts == nil {
 		s.GapCounts = map[string]int64{}
+	}
+	if s.GapClasses == nil {
+		s.GapClasses = map[string]int64{}
 	}
 	if s.Metrics == nil {
 		s.Metrics = metrics.NewTable()
@@ -209,36 +233,41 @@ type StateChange struct {
 
 // Cell is one ticket's cell and its station history.
 type Cell struct {
-	TicketID     string         `json:"ticket_id"`
-	CellInstance string         `json:"cell_instance,omitempty"`
-	SliceID      string         `json:"slice_id,omitempty"`
-	WaveID       string         `json:"wave_id,omitempty"`
-	Revision     *int64         `json:"revision"`
-	Stage        string         `json:"stage,omitempty"`
-	StageSource  string         `json:"stage_source,omitempty"` // the event kind that set it
-	Risk         string         `json:"risk,omitempty"`
-	AppType      string         `json:"app_type,omitempty"`
-	FirstSeen    *Stamp         `json:"first_seen"`
-	Updated      *Stamp         `json:"updated"`
-	Lifecycle    bool           `json:"lifecycle"`
-	CurrentVisit string         `json:"current_visit,omitempty"`
-	Round        *int64         `json:"round"`
-	Visits       []*Visit       `json:"visits"`
-	Gates        []*Gate        `json:"gates"`
-	GatesDropped int64          `json:"gates_dropped"`
-	Tasks        []*Task        `json:"tasks"`
-	Checks       []*Check       `json:"checks"`
-	Targets      []Target       `json:"targets"`
-	Reviews      []*ReviewRound `json:"reviews"`
-	Findings     []Finding      `json:"findings"`
-	Approvals    []*Approval    `json:"approvals"`
-	Merge        *Merge         `json:"merge"`
-	Cleanup      *Cleanup       `json:"cleanup"`
-	Executions   []string       `json:"executions"`
-	Archived     bool           `json:"archived"`
-	Began        *Began         `json:"history_began"`
-	Artifacts    ArtifactCounts `json:"artifacts"`
-	Dropped      int64          `json:"dropped"`
+	TicketID     string `json:"ticket_id"`
+	CellInstance string `json:"cell_instance,omitempty"`
+	SliceID      string `json:"slice_id,omitempty"`
+	WaveID       string `json:"wave_id,omitempty"`
+	Revision     *int64 `json:"revision"`
+	Stage        string `json:"stage,omitempty"`
+	StageSource  string `json:"stage_source,omitempty"` // the event kind that set it
+	Risk         string `json:"risk,omitempty"`
+	AppType      string `json:"app_type,omitempty"`
+	// AppTypeSource is the event that recorded the app type (the plan's exit), "" when a run
+	// record gave it. Contracts and TasksPlanned are the plan exit's counts.
+	AppTypeSource string         `json:"app_type_source,omitempty"`
+	Contracts     *int64         `json:"contracts,omitempty"`
+	TasksPlanned  *int64         `json:"tasks_planned,omitempty"`
+	FirstSeen     *Stamp         `json:"first_seen"`
+	Updated       *Stamp         `json:"updated"`
+	Lifecycle     bool           `json:"lifecycle"`
+	CurrentVisit  string         `json:"current_visit,omitempty"`
+	Round         *int64         `json:"round"`
+	Visits        []*Visit       `json:"visits"`
+	Gates         []*Gate        `json:"gates"`
+	GatesDropped  int64          `json:"gates_dropped"`
+	Tasks         []*Task        `json:"tasks"`
+	Checks        []*Check       `json:"checks"`
+	Targets       []Target       `json:"targets"`
+	Reviews       []*ReviewRound `json:"reviews"`
+	Findings      []Finding      `json:"findings"`
+	Approvals     []*Approval    `json:"approvals"`
+	Merge         *Merge         `json:"merge"`
+	Cleanup       *Cleanup       `json:"cleanup"`
+	Executions    []string       `json:"executions"`
+	Archived      bool           `json:"archived"`
+	Began         *Began         `json:"history_began"`
+	Artifacts     ArtifactCounts `json:"artifacts"`
+	Dropped       int64          `json:"dropped"`
 }
 
 // ArtifactCounts counts artifact.recorded events by nature and integrity.
@@ -591,6 +620,8 @@ type Gap struct {
 	FromSeq   *int64 `json:"from_seq"`
 	ToSeq     *int64 `json:"to_seq"`
 	Reason    string `json:"reason"`
+	Class     string `json:"class"`
+	Lost      bool   `json:"history_lost"`
 	Count     *int64 `json:"count"`
 	EventID   string `json:"event_id"`
 	Pos       uint64 `json:"pos"`

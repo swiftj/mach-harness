@@ -284,3 +284,31 @@ func TestLifecycleSeqGapsTornLinesAndForeignTicket(t *testing.T) {
 		t.Fatal("ids are physical lines, counting the torn one")
 	}
 }
+
+// D16: the intake log appears after the observer started (the Factory is enabled while it
+// watches): its first line is live, not backfill.
+func TestIntakeLogCreatedLaterIsLiveFromItsFirstLine(t *testing.T) {
+	root := testkit.Project(t)
+	h := newHarness(t, root, "", false)
+	for i := 0; i < 5; i++ {
+		h.tick()
+	}
+	if h.o.catchingUp {
+		t.Fatal("still catching up on an empty Factory")
+	}
+	testkit.Append(t, testkit.LedgerPath(root), append(testkit.LedgerLine(1, "factory.activated", "", map[string]any{"autonomy": "observe"}),
+		testkit.LedgerLine(2, "factory.paused", "", map[string]any{"reason": "a pause"})...))
+	h.drain()
+	evs := h.events()
+	if len(evs) != 2 {
+		t.Fatalf("%d events", len(evs))
+	}
+	for _, e := range evs {
+		if e.Provenance != nil && e.Provenance.Rule == "backfill" {
+			t.Fatalf("%s is marked backfill", e.Type)
+		}
+	}
+	if st := h.o.Stats(); st.Backfill != 0 {
+		t.Fatalf("backfill %d", st.Backfill)
+	}
+}

@@ -31,25 +31,28 @@ type Stream struct {
 	// is read for that line only and never forwarded. nil: not known.
 	StderrBudget func() bool
 
-	key        string
-	version    string
-	restricted bool
-	initSeen   bool
-	lastOwnMS  int64
-	calls      map[string]*call
-	callArgs   map[string]workflowArgs
-	subagents  map[string]string // Agent-tool sub-agent id -> the spawning call
-	tasks      map[string]*workflow
-	taskOrder  []string
-	results    []result
-	parts      map[int64]int
-	seenOdd    map[string]bool
-	finished   bool
+	key       string
+	version   string
+	initSeen  bool
+	lastOwnMS int64
+	calls     map[string]*call
+	callArgs  map[string]workflowArgs
+	subagents map[string]string // Agent-tool sub-agent id -> the spawning call
+	tasks     map[string]*workflow
+	taskOrder []string
+	results   []result
+	parts     map[int64]int
+	seenOdd   map[string]bool
+	finished  bool
 
 	// Unrecognised counts records by classification that no rule reads, and Malformed lines
 	// that are not JSON objects. Names only, never content.
 	Unrecognised map[string]int64
 	Malformed    int64
+	// Accepted counts records whose shape matched; Refused those whose did not, by
+	// classification (names only). A refused record yields a gap and nothing else.
+	Accepted int64
+	Refused  map[string]int64
 }
 
 type call struct {
@@ -105,14 +108,37 @@ type result struct {
 func NewStream(execution, root string, identity *Identity) *Stream {
 	return &Stream{Execution: execution, Root: root, Identity: identity, key: event.StreamKey(execution),
 		calls: map[string]*call{}, callArgs: map[string]workflowArgs{}, subagents: map[string]string{}, tasks: map[string]*workflow{},
-		parts: map[int64]int{}, seenOdd: map[string]bool{}, Unrecognised: map[string]int64{}}
+		parts: map[int64]int{}, seenOdd: map[string]bool{}, Unrecognised: map[string]int64{}, Refused: map[string]int64{}}
 }
 
 // Key is the partition key.
 func (s *Stream) Key() string { return s.key }
 
-// Version is the Claude Code version from the first init, and whether the parser knows it.
-func (s *Stream) Version() (string, bool) { return s.version, s.version == "" || !s.restricted }
+// Version is the Claude Code version from the first init ("" before it), and its state:
+// proven, compatible-unproven, incompatible (records refused for their shape) or unknown.
+func (s *Stream) Version() (string, string) { return s.version, s.RuntimeState() }
+
+// RuntimeState is the stream's runtime state at this moment (see streamshape.go).
+func (s *Stream) RuntimeState() string {
+	switch {
+	case len(s.Refused) > 0:
+		return RuntimeIncompatible
+	case s.version == "":
+		return RuntimeUnknown
+	case Proven(s.version):
+		return RuntimeProven
+	}
+	return RuntimeUnproven
+}
+
+// RefusedTotal is how many records were refused for their shape.
+func (s *Stream) RefusedTotal() int64 {
+	var n int64
+	for _, k := range s.Refused {
+		n += k
+	}
+	return n
+}
 
 // Reasons the reported spend may be incomplete (execution.usage.cost_incomplete_reasons,
 // schema revision 1). The stream proof (section 3.5) saw a budget stop kill agents with requests
@@ -182,9 +208,6 @@ var known = map[string]bool{
 	"system/background_tasks_changed": true, "rate_limit_event": true,
 }
 
-// restrictedKnown: what is read for a Claude Code version the parser is not pinned to.
-var restrictedKnown = map[string]bool{"system/init": true, "system/permission_denied": true}
-
 func (s *Stream) base(typ string, r Read) *event.Event {
 	ev := newEvent(typ, event.StreamClaude, s.key, r.Line, "claude", event.Observed)
 	p := s.parts[r.Line]
@@ -194,6 +217,7 @@ func (s *Stream) base(typ string, r Read) *event.Event {
 	if s.version != "" {
 		ev.Origin.SourceVersion = "claude-code " + s.version
 	}
+	ev.Origin.RuntimeState = s.RuntimeState()
 	ev.IDs.ExecutionID = s.Execution
 	ev.Ref(event.RefExecution(s.Execution))
 	if s.Identity != nil {
@@ -276,6 +300,24 @@ func (s *Stream) unknownType(class string, r Read) []*event.Event {
 	return []*event.Event{g}
 }
 
+// refuse: a known classification with a shape the parser does not know. Nothing of the record is
+// read; the first refusal of each classification is a gap (unexpected-shape: received, not
+// interpreted), every one is counted.
+func (s *Stream) refuse(class, at string, r Read) []*event.Event {
+	s.Refused[class]++
+	key := "shape:" + class
+	if s.seenOdd[key] {
+		return nil
+	}
+	s.seenOdd[key] = true
+	g := gapEvent(event.ObserverID("gap", s.key+":shape-"+event.Enc(class)), s.key, "unexpected-shape", r.Line, r.Line, 1, nil, r)
+	g.AnchorKey, g.AnchorSeq = s.key, r.Line
+	g.IDs.ExecutionID = s.Execution
+	g.Ref(event.RefExecution(s.Execution))
+	_ = at // the field is reported in the source's stats, never in an event
+	return []*event.Event{g}
+}
+
 // Line normalises one physical line of the stream.
 func (s *Stream) Line(line []byte, r Read) []*event.Event {
 	var rec map[string]any
@@ -287,11 +329,16 @@ func (s *Stream) Line(line []byte, r Read) []*event.Event {
 		return []*event.Event{g}
 	}
 	class := Classify(rec)
-	if strings.HasPrefix(class, "result") {
-		return s.result(rec, r)
-	}
-	if !known[class] || s.restricted && !restrictedKnown[class] {
+	isResult := strings.HasPrefix(class, "result")
+	if !isResult && !known[class] {
 		return s.unknownType(class, r)
+	}
+	if ok, at := ShapeOK(class, rec); !ok {
+		return s.refuse(class, at, r)
+	}
+	s.Accepted++
+	if isResult {
+		return s.result(rec, r)
 	}
 	switch class {
 	case "system/init":
@@ -334,7 +381,6 @@ func (s *Stream) init(rec map[string]any, r Read) []*event.Event {
 		v = ""
 	}
 	s.version = v
-	s.restricted = v != ClaudeVersion
 	ev := s.base("session.initialized", r)
 	s.noOwnTime(ev, r)
 	var version any
@@ -851,9 +897,6 @@ func (s *Stream) result(rec map[string]any, r Read) []*event.Event {
 		}
 	}
 	s.results = append(s.results, res)
-	if s.restricted {
-		return nil
-	}
 	var out []*event.Event
 	if res.index == 1 || res.budget {
 		for _, taskID := range s.taskOrder {
@@ -942,11 +985,9 @@ func (s *Stream) Finish(r Read) []*event.Event {
 	}
 	s.finished = true
 	var out []*event.Event
-	if !s.restricted {
-		for _, taskID := range s.taskOrder {
-			if wf := s.tasks[taskID]; wf.updated && !wf.done {
-				out = append(out, s.workflowFinished(wf, r))
-			}
+	for _, taskID := range s.taskOrder {
+		if wf := s.tasks[taskID]; wf.updated && !wf.done {
+			out = append(out, s.workflowFinished(wf, r))
 		}
 	}
 	if n := len(s.results); n > 0 {
