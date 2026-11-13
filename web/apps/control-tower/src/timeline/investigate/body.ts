@@ -10,6 +10,8 @@ export interface BodyProps {
   readonly width: number;
   /** The ticket of the store's selection, if the selection is about a cell. */
   readonly selectedTicket: string | null;
+  /** Each row's position among the tracks' rows, by id: the lens shows things in the tracks' order. */
+  readonly rowOrder: ReadonlyMap<string, number>;
   onReveal(ref: string, at?: number): void;
   /** Widen the window to the whole history. */
   onWiden(): void;

@@ -99,7 +99,7 @@ export const LENSES: readonly LensDefinition[] = [
   {
     id: "waits",
     label: "What was it waiting on?",
-    about: "Each time a slice waited on a dependency, the slices it named and when those were integrated, from the scheduler's wait spans and the merge records.",
+    about: "Each time a slice waited on a dependency or for a free place, the slices it named and when those were integrated, from the scheduler's wait spans, the capacity waits and the merge records.",
     preset(tree, view) {
       const spans = spansOfTree(tree);
       const add: string[] = [];

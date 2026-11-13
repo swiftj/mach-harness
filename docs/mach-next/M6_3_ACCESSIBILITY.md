@@ -8,6 +8,20 @@ and what it found on 2026-11-13. Every key below was read from the code, not fro
 
 ## 1. Keyboard map of the Timeline workspace
 
+### Getting to the tracks
+
+The page's first two Tab stops are skip links, shown only when focused (round 6, defect 16: the tracks were
+32 Tab stops from the top of the page). **Skip to the timeline** focuses the stage. **Skip to the tracks**,
+offered only while the Timeline is up, moves focus straight to where the tracks are worked by keyboard: the
+canvas (`role="application"`), or in the table the grid's focusable row, else the grid; with nothing drawn
+yet it falls back to the stage (`src/timeline/a11y/skip.ts`). So the tracks are Tab, Tab, Enter from a
+fresh page. Nothing else moved: the header, transport and toolbar keep their Tab stops in the same order,
+and no shortcut changed.
+
+Not done here (the toolbar is `src/timeline/controls/**`): folding each toolbar into one Tab stop with
+arrow-key roving focus (the ARIA toolbar pattern), which would shorten the walk for someone who tabs through
+it rather than skipping.
+
 ### Anywhere in the workspace (the global map)
 
 Handled by one listener on `window`, in the bubble phase. It skips any event a focused widget has already
@@ -109,9 +123,11 @@ with children in the table expands it in the canvas too; a leaf's span list is t
   child rows in time order, before its child tracks; at most 200, then a row "n more: narrow the window".
   A leaf opened with nothing in the window says so in a row of its own.
 - Columns: Track (label, its own state's mark and word, the counts beneath it in the attention ink, the
-  detail; the id is never cut while a " · " detail can be; the column can be widened by dragging its
+  detail; the detail or note takes only the room the label leaves, so a label such as "SYN-006 · run 2/3" or
+  "Claim" is never cut for it; a label longer than the whole column is cut in its " · " details, never its id; the column can be widened by dragging its
   header's edge, a pointer-only convenience that is not a tab stop, so the grid stays one stop), What (`describeSpan`), Started, Ended
-  (UTC time codes in mono tabular figures; a bounded end reads "between … and …", a placed end "≈";
+  (UTC time codes in mono tabular figures; a bounded end is its two times stacked as a range on the row's two
+  short lines, "between … and …" to a screen reader and in its title, never a sentence that wraps and is cut; a placed end "≈";
   "Not recorded" in italic where a value applies but no record holds it; "Still open" until the end is held),
   Duration and how it is known (`durationWords`), Outcome (only once `outcomeKnownAt` allows it), Authority
   (the `AuthorityBadge`: word and glyph).
@@ -150,6 +166,20 @@ proportional to the number of spans.
    `KIND_WORDS`, `stateWord`, `schedulerLook` and the grammar's conditions; a span counts only once it has
    started by the live edge, and a failure only once the end that established it is held.
 3. **The treegrid**: the full structure, always reachable from the toolbar.
+
+4. **The inspector's words** (round 6): a station's own outcome code is said in plain words wherever it
+   is a state (the header, a visit's State, a station's visit list, a gate's position, a span's headline:
+   "Failed, with evidence", "Refused: failed, with evidence"), from the same table the In time section uses
+   (`outcomeWordsOf`); the code itself stays where the record is quoted ("The station said", and beside the
+   In time outcome). A reviewer is named by its seat and model, its agent id a quiet second line; a span
+   picked through an ancestor names its record id on its own line, outside the sentence; a duration bounded
+   from nothing reads "up to …". Not yet: the "Why it looks like this" sentence comes from the simulation's
+   event descriptions (`src/sim/describe-v3.ts`) and still quotes the code ("left verify:
+   FAIL_WITH_EVIDENCE").
+5. **The Factory's state on this machine** (not enabled, paused) is a chip in the top bar, one Tab stop,
+   named by the notice's title and described by its whole text (that the Control Tower cannot enable or
+   change anything); its popover shows the same. It no longer covers the Atlas or the Blueprint, and it is
+   chosen apart from the stage's notice, so an empty or failing stage still says so.
 
 ## 4. Reduced motion
 
@@ -207,6 +237,14 @@ What the first run found and how it was fixed:
 | contrast | pass | 0 pairs under their minimum |
 | reduced motion | pass | zoom, brush drag, workspace switch: nothing running, canvas still |
 | shortcuts | pass | no duplicate, nothing shadowed; grid Home/End keep the playhead |
+
+### Results, 2026-11-13, round 6 (chrome, port 4364, the simulation; other parts were still changing)
+
+All six checks pass: axe 0 violations in 26 states; keyboard 38 stops, same order, every stop with a
+visible ring, Tab comes back round; targets, contrast, reduced motion and shortcuts unchanged. Measured
+separately on a real observer (syn-s, Live Factory): from a fresh page the first Tab stops are "Skip to the
+timeline", "Skip to the tracks", then the source badge; Enter on the second puts focus on the tracks
+(`role="application"`), or on the table's focused row when the table is up.
 
 ## 6. Known gaps
 

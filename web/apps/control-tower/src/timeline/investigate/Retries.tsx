@@ -116,8 +116,8 @@ function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal
         id={span.id}
         name={name}
         sources={[spanSource(span, `${word.toLowerCase()} visit`)]}
-        onActivate={(shift) => {
-          onPick(r, shift);
+        onActivate={(shift, go) => {
+          if (!go) onPick(r, shift);
           onReveal(span.entity, at ?? undefined);
         }}
       >
@@ -215,8 +215,8 @@ function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal
                 id={`verdict:${k}`}
                 name={r.verdict.kind === "none" ? `Pass ${r.index} of ${r.ticket}: no verdict recorded` : `Pass ${r.index} of ${r.ticket}: verification ${verdictWords(r.verdict.kind)}${r.verdict.at !== null ? ` at ${when(r.verdict.at)}` : ""}, ${r.verdict.mark ? "as its gate event records" : "as the visit's outcome records"}${r.verdict.checks ? `, ${r.verdict.checks}` : ""}`}
                 sources={r.verdict.sources}
-                onActivate={(shift) => {
-                  onPick(r, shift);
+                onActivate={(shift, go) => {
+                  if (!go) onPick(r, shift);
                   if (r.verdict.mark?.entity) onReveal(r.verdict.mark.entity, r.verdict.at ?? undefined);
                   else onReveal(r.verify!.entity, r.verdict.at ?? undefined);
                 }}
@@ -286,6 +286,7 @@ function Comparison({ a, b, width, gutter, liveAt, onReveal }: { a: { l: Ladder;
   const colX = gutter + 16 + plotW + 16;
   return (
     <div className="border-b border-line">
+      <div className="relative">
       <svg width={width} height={H} role="presentation" style={{ display: "block" }}>
         {ticks.map((t) => (
           <g key={t} aria-hidden="true">
@@ -322,14 +323,18 @@ function Comparison({ a, b, width, gutter, liveAt, onReveal }: { a: { l: Ladder;
                 );
               })}
               {verdictAt !== null ? <Diamond x={X(verdictAt)} y={y + 8} r={5} tone={look.tone} open={look.open} cross={look.cross} /> : null}
-              <text x={colX} y={y + 11} style={{ ...SANS, fontSize: 11, fill: INK }} aria-hidden="true">
-                {parts.map((pt) => `${partWord(pt.span, pt.part)} ${durationWords(pt.span, liveAt)}`).join(" · ") || "No visit timed"}
-                <tspan style={{ fill: MUTED }}> · {verdictWords(r.verdict.kind)}</tspan>
-              </text>
             </g>
           );
         })}
       </svg>
+      {/* Each pass's summary in the column to the right, wrapped to the band's width, never cut at its edge (round 6, defect 9). */}
+      {rows.map(({ r, parts }, i) => (
+        <p key={rungKey(r)} aria-hidden="true" className="absolute m-0 line-clamp-2 text-[11px] leading-[13px] text-ink" style={{ left: colX, top: 22 + i * 30 + 1, width: Math.max(80, width - colX - 10) }} title={`${parts.map((pt) => `${partWord(pt.span, pt.part)} ${durationWords(pt.span, liveAt)}`).join(" · ") || "No visit timed"} · ${verdictWords(r.verdict.kind)}`}>
+          {parts.map((pt) => `${partWord(pt.span, pt.part)} ${durationWords(pt.span, liveAt)}`).join(" · ") || "No visit timed"}
+          <span className="text-ink-muted"> · {verdictWords(r.verdict.kind)}</span>
+        </p>
+      ))}
+      </div>
       <ul className="px-2 pb-2 pl-[10px]">
         {diffs.length ? (
           diffs.map((d) => (

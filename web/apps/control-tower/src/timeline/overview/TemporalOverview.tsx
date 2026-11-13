@@ -24,6 +24,7 @@ import "../../shell/shell.css";
 import { MIN_WINDOW_MS, type TemporalOverviewProps, type TimeWindow } from "../contract";
 import { activityY, drawOverview, overviewLayout, readOverviewPalette, type ActivityLayer, type TailLayer } from "./draw";
 import {
+  afterLabelLeft,
   aggregateMarks,
   brokenAxis,
   centreWindow,
@@ -72,6 +73,10 @@ import { asOfPlayhead } from "../controls/frame";
 
 /** Room on the right so the end handle can be grabbed at the live edge. */
 const RIGHT_PAD = 12;
+/** The width of the overview's "after the playhead" words (10 px sans), with their padding. */
+const AFTER_LABEL_W = 92;
+/** The room the live edge's "now" takes before the edge. */
+const NOW_CHIP_W = 30;
 /** Below this total width the legend is left out (the plot still starts at the caller's gutter). */
 const LEGEND_MIN_WIDTH = 720;
 /** Pixels a press must travel before it is a drag. */
@@ -141,6 +146,11 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   const compress = gaps.length > 0 && (compressPref ?? compressByDefault(gaps, extent));
   const axis: Axis = useMemo(() => (compress ? brokenAxis(extent, gaps, pw) : extent), [compress, extent, gaps, pw]);
   const breakLayer = useMemo(() => (axis.breaks ?? []).map((b) => ({ x0: xOf(b.from, axis, pw), x1: xOf(b.to, axis, pw), label: lengthWords(b.to - b.from), from: b.from, to: b.to })), [axis, pw]);
+  // The brush's edges, which a break's length or the idle tail's words must not run under (round 6,
+  // defect 13). The canvas is redrawn when the window's edges move a whole pixel.
+  const edge0 = Math.round(xOf(Math.max(extent.from, win.from), axis, pw));
+  const edge1 = Math.round(xOf(Math.min(extent.to, win.to), axis, pw));
+  const brushEdges = useMemo(() => [edge0, edge1], [edge0, edge1]);
 
   // ------------------------------------------------------------ derived drawing (pixel space)
   const density = useMemo(() => (got.density ? densityColumns(got.density, axis, pw) : null), [got.density, axis, pw]);
@@ -206,9 +216,9 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawOverview(ctx, { width: pw, height, layout: L, density: empty ? null : density, activity: empty ? null : activity, points: marks.points, bars: marks.bars, ticks, tail: empty ? null : tail, breaks: empty ? [] : breakLayer }, readOverviewPalette(canvas));
+    drawOverview(ctx, { width: pw, height, layout: L, density: empty ? null : density, activity: empty ? null : activity, points: marks.points, bars: marks.bars, ticks, tail: empty ? null : tail, breaks: empty ? [] : breakLayer, avoid: brushEdges }, readOverviewPalette(canvas));
     // `theme` re-reads the palette when the theme changes.
-  }, [pw, height, L, density, activity, marks, ticks, tail, empty, theme, breakLayer]);
+  }, [pw, height, L, density, activity, marks, ticks, tail, empty, theme, breakLayer, brushEdges]);
 
   // ------------------------------------------------------------ playhead and live edge (per frame, no React)
   const headRef = useRef<HTMLDivElement>(null);
@@ -228,7 +238,16 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
         after.style.left = `${hx}px`;
         after.style.width = `${Math.max(0, lx2 - hx)}px`;
         const label = after.firstElementChild as HTMLElement | null;
-        if (label) label.style.display = lx2 - hx > 96 ? "block" : "none";
+        if (label) {
+          // Beside the landmark glyphs, never over one (round 6, defect 13); not drawn where none is free.
+          // Clear of the live edge's "now" too (live only), which stands just before the edge.
+          const at = afterLabelLeft(hx, lx2 - (data.source === "live" ? NOW_CHIP_W : 0), marks.points, AFTER_LABEL_W);
+          // No free stretch on the landmark row: just below it, on its own ground, at the playhead.
+          const room = lx2 - hx - (data.source === "live" ? NOW_CHIP_W : 0) > AFTER_LABEL_W + 8;
+          label.style.display = room ? "block" : "none";
+          label.style.left = `${Math.round(at ?? 6)}px`;
+          label.style.top = at !== null ? "0px" : `${L.bandBase - L.bandTop + 2}px`;
+        }
       }
       if (headRef.current) {
         headRef.current.style.transform = `translateX(${clampX(s.playhead)}px)`;
@@ -242,7 +261,7 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
         futureRef.current.style.width = `${Math.max(0, pw - lx)}px`;
       }
     },
-    [pw, axis],
+    [pw, axis, marks, data.source, L],
   );
 
   // ------------------------------------------------------------ the brush
@@ -523,7 +542,7 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
         <div ref={futureRef} aria-hidden="true" className="mach-future pointer-events-none absolute opacity-60" style={{ top: L.bandTop, height: L.plotBottom - L.bandTop, left: pw, width: 0 }} />
         {/* After the playhead (T6): what the tracks and lenses show but the inspector does not yet. */}
         <div ref={afterRef} aria-hidden="true" className="pointer-events-none absolute bg-ink/[0.06]" style={{ top: L.bandTop, height: L.plotBottom - L.bandTop, left: 0, width: 0, display: "none" }}>
-          <span className="absolute left-1.5 top-0 whitespace-nowrap text-[10px] leading-[12px] text-ink-subtle">after the playhead</span>
+          <span className="absolute top-0 whitespace-nowrap rounded-xs bg-surface px-0.5 text-[10px] leading-[12px] text-ink-subtle" style={{ left: 6 }}>after the playhead</span>
         </div>
 
         {/* Outside the brush the overview is dimmed, not hidden. Geometry is written by applyBrush. */}

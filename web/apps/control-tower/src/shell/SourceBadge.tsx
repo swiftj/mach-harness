@@ -10,17 +10,23 @@
  *   what has been received;
  * - the **completeness badge**: shown only when history is not complete (partial since, reconstructed);
  * - the **stage notice**: the honest empty and failure states (no observer, no Factory state, the
- *   Factory not enabled on this machine, the observer gone quiet).
+ *   observer gone quiet), over the stage only while it is empty or its contents may be out of date;
+ * - the **Factory state chip**: the steady states that leave the stage full and correct (the Factory
+ *   not enabled on this machine, or paused), as a compact chip in the top bar whose popover holds the
+ *   whole notice, so it never covers the Atlas or the Blueprint.
  *
  * Nothing here starts, pauses, schedules or approves anything; the menu only chooses what to read.
  */
 import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@mach/ui";
-import { isStale, useSceneStore, type ConnectionStatus } from "../scene";
+import { useSceneStore, type ConnectionStatus } from "../scene";
 import { refId, refKind, sourceRuntimeOf, streamObservationOf, type Completeness, type SceneSource } from "../sim";
 import { completenessWords, deliveryLagWords, receivedWords, runtimeStateWords, runtimeSummaryWords } from "./inspector/words";
 import { useSource } from "./source/context";
+import { connectionLook, noticesFor, type ConnectionLook, type Notice } from "./notices";
+
+export { connectionLook, noticesFor, type ConnectionLook, type Notice } from "./notices";
 import type { SourceChoice } from "./source/boot";
 import { duration as durationWords, isMoment, timecode, utcClock } from "./vocab";
 
@@ -159,35 +165,6 @@ export function SourceBadge({ open: openProp, onOpenChange }: { open?: boolean; 
 }
 
 // ---------------------------------------------------------------- the connection
-
-export interface ConnectionLook {
-  state: "connecting" | "live" | "reconnecting" | "stale" | "disconnected";
-  label: string;
-  /** For screen readers and the announcer. */
-  sentence: string;
-}
-
-
-/** The words for a connection. Times are factory time (the stream's), never the browser's clock. */
-export function connectionLook(c: ConnectionStatus): ConnectionLook {
-  const since = isMoment(c.staleSince) ? utcClock(c.staleSince) : null;
-  switch (c.state) {
-    case "connecting":
-      return { state: "connecting", label: "Connecting", sentence: "Connecting to the observer." };
-    case "live":
-      return { state: "live", label: "Live", sentence: "Connected: receiving live." };
-    case "stale":
-      return { state: "stale", label: since ? `Stale since ${since}` : "Stale", sentence: `Nothing heard from the observer${since ? ` since ${since} UTC` : ""}. What is shown is as last seen.` };
-    case "reconnecting":
-      return { state: "reconnecting", label: "Reconnecting", sentence: "The stream dropped. Reconnecting from the last cursor." };
-    case "disconnected":
-      // The source says disconnected after several failed attempts and keeps retrying (attempts > 0).
-      if (c.attempts > 0) return { state: "disconnected", label: "Disconnected, retrying", sentence: `The observer cannot be reached${since ? ` since ${since} UTC` : ""}. Retrying; what is shown is as last seen.` };
-      return { state: "disconnected", label: "Disconnected", sentence: `Disconnected${c.reason ? `: ${c.reason}` : "."}` };
-    case "no-session":
-      return { state: "disconnected", label: "No session", sentence: "The observer does not know this browser: the session expired or was dropped. Open the observer's new link." };
-  }
-}
 
 function ConnectionGlyph({ state }: { state: ConnectionLook["state"] }) {
   return (
@@ -331,15 +308,12 @@ export function CompletenessBadge() {
 
 // ---------------------------------------------------------------- the stage notice
 
-interface Notice {
-  key: string;
-  tone: "info" | "warning" | "danger";
-  title: string;
-  body: string;
-}
-
-/** The honest empty and failure states, over the top of the stage. At most one, the most important. */
-export function useStageNotice(): Notice | null {
+/**
+ * The honest empty and failure states: at most one over the stage (the most important), and the
+ * Factory's steady state on this machine (not enabled, paused) for the top bar's chip, each chosen
+ * on its own so a chip never hides an empty or failing stage's notice.
+ */
+export function useNotices(): { stage: Notice | null; chip: Notice | null } {
   const source = useSceneStore((s) => s.source);
   const connection = useSceneStore((s) => s.connection);
   const empty = useSceneStore((s) => s.source !== "simulation" && s.log.size() === 0);
@@ -351,31 +325,12 @@ export function useStageNotice(): Notice | null {
     const id = window.setTimeout(() => setSettled(true), 2500);
     return () => window.clearTimeout(id);
   }, []);
+  return noticesFor({ source, connection, empty, settled, notice, observer, factory });
+}
 
-  if (source === "simulation") {
-    if (notice) return { key: "sim", tone: "info", title: notice, body: observer === "no-session" ? "An observer answered but this browser has no session with it. The link comes from the skill that started the observer; each link works once." : "Nothing here is real execution. Real history appears when the page is opened from the observer's link." };
-    return null;
-  }
-  if (connection && connection.state === "no-session") {
-    return { key: "session", tone: "danger", title: "No observer session", body: "The observer no longer knows this browser: the session expired, or the observer was restarted. The link comes from the skill that started the observer; open the new link it printed." };
-  }
-  if (connection && isStale(connection)) {
-    const look = connectionLook(connection);
-    return { key: `stale-${look.state}`, tone: look.state === "disconnected" ? "danger" : "warning", title: look.state === "disconnected" ? "Observer unreachable: as last seen" : "As last seen", body: `${look.sentence} Work shown as executing may have changed; nothing moves until the observer answers again${look.state === "disconnected" ? ", and it will reconnect by itself when it does" : ""}.` };
-  }
-  if (factory?.factoryPresent === false) {
-    return { key: "no-factory", tone: "info", title: "No Factory state in this project", body: "The observer is running, but this project has no .factory folder yet, so there is nothing to show. It appears here when MACH is installed and work starts." };
-  }
-  if (factory?.enabled === false && source === "live") {
-    return { key: "disabled", tone: "info", title: "The Factory is not enabled on this machine", body: "The observer shows what is recorded, but no Factory Supervisor runs work here. Enabling it is an engineer's decision taken outside the Control Tower, which has no control to start, pause, schedule or approve anything." };
-  }
-  if (empty && settled && (!connection || connection.state === "live")) {
-    return { key: "empty", tone: "info", title: source === "replay" ? "No history to replay" : "No Factory activity recorded yet", body: source === "replay" ? "The observer holds no events for this project." : "Connected and waiting: events appear here as the Factory records them." };
-  }
-  if (factory?.paused && source === "live") {
-    return { key: "paused", tone: "info", title: "The Factory is paused on this machine", body: "Recorded work stays as it is until an engineer resumes it, outside the Control Tower." };
-  }
-  return null;
+/** The notice over the stage, if any (the chip's steady states are not among them). */
+export function useStageNotice(): Notice | null {
+  return useNotices().stage;
 }
 
 export function StageNotice() {
@@ -390,5 +345,45 @@ export function StageNotice() {
         <p className="mt-0.5 text-body-sm text-ink">{n.body}</p>
       </div>
     </div>
+  );
+}
+
+/**
+ * The Factory's steady state on this machine (not enabled, paused) as a chip in the top bar: one tab
+ * stop, never over the stage. Its popover holds the whole notice, including that nothing in the
+ * Control Tower can change it; screen readers hear the notice from the chip itself.
+ */
+export function FactoryStateChip() {
+  const n = useNotices().chip;
+  const bodyId = useId();
+  if (!n || !n.chip) return null;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-factory-state={n.key}
+          aria-label={`${n.title}. Details`}
+          aria-describedby={bodyId}
+          title={n.title}
+          className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-xs border border-info-line bg-info-soft px-2 text-caption font-semibold text-info-ink"
+        >
+          <svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" className="shrink-0">
+            <circle cx="5" cy="5" r="4" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2 }} />
+            <path d="M5 4.4V7.4M5 2.6V2.8" style={{ stroke: "currentColor", strokeWidth: 1.3, strokeLinecap: "round" }} />
+          </svg>
+          <span className="max-[1279px]:sr-only">{n.chip}</span>
+          <span id={bodyId} className="sr-only">
+            {n.body}
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-96" aria-label={n.title}>
+        <div data-stage-notice={n.key}>
+          <p className="text-label text-info-ink">{n.title}</p>
+          <p className="mt-1 text-body-sm text-ink">{n.body}</p>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

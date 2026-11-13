@@ -18,7 +18,8 @@ import { ChevronRight } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useRef, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { cn, StateMark, type MarkState } from "@mach/ui";
 import type { FlatRow, TrackKind, TrackLabelsProps, TrackNode } from "../contract";
-import { countsTone, countsWords, DETAIL_MIN_CHARS, fitLabel, nodeState, showDetail, showsCounts, shownCounts } from "./words";
+import { laneWords } from "../tracks/lanes";
+import { countsTone, countsWords, DETAIL_MIN_CHARS, executionTitle, fitLabel, nodeState, shortNote, showDetail, showsCounts, shownCounts } from "./words";
 import "./render.css";
 
 export const LABEL_MIN = 176;
@@ -86,6 +87,7 @@ function fonts(): { sans: string; mono: string } {
  * execution's ticket from its label ("LOCAL-001: build" reads "build"), and its title says it again.
  */
 function fullTitle(layout: TrackLabelsProps["layout"], node: TrackNode): string | null {
+  if (node.kind === "execution") return executionTitle(node);
   if (node.kind !== "agent") return null;
   let id = node.parentId;
   while (id) {
@@ -108,10 +110,15 @@ const LabelRow = memo(function LabelRow({ row, width, title, liveAt, onToggle, o
   const indent = 6 + node.depth * INDENT;
   const disclosure = useRef<HTMLSpanElement>(null);
   if (row.lane > 0) {
-    // A further lane of the same track: the rails continue, the label is on the first lane.
+    // A further lane of the same track: the rails continue, the label is on the first lane, and the lane
+    // says what it holds ("lane 2 · 4 agents"), never a blank band (round 6, defect 5).
+    const words = laneWords(node, row.lane);
     return (
-      <div className="absolute inset-x-0" style={style}>
+      <div className="absolute inset-x-0" style={style} title={`${node.label}, ${words}: lanes hold what did not overlap in time`}>
         <Rails depth={node.depth + 1} />
+        <span className="absolute inset-y-0 right-3 flex items-center truncate whitespace-nowrap text-[10.5px] leading-tight text-ink-subtle" style={{ left: indent + 16 + 4 + 12 + 2 }}>
+          {words}
+        </span>
       </div>
     );
   }
@@ -119,6 +126,8 @@ const LabelRow = memo(function LabelRow({ row, width, title, liveAt, onToggle, o
   const own = nodeState(node, liveAt);
   const mono = MONO_KINDS.has(node.kind);
   const quiet = node.note ?? node.detail;
+  // Shown: a shorter form of a long note (its full words are in the title).
+  const quietShown = node.note ? shortNote(node.note) : node.detail;
   const counted = showsCounts(node) ? countsWords(shownCounts(node)) : [];
   const tone = countsTone(shownCounts(node));
   const f = fonts();
@@ -146,7 +155,7 @@ const LabelRow = memo(function LabelRow({ row, width, title, liveAt, onToggle, o
   const countShown = countW > 0 && countW <= room;
   if (countShown) room -= countW;
   // A label that had to drop its own details (a run, a start) keeps the room: the quieter detail goes first.
-  const detailShown = quiet && !label.truncated && !label.dropped ? showDetail(room + labelW, labelW, textWidth(quiet, detailFont), textWidth(`${quiet.slice(0, DETAIL_MIN_CHARS)}…`, detailFont)) : false;
+  const detailShown = quietShown && !label.truncated && !label.dropped ? showDetail(room + labelW, labelW, textWidth(quietShown, detailFont), textWidth(`${quietShown.slice(0, DETAIL_MIN_CHARS)}…`, detailFont)) : false;
   // For sighted readers: the full label, then its state and counts, then the spans; one line each.
   const head = [node.label, quiet].filter(Boolean).join(" — ");
   const state = [own.words, ...counted].filter(Boolean).join("; ");
@@ -199,9 +208,10 @@ const LabelRow = memo(function LabelRow({ row, width, title, liveAt, onToggle, o
               {countsText}
             </span>
           ) : null}
-          {quiet && detailShown ? (
+          {quietShown && detailShown ? (
             <span className={cn("block min-w-0 flex-1 truncate leading-tight text-ink-subtle", thin ? "text-[10.5px]" : "text-[11px]", node.note && "italic")}>
-              {quiet}
+              <span aria-hidden={quietShown !== quiet || undefined}>{quietShown}</span>
+              {quietShown !== quiet ? <span className="sr-only">{quiet}</span> : null}
             </span>
           ) : quiet ? (
             <span className="sr-only">, {quiet}</span>

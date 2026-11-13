@@ -110,6 +110,8 @@ export interface OverviewFrame {
   readonly tail: TailLayer | null;
   /** Compressed idle stretches (X10), in pixels, with their length in words for the label under the axis. */
   readonly breaks?: ReadonlyArray<{ readonly x0: number; readonly x1: number; readonly label: string }>;
+  /** Columns a break's label must not run under: the brush's edges and their handles (round 6). */
+  readonly avoid?: readonly number[];
 }
 
 function hatch(ctx: CanvasRenderingContext2D, x0: number, x1: number, top: number, bottom: number, p: OverviewPalette) {
@@ -434,8 +436,11 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
     ctx.textBaseline = "alphabetic";
     let end = tx;
     if (tail.labelX !== null) {
-      ctx.fillText(tail.label, tail.labelX, L.plotBottom - 3);
-      end = tail.labelX + ctx.measureText(tail.label).width;
+      // Clear of the brush's edges (round 6, defect 13: "last rec|orded 20:06:10").
+      const lw = ctx.measureText(tail.label).width;
+      const lx = clearOf(tail.labelX, lw, frame.avoid ?? [], 0, tail.liveX - 8);
+      ctx.fillText(tail.label, lx, L.plotBottom - 3);
+      end = lx + lw;
     }
     ctx.font = `11px ${p.sans}`;
     const iw = ctx.measureText(tail.idle).width;
@@ -485,15 +490,48 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
   ctx.font = `${L.compact ? 9 : 10}px ${p.mono}`;
   for (const b of frame.breaks ?? []) {
     const tw = ctx.measureText(b.label).width;
-    const cx = (b.x0 + b.x1) / 2;
-    // A break too narrow for its label (the idle tail at the live edge): the label ends before the
-    // break instead of running under the live edge's "now" (X20).
-    const inside = b.x1 - b.x0 >= tw + 8 && cx + tw / 2 <= width - 30;
-    const lx = Math.round(inside ? Math.max(0, cx - tw / 2) : Math.max(0, b.x0 - 6 - tw));
+    const lx = Math.round(breakLabelX(b, tw, width, frame.avoid ?? []));
     const ly = Math.round((L.plotTop + L.plotBottom) / 2);
     ctx.fillStyle = p.surface;
     ctx.fillRect(lx - 3, ly - 9, tw + 6, 13);
     ctx.fillStyle = p.inkMuted;
     ctx.fillText(b.label, lx, ly + 1);
   }
+}
+
+/**
+ * Where a break's length label starts. Centred in the break when it fits; a break too narrow for its
+ * label (the idle tail at the live edge) puts it before the break instead of under the live edge's
+ * "now" (X20). A label never runs under an `avoid` column (the brush's edge handles, which cut
+ * "12 h 3|5 min", round 6 defect 13): it slides to the break's left or right end, then before or
+ * after the break, then just clear of the edge. Pure.
+ */
+export function breakLabelX(b: { readonly x0: number; readonly x1: number }, tw: number, width: number, avoid: readonly number[], clear = 6): number {
+  const cx = (b.x0 + b.x1) / 2;
+  const fits = b.x1 - b.x0 >= tw + 8;
+  const candidates: number[] = [];
+  if (fits && cx + tw / 2 <= width - 30) candidates.push(cx - tw / 2);
+  if (fits) candidates.push(b.x0 + 4, b.x1 - 4 - tw);
+  candidates.push(b.x0 - 6 - tw, b.x1 + 6);
+  // Before the break but the brush's edge is there too: just clear of the edge, on whichever side.
+  // Only near its break (a label far from it would name nothing), nearest first.
+  const near = avoid.flatMap((a) => [a - clear - 4 - tw, a + clear + 4]).filter((x) => x + tw >= b.x0 - 2 * tw - 12 && x <= b.x1 + 2 * tw);
+  near.sort((u, v) => Math.abs(u + tw - b.x0) - Math.abs(v + tw - b.x0));
+  candidates.push(...near);
+  // Never under the live edge's "now" (the last 30 px), nor under an avoided column.
+  const ok = (x: number) => x >= 3 && x + tw + 3 <= width - 30 && avoid.every((a) => a < x - 3 - clear || a > x + tw + 3 + clear);
+  const chosen = candidates.find(ok) ?? candidates[fits && cx + tw / 2 <= width - 30 ? 0 : candidates.length - 2]!;
+  return Math.max(0, chosen);
+}
+
+/**
+ * A label at `x`, `w` wide, moved just clear of any `avoid` column it would run under (the brush's
+ * edges), staying within [lo, hi]; where it is when no clear place is found. Pure.
+ */
+export function clearOf(x: number, w: number, avoid: readonly number[], lo: number, hi: number, clear = 6): number {
+  const free = (at: number) => at >= lo && at + w <= hi && avoid.every((a) => a < at - clear || a > at + w + clear);
+  if (free(x)) return x;
+  const options = avoid.flatMap((a) => [a + clear + 1, a - clear - 1 - w]).filter(free);
+  options.sort((u, v) => Math.abs(u - x) - Math.abs(v - x));
+  return options[0] ?? x;
 }

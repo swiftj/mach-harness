@@ -237,6 +237,8 @@ export function durationWords(span: TimelineSpan, liveAt: number, context?: Open
       if (min === null || max === null) return ms === null ? "length not known" : `about ${durationText(ms)}`;
       const a = durationText(Math.min(min, max));
       const b = durationText(Math.max(min, max));
+      // A lower bound of nothing says nothing: "up to 4 min 7 s", never "between 0 ms and …" (round 6).
+      if (Math.min(min, max) <= 0) return `up to ${b}`;
       return a === b ? `about ${a}, within bounds` : `between ${a} and ${b}`;
     }
     case "inferred":
@@ -511,4 +513,35 @@ export const DETAIL_MIN_CHARS = 6;
  */
 export function showDetail(available: number, labelWidth: number, detailWidth: number, minWidth: number): boolean {
   return available - labelWidth - 6 >= Math.min(detailWidth, minWidth);
+}
+
+/**
+ * The words the label column shows for a row's note: the count-only notes, long enough to be cut to
+ * "Tool calls are c…" or "2 tool calls, cou…", keep their informative part ("calls counted",
+ * "2 calls, counted"); the full note stays in the row's title and in the table (round 6, defect 19).
+ */
+export function shortNote(note: string): string {
+  if (note === "Tool calls are counted, not observable one by one") return "calls counted";
+  const m = /^(\d+) tool (calls?), counted, not observable one by one$/.exec(note);
+  return m ? `${m[1]} ${m[2]}, counted` : note;
+}
+
+/**
+ * An execution row's full words: its detail is kept short ("from 16:55"), the title says the
+ * supervisor's attempt in full (round 6, defect 19).
+ */
+export function executionTitle(node: Pick<TrackNode, "label" | "detail" | "lanes" | "children">): string {
+  // As tracks/relations.ts reads it: from the execution's or its claim's ids or attrs.
+  let attempt: string | undefined;
+  for (const n of [node, ...node.children.filter((c) => c.kind === "claim")]) {
+    for (const lane of n.lanes) {
+      for (const span of lane.spans) {
+        if (span.kind !== "execution" && span.kind !== "claim") continue;
+        const a = span.ids.attempt || (span.attrs.attempt !== undefined ? String(span.attrs.attempt) : "");
+        if (a) attempt = a;
+      }
+    }
+  }
+  const head = [node.label, node.detail].filter(Boolean).join(" — ");
+  return `${head}; ${attempt ? `supervisor attempt ${attempt}` : "no supervisor attempt recorded"}`;
 }

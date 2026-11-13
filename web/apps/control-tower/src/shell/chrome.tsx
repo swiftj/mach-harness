@@ -43,13 +43,14 @@ export function Brand() {
 function SimulatedRun({ compact }: { compact?: boolean }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2.5">
-      <h1 className="truncate font-sans text-body-lg font-bold leading-none text-ink">
+      {/* The run's name gives way last: the history's start, then the waves, are cut first. */}
+      <h1 className="max-w-[45%] shrink-0 truncate font-sans text-body-lg font-bold leading-none text-ink">
         {RUN.waveTitle}
         <span className="sr-only">, a simulated run of the MACH Factory</span>
       </h1>
       <span className="shrink-0 font-mono text-caption text-ink-subtle max-[799px]:hidden">{RUN.waveId}</span>
       {compact ? null : (
-        <span className="hidden shrink-0 text-caption text-ink-subtle min-[1360px]:inline">
+        <span className="hidden min-w-0 truncate text-caption text-ink-subtle min-[1360px]:inline">
           {RUN.project}, {RUN.date} from {RUN.startClock} UTC
         </span>
       )}
@@ -74,7 +75,8 @@ function RealRun({ compact }: { compact?: boolean }) {
   const title = project ?? "This project";
   return (
     <div className="flex min-w-0 items-baseline gap-2.5">
-      <h1 className="truncate font-sans text-body-lg font-bold leading-none text-ink">
+      {/* The run's name gives way last: the history's start, then the waves, are cut first. */}
+      <h1 className="max-w-[45%] shrink-0 truncate font-sans text-body-lg font-bold leading-none text-ink">
         {title}
         <span className="sr-only">, {source === "live" ? "real execution of the MACH Factory, live" : "real execution of the MACH Factory, replayed"}</span>
       </h1>
@@ -84,7 +86,7 @@ function RealRun({ compact }: { compact?: boolean }) {
         </span>
       ) : null}
       {compact || !held ? null : (
-        <span className="hidden shrink-0 text-caption text-ink-subtle min-[1360px]:inline">
+        <span className="hidden min-w-0 truncate text-caption text-ink-subtle min-[1360px]:inline">
           History held from {utcDate(start)}, {utcClock(start)} UTC
         </span>
       )}

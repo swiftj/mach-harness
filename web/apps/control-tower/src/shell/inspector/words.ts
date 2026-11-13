@@ -3,7 +3,7 @@
  * D8, D13, D14, D17), as plain functions over the scene's own state, so they are tested
  * (test/m62-acceptance.test.mjs) rather than left inside JSX. No React here.
  */
-import { GAP_CLASS_WORDS, type Completeness, type PlanFacts, type StationVisit, type StreamObservationState, type VisitStatus } from "../../sim";
+import { GAP_CLASS_WORDS, MODELS, type Completeness, type PlanFacts, type StationVisit, type StreamObservationState, type VisitStatus } from "../../sim";
 import type { ConnectionStatus, RuntimeSummary } from "../../scene/connection";
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString("en-GB")} ${n === 1 ? one : many}`;
@@ -205,4 +205,15 @@ export function pickedWords(detail: string): string {
  */
 export function pickedThroughWords(detail: string, kindWord: string): string {
   return `You picked ${pickedWords(detail)} on the Timeline. It is not selectable on its own: what its span records is under In time, first; its ${kindWord.toLowerCase()}'s own record follows.`;
+}
+
+/** A seat's model by its name ("Claude Opus 5.5"); a model the vocabulary does not know, as recorded; null when none is. */
+export function seatModelName(model: string | null | undefined): string | null {
+  if (!model) return null;
+  return (MODELS as Readonly<Record<string, { name: string }>>)[model]?.name ?? model;
+}
+
+/** The reviewer of a review seat, by the seat and model its record carries: never by its agent's opaque id. */
+export function reviewerWords(seat: string, model: string | null): string {
+  return `The ${seat} seat's reviewer${model ? `, on ${model}` : ""}`;
 }

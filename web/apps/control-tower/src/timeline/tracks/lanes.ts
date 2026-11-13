@@ -6,6 +6,11 @@
  * for half a millisecond, so two instants at the same moment never share a lane while a visit that
  * starts exactly when the previous one ended does. An agent and its queue are one unit: the queue sits
  * on the same lane immediately before its agent. O(n log n) with two heaps.
+ *
+ * Only units started by `liveAt` open lanes: a unit that starts after the live edge is not drawn yet
+ * (lod.spanTimes), so a lane opened for it would be an empty band (round 6, defect 5). Such units go
+ * on lane 0 until they start, when the tree is built again. Packing is prefix-stable: the lanes of the
+ * units started by an earlier liveAt are the same with a later one.
  */
 import { extentOf, type TimelineSpan, type TrackLane } from "../contract";
 
@@ -97,8 +102,21 @@ function unitsOf(spans: readonly TimelineSpan[]): Unit[] {
   return units;
 }
 
-/** Packs spans into lanes without overlap. Spans with no time at all go on lane 0. */
-export function packLanes(spans: readonly TimelineSpan[]): TrackLane[] {
+/** How many of these spans have started by `liveAt` (or have no time at all); the lanes depend on it. */
+export function startedBy(spans: readonly TimelineSpan[], liveAt: number): number {
+  let n = 0;
+  for (const span of spans) {
+    const x = extentOf(span);
+    if (!x || x.from <= liveAt) n++;
+  }
+  return n;
+}
+
+/**
+ * Packs spans into lanes without overlap. Spans with no time at all, and spans not started by
+ * `liveAt`, go on lane 0.
+ */
+export function packLanes(spans: readonly TimelineSpan[], liveAt = Number.POSITIVE_INFINITY): TrackLane[] {
   if (spans.length === 0) return [];
   if (spans.length === 1) return [{ spans: [spans[0] as TimelineSpan] }];
   const units = unitsOf(spans);
@@ -108,7 +126,7 @@ export function packLanes(spans: readonly TimelineSpan[]): TrackLane[] {
   const free = new Heap<number>((a, b) => a < b);
   const timeless: TimelineSpan[] = [];
   for (const unit of units) {
-    if (unit.from === Number.NEGATIVE_INFINITY) {
+    if (unit.from === Number.NEGATIVE_INFINITY || unit.from > liveAt) {
       timeless.push(...unit.spans);
       continue;
     }
@@ -129,4 +147,35 @@ export function packLanes(spans: readonly TimelineSpan[]): TrackLane[] {
     (lanes[0] as TimelineSpan[]).push(...timeless);
   }
   return lanes.map((s) => ({ spans: s }));
+}
+
+const NOUNS: Partial<Record<TimelineSpan["kind"], readonly [string, string]>> = {
+  agent: ["agent", "agents"],
+  tool: ["tool call", "tool calls"],
+  task: ["task", "tasks"],
+  visit: ["visit", "visits"],
+  seat: ["seat", "seats"],
+  // Every kind of wait (person, gate, capacity, dependency, eligible) reads as a wait.
+  "person-wait": ["wait", "waits"],
+};
+
+/**
+ * What a lane after the first holds, for the label column: "lane 2 · 4 agents", "lane 2 · 6 tasks"
+ * (round 6, defect 5: such a lane had a blank label). An agent and its queue are one agent. Lanes of
+ * mixed kinds say only their number.
+ */
+export function laneWords(node: { readonly lanes: readonly TrackLane[] }, lane: number): string {
+  const spans = node.lanes[lane]?.spans ?? [];
+  const head = `lane ${lane + 1}`;
+  let kind: TimelineSpan["kind"] | null = null;
+  const units = new Set<string>();
+  for (const span of spans) {
+    const k = span.kind === "agent-queue" ? "agent" : span.kind.endsWith("-wait") || span.kind === "slice-eligible" ? "person-wait" : span.kind;
+    if (kind === null) kind = k;
+    else if (kind !== k) return head;
+    units.add(k === "agent" ? span.entity : span.id);
+  }
+  const noun = kind ? NOUNS[kind] : undefined;
+  if (!noun) return head;
+  return `${head} · ${units.size} ${units.size === 1 ? noun[0] : noun[1]}`;
 }

@@ -275,9 +275,11 @@ test("execution grouping: execution → claim → workflow → agents → tools;
   // X7, recheck R2: the ticket and its run among the cell's executions (short, so it survives the
   // default column); the start and the supervisor's attempt are the detail.
   assert.equal(e1.label, "T1 · run 1/2");
-  assert.equal(e1.detail, "from 09:19 · supervisor attempt 1");
+  // Round 6, defect 19: a first supervisor attempt is not repeated in the detail (cut to "s…" in the
+  // column); a later one is, short; the label column's title says it in full.
+  assert.equal(e1.detail, "from 09:19");
   assert.equal(tree.byId.get("execution:E2").label, "T1 · run 2/2");
-  assert.equal(tree.byId.get("execution:E2").detail, "from 10:29 · supervisor attempt 2");
+  assert.equal(tree.byId.get("execution:E2").detail, "from 10:29 · attempt 2");
   assert.equal(e1.attention, "interrupted");
   assert.deepEqual(ids(e1.children), ["execution:E1/claim"]);
   assert.deepEqual(e1.ribbons.map((s) => s.entity), ["visit:T1/build#1", "visit:T1/verify#1", "visit:T1/review#1", "visit:T1/build#2"]);

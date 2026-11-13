@@ -7,7 +7,7 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { Button, fc, StateMark, type MarkState } from "@mach/ui";
 import { timecode } from "../../shell/time";
-import type { TimelineViewport, TimeWindow } from "../contract";
+import type { SelectGesture, TimelineViewport, TimeWindow } from "../contract";
 import { figureName, type Source } from "./model";
 
 // ---------------------------------------------------------------- type
@@ -68,6 +68,12 @@ const Ctx = createContext<FigureCtx | null>(null);
  * figures' tabindex and arrows to it.
  */
 export const BandRoving = createContext(false);
+
+/**
+ * The band's selection gesture (X13, round 6 defect 14): told which figure was activated and how, it
+ * answers whether that is "go to" (seek). A click or a first Enter only selects.
+ */
+export const BandGesture = createContext<((key: string, how: SelectGesture) => boolean) | null>(null);
 
 /** The band's focusable parts in document order: its buttons and every figure. */
 export function rovingItems(root: HTMLElement | null): HTMLElement[] {
@@ -179,10 +185,17 @@ function TipCard({ tip, width, height }: { tip: Tip; width: number; height: numb
 
 /**
  * One interactive figure: a button with an accessible name (what, when, how its time is known), the
- * records it comes from on hover and focus, and `onActivate(shift)` on click or Enter.
+ * records it comes from on hover and focus, and `onActivate(shift, go)` on click or Enter. `go` is
+ * true only for "go to" (Enter again, or a double-click's second click, on the same figure): a lens
+ * then seeks; otherwise it only selects. Shift (the second choice) is never "go to".
  */
-export function Fig({ id, name, sources, onActivate, selected, children }: { id: string; name: string; sources: readonly Source[]; onActivate(shift: boolean): void; selected?: boolean; children: ReactNode }) {
+export function Fig({ id, name, sources, onActivate, selected, children }: { id: string; name: string; sources: readonly Source[]; onActivate(shift: boolean, go: boolean): void; selected?: boolean; children: ReactNode }) {
   const ctx = useContext(Ctx);
+  const gesture = useContext(BandGesture);
+  const activate = (shift: boolean, how: SelectGesture) => {
+    const go = shift ? false : gesture ? gesture(id, how) : how !== "click";
+    onActivate(shift, go);
+  };
   const ref = useRef<SVGGElement>(null);
   // The accessible name starts with the figure's visible words (WCAG 2.5.3), then says the rest.
   useLayoutEffect(() => {
@@ -202,11 +215,11 @@ export function Fig({ id, name, sources, onActivate, selected, children }: { id:
       aria-pressed={selected === undefined ? undefined : selected}
       className="mach-inv-fig"
       style={{ cursor: "pointer", outline: "none" }}
-      onClick={(e) => onActivate(e.shiftKey)}
+      onClick={(e) => activate(e.shiftKey, e.detail >= 2 ? "double-click" : "click")}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onActivate(e.shiftKey);
+          activate(e.shiftKey, "key");
         }
       }}
       onMouseEnter={(e) => show(e.currentTarget, e.clientX, e.clientY)}

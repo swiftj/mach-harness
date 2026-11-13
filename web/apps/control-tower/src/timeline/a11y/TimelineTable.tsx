@@ -85,15 +85,28 @@ function EndCell({ end, which, liveAt, open }: { end: SpanEnd | null; which: "st
   if (!end) return <NotRecorded />;
   if (end.at === null && end.notBefore !== null && end.notAfter !== null) {
     if (end.notBefore > liveAt) return <span className="text-body-sm text-ink-muted">Still open</span>;
-    return (
-      <span className="text-body-sm text-ink-muted">
-        between <Moment t={end.notBefore} /> and <Moment t={end.notAfter} />
-      </span>
-    );
+    return <BoundedMoment lo={end.notBefore} hi={end.notAfter} />;
   }
   if (end.at === null) return <NotRecorded />;
   if (end.basis === "inferred") return <Moment t={end.at} approx />;
   return <Moment t={end.at} />;
+}
+
+/**
+ * An end known only between two times, in a time column: both times, stacked as a range on the row's
+ * two short lines (never "between … and" wrapped and cut); said in full to a screen reader and in the
+ * title.
+ */
+function BoundedMoment({ lo, hi }: { lo: number; hi: number }) {
+  return (
+    <span className="flex flex-col whitespace-nowrap font-mono text-[11px] leading-[13px] text-ink-muted tabular" title={`between ${timecode(lo)} and ${timecode(hi)}`} data-bounded="">
+      <span aria-hidden="true">{timecode(lo)}</span>
+      <span aria-hidden="true">–{timecode(hi)}</span>
+      <span className="sr-only">
+        between {spokenTime(lo)} and {spokenTime(hi)}
+      </span>
+    </span>
+  );
 }
 
 function outcomeText(span: TimelineSpan, liveAt: number): string {
@@ -145,7 +158,7 @@ function TrackLabel({ label, strong }: { label: string; strong: boolean }) {
   // Non-breaking around the separator: a flex item drops its leading space.
   const rest = cut < 0 ? "" : `\u00a0·\u00a0${label.slice(cut + 3)}`;
   return (
-    <span className={cn("flex min-w-0 shrink items-baseline", strong && "font-semibold")} title={label}>
+    <span className={cn("flex min-w-0 shrink items-baseline", strong && "font-semibold")} title={label} data-track-label="">
       <span className="min-w-0 shrink-0 truncate" style={{ maxWidth: "100%" }}>
         {id}
       </span>
@@ -249,7 +262,9 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, selected, g
           <TrackLabel label={node.label} strong={row.level <= 2} />
           {counted.length ? <span className="shrink-0 text-caption font-medium" style={{ color: node.counts?.failed || node.counts?.rejected ? "var(--mach-factory-fail)" : "var(--mach-factory-halt)" }}>{counted.join(", ")}</span> : null}
           {word ? <span className="shrink-0 text-caption text-ink-muted">· {word}</span> : null}
-          {node.note ?? node.detail ? <span className={cn("min-w-0 shrink-[4] truncate text-caption text-ink-subtle", node.note && "italic")}>{node.note ?? node.detail}</span> : null}
+          {/* The note or detail takes only the room the label leaves (basis 0): the label ("SYN-006 · run 2/3",
+              "Claim") is never cut for it; only a label longer than the whole column is cut, in its details. */}
+          {node.note ?? node.detail ? <span className={cn("min-w-0 flex-1 basis-0 truncate text-caption text-ink-subtle", node.note && "italic")}>{node.note ?? node.detail}</span> : null}
         </span>
       </Cell>
       <Cell area="what">

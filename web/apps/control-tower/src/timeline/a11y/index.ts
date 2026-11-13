@@ -6,3 +6,4 @@
 export { TimelineTable, useIdleSummary } from "./TimelineTable";
 export { rowSummary, windowSummary, summaryWords, attentionWords, openContext } from "./describe";
 export { GRID_KEYS } from "./model";
+export { focusTracks, tracksFocusTarget, TRACKS_TARGETS } from "./skip";

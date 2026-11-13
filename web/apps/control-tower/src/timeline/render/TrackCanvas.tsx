@@ -780,11 +780,9 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
         <div ref={liveRef} className="absolute inset-y-0 left-0 w-0">
           <div className="absolute inset-y-0 left-0 border-l border-dashed" style={{ borderColor: "var(--mach-factory-plate-edge)" }} />
         </div>
-        <div ref={liveOffRef} data-live-off-window="" className="absolute inset-y-0 right-0 flex items-start border-r-2 border-dashed" style={{ visibility: "hidden", borderColor: "var(--mach-factory-plate-edge)" }}>
-          <span className="mr-1 mt-1 whitespace-nowrap rounded-xs px-1 text-[10.5px] text-ink-muted" style={{ background: "var(--mach-factory-ground)" }}>
-            Live edge later →
-          </span>
-        </div>
+        {/* The live edge past the window: a dashed right edge here; its words are on the ruler, where they
+            cover no track's marks (round 6, defect 13). */}
+        <div ref={liveOffRef} className="absolute inset-y-0 right-0 border-r-2 border-dashed" style={{ visibility: "hidden", borderColor: "var(--mach-factory-plate-edge)" }} />
         <div ref={playRef} className="absolute inset-y-0 left-0 w-0">
           <div className="absolute inset-y-0 -left-px w-0.5 bg-ink" />
         </div>

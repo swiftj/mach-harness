@@ -157,7 +157,22 @@ e-mail address, key, token or one-time link value. 5,622 requests across 15 brow
 127.0.0.1. The source projects were not written (copies only); every process started was stopped; `git status`
 stayed clean.
 
-**Visual defects still visible on the final build**, ranked:
+**Visual defects visible in that set (on `c2f3b2b`)**, ranked. All nineteen were then worked on, after the set
+was made: 1–4 in `df5665e`, 5–19 in the commit after it. Each fix has a unit test and an after-shot taken against a
+real observer (`fix-0N-…png` and `r6-NN-…png` in the same folder); the ten-item set itself was not retaken, so its
+frames still show the defects. After the fixes: 489 unit tests, 41 Timeline end-to-end tests and the six-check
+accessibility audit pass. What the fixes did not cover:
+
+- Event sentences under "Why it looks like this" and in landmarks still quote the stations' own words
+  (`FAIL_WITH_EVIDENCE`, `APPROVED`); they are shared with the Atlas and Blueprint and were left as they are.
+- Raw outcome words in mark labels and hover cards on the tracks were not rechecked.
+- In Historical replay the toolbar still says "As of the live edge; playhead at …".
+- The toolbars are still one Tab stop per control; the route to the tracks is a "Skip to the tracks" link.
+- The "Factory not enabled" notice is now a chip in the top bar; it is announced when focused, not on load.
+- A row's span count on a `win=` deep link can differ from the navigated view (tasks are loaded by window).
+- Fixes were checked in the dark theme; light was checked only for 7.
+
+The list as found:
 
 Must fix
 1. The toolbar overflows instead of folding: the pinned-window control and its **Follow** are cut off or pushed

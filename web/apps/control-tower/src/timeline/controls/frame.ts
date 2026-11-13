@@ -85,6 +85,21 @@ export function pinnedBehind(chosen: TimeWindow | null, drawn: TimeWindow, liveE
 }
 
 /**
+ * A zoom (a new length, not a pan) of a window that holds the live edge while the store follows it:
+ * the new length anchored on the live edge, still following (`followWindow`); null when the zoom
+ * should stay where it was asked (not following, the window away from the edge, or a pan). Narrowing
+ * while following once zoomed about the centre and pinned the window, leaving the live edge hours
+ * ahead (round 6, defect 8). A length as wide as the whole history is "all" (ALL_WINDOW). Pure.
+ */
+export function followingZoom(drawn: TimeWindow, length: number, whole: TimeWindow, following: boolean): TimeWindow | null {
+  if (!following || drawn.to < whole.to - 1000) return null;
+  const was = drawn.to - drawn.from;
+  if (Math.abs(length - was) <= Math.max(1, was * 0.001)) return null;
+  if (length >= whole.to - whole.from) return ALL_WINDOW;
+  return followWindow(Math.max(MIN_WINDOW_MS, length));
+}
+
+/**
  * The window that follows the live edge again after a pinned one ("Return to live", L, "Follow", "No
  * lens"): the length shown kept while a lens is on (its zoom level); otherwise the default (null).
  */
@@ -383,12 +398,24 @@ export function isRunning(span: TimelineSpan): boolean {
  *   bucket's end, the last recorded span end, and the last mark (its `until` when it is an interval).
  * - While something is running (`isRunning`: an open execution, workflow, agent, or station visit
  *   other than human approval) and the source is live and following, it ends at the live edge
- *   instead. An open wait, cell, round or wave alone is not running: a cell parked for a person
+ *   instead, unless the silence since the last record is long (`silentTail`): the open tail would
+ *   squeeze what was recorded into the left of the stage. An open wait, cell, round or wave alone is not running: a cell parked for a person
  *   hours after its last event is framed on its recorded activity, live or not.
  * - 2% of its length is added on each side, never beyond the whole history; never narrower than
  *   MIN_WINDOW_MS. With nothing recorded at all it is the whole history.
  * "Show all" (ALL_WINDOW) still shows the whole history held, and the overview always does.
  */
+/**
+ * Whether the time since the last record is so long that open work is not worth following: more than
+ * three times the recorded activity and over half an hour. A run that pauses briefly keeps following;
+ * a history whose open work fell silent hours ago is framed on what was recorded (round 6, defect 17).
+ */
+export function silentTail(first: number, last: number, edge: number): boolean {
+  const tail = edge - last;
+  return tail > SILENT_TAIL_MIN_MS && tail > 3 * Math.max(0, last - first);
+}
+const SILENT_TAIL_MIN_MS = 30 * 60_000;
+
 export function activityWindow(input: ActivityInput): TimeWindow {
   const { whole } = input;
   let first = Number.POSITIVE_INFINITY;
@@ -420,7 +447,10 @@ export function activityWindow(input: ActivityInput): TimeWindow {
     last = Math.max(last, m.until ?? m.at);
   }
   if (input.dataFrom !== null && Number.isFinite(input.dataFrom)) first = input.dataFrom;
-  if (running && input.followingLive) last = whole.to;
+  // Running, live and following: to the live edge, unless the work has been silent so long that its
+  // open tail would take most of the stage. Then nothing is moving to follow, and the recorded activity
+  // is framed (round 6, defect 17: 6 h of history squeezed into the left 13% by a 39 h open tail).
+  if (running && input.followingLive && Number.isFinite(first) && Number.isFinite(last) && !silentTail(first, last, whole.to)) last = whole.to;
   if (!Number.isFinite(first) || !Number.isFinite(last)) return whole;
   let from = Math.max(whole.from, first);
   let to = Math.min(whole.to, Math.max(last, from));

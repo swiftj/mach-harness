@@ -383,8 +383,13 @@ export function outcomeKnownAt(span: TimelineSpan, liveAt: number): boolean {
 }
 
 /** The condition a span contributes to its track's `attention`. */
-/** The span kinds `TimelineData.structure()` returns. */
-export const STRUCTURAL_KINDS: readonly SpanKind[] = ["wave", "slice-wait", "slice-eligible", "capacity-wait", "cell", "round", "claim", "execution", "workflow", "person-wait", "gate-wait"];
+/**
+ * The span kinds `TimelineData.structure()` returns. Station visits and review seats are here because
+ * each makes a row (a station's, a seat's): without them a fresh `win=` deep link dropped the Groom
+ * and Plan rows a navigated view kept (round 6, defect 7). A few per cell; tasks, agents and tools,
+ * the bulk, stay windowed.
+ */
+export const STRUCTURAL_KINDS: readonly SpanKind[] = ["wave", "slice-wait", "slice-eligible", "capacity-wait", "cell", "round", "visit", "seat", "claim", "execution", "workflow", "person-wait", "gate-wait"];
 
 /**
  * An open span on a history that is no longer live, seen at or after that history's end: "no end

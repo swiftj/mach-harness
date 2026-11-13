@@ -180,3 +180,14 @@ export function afterPlayheadBand(behind: boolean, playheadX: number, liveX: num
   const w = liveX - a;
   return { left: a, width: w, label: w >= AFTER_LABEL_MIN_PX };
 }
+
+/** The ruler's right-hand room kept for the edge-later words (WindowRuler). */
+export const EDGE_CHIP_ROOM = 128;
+
+/**
+ * The words for an edge after the window, true to the source: a live Factory's edge is still moving
+ * ("live edge later →"); a replay's is the recording's end, which no "live" describes (round 6, defect 15).
+ */
+export function edgeLaterWords(source: string): string {
+  return source === "live" ? "live edge later →" : source === "replay" ? "recording ends later →" : "history ends later →";
+}

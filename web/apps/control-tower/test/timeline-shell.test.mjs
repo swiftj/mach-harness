@@ -406,9 +406,13 @@ test("default window: frames the recorded activity, not the wall clock (the real
   const mark = { id: "m", kind: "human", at: lastEnd + 10 * 60_000, until: lastEnd + 20 * 60_000, eventId: null, entity: null, label: "", verdict: null, authority: "observed" };
   const w2 = frame.activityWindow({ whole, dataFrom: T0, density, spans, lastMark: mark, followingLive: false });
   assert.ok(Math.abs(w2.to - (lastEnd + 20 * 60_000) * 1 - (lastEnd + 20 * 60_000 - T0) * frame.ACTIVITY_PAD) < 1, String(w2.to - lastEnd));
-  // Something open, live and following: it follows the live edge.
+  // Something open, live and following: it follows the live edge, while its records are recent.
   const open = [...spans, sp("visit:visit:LOCAL-1/build#2", lastEnd - 5_000, null)];
-  assert.equal(frame.activityWindow({ whole, dataFrom: T0, density, spans: open, lastMark: null, followingLive: true }).to, whole.to);
+  const recent = { ...whole, to: lastEnd + 30 * 60_000 };
+  assert.equal(frame.activityWindow({ whole: recent, dataFrom: T0, density, spans: open, lastMark: null, followingLive: true }).to, recent.to);
+  // Round 6, defect 17: open work silent for seven hours after 73 minutes of records is framed on
+  // what was recorded, not squeezed into the left of a window that runs to the live edge.
+  assert.ok(frame.activityWindow({ whole, dataFrom: T0, density, spans: open, lastMark: null, followingLive: true }).to < lastEnd + 5 * 60_000);
   // The same open span, reviewed (not following): the recorded activity still.
   assert.ok(frame.activityWindow({ whole, dataFrom: T0, density, spans: open, lastMark: null, followingLive: false }).to < whole.to);
   // Nothing recorded: the whole history.
@@ -474,9 +478,12 @@ test("default window: the real case, one cell parked for a person seven hours af
   // An open wave or cell alone: the same.
   const shelf = [sp("wave:wave:W1", T0, null, {}, "wave"), sp("cell:cell:LOCAL-1", T0, null, {}, "cell")];
   assert.equal(frame.activityWindow({ whole, dataFrom: T0, density, spans: shelf, lastMark: null, followingLive: true }).to, lastEvent + len * frame.ACTIVITY_PAD);
-  // An open agent or workflow, live and following: the live edge.
+  // An open agent or workflow, live and following, recorded recently: the live edge. Silent for seven
+  // hours after 73 minutes of records (round 6, defect 17): the recorded activity.
+  const recent = { ...whole, to: lastEvent + 20 * 60_000 };
   for (const kind of ["agent", "workflow"]) {
-    assert.equal(frame.activityWindow({ whole, dataFrom: T0, density, spans: [sp(`${kind}:${kind}:x/1`, lastEvent - 1000, null, {}, kind)], lastMark: null, followingLive: true }).to, whole.to, kind);
+    assert.equal(frame.activityWindow({ whole: recent, dataFrom: T0, density, spans: [sp(`${kind}:${kind}:x/1`, lastEvent - 1000, null, {}, kind)], lastMark: null, followingLive: true }).to, recent.to, kind);
+    assert.ok(frame.activityWindow({ whole, dataFrom: T0, density, spans: [sp(`${kind}:${kind}:x/1`, lastEvent - 1000, null, {}, kind)], lastMark: null, followingLive: true }).to < lastEvent + 5 * 60_000, kind);
   }
 });
 

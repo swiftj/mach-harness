@@ -987,3 +987,19 @@ export function chooseTicks(extent: Axis, width: number, wall: boolean, minSpaci
   }
   return { step, ticks };
 }
+
+/**
+ * Where the overview's "after the playhead" words go, in px from the band's left (the playhead), or
+ * null when no stretch of the band is free of landmark glyphs: the words never cover a landmark
+ * (round 6, defect 13). `hx`/`lx` are the band's ends; `points` the landmark glyphs (any order). Pure.
+ */
+export function afterLabelLeft(hx: number, lx: number, points: readonly Pick<MarkPoint, "x">[], labelW: number, pad = 6): number | null {
+  const xs = points.map((p) => p.x).filter((x) => x >= hx - pad && x <= lx + pad).sort((a, b) => a - b);
+  let at = hx + pad;
+  for (const x of xs) {
+    if (x + pad <= at) continue;
+    if (x - pad >= at + labelW) break;
+    at = x + pad;
+  }
+  return at + labelW <= lx - 2 ? at - hx : null;
+}

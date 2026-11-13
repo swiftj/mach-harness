@@ -7,7 +7,7 @@
  * span that ends after it is still open, a span that starts after it has not begun, and an outcome
  * established after it is not shown (`outcomeKnownAt`). Order in time is never said as causation.
  */
-import { findAgent, findToolCall, type ArtifactState, type EntityRef, type Scene } from "../../sim";
+import { findAgent, findToolCall, gateStateWords, visitStatusOf, type ArtifactState, type GateState, type EntityRef, type Scene, type StationVisit } from "../../sim";
 import { duration, timecode } from "../../shell/time";
 import { elapsedWords } from "../../shell/inspector/words";
 import { noEndRecorded, outcomeKnownAt, type SpanKind, type SpanQuery, type TimeWindow, type TimelineSpan } from "../contract";
@@ -270,7 +270,7 @@ export function spanHeadline(span: TimelineSpan, asOf: number, clock: (t: number
   const state = endedWithoutExit(span)
     ? "ended without an exit record"
     : outcome
-      ? outcome.toLowerCase()
+      ? outcomeWordsOf(outcome).words.toLowerCase()
       : span.end?.reason === "failed" || span.end?.reason === "refused"
         ? span.end.reason
         : span.end?.reason === "interrupted" || span.end?.reason === "superseded"
@@ -474,7 +474,8 @@ export function durationSentence(span: TimelineSpan, asOf: number, rules: Readon
     case "measured":
       return { text: ms !== null ? `took ${span1(ms)} (measured)` : "Measured, but the length was not given", live: null };
     case "bounded":
-      if (minMs !== null && maxMs !== null) return { text: minMs === maxMs ? `took ${span1(minMs)} (bounded to that)` : `between ${span1(minMs)} and ${span1(maxMs)}`, live: null };
+      // A lower bound of nothing says nothing: "up to 3 h 7 min", never "between 0 ms and 3 h 7 min".
+      if (minMs !== null && maxMs !== null) return { text: minMs === maxMs ? `took ${span1(minMs)} (bounded to that)` : minMs <= 0 ? `up to ${span1(maxMs)}` : `between ${span1(minMs)} and ${span1(maxMs)}`, live: null };
       if (minMs !== null) return { text: `at least ${span1(minMs)}; the upper bound is not known`, live: null };
       if (maxMs !== null) return { text: `at most ${span1(maxMs)}; the lower bound is not known`, live: null };
       return { text: "Bounded, but neither bound is recorded", live: null };
@@ -557,7 +558,41 @@ const STATION_OUTCOME_WORDS: Readonly<Record<string, string>> = {
 /** An outcome in words, and the station's own word when it is one (shown beside them, in mono); null words when it is already plain. */
 export function outcomeWordsOf(outcome: string): { words: string; own: string | null } {
   const words = STATION_OUTCOME_WORDS[outcome];
-  return words ? { words, own: outcome } : { words: outcome, own: null };
+  if (words) return { words, own: outcome };
+  // A wait's outcome is the record that closed it (an event type such as work.claimed): said as such.
+  if (/^[a-z_]+\.[a-z_]+$/.test(outcome)) return { words: `closed by a ${outcome} record`, own: null };
+  return { words: outcome, own: null };
+}
+
+/**
+ * The same plain words, capitalised, for a place that shows one word as a state ("Failed, with
+ * evidence" for FAIL_WITH_EVIDENCE); a word that is not a station's own is left as it is. The raw
+ * word is still shown where the record is quoted ("The station said").
+ */
+export function outcomeStateWords(outcome: string): string {
+  const { words } = outcomeWordsOf(outcome);
+  return words ? words[0]!.toUpperCase() + words.slice(1) : words;
+}
+
+/**
+ * A station visit's state as one word, with a station's own outcome word in plain words
+ * (visitStatusOf's word, which quotes the record, otherwise).
+ */
+export function visitStateWords(visit: Pick<StationVisit, "station" | "leftAt" | "outcome" | "outcomeWord" | "unclosed">): string {
+  const status = visitStatusOf(visit);
+  return status.state === "ended" ? outcomeStateWords(visit.outcomeWord ?? visit.outcome ?? "ended") : status.word;
+}
+
+/**
+ * A gate's position in words (gateStateWords), with a reason that is a station's own outcome code in
+ * plain words: "Refused: failed, with evidence", never "Refused: FAIL_WITH_EVIDENCE". Other reason
+ * codes (findings-invalid, wrong-stage) are left as recorded.
+ */
+export function gatePositionWords(gate: Pick<GateState, "state" | "reasonCode">): string {
+  const code = gate.reasonCode;
+  if (!code || (gate.state !== "overridden" && gate.state !== "failed")) return gateStateWords(gate);
+  const { own, words } = outcomeWordsOf(code);
+  return own ? gateStateWords({ ...gate, reasonCode: words }) : gateStateWords(gate);
 }
 
 /** What the outcome is called: a seat's is its verdict. */

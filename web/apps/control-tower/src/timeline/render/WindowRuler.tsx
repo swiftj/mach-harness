@@ -3,13 +3,17 @@
  * apart, with minors), UTC labels in 11 px mono whose format follows the step, and date changes
  * marked with a full-height tick and the day. The playhead and the live edge are DOM written on every
  * store tick. Dragging the ruler pans time; the wheel zooms about the pointer (horizontal wheel pans).
+ *
+ * When the live edge (a replay: the recording's end) lies after the window, the ruler's right end says
+ * so ("live edge later →", "recording ends later →"): on the ruler, with its own ground, never over a
+ * track's marks (round 6, defect 13), and the tick labels leave it room.
  */
 import { memo, useEffect, useLayoutEffect, useRef, type PointerEvent } from "react";
 import { useTheme } from "@mach/ui";
 import { usePlayheadEffect } from "../../shell/timeline/playhead";
 import { RULER_HEIGHT, type TimeWindow, type WindowRulerProps } from "../contract";
 import { readPalette } from "./palette";
-import { clampWindow, dateChanges, dayLabel, isWallTime, panBy, scaleOf, tAt, tickLabel, ticksFor, xAt, zoomAbout } from "./scale";
+import { clampWindow, edgeLaterWords, EDGE_CHIP_ROOM, dateChanges, dayLabel, isWallTime, panBy, scaleOf, tAt, tickLabel, ticksFor, xAt, zoomAbout } from "./scale";
 
 export const WindowRuler = memo(function WindowRuler({ viewport, onWindow }: WindowRulerProps) {
   const { window: win, width, liveAt } = viewport;
@@ -17,6 +21,7 @@ export const WindowRuler = memo(function WindowRuler({ viewport, onWindow }: Win
   const ref = useRef<HTMLCanvasElement>(null);
   const playRef = useRef<HTMLDivElement>(null);
   const liveRef = useRef<HTMLDivElement>(null);
+  const laterRef = useRef<HTMLSpanElement>(null);
   const drag = useRef<{ x: number; win: TimeWindow } | null>(null);
   const latest = useRef({ viewport, onWindow });
   const pending = useRef<TimeWindow | null>(null);
@@ -60,6 +65,8 @@ export const WindowRuler = memo(function WindowRuler({ viewport, onWindow }: Win
     ctx.fillRect(0, H - 1, width, 1);
 
     // Labels: after each major, skipped where they would collide; a new day's tick carries the day.
+    // The live edge after the window: its words take the right end (the chip below), labels stop short.
+    const right = xAt(scale, liveAt) > width + 1 ? width - EDGE_CHIP_ROOM : width;
     const mono = `400 11px ${p.mono}`;
     const day = `600 11px ${p.mono}`;
     ctx.textBaseline = "alphabetic";
@@ -70,7 +77,7 @@ export const WindowRuler = memo(function WindowRuler({ viewport, onWindow }: Win
       const text = isDay ? dayLabel(t) : tickLabel(t, ticks.major, wall);
       ctx.font = isDay ? day : mono;
       const w = ctx.measureText(text).width;
-      if (x + 4 < lastRight + 10 || x + 4 + w > width - 2) continue;
+      if (x + 4 < lastRight + 10 || x + 4 + w > right - 2) continue;
       ctx.fillStyle = isDay ? p.ink : p.inkSubtle;
       ctx.fillText(text, x + 4, 13);
       lastRight = x + 4 + w;
@@ -103,6 +110,12 @@ export const WindowRuler = memo(function WindowRuler({ viewport, onWindow }: Win
       if (liveRef.current) {
         liveRef.current.style.transform = `translateX(${Math.round(l)}px)`;
         liveRef.current.style.visibility = l < 0 || l >= width ? "hidden" : "visible";
+      }
+      const later = laterRef.current;
+      if (later) {
+        const words = l > width + 1 ? edgeLaterWords(s.source) : null;
+        later.style.visibility = words ? "visible" : "hidden";
+        if (words && later.textContent !== words) later.textContent = words;
       }
     },
     [win.from, win.to, width, liveAt],
@@ -159,6 +172,12 @@ export const WindowRuler = memo(function WindowRuler({ viewport, onWindow }: Win
         <div ref={liveRef} className="absolute inset-y-0 left-0 w-0">
           <div className="absolute inset-y-0 left-0 border-l border-dashed" style={{ borderColor: "var(--mach-factory-plate-edge)" }} />
         </div>
+        <span
+          ref={laterRef}
+          data-live-off-window=""
+          className="absolute right-0.5 top-[3px] whitespace-nowrap rounded-xs px-1 text-[10.5px] leading-[15px] text-ink-muted"
+          style={{ visibility: "hidden", background: "var(--mach-factory-ground)", maxWidth: EDGE_CHIP_ROOM }}
+        />
         <div ref={playRef} className="absolute inset-y-0 left-0 w-0">
           <div className="absolute bottom-0 -left-px top-0 w-0.5 bg-ink" />
           <div className="absolute -left-[5px] top-0 size-0 border-x-[5px] border-t-[6px] border-x-transparent border-t-ink" />

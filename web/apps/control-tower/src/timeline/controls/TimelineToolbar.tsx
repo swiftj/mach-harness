@@ -36,6 +36,7 @@ import {
   isFollow,
   isRunning,
   followWindow,
+  followingZoom,
   JUMPS,
   jumpEndWords,
   jumpOf,
@@ -273,11 +274,18 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
         onView({ window: isAll(next) ? next : followWindow(next.to - next.from) });
         return;
       }
+      // Following the live edge with the default window: anchored on the edge, still following (defect 8).
+      const st = store.getState();
+      const kept = followingZoom(w, (w.to - w.from) * factor, whole(), st.source === "live" && st.following);
+      if (kept) {
+        onView({ window: kept });
+        return;
+      }
       const mid = (w.from + w.to) / 2;
       const half = ((w.to - w.from) * factor) / 2;
       onView({ window: clampWindow({ from: mid - half, to: mid + half }, whole()) });
     },
-    [onView, shown, whole, view.window],
+    [onView, shown, whole, view.window, store],
   );
   const showAll = useCallback(() => onView({ window: ALL_WINDOW }), [onView]);
   const fitActivity = useCallback(() => onView({ window: null }), [onView]);

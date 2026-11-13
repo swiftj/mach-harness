@@ -10,7 +10,7 @@ import { fc } from "@mach/ui";
 import { durationWords } from "../render";
 import type { BodyProps } from "./body";
 import { Caption, Diamond, Empty, Fig, Figures, FrameFig, Hit, HumanTriangle, LiveEdge, Mark, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
-import { attemptOf, frameAbout, frameOf, markSource, recoveryItems, type RecoveryItem } from "./model";
+import { attemptOf, frameAbout, frameOf, markSource, placeLabel, recoveryItems, type RecoveryItem } from "./model";
 import type { TimeWindow } from "../contract";
 
 const ROW_H = 30;
@@ -63,6 +63,9 @@ export function RecoveryBody(p: BodyProps) {
 
 function ItemRow({ it, y, s, liveAt, onReveal, onFrame }: { it: RecoveryItem; y: number; s: Scale; liveAt: number; onReveal(ref: string, at?: number): void; onFrame(w: TimeWindow, about: readonly string[]): void }) {
   const mid = y + 11;
+  // Labels beside a point stay inside the drawing: after it when they fit, else before it (round 6, defect 9).
+  const right = s.gutter + s.plotW;
+  const beside = (x: number, text: string, gap: number) => placeLabel(x, text, 10, s.gutter, right, gap);
   const isExec = it.span.kind === "execution";
   const a = it.from !== null ? s.cx(it.from) : null;
   const stop = it.stoppedAt !== null ? s.cx(it.stoppedAt) : null;
@@ -107,11 +110,17 @@ function ItemRow({ it, y, s, liveAt, onReveal, onFrame }: { it: RecoveryItem; y:
           </>
         ) : null}
       </Fig>
-      {stop !== null && it.kind !== "late-exit" && it.kind !== "person" ? (
-        <text x={stop + 8} y={mid + 13} style={{ ...SANS, fontSize: 10, fill: it.kind === "interrupted" ? fc("halt") : MUTED }} aria-hidden="true">
-          {it.kind === "unknown" ? "outcome not known" : it.kind === "no-exit" ? "no exit recorded" : "interrupted"}
-        </text>
-      ) : null}
+      {stop !== null && it.kind !== "late-exit" && it.kind !== "person"
+        ? (() => {
+            const text = it.kind === "unknown" ? "outcome not known" : it.kind === "no-exit" ? "no exit recorded" : "interrupted";
+            const at = beside(stop, text, 8);
+            return at ? (
+              <text x={at.x} y={mid + 13} textAnchor={at.anchor} style={{ ...SANS, fontSize: 10, fill: it.kind === "interrupted" ? fc("halt") : MUTED }} aria-hidden="true">
+                {text}
+              </text>
+            ) : null;
+          })()
+        : null}
       {/* Recoveries the supervisor recorded for this item. */}
       {it.recoveries.map((m) => (
         <Fig key={m.id} id={m.id} name={`${m.label} At ${when(m.at)}.`} sources={[markSource(m, "recovery mark")]} onActivate={() => onReveal(m.entity ?? it.span.entity, m.at)}>
@@ -125,25 +134,33 @@ function ItemRow({ it, y, s, liveAt, onReveal, onFrame }: { it: RecoveryItem; y:
         <Fig id={`resumed:${it.span.id}`} name={`${it.label}: ${it.resumed.words} at ${when(it.resumed.at)}, as that record shows`} sources={[it.resumed.source]} onActivate={() => onReveal(it.resumed!.ref, it.resumed!.at)}>
           {(() => {
             const rx = s.cx(it.resumed.at);
+            const at = beside(rx, it.resumed.words, 5);
             return (
               <>
                 <Hit x={stop} y={mid - 4} w={Math.max(4, rx - stop)} h={8} />
                 <line x1={stop + 6} x2={rx} y1={mid} y2={mid} style={{ stroke: fc("halt"), strokeWidth: 1.2, strokeDasharray: "1 3", strokeLinecap: "round" }} />
                 <path d={`M${rx} ${mid - 5}V${mid + 5}`} style={{ stroke: fc("live"), strokeWidth: 1.6 }} />
-                <text x={rx + 5} y={mid + 3.5} style={{ ...SANS, fontSize: 10, fill: INK }}>
-                  {it.resumed.words}
-                </text>
+                {at ? (
+                  <text x={at.x} y={at.anchor === "start" ? mid + 3.5 : mid - 4} textAnchor={at.anchor} style={{ ...SANS, fontSize: 10, fill: INK }}>
+                    {it.resumed.words}
+                  </text>
+                ) : null}
                 <Ring x={stop} y={mid - 4} w={Math.max(4, rx - stop)} h={8} />
               </>
             );
           })()}
         </Fig>
       ) : null}
-      {it.kind === "late-exit" && visitEnd !== null && !it.resumed ? (
-        <text x={visitEnd + 6} y={mid + 3.5} style={{ ...SANS, fontSize: 10, fill: SUBTLE }} aria-hidden="true">
-          exit recorded after its execution ended
-        </text>
-      ) : null}
+      {it.kind === "late-exit" && visitEnd !== null && !it.resumed
+        ? (() => {
+            const at = beside(visitEnd, "exit recorded after its execution ended", 6);
+            return at ? (
+              <text x={at.x} y={at.anchor === "start" ? mid + 3.5 : mid + 15} textAnchor={at.anchor} style={{ ...SANS, fontSize: 10, fill: SUBTLE }} aria-hidden="true">
+                exit recorded after its execution ended
+              </text>
+            ) : null;
+          })()
+        : null}
     </g>
   );
 }

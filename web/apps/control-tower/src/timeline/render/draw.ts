@@ -186,8 +186,10 @@ export function shortDuration(span: TimelineSpan, from: number, to: number, open
   const d = span.duration;
   if (endedWithoutExit(span)) return `≤ ${durationText(d.maxMs ?? d.ms ?? to - from)}`;
   if (d.basis === "bounded" && d.minMs !== null && d.maxMs !== null) {
-    const a = durationText(d.minMs);
     const b = durationText(d.maxMs);
+    // A lower bound of nothing is not information: "≤ 4 min 7 s", not "0 ms – 4 min 7 s" (round 6).
+    if (d.minMs <= 0) return `≤ ${b}`;
+    const a = durationText(d.minMs);
     return a === b ? a : `${a} – ${b}`;
   }
   const ms = d.ms ?? to - from;
@@ -377,6 +379,11 @@ interface Paint {
   readonly xLive: number;
   /** The opacity everything of the current span is drawn at (a newly arrived span fades in). */
   base: number;
+  /**
+   * Text over a row's top band, painted once the row's marks are drawn and on a knock-out of the
+   * ground, so no mark, cap or tick strikes through a label or a duration (round 6, defect 13).
+   */
+  readonly later?: (() => void)[];
 }
 
 export type Box = readonly [number, number, number, number];
@@ -688,7 +695,10 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
   }
 
   // A lifetime (wave, cell) is named by its row's label: the line alone.
-  if (labels && item.lod !== "geometry" && fam !== "lifetime") paintLabel(c, item, g, X0, X1 - (seat ? 6 : 0), textFrom, tone, fam, marks);
+  // Past the end cap or verdict, up to the next span in the row: where a thin row's label goes when the
+  // bar is too short for it (round 6: the first review seat's "Architecture" was dropped).
+  const beyond = { from: X1 + (seat ? 9 : 6), to: Math.min(next ? next.x0 - 6 : Number.POSITIVE_INFINITY, c.xLive - 2, c.scale.width - 4) };
+  if (labels && item.lod !== "geometry" && fam !== "lifetime") paintLabel(c, item, g, X0, X1 - (seat ? 6 : 0), textFrom, tone, fam, marks, beyond);
 
   const half = Math.max(th / 2, 3) + 2;
   return { box: [X0 - 1, cy - half, (noExit ? cutX + 4 : seat ? X1 + 5 : X1 + 1), cy + half] };
@@ -727,7 +737,7 @@ function paintBracket(c: Paint, item: PlacedSpan, g: RowGeom, ink: string, label
   return { box: [X0 - 1, y - 3, X1 + 1, y + 5] };
 }
 
-function paintLabel(c: Paint, item: PlacedSpan, g: RowGeom, X0: number, X1: number, textFrom: number, tone: Tone, fam: Family, marks: readonly PlacedMark[]) {
+function paintLabel(c: Paint, item: PlacedSpan, g: RowGeom, X0: number, X1: number, textFrom: number, tone: Tone, fam: Family, marks: readonly PlacedMark[], beyond?: { readonly from: number; readonly to: number }) {
   const { ctx, p } = c;
   const span = item.span;
   const label = shortLabel(span);
@@ -756,17 +766,31 @@ function paintLabel(c: Paint, item: PlacedSpan, g: RowGeom, X0: number, X1: numb
     }
     ctx.font = sans;
     const shown = text ? fit(ctx, sans, text, room) : null;
-    if (shown) {
-      ctx.fillStyle = tone === "fail" ? p.fail : p.inkMuted;
-      ctx.fillText(shown, x, y);
-    }
-    if (dur) {
-      ctx.font = mono;
-      ctx.fillStyle = p.inkSubtle;
-      ctx.textAlign = "right";
-      ctx.fillText(dur, right, y);
-      ctx.textAlign = "left";
-    }
+    const alpha = ctx.globalAlpha;
+    const paint = () => {
+      ctx.globalAlpha = alpha;
+      if (shown) {
+        const lw = measure(ctx, sans, shown);
+        ctx.fillStyle = p.ground;
+        ctx.fillRect(x - 1.5, y - 8, lw + 3, 9.5);
+        ctx.font = sans;
+        ctx.fillStyle = tone === "fail" ? p.fail : p.inkMuted;
+        ctx.fillText(shown, x, y);
+      }
+      if (dur) {
+        const dw = measure(ctx, mono, dur);
+        ctx.fillStyle = p.ground;
+        ctx.fillRect(right - dw - 1.5, y - 8, dw + 3, 9.5);
+        ctx.font = mono;
+        ctx.fillStyle = p.inkSubtle;
+        ctx.textAlign = "right";
+        ctx.fillText(dur, right, y);
+        ctx.textAlign = "left";
+      }
+      ctx.globalAlpha = 1;
+    };
+    if (c.later) c.later.push(paint);
+    else paint();
     return;
   }
   // Thin rows: the label inline after the start, on a knock-out of the ground.
@@ -776,10 +800,21 @@ function paintLabel(c: Paint, item: PlacedSpan, g: RowGeom, X0: number, X1: numb
   ctx.font = font;
   // Clear of the end cap and of whatever begins where this ends (an agent's head after its queue).
   const room = inlineRoom(Math.max(textFrom + 2, visible0 + 4), Math.min(X1 - 6, c.xLive, c.scale.width - 4), marks);
-  if (!room) return;
+  const shown = room ? fit(ctx, font, text, room.right - room.x - 3) : null;
+  // Too short a bar for the whole label: after its end, when the row is free there, if it is not cut
+  // there (else a shortened label stays inside). Not an agent: its lane packs the next agent close.
+  const outside = beyond && shown !== text && span.kind !== "agent" && span.kind !== "agent-queue" ? inlineRoom(Math.max(beyond.from, visible0 + 4), beyond.to, marks) : null;
+  const after = outside ? fit(ctx, font, text, outside.right - outside.x - 3) : null;
+  if (outside && after && (!shown || after === text)) {
+    const tw = measure(ctx, font, after);
+    ctx.fillStyle = p.ground;
+    ctx.fillRect(outside.x - 3, g.cy - 5.5, tw + 6, 11);
+    ctx.fillStyle = tone === "fail" ? p.fail : p.inkMuted;
+    ctx.fillText(after, outside.x, y);
+    return;
+  }
+  if (!room || !shown) return;
   const { x, right } = room;
-  const shown = fit(ctx, font, text, right - x - 3);
-  if (!shown) return;
   const tw = measure(ctx, font, shown);
   ctx.fillStyle = p.ground;
   ctx.fillRect(x - 3, g.cy - 5.5, tw + 6, 11);
@@ -1022,7 +1057,8 @@ export function drawTracks(input: DrawInput): DrawOutput {
   const { ctx, width: W, height: H, scrollTop, palette: p, liveAt } = input;
   const scale = scaleOf(input.window, W);
   const xLive = Math.min(W + 40, Math.max(-40, xAt(scale, liveAt)));
-  const c: Paint = { ctx, p, scale, liveAt, xLive, base: 1 };
+  const later: (() => void)[] = [];
+  const c: Paint = { ctx, p, scale, liveAt, xLive, base: 1, later };
   const chevrons = new Map<string, EdgeChevron>();
   const fresh = input.fresh;
   const plans = new Map<string, RowPlan>();
@@ -1183,6 +1219,10 @@ export function drawTracks(input: DrawInput): DrawOutput {
         }
       });
     }
+
+    // The row's top-band labels and durations, over its marks (Paint.later).
+    for (const paint of later) paint();
+    later.length = 0;
 
     // A row with spans, none of them in view: a quiet chevron at the side the nearest lies on.
     if (lane && lane.spans.length && !plan.items.length && !plan.instants.length && !plan.runs.length && !plan.pips.length) {

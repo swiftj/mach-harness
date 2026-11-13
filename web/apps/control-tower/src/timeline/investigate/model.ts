@@ -447,6 +447,12 @@ export interface ConcurrencyLine {
   readonly inferredPeak: number;
   readonly peak: number;
   readonly peakAt: number | null;
+  /**
+   * The top of this line's own scale (round 6, defect 10): its peak or the recorded limit that applies
+   * to it, whichever is higher, plus headroom. Each line is read against its own scale, so a limit of 3
+   * is not flattened by 23 agents; no line is ever scaled to another as if it were its utilisation.
+   */
+  readonly scaleMax: number;
 }
 
 export interface LimitLine {
@@ -455,7 +461,23 @@ export interface LimitLine {
   readonly to: number;
   /** What the limit counts, as recorded (`appliesTo`); "executions" when the record does not say. */
   readonly appliesTo: string;
+  /** The lines the limit is drawn against: those whose span kind it records it bounds (`appliesTo`). */
+  readonly lines: readonly ConcurrencyLineKind[];
 }
+
+/**
+ * The lines a recorded limit bounds, from the span kinds it records (`applies_to`): an execution limit
+ * on the executions line, and so on. A limit on cells is not a limit on cells in a station (the visits
+ * line counts station visits), so it is drawn on no line. Not recorded: executions, as before.
+ */
+export function limitLinesOf(appliesTo: unknown): ConcurrencyLineKind[] {
+  if (appliesTo === undefined || appliesTo === null) return ["execution"];
+  const kinds = (Array.isArray(appliesTo) ? appliesTo : [appliesTo]).map((k) => String(k).toLowerCase());
+  return (["execution", "visit", "agent"] as const).filter((line) => kinds.some((k) => k === line || k === `${line}s`));
+}
+
+/** Headroom above a scale's top, so a peak is never drawn on the frame's edge (X14). */
+const withHeadroom = (top: number): number => Math.max(1, top) + Math.max(1, Math.ceil(Math.max(1, top) * 0.2));
 
 export type LaneSegmentKind = "station" | "capacity" | "eligible" | "claim";
 
@@ -517,16 +539,23 @@ export function concurrencyView(series: ConcurrencySeries | null, spans: readonl
           peakAt = from;
         }
       });
-      if (steps.some((s) => s.count > 0)) lines.push({ kind, label: LINE_LABEL[kind], steps, inferred: said ? inferred : [], inferredPeak, peak, peakAt });
+      if (steps.some((s) => s.count > 0)) lines.push({ kind, label: LINE_LABEL[kind], steps, inferred: said ? inferred : [], inferredPeak, peak, peakAt, scaleMax: 0 });
     }
   }
   const limits: LimitLine[] = (series?.limits ?? [])
     .filter((l) => l.name === "max_parallel" && Number.isFinite(l.value))
-    .map((l) => ({ value: l.value, from: Math.max(l.from, window.from), to: Math.min(l.to ?? liveAt, window.to, liveAt), appliesTo: String((l as { appliesTo?: unknown }).appliesTo ?? "executions") }))
+    .map((l) => {
+      const raw = (l as { appliesTo?: unknown }).appliesTo;
+      const appliesTo = raw === undefined || raw === null ? "executions" : (Array.isArray(raw) ? raw : [raw]).map(String).join(", ");
+      return { value: l.value, from: Math.max(l.from, window.from), to: Math.min(l.to ?? liveAt, window.to, liveAt), appliesTo, lines: limitLinesOf(raw) };
+    })
     .filter((l) => l.to > l.from);
-  // Headroom above the highest line or limit, so a peak is never drawn on the frame's edge (X14).
-  const top = Math.max(1, ...lines.map((l) => l.peak), ...limits.map((l) => l.value));
-  const yMax = top + Math.max(1, Math.ceil(top * 0.2));
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]!;
+    lines[i] = { ...l, scaleMax: withHeadroom(Math.max(l.peak, ...limits.filter((x) => x.lines.includes(l.kind)).map((x) => x.value))) };
+  }
+  // The highest line or limit, with headroom: kept for callers that want one scale for all.
+  const yMax = withHeadroom(Math.max(1, ...lines.map((l) => l.peak), ...limits.map((l) => l.value)));
 
   const lanes = new Map<string, { label: string; ref: string; segments: LaneSegment[]; first: number }>();
   const KIND: Partial<Record<SpanKind, LaneSegmentKind>> = { visit: "station", "capacity-wait": "capacity", "slice-eligible": "eligible", claim: "claim" };
@@ -577,6 +606,11 @@ export interface DependencyLink {
 }
 
 export interface WaitItem {
+  /**
+   * What the slice waited on: a named dependency (the scheduler's slice wait), or a free place under
+   * the recorded limit (a capacity wait, round 6 defect 6: the tracks show both, so the lens does too).
+   */
+  readonly kind: "dependency" | "capacity";
   readonly span: TimelineSpan;
   readonly slice: string;
   readonly ticket: string | null;
@@ -593,7 +627,12 @@ export interface WaitItem {
 
 export const RELEASE_NOT_RECORDED = "The records name the dependency; they do not say which event released it.";
 
-/** Each dependency wait in the window, its dependencies, and their own completion instants where the data holds them. */
+/**
+ * Each wait of a slice in the window, in time order: dependency waits with their dependencies and those
+ * dependencies' own completion instants where the data holds them, and capacity waits (a ready slice
+ * or its cell waiting for a free place), which name no dependency. A capacity wait that records only
+ * its cell is placed on that cell's slice when a span records which slice the cell is.
+ */
 export function waitItems(spans: readonly TimelineSpan[], marks: readonly TimelineMark[], liveAt: number): WaitItem[] {
   const sliceOfTicket = new Map<string, string>();
   for (const s of spans) {
@@ -616,27 +655,118 @@ export function waitItems(spans: readonly TimelineSpan[], marks: readonly Timeli
     return null;
   };
   return held(spans, liveAt)
-    .filter((s) => s.kind === "slice-wait")
+    .filter((s) => s.kind === "slice-wait" || s.kind === "capacity-wait")
     .sort(byStart)
     .flatMap((s) => {
       const from = startAt(s);
-      const slice = sliceOf(s);
+      const ticket = s.ids.ticket_id ?? (s.kind === "capacity-wait" ? ticketOf(s) : null);
+      const slice = sliceOf(s) ?? (ticket ? (sliceOfTicket.get(ticket) ?? null) : null);
       if (from === null || !slice) return [];
       const to = endBy(s, liveAt);
+      const capacity = s.kind === "capacity-wait";
       return [
         {
+          kind: capacity ? ("capacity" as const) : ("dependency" as const),
           span: s,
           slice,
-          ticket: s.ids.ticket_id ?? null,
+          ticket,
           from,
           to,
           ended: to !== null ? { at: to, eventId: s.end?.eventId ?? null } : null,
-          dependencies: (s.attrs.dependsOn ?? []).map((d) => ({ slice: d, instant: instantOf(d) })),
+          dependencies: capacity ? [] : [...new Set(s.attrs.dependsOn ?? [])].map((d) => ({ slice: d, instant: instantOf(d) })),
           reasons: s.attrs.reasons ?? [],
           releaseNotRecorded: true,
         },
       ];
     });
+}
+
+/** One dependency's completion drawn on a slice's row: once, however many of the row's waits name it. */
+export interface RowLeader {
+  readonly slice: string;
+  readonly instant: NonNullable<DependencyLink["instant"]>;
+  /** The waits of the row that named it, earliest first. */
+  readonly waits: readonly WaitItem[];
+}
+
+/**
+ * The leaders of one slice's row: each named dependency's completion instant once (round 6, defect 6:
+ * two waits naming SLICE-002 drew "SLICE-002 merged" twice, overprinted), in time order.
+ */
+export function rowLeaders(waits: readonly WaitItem[]): RowLeader[] {
+  const out = new Map<string, { slice: string; instant: NonNullable<DependencyLink["instant"]>; waits: WaitItem[] }>();
+  for (const w of waits) {
+    for (const d of w.dependencies) {
+      if (!d.instant) continue;
+      const k = `${d.slice}@${d.instant.at}`;
+      const x = out.get(k);
+      if (x) x.waits.push(w);
+      else out.set(k, { slice: d.slice, instant: d.instant, waits: [w] });
+    }
+  }
+  return [...out.values()].sort((a, b) => a.instant.at - b.instant.at || (a.slice < b.slice ? -1 : 1));
+}
+
+// ---------------------------------------------------------------- labels that stay inside the drawing
+
+/** A rough width of `chars` characters at `fontSize` (the sans and mono faces average about 0.6 em). */
+export const textWidth = (chars: number, fontSize: number): number => chars * fontSize * 0.6;
+
+/**
+ * Where a label goes beside a point at `x` so it is not cut at the drawing's right edge (round 6,
+ * defect 9): after the point when it fits before `right`, else ending before the point; `null` when
+ * it fits on neither side (the hover card still names it).
+ */
+export function placeLabel(x: number, text: string, fontSize: number, left: number, right: number, gap = 5): { x: number; anchor: "start" | "end" } | null {
+  const w = textWidth(text.length, fontSize);
+  if (x + gap + w <= right) return { x: x + gap, anchor: "start" };
+  if (x - gap - w >= left) return { x: x - gap, anchor: "end" };
+  return null;
+}
+
+/** Two leader labels as one: "SLICE-007 merged" and "SLICE-002 merged" read "SLICE-007, SLICE-002 merged". */
+function joinLabels(a: string, b: string): string {
+  const ia = a.lastIndexOf(" ");
+  const ib = b.lastIndexOf(" ");
+  if (ia > 0 && ib > 0 && a.slice(ia) === b.slice(ib) && !a.includes("outside the window") && !b.includes("outside the window")) return `${a.slice(0, ia)}, ${b}`;
+  return `${a} · ${b}`;
+}
+
+/**
+ * The labels of a row's leaders, left to right (`points` in time order): each beside its own point,
+ * never past the next point; one that would overprint the label before it is joined to that label
+ * ("SLICE-007, SLICE-002 merged"), so two dependencies integrated moments apart read as one line, never
+ * as text struck over text. A label that fits nowhere is left to the figure's hover card and name.
+ */
+export function leaderLabels(points: readonly { x: number; text: string }[], left: number, right: number, fontSize = 9.5): { x: number; anchor: "start" | "end"; text: string }[] {
+  type L = { x: number; anchor: "start" | "end"; text: string; limit: number; px: number };
+  const out: L[] = [];
+  const w = (t: string) => textWidth(t.length, fontSize);
+  const endOf = (l: L) => (l.anchor === "start" ? l.x + w(l.text) : l.x);
+  const startOf = (l: L) => (l.anchor === "start" ? l.x : l.x - w(l.text));
+  points.forEach((p, i) => {
+    // Never past the next point that is not drawn on top of this one (those are joined to it).
+    const limit = Math.min(right, (points.slice(i + 1).find((q) => q.x > p.x + 12)?.x ?? Infinity) - 6);
+    const prev = out[out.length - 1];
+    const floor = prev ? endOf(prev) + 4 : left;
+    const at = placeLabel(p.x, p.text, fontSize, floor, Math.max(limit, p.x + 6), 6);
+    if (at && (at.anchor === "start" ? at.x >= floor && at.x + w(p.text) <= limit : at.x - w(p.text) >= floor)) {
+      out.push({ ...at, text: p.text, limit, px: p.x });
+      return;
+    }
+    if (prev) {
+      // Joined: after the first point, else ending before it.
+      const text = joinLabels(prev.text, p.text);
+      const before = out[out.length - 2];
+      const min = before ? endOf(before) + 4 : left;
+      const ok = (l: L) => endOf(l) <= limit && startOf(l) >= min;
+      const after: L = { x: prev.px + 6, anchor: "start", text, limit, px: prev.px };
+      const ahead: L = { x: prev.px - 6, anchor: "end", text, limit, px: prev.px };
+      const joined = ok(after) ? after : ok(ahead) ? ahead : null;
+      if (joined) out[out.length - 1] = joined;
+    }
+  });
+  return out.map(({ x, anchor, text }) => ({ x, anchor, text }));
 }
 
 // ---------------------------------------------------------------- 4. review and human intervention
@@ -698,8 +828,13 @@ export function mergeAuthorityOf(m: TimelineMark): MergeAuthority {
   return "not-recorded";
 }
 
-/** Review rounds per cell in the window: seats, verdicts, the decision, a person's gate after it, and the merge. */
-export function reviewCells(spans: readonly TimelineSpan[], marks: readonly TimelineMark[], liveAt: number): CellReview[] {
+/**
+ * Review rounds per cell in the window: seats, verdicts, the decision, a person's gate after it, and the merge.
+ * `rowOrder` (a seat row's position among the tracks' rows, by its ref) puts the seats in the order the
+ * tracks show them (round 6, defect 18): the lens keeps no seat order of its own. Seats with no row
+ * there follow by ref, the tracks' own tie rule.
+ */
+export function reviewCells(spans: readonly TimelineSpan[], marks: readonly TimelineMark[], liveAt: number, rowOrder?: ReadonlyMap<string, number>): CellReview[] {
   const hs = held(spans, liveAt);
   const hm = marks.filter((m) => m.at <= liveAt);
   const rounds = new Map<string, { ticket: string; round: number; seats: Map<string, SeatRow> }>();
@@ -775,7 +910,7 @@ export function reviewCells(spans: readonly TimelineSpan[], marks: readonly Time
         ticket: t,
         round: r.round,
         ref: `gate:${t}/review#${r.round}`,
-        seats: [...r.seats.values()].sort((a, b) => SEAT_ORDER(a.seat) - SEAT_ORDER(b.seat) || (a.seat < b.seat ? -1 : 1)),
+        seats: [...r.seats.values()].sort((a, b) => (rowOrder?.get(a.ref) ?? Infinity) - (rowOrder?.get(b.ref) ?? Infinity) || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0)),
         decision,
         securityVeto: vetoMark,
         human,
@@ -806,11 +941,6 @@ export function reviewAskedForPerson(m: TimelineMark, spans: readonly TimelineSp
   if (/supervisor stopped|person was needed/i.test(m.label)) return false;
   if (spans.some((s) => s.entity === m.entity && s.kind === "person-wait")) return false;
   return spans.some((s) => s.entity === m.entity && s.kind === "gate-wait") || /review asked|approval was required/i.test(m.label);
-}
-
-function SEAT_ORDER(seat: string): number {
-  const i = ["architecture", "security", "product", "general"].indexOf(seat);
-  return i < 0 ? 9 : i;
 }
 
 // ---------------------------------------------------------------- 5. recovery and interruption
@@ -908,6 +1038,24 @@ export function recoveryItems(spans: readonly TimelineSpan[], marks: readonly Ti
     }
   }
   return { items, looseRecoveries: recoveries.filter((m) => !used.has(m.id)) };
+}
+
+/**
+ * Whether a scrolled band has more above or below what shows (round 6, defect 9): the band then draws
+ * a cue at that edge, so a row cut at the edge always reads as "scroll for more", never as lost.
+ */
+export function overflowCue(scrollTop: number, clientHeight: number, scrollHeight: number): { above: boolean; below: boolean } {
+  return { above: scrollTop > 1, below: scrollTop + clientHeight < scrollHeight - 1 };
+}
+
+/**
+ * The band's height cap: at most `max` px, and never more than `share` of the height the Timeline has
+ * below its toolbar, so the tracks keep the larger part at small heights (round 6, defect 9: at
+ * 1100×700 an open lens left the tracks about a third). Never below `min`.
+ */
+export function bandMaxHeight(available: number, max = 220, share = 0.3, min = 120): number {
+  if (!Number.isFinite(available) || available <= 0) return max;
+  return Math.round(Math.max(min, Math.min(max, available * share)));
 }
 
 /** A figure's name: its visible words first when the description does not already hold them. */

@@ -37,7 +37,7 @@ import {
 import { historyEndedAt, useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
 import { IconButton } from "../timeline/Transport";
-import { artifactOf, selectable, STATION_WORDS, gateOf, kindOf, gateStateWords, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
+import { artifactOf, selectable, STATION_WORDS, gateOf, kindOf, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
 import {
   ActorAnatomy,
   AgentAnatomy,
@@ -61,7 +61,7 @@ import { AuthorityBadge, Evidence, JumpButton, precisionWords, useEntityEvents }
 import { Provenance } from "./Provenance";
 import { pickedThroughWords } from "./words";
 import { RunNow } from "./RunNow";
-import { InTimeSection } from "../../timeline/inspector";
+import { gatePositionWords, InTimeSection, visitStateWords } from "../../timeline/inspector";
 import { cellTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
 
 interface Look extends Timing {
@@ -100,7 +100,7 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
       const last = visits[visits.length - 1];
       const status = last ? visitStatusOf(last) : null;
       const state: FactoryState = !last || !status ? "idle" : status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(last.outcome);
-      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: status ? status.word : "Not visited", ...stationTiming(last) };
+      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: last ? visitStateWords(last) : "Not visited", ...stationTiming(last) };
     }
     case "agent": {
       const a = value as AgentState;
@@ -121,7 +121,7 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
     case "gate": {
       const g = value as GateState;
       const state = gateState(g.state);
-      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: gateStateWords(g), phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
+      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: gatePositionWords(g), phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
     }
     case "dependency": {
       const d = value as DependencyState;
@@ -144,7 +144,7 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
       const v = value as VisitEntity;
       const status = visitStatusOf(v);
       const state: FactoryState = status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(v.outcome);
-      return { glyph: <StationGlyph kind={v.station as StationKind} size={28} state={state} />, state, word: status.word, phase: v.leftAt === null ? "running" : "finished", since: v.leftAt ?? v.enteredAt };
+      return { glyph: <StationGlyph kind={v.station as StationKind} size={28} state={state} />, state, word: visitStateWords(v), phase: v.leftAt === null ? "running" : "finished", since: v.leftAt ?? v.enteredAt };
     }
     case "seat": {
       const v = value as SeatEntity;
@@ -356,7 +356,12 @@ function PickedThrough({ entity, kindWord }: { entity: AnyRef; kindWord: string 
   if (!detail) return null;
   return (
     <p className="mx-5 mt-4 rounded-sm border border-dashed border-line-strong px-3 py-2 text-body-sm text-ink-muted" data-inspector-picked={detail}>
-      {pickedThroughWords(detail, kindWord)} <span className="font-mono text-[12px] text-ink [overflow-wrap:anywhere]">{detail}</span>
+      {pickedThroughWords(detail, kindWord)}
+      {/* The span's record id: a secondary detail, on its own quiet line (never in the sentence). */}
+      <span className="mt-1 block font-mono text-[11px] text-ink-subtle [overflow-wrap:anywhere]" title="The span's record id">
+        <span className="sr-only">Its record id: </span>
+        {detail}
+      </span>
     </p>
   );
 }

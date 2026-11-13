@@ -20,9 +20,10 @@ import { heldStore, SceneStoreProvider, showInTimeline, showOnFloor, useSceneSto
 import { timelineDataFor } from "../timeline/data";
 import { TIMELINE_CHROME_HEIGHT } from "../timeline/controls/frame";
 import { TimelineWorkspace } from "../timeline/Workspace";
+import { focusTracks } from "../timeline/a11y/skip";
 import { Announcer } from "./Announcer";
 import { Brand, ModeSwitch, RunIdentity, WorkspaceSwitch } from "./chrome";
-import { CompletenessBadge, ConnectionBadge, SOURCE_WORDS, SourceBadge, StageNotice } from "./SourceBadge";
+import { CompletenessBadge, ConnectionBadge, FactoryStateChip, SOURCE_WORDS, SourceBadge, StageNotice } from "./SourceBadge";
 import { useSource } from "./source/context";
 import { parseHash, type HashAt } from "./source/hash";
 import { applyHash, browserHashHost, createHashSync, type LostReason } from "./source/hashSync";
@@ -183,6 +184,7 @@ function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { 
         <SourceBadge open={sourceOpen} onOpenChange={onSource} />
         <ConnectionBadge />
         <CompletenessBadge />
+        <FactoryStateChip />
       </div>
       <span className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
       <div className="min-w-0 flex-1 overflow-hidden">
@@ -419,6 +421,20 @@ export function Shell() {
       >
         {onFloor ? "Skip to the factory view" : "Skip to the timeline"}
       </a>
+      {/* The Timeline's tracks are past its transport and toolbar: the page's second Tab stop goes straight to them. */}
+      {onFloor ? null : (
+        <a
+          href="#stage"
+          data-skip-tracks=""
+          onClick={(e) => {
+            e.preventDefault();
+            focusTracks(document, document.getElementById("stage"));
+          }}
+          className="sr-only z-[70] rounded-sm bg-surface-raised px-3 py-2 text-label text-ink shadow-2 focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
+        >
+          Skip to the tracks
+        </a>
+      )}
 
       <header className="min-w-0 overflow-hidden [grid-area:top]" inert={theater}>
         <TopBar sourceOpen={sourceOpen} onSource={setSourceOpen} inspectorOpen={inspectorOpen} onInspector={toggleInspector} onHelp={() => {

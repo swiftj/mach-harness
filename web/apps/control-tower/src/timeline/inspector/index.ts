@@ -14,4 +14,4 @@
  *   at the call site, the shared words first.
  */
 export { InTimeSection } from "./InTimeSection";
-export { evidenceRefsOf, hasTimeSection, endedWithoutExit, TIMELINE_RULE_WORDS, type EvidenceRef, type EvidenceEvent } from "./model";
+export { evidenceRefsOf, hasTimeSection, endedWithoutExit, TIMELINE_RULE_WORDS, gatePositionWords, outcomeStateWords, outcomeWordsOf, visitStateWords, type EvidenceRef, type EvidenceEvent } from "./model";

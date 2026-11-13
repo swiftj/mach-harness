@@ -48,6 +48,7 @@ import {
   extentOfSpans,
   fittingExpansion,
   followingAgain,
+  followingZoom,
   frameRevealRef,
   idleSinceOf,
   isAll,
@@ -457,11 +458,20 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   const ownSelection = useRef<string | null>(null);
   const [revealTick, setRevealTick] = useState(0);
 
+  const drawnRef = useRef(win);
+  useEffect(() => {
+    drawnRef.current = win;
+  });
   const onWindow = useCallback(
     (next: TimeWindow | null) => {
       pendingReveal.current = null;
+      // Round 6, defect 8: a zoom (wheel, keys) while following the live edge stays anchored on it and
+      // keeps following; a pan, or a drag of the window's right end, pins as before.
+      const drawn = drawnRef.current;
+      const s = store.getState();
+      const kept = next && Math.abs(next.from - drawn.from) > 1 ? followingZoom(drawn, next.to - next.from, whole, s.source === "live" && s.following) : null;
       // The overview's "all" (null) and anything as wide as the whole history: all of it, following the live edge.
-      store.setTimelineView({ window: clampWindow(next ?? { from: Number.NEGATIVE_INFINITY, to: Number.POSITIVE_INFINITY }, whole) });
+      store.setTimelineView({ window: kept ?? clampWindow(next ?? { from: Number.NEGATIVE_INFINITY, to: Number.POSITIVE_INFINITY }, whole) });
     },
     [store, whole],
   );

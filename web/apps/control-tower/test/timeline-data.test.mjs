@@ -931,7 +931,7 @@ test("X4: structure() reads the structural kinds over the whole history, paged, 
   const store = fakeStore();
   const spans = [];
   for (let i = 0; i < 1500; i++) spans.push(wire("execution", `execution:x${i}`, { start: i * 1000, end: i * 1000 + 500 }));
-  spans.push(wire("wave", "wave:W1", { start: 0, end: null }), wire("visit", "visit:not-structural", { start: 0, end: 1000 }));
+  spans.push(wire("wave", "wave:W1", { start: 0, end: null }), wire("task", "task:not-structural", { start: 0, end: 1000 }));
   const { provider, server } = setup({ spans, store, timers });
   const off = provider.subscribe(() => {});
   const asked = () => server.requests.filter((r) => r.includes("/spans?") && !r.includes("from_ms"));

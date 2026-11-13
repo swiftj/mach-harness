@@ -10,7 +10,7 @@ import { fc, StationSymbol } from "@mach/ui";
 import { durationWords } from "../render";
 import type { BodyProps } from "./body";
 import { Caption, Diamond, Empty, FadeDefs, Fig, Figures, FrameFig, Hit, HumanTriangle, LiveEdge, Mark, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
-import { frameAbout, frameOf, markSource, reviewCells, type CellReview, type ReviewRound } from "./model";
+import { frameAbout, frameOf, markSource, placeLabel, reviewCells, type CellReview, type ReviewRound } from "./model";
 import type { TimeWindow } from "../contract";
 
 const HEAD_H = 16;
@@ -23,7 +23,7 @@ const voteTone = (v: string | null): { tone: "pass" | "fail" | "wait" | "ink"; c
 export function ReviewBody(p: BodyProps) {
   const liveAt = p.viewport.liveAt;
   const s = scaleOf(p.viewport, p.width);
-  const cells = useMemo(() => reviewCells(p.spans, p.marks, liveAt), [p.spans, p.marks, liveAt]);
+  const cells = useMemo(() => reviewCells(p.spans, p.marks, liveAt, p.rowOrder), [p.spans, p.marks, liveAt, p.rowOrder]);
   const shown = p.selectedTicket ? cells.filter((c) => c.ticket === p.selectedTicket) : cells;
 
   if (p.status === "loading") return <Caption>Reading review seats, decisions and approvals of this window…</Caption>;
@@ -109,9 +109,15 @@ function RoundDrawing({ r, top, s, liveAt, onReveal }: { r: ReviewRound; top: nu
           <Hit x={s.cx(d.at) - 4} y={seatsTop - 4} w={8} h={seatsBottom - seatsTop + 8} />
           <line className="mach-inv-hover" x1={s.cx(d.at)} x2={s.cx(d.at)} y1={seatsTop - 2} y2={seatsBottom} style={{ stroke: dTone!.tone === "ink" ? fc("ink-soft") : fc(dTone!.tone), strokeWidth: 1.4 }} />
           {r.securityVeto ? <Mark x={s.cx(d.at)} y={top + 8} state="blocked" r={5.5} /> : <Diamond x={s.cx(d.at)} y={top + 8} r={5} tone={dTone!.tone} cross={dTone!.cross} />}
-          <text x={s.cx(d.at) + 9} y={top + 11.5} style={{ ...SANS, fontSize: 10.5, fill: r.securityVeto || dTone!.tone === "fail" ? fc("fail") : dTone!.tone === "pass" ? fc("pass") : MUTED, fontWeight: 600 }}>
-            {r.securityVeto ? "Rejected: security veto" : d.verdict === "awaiting-human" ? "Approved, a person must approve" : `${d.verdict[0]!.toUpperCase()}${d.verdict.slice(1).replace(/-/g, " ")}`}
-          </text>
+          {(() => {
+            const text = r.securityVeto ? "Rejected: security veto" : d.verdict === "awaiting-human" ? "Approved, a person must approve" : `${d.verdict[0]!.toUpperCase()}${d.verdict.slice(1).replace(/-/g, " ")}`;
+            const at = placeLabel(s.cx(d.at), text, 10.5, s.gutter, s.gutter + s.plotW, 9);
+            return at ? (
+              <text x={at.x} y={top + 11.5} textAnchor={at.anchor} style={{ ...SANS, fontSize: 10.5, fill: r.securityVeto || dTone!.tone === "fail" ? fc("fail") : dTone!.tone === "pass" ? fc("pass") : MUTED, fontWeight: 600 }}>
+                {text}
+              </text>
+            ) : null;
+          })()}
           <Ring x={s.cx(d.at) - 5} y={seatsTop - 4} w={10} h={seatsBottom - seatsTop + 8} />
         </Fig>
       ) : null}
@@ -171,9 +177,17 @@ function AfterReview({ c, top, s, liveAt, onReveal }: { c: CellReview; top: numb
           <Hit x={s.cx(ap.at) - 6} y={y - 6} w={12} h={12} />
           <Mark x={s.cx(ap.at)} y={y} state="succeeded" r={5} />
           <circle cx={s.cx(ap.at)} cy={y} r={6.5} style={{ fill: "none", stroke: fc("human"), strokeWidth: 1.4 }} aria-hidden="true" />
-          <text x={s.cx(ap.at) - 11} y={y + 3.5} textAnchor="end" style={{ ...SANS, fontSize: 10.5, fill: fc("human") }}>
-            a person approved the code
-          </text>
+          {(() => {
+            // Before the mark by preference (the merge is usually after it); after it when there is no room.
+            const fit = placeLabel(s.cx(ap.at), "a person approved the code", 10.5, s.gutter, s.gutter + s.plotW, 11);
+            const before = s.cx(ap.at) - 11 - 26 * 10.5 * 0.6 >= s.gutter;
+            const at = before ? { x: s.cx(ap.at) - 11, anchor: "end" as const } : fit;
+            return at ? (
+              <text x={at.x} y={y + 3.5} textAnchor={at.anchor} style={{ ...SANS, fontSize: 10.5, fill: fc("human") }}>
+                a person approved the code
+              </text>
+            ) : null;
+          })()}
           <Ring x={s.cx(ap.at) - 7} y={y - 7} w={14} h={14} />
         </Fig>
       ) : null}
@@ -182,9 +196,14 @@ function AfterReview({ c, top, s, liveAt, onReveal }: { c: CellReview; top: numb
           <Hit x={s.cx(mg.at) - 7} y={y - 7} w={14} h={14} />
           <rect x={s.cx(mg.at) - 7} y={y - 7} width={14} height={14} rx={2} style={{ fill: fc("ground"), stroke: fc("route"), strokeWidth: 1.2 }} aria-hidden="true" />
           <StationSymbol kind="merge" size={12} x={s.cx(mg.at)} y={y} color={fc("route")} strokeWidth={1.4} />
-          <text x={s.cx(mg.at) + 11} y={y + 3.5} style={{ ...SANS, fontSize: 10.5, fill: INK }}>
-            {mergeWords}
-          </text>
+          {(() => {
+            const at = placeLabel(s.cx(mg.at), mergeWords!, 10.5, s.gutter, s.gutter + s.plotW, 11);
+            return at ? (
+              <text x={at.x} y={y + 3.5} textAnchor={at.anchor} style={{ ...SANS, fontSize: 10.5, fill: INK }}>
+                {mergeWords}
+              </text>
+            ) : null;
+          })()}
           <Ring x={s.cx(mg.at) - 8} y={y - 8} w={16} h={16} />
         </Fig>
       ) : null}

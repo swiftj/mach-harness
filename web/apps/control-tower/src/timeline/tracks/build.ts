@@ -25,7 +25,7 @@ import {
   type TrackNode,
   type TrackTree,
 } from "../contract";
-import { packLanes } from "./lanes";
+import { packLanes, startedBy } from "./lanes";
 import { filterOf, idOf, individual, relationsOf, sliceOf, stationOf, ticketOf, execOf, type AgentGroup, type Relations } from "./relations";
 
 type Attention = TrackNode["attention"];
@@ -109,6 +109,8 @@ interface Draft {
   base?: string;
   /** An execution's detail before numberRuns adds its start (so a rebuild does not add it twice). */
   baseDetail?: string | null;
+  /** An execution's recorded supervisor attempt, if any. */
+  attempt?: string | null;
   note: string | null;
   /** Children sort by order, then (when byTime) by their earliest instant, then by id. */
   readonly order: number;
@@ -129,6 +131,8 @@ interface Draft {
 interface LaneMemo {
   readonly sections: readonly (readonly TimelineSpan[])[];
   readonly lanes: readonly TrackLane[];
+  /** How many of the sections' spans had started by liveAt when the lanes were packed. */
+  readonly started: number;
   readonly liveAt: number;
   readonly own: Attention;
   /** The counts of the node's own spans. */
@@ -414,6 +418,7 @@ function executionPlacer(rel: Relations): Placer {
     const draft = d.make(id, "execution", null, { ref: asRef(id), label: base, detail: attempt ? `supervisor attempt ${attempt}` : "attempt not recorded", order: 0, byTime: true });
     draft.base = base;
     draft.baseDetail = draft.detail;
+    draft.attempt = attempt ?? null;
     return draft;
   };
   const claim = (x: string): Draft => d.get(`execution:${x}/claim`) ?? d.make(`execution:${x}/claim`, "claim", execution(x), { label: "Claim", order: 0 });
@@ -617,20 +622,24 @@ class Finisher {
 
   private lanesOf(draft: Draft): LaneMemo {
     const old = this.prev?.memo.get(draft.id);
-    if (old && sameSections(old.sections, draft.sections)) {
-      if (old.liveAt === this.liveAt) return old;
+    const same = old !== undefined && sameSections(old.sections, draft.sections);
+    if (old && same && old.liveAt === this.liveAt) return old;
+    // The lanes depend on what has started by liveAt (lanes.ts): reused while that count holds.
+    let started = 0;
+    for (const section of draft.sections) started += startedBy(section, this.liveAt);
+    if (old && same && old.started === started) {
       return { ...old, liveAt: this.liveAt, own: this.ownAttention(old.sections), counts: this.countsOf(old.lanes) };
     }
     const lanes: TrackLane[] = [];
     let from = Number.POSITIVE_INFINITY;
     for (const section of draft.sections) {
-      for (const lane of packLanes(section)) lanes.push(lane);
+      for (const lane of packLanes(section, this.liveAt)) lanes.push(lane);
       for (const span of section) {
         const x = extentOf(span);
         if (x && x.from < from) from = x.from;
       }
     }
-    return { sections: draft.sections, lanes, liveAt: this.liveAt, own: this.ownAttention(draft.sections), counts: this.countsOf(lanes), from };
+    return { sections: draft.sections, lanes, started, liveAt: this.liveAt, own: this.ownAttention(draft.sections), counts: this.countsOf(lanes), from };
   }
 
   /**
@@ -760,8 +769,8 @@ function executionStart(draft: Draft): number | null {
 }
 
 /**
- * Labels the execution roots by what tells them apart: "LOCAL-001 · run 2/3" (detail "from 05:37 ·
- * supervisor attempt 1"), the run being
+ * Labels the execution roots by what tells them apart: "LOCAL-001 · run 2/3" (detail "from 05:37",
+ * or "from 05:37 · attempt 2" for a later supervisor attempt), the run being
  * the execution's order among its cell's executions by start (from the structural spans, so it does not
  * depend on the window). An execution not started by liveAt is not counted yet.
  */
@@ -775,10 +784,11 @@ function numberRuns(roots: readonly Draft[], liveAt: number): void {
       if (draft.baseDetail !== undefined) draft.detail = draft.baseDetail;
       continue;
     }
-    // The start goes in the detail, before the supervisor's attempt: the label keeps what survives
-    // fitting at the default column (recheck R2).
-    const own = draft.baseDetail === undefined ? draft.detail : draft.baseDetail;
-    draft.detail = `from ${startWords(start)}${own ? ` · ${own}` : ""}`;
+    // The start goes in the detail: the label keeps what survives fitting at the default column
+    // (recheck R2). A first supervisor attempt is the usual case and says nothing a run number does
+    // not; a later one ("attempt 2") is kept, short, so it is not cut to "s…" (round 6, defect 19).
+    // The label column's title says the supervisor's attempt in full.
+    draft.detail = `from ${startWords(start)}${draft.attempt && draft.attempt !== "1" ? ` · attempt ${draft.attempt}` : ""}`;
     if (draft.base === NO_TICKET) {
       draft.label = NO_TICKET;
       continue;
