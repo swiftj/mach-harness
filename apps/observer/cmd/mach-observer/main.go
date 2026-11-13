@@ -137,7 +137,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	loop := ingest.New(ingest.Options{Root: root, Store: st, Logger: logger, HotFor: ingest.DefaultHotFor, ColdEvery: ingest.DefaultColdEvery})
 	feedLog := storeLog{st}
-	proj := project.New(project.Options{Log: feedLog, PersistDir: projectionDir(indexDir), Logger: logger})
+	proj := project.New(project.Options{Log: feedLog, PersistDir: projectionDir(indexDir), Logger: logger, BackgroundRebuild: true})
 	defer proj.Close()
 	linkFile := ""
 	if indexDir != "" {

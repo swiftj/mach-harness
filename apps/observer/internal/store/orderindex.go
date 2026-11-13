@@ -228,13 +228,19 @@ func (q HistoryQuery) matches(ticket, execution, typ string, entities []string, 
 	return false
 }
 
-// historyReader reads the chunks of a window from the segments (the caller holds the read lock).
+// historyReader reads the chunks of a window from the segments. It holds the store's read lock
+// only to copy the next minute's chunks (and to find the minute after it), never while it reads
+// a segment (A8 of the M6.3 round 4 review): what it needs of the store is copied at creation.
 type historyReader struct {
 	s        *Store
 	q        HistoryQuery
 	want     map[string]bool
 	files    map[int32]*os.File
-	keyAt    int     // the next minute (index into keys) not yet opened
+	floor    uint64 // the store's disk floor and first memory position when the window was read
+	first    uint64
+	gen      string
+	next     int64   // the next minute not yet opened
+	hasNext  bool    // whether there is one (within hiMinute)
 	queue    []chunk // the opened minute's chunks not yet read, by minOrder
 	queueMin int64
 	hiMinute int64 // the last minute the window reaches (-2: no bound)
@@ -242,20 +248,30 @@ type historyReader struct {
 	examined int
 }
 
+// newHistoryReader: the caller holds the read lock.
 func (s *Store) newHistoryReader(q HistoryQuery, want map[string]bool) *historyReader {
-	r := &historyReader{s: s, q: q, want: want, hiMinute: -2}
-	x := &s.oidx
-	from := minuteOf(q.FromOrder)
-	r.keyAt = sort.Search(len(x.keys), func(i int) bool { return x.keys[i] >= from })
-	if q.FromOrder == "" || from < 0 {
-		r.keyAt = sort.Search(len(x.keys), func(i int) bool { return x.keys[i] >= 0 })
-	}
+	r := &historyReader{s: s, q: q, want: want, hiMinute: -2, floor: s.diskFloor, first: s.first, gen: s.meta.Generation}
 	if q.ToOrder != "" {
 		if ms := orderMS(q.ToOrder[:min(15, len(q.ToOrder))]); ms >= 0 {
 			r.hiMinute = ms - ms%SeriesMinute
 		}
 	}
+	from := minuteOf(q.FromOrder)
+	if q.FromOrder == "" || from < 0 {
+		from = 0
+	}
+	r.seek(from)
 	return r
+}
+
+// seek finds the first minute at or after m (the caller holds the read lock).
+func (r *historyReader) seek(m int64) {
+	x := &r.s.oidx
+	i := sort.Search(len(x.keys), func(i int) bool { return x.keys[i] >= m })
+	r.hasNext = i < len(x.keys) && (r.hiMinute == -2 || x.keys[i] <= r.hiMinute)
+	if r.hasNext {
+		r.next = x.keys[i]
+	}
 }
 
 func (r *historyReader) close() {
@@ -270,30 +286,30 @@ func (r *historyReader) frontier() (string, bool) {
 	if len(r.queue) > 0 {
 		return r.queue[0].minOrder, true
 	}
-	x := &r.s.oidx
-	if r.keyAt < len(x.keys) && (r.hiMinute == -2 || x.keys[r.keyAt] <= r.hiMinute) {
-		return orderPrefix(x.keys[r.keyAt]), true
+	if r.hasNext {
+		return orderPrefix(r.next), true
 	}
 	return "", false
 }
 
 // wanted says whether a chunk can hold a disk event of the window.
 func (r *historyReader) wanted(c *chunk) bool {
-	s := r.s
-	return c.maxOrder >= r.q.FromOrder && (r.q.ToOrder == "" || c.minOrder < r.q.ToOrder) && c.hi > s.diskFloor && c.lo < s.first
+	return c.maxOrder >= r.q.FromOrder && (r.q.ToOrder == "" || c.minOrder < r.q.ToOrder) && c.hi > r.floor && c.lo < r.first
 }
 
-// step opens the next minute or reads the next chunk, returning the window's events found.
+// step opens the next minute (copying its chunks under the read lock) or reads the next chunk
+// (without it), returning the window's events found.
 func (r *historyReader) step() ([]Entry, error) {
-	x := &r.s.oidx
 	if len(r.queue) == 0 {
-		m := x.keys[r.keyAt]
-		r.keyAt++
-		for _, c := range x.minutes[m] {
+		m := r.next
+		r.s.mu.RLock()
+		for _, c := range r.s.oidx.minutes[m] {
 			if r.wanted(&c) {
 				r.queue = append(r.queue, c)
 			}
 		}
+		r.seek(m + 1)
+		r.s.mu.RUnlock()
 		sort.SliceStable(r.queue, func(i, j int) bool { return r.queue[i].minOrder < r.queue[j].minOrder })
 		r.queueMin = m
 		return nil, nil
@@ -303,11 +319,12 @@ func (r *historyReader) step() ([]Entry, error) {
 	return r.read(&c, r.queueMin)
 }
 
-// readSpecial reads the chunks whose events' order keys have no time prefix (none in practice).
-func (r *historyReader) readSpecial() ([]Entry, error) {
+// readSpecial reads the chunks whose events' order keys have no time prefix (none in practice);
+// special is their copy, taken under the read lock.
+func (r *historyReader) readSpecial(special []chunk) ([]Entry, error) {
 	r.special = true
 	var out []Entry
-	for _, c := range r.s.oidx.minutes[-1] {
+	for _, c := range special {
 		if !r.wanted(&c) {
 			continue
 		}
@@ -361,16 +378,16 @@ func (r *historyReader) read(c *chunk, minute int64) ([]Entry, error) {
 			if json.Unmarshal(line, &h) != nil {
 				return nil, fmt.Errorf("the index log has an unreadable line")
 			}
-			if h.Pos <= s.diskFloor || h.Pos >= s.first || h.Pos < c.lo || h.Pos > c.hi ||
+			if h.Pos <= r.floor || h.Pos >= r.first || h.Pos < c.lo || h.Pos > c.hi ||
 				!r.q.matches(h.IDs.TicketID, h.IDs.ExecutionID, h.Type, h.Entities, r.want) {
 				continue
 			}
 		}
-		e, err := s.expand(line)
+		e, err := expandGen(line, r.gen)
 		if err != nil {
 			return nil, err
 		}
-		if p := e.Event.Pos; p <= s.diskFloor || p >= s.first || p < c.lo || p > c.hi {
+		if p := e.Event.Pos; p <= r.floor || p >= r.first || p < c.lo || p > c.hi {
 			continue
 		}
 		e.loc = diskLoc{seg: c.seg, off: start, n: int32(len(line))}
@@ -400,43 +417,56 @@ func (s *Store) History(q HistoryQuery) HistoryPage {
 	s.mu.Lock()
 	s.sortOrder()
 	s.mu.Unlock()
+
+	// Under the read lock: what the memory window holds of the page, and what the disk reader needs
+	// of the store. Every segment is read after it is released (A8).
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	var complete bool
 	if s.cur == nil {
 		complete = s.evictedMax == "" || q.FromOrder != "" && q.FromOrder > s.evictedMax
 	} else {
 		complete = s.oidx.lostMax == "" || q.FromOrder > s.oidx.lostMax
 	}
-
-	// The memory window, in order.
-	mi := sort.Search(len(s.byOrder), func(i int) bool { return s.byOrder[i].order >= q.FromOrder })
-	memHead := func() *Entry {
-		for ; mi < len(s.byOrder); mi++ {
-			r := s.byOrder[mi]
-			if q.ToOrder != "" && r.order >= q.ToOrder {
-				return nil
-			}
-			if r.pos < s.first {
-				continue
-			}
-			e := &s.entries[r.pos-s.first]
-			if q.matches(e.Event.IDs.TicketID, e.Event.IDs.ExecutionID, e.Event.Type, e.Event.Entities, want) {
-				return e
+	// The memory window's matches in order, as many as a page can take: past the limit, up to the
+	// first that differs in order from the limit-th (the merge below never takes more of them).
+	var mem []Entry
+	for mi := sort.Search(len(s.byOrder), func(i int) bool { return s.byOrder[i].order >= q.FromOrder }); mi < len(s.byOrder); mi++ {
+		r := s.byOrder[mi]
+		if q.ToOrder != "" && r.order >= q.ToOrder {
+			break
+		}
+		if r.pos < s.first {
+			continue
+		}
+		e := &s.entries[r.pos-s.first]
+		if q.matches(e.Event.IDs.TicketID, e.Event.IDs.ExecutionID, e.Event.Type, e.Event.Entities, want) {
+			mem = append(mem, *e)
+			if len(mem) > q.Limit && mem[len(mem)-1].Event.Order != mem[q.Limit-1].Event.Order {
+				break
 			}
 		}
-		return nil
 	}
-
-	// The segments, for what left it.
 	var disk *historyReader
-	var pending []Entry
-	var readErr error
+	var special []chunk
+	gen := s.meta.Generation
 	if s.cur != nil && s.first > s.diskFloor+1 {
 		disk = s.newHistoryReader(q, want)
+		special = append(special, s.oidx.minutes[-1]...)
+	}
+	s.mu.RUnlock()
+
+	memHead := func() *Entry {
+		if len(mem) == 0 {
+			return nil
+		}
+		return &mem[0]
+	}
+	var pending []Entry
+	var readErr error
+	if disk != nil {
 		defer disk.close()
-		if len(s.oidx.minutes[-1]) > 0 {
-			pending, readErr = disk.readSpecial()
+		if len(special) > 0 {
+			pending, readErr = disk.readSpecial(special)
 			sort.Slice(pending, func(i, j int) bool { return entryLess(&pending[i], &pending[j]) })
 		}
 	}
@@ -461,7 +491,7 @@ func (s *Store) History(q HistoryQuery) HistoryPage {
 			if fromDisk {
 				pending = pending[1:]
 			} else {
-				mi++
+				mem = mem[1:]
 			}
 			if len(out) > q.Limit && out[len(out)-1].Event.Order != out[q.Limit-1].Event.Order {
 				stopped = true
@@ -518,7 +548,7 @@ func (s *Store) History(q HistoryQuery) HistoryPage {
 	if page.More && page.Next == "" {
 		page.More = false
 	}
-	if s.fill(out) != nil {
+	if s.fillGen(out, gen) != nil {
 		// An envelope could not be read back: leave it out and say the window is not complete.
 		kept := out[:0]
 		for _, e := range out {
@@ -527,6 +557,10 @@ func (s *Store) History(q HistoryQuery) HistoryPage {
 			}
 		}
 		out, page.Complete = kept, false
+	}
+	if s.Generation() != gen {
+		// The index was started again while the segments were read: nothing read can be trusted.
+		return HistoryPage{}
 	}
 	page.Entries = out
 	page.Capped = capped

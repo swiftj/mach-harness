@@ -471,7 +471,12 @@ func (s *Store) push(e Entry) {
 // fill reads back the envelope of every entry that left the hot tail, from its line on disk
 // (the caller holds the lock, so no segment is dropped meanwhile). The entries are copies: what
 // is read is not kept.
-func (s *Store) fill(out []Entry) error {
+func (s *Store) fill(out []Entry) error { return s.fillGen(out, s.meta.Generation) }
+
+// fillGen is fill for a caller that does not hold the lock: gen is the generation it read under
+// it. A segment dropped meanwhile is an error (the caller says its answer is not complete), and a
+// line that is not the entry's own is refused.
+func (s *Store) fillGen(out []Entry, gen string) error {
 	var files map[int32]*os.File
 	defer func() {
 		for _, f := range files {
@@ -501,7 +506,7 @@ func (s *Store) fill(out []Entry) error {
 		if _, err := f.ReadAt(line, l.off); err != nil {
 			return fmt.Errorf("could not read the index log: %w", err)
 		}
-		e, err := s.expand(line)
+		e, err := expandGen(line, gen)
 		if err != nil {
 			return err
 		}
@@ -514,12 +519,14 @@ func (s *Store) fill(out []Entry) error {
 }
 
 // expand turns a compact line from a segment into an entry with the served envelope.
-func (s *Store) expand(compact []byte) (Entry, error) {
+func (s *Store) expand(compact []byte) (Entry, error) { return expandGen(compact, s.meta.Generation) }
+
+func expandGen(compact []byte, gen string) (Entry, error) {
 	var ev event.Event
 	if err := json.Unmarshal(compact, &ev); err != nil {
 		return Entry{}, err
 	}
-	ev.Cursor = event.Cursor{Generation: s.meta.Generation, Position: ev.Pos}.String()
+	ev.Cursor = event.Cursor{Generation: gen, Position: ev.Pos}.String()
 	full, err := json.Marshal(&ev) // the compact form, expanded to the served envelope
 	if err != nil {
 		return Entry{}, err

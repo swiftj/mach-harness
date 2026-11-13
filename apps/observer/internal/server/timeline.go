@@ -11,7 +11,10 @@ import (
 )
 
 // The Execution Timeline's routes (M6_3_DESIGN.md section 6): spans, concurrency and marks, all
-// GET, all derived from the projection under its lock, none writing anything.
+// GET, none writing anything. Each is answered from a timeline (project.Timeline): spans and
+// marks built from a snapshot of the projection outside its lock, shared by concurrent requests,
+// served for up to a second while events keep arriving; the reply's cursor is the position it was
+// built at. Nothing is encoded under the projection's lock.
 
 // Marks limits.
 const (
@@ -113,18 +116,41 @@ func (s *Server) spans(w http.ResponseWriter, r *http.Request) {
 		bad(*e)
 		return
 	}
-	s.view(w, func(st *project.State) (int, Envelope) {
-		all := project.Spans(st, f)
+	s.timeline(w, func(tl *project.Timeline) (int, Envelope) {
+		all := tl.Spans(f)
 		uncapped := len(all)
 		if len(all) > MaxSpans {
 			all = all[:MaxSpans]
 		}
-		v := pageOf(all, off, limit, s.cursor(st.Pos))
+		v := pageOf(all, off, limit, s.cursor(tl.Pos))
 		v["truncated"], v["total_uncapped"], v["sort"] = uncapped > MaxSpans, uncapped, "start"
 		v["basis_vocabulary"] = []string{"measured", "bounded", "inferred", "open", "unknown"}
-		v["live_ms"] = st.LastMS
+		v["live_ms"] = tl.LastMS
+		v["projection"] = projectionState(tl)
 		return http.StatusOK, ok(v)
 	})
+}
+
+// timeline answers from the projection's timeline; the reply is encoded without any lock held.
+func (s *Server) timeline(w http.ResponseWriter, fn func(tl *project.Timeline) (int, Envelope)) {
+	tl, err := s.opts.Projector.Timeline()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, fail(KindInternal, "The timeline could not be built from the projection."))
+		return
+	}
+	status, env := fn(tl)
+	data, bad := encode(env)
+	if bad != 0 {
+		status = bad
+	}
+	writeBytes(w, status, data)
+}
+
+func projectionState(tl *project.Timeline) string {
+	if tl.Rebuilding {
+		return "rebuilding"
+	}
+	return "current"
 }
 
 // concurrency: GET /api/v1/concurrency?from_ms&to_ms&bucket_ms&kinds
@@ -159,8 +185,8 @@ func (s *Server) concurrencyReply(w http.ResponseWriter, fromP, toP, bucketP *in
 		invalid("The range is empty: to_ms must be after from_ms.")
 		return
 	}
-	s.view(w, func(st *project.State) (int, Envelope) {
-		lo, hi, _ := project.SpanExtent(st)
+	s.timeline(w, func(tl *project.Timeline) (int, Envelope) {
+		lo, hi, _ := tl.Extent()
 		from, to := lo, hi+1
 		if fromP != nil {
 			from = *fromP
@@ -190,16 +216,18 @@ func (s *Server) concurrencyReply(w http.ResponseWriter, fromP, toP, bucketP *in
 			return http.StatusBadRequest, fail(KindInvalid, fmt.Sprintf("That would be %d buckets; at most %d. Ask for a larger bucket_ms or a shorter range.", n, MaxSeriesBuckets))
 		}
 		return http.StatusOK, ok(map[string]any{
-			"from_ms": from, "to_ms": to, "bucket_ms": bucket, "buckets": project.Concurrency(st, from, to, bucket, kinds),
-			"limits": project.Limits(st), "complete": !project.HistoryLostIn(st, from, to), "live_ms": st.LastMS, "cursor": s.cursor(st.Pos),
-			"rules": "active over [start's earliest bound, end's latest bound); an open span until live_ms; mean is time-weighted over the bucket",
+			"from_ms": from, "to_ms": to, "bucket_ms": bucket, "buckets": tl.Concurrency(from, to, bucket, kinds),
+			"limits": tl.Limits(), "complete": !tl.HistoryLostIn(from, to), "live_ms": tl.LastMS, "cursor": s.cursor(tl.Pos), "projection": projectionState(tl),
+			"rules": "active over [start's earliest bound, end's latest bound); an open span until live_ms; mean is time-weighted over the bucket; " +
+				"inferred_max counts the spans whose end no record states (end basis inferred)",
 		})
 	})
 }
 
-// marks: GET /api/v1/marks?from_ms&to_ms | after_ms | before_ms &kinds&limit
+// marks: GET /api/v1/marks?from_ms&to_ms | after_ms | before_ms &kinds&limit&offset
 // In a window, ascending by time; after_ms (strictly after) ascending and before_ms (strictly
-// before) descending, so the nearest mark is first.
+// before) descending, so the nearest mark is first; ties by id, so the order is stable and offset
+// pages through every match (more, next_offset). total counts every match.
 func (s *Server) marks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	bad := func(env Envelope) { writeJSON(w, http.StatusBadRequest, env) }
@@ -231,13 +259,25 @@ func (s *Server) marks(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
+	off, e := offset(r)
+	if e != nil {
+		bad(*e)
+		return
+	}
+	f.Offset = off
 	order := "ascending"
 	if f.BeforeMS != nil {
 		order = "descending"
 	}
-	s.view(w, func(st *project.State) (int, Envelope) {
-		items, total := project.Marks(st, f, limit)
+	s.timeline(w, func(tl *project.Timeline) (int, Envelope) {
+		items, total := tl.Marks(f, limit)
+		more := off+len(items) < total
+		var next any
+		if more {
+			next = off + len(items)
+		}
 		return http.StatusOK, ok(map[string]any{"items": items, "total": total, "truncated": total > len(items), "order": order,
-			"kinds": project.MarkKinds, "cursor": s.cursor(st.Pos), "live_ms": st.LastMS})
+			"offset": off, "more": more, "next_offset": next,
+			"kinds": project.MarkKinds, "cursor": s.cursor(tl.Pos), "live_ms": tl.LastMS, "projection": projectionState(tl)})
 	})
 }

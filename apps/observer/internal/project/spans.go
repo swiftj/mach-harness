@@ -227,21 +227,7 @@ func allSpans(s *State) []*Span {
 }
 
 // Spans returns the spans that match f, sorted by start (earliest bound first).
-func Spans(s *State, f SpanFilter) []*Span {
-	all := allSpans(s)
-	end := len(all)
-	if f.ToMS != nil {
-		to := *f.ToMS
-		end = sort.Search(len(all), func(i int) bool { return all[i].from > to })
-	}
-	out := []*Span{}
-	for _, sp := range all[:end] {
-		if f.match(sp) {
-			out = append(out, sp)
-		}
-	}
-	return out
-}
+func Spans(s *State, f SpanFilter) []*Span { return spansOf(allSpans(s), f) }
 
 // buildSpans builds every span the projection supports.
 func buildSpans(s *State) []*Span {
@@ -258,7 +244,7 @@ func buildSpans(s *State) []*Span {
 			wave = c.WaveID
 		}
 		b.cur = spanMeta{src: srcExec, ticket: x.TicketID, wave: wave, execs: []string{id}}
-		execSpans(b, x)
+		execSpans(b, s, x)
 	}
 	for _, id := range sortedKeys(s.Slices) {
 		sl := s.Slices[id]
@@ -465,29 +451,24 @@ func cellSpans(b *spanBuilder, s *State, c *Cell) {
 		if v.ExecutionID != "" {
 			parent = "execution:" + v.ExecutionID
 		}
-		reason := "completed"
-		if v.ClosedBy == "cleanup" {
-			reason = "unknown"
-		}
-		bound, rule, why := visitBound(s, c, i)
+		bound, rule, why := visitEnd(s, c, i)
 		end := v.Exited
-		if end == nil {
+		if bound != nil {
 			end = bound
 		}
 		if sp := b.add("visit", "visit:"+v.VisitID, parent, cellRef, with("visit_id", v.VisitID, "station", v.Station, "round", itoa(v.Round), "execution_id", v.ExecutionID),
-			v.Entered, end, v.Outcome, reason, false, ""); sp != nil {
+			v.Entered, end, v.Outcome, "completed", false, ""); sp != nil {
 			sp.Attrs.Action, sp.Attrs.Round = v.Action, v.Round
 			switch {
-			case v.Exited == nil && bound != nil:
-				// Ended without an exit record: closed at the bound, no outcome, reconstructed.
-				sp.End = endOf(bound, "inferred", rule, why)
-				sp.Outcome = nil
-				d := between(v.Entered, bound, true)
-				sp.Duration = Duration{MaxMS: d.MaxMS, Basis: "inferred"} // at most until the bound; never "took"
-				sp.Authority = "reconstructed"
-			case v.Exited != nil && bound != nil && laterThan(v.Exited, bound):
-				// The recorded exit wins; say where the span had stopped before it arrived.
-				sp.Attrs.InterruptedAt, sp.Attrs.InterruptedReason = ptr(stampMS(bound)), why
+			case bound != nil:
+				// Ended without an exit record (or closed only by cleanup): closed at the bound, no
+				// outcome, reconstructed, its length at most until the bound; never "took".
+				sp.closeInferred(v.Entered, bound, rule, why)
+			case v.Exited != nil:
+				if late, _, lateWhy := visitBound(s, c, i); late != nil && laterThan(v.Exited, late) {
+					// The recorded exit wins; say where the span had stopped before it arrived.
+					sp.Attrs.InterruptedAt, sp.Attrs.InterruptedReason = ptr(stampMS(late)), lateWhy
+				}
 			}
 		}
 		prev := v.Entered
@@ -549,6 +530,8 @@ func cellSpans(b *spanBuilder, s *State, c *Cell) {
 // interrupted; never for the human-approval station: a wait on a person is not an execution's
 // work) and the next entry of the same station ("unclosed-visit", reason superseded: the station
 // helper names the earlier visit in that entry as unclosed_visit). nil when neither applies.
+// An execution whose outcome is unknown and that recorded no end bounds its visits too, at the
+// supervisor's outcome-unknown recovery ("execution-outcome-unknown", reason unknown).
 func visitBound(s *State, c *Cell, i int) (bound *Stamp, rule, reason string) {
 	v := c.Visits[i]
 	if v.Entered == nil {
@@ -570,6 +553,7 @@ func visitBound(s *State, c *Cell, i int) (bound *Stamp, rule, reason string) {
 		for _, st := range []*Stamp{x.Completed, x.Failed, x.ProcessEnded} {
 			consider(st, "execution-ended", "interrupted")
 		}
+		consider(unknownEnd(s, x), "execution-outcome-unknown", "unknown")
 	}
 	for _, w := range c.Visits[i+1:] {
 		if w.Station == v.Station && w.Entered != nil {
@@ -578,6 +562,60 @@ func visitBound(s *State, c *Cell, i int) (bound *Stamp, rule, reason string) {
 		}
 	}
 	return bound, rule, reason
+}
+
+// visitEnd is where a visit's span ends when its end is not a recorded exit: the bound when it has
+// no exit (visitBound), and, when its only exit was written by cleanup (closed_by cleanup, at
+// cleanup time, long after the work), the bound before that exit, else the cleanup itself
+// ("closed-by-cleanup", reason unknown). nil when the visit's exit is recorded or it has neither.
+func visitEnd(s *State, c *Cell, i int) (end *Stamp, rule, reason string) {
+	v := c.Visits[i]
+	bound, rule, reason := visitBound(s, c, i)
+	switch {
+	case v.Exited == nil:
+		return bound, rule, reason
+	case v.ClosedBy != "cleanup":
+		return nil, "", ""
+	case bound != nil:
+		return bound, rule, reason
+	}
+	return v.Exited, "closed-by-cleanup", "unknown"
+}
+
+// closeInferred makes an end that no record states: basis inferred with its rule and reason, no
+// outcome, authority reconstructed, and the length only as a most (until the end's latest bound).
+func (sp *Span) closeInferred(start, end *Stamp, rule, reason string) {
+	sp.End = endOf(end, "inferred", rule, reason)
+	sp.Outcome = nil
+	d := between(start, end, true)
+	sp.Duration = Duration{MaxMS: d.MaxMS, Basis: "inferred"}
+	sp.Authority = "reconstructed"
+}
+
+// unknownEnd is where an execution whose outcome is unknown and that recorded no end is closed: no
+// later than the supervisor's outcome-unknown recovery (a bounded end: not_after, no at). nil for
+// any other execution.
+func unknownEnd(s *State, x *Execution) *Stamp {
+	if x == nil || x.ProcessEnded != nil || x.Completed != nil || x.Failed != nil || ExecState(x) != "unknown" {
+		return nil
+	}
+	at := x.UnknownAt
+	if at == nil { // a projection saved before UnknownAt was kept
+		for i := range s.Recoveries {
+			if r := &s.Recoveries[i]; r.Kind == "outcome-unknown" && r.ExecutionID == x.ExecutionID {
+				at = r.At
+				break
+			}
+		}
+	}
+	if at == nil {
+		return nil
+	}
+	hi, ok := at.hi()
+	if !ok {
+		hi = at.OrderMS
+	}
+	return &Stamp{EventID: at.EventID, Pos: at.Pos, Precision: "bounded", NotAfter: &hi, OrderMS: at.OrderMS, Authority: "reconstructed"}
 }
 
 // laterThan reports whether a happened after b by their recorded times (a's earliest bound after
@@ -589,7 +627,7 @@ func laterThan(a, b *Stamp) bool {
 	return ok && ok2 && lo > hi
 }
 
-func execSpans(b *spanBuilder, x *Execution) {
+func execSpans(b *spanBuilder, s *State, x *Execution) {
 	ref := "execution:" + x.ExecutionID
 	ids := map[string]string{"execution_id": x.ExecutionID}
 	if x.TicketID != "" {
@@ -615,21 +653,37 @@ func execSpans(b *spanBuilder, x *Execution) {
 	state := ExecState(x)
 	execAttrs := SpanAttrs{Attempt: x.Attempt, State: state, CostUSD: costOf(x).USD}
 	reason := map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "failed", "unknown": "unknown"}[state]
-	if x.ProcessStarted != nil {
-		if sp := b.add("execution", ref, cellParent, group, ids, x.ProcessStarted, x.ProcessEnded, state, orDefault(reason, "completed"), false, ""); sp != nil {
-			sp.Attrs = execAttrs
-		}
-	} else if x.Started != nil {
-		end := x.Completed
+	// An execution whose outcome is unknown and that recorded no end ended no later than the
+	// recovery that found it so: never "running" after it. Its open children close there too.
+	unknown := unknownEnd(s, x)
+	start, end := x.ProcessStarted, x.ProcessEnded
+	if start == nil {
+		start, end = x.Started, x.Completed
 		if end == nil {
 			end = x.Failed
 		}
-		sp := b.add("execution", ref, cellParent, group, ids, x.Started, end, state, orDefault(reason, "completed"), false, "")
-		if sp != nil {
+	}
+	if start != nil {
+		inferred := end == nil && unknown != nil
+		if inferred {
+			end = unknown
+		}
+		if sp := b.add("execution", ref, cellParent, group, ids, start, end, state, orDefault(reason, "completed"), false, ""); sp != nil {
 			sp.Attrs = execAttrs
-			if sp.Duration.Basis == "measured" {
+			switch {
+			case inferred:
+				sp.closeInferred(start, end, "execution-outcome-unknown", "unknown")
+			case x.ProcessStarted == nil && sp.Duration.Basis == "measured":
 				sp.Duration.Basis = "bounded" // the supervisor's own stamps, up to a poll late
 			}
+		}
+	}
+	// closeOpen ends a child span of an unknown execution, left open, at the same bound.
+	closeOpen := func(sp *Span, from *Stamp) {
+		if sp != nil && unknown != nil && sp.End == nil && from != nil && from.Pos < unknown.Pos {
+			to := unknown.NotAfter
+			sp.to, sp.endKey = max(*to, sp.from), unknown.OrderMS
+			sp.closeInferred(from, unknown, "execution-outcome-unknown", "unknown")
 		}
 	}
 	for _, wref := range sortedKeys(x.Workflows) {
@@ -640,7 +694,7 @@ func execSpans(b *spanBuilder, x *Execution) {
 		} else if w.Status == "unknown" {
 			reason = "unknown"
 		}
-		b.add("workflow", wref, ref, ref, ids, w.Started, w.Finished, w.Status, reason, false, "")
+		closeOpen(b.add("workflow", wref, ref, ref, ids, w.Started, w.Finished, w.Status, reason, false, ""), w.Started)
 	}
 	for _, a := range Agents(x) {
 		aref := "agent:" + a.AgentID
@@ -657,6 +711,7 @@ func execSpans(b *spanBuilder, x *Execution) {
 		if a.Queued != nil {
 			if sp := b.add("agent-queue", aref, parent, parent, aids, a.Queued, a.Started, "", "completed", false, ""); sp != nil {
 				sp.Attrs = SpanAttrs{Label: a.Label, Model: a.Model, AgentType: a.AgentType}
+				closeOpen(sp, a.Queued)
 			}
 		}
 		if a.Started != nil {
@@ -669,6 +724,7 @@ func execSpans(b *spanBuilder, x *Execution) {
 				// A workflow agent's calls are seen only as a count; an Agent-tool sub-agent's one by one.
 				sp.Attrs = SpanAttrs{Label: a.Label, Model: a.Model, AgentType: a.AgentType, ToolCalls: a.ToolCalls, ToolsCountOnly: a.Workflow != "",
 					LastTool: a.LastTool, Tokens: a.Tokens}
+				closeOpen(sp, a.Started)
 			}
 		}
 	}
@@ -680,7 +736,7 @@ func execSpans(b *spanBuilder, x *Execution) {
 		}
 		tids := map[string]string{"execution_id": x.ExecutionID, "tool_call_id": t.ToolCallID}
 		reason := map[string]string{"error": "failed", "unknown": "unknown"}[t.Status]
-		b.add("tool", "tool:"+t.ToolCallID, parent, parent, tids, t.Called, t.Returned, t.Status, orDefault(reason, "completed"), false, "")
+		closeOpen(b.add("tool", "tool:"+t.ToolCallID, parent, parent, tids, t.Called, t.Returned, t.Status, orDefault(reason, "completed"), false, ""), t.Called)
 	}
 }
 

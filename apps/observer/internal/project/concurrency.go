@@ -14,6 +14,9 @@ import (
 type Active struct {
 	Max  int     `json:"max"`
 	Mean float64 `json:"mean"`
+	// InferredMax is the most spans active at once in the bucket whose end no record states (end
+	// basis inferred: closed at an execution's end, a re-entry, cleanup or an unknown outcome).
+	InferredMax int `json:"inferred_max"`
 }
 
 // ConcurrencyBucket is one bucket.
@@ -45,19 +48,22 @@ func limitAppliesTo(name string) []string {
 // Concurrency sweeps the spans of the given kinds (all when empty) over [from, to) in buckets of
 // bucket milliseconds.
 func Concurrency(s *State, from, to, bucket int64, kinds map[string]bool) []ConcurrencyBucket {
+	return concurrencyOf(allSpans(s), s.LastMS, from, to, bucket, kinds)
+}
+
+func concurrencyOf(spans []*Span, live, from, to, bucket int64, kinds map[string]bool) []ConcurrencyBucket {
 	n := int((to - from + bucket - 1) / bucket)
 	out := make([]ConcurrencyBucket, n)
 	for i := range out {
 		out[i] = ConcurrencyBucket{FromMS: from + int64(i)*bucket, Active: map[string]Active{}}
 	}
-	live := s.LastMS
 	type edge struct {
-		t    int64
-		ord  int // 0: end of a span with length, 1: start, 2: end of a span of no length
-		kind string
+		t        int64
+		ord      int // 0: end of a span with length, 1: start, 2: end of a span of no length
+		inferred bool
 	}
 	byKind := map[string][]edge{}
-	for _, sp := range allSpans(s) {
+	for _, sp := range spans {
 		if len(kinds) > 0 && !kinds[sp.Kind] {
 			continue
 		}
@@ -69,10 +75,11 @@ func Concurrency(s *State, from, to, bucket int64, kinds map[string]bool) []Conc
 			continue
 		}
 		e := byKind[sp.Kind]
+		inf := sp.End != nil && sp.End.Basis == "inferred"
 		if b == a {
-			e = append(e, edge{a, 1, sp.Kind}, edge{a, 2, sp.Kind})
+			e = append(e, edge{a, 1, inf}, edge{a, 2, inf})
 		} else {
-			e = append(e, edge{a, 1, sp.Kind}, edge{b, 0, sp.Kind})
+			e = append(e, edge{a, 1, inf}, edge{b, 0, inf})
 		}
 		byKind[sp.Kind] = e
 	}
@@ -83,35 +90,42 @@ func Concurrency(s *State, from, to, bucket int64, kinds map[string]bool) []Conc
 			}
 			return edges[i].ord < edges[j].ord
 		})
-		cur, k := 0, 0
+		cur, inf, k := 0, 0, 0
+		step := func(ev edge) {
+			cur += delta(ev.ord)
+			if ev.inferred {
+				inf += delta(ev.ord)
+			}
+		}
 		// Everything that starts before the range and is still active at its start.
 		for k < len(edges) && edges[k].t < from {
-			cur += delta(edges[k].ord)
+			step(edges[k])
 			k++
 		}
 		for i := range out {
 			bs := out[i].FromMS
 			be := min(bs+bucket, to)
-			peak, area, t := 0, int64(0), bs
+			peak, peakInf, area, t := 0, 0, int64(0), bs
 			for k < len(edges) && edges[k].t < be {
 				ev := edges[k]
 				if ev.t > t {
-					peak = max(peak, cur) // cur was active over [t, ev.t)
+					peak, peakInf = max(peak, cur), max(peakInf, inf) // active over [t, ev.t)
 					area += int64(cur) * (ev.t - t)
 					t = ev.t
 				}
-				cur += delta(ev.ord)
+				step(ev)
 				if ev.ord == 1 {
-					peak = max(peak, cur) // a start counts at its instant, even for a span of no length
+					// a start counts at its instant, even for a span of no length
+					peak, peakInf = max(peak, cur), max(peakInf, inf)
 				}
 				k++
 			}
 			if be > t {
-				peak = max(peak, cur)
+				peak, peakInf = max(peak, cur), max(peakInf, inf)
 				area += int64(cur) * (be - t)
 			}
 			if peak > 0 {
-				out[i].Active[kind] = Active{Max: peak, Mean: math.Round(float64(area)/float64(be-bs)*1000) / 1000}
+				out[i].Active[kind] = Active{Max: peak, Mean: math.Round(float64(area)/float64(be-bs)*1000) / 1000, InferredMax: min(peakInf, peak)}
 			}
 		}
 	}
@@ -144,13 +158,17 @@ func Limits(s *State) []LimitView {
 // SpanExtent is the earliest start and the latest finite end over every span (ok false when there
 // are none), for a reply's default range.
 func SpanExtent(s *State) (lo, hi int64, ok bool) {
-	for _, sp := range allSpans(s) {
+	return extentOf(allSpans(s), s.LastMS)
+}
+
+func extentOf(spans []*Span, live int64) (lo, hi int64, ok bool) {
+	for _, sp := range spans {
 		if !ok || sp.from < lo {
 			lo = sp.from
 		}
 		end := sp.to
 		if end == math.MaxInt64 {
-			end = max(s.LastMS, sp.from)
+			end = max(live, sp.from)
 		}
 		if !ok || end > hi {
 			hi = end

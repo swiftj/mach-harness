@@ -466,3 +466,49 @@ func TestHistoryDiskVolume(t *testing.T) {
 		r.Head(), ingest.Round(time.Millisecond), open.Round(time.Millisecond), cold.Round(time.Microsecond), warm.Round(time.Microsecond),
 		ticketPage.Round(time.Microsecond), len(tp.Entries), tp.Capped, len(mid.Entries), chunks, cells, float64(int64(with)-int64(without))/(1<<20), float64(est)/(1<<20))
 }
+
+// A8: /history reads the segments without the store's lock, so appends (which evict the memory
+// window to disk and roll segments) go on while a page is read; a window written before the
+// appends answers the same (run under -race).
+func TestHistoryReadsTheSegmentsOutsideTheLock(t *testing.T) {
+	n := 12000
+	if testing.Short() || testkit.Race {
+		n = 6000
+	}
+	s, err := OpenWith(t.TempDir(), Options{MaxMemory: 1500, HotRaw: 300, SegmentBytes: 256 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	evs := genHistory(n, 3)
+	appendAll(t, s, evs[:n/2], 300)
+	_, to := s.Bounds()
+	cut := ""
+	for _, e := range heldInOrder(t, s) {
+		cut = max(cut, e.Event.Order)
+	}
+	q := HistoryQuery{ToOrder: cut, Limit: 250}
+	want := bruteHistory(heldInOrder(t, s), q)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Later events only (orders past the window), so the window's answer cannot change.
+		var later []*event.Event
+		for _, e := range evs[n/2:] {
+			if e.Order > cut {
+				later = append(later, e)
+			}
+		}
+		for i := 0; i < len(later); i += 100 {
+			s.Append(later[i:min(i+100, len(later))], map[string]tail.Checkpoint{"ledger": {Offset: int64(to) + int64(i)}})
+		}
+	}()
+	for range 3 {
+		got, _, complete := pageAll(t, s, q)
+		sameIDs(t, "during appends", got, want)
+		if !complete {
+			t.Fatal("not complete")
+		}
+	}
+	<-done
+}

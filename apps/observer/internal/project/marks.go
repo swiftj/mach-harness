@@ -2,6 +2,7 @@ package project
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"mach/observer/internal/feed"
@@ -13,7 +14,9 @@ import (
 // projection position. Labels are plain sentences that name roles only, never a person.
 
 // MarkKinds are the kinds of mark, in the order a menu lists them.
-var MarkKinds = []string{"failure", "retry", "gate", "review", "human", "recovery", "interruption", "gap", "wave", "merge"}
+// retry is a revise visit (a judging round sent the work back); attempt is an execution of a cell
+// after its first, by start order (the supervisor's recorded attempt number can repeat).
+var MarkKinds = []string{"failure", "retry", "attempt", "gate", "review", "human", "recovery", "interruption", "gap", "wave", "merge"}
 
 // Mark is one mark.
 type Mark struct {
@@ -36,6 +39,7 @@ type Mark struct {
 type MarkFilter struct {
 	Kinds                           map[string]bool
 	FromMS, ToMS, AfterMS, BeforeMS *int64
+	Offset                          int // marks of the order skipped before the page
 }
 
 type markSet struct {
@@ -125,6 +129,7 @@ func allMarks(s *State) []*Mark {
 	for _, id := range sortedKeys(s.Executions) {
 		execMarks(b, s.Executions[id], recovered[id])
 	}
+	attemptMarks(b, s)
 	for _, g := range s.Gaps {
 		label := "History is missing here: " + strings.ReplaceAll(orDefault(g.Reason, "no reason recorded"), "-", " ") + "."
 		if !g.Lost {
@@ -153,11 +158,17 @@ func cellMarks(b *markBuilder, s *State, c *Cell) {
 		if v.Action == "revise" {
 			b.add("retry", v.Entered, v.Exited, "visit:"+v.VisitID, "The "+orDefault(v.Station, "build")+" station took the ticket up again to revise it.", "revise")
 		}
-		// A visit that ended without an exit record: where its span was closed (spans.go visitBound).
-		if bound, _, why := visitBound(s, c, i); v.Exited == nil && bound != nil {
-			label := "A visit to the " + orDefault(v.Station, "unnamed") + " station ended without an exit record when its execution ended."
-			if why == "superseded" {
-				label = "A visit to the " + orDefault(v.Station, "unnamed") + " station ended without an exit record when the station was entered again."
+		// A visit that ended without an exit record: where its span was closed (spans.go visitEnd).
+		if bound, rule, why := visitEnd(s, c, i); bound != nil {
+			station := orDefault(v.Station, "unnamed")
+			label := "A visit to the " + station + " station ended without an exit record when its execution ended."
+			switch rule {
+			case "unclosed-visit":
+				label = "A visit to the " + station + " station ended without an exit record when the station was entered again."
+			case "execution-outcome-unknown":
+				label = "A visit to the " + station + " station has no exit record; its execution's outcome is unknown."
+			case "closed-by-cleanup":
+				label = "A visit to the " + station + " station had no exit record until cleanup closed it."
 			}
 			if m := b.add("interruption", bound, nil, "visit:"+v.VisitID, label, why); m != nil {
 				m.Authority = "reconstructed"
@@ -212,9 +223,6 @@ func cellMarks(b *markBuilder, s *State, c *Cell) {
 
 func execMarks(b *markBuilder, x *Execution, recovered *Stamp) {
 	ref := "execution:" + x.ExecutionID
-	if x.Attempt != nil && *x.Attempt > 1 {
-		b.add("retry", x.Claimed, nil, ref, "The supervisor claimed the ticket again (attempt "+itoa(x.Attempt)+").", "attempt")
-	}
 	state := ExecState(x)
 	switch state {
 	case "failed", "could-not-start":
@@ -234,10 +242,55 @@ func execMarks(b *markBuilder, x *Execution, recovered *Stamp) {
 	}
 }
 
+// execStart is an execution's first stamp: its claim, else its start, else its process start.
+func execStart(x *Execution) *Stamp {
+	for _, st := range []*Stamp{x.Claimed, x.Started, x.ProcessStarted} {
+		if st != nil {
+			return st
+		}
+	}
+	return nil
+}
+
+// attemptMarks marks every execution of a cell after its first, the cell's executions taken in
+// start order (time, then position, then id).
+func attemptMarks(b *markBuilder, s *State) {
+	byTicket := map[string][]*Execution{}
+	for _, id := range sortedKeys(s.Executions) {
+		if x := s.Executions[id]; x.TicketID != "" && execStart(x) != nil {
+			byTicket[x.TicketID] = append(byTicket[x.TicketID], x)
+		}
+	}
+	for _, t := range sortedKeys(byTicket) {
+		xs := byTicket[t]
+		sort.SliceStable(xs, func(i, j int) bool {
+			a, c := execStart(xs[i]), execStart(xs[j])
+			if ma, mc := stampMS(a), stampMS(c); ma != mc {
+				return ma < mc
+			}
+			if a.Pos != c.Pos {
+				return a.Pos < c.Pos
+			}
+			return xs[i].ExecutionID < xs[j].ExecutionID
+		})
+		for n, x := range xs[1:] {
+			label := "The supervisor ran ticket " + t + " again: run " + strconv.Itoa(n+2) + " of its executions"
+			if x.Attempt != nil {
+				label += " (supervisor attempt " + itoa(x.Attempt) + ")"
+			}
+			b.add("attempt", execStart(x), nil, "execution:"+x.ExecutionID, label+".", "attempt")
+		}
+	}
+}
+
 // Marks returns the marks matching f: in a window ascending, after a time ascending (nearest
-// first), before a time descending (nearest first). total is the number that matched before limit.
+// first), before a time descending (nearest first), in a stable order (time, then id). total is
+// the number that matched; the page is the limit marks after the first offset of them.
 func Marks(s *State, f MarkFilter, limit int) (out []*Mark, total int) {
-	all := allMarks(s)
+	return marksOf(allMarks(s), f, limit)
+}
+
+func marksOf(all []*Mark, f MarkFilter, limit int) (out []*Mark, total int) {
 	want := func(m *Mark) bool {
 		if len(f.Kinds) > 0 && !f.Kinds[m.Kind] {
 			return false
@@ -267,7 +320,7 @@ func Marks(s *State, f MarkFilter, limit int) (out []*Mark, total int) {
 		for i := len(all) - 1; i >= 0; i-- {
 			if want(all[i]) {
 				total++
-				if len(out) < limit {
+				if total > f.Offset && len(out) < limit {
 					out = append(out, all[i])
 				}
 			}
@@ -285,7 +338,7 @@ func Marks(s *State, f MarkFilter, limit int) (out []*Mark, total int) {
 		}
 		if want(m) {
 			total++
-			if len(out) < limit {
+			if total > f.Offset && len(out) < limit {
 				out = append(out, m)
 			}
 		}

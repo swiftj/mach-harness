@@ -141,18 +141,22 @@ func (s *State) fill() {
 		s.Pending.LifecycleTickets = map[string]bool{}
 	}
 	for _, x := range s.Executions {
-		if x.Agents == nil {
-			x.Agents = map[string]*Agent{}
-		}
-		if x.Queued == nil {
-			x.Queued = map[string]*Agent{}
-		}
-		if x.Tools == nil {
-			x.Tools = map[string]*Tool{}
-		}
-		if x.Workflows == nil {
-			x.Workflows = map[string]*Workflow{}
-		}
+		fillExecution(x)
+	}
+}
+
+func fillExecution(x *Execution) {
+	if x.Agents == nil {
+		x.Agents = map[string]*Agent{}
+	}
+	if x.Queued == nil {
+		x.Queued = map[string]*Agent{}
+	}
+	if x.Tools == nil {
+		x.Tools = map[string]*Tool{}
+	}
+	if x.Workflows == nil {
+		x.Workflows = map[string]*Workflow{}
 	}
 }
 
@@ -510,42 +514,45 @@ type HumanGate struct {
 
 // Execution is one supervised execution.
 type Execution struct {
-	ExecutionID    string               `json:"execution_id"`
-	TicketID       string               `json:"ticket_id,omitempty"`
-	SliceID        string               `json:"slice_id,omitempty"`
-	RunnerID       string               `json:"runner_id,omitempty"`
-	Attempt        *int64               `json:"attempt"`
-	Workflow       string               `json:"workflow,omitempty"`
-	Until          string               `json:"until,omitempty"`
-	Limits         map[string]float64   `json:"limits,omitempty"`
-	Claimed        *Stamp               `json:"claimed"`
-	Started        *Stamp               `json:"started"`
-	ProcessStarted *Stamp               `json:"process_started"`
-	ProcessEnded   *Stamp               `json:"process_ended"`
-	Ended          string               `json:"ended,omitempty"` // exited | timed-out | interrupted | could-not-start
-	ExitCode       *int64               `json:"exit_code"`
-	Seconds        *int64               `json:"seconds"`
-	Completed      *Stamp               `json:"completed"`
-	Failed         *Stamp               `json:"failed"`
-	StageAtStart   string               `json:"stage_at_start,omitempty"`
-	StageAtEnd     string               `json:"stage_at_end,omitempty"`
-	Next           string               `json:"next,omitempty"`
-	WaitingFor     string               `json:"waiting_for,omitempty"`
-	How            string               `json:"how,omitempty"`
-	ClaudeError    string               `json:"claude_error,omitempty"`
-	CostUSD        *float64             `json:"cost_usd"` // execution.completed (MACH-recorded)
-	RefusedTools   []string             `json:"refused_tools"`
-	RefusedFinal   bool                 `json:"refused_final,omitempty"` // execution.completed recorded RefusedTools
-	Recovery       []string             `json:"recovery"`
-	Usage          *Usage               `json:"usage"`
-	Session        *Session             `json:"session"`
-	Workflows      map[string]*Workflow `json:"workflows"`
-	Agents         map[string]*Agent    `json:"agents"`
-	Queued         map[string]*Agent    `json:"queued"`
-	Tools          map[string]*Tool     `json:"tools"`
-	ToolsDropped   int64                `json:"tools_dropped"`
-	Refused        []Refusal            `json:"refused"`
-	Visits         []string             `json:"visits"`
+	ExecutionID    string             `json:"execution_id"`
+	TicketID       string             `json:"ticket_id,omitempty"`
+	SliceID        string             `json:"slice_id,omitempty"`
+	RunnerID       string             `json:"runner_id,omitempty"`
+	Attempt        *int64             `json:"attempt"`
+	Workflow       string             `json:"workflow,omitempty"`
+	Until          string             `json:"until,omitempty"`
+	Limits         map[string]float64 `json:"limits,omitempty"`
+	Claimed        *Stamp             `json:"claimed"`
+	Started        *Stamp             `json:"started"`
+	ProcessStarted *Stamp             `json:"process_started"`
+	ProcessEnded   *Stamp             `json:"process_ended"`
+	Ended          string             `json:"ended,omitempty"` // exited | timed-out | interrupted | could-not-start
+	ExitCode       *int64             `json:"exit_code"`
+	Seconds        *int64             `json:"seconds"`
+	Completed      *Stamp             `json:"completed"`
+	Failed         *Stamp             `json:"failed"`
+	StageAtStart   string             `json:"stage_at_start,omitempty"`
+	StageAtEnd     string             `json:"stage_at_end,omitempty"`
+	Next           string             `json:"next,omitempty"`
+	WaitingFor     string             `json:"waiting_for,omitempty"`
+	How            string             `json:"how,omitempty"`
+	ClaudeError    string             `json:"claude_error,omitempty"`
+	CostUSD        *float64           `json:"cost_usd"` // execution.completed (MACH-recorded)
+	RefusedTools   []string           `json:"refused_tools"`
+	RefusedFinal   bool               `json:"refused_final,omitempty"` // execution.completed recorded RefusedTools
+	Recovery       []string           `json:"recovery"`
+	// UnknownAt is the first outcome-unknown recovery for this execution: an execution with no
+	// recorded end ended no later than it.
+	UnknownAt    *Stamp               `json:"unknown_at,omitempty"`
+	Usage        *Usage               `json:"usage"`
+	Session      *Session             `json:"session"`
+	Workflows    map[string]*Workflow `json:"workflows"`
+	Agents       map[string]*Agent    `json:"agents"`
+	Queued       map[string]*Agent    `json:"queued"`
+	Tools        map[string]*Tool     `json:"tools"`
+	ToolsDropped int64                `json:"tools_dropped"`
+	Refused      []Refusal            `json:"refused"`
+	Visits       []string             `json:"visits"`
 }
 
 // Usage is execution.usage: Claude-reported cost and tokens, per execution and per model.

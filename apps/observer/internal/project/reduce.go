@@ -490,6 +490,9 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		if x := s.execution(e); x != nil {
 			x.Recovery = append(x.Recovery, d.Kind)
+			if d.Kind == "outcome-unknown" && x.UnknownAt == nil {
+				x.UnknownAt = st
+			}
 		}
 		s.Recoveries = append(s.Recoveries, Recovery{Kind: d.Kind, ExecutionID: e.Execution(), TicketID: e.Ticket(), At: st})
 		if n := len(s.Recoveries); n > maxRecoveries {
