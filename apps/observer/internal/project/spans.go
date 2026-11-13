@@ -63,6 +63,10 @@ type SpanAttrs struct {
 	Vote           string   `json:"vote,omitempty"`
 	Reasons        []string `json:"reasons,omitempty"`
 	DependsOn      []string `json:"depends_on,omitempty"`
+	// A visit whose exit was recorded only after its execution ended (or after its station was
+	// entered again): where the span had stopped before the exit arrived, and why.
+	InterruptedAt     *int64 `json:"interrupted_at,omitempty"`
+	InterruptedReason string `json:"interrupted_reason,omitempty"` // interrupted | superseded
 }
 
 // spanMeta is what the filters need to know about where a span came from.
@@ -456,7 +460,7 @@ func cellSpans(b *spanBuilder, s *State, c *Cell) {
 	}
 
 	// visits, and the build tasks inside them (start inferred: the previous completion).
-	for _, v := range c.Visits {
+	for i, v := range c.Visits {
 		parent := ""
 		if v.ExecutionID != "" {
 			parent = "execution:" + v.ExecutionID
@@ -465,9 +469,26 @@ func cellSpans(b *spanBuilder, s *State, c *Cell) {
 		if v.ClosedBy == "cleanup" {
 			reason = "unknown"
 		}
+		bound, rule, why := visitBound(s, c, i)
+		end := v.Exited
+		if end == nil {
+			end = bound
+		}
 		if sp := b.add("visit", "visit:"+v.VisitID, parent, cellRef, with("visit_id", v.VisitID, "station", v.Station, "round", itoa(v.Round), "execution_id", v.ExecutionID),
-			v.Entered, v.Exited, v.Outcome, reason, false, ""); sp != nil {
+			v.Entered, end, v.Outcome, reason, false, ""); sp != nil {
 			sp.Attrs.Action, sp.Attrs.Round = v.Action, v.Round
+			switch {
+			case v.Exited == nil && bound != nil:
+				// Ended without an exit record: closed at the bound, no outcome, reconstructed.
+				sp.End = endOf(bound, "inferred", rule, why)
+				sp.Outcome = nil
+				d := between(v.Entered, bound, true)
+				sp.Duration = Duration{MaxMS: d.MaxMS, Basis: "inferred"} // at most until the bound; never "took"
+				sp.Authority = "reconstructed"
+			case v.Exited != nil && bound != nil && laterThan(v.Exited, bound):
+				// The recorded exit wins; say where the span had stopped before it arrived.
+				sp.Attrs.InterruptedAt, sp.Attrs.InterruptedReason = ptr(stampMS(bound)), why
+			}
 		}
 		prev := v.Entered
 		for _, task := range c.Tasks {
@@ -520,6 +541,52 @@ func cellSpans(b *spanBuilder, s *State, c *Cell) {
 			}
 		}
 	}
+}
+
+// visitBound is where a visit stopped when its exit was not recorded by then, by the rules the
+// Control Tower's scene uses (reduce-v3.ts closeVisits): the first applied after its entry (and,
+// when it exited, before its exit) of its execution's end ("execution-ended", reason
+// interrupted; never for the human-approval station: a wait on a person is not an execution's
+// work) and the next entry of the same station ("unclosed-visit", reason superseded: the station
+// helper names the earlier visit in that entry as unclosed_visit). nil when neither applies.
+func visitBound(s *State, c *Cell, i int) (bound *Stamp, rule, reason string) {
+	v := c.Visits[i]
+	if v.Entered == nil {
+		return nil, "", ""
+	}
+	limit := uint64(math.MaxUint64)
+	if v.Exited != nil {
+		limit = v.Exited.Pos
+	}
+	consider := func(st *Stamp, ru, re string) {
+		if st == nil || st.Pos <= v.Entered.Pos || st.Pos >= limit {
+			return
+		}
+		if bound == nil || st.Pos < bound.Pos {
+			bound, rule, reason = st, ru, re
+		}
+	}
+	if x := s.Executions[v.ExecutionID]; v.ExecutionID != "" && x != nil && v.Station != "human-approval" {
+		for _, st := range []*Stamp{x.Completed, x.Failed, x.ProcessEnded} {
+			consider(st, "execution-ended", "interrupted")
+		}
+	}
+	for _, w := range c.Visits[i+1:] {
+		if w.Station == v.Station && w.Entered != nil {
+			consider(w.Entered, "unclosed-visit", "superseded")
+			break
+		}
+	}
+	return bound, rule, reason
+}
+
+// laterThan reports whether a happened after b by their recorded times (a's earliest bound after
+// b's latest). An exit delivered after the bound but stamped before it was not interrupted: the
+// sources are read separately, so delivery order is not the order things happened.
+func laterThan(a, b *Stamp) bool {
+	lo, ok := a.lo()
+	hi, ok2 := b.hi()
+	return ok && ok2 && lo > hi
 }
 
 func execSpans(b *spanBuilder, x *Execution) {

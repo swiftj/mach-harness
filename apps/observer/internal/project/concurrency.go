@@ -29,6 +29,17 @@ type LimitView struct {
 	FromMS  int64   `json:"from_ms"`
 	ToMS    *int64  `json:"to_ms"`
 	EventID string  `json:"event_id"`
+	// AppliesTo is the span kinds the limit bounds, so a client draws it only over those (nil:
+	// the limit bounds no span kind, e.g. poll seconds or runs per day).
+	AppliesTo []string `json:"applies_to"`
+}
+
+// limitAppliesTo maps a recorded limit to the span kinds it bounds.
+func limitAppliesTo(name string) []string {
+	if name == "max_parallel" {
+		return []string{"execution", "cell"}
+	}
+	return nil
 }
 
 // Concurrency sweeps the spans of the given kinds (all when empty) over [from, to) in buckets of
@@ -121,7 +132,7 @@ func Limits(s *State) []LimitView {
 		if l.From == nil {
 			continue
 		}
-		v := LimitView{Name: l.Name, Value: l.Value, FromMS: stampMS(l.From), EventID: l.From.EventID}
+		v := LimitView{Name: l.Name, Value: l.Value, FromMS: stampMS(l.From), EventID: l.From.EventID, AppliesTo: limitAppliesTo(l.Name)}
 		if l.To != nil {
 			v.ToMS = ptr(stampMS(l.To))
 		}

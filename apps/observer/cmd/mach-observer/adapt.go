@@ -43,7 +43,7 @@ func (l storeLog) After(pos uint64, limit int) ([]feed.Record, error) {
 func (l storeLog) History(q feed.HistoryQuery) feed.HistoryPage {
 	p := l.s.History(store.HistoryQuery{FromOrder: q.FromOrder, ToOrder: q.ToOrder, Entities: q.Entities, Ticket: q.Ticket,
 		Execution: q.Execution, TypePrefix: q.TypePrefix, Limit: q.Limit})
-	out := feed.HistoryPage{Next: p.Next, More: p.More, Complete: p.Complete, Records: make([]feed.Record, len(p.Entries))}
+	out := feed.HistoryPage{Next: p.Next, More: p.More, Complete: p.Complete, Capped: p.Capped, Records: make([]feed.Record, len(p.Entries))}
 	for i, e := range p.Entries {
 		out.Records[i] = feed.Record{Pos: e.Event.Pos, Raw: e.Raw}
 	}

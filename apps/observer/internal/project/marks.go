@@ -61,16 +61,16 @@ type markBuilder struct {
 	seen map[string]bool
 }
 
-func (b *markBuilder) add(kind string, at, until *Stamp, entity, label, verdict string) {
+func (b *markBuilder) add(kind string, at, until *Stamp, entity, label, verdict string) *Mark {
 	if at == nil {
-		return
+		return nil
 	}
 	id := kind + ":" + at.EventID
 	if entity != "" {
 		id += ":" + entity
 	}
 	if b.seen[id] {
-		return
+		return nil
 	}
 	b.seen[id] = true
 	m := &Mark{ID: id, MarkID: id, Kind: kind, AtMS: stampMS(at), EventID: at.EventID, Entity: strp(entity), Label: label, Verdict: strp(verdict),
@@ -81,6 +81,7 @@ func (b *markBuilder) add(kind string, at, until *Stamp, entity, label, verdict 
 		m.UntilMS, m.Until = &u, ptr(feed.FormatMS(u))
 	}
 	b.out = append(b.out, m)
+	return m
 }
 
 // verdictWord normalises a recorded vote or decision for the mark's verdict.
@@ -148,9 +149,19 @@ func allMarks(s *State) []*Mark {
 
 func cellMarks(b *markBuilder, s *State, c *Cell) {
 	t := c.TicketID
-	for _, v := range c.Visits {
+	for i, v := range c.Visits {
 		if v.Action == "revise" {
 			b.add("retry", v.Entered, v.Exited, "visit:"+v.VisitID, "The "+orDefault(v.Station, "build")+" station took the ticket up again to revise it.", "revise")
+		}
+		// A visit that ended without an exit record: where its span was closed (spans.go visitBound).
+		if bound, _, why := visitBound(s, c, i); v.Exited == nil && bound != nil {
+			label := "A visit to the " + orDefault(v.Station, "unnamed") + " station ended without an exit record when its execution ended."
+			if why == "superseded" {
+				label = "A visit to the " + orDefault(v.Station, "unnamed") + " station ended without an exit record when the station was entered again."
+			}
+			if m := b.add("interruption", bound, nil, "visit:"+v.VisitID, label, why); m != nil {
+				m.Authority = "reconstructed"
+			}
 		}
 	}
 	for _, g := range c.Gates {

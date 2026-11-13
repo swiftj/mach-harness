@@ -39,12 +39,13 @@ The observer projects events into spans. A span is a derived record; it is rebui
 | `entity` | the ref the span belongs to |
 | `parent` | the enclosing span, only when recorded (event contract 5.3) |
 | `ids` | the v3 `ids` of the opening event (ticket, cell instance, execution, visit, round, attempt, seat, agent, tool call) |
-| `start` | `{event_id, at, precision, basis}` |
-| `end` | `{event_id, at, precision, basis, reason}` or null; `reason`: `completed`, `failed`, `refused`, `interrupted`, `superseded`, `unknown` |
-| `duration` | `{ms, min_ms, max_ms, basis}`; `ms` is null unless `basis` is `measured` or `inferred` |
+| `start` | `{event_id, at, precision, not_before, not_after, basis, rule}`; `basis`: `recorded` or `inferred` (with the `rule`) |
+| `end` | `{event_id, at, precision, not_before, not_after, basis, rule, reason}` or null; `basis`: `recorded`, or `inferred` with its `rule` (2.3); `reason`: `completed`, `failed`, `refused`, `interrupted`, `superseded`, `unknown` |
+| `duration` | `{ms, min_ms, max_ms, basis}`; `basis` (the reply's `basis_vocabulary`): `measured`, `bounded`, `inferred`, `open`, `unknown`; `ms` is null unless `basis` is `measured` or `inferred`, and is null for a span whose end was inferred (2.3: it never "took" a duration, only `max_ms`) |
 | `outcome` | the closing event's outcome (`station.exited.outcome`, `review.decided.outcome`, …), null while open |
 | `lane` | concurrency lane (2.4) |
-| `authority` | the weakest authority of its two ends |
+| `authority` | the weakest authority of its two ends; `reconstructed` when an end is inferred |
+| `attrs` | facts other routes already serve (label, model, tool-call count, round, attempt, state, cost, vote, reasons, depends_on); for a visit whose exit was recorded after it had been closed by inference, `interrupted_at` (ms) and `interrupted_reason`. A key is left out when nothing recorded it |
 
 **No early outcomes.** A span read at time `t` has `end: null` and no outcome if its end sorts after `t`. This is the M6.0 guarantee (`test/no-early-outcomes.test.mjs`) and the production selectors must pass the same test.
 
@@ -54,10 +55,11 @@ The observer projects events into spans. A span is a derived record; it is rebui
 |---|---|---|---|
 | `wave` | `wave.discovered` | last slice's `slice.integrated` (`completed`) or `revision.superseded` of all slices | a wave is never "finished" before its last slice integrates |
 | `slice-wait` | `dependency.blocked` | `dependency.resolved` | dependency wait (2.5) |
+| `capacity-wait` | `capacity.wait_changed` `waiting` (reconstructed from the supervisor's "all N place(s) are in use" hold) | `capacity.wait_changed` `released` | execution-capacity wait, per ticket; id `capacity-wait:cell:<ticket>@<opening event id>`, `ids: {ticket_id}`; never from silence |
 | `slice-eligible` | `dependency.resolved` (or `slice.materialized` with no dependencies) | `work.scheduled` | queue wait; capacity is not separable (2.5) |
 | `cell` | `work.scheduled`, or the first lifecycle event, or `history.began` | `merge.completed` / `cleanup.completed` / `run.recorded` | |
 | `round` | first `station.entered` with a new `ids.round` | the verdict that ends it: `gate.evaluated` (verification failed) or `review.decided` | judging rounds 1–3; round numbering follows MACH (first review after a failed verification is round 2) |
-| `visit` | `station.entered` | `station.exited` with the same `visit_id` | **measured**; the backbone of the Timeline |
+| `visit` | `station.entered` | `station.exited` with the same `visit_id`; with no exit, inferred (2.3) at its execution's end or the next entry of the same station | **measured**; the backbone of the Timeline |
 | `gate-wait` | `review.decided` `AWAITING_HUMAN` | `human.approval_recorded` | human wait |
 | `seat` | `review.round_started` (one per panel seat) | `review.verdict_submitted` for that seat | measured from lifecycle alone, whatever the stream shows |
 | `claim` | `work.claimed` | `execution.process_started` | the supervisor's start latency |
@@ -76,6 +78,7 @@ The observer projects events into spans. A span is a derived record; it is rebui
 - **Agents**: measured, in ms, from the snapshot times (`startedAt`, `durationMs`), whether the stream was tailed live or read afterwards. Each agent's tool-call count and tokens are a step series at snapshot cadence (median 6 s apart, and at every start and finish); the Timeline draws them as steps, never as interpolated progress.
 - **Main-loop tool calls**: measured from `assistant`/`user` `timestamp`s. A workflow agent's tool calls have no span at all.
 - **Workflow start** has no time of its own (`task_started`): `arrival` when tailed live, `bounded` when read afterwards; the workflow's end has its own (`task_updated.end_time`).
+- **Visits that recorded no exit**: the lifecycle log stays the only authority on visits and no exit is invented in the projection's state, but a span is not left running past what bounds it. The span ends at the first, after the entry, of the visit's execution's end (`execution.completed`, `execution.failed` or `execution.process_ended`: `end.basis: inferred`, `rule: execution-ended`, `reason: interrupted`) and the next `station.entered` of the same station (which names it as `unclosed_visit`: `rule: unclosed-visit`, `reason: superseded`). No outcome; `duration {ms: null, min_ms: null, max_ms: <to the bound>, basis: inferred}`; authority `reconstructed`; `/concurrency` counts it active only until the bound and `/marks` has an `interruption` mark (`reconstructed`) there. A wait on a person (the `human-approval` station, `gate-wait`, `person-wait`) is not an execution's work and is never closed this way. When the exit arrives later and is stamped after the bound, the recorded exit wins and the span carries `attrs.interrupted_at` and `attrs.interrupted_reason`. These are the Control Tower scene's rules (`reduce-v3.ts` `closeVisits`, its visits' `interrupted`), so the Factory Floor and the Timeline agree.
 - **Idle time inside an execution** (between a visit's exit and the next visit's entry in the same execution) is a derived gap, labelled "between stations", basis `measured` if both ends are lifecycle events. It is not attributed to a clerk agent unless the stream shows one.
 
 ### 2.4 Concurrency
@@ -112,7 +115,7 @@ The client's reducer stays the one authority on scene state (M6.0 contract rule 
 
 ### 2.8 What the Timeline asks the observer for
 
-`GET /api/v1/spans?entity=<ref>&kinds=&ticket=&execution=&wave=` → spans as in 2.1 (built); `GET /api/v1/history?from_order=&to_order=&entities=` → the events of a window in history order (built); `GET /api/v1/series?metric=<counts series>&bucket=minute&from=&to=` → counts (**deferred**: a client computes them from `/spans` and `/history` until the Timeline names the series it needs).
+`GET /api/v1/spans?entity=<ref>&kinds=&ticket=&execution=&wave=&span=&from_ms=&to_ms=` → spans as in 2.1, those overlapping the window, at most 5,000 (`truncated`) (built); `GET /api/v1/history?from_order=&to_order=&entities=` → the events of a window in history order, from memory or the index's segments on disk; a page reads at most 10,000 lines from disk and then stops with `capped: true` and `more: true` (built); `GET /api/v1/series?from_ms=&to_ms=&bucket_ms=&ticket=|execution=` → event counts per bucket by kind and authority, whole minutes for the whole index (also per ticket or per execution) (built; the counts series of 2.6 stays **deferred**: a client computes it from `/spans`); `GET /api/v1/concurrency?from_ms=&to_ms=&bucket_ms=&kinds=` → per bucket and span kind the most and mean active, with the recorded Factory limits, each with `applies_to` (the span kinds it bounds: `max_parallel` → `["execution", "cell"]`, others `null`) (built); `GET /api/v1/marks` → instants to jump to (built). All are derived from the projection (format 3: wait history, capacity waits, recovery and gap times, limit history), built once per projection position, GET only, behind the session.
 
 ---
 

@@ -691,6 +691,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 		"next_from_order": next,
 		"more":            page.More,
 		"complete":        page.Complete,
+		"capped":          page.Capped,
 		"head":            s.cursor(head),
 		"floor":           s.cursor(floor),
 		"watermark_ms":    in.WatermarkMS,
