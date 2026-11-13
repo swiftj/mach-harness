@@ -29,9 +29,13 @@
 //	ByTicket(t, after, limit)              Run with a ticket filter
 //	ByExecution(x, after, limit)           Run with an execution filter
 //	ByEntity(ref, after, limit)            Run with an entity-reference filter
-//	History(HistoryQuery) HistoryPage      the memory window's events in history ORDER (the `order` key), for
-//	                                       replay and the Timeline (/api/v1/history): filters, pages that never split
-//	                                       an order key, and Complete=false when evicted events may belong to the window
+//	History(HistoryQuery) HistoryPage      events in history ORDER (the `order` key), for replay and the Timeline
+//	                                       (/api/v1/history): the memory window merged with the segments for what left
+//	                                       it (orderindex.go); filters; pages never split an order key; a page stops
+//	                                       early (More) past HistoryScanCap lines read from disk; Complete=false when
+//	                                       retention may have dropped events of the window
+//	Series(SeriesQuery) SeriesResult       event counts per time bucket (series.go): kept per minute for the whole
+//	                                       index, also per ticket and per execution; finer buckets from memory
 //	Get(id) (Entry, bool)                  one event in the memory window by id
 //	Changed() <-chan struct{}              closed at the next append; take it before reading
 //	Wait(ctx, after) error                 returns when the head passes after (wait-for-new)
