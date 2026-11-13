@@ -11,6 +11,97 @@ import (
 	"mach/observer/internal/metrics"
 )
 
+// freePlaceSentence is the supervisor's fixed sentence for a ready slice a pass did not dispatch
+// because every place was taken when it planned (supervisor.py waiting_for_a_place):
+// "it is ready and waits for a free place: <in use> of <max_parallel> in use". The count in use is
+// as the plan saw it, which may lag the place just taken; the limit is the recorded max_parallel.
+var freePlaceSentence = regexp.MustCompile(`^it is ready and waits for a free place: ([0-9]{1,4}) of ([0-9]{1,4}) in use$`)
+
+// ticketPlaceSentence is the supervisor's fixed sentence for a runnable ticket held because every
+// place is in use (supervisor.py schedule); normalize reconstructs its capacity.wait_changed.
+var ticketPlaceSentence = regexp.MustCompile(`^all [0-9]{1,4} place\(s\) are in use$`)
+
+// bounded is a reconstructed moment known only to lie between lo (when given) and the decision
+// st that sampled it: at is the decision's time, the bounds say where the moment itself may lie.
+func bounded(st, lo *Stamp) *Stamp {
+	out := &Stamp{EventID: st.EventID, Pos: st.Pos, At: st.At, Precision: "bounded", OrderMS: st.OrderMS, Authority: "reconstructed"}
+	if hi, ok := st.hi(); ok {
+		out.NotAfter = ptr(hi)
+	}
+	if l, ok := lo.lo(); ok && (out.NotAfter == nil || l <= *out.NotAfter) {
+		out.NotBefore = ptr(l)
+	}
+	return out
+}
+
+// sliceCapacity applies one scheduling decision to the slices waiting for a free place: a slice
+// held with freePlaceSentence opens a wait at this decision (not before the previous decision, or
+// the activation when there was none) and stays waiting while decisions keep holding it for that
+// reason; one no longer held for it is released here. A slice whose own ticket is held for
+// capacity (ticketPlaceSentence, or a per-ticket wait already open) is not counted twice: its
+// per-ticket wait is the one that stands. Silence is never read as waiting (D16).
+func (s *State) sliceCapacity(st, prev *Stamp, held []Held) {
+	ticketHeld := map[string]bool{}
+	for _, h := range held {
+		if h.TicketID != "" && ticketPlaceSentence.MatchString(h.Why) {
+			ticketHeld[h.TicketID] = true
+		}
+	}
+	now := map[string]Held{}
+	limits := map[string]int64{}
+	for _, h := range held {
+		if h.SliceID == "" || h.TicketID != "" {
+			continue
+		}
+		m := freePlaceSentence.FindStringSubmatch(h.Why)
+		if m == nil {
+			continue
+		}
+		if sl := s.Slices[h.SliceID]; sl != nil && sl.TicketID != "" && (ticketHeld[sl.TicketID] || s.Pending.Capacity[sl.TicketID] != nil) {
+			continue
+		}
+		n, _ := strconv.ParseInt(m[2], 10, 64)
+		now[h.SliceID], limits[h.SliceID] = h, n
+	}
+	for _, id := range sortedKeys(s.Pending.SliceCapacity) {
+		if _, still := now[id]; !still {
+			s.releaseSliceCapacity(id, st)
+		}
+	}
+	lo := prev
+	if lo == nil {
+		lo = s.Factory.Since
+	}
+	for _, id := range sortedKeys(now) {
+		w := s.Pending.SliceCapacity[id]
+		if w == nil {
+			wave := ""
+			if sl := s.Slices[id]; sl != nil {
+				wave = sl.WaveID
+			}
+			w = &SliceCapacityWait{SliceID: id, WaveID: wave, Opened: bounded(st, lo)}
+			s.Pending.SliceCapacity[id] = w
+		}
+		w.Limit, w.Why, w.LastHeld = limits[id], now[id].Why, st
+	}
+}
+
+// releaseSliceCapacity ends a slice's open wait for a free place at st: after the last decision
+// that held it, by st at the latest.
+func (s *State) releaseSliceCapacity(id string, st *Stamp) {
+	w := s.Pending.SliceCapacity[id]
+	if w == nil {
+		return
+	}
+	delete(s.Pending.SliceCapacity, id)
+	w.Released = bounded(st, w.LastHeld)
+	s.SliceCapacityWaits = append(s.SliceCapacityWaits, w)
+	if n := len(s.SliceCapacityWaits); n > maxCapacityWaits {
+		s.SliceCapacityWaitsDropped += int64(n - maxCapacityWaits)
+		s.SliceCapacityWaits = append([]*SliceCapacityWait(nil), s.SliceCapacityWaits[n-maxCapacityWaits:]...)
+	}
+}
+
 // capacitySentence is the supervisor's fixed sentence for an execution-capacity hold
 // (supervisor.py schedule): "all <n> place(s) are in use". Only this recorded sentence makes a
 // capacity wait; silence never does (contract D16).
@@ -22,6 +113,9 @@ func (s *State) Apply(e *feed.Event) {
 	s.Applied++
 	s.Kinds[e.Type]++
 	st := stampOf(e)
+	if st.OrderMS > s.LastMS {
+		s.LastMS = st.OrderMS
+	}
 	switch e.Origin.Stream {
 	case "intake-log":
 		s.applyIntake(e, st)
@@ -189,6 +283,30 @@ func (sl *Slice) recompute(st *Stamp) {
 	}
 }
 
+// openWait is the slice's dependency wait with no recorded end, if any (only the last can be).
+func (sl *Slice) openWait() *DependencyWait {
+	if n := len(sl.Waits); n > 0 && sl.Waits[n-1].open() {
+		return sl.Waits[n-1]
+	}
+	return nil
+}
+
+// endWait closes an open dependency wait because the slice it belonged to was replaced.
+func (sl *Slice) endWait(st *Stamp) {
+	if w := sl.openWait(); w != nil {
+		w.Superseded = st
+	}
+}
+
+// closeLimits ends every recorded limit that still applies.
+func (s *State) closeLimits(st *Stamp) {
+	for i := range s.Factory.LimitHistory {
+		if s.Factory.LimitHistory[i].To == nil {
+			s.Factory.LimitHistory[i].To = st
+		}
+	}
+}
+
 // eligible is when the slice became ready: its dependencies resolved, or materialized with none.
 func (sl *Slice) eligible() *Stamp {
 	if sl.Resolved != nil {
@@ -253,6 +371,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		if sl.Materialized != nil && !sameRev(sl.Revision, e.IDs.Revision) {
 			sl.Revisions = append(sl.Revisions, SliceRevision{Revision: sl.Revision, TicketID: sl.TicketID, State: sl.State, At: sl.Materialized})
+			sl.endWait(st) // a new revision replaced the slice while it waited
 			sl.Blocked, sl.Resolved, sl.Scheduled, sl.Integrated, sl.Superseded = nil, nil, nil, nil, nil
 			sl.Reasons, sl.DependsOn, sl.Commit = []string{}, []string{}, ""
 		}
@@ -293,6 +412,9 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 				m.Duration("W1", dims("wave", sl.WaveID), day(st), ms)
 			}
 		}
+		if w := sl.openWait(); w != nil {
+			w.Resolved, w.DependsOn = st, nonNilS(d.DependsOn)
+		}
 		sl.Resolved = st
 		if d.DependsOn != nil {
 			sl.DependsOn = d.DependsOn
@@ -315,6 +437,17 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		if d.Reasons != nil {
 			sl.Reasons = d.Reasons
 		}
+		if w := sl.openWait(); w != nil {
+			if d.Reasons != nil {
+				w.Reasons = d.Reasons
+			}
+		} else {
+			sl.Waits = append(sl.Waits, &DependencyWait{Revision: sl.Revision, Blocked: st, Reasons: nonNilS(d.Reasons)})
+			if len(sl.Waits) > maxWaitsPerSlice {
+				sl.WaitsDropped += int64(len(sl.Waits) - maxWaitsPerSlice)
+				sl.Waits = append([]*DependencyWait(nil), sl.Waits[len(sl.Waits)-maxWaitsPerSlice:]...)
+			}
+		}
 		sl.recompute(st)
 	case "work.scheduled":
 		sl := s.slice(e)
@@ -328,6 +461,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 				m.Duration("W2", dims("wave", sl.WaveID), day(st), ms)
 			}
 			sl.Scheduled = st
+			s.releaseSliceCapacity(sl.SliceID, st)
 			if t := e.Ticket(); t != "" {
 				sl.TicketID = t
 			}
@@ -345,6 +479,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 	case "revision.superseded":
 		if sl := s.slice(e); sl != nil {
 			sl.Superseded = st
+			sl.endWait(st)
 			sl.recompute(st)
 		}
 	case "human.required":
@@ -364,9 +499,21 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		s.Factory.State, s.Factory.Autonomy, s.Factory.Limits = orUnknown(d.Autonomy), d.Autonomy, d.Limits
+		s.closeLimits(st)
+		for _, name := range sortedKeys(d.Limits) {
+			s.Factory.LimitHistory = append(s.Factory.LimitHistory, LimitSpan{Name: name, Value: d.Limits[name], From: st})
+		}
+		if n := len(s.Factory.LimitHistory); n > maxLimitHistory {
+			s.Factory.LimitHistory = append([]LimitSpan(nil), s.Factory.LimitHistory[n-maxLimitHistory:]...)
+		}
 		s.Factory.AllowMerge, s.Factory.Persistent, s.Factory.Since, s.Factory.PausedReason = d.AllowMerge, d.Persistent, st, ""
 	case "factory.disabled":
 		s.Factory.State, s.Factory.Since = "disabled", st
+		// No scheduler decides while the Factory is off: nothing waits for one of its places.
+		for _, id := range sortedKeys(s.Pending.SliceCapacity) {
+			s.releaseSliceCapacity(id, st)
+		}
+		s.closeLimits(st)
 	case "factory.paused":
 		var d struct {
 			Reason *string `json:"reason"`
@@ -389,6 +536,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			Held       []Held   `json:"held"`
 		}
 		e.DataAs(&d)
+		s.sliceCapacity(st, s.Factory.LastDecision, nonNil(d.Held))
 		s.Factory.SchedulerState, s.Factory.LastDecision = d.State, st
 		s.Factory.Held, s.Factory.Dispatched, s.Factory.Started = nonNil(d.Held), nonNilS(d.Dispatched), nonNilS(d.Started)
 	case "work.claimed":
@@ -439,6 +587,14 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		if x := s.execution(e); x != nil {
 			x.Recovery = append(x.Recovery, d.Kind)
+			if d.Kind == "outcome-unknown" && x.UnknownAt == nil {
+				x.UnknownAt = st
+			}
+		}
+		s.Recoveries = append(s.Recoveries, Recovery{Kind: d.Kind, ExecutionID: e.Execution(), TicketID: e.Ticket(), At: st})
+		if n := len(s.Recoveries); n > maxRecoveries {
+			s.RecoveriesDropped += int64(n - maxRecoveries)
+			s.Recoveries = append([]Recovery(nil), s.Recoveries[n-maxRecoveries:]...)
 		}
 		m.Rate("S1", dims("kind", d.Kind), day(st), 1, 0)
 		if d.Kind == "outcome-unknown" {
@@ -1203,9 +1359,48 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 
 // ---- observer reconstructions ----
 
+// applyClosing applies the observer's closing of an agent or main-loop tool call still open when
+// its process ended (event contract 8: rule open-at-process-end, status unknown, bounded by the
+// process end, reconstructed). It never replaces an end the stream recorded, never creates an
+// agent or call the stream did not start, and records nothing else (no duration, no metric).
+func (s *State) applyClosing(e *feed.Event, st *Stamp) {
+	x := s.Executions[e.Execution()]
+	if x == nil {
+		return
+	}
+	switch e.Type {
+	case "agent.finished":
+		a := x.Agents[feed.Str(e.IDs.AgentID)]
+		if a == nil || a.Finished != nil {
+			return
+		}
+		var d struct {
+			Tokens    *int64 `json:"tokens"`
+			ToolCalls *int64 `json:"tool_calls"`
+		}
+		e.DataAs(&d)
+		a.Finished, a.Status, a.DurationMS = st, "unknown", nil
+		if d.Tokens != nil {
+			a.Tokens = d.Tokens
+		}
+		if d.ToolCalls != nil {
+			a.ToolCalls = d.ToolCalls
+		}
+	case "tool.returned":
+		t := x.Tools[feed.Str(e.IDs.ToolCallID)]
+		if t == nil || t.Returned != nil {
+			return
+		}
+		t.Returned, t.Status, t.DurationMS = st, "unknown", nil
+	}
+	s.touch(entExecution, x.ExecutionID)
+}
+
 func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 	m := s.Metrics
 	switch e.Type {
+	case "agent.finished", "tool.returned":
+		s.applyClosing(e, st)
 	case "history.gap":
 		var d struct {
 			SourceKey string `json:"source_key"`
@@ -1219,7 +1414,7 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 		s.GapCounts[d.Reason]++
 		s.GapClasses[class]++
 		s.Gaps = append(s.Gaps, Gap{SourceKey: d.SourceKey, FromSeq: d.FromSeq, ToSeq: d.ToSeq, Reason: d.Reason, Class: class, Lost: lost,
-			Count: d.Count, EventID: e.ID, Pos: e.Pos})
+			Count: d.Count, EventID: e.ID, Pos: e.Pos, At: st})
 		if len(s.Gaps) > maxGapsKept {
 			s.Gaps = append([]Gap(nil), s.Gaps[len(s.Gaps)-maxGapsKept:]...)
 		}
@@ -1305,6 +1500,11 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 					m.Duration("W2b", nil, day(st), ms)
 				}
 				delete(s.Pending.Capacity, t)
+				s.CapacityWaits = append(s.CapacityWaits, CapacityWait{TicketID: t, Opened: open, Released: st})
+				if n := len(s.CapacityWaits); n > maxCapacityWaits {
+					s.CapacityWaitsDropped += int64(n - maxCapacityWaits)
+					s.CapacityWaits = append([]CapacityWait(nil), s.CapacityWaits[n-maxCapacityWaits:]...)
+				}
 			}
 		}
 	}

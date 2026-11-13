@@ -186,6 +186,37 @@ test("R6: after its process ended and before the supervisor records it, an execu
   assert.equal(sim.executionStatusOf(logOf(finalize(f.out)).head().executions[x]).word, "Completed");
 });
 
+test("M6.3 polish: an execution the supervisor moved on from (a later claim of the same ticket, no end recorded) is not running on the Floor", () => {
+  const f = factory();
+  const [a, b] = ["x13e7bccffc01", "x13e7bccffc02"];
+  const claim = (x, t, attempt) => f.intake("work.claimed", t, { stage: "planned", next: "build", attempt }, { ticket_id: TICKET, execution_id: x, attempt }, [`execution:${x}`, `cell:${TICKET}`]);
+  claim(a, T0, 1);
+  f.intake("execution.started", T0 + 1_000, { until: "merge", workflow: "mach:belt", limits: {} }, { ticket_id: TICKET, execution_id: a }, [`execution:${a}`]);
+  f.enter("build#1", T0 + 3_000, a, 1, { stage: "planned" });
+  const open = logOf(finalize([...f.out])).head();
+  assert.equal(sim.executionStatusOf(open.executions[a]).word, "Running", "nothing later yet: it may still be running");
+  // The supervisor attempt number repeats: the order of claims is what tells them apart.
+  claim(b, T0 + 600_000, 1);
+  const head = logOf(finalize(f.out)).head();
+  assert.deepEqual(sim.executionStatusOf(head.executions[a]), { word: "Outcome not known", running: false });
+  assert.equal(activityOf(head, `execution:${a}`).state, "unknown");
+  assert.equal(head.executions[a].movedOnAt, T0 + 600_000);
+  assert.equal(sim.executionStatusOf(head.executions[b]).word, "Claimed, not started");
+  assert.ok(head.cells[TICKET].visits.every((v) => v.executionId !== a || v.leftAt !== null), "its open visit closes at the later claim");
+});
+
+test("M6.3 polish: an interrupted process outranks an outcome-unknown recovery in every Floor reading, as in the observer", () => {
+  const f = factory();
+  const x = "x13e7bccffc03";
+  f.intake("execution.started", T0 + 1_000, { until: "merge", workflow: "mach:belt", limits: {} }, { ticket_id: TICKET, execution_id: x }, [`execution:${x}`]);
+  f.record("execution.process_started", x, 1, T0 + 2_000, {});
+  f.record("execution.process_ended", x, 2, T0 + 90_000, { ended: "interrupted", exit_code: null, seconds: 88 });
+  f.intake("recovery.started", T0 + 120_000, { kind: "outcome-unknown" }, { ticket_id: TICKET, execution_id: x }, [`execution:${x}`]);
+  const head = logOf(finalize(f.out)).head();
+  assert.equal(sim.executionStatusOf(head.executions[x]).word, "Interrupted");
+  assert.equal(activityOf(head, `execution:${x}`).state, "interrupted");
+});
+
 // ---------------------------------------------------------------- R7: the live clock, the empty state and the idle frame loop
 
 function liveStore(events, wallStart) {

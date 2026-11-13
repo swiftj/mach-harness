@@ -1,10 +1,10 @@
 /**
- * Frame pieces: the source stamp, the brand and run identity, the mode switch.
+ * Frame pieces: the source stamp, the brand and run identity, the workspace switch and the mode switch.
  */
 import { useId } from "react";
 import { cn, MachMark, fc } from "@mach/ui";
 import { SCENARIO, WAVE } from "../sim";
-import { useScene, useSceneStore, type ViewMode } from "../scene";
+import { useScene, useSceneStore, type ViewMode, type Workspace } from "../scene";
 import { SourceStamp } from "./SourceBadge";
 import { useSource } from "./source/context";
 import { utcClock, utcDate } from "./vocab";
@@ -43,13 +43,14 @@ export function Brand() {
 function SimulatedRun({ compact }: { compact?: boolean }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2.5">
-      <h1 className="truncate font-sans text-body-lg font-bold leading-none text-ink">
+      {/* The run's name gives way last: the history's start, then the waves, are cut first. */}
+      <h1 className="max-w-[45%] shrink-0 truncate font-sans text-body-lg font-bold leading-none text-ink">
         {RUN.waveTitle}
         <span className="sr-only">, a simulated run of the MACH Factory</span>
       </h1>
       <span className="shrink-0 font-mono text-caption text-ink-subtle max-[799px]:hidden">{RUN.waveId}</span>
       {compact ? null : (
-        <span className="hidden shrink-0 text-caption text-ink-subtle min-[1360px]:inline">
+        <span className="hidden min-w-0 truncate text-caption text-ink-subtle min-[1360px]:inline">
           {RUN.project}, {RUN.date} from {RUN.startClock} UTC
         </span>
       )}
@@ -74,7 +75,8 @@ function RealRun({ compact }: { compact?: boolean }) {
   const title = project ?? "This project";
   return (
     <div className="flex min-w-0 items-baseline gap-2.5">
-      <h1 className="truncate font-sans text-body-lg font-bold leading-none text-ink">
+      {/* The run's name gives way last: the history's start, then the waves, are cut first. */}
+      <h1 className="max-w-[45%] shrink-0 truncate font-sans text-body-lg font-bold leading-none text-ink">
         {title}
         <span className="sr-only">, {source === "live" ? "real execution of the MACH Factory, live" : "real execution of the MACH Factory, replayed"}</span>
       </h1>
@@ -84,7 +86,7 @@ function RealRun({ compact }: { compact?: boolean }) {
         </span>
       ) : null}
       {compact || !held ? null : (
-        <span className="hidden shrink-0 text-caption text-ink-subtle min-[1360px]:inline">
+        <span className="hidden min-w-0 truncate text-caption text-ink-subtle min-[1360px]:inline">
           History held from {utcDate(start)}, {utcClock(start)} UTC
         </span>
       )}
@@ -142,6 +144,58 @@ export function ModeSwitch({ value, onChange }: { value: ViewMode; onChange: (v:
           <input type="radio" name={name} value={m.value} checked={value === m.value} onChange={() => onChange(m.value)} className="sr-only" />
           <ModeIcon mode={m.value} />
           <span>{m.label}</span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+const WORKSPACE_CHOICES: Array<{ value: Workspace; label: string; keys: string; hint: string }> = [
+  { value: "floor", label: "Factory floor", keys: "1, 2", hint: "Factory floor: the plant now, as the Atlas or the Blueprint" },
+  { value: "timeline", label: "Timeline", keys: "3", hint: "Execution Timeline: what the Factory did, when, and how it is known" },
+];
+
+function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
+  return (
+    <svg aria-hidden="true" width="16" height="14" viewBox="0 0 16 14" className="shrink-0">
+      {workspace === "floor" ? (
+        <>
+          <path d="M1.5 4.5L8 1.5L14.5 4.5L8 7.5Z" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
+          <path d="M1.5 8.5L8 11.5L14.5 8.5" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
+        </>
+      ) : (
+        <>
+          <path d="M1.5 3.5H9M4 7H14.5M1.5 10.5H7.5" style={{ stroke: "currentColor", strokeWidth: 2, strokeLinecap: "butt" }} />
+          <path d="M11 1V13" style={{ stroke: "currentColor", strokeWidth: 0.9 }} />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/**
+ * The primary navigation (M6.3 design section 3): the workspace. A radio group in the same language as
+ * the Atlas/Blueprint switch, which is shown beside it on the floor only. Later experiences are not
+ * drawn until they exist.
+ */
+export function WorkspaceSwitch({ value, onChange }: { value: Workspace; onChange: (w: Workspace) => void }) {
+  const name = useId();
+  return (
+    <fieldset className="flex shrink-0 rounded-sm border border-line bg-surface-sunken p-0.5" data-workspace-switch="">
+      <legend className="sr-only">Workspace</legend>
+      {WORKSPACE_CHOICES.map((w) => (
+        <label
+          key={w.value}
+          title={`${w.hint} (${w.keys})`}
+          className={cn(
+            "relative flex h-7 cursor-pointer items-center gap-1.5 rounded-xs px-2.5 text-body-sm text-ink-muted transition-colors duration-[var(--mach-duration-fast)]",
+            "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-focus",
+            value === w.value ? "bg-surface font-semibold text-ink shadow-1" : "hover:text-ink",
+          )}
+        >
+          <input type="radio" name={name} value={w.value} checked={value === w.value} onChange={() => onChange(w.value)} aria-keyshortcuts={w.value === "timeline" ? "3" : "1 2"} className="sr-only" />
+          <WorkspaceIcon workspace={w.value} />
+          <span className="max-[1099px]:sr-only">{w.label}</span>
         </label>
       ))}
     </fieldset>

@@ -1,0 +1,331 @@
+/**
+ * Pure helpers both providers share: windows and tiles, query filters, concurrency by sweeping spans,
+ * density by bucketing event times, cutting a span set at what is held, and the honesty rules every
+ * answer passes through (no outcome without an end, no tool span under a count-only agent).
+ */
+import { extentOf, overlaps } from "../contract";
+import type { ConcurrencySeries, DensitySeries, SpanAttrs, SpanEnd, SpanKind, SpanQuery, TimeWindow, TimelineMark, TimelineSpan } from "../contract";
+
+/**
+ * A density series with whether the caller's ticket or execution filter was applied. The contract's
+ * `density` takes one ticket or execution: a caller with several asks for the unfiltered series, and
+ * `filtered: false` lets the legend say it shows every event, not the filter's.
+ */
+export type FilteredDensity = DensitySeries & { readonly filtered: boolean };
+
+/** A limit with what it limits: `applies_to` from the observer (span kinds), null when it limits none of the counted bands. */
+export type ConcurrencyLimit = ConcurrencySeries["limits"][number] & { readonly appliesTo?: readonly string[] | null };
+
+/**
+ * A marks answer with extra properties (T8): `truncated` (cut at the paging bound) and `complete`
+ * (false when cut or when part of the window could not be read). Absent on an older provider.
+ */
+export type MarksAnswer = TimelineMark[] & { truncated: boolean; complete: boolean };
+export const marksAnswer = (marks: TimelineMark[], truncated: boolean, complete: boolean): MarksAnswer => Object.assign(marks, { truncated, complete });
+
+/** Tile sizes, ascending. A window is cut into tiles of the smallest size that holds half of it, so panning reuses tiles. */
+export const TILE_STEPS: readonly number[] = [
+  10_000, 30_000, 60_000, 300_000, 900_000, 3_600_000, 10_800_000, 21_600_000, 43_200_000, 86_400_000, 259_200_000, 604_800_000, 2_592_000_000, 31_536_000_000,
+];
+
+export function tileSizeFor(window: TimeWindow): number {
+  const half = Math.max(1, (window.to - window.from) / 2);
+  for (const step of TILE_STEPS) if (step >= half) return step;
+  return TILE_STEPS[TILE_STEPS.length - 1] as number;
+}
+
+/** The tiles covering a window, quantised outward to tile boundaries. */
+export function tilesFor(window: TimeWindow): readonly TimeWindow[] {
+  const size = tileSizeFor(window);
+  const first = Math.floor(window.from / size) * size;
+  const last = Math.max(first + size, Math.ceil(window.to / size) * size);
+  const out: TimeWindow[] = [];
+  for (let from = first; from < last; from += size) out.push({ from, to: from + size });
+  return out;
+}
+
+export function spanMatches(span: TimelineSpan, query: SpanQuery): boolean {
+  if (query.kinds?.length && !query.kinds.includes(span.kind)) return false;
+  if (query.ticket && span.ids.ticket_id !== query.ticket) return false;
+  if (query.execution && span.ids.execution_id !== query.execution) return false;
+  if (query.wave && span.ids.wave_id !== query.wave) return false;
+  return overlaps(span, query.window);
+}
+
+const startOf = (span: TimelineSpan): number => extentOf(span)?.from ?? Number.POSITIVE_INFINITY;
+
+export function byStart(a: TimelineSpan, b: TimelineSpan): number {
+  return startOf(a) - startOf(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+/**
+ * The honesty rules, applied to every answer: an outcome only with a recorded end; and no `tool`
+ * span whose agent is count-only (its calls are not observable one by one, so a tick would be
+ * invented). Tool spans are dropped when their parent agent in the same set says count-only.
+ */
+export function honest(spans: readonly TimelineSpan[]): TimelineSpan[] {
+  const countOnly = new Set<string>();
+  for (const s of spans) if (s.kind === "agent" && s.attrs.toolsCountOnly === true) countOnly.add(s.entity);
+  const out: TimelineSpan[] = [];
+  for (const s of spans) {
+    if (s.kind === "tool" && s.parent !== null && countOnly.has(s.parent)) continue;
+    out.push(s.end === null && s.outcome !== null ? { ...s, outcome: null } : s);
+  }
+  return out;
+}
+
+/**
+ * Attributes that accumulate or are decided while a span runs (counts, the last tool, cost, a vote):
+ * the values held are the ones at the log's head, not at an earlier `liveAt`. While open as of
+ * `liveAt` they are omitted (not known as of then), never shown early. `interruptedAt` stays only when
+ * it lies at or before `liveAt`.
+ */
+const AS_OF_HEAD: readonly (keyof SpanAttrs)[] = ["toolCalls", "lastTool", "tokens", "costUsd", "vote", "reasons", "state"];
+
+function attrsAsOf(attrs: SpanAttrs, liveAt: number): SpanAttrs {
+  let out: { -readonly [K in keyof SpanAttrs]: SpanAttrs[K] } | null = null;
+  for (const k of AS_OF_HEAD) {
+    if (attrs[k] === undefined) continue;
+    out ??= { ...attrs };
+    delete out[k];
+  }
+  if (attrs.interruptedAt !== undefined && attrs.interruptedAt > liveAt) {
+    out ??= { ...attrs };
+    delete out.interruptedAt;
+  }
+  return out ?? attrs;
+}
+
+/**
+ * The span as it stood at `liveAt` (the simulation, whose future is recorded): null when it had not
+ * begun; open, without an outcome, when its end lies after `liveAt`. `headAt` is the time of the
+ * newest record the span was derived from: a span still open there whose head lies after `liveAt`
+ * loses the attributes that are only known as of the head (T12).
+ */
+export function cutAt(span: TimelineSpan, liveAt: number, headAt: number = Number.POSITIVE_INFINITY): TimelineSpan | null {
+  const x = extentOf(span);
+  if (x === null || x.from > liveAt) return null;
+  const end = span.end;
+  if (end === null) {
+    if (headAt <= liveAt) return span;
+    const attrs = attrsAsOf(span.attrs, liveAt);
+    return attrs === span.attrs ? span : { ...span, attrs };
+  }
+  const endAt = end.at ?? end.notAfter ?? end.notBefore;
+  if (endAt === null || endAt <= liveAt) return span;
+  if (span.start === null) return null; // only its end was known, and that has not happened yet
+  return { ...span, end: null, outcome: null, duration: { ms: null, minMs: null, maxMs: null, basis: "open" }, attrs: attrsAsOf(span.attrs, liveAt) };
+}
+
+/** The kinds that are work while open and so are said to have no end when the history ends without one. */
+const UNENDED_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["execution", "workflow", "agent", "visit"]);
+const unended = new WeakMap<TimelineSpan, TimelineSpan>();
+
+/**
+ * Presentation on a history that is no longer live (`at`: its last recorded time; null while live):
+ * every execution, workflow, agent or visit (not a wait on a person) still open is tagged
+ * `attrs.historyEndsAt`, so views say "no end recorded; the history ends at …" instead of "at work".
+ * Nothing is closed (`end` stays null) and the observer is not asked to close anything. One tagged
+ * object per span and end, so an unchanged answer keeps its identity.
+ */
+export function endsWithHistory(spans: readonly TimelineSpan[], at: number | null): TimelineSpan[] {
+  if (at === null) return spans as TimelineSpan[];
+  let out: TimelineSpan[] | null = null;
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i] as TimelineSpan;
+    const tag = s.end === null && UNENDED_KINDS.has(s.kind) && !(s.kind === "visit" && s.ids.station === "human-approval") && s.attrs.historyEndsAt !== at;
+    if (!tag) {
+      out?.push(s);
+      continue;
+    }
+    out ??= spans.slice(0, i) as TimelineSpan[];
+    let t = unended.get(s);
+    if (!t || t.attrs.historyEndsAt !== at) {
+      t = { ...s, attrs: { ...s.attrs, historyEndsAt: at } };
+      unended.set(s, t);
+    }
+    out.push(t);
+  }
+  return out ?? (spans as TimelineSpan[]);
+}
+
+/** Bucket boundaries for `buckets` buckets over a window (at least 1 ms each). */
+export function bucketSize(window: TimeWindow, buckets: number): number {
+  return Math.max(1, Math.ceil((window.to - window.from) / Math.max(1, Math.floor(buckets))));
+}
+
+/** Events per bucket from ascending event times (sparse). */
+export function densityOf(times: readonly number[], window: TimeWindow, buckets: number, complete: boolean): DensitySeries {
+  const size = bucketSize(window, buckets);
+  const counts = new Map<number, number>();
+  for (const t of times) {
+    if (t < window.from || t >= window.to) continue;
+    const k = window.from + Math.floor((t - window.from) / size) * size;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return { from: window.from, to: window.to, bucketMs: size, buckets: [...counts].sort((a, b) => a[0] - b[0]).map(([from, count]) => ({ from, count })), complete };
+}
+
+/** Per kind in a bucket, with `inferredMax` (T9): how many of `max` are spans whose end is inferred or only bounded. */
+export type ActiveCount = { readonly max: number; readonly mean: number; readonly inferredMax?: number };
+
+/** A span whose end is not recorded as a fact: placed by a rule, or only bounded. */
+export function endInferred(span: TimelineSpan): boolean {
+  const e = span.end;
+  if (!e) return false;
+  return e.basis === "inferred" || e.at === null || span.duration.basis === "inferred" || span.duration.basis === "bounded";
+}
+
+/**
+ * Concurrency by sweeping spans: per bucket and kind, the most active at once and the time-weighted
+ * mean, and `inferredMax`, the most active at once among spans whose end is inferred or bounded. An
+ * open span is active up to `liveAt`; a span with no known start is not counted (its length is not
+ * known, so it is never stretched to fill the bucket).
+ */
+export function concurrencyOf(spans: readonly TimelineSpan[], window: TimeWindow, buckets: number, liveAt: number, limits: ConcurrencySeries["limits"], complete: boolean): ConcurrencySeries {
+  const all = sweep(spans, window, buckets, liveAt);
+  const inferred = sweep(spans.filter(endInferred), window, buckets, liveAt);
+  const byFrom = new Map(inferred.buckets.map((b) => [b.from, b.active]));
+  const out = all.buckets.map((b) => {
+    const extra = byFrom.get(b.from);
+    const active: Partial<Record<SpanKind, ActiveCount>> = {};
+    for (const [k, v] of Object.entries(b.active) as [SpanKind, ActiveCount][]) active[k] = { ...v, inferredMax: extra?.[k]?.max ?? 0 };
+    return { from: b.from, active };
+  });
+  return { from: all.from, to: all.to, bucketMs: all.bucketMs, buckets: out, limits, complete };
+}
+
+function sweep(spans: readonly TimelineSpan[], window: TimeWindow, buckets: number, liveAt: number): { from: number; to: number; bucketMs: number; buckets: { from: number; active: Partial<Record<SpanKind, ActiveCount>> }[] } {
+  const size = bucketSize(window, buckets);
+  const n = Math.max(1, Math.ceil((window.to - window.from) / size));
+  const byKind = new Map<SpanKind, { t: number; d: number }[]>();
+  for (const s of spans) {
+    const from = s.start?.at ?? s.start?.notBefore ?? null;
+    if (from === null) continue;
+    const to = s.end ? (s.end.at ?? s.end.notAfter ?? null) : Math.min(liveAt, window.to);
+    if (to === null || to < from || to < window.from || from > window.to) continue;
+    const list = byKind.get(s.kind) ?? [];
+    list.push({ t: from, d: 1 }, { t: Math.max(to, from), d: -1 });
+    byKind.set(s.kind, list);
+  }
+  const out = Array.from({ length: n }, (_, i) => ({ from: window.from + i * size, active: {} as Partial<Record<SpanKind, { max: number; mean: number }>> }));
+  for (const [kind, edges] of byKind) {
+    // Starts before ends at the same instant, so back-to-back spans count as touching, not overlapping twice.
+    edges.sort((a, b) => a.t - b.t || a.d - b.d);
+    let active = 0;
+    let i = 0;
+    for (; i < edges.length && (edges[i] as { t: number }).t <= window.from; i++) active += (edges[i] as { d: number }).d;
+    for (let b = 0; b < n; b++) {
+      const bucket = out[b] as (typeof out)[number];
+      const bFrom = bucket.from;
+      const bTo = Math.min(window.to, bFrom + size);
+      let max = active;
+      let weighted = 0;
+      let at = bFrom;
+      while (i < edges.length && (edges[i] as { t: number }).t < bTo) {
+        const e = edges[i] as { t: number; d: number };
+        weighted += active * (e.t - at);
+        at = e.t;
+        active += e.d;
+        max = Math.max(max, active);
+        i++;
+      }
+      weighted += active * (bTo - at);
+      if (max > 0) bucket.active[kind] = { max, mean: bTo > bFrom ? weighted / (bTo - bFrom) : active };
+    }
+  }
+  return { from: window.from, to: window.to, bucketMs: size, buckets: out.filter((b) => Object.keys(b.active).length > 0) };
+}
+
+/** The execution a visit ran in: its `execution_id`, else its parent when that is an execution. */
+function executionRefOf(span: TimelineSpan): string | null {
+  const id = span.ids.execution_id;
+  if (id) return `execution:${id}`;
+  return span.parent?.startsWith("execution:") ? span.parent : null;
+}
+
+/**
+ * The documented rule for a visit that never recorded an exit (M6_1_SHARED_CONTRACTS, D4): it is
+ * closed at its execution's end, inferred by rule `execution-ended`, reason `interrupted`, no
+ * outcome, reconstructed. An M6.3 observer already sends visits closed this way. This is the CLIENT
+ * applying the same rule, as a safety net for an older observer: a visit is never presented as open
+ * (still running) when the execution it ran in has ended in the same answer. Only spans in the same
+ * answer are compared; a visit whose execution is not in the answer is left as it is. The duration is
+ * bounded, not measured: at most entry to the execution's end (`maxMs`), never "took". A visit to
+ * human-approval (a wait on a person) is never closed this way. An M6.3 observer (a windowed reply)
+ * already applied the rule, so the observer provider does not run this net on its answers.
+ */
+export function closeEndedVisits(spans: readonly TimelineSpan[]): TimelineSpan[] {
+  let ended: Map<string, SpanEnd> | null = null;
+  for (const s of spans) {
+    if (s.kind !== "execution" || !s.end || s.end.at === null) continue;
+    (ended ??= new Map()).set(s.entity, s.end);
+  }
+  if (!ended) return spans as TimelineSpan[];
+  const out: TimelineSpan[] = [];
+  for (const s of spans) {
+    // A wait on a person is left open: it is not work the execution was doing (T3; Go and the scene agree).
+    const exec = s.kind === "visit" && s.end === null && s.ids.station !== "human-approval" ? executionRefOf(s) : null;
+    const end = exec ? ended.get(exec) : undefined;
+    const startAt = s.start ? (s.start.at ?? s.start.notBefore) : null;
+    if (!end || end.at === null || (startAt !== null && startAt > end.at)) {
+      out.push(s);
+      continue;
+    }
+    out.push({
+      ...s,
+      end: { eventId: end.eventId, at: end.at, precision: end.precision, notBefore: null, notAfter: null, basis: "inferred", rule: "execution-ended", reason: "interrupted" },
+      duration: { ms: null, minMs: null, maxMs: startAt === null ? null : Math.max(0, end.at - startAt), basis: "inferred" },
+      outcome: null,
+      authority: s.authority === "simulated" ? "simulated" : "reconstructed",
+    });
+  }
+  return out;
+}
+
+/** The kinds that run inside an execution and cannot outlive it. */
+const EXECUTION_CHILDREN: ReadonlySet<SpanKind> = new Set<SpanKind>(["claim", "workflow", "agent-queue", "agent", "tool"]);
+
+/**
+ * The same rule for the work inside an execution (design 5, T1): a claim, workflow, agent-queue, agent or
+ * tool span still open when its execution in the same answer has ended (recorded, or only bounded: an
+ * outcome not known) is closed at that end: inferred by rule `execution-ended`, reason `unknown` when the
+ * execution's outcome is not known and `interrupted` otherwise, no outcome, reconstructed, at most entry
+ * to that end. An observer that already closes them (M6.3, round 5) leaves nothing open here, so this runs
+ * on every answer: it is a safety net, never a second opinion. Exclusions as for visits: only spans in
+ * the same answer are compared, and a span that starts after the execution's end is left as it is.
+ */
+export function closeEndedChildren(spans: readonly TimelineSpan[]): TimelineSpan[] {
+  let ended: Map<string, SpanEnd> | null = null;
+  for (const s of spans) {
+    if (s.kind !== "execution" || !s.end) continue;
+    const at = s.end.at ?? s.end.notAfter;
+    if (at === null) continue;
+    (ended ??= new Map()).set(s.entity, s.end);
+  }
+  if (!ended) return spans as TimelineSpan[];
+  let out: TimelineSpan[] | null = null;
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i] as TimelineSpan;
+    const exec = s.end === null && EXECUTION_CHILDREN.has(s.kind) ? executionRefOf(s) : null;
+    const end = exec ? ended.get(exec) : undefined;
+    const bound = end ? (end.at ?? end.notAfter) : null;
+    const startAt = s.start ? (s.start.at ?? s.start.notBefore) : null;
+    if (!end || bound === null || (startAt !== null && startAt > bound)) {
+      out?.push(s);
+      continue;
+    }
+    out ??= spans.slice(0, i) as TimelineSpan[];
+    const unknown = end.reason === "unknown";
+    out.push({
+      ...s,
+      end: end.at !== null
+        ? { eventId: end.eventId, at: end.at, precision: end.precision, notBefore: null, notAfter: null, basis: "inferred", rule: "execution-ended", reason: unknown ? "unknown" : "interrupted" }
+        : { eventId: end.eventId, at: null, precision: "bounded", notBefore: end.notBefore, notAfter: bound, basis: "inferred", rule: "execution-ended", reason: unknown ? "unknown" : "interrupted" },
+      duration: { ms: null, minMs: null, maxMs: startAt === null ? null : Math.max(0, bound - startAt), basis: "inferred" },
+      outcome: null,
+      authority: s.authority === "simulated" ? "simulated" : "reconstructed",
+    });
+  }
+  return out ?? (spans as TimelineSpan[]);
+}

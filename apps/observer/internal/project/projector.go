@@ -8,6 +8,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mach/observer/internal/feed"
@@ -40,7 +41,20 @@ type Options struct {
 	// set a negative value to save at every PersistEvery).
 	PersistMinInterval time.Duration
 	Logger             *log.Logger
+	// TimelineMaxAge is how long a built timeline is served while events keep arriving (0:
+	// DefaultTimelineMaxAge; negative: never, every request at a new position builds anew).
+	TimelineMaxAge time.Duration
+	// BackgroundRebuild: when the log holds more than RebuildAfter events the projection has not
+	// applied at start (a first run, or a saved projection discarded by a format change), Run
+	// replays them in batches, releasing the lock between batches, and requests are answered from
+	// the projection as far as it has got (health says "rebuilding") instead of waiting for all of
+	// it. Off by default (tests and tools that read the projection right after New).
+	BackgroundRebuild bool
 }
+
+// RebuildAfter is how far behind the log a starting projection must be to rebuild in the
+// background (with BackgroundRebuild).
+const RebuildAfter = 20000
 
 // Projector keeps the projection up to date with the log. One goroutine (Run) follows the log;
 // any request may also bring it up to date (Sync) before reading. Both take the same lock, so a
@@ -56,6 +70,9 @@ type Projector struct {
 	lastPersist uint64
 	lastErr     string
 	syncs       int64
+	rebuilding  bool        // replaying a long log in the background (BackgroundRebuild)
+	running     atomic.Bool // Run is following the log
+	tl          timelineCache
 }
 
 // New makes a projector, loading a saved projection when one matches the log.
@@ -75,6 +92,9 @@ func New(opts Options) *Projector {
 	if opts.Logger == nil {
 		opts.Logger = log.New(io.Discard, "", 0)
 	}
+	if opts.TimelineMaxAge == 0 {
+		opts.TimelineMaxAge = DefaultTimelineMaxAge
+	}
 	p := &Projector{opts: opts}
 	p.mu.Lock()
 	p.start()
@@ -85,6 +105,10 @@ func New(opts Options) *Projector {
 // start sets the base state: a saved projection if it fits the log, else empty (and partial when
 // the log no longer holds its beginning).
 func (p *Projector) start() {
+	defer func() {
+		_, head := p.opts.Log.Bounds()
+		p.rebuilding = p.opts.BackgroundRebuild && head > p.state.Pos+RebuildAfter
+	}()
 	epoch := p.opts.Log.Epoch()
 	floor, head := p.opts.Log.Bounds()
 	p.cps = nil
@@ -155,7 +179,20 @@ func (p *Projector) Sync() {
 	p.syncLocked()
 }
 
-func (p *Projector) syncLocked() {
+func (p *Projector) syncLocked() { p.syncBatches(-1) }
+
+// syncBatches applies up to batches batches of the log (negative: all of it) and reports whether
+// the projection reached the log's head. Reaching it ends a background rebuild.
+func (p *Projector) syncBatches(batches int) bool {
+	caught := p.syncLog(batches)
+	if caught && p.rebuilding {
+		p.rebuilding = false
+		p.opts.Logger.Printf("projection: rebuilt to position %d", p.state.Pos)
+	}
+	return caught
+}
+
+func (p *Projector) syncLog(batches int) bool {
 	p.syncs++
 	if p.opts.Log.Epoch() != p.state.Epoch {
 		p.start() // the log was rebuilt: its cursors and positions are new
@@ -173,11 +210,11 @@ func (p *Projector) syncLocked() {
 		}
 		if errors.Is(err, feed.ErrFuture) {
 			p.start()
-			return
+			return false
 		}
 		if err != nil {
 			p.lastErr = err.Error()
-			return
+			return false
 		}
 		if len(recs) == 0 {
 			break
@@ -188,7 +225,16 @@ func (p *Projector) syncLocked() {
 				p.addCheckpoint()
 			}
 		}
+		if batches--; batches == 0 {
+			p.persistMaybe()
+			return false
+		}
 	}
+	p.persistMaybe()
+	return true
+}
+
+func (p *Projector) persistMaybe() {
 	// The saved projection is a cache for restarts: written every PersistEvery positions, but not
 	// more than every PersistMinInterval (a long history read at start would otherwise write the
 	// whole projection dozens of times).
@@ -226,11 +272,32 @@ func (p *Projector) persistLocked() {
 
 // Run follows the log until done is closed, then saves the projection.
 func (p *Projector) Run(done <-chan struct{}) {
+	p.running.Store(true)
+	defer p.running.Store(false)
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
 		changed := p.opts.Log.Changed()
-		p.Sync()
+		// A few batches at a time (one while rebuilding), the lock released between them: events
+		// that never stop arriving never keep the lock from a request's snapshot.
+		p.mu.Lock()
+		batches := 4
+		if p.rebuilding {
+			batches = 1
+		}
+		caught := p.syncBatches(batches)
+		p.mu.Unlock()
+		if !caught {
+			select {
+			case <-done:
+				p.mu.Lock()
+				p.persistLocked()
+				p.mu.Unlock()
+				return
+			default:
+			}
+			continue
+		}
 		select {
 		case <-changed:
 		case <-tick.C:
@@ -244,10 +311,13 @@ func (p *Projector) Run(done <-chan struct{}) {
 }
 
 // View runs fn on the current state, brought up to date first. fn must not keep the state.
+// While the projection rebuilds in the background, fn sees it as far as it has got.
 func (p *Projector) View(fn func(*State)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.syncLocked()
+	if !p.rebuilding {
+		p.syncLocked()
+	}
 	fn(p.state)
 }
 
@@ -261,6 +331,10 @@ type Status struct {
 	Persisted   uint64 `json:"persisted_at"`
 	Partial     string `json:"partial,omitempty"`
 	LastError   string `json:"last_error,omitempty"`
+	// State is "rebuilding" while a long log is replayed in the background, else "current".
+	State string `json:"state"`
+	// Timeline is what building the latest timeline (spans and marks) cost.
+	Timeline TimelineStats `json:"timeline"`
 	// History is HistoryFacts at the projection's position: completeness by gap class.
 	History map[string]any `json:"history"`
 }
@@ -270,7 +344,10 @@ func (p *Projector) Status() Status {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	st := Status{Pos: p.state.Pos, Applied: p.state.Applied, NotV3: p.state.NotV3, Checkpoints: len(p.cps), Persisted: p.lastPersist,
-		Partial: p.state.Partial, LastError: p.lastErr, History: HistoryFacts(p.state)}
+		Partial: p.state.Partial, LastError: p.lastErr, History: HistoryFacts(p.state), State: "current", Timeline: p.TimelineStats()}
+	if p.rebuilding {
+		st.State = "rebuilding"
+	}
 	if len(p.cps) > 0 {
 		st.OldestCP = p.cps[0].pos
 	}
@@ -282,7 +359,9 @@ func (p *Projector) Status() Status {
 // projection. The copy is built from a fixed cursor: appends while it is built change nothing.
 func (p *Projector) At(at uint64) (*State, bool, error) {
 	p.mu.Lock()
-	p.syncLocked()
+	if !p.rebuilding {
+		p.syncLocked()
+	}
 	cur := p.state.Pos
 	if at == 0 || at == cur {
 		// A private copy at the head: the latest checkpoint brought to the head (only what changed

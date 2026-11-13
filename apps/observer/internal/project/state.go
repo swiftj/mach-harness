@@ -17,7 +17,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 2 // 2: gap classes
+const FormatVersion = 4 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -27,6 +27,10 @@ const (
 	maxAgentsPerExec  = 1000
 	maxRefusedPerExec = 500
 	maxGapsKept       = 200
+	maxWaitsPerSlice  = 200 // dependency waits kept per slice (oldest dropped, counted)
+	maxCapacityWaits  = 500 // closed capacity waits kept (oldest dropped, counted)
+	maxRecoveries     = 1000
+	maxLimitHistory   = 200
 )
 
 // State is the projection at one position.
@@ -53,6 +57,24 @@ type State struct {
 	Stream     StreamInfo            `json:"stream"`
 	Metrics    *metrics.Table        `json:"metrics"`
 	Pending    Pending               `json:"pending"`
+	// CapacityWaits are closed execution-capacity waits (capacity.wait_changed waiting to released),
+	// oldest first; the open ones are Pending.Capacity.
+	CapacityWaits        []CapacityWait `json:"capacity_waits"`
+	CapacityWaitsDropped int64          `json:"capacity_waits_dropped"`
+	// SliceCapacityWaits are closed waits of a ready slice for a free place (scheduling.decided's
+	// held[] with the supervisor's fixed sentence), oldest first; the open ones are
+	// Pending.SliceCapacity.
+	SliceCapacityWaits        []*SliceCapacityWait `json:"slice_capacity_waits"`
+	SliceCapacityWaitsDropped int64                `json:"slice_capacity_waits_dropped"`
+	// Recoveries are recovery.started events with their time, oldest first.
+	Recoveries        []Recovery `json:"recoveries"`
+	RecoveriesDropped int64      `json:"recoveries_dropped"`
+	// LastMS is the latest order time of any event applied: what the projection holds up to.
+	LastMS int64 `json:"last_ms"`
+
+	// Derived lists cached for the position they were built at (never encoded).
+	spanCache *spanSet
+	markCache *markSet
 
 	// dirty names the entities (cells, slices, executions, waves) an event has touched since the
 	// last checkpoint, so a checkpoint re-encodes only those and shares the rest (checkpoint.go).
@@ -117,6 +139,9 @@ func (s *State) fill() {
 	if s.Pending.Capacity == nil {
 		s.Pending.Capacity = map[string]*Stamp{}
 	}
+	if s.Pending.SliceCapacity == nil {
+		s.Pending.SliceCapacity = map[string]*SliceCapacityWait{}
+	}
 	if s.Pending.CostTickets == nil {
 		s.Pending.CostTickets = map[string]bool{}
 	}
@@ -124,26 +149,32 @@ func (s *State) fill() {
 		s.Pending.LifecycleTickets = map[string]bool{}
 	}
 	for _, x := range s.Executions {
-		if x.Agents == nil {
-			x.Agents = map[string]*Agent{}
-		}
-		if x.Queued == nil {
-			x.Queued = map[string]*Agent{}
-		}
-		if x.Tools == nil {
-			x.Tools = map[string]*Tool{}
-		}
-		if x.Workflows == nil {
-			x.Workflows = map[string]*Workflow{}
-		}
+		fillExecution(x)
+	}
+}
+
+func fillExecution(x *Execution) {
+	if x.Agents == nil {
+		x.Agents = map[string]*Agent{}
+	}
+	if x.Queued == nil {
+		x.Queued = map[string]*Agent{}
+	}
+	if x.Tools == nil {
+		x.Tools = map[string]*Tool{}
+	}
+	if x.Workflows == nil {
+		x.Workflows = map[string]*Workflow{}
 	}
 }
 
 // Pending holds fold bookkeeping that is part of the state (so checkpoints carry it).
 type Pending struct {
-	Capacity         map[string]*Stamp `json:"capacity"`          // ticket -> capacity wait opened
-	CostTickets      map[string]bool   `json:"cost_tickets"`      // tickets already counted in K4's denominator
-	LifecycleTickets map[string]bool   `json:"lifecycle_tickets"` // tickets already counted in C2's denominator
+	Capacity map[string]*Stamp `json:"capacity"` // ticket -> capacity wait opened
+	// SliceCapacity is slice -> its open wait for a free place.
+	SliceCapacity    map[string]*SliceCapacityWait `json:"slice_capacity"`
+	CostTickets      map[string]bool               `json:"cost_tickets"`      // tickets already counted in K4's denominator
+	LifecycleTickets map[string]bool               `json:"lifecycle_tickets"` // tickets already counted in C2's denominator
 }
 
 // StreamInfo is what the execution stream said about itself.
@@ -166,6 +197,47 @@ type Factory struct {
 	Held           []Held             `json:"held"`
 	Dispatched     []string           `json:"dispatched"`
 	Started        []string           `json:"started"`
+	// LimitHistory is every limit factory.activated recorded and when it applied, oldest first.
+	LimitHistory []LimitSpan `json:"limit_history"`
+}
+
+// LimitSpan is one recorded Factory limit (max_parallel, ...) from the activation that set it to
+// the next activation or disablement (open while it still applies).
+type LimitSpan struct {
+	Name  string  `json:"name"`
+	Value float64 `json:"value"`
+	From  *Stamp  `json:"from"`
+	To    *Stamp  `json:"to"`
+}
+
+// CapacityWait is one closed execution-capacity wait for a ticket.
+type CapacityWait struct {
+	TicketID string `json:"ticket_id"`
+	Opened   *Stamp `json:"opened"`
+	Released *Stamp `json:"released"`
+}
+
+// SliceCapacityWait is a ready slice's wait for a free place, reconstructed from the scheduler's
+// recorded decisions (rule "held-sentence"): a decision is a sample, not the moment the wait began
+// or ended, so both ends are bounded by decisions (Opened: from the previous decision to the one
+// that first held it; Released: from the last decision that held it to what ended it).
+type SliceCapacityWait struct {
+	SliceID string `json:"slice_id"`
+	WaveID  string `json:"wave_id,omitempty"`
+	// Limit is the number of places the sentence says were in use of ("<n> of <limit> in use").
+	Limit    int64  `json:"limit"`
+	Why      string `json:"why"`
+	Opened   *Stamp `json:"opened"`
+	LastHeld *Stamp `json:"last_held"`
+	Released *Stamp `json:"released"`
+}
+
+// Recovery is one recovery.started, with its time.
+type Recovery struct {
+	Kind        string `json:"kind"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	TicketID    string `json:"ticket_id,omitempty"`
+	At          *Stamp `json:"at"`
 }
 
 // Held is one item the scheduler held, with its recorded reason (MACH-written prose, scrubbed).
@@ -213,7 +285,24 @@ type Slice struct {
 	Superseded   *Stamp          `json:"superseded"`
 	Revisions    []SliceRevision `json:"revisions"`
 	History      []StateChange   `json:"history"`
+	// Waits is every dependency wait (dependency.blocked to dependency.resolved), oldest first;
+	// an unresolved one has no end. WaitsDropped counts the oldest ones no longer kept.
+	Waits        []*DependencyWait `json:"waits"`
+	WaitsDropped int64             `json:"waits_dropped"`
 }
+
+// DependencyWait is one recorded dependency wait of a slice.
+type DependencyWait struct {
+	Revision   *int64   `json:"revision"`
+	Blocked    *Stamp   `json:"blocked"`
+	Resolved   *Stamp   `json:"resolved"`
+	Superseded *Stamp   `json:"superseded"` // a new revision (or a supersession) replaced the slice while it waited
+	Reasons    []string `json:"reasons"`
+	DependsOn  []string `json:"depends_on"`
+}
+
+// open reports a wait with no recorded end.
+func (w *DependencyWait) open() bool { return w.Resolved == nil && w.Superseded == nil }
 
 // SliceRevision is an earlier revision of a slice, as it stood when the next one arrived.
 type SliceRevision struct {
@@ -450,42 +539,45 @@ type HumanGate struct {
 
 // Execution is one supervised execution.
 type Execution struct {
-	ExecutionID    string               `json:"execution_id"`
-	TicketID       string               `json:"ticket_id,omitempty"`
-	SliceID        string               `json:"slice_id,omitempty"`
-	RunnerID       string               `json:"runner_id,omitempty"`
-	Attempt        *int64               `json:"attempt"`
-	Workflow       string               `json:"workflow,omitempty"`
-	Until          string               `json:"until,omitempty"`
-	Limits         map[string]float64   `json:"limits,omitempty"`
-	Claimed        *Stamp               `json:"claimed"`
-	Started        *Stamp               `json:"started"`
-	ProcessStarted *Stamp               `json:"process_started"`
-	ProcessEnded   *Stamp               `json:"process_ended"`
-	Ended          string               `json:"ended,omitempty"` // exited | timed-out | interrupted | could-not-start
-	ExitCode       *int64               `json:"exit_code"`
-	Seconds        *int64               `json:"seconds"`
-	Completed      *Stamp               `json:"completed"`
-	Failed         *Stamp               `json:"failed"`
-	StageAtStart   string               `json:"stage_at_start,omitempty"`
-	StageAtEnd     string               `json:"stage_at_end,omitempty"`
-	Next           string               `json:"next,omitempty"`
-	WaitingFor     string               `json:"waiting_for,omitempty"`
-	How            string               `json:"how,omitempty"`
-	ClaudeError    string               `json:"claude_error,omitempty"`
-	CostUSD        *float64             `json:"cost_usd"` // execution.completed (MACH-recorded)
-	RefusedTools   []string             `json:"refused_tools"`
-	RefusedFinal   bool                 `json:"refused_final,omitempty"` // execution.completed recorded RefusedTools
-	Recovery       []string             `json:"recovery"`
-	Usage          *Usage               `json:"usage"`
-	Session        *Session             `json:"session"`
-	Workflows      map[string]*Workflow `json:"workflows"`
-	Agents         map[string]*Agent    `json:"agents"`
-	Queued         map[string]*Agent    `json:"queued"`
-	Tools          map[string]*Tool     `json:"tools"`
-	ToolsDropped   int64                `json:"tools_dropped"`
-	Refused        []Refusal            `json:"refused"`
-	Visits         []string             `json:"visits"`
+	ExecutionID    string             `json:"execution_id"`
+	TicketID       string             `json:"ticket_id,omitempty"`
+	SliceID        string             `json:"slice_id,omitempty"`
+	RunnerID       string             `json:"runner_id,omitempty"`
+	Attempt        *int64             `json:"attempt"`
+	Workflow       string             `json:"workflow,omitempty"`
+	Until          string             `json:"until,omitempty"`
+	Limits         map[string]float64 `json:"limits,omitempty"`
+	Claimed        *Stamp             `json:"claimed"`
+	Started        *Stamp             `json:"started"`
+	ProcessStarted *Stamp             `json:"process_started"`
+	ProcessEnded   *Stamp             `json:"process_ended"`
+	Ended          string             `json:"ended,omitempty"` // exited | timed-out | interrupted | could-not-start
+	ExitCode       *int64             `json:"exit_code"`
+	Seconds        *int64             `json:"seconds"`
+	Completed      *Stamp             `json:"completed"`
+	Failed         *Stamp             `json:"failed"`
+	StageAtStart   string             `json:"stage_at_start,omitempty"`
+	StageAtEnd     string             `json:"stage_at_end,omitempty"`
+	Next           string             `json:"next,omitempty"`
+	WaitingFor     string             `json:"waiting_for,omitempty"`
+	How            string             `json:"how,omitempty"`
+	ClaudeError    string             `json:"claude_error,omitempty"`
+	CostUSD        *float64           `json:"cost_usd"` // execution.completed (MACH-recorded)
+	RefusedTools   []string           `json:"refused_tools"`
+	RefusedFinal   bool               `json:"refused_final,omitempty"` // execution.completed recorded RefusedTools
+	Recovery       []string           `json:"recovery"`
+	// UnknownAt is the first outcome-unknown recovery for this execution: an execution with no
+	// recorded end ended no later than it.
+	UnknownAt    *Stamp               `json:"unknown_at,omitempty"`
+	Usage        *Usage               `json:"usage"`
+	Session      *Session             `json:"session"`
+	Workflows    map[string]*Workflow `json:"workflows"`
+	Agents       map[string]*Agent    `json:"agents"`
+	Queued       map[string]*Agent    `json:"queued"`
+	Tools        map[string]*Tool     `json:"tools"`
+	ToolsDropped int64                `json:"tools_dropped"`
+	Refused      []Refusal            `json:"refused"`
+	Visits       []string             `json:"visits"`
 }
 
 // Usage is execution.usage: Claude-reported cost and tokens, per execution and per model.
@@ -626,4 +718,5 @@ type Gap struct {
 	Count     *int64 `json:"count"`
 	EventID   string `json:"event_id"`
 	Pos       uint64 `json:"pos"`
+	At        *Stamp `json:"at"`
 }

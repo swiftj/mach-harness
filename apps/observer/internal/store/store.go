@@ -16,7 +16,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -142,6 +141,7 @@ type Store struct {
 	byOrder     []orderRef // the memory window in history order (entries leave it lazily)
 	orderBuf    []orderRef // appended out of order since the last merge
 	series      seriesAgg  // counts per minute, by kind and authority, of everything indexed
+	oidx        orderIndex // where on disk each minute of order time is (history beyond the memory window)
 	closed      bool
 }
 
@@ -250,6 +250,10 @@ type posLine struct {
 	Time      struct {
 		OrderMS int64 `json:"order_ms"`
 	} `json:"time"`
+	IDs struct {
+		TicketID    string `json:"ticket_id"`
+		ExecutionID string `json:"execution_id"`
+	} `json:"ids"`
 }
 
 // loadSegments scans every retained segment: positions must run on without a hole, a torn last
@@ -300,7 +304,8 @@ func (s *Store) loadSegments() (string, error) {
 				if p.Order > s.maxOrder {
 					s.maxOrder = p.Order
 				}
-				s.series.add(p.Time.OrderMS, p.Type, p.Authority)
+				s.series.add(p.Time.OrderMS, p.Type, p.Authority, p.IDs.TicketID, p.IDs.ExecutionID)
+				s.oidx.add(p.Order, p.Pos, int32(n), offset, len(line))
 				offset += int64(len(line))
 			}
 			if err == io.EOF {
@@ -333,6 +338,20 @@ func (s *Store) loadSegments() (string, error) {
 	if len(s.segs) > 0 && s.segs[0].first > 0 {
 		s.diskFloor = s.segs[0].first - 1
 	}
+	if s.diskFloor > 0 {
+		// Retention dropped segments before this start: what they held is not known, so a window is
+		// taken as complete only from the earliest order retained on (as the series counts do).
+		for _, m := range s.oidx.keys {
+			for _, c := range s.oidx.minutes[m] {
+				if s.oidx.lostMax == "" || c.minOrder < s.oidx.lostMax {
+					s.oidx.lostMax = c.minOrder
+				}
+			}
+			if m >= 0 {
+				break
+			}
+		}
+	}
 	s.head = expect
 	if s.head == 0 {
 		return "", nil
@@ -343,6 +362,18 @@ func (s *Store) loadSegments() (string, error) {
 	}
 	if from <= s.diskFloor {
 		from = s.diskFloor + 1
+	}
+	if from > 1 {
+		// Events before the memory window left it in an earlier run: the largest order they may
+		// have (from the order index; at least as large as theirs) is what left the window.
+		s.evictedMax = s.oidx.lostMax
+		for _, list := range s.oidx.minutes {
+			for _, c := range list {
+				if c.lo < from && c.maxOrder > s.evictedMax {
+					s.evictedMax = c.maxOrder
+				}
+			}
+		}
 	}
 	got, err := s.readDisk(from-1, s.opts.MaxMemory+1)
 	if err != nil {
@@ -373,7 +404,7 @@ func (s *Store) reset() error {
 	s.ids = map[string]held{}
 	s.byTicket, s.byExec, s.byEntity = map[string][]uint64{}, map[string][]uint64{}, map[string][]uint64{}
 	s.checkpoints = map[string]tail.Checkpoint{}
-	s.byOrder, s.orderBuf, s.series = nil, nil, seriesAgg{}
+	s.byOrder, s.orderBuf, s.series, s.oidx = nil, nil, seriesAgg{}, orderIndex{}
 	data, _ := json.MarshalIndent(s.meta, "", "  ")
 	return writeAtomic(filepath.Join(s.dir, "meta.json"), append(data, '\n'))
 }
@@ -440,7 +471,12 @@ func (s *Store) push(e Entry) {
 // fill reads back the envelope of every entry that left the hot tail, from its line on disk
 // (the caller holds the lock, so no segment is dropped meanwhile). The entries are copies: what
 // is read is not kept.
-func (s *Store) fill(out []Entry) error {
+func (s *Store) fill(out []Entry) error { return s.fillGen(out, s.meta.Generation) }
+
+// fillGen is fill for a caller that does not hold the lock: gen is the generation it read under
+// it. A segment dropped meanwhile is an error (the caller says its answer is not complete), and a
+// line that is not the entry's own is refused.
+func (s *Store) fillGen(out []Entry, gen string) error {
 	var files map[int32]*os.File
 	defer func() {
 		for _, f := range files {
@@ -470,7 +506,7 @@ func (s *Store) fill(out []Entry) error {
 		if _, err := f.ReadAt(line, l.off); err != nil {
 			return fmt.Errorf("could not read the index log: %w", err)
 		}
-		e, err := s.expand(line)
+		e, err := expandGen(line, gen)
 		if err != nil {
 			return err
 		}
@@ -483,12 +519,14 @@ func (s *Store) fill(out []Entry) error {
 }
 
 // expand turns a compact line from a segment into an entry with the served envelope.
-func (s *Store) expand(compact []byte) (Entry, error) {
+func (s *Store) expand(compact []byte) (Entry, error) { return expandGen(compact, s.meta.Generation) }
+
+func expandGen(compact []byte, gen string) (Entry, error) {
 	var ev event.Event
 	if err := json.Unmarshal(compact, &ev); err != nil {
 		return Entry{}, err
 	}
-	ev.Cursor = event.Cursor{Generation: s.meta.Generation, Position: ev.Pos}.String()
+	ev.Cursor = event.Cursor{Generation: gen, Position: ev.Pos}.String()
 	full, err := json.Marshal(&ev) // the compact form, expanded to the served envelope
 	if err != nil {
 		return Entry{}, err
@@ -647,7 +685,7 @@ func (s *Store) Append(batch []*event.Event, checkpoints map[string]tail.Checkpo
 	}
 	for _, e := range fresh {
 		s.push(e)
-		s.series.add(e.Event.Time.OrderMS, e.Event.Type, e.Event.Authority)
+		s.series.add(e.Event.Time.OrderMS, e.Event.Type, e.Event.Authority, e.Event.IDs.TicketID, e.Event.IDs.ExecutionID)
 	}
 	if len(fresh) > 0 {
 		close(s.changed)
@@ -681,6 +719,7 @@ func (s *Store) write(data []byte, fresh []Entry, sizes []int) error {
 		}
 		count++
 		seg.last = e.Event.Pos
+		s.oidx.add(e.Event.Order, e.Event.Pos, int32(seg.n), offset, sizes[i])
 		offset += int64(sizes[i])
 	}
 	seg.size = offset
@@ -710,6 +749,7 @@ func (s *Store) write(data []byte, fresh []Entry, sizes []int) error {
 		s.segs = s.segs[1:]
 		s.diskFloor = old.last
 		s.dropped++
+		s.oidx.prune(s.diskFloor)
 	}
 	return nil
 }
@@ -1019,112 +1059,14 @@ const MaxHistory = 5000
 
 // HistoryPage is a window of history. Next is the FromOrder of the next page when More; a page
 // never ends in the middle of events that share an order key. Complete is false when events of
-// the window may have left the memory window (it then holds only the most recent ones).
+// the window may no longer be held: dropped by retention from the segments (or, for a store kept
+// in memory only, evicted from the memory window).
 type HistoryPage struct {
 	Entries  []Entry
 	Next     string
 	More     bool
 	Complete bool
-}
-
-// History returns the memory window's events whose order is in [FromOrder, ToOrder) and that
-// match the filters, sorted by order (late events appear where they belong, not where they were
-// delivered).
-func (s *Store) History(q HistoryQuery) HistoryPage {
-	if q.Limit <= 0 {
-		q.Limit = 1000
-	}
-	q.Limit = min(q.Limit, MaxHistory)
-	want := map[string]bool{}
-	for _, e := range q.Entities {
-		want[e] = true
-	}
-	s.mu.Lock()
-	s.sortOrder()
-	s.mu.Unlock()
-	s.mu.RLock()
-	complete := s.evictedMax == "" || q.FromOrder != "" && q.FromOrder > s.evictedMax
-	// The order index makes a window O(log n + what it holds): start at from, stop at to, or one
-	// order key past the page.
-	i := sort.Search(len(s.byOrder), func(i int) bool { return s.byOrder[i].order >= q.FromOrder })
-	var out []Entry
-	cutOrder := ""
-	for ; i < len(s.byOrder); i++ {
-		r := s.byOrder[i]
-		if q.ToOrder != "" && r.order >= q.ToOrder {
-			break
-		}
-		if cutOrder != "" && r.order != cutOrder {
-			break
-		}
-		if r.pos < s.first {
-			continue
-		}
-		e := s.entries[r.pos-s.first]
-		ev := e.Event
-		if q.Ticket != "" && ev.IDs.TicketID != q.Ticket || q.Execution != "" && ev.IDs.ExecutionID != q.Execution ||
-			q.TypePrefix != "" && !strings.HasPrefix(ev.Type, q.TypePrefix) {
-			continue
-		}
-		if len(want) > 0 {
-			hit := false
-			for _, ref := range ev.Entities {
-				if want[ref] {
-					hit = true
-					break
-				}
-			}
-			if !hit {
-				continue
-			}
-		}
-		out = append(out, e)
-		if len(out) == q.Limit+1 && cutOrder == "" {
-			cutOrder = out[q.Limit-1].Event.Order // read on through the ties of the page's last key
-			if out[q.Limit].Event.Order != cutOrder {
-				break
-			}
-		}
-	}
-	if s.fill(out) != nil {
-		// An envelope could not be read back: leave it out and say the window is not complete.
-		kept := out[:0]
-		for _, e := range out {
-			if e.Raw != nil {
-				kept = append(kept, e)
-			}
-		}
-		out, complete = kept, false
-	}
-	s.mu.RUnlock()
-	page := HistoryPage{Complete: complete}
-	if len(out) > q.Limit {
-		cut := q.Limit
-		// Do not split events that share an order key: the next page starts at that key.
-		for cut > 0 && out[cut-1].Event.Order == out[cut].Event.Order {
-			cut--
-		}
-		if cut == 0 { // more ties than a page: take them all
-			for cut = q.Limit; cut < len(out) && out[cut].Event.Order == out[q.Limit-1].Event.Order; cut++ {
-			}
-		}
-		if cut < len(out) {
-			page.Next, page.More = out[cut].Event.Order, true
-		} else {
-			// Every tie was taken: the next page starts after them, if anything follows.
-			s.mu.RLock()
-			j := sort.Search(len(s.byOrder), func(j int) bool { return s.byOrder[j].order > out[len(out)-1].Event.Order })
-			for ; j < len(s.byOrder) && s.byOrder[j].pos < s.first; j++ {
-			}
-			if j < len(s.byOrder) && (q.ToOrder == "" || s.byOrder[j].order < q.ToOrder) {
-				page.Next, page.More = s.byOrder[j].order, true
-			}
-			s.mu.RUnlock()
-		}
-		out = out[:cut]
-	}
-	page.Entries = out
-	return page
+	Capped   bool // the page stopped early at HistoryScanCap lines read from disk (More is then true)
 }
 
 // orderRef is one memory-window event in the order index.

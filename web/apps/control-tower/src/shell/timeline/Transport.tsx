@@ -128,7 +128,7 @@ function Pill({ kind, children }: { kind: "edge" | "review" | "stale"; children:
  *   moment with the count of events received since and a way back;
  * - replay: replaying, or at its last event.
  */
-export function LiveState({ compact }: { compact?: boolean }) {
+export function LiveState({ compact, idleSince = null }: { compact?: boolean; idleSince?: number | null }) {
   const source = useSceneStore((s) => s.source);
   const following = useSceneStore((s) => s.following);
   const behind = useSceneStore((s) => (s.following ? 0 : Math.round((s.liveAt - s.playhead) / 10_000) * 10_000));
@@ -152,7 +152,20 @@ export function LiveState({ compact }: { compact?: boolean }) {
     if (following) {
       return (
         <span className="inline-flex shrink-0 items-center" data-live-state={stale ? "stale" : "live"}>
-          {stale ? <Pill kind="stale">As last seen{isMoment(staleSince) ? ` ${utcClock(staleSince)}` : ""}</Pill> : <Pill kind="edge">At the live edge</Pill>}
+          {stale ? (
+            <Pill kind="stale">As last seen{isMoment(staleSince) ? ` ${utcClock(staleSince)}` : ""}</Pill>
+          ) : (
+            <Pill kind="edge">
+              At the live edge
+              {/* Nothing running: since when, so the tracks (framed on what was recorded) are not read as following the clock. */}
+              {idleSince !== null && !compact ? (
+                <span className="font-normal" data-live-idle-since={Math.round(idleSince)}>
+                  {" "}
+                  · nothing running since {utcClock(idleSince).slice(0, 5)}
+                </span>
+              ) : null}
+            </Pill>
+          )}
         </span>
       );
     }
@@ -241,7 +254,12 @@ function ChapterName() {
   );
 }
 
-export const Transport = memo(function Transport({ collapsed, onCollapse }: { collapsed: boolean; onCollapse: () => void }) {
+/**
+ * `onCollapse` is the docked timeline's; without it (the Timeline workspace) there is no collapse button.
+ * `compact`: the column it sits in is narrower than the window (the Timeline beside an inspector), so
+ * the live state drops its secondary words and the speed control keeps its room.
+ */
+export const Transport = memo(function Transport({ collapsed, onCollapse, idleSince = null, compact = false }: { collapsed: boolean; onCollapse?: () => void; idleSince?: number | null; compact?: boolean }) {
   const playing = useSceneStore((s) => s.playing);
   const reduced = useSceneStore((s) => s.reducedMotion);
   const source = useSceneStore((s) => s.source);
@@ -289,7 +307,7 @@ export const Transport = memo(function Transport({ collapsed, onCollapse }: { co
         <span className="sr-only">{source === "simulation" ? "Simulated factory time" : "Time, UTC"}</span>
       </div>
       <div className="mx-2 h-5 w-px shrink-0 bg-line min-[1100px]:mx-3" aria-hidden="true" />
-      <LiveState />
+      <LiveState idleSince={idleSince} compact={compact} />
       <span className="ml-2">
         <FollowState />
       </span>
@@ -304,9 +322,11 @@ export const Transport = memo(function Transport({ collapsed, onCollapse }: { co
         </span>
       ) : null}
       <SpeedControl />
-      <IconButton label={collapsed ? "Expand the timeline" : "Collapse the timeline"} shortcut="Shift+T" onClick={onCollapse} className="ml-1">
-        {collapsed ? <PanelBottomOpen aria-hidden="true" /> : <PanelBottomClose aria-hidden="true" />}
-      </IconButton>
+      {onCollapse ? (
+        <IconButton label={collapsed ? "Expand the timeline" : "Collapse the timeline"} shortcut="Shift+T" onClick={onCollapse} className="ml-1">
+          {collapsed ? <PanelBottomOpen aria-hidden="true" /> : <PanelBottomClose aria-hidden="true" />}
+        </IconButton>
+      ) : null}
     </div>
   );
 });

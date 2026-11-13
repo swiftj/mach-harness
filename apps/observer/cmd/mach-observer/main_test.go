@@ -253,7 +253,7 @@ func touchEveryEndpoint(t *testing.T, r *running) {
 	t.Helper()
 	for _, path := range []string{"/api/v1/health", "/api/v1/factory/status", "/api/v1/session", "/api/v1/events?limit=1000",
 		"/api/v1/snapshot", "/api/v1/project", "/api/v1/waves", "/api/v1/slices", "/api/v1/cells", "/api/v1/runs", "/api/v1/spans", "/api/v1/history",
-		"/api/v1/artifacts", "/api/v1/cells/T-1/evidence", "/api/v1/analytics/metrics?group_by=day", "/api/v1/analytics/runs", "/", "/some/app/route"} {
+		"/api/v1/series", "/api/v1/concurrency", "/api/v1/marks", "/api/v1/artifacts", "/api/v1/cells/T-1/evidence", "/api/v1/analytics/metrics?group_by=day", "/api/v1/analytics/runs", "/", "/some/app/route"} {
 		r.get(t, path)
 	}
 	var snap struct {

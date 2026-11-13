@@ -1,0 +1,29 @@
+/* The Execution Timeline's tracks (src/timeline/render). Tokens only. */
+
+/* Beyond the live edge nothing has happened yet: the drafting hatch of the docked timeline. */
+.mach-tl-future {
+  background-color: var(--mach-factory-ground);
+  background-image: repeating-linear-gradient(135deg, var(--mach-factory-grid-major) 0 1px, transparent 1px 7px);
+}
+
+.mach-tl-card {
+  font-family: var(--mach-font-sans);
+}
+
+/* The tracks' focus ring: 1 px of the focus token at 0.7, inset (quiet: the cursor's bracket is the loud part). */
+.mach-tl-tracks:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: 20;
+  pointer-events: none;
+  border-radius: 2px;
+  outline: 1px solid color-mix(in srgb, var(--mach-focus) 70%, transparent);
+  outline-offset: 0;
+}
+
+/* Scrubbed back: the stretch between the playhead and the live edge, which the tracks still show. */
+.mach-tl-after {
+  background-color: color-mix(in srgb, var(--mach-factory-select) 7%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--mach-factory-select) 30%, transparent);
+}

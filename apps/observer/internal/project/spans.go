@@ -1,6 +1,7 @@
 package project
 
 import (
+	"math"
 	"sort"
 	"strings"
 )
@@ -35,11 +36,60 @@ type Span struct {
 	Outcome   *string           `json:"outcome"`
 	Lane      int               `json:"lane"`
 	Authority string            `json:"authority"`
+	Attrs     SpanAttrs         `json:"attrs"`
 
 	group    string
 	startKey [2]int64
 	endKey   int64 // -1 while open
+	meta     spanMeta
+	from, to int64 // the earliest and latest instant the span can touch (to: MaxInt64 while open)
 }
+
+// SpanAttrs are facts about a span that other routes already serve. A key is left out when
+// nothing recorded it; a recorded zero is sent.
+type SpanAttrs struct {
+	Label          string   `json:"label,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	AgentType      string   `json:"agent_type,omitempty"`
+	ToolCalls      *int64   `json:"tool_calls,omitempty"`
+	ToolsCountOnly bool     `json:"tools_count_only,omitempty"` // a workflow agent: only a count of its tool calls is observable
+	LastTool       string   `json:"last_tool,omitempty"`
+	Tokens         *int64   `json:"tokens,omitempty"`
+	Action         string   `json:"action,omitempty"`
+	Round          *int64   `json:"round,omitempty"`
+	Attempt        *int64   `json:"attempt,omitempty"`
+	State          string   `json:"state,omitempty"`
+	CostUSD        *float64 `json:"cost_usd,omitempty"`
+	Vote           string   `json:"vote,omitempty"`
+	Reasons        []string `json:"reasons,omitempty"`
+	DependsOn      []string `json:"depends_on,omitempty"`
+	// Limit is the recorded number of places a capacity wait waited on (max_parallel).
+	Limit *int64 `json:"limit,omitempty"`
+	// A visit whose exit was recorded only after its execution ended (or after its station was
+	// entered again): where the span had stopped before the exit arrived, and why.
+	InterruptedAt     *int64 `json:"interrupted_at,omitempty"`
+	InterruptedReason string `json:"interrupted_reason,omitempty"` // interrupted | superseded
+}
+
+// spanMeta is what the filters need to know about where a span came from.
+type spanMeta struct {
+	src    byte // srcCell | srcExec | srcSlice | srcWave
+	ticket string
+	wave   string
+	execs  []string
+}
+
+const (
+	srcCell byte = iota + 1
+	srcExec
+	srcSlice // slice waits and eligibility, capacity waits: never under an execution filter
+	srcWave
+)
+
+// From and To are the span's extent in Unix milliseconds: the start's earliest bound and the
+// end's latest bound. To is math.MaxInt64 while the span is open.
+func (sp *Span) From() int64 { return sp.from }
+func (sp *Span) To() int64   { return sp.to }
 
 func endOf(st *Stamp, basis, rule, reason string) *SpanEnd {
 	if st == nil {
@@ -56,7 +106,10 @@ func strp(s string) *string {
 	return &s
 }
 
-type spanBuilder struct{ out []*Span }
+type spanBuilder struct {
+	out []*Span
+	cur spanMeta
+}
 
 func (b *spanBuilder) add(kind, entity, parent, group string, ids map[string]string, start, end *Stamp, outcome, reason string, inferredStart bool, rule string) *Span {
 	if start == nil && end == nil {
@@ -88,96 +141,276 @@ func (b *spanBuilder) add(kind, entity, parent, group string, ids map[string]str
 	if inferredStart && sp.Authority == "authoritative" {
 		sp.Authority = "reconstructed"
 	}
+	sp.meta = b.cur
+	edge := start
+	if edge == nil {
+		edge = end
+	}
+	if lo, ok := edge.lo(); ok {
+		sp.from = lo
+	} else {
+		sp.from = edge.OrderMS
+	}
+	sp.to = math.MaxInt64
+	if end != nil {
+		if hi, ok := end.hi(); ok {
+			sp.to = hi
+		} else {
+			sp.to = end.OrderMS
+		}
+		sp.to = max(sp.to, sp.from)
+	}
 	b.out = append(b.out, sp)
 	return sp
 }
 
-// SpanFilter selects spans.
+// SpanFilter selects spans. FromMS and ToMS select spans overlapping the window (an open span
+// overlaps everything after its start); SpanID selects one span exactly.
 type SpanFilter struct {
-	Ticket, Execution, Wave, Entity string
-	Kinds                           map[string]bool
+	Ticket, Execution, Wave, Entity, SpanID string
+	Kinds                                   map[string]bool
+	FromMS, ToMS                            *int64
 }
 
 func (f SpanFilter) wantTicket(t string) bool { return f.Ticket == "" || f.Ticket == t }
 
-// Spans builds every span the projection supports, filtered, with lanes assigned.
-func Spans(s *State, f SpanFilter) []*Span {
+func (f SpanFilter) match(sp *Span) bool {
+	m := sp.meta
+	switch m.src {
+	case srcCell:
+		if !f.wantTicket(m.ticket) || (f.Wave != "" && m.wave != f.Wave) || (f.Execution != "" && !contains(m.execs, f.Execution)) {
+			return false
+		}
+	case srcExec:
+		if (f.Execution != "" && (len(m.execs) == 0 || m.execs[0] != f.Execution)) || !f.wantTicket(m.ticket) || (f.Wave != "" && m.wave != f.Wave) {
+			return false
+		}
+	case srcSlice:
+		if f.Execution != "" || !f.wantTicket(m.ticket) || (f.Wave != "" && m.wave != f.Wave) {
+			return false
+		}
+	case srcWave:
+		if f.Execution != "" || f.Ticket != "" || (f.Wave != "" && m.wave != f.Wave) {
+			return false
+		}
+	}
+	if f.SpanID != "" && sp.SpanID != f.SpanID {
+		return false
+	}
+	if len(f.Kinds) > 0 && !f.Kinds[sp.Kind] {
+		return false
+	}
+	if f.Entity != "" && sp.Entity != f.Entity && feedStr(sp.Parent) != f.Entity && !strings.HasPrefix(sp.Entity, f.Entity+"/") {
+		return false
+	}
+	if f.FromMS != nil && sp.to < *f.FromMS {
+		return false
+	}
+	return true
+}
+
+// spanSet is every span of one projection position, sorted by start, with lanes assigned over
+// the whole set (so a filtered reply keeps the lanes of the full picture).
+type spanSet struct {
+	pos     uint64
+	applied int64
+	spans   []*Span
+}
+
+// allSpans returns the spans of the state's current position, building them once per position.
+// The spans are shared by every caller: they must not be changed.
+func allSpans(s *State) []*Span {
+	if c := s.spanCache; c != nil && c.pos == s.Pos && c.applied == s.Applied {
+		return c.spans
+	}
+	spans := buildSpans(s)
+	s.spanCache = &spanSet{pos: s.Pos, applied: s.Applied, spans: spans}
+	return spans
+}
+
+// Spans returns the spans that match f, sorted by start (earliest bound first).
+func Spans(s *State, f SpanFilter) []*Span { return spansOf(allSpans(s), f) }
+
+// buildSpans builds every span the projection supports.
+func buildSpans(s *State) []*Span {
 	b := &spanBuilder{}
 	for _, t := range sortedKeys(s.Cells) {
 		c := s.Cells[t]
-		if !f.wantTicket(t) || (f.Wave != "" && c.WaveID != f.Wave) || (f.Execution != "" && !contains(c.Executions, f.Execution)) {
-			continue
-		}
-		cellSpans(b, s, c, f)
+		b.cur = spanMeta{src: srcCell, ticket: t, wave: c.WaveID, execs: c.Executions}
+		cellSpans(b, s, c)
 	}
 	for _, id := range sortedKeys(s.Executions) {
 		x := s.Executions[id]
-		if (f.Execution != "" && f.Execution != id) || !f.wantTicket(x.TicketID) || (f.Wave != "" && !waveHas(s, f.Wave, x.TicketID)) {
-			continue
+		wave := ""
+		if c := s.Cells[x.TicketID]; c != nil {
+			wave = c.WaveID
 		}
-		execSpans(b, x)
+		b.cur = spanMeta{src: srcExec, ticket: x.TicketID, wave: wave, execs: []string{id}}
+		execSpans(b, s, x)
 	}
-	if f.Execution == "" {
-		for _, id := range sortedKeys(s.Slices) {
-			sl := s.Slices[id]
-			if (f.Wave != "" && sl.WaveID != f.Wave) || !f.wantTicket(sl.TicketID) {
-				continue
-			}
-			ids := map[string]string{"slice_id": sl.SliceID, "wave_id": sl.WaveID, "ticket_id": sl.TicketID}
-			ref := "slice:" + sl.SliceID
-			if sl.Blocked != nil {
-				var end *Stamp
-				if sl.Resolved != nil && sl.Resolved.Pos > sl.Blocked.Pos {
-					end = sl.Resolved
-				}
-				b.add("slice-wait", ref, ref, ref, ids, sl.Blocked, end, "", "completed", false, "")
-			}
-			if el := sl.eligible(); el != nil {
-				reason := "completed"
-				end := sl.Scheduled
-				if end == nil && sl.Superseded != nil {
-					end, reason = sl.Superseded, "superseded"
-				}
-				b.add("slice-eligible", ref, ref, ref, ids, el, end, "", reason, false, "")
+	for _, id := range sortedKeys(s.Slices) {
+		sl := s.Slices[id]
+		b.cur = spanMeta{src: srcSlice, ticket: sl.TicketID, wave: sl.WaveID}
+		ids := map[string]string{"slice_id": sl.SliceID}
+		for k, v := range map[string]string{"wave_id": sl.WaveID, "ticket_id": sl.TicketID} {
+			if v != "" {
+				ids[k] = v
 			}
 		}
-		if f.Ticket == "" {
-			for _, id := range sortedKeys(s.Waves) {
-				w := s.Waves[id]
-				if f.Wave != "" && f.Wave != id {
-					continue
+		ref := "slice:" + sl.SliceID
+		// Every dependency wait, oldest first: the first keeps the plain id, later ones "#n"
+		// (n counts the waits no longer kept, so an id never moves to another wait).
+		for i, w := range sl.Waits {
+			n := sl.WaitsDropped + int64(i) + 1
+			var end *Stamp
+			reason := "completed"
+			if w.Resolved != nil {
+				end = w.Resolved
+			} else if w.Superseded != nil {
+				end, reason = w.Superseded, "superseded"
+			}
+			sp := b.add("slice-wait", ref, ref, ref, ids, w.Blocked, end, "", reason, false, "")
+			if sp != nil {
+				if n > 1 {
+					sp.SpanID += "#" + itoa(&n)
 				}
-				var last *Stamp
-				done := len(w.Slices) > 0
-				for _, sid := range w.Slices {
-					sl := s.Slices[sid]
-					if sl == nil || (sl.Integrated == nil && sl.Superseded == nil) {
-						done = false
-						break
-					}
-					if sl.Integrated != nil && (last == nil || sl.Integrated.Pos > last.Pos) {
-						last = sl.Integrated
-					}
+				sp.Attrs.Reasons, sp.Attrs.DependsOn = nonEmpty(w.Reasons), nonEmpty(w.DependsOn)
+				// dependency.blocked names its slices only in its sentences: of the slice's
+				// dependencies recorded at materialization (the wait's own revision), the ones its
+				// sentences name are what it waits on. A dependency they do not name is not claimed.
+				if sp.Attrs.DependsOn == nil && sameRevision(w.Revision, sl.Revision) {
+					sp.Attrs.DependsOn = nonEmpty(namedIn(sl.Dependencies, w.Reasons))
 				}
-				if !done {
-					last = nil
-				}
-				b.add("wave", "wave:"+id, "", "wave:"+id, map[string]string{"wave_id": id}, w.FirstSeen, last, "", "completed", false, "")
+			}
+		}
+		if el := sl.eligible(); el != nil {
+			reason := "completed"
+			end := sl.Scheduled
+			if end == nil && sl.Superseded != nil {
+				end, reason = sl.Superseded, "superseded"
+			}
+			sp := b.add("slice-eligible", ref, ref, ref, ids, el, end, "", reason, false, "")
+			if sp != nil {
+				sp.Attrs.DependsOn = nonEmpty(sl.DependsOn)
 			}
 		}
 	}
-	var out []*Span
-	for _, sp := range b.out {
-		if len(f.Kinds) > 0 && !f.Kinds[sp.Kind] {
-			continue
+	// Execution-capacity waits, closed then open, keyed by the event that opened them.
+	capacity := func(t string, opened, released *Stamp) {
+		wave := ""
+		if c := s.Cells[t]; c != nil {
+			wave = c.WaveID
 		}
-		if f.Entity != "" && sp.Entity != f.Entity && feedStr(sp.Parent) != f.Entity && !strings.HasPrefix(sp.Entity, f.Entity+"/") {
-			continue
+		b.cur = spanMeta{src: srcSlice, ticket: t, wave: wave}
+		ref := "cell:" + t
+		if sp := b.add("capacity-wait", ref, ref, ref, map[string]string{"ticket_id": t}, opened, released, "", "completed", false, ""); sp != nil {
+			sp.SpanID += "@" + opened.EventID
 		}
-		out = append(out, sp)
 	}
-	assignLanes(out)
+	for _, w := range s.CapacityWaits {
+		capacity(w.TicketID, w.Opened, w.Released)
+	}
+	for _, t := range sortedKeys(s.Pending.Capacity) {
+		capacity(t, s.Pending.Capacity[t], nil)
+	}
+	// A ready slice's waits for a free place, closed then open: reconstructed from the scheduler's
+	// decisions (rule held-sentence), both ends bounded by the decisions that sampled them.
+	sliceCapacity := func(w *SliceCapacityWait) {
+		ticket := ""
+		if sl := s.Slices[w.SliceID]; sl != nil {
+			ticket = sl.TicketID
+		}
+		b.cur = spanMeta{src: srcSlice, ticket: ticket, wave: w.WaveID}
+		ref := "slice:" + w.SliceID
+		ids := map[string]string{"slice_id": w.SliceID}
+		if w.WaveID != "" {
+			ids["wave_id"] = w.WaveID
+		}
+		if sp := b.add("capacity-wait", ref, ref, ref, ids, w.Opened, w.Released, "", "completed", false, "held-sentence"); sp != nil {
+			sp.SpanID += "@" + w.Opened.EventID
+			if w.Limit > 0 {
+				sp.Attrs.Limit = ptr(w.Limit)
+			}
+			sp.Attrs.Reasons = nonEmpty([]string{w.Why})
+		}
+	}
+	for _, w := range s.SliceCapacityWaits {
+		sliceCapacity(w)
+	}
+	for _, id := range sortedKeys(s.Pending.SliceCapacity) {
+		sliceCapacity(s.Pending.SliceCapacity[id])
+	}
+	for _, id := range sortedKeys(s.Waves) {
+		w := s.Waves[id]
+		b.cur = spanMeta{src: srcWave, wave: id}
+		b.add("wave", "wave:"+id, "", "wave:"+id, map[string]string{"wave_id": id}, w.FirstSeen, waveDone(s, w), "", "completed", false, "")
+	}
+	assignLanes(b.out)
+	sort.SliceStable(b.out, func(i, j int) bool {
+		x, y := b.out[i], b.out[j]
+		if x.from != y.from {
+			return x.from < y.from
+		}
+		if x.startKey != y.startKey {
+			return x.startKey[1] < y.startKey[1]
+		}
+		return x.SpanID < y.SpanID
+	})
+	return b.out
+}
+
+// namedIn returns the ids of deps that one of the sentences names as a whole word.
+func namedIn(deps, sentences []string) []string {
+	var out []string
+	for _, d := range deps {
+		for _, r := range sentences {
+			if i := strings.Index(r, d); i >= 0 && !idChar(r, i-1) && !idChar(r, i+len(d)) {
+				out = append(out, d)
+				break
+			}
+		}
+	}
 	return out
+}
+
+// idChar reports a character at i that would continue an id (a letter, digit, - or _).
+func idChar(s string, i int) bool {
+	if i < 0 || i >= len(s) {
+		return false
+	}
+	c := s[i]
+	return c == '-' || c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// sameRevision reports two recorded revisions that are the same (or not recorded on either side).
+func sameRevision(a, b *int64) bool {
+	return a == nil || b == nil || *a == *b
+}
+
+// waveDone is when a wave's last slice was integrated, once every slice is integrated or
+// superseded; nil before.
+func waveDone(s *State, w *Wave) *Stamp {
+	var last *Stamp
+	if len(w.Slices) == 0 {
+		return nil
+	}
+	for _, sid := range w.Slices {
+		sl := s.Slices[sid]
+		if sl == nil || (sl.Integrated == nil && sl.Superseded == nil) {
+			return nil
+		}
+		if sl.Integrated != nil && (last == nil || sl.Integrated.Pos > last.Pos) {
+			last = sl.Integrated
+		}
+	}
+	return last
+}
+
+func nonEmpty(list []string) []string {
+	if len(list) == 0 {
+		return nil
+	}
+	return append([]string(nil), list...)
 }
 
 func feedStr(p *string) string {
@@ -187,12 +420,7 @@ func feedStr(p *string) string {
 	return *p
 }
 
-func waveHas(s *State, wave, ticket string) bool {
-	c := s.Cells[ticket]
-	return c != nil && c.WaveID == wave
-}
-
-func cellSpans(b *spanBuilder, s *State, c *Cell, f SpanFilter) {
+func cellSpans(b *spanBuilder, s *State, c *Cell) {
 	t := c.TicketID
 	cellRef := "cell:" + t
 	base := map[string]string{"ticket_id": t, "cell_instance": c.CellInstance, "slice_id": c.SliceID}
@@ -275,28 +503,46 @@ func cellSpans(b *spanBuilder, s *State, c *Cell, f SpanFilter) {
 		if r.outcome != "" && r.outcome != "APPROVED" && r.outcome != "AWAITING_HUMAN" {
 			reason = "failed"
 		}
-		b.add("round", "gate:"+t+"/round#"+itoa(&n), cellRef, cellRef, with("round", itoa(&n)), r.start, r.end, r.outcome, reason, false, "")
+		if sp := b.add("round", "gate:"+t+"/round#"+itoa(&n), cellRef, cellRef, with("round", itoa(&n)), r.start, r.end, r.outcome, reason, false, ""); sp != nil {
+			sp.Attrs.Round = ptr(n)
+		}
 	}
 
 	// visits, and the build tasks inside them (start inferred: the previous completion).
-	for _, v := range c.Visits {
+	for i, v := range c.Visits {
 		parent := ""
 		if v.ExecutionID != "" {
 			parent = "execution:" + v.ExecutionID
 		}
-		reason := "completed"
-		if v.ClosedBy == "cleanup" {
-			reason = "unknown"
+		bound, rule, why := visitEnd(s, c, i)
+		end := v.Exited
+		if bound != nil {
+			end = bound
 		}
-		b.add("visit", "visit:"+v.VisitID, parent, cellRef, with("visit_id", v.VisitID, "station", v.Station, "round", itoa(v.Round), "execution_id", v.ExecutionID),
-			v.Entered, v.Exited, v.Outcome, reason, false, "")
+		if sp := b.add("visit", "visit:"+v.VisitID, parent, cellRef, with("visit_id", v.VisitID, "station", v.Station, "round", itoa(v.Round), "execution_id", v.ExecutionID),
+			v.Entered, end, v.Outcome, "completed", false, ""); sp != nil {
+			sp.Attrs.Action, sp.Attrs.Round = v.Action, v.Round
+			switch {
+			case bound != nil:
+				// Ended without an exit record (or closed only by cleanup): closed at the bound, no
+				// outcome, reconstructed, its length at most until the bound; never "took".
+				sp.closeInferred(v.Entered, bound, rule, why)
+			case v.Exited != nil:
+				if late, _, lateWhy := visitBound(s, c, i); late != nil && laterThan(v.Exited, late) {
+					// The recorded exit wins; say where the span had stopped before it arrived.
+					sp.Attrs.InterruptedAt, sp.Attrs.InterruptedReason = ptr(stampMS(late)), lateWhy
+				}
+			}
+		}
 		prev := v.Entered
 		for _, task := range c.Tasks {
 			if task.VisitID != v.VisitID {
 				continue
 			}
-			b.add("task", "visit:"+v.VisitID+"/task:"+task.TaskID+"#"+task.Step, "visit:"+v.VisitID, "visit:"+v.VisitID,
-				with("visit_id", v.VisitID, "task_id", task.TaskID, "round", itoa(task.Round)), prev, task.At, task.Step, "completed", true, "previous-completion")
+			if sp := b.add("task", "visit:"+v.VisitID+"/task:"+task.TaskID+"#"+task.Step, "visit:"+v.VisitID, "visit:"+v.VisitID,
+				with("visit_id", v.VisitID, "task_id", task.TaskID, "round", itoa(task.Round)), prev, task.At, task.Step, "completed", true, "previous-completion"); sp != nil {
+				sp.Attrs.Round = task.Round
+			}
 			prev = task.At
 		}
 	}
@@ -306,14 +552,19 @@ func cellSpans(b *spanBuilder, s *State, c *Cell, f SpanFilter) {
 		gate := "gate:" + t + "/review#" + itoa(rv.Round)
 		for _, seat := range rv.Panel {
 			var end *Stamp
-			vote := ""
+			vote, model := "", seat.Model
 			for _, vd := range rv.Verdicts {
 				if vd.Seat == seat.Seat {
 					end, vote = vd.At, vd.Vote
+					if vd.Model != "" {
+						model = vd.Model
+					}
 				}
 			}
-			b.add("seat", "seat:"+t+"/review#"+itoa(rv.Round)+"/"+seat.Seat, gate, gate, with("round", itoa(rv.Round), "seat", seat.Seat),
-				rv.Started, end, vote, "completed", false, "")
+			if sp := b.add("seat", "seat:"+t+"/review#"+itoa(rv.Round)+"/"+seat.Seat, gate, gate, with("round", itoa(rv.Round), "seat", seat.Seat),
+				rv.Started, end, vote, "completed", false, ""); sp != nil {
+				sp.Attrs.Model, sp.Attrs.Vote, sp.Attrs.Round = model, vote, rv.Round
+			}
 		}
 	}
 
@@ -327,12 +578,199 @@ func cellSpans(b *spanBuilder, s *State, c *Cell, f SpanFilter) {
 		if g.Kind == "required" {
 			kind = "person-wait"
 		}
-		b.add(kind, "gate:"+t+"/"+g.Key, cellRef, cellRef, with("round", itoa(g.Round)), g.Opened, g.Closed, g.ClosedBy, "completed", false, "")
+		if sp := b.add(kind, "gate:"+t+"/"+g.Key, cellRef, cellRef, with("round", itoa(g.Round)), g.Opened, g.Closed, g.ClosedBy, "completed", false, ""); sp != nil {
+			sp.Attrs.Round = g.Round
+			if g.Reason != "" {
+				sp.Attrs.Reasons = []string{g.Reason}
+			}
+		}
 	}
-	_ = f
 }
 
-func execSpans(b *spanBuilder, x *Execution) {
+// visitBound is where a visit stopped when its exit was not recorded by then, by the rules the
+// Control Tower's scene uses (reduce-v3.ts closeVisits): the first applied after its entry (and,
+// when it exited, before its exit) of its execution's end ("execution-ended", reason
+// interrupted; never for the human-approval station: a wait on a person is not an execution's
+// work) and the next entry of the same station ("unclosed-visit", reason superseded: the station
+// helper names the earlier visit in that entry as unclosed_visit); for a visit closed only by
+// cleanup, also the cell's next entry into a different station (same rule). nil when none applies.
+// An execution whose outcome is unknown and that recorded no end bounds its visits too, at the
+// supervisor's outcome-unknown recovery ("execution-outcome-unknown", reason unknown).
+func visitBound(s *State, c *Cell, i int) (bound *Stamp, rule, reason string) {
+	v := c.Visits[i]
+	if v.Entered == nil {
+		return nil, "", ""
+	}
+	limit := uint64(math.MaxUint64)
+	if v.Exited != nil {
+		limit = v.Exited.Pos
+	}
+	consider := func(st *Stamp, ru, re string) {
+		if st == nil || st.Pos <= v.Entered.Pos || st.Pos >= limit {
+			return
+		}
+		if bound == nil || st.Pos < bound.Pos {
+			bound, rule, reason = st, ru, re
+		}
+	}
+	if x := s.Executions[v.ExecutionID]; v.ExecutionID != "" && x != nil && v.Station != "human-approval" {
+		for _, st := range []*Stamp{x.Completed, x.Failed, x.ProcessEnded} {
+			consider(st, "execution-ended", "interrupted")
+		}
+		consider(unknownEnd(s, x), "execution-outcome-unknown", "unknown")
+	}
+	for _, w := range c.Visits[i+1:] {
+		if w.Station == v.Station && w.Entered != nil {
+			consider(w.Entered, "unclosed-visit", "superseded")
+			break
+		}
+	}
+	// A visit whose only exit was written by cleanup: the cell entering any other station shows it
+	// had moved on (one station at a time per cell), so the first such entry bounds it too.
+	if v.ClosedBy == "cleanup" {
+		for _, w := range c.Visits[i+1:] {
+			if w.Station != v.Station && w.Entered != nil {
+				consider(w.Entered, "unclosed-visit", "superseded")
+				break
+			}
+		}
+	}
+	return bound, rule, reason
+}
+
+// visitEnd is where a visit's span ends when its end is not a recorded exit: the bound when it has
+// no exit (visitBound), and, when its only exit was written by cleanup (closed_by cleanup, at
+// cleanup time, long after the work), the bound before that exit, else the cleanup itself
+// ("closed-by-cleanup", reason unknown). nil when the visit's exit is recorded or it has neither.
+func visitEnd(s *State, c *Cell, i int) (end *Stamp, rule, reason string) {
+	v := c.Visits[i]
+	bound, rule, reason := visitBound(s, c, i)
+	switch {
+	case v.Exited == nil:
+		return bound, rule, reason
+	case v.ClosedBy != "cleanup":
+		return nil, "", ""
+	case bound != nil:
+		return bound, rule, reason
+	}
+	return v.Exited, "closed-by-cleanup", "unknown"
+}
+
+// closeInferred makes an end that no record states: basis inferred with its rule and reason, no
+// outcome, authority reconstructed, and the length only as a most (until the end's latest bound).
+func (sp *Span) closeInferred(start, end *Stamp, rule, reason string) {
+	sp.End = endOf(end, "inferred", rule, reason)
+	sp.Outcome = nil
+	d := between(start, end, true)
+	sp.Duration = Duration{MaxMS: d.MaxMS, Basis: "inferred"}
+	sp.Authority = "reconstructed"
+}
+
+// unknownEnd is where an execution that recorded no end is closed when its outcome is unknown: no
+// later than the supervisor's outcome-unknown recovery, else no later than the first later record
+// that shows the supervisor had moved on from it (movedOnEnd). A bounded end: not_after, no at.
+// nil for any other execution.
+func unknownEnd(s *State, x *Execution) *Stamp {
+	if x == nil || x.ProcessEnded != nil || x.Completed != nil || x.Failed != nil {
+		return nil
+	}
+	if ExecState(x) != "unknown" {
+		return movedOnEnd(s, x)
+	}
+	at := x.UnknownAt
+	if at == nil { // a projection saved before UnknownAt was kept
+		for i := range s.Recoveries {
+			if r := &s.Recoveries[i]; r.Kind == "outcome-unknown" && r.ExecutionID == x.ExecutionID {
+				at = r.At
+				break
+			}
+		}
+	}
+	return boundAt(at)
+}
+
+// movedOnEnd bounds an execution that recorded no end and no recovery when later records show the
+// supervisor had moved on from it: a later claim of the same ticket (another execution) or the
+// supervisor parking the ticket for a person. One execution runs a ticket at a time, so whatever
+// ran had ended by the first of those; how it ended is not recorded. nil when nothing bounds it:
+// it may still be running.
+func movedOnEnd(s *State, x *Execution) *Stamp {
+	start := execStart(x)
+	if x.TicketID == "" || start == nil {
+		return nil
+	}
+	var first *Stamp
+	consider := func(st *Stamp) {
+		if st != nil && st.Pos > start.Pos && (first == nil || st.Pos < first.Pos) {
+			first = st
+		}
+	}
+	for _, y := range s.Executions {
+		if y != x && y.TicketID == x.TicketID {
+			consider(execStart(y))
+		}
+	}
+	for _, g := range s.Gates {
+		if g.TicketID == x.TicketID && g.Kind == "required" {
+			consider(g.Opened)
+		}
+	}
+	return boundAt(first)
+}
+
+// boundAt is a bounded, reconstructed end no later than st.
+func boundAt(at *Stamp) *Stamp {
+	if at == nil {
+		return nil
+	}
+	hi, ok := at.hi()
+	if !ok {
+		hi = at.OrderMS
+	}
+	return &Stamp{EventID: at.EventID, Pos: at.Pos, Precision: "bounded", NotAfter: &hi, OrderMS: at.OrderMS, Authority: "reconstructed"}
+}
+
+// execEnd is where an execution's span ends: its recorded end (the process's own, else the
+// supervisor's completed or failed, which are stamped late), else unknownEnd. inferred says the
+// end is a bound no record states. nil while nothing ends or bounds it.
+func execEnd(s *State, x *Execution) (end *Stamp, inferred bool) {
+	for _, st := range []*Stamp{x.ProcessEnded, x.Completed, x.Failed} {
+		if st != nil {
+			return st, false
+		}
+	}
+	if u := unknownEnd(s, x); u != nil {
+		return u, true
+	}
+	return nil, false
+}
+
+// ExecStateIn is ExecState with what only the whole projection knows: an execution bounded by
+// later records (movedOnEnd) is of unknown outcome, never "running". The one state every view
+// serves (/runs, /runs/{id}, the snapshot, a span's attrs.state, /marks).
+func ExecStateIn(s *State, x *Execution) string {
+	state := ExecState(x)
+	if (state == "running" || state == "claimed") && movedOnEnd(s, x) != nil && x.ProcessEnded == nil && x.Completed == nil && x.Failed == nil {
+		return "unknown"
+	}
+	return state
+}
+
+// execReason is an execution span's end reason for its state.
+func execReason(state string) string {
+	return orDefault(map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "interrupted", "unknown": "unknown"}[state], "completed")
+}
+
+// laterThan reports whether a happened after b by their recorded times (a's earliest bound after
+// b's latest). An exit delivered after the bound but stamped before it was not interrupted: the
+// sources are read separately, so delivery order is not the order things happened.
+func laterThan(a, b *Stamp) bool {
+	lo, ok := a.lo()
+	hi, ok2 := b.hi()
+	return ok && ok2 && lo > hi
+}
+
+func execSpans(b *spanBuilder, s *State, x *Execution) {
 	ref := "execution:" + x.ExecutionID
 	ids := map[string]string{"execution_id": x.ExecutionID}
 	if x.TicketID != "" {
@@ -346,25 +784,65 @@ func execSpans(b *spanBuilder, x *Execution) {
 		cellParent = "cell:" + x.TicketID
 	}
 	group := orDefault(cellParent, ref)
-	if x.Claimed != nil {
-		end := x.ProcessStarted
-		if end == nil {
-			end = x.Started
-		}
-		b.add("claim", ref, cellParent, group, ids, x.Claimed, end, "", "completed", false, "")
+	// The state always goes out (attrs.state), so a view never has to guess "running".
+	state := ExecStateIn(s, x)
+	execAttrs := SpanAttrs{Attempt: x.Attempt, State: state, CostUSD: costOf(x).USD}
+	reason := execReason(state)
+	// An execution ends at its recorded end; with none, an execution whose outcome is unknown ends
+	// no later than the recovery that found it so, or the first later record showing the supervisor
+	// had moved on (unknownEnd): never "running" after it.
+	end, inferred := execEnd(s, x)
+	start := x.ProcessStarted
+	if start == nil {
+		start = x.Started
 	}
-	state := ExecState(x)
-	reason := map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "failed", "unknown": "unknown"}[state]
-	if x.ProcessStarted != nil {
-		b.add("execution", ref, cellParent, group, ids, x.ProcessStarted, x.ProcessEnded, state, orDefault(reason, "completed"), false, "")
-	} else if x.Started != nil {
-		end := x.Completed
-		if end == nil {
-			end = x.Failed
+	if start != nil {
+		if sp := b.add("execution", ref, cellParent, group, ids, start, end, state, reason, false, ""); sp != nil {
+			sp.Attrs = execAttrs
+			switch {
+			case inferred:
+				sp.closeInferred(start, end, "execution-outcome-unknown", "unknown")
+			case end != nil && sp.Duration.Basis == "measured" && (x.ProcessStarted == nil || x.ProcessEnded == nil):
+				sp.Duration.Basis = "bounded" // the supervisor's own stamps, up to a poll late
+			}
+			if end != nil && reason != "completed" && reason != "failed" && sp.Duration.Basis == "measured" {
+				// Measured only for a process that ran to its end: an interrupted one never "took" it.
+				sp.Duration.Basis = "bounded"
+			}
 		}
-		sp := b.add("execution", ref, cellParent, group, ids, x.Started, end, state, orDefault(reason, "completed"), false, "")
-		if sp != nil && sp.Duration.Basis == "measured" {
-			sp.Duration.Basis = "bounded" // the supervisor's own stamps, up to a poll late
+	}
+	// Nothing under an ended execution stays open: every child span left open (no record closed
+	// it) ends at the execution's end, inferred (rule execution-ended), with no outcome. A child
+	// closed only by the observer's own reconstruction at the process end (contract 8:
+	// open-at-process-end, status unknown) reads the same way: no record stated that end.
+	childReason := "interrupted"
+	if reason == "unknown" {
+		childReason = "unknown"
+	}
+	closeOpen := func(sp *Span, from, own *Stamp) {
+		if sp == nil || from == nil {
+			return
+		}
+		switch {
+		case sp.End == nil && end != nil:
+			hi, ok := end.hi()
+			if !ok {
+				hi = end.OrderMS
+			}
+			sp.to, sp.endKey = max(hi, sp.from), end.OrderMS
+			sp.closeInferred(from, end, "execution-ended", childReason)
+		case sp.End != nil && own != nil && own.Authority == "reconstructed":
+			sp.closeInferred(from, own, "execution-ended", childReason)
+		}
+	}
+	if x.Claimed != nil {
+		started := x.ProcessStarted
+		if started == nil {
+			started = x.Started
+		}
+		if sp := b.add("claim", ref, cellParent, group, ids, x.Claimed, started, "", "completed", false, ""); sp != nil {
+			sp.Attrs.Attempt = x.Attempt
+			closeOpen(sp, x.Claimed, nil) // a claim that never started, of an ended execution
 		}
 	}
 	for _, wref := range sortedKeys(x.Workflows) {
@@ -375,7 +853,7 @@ func execSpans(b *spanBuilder, x *Execution) {
 		} else if w.Status == "unknown" {
 			reason = "unknown"
 		}
-		b.add("workflow", wref, ref, ref, ids, w.Started, w.Finished, w.Status, reason, false, "")
+		closeOpen(b.add("workflow", wref, ref, ref, ids, w.Started, w.Finished, w.Status, reason, false, ""), w.Started, w.Finished)
 	}
 	for _, a := range Agents(x) {
 		aref := "agent:" + a.AgentID
@@ -390,13 +868,22 @@ func execSpans(b *spanBuilder, x *Execution) {
 		}
 		parent := orDefault(a.Workflow, ref)
 		if a.Queued != nil {
-			b.add("agent-queue", aref, parent, parent, aids, a.Queued, a.Started, "", "completed", false, "")
+			if sp := b.add("agent-queue", aref, parent, parent, aids, a.Queued, a.Started, "", "completed", false, ""); sp != nil {
+				sp.Attrs = SpanAttrs{Label: a.Label, Model: a.Model, AgentType: a.AgentType}
+				closeOpen(sp, a.Queued, nil)
+			}
 		}
 		if a.Started != nil {
 			reason := map[string]string{"error": "failed", "unknown": "unknown"}[a.Status]
 			sp := b.add("agent", aref, parent, parent, aids, a.Started, a.Finished, a.Status, orDefault(reason, "completed"), false, "")
 			if sp != nil && a.Finished != nil && a.DurationMS != nil && a.Started.Precision == "ms" {
 				sp.Duration = Duration{MS: a.DurationMS, MinMS: a.DurationMS, MaxMS: a.DurationMS, Basis: "measured"}
+			}
+			if sp != nil {
+				// A workflow agent's calls are seen only as a count; an Agent-tool sub-agent's one by one.
+				sp.Attrs = SpanAttrs{Label: a.Label, Model: a.Model, AgentType: a.AgentType, ToolCalls: a.ToolCalls, ToolsCountOnly: a.Workflow != "",
+					LastTool: a.LastTool, Tokens: a.Tokens}
+				closeOpen(sp, a.Started, a.Finished)
 			}
 		}
 	}
@@ -408,7 +895,7 @@ func execSpans(b *spanBuilder, x *Execution) {
 		}
 		tids := map[string]string{"execution_id": x.ExecutionID, "tool_call_id": t.ToolCallID}
 		reason := map[string]string{"error": "failed", "unknown": "unknown"}[t.Status]
-		b.add("tool", "tool:"+t.ToolCallID, parent, parent, tids, t.Called, t.Returned, t.Status, orDefault(reason, "completed"), false, "")
+		closeOpen(b.add("tool", "tool:"+t.ToolCallID, parent, parent, tids, t.Called, t.Returned, t.Status, orDefault(reason, "completed"), false, ""), t.Called, t.Returned)
 	}
 }
 

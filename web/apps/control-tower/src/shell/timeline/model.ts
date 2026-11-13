@@ -29,6 +29,7 @@ import {
   type StationOutcome,
   type TimeQuality,
   type ToolName,
+  executionEndedAt,
 } from "../../sim";
 import type { HistoryIndex } from "../history";
 import { toolFamily } from "../vocab";
@@ -258,8 +259,8 @@ export function timelineModel(): TimelineModel {
       }
       for (const ex of Object.values(scene.executions)) {
         if (ex.ticketId !== ticketId) continue;
-        track.executions.push({ ref: ref.execution(ex.id), start: ex.claimedAt, end: ex.endedAt });
-        put(ref.execution(ex.id), -1, ex.claimedAt, ex.endedAt);
+        track.executions.push({ ref: ref.execution(ex.id), start: ex.claimedAt, end: executionEndedAt(ex) });
+        put(ref.execution(ex.id), -1, ex.claimedAt, executionEndedAt(ex));
       }
       for (const span of timeline.agents) {
         const agent = cell.agents[span.agentId] as AgentState;
@@ -361,7 +362,7 @@ export function liveTimelineModel(log: SceneLog, liveAt: number, index: HistoryI
   const gatesBy = new Map<string, GateState[]>();
   for (const g of Object.values(scene.gates)) (gatesBy.get(g.ticketId) ?? gatesBy.set(g.ticketId, []).get(g.ticketId))?.push(g);
   const execBy = new Map<string, Track["executions"]>();
-  for (const x of Object.values(scene.executions)) (execBy.get(x.ticketId) ?? execBy.set(x.ticketId, []).get(x.ticketId))?.push({ ref: ref.execution(x.id), start: x.claimedAt, end: x.endedAt });
+  for (const x of Object.values(scene.executions)) (execBy.get(x.ticketId) ?? execBy.set(x.ticketId, []).get(x.ticketId))?.push({ ref: ref.execution(x.id), start: x.claimedAt, end: executionEndedAt(x) });
 
   const cells = Object.values(scene.cells).sort((a, b) => a.openedAt - b.openedAt || a.ticketId.localeCompare(b.ticketId));
   const withCell = new Set<string>();

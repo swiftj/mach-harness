@@ -164,7 +164,7 @@ func routes() []string {
 		"/api/v1/waves", "/api/v1/waves/WAVE-001", "/api/v1/slices", "/api/v1/slices/SLICE-001", "/api/v1/cells", "/api/v1/cells/T-1",
 		"/api/v1/cells/T-1/visits/build%231", "/api/v1/cells/T-1/evidence", "/api/v1/runs", "/api/v1/runs/x0123456789ab",
 		"/api/v1/runs/x0123456789ab/agents", "/api/v1/runs/x0123456789ab/tools", "/api/v1/spans", "/api/v1/artifacts",
-		"/api/v1/analytics/metrics", "/api/v1/analytics/runs", "/api/v1/history"}
+		"/api/v1/analytics/metrics", "/api/v1/analytics/runs", "/api/v1/history", "/api/v1/series", "/api/v1/concurrency", "/api/v1/marks"}
 }
 
 // ---- security ----
@@ -269,7 +269,7 @@ func TestEveryEndpointShape(t *testing.T) {
 		"/api/v1/health":                     {"status", "observer_time", "index", "projection", "ingest", "freshness", "streams"},
 		"/api/v1/factory/status":             {"factory_present", "report", "summary", "supervisor", "recorded_mode", "freshness"},
 		"/api/v1/events":                     {"events", "next", "head", "floor", "more", "scanned"},
-		"/api/v1/history":                    {"events", "next_from_order", "more", "complete", "head", "watermark_ms", "limits"},
+		"/api/v1/history":                    {"events", "next_from_order", "more", "complete", "capped", "head", "watermark_ms", "limits"},
 		"/api/v1/snapshot":                   {"cursor", "generation", "reconstructed", "state"},
 		"/api/v1/project":                    {"counts_by_state", "factory", "active_cells", "human_gates_open", "cursor"},
 		"/api/v1/waves":                      {"items", "cursor"},
@@ -285,6 +285,9 @@ func TestEveryEndpointShape(t *testing.T) {
 		"/api/v1/runs/x0123456789ab/agents":  {"items", "note"},
 		"/api/v1/runs/x0123456789ab/tools":   {"items", "refused"},
 		"/api/v1/spans":                      {"items", "basis_vocabulary"},
+		"/api/v1/series":                     {"buckets", "complete", "source"},
+		"/api/v1/concurrency":                {"buckets", "limits", "complete", "live_ms"},
+		"/api/v1/marks":                      {"items", "total", "kinds"},
 		"/api/v1/artifacts":                  {"items", "settings"},
 		"/api/v1/analytics/metrics":          {"metrics", "definitions_version"},
 		"/api/v1/analytics/runs":             {"items", "total"},
@@ -308,9 +311,14 @@ func TestEveryEndpointShape(t *testing.T) {
 	if run["state"] != "finished" || run["cost"].(map[string]any)["usd"].(float64) != 4.5 || run["time_basis"] != "process" {
 		t.Fatalf("run %v", run)
 	}
-	runs := h.get(t, "/api/v1/runs?state=unknown")["items"].([]any)
-	if len(runs) != 1 || runs[0].(map[string]any)["cost_may_be_under_reported"] != true {
+	// The interrupted run also has an outcome-unknown recovery: its process record wins (M6.3 polish;
+	// the Factory Floor's order, event contract 8), so it is a finished-class run, not an unknown one.
+	if runs := h.get(t, "/api/v1/runs?state=unknown")["items"].([]any); len(runs) != 0 {
 		t.Fatalf("unknown runs %v", runs)
+	}
+	stopped := h.get(t, "/api/v1/runs/x0fedcba98765")["run"].(map[string]any)
+	if stopped["state"] != "interrupted" || stopped["cost_may_be_under_reported"] != true {
+		t.Fatalf("interrupted run %v", stopped)
 	}
 	agents, _ := json.Marshal(h.get(t, "/api/v1/runs/x0123456789ab/agents")["items"])
 	if strings.Contains(string(agents), "cost") {

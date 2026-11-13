@@ -16,6 +16,7 @@ import {
   type FindingState,
   type Scene,
   type StationId,
+  type VisitEntity,
 } from "../../sim";
 import { ACTOR_WORDS, gateName, kindOf, KIND_WORDS, ROLE_WORDS, STATION_WORDS, type ShellKind } from "../vocab";
 
@@ -32,6 +33,36 @@ export function findFinding(scene: Scene, id: string): FindingState | null {
 
 export function parseStation(id: string): { ticketId: string | null; station: StationId } {
   return id.includes("/") ? { ticketId: id.split("/")[0] ?? null, station: id.split("/")[1] as StationId } : { ticketId: null, station: id as StationId };
+}
+
+/** One VisitEntity per scene visit object, so a React selector gets the same object while the visit does not change. */
+const pickedCache = new WeakMap<object, VisitEntity>();
+
+/**
+ * The visit the Timeline picked through a station (X3): the selection is `station:T/s` and the detail
+ * `visit:T/s#n` (the n-th visit to that station in the cell, as the Timeline numbers them) or the
+ * visit's recorded id. Null when the detail names no visit of that station, or it has not begun.
+ */
+export function pickedVisitOf(scene: Scene, entity: AnyRef, detail: string | null): VisitEntity | null {
+  // A visit selected by its own ref that the scene cannot resolve (the simulation's visits carry no
+  // recorded id): read it through its station, by the Timeline's numbering.
+  if (!detail && kindOf(entity) === "visit") {
+    const m = /^visit:([^/]+)\/([^#/]+)#\d+$/.exec(entity);
+    if (!m || stableEntityAt(scene, entity)) return null;
+    return pickedVisitOf(scene, `station:${m[1]}/${m[2]}` as AnyRef, entity);
+  }
+  if (!detail || !detail.startsWith("visit:") || kindOf(entity) !== "station") return null;
+  const { ticketId, station } = parseStation(refId(entity));
+  const cell = ticketId ? scene.cells[ticketId] : undefined;
+  if (!cell) return null;
+  const vid = detail.slice("visit:".length);
+  const mine = cell.visits.filter((v) => v.station === station);
+  const m = /^([^/]+)\/([^#/]+)#(\d+)$/.exec(vid);
+  const v = mine.find((x) => x.visitId === vid) ?? (m && m[1] === ticketId && m[2] === station ? mine[Number(m[3]) - 1] : undefined);
+  if (!v) return null;
+  let out = pickedCache.get(v);
+  if (!out) pickedCache.set(v, (out = { ...v, ticketId: cell.ticketId, visitId: vid }));
+  return out;
 }
 
 /** The entity's own object at the playhead (stable while it does not change), or null if it does not exist yet. */

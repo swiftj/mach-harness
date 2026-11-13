@@ -53,12 +53,16 @@ func TestScenarioProjection(t *testing.T) {
 			t.Fatalf("review %+v", c.Reviews)
 		}
 		x1, x2 := s.Executions["x0123456789ab"], s.Executions["x0fedcba98765"]
-		r1, r2 := Run(x1), Run(x2)
+		r1, r2 := Run(s, x1), Run(s, x2)
 		if r1.State != "finished" || r1.TimeBasis != "process" || r1.Duration.Basis != "measured" || *r1.Cost.USD != 4.5 || r1.Cost.Source != "execution.usage" ||
 			r1.UnderReported || len(r1.Models) != 2 || *r1.Tokens != 1000+2000+50000+4000+500+700+9000+800 {
 			t.Fatalf("run 1 %+v", r1)
 		}
-		if r2.State != "unknown" || !r2.UnderReported || r2.Cost.USD != nil || r2.Cost.NullReason == "" {
+		// Its process record says interrupted and the supervisor also recorded outcome-unknown: interrupted
+		// (was unknown before M6.3 polish). One order with the Factory Floor's executionActivity; the
+		// process record is the execution's own account, outcome-unknown the fallback with no result
+		// (event contract 8; shared contracts 2.3).
+		if r2.State != "interrupted" || !r2.UnderReported || r2.Cost.USD != nil || r2.Cost.NullReason == "" {
 			t.Fatalf("run 2 %+v", r2)
 		}
 		agents := Agents(x1)
@@ -391,7 +395,7 @@ func TestCostCompletenessDecidesUnderReporting(t *testing.T) {
 	)
 	p := New(Options{Log: m})
 	p.View(func(s *State) {
-		a, b, c := Run(s.Executions[incomplete]), Run(s.Executions[complete]), Run(s.Executions[legacy])
+		a, b, c := Run(s, s.Executions[incomplete]), Run(s, s.Executions[complete]), Run(s, s.Executions[legacy])
 		if !a.UnderReported || len(a.UnderReasons) != 2 || !strings.Contains(a.UnderReasons[0], "budget") {
 			t.Fatalf("incomplete: %v %v", a.UnderReported, a.UnderReasons)
 		}
@@ -508,7 +512,7 @@ func TestRefusedToolsObservedThenReconciled(t *testing.T) {
 	}
 	view := func(x string) RunView {
 		var v RunView
-		New(Options{Log: m}).View(func(s *State) { v = Run(s.Executions[x]) })
+		New(Options{Log: m}).View(func(s *State) { v = Run(s, s.Executions[x]) })
 		return v
 	}
 	check := func(x string, tools []string, from string) {

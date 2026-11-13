@@ -12,6 +12,7 @@ import { ConnectionFacts } from "../SourceBadge";
 import { ACTOR_WORDS, schedulerLook, stageLook, timecode } from "../vocab";
 import { mayBeUnderReported, recordedCost } from "./anatomies";
 import { Facts, JumpButton, NotRecorded, RefLink, RefList, Section } from "./parts";
+import { sliceTitle } from "./words";
 
 export function RunNow() {
   const index = useSceneStore(indexFor);
@@ -93,7 +94,9 @@ export function RunNow() {
               return (
                 <div key={s.id}>
                   <RefLink to={ref.slice(s.id)} glyph={<SliceGlyph size={18} state={look.state} mark={look.mark} />} detail={look.label}>
-                    <span className="font-mono text-[12px]">{s.id}</span> <span className="text-ink-muted">{s.title}</span>
+                    {/* A slice with no title of its own is named by its id, once (never "SLICE-002 SLICE-002"). */}
+                    <span className="font-mono text-[12px]">{s.id}</span>
+                    {sliceTitle(s) ? <span className="text-ink-muted"> {sliceTitle(s)}</span> : null}
                   </RefLink>
                   {s.reasons[0] ? <p className="mb-1 ml-8 text-caption text-ink-subtle">{s.reasons.join(" ")}</p> : null}
                 </div>
@@ -107,6 +110,7 @@ export function RunNow() {
     </div>
   );
 }
+
 
 /** The run's counts change with nearly every event, so they render on their own. */
 function RunCounts() {

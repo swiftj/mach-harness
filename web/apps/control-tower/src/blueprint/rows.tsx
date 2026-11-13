@@ -17,7 +17,7 @@
 import { memo, useContext, type ReactNode } from "react";
 import { AgentHead, ArtifactCard, fc, StationSymbol, TimeRuler, type FactoryState } from "@mach/ui";
 import type { AgentState, CellState, EntityRef, ExecutionState, FindingState, GateState, StationVisit } from "../sim";
-import { activityOf } from "../sim";
+import { activityOf, executionEndedAt } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { execAxis, xOn, type ExecAxis } from "./axis";
 import { LodContext } from "./context";
@@ -111,7 +111,7 @@ export function ExecutionRows({ exec, pos, size, rows, laneY, ax, aw, width, flo
 
 function execColumns(flow: Flow, exec: ExecutionState): { x1: number; x2: number } | null {
   const xs: number[] = [];
-  const end = exec.endedAt ?? Infinity;
+  const end = executionEndedAt(exec) ?? Infinity;
   for (const n of flow.nodes) {
     const t = n.visit?.enteredAt ?? n.gate?.openedAt;
     if (t === undefined || t < exec.claimedAt || t > end) continue;

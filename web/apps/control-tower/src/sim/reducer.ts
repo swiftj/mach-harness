@@ -37,6 +37,7 @@ export const EMPTY_EXECUTION_EXTRAS = {
   ended: null,
   exitCode: null,
   recovery: null,
+  movedOnAt: null,
   workflowId: null,
   workflowStatus: null,
   stopReason: null,

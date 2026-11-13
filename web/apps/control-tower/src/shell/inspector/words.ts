@@ -3,7 +3,7 @@
  * D8, D13, D14, D17), as plain functions over the scene's own state, so they are tested
  * (test/m62-acceptance.test.mjs) rather than left inside JSX. No React here.
  */
-import { GAP_CLASS_WORDS, type Completeness, type PlanFacts, type StationVisit, type StreamObservationState, type VisitStatus } from "../../sim";
+import { GAP_CLASS_WORDS, MODELS, type Completeness, type PlanFacts, type StationVisit, type StreamObservationState, type VisitStatus } from "../../sim";
 import type { ConnectionStatus, RuntimeSummary } from "../../scene/connection";
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString("en-GB")} ${n === 1 ? one : many}`;
@@ -121,8 +121,10 @@ export function completenessWords(c: Completeness): { state: "partial" | "recons
 export { GAP_CLASS_WORDS } from "../../sim";
 
 /** A visit's or a gate's elapsed-time words (D4, D14): at work, waiting for a person, or bounded. */
-export function elapsedWords(status: VisitStatus["state"] | "work" | "wait" | "interrupted", started: boolean, finished: boolean, duration: string): string {
+export function elapsedWords(status: VisitStatus["state"] | "work" | "wait" | "interrupted" | "open", started: boolean, finished: boolean, duration: string): string {
   if (!started) return "not started";
+  // An open wave, slice, cell or round (X2): open, never at work.
+  if (status === "open") return finished ? `open ${duration}, then closed` : `open ${duration}`;
   if (status === "ended-unrecorded") return `ended without an exit record, within ${duration}`;
   // Entry to exit of a visit that stopped and was taken up again: a span, never time spent working.
   if (status === "interrupted") return finished ? `open for ${duration}, not continuous` : `open for ${duration}`;
@@ -167,4 +169,51 @@ export function visitLeftWords(visit: Pick<StationVisit, "leftAt">, status: Pick
   if (visit.leftAt === null) return status.state === "waiting-person" ? "not yet: waiting for a person" : "still open";
   if (status.state === "ended-unrecorded") return `no exit record; ended by ${clock(visit.leftAt)} at the latest`;
   return clock(visit.leftAt);
+}
+
+/** Cost by model from the last `execution.usage` among `entries` (the caller passes only what happened by the playhead). */
+export function modelCostsOf(entries: readonly { readonly event: { readonly type: string } }[]): Array<[string, number | null]> {
+  const usage = [...entries].reverse().find((e) => e.event.type === "execution.usage");
+  if (!usage) return [];
+  const models = ((usage.event as { data?: { models?: Record<string, { cost_usd?: number | null }> } }).data?.models ?? {}) as Record<string, { cost_usd?: number | null }>;
+  return Object.entries(models).map(([name, m]): [string, number | null] => [name, typeof m.cost_usd === "number" ? m.cost_usd : null]);
+}
+
+/** A slice's own title, or null when it has none but its id (the reducer names an untitled slice by its id). */
+export function sliceTitle(s: { readonly id: string; readonly title: string }): string | null {
+  const t = s.title.trim();
+  return t && t !== s.id ? t : null;
+}
+
+/** What a Timeline span picked through an ancestor is called, by its ref's grammar. */
+export function pickedWords(detail: string): string {
+  if (/^visit:.*\/task:/.test(detail)) return "a build task";
+  if (detail.startsWith("visit:")) return "a station visit";
+  if (/^gate:.*\/round#/.test(detail)) return "a review round";
+  if (/^gate:.*\/required:/.test(detail)) return "a wait on a person";
+  if (detail.startsWith("workflow:")) return "a workflow";
+  if (detail.startsWith("seat:")) return "a review seat";
+  if (detail.startsWith("gate:")) return "a wait at a gate";
+  return "a span";
+}
+
+/**
+ * The note above an entity selected through a span the store cannot select itself (a wait on a
+ * person, a round, a seat). It never says nothing more is known: what the Timeline holds for the span
+ * (its record's reasons, since when, until when or still open, how it is known) is the In time
+ * section, shown first; the selected ancestor's own record follows.
+ */
+export function pickedThroughWords(detail: string, kindWord: string): string {
+  return `You picked ${pickedWords(detail)} on the Timeline. It is not selectable on its own: what its span records is under In time, first; its ${kindWord.toLowerCase()}'s own record follows.`;
+}
+
+/** A seat's model by its name ("Claude Opus 5.5"); a model the vocabulary does not know, as recorded; null when none is. */
+export function seatModelName(model: string | null | undefined): string | null {
+  if (!model) return null;
+  return (MODELS as Readonly<Record<string, { name: string }>>)[model]?.name ?? model;
+}
+
+/** The reviewer of a review seat, by the seat and model its record carries: never by its agent's opaque id. */
+export function reviewerWords(seat: string, model: string | null): string {
+  return `The ${seat} seat's reviewer${model ? `, on ${model}` : ""}`;
 }

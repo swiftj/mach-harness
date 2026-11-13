@@ -30,12 +30,21 @@ import type { SceneSource } from "../sim/provenance";
 import type { Clock, SwitchableClock } from "./clock";
 import type { ConnectionStatus, FactoryStatus } from "./connection";
 import { INITIAL_CONNECTION } from "./connection";
+import { INITIAL_TIMELINE_VIEW, type TimelineViewState } from "../timeline/contract";
+import { storeView } from "./view";
 
 /** Factory milliseconds per wall millisecond at 1x: the 55-minute run plays in about 5.5 minutes. Simulation and replay playback only; live time runs at 1. */
 export const PLAYBACK_BASE_RATE = 10;
 export const SPEEDS = [0.5, 1, 2, 4, 8, 16] as const;
 export type PlaybackSpeed = (typeof SPEEDS)[number];
 export type ViewMode = "atlas" | "blueprint";
+/**
+ * The experience on screen (M6.3 design section 7): the Factory Floor (whose view is `view`) or the
+ * Execution Timeline. A separate field, so `ViewMode` and everything that assumes two views stay as
+ * they are, and the floor's view is remembered while the Timeline is up.
+ */
+export type Workspace = "floor" | "timeline";
+export const WORKSPACES: readonly Workspace[] = ["floor", "timeline"];
 /** How far the live edge may run ahead of the last thing the stream confirmed (a heartbeat comes every 15 s). */
 export const LIVE_EXTRAPOLATION_MS = 20_000;
 /**
@@ -94,6 +103,13 @@ export interface SeriesState {
   readonly coarse: boolean;
 }
 
+/** A chosen time interval and the cells with a span overlapping it. */
+export interface HighlightInterval {
+  readonly from: number;
+  readonly to: number;
+  readonly refs: readonly EntityRef[];
+}
+
 export interface SceneStoreState {
   /** Where the scenes come from. Persistent: a store never changes source. */
   readonly source: SceneSource;
@@ -127,16 +143,42 @@ export interface SceneStoreState {
   readonly liveAt: number;
   /** Live-follow: the playhead is pinned to liveAt. Off while replaying an earlier moment. */
   readonly following: boolean;
+  /** Bumped by every `followLive()` ("Return to live", L, End), even one already at the live edge: views that pinned something to a moment let it follow again. */
+  readonly liveReturns: number;
   readonly playing: boolean;
   readonly speed: PlaybackSpeed;
   /** Events applied at the playhead (log.cursorAt(playhead)), for cheap change detection. */
   readonly cursor: number;
   readonly selection: EntityRef | null;
+  /**
+   * What was picked when it is more precise than the selection: a Timeline span whose own entity the
+   * store cannot select (a visit, a round, a build task in the simulation) selects its nearest
+   * selectable ancestor, and the span's entity is kept here so the Timeline can keep it marked.
+   * Null otherwise; cleared by any other selection.
+   */
+  readonly selectionDetail: string | null;
   readonly focus: FocusRequest | null;
   readonly hovered: EntityRef | null;
-  /** What to highlight with the hovered (or else the selected) entity: its dependency set or relations. */
+  /**
+   * What to highlight: the hovered (or else the selected) entity's dependency set or relations; with
+   * neither, the cells active in the Timeline's chosen interval (`interval`), when one is set.
+   */
   readonly highlighted: readonly EntityRef[];
+  /**
+   * A time interval the person chose in the Timeline and the cells active in it, so the floor can
+   * show them (M6.3 design section 7). Not a second selection: it only feeds `highlighted`, and only
+   * while nothing is hovered or selected. Set and cleared by the Timeline workspace.
+   */
+  readonly interval: HighlightInterval | null;
   readonly view: ViewMode;
+  /** Factory Floor or Timeline. The floor's `view` is kept while the Timeline is up. */
+  readonly workspace: Workspace;
+  /**
+   * The Timeline's interface state (window, grouping, expansion, filters, table), kept here so it
+   * survives a workspace switch. Interface state only: nothing in it changes what another view shows.
+   */
+  readonly timeline: TimelineViewState;
+  /** Theater Mode: the Factory Floor only; always off while the Timeline is up. */
   readonly theater: boolean;
   readonly reducedMotion: boolean;
   /**
@@ -165,9 +207,10 @@ export function playbackFactorLabel(source: SceneSource, speed: PlaybackSpeed): 
   return `${factor === 0.5 ? "½" : factor}×`;
 }
 
-/** The factor as spoken: "20 times real time" for real history, "2 times" for the simulation. */
+/** The factor as spoken: "20 times real time" for real history, "2 times" for the simulation; a half is "half speed" (X22), never "0.5 times". */
 export function playbackFactorWords(source: SceneSource, speed: PlaybackSpeed): string {
   const factor = playbackFactorOf(source, speed);
+  if (factor === 0.5) return source === "simulation" ? "half speed" : "half real time";
   return source === "simulation" ? `${factor} times` : `${factor} times real time`;
 }
 
@@ -220,10 +263,17 @@ export interface SceneStore {
   setSpeed(speed: PlaybackSpeed): void;
   /** Jump to the live edge and stay pinned to it. */
   followLive(): void;
-  select(entity: EntityRef | null, options?: { focus?: boolean }): void;
+  select(entity: EntityRef | null, options?: { focus?: boolean; detail?: string | null }): void;
   focusOn(target: EntityRef | "overview", reason?: FocusRequest["reason"]): void;
   hover(entity: EntityRef | null): void;
+  /** The Timeline's chosen interval and the cells active in it, or null. Feeds `highlighted` only while nothing is hovered or selected. */
+  setHighlightInterval(interval: HighlightInterval | null): void;
   setView(view: ViewMode): void;
+  /** Switch the experience. Selection, hover, playhead, playback and `view` are kept; Theater Mode ends on leaving the floor. */
+  setWorkspace(workspace: Workspace): void;
+  /** Merge a change into the Timeline's interface state. No change, no new state. */
+  setTimelineView(patch: Partial<TimelineViewState>): void;
+  /** Theater Mode on or off. Asking for it while the Timeline is up does nothing: it belongs to the floor. */
   setTheater(on: boolean): void;
   setReducedMotion(on: boolean): void;
   /** Camera follow on or off. A view calls setFollow(false) when the person pans or zooms. */
@@ -252,6 +302,7 @@ interface CommonOptions {
   reducedMotion?: boolean;
   speed?: PlaybackSpeed;
   view?: ViewMode;
+  workspace?: Workspace;
   /** Start at this factory time (default: the start for the simulation, the live edge otherwise). */
   at?: number;
   autoplay?: boolean;
@@ -322,6 +373,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     logVersion: 0,
     arrived: isSim ? 0 : log.size(),
     arrivedAtLeave: null,
+    liveReturns: 0,
     windowLoading: false,
     series: null,
     extent: isSim ? extentOf(fixture) : extentNow(startEdge),
@@ -335,10 +387,14 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     speed: options.speed ?? 1,
     cursor: log.cursorAt(start),
     selection: null,
+    selectionDetail: null,
     focus: null,
     hovered: null,
     highlighted: [],
+    interval: null,
     view: options.view ?? "atlas",
+    workspace: options.workspace ?? "floor",
+    timeline: INITIAL_TIMELINE_VIEW,
     theater: false,
     reducedMotion: options.reducedMotion ?? false,
     follow: true,
@@ -353,7 +409,13 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
 
   const highlightFor = (s: SceneStoreState): readonly EntityRef[] => {
     const subject = s.hovered ?? s.selection;
-    return subject ? relatedRefs(s.log.sceneAt(s.playhead), subject) : [];
+    if (subject) {
+      const related = relatedRefs(s.log.sceneAt(s.playhead), subject);
+      // The precise thing picked (a span selected through its ancestor) stays marked while nothing is hovered.
+      const detail = s.hovered === null && s.selectionDetail !== null && s.selectionDetail !== s.selection ? (s.selectionDetail as EntityRef) : null;
+      return detail && !related.includes(detail) ? [...related, detail] : related;
+    }
+    return s.interval ? s.interval.refs : [];
   };
 
   const set = (patch: Partial<SceneStoreState>): void => {
@@ -362,7 +424,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     if (next.following !== state.following) next = { ...next, arrivedAtLeave: next.following || isSim ? null : next.arrived };
     if (!isSim && windows) next = route(next);
     if (patch.playhead !== undefined || patch.logVersion !== undefined || next.log !== state.log) next = { ...next, cursor: next.log.cursorAt(next.playhead) };
-    const subjectChanged = next.hovered !== state.hovered || next.selection !== state.selection;
+    const subjectChanged = next.hovered !== state.hovered || next.selection !== state.selection || next.selectionDetail !== state.selectionDetail || next.interval !== state.interval;
     if (subjectChanged || next.cursor !== state.cursor || next.logVersion !== state.logVersion) {
       const highlighted = highlightFor(next);
       const same = highlighted.length === state.highlighted.length && highlighted.every((r, i) => r === state.highlighted[i]);
@@ -572,11 +634,11 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       if (SPEEDS.includes(speed)) set({ speed });
     },
     followLive() {
-      set({ following: true, playhead: state.liveAt, follow: true });
+      set({ following: true, playhead: state.liveAt, follow: true, liveReturns: state.liveReturns + 1 });
       if (loopWanted()) startLoop();
     },
     select(entity, opts) {
-      set({ selection: entity });
+      set({ selection: entity, selectionDetail: entity && opts?.detail && opts.detail !== entity ? opts.detail : null });
       if (entity && opts?.focus !== false) store.focusOn(entity, "select");
     },
     focusOn(target, reason = "api") {
@@ -587,10 +649,35 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     hover(entity) {
       if (entity !== state.hovered) set({ hovered: entity });
     },
+    setHighlightInterval(interval) {
+      const cur = state.interval;
+      if (interval === cur) return;
+      const same =
+        interval !== null &&
+        cur !== null &&
+        interval.from === cur.from &&
+        interval.to === cur.to &&
+        interval.refs.length === cur.refs.length &&
+        interval.refs.every((r, i) => r === cur.refs[i]);
+      if (!same) set({ interval });
+    },
     setView(view) {
       if (view !== state.view) set({ view });
     },
+    setWorkspace(workspace) {
+      if (workspace === state.workspace || !WORKSPACES.includes(workspace)) return;
+      set({ workspace, ...(workspace !== "floor" && state.theater ? { theater: false } : {}) });
+    },
+    setTimelineView(patch) {
+      const current = state.timeline;
+      const changed = (Object.keys(patch) as Array<keyof TimelineViewState>).some((k) => patch[k] !== undefined && patch[k] !== current[k]);
+      if (!changed) return;
+      const next: Record<string, unknown> = { ...current };
+      for (const [k, v] of Object.entries(patch)) if (v !== undefined) next[k] = v;
+      set({ timeline: next as unknown as TimelineViewState });
+    },
     setTheater(on) {
+      if (on && state.workspace !== "floor") return;
       if (on !== state.theater) set({ theater: on });
     },
     setReducedMotion(on) {
@@ -655,6 +742,68 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   if (windows) set({});
   if (options.autoplay) store.play();
   return store;
+}
+
+// ---------------------------------------------------------------- workspaces
+
+/**
+ * "Show in Timeline" (M6.3 design section 7), for the inspector's anatomies, the Atlas, the
+ * Blueprint and key `3`: select `ref` when one is given (without moving the floor's camera), leave
+ * Theater Mode, switch to the Timeline, and ask for the selection to be framed (the Timeline reveals
+ * the store's focus request: it expands the selection's tracks, scrolls to them and pans to its span).
+ * The playhead, playback and the floor's view are untouched.
+ */
+export function showInTimeline(store: SceneStore, ref?: EntityRef | null): void {
+  if (ref && ref !== store.getState().selection) store.select(ref, { focus: false });
+  store.setWorkspace("timeline");
+  const selection = store.getState().selection;
+  if (selection) store.focusOn(selection, "api");
+}
+
+/** "Show on the floor": back to the Factory Floor (keeping its view), framing the selection through the existing focusOn. */
+export function showOnFloor(store: SceneStore, view?: ViewMode): void {
+  if (view) store.setView(view);
+  store.setWorkspace("floor");
+  const selection = store.getState().selection;
+  if (selection) store.focusOn(selection, "api");
+}
+
+/** A view of the store that can be held still: what a hidden workspace reads. */
+export interface HeldStore extends SceneStore {
+  /** Held: getState() keeps returning the state as of the moment it was held, and no listener is told of changes. Released: brought up to date at once, then follows every change. */
+  hold(held: boolean): void;
+  held(): boolean;
+}
+
+/**
+ * The store as the Factory Floor sees it (a StoreView, view.ts). While held, a subtree reading it
+ * renders nothing new and runs no effect a change would start (no camera framing, no drawing, no
+ * catching up), so a hidden floor costs nothing while the Timeline is up, and is exactly where it was
+ * when it returns.
+ *
+ * It holds itself (A3) in its own change handler whenever the store's workspace is not "floor", before
+ * any listener is told: the change that switched workspaces (and a `focusOn` issued with it, as
+ * "Show in Timeline" does) never reaches the hidden floor, whose views therefore never animate while
+ * hidden. It is released, and caught up at once, by the change that brings the floor back, whichever
+ * way it comes (the switch, a key, the address).
+ */
+export function heldStore(store: SceneStore): HeldStore {
+  // Held by request (hold(true)), or by the store's workspace not being the floor's: either holds it.
+  let asked = false;
+  const away = (s: SceneStoreState) => s.workspace !== "floor";
+  const view = storeView(store, {
+    snapshotOnHide: true,
+    decide: (s) => (asked || away(s) ? "hide" : "show"),
+  });
+  if (away(store.getState())) view.setShown(false);
+  return {
+    ...view,
+    hold(held) {
+      asked = held;
+      view.setShown(!(held || away(store.getState())));
+    },
+    held: () => !view.shown(),
+  };
 }
 
 // ---------------------------------------------------------------- the development and capture hook

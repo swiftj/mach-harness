@@ -36,13 +36,13 @@ import {
   type VisitEntity,
   type WaveState,
   type WorkflowEntity,
+  executionEndedAt,
 } from "../../sim";
 import { useScene } from "../../scene";
 import { AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateGlyph, StateWord, StationGlyph, ToolGlyph } from "../glyphs";
 import {
   ACTOR_WORDS,
   artifactOf,
-  gateStateWords,
   gateName,
   gateOf,
   gateState,
@@ -61,9 +61,10 @@ import {
 import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
-import { activityNote, agentsWords, interruptionWords, planWords, runtimeWords, visitLeftWords } from "./words";
+import { activityNote, agentsWords, interruptionWords, modelCostsOf, planWords, reviewerWords, runtimeWords, seatModelName, visitLeftWords } from "./words";
 import { useFreeTextLabel } from "./catalog";
-import { useSceneStore } from "../../scene";
+import { gatePositionWords, outcomeStateWords, outcomeWordsOf, visitStateWords } from "../../timeline/inspector";
+import { historyEndedAt, useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
 
 /**
@@ -112,7 +113,7 @@ function FreeTextNote({ label, block = false }: { label: string; block?: boolean
   );
 }
 
-function ArtifactLink({ artifact }: { artifact: ArtifactState }) {
+export function ArtifactLink({ artifact }: { artifact: ArtifactState }) {
   const freeText = useFreeTextLabel(artifact);
   return (
     <RefLink to={ref.artifact(artifact.id)} glyph={<ArtifactGlyph kind={artifactOf(artifact.kind)} size={18} failed={/findings/.test(artifact.kind)} />} detail={timecode(artifact.writtenAt, false)}>
@@ -124,7 +125,7 @@ function ArtifactLink({ artifact }: { artifact: ArtifactState }) {
 
 function GateLink({ gate, to }: { gate: GateState; to?: EntityRef }) {
   return (
-    <RefLink to={to ?? ref.gate(gate.id)} glyph={<GateGlyphSmall kind={gateOf(gate.gate)} size={18} state={gateState(gate.state)} />} detail={gateStateWords(gate)}>
+    <RefLink to={to ?? ref.gate(gate.id)} glyph={<GateGlyphSmall kind={gateOf(gate.gate)} size={18} state={gateState(gate.state)} />} detail={gatePositionWords(gate)}>
       {gateName(gate)}
       {gate.round ? `, round ${gate.round}` : ""}
       {gate.recorded && gate.recorded.evaluations.at(-1)?.subject ? <span className="text-ink-subtle">, {gate.recorded.evaluations.at(-1)?.subject}</span> : null}
@@ -405,7 +406,7 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
                     Round {v.round}, {v.action}
                     <span className="text-ink-muted">
                       {" "}
-                      {status.state === "ended" ? `${v.outcomeWord ?? v.outcome ?? "ended"}, ` : status.state === "ended-unrecorded" ? "" : `${status.word.toLowerCase()}, `}<Elapsed startedAt={v.enteredAt} finishedAt={v.leftAt} mode={status.state === "waiting-person" ? "wait" : status.state === "ended-unrecorded" ? "ended-unrecorded" : v.interrupted ? "interrupted" : "work"} />
+                      {status.state === "ended" ? `${visitStateWords(v).toLowerCase()}, ` : status.state === "ended-unrecorded" ? "" : `${status.word.toLowerCase()}, `}<Elapsed startedAt={v.enteredAt} finishedAt={v.leftAt} mode={status.state === "waiting-person" ? "wait" : status.state === "ended-unrecorded" ? "ended-unrecorded" : v.interrupted ? "interrupted" : "work"} />
                     </span>
                   </p>
                   <p className="font-mono text-[11px] text-ink-subtle tabular">
@@ -709,7 +710,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
         <Facts
           facts={[
             ["Gate", gateName(gate)],
-            ["Position", <StateWord key="p" state={state} label={gateStateWords(gate)} />],
+            ["Position", <StateWord key="p" state={state} label={gatePositionWords(gate)} />],
             gate.round ? ["Round", `${gate.round} of ${MAX_ROUNDS}`] : null,
             ["Reached", at(gate.openedAt)],
             ["Decided", gate.decidedAt === null ? "not yet" : at(gate.decidedAt)],
@@ -836,7 +837,7 @@ export function FindingAnatomy({ finding }: { finding: FindingState }) {
       <Section title="Related">
         <RefList>
           {round ? (
-            <RefLink to={ref.gate(`${ticketId}/review#${finding.round}`)} glyph={<GateGlyphSmall kind="consensus" size={18} state={round.outcome === null ? "active" : round.outcome === "APPROVED" ? "succeeded" : round.outcome === "AWAITING_HUMAN" ? "human" : "failed"} />} detail={round.outcome?.toLowerCase().replace("_", " ") ?? "in progress"}>
+            <RefLink to={ref.gate(`${ticketId}/review#${finding.round}`)} glyph={<GateGlyphSmall kind="consensus" size={18} state={round.outcome === null ? "active" : round.outcome === "APPROVED" ? "succeeded" : round.outcome === "AWAITING_HUMAN" ? "human" : "failed"} />} detail={round.outcome ? outcomeWordsOf(round.outcome).words : "in progress"}>
               Review consensus, round {finding.round}
             </RefLink>
           ) : null}
@@ -910,15 +911,12 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
 // ---------------------------------------------------------------- execution
 
 /** Recorded spend per model, from the execution's own usage record (never per agent). */
+/** Cost by model as of the playhead: the last usage record received by then (never one recorded later). */
 function useModelCosts(executionId: string): Array<[string, number | null]> {
-  const { all } = useEntityEvents(ref.execution(executionId));
-  return useMemo(() => {
-    const usage = [...all].reverse().find((e) => e.event.type === "execution.usage");
-    if (!usage) return [];
-    const models = ((usage.event as { data?: { models?: Record<string, { cost_usd?: number | null }> } }).data?.models ?? {}) as Record<string, { cost_usd?: number | null }>;
-    return Object.entries(models).map(([name, m]): [string, number | null] => [name, typeof m.cost_usd === "number" ? m.cost_usd : null]);
-  }, [all]);
+  const { all, happened } = useEntityEvents(ref.execution(executionId));
+  return useMemo(() => modelCostsOf(all.slice(0, happened)), [all, happened]);
 }
+
 
 const COST_REASON_WORDS: Readonly<Record<string, string>> = {
   "budget-stop": "a budget stop ended the run",
@@ -950,6 +948,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
   const strays = useScene((s) => s.strayAgents);
   const count = useMemo(() => allAgentsOf(agents, execution.id) + Object.values(strays).filter((a) => a.executionId === execution.id).length, [agents, strays, execution.id]);
   const factory = useSceneStore((s) => s.factoryStatus);
+  const historyEnd = useSceneStore(historyEndedAt);
   const agentsLine = useScene((s) => agentsOf(s, factory, execution.id, count));
   const runtimeLine = useScene((s) => (execution.meta.authority === "simulated" ? null : runtimeWords(streamObservationOf(s, execution.id, sourceRuntimeOf(factory?.sources, execution.id)))));
   const real = execution.meta.authority !== "simulated";
@@ -962,7 +961,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
         <Facts
           facts={[
             ["Ticket", <Mono key="t">{execution.ticketId}</Mono>],
-            ["State", executionStatusOf(execution).word],
+            ["State", executionStatusOf(execution, historyEnd).word],
             ["Attempt", isKnown(execution.meta, "attempt") ? execution.attempt : <NotRecorded key="at" />],
             ["Asked to", isKnown(execution.meta, "next") ? execution.next : <NotRecorded key="n" />],
             execution.workflow ? ["Workflow", <Mono key="w">{execution.workflow}</Mono>] : null,
@@ -971,9 +970,14 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
             execution.phases.length ? ["Declared phases", execution.phases.join(", ")] : null,
             ["Claimed", isKnown(execution.meta, "claimedAt") ? at(execution.claimedAt) : <NotRecorded key="c" />],
             ["Started", at(execution.startedAt)],
-            ["Ended", at(execution.endedAt)],
+            // The execution ended when its process ended (measured, from the process record); the
+            // supervisor's record of its end, when later, is said on its own line (one rule everywhere).
+            ["Ended", at(executionEndedAt(execution))],
+            real && execution.processEndedAt !== null && execution.endedAt !== null && execution.endedAt !== execution.processEndedAt
+              ? ["Recorded by the supervisor", at(execution.endedAt)]
+              : null,
             real && execution.processStartedAt !== null
-              ? ["Process", `${timecode(execution.processStartedAt, false)} to ${execution.processEndedAt === null ? "now" : timecode(execution.processEndedAt, false)}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
+              ? ["Process", `${timecode(execution.processStartedAt, false)} to ${execution.processEndedAt !== null ? timecode(execution.processEndedAt, false) : historyEnd !== null ? `no end recorded (the history ends at ${timecode(historyEnd, false)})` : "now"}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
               : null,
             execution.recovery ? ["Recovery", execution.recovery] : null,
             execution.outcome ? ["Outcome", `${execution.outcome.stage ?? "?"}, next ${execution.outcome.next}${execution.outcome.waitingFor ? `, waiting for ${execution.outcome.waitingFor}` : ""}`] : null,
@@ -1110,7 +1114,7 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
             ["Round", `${visit.round} of ${MAX_ROUNDS}`],
             ["Step", isKnown(visit.meta, "action") ? visit.action : <NotRecorded key="a" />],
             ["Entered", at(visit.enteredAt)],
-            ["State", status.word],
+            ["State", visitStateWords(visit)],
             ["Left", status.state === "ended" ? at(visit.leftAt) : visitLeftWords(visit, status, (t) => timecode(t, false))],
             visit.interrupted ? ["Not continuous", interruptionWords(visit, (t) => timecode(t, false))] : null,
             [
@@ -1124,7 +1128,8 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
               ) : visit.interrupted ? (
                 <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={visit.leftAt} mode="interrupted" />
               ) : (
-                <NotRecorded key="d" />
+                // Entered and left are both recorded: the length is theirs, in the words "In time" uses (one source of truth).
+                <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={visit.leftAt} mode="work" />
               ),
             ],
             ["The station said", visit.outcomeWord ? <Mono key="o">{visit.outcomeWord}</Mono> : visit.leftAt === null ? "not yet" : <NotRecorded key="o" />],
@@ -1147,6 +1152,22 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
 }
 
 /** One review seat: it exists from its round's start, whether or not its reviewer is seen. */
+/**
+ * The reviewer as the record names it: its seat and model, the agent's id only as a quiet second line
+ * (an opaque hex id is not a name).
+ */
+function ReviewerWords({ seat }: { seat: SeatEntity }) {
+  return (
+    <span className="flex min-w-0 flex-col">
+      <span>{reviewerWords(seat.seat, seatModelName(seat.model))}</span>
+      <span className="font-mono text-[11px] text-ink-subtle [overflow-wrap:anywhere]" title="The reviewer agent's id">
+        <span className="sr-only">Agent id: </span>
+        {seat.agentId}
+      </span>
+    </span>
+  );
+}
+
 export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
   return (
     <>
@@ -1156,12 +1177,12 @@ export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
             ["Seat", seat.seat],
             ["Cell", <Mono key="c">{seat.ticketId}</Mono>],
             ["Round", `${seat.round} of ${MAX_ROUNDS}`],
-            ["Model", seat.model],
-            ["Vote", seat.vote ?? "not yet"],
+            ["Model", seatModelName(seat.model) ?? <NotRecorded key="m" />],
+            ["Vote", seat.vote ? outcomeStateWords(seat.vote) : "not yet"],
             seat.votedAt !== null ? ["Voted", at(seat.votedAt)] : null,
             seat.votedLate ? ["Arrived", "late: recorded after events that come after it"] : null,
             ["Findings", seat.findings],
-            ["Reviewer", seat.agentId ? <Mono key="r">{seat.agentId}</Mono> : "not seen"],
+            ["Reviewer", seat.agentId ? <ReviewerWords key="r" seat={seat} /> : "not seen"],
           ]}
         />
         {seat.votedEventId ? <JumpButton eventId={seat.votedEventId} label="Go to the vote" /> : null}

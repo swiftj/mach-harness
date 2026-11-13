@@ -286,8 +286,11 @@ Every response is M5's envelope: `{"ok": true, "data": …}` or `{"ok": false, "
 | `GET /cells`, `/cells/{ticket}` | Cells and station history | `[{ticket_id, slice_id, stage, risk, app_type, created_at, updated_at, current_visit, rounds}]`; detail adds `visits:[{visit, station, round, entered_at, exited_at, outcome, gates:[{gate, verdict, subject, seconds}]}]` and `archived:bool` |
 | `GET /cells/{ticket}/visits/{visit}` | One station visit | `{visit, station, events:[event]}` |
 | `GET /runs/{execution}/agents`, `/tools` | Agent and tool observations (DEPENDS ON the stream proof) | `[{agent_run_id, parent_id, label (identifier only), agent_type, model, started_at, finished_at, status, duration_ms, cost_usd}]`, `[{tool_call_id, agent_run_id, tool, category, outcome, duration_ms}]`. Never inputs or outputs. |
-| `GET /spans` **built** | Execution Timeline spans (shared contracts 2) | `?ticket|execution|wave|entity&kinds&limit&offset` → `{items:[span], basis_vocabulary}` |
-| `GET /history` **built** | A window of history in order (contract 14) | `?from_order&to_order` (or `from_ms&to_ms`) `&entities&ticket&execution&type&limit` → `{events, next_from_order, more, complete, watermark_ms}` |
+| `GET /spans` **built** | Execution Timeline spans (shared contracts 2, kinds including `capacity-wait`; a visit with no exit closed by inference at its execution's end or the next entry of its station) | `?ticket|execution|wave|entity|span&kinds&from_ms&to_ms&limit&offset` → `{items:[span], total, truncated, total_uncapped, basis_vocabulary, live_ms}` |
+| `GET /history` **built** | A window of history in order (contract 14), from memory and the segments on disk | `?from_order&to_order` (or `from_ms&to_ms`) `&entities&ticket&execution&type&limit` → `{events, next_from_order, more, complete, capped, watermark_ms}`; `capped`: the page stopped at 10,000 lines read from disk |
+| `GET /series` **built** | Event counts per time bucket | `?from_ms&to_ms&bucket_ms&ticket|execution` → `{buckets, total, kinds, authorities, complete, source}` |
+| `GET /concurrency` **built** | Spans active per bucket and kind | `?from_ms&to_ms&bucket_ms&kinds` → `{buckets[{from_ms, active:{kind:{max, mean, inferred_max}}}], limits[{name, value, from_ms, to_ms, event_id, applies_to}], complete, live_ms, projection}` |
+| `GET /marks` **built** | Instants to jump to | `?from_ms&to_ms|after_ms|before_ms&kinds&limit&offset` → `{items[mark], total, truncated, order, offset, more, next_offset, kinds}` |
 | `GET /cells/{ticket}/evidence` | Evidence metadata (catalog) | `{status, head, review_loop, checks:[{id, kind, result, evidence:[{artifact_id, file, sha256, bytes, media_type, viewable}]}], previous:[n]}` from `evidence/summary.json` and `results.json`; notes omitted |
 | `GET /artifacts/{ticket}/{artifact_id}` | Permitted artifact bytes (section 13) | the file, or 404/415/413 |
 | `GET /analytics/runs` | Historical analytics source data | `?after&limit` → `[{ticket_id, slice_id, outcome, rounds, verify_failures, review_rejections, escalated, human_approval, deviations_count, blockers:[{rule}], tests_seen_failing_first, created_at, closed_at, integration:{method, approved_commit, landed_commit}}]` from `archive/runs.jsonl` (notes and findings text omitted) |
@@ -460,8 +463,14 @@ differ, this one describes what is built.
   read: 213 MB of segments for that history instead of 281 MB. A format change rebuilds the index.
 - **History in order (section 12).** The store keeps an order index of its memory window (appended, or inserted where a
   late event belongs), so a `/history` window costs its size plus a binary search, not a scan and sort of the window.
+  What has left the window is read from the segments through a per-minute chunk index (oldest page of a 250,000-event
+  history: 30 ms; the index grew by 2.1 MiB); a page reads at most 10,000 lines from disk and says `capped: true` when it
+  stopped there.
+- **Projection format 3.** The projection keeps every dependency wait, closed capacity waits, recovery and gap times and
+  the Factory's limit history, so spans, concurrency and marks are derived from it once per position (a `/spans` query
+  on 250,000 events: 0.09 ms cached, 30 ms to build).
 - **Series.** `GET /api/v1/series`: counts per bucket by kind and authority, kept per minute for everything the index
-  has held (rebuilt from the segments on a restart), finer buckets from the memory window.
+  has held, also per ticket and per execution (rebuilt from the segments on a restart), finer buckets from the memory window.
 - **Snapshot at the head** is built from the live projection under its lock and kept until the projection moves (no
   copy of the state): about 0.6 s for that history the first time, then the encoded bytes.
 - **Plan facts and evidence visits (D11, D12).** The plan's exit carries `app_type` and `risk` (revision 2); the cell

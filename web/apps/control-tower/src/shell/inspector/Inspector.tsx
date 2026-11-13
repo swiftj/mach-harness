@@ -20,6 +20,7 @@ import {
   type ArtifactState,
   type CellState,
   type DependencyState,
+  type EntityRef,
   type ExecutionState,
   type FindingState,
   type GateState,
@@ -31,11 +32,12 @@ import {
   type VisitEntity,
   type WaveState,
   type WorkflowEntity,
+  executionEndedAt,
 } from "../../sim";
-import { useScene, useSceneStore, useStore } from "../../scene";
+import { historyEndedAt, useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
 import { IconButton } from "../timeline/Transport";
-import { artifactOf, selectable, gateOf, kindOf, gateStateWords, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
+import { artifactOf, selectable, STATION_WORDS, gateOf, kindOf, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
 import {
   ActorAnatomy,
   AgentAnatomy,
@@ -54,10 +56,12 @@ import {
   WaveAnatomy,
   WorkflowAnatomy,
 } from "./anatomies";
-import { identityOf, parseStation, selectEntity } from "./entity";
+import { identityOf, parseStation, pickedVisitOf, selectEntity } from "./entity";
 import { AuthorityBadge, Evidence, JumpButton, precisionWords, useEntityEvents } from "./parts";
 import { Provenance } from "./Provenance";
+import { pickedThroughWords } from "./words";
 import { RunNow } from "./RunNow";
+import { gatePositionWords, InTimeSection, visitStateWords } from "../../timeline/inspector";
 import { cellTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
 
 interface Look extends Timing {
@@ -68,7 +72,7 @@ interface Look extends Timing {
 }
 
 /** Glyph, state and phase of an entity that exists at the playhead. */
-function lookOf(entity: AnyRef, value: unknown): Look {
+function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null): Look {
   const id = refId(entity);
   switch (kindOf(entity)) {
     case "actor": {
@@ -96,7 +100,7 @@ function lookOf(entity: AnyRef, value: unknown): Look {
       const last = visits[visits.length - 1];
       const status = last ? visitStatusOf(last) : null;
       const state: FactoryState = !last || !status ? "idle" : status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(last.outcome);
-      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: status ? status.word : "Not visited", ...stationTiming(last) };
+      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: last ? visitStateWords(last) : "Not visited", ...stationTiming(last) };
     }
     case "agent": {
       const a = value as AgentState;
@@ -117,7 +121,7 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     case "gate": {
       const g = value as GateState;
       const state = gateState(g.state);
-      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: gateStateWords(g), phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
+      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: gatePositionWords(g), phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
     }
     case "dependency": {
       const d = value as DependencyState;
@@ -130,15 +134,17 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     case "execution": {
       const x = value as ExecutionState;
       // Its process may have ended before the supervisor recorded it (R6): ended, outcome not recorded yet.
-      const status = executionStatusOf(x);
+      const status = executionStatusOf(x, historyEnd);
       const state: FactoryState = status.running ? "active" : x.state === "failed" ? "failed" : x.state === "completed" ? "succeeded" : "idle";
-      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: status.word, phase: status.running ? "running" : "finished", since: x.endedAt ?? x.processEndedAt ?? x.startedAt };
+      // No end recorded on a history that is no longer live: started then, nothing says it finished.
+      if (historyEnd !== null && status.word === "No end recorded") return { glyph: <ExecutionGlyph size={28} state={state} />, state, mark: "ring-query", word: status.word, phase: "finished", since: x.startedAt ?? x.claimedAt, sinceWord: "Started at" };
+      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: status.word, phase: status.running ? "running" : "finished", since: executionEndedAt(x) ?? x.startedAt };
     }
     case "visit": {
       const v = value as VisitEntity;
       const status = visitStatusOf(v);
       const state: FactoryState = status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(v.outcome);
-      return { glyph: <StationGlyph kind={v.station as StationKind} size={28} state={state} />, state, word: status.word, phase: v.leftAt === null ? "running" : "finished", since: v.leftAt ?? v.enteredAt };
+      return { glyph: <StationGlyph kind={v.station as StationKind} size={28} state={state} />, state, word: visitStateWords(v), phase: v.leftAt === null ? "running" : "finished", since: v.leftAt ?? v.enteredAt };
     }
     case "seat": {
       const v = value as SeatEntity;
@@ -260,16 +266,25 @@ function namingScene(s: { source: string; log: { head(): Scene } }): Scene {
 }
 
 function Selected({ entity }: { entity: AnyRef }) {
-  const value = useScene((s) => selectEntity(s, entity));
   const store = useStore();
+  const detail = useSceneStore((s) => (s.selection === entity ? s.selectionDetail : null));
+  // A visit picked on the Timeline through its station (X3): that visit is the subject, not the station's latest.
+  const picked = useScene((s) => pickedVisitOf(s, entity, detail));
+  const own = useScene((s) => selectEntity(s, entity));
+  const subject: AnyRef = picked && detail ? (detail as AnyRef) : entity;
+  const value = picked ?? own;
   // Strings, so a new event re-renders the header only when the name itself changes.
-  const name = useSceneStore((s) => identityOf(entity, namingScene(s)).name);
-  const kindWord = useSceneStore((s) => identityOf(entity, namingScene(s)).kindWord);
-  const identity = { name, kindWord, id: refId(entity) };
+  const ownName = useSceneStore((s) => identityOf(entity, namingScene(s)).name);
+  const ownKindWord = useSceneStore((s) => identityOf(entity, namingScene(s)).kindWord);
+  const name = picked ? `${STATION_WORDS[picked.station as StationKind] ?? picked.station}, round ${picked.round}, in ${picked.ticketId}` : ownName;
+  const kindWord = picked ? "Station visit" : ownKindWord;
+  const identity = { name, kindWord, id: picked && detail ? refId(detail as AnyRef) : refId(entity) };
   const focusable = selectable(entity);
-  const look = value ? lookOf(entity, value) : null;
+  const historyEnd = useSceneStore(historyEndedAt);
+  const look = value ? lookOf(subject, value, historyEnd) : null;
   const { all } = useEntityEvents(entity);
   const unknown = all.length === 0 && !value;
+  const through = Boolean(detail) && !picked;
   return (
     <div>
       <header className="sticky top-0 z-10 border-b border-line bg-surface px-5 pb-4 pt-4">
@@ -301,15 +316,53 @@ function Selected({ entity }: { entity: AnyRef }) {
         <TimeStatus look={look} entity={entity} />
       </header>
       {unknown ? <p className="px-5 py-4 text-body-sm text-ink-muted">No record of that entity has been received. If it appears, this shows it.</p> : null}
+      {picked && detail ? <PickedVisit entity={entity} /> : picked ? null : <PickedThrough entity={entity} kindWord={identity.kindWord} />}
+      {/* A span picked through this entity (a wait on a person, a seat, a round): its time first, then this entity's record. */}
+      {through ? <InTimeSection entity={entity} detail={detail} /> : null}
       {value ? (
         <div className="pt-4">
-          <Why entity={entity} />
-          <Anatomy entity={entity} value={value} />
+          {/* "Why" reads the selection's own latest record: not shown for a visit picked through its station. */}
+          {picked ? null : <Why entity={entity} />}
+          <Anatomy entity={subject} value={value} />
         </div>
       ) : null}
+      {through ? null : <InTimeSection entity={entity} detail={detail} />}
       {value || all.length ? <Provenance entity={entity} value={value} /> : null}
       <Evidence entity={entity} />
     </div>
+  );
+}
+
+/** The picked visit's context: the station it was picked through, one link away. */
+function PickedVisit({ entity }: { entity: AnyRef }) {
+  const store = useStore();
+  return (
+    <p className="mx-5 mt-4 text-body-sm text-ink-muted" data-inspector-picked-visit="">
+      The visit you picked on the Timeline.{" "}
+      <button type="button" onClick={() => store.select(entity as EntityRef, { focus: false })} className="font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2">
+        Every visit to this station
+      </button>
+    </p>
+  );
+}
+
+/**
+ * When the Timeline picked something the store cannot select itself (a visit, a round, a build task in
+ * the simulation), the selection is its nearest selectable ancestor: said here, so the inspector never
+ * looks as if a different thing was picked.
+ */
+function PickedThrough({ entity, kindWord }: { entity: AnyRef; kindWord: string }) {
+  const detail = useSceneStore((s) => (s.selection === entity ? s.selectionDetail : null));
+  if (!detail) return null;
+  return (
+    <p className="mx-5 mt-4 rounded-sm border border-dashed border-line-strong px-3 py-2 text-body-sm text-ink-muted" data-inspector-picked={detail}>
+      {pickedThroughWords(detail, kindWord)}
+      {/* The span's record id: a secondary detail, on its own quiet line (never in the sentence). */}
+      <span className="mt-1 block font-mono text-[11px] text-ink-subtle [overflow-wrap:anywhere]" title="The span's record id">
+        <span className="sr-only">Its record id: </span>
+        {detail}
+      </span>
+    </p>
   );
 }
 

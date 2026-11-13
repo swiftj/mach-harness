@@ -70,6 +70,7 @@ type HistoryPage struct {
 	Next     string
 	More     bool
 	Complete bool
+	Capped   bool // the page stopped early at the store's disk scan cap (More is then true)
 }
 
 // Historian is a Log that can serve history in order as well as in delivery order.

@@ -37,21 +37,40 @@ func TV(st *Stamp) *TimeView {
 
 var terminalExec = map[string]bool{"finished": true, "failed": true, "interrupted": true, "timed-out": true, "could-not-start": true}
 
-// ExecState is an execution's state from what was recorded, strongest fact first: a recorded
-// unknown outcome, a failure, an interruption, completion, a process that ended (the supervisor
-// has not recorded it yet), a running process, a claim.
+// stoppedHow is how an execution's process was stopped before it could run to its end
+// (interrupted, timed-out, could-not-start), from its own record (result.json `ended`) or, when
+// that is missing, the supervisor's execution.failed `how` (which copies it). "" for a process
+// that ran to its end, or one not known to have stopped.
+func stoppedHow(x *Execution) string {
+	stopped := map[string]bool{"interrupted": true, "timed-out": true, "could-not-start": true}
+	switch {
+	case stopped[x.Ended]:
+		return x.Ended
+	case x.Ended == "" && x.Failed != nil && stopped[x.How]:
+		return x.How
+	}
+	return ""
+}
+
+// ExecState is an execution's state from its own records, strongest fact first: an interruption
+// (the process record says how the process was stopped; execution.failed then says only that it
+// did not finish), a recorded unknown outcome (the supervisor's outcome-unknown recovery, which the
+// event contract uses only when there is no process result), a failure (it ran to its end and
+// reported one), completion, a process that ended (the supervisor has not recorded it yet), a
+// running process, a claim. The same order as the Factory Floor's executionActivity
+// (selectors.ts). Views use ExecStateIn, which adds what only the whole projection knows.
 func ExecState(x *Execution) string {
 	unknown := false
 	for _, k := range x.Recovery {
 		unknown = unknown || k == "outcome-unknown"
 	}
 	switch {
+	case stoppedHow(x) != "":
+		return stoppedHow(x)
 	case unknown && x.Completed == nil && x.Failed == nil:
 		return "unknown"
 	case x.Failed != nil:
 		return "failed"
-	case x.Ended == "interrupted" || x.Ended == "timed-out" || x.Ended == "could-not-start":
-		return x.Ended
 	case x.Completed != nil:
 		return "finished"
 	case x.ProcessEnded != nil:
@@ -139,9 +158,11 @@ func refusedTools(x *Execution) ([]string, string) {
 	return out, "observed"
 }
 
-// Run builds an execution's view.
-func Run(x *Execution) RunView {
-	v := RunView{ExecutionID: x.ExecutionID, TicketID: x.TicketID, SliceID: x.SliceID, Workflow: x.Workflow, State: ExecState(x), Attempt: x.Attempt,
+// Run builds an execution's view. Its state is ExecStateIn, the one the execution's span carries
+// (attrs.state), so /runs, /runs/{id}, /spans and /marks never disagree; an execution bounded by
+// later records ends at that bound here too (ended_at not_after, duration inferred, max only).
+func Run(s *State, x *Execution) RunView {
+	v := RunView{ExecutionID: x.ExecutionID, TicketID: x.TicketID, SliceID: x.SliceID, Workflow: x.Workflow, State: ExecStateIn(s, x), Attempt: x.Attempt,
 		Claimed: TV(x.Claimed), Ended: x.Ended, ExitCode: x.ExitCode, How: x.How, StageAtStart: x.StageAtStart, StageAtEnd: x.StageAtEnd,
 		Recovery: nonNilS(x.Recovery), Agents: len(x.Agents) + len(x.Queued), Visits: nonNilS(x.Visits),
 		Models: map[string]*ModelUsage{}, UnderReasons: []string{}}
@@ -163,20 +184,22 @@ func Run(x *Execution) RunView {
 	}
 	v.StartedAt, v.EndedAt = TV(start), TV(end)
 	v.Duration = between(start, end, false)
+	if end == nil {
+		if u := unknownEnd(s, x); u != nil {
+			v.EndedAt = TV(u)
+			v.Duration = Duration{MaxMS: between(start, u, true).MaxMS, Basis: "inferred"}
+		}
+	}
 	if v.TimeBasis == "supervisor" && v.Duration.Basis == "measured" {
 		v.Duration.Basis = "bounded" // the supervisor stamps executions up to a poll late
+	}
+	if stoppedHow(x) != "" && v.Duration.Basis == "measured" {
+		v.Duration.Basis = "bounded" // stopped from outside: it never "took" that long, it ran until stopped
 	}
 	if x.Completed != nil || x.Failed != nil {
 		v.Moved = ptr(x.Completed != nil)
 	}
-	switch {
-	case x.Usage != nil && x.Usage.TotalCostUSD != nil:
-		v.Cost = Cost{USD: x.Usage.TotalCostUSD, Source: "execution.usage", Authority: "observed"}
-	case x.CostUSD != nil:
-		v.Cost = Cost{USD: x.CostUSD, Source: "execution.completed", Authority: "authoritative"}
-	default:
-		v.Cost.NullReason = "no cost was recorded for this execution (no result was read)"
-	}
+	v.Cost = costOf(x)
 	if x.Usage != nil {
 		var total int64
 		seen := false
@@ -224,6 +247,17 @@ func Run(x *Execution) RunView {
 	return v
 }
 
+// costOf is an execution's recorded cost: the stream's usage, else the supervisor's record.
+func costOf(x *Execution) Cost {
+	switch {
+	case x.Usage != nil && x.Usage.TotalCostUSD != nil:
+		return Cost{USD: x.Usage.TotalCostUSD, Source: "execution.usage", Authority: "observed"}
+	case x.CostUSD != nil:
+		return Cost{USD: x.CostUSD, Source: "execution.completed", Authority: "authoritative"}
+	}
+	return Cost{NullReason: "no cost was recorded for this execution (no result was read)"}
+}
+
 // costReason words a cost_incomplete_reasons code for a person.
 func costReason(code string) string {
 	switch code {
@@ -251,7 +285,7 @@ func Runs(s *State, class, ticket string) []RunView {
 		if ticket != "" && x.TicketID != ticket {
 			continue
 		}
-		if class != "" && StateClass(ExecState(x)) != class {
+		if class != "" && StateClass(ExecStateIn(s, x)) != class {
 			continue
 		}
 		xs = append(xs, x)
@@ -265,7 +299,7 @@ func Runs(s *State, class, ticket string) []RunView {
 	})
 	out := make([]RunView, 0, len(xs))
 	for _, x := range xs {
-		out = append(out, Run(x))
+		out = append(out, Run(s, x))
 	}
 	return out
 }
@@ -457,7 +491,7 @@ func ProjectView(s *State) map[string]any {
 	}
 	running := 0
 	for _, x := range s.Executions {
-		if StateClass(ExecState(x)) == "active" {
+		if StateClass(ExecStateIn(s, x)) == "active" {
 			running++
 		}
 	}
@@ -682,7 +716,7 @@ func SnapshotView(s *State) map[string]any {
 	execs := map[string]any{}
 	for _, id := range sortedKeys(s.Executions) {
 		x := s.Executions[id]
-		execs[id] = map[string]any{"run": Run(x), "agents": Agents(x), "tools": Tools(x), "refused": orEmpty(x.Refused), "workflows": x.Workflows, "session": x.Session}
+		execs[id] = map[string]any{"run": Run(s, x), "agents": Agents(x), "tools": Tools(x), "refused": orEmpty(x.Refused), "workflows": x.Workflows, "session": x.Session}
 	}
 	gates := []*HumanGate{}
 	for _, k := range sortedKeys(s.Gates) {

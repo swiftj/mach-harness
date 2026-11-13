@@ -8,12 +8,23 @@ import (
 // Series: how many events of each kind and authority fall in each time bucket, for drawing a long
 // timeline without fetching every event (GET /api/v1/series; shared contracts 2.8). The store
 // keeps counts per minute of order time for everything it has indexed since its generation began
-// (also what has left the memory window, and what was read back from the segments on a restart);
-// finer buckets are counted from the memory window. Placement is by order_ms: a late event counts
-// where it belongs.
+// (also what has left the memory window, and what was read back from the segments on a restart),
+// and the same per ticket and per execution, so a filtered overview covers the whole history too.
+// Finer buckets, and a ticket and an execution filter together, are counted from the memory
+// window. Placement is by order_ms: a late event counts where it belongs.
+//
+// Per-ticket and per-execution counts cost one cell per (ticket or execution, minute) with events:
+// a total and a short list of (kind or authority, count) pairs, about 100 bytes. They are bounded
+// by MaxKeyedCells: past it the oldest minutes of every key are dropped together (about a quarter
+// of the cells), and a filtered series that reaches before the earliest kept minute is not complete.
 
 // SeriesMinute is the resolution of the kept counts.
 const SeriesMinute = 60_000
+
+// MaxKeyedCells bounds the per-ticket and per-execution minute counts (about 25 MB at most).
+const MaxKeyedCells = 1 << 18
+
+var keyedCellLimit = MaxKeyedCells // a test lowers it
 
 type seriesBucket struct {
 	total uint32
@@ -21,12 +32,31 @@ type seriesBucket struct {
 	auth  map[string]uint32
 }
 
+// keyCount is one kind's (id < authorityBit) or authority's count in a keyed cell.
+type keyCount struct {
+	id uint16
+	n  uint32
+}
+
+const authorityBit = 1 << 15
+
+type keyedCell struct {
+	total  uint32
+	counts []keyCount
+}
+
 type seriesAgg struct {
 	minutes map[int64]*seriesBucket
 	first   int64 // the earliest minute counted (0: none)
+
+	keyed      map[string]map[int64]*keyedCell // "t:<ticket>" | "x:<execution>" -> minute -> counts
+	cells      int
+	keyedFloor int64 // minutes before this were dropped from the keyed counts (0: none)
+	names      []string
+	nameID     map[string]uint16
 }
 
-func (a *seriesAgg) add(orderMS int64, kind, authority string) {
+func (a *seriesAgg) add(orderMS int64, kind, authority, ticket, execution string) {
 	if orderMS <= 0 {
 		return
 	}
@@ -45,6 +75,112 @@ func (a *seriesAgg) add(orderMS int64, kind, authority string) {
 	if a.first == 0 || m < a.first {
 		a.first = m
 	}
+	if m < a.keyedFloor {
+		return
+	}
+	if ticket != "" {
+		a.addKeyed("t:"+ticket, m, kind, authority)
+	}
+	if execution != "" {
+		a.addKeyed("x:"+execution, m, kind, authority)
+	}
+}
+
+func (a *seriesAgg) id(name string) uint16 {
+	if id, ok := a.nameID[name]; ok {
+		return id
+	}
+	if a.nameID == nil {
+		a.nameID = map[string]uint16{}
+	}
+	if len(a.names) >= authorityBit-1 {
+		return authorityBit - 1 // more distinct kinds than any history has: counted under the last name
+	}
+	id := uint16(len(a.names))
+	a.names = append(a.names, name)
+	a.nameID[name] = id
+	return id
+}
+
+func (c *keyedCell) bump(id uint16) {
+	for i := range c.counts {
+		if c.counts[i].id == id {
+			c.counts[i].n++
+			return
+		}
+	}
+	c.counts = append(c.counts, keyCount{id: id, n: 1})
+}
+
+func (a *seriesAgg) addKeyed(key string, m int64, kind, authority string) {
+	if a.keyed == nil {
+		a.keyed = map[string]map[int64]*keyedCell{}
+	}
+	mins := a.keyed[key]
+	if mins == nil {
+		mins = map[int64]*keyedCell{}
+		a.keyed[key] = mins
+	}
+	c := mins[m]
+	if c == nil {
+		c = &keyedCell{}
+		mins[m] = c
+		a.cells++
+	}
+	c.total++
+	c.bump(a.id(kind))
+	c.bump(a.id(authority) | authorityBit)
+	if a.cells > keyedCellLimit {
+		a.dropOldestKeyed()
+	}
+}
+
+// dropOldestKeyed drops the oldest minutes of every keyed count, about a quarter of the cells.
+func (a *seriesAgg) dropOldestKeyed() {
+	perMinute := map[int64]int{}
+	for _, mins := range a.keyed {
+		for m := range mins {
+			perMinute[m]++
+		}
+	}
+	order := make([]int64, 0, len(perMinute))
+	for m := range perMinute {
+		order = append(order, m)
+	}
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+	drop := 0
+	floor := a.keyedFloor
+	for _, m := range order {
+		if drop >= a.cells/4 && m > floor {
+			break
+		}
+		drop += perMinute[m]
+		floor = m + SeriesMinute
+	}
+	for key, mins := range a.keyed {
+		for m := range mins {
+			if m < floor {
+				delete(mins, m)
+				a.cells--
+			}
+		}
+		if len(mins) == 0 {
+			delete(a.keyed, key)
+		}
+	}
+	a.keyedFloor = floor
+}
+
+// keyedBytes estimates the memory of the per-ticket and per-execution counts.
+func (a *seriesAgg) keyedBytes() int64 {
+	var b int64
+	for key, mins := range a.keyed {
+		b += int64(len(key)) + 64
+		for _, c := range mins {
+			b += 40 + 32 + int64(cap(c.counts))*8 // map entry, cell, counts
+		}
+	}
+	return b
 }
 
 // SeriesQuery selects buckets. FromMS/ToMS are [from, to); BucketMS is a multiple of 1,000.
@@ -63,8 +199,9 @@ type SeriesBucket struct {
 }
 
 // SeriesResult is a series. Complete is false when counts for part of the range are not held (a
-// fine series or a filtered one reaching before the memory window, or history dropped by
-// retention before this generation's kept counts begin).
+// fine series, or one filtered by both a ticket and an execution, reaching before the memory
+// window; history dropped by retention before this generation's kept counts begin; or a filtered
+// series reaching before the earliest per-key minute still kept under MaxKeyedCells).
 type SeriesResult struct {
 	Buckets     []SeriesBucket   `json:"buckets"`
 	Total       int64            `json:"total"`
@@ -96,7 +233,8 @@ func (s *Store) SeriesBounds() (int64, int64) {
 }
 
 // Series answers a query: from the kept minutes when the bucket is a whole number of minutes and
-// there is no filter, otherwise from the memory window. Empty buckets are left out.
+// there is at most one filter (a ticket or an execution), otherwise from the memory window. Empty
+// buckets are left out.
 func (s *Store) Series(q SeriesQuery) SeriesResult {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -111,10 +249,14 @@ func (s *Store) Series(q SeriesQuery) SeriesResult {
 		}
 		return b
 	}
-	fromMinutes := q.BucketMS%SeriesMinute == 0 && q.FromMS%SeriesMinute == 0 && q.Ticket == "" && q.Execution == ""
-	if fromMinutes {
+	whole := q.BucketMS%SeriesMinute == 0 && q.FromMS%SeriesMinute == 0
+	// Counts for the range are held from the kept minutes when nothing was dropped by retention, or
+	// the range starts at or after the earliest minute counted.
+	held := s.diskFloor == 0 || s.series.first > 0 && s.series.first <= q.FromMS
+	switch {
+	case whole && q.Ticket == "" && q.Execution == "":
 		out.Source = "minutes"
-		out.Complete = s.diskFloor == 0 || s.series.first > 0 && s.series.first <= q.FromMS
+		out.Complete = held
 		for m, b := range s.series.minutes {
 			if m < q.FromMS || m >= q.ToMS {
 				continue
@@ -128,7 +270,28 @@ func (s *Store) Series(q SeriesQuery) SeriesResult {
 				t.Authorities[k] += int64(n)
 			}
 		}
-	} else {
+	case whole && (q.Ticket == "") != (q.Execution == ""):
+		out.Source = "minutes"
+		key := "t:" + q.Ticket
+		if q.Execution != "" {
+			key = "x:" + q.Execution
+		}
+		out.Complete = held && (s.series.keyedFloor == 0 || q.FromMS >= s.series.keyedFloor)
+		for m, c := range s.series.keyed[key] {
+			if m < q.FromMS || m >= q.ToMS {
+				continue
+			}
+			t := bucket(m)
+			t.Count += int64(c.total)
+			for _, kc := range c.counts {
+				if kc.id&authorityBit != 0 {
+					t.Authorities[s.series.names[kc.id&^authorityBit]] += int64(kc.n)
+				} else {
+					t.Kinds[s.series.names[kc.id]] += int64(kc.n)
+				}
+			}
+		}
+	default:
 		out.Source = "memory-window"
 		lowest := int64(0)
 		for _, e := range s.entries {

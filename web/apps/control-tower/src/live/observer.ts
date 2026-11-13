@@ -21,7 +21,10 @@ export interface FetchResponseLike {
   readonly headers?: { get(name: string): string | null };
   text?(): Promise<string>;
 }
-export type FetchLike = (url: string, init?: { readonly headers?: Readonly<Record<string, string>>; readonly credentials?: "same-origin" }) => Promise<FetchResponseLike>;
+export type FetchLike = (
+  url: string,
+  init?: { readonly headers?: Readonly<Record<string, string>>; readonly credentials?: "same-origin"; /** M6.3: lets a superseded request be cancelled (a fetch that ignores it is still safe: the answer is discarded). */ readonly signal?: AbortSignal },
+) => Promise<FetchResponseLike>;
 
 export type ObserverErrorKind = "invalid" | "unauthorized" | "not_found" | "cursor_reset" | "cursor_expired" | "unavailable" | "internal" | "network" | "protocol";
 
@@ -96,6 +99,8 @@ export interface HistoryPage {
   /** False when part of the window may have left the observer's memory. */
   readonly complete: boolean;
   readonly watermark: number | null;
+  /** M6.3: the page stopped at the observer's scan cap (`more` is then true too); absent from an older observer. */
+  readonly capped?: boolean;
 }
 
 /** Counts of events per time bucket (`GET /api/v1/series`), for drawing a long history without loading it. */
@@ -239,6 +244,92 @@ export interface ObserverClient {
   artifactContent(id: string): Promise<{ readonly text: string; readonly labels: ContentLabels }>;
   /** The current waves, slices, cells and executions, paged through (see ObserverSummaries). */
   summaries(): Promise<ObserverSummaries>;
+  // ---- M6.3 (Execution Timeline). Optional so other implementations keep compiling; createObserverClient has them all.
+  /** One page of `/api/v1/spans` (windowed, filtered), items unparsed: src/timeline/data reads them. */
+  spans?(query: ObserverSpansQuery): Promise<ObserverSpansPage>;
+  /** One page of `/api/v1/marks`; throws not_found on an observer without the route. */
+  marks?(query: ObserverMarksQuery): Promise<ObserverMarksPage>;
+  /** `/api/v1/concurrency`, unparsed; throws not_found on an observer without the route. */
+  concurrency?(query: ObserverConcurrencyQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `/api/v1/series` with a filter (ticket, execution, event kinds), each bucket's counts by kind kept. */
+  seriesFor?(query: ObserverSeriesQuery): Promise<FilteredSeries>;
+}
+
+/** `/api/v1/spans` (M6.3): `from_ms`/`to_ms` overlap, `span` exact, `sort=start`. */
+export interface ObserverSpansQuery {
+  readonly fromMs?: number | null;
+  readonly toMs?: number | null;
+  readonly kinds?: readonly string[];
+  readonly ticket?: string;
+  readonly execution?: string;
+  readonly wave?: string;
+  readonly span?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly signal?: AbortSignal;
+}
+export interface ObserverSpansPage {
+  readonly items: readonly unknown[];
+  /** The reply's `total` (after the observer's cap), null when absent. */
+  readonly total: number | null;
+  /** `total_uncapped` (M6.3), null from an observer that does not say. */
+  readonly totalUncapped: number | null;
+  /** `truncated` (M6.3), null from an observer that does not say. */
+  readonly truncated: boolean | null;
+  readonly more: boolean;
+  readonly offset: number;
+  readonly cursor: string | null;
+}
+/** `/api/v1/marks` (M6.3): a window, or the nearest strictly after or before a time. */
+export interface ObserverMarksQuery {
+  readonly fromMs?: number | null;
+  readonly toMs?: number | null;
+  readonly afterMs?: number | null;
+  readonly beforeMs?: number | null;
+  readonly kinds?: readonly string[];
+  readonly limit?: number;
+  /** Paging within a window (round 4); an observer without paging ignores it. */
+  readonly offset?: number;
+  readonly signal?: AbortSignal;
+}
+export interface ObserverMarksPage {
+  readonly items: readonly unknown[];
+  readonly truncated: boolean | null;
+  readonly cursor: string | null;
+  /** Round 4 paging: more marks follow at `offset + items.length`; null when the reply does not say. */
+  readonly more?: boolean | null;
+  readonly total?: number | null;
+  readonly offset?: number | null;
+}
+export interface ObserverConcurrencyQuery {
+  readonly fromMs: number;
+  readonly toMs: number;
+  readonly bucketMs: number;
+  readonly kinds?: readonly string[];
+  readonly signal?: AbortSignal;
+}
+export interface ObserverSeriesQuery {
+  readonly fromMs?: number | null;
+  readonly toMs?: number | null;
+  readonly bucketMs?: number | null;
+  readonly ticket?: string;
+  readonly execution?: string;
+  /** Event kinds to count (`kinds=`); an observer that ignores it counts everything, and `kindsApplied` says so. */
+  readonly kinds?: readonly string[];
+  readonly signal?: AbortSignal;
+}
+export interface FilteredSeries {
+  readonly fromMs: number;
+  readonly toMs: number;
+  readonly bucketMs: number;
+  /** Sparse; `kinds` is each bucket's count by event kind when the reply has it. */
+  readonly buckets: readonly { readonly fromMs: number; readonly count: number; readonly kinds: Readonly<Record<string, number>> | null }[];
+  readonly total: number | null;
+  /** The reply's `complete`; null when it does not say. */
+  readonly complete: boolean | null;
+  /** Whether `kinds` was honoured: counts were taken from each bucket's by-kind map, or the reply echoed it. */
+  readonly kindsApplied: boolean;
+  readonly cursor: string | null;
 }
 
 export const EVENT_SCHEMA = 3;
@@ -265,6 +356,7 @@ export function readFactoryStatus(data: unknown): FactoryStatus {
     paused: bool(summary.paused),
     mode: str(summary.mode),
     autonomy: str(summary.autonomy),
+    recordedState: str(obj(d.recorded_mode).state),
     supervisor: {
       leasePresent: bool(supervisor.lease_present),
       heartbeatFresh: bool(supervisor.heartbeat_fresh),
@@ -432,22 +524,80 @@ const KINDS: Readonly<Record<string, ObserverErrorKind>> = {
 
 export function createObserverClient(options: { readonly fetch: FetchLike; readonly base?: string }): ObserverClient {
   const base = options.base ?? "/api/v1";
-  const get = async (path: string): Promise<Record<string, unknown>> => {
+  const getOnce = async (path: string, signal?: AbortSignal): Promise<Record<string, unknown>> => {
+    const aborted = (): never => {
+      throw signal?.reason ?? new DOMException("The request was superseded.", "AbortError");
+    };
+    if (signal?.aborted) aborted();
     let response: FetchResponseLike;
     try {
-      response = await options.fetch(`${base}${path}`, { headers: { "X-MACH-Event-Schema": String(EVENT_SCHEMA), Accept: "application/json" }, credentials: "same-origin" });
+      response = await options.fetch(`${base}${path}`, { headers: { "X-MACH-Event-Schema": String(EVENT_SCHEMA), Accept: "application/json" }, credentials: "same-origin", ...(signal ? { signal } : {}) });
     } catch (error) {
+      if (signal?.aborted) aborted();
       throw new ObserverError("network", error instanceof Error ? error.message : "The observer could not be reached.", 0);
     }
     let body: Record<string, unknown>;
     try {
       body = obj(await response.json());
     } catch {
+      if (signal?.aborted) aborted();
       throw new ObserverError("protocol", "The observer's response was not JSON.", response.status);
     }
+    if (signal?.aborted) aborted();
     if (body.ok === true) return obj(body.data);
     const error = obj(body.error);
     throw new ObserverError(KINDS[str(error.kind) ?? ""] ?? "protocol", str(error.message) ?? `The observer answered ${response.status}.`, response.status, error);
+  };
+  // Identical requests in flight are one request (L8 of the live run: the overview, the lenses and the
+  // default window asked the same thing at once). Each caller keeps its own abort: the shared request is
+  // aborted only when every caller waiting on it has given up.
+  const inflight = new Map<string, { readonly promise: Promise<Record<string, unknown>>; readonly ctl: AbortController; waiting: number }>();
+  const get = (path: string, signal?: AbortSignal): Promise<Record<string, unknown>> => {
+    if (signal?.aborted) return Promise.reject(signal.reason ?? new DOMException("The request was superseded.", "AbortError"));
+    let entry = inflight.get(path);
+    if (!entry) {
+      const ctl = new AbortController();
+      const promise = getOnce(path, ctl.signal);
+      const made = { promise, ctl, waiting: 0 };
+      entry = made;
+      inflight.set(path, made);
+      const forget = () => {
+        if (inflight.get(path) === made) inflight.delete(path);
+      };
+      promise.then(forget, forget);
+    }
+    const shared = entry;
+    shared.waiting += 1;
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const settle = () => {
+        done = true;
+        shared.waiting -= 1;
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        if (done) return;
+        settle();
+        if (shared.waiting === 0) {
+          if (inflight.get(path) === shared) inflight.delete(path);
+          shared.ctl.abort();
+        }
+        reject(signal?.reason ?? new DOMException("The request was superseded.", "AbortError"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      shared.promise.then(
+        (value) => {
+          if (done) return;
+          settle();
+          resolve(value);
+        },
+        (error: unknown) => {
+          if (done) return;
+          settle();
+          reject(error);
+        },
+      );
+    });
   };
 
   return {
@@ -506,6 +656,7 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
         more: d.more === true,
         complete: d.complete !== false,
         watermark: timeOf(d.watermark_ms),
+        ...(typeof d.capped === "boolean" ? { capped: d.capped } : {}),
       };
     },
     async snapshot(at) {
@@ -597,6 +748,74 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       }
       const state = readSnapshotState({ waves: waves.items, slices, cells, executions: runs, history });
       return { cursor, state };
+    },
+    async spans(query) {
+      const q = new URLSearchParams();
+      if (query.span) q.set("span", query.span);
+      else {
+        if (typeof query.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+        if (typeof query.toMs === "number") q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+        if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
+        if (query.ticket) q.set("ticket", query.ticket);
+        if (query.execution) q.set("execution", query.execution);
+        if (query.wave) q.set("wave", query.wave);
+        q.set("sort", "start");
+        q.set("limit", String(query.limit ?? 1000));
+        if (query.offset) q.set("offset", String(query.offset));
+      }
+      const d = await get(`/spans?${q.toString()}`, query.signal);
+      // `span=` may answer with the list shape (0 or 1 item) or one `span` object.
+      const items = d.span && typeof d.span === "object" ? [d.span] : list(d.items);
+      return { items, total: num(d.total), totalUncapped: num(d.total_uncapped), truncated: bool(d.truncated), more: d.more === true, offset: num(d.offset) ?? query.offset ?? 0, cursor: str(d.cursor) };
+    },
+    async marks(query) {
+      const q = new URLSearchParams();
+      if (typeof query.afterMs === "number") q.set("after_ms", String(Math.max(0, Math.floor(query.afterMs))));
+      else if (typeof query.beforeMs === "number") q.set("before_ms", String(Math.max(0, Math.ceil(query.beforeMs))));
+      else {
+        if (typeof query.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+        if (typeof query.toMs === "number") q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+      }
+      if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
+      if (typeof query.limit === "number") q.set("limit", String(query.limit));
+      if (typeof query.offset === "number" && query.offset > 0) q.set("offset", String(Math.floor(query.offset)));
+      const d = await get(`/marks?${q.toString()}`, query.signal);
+      return { items: list(d.items), truncated: bool(d.truncated), cursor: str(d.cursor), more: bool(d.more), total: num(d.total), offset: num(d.offset) };
+    },
+    async concurrency(query) {
+      const q = new URLSearchParams();
+      q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+      q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+      q.set("bucket_ms", String(Math.max(1000, Math.round(query.bucketMs / 1000) * 1000)));
+      if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
+      return get(`/concurrency?${q.toString()}`, query.signal);
+    },
+    async seriesFor(query) {
+      const q = new URLSearchParams();
+      if (typeof query.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+      if (typeof query.toMs === "number") q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+      if (typeof query.bucketMs === "number") q.set("bucket_ms", String(Math.max(1000, Math.round(query.bucketMs / 1000) * 1000)));
+      if (query.ticket) q.set("ticket", query.ticket);
+      if (query.execution) q.set("execution", query.execution);
+      if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
+      const d = await get(`/series${q.size ? `?${q.toString()}` : ""}`, query.signal);
+      const want = query.kinds?.length ? new Set(query.kinds) : null;
+      const echoed = Array.isArray(d.kinds_applied) || d.kinds_applied === true;
+      let applied = !want || echoed;
+      const buckets = list(d.buckets)
+        .map((x) => obj(x))
+        .map((b) => {
+          const kinds = b.kinds && typeof b.kinds === "object" ? counts(b.kinds) : null;
+          let count = num(b.count) ?? 0;
+          // Without an echo, count only the asked kinds from the bucket's own by-kind counts.
+          if (want && !echoed && kinds) {
+            count = Object.entries(kinds).reduce((n, [k, v]) => (want.has(k) ? n + v : n), 0);
+            applied = true;
+          }
+          return { fromMs: num(b.from_ms) ?? 0, count, kinds };
+        })
+        .filter((b) => b.count > 0);
+      return { fromMs: num(d.from_ms) ?? buckets[0]?.fromMs ?? 0, toMs: num(d.to_ms) ?? 0, bucketMs: num(d.bucket_ms) ?? 60_000, buckets, total: want && !echoed ? null : num(d.total), complete: bool(d.complete), kindsApplied: applied, cursor: str(d.head) ?? str(d.cursor) };
     },
   };
 }

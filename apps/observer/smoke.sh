@@ -62,7 +62,11 @@ check() { # check <path> <python assertion on d>
 check /api/v1/session "d['read_only'] is True and d['versions']['event']['schema'] == 3 and d['capabilities']['execution'] is False"
 check /api/v1/health "d['status'] in ('ok', 'degraded') and 'freshness' in d"
 check "/api/v1/events?schema=3&limit=5" "'events' in d and 'next' in d"
-check "/api/v1/history?limit=5" "'events' in d and 'complete' in d"
+check "/api/v1/history?limit=5" "'events' in d and 'complete' in d and 'capped' in d"
+check /api/v1/series "'buckets' in d and 'complete' in d"
+check "/api/v1/spans?limit=5" "'items' in d and 'truncated' in d"
+check /api/v1/concurrency "'buckets' in d and all('applies_to' in l for l in d['limits'])"
+check "/api/v1/marks?limit=5" "'items' in d and 'kinds' in d"
 check /api/v1/snapshot "'cursor' in d and 'state' in d"
 check /api/v1/factory/status "d['factory_present'] is True"
 check /api/v1/analytics/metrics "len(d['metrics']) > 40"
@@ -81,4 +85,4 @@ wait "$PID" || STATUS=$?
 PID=""
 [ "$STATUS" = 0 ] || { echo "smoke: the observer exited $STATUS" >&2; cat "$WORK/log" >&2; exit 1; }
 [ ! -f "$WORK/project/.factory/local/observer/link" ] || { echo "smoke: the link file outlived the observer" >&2; exit 1; }
-echo "smoke: ok ($(basename "$BIN"): page and $(echo $ASSETS | wc -w | tr -d ' ') assets under the CSP, no source maps, session, events, history, snapshot, status, metrics, GET only on $ORIGIN)"
+echo "smoke: ok ($(basename "$BIN"): page and $(echo $ASSETS | wc -w | tr -d ' ') assets under the CSP, no source maps, session, events, history, series, spans, concurrency, marks, snapshot, status, metrics, GET only on $ORIGIN)"

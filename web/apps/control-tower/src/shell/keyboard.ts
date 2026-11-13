@@ -9,7 +9,7 @@
  * which prevents the default so this map skips the event.
  */
 import { useEffect } from "react";
-import { SPEEDS, useStore, type SceneStore } from "../scene";
+import { showInTimeline, showOnFloor, SPEEDS, useStore, type SceneStore } from "../scene";
 import { indexFor, lastAtOrBefore } from "./history";
 
 export interface ShellCommands {
@@ -25,10 +25,38 @@ export interface ShellCommands {
 export interface KeyBinding {
   keys: string[];
   action: string;
-  group: "Playback" | "Views" | "Panels" | "In a view" | "Atlas" | "Blueprint" | "Timeline";
+  group: "Playback" | "Views" | "Panels" | "In a view" | "Atlas" | "Blueprint" | "Timeline" | "Timeline workspace";
   /** Handled by the views, listed for discovery only. */
   view?: true;
+  /** Active only in this workspace (absent: in both). */
+  workspace?: "floor" | "timeline";
 }
+
+/** What the Timeline workspace's keys ask of it (handled by its toolbar while it is up). */
+export type TimelineKeyCommand = "grouping" | "filters" | "next-mark" | "previous-mark" | "zoom-selection" | "show-all";
+
+let timelineKeys: ((command: TimelineKeyCommand) => boolean) | null = null;
+
+/**
+ * The Timeline workspace registers the handler for its keys while it is mounted (and the map routes
+ * them only while the workspace is "timeline"). Returns the unregister function. Last one wins.
+ */
+export function registerTimelineKeys(handler: (command: TimelineKeyCommand) => boolean): () => void {
+  timelineKeys = handler;
+  return () => {
+    if (timelineKeys === handler) timelineKeys = null;
+  };
+}
+
+/** The Timeline workspace's own keys, free in the global map (test/timeline-shell.test.mjs holds that). */
+export const TIMELINE_KEYS: Readonly<Record<string, TimelineKeyCommand>> = {
+  g: "grouping",
+  "/": "filters",
+  n: "next-mark",
+  p: "previous-mark",
+  z: "zoom-selection",
+  a: "show-all",
+};
 
 export const KEYMAP: KeyBinding[] = [
   { keys: ["Space"], action: "Play or pause", group: "Playback" },
@@ -38,13 +66,14 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["{", "}"], action: "Slower / faster (real history: 5× to 160× real time; simulation: 0.5× to 16×)", group: "Playback" },
   { keys: ["Home", "End"], action: "Start of what is held / live edge (replay: its last event)", group: "Playback" },
   { keys: ["L"], action: "Return to live (and follow); live keeps arriving while you look back", group: "Playback" },
-  { keys: ["1", "2"], action: "Factory Atlas / Execution Blueprint", group: "Views" },
-  { keys: ["T"], action: "Theater Mode", group: "Views" },
-  { keys: ["F"], action: "Focus the selection", group: "Views" },
+  { keys: ["1", "2"], action: "Factory floor: Atlas / Blueprint (from the Timeline: keeping the selection and playhead, framed there)", group: "Views" },
+  { keys: ["3"], action: "Timeline, keeping the selection and the playhead (Show in Timeline)", group: "Views" },
+  { keys: ["T"], action: "Theater Mode (Factory floor only; does nothing in the Timeline)", group: "Views" },
+  { keys: ["F"], action: "Focus the selection (in the Timeline: reveal its tracks and span)", group: "Views" },
   { keys: ["Shift+F"], action: "Camera follow back on", group: "Views" },
   { keys: ["Escape"], action: "Clear highlight, then selection, then leave Theater Mode", group: "Views" },
   { keys: ["I"], action: "Show or hide the inspector", group: "Panels" },
-  { keys: ["Shift+T"], action: "Expand or collapse the timeline", group: "Panels" },
+  { keys: ["Shift+T"], action: "Expand or collapse the docked timeline (Factory floor)", group: "Panels", workspace: "floor" },
   { keys: ["?"], action: "This list", group: "Panels" },
   { keys: ["S"], action: "Choose the source: Live Factory, Historical replay or Simulation", group: "Panels" },
   { keys: ["+", "-", "0"], action: "Zoom in / out / fit", group: "In a view", view: true },
@@ -64,6 +93,11 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["Alt+→", "Alt+←"], action: "Expand / collapse the focused track (* also expands)", group: "Timeline", view: true },
   { keys: ["+", "-", "0"], action: "Narrow / widen the time window, or show the whole run (tracks focused)", group: "Timeline", view: true },
   { keys: ["↑", "↓"], action: "Taller / shorter timeline (its top edge focused; Enter collapses or restores it)", group: "Timeline", view: true },
+  { keys: ["G"], action: "Group by product or by execution", group: "Timeline workspace", workspace: "timeline" },
+  { keys: ["/"], action: "Filters", group: "Timeline workspace", workspace: "timeline" },
+  { keys: ["N", "P"], action: "Next / previous mark of the kind last jumped to (failure at first)", group: "Timeline workspace", workspace: "timeline" },
+  { keys: ["Z"], action: "Zoom to the selection", group: "Timeline workspace", workspace: "timeline" },
+  { keys: ["A"], action: "Show all of the history held", group: "Timeline workspace", workspace: "timeline" },
 ];
 
 const TYPING = /^(INPUT|TEXTAREA|SELECT)$/;
@@ -75,6 +109,13 @@ function ownsActivation(target: HTMLElement | null): boolean {
   if (target.tagName === "BUTTON" || target.tagName === "A") return true;
   const role = target.getAttribute("role");
   return role === "button" || role === "radio" || role === "slider" || role === "checkbox" || role === "menuitem" || role === "tab";
+}
+
+/** Elements where Home and End move within the element: a slider, and the Timeline's table (a treegrid) and its cells. */
+function ownsHomeEnd(target: HTMLElement | null): boolean {
+  if (!target) return false;
+  if (target.getAttribute("role") === "slider") return true;
+  return Boolean(target.closest?.("[role='treegrid']"));
 }
 
 /**
@@ -138,6 +179,12 @@ export function useShellKeys(commands: ShellCommands): void {
       if (target && (TYPING.test(target.tagName) || target.isContentEditable)) return;
       if (commands.modalOpen()) return;
       const s = store.getState();
+      const inTimeline = s.workspace === "timeline";
+      if (inTimeline && !e.altKey && Object.hasOwn(TIMELINE_KEYS, e.key)) {
+        const command = TIMELINE_KEYS[e.key] as TimelineKeyCommand;
+        if (timelineKeys?.(command)) e.preventDefault();
+        return;
+      }
       // Shift with , and . is < and > on most layouts; some report the unshifted key.
       const key = e.shiftKey && e.key === "," ? "<" : e.shiftKey && e.key === "." ? ">" : e.key;
       let handled = true;
@@ -171,11 +218,11 @@ export function useShellKeys(commands: ShellCommands): void {
           stepSpeed(store, 1);
           break;
         case "Home":
-          if (ownsActivation(target) && target?.getAttribute("role") === "slider") handled = false;
+          if (ownsHomeEnd(target)) handled = false;
           else store.seek(s.extent.start);
           break;
         case "End":
-          if (ownsActivation(target) && target?.getAttribute("role") === "slider") handled = false;
+          if (ownsHomeEnd(target)) handled = false;
           else store.followLive();
           break;
         case "l":
@@ -183,16 +230,27 @@ export function useShellKeys(commands: ShellCommands): void {
           store.followLive();
           break;
         case "1":
-          store.setView("atlas");
+        case "2": {
+          const view = key === "1" ? "atlas" : "blueprint";
+          // From the Timeline: back to the floor keeping selection and playhead, framing the selection there.
+          if (inTimeline) showOnFloor(store, view);
+          else {
+            store.setView(view);
+            store.setWorkspace("floor");
+          }
           break;
-        case "2":
-          store.setView("blueprint");
+        }
+        case "3":
+          showInTimeline(store);
           break;
         case "t":
-          store.setTheater(!s.theater);
+          // Theater Mode is the floor's; in the Timeline the key does nothing (and says so in the help).
+          if (inTimeline) handled = false;
+          else store.setTheater(!s.theater);
           break;
         case "T":
-          commands.toggleTimeline();
+          if (inTimeline) handled = false;
+          else commands.toggleTimeline();
           break;
         case "f":
           if (s.selection) store.focusOn(s.selection, "api");
@@ -230,6 +288,21 @@ export function useShellKeys(commands: ShellCommands): void {
 }
 
 /**
+ * The keyboard home of the workspace on screen: the active Factory Floor view's canvas, or the
+ * Timeline's tracks. The hidden workspace is inert, so its canvas is skipped.
+ */
+export function activeCanvas(): HTMLElement | null {
+  // The Timeline's tracks are its one canvas tab stop (role="application"); the label column's resize separator comes first in the DOM.
+  for (const el of document.querySelectorAll<HTMLElement>("[data-timeline-workspace] [role='application'][tabindex='0']")) {
+    if (!el.closest("[inert]")) return el;
+  }
+  for (const el of document.querySelectorAll<HTMLElement>("[data-stage-active] [tabindex='0'], [data-timeline-workspace] [tabindex='0']")) {
+    if (!el.closest("[inert]")) return el;
+  }
+  return null;
+}
+
+/**
  * Keep focus in its region when a key removes what had it (Escape clears the selection the inspector
  * showed; a view re-renders an entity) or makes its region inert (Theater Mode): instead of falling to
  * the page, focus goes to the inspector's heading, the view's canvas, or the stage. Browsers fire no
@@ -246,7 +319,7 @@ function useFocusKeeper(): void {
         const stranded = !now || now === document.body || Boolean((now as HTMLElement).closest?.("[inert]"));
         if (!stranded || (had.isConnected && !had.closest("[inert]"))) return;
         const live = home && home.isConnected && !home.closest("[inert]") ? home : null;
-        const canvas = document.querySelector<HTMLElement>("[data-stage-active] [tabindex='0']");
+        const canvas = activeCanvas();
         const next = live?.querySelector<HTMLElement>("[data-inspector-heading]") ?? (live?.tagName === "MAIN" ? canvas : null) ?? live ?? canvas ?? document.getElementById("stage");
         next?.focus({ preventScroll: true });
       });

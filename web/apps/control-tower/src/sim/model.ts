@@ -649,6 +649,12 @@ export interface ExecutionState {
   readonly exitCode: number | null;
   /** The supervisor's recovery kind, when it recovered this execution (recovery.started). */
   readonly recovery: string | null;
+  /**
+   * When a later claim of the same ticket (or the supervisor parking it for a person) showed it had moved on from this execution
+   * while nothing recorded its end (live only; the observer's movedOnEnd bound, shared contracts 2.3).
+   * Its outcome is then not known; it is never "running" after this.
+   */
+  readonly movedOnAt: number | null;
   /** The Dynamic Workflow it ran: its `workflow:` ref id and recorded status (`completed` only from task_updated, D14). */
   readonly workflowId: string | null;
   readonly workflowStatus: "running" | "completed" | "killed" | "unknown" | null;

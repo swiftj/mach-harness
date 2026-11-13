@@ -151,3 +151,184 @@ test("window.__machSim: seeking and reading (version 1 members)", () => {
   remove();
   assert.equal(target.__machSim, undefined);
 });
+
+// ---------------------------------------------------------------- M6.3: workspaces and the Timeline's interface state
+
+test("workspace: the floor by default; switching keeps view, selection, playhead and playback", async () => {
+  const { INITIAL_TIMELINE_VIEW } = await import("../src/timeline/contract.ts");
+  const { store } = make({ at: 20 * 60000 });
+  let s = store.getState();
+  assert.equal(s.workspace, "floor");
+  assert.equal(s.timeline, INITIAL_TIMELINE_VIEW);
+  store.setView("blueprint");
+  store.select("cell:LOCAL-031");
+  store.setSpeed(4);
+  const before = store.getState();
+  store.setWorkspace("timeline");
+  s = store.getState();
+  assert.equal(s.workspace, "timeline");
+  assert.equal(s.view, "blueprint", "the floor's view is remembered");
+  assert.equal(s.selection, "cell:LOCAL-031");
+  assert.equal(s.playhead, before.playhead);
+  assert.equal(s.speed, 4);
+  assert.equal(s.focus, before.focus, "switching asks no camera for anything");
+  store.setWorkspace("floor");
+  assert.equal(store.getState().view, "blueprint");
+  const same = store.getState();
+  store.setWorkspace("floor");
+  store.setWorkspace("evidence");
+  assert.equal(store.getState(), same, "no change, and an unknown workspace is ignored");
+});
+
+test("Theater Mode is the floor's: it ends on leaving the floor and cannot start in the Timeline", () => {
+  const { store } = make();
+  store.setTheater(true);
+  store.setWorkspace("timeline");
+  assert.equal(store.getState().theater, false);
+  store.setTheater(true);
+  assert.equal(store.getState().theater, false);
+  store.setWorkspace("floor");
+  store.setTheater(true);
+  assert.equal(store.getState().theater, true);
+});
+
+test("setTimelineView merges a patch; an empty or unchanged patch makes no new state", () => {
+  const { store } = make();
+  const before = store.getState();
+  store.setTimelineView({});
+  store.setTimelineView({ grouping: "product", window: null });
+  assert.equal(store.getState(), before);
+  store.setTimelineView({ grouping: "execution", window: { from: 1000, to: 70000 } });
+  const t = store.getState().timeline;
+  assert.equal(t.grouping, "execution");
+  assert.deepEqual(t.window, { from: 1000, to: 70000 });
+  assert.deepEqual(t.expanded, [], "untouched fields kept");
+  assert.equal(t.table, false);
+  store.setTimelineView({ expanded: ["cell:LOCAL-031"] });
+  assert.equal(store.getState().timeline.grouping, "execution");
+  // Interface state only: the playhead, selection and view are not touched.
+  assert.equal(store.getState().playhead, before.playhead);
+  assert.equal(store.getState().view, before.view);
+});
+
+test("showInTimeline selects without moving the floor's camera, leaves Theater Mode, keeps the playhead and asks for a frame", async () => {
+  const { showInTimeline, showOnFloor } = await import("../src/scene/store.ts");
+  const { store } = make({ at: 30 * 60000 });
+  store.setView("blueprint");
+  store.setTheater(true);
+  showInTimeline(store, "cell:LOCAL-032");
+  const s = store.getState();
+  assert.equal(s.workspace, "timeline");
+  assert.equal(s.selection, "cell:LOCAL-032");
+  assert.equal(s.theater, false);
+  assert.equal(s.playhead, 30 * 60000);
+  assert.equal(s.focus?.target, "cell:LOCAL-032", "the Timeline frames the selection");
+  const nonce = s.focus.nonce;
+  showInTimeline(store);
+  assert.notEqual(store.getState().focus.nonce, nonce, "asking again frames again");
+  assert.equal(store.getState().selection, "cell:LOCAL-032");
+  showOnFloor(store);
+  assert.equal(store.getState().workspace, "floor");
+  assert.equal(store.getState().view, "blueprint");
+});
+
+test("heldStore: held, a hidden workspace sees nothing change and is told nothing; released, it catches up once", async () => {
+  const { heldStore } = await import("../src/scene/store.ts");
+  const { clock, store } = make();
+  const held = heldStore(store);
+  let told = 0;
+  const off = held.subscribe(() => told++);
+  held.hold(true);
+  const frozen = held.getState();
+  store.play();
+  clock.frames(1, 0);
+  clock.frames(10, 100);
+  store.select("cell:LOCAL-031");
+  assert.equal(told, 0);
+  assert.equal(held.getState(), frozen);
+  assert.notEqual(store.getState().playhead, frozen.playhead, "the store itself goes on");
+  held.select("cell:LOCAL-033", { focus: false });
+  assert.equal(store.getState().selection, "cell:LOCAL-033", "actions go straight to the store");
+  held.hold(false);
+  assert.equal(told, 1);
+  assert.equal(held.getState(), store.getState());
+  store.pause();
+  assert.equal(told, 2, "released, it follows every change");
+  off();
+});
+
+test("A3: heldStore holds itself in its change handler when the workspace leaves the floor; the switch's focusOn never reaches it", async () => {
+  const { heldStore, showInTimeline, showOnFloor } = await import("../src/scene/store.ts");
+  const { store } = make();
+  const held = heldStore(store);
+  const seen = [];
+  const off = held.subscribe(() => seen.push(held.getState()));
+  store.select("cell:LOCAL-031", { focus: false });
+  assert.equal(seen.length, 1, "on the floor it follows every change");
+  const before = held.getState();
+  showInTimeline(store);
+  // No render in between (no layout effect): it is already held, and was told nothing of the switch or its focusOn.
+  assert.equal(held.held(), true);
+  assert.equal(seen.length, 1);
+  assert.equal(held.getState(), before);
+  assert.equal(held.getState().workspace, "floor", "the hidden floor still sees itself as it was");
+  assert.notEqual(store.getState().focus, null, "the Timeline was asked to frame");
+  assert.notEqual(held.getState().focus?.nonce, store.getState().focus.nonce, "the floor never saw that request");
+  store.select("cell:LOCAL-033", { focus: false });
+  assert.equal(seen.length, 1, "nothing while the Timeline is up");
+  // Back by any route (here the plain switch): caught up at once, in the same change.
+  store.setWorkspace("floor");
+  assert.equal(held.held(), false);
+  assert.equal(seen.length, 1 + 1);
+  assert.equal(held.getState(), store.getState());
+  showOnFloor(store);
+  off();
+});
+
+test("A3: a heldStore made while the Timeline is up starts held", async () => {
+  const { heldStore } = await import("../src/scene/store.ts");
+  const { store } = make();
+  store.setWorkspace("timeline");
+  const held = heldStore(store);
+  assert.equal(held.held(), true);
+  held.hold(false);
+  assert.equal(held.held(), true, "releasing by hand does not show the floor while it is not up");
+});
+
+test("A4: one shared store view; the Stage's gated policy (catch up on a timer while hidden) runs on it", async () => {
+  const { storeView } = await import("../src/scene/view.ts");
+  const { clock, store } = make();
+  let hiddenChanges = 0;
+  let attached = 0;
+  let detached = 0;
+  const view = storeView(store, {
+    hiddenChange: () => hiddenChanges++,
+    attach: () => {
+      attached++;
+      return () => detached++;
+    },
+  });
+  let told = 0;
+  const off = view.subscribe(() => told++);
+  assert.equal(attached, 1);
+  store.seek(1000);
+  assert.equal(told, 1, "shown: every change");
+  view.setShown(false);
+  const frozen = view.getState();
+  store.seek(2000);
+  store.seek(3000);
+  assert.equal(told, 1);
+  assert.equal(hiddenChanges, 2, "the policy hears each hidden change");
+  assert.equal(view.getState(), frozen);
+  assert.equal(view.stale(), true);
+  view.catchUp();
+  assert.equal(told, 2, "caught up once");
+  assert.equal(view.getState(), store.getState());
+  view.catchUp();
+  assert.equal(told, 2, "nothing when current");
+  view.setShown(true);
+  assert.equal(told, 2, "shown again while current: nothing to tell");
+  off();
+  assert.equal(detached, 1, "the policy stops with the last listener");
+  void clock;
+});

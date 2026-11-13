@@ -1,0 +1,10 @@
+/* The investigation band (src/timeline/investigate). Tokens only; no transitions. */
+.mach-inv-ring {
+  display: none;
+}
+.mach-inv-fig:focus-visible .mach-inv-ring {
+  display: inline;
+}
+.mach-inv-fig:hover .mach-inv-hover {
+  stroke: var(--mach-factory-select);
+}
