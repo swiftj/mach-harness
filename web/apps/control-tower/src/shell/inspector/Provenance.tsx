@@ -43,7 +43,7 @@ const FIELD_WORDS: Readonly<Record<string, string>> = {
   leftAt: "End time",
 };
 
-const RULE_WORDS: Readonly<Record<string, string>> = {
+export const RULE_WORDS: Readonly<Record<string, string>> = {
   label: "read from its label",
   "time-window": "placed by its time window",
   execution: "taken from its execution",

@@ -112,7 +112,7 @@ function FreeTextNote({ label, block = false }: { label: string; block?: boolean
   );
 }
 
-function ArtifactLink({ artifact }: { artifact: ArtifactState }) {
+export function ArtifactLink({ artifact }: { artifact: ArtifactState }) {
   const freeText = useFreeTextLabel(artifact);
   return (
     <RefLink to={ref.artifact(artifact.id)} glyph={<ArtifactGlyph kind={artifactOf(artifact.kind)} size={18} failed={/findings/.test(artifact.kind)} />} detail={timecode(artifact.writtenAt, false)}>

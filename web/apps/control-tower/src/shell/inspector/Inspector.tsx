@@ -58,6 +58,7 @@ import { identityOf, parseStation, selectEntity } from "./entity";
 import { AuthorityBadge, Evidence, JumpButton, precisionWords, useEntityEvents } from "./parts";
 import { Provenance } from "./Provenance";
 import { RunNow } from "./RunNow";
+import { InTimeSection } from "../../timeline/inspector";
 import { cellTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
 
 interface Look extends Timing {
@@ -307,6 +308,7 @@ function Selected({ entity }: { entity: AnyRef }) {
           <Anatomy entity={entity} value={value} />
         </div>
       ) : null}
+      <InTimeSection entity={entity} />
       {value || all.length ? <Provenance entity={entity} value={value} /> : null}
       <Evidence entity={entity} />
     </div>
