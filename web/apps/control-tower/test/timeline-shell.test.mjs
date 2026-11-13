@@ -349,7 +349,8 @@ test("key map: the workspace keys and the Timeline's keys collide with nothing",
 
 test("framing: clamp, frame, pan; refs from spans", () => {
   const whole = { from: 0, to: 3_600_000 };
-  assert.equal(frame.clampWindow({ from: -10, to: 4_000_000 }, whole), null, "all of it: follow again");
+  assert.deepEqual(frame.clampWindow({ from: -10, to: 4_000_000 }, whole), frame.ALL_WINDOW, "all of it: the whole history, following again");
+  assert.ok(frame.isAll(frame.clampWindow({ from: Number.NaN, to: 5 }, whole)), "not a window: all of it");
   assert.deepEqual(frame.clampWindow({ from: 100, to: 200 }, whole), { from: 0, to: MIN_WINDOW_MS }, "never narrower than the minimum, kept within the history");
   assert.deepEqual(frame.clampWindow({ from: 3_590_000, to: 3_700_000 }, whole), { from: 3_490_000, to: 3_600_000 });
   assert.deepEqual(frame.frameExtent({ from: 100_000, to: 200_000 }), { from: 90_000, to: 210_000 });
@@ -367,4 +368,272 @@ test("framing: clamp, frame, pan; refs from spans", () => {
   assert.equal(frame.spanIdForRef("finding:x"), null);
   assert.deepEqual(frame.toggled(["a", "b"], "a"), ["b"]);
   assert.deepEqual(frame.toggled(["b"], "a"), ["b", "a"]);
+});
+
+// ---------------------------------------------------------------- wave 2: the default window
+
+const { locateEvent } = await import("../src/shell/source/locate.ts");
+const { showOnFloor, showInTimeline } = await import("../src/scene/store.ts");
+
+const H = 3_600_000;
+const T0 = Date.UTC(2026, 10, 12, 5, 29);
+/** A span with recorded ends (end null: open). */
+const sp = (id, from, to, ids = {}, kind = "visit") => ({
+  id,
+  kind,
+  entity: id.slice(id.indexOf(":") + 1),
+  parent: null,
+  ids,
+  start: { eventId: `${id}/start`, at: from, precision: "ms", notBefore: null, notAfter: null, basis: "recorded", rule: null, reason: null },
+  end: to === null ? null : { eventId: `${id}/end`, at: to, precision: "ms", notBefore: null, notAfter: null, basis: "recorded", rule: null, reason: "completed" },
+  duration: { ms: to === null ? null : to - from, minMs: null, maxMs: null, basis: to === null ? "open" : "measured" },
+  outcome: null,
+  authority: "observed",
+  attrs: {},
+});
+
+test("default window: frames the recorded activity, not the wall clock (the real run: 73 min of work, viewed 7 h later)", () => {
+  const whole = { from: T0, to: T0 + 8 * H + 13 * 60_000 };
+  const lastEnd = T0 + 73 * 60_000;
+  const density = { from: whole.from, to: whole.to, bucketMs: 60_000, buckets: [{ from: T0, count: 5 }, { from: lastEnd - 60_000, count: 2 }], complete: true };
+  const spans = [sp("cell:cell:LOCAL-1", T0 + 10_000, lastEnd - 30_000)];
+  const w = frame.activityWindow({ whole, dataFrom: T0, density, spans, lastMark: null, followingLive: false });
+  const len = lastEnd - T0;
+  assert.equal(w.from, T0, "never before the history: the pad stops at its start");
+  assert.equal(w.to, lastEnd + len * frame.ACTIVITY_PAD, "the last bucket's end, padded 2%");
+  // A later mark extends it; its `until` counts.
+  const mark = { id: "m", kind: "human", at: lastEnd + 10 * 60_000, until: lastEnd + 20 * 60_000, eventId: null, entity: null, label: "", verdict: null, authority: "observed" };
+  const w2 = frame.activityWindow({ whole, dataFrom: T0, density, spans, lastMark: mark, followingLive: false });
+  assert.ok(Math.abs(w2.to - (lastEnd + 20 * 60_000) * 1 - (lastEnd + 20 * 60_000 - T0) * frame.ACTIVITY_PAD) < 1, String(w2.to - lastEnd));
+  // Something open, live and following: it follows the live edge.
+  const open = [...spans, sp("visit:visit:LOCAL-1/build#2", lastEnd - 5_000, null)];
+  assert.equal(frame.activityWindow({ whole, dataFrom: T0, density, spans: open, lastMark: null, followingLive: true }).to, whole.to);
+  // The same open span, reviewed (not following): the recorded activity still.
+  assert.ok(frame.activityWindow({ whole, dataFrom: T0, density, spans: open, lastMark: null, followingLive: false }).to < whole.to);
+  // Nothing recorded: the whole history.
+  assert.deepEqual(frame.activityWindow({ whole, dataFrom: null, density: null, spans: [], lastMark: null, followingLive: false }), whole);
+  // Without data.extent(), the first bucket or span starts it.
+  const w3 = frame.activityWindow({ whole, dataFrom: null, density: { ...density, buckets: [{ from: T0 + H, count: 1 }] }, spans: [], lastMark: null, followingLive: false });
+  assert.ok(w3.from < T0 + H && w3.from > T0 + H - 60_000, "padded before the first bucket");
+  // Never narrower than the minimum.
+  const tiny = frame.activityWindow({ whole, dataFrom: null, density: null, spans: [sp("x:x", T0 + H, T0 + H + 100)], lastMark: null, followingLive: false });
+  assert.ok(tiny.to - tiny.from >= MIN_WINDOW_MS);
+});
+
+test("default window: null frames the activity, ALL the whole history, a chosen window itself", () => {
+  const whole = { from: 0, to: 100 };
+  const fallback = { from: 10, to: 20 };
+  assert.deepEqual(frame.resolveWindow(null, whole, fallback), fallback);
+  assert.deepEqual(frame.resolveWindow(frame.ALL_WINDOW, whole, fallback), whole);
+  assert.deepEqual(frame.resolveWindow({ from: 30, to: 40 }, whole, fallback), { from: 30, to: 40 });
+  assert.equal(frame.isAll(null), false);
+  assert.equal(frame.windowLengthWords(73 * 60_000), "1 h 13 min");
+  assert.equal(frame.windowLengthWords(45_000), "45 s");
+  assert.equal(frame.windowLengthWords(12 * 60_000), "12 min");
+  assert.equal(frame.windowLengthWords(5 * 60_000 + 30_000), "5 min 30 s");
+  assert.equal(frame.windowLengthWords(52 * H), "2 d 4 h");
+});
+
+// ---------------------------------------------------------------- filters and chips
+
+test("filters: every value in the window stays on offer while a filter is on; one chip per choice", () => {
+  const spans = [
+    sp("visit:a", 0, 10, { ticket_id: "LOCAL-1", execution_id: "x1", slice_id: "SLICE-1", station: "build" }),
+    sp("seat:b", 0, 10, { ticket_id: "LOCAL-2", slice_id: "SLICE-2" }, "seat"),
+  ];
+  const filters = { tickets: ["LOCAL-1"], executions: [], slices: [], stations: [], kinds: ["agent"], attentionOnly: true };
+  const o = frame.filterOptionsOfSpans(spans, filters);
+  assert.deepEqual(o.tickets, ["LOCAL-1", "LOCAL-2"]);
+  assert.deepEqual(o.executions, ["x1"]);
+  assert.deepEqual(o.stations, ["build", "review"], "a seat belongs to review");
+  assert.deepEqual(o.kinds, ["agent", "seat", "visit"], "a chosen kind with nothing in the window is still offered, to be undone");
+  const chips = frame.filterChips(filters, (k) => `K ${k}`);
+  assert.deepEqual(chips.map((c) => c.label), ["Needs attention", "LOCAL-1", "K agent"]);
+  assert.deepEqual(chips[1].without, { tickets: [] });
+  assert.deepEqual(chips[0].without, { attentionOnly: false });
+});
+
+// ---------------------------------------------------------------- the interval on the floor
+
+test("interval: the cells active in a chosen window are highlighted on the floor, only while nothing is hovered or selected", () => {
+  const spans = [
+    sp("visit:a", 100_000, 200_000, { ticket_id: "LOCAL-031" }),
+    sp("cell:cell:LOCAL-032", 150_000, 400_000, {}, "cell"),
+    sp("visit:c", 500_000, 600_000, { ticket_id: "LOCAL-033" }),
+    sp("visit:d", 120_000, 130_000, { ticket_id: "LOCAL-031" }),
+  ];
+  const refs = frame.cellsInInterval(spans, { from: 150_000, to: 300_000 });
+  assert.deepEqual(refs, ["cell:LOCAL-031", "cell:LOCAL-032"]);
+  const store = make();
+  store.seek(1_200_000);
+  assert.deepEqual(store.getState().highlighted, []);
+  store.setHighlightInterval({ from: 150_000, to: 300_000, refs });
+  assert.deepEqual(store.getState().highlighted, refs);
+  const before = store.getState();
+  store.setHighlightInterval({ from: 150_000, to: 300_000, refs: [...refs] });
+  assert.equal(store.getState(), before, "the same interval again changes nothing");
+  store.select("cell:LOCAL-033", { focus: false });
+  assert.ok(!store.getState().highlighted.includes("cell:LOCAL-032"), "a selection's relations win: not a second selection model");
+  store.select(null);
+  assert.deepEqual(store.getState().highlighted, refs, "back to the interval");
+  store.hover("cell:LOCAL-033");
+  assert.ok(!store.getState().highlighted.includes("cell:LOCAL-032"));
+  store.hover(null);
+  store.setHighlightInterval(null);
+  assert.deepEqual(store.getState().highlighted, []);
+  assert.equal(store.getState().interval, null);
+});
+
+// ---------------------------------------------------------------- lenses
+
+test("lens: choosing one applies its preset (seeing the window as drawn) and sets the lens", () => {
+  const seen = [];
+  const lens = {
+    id: "retries",
+    label: "Retries",
+    about: "Rounds and attempts that ran again, from the review and execution records.",
+    preset(tree, view) {
+      seen.push(view.window);
+      return { grouping: "execution", filters: { ...view.filters, attentionOnly: true } };
+    },
+  };
+  const view = { window: { from: Number.NEGATIVE_INFINITY, to: Number.POSITIVE_INFINITY }, grouping: "product", expanded: [], filters: { tickets: [], executions: [], slices: [], stations: [], kinds: [], attentionOnly: false }, table: false, lens: null };
+  const patch = frame.applyLens(lens, { roots: [], byId: new Map() }, view, { from: 1, to: 2 });
+  assert.equal(patch.lens, "retries");
+  assert.equal(patch.grouping, "execution");
+  assert.equal(patch.filters.attentionOnly, true);
+  assert.deepEqual(seen[0], { from: 1, to: 2 }, "never the stored 'all' sentinel");
+  frame.applyLens(lens, { roots: [], byId: new Map() }, { ...view, window: null }, { from: 1, to: 2 });
+  assert.equal(seen[1], null, "no window chosen stays unchosen");
+  // Applied through the store, the lens and its preset land together; clearing returns to no lens.
+  const store = make();
+  store.setTimelineView(patch);
+  assert.equal(store.getState().timeline.lens, "retries");
+  assert.equal(store.getState().timeline.grouping, "execution");
+  store.setTimelineView({ lens: null });
+  assert.equal(store.getState().timeline.lens, null);
+});
+
+// ---------------------------------------------------------------- the address: lens, table, all
+
+test("hash grammar: lens, table and win=all (Timeline only), round-trip, and applied", () => {
+  const h = parseHash("#timeline?sel=cell%3ALOCAL-031&win=all&lens=waits&table=1");
+  assert.equal(h.lens, "waits");
+  assert.equal(h.table, true);
+  assert.ok(frame.isAll(h.win));
+  assert.equal(parseHash("#timeline?lens=everything").lens, null, "an unknown lens is dropped");
+  assert.equal(parseHash("#timeline?table=yes").table, false);
+  assert.equal(parseHash("#atlas?lens=waits&table=1").lens, null);
+  assert.equal(parseHash("#atlas?lens=waits&table=1").table, false);
+  const text = formatHash({ route: "timeline", sel: "cell:LOCAL-031", at: null, win: frame.ALL_WINDOW, group: "execution", lens: "review", table: true });
+  assert.equal(text, "#timeline?sel=cell%3ALOCAL-031&win=all&group=execution&lens=review&table=1");
+  const back = parseHash(text);
+  assert.deepEqual([back.lens, back.table, frame.isAll(back.win), back.group], ["review", true, true, "execution"]);
+  assert.equal(formatHash({ route: "atlas", sel: null, at: null, win: null, group: "product", lens: "review", table: true }), "#atlas");
+  const store = make();
+  applyHash(store, h);
+  assert.equal(store.getState().timeline.lens, "waits");
+  assert.equal(store.getState().timeline.table, true);
+  assert.ok(frame.isAll(store.getState().timeline.window));
+  // Written back from the store.
+  const host = fakeHost("#timeline");
+  const sync = createHashSync(store, host);
+  store.select("cell:LOCAL-031", { focus: false });
+  assert.ok(host.hash.includes("lens=waits") && host.hash.includes("table=1"), host.hash);
+  store.setTimelineView({ lens: null, table: false });
+  assert.ok(!host.hash.includes("lens=") && !host.hash.includes("table="), host.hash);
+  sync.dispose();
+});
+
+// ---------------------------------------------------------------- an `at` outside what is held
+
+/** lateStore, connected and caught up, with a history window loader stand-in: seeking a time "loads" the events near it. */
+function windowedStore(events) {
+  const store = lateStore();
+  const base = store.getState();
+  store.arrive("held:1", 4_900_000);
+  const s = store.getState();
+  Object.assign(s, { connection: { state: "live" } });
+  const seek = store.seek.bind(store);
+  store.seek = (t) => {
+    for (const [id, at] of events) if (Math.abs(at - t) < 60_000) store.arrive(id, at);
+    seek(t);
+  };
+  void base;
+  return store;
+}
+
+test("at (event outside what is held): looked up, then honoured as its time; not found, the person is told", async () => {
+  const store = windowedStore([["review-log/LOCAL-031:3", 4_300_000]]);
+  const host = fakeHost("#timeline?at=review-log%2FLOCAL-031%3A3");
+  const lost = [];
+  const asked = [];
+  const sync = createHashSync(store, host, undefined, {
+    locate: async (id) => {
+      asked.push(id);
+      return 4_300_000;
+    },
+    onLost: (at, why) => lost.push([at, why]),
+  });
+  store.arrive("held:2", 4_950_000); // any change tries again; it is asked once
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(asked, ["review-log/LOCAL-031:3"]);
+  assert.deepEqual(store.seeks.at(-1), 4_300_000);
+  assert.equal(sync.pending(), null);
+  assert.deepEqual(lost, []);
+  sync.dispose();
+
+  const store2 = windowedStore([]);
+  const lost2 = [];
+  const sync2 = createHashSync(store2, fakeHost("#timeline?at=nowhere%3A1"), undefined, { locate: async () => null, onLost: (at, why) => lost2.push([at.id, why]) });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(lost2, [["nowhere:1", "not-found"]]);
+  assert.equal(sync2.pending(), null);
+  assert.deepEqual(store2.seeks, [], "the playhead is left where it was");
+  sync2.dispose();
+});
+
+test("at: never dropped silently: an unknown simulation event, and one the person moved past first, are both said", () => {
+  const lost = [];
+  const sync = createHashSync(make(), fakeHost("#atlas?at=sim%3Anope"), undefined, { onLost: (at, why) => lost.push([at.id, why]) });
+  assert.deepEqual(lost, [["sim:nope", "not-found"]]);
+  sync.dispose();
+  const store = lateStore();
+  const host = fakeHost("#timeline?at=cell-lifecycle%2FLOCAL-031%3A7");
+  const lost2 = [];
+  const sync2 = createHashSync(store, host, undefined, { onLost: (at, why) => lost2.push(why) });
+  host.interact();
+  assert.deepEqual(lost2, ["interrupted"]);
+  sync2.dispose();
+});
+
+test("locate: an event id is found through the marks, then the ends of spans; null when nothing names it", async () => {
+  const marks = [{ id: "m1", kind: "gate", at: 700, until: null, eventId: "gate:9", entity: null, label: "", verdict: null, authority: "observed" }];
+  const spans = [sp("visit:v", 100, 300)];
+  const data = { marks: async () => marks, spans: async () => ({ spans, truncated: false, total: 1, version: "1" }) };
+  const whole = { from: 0, to: 1000 };
+  assert.equal(await locateEvent(data, whole, "gate:9"), 700);
+  assert.equal(await locateEvent(data, whole, "visit:v/start"), 100);
+  assert.equal(await locateEvent(data, whole, "visit:v/end"), 300);
+  assert.equal(await locateEvent(data, whole, "other:1"), null);
+});
+
+// ---------------------------------------------------------------- across the experiences
+
+test("cross-experience: 3 frames the selection in the Timeline; 1 and 2 return to the floor keeping selection and playhead, and frame it there", () => {
+  const store = make();
+  store.seek(900_000);
+  store.select("cell:LOCAL-031");
+  showInTimeline(store);
+  let s = store.getState();
+  assert.equal(s.workspace, "timeline");
+  assert.equal(s.focus?.target, "cell:LOCAL-031", "the Timeline reveals the focus request");
+  const nonce = s.focus.nonce;
+  showOnFloor(store, "blueprint");
+  s = store.getState();
+  assert.equal(s.workspace, "floor");
+  assert.equal(s.view, "blueprint");
+  assert.equal(s.selection, "cell:LOCAL-031");
+  assert.equal(s.playhead, 900_000);
+  assert.ok(s.focus.nonce > nonce && s.focus.target === "cell:LOCAL-031", "the floor frames it with the existing focusOn");
 });

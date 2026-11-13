@@ -8,6 +8,12 @@
  * It is dropped, never applied late, once the person interacts first (a key, a click, a wheel), so the
  * playhead never jumps after they have started looking.
  *
+ * An event id the history held does not reach (a replay, or live history read in windows) is looked
+ * up through `locate` (the Timeline's marks and spans, which carry the event ids that bound them):
+ * found, it becomes that time and is honoured as one, which loads the history window holding it; not
+ * found, it is dropped and the person is told (`onLost`). An `at` is never dropped silently: dropped
+ * because the person acted first, they are told that too.
+ *
  * Writing (history.replaceState, never on every frame): the route and selection at once; `at` only
  * while the playhead is held still (paused off the live edge) and has stayed put for SETTLE_MS; the
  * Timeline's `win` once the window has stayed put for SETTLE_MS. An `at` not yet honoured is kept in
@@ -28,7 +34,7 @@ export interface HashHost {
   clearTimeout(handle: unknown): void;
 }
 
-/** Apply everything in the hash that needs no history (route, selection, Theater Mode, Timeline window and grouping). */
+/** Apply everything in the hash that needs no history (route, selection, Theater Mode, Timeline window, grouping, lens and table). */
 export function applyHash(store: SceneStore, h: HashState): void {
   if (h.route === "atlas" || h.route === "blueprint") {
     store.setView(h.route);
@@ -41,6 +47,7 @@ export function applyHash(store: SceneStore, h: HashState): void {
   if (h.route === "timeline") {
     if (h.group) store.setTimelineView({ grouping: h.group });
     if (h.win) store.setTimelineView({ window: h.win });
+    store.setTimelineView({ lens: h.lens, table: h.table });
   }
 }
 
@@ -90,6 +97,16 @@ const sameAt = (a: HashAt | null, b: HashAt | null): boolean =>
   a === b || (a !== null && b !== null && (a.kind === "ms" ? b.kind === "ms" && a.ms === b.ms : b.kind === "event" && a.id === b.id));
 const winKey = (w: { from: number; to: number } | null): string => (w ? `${Math.round(w.from)}-${Math.round(w.to)}` : "");
 
+/** Why an `at` from the address was not applied. */
+export type LostReason = "not-found" | "interrupted";
+
+export interface HashSyncOptions {
+  /** The time of an event the history held does not reach, or null when nothing recorded names it. */
+  locate?(eventId: string): Promise<number | null>;
+  /** An `at` was dropped without being applied. */
+  onLost?(at: HashAt, why: LostReason): void;
+}
+
 export interface HashSync {
   /** The `at` still waiting to be honoured, if any. */
   pending(): HashAt | null;
@@ -100,8 +117,11 @@ export interface HashSync {
  * Start syncing. The route, selection and the rest are assumed applied already (applyHash, before the
  * first render); this takes the hash's `at` as pending and keeps the address written.
  */
-export function createHashSync(store: SceneStore, host: HashHost, settleMs = SETTLE_MS): HashSync {
+export function createHashSync(store: SceneStore, host: HashHost, settleMs = SETTLE_MS, options: HashSyncOptions = {}): HashSync {
   let pending: HashAt | null = parseHash(host.getHash()).at;
+  /** The `at` already looked up (once each). */
+  let asked: HashAt | null = null;
+  let disposed = false;
   let last = host.getHash();
   let settledAt: HashAt | null = null;
   let settledWin = store.getState().timeline.window;
@@ -118,6 +138,8 @@ export function createHashSync(store: SceneStore, host: HashHost, settleMs = SET
       at: pending ?? settledAt,
       win: settledWin,
       group: s.timeline.grouping,
+      lens: s.timeline.lens,
+      table: s.timeline.table,
     });
     if (next === last) return;
     last = next;
@@ -131,10 +153,45 @@ export function createHashSync(store: SceneStore, host: HashHost, settleMs = SET
     pending = null;
     if (!honourAt(store, at)) {
       pending = at;
+      if (at.kind === "event") locateLater(at);
       return;
     }
     // Honoured: it is the playhead now, already settled.
     settledAt = wantAt = playheadHeld(store.getState()) ? atOf(store.getState()) : null;
+  };
+
+  const lose = (at: HashAt, why: LostReason) => {
+    if (pending === at) pending = null;
+    options.onLost?.(at, why);
+  };
+
+  /** An event id the shown history does not hold: the simulation holds all of its own; otherwise look it up once the history is ready. */
+  const locateLater = (at: HashAt & { kind: "event" }) => {
+    const s = store.getState();
+    if (s.source === "simulation") {
+      lose(at, "not-found");
+      return;
+    }
+    if (!options.locate || asked === at) return;
+    const ready = s.source === "replay" ? s.log.headTime() !== null : s.connection?.state === "live";
+    if (!ready) return;
+    asked = at;
+    options.locate(at.id).then(
+      (t) => {
+        if (disposed || pending !== at) return;
+        if (t === null || !Number.isFinite(t)) {
+          lose(at, "not-found");
+          return;
+        }
+        // Found by time: honoured as that time (which loads the window holding it).
+        pending = { kind: "ms", ms: Math.round(t) };
+        tryPending();
+        write();
+      },
+      () => {
+        if (!disposed && pending === at) lose(at, "not-found");
+      },
+    );
   };
 
   const onChange = () => {
@@ -178,13 +235,16 @@ export function createHashSync(store: SceneStore, host: HashHost, settleMs = SET
     last = host.getHash();
     applyHash(store, h);
     pending = h.at;
+    asked = null;
     settledWin = wantWin = store.getState().timeline.window;
     tryPending();
   });
   const offInteraction = host.onInteraction(() => {
     if (!pending) return;
-    // The person acted first: the address's moment is no longer theirs to be moved to.
+    // The person acted first: the address's moment is no longer theirs to be moved to. Said, never silent.
+    const dropped = pending;
     pending = null;
+    options.onLost?.(dropped, "interrupted");
     onChange();
   });
   const offStore = store.subscribe(onChange);
@@ -193,6 +253,7 @@ export function createHashSync(store: SceneStore, host: HashHost, settleMs = SET
   return {
     pending: () => pending,
     dispose() {
+      disposed = true;
       offHash();
       offInteraction();
       offStore();

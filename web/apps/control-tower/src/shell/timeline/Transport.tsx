@@ -241,7 +241,8 @@ function ChapterName() {
   );
 }
 
-export const Transport = memo(function Transport({ collapsed, onCollapse }: { collapsed: boolean; onCollapse: () => void }) {
+/** `onCollapse` is the docked timeline's; without it (the Timeline workspace) there is no collapse button. */
+export const Transport = memo(function Transport({ collapsed, onCollapse }: { collapsed: boolean; onCollapse?: () => void }) {
   const playing = useSceneStore((s) => s.playing);
   const reduced = useSceneStore((s) => s.reducedMotion);
   const source = useSceneStore((s) => s.source);
@@ -304,9 +305,11 @@ export const Transport = memo(function Transport({ collapsed, onCollapse }: { co
         </span>
       ) : null}
       <SpeedControl />
-      <IconButton label={collapsed ? "Expand the timeline" : "Collapse the timeline"} shortcut="Shift+T" onClick={onCollapse} className="ml-1">
-        {collapsed ? <PanelBottomOpen aria-hidden="true" /> : <PanelBottomClose aria-hidden="true" />}
-      </IconButton>
+      {onCollapse ? (
+        <IconButton label={collapsed ? "Expand the timeline" : "Collapse the timeline"} shortcut="Shift+T" onClick={onCollapse} className="ml-1">
+          {collapsed ? <PanelBottomOpen aria-hidden="true" /> : <PanelBottomClose aria-hidden="true" />}
+        </IconButton>
+      ) : null}
     </div>
   );
 });

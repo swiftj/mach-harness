@@ -1,32 +1,57 @@
 /**
- * The Timeline's own controls (M6.3 design section 3D), under the shared transport: grouping, filters,
- * jumps, zoom to the selection, show all, and the table. Time, selection and playback stay the
- * store's: a jump seeks the playhead with the store's own seek (by event id when the mark has one)
- * and selects the mark's entity; the window and filters are the Timeline's interface state
- * (`onView`, kept in the store).
+ * The Timeline's own controls (M6.3 design section 3D), under the shared transport: grouping, filters
+ * with a chip per active choice, the investigation lenses, jumps (the kind shown), zoom with the
+ * window's length in words, fitting the recorded activity, show all, zoom to the selection, and the
+ * table. Time, selection and playback stay the store's: a jump seeks the playhead with the store's
+ * own seek (by event id when the mark has one) and selects the mark's entity; the window, filters and
+ * lens are the Timeline's interface state (`onView`, kept in the store).
+ *
+ * The row is a size container: as the workspace narrows (an inspector beside it, a smaller window),
+ * secondary labels give way to icons with accessible names, so nothing wraps or clips.
  *
  * Keys (registered only while the Timeline is up; src/shell/keyboard.ts routes them): g grouping,
  * / filters, n and p the next and previous mark of the kind last jumped to, z zoom to the selection,
  * a show all.
  */
-import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, ListFilter, Maximize2, Table2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, ListFilter, Maximize2, Microscope, Minus, Plus, ScanLine, Table2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Checkbox, cn, Popover, PopoverContent, PopoverTrigger } from "@mach/ui";
 import type { EntityRef } from "../../sim";
 import { useSceneStore, useStore } from "../../scene";
 import { registerTimelineKeys, type TimelineKeyCommand } from "../../shell/keyboard";
 import { IconButton } from "../../shell/timeline/Transport";
-import { NO_FILTERS, type Grouping, type SpanKind, type TimelineFilters, type TimelineToolbarProps, type TimeWindow } from "../contract";
-import { clampWindow, extentOfSpans, filterCount, filterOptions, frameExtent, JUMPS, jumpOf, panToInclude, spanIdForRef, spansOfRef, toggled, type JumpKind } from "./frame";
+import { NO_FILTERS, type Grouping, type LensDefinition, type LensId, type SpanKind, type TimelineFilters, type TimelineSpan, type TimelineToolbarProps, type TimeWindow } from "../contract";
+import {
+  ALL_WINDOW,
+  applyLens,
+  clampWindow,
+  extentOfSpans,
+  filterChips,
+  filterCount,
+  filterOptions,
+  filterOptionsOfSpans,
+  frameExtent,
+  isAll,
+  JUMPS,
+  jumpOf,
+  panToInclude,
+  spanIdForRef,
+  spansOfRef,
+  toggled,
+  windowLengthWords,
+  type JumpKind,
+} from "./frame";
 
 const REF = /^[a-z]+:.+/;
+/** One zoom step: the window's length is divided or multiplied by this. */
+const ZOOM_STEP = 2;
 
 const GROUPINGS: Array<{ value: Grouping; label: string; hint: string }> = [
   { value: "product", label: "Product", hint: "Wave, slice, cell, station: the work as the product sees it" },
   { value: "execution", label: "Execution", hint: "Execution, claim, workflow, agents, tools: the work as it ran" },
 ];
 
-const KIND_WORDS: Partial<Record<SpanKind, string>> = {
+export const KIND_WORDS: Partial<Record<SpanKind, string>> = {
   wave: "Waves",
   "slice-wait": "Dependency waits",
   "slice-eligible": "Eligible, not started",
@@ -45,6 +70,23 @@ const KIND_WORDS: Partial<Record<SpanKind, string>> = {
   agent: "Agents",
   tool: "Tool calls",
 };
+const kindWords = (k: SpanKind): string => KIND_WORDS[k] ?? k;
+
+/** What the workspace gives the toolbar beyond the contract's props. All optional: without them it behaves as before. */
+export interface ToolbarExtras {
+  /** The spans of the window, unfiltered: the filter lists offer every value present. */
+  readonly spans?: readonly TimelineSpan[];
+  /** The window as drawn (the default, or the whole history for "all"). */
+  readonly drawn?: TimeWindow;
+  /** The whole history held. */
+  readonly whole?: TimeWindow;
+  /** The investigation lenses, once their module has loaded (null while it has not, or when it is absent). */
+  readonly lenses?: readonly LensDefinition[] | null;
+}
+
+function Sep() {
+  return <span className="mx-1 h-5 w-px shrink-0 bg-line" aria-hidden="true" />;
+}
 
 function GroupingSwitch({ value, onChange }: { value: Grouping; onChange: (g: Grouping) => void }) {
   const name = useId();
@@ -69,28 +111,26 @@ function GroupingSwitch({ value, onChange }: { value: Grouping; onChange: (g: Gr
   );
 }
 
-function ToolbarButton({ label, shortcut, onClick, pressed, children, wide }: { label: string; shortcut?: string; onClick: () => void; pressed?: boolean; children: ReactNode; wide?: string }) {
-  if (!wide) {
-    return (
-      <IconButton label={label} shortcut={shortcut} onClick={onClick} pressed={pressed}>
-        {children}
-      </IconButton>
-    );
-  }
+/** A button whose words give way to its icon when the row is narrow (the words stay its accessible name). */
+function LabelledButton({ label, words, shortcut, onClick, pressed, children, collapseBelow = "lg", disabled }: { label: string; words: string; shortcut?: string; onClick: () => void; pressed?: boolean; children: ReactNode; collapseBelow?: "md" | "lg"; disabled?: boolean }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={pressed}
       aria-keyshortcuts={shortcut}
+      aria-label={label}
+      disabled={disabled}
       title={shortcut ? `${label} (${shortcut})` : label}
       className={cn(
-        "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2 text-body-sm text-ink-muted transition-colors duration-[var(--mach-duration-fast)] hover:bg-surface-sunken hover:text-ink [&_svg]:size-4",
+        "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2 text-body-sm text-ink-muted transition-colors duration-[var(--mach-duration-fast)] hover:bg-surface-sunken hover:text-ink disabled:opacity-40 [&_svg]:size-4",
         pressed && "bg-surface-sunken text-ink",
       )}
     >
       {children}
-      <span className="max-[1279px]:sr-only">{wide}</span>
+      <span aria-hidden="true" className={collapseBelow === "lg" ? "@max-[1199px]:hidden" : "@max-[879px]:hidden"}>
+        {words}
+      </span>
     </button>
   );
 }
@@ -109,22 +149,31 @@ function FilterList({ title, values, chosen, words, onToggle }: { title: string;
   );
 }
 
-export function TimelineToolbar({ data, tree, view, onView }: TimelineToolbarProps) {
+/** At most this many chips are drawn; the rest are counted. */
+const MAX_CHIPS = 3;
+
+export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole: wholeProp, lenses }: TimelineToolbarProps & ToolbarExtras) {
   const store = useStore();
   const selection = useSceneStore((s) => s.selection);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [jumpsOpen, setJumpsOpen] = useState(false);
+  const [lensOpen, setLensOpen] = useState(false);
   const [lastJump, setLastJump] = useState<JumpKind>("failure");
   const [said, setSaid] = useState("");
-  const options = useMemo(() => filterOptions(tree, view.filters), [tree, view.filters]);
+  // Every value present in the window stays on offer while a filter is on: built from the spans, not the filtered tree.
+  const options = useMemo(() => (spans ? filterOptionsOfSpans(spans, view.filters) : filterOptions(tree, view.filters)), [spans, tree, view.filters]);
   const count = filterCount(view.filters);
+  const chips = useMemo(() => filterChips(view.filters, kindWords), [view.filters]);
   const jumping = useRef<AbortController | null>(null);
 
   const whole = useCallback((): TimeWindow => {
+    if (wholeProp) return wholeProp;
     const s = store.getState();
     const ext = data.extent();
     return { from: Math.min(ext?.from ?? s.extent.start, s.extent.start), to: Math.max(ext?.to ?? s.liveAt, s.liveAt, s.extent.end) };
-  }, [data, store]);
+  }, [data, store, wholeProp]);
+  /** The window as drawn now. */
+  const shown = useCallback((): TimeWindow => drawn ?? (view.window && !isAll(view.window) ? view.window : whole()), [drawn, view.window, whole]);
 
   const setFilters = useCallback((patch: Partial<TimelineFilters>) => onView({ filters: { ...view.filters, ...patch } }), [onView, view.filters]);
 
@@ -151,14 +200,12 @@ export function TimelineToolbar({ data, tree, view, onView }: TimelineToolbarPro
       if (mark.eventId && store.getState().log.entry(mark.eventId)) store.seekToEvent(mark.eventId);
       else store.seek(mark.at);
       if (mark.entity && REF.test(mark.entity)) store.select(mark.entity as EntityRef, { focus: false });
-      const current = view.window;
-      if (current) {
-        const next = panToInclude(current, { from: mark.at, to: mark.until ?? mark.at });
-        if (next !== current) onView({ window: clampWindow(next, whole()) });
-      }
+      const current = shown();
+      const next = panToInclude(current, { from: mark.at, to: mark.until ?? mark.at });
+      if (next !== current) onView({ window: clampWindow(next, whole()) });
       setSaid(mark.label);
     },
-    [data, store, view.window, onView, whole],
+    [data, store, onView, whole, shown],
   );
 
   const zoomToSelection = useCallback(async () => {
@@ -180,8 +227,32 @@ export function TimelineToolbar({ data, tree, view, onView }: TimelineToolbarPro
     onView({ window: clampWindow(frameExtent(ext), whole()) });
   }, [data, onView, store, tree, whole]);
 
-  const showAll = useCallback(() => onView({ window: null }), [onView]);
+  /** Narrow (factor < 1) or widen the window about its middle. */
+  const zoom = useCallback(
+    (factor: number) => {
+      const w = shown();
+      const mid = (w.from + w.to) / 2;
+      const half = ((w.to - w.from) * factor) / 2;
+      onView({ window: clampWindow({ from: mid - half, to: mid + half }, whole()) });
+    },
+    [onView, shown, whole],
+  );
+  const showAll = useCallback(() => onView({ window: ALL_WINDOW }), [onView]);
+  const fitActivity = useCallback(() => onView({ window: null }), [onView]);
   const toggleGrouping = useCallback(() => onView({ grouping: view.grouping === "product" ? "execution" : "product" }), [onView, view.grouping]);
+  const chooseLens = useCallback(
+    (lens: LensDefinition | null) => {
+      setLensOpen(false);
+      if (!lens) {
+        onView({ lens: null });
+        setSaid("No investigation lens.");
+        return;
+      }
+      onView(applyLens(lens, tree, view, shown()));
+      setSaid(`${lens.label}: ${lens.about}`);
+    },
+    [onView, tree, view, shown],
+  );
 
   useEffect(
     () =>
@@ -214,126 +285,225 @@ export function TimelineToolbar({ data, tree, view, onView }: TimelineToolbarPro
   useEffect(() => () => jumping.current?.abort(), []);
 
   const last = jumpOf(lastJump);
+  const w = shown();
+  const length = windowLengthWords(w.to - w.from);
+  const all = isAll(view.window);
+  const activeLens: LensDefinition | null = view.lens ? (lenses?.find((l) => l.id === view.lens) ?? null) : null;
+  const lensName = (id: LensId) => activeLens?.label ?? id.charAt(0).toUpperCase() + id.slice(1);
+
   return (
-    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-line bg-surface px-2" role="toolbar" aria-label="Timeline controls" data-timeline-toolbar="">
-      <GroupingSwitch value={view.grouping} onChange={(grouping) => onView({ grouping })} />
-      <span className="mx-1.5 h-5 w-px shrink-0 bg-line" aria-hidden="true" />
+    <div className="@container shrink-0 border-b border-line bg-surface">
+      <div className="flex h-10 min-w-0 items-center gap-1 px-2" role="toolbar" aria-label="Timeline controls" data-timeline-toolbar="">
+        <GroupingSwitch value={view.grouping} onChange={(grouping) => onView({ grouping })} />
+        <Sep />
 
-      <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            aria-keyshortcuts="/"
-            title="Filters (/)"
-            className={cn(
-              "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2 text-body-sm text-ink-muted hover:bg-surface-sunken hover:text-ink [&_svg]:size-4",
-              count > 0 && "bg-surface-sunken text-ink",
-            )}
-          >
-            <ListFilter aria-hidden="true" />
-            <span>Filters</span>
-            {count > 0 ? (
-              <span className="rounded-full bg-ink px-1.5 text-caption leading-4 text-ink-inverse">
-                {count}
-                <span className="sr-only"> on</span>
+        {/* Filters, then a chip per active choice (removable). */}
+        <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-keyshortcuts="/"
+              aria-label={count > 0 ? `Filters, ${count} on` : "Filters"}
+              title="Filters (/)"
+              className={cn(
+                "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2 text-body-sm text-ink-muted hover:bg-surface-sunken hover:text-ink [&_svg]:size-4",
+                count > 0 && "bg-surface-sunken text-ink",
+              )}
+            >
+              <ListFilter aria-hidden="true" />
+              <span aria-hidden="true" className="@max-[879px]:hidden">
+                Filters
               </span>
-            ) : null}
-          </button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[min(560px,calc(100vw-32px))]" aria-label="Filters">
-          <div className="flex flex-col gap-4">
-            <Checkbox
-              label="Needs attention only"
-              description="Tracks holding something that failed, was interrupted or refused, or waits on a person."
-              checked={view.filters.attentionOnly}
-              onCheckedChange={(on) => setFilters({ attentionOnly: on === true })}
-            />
-            <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-              <FilterList title="Cells" values={options.tickets} chosen={view.filters.tickets} onToggle={(v) => setFilters({ tickets: toggled(view.filters.tickets, v) })} />
-              <FilterList title="Slices" values={options.slices} chosen={view.filters.slices} onToggle={(v) => setFilters({ slices: toggled(view.filters.slices, v) })} />
-              <FilterList title="Executions" values={options.executions} chosen={view.filters.executions} onToggle={(v) => setFilters({ executions: toggled(view.filters.executions, v) })} />
-              <FilterList title="Stations" values={options.stations} chosen={view.filters.stations} onToggle={(v) => setFilters({ stations: toggled(view.filters.stations, v) })} />
-              <FilterList
-                title="Kinds"
-                values={options.kinds}
-                chosen={view.filters.kinds}
-                words={(v) => KIND_WORDS[v as SpanKind] ?? v}
-                onToggle={(v) => setFilters({ kinds: toggled(view.filters.kinds, v as SpanKind) })}
-              />
-            </div>
-            {options.tickets.length + options.slices.length + options.executions.length + options.stations.length + options.kinds.length === 0 ? (
-              <p className="text-body-sm text-ink-muted">Nothing in this window to filter by yet.</p>
-            ) : null}
-            <div className="flex justify-end">
-              <button type="button" disabled={count === 0} onClick={() => onView({ filters: NO_FILTERS })} className="h-8 rounded-sm px-2.5 text-body-sm font-semibold text-accent-ink hover:bg-surface-sunken disabled:opacity-40">
-                Clear filters
-              </button>
-            </div>
-          </div>
-        </PopoverContent>
-      </Popover>
-
-      <span className="mx-1.5 h-5 w-px shrink-0 bg-line" aria-hidden="true" />
-      <IconButton label={`Previous ${last.label}`} shortcut="P" onClick={() => void jump(lastJump, -1)}>
-        <ChevronLeft aria-hidden="true" />
-      </IconButton>
-      <Popover open={jumpsOpen} onOpenChange={setJumpsOpen}>
-        <PopoverTrigger asChild>
-          <button type="button" title="Jump to a failure, retry, gate decision, human intervention or gap" className="inline-flex h-8 shrink-0 items-center gap-1 rounded-sm px-2 text-body-sm text-ink-muted hover:bg-surface-sunken hover:text-ink [&_svg]:size-3.5">
-            <span>
-              Jump<span className="max-[1099px]:sr-only">: {last.plural.toLowerCase()}</span>
-            </span>
-            <ChevronDown aria-hidden="true" />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent className="w-72 p-2" aria-label="Jump to">
-          <ul className="flex flex-col">
-            {JUMPS.map((j) => (
-              <li key={j.id} className="flex items-center justify-between gap-2 rounded-sm px-2 py-1 hover:bg-surface-sunken">
-                <span className={cn("text-body-sm", j.id === lastJump ? "font-semibold text-ink" : "text-ink-muted")}>{j.plural}</span>
-                <span className="flex gap-0.5">
-                  <IconButton
-                    label={`Previous ${j.label}`}
-                    onClick={() => {
-                      setJumpsOpen(false);
-                      void jump(j.id, -1);
-                    }}
-                  >
-                    <ChevronLeft aria-hidden="true" />
-                  </IconButton>
-                  <IconButton
-                    label={`Next ${j.label}`}
-                    onClick={() => {
-                      setJumpsOpen(false);
-                      void jump(j.id, 1);
-                    }}
-                  >
-                    <ChevronRight aria-hidden="true" />
-                  </IconButton>
+              {count > 0 ? (
+                <span aria-hidden="true" className="rounded-full bg-ink px-1.5 text-caption leading-4 text-ink-inverse">
+                  {count}
                 </span>
+              ) : null}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[min(560px,calc(100vw-32px))]" aria-label="Filters">
+            <div className="flex flex-col gap-4">
+              <Checkbox
+                label="Needs attention only"
+                description="Tracks holding something that failed, was interrupted or refused, or waits on a person."
+                checked={view.filters.attentionOnly}
+                onCheckedChange={(on) => setFilters({ attentionOnly: on === true })}
+              />
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+                <FilterList title="Cells" values={options.tickets} chosen={view.filters.tickets} onToggle={(v) => setFilters({ tickets: toggled(view.filters.tickets, v) })} />
+                <FilterList title="Slices" values={options.slices} chosen={view.filters.slices} onToggle={(v) => setFilters({ slices: toggled(view.filters.slices, v) })} />
+                <FilterList title="Executions" values={options.executions} chosen={view.filters.executions} onToggle={(v) => setFilters({ executions: toggled(view.filters.executions, v) })} />
+                <FilterList title="Stations" values={options.stations} chosen={view.filters.stations} onToggle={(v) => setFilters({ stations: toggled(view.filters.stations, v) })} />
+                <FilterList title="Kinds" values={options.kinds} chosen={view.filters.kinds} words={(v) => kindWords(v as SpanKind)} onToggle={(v) => setFilters({ kinds: toggled(view.filters.kinds, v as SpanKind) })} />
+              </div>
+              {options.tickets.length + options.slices.length + options.executions.length + options.stations.length + options.kinds.length === 0 ? (
+                <p className="text-body-sm text-ink-muted">Nothing in this window to filter by yet.</p>
+              ) : null}
+              <div className="flex justify-end">
+                <button type="button" disabled={count === 0} onClick={() => onView({ filters: NO_FILTERS })} className="h-8 rounded-sm px-2.5 text-body-sm font-semibold text-accent-ink hover:bg-surface-sunken disabled:opacity-40">
+                  Clear filters
+                </button>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+        {chips.length ? (
+          <ul className="flex shrink-0 items-center gap-1 @max-[999px]:hidden" aria-label="Active filters" data-timeline-chips="">
+            {chips.slice(0, MAX_CHIPS).map((c) => (
+              <li key={c.key} className="flex h-6 max-w-[9rem] items-center gap-0.5 rounded-full border border-line bg-surface-sunken pl-2 pr-0.5 text-caption text-ink">
+                <span className="min-w-0 truncate">{c.label}</span>
+                <button type="button" aria-label={`Remove the filter ${c.label}`} title={`Remove ${c.label}`} onClick={() => setFilters(c.without)} className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-ink-muted hover:bg-surface hover:text-ink [&_svg]:size-3">
+                  <X aria-hidden="true" />
+                </button>
               </li>
             ))}
+            {chips.length > MAX_CHIPS ? (
+              <li className="shrink-0 text-caption text-ink-subtle">
+                <button type="button" onClick={() => setFiltersOpen(true)} className="rounded-sm px-1 hover:text-ink" aria-label={`${chips.length - MAX_CHIPS} more filters: open the filters`}>
+                  +{chips.length - MAX_CHIPS}
+                </button>
+              </li>
+            ) : null}
           </ul>
-        </PopoverContent>
-      </Popover>
-      <IconButton label={`Next ${last.label}`} shortcut="N" onClick={() => void jump(lastJump, 1)}>
-        <ChevronRight aria-hidden="true" />
-      </IconButton>
+        ) : null}
+        <Sep />
 
-      <span className="mx-1.5 h-5 w-px shrink-0 bg-line" aria-hidden="true" />
-      <ToolbarButton label={selection ? "Zoom to the selection" : "Zoom to the selection (nothing selected)"} shortcut="Z" onClick={() => void zoomToSelection()} wide="Zoom to selection">
-        <Crosshair aria-hidden="true" />
-      </ToolbarButton>
-      <ToolbarButton label="Show all of the history held" shortcut="A" onClick={showAll} pressed={view.window === null} wide="Show all">
-        <Maximize2 aria-hidden="true" />
-      </ToolbarButton>
+        {/* Investigation lenses. */}
+        <Popover open={lensOpen} onOpenChange={setLensOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={view.lens ? `Investigate: ${lensName(view.lens)} lens on` : "Investigate"}
+              title={lenses ? "Investigate: retries, concurrency, waits, review, recovery" : "Investigation lenses are not available in this build"}
+              className={cn(
+                "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2 text-body-sm text-ink-muted hover:bg-surface-sunken hover:text-ink [&_svg]:size-4",
+                view.lens && "bg-accent-soft text-ink",
+              )}
+              data-timeline-investigate=""
+            >
+              <Microscope aria-hidden="true" />
+              <span aria-hidden="true" className="max-w-40 truncate @max-[879px]:hidden">
+                {view.lens ? lensName(view.lens) : "Investigate"}
+              </span>
+              <ChevronDown aria-hidden="true" className="!size-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[min(380px,calc(100vw-32px))] p-1.5" aria-label="Investigate">
+            {lenses && lenses.length ? (
+              <ul className="flex flex-col">
+                {lenses.map((lens) => (
+                  <li key={lens.id}>
+                    <button
+                      type="button"
+                      aria-pressed={view.lens === lens.id}
+                      onClick={() => chooseLens(lens)}
+                      className={cn("flex w-full flex-col items-start gap-0.5 rounded-sm px-2.5 py-2 text-left hover:bg-surface-sunken", view.lens === lens.id && "bg-surface-sunken")}
+                    >
+                      <span className={cn("text-body-sm", view.lens === lens.id ? "font-semibold text-ink" : "text-ink")}>{lens.label}</span>
+                      <span className="text-caption text-ink-muted">{lens.about}</span>
+                    </button>
+                  </li>
+                ))}
+                <li className="mt-1 border-t border-line pt-1">
+                  <button type="button" disabled={!view.lens} onClick={() => chooseLens(null)} className="flex w-full rounded-sm px-2.5 py-2 text-left text-body-sm text-ink-muted hover:bg-surface-sunken hover:text-ink disabled:opacity-40">
+                    No lens
+                  </button>
+                </li>
+              </ul>
+            ) : (
+              <p className="px-2.5 py-2 text-body-sm text-ink-muted">The investigation lenses are not available in this build.</p>
+            )}
+          </PopoverContent>
+        </Popover>
+        {view.lens ? (
+          <IconButton label={`Clear the ${lensName(view.lens)} lens`} onClick={() => chooseLens(null)} className="-ml-1 size-7">
+            <X aria-hidden="true" />
+          </IconButton>
+        ) : null}
+        <Sep />
 
-      <p role="status" className="ml-2 min-w-0 flex-1 truncate text-caption text-ink-subtle">
-        {said}
-      </p>
-      <ToolbarButton label="Show the window as a table" onClick={() => onView({ table: !view.table })} pressed={view.table} wide="Table">
-        <Table2 aria-hidden="true" />
-      </ToolbarButton>
+        {/* Jumps: the kind is always shown. */}
+        <IconButton label={`Previous ${last.label}`} shortcut="P" onClick={() => void jump(lastJump, -1)}>
+          <ChevronLeft aria-hidden="true" />
+        </IconButton>
+        <Popover open={jumpsOpen} onOpenChange={setJumpsOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Jump to: ${last.plural.toLowerCase()}. Choose another kind`}
+              title="Jump to a failure, retry, gate decision, human intervention or gap"
+              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm text-ink-muted hover:bg-surface-sunken hover:text-ink [&_svg]:size-3.5"
+            >
+              <span aria-hidden="true" className="whitespace-nowrap">
+                <span className="@max-[1179px]:hidden">Jump: </span>
+                {last.plural}
+              </span>
+              <ChevronDown aria-hidden="true" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-72 p-2" aria-label="Jump to">
+            <ul className="flex flex-col">
+              {JUMPS.map((j) => (
+                <li key={j.id} className="flex items-center justify-between gap-2 rounded-sm px-2 py-1 hover:bg-surface-sunken">
+                  <span className={cn("text-body-sm", j.id === lastJump ? "font-semibold text-ink" : "text-ink-muted")}>{j.plural}</span>
+                  <span className="flex gap-0.5">
+                    <IconButton
+                      label={`Previous ${j.label}`}
+                      onClick={() => {
+                        setJumpsOpen(false);
+                        void jump(j.id, -1);
+                      }}
+                    >
+                      <ChevronLeft aria-hidden="true" />
+                    </IconButton>
+                    <IconButton
+                      label={`Next ${j.label}`}
+                      onClick={() => {
+                        setJumpsOpen(false);
+                        void jump(j.id, 1);
+                      }}
+                    >
+                      <ChevronRight aria-hidden="true" />
+                    </IconButton>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </PopoverContent>
+        </Popover>
+        <IconButton label={`Next ${last.label}`} shortcut="N" onClick={() => void jump(lastJump, 1)}>
+          <ChevronRight aria-hidden="true" />
+        </IconButton>
+        <Sep />
+
+        {/* Zoom, with the window's length in words. */}
+        <IconButton label="Widen the time window" onClick={() => zoom(ZOOM_STEP)} disabled={all}>
+          <Minus aria-hidden="true" />
+        </IconButton>
+        <span className="min-w-[4.5rem] shrink-0 whitespace-nowrap text-center text-caption text-ink tabular" data-timeline-length="" title={`${length} of the history shown`}>
+          {length}
+          <span className="@max-[1279px]:sr-only"> shown</span>
+        </span>
+        <IconButton label="Narrow the time window" onClick={() => zoom(1 / ZOOM_STEP)}>
+          <Plus aria-hidden="true" />
+        </IconButton>
+        <LabelledButton label="Fit the recorded activity" words="Fit activity" onClick={fitActivity} pressed={view.window === null}>
+          <ScanLine aria-hidden="true" />
+        </LabelledButton>
+        <LabelledButton label="Show all of the history held" words="Show all" shortcut="A" onClick={showAll} pressed={all}>
+          <Maximize2 aria-hidden="true" />
+        </LabelledButton>
+        <IconButton label={selection ? "Zoom to the selection" : "Zoom to the selection (nothing selected)"} shortcut="Z" onClick={() => void zoomToSelection()} disabled={!selection}>
+          <Crosshair aria-hidden="true" />
+        </IconButton>
+
+        <p role="status" className="ml-2 min-w-0 flex-1 truncate text-caption text-ink-subtle" title={said || undefined}>
+          {said}
+        </p>
+        <LabelledButton label={view.table ? "Show the tracks" : "Show the window as a table"} words="Table" onClick={() => onView({ table: !view.table })} pressed={view.table} collapseBelow="md">
+          <Table2 aria-hidden="true" />
+        </LabelledButton>
+      </div>
     </div>
   );
 }

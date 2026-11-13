@@ -12,18 +12,20 @@
  * Owned here: panel sizes, open and closed panels, the help sheet. Everything about the factory and
  * the playback (playhead, selection, focus, mode, workspace, Theater Mode) is the store's.
  */
-import { CircleHelp, Monitor, Moon, PanelRight, PanelRightClose, Sun, TvMinimalPlay } from "lucide-react";
+import { CircleHelp, Monitor, Moon, PanelRight, PanelRightClose, Sun, TvMinimalPlay, X } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { cn, useTheme, type ThemePreference } from "@mach/ui";
 import { refKind } from "../sim";
 import { heldStore, SceneStoreProvider, showInTimeline, showOnFloor, useSceneStore, useStore, type SceneStore } from "../scene";
+import { timelineDataFor } from "../timeline/data";
 import { TimelineWorkspace } from "../timeline/Workspace";
 import { Announcer } from "./Announcer";
 import { Brand, ModeSwitch, RunIdentity, WorkspaceSwitch } from "./chrome";
 import { CompletenessBadge, ConnectionBadge, SOURCE_WORDS, SourceBadge, StageNotice } from "./SourceBadge";
 import { useSource } from "./source/context";
-import { parseHash } from "./source/hash";
-import { applyHash, browserHashHost, createHashSync } from "./source/hashSync";
+import { parseHash, type HashAt } from "./source/hash";
+import { applyHash, browserHashHost, createHashSync, type LostReason } from "./source/hashSync";
+import { locateEvent } from "./source/locate";
 import { HelpSheet } from "./HelpSheet";
 import { Inspector } from "./inspector/Inspector";
 import { useShellKeys } from "./keyboard";
@@ -66,8 +68,10 @@ function useMedia(query: string): boolean {
  * (#blueprint?sel=cell:LOCAL-031, #timeline?sel=...&at=...&win=...&group=...), both ways. Grammar and
  * rules: source/hash.ts and source/hashSync.ts.
  */
-function useHashSync() {
+function useHashSync(): { lost: { at: HashAt; why: LostReason } | null; dismiss: () => void } {
   const store = useStore();
+  const { client = null } = useSource();
+  const [lost, setLost] = useState<{ at: HashAt; why: LostReason } | null>(null);
   // Read once before the first render, so the stage mounts the view (and the workspace) the address
   // names (no switch, and no transition, at start-up). `at` waits for history: createHashSync below.
   useState(() => {
@@ -75,9 +79,37 @@ function useHashSync() {
     return true;
   });
   useEffect(() => {
-    const sync = createHashSync(store, browserHashHost());
+    const data = timelineDataFor(store, client);
+    const sync = createHashSync(store, browserHashHost(), undefined, {
+      // An event the history held does not reach: found through the Timeline's marks and span ends, over the whole history.
+      locate: (id) => {
+        const s = store.getState();
+        const ext = data.extent();
+        const whole = { from: Math.min(s.extent.start, ext?.from ?? s.extent.start), to: Math.max(s.liveAt, s.extent.end, ext?.to ?? s.liveAt) };
+        return locateEvent(data, whole, id);
+      },
+      onLost: (at, why) => setLost({ at, why }),
+    });
     return () => sync.dispose();
-  }, [store]);
+  }, [store, client]);
+  return { lost, dismiss: useCallback(() => setLost(null), []) };
+}
+
+/** Said when the address named a moment that was not applied: never dropped silently. */
+function LostMomentNotice({ at, why, onDismiss }: { at: HashAt; why: LostReason; onDismiss: () => void }) {
+  const what = at.kind === "event" ? `the event ${at.id.length > 64 ? `${at.id.slice(0, 61)}…` : at.id}` : "that time";
+  const text =
+    why === "not-found"
+      ? `The address names a moment (${what}) that could not be located in the history held. The playhead was left where it was.`
+      : `The moment the address names (${what}) was not applied: you moved first.`;
+  return (
+    <div role="status" className="absolute bottom-4 left-1/2 z-40 flex w-[min(560px,calc(100%-32px))] -translate-x-1/2 items-start gap-2 rounded-md border border-line bg-surface-raised px-3 py-2 text-body-sm text-ink shadow-2" data-lost-moment={why}>
+      <span className="min-w-0 flex-1">{text}</span>
+      <IconButton label="Dismiss" onClick={onDismiss} className="-my-1 size-7">
+        <X aria-hidden="true" />
+      </IconButton>
+    </div>
+  );
 }
 
 /** The floor's view of the store: held still while another workspace is up (set before the first render too). */
@@ -217,7 +249,7 @@ function usePageTitle() {
 
 export function Shell() {
   const store = useStore();
-  useHashSync();
+  const lostMoment = useHashSync();
   usePageTitle();
   const source = useSceneStore((s) => s.source);
   const theater = useSceneStore((s) => s.theater);
@@ -404,6 +436,7 @@ export function Shell() {
             <TimelineWorkspace />
           </div>
         )}
+        {lostMoment.lost ? <LostMomentNotice at={lostMoment.lost.at} why={lostMoment.lost.why} onDismiss={lostMoment.dismiss} /> : null}
       </main>
 
       <aside

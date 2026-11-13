@@ -38,7 +38,8 @@ export function urlFor(choice: SourceChoice, location: Pick<Location, "pathname"
 }
 
 export const browserFetch: FetchLike = async (url, init) => {
-  const response = await fetch(url, { headers: init?.headers, credentials: "same-origin", cache: "no-store" });
+  // The signal is forwarded so a superseded request (a window the person has already left) is really aborted.
+  const response = await fetch(url, { headers: init?.headers, credentials: "same-origin", cache: "no-store", signal: init?.signal });
   return { status: response.status, json: () => response.json() };
 };
 

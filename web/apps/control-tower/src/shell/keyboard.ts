@@ -9,7 +9,7 @@
  * which prevents the default so this map skips the event.
  */
 import { useEffect } from "react";
-import { showInTimeline, SPEEDS, useStore, type SceneStore } from "../scene";
+import { showInTimeline, showOnFloor, SPEEDS, useStore, type SceneStore } from "../scene";
 import { indexFor, lastAtOrBefore } from "./history";
 
 export interface ShellCommands {
@@ -66,7 +66,7 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["{", "}"], action: "Slower / faster (real history: 5× to 160× real time; simulation: 0.5× to 16×)", group: "Playback" },
   { keys: ["Home", "End"], action: "Start of what is held / live edge (replay: its last event)", group: "Playback" },
   { keys: ["L"], action: "Return to live (and follow); live keeps arriving while you look back", group: "Playback" },
-  { keys: ["1", "2"], action: "Factory floor: Atlas / Blueprint (from the Timeline too)", group: "Views" },
+  { keys: ["1", "2"], action: "Factory floor: Atlas / Blueprint (from the Timeline: keeping the selection and playhead, framed there)", group: "Views" },
   { keys: ["3"], action: "Timeline, keeping the selection and the playhead (Show in Timeline)", group: "Views" },
   { keys: ["T"], action: "Theater Mode (Factory floor only; does nothing in the Timeline)", group: "Views" },
   { keys: ["F"], action: "Focus the selection (in the Timeline: reveal its tracks and span)", group: "Views" },
@@ -109,6 +109,13 @@ function ownsActivation(target: HTMLElement | null): boolean {
   if (target.tagName === "BUTTON" || target.tagName === "A") return true;
   const role = target.getAttribute("role");
   return role === "button" || role === "radio" || role === "slider" || role === "checkbox" || role === "menuitem" || role === "tab";
+}
+
+/** Elements where Home and End move within the element: a slider, and the Timeline's table (a treegrid) and its cells. */
+function ownsHomeEnd(target: HTMLElement | null): boolean {
+  if (!target) return false;
+  if (target.getAttribute("role") === "slider") return true;
+  return Boolean(target.closest?.("[role='treegrid']"));
 }
 
 /**
@@ -211,11 +218,11 @@ export function useShellKeys(commands: ShellCommands): void {
           stepSpeed(store, 1);
           break;
         case "Home":
-          if (ownsActivation(target) && target?.getAttribute("role") === "slider") handled = false;
+          if (ownsHomeEnd(target)) handled = false;
           else store.seek(s.extent.start);
           break;
         case "End":
-          if (ownsActivation(target) && target?.getAttribute("role") === "slider") handled = false;
+          if (ownsHomeEnd(target)) handled = false;
           else store.followLive();
           break;
         case "l":
@@ -223,13 +230,16 @@ export function useShellKeys(commands: ShellCommands): void {
           store.followLive();
           break;
         case "1":
-          store.setView("atlas");
-          store.setWorkspace("floor");
+        case "2": {
+          const view = key === "1" ? "atlas" : "blueprint";
+          // From the Timeline: back to the floor keeping selection and playhead, framing the selection there.
+          if (inTimeline) showOnFloor(store, view);
+          else {
+            store.setView(view);
+            store.setWorkspace("floor");
+          }
           break;
-        case "2":
-          store.setView("blueprint");
-          store.setWorkspace("floor");
-          break;
+        }
         case "3":
           showInTimeline(store);
           break;
@@ -282,6 +292,10 @@ export function useShellKeys(commands: ShellCommands): void {
  * Timeline's tracks. The hidden workspace is inert, so its canvas is skipped.
  */
 export function activeCanvas(): HTMLElement | null {
+  // The Timeline's tracks are its one canvas tab stop (role="application"); the label column's resize separator comes first in the DOM.
+  for (const el of document.querySelectorAll<HTMLElement>("[data-timeline-workspace] [role='application'][tabindex='0']")) {
+    if (!el.closest("[inert]")) return el;
+  }
   for (const el of document.querySelectorAll<HTMLElement>("[data-stage-active] [tabindex='0'], [data-timeline-workspace] [tabindex='0']")) {
     if (!el.closest("[inert]")) return el;
   }

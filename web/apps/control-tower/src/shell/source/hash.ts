@@ -3,17 +3,26 @@
  *
  *   #atlas?sel=<ref>&at=<event id | ms>&theater=1
  *   #blueprint?sel=<ref>&at=<event id | ms>&theater=1
- *   #timeline?sel=<ref>&at=<event id | ms>&win=<fromMs>-<toMs>&group=product|execution
+ *   #timeline?sel=<ref>&at=<event id | ms>&win=<fromMs>-<toMs>|all&group=product|execution&lens=<id>&table=1
  *
  * - `sel` uses the store's ref grammar (`<kind>:<id>`); anything else is ignored.
  * - `at`: all digits is a time in ms (the simulation's scenario ms, or Unix ms for real history);
  *   anything else is an event id (event ids always hold a letter or a colon: `sim:12`, `<key>:<line>`).
- * - `win`: two whole non-negative ms, the first before the second. Timeline only.
+ * - `win`: two whole non-negative ms, the first before the second; or `all`, all of the history held
+ *   (following the live edge). Absent: the recorded activity (the default window). Timeline only.
  * - `group`: `product` or `execution`. Timeline only.
+ * - `lens`: an investigation lens (`retries`, `concurrency`, `waits`, `review`, `recovery`). Timeline only.
+ * - `table=1`: the Timeline as a table (the structured alternative). Timeline only.
  * - `theater=1`: the floor only (read, never written: as before M6.3).
  * Unknown parameters are ignored; a malformed one is dropped on its own and never throws.
  */
 import type { EntityRef } from "../../sim";
+import type { LensId } from "../../timeline/contract";
+
+/** The lens ids the address accepts (the contract's LensId). */
+export const HASH_LENSES: readonly LensId[] = ["retries", "concurrency", "waits", "review", "recovery"];
+/** `win=all`: the whole history held, following the live edge (the store keeps it as an unbounded window). */
+export const WIN_ALL = { from: Number.NEGATIVE_INFINITY, to: Number.POSITIVE_INFINITY } as const;
 
 export type HashRoute = "atlas" | "blueprint" | "timeline";
 export type HashAt = { readonly kind: "event"; readonly id: string } | { readonly kind: "ms"; readonly ms: number };
@@ -25,6 +34,8 @@ export interface HashState {
   readonly at: HashAt | null;
   readonly win: { readonly from: number; readonly to: number } | null;
   readonly group: "product" | "execution" | null;
+  readonly lens: LensId | null;
+  readonly table: boolean;
   readonly theater: boolean;
 }
 
@@ -70,6 +81,7 @@ export function parseAt(value: string | null | undefined): HashAt | null {
 }
 
 export function parseWin(value: string | null | undefined): { from: number; to: number } | null {
+  if (value && value.trim() === "all") return { ...WIN_ALL };
   const m = value ? WIN.exec(value.trim()) : null;
   if (!m) return null;
   const from = Number(m[1]);
@@ -88,12 +100,15 @@ export function parseHash(hash: string): HashState {
   const sel = selRaw && REF.test(selRaw) && selRaw.length <= MAX_ID ? (selRaw as EntityRef) : null;
   const timeline = route === "timeline";
   const group = p.get("group");
+  const lens = p.get("lens") as LensId | undefined;
   return {
     route,
     sel,
     at: parseAt(p.get("at")),
     win: timeline ? parseWin(p.get("win")) : null,
     group: timeline && (group === "product" || group === "execution") ? group : null,
+    lens: timeline && lens && HASH_LENSES.includes(lens) ? lens : null,
+    table: timeline && p.get("table") === "1",
     theater: !timeline && p.get("theater") === "1",
   };
 }
@@ -105,6 +120,8 @@ export interface HashWrite {
   readonly at: HashAt | null;
   readonly win: { readonly from: number; readonly to: number } | null;
   readonly group: "product" | "execution";
+  readonly lens?: LensId | null;
+  readonly table?: boolean;
 }
 
 export function formatAt(at: HashAt): string {
@@ -117,8 +134,10 @@ export function formatHash(w: HashWrite): string {
   if (w.sel) parts.push(`sel=${encodeURIComponent(w.sel)}`);
   if (w.at) parts.push(`at=${formatAt(w.at)}`);
   if (w.route === "timeline") {
-    if (w.win) parts.push(`win=${Math.round(w.win.from)}-${Math.round(w.win.to)}`);
+    if (w.win) parts.push(Number.isFinite(w.win.from) && Number.isFinite(w.win.to) ? `win=${Math.round(w.win.from)}-${Math.round(w.win.to)}` : "win=all");
     if (w.group !== "product") parts.push(`group=${w.group}`);
+    if (w.lens) parts.push(`lens=${w.lens}`);
+    if (w.table) parts.push("table=1");
   }
   return `#${w.route}${parts.length ? `?${parts.join("&")}` : ""}`;
 }

@@ -102,6 +102,13 @@ export interface SeriesState {
   readonly coarse: boolean;
 }
 
+/** A chosen time interval and the cells with a span overlapping it. */
+export interface HighlightInterval {
+  readonly from: number;
+  readonly to: number;
+  readonly refs: readonly EntityRef[];
+}
+
 export interface SceneStoreState {
   /** Where the scenes come from. Persistent: a store never changes source. */
   readonly source: SceneSource;
@@ -142,8 +149,17 @@ export interface SceneStoreState {
   readonly selection: EntityRef | null;
   readonly focus: FocusRequest | null;
   readonly hovered: EntityRef | null;
-  /** What to highlight with the hovered (or else the selected) entity: its dependency set or relations. */
+  /**
+   * What to highlight: the hovered (or else the selected) entity's dependency set or relations; with
+   * neither, the cells active in the Timeline's chosen interval (`interval`), when one is set.
+   */
   readonly highlighted: readonly EntityRef[];
+  /**
+   * A time interval the person chose in the Timeline and the cells active in it, so the floor can
+   * show them (M6.3 design section 7). Not a second selection: it only feeds `highlighted`, and only
+   * while nothing is hovered or selected. Set and cleared by the Timeline workspace.
+   */
+  readonly interval: HighlightInterval | null;
   readonly view: ViewMode;
   /** Factory Floor or Timeline. The floor's `view` is kept while the Timeline is up. */
   readonly workspace: Workspace;
@@ -239,6 +255,8 @@ export interface SceneStore {
   select(entity: EntityRef | null, options?: { focus?: boolean }): void;
   focusOn(target: EntityRef | "overview", reason?: FocusRequest["reason"]): void;
   hover(entity: EntityRef | null): void;
+  /** The Timeline's chosen interval and the cells active in it, or null. Feeds `highlighted` only while nothing is hovered or selected. */
+  setHighlightInterval(interval: HighlightInterval | null): void;
   setView(view: ViewMode): void;
   /** Switch the experience. Selection, hover, playhead, playback and `view` are kept; Theater Mode ends on leaving the floor. */
   setWorkspace(workspace: Workspace): void;
@@ -360,6 +378,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     focus: null,
     hovered: null,
     highlighted: [],
+    interval: null,
     view: options.view ?? "atlas",
     workspace: options.workspace ?? "floor",
     timeline: INITIAL_TIMELINE_VIEW,
@@ -377,7 +396,8 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
 
   const highlightFor = (s: SceneStoreState): readonly EntityRef[] => {
     const subject = s.hovered ?? s.selection;
-    return subject ? relatedRefs(s.log.sceneAt(s.playhead), subject) : [];
+    if (subject) return relatedRefs(s.log.sceneAt(s.playhead), subject);
+    return s.interval ? s.interval.refs : [];
   };
 
   const set = (patch: Partial<SceneStoreState>): void => {
@@ -386,7 +406,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     if (next.following !== state.following) next = { ...next, arrivedAtLeave: next.following || isSim ? null : next.arrived };
     if (!isSim && windows) next = route(next);
     if (patch.playhead !== undefined || patch.logVersion !== undefined || next.log !== state.log) next = { ...next, cursor: next.log.cursorAt(next.playhead) };
-    const subjectChanged = next.hovered !== state.hovered || next.selection !== state.selection;
+    const subjectChanged = next.hovered !== state.hovered || next.selection !== state.selection || next.interval !== state.interval;
     if (subjectChanged || next.cursor !== state.cursor || next.logVersion !== state.logVersion) {
       const highlighted = highlightFor(next);
       const same = highlighted.length === state.highlighted.length && highlighted.every((r, i) => r === state.highlighted[i]);
@@ -610,6 +630,18 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     },
     hover(entity) {
       if (entity !== state.hovered) set({ hovered: entity });
+    },
+    setHighlightInterval(interval) {
+      const cur = state.interval;
+      if (interval === cur) return;
+      const same =
+        interval !== null &&
+        cur !== null &&
+        interval.from === cur.from &&
+        interval.to === cur.to &&
+        interval.refs.length === cur.refs.length &&
+        interval.refs.every((r, i) => r === cur.refs[i]);
+      if (!same) set({ interval });
     },
     setView(view) {
       if (view !== state.view) set({ view });

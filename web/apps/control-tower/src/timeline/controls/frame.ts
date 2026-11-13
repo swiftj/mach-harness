@@ -3,13 +3,51 @@
  * panning to a moment, what the filters can offer, the jump list, and which store ref a span stands
  * for. No React, no store: test/timeline-shell.test.mjs runs them in node.
  */
-import { extentOf, MIN_WINDOW_MS, overlaps, type MarkKind, type SpanKind, type TimeWindow, type TimelineFilters, type TimelineSpan, type TrackNode, type TrackTree } from "../contract";
+import {
+  extentOf,
+  MIN_WINDOW_MS,
+  overlaps,
+  type DensitySeries,
+  type LensDefinition,
+  type MarkKind,
+  type SpanKind,
+  type TimeWindow,
+  type TimelineFilters,
+  type TimelineMark,
+  type TimelineSpan,
+  type TimelineViewState,
+  type TrackNode,
+  type TrackTree,
+} from "../contract";
 
-/** A window no narrower than MIN_WINDOW_MS, within `whole` when it fits; null when it shows all of `whole` (then it follows the live edge again). */
-export function clampWindow(next: TimeWindow, whole: TimeWindow): TimeWindow | null {
+// ---------------------------------------------------------------- windows: chosen, all, and the default
+
+/**
+ * The window the person asked to be "all of the history held": stored as unbounded, drawn as the
+ * whole history at that moment, so it keeps following the live edge. `null` in the store is the other
+ * case: nothing chosen, so the Timeline frames the recorded activity (see `activityWindow`).
+ */
+export const ALL_WINDOW: TimeWindow = Object.freeze({ from: Number.NEGATIVE_INFINITY, to: Number.POSITIVE_INFINITY });
+
+/** Whether a stored window means "all of the history held". */
+export function isAll(w: TimeWindow | null): boolean {
+  return w !== null && (!Number.isFinite(w.from) || !Number.isFinite(w.to));
+}
+
+/** The window to draw: the person's, the whole history for ALL_WINDOW, or the default when none is chosen. */
+export function resolveWindow(chosen: TimeWindow | null, whole: TimeWindow, fallback: TimeWindow): TimeWindow {
+  if (chosen === null) return fallback;
+  return isAll(chosen) ? whole : chosen;
+}
+
+/**
+ * A window no narrower than MIN_WINDOW_MS, within `whole` when it fits; ALL_WINDOW when it shows all
+ * of `whole` (then it follows the live edge again) or is not a window at all.
+ */
+export function clampWindow(next: TimeWindow, whole: TimeWindow): TimeWindow {
   let from = Math.min(next.from, next.to);
   let to = Math.max(next.from, next.to);
-  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return ALL_WINDOW;
   if (to - from < MIN_WINDOW_MS) {
     const mid = (from + to) / 2;
     from = mid - MIN_WINDOW_MS / 2;
@@ -17,7 +55,7 @@ export function clampWindow(next: TimeWindow, whole: TimeWindow): TimeWindow | n
   }
   const span = to - from;
   const wholeSpan = whole.to - whole.from;
-  if (span >= wholeSpan) return null;
+  if (span >= wholeSpan) return ALL_WINDOW;
   if (from < whole.from) {
     from = whole.from;
     to = from + span;
@@ -213,4 +251,186 @@ export function toggled<T>(list: readonly T[], value: T): T[] {
 export function anyInWindow(tree: TrackTree, window: TimeWindow): boolean {
   for (const node of tree.byId.values()) for (const lane of node.lanes) for (const span of lane.spans) if (overlaps(span, window)) return true;
   return false;
+}
+
+// ---------------------------------------------------------------- the default window
+
+/** What the default window is framed from. */
+export interface ActivityInput {
+  /** The whole history held (the store's extent, reaching back as far as the data knows). */
+  readonly whole: TimeWindow;
+  /** `data.extent()?.from`: where the recorded history starts, when the data source knows. */
+  readonly dataFrom: number | null;
+  /** Events recorded per bucket over `whole` (sparse), when served. */
+  readonly density: DensitySeries | null;
+  /** From the first to the last thing recorded, as the data layer measures it (`recordedExtent(data)`), when known. */
+  readonly recorded?: TimeWindow | null;
+  /** The spans loaded now. */
+  readonly spans: readonly TimelineSpan[];
+  /** The latest mark recorded, when known. */
+  readonly lastMark: TimelineMark | null;
+  /** True when the source is live and the playhead follows the live edge. */
+  readonly followingLive: boolean;
+}
+
+/** Each side of the default window is padded by this share of its length. */
+export const ACTIVITY_PAD = 0.02;
+
+/**
+ * The default window, when the person has not chosen one (finding 1 of the real run: 73 minutes of
+ * activity were squeezed into the left tenth of the tracks because the window ran to the wall clock).
+ *
+ * The rule:
+ * - It starts where the recorded history starts (`data.extent()`), else at the first non-empty density
+ *   bucket or the first span, whichever is earlier.
+ * - It ends at the last thing recorded: the latest of the data layer's recorded extent
+ *   (`recordedExtent(data)`: density, else marks and span bounds), the last non-empty density
+ *   bucket's end, the last recorded span end, and the last mark (its `until` when it is an interval).
+ * - While something is still open and the source is live and following, it ends at the live edge
+ *   instead (it follows the live edge as before).
+ * - 2% of its length is added on each side, never beyond the whole history; never narrower than
+ *   MIN_WINDOW_MS. With nothing recorded at all it is the whole history.
+ * "Show all" (ALL_WINDOW) still shows the whole history held, and the overview always does.
+ */
+export function activityWindow(input: ActivityInput): TimeWindow {
+  const { whole } = input;
+  let first = Number.POSITIVE_INFINITY;
+  let last = Number.NEGATIVE_INFINITY;
+  let open = false;
+  const d = input.density;
+  if (d) {
+    for (const b of d.buckets) {
+      if (b.count <= 0) continue;
+      first = Math.min(first, b.from);
+      last = Math.max(last, b.from + d.bucketMs);
+    }
+  }
+  for (const span of input.spans) {
+    const x = extentOf(span);
+    if (!x) continue;
+    first = Math.min(first, x.from);
+    if (span.end === null) open = true;
+    if (Number.isFinite(x.to)) last = Math.max(last, x.to);
+    else last = Math.max(last, x.from);
+  }
+  if (input.recorded) {
+    first = Math.min(first, input.recorded.from);
+    last = Math.max(last, input.recorded.to);
+  }
+  const m = input.lastMark;
+  if (m) {
+    first = Math.min(first, m.at);
+    last = Math.max(last, m.until ?? m.at);
+  }
+  if (input.dataFrom !== null && Number.isFinite(input.dataFrom)) first = input.dataFrom;
+  if (open && input.followingLive) last = whole.to;
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return whole;
+  let from = Math.max(whole.from, first);
+  let to = Math.min(whole.to, Math.max(last, from));
+  const pad = (to - from) * ACTIVITY_PAD;
+  from = Math.max(whole.from, from - pad);
+  to = Math.min(whole.to, to + pad);
+  if (to - from < MIN_WINDOW_MS) {
+    const mid = (from + to) / 2;
+    from = Math.max(whole.from, mid - MIN_WINDOW_MS / 2);
+    to = Math.min(whole.to, from + MIN_WINDOW_MS);
+  }
+  if (from <= whole.from && to >= whole.to) return whole;
+  return { from, to };
+}
+
+/** A window's length in words, for the zoom controls: "45 s", "12 min", "1 h 13 min", "2 d 4 h". */
+export function windowLengthWords(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0 s";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  const min = Math.round(ms / 60_000);
+  if (min < 60) {
+    const sec = s - Math.floor(s / 60) * 60;
+    return min < 10 && sec > 0 ? `${Math.floor(s / 60)} min ${sec} s` : `${min} min`;
+  }
+  const h = Math.floor(min / 60);
+  if (h < 24) {
+    const rest = min - h * 60;
+    return rest ? `${h} h ${rest} min` : `${h} h`;
+  }
+  const days = Math.floor(h / 24);
+  const hours = h - days * 24;
+  return hours ? `${days} d ${hours} h` : `${days} d`;
+}
+
+// ---------------------------------------------------------------- filter options from the spans
+
+/**
+ * What the filter lists offer, built from the spans in the window rather than the (filtered) tree, so
+ * every value present stays on offer while a filter is on; plus whatever is chosen now.
+ */
+export function filterOptionsOfSpans(spans: readonly TimelineSpan[], filters: TimelineFilters): FilterOptions {
+  const tickets = new Set<string>(filters.tickets);
+  const executions = new Set<string>(filters.executions);
+  const slices = new Set<string>(filters.slices);
+  const stations = new Set<string>(filters.stations);
+  const kinds = new Set<SpanKind>(filters.kinds);
+  for (const span of spans) {
+    kinds.add(span.kind);
+    const t = span.ids.ticket_id;
+    if (t) tickets.add(t);
+    const x = span.ids.execution_id;
+    if (x) executions.add(x);
+    const sl = span.ids.slice_id;
+    if (sl) slices.add(sl);
+    const st = span.ids.station ?? (span.kind === "seat" ? "review" : undefined);
+    if (st) stations.add(st);
+  }
+  const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  return { tickets: sorted(tickets), executions: sorted(executions), slices: sorted(slices), stations: sorted(stations), kinds: [...kinds].sort() as SpanKind[] };
+}
+
+/** One chip per active filter choice, with what removing it leaves. */
+export interface FilterChip {
+  readonly key: string;
+  readonly label: string;
+  readonly without: Partial<TimelineFilters>;
+}
+
+export function filterChips(f: TimelineFilters, kindWords: (k: SpanKind) => string = (k) => k): FilterChip[] {
+  const out: FilterChip[] = [];
+  if (f.attentionOnly) out.push({ key: "attention", label: "Needs attention", without: { attentionOnly: false } });
+  for (const v of f.tickets) out.push({ key: `t:${v}`, label: v, without: { tickets: f.tickets.filter((x) => x !== v) } });
+  for (const v of f.slices) out.push({ key: `s:${v}`, label: v, without: { slices: f.slices.filter((x) => x !== v) } });
+  for (const v of f.executions) out.push({ key: `x:${v}`, label: v, without: { executions: f.executions.filter((x) => x !== v) } });
+  for (const v of f.stations) out.push({ key: `st:${v}`, label: v, without: { stations: f.stations.filter((x) => x !== v) } });
+  for (const v of f.kinds) out.push({ key: `k:${v}`, label: kindWords(v), without: { kinds: f.kinds.filter((x) => x !== v) } });
+  return out;
+}
+
+// ---------------------------------------------------------------- an interval on the floor
+
+/**
+ * The cells active in a time interval: every cell (`cell:<ticket>`) with a span overlapping it, in
+ * first-seen order. What the floor highlights when the person chose a window and selected nothing.
+ */
+export function cellsInInterval(spans: readonly TimelineSpan[], window: TimeWindow): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const span of spans) {
+    const ticket = span.ids.ticket_id ?? (span.entity.startsWith("cell:") ? span.entity.slice(5) : undefined);
+    if (!ticket) continue;
+    const ref = `cell:${ticket}`;
+    if (seen.has(ref) || !overlaps(span, window)) continue;
+    seen.add(ref);
+    out.push(ref);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- lenses
+
+/**
+ * Choosing a lens: its preset (grouping, filters, expansion, window) and the lens itself. The preset
+ * sees the window as drawn (never the stored ALL_WINDOW sentinel). The person may change any of it after.
+ */
+export function applyLens(lens: Pick<LensDefinition, "id" | "preset">, tree: TrackTree, view: TimelineViewState, drawn: TimeWindow): Partial<TimelineViewState> {
+  const preset = lens.preset(tree, { ...view, window: view.window === null ? null : drawn });
+  return { ...preset, lens: lens.id };
 }
