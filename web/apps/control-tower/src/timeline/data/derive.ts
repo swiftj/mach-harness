@@ -250,3 +250,50 @@ export function closeEndedVisits(spans: readonly TimelineSpan[]): TimelineSpan[]
   }
   return out;
 }
+
+/** The kinds that run inside an execution and cannot outlive it. */
+const EXECUTION_CHILDREN: ReadonlySet<SpanKind> = new Set<SpanKind>(["claim", "workflow", "agent-queue", "agent", "tool"]);
+
+/**
+ * The same rule for the work inside an execution (design 5, T1): a claim, workflow, agent-queue, agent or
+ * tool span still open when its execution in the same answer has ended (recorded, or only bounded: an
+ * outcome not known) is closed at that end: inferred by rule `execution-ended`, reason `unknown` when the
+ * execution's outcome is not known and `interrupted` otherwise, no outcome, reconstructed, at most entry
+ * to that end. An observer that already closes them (M6.3, round 5) leaves nothing open here, so this runs
+ * on every answer: it is a safety net, never a second opinion. Exclusions as for visits: only spans in
+ * the same answer are compared, and a span that starts after the execution's end is left as it is.
+ */
+export function closeEndedChildren(spans: readonly TimelineSpan[]): TimelineSpan[] {
+  let ended: Map<string, SpanEnd> | null = null;
+  for (const s of spans) {
+    if (s.kind !== "execution" || !s.end) continue;
+    const at = s.end.at ?? s.end.notAfter;
+    if (at === null) continue;
+    (ended ??= new Map()).set(s.entity, s.end);
+  }
+  if (!ended) return spans as TimelineSpan[];
+  let out: TimelineSpan[] | null = null;
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i] as TimelineSpan;
+    const exec = s.end === null && EXECUTION_CHILDREN.has(s.kind) ? executionRefOf(s) : null;
+    const end = exec ? ended.get(exec) : undefined;
+    const bound = end ? (end.at ?? end.notAfter) : null;
+    const startAt = s.start ? (s.start.at ?? s.start.notBefore) : null;
+    if (!end || bound === null || (startAt !== null && startAt > bound)) {
+      out?.push(s);
+      continue;
+    }
+    out ??= spans.slice(0, i) as TimelineSpan[];
+    const unknown = end.reason === "unknown";
+    out.push({
+      ...s,
+      end: end.at !== null
+        ? { eventId: end.eventId, at: end.at, precision: end.precision, notBefore: null, notAfter: null, basis: "inferred", rule: "execution-ended", reason: unknown ? "unknown" : "interrupted" }
+        : { eventId: end.eventId, at: null, precision: "bounded", notBefore: end.notBefore, notAfter: bound, basis: "inferred", rule: "execution-ended", reason: unknown ? "unknown" : "interrupted" },
+      duration: { ms: null, minMs: null, maxMs: startAt === null ? null : Math.max(0, bound - startAt), basis: "inferred" },
+      outcome: null,
+      authority: s.authority === "simulated" ? "simulated" : "reconstructed",
+    });
+  }
+  return out ?? (spans as TimelineSpan[]);
+}

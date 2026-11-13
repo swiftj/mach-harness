@@ -346,6 +346,9 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
   const found = active.key === null ? undefined : model.indexOf.get(active.key);
   const activeIndex = count === 0 ? -1 : Math.min(count - 1, found ?? active.index);
 
+  // The grid exists only while there are rows: measured again whenever it appears (a table opened on an
+  // empty window and then filled would otherwise keep the default height and never render its last rows).
+  const hasGrid = count > 0;
   useEffect(() => {
     const el = grid.current;
     if (!el) return;
@@ -356,8 +359,10 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     measure();
+    // The scroll position is the element's own: a grid mounted anew starts where it is.
+    setScrollTop(el.scrollTop);
     return () => ro.disconnect();
-  }, []);
+  }, [hasGrid]);
 
   const focusRow = useCallback(
     (i: number) => {

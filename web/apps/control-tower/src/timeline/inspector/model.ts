@@ -11,6 +11,10 @@ import { findAgent, findToolCall, type ArtifactState, type EntityRef, type Scene
 import { duration, timecode } from "../../shell/time";
 import { elapsedWords } from "../../shell/inspector/words";
 import { outcomeKnownAt, type SpanKind, type SpanQuery, type TimeWindow, type TimelineSpan } from "../contract";
+import { stoppedState, stoppedWords, type StoppedState } from "../render/words";
+
+/** A stopped execution's state in the headline's words. */
+const STOPPED_HEADLINE: Readonly<Record<StoppedState, string>> = { interrupted: "interrupted", "timed-out": "timed out", "could-not-start": "could not start", unknown: "outcome not known" };
 
 // ---------------------------------------------------------------- which spans a ref has
 
@@ -239,6 +243,12 @@ export function spanName(span: TimelineSpan): string {
 export function spanHeadline(span: TimelineSpan, asOf: number, clock: (t: number) => string = (t) => timecode(t, false)): string {
   const from = beganAt(span);
   if (!begunBy(span, asOf)) return `${spanName(span)} — not started at the playhead`;
+  const stopped = stoppedState(span);
+  if (stopped !== null && (span.end === null || endedBy(span, asOf))) {
+    const to = span.end ? endTime(span) : null;
+    const times = from !== null && to !== null ? `${clock(from)}–${span.end?.at === null ? "at most " : ""}${clock(to)}` : from !== null ? `from ${clock(from)}` : "";
+    return `${spanName(span)} — ${STOPPED_HEADLINE[stopped]}${times ? `, ${times}` : ""}`;
+  }
   if (!endedBy(span, asOf)) {
     const state = isWait(span) ? "waiting" : atWorkWhileOpen(span) ? "at work" : "open";
     return `${spanName(span)} — ${state}${from !== null ? `, from ${clock(from)}` : ""}`;
@@ -411,6 +421,12 @@ export interface DurationSentence {
  */
 export function durationSentence(span: TimelineSpan, asOf: number, rules: Readonly<Record<string, string>> = {}, clock: (t: number) => string = (t) => timecode(t, false)): DurationSentence {
   if (!begunBy(span, asOf)) return { text: "Not started at the playhead", live: null };
+  // An execution stopped from outside, or of unknown outcome: never "took", "failed" or "at work".
+  const stopped = stoppedState(span);
+  if (stopped !== null && (span.end === null || endedBy(span, asOf))) {
+    const words = stoppedWords(span, stopped);
+    return { text: words.charAt(0).toUpperCase() + words.slice(1), live: null };
+  }
   if (!endedBy(span, asOf)) {
     const start = span.start?.at ?? null;
     if (start === null) return { text: span.start ? "Still open; its start is known only within bounds, so how long is not known" : "Still open; start not known", live: null };

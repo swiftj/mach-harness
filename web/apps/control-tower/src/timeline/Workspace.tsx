@@ -156,7 +156,16 @@ interface Fetched {
  * again when the window leaves what was fetched or the data says it changed. While a query runs, the
  * previous answer stays on screen.
  */
-function useWindowSpans(data: TimelineData, win: TimeWindow): Fetched & { retry: () => void } {
+/**
+ * Whether the window can be asked for yet. "wait": a live or replay store that has taken in no event and
+ * is still connecting: its window is the epoch or the wall clock, not the history, and every answer would
+ * be thrown away (on a fresh page that was hundreds of requests in the first second). "empty": the
+ * connection is up and the history holds nothing: the answer is empty without asking.
+ */
+type Hold = "wait" | "empty" | null;
+const EMPTY_FETCHED: Fetched = { range: null, page: { spans: [], truncated: false, total: 0, version: "" }, marks: [], loading: false, error: null };
+
+function useWindowSpans(data: TimelineData, win: TimeWindow, hold: Hold = null): Fetched & { retry: () => void } {
   const [fetched, setFetched] = useState<Fetched>({ range: null, page: null, marks: NO_MARKS, loading: true, error: null });
   const dataTick = useDataTick(data, REQUERY_MS);
   const [retries, setRetries] = useState(0);
@@ -164,20 +173,26 @@ function useWindowSpans(data: TimelineData, win: TimeWindow): Fetched & { retry:
   const inRange = fetched.range !== null && contains(fetched.range, win) && fetched.error === null;
   // What to ask for: a new range only when the window has left the fetched one; else the same range again on a tick.
   const want = inRange && fetched.range ? fetched.range : widen(win);
-  const key = `${Math.round(want.from)}:${Math.round(want.to)}:${inRange ? "same" : "new"}:${tick}`;
+  const key = hold ? `hold:${hold}` : `${Math.round(want.from)}:${Math.round(want.to)}:${inRange ? "same" : "new"}:${tick}`;
   const asked = useRef("");
+  /** The key whose answer is held: any other key is still loading (derived, not set in the effect). */
+  const answered = useRef("");
   useEffect(() => {
     if (asked.current === key) return;
+    if (hold) return;
     asked.current = key;
     const ctl = new AbortController();
     const range = want;
-    setFetched((f) => (f.loading ? f : { ...f, loading: true }));
     Promise.all([data.spans({ window: range }, ctl.signal), data.marks(range, undefined, ctl.signal).catch((e: unknown) => (isAbort(e) ? Promise.reject(e) : NO_MARKS))]).then(
       ([page, marks]) => {
-        if (!ctl.signal.aborted) setFetched({ range, page, marks, loading: false, error: null });
+        if (!ctl.signal.aborted) {
+          answered.current = key;
+          setFetched({ range, page, marks, loading: false, error: null });
+        }
       },
       (e: unknown) => {
         if (ctl.signal.aborted || isAbort(e)) return;
+        answered.current = key;
         setFetched((f) => ({ ...f, loading: false, error: errorText(e) }));
       },
     );
@@ -189,7 +204,9 @@ function useWindowSpans(data: TimelineData, win: TimeWindow): Fetched & { retry:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, key]);
   const retry = useCallback(() => setRetries((t) => t + 1), []);
-  return { ...fetched, retry };
+  if (hold === "empty") return { ...EMPTY_FETCHED, retry };
+  // eslint-disable-next-line react-hooks/refs -- read to tell an answered key from one still asked for
+  return { ...fetched, loading: fetched.loading || answered.current !== key, retry };
 }
 
 /**
@@ -347,7 +364,9 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   );
   const win = resolveWindow(view.window, whole, fallback);
 
-  const fetched = useWindowSpans(data, win);
+  // The provider's own extent: null while it holds nothing of the history (an observer before its first event).
+  const hold: Hold = source !== "live" || dataFrom !== null ? null : connection === "connecting" || connection === "reconnecting" ? "wait" : "empty";
+  const fetched = useWindowSpans(data, win, hold);
   const structure = useStructure(data);
   const windowSpans = fetched.page?.spans ?? NO_SPANS;
   // X4: the tree is built from the whole history's structural spans and the window's detailed ones,
@@ -710,7 +729,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
 
       {/* A: the whole history, with the brush. The overview draws its own legend column, `gutter` wide, so its plot lines up with the tracks. */}
       <section aria-label="Whole history" className="shrink-0">
-        {fullWidth > 0 ? <TemporalOverview data={data} extent={whole} window={win} liveAt={liveAt} width={fullWidth} height={overviewH} gutter={gutter} filters={view.filters} onWindow={onWindow} /> : <div style={{ height: overviewH }} />}
+        {fullWidth > 0 && hold !== "wait" ? <TemporalOverview data={data} extent={whole} window={win} liveAt={liveAt} width={fullWidth} height={overviewH} gutter={gutter} filters={view.filters} onWindow={onWindow} /> : <div style={{ height: overviewH }} />}
       </section>
 
       {/* The investigation band, when a lens is on. */}

@@ -85,6 +85,12 @@ export interface TileCache<T> {
    * past tile even when nothing else arrives after it.
    */
   markBehind(): number | null;
+  /**
+   * Mark one tile behind: its answer came from a reply older than events the client already holds
+   * (the observer answered before its projection took them in). Re-read once it is `behindAfterMs`
+   * old. Returns the ms until then, or null when the tile is not held.
+   */
+  markLagging(key: string): number | null;
   clear(): void;
   readonly size: number;
   /** Total weight held (spans, with `weigh`). */
@@ -237,6 +243,16 @@ export function createTileCache<T>(options: number | TileCacheOptions<T> = {}): 
         if (latest === null || wait > latest) latest = wait;
       }
       return latest;
+    },
+    markLagging(key) {
+      const e = entries.get(key);
+      if (!e?.value) return null;
+      if (e.inflight) {
+        e.behindOnArrival = true;
+        return behindAfter;
+      }
+      e.behind = true;
+      return Math.max(0, behindAfter - (now() - e.fetchedAt));
     },
     clear() {
       for (const e of entries.values()) {

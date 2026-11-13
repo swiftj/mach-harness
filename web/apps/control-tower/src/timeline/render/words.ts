@@ -73,7 +73,54 @@ function startAt(span: TimelineSpan): number | null {
 
 function isInterrupted(span: TimelineSpan): boolean {
   const r = span.end?.reason;
-  return r === "interrupted" || r === "superseded" || endedWithoutExit(span);
+  return r === "interrupted" || r === "superseded" || endedWithoutExit(span) || stoppedState(span) !== null;
+}
+
+/** How an execution stopped when it did not run to its end: from the observer's `attrs.state`, else its end's reason. */
+export type StoppedState = "interrupted" | "timed-out" | "could-not-start" | "unknown";
+const STOPPED: ReadonlySet<string> = new Set(["interrupted", "timed-out", "could-not-start", "unknown"]);
+
+/**
+ * An execution's stopped state (design 5): "interrupted", "timed-out", "could-not-start" (all with end
+ * reason "interrupted"), or "unknown" (the outcome is not known). Null for an execution that ran to its
+ * end, is running, or any other kind. Never "took", "failed" or "running".
+ */
+export function stoppedState(span: TimelineSpan): StoppedState | null {
+  if (span.kind !== "execution") return null;
+  const st = span.attrs.state;
+  if (st && STOPPED.has(st)) return st as StoppedState;
+  const r = span.end?.reason;
+  if (r === "interrupted" || r === "unknown") return r;
+  return null;
+}
+
+const STOPPED_WORDS: Readonly<Record<Exclude<StoppedState, "unknown">, string>> = {
+  interrupted: "interrupted",
+  "timed-out": "timed out",
+  "could-not-start": "could not start; stopped",
+};
+
+/**
+ * A stopped execution's length in words: "interrupted after at most 6 min 48 s", "outcome not known;
+ * last record at 03:12:40". Its end is a bound at best (the process was stopped from outside), so the
+ * length is the most it can have been, never a measured "took".
+ */
+export function stoppedWords(span: TimelineSpan, state: StoppedState): string {
+  const e = span.end;
+  const t0 = startAt(span);
+  if (state === "unknown") {
+    if (e === null) return t0 === null ? "outcome not known; no end recorded" : `outcome not known; no end recorded, last known start ${clockWords(t0)}`;
+    const last = e.basis === "recorded" ? (e.at ?? e.notBefore) : (e.notBefore ?? null);
+    const by = e.notAfter ?? e.at;
+    if (last !== null) return by !== null && by > last + 999 ? `outcome not known; last record at ${clockWords(last)}, ended by ${clockWords(by)}` : `outcome not known; last record at ${clockWords(last)}`;
+    return by !== null ? `outcome not known; ended by ${clockWords(by)} at the latest` : "outcome not known; when it ended is not known";
+  }
+  const word = STOPPED_WORDS[state];
+  const endAt = e ? (e.notAfter ?? e.at) : null;
+  const most = span.duration.maxMs ?? span.duration.ms ?? (endAt !== null && t0 !== null ? endAt - t0 : null);
+  if (e === null) return `${word}; when is not recorded`;
+  if (most === null) return `${word}, after a time not known`;
+  return `${word} after at most ${durationText(Math.max(0, most))}`;
 }
 
 /**
@@ -119,6 +166,10 @@ export function durationWords(span: TimelineSpan, liveAt: number, context?: Open
   const endUnknown = e !== null && e.at === null && e.notBefore === null && e.notAfter === null;
   if (startUnknown) return endUnknown ? "start and end not known" : "start not known";
   if (t0 !== null && t0 > liveAt) return "not started yet";
+
+  // An execution stopped from outside, or of unknown outcome: never "took", "failed" or "running".
+  const stopped = stoppedState(span);
+  if (stopped !== null && (e === null || endedBy(span, liveAt))) return stoppedWords(span, stopped);
 
   // Open, or ended only after what is held: still running at the live edge.
   if (e === null || !endedBy(span, liveAt)) {

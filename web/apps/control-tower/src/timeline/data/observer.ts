@@ -34,7 +34,7 @@ import type { SceneStore } from "../../scene/store";
 import { STRUCTURAL_KINDS } from "../contract";
 import type { ConcurrencySeries, DensitySeries, SpanPage, SpanQuery, TimeWindow, TimelineData, TimelineMark, TimelineSpan } from "../contract";
 import { abortError, anySignal, BEHIND_AFTER_MS, createTileCache, isAbort, type Loaded, type TileCache } from "./cache";
-import { byStart, closeEndedVisits, honest, marksAnswer, spanMatches, tilesFor, type FilteredDensity } from "./derive";
+import { byStart, closeEndedChildren, closeEndedVisits, honest, marksAnswer, spanMatches, tilesFor, type FilteredDensity } from "./derive";
 import { readConcurrency, readMark, readSpan } from "./parse";
 import { availabilityState, type Part, type PartState } from "./availability";
 import { storeWatcher, THROTTLE_MS, type TimerLike } from "./watch";
@@ -51,6 +51,8 @@ export const MAX_MARK_PAGES = 10;
 export const STRUCTURE_REFRESH_MS = 2000;
 /** Structural spans read in all (the observer caps one query at OBSERVER_SPAN_CAP anyway). */
 const MAX_STRUCTURE = 20_000;
+/** Re-reads of lagging tiles for one stream position before leaving them to the next event. */
+export const MAX_LAG_ROUNDS = 8;
 /** How long to leave a failing observer alone before one probe: then every 15 s. */
 export const BACKOFF_MS: readonly number[] = [1000, 2000, 5000, 15_000];
 
@@ -181,7 +183,10 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
   const watcher = storeWatcher(store, {
     timers: options.timers,
     throttleMs: options.throttleMs ?? THROTTLE_MS,
-    changed: (prev, next) => prev.logVersion !== next.logVersion || prev.series !== next.series,
+    // `logVersion` is the SHOWN log's version: while the scene shows a history window (the playhead or the
+    // Timeline's window away from the live edge) it does not move with arrivals. `arrived` does, for every
+    // event the store takes in, late and out-of-order ones included (T5).
+    changed: (prev, next) => prev.logVersion !== next.logVersion || prev.arrived !== next.arrived || prev.series !== next.series,
     before: () => {
       if (source !== "live") return;
       let wait: number | null = null;
@@ -190,14 +195,40 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
         const w = c.markBehind();
         if (w !== null && (wait === null || w > wait)) wait = w;
       }
-      if (wait !== null && wait > 0 && behindTimer === null) {
-        behindTimer = timers.setTimeout(() => {
-          behindTimer = null;
-          watcher.notify();
-        }, wait);
-      }
+      if (wait !== null && wait > 0) noticeIn(wait);
     },
   });
+  /** Tell subscribers again in `wait` ms (one notice pending at a time). */
+  function noticeIn(wait: number): boolean {
+    if (behindTimer !== null) return false;
+    behindTimer = timers.setTimeout(() => {
+      behindTimer = null;
+      watcher.notify();
+    }, wait);
+    return true;
+  }
+
+  // ---- lagging replies (T5): the observer's stream can deliver an event before its span projection
+  // has taken it in, so a tile re-read on that event's notice may answer from just before it (its reply
+  // cursor is behind the stream's). Such a tile stays behind and is read again once BEHIND_AFTER_MS old,
+  // for as long as replies lag what the stream delivered, at most MAX_LAG_ROUNDS times per stream position.
+  let lagAt = -1;
+  let lagRounds = 0;
+  const streamPos = (): { generation: string; pos: number } | null => parseCursor(store.getState().connection?.cursor ?? null);
+  const checkLag = (cache: TileCache<unknown>, key: string, version: string | null): void => {
+    if (source !== "live" || version === null) return;
+    const held = streamPos();
+    const got = parseCursor(version);
+    if (!held || !got || held.generation !== got.generation || got.pos >= held.pos) return;
+    if (held.pos !== lagAt) {
+      lagAt = held.pos;
+      lagRounds = 0;
+    }
+    if (lagRounds >= MAX_LAG_ROUNDS) return;
+    const wait = cache.markLagging(key);
+    if (wait === null) return;
+    if (noticeIn(Math.max(wait, 50))) lagRounds += 1;
+  };
 
   // ---- health: back-off after failures, one probe at a time, resets and epochs.
   let failures = 0;
@@ -271,7 +302,10 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
   const tile = <T>(cache: TileCache<T>, key: string, edge: boolean, load: (signal: AbortSignal) => Promise<Loaded<T>>, signal?: AbortSignal): Promise<Loaded<T>> => {
     const run = (): Promise<Loaded<T>> => cache.get(key, edge, loader);
     const loader = guarded(load, run);
-    return cache.get(key, edge, loader, signal).catch((error: unknown) => {
+    return cache.get(key, edge, loader, signal).then((answer) => {
+      checkLag(cache as TileCache<unknown>, key, answer.version);
+      return answer;
+    }).catch((error: unknown) => {
       if (isAbort(error) || signal?.aborted) throw error;
       const held = cache.peek(key);
       if (held) return held;
@@ -381,7 +415,8 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
       // The client's safety net is for an older observer only: an M6.3 observer (a windowed reply) already
       // closed what its rules close, and deliberately left the rest open (T3).
       const held = honest([...chosen.values()].map((c) => c.span));
-      const spans = (windowed ? held : closeEndedVisits(held))
+      // The children of an ended execution are closed on every answer (an observer that closes them leaves nothing to do).
+      const spans = closeEndedChildren(windowed ? held : closeEndedVisits(held))
         .filter((s) => spanMatches(s, query))
         .sort(byStart);
       return { spans, truncated, total: truncated ? Math.max(total, spans.length) : spans.length, version: version ?? "" };
@@ -450,7 +485,7 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
       try {
         const answer = await tile(structureCache, "structure", false, load, signal);
         mark("spans", "available");
-        const spans = honest(answer.value.spans).sort(byStart);
+        const spans = closeEndedChildren(honest(answer.value.spans)).sort(byStart);
         return { spans, truncated: answer.value.truncated, total: answer.value.truncated ? answer.value.total : spans.length, version: answer.version ?? "" };
       } catch (error) {
         if (isAbort(error) || signal?.aborted) throw isAbort(error) ? error : abortError(signal);

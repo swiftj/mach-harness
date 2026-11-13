@@ -42,7 +42,22 @@ for (const node of fx.tree.byId.values()) {
     }
   }
 }
-const SPANS = state === "empty" ? [] : ALL;
+/**
+ * The render fixture's spans carry their ticket as `ids.ticket` (or only in the entity) and a visit's
+ * station as `attrs.action`: enough for its hand-made tree, not for the workspace, which builds the tree
+ * from the ids the observer sends (`ticket_id`, `station`). Without them every span lands in one
+ * "Not attached to a cell" track whose many lanes run on below its one label. Given here as the
+ * observer would send them.
+ */
+const TICKET_IN_ENTITY = /^(?:visit|round|cell|task|capacity-wait|person-wait|gate):(LOCAL-\d+)/;
+function asObserverSends(s: TimelineSpan): TimelineSpan {
+  const ticket = s.ids.ticket_id ?? s.ids.ticket ?? TICKET_IN_ENTITY.exec(s.entity)?.[1] ?? TICKET_IN_ENTITY.exec(s.id.slice(s.id.indexOf(":") + 1))?.[1] ?? null;
+  // The fixture's tasks are the build station's.
+  const station = s.kind === "visit" ? (s.ids.station ?? s.attrs.action ?? null) : s.kind === "task" ? (s.ids.station ?? "build") : null;
+  if ((!ticket || s.ids.ticket_id) && (!station || s.ids.station)) return s;
+  return { ...s, ids: { ...s.ids, ...(ticket ? { ticket_id: ticket } : {}), ...(station ? { station } : {}) } };
+}
+const SPANS = state === "empty" ? [] : ALL.map(asObserverSends);
 
 const never = <T,>(): Promise<T> => new Promise<T>(() => undefined);
 const loaded = performance.now();

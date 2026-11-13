@@ -1124,7 +1124,8 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
               ) : visit.interrupted ? (
                 <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={visit.leftAt} mode="interrupted" />
               ) : (
-                <NotRecorded key="d" />
+                // Entered and left are both recorded: the length is theirs, in the words "In time" uses (one source of truth).
+                <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={visit.leftAt} mode="work" />
               ),
             ],
             ["The station said", visit.outcomeWord ? <Mono key="o">{visit.outcomeWord}</Mono> : visit.leftAt === null ? "not yet" : <NotRecorded key="o" />],

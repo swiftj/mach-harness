@@ -11,7 +11,7 @@ import { STRUCTURAL_KINDS } from "../contract";
 import type { ConcurrencySeries, MarkKind, SpanPage, TimeWindow, TimelineData, TimelineMark, TimelineSpan } from "../contract";
 import { abortError } from "./cache";
 import { ALL_AVAILABLE } from "./availability";
-import { byStart, closeEndedVisits, concurrencyOf, cutAt, densityOf, honest, marksAnswer, spanMatches, type ConcurrencyLimit } from "./derive";
+import { byStart, closeEndedChildren, closeEndedVisits, concurrencyOf, cutAt, densityOf, honest, marksAnswer, spanMatches, type ConcurrencyLimit } from "./derive";
 import { marksOfScene, spansOfScene } from "./scene";
 import { storeWatcher, THROTTLE_MS, type TimerLike } from "./watch";
 
@@ -60,7 +60,7 @@ export function createSimulationTimelineData(store: SceneStore, options: Simulat
     }
     // The scene closes a visit whose execution ended without its exit (StationVisit.unclosed); the same
     // rule applied to the cut set keeps any other such visit from reading as still running.
-    return closeEndedVisits(out);
+    return closeEndedChildren(closeEndedVisits(out));
   };
   const check = (signal?: AbortSignal) => {
     if (signal?.aborted) throw abortError(signal);
