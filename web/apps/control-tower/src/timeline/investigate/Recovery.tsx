@@ -10,7 +10,7 @@ import { fc } from "@mach/ui";
 import { durationWords } from "../render";
 import type { BodyProps } from "./body";
 import { Caption, Diamond, Empty, Fig, Figures, FrameFig, Hit, HumanTriangle, LiveEdge, Mark, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
-import { frameOf, markSource, recoveryItems, type RecoveryItem } from "./model";
+import { attemptOf, frameOf, markSource, recoveryItems, type RecoveryItem } from "./model";
 import type { TimeWindow } from "../contract";
 
 const ROW_H = 30;
@@ -69,7 +69,7 @@ function ItemRow({ it, y, s, liveAt, onReveal, onFrame }: { it: RecoveryItem; y:
   // A late exit and a wait for a person are drawn to their own end (the exit, the person's answer, or the live edge).
   const visitEnd = it.kind === "late-exit" || it.kind === "person" ? s.cx(it.span.end?.at !== null && it.span.end?.at !== undefined && it.span.end.at <= liveAt ? it.span.end.at : liveAt) : null;
   const word = KIND_WORDS[it.kind];
-  const name = `${it.label}: ${word}${it.stoppedAt !== null ? ` at ${when(it.stoppedAt)}` : ""}; ${durationWords(it.span, liveAt)}.${it.resumed ? ` ${it.resumed.words[0]!.toUpperCase()}${it.resumed.words.slice(1)} at ${when(it.resumed.at)}.` : it.kind === "unknown" ? " Nothing later in the records takes it up again." : it.kind === "person" ? "" : " Not taken up again in the records held."}`;
+  const name = `${it.label}: ${word}${it.stoppedAt !== null ? ` at ${when(it.stoppedAt)}` : ""}; ${durationWords(it.span, liveAt)}.${it.resumed ? ` ${it.resumed.words[0]!.toUpperCase()}${it.resumed.words.slice(1)} at ${when(it.resumed.at)}.` : it.kind === "unknown" ? " Nothing later in the records takes it up again." : it.kind === "person" ? "" : " Not taken up again in the records held."}${it.span.kind === "execution" && attemptOf(it.span) ? ` The supervisor recorded it as attempt ${attemptOf(it.span)}.` : ""}`;
   return (
     <g>
       <text x={10} y={y + 14} style={{ ...MONO, fontSize: 10.5, fill: INK }} aria-hidden="true">

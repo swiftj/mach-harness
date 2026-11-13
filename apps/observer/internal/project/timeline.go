@@ -169,8 +169,8 @@ func (c *timelineCache) decode(cp checkpoint) (*State, error) {
 // Timeline returns the spans and marks at the projection's position, brought up to date first. A
 // request never waits for the projection's writer when a timeline is already built: while the
 // writer holds the lock (applying events, a checkpoint, a save) the latest timeline is served. A
-// timeline built at an earlier position is also served while it is younger than TimelineMaxAge,
-// and while another request is building the next one (its own Pos says where it was built). One
+// timeline built at an earlier position is also served while it is younger than TimelineMaxAge
+// and of the log's epoch (the writer's lock held or not), and while another request is building the next one (its own Pos says where it was built). One
 // build runs at a time.
 func (p *Projector) Timeline() (*Timeline, error) {
 	c := &p.tl
@@ -179,7 +179,9 @@ func (p *Projector) Timeline() (*Timeline, error) {
 			c.mu.Lock()
 			cur := c.cur
 			c.mu.Unlock()
-			if cur != nil && p.opts.TimelineMaxAge > 0 {
+			// The same checks as below: the log's epoch (read without the projector's lock) and the
+			// age limit. A timeline from another epoch, or older than that, waits for the lock instead.
+			if cur != nil && p.opts.TimelineMaxAge > 0 && cur.Epoch == p.opts.Log.Epoch() && time.Since(cur.Built) < p.opts.TimelineMaxAge {
 				return cur, nil
 			}
 			p.mu.Lock()

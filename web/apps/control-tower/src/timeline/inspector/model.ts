@@ -10,8 +10,8 @@
 import { findAgent, findToolCall, type ArtifactState, type EntityRef, type Scene } from "../../sim";
 import { duration, timecode } from "../../shell/time";
 import { elapsedWords } from "../../shell/inspector/words";
-import { outcomeKnownAt, type SpanKind, type SpanQuery, type TimeWindow, type TimelineSpan } from "../contract";
-import { stoppedState, stoppedWords, type StoppedState } from "../render/words";
+import { noEndRecorded, outcomeKnownAt, type SpanKind, type SpanQuery, type TimeWindow, type TimelineSpan } from "../contract";
+import { noEndWords, stoppedState, stoppedWords, type StoppedState } from "../render/words";
 
 /** A stopped execution's state in the headline's words. */
 const STOPPED_HEADLINE: Readonly<Record<StoppedState, string>> = { interrupted: "interrupted", "timed-out": "timed out", "could-not-start": "could not start", unknown: "outcome not known" };
@@ -249,6 +249,7 @@ export function spanHeadline(span: TimelineSpan, asOf: number, clock: (t: number
     const times = from !== null && to !== null ? `${clock(from)}–${span.end?.at === null ? "at most " : ""}${clock(to)}` : from !== null ? `from ${clock(from)}` : "";
     return `${spanName(span)} — ${STOPPED_HEADLINE[stopped]}${times ? `, ${times}` : ""}`;
   }
+  if (noEndRecorded(span, asOf)) return `${spanName(span)} — no end recorded${from !== null ? `, from ${clock(from)}` : ""}`;
   if (!endedBy(span, asOf)) {
     const state = isWait(span) ? "waiting" : atWorkWhileOpen(span) ? "at work" : "open";
     return `${spanName(span)} — ${state}${from !== null ? `, from ${clock(from)}` : ""}`;
@@ -427,6 +428,10 @@ export function durationSentence(span: TimelineSpan, asOf: number, rules: Readon
     const words = stoppedWords(span, stopped);
     return { text: words.charAt(0).toUpperCase() + words.slice(1), live: null };
   }
+  if (noEndRecorded(span, asOf)) {
+    const words = noEndWords(span.attrs.historyEndsAt!);
+    return { text: words.charAt(0).toUpperCase() + words.slice(1), live: null };
+  }
   if (!endedBy(span, asOf)) {
     const start = span.start?.at ?? null;
     if (start === null) return { text: span.start ? "Still open; its start is known only within bounds, so how long is not known" : "Still open; start not known", live: null };
@@ -451,7 +456,7 @@ export function durationSentence(span: TimelineSpan, asOf: number, rules: Readon
     if (known === null) return { text: span.end?.reason === "superseded" ? "Open, then superseded; how long is not known" : "Open, then interrupted; how long is not known", live: null };
     const d = span1(known);
     // `interruptedAt` only says the exit was stamped after its execution ended: never that work resumed.
-    if (span.attrs.interruptedAt !== undefined) return { text: `open for ${d}; its exit was recorded after its execution ended (at ${clock(span.attrs.interruptedAt)})`, live: null };
+    if (span.attrs.interruptedAt !== undefined) return { text: `${elapsedWords("interrupted", true, true, d)}; its exit was recorded after its execution ended (at ${clock(span.attrs.interruptedAt)})`, live: null };
     return { text: span.end?.reason === "superseded" ? `open for ${d}, then superseded` : `open for ${d}, then interrupted`, live: null };
   }
   switch (basis) {

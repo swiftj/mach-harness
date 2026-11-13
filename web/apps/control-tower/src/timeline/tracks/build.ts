@@ -107,6 +107,8 @@ interface Draft {
   detail: string | null;
   /** An execution's label before its run and start are known ("LOCAL-001"). */
   base?: string;
+  /** An execution's detail before numberRuns adds its start (so a rebuild does not add it twice). */
+  baseDetail?: string | null;
   note: string | null;
   /** Children sort by order, then (when byTime) by their earliest instant, then by id. */
   readonly order: number;
@@ -411,6 +413,7 @@ function executionPlacer(rel: Relations): Placer {
     const base = ticket ?? NO_TICKET;
     const draft = d.make(id, "execution", null, { ref: asRef(id), label: base, detail: attempt ? `supervisor attempt ${attempt}` : "attempt not recorded", order: 0, byTime: true });
     draft.base = base;
+    draft.baseDetail = draft.detail;
     return draft;
   };
   const claim = (x: string): Draft => d.get(`execution:${x}/claim`) ?? d.make(`execution:${x}/claim`, "claim", execution(x), { label: "Claim", order: 0 });
@@ -757,7 +760,8 @@ function executionStart(draft: Draft): number | null {
 }
 
 /**
- * Labels the execution roots by what tells them apart: "LOCAL-001 · run 2 of 3 · 05:37", the run being
+ * Labels the execution roots by what tells them apart: "LOCAL-001 · run 2/3" (detail "from 05:37 ·
+ * supervisor attempt 1"), the run being
  * the execution's order among its cell's executions by start (from the structural spans, so it does not
  * depend on the window). An execution not started by liveAt is not counted yet.
  */
@@ -768,10 +772,15 @@ function numberRuns(roots: readonly Draft[], liveAt: number): void {
     const start = executionStart(draft);
     if (start === null || start > liveAt) {
       draft.label = draft.base;
+      if (draft.baseDetail !== undefined) draft.detail = draft.baseDetail;
       continue;
     }
+    // The start goes in the detail, before the supervisor's attempt: the label keeps what survives
+    // fitting at the default column (recheck R2).
+    const own = draft.baseDetail === undefined ? draft.detail : draft.baseDetail;
+    draft.detail = `from ${startWords(start)}${own ? ` · ${own}` : ""}`;
     if (draft.base === NO_TICKET) {
-      draft.label = `${NO_TICKET} · ${startWords(start)}`;
+      draft.label = NO_TICKET;
       continue;
     }
     const list = byTicket.get(draft.base);
@@ -780,8 +789,8 @@ function numberRuns(roots: readonly Draft[], liveAt: number): void {
   }
   for (const list of byTicket.values()) {
     list.sort((a, b) => a.start - b.start || (a.draft.id < b.draft.id ? -1 : 1));
-    list.forEach(({ draft, start }, i) => {
-      draft.label = list.length > 1 ? `${draft.base} · run ${i + 1} of ${list.length} · ${startWords(start)}` : `${draft.base} · ${startWords(start)}`;
+    list.forEach(({ draft }, i) => {
+      draft.label = list.length > 1 ? `${draft.base} · run ${i + 1}/${list.length}` : draft.base!;
     });
   }
 }

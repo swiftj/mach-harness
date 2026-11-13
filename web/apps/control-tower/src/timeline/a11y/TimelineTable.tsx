@@ -22,7 +22,7 @@ import { createContext, memo, useCallback, useContext, useEffect, useId, useLayo
 import { cn, StateMark, type MarkState } from "@mach/ui";
 import { AuthorityBadge, NotRecorded } from "../../shell/inspector/parts";
 import { getTimeBase, spokenTime, timecode } from "../../shell/vocab";
-import { attentionOf, outcomeKnownAt, type SpanEnd, type TimelineSpan, type TimelineTableProps } from "../contract";
+import { attentionOf, outcomeKnownAt, type SelectGesture, type SpanEnd, type TimelineSpan, type TimelineTableProps } from "../contract";
 import { countsWords, describeSpan, durationWords, nodeState, shownCounts } from "../render";
 import { useAsOf } from "../controls";
 import { attentionWords, countWords, heldEnd, momentWords, openContext, summaryWords, windowSummary, type Attention, type TrackSummary } from "./describe";
@@ -132,7 +132,7 @@ interface RowProps {
   readonly geometry: GridGeometry;
   readonly tree: TimelineTableProps["tree"];
   readonly trackCol: number;
-  onActivate(index: number, row: GridRow): void;
+  onActivate(index: number, row: GridRow, how?: SelectGesture): void;
 }
 
 /**
@@ -166,7 +166,7 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, selected, g
     tabIndex: active ? 0 : -1,
     "data-key": row.key,
     "aria-selected": row.type === "more" ? undefined : selected,
-    onClick: () => onActivate(index, row),
+    onClick: (e: { detail: number }) => onActivate(index, row, e.detail >= 2 ? "double-click" : "click"),
     style: {
       top: index * geometry.row,
       height: geometry.row,
@@ -297,13 +297,16 @@ function ColumnResizer({ width, onWidth }: { width: number; onWidth(w: number): 
   );
 }
 
-/** windowSummary for the tree and window, computed when idle; the live edge is read when it runs. */
-function useIdleSummary(tree: TimelineTableProps["tree"], win: TimelineTableProps["viewport"]["window"], liveAt: number): string {
+/**
+ * windowSummary for the tree and window, computed when idle (keyed on them, not on every live-edge
+ * step); the live edge is read when it runs. The table and the workspace's hidden summary (A5).
+ */
+export function useIdleSummary(tree: TimelineTableProps["tree"], win: TimelineTableProps["viewport"]["window"], liveAt: number, eager = true): string {
   const live = useRef(liveAt);
   useLayoutEffect(() => {
     live.current = liveAt;
   });
-  const [text, setText] = useState(() => windowSummary(tree, win, liveAt));
+  const [text, setText] = useState(() => (eager ? windowSummary(tree, win, liveAt) : ""));
   useEffect(() => {
     const run = () => setText(windowSummary(tree, win, live.current));
     const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (h: number) => void };
@@ -437,9 +440,9 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
   );
 
   const onActivate = useCallback(
-    (i: number, row: GridRow) => {
+    (i: number, row: GridRow, how: SelectGesture = "key") => {
       setActive({ key: row.key, index: i });
-      if (row.type === "span") onSelect(row.span);
+      if (row.type === "span") onSelect(row.span, how);
       else if (row.type === "track") toggle(row);
     },
     [onSelect, toggle],
@@ -457,7 +460,7 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
     else if (action.type === "toggle") {
       toggle(row);
       pendingFocus.current = true;
-    } else if (row.type === "span") onSelect(row.span);
+    } else if (row.type === "span") onSelect(row.span, "key");
   };
 
   const range = visibleRange(scrollTop, height, count, 8, geometry);

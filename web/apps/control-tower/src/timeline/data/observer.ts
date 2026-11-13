@@ -31,10 +31,11 @@
  */
 import { ObserverError, parseCursor, type ObserverClient } from "../../live/observer";
 import type { SceneStore } from "../../scene/store";
+import { historyEndedAt } from "../../scene/connection";
 import { STRUCTURAL_KINDS } from "../contract";
 import type { ConcurrencySeries, DensitySeries, SpanPage, SpanQuery, TimeWindow, TimelineData, TimelineMark, TimelineSpan } from "../contract";
 import { abortError, anySignal, BEHIND_AFTER_MS, createTileCache, isAbort, type Loaded, type TileCache } from "./cache";
-import { byStart, closeEndedChildren, closeEndedVisits, honest, marksAnswer, spanMatches, tilesFor, type FilteredDensity } from "./derive";
+import { byStart, closeEndedChildren, closeEndedVisits, endsWithHistory, honest, marksAnswer, spanMatches, tilesFor, type FilteredDensity } from "./derive";
 import { readConcurrency, readMark, readSpan } from "./parse";
 import { availabilityState, type Part, type PartState } from "./availability";
 import { storeWatcher, THROTTLE_MS, type TimerLike } from "./watch";
@@ -123,6 +124,11 @@ interface SpanTile {
   readonly total: number;
   /** The reply said `truncated` (an M6.3 observer): the window was honoured. */
   readonly windowed: boolean;
+  /**
+   * Its pages answered from different projection positions (recheck R6): offset paging across them
+   * can skip a span inserted mid-read, so the tile is marked lagging and read again.
+   */
+  readonly mixed?: boolean;
 }
 
 const notFound = (error: unknown): boolean => error instanceof ObserverError && (error.kind === "not_found" || error.status === 404);
@@ -176,6 +182,13 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
   const mark = (part: Part, state: PartState) => availability.set(part, state);
   const failedState = (error: unknown): PartState => (notFound(error) ? "unavailable" : "failed");
 
+  /**
+   * The history's last recorded time when it is no longer live, else null: a replay, or a Factory whose
+   * own records leave it disabled (factory.disabled last) with no supervisor lease held. Presentation
+   * only (endsWithHistory); a live, enabled Factory keeps "at work".
+   */
+  const historyEnd = (): number | null => historyEndedAt({ ...store.getState(), source });
+
   const isEdge = (tile: TimeWindow): boolean => source === "live" && tile.to > store.getState().liveAt - 1;
 
   /** A notice due when the behind tiles may be re-read (one at a time). */
@@ -186,7 +199,12 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
     // `logVersion` is the SHOWN log's version: while the scene shows a history window (the playhead or the
     // Timeline's window away from the live edge) it does not move with arrivals. `arrived` does, for every
     // event the store takes in, late and out-of-order ones included (T5).
-    changed: (prev, next) => prev.logVersion !== next.logVersion || prev.arrived !== next.arrived || prev.series !== next.series,
+    changed: (prev, next) =>
+      prev.logVersion !== next.logVersion ||
+      prev.arrived !== next.arrived ||
+      prev.series !== next.series ||
+      prev.factoryStatus?.recordedState !== next.factoryStatus?.recordedState ||
+      prev.factoryStatus?.supervisor.leasePresent !== next.factoryStatus?.supervisor.leasePresent,
     before: () => {
       if (source !== "live") return;
       let wait: number | null = null;
@@ -198,12 +216,27 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
       if (wait !== null && wait > 0) noticeIn(wait);
     },
   });
-  /** Tell subscribers again in `wait` ms (one notice pending at a time). */
+  /**
+   * Tell subscribers again in `wait` ms. One timer is pending at a time; a notice due after it is
+   * remembered (`laterDue`) and the timer is armed again for it when it fires, so a tile that falls
+   * behind while an earlier notice is pending is still told about once it is due (recheck R1).
+   */
+  let timerDue = 0;
+  let laterDue = 0;
   function noticeIn(wait: number): boolean {
-    if (behindTimer !== null) return false;
+    const due = now() + wait;
+    if (behindTimer !== null) {
+      if (due <= timerDue) return false;
+      laterDue = Math.max(laterDue, due);
+      return true;
+    }
+    timerDue = due;
     behindTimer = timers.setTimeout(() => {
       behindTimer = null;
       watcher.notify();
+      const next = laterDue;
+      laterDue = 0;
+      if (next > timerDue) noticeIn(Math.max(1, next - now()));
     }, wait);
     return true;
   }
@@ -332,8 +365,12 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
     let truncated = false;
     let total: number | null = null;
     let windowed = false;
+    let first: string | null | undefined;
+    let mixed = false;
     for (let offset = 0; ; ) {
       const page = await fetchSpans({ fromMs: t.from, toMs: t.to, kinds: query.kinds, ticket: query.ticket, execution: query.execution, wave: query.wave, limit: pageLimit, offset, signal });
+      if (first === undefined) first = page.cursor;
+      else if (page.cursor !== first) mixed = true;
       if (cursorPos(page.cursor) >= cursorPos(version)) version = page.cursor;
       for (const raw of page.items) {
         const span = readSpan(raw);
@@ -351,7 +388,16 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
     }
     // An observer before M6.3 cuts at its cap without saying so: at the cap, say it may be cut.
     if (!windowed && (total ?? 0) >= OBSERVER_SPAN_CAP) truncated = true;
-    return { value: { spans, truncated, total: Math.max(total ?? 0, spans.length), windowed }, version };
+    return { value: { spans, truncated, total: Math.max(total ?? 0, spans.length), windowed, ...(mixed ? { mixed } : {}) }, version };
+  };
+
+  /** A tile read across projection positions is read again once due (R6). */
+  const lagIfMixed = (key: string) => (answer: Loaded<SpanTile>): Loaded<SpanTile> => {
+    if (answer.value.mixed) {
+      const wait = spanTiles.markLagging(key);
+      if (wait !== null) noticeIn(Math.max(wait, 50));
+    }
+    return answer;
   };
 
   const filterKey = (q: SpanQuery): string => JSON.stringify([[...(q.kinds ?? [])].sort(), q.ticket ?? "", q.execution ?? "", q.wave ?? ""]);
@@ -373,7 +419,10 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
       const own = new AbortController();
       const combined = anySignal([own.signal, signal]);
       const tiles = tilesFor(query.window);
-      const requests = tiles.map((t) => tile(spanTiles, `spans|${key}|${t.from}|${t.to}`, isEdge(t), (s) => loadSpanTile(query, t, s), combined));
+      const requests = tiles.map((t) => {
+        const k = `spans|${key}|${t.from}|${t.to}`;
+        return tile(spanTiles, k, isEdge(t), (s) => loadSpanTile(query, t, s), combined).then(lagIfMixed(k));
+      });
       // Supersede the previous call for these filters only once this one holds its tiles, so shared tiles survive.
       latest.get(key)?.abort(abortError());
       latest.set(key, own);
@@ -419,7 +468,7 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
       const spans = closeEndedChildren(windowed ? held : closeEndedVisits(held))
         .filter((s) => spanMatches(s, query))
         .sort(byStart);
-      return { spans, truncated, total: truncated ? Math.max(total, spans.length) : spans.length, version: version ?? "" };
+      return { spans: endsWithHistory(spans, historyEnd()), truncated, total: truncated ? Math.max(total, spans.length) : spans.length, version: version ?? "" };
     },
 
     async span(id, signal) {
@@ -429,7 +478,7 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
         const page = await direct(() => fetchSpans({ span: id, signal }), (p) => p.cursor);
         for (const raw of page.items) {
           const span = readSpan(raw);
-          if (span && span.id === id) return honest([span])[0] ?? null;
+          if (span && span.id === id) return endsWithHistory(honest([span]), historyEnd())[0] ?? null;
         }
         return null;
       } catch (error) {
@@ -485,7 +534,7 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
       try {
         const answer = await tile(structureCache, "structure", false, load, signal);
         mark("spans", "available");
-        const spans = closeEndedChildren(honest(answer.value.spans)).sort(byStart);
+        const spans = endsWithHistory(closeEndedChildren(honest(answer.value.spans)).sort(byStart), historyEnd());
         return { spans, truncated: answer.value.truncated, total: answer.value.truncated ? answer.value.total : spans.length, version: answer.version ?? "" };
       } catch (error) {
         if (isAbort(error) || signal?.aborted) throw isAbort(error) ? error : abortError(signal);

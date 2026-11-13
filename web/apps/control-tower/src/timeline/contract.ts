@@ -70,6 +70,13 @@ export interface SpanAttrs {
   readonly dependsOn?: readonly string[];
   /** The scene marked this visit as stopped and taken up again: when it stopped. */
   readonly interruptedAt?: number;
+  /**
+   * Client-only presentation (data/derive.ts `endsWithHistory`): the history is no longer live (a
+   * replay, or a Factory recorded as disabled with no supervisor lease) and this open execution,
+   * workflow, agent or visit has no end recorded by its last recorded time, which this holds. Nothing
+   * is closed: `end` stays null. See `noEndRecorded`.
+   */
+  readonly historyEndsAt?: number;
 }
 
 export interface TimelineSpan {
@@ -377,7 +384,16 @@ export function outcomeKnownAt(span: TimelineSpan, liveAt: number): boolean {
 /** The span kinds `TimelineData.structure()` returns. */
 export const STRUCTURAL_KINDS: readonly SpanKind[] = ["wave", "slice-wait", "slice-eligible", "capacity-wait", "cell", "round", "claim", "execution", "workflow", "person-wait", "gate-wait"];
 
+/**
+ * An open span on a history that is no longer live, seen at or after that history's end: "no end
+ * recorded; the history ends at …", with the ring-query mark; never "at work" (attrs.historyEndsAt).
+ */
+export function noEndRecorded(span: TimelineSpan, liveAt: number): boolean {
+  return span.end === null && span.attrs.historyEndsAt !== undefined && liveAt >= span.attrs.historyEndsAt;
+}
+
 export function attentionOf(span: TimelineSpan, liveAt: number): Attention {
+  if (noEndRecorded(span, liveAt)) return "unknown";
   if (span.end === null) return span.kind === "person-wait" || span.kind === "gate-wait" ? "person" : "open";
   if (span.end.at !== null && span.end.at > liveAt) return "open";
   if (span.end.reason === "failed" || span.end.reason === "refused") return "failed";
@@ -443,9 +459,13 @@ export interface TrackCanvasProps {
   onWindow(next: TimeWindow): void;
   /** Hover and selection go to the scene store by the caller; the canvas only reports. */
   onHover(hit: TimelineHit | null): void;
-  onSelect(hit: TimelineHit): void;
+  /** `how`: a single click, the second click of a double-click, or a key (Enter). Only the last two may seek (X13). */
+  onSelect(hit: TimelineHit, how?: SelectGesture): void;
   onToggle(trackId: string): void;
 }
+
+/** How a select was made (X13): a second single click only keeps the selection; Enter twice or a double-click goes to it. */
+export type SelectGesture = "click" | "double-click" | "key";
 
 export interface TimelineCursor {
   readonly trackId: string;
@@ -494,7 +514,7 @@ export interface TimelineTableProps {
   readonly tree: TrackTree;
   readonly layout: RowLayout;
   readonly viewport: TimelineViewport;
-  onSelect(span: TimelineSpan): void;
+  onSelect(span: TimelineSpan, how?: SelectGesture): void;
   onToggle(trackId: string): void;
 }
 

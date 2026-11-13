@@ -91,7 +91,7 @@ test("a span that begins after the playhead is not started there", () => {
 test("T4: a late exit is not a resumption: open for its span, exit recorded after its execution ended, never 'took'", () => {
   const v = span({ start: 0, finish: 300_000, attrs: { interruptedAt: 120_000 }, outcome: "built" });
   const text = M.durationSentence(v, 400_000, {}, clock).text;
-  assert.equal(text, "open for 5 min; its exit was recorded after its execution ended (at t120000)");
+  assert.equal(text, "open for 5 min, not continuous; its exit was recorded after its execution ended (at t120000)");
   assert.doesNotMatch(text, /took|taken up|resum/);
   // While still open after the stop: open for, live, interrupted mode.
   const live = M.durationSentence(v, 200_000);

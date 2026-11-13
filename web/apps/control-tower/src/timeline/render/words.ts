@@ -12,19 +12,19 @@
 import type { MarkState } from "@mach/ui";
 import { duration as durationOf, timecode } from "../../shell/time";
 import { elapsedWords } from "../../shell/inspector/words";
-import { outcomeKnownAt, type FlatRow, type SpanAuthority, type SpanKind, type SpanPrecision, type TimelineSpan, type TrackNode } from "../contract";
+import { noEndRecorded, outcomeKnownAt, type FlatRow, type SpanAuthority, type SpanKind, type SpanPrecision, type TimelineSpan, type TrackNode } from "../contract";
 
-/** Kinds whose open state is a wait, not work: "waiting for", never "running for". */
+/** Kinds whose open state is a wait, not work: "waiting for", never "at work for". */
 export const WAIT_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["slice-wait", "slice-eligible", "capacity-wait", "gate-wait", "person-wait", "agent-queue"]);
 
 /** Kinds that are work while open (the contract's open rule); a human-approval visit is a wait. */
 const WORK_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["execution", "workflow", "agent", "tool", "task", "visit"]);
 
-/** How an open span is said: "running" (work), "waiting" (a wait, a visit to human approval) or "open" (a wave, slice, cell, round, claim, seat). */
-export function openWord(span: TimelineSpan): "running" | "waiting" | "open" {
+/** How an open span is said: "at work" (work), "waiting" (a wait, a visit to human approval) or "open" (a wave, slice, cell, round, claim, seat). The inspector's words. */
+export function openWord(span: TimelineSpan): "at work" | "waiting" | "open" {
   if (WAIT_KINDS.has(span.kind)) return "waiting";
   if (span.kind === "visit" && span.ids.station === "human-approval") return "waiting";
-  return WORK_KINDS.has(span.kind) ? "running" : "open";
+  return WORK_KINDS.has(span.kind) ? "at work" : "open";
 }
 
 /**
@@ -155,6 +155,11 @@ export function outcomeUnknown(span: TimelineSpan, liveAt: number): boolean {
  * The duration in the words of design section 5. `context` (from the tree, for an open wave, slice,
  * cell or round) adds when anything beneath it last ended.
  */
+/** The words for an open span when its history, no longer live, ended at `at` (the inspector's too). */
+export function noEndWords(at: number): string {
+  return `no end recorded; the history ends at ${clockWords(at)}`;
+}
+
 export function durationWords(span: TimelineSpan, liveAt: number, context?: OpenContext | null): string {
   const wait = WAIT_KINDS.has(span.kind);
   const s = span.start;
@@ -167,6 +172,9 @@ export function durationWords(span: TimelineSpan, liveAt: number, context?: Open
   if (startUnknown) return endUnknown ? "start and end not known" : "start not known";
   if (t0 !== null && t0 > liveAt) return "not started yet";
 
+  // Open at the end of a history that is no longer live (a replay, a disabled Factory): never "at work".
+  if (noEndRecorded(span, liveAt)) return noEndWords(span.attrs.historyEndsAt!);
+
   // An execution stopped from outside, or of unknown outcome: never "took", "failed" or "running".
   const stopped = stoppedState(span);
   if (stopped !== null && (e === null || endedBy(span, liveAt))) return stoppedWords(span, stopped);
@@ -177,7 +185,7 @@ export function durationWords(span: TimelineSpan, liveAt: number, context?: Open
     if (t0 === null) return "start not known";
     const word = openWord(span);
     const d = durationText(liveAt - t0);
-    // Only work is "running"; an open container is open, and says what the tree knows of its activity.
+    // Only work is "at work"; an open container is open, and says what the tree knows of its activity.
     return word === "open" ? `open ${d}${contextWords(context)}` : `${word} for ${d}`;
   }
   if (endUnknown) return "end not known";
@@ -208,7 +216,8 @@ export function durationWords(span: TimelineSpan, liveAt: number, context?: Open
   if (span.attrs.interruptedAt !== undefined && ms !== null) {
     // `interruptedAt` says only that the exit was stamped after the execution ended (or after the station
     // was entered again): never that the work was taken up. Entry to exit is a span, not time worked.
-    return `exit recorded ${basis === "measured" ? "" : "about "}${durationText(ms)} after entry, after its execution ended (at ${clockWords(span.attrs.interruptedAt)})`;
+    // The inspector's words (src/timeline/inspector/model.ts) and the bar's (render/draw.ts shortDuration).
+    return `${elapsedWords("interrupted", true, true, `${basis === "measured" ? "" : "about "}${durationText(ms)}`)}; its exit was recorded after its execution ended (at ${clockWords(span.attrs.interruptedAt)})`;
   }
 
   switch (basis) {
@@ -387,6 +396,8 @@ export function nodeState(node: TrackNode, liveAt: number): { readonly state: Ma
     case "failed":
       return { state: "failed", words: "failed" };
     case "unknown":
+      // Its own span open at the end of a history that is no longer live: no end recorded.
+      if (node.lanes[0]?.spans.some((s) => noEndRecorded(s, liveAt))) return { state: "unknown", words: "no end recorded" };
       return { state: "unknown", words: "outcome not known" };
     case "interrupted":
       return { state: "interrupted", words: "interrupted" };
@@ -450,7 +461,7 @@ export function showsCounts(node: TrackNode): boolean {
 
 /**
  * The most of a label that fits `room`, dropping its trailing " · " parts first (they are details:
- * "LOCAL-001 · run 2 of 3 · 05:37" becomes "LOCAL-001 · run 2 of 3", then "LOCAL-001"), so an id is
+ * "LOCAL-001 · run 2/3 · 05:37" becomes "LOCAL-001 · run 2/3", then "LOCAL-001"), so an id is
  * never cut in the middle while a detail can go instead. Only the first part is ever truncated.
  * `dropped` holds what was taken off, for the title. Pure given `width`.
  */

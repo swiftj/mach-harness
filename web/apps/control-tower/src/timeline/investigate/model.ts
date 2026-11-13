@@ -42,6 +42,29 @@ export function startAt(span: TimelineSpan): number | null {
   return s.at ?? s.notBefore ?? null;
 }
 
+/**
+ * An execution's run number among its cell's executions, the same naming as the tracks ("run 2 of 3"):
+ * order by recorded start, executions not started by `liveAt` not counted. The supervisor's own
+ * `attempt` number is a different fact (it can repeat across executions) and is not this.
+ */
+export function runOf(exec: TimelineSpan, spans: readonly TimelineSpan[], liveAt: number): { readonly index: number; readonly of: number } | null {
+  const ticket = ticketOf(exec);
+  const at = startAt(exec);
+  if (!ticket || at === null || at > liveAt) return null;
+  const seen = new Set<string>();
+  const list = spans
+    .filter((s) => s.kind === "execution" && ticketOf(s) === ticket && (startAt(s) ?? Infinity) <= liveAt && !seen.has(s.entity) && seen.add(s.entity))
+    .sort((a, b) => startAt(a)! - startAt(b)! || (a.entity < b.entity ? -1 : 1));
+  const i = list.findIndex((s) => s.entity === exec.entity);
+  return i < 0 ? null : { index: i + 1, of: list.length };
+}
+
+/** "run 2 of 3", or "the only run". */
+export const runWords = (r: { index: number; of: number }): string => (r.of > 1 ? `run ${r.index} of ${r.of}` : "the only run");
+
+/** The supervisor's recorded attempt number, or null. */
+export const attemptOf = (s: TimelineSpan): number | null => s.attrs.attempt ?? (s.ids.attempt ? Number(s.ids.attempt) : null);
+
 /** When a span ends as recorded, or null while open or not known. */
 export function endAt(span: TimelineSpan): number | null {
   const e = span.end;
@@ -154,6 +177,8 @@ export interface SlotRun {
   readonly to: number | null;
   readonly span: TimelineSpan | null;
   readonly endReason: string | null;
+  /** For an execution: the supervisor's recorded attempt number (hover card only; it can repeat). */
+  readonly attempt?: number | null;
 }
 
 export interface Ladder {
@@ -299,8 +324,9 @@ export function ladderOf(ticket: string, spans: readonly TimelineSpan[], marks: 
   const execSpans = spans.filter((s) => s.kind === "execution");
   const attempts = runs(executionOfVisit, (k) => {
     const span = execSpans.find((s) => s.entity === k) ?? null;
-    const n = span?.attrs.attempt ?? (span?.ids.attempt ? Number(span.ids.attempt) : null);
-    return { label: n ? `Attempt ${n}` : "Attempt not recorded", ref: k, from: span ? startAt(span) : null, to: span ? endBy(span, liveAt) : null, span, endReason: span && endBy(span, liveAt) !== null ? (span.end?.reason ?? null) : null };
+    const run = span ? runOf(span, execSpans, liveAt) : null;
+    const words = run ? runWords(run) : "execution not held";
+    return { label: `${words[0]!.toUpperCase()}${words.slice(1)}`, attempt: span ? attemptOf(span) : null, ref: k, from: span ? startAt(span) : null, to: span ? endBy(span, liveAt) : null, span, endReason: span && endBy(span, liveAt) !== null ? (span.end?.reason ?? null) : null };
   });
   return { ticket, rungs, rounds: rounds.runs, attempts: attempts.runs, unroundedSlots: rounds.missing, unattemptedSlots: attempts.missing };
 }
@@ -381,7 +407,7 @@ export function compareRungs(a: Rung, b: Rung, ladder: Ladder): string[] {
   };
   const xa = attemptAt(a);
   const xb = attemptAt(b);
-  if (xa && xb && xa !== xb && !/not recorded/.test(xa + xb)) out.push(`Execution: ${A} ran in ${xa.toLowerCase()}, ${B} in ${xb.toLowerCase()}.`);
+  if (xa && xb && xa !== xb && !/not held/.test(xa + xb)) out.push(`Execution: ${A} ran in ${xa.toLowerCase()}, ${B} in ${xb.toLowerCase()}.`);
   return out;
 }
 
@@ -806,7 +832,7 @@ export function recoveryItems(spans: readonly TimelineSpan[], marks: readonly Ti
   const recoveries = hm.filter((m) => m.kind === "recovery");
   const used = new Set<string>();
   const execs = hs.filter((s) => s.kind === "execution");
-  const attemptOf = (s: TimelineSpan): number | null => s.attrs.attempt ?? (s.ids.attempt ? Number(s.ids.attempt) : null);
+  const runOfExec = (x: TimelineSpan) => (x.kind === "execution" ? runOf(x, hs, liveAt) : null);
 
   const nextAttempt = (ticket: string | null, after: number, not: string): RecoveryItem["resumed"] => {
     if (!ticket) return null;
@@ -815,8 +841,8 @@ export function recoveryItems(spans: readonly TimelineSpan[], marks: readonly Ti
       .sort(byStart)[0];
     if (!later) return null;
     const x = later.kind === "execution" ? later : (execs.find((e) => e.entity === later.entity) ?? later);
-    const n = attemptOf(x);
-    return { at: startAt(later)!, ref: later.entity, words: `taken up again by ${n ? `attempt ${n}` : "a later execution (attempt not recorded)"}`, source: spanSource(later, later.kind === "claim" ? "the next claim of the same cell" : "the next execution of the same cell") };
+    const r = runOfExec(x);
+    return { at: startAt(later)!, ref: later.entity, words: `taken up again by ${r ? runWords(r) : "a later execution"}`, source: spanSource(later, later.kind === "claim" ? "the next claim of the same cell" : "the next execution of the same cell") };
   };
   const recsFor = (ref: string) => {
     const r = recoveries.filter((m) => m.entity === ref);
@@ -834,14 +860,14 @@ export function recoveryItems(spans: readonly TimelineSpan[], marks: readonly Ti
       const unknown = reason === "unknown" || outcome === "unknown" || hm.some((m) => m.kind === "interruption" && m.entity === s.entity && m.verdict === "unknown");
       const interrupted = !unknown && (reason === "interrupted" || reason === "superseded" || /interrupt|timed.?out/.test(outcome));
       if (!unknown && !interrupted) continue;
-      const n = attemptOf(s);
+      const r = runOfExec(s);
       const recs = recsFor(s.entity);
       const stop = e ?? recs[0]?.at ?? null;
       items.push({
         kind: unknown ? "unknown" : "interrupted",
         span: s,
         ticket,
-        label: `${n ? `Attempt ${n}` : "Execution, attempt not recorded"}${ticket ? ` · ${ticket}` : ""}`,
+        label: `${ticket ?? "Execution"}${r ? ` · ${runWords(r)}` : ""}`,
         from: startAt(s),
         stoppedAt: stop,
         recoveries: recs,

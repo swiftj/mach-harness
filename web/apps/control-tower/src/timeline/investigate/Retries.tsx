@@ -1,7 +1,7 @@
 /**
  * Lens 1, verification failures and retries: per cell a ladder, one rung per pass through build and
  * verify in time order (the build or revise visit, the verification, the gate verdict, what followed).
- * Review rounds are brackets above the ladder and execution attempts a rail below it, each labelled;
+ * Review rounds are brackets above the ladder and the executions (runs) a rail below it, each labelled;
  * they overlap freely and neither is nested in the other. Two passes chosen (click, then shift-click;
  * Enter, then Shift+Enter) are compared on a shared relative time axis.
  */
@@ -26,9 +26,13 @@ function shortLength(span: TimelineSpan, liveAt: number): string {
   const a = startAt(span);
   const b = endBy(span, liveAt);
   if (a === null) return "start not known";
-  if (b === null) return `running ${duration(liveAt - a)}`;
+  if (span.end === null && span.attrs.historyEndsAt !== undefined && liveAt >= span.attrs.historyEndsAt) return "no end recorded";
+  if (b === null) return `at work ${duration(liveAt - a)}`;
   const r = span.end?.reason;
   if (r === "interrupted" || r === "superseded") return r;
+  // Its exit was recorded after its execution ended: entry to exit is not time spent working, and the
+  // rung has no room for "open for …, not continuous": the length is left to the hover card.
+  if (span.attrs.interruptedAt !== undefined && span.attrs.interruptedAt <= liveAt) return "not continuous";
   const ms = span.duration.ms ?? b - a;
   return span.duration.basis === "measured" ? duration(ms) : `≈ ${duration(ms)}`;
 }
@@ -76,7 +80,7 @@ export function RetriesBody(p: BodyProps) {
   return (
     <Figures label="Passes through build and verify">
       <Caption>
-        One rung per pass through build and verify, in time order; review rounds are bracketed above, execution attempts run below.{" "}
+        One rung per pass through build and verify, in time order; review rounds are bracketed above, the executions it ran in (run 1 of 3, …) below.{" "}
         {chosenRungs.length === 1 ? `Pass ${chosenRungs[0]!.r.index} of ${chosenRungs[0]!.r.ticket} chosen: Shift-click (Shift+Enter) a second pass to compare.` : chosenRungs.length === 2 ? "Comparing passes A and B." : "Choose a pass, then Shift-click (Shift+Enter) a second to compare them."}
         {more ? ` ${more} more cells with retries are in this window: select one to see it.` : ""}
       </Caption>
@@ -243,14 +247,14 @@ function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal
         );
       })}
 
-      {/* Execution attempts: a rail below, with tick ends; an interrupted attempt ends in the halt cut. */}
+      {/* Executions (runs): a rail below, with tick ends; an interrupted one ends in the halt cut. */}
       {ladder.attempts.map((x, j) => {
         const a = slotL(x.fromSlot) + (j > 0 ? 2 : 0);
         const b = slotR(x.toSlot);
         const interrupted = x.endReason === "interrupted" || x.endReason === "superseded";
         const unknown = x.endReason === "unknown";
         return (
-          <Fig key={`x${x.fromSlot}`} id={`attempt:${x.ref}`} name={`${x.label} for ${ladder.ticket}${x.from !== null ? `, started ${when(x.from)}` : ""}${x.to !== null ? `, ended ${when(x.to)}` : ", not ended by the live edge"}${interrupted ? ", interrupted" : unknown ? ", outcome not known" : ""}`} sources={x.span ? [spanSource(x.span, "execution")] : [{ what: "the visits' recorded execution", ref: x.ref, eventId: null }]} onActivate={() => onReveal(x.ref, x.from ?? undefined)}>
+          <Fig key={`x${x.fromSlot}`} id={`attempt:${x.ref}`} name={`${x.label} for ${ladder.ticket}${x.from !== null ? `, started ${when(x.from)}` : ""}${x.to !== null ? `, ended ${when(x.to)}` : x.span?.attrs.historyEndsAt !== undefined ? `, no end recorded; the history ends at ${when(x.span.attrs.historyEndsAt)}` : ", not ended by the live edge"}${interrupted ? ", interrupted" : unknown ? ", outcome not known" : ""}${x.attempt ? `; the supervisor recorded it as attempt ${x.attempt}` : x.span ? "; no supervisor attempt number recorded" : ""}`} sources={x.span ? [spanSource(x.span, "execution")] : [{ what: "the visits' recorded execution", ref: x.ref, eventId: null }]} onActivate={() => onReveal(x.ref, x.from ?? undefined)}>
             <Hit x={a} y={RAIL_Y - 4} w={b - a} h={8} />
             <rect className="mach-inv-hover" x={a} y={RAIL_Y - 2} width={b - a} height={4} style={{ fill: fc("ink-soft"), stroke: "none" }} />
             <path d={`M${a} ${RAIL_Y - 5}V${RAIL_Y + 5}`} style={{ stroke: fc("ink-soft"), strokeWidth: 1.4 }} />

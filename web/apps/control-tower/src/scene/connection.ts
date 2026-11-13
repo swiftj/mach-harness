@@ -129,6 +129,8 @@ export interface FactoryStatus {
   readonly paused: boolean | null;
   readonly mode: string | null;
   readonly autonomy: string | null;
+  /** The Factory's state as its own records left it (`recorded_mode.state`: e.g. `disabled` after factory.disabled). Absent: not read. */
+  readonly recordedState?: string | null;
   readonly supervisor: {
     readonly leasePresent: boolean | null;
     readonly heartbeatFresh: boolean | null;
@@ -162,4 +164,17 @@ export interface FactoryStatus {
 /** Whether what the scene shows as executing may have changed unseen. */
 export function isStale(status: ConnectionStatus | null): boolean {
   return status !== null && status.state !== "live" && status.state !== "connecting";
+}
+
+/**
+ * When the history shown is no longer live, its last recorded time; else null. No longer live: a
+ * replay, or a Factory whose own records leave it disabled (factory.disabled last) with no supervisor
+ * lease held. Then work still open at the end is "no end recorded", never running (presentation only:
+ * nothing is closed). A live, enabled Factory, or one whose status is not read yet, is live.
+ */
+export function historyEndedAt(s: { readonly source: string; readonly factoryStatus: FactoryStatus | null; readonly extent: { readonly events: number }; readonly log?: { headTime?(): number | null } | null }): number | null {
+  const f = s.factoryStatus;
+  const closed = s.source === "replay" || (s.source === "live" && f?.recordedState === "disabled" && f.supervisor.leasePresent === false);
+  if (!closed || s.extent.events === 0) return null;
+  return s.log?.headTime?.() ?? null;
 }

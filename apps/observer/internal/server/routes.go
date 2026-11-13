@@ -531,7 +531,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		if x.Session != nil {
 			claude = x.Session
 		}
-		return map[string]any{"run": project.Run(x), "session": claude, "workflows": workflows, "usage": x.Usage,
+		return map[string]any{"run": project.Run(st, x), "session": claude, "workflows": workflows, "usage": x.Usage,
 			"observations": map[string]any{"agents": len(x.Agents) + len(x.Queued), "main_loop_tools": len(x.Tools), "tools_dropped": x.ToolsDropped, "refused": len(x.Refused)},
 			"refused":      x.Refused, "cursor": s.cursor(st.Pos)}
 	})

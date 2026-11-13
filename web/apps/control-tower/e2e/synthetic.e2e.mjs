@@ -133,7 +133,7 @@ describe("Timeline over a synthetic history (real observer)", () => {
     const agents = subtree(rows, lane.key).filter((r) => r.key.startsWith("span:agent:"));
     assert.ok(agents.length >= 5 && agents.every((a) => a.level === lane.level + 1), `${agents.length} agent spans under the lane`);
     // Each execution row says what distinguishes it: the ticket, its run among the cell's runs, its start.
-    check(execs.every((r) => /SYN-\d{3} · run \d+ of \d+/.test(r.text)), "X7", `execution labels do not all say "<ticket> · run n of m": ${execs.slice(0, 3).map((r) => cols(r).track).join(" / ")}`);
+    check(execs.every((r) => /SYN-\d{3} · run \d+\/\d+/.test(r.text)), "X7", `execution labels do not all say "<ticket> · run n/m": ${execs.slice(0, 3).map((r) => cols(r).track).join(" / ")}`);
   });
 
   test("(3) a count-only agent shows its count, says the calls are not observable one by one, and has no tool rows", async () => {
@@ -258,7 +258,10 @@ describe("Timeline over a synthetic history (real observer)", () => {
 
     const eu = rows.find((r) => r.key === `span:execution:execution:${xu}`);
     assert.ok(eu, `no span row for the execution of unknown outcome ${xu}`);
-    assert.match(eu.text, /outcome not known/i);
+    // Its process record says interrupted and the supervisor recorded outcome-unknown: since M6.3 polish
+    // it reads "interrupted" (the process record outranks the recovery, as on the Factory Floor; shared
+    // contracts 2.3). Either way it is never running or completed.
+    assert.match(eu.text, /outcome not known|interrupted/i);
     assert.doesNotMatch(cols(eu).outcome, /finished|completed|done|passed/i, `unknown outcome shown as ${cols(eu).outcome}`);
     assert.ok(!isOpenRow(eu) && !/running/i.test(eu.text), `the unknown-outcome execution reads as running: ${cols(eu).what}`);
     const uRunning = subtree(rows, `track:execution:${xu}`).filter((r) => /running/i.test(r.text) || (r.key.startsWith("span:") && isOpenRow(r)));

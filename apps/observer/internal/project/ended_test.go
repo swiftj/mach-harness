@@ -89,7 +89,7 @@ func TestAnInterruptedExecutionIsNotAFailureAndLeavesNothingOpen(t *testing.T) {
 	if x == nil || x.End == nil || x.End.Reason != "interrupted" || x.Attrs.State != "interrupted" || x.Duration.Basis != "bounded" {
 		t.Fatalf("execution: %+v end %+v duration %+v", x, x.End, x.Duration)
 	}
-	if got := Run(s.Executions[xc]); got.State != "interrupted" || got.Duration.Basis != "bounded" {
+	if got := Run(s, s.Executions[xc]); got.State != "interrupted" || got.Duration.Basis != "bounded" {
 		t.Fatalf("/runs: %s %+v", got.State, got.Duration)
 	}
 	assertClosedUnder(t, s, xc, "interrupted", feedtest.At(9999))
@@ -132,18 +132,50 @@ func TestAGenuineFailureStaysFailed(t *testing.T) {
 	}
 }
 
-// An execution whose process ended (interrupted) and whose outcome the supervisor could not learn:
-// unknown, and its children close at the process end with reason unknown.
-func TestAnUnknownOutcomeWithARecordedEndClosesItsChildren(t *testing.T) {
+// An execution whose process record says it was interrupted and for which the supervisor also
+// recorded an outcome-unknown recovery: interrupted. Changed in M6.3 polish (it was unknown): the
+// Factory Floor (selectors.ts executionActivity) and the observer now share one order, and the
+// process record wins because it is the execution's own authoritative account of how it stopped,
+// while the event contract (section 8) uses outcome-unknown only when there is no process result.
+// Its children close at the process end, reason interrupted; /runs says the same as the span.
+func TestAnInterruptedProcessOutranksAnOutcomeUnknownRecovery(t *testing.T) {
 	evs := append([]*feedtest.Ev{started(xc, "T-4", 1000)}, openChildren(xc, 2000)...)
 	evs = append(evs, processEnded(xc, "T-4", 9000, "interrupted"),
 		feedtest.New("intake-log", "recovery.started", 30000).Exec(xc).Ticket("T-4").Data(map[string]any{"kind": "outcome-unknown"}))
 	s := project(evs...)
 	x := byID(Spans(s, SpanFilter{}))["execution:execution:"+xc]
-	if x.End == nil || x.End.Reason != "unknown" || x.Attrs.State != "unknown" || x.Duration.Basis == "measured" {
+	if x.End == nil || x.End.Reason != "interrupted" || x.Attrs.State != "interrupted" || x.Duration.Basis == "measured" {
 		t.Fatalf("end %+v state %s duration %+v", x.End, x.Attrs.State, x.Duration)
 	}
-	assertClosedUnder(t, s, xc, "unknown", feedtest.At(9999))
+	if r := Run(s, s.Executions[xc]); r.State != x.Attrs.State {
+		t.Fatalf("/runs says %s, the span %s", r.State, x.Attrs.State)
+	}
+	assertClosedUnder(t, s, xc, "interrupted", feedtest.At(9999))
+}
+
+// /runs, /runs/{id} and the span projection share one state: an execution the supervisor moved on
+// from (a later claim of the same ticket) is unknown in all of them, never "running", and the run
+// summary carries the bound as its end.
+func TestRunsAndSpansAgreeOnAnExecutionBoundedByLaterRecords(t *testing.T) {
+	const later = "x0123456789dd"
+	s := project(claimed(xc, "T-4", 500), started(xc, "T-4", 1000), claimed(later, "T-4", 40000), started(later, "T-4", 41000))
+	sp := byID(Spans(s, SpanFilter{}))
+	for _, id := range []string{xc, later} {
+		r := Run(s, s.Executions[id])
+		if want := sp["execution:execution:"+id].Attrs.State; r.State != want {
+			t.Fatalf("%s: /runs %s, span %s", id, r.State, want)
+		}
+	}
+	r := Run(s, s.Executions[xc])
+	if r.State != "unknown" || r.EndedAt == nil || r.EndedAt.NotAfter == nil || r.Duration.Basis != "inferred" || r.Duration.MS != nil {
+		t.Fatalf("bounded run: %+v %+v %+v", r.State, r.EndedAt, r.Duration)
+	}
+	if got := Runs(s, "active", ""); len(got) != 1 || got[0].ExecutionID != later {
+		t.Fatalf("active runs: %+v", got)
+	}
+	if n := ProjectView(s)["executions_active"]; n != 1 {
+		t.Fatalf("executions_active %v", n)
+	}
 }
 
 // An outcome-unknown recovery with no recorded end: children close at the recovery, reason unknown.

@@ -712,6 +712,12 @@ function LimitNote({ limit }: { limit: { text: string; title: string } | undefin
   );
 }
 
+/** The compact legend's line: "1 run · 1 cell · 3 agents" (most at once of each). */
+function atOnceWords(a: { executions: number; visits: number; agents: number }): string {
+  const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+  return `${n(a.executions, "run", "runs")} · ${n(a.visits, "cell", "cells")} · ${n(a.agents, "agent", "agents")}`;
+}
+
 function Legend(props: {
   width: number;
   height: number;
@@ -780,15 +786,9 @@ function Legend(props: {
         </>
       ) : compact ? (
         <div className={cn(row, "text-ink-muted")} title={`Most spans active at once, counted from recorded spans: executions running, cells in a station, agents${Object.values(props.limits).map((l) => `. ${l.title}`).join("")}`}>
-          <span className="text-ink-subtle">spans at once</span>
-          <span className="ml-auto flex items-center gap-1 font-mono tabular">
-            <Swatch kind="executions" />
-            {activity?.executions ?? "–"}
-            <Swatch kind="visits" />
-            {activity?.visits ?? "–"}
-            <Swatch kind="agents" />
-            {activity?.agents ?? "–"}
-          </span>
+          {/* One line of words (X20): never glyphs and bare numbers. */}
+          <span className="shrink-0 text-ink-subtle">at once</span>
+          <span>{activity ? atOnceWords(activity) : "not known"}</span>
         </div>
       ) : null}
       {compact && props.zoomed ? <div className={cn(row, "text-ink-subtle")}>{showAll}</div> : null}

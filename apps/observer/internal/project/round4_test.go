@@ -152,3 +152,22 @@ func TestMarksPageWithAnOffset(t *testing.T) {
 		}
 	}
 }
+
+// Recheck R3: a visit closed only by cleanup is bounded by the cell's next entry into another
+// station, not counted active until cleanup hours later.
+func TestACleanupClosedVisitEndsWhenTheCellMovesOn(t *testing.T) {
+	s := project(
+		lc("station.entered", 2000, "T-4", "build#1", 1).Data(map[string]any{"station": "build"}),
+		lc("station.entered", 10000, "T-4", "verify#1", 1).Data(map[string]any{"station": "verify"}),
+		lc("station.exited", 20000, "T-4", "verify#1", 1).Data(map[string]any{"station": "verify", "outcome": "passed"}),
+		lc("station.exited", 9000000, "T-4", "build#1", 1).Data(map[string]any{"station": "build", "outcome": "abandoned", "closed_by": "cleanup"}),
+	)
+	v := byID(Spans(s, SpanFilter{}))["visit:visit:T-4/build#1"]
+	if v.End == nil || v.End.Rule != "unclosed-visit" || v.End.Reason != "superseded" || v.To() > feedtest.At(10999) {
+		t.Fatalf("end %+v to %d", v.End, v.To())
+	}
+	b := Concurrency(s, feedtest.At(1000000), feedtest.At(1010000), 10000, map[string]bool{"visit": true})
+	if len(b) == 0 || b[0].Active["visit"].Max != 0 {
+		t.Fatalf("still counted long after the cell moved on: %+v", b)
+	}
+}

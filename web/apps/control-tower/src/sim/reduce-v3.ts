@@ -519,6 +519,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       return withSlice(s, e.ids.slice_id, (slice) => ({ ...slice, revision: e.ids.revision ?? slice.revision, reasons: [e.data.effect], meta: touch(slice.meta, e) }));
     case "human.required": {
       const key = ticket ?? e.ids.slice_id ?? "factory";
+      s = movedOnFrom(s, ticket, "", at, e);
       return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, key, { reason: e.data.reason, at: t, seq }) } };
     }
     case "scheduling.decided": {
@@ -543,6 +544,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         claimedAt: at,
         meta: metaOf(e, { unknown: e.data.next ? [] : ["next"] }),
       });
+      s = movedOnFrom(s, ticket, id, at, e);
       s = { ...s, executions: put(s.executions, id, before ? { ...execution, processStartedAt: before.processStartedAt, processEndedAt: before.processEndedAt, ended: before.ended } : execution) };
       return withCell(s, ticket, (cell) => ({ ...cell, executionId: id }));
     }
@@ -950,6 +952,25 @@ function closeVisits(cell: CellState, pick: (v: CellState["visits"][number]) => 
 }
 
 /** An execution ended: every visit it entered and never exited ended with it. A wait on a person (human approval) is not its work and stays open. */
+/**
+ * A later claim of the same ticket, or the supervisor parking the ticket for a person, shows it had
+ * moved on from any earlier execution of it that recorded no end (one execution runs a ticket at a time): it is no longer running, how it ended
+ * is not recorded, and its open visits close there. The observer's movedOnEnd rule (shared contracts
+ * 2.3), so the Factory Floor and the Timeline agree. Live only: the simulation records every end.
+ */
+function movedOnFrom(input: Scene, ticket: string | null, claimed: string, at: number, e: AnyV3Event): Scene {
+  if (!ticket) return input;
+  let s = input;
+  for (const x of Object.values(input.executions)) {
+    if (x.id === claimed || x.ticketId !== ticket || x.meta.authority === "simulated") continue;
+    if (x.state === "completed" || x.state === "failed" || x.ended !== null || x.processEndedAt !== null || x.movedOnAt !== null || x.recovery === "outcome-unknown") continue;
+    s = withExecution(s, x.id, (y) => ({ ...y, movedOnAt: at, workflowRunning: false }));
+    s = closeVisitsOf(s, x.id, at, e);
+    if (x.state === "running") s = { ...s, counters: bump(s.counters, { executionsRunning: -1 }) };
+  }
+  return s;
+}
+
 function closeVisitsOf(input: Scene, executionId: string | null, at: number, e: AnyV3Event): Scene {
   if (!executionId) return input;
   let s = input;

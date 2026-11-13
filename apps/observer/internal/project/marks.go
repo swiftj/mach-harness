@@ -225,7 +225,7 @@ func execMarks(b *markBuilder, s *State, x *Execution, recovered *Stamp) {
 	// Each mark sits at the event that established its verdict, never earlier: an outcome never
 	// appears before the record that says it.
 	ref := "execution:" + x.ExecutionID
-	state := execStateAt(s, x)
+	state := ExecStateIn(s, x)
 	first := func(sts ...*Stamp) *Stamp {
 		for _, st := range sts {
 			if st != nil {

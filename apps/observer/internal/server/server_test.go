@@ -311,9 +311,14 @@ func TestEveryEndpointShape(t *testing.T) {
 	if run["state"] != "finished" || run["cost"].(map[string]any)["usd"].(float64) != 4.5 || run["time_basis"] != "process" {
 		t.Fatalf("run %v", run)
 	}
-	runs := h.get(t, "/api/v1/runs?state=unknown")["items"].([]any)
-	if len(runs) != 1 || runs[0].(map[string]any)["cost_may_be_under_reported"] != true {
+	// The interrupted run also has an outcome-unknown recovery: its process record wins (M6.3 polish;
+	// the Factory Floor's order, event contract 8), so it is a finished-class run, not an unknown one.
+	if runs := h.get(t, "/api/v1/runs?state=unknown")["items"].([]any); len(runs) != 0 {
 		t.Fatalf("unknown runs %v", runs)
+	}
+	stopped := h.get(t, "/api/v1/runs/x0fedcba98765")["run"].(map[string]any)
+	if stopped["state"] != "interrupted" || stopped["cost_may_be_under_reported"] != true {
+		t.Fatalf("interrupted run %v", stopped)
 	}
 	agents, _ := json.Marshal(h.get(t, "/api/v1/runs/x0123456789ab/agents")["items"])
 	if strings.Contains(string(agents), "cost") {

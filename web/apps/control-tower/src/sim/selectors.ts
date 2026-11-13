@@ -971,21 +971,31 @@ function activityOfUncached(scene: Scene, entity: EntityRef, options: ActivityOp
  * An execution's state in words, from what is recorded (R6): its process may have ended before the
  * supervisor recorded the outcome; it is then "Ended, outcome not recorded yet", never "running".
  */
-export function executionStatusOf(x: Pick<ExecutionState, "state" | "processEndedAt" | "ended">): { readonly word: string; readonly running: boolean } {
+export function executionStatusOf(x: Pick<ExecutionState, "state" | "processEndedAt" | "ended"> & Partial<Pick<ExecutionState, "recovery" | "movedOnAt">>, historyEndedAt: number | null = null): { readonly word: string; readonly running: boolean } {
+  // One order with executionActivity and the observer's ExecStateIn (shared contracts 2.3): how the
+  // process was stopped, then an outcome-unknown recovery, then the supervisor's failure or completion.
+  if (x.ended === "interrupted") return { word: "Interrupted", running: false };
+  if (x.ended === "timed-out") return { word: "Timed out", running: false };
+  if (x.ended === "could-not-start") return { word: "Could not start", running: false };
+  if (x.recovery === "outcome-unknown" && x.state !== "completed" && x.state !== "failed") return { word: "Outcome not known", running: false };
   if (x.state === "completed") return { word: "Completed", running: false };
   if (x.state === "failed") return { word: "Failed", running: false };
   if (x.processEndedAt !== null || x.ended !== null) return { word: "Ended, outcome not recorded yet", running: false };
+  if (x.movedOnAt != null) return { word: "Outcome not known", running: false };
+  // A history that is no longer live (a replay, a disabled Factory with no lease): open is not running.
+  if (historyEndedAt !== null) return { word: "No end recorded", running: false };
   return x.state === "claimed" ? { word: "Claimed, not started", running: true } : { word: "Running", running: true };
 }
 
 function executionActivity(x: ExecutionState): Activity {
   const authority = x.meta.authority;
   if (x.ended === "interrupted" || x.ended === "timed-out") return { state: "interrupted", reason: x.ended === "timed-out" ? "Its process timed out." : "Its process was interrupted.", since: x.processEndedAt, authority };
-  if (x.recovery === "outcome-unknown") return { state: "unknown", reason: "The supervisor could not learn how it ended.", since: x.endedAt, authority };
+  if (x.recovery === "outcome-unknown" && x.state !== "completed" && x.state !== "failed") return { state: "unknown", reason: "The supervisor could not learn how it ended.", since: x.endedAt, authority };
   if (x.state === "failed") return { state: "failed", reason: "The supervisor recorded a failure.", since: x.endedAt, authority };
   if (x.state === "completed") return { state: "completed", reason: "The supervisor recorded its end.", since: x.endedAt, authority };
   if (x.capacityWait) return { state: "waiting-resources", reason: "Held: every execution place is in use (recorded).", since: x.capacityWait.since, authority: "reconstructed" };
   if (x.ended || x.processEndedAt !== null) return { state: "unknown", reason: "Its process ended; the supervisor has not recorded the outcome yet.", since: x.processEndedAt, authority, label: "Ended, outcome not recorded yet" };
+  if (x.movedOnAt !== null) return { state: "unknown", reason: "A later record (another claim of the same ticket, or the supervisor stopping for a person) shows the supervisor had moved on from it; how it ended is not recorded.", since: x.movedOnAt, authority: "reconstructed", label: "Outcome not known" };
   return { state: "executing", reason: x.state === "claimed" ? "Claimed by the supervisor." : "Running.", since: x.startedAt ?? x.claimedAt, authority };
 }
 
@@ -1028,7 +1038,7 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
 }
 
 /** The execution has ended: the supervisor recorded its end, or its process ended (D4). */
-const hasEnded = (x: ExecutionState): boolean => x.state === "completed" || x.state === "failed" || x.ended !== null || x.processEndedAt !== null;
+const hasEnded = (x: ExecutionState): boolean => x.state === "completed" || x.state === "failed" || x.ended !== null || x.processEndedAt !== null || x.movedOnAt !== null;
 
 /**
  * A live cell whose last execution has ended and none is running: idle between executions. Said from

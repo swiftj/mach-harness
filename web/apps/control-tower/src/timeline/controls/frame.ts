@@ -313,7 +313,8 @@ const RUNNING_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["execution", "wo
  * rounds, waves, claims and eligibility do not count: a cell parked for a person is not running.
  */
 export function isRunning(span: TimelineSpan): boolean {
-  if (span.end !== null || !RUNNING_KINDS.has(span.kind)) return false;
+  // A history that is no longer live with no end recorded for it (attrs.historyEndsAt): not running.
+  if (span.end !== null || !RUNNING_KINDS.has(span.kind) || span.attrs.historyEndsAt !== undefined) return false;
   if (span.kind !== "visit") return true;
   const station = span.ids.station ?? span.entity.slice(span.entity.lastIndexOf("/") + 1).replace(/#.*$/, "");
   return station !== "human-approval";
@@ -582,10 +583,12 @@ export interface Activated {
 
 /**
  * X13: what selecting a span or mark does. Selecting never moves the playhead; a second select of the
- * same span or mark (Enter twice, a double-click's second click) while it is still the selection is
- * "go to": the playhead seeks there.
+ * same span or mark while it is still the selection is "go to" (the playhead seeks there) only when it
+ * is Enter again or a real double-click's second click. A later single click only keeps the selection
+ * (recheck R4: clicking the same span again seconds later must not seek and leave the live edge).
  */
-export function activation(last: Activated | null, key: string, selection: string | null): "select" | "seek" {
+export function activation(last: Activated | null, key: string, selection: string | null, how: "click" | "double-click" | "key" = "key"): "select" | "seek" {
+  if (how === "click") return "select";
   return last !== null && key !== "" && last.key === key && last.selection === selection ? "seek" : "select";
 }
 

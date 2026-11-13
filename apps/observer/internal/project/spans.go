@@ -529,7 +529,8 @@ func cellSpans(b *spanBuilder, s *State, c *Cell) {
 // when it exited, before its exit) of its execution's end ("execution-ended", reason
 // interrupted; never for the human-approval station: a wait on a person is not an execution's
 // work) and the next entry of the same station ("unclosed-visit", reason superseded: the station
-// helper names the earlier visit in that entry as unclosed_visit). nil when neither applies.
+// helper names the earlier visit in that entry as unclosed_visit); for a visit closed only by
+// cleanup, also the cell's next entry into a different station (same rule). nil when none applies.
 // An execution whose outcome is unknown and that recorded no end bounds its visits too, at the
 // supervisor's outcome-unknown recovery ("execution-outcome-unknown", reason unknown).
 func visitBound(s *State, c *Cell, i int) (bound *Stamp, rule, reason string) {
@@ -559,6 +560,16 @@ func visitBound(s *State, c *Cell, i int) (bound *Stamp, rule, reason string) {
 		if w.Station == v.Station && w.Entered != nil {
 			consider(w.Entered, "unclosed-visit", "superseded")
 			break
+		}
+	}
+	// A visit whose only exit was written by cleanup: the cell entering any other station shows it
+	// had moved on (one station at a time per cell), so the first such entry bounds it too.
+	if v.ClosedBy == "cleanup" {
+		for _, w := range c.Visits[i+1:] {
+			if w.Station != v.Station && w.Entered != nil {
+				consider(w.Entered, "unclosed-visit", "superseded")
+				break
+			}
 		}
 	}
 	return bound, rule, reason
@@ -671,9 +682,10 @@ func execEnd(s *State, x *Execution) (end *Stamp, inferred bool) {
 	return nil, false
 }
 
-// execStateAt is ExecState with what only the whole projection knows: an execution bounded by
-// later records (movedOnEnd) is of unknown outcome, never "running".
-func execStateAt(s *State, x *Execution) string {
+// ExecStateIn is ExecState with what only the whole projection knows: an execution bounded by
+// later records (movedOnEnd) is of unknown outcome, never "running". The one state every view
+// serves (/runs, /runs/{id}, the snapshot, a span's attrs.state, /marks).
+func ExecStateIn(s *State, x *Execution) string {
 	state := ExecState(x)
 	if (state == "running" || state == "claimed") && movedOnEnd(s, x) != nil && x.ProcessEnded == nil && x.Completed == nil && x.Failed == nil {
 		return "unknown"
@@ -710,7 +722,7 @@ func execSpans(b *spanBuilder, s *State, x *Execution) {
 	}
 	group := orDefault(cellParent, ref)
 	// The state always goes out (attrs.state), so a view never has to guess "running".
-	state := execStateAt(s, x)
+	state := ExecStateIn(s, x)
 	execAttrs := SpanAttrs{Attempt: x.Attempt, State: state, CostUSD: costOf(x).USD}
 	reason := execReason(state)
 	// An execution ends at its recorded end; with none, an execution whose outcome is unknown ends

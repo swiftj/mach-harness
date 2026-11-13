@@ -63,7 +63,7 @@ import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
 import { activityNote, agentsWords, interruptionWords, planWords, runtimeWords, visitLeftWords } from "./words";
 import { useFreeTextLabel } from "./catalog";
-import { useSceneStore } from "../../scene";
+import { historyEndedAt, useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
 
 /**
@@ -950,6 +950,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
   const strays = useScene((s) => s.strayAgents);
   const count = useMemo(() => allAgentsOf(agents, execution.id) + Object.values(strays).filter((a) => a.executionId === execution.id).length, [agents, strays, execution.id]);
   const factory = useSceneStore((s) => s.factoryStatus);
+  const historyEnd = useSceneStore(historyEndedAt);
   const agentsLine = useScene((s) => agentsOf(s, factory, execution.id, count));
   const runtimeLine = useScene((s) => (execution.meta.authority === "simulated" ? null : runtimeWords(streamObservationOf(s, execution.id, sourceRuntimeOf(factory?.sources, execution.id)))));
   const real = execution.meta.authority !== "simulated";
@@ -962,7 +963,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
         <Facts
           facts={[
             ["Ticket", <Mono key="t">{execution.ticketId}</Mono>],
-            ["State", executionStatusOf(execution).word],
+            ["State", executionStatusOf(execution, historyEnd).word],
             ["Attempt", isKnown(execution.meta, "attempt") ? execution.attempt : <NotRecorded key="at" />],
             ["Asked to", isKnown(execution.meta, "next") ? execution.next : <NotRecorded key="n" />],
             execution.workflow ? ["Workflow", <Mono key="w">{execution.workflow}</Mono>] : null,
@@ -973,7 +974,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
             ["Started", at(execution.startedAt)],
             ["Ended", at(execution.endedAt)],
             real && execution.processStartedAt !== null
-              ? ["Process", `${timecode(execution.processStartedAt, false)} to ${execution.processEndedAt === null ? "now" : timecode(execution.processEndedAt, false)}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
+              ? ["Process", `${timecode(execution.processStartedAt, false)} to ${execution.processEndedAt !== null ? timecode(execution.processEndedAt, false) : historyEnd !== null ? `no end recorded (the history ends at ${timecode(historyEnd, false)})` : "now"}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
               : null,
             execution.recovery ? ["Recovery", execution.recovery] : null,
             execution.outcome ? ["Outcome", `${execution.outcome.stage ?? "?"}, next ${execution.outcome.next}${execution.outcome.waitingFor ? `, waiting for ${execution.outcome.waitingFor}` : ""}`] : null,

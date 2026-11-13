@@ -11,7 +11,7 @@
  * - instants (tool calls, gate and review verdicts, people's acts) are drawn one by one only while
  *   the row holds fewer than one per 6 px in view; otherwise as count pips.
  */
-import { extentOf, type TimelineMark, type TimelineSpan, type TrackNode } from "../contract";
+import { extentOf, noEndRecorded, type TimelineMark, type TimelineSpan, type TrackNode } from "../contract";
 import type { Scale } from "./scale";
 import { xAt } from "./scale";
 
@@ -100,6 +100,8 @@ export interface SpanTimes {
   readonly open: boolean;
   readonly startUnknown: boolean;
   readonly endUnknown: boolean;
+  /** Open at the end of a history that is no longer live (noEndRecorded): drawn to that end, uncapped, with the ring-query; never live. */
+  readonly noEnd?: boolean;
 }
 
 /** The span's drawable times at `liveAt`, or null when nothing of it is known by then. */
@@ -118,6 +120,7 @@ export function spanTimes(span: TimelineSpan, liveAt: number): SpanTimes | null 
     return { from: anchor, to: anchor, open: false, startUnknown, endUnknown };
   } else from = s!.notBefore ?? s!.at ?? (s!.notAfter as number);
   if (from > liveAt) return null;
+  if (noEndRecorded(span, liveAt)) return { from, to: Math.max(from, Math.min(liveAt, span.attrs.historyEndsAt!)), open: false, startUnknown, endUnknown, noEnd: true };
   let to: number;
   if (endUnknown) to = from;
   else if (open) to = liveAt;

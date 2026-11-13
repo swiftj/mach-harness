@@ -486,7 +486,10 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
   for (const b of frame.breaks ?? []) {
     const tw = ctx.measureText(b.label).width;
     const cx = (b.x0 + b.x1) / 2;
-    const lx = Math.round(Math.max(0, Math.min(width - tw - 2, cx - tw / 2)));
+    // A break too narrow for its label (the idle tail at the live edge): the label ends before the
+    // break instead of running under the live edge's "now" (X20).
+    const inside = b.x1 - b.x0 >= tw + 8 && cx + tw / 2 <= width - 30;
+    const lx = Math.round(inside ? Math.max(0, cx - tw / 2) : Math.max(0, b.x0 - 6 - tw));
     const ly = Math.round((L.plotTop + L.plotBottom) / 2);
     ctx.fillStyle = p.surface;
     ctx.fillRect(lx - 3, ly - 9, tw + 6, 13);

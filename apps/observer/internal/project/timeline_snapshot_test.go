@@ -187,3 +187,32 @@ func BenchmarkTimelineUnderIngest(b *testing.B) {
 	wg.Wait()
 	b.ReportMetric(float64(p.TimelineBuilds()), "builds")
 }
+
+// Recheck R7: while the writer holds the lock, a cached timeline older than TimelineMaxAge is not
+// served: the request waits for the lock and reads where the projection is.
+func TestTheBusyPathAppliesTheAgeLimit(t *testing.T) {
+	m := feedtest.NewMem("", 0)
+	m.Append(visitEvents("T-1", 1, 1000)...)
+	q := New(Options{Log: m, TimelineMaxAge: time.Hour})
+	a, _ := q.Timeline()
+	q.mu.Lock()
+	if b, _ := q.Timeline(); b != a {
+		q.mu.Unlock()
+		t.Fatal("a young timeline of the same epoch is served while the writer holds the lock")
+	}
+	q.tl.mu.Lock()
+	q.tl.cur.Built = time.Now().Add(-2 * time.Hour)
+	q.tl.mu.Unlock()
+	done := make(chan *Timeline, 1)
+	go func() { tl, _ := q.Timeline(); done <- tl }()
+	select {
+	case <-done:
+		q.mu.Unlock()
+		t.Fatal("an old timeline was served without waiting for the lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+	q.mu.Unlock()
+	if tl := <-done; tl == nil {
+		t.Fatal("no timeline")
+	}
+}

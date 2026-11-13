@@ -78,11 +78,25 @@ test("rounds and execution attempts are laid over the slots independently and cr
   const l = M.ladderOf(TK, spansA, marksA, LIVE);
   // Slots: 0 b1, 1 v1, 2 b2, 3 v2, 4 b3, 5 v3.
   assert.deepEqual(l.rounds.map((r) => [r.label, r.fromSlot, r.toSlot]), [["Round 1", 0, 3], ["Round 2", 4, 5]]);
-  assert.deepEqual(l.attempts.map((r) => [r.label, r.fromSlot, r.toSlot]), [["Attempt 1", 0, 2], ["Attempt 2", 3, 5]]);
+  assert.deepEqual(l.attempts.map((r) => [r.label, r.fromSlot, r.toSlot]), [["Run 1 of 2", 0, 2], ["Run 2 of 2", 3, 5]]);
+  assert.deepEqual(l.attempts.map((r) => r.attempt), [1, 2], "the supervisor's attempt number is kept for the hover card only");
   // Attempt 2 begins inside round 1 and runs into round 2: neither contains the other.
   const a2 = l.attempts[1];
   assert.ok(a2.fromSlot <= l.rounds[0].toSlot && a2.toSlot > l.rounds[0].toSlot && l.attempts[0].toSlot < l.rounds[0].toSlot);
   assert.equal(l.attempts[0].endReason, "interrupted");
+});
+
+test("execution rails are named by run, like the tracks, even when the supervisor's attempt number repeats", () => {
+  const spans = [
+    execution("y1", "T-9", 1, t(0), t(10), { reason: "interrupted", outcome: "interrupted" }),
+    execution("y2", "T-9", 1, t(12), t(30)),
+    visit("T-9", "build", 1, t(1), t(9), { exec: "y1" }),
+    visit("T-9", "verify", 1, t(13), t(20), { exec: "y2" }),
+  ];
+  const l = M.ladderOf("T-9", spans, [], LIVE);
+  assert.deepEqual(l.attempts.map((r) => [r.label, r.attempt]), [["Run 1 of 2", 1], ["Run 2 of 2", 1]]);
+  // Not yet started by the live edge: not counted.
+  assert.deepEqual(M.ladderOf("T-9", spans, [], t(11)).attempts.map((r) => r.label), ["The only run"]);
 });
 
 test("comparison states differences only where both records carry the fact", () => {
@@ -92,7 +106,7 @@ test("comparison states differences only where both records carry the fact", () 
   assert.ok(d12.some((s) => /Verdict: pass 1 failed, pass 2 passed/.test(s)));
   assert.ok(d12.some((s) => /Checks recorded: pass 1 3 of 5 checks, pass 2 5 of 5 checks/.test(s)));
   assert.ok(d12.some((s) => /What followed: pass 1 went to a revise visit, pass 2 to review/.test(s)));
-  assert.ok(d12.some((s) => /Execution: pass 1 ran in attempt 1, pass 2 in attempt 2/.test(s)));
+  assert.ok(d12.some((s) => /Execution: pass 1 ran in run 1 of 2, pass 2 in run 2 of 2/.test(s)));
   // Pass 3's checks are not recorded and nothing followed it yet: neither is compared.
   const d23 = M.compareRungs(r2, r3, l);
   assert.ok(!d23.some((s) => /Checks/.test(s)));
@@ -197,7 +211,8 @@ test("recovery: unknown outcomes stay unknown; 'resumed' only from a later recor
   const byRef = Object.fromEntries(items.map((i) => [i.span.entity, i]));
   assert.equal(byRef["execution:x1"].kind, "interrupted");
   assert.equal(byRef["execution:x1"].resumed.ref, "execution:x2");
-  assert.match(byRef["execution:x1"].resumed.words, /attempt 2/);
+  assert.match(byRef["execution:x1"].resumed.words, /run 2 of 2/);
+  assert.equal(byRef["execution:x1"].label, "T-5 · run 1 of 2");
   assert.equal(byRef["execution:x1"].recoveries[0].id, "r1");
   assert.equal(byRef["execution:x3"].kind, "unknown");
   assert.equal(byRef["execution:x3"].resumed, null, "nothing later took T-6 up again");

@@ -52,21 +52,23 @@ func stoppedHow(x *Execution) string {
 	return ""
 }
 
-// ExecState is an execution's state from what was recorded, strongest fact first: a recorded
-// unknown outcome, an interruption (the process was stopped: execution.failed then says only that
-// it did not finish, so the interruption is the fact that explains it, as the Factory Floor's
-// executionActivity reads it), a failure (it ran to its end and reported one), completion, a
-// process that ended (the supervisor has not recorded it yet), a running process, a claim.
+// ExecState is an execution's state from its own records, strongest fact first: an interruption
+// (the process record says how the process was stopped; execution.failed then says only that it
+// did not finish), a recorded unknown outcome (the supervisor's outcome-unknown recovery, which the
+// event contract uses only when there is no process result), a failure (it ran to its end and
+// reported one), completion, a process that ended (the supervisor has not recorded it yet), a
+// running process, a claim. The same order as the Factory Floor's executionActivity
+// (selectors.ts). Views use ExecStateIn, which adds what only the whole projection knows.
 func ExecState(x *Execution) string {
 	unknown := false
 	for _, k := range x.Recovery {
 		unknown = unknown || k == "outcome-unknown"
 	}
 	switch {
-	case unknown && x.Completed == nil && x.Failed == nil:
-		return "unknown"
 	case stoppedHow(x) != "":
 		return stoppedHow(x)
+	case unknown && x.Completed == nil && x.Failed == nil:
+		return "unknown"
 	case x.Failed != nil:
 		return "failed"
 	case x.Completed != nil:
@@ -156,9 +158,11 @@ func refusedTools(x *Execution) ([]string, string) {
 	return out, "observed"
 }
 
-// Run builds an execution's view.
-func Run(x *Execution) RunView {
-	v := RunView{ExecutionID: x.ExecutionID, TicketID: x.TicketID, SliceID: x.SliceID, Workflow: x.Workflow, State: ExecState(x), Attempt: x.Attempt,
+// Run builds an execution's view. Its state is ExecStateIn, the one the execution's span carries
+// (attrs.state), so /runs, /runs/{id}, /spans and /marks never disagree; an execution bounded by
+// later records ends at that bound here too (ended_at not_after, duration inferred, max only).
+func Run(s *State, x *Execution) RunView {
+	v := RunView{ExecutionID: x.ExecutionID, TicketID: x.TicketID, SliceID: x.SliceID, Workflow: x.Workflow, State: ExecStateIn(s, x), Attempt: x.Attempt,
 		Claimed: TV(x.Claimed), Ended: x.Ended, ExitCode: x.ExitCode, How: x.How, StageAtStart: x.StageAtStart, StageAtEnd: x.StageAtEnd,
 		Recovery: nonNilS(x.Recovery), Agents: len(x.Agents) + len(x.Queued), Visits: nonNilS(x.Visits),
 		Models: map[string]*ModelUsage{}, UnderReasons: []string{}}
@@ -180,6 +184,12 @@ func Run(x *Execution) RunView {
 	}
 	v.StartedAt, v.EndedAt = TV(start), TV(end)
 	v.Duration = between(start, end, false)
+	if end == nil {
+		if u := unknownEnd(s, x); u != nil {
+			v.EndedAt = TV(u)
+			v.Duration = Duration{MaxMS: between(start, u, true).MaxMS, Basis: "inferred"}
+		}
+	}
 	if v.TimeBasis == "supervisor" && v.Duration.Basis == "measured" {
 		v.Duration.Basis = "bounded" // the supervisor stamps executions up to a poll late
 	}
@@ -275,7 +285,7 @@ func Runs(s *State, class, ticket string) []RunView {
 		if ticket != "" && x.TicketID != ticket {
 			continue
 		}
-		if class != "" && StateClass(ExecState(x)) != class {
+		if class != "" && StateClass(ExecStateIn(s, x)) != class {
 			continue
 		}
 		xs = append(xs, x)
@@ -289,7 +299,7 @@ func Runs(s *State, class, ticket string) []RunView {
 	})
 	out := make([]RunView, 0, len(xs))
 	for _, x := range xs {
-		out = append(out, Run(x))
+		out = append(out, Run(s, x))
 	}
 	return out
 }
@@ -481,7 +491,7 @@ func ProjectView(s *State) map[string]any {
 	}
 	running := 0
 	for _, x := range s.Executions {
-		if StateClass(ExecState(x)) == "active" {
+		if StateClass(ExecStateIn(s, x)) == "active" {
 			running++
 		}
 	}
@@ -706,7 +716,7 @@ func SnapshotView(s *State) map[string]any {
 	execs := map[string]any{}
 	for _, id := range sortedKeys(s.Executions) {
 		x := s.Executions[id]
-		execs[id] = map[string]any{"run": Run(x), "agents": Agents(x), "tools": Tools(x), "refused": orEmpty(x.Refused), "workflows": x.Workflows, "session": x.Session}
+		execs[id] = map[string]any{"run": Run(s, x), "agents": Agents(x), "tools": Tools(x), "refused": orEmpty(x.Refused), "workflows": x.Workflows, "session": x.Session}
 	}
 	gates := []*HumanGate{}
 	for _, k := range sortedKeys(s.Gates) {

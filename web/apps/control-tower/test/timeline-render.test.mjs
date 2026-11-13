@@ -189,7 +189,7 @@ test("durationWords: every basis in the words of design section 5", () => {
   assert.equal(words.durationWords(bounded, live), "between 4 min 10 s and 4 min 14 s");
   const inferred = span("i", "visit", at(T0), at(T0 + 4 * M, { basis: "inferred", rule: "visit-end-at-next-visit" }));
   assert.equal(words.durationWords(inferred, live), "about 4 min, placed by rule: visit end at next visit");
-  assert.equal(words.durationWords(visit("o", T0, null), T0 + 4 * M), "running for 4 min");
+  assert.equal(words.durationWords(visit("o", T0, null), T0 + 4 * M), "at work for 4 min");
   assert.equal(words.durationWords(span("w", "slice-wait", at(T0), null), T0 + 4 * M), "waiting for 4 min");
   assert.equal(words.durationWords(span("us", "visit", null, at(T0), { basis: "unknown" }), live), "start not known");
   assert.equal(words.durationWords(span("ue", "visit", at(T0), at(null), { basis: "unknown" }), live), "end not known");
@@ -206,14 +206,14 @@ test("durationWords: an interrupted span never 'took'; one ended after the live 
   const resumed = visit("r", T0, T0 + 9 * M, { attrs: { action: "build", interruptedAt: T0 + 3 * M } });
   // T4: a late exit is not proof that work was taken up again.
   const late = words.durationWords(resumed, live);
-  assert.match(late, /^exit recorded 9 min after entry, after its execution ended \(at [0-9:]+\)$/);
+  assert.match(late, /^open for 9 min, not continuous; its exit was recorded after its execution ended \(at [0-9:]+\)$/);
   assert.doesNotMatch(late, /taken up|resum|ran /);
-  assert.equal(words.durationWords(visit("f", T0, T0 + 9 * M), T0 + 4 * M), "running for 4 min");
+  assert.equal(words.durationWords(visit("f", T0, T0 + 9 * M), T0 + 4 * M), "at work for 4 min");
 });
 
 test("describeSpan: one sentence; the outcome only once it is known", () => {
   const s = visit("v", T0, T0 + 4 * M + 12 * S, { outcome: "failed", ids: { ticket: "LOCAL-031" }, attrs: { action: "verify", round: 2 } });
-  assert.equal(words.describeSpan(s, T0 + 2 * M), "Verify visit, round 2 for LOCAL-031: running for 2 min.");
+  assert.equal(words.describeSpan(s, T0 + 2 * M), "Verify visit, round 2 for LOCAL-031: at work for 2 min.");
   assert.equal(words.describeSpan(s, T0 + 10 * M), "Verify visit, round 2 for LOCAL-031: took 4 min 12 s, failed.");
   const pending = visit("p", T0, T0 + M, { attrs: { action: "build" } });
   assert.equal(words.describeSpan(pending, T0 + 2 * M), "Build visit: took 1 min, no outcome recorded yet.");
@@ -270,6 +270,16 @@ test("inline labels in thin rows keep clear of marks: pushed past one at the sta
   assert.ok(cut.right <= 120 - draw.MARK_HALF - 4);
   assert.equal(draw.inlineRoom(10, 40, [{ x: 14 }, { x: 36 }]), null, "no room: no label");
   assert.deepEqual(draw.inlineRoom(10, 200, [{ x: 400 }]), { x: 10, right: 200 }, "marks elsewhere change nothing");
+});
+
+test("a visit whose exit was recorded after its execution ended never shows a bare duration on its bar", () => {
+  const late = visit("late", T0, T0 + 60 * M, { attrs: { action: "build", interruptedAt: T0 + 6 * M } });
+  late.duration = { basis: "measured", ms: 60 * M, minMs: null, maxMs: null };
+  assert.equal(draw.shortDuration(late, T0, T0 + 60 * M, false), "open for 1 h 0 min, not continuous");
+  assert.equal(draw.shortDuration(late, T0, T0 + 20 * M, true), "open for 20 min");
+  const plain = visit("plain", T0, T0 + 60 * M);
+  plain.duration = { basis: "measured", ms: 60 * M, minMs: null, maxMs: null };
+  assert.equal(draw.shortDuration(plain, T0, T0 + 60 * M, false), "1 h 0 min");
 });
 
 test("the label column drops a detail that cannot show six characters; the label has priority", () => {
@@ -484,7 +494,7 @@ test("X1: a row's own state: merged, open, waiting for a person; never a child's
 test("X2: only work is 'running'; an open container is 'open' with its last activity; a wait is 'waiting'", () => {
   const live = T0 + 8 * 60 * M;
   const open = (kind, ids = {}) => span(`o-${kind}`, kind, at(T0), null, { ids });
-  for (const k of ["execution", "workflow", "agent", "tool", "task", "visit"]) assert.equal(words.openWord(open(k)), "running", k);
+  for (const k of ["execution", "workflow", "agent", "tool", "task", "visit"]) assert.equal(words.openWord(open(k)), "at work", k);
   for (const k of ["wave", "cell", "round", "slice-wait"].slice(0, 3)) assert.equal(words.openWord(open(k)), "open", k);
   assert.equal(words.openWord(open("visit", { station: "human-approval" })), "waiting");
   assert.equal(words.openWord(open("person-wait")), "waiting");

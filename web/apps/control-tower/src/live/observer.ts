@@ -356,6 +356,7 @@ export function readFactoryStatus(data: unknown): FactoryStatus {
     paused: bool(summary.paused),
     mode: str(summary.mode),
     autonomy: str(summary.autonomy),
+    recordedState: str(obj(d.recorded_mode).state),
     supervisor: {
       leasePresent: bool(supervisor.lease_present),
       heartbeatFresh: bool(supervisor.heartbeat_fresh),

@@ -25,6 +25,7 @@ import {
   RULER_HEIGHT,
   type Grouping,
   type LensDefinition,
+  type SelectGesture,
   type SpanPage,
   type TimelineCursor,
   type TimelineData,
@@ -63,7 +64,7 @@ import {
   type Activated,
   type SpanSelection,
 } from "./controls";
-import { TimelineTable, windowSummary } from "./a11y";
+import { TimelineTable, useIdleSummary } from "./a11y";
 import { recordedExtent, useTimelineData } from "./data";
 import { InvestigationPanel, LENSES } from "./investigate";
 import { TemporalOverview } from "./overview";
@@ -477,9 +478,9 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
    * the transport's live control says it is reviewing an earlier moment.
    */
   const activate = useCallback(
-    (hit: TimelineHit, sel: SpanSelection) => {
+    (hit: TimelineHit, sel: SpanSelection, how: SelectGesture = "key") => {
       const key = hitKey(hit);
-      if (activation(lastActivated.current, key, store.getState().selection) === "seek") {
+      if (activation(lastActivated.current, key, store.getState().selection, how) === "seek") {
         goTo(hit);
         return;
       }
@@ -488,7 +489,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
     },
     [goTo, selectRef, store],
   );
-  const selectSpan = useCallback((span: TimelineSpan) => activate({ trackId: "", lane: 0, span, mark: null, count: 1, from: span.start?.at ?? 0, to: span.end?.at ?? 0 }, selectionOf(span)), [activate, selectionOf]);
+  const selectSpan = useCallback((span: TimelineSpan, how?: SelectGesture) => activate({ trackId: "", lane: 0, span, mark: null, count: 1, from: span.start?.at ?? 0, to: span.end?.at ?? 0 }, selectionOf(span), how), [activate, selectionOf]);
   const onHover = useCallback(
     (hit: TimelineHit | null) => {
       const ref = hit?.span ? refOf(hit.span) : hit?.mark?.entity && REF.test(hit.mark.entity) ? (hit.mark.entity as EntityRef) : null;
@@ -497,14 +498,14 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
     [refOf, store],
   );
   const onSelect = useCallback(
-    (hit: TimelineHit) => {
+    (hit: TimelineHit, how?: SelectGesture) => {
       if (hit.span) {
-        activate(hit, selectionOf(hit.span));
+        activate(hit, selectionOf(hit.span), how);
         return;
       }
       if (hit.mark) {
         const m = hit.mark;
-        activate(hit, { ref: m.entity && REF.test(m.entity) ? m.entity : null, detail: null });
+        activate(hit, { ref: m.entity && REF.test(m.entity) ? m.entity : null, detail: null }, how);
         return;
       }
       // An aggregate of spans too small to draw one by one: zoom to it.
@@ -654,12 +655,8 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
 
   // ---- accessibility: the window in words (aria-describedby of the tracks), and Escape out of the band
   const summaryId = useId();
-  // Worded when the browser is idle, never in the render: it walks every span (A5).
-  const [summary, setSummary] = useState("");
-  useEffect(() => {
-    const id = globalThis.setTimeout(() => setSummary(windowSummary(tree, win, liveAt)), 300);
-    return () => globalThis.clearTimeout(id);
-  }, [tree, win, liveAt]);
+  // Worded when the browser is idle, keyed on the tree and the window, never per live-edge step (A5, R5).
+  const summary = useIdleSummary(tree, win, liveAt, false);
   const tracksBox = useRef<HTMLDivElement>(null);
   useEffect(() => {
     // The canvas names its keys in aria-describedby; the window's summary is added beside them.

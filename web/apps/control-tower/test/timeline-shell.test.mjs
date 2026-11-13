@@ -925,6 +925,11 @@ test("X13: selecting never seeks; a second select of the same span or mark while
   assert.equal(frame.activation(last, "span:b", "cell:X"), "select", "another span");
   assert.equal(frame.activation(last, "span:a", "cell:Y"), "select", "the selection changed elsewhere in between");
   assert.equal(frame.activation(last, "", "cell:X"), "select");
+  // Recheck R4: a later single click on the same span only keeps the selection; a double-click's
+  // second click or Enter again goes to it.
+  assert.equal(frame.activation(last, "span:a", "cell:X", "click"), "select");
+  assert.equal(frame.activation(last, "span:a", "cell:X", "double-click"), "seek");
+  assert.equal(frame.activation(last, "span:a", "cell:X", "key"), "seek");
   // Where "go to" seeks: a mark's event, a span's start event.
   assert.deepEqual(frame.seekTargetOf({ mark: { at: 5, eventId: "e5" } }), { eventId: "e5", at: 5 });
   assert.deepEqual(frame.seekTargetOf({ span: { start: { at: 7, eventId: null } } }), { eventId: null, at: 7 });

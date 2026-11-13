@@ -23,6 +23,9 @@ import { factoryTokens, useTheme } from "@mach/ui";
 import { useSceneStore } from "../../scene";
 import { usePlayheadEffect } from "../../shell/timeline/playhead";
 import { type FlatRow, type TimelineCursor, type TimelineHit, type TimelineMark, type TimeWindow, type TrackCanvasProps } from "../contract";
+
+/** The double-click interval: a second click on the same span or mark within it goes to it. */
+const DOUBLE_CLICK_MS = 500;
 import { asOfPlayhead } from "../controls";
 import { drawTracks, hitBox, outlivesExecution, rowGeom, rowKey, type DrawOutput } from "./draw";
 import { cursorRow, keyAction, panToShow, rowSpans } from "./keys";
@@ -150,6 +153,8 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
   const hovered = useRef<{ row: FlatRow; hit: TimelineHit } | null>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const drag = useRef<{ x: number; y: number; win: TimeWindow; top: number; moved: boolean; id: number } | null>(null);
+  /** The last single click on a span or mark, for telling a double-click's second click (X13). */
+  const lastClick = useRef<{ id: string; at: number } | null>(null);
   const anim = useRef<number | null>(null);
   // Wheel and drag events can arrive faster than the caller re-renders: build on what was last asked for.
   const pendingWin = useRef<TimeWindow | null>(null);
@@ -540,7 +545,13 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     const found = hitAt(out.current, P.layout, P.scrollTop, pt.x, pt.y, scaleOf(P.viewport.window, P.viewport.width));
     if (found) {
       P.onCursor({ trackId: found.row.node.id, lane: found.row.lane, spanId: found.hit.span?.id ?? null });
-      P.onSelect(found.hit);
+      // A pointerup carries no click count: the second click of a double-click is one on the same thing
+      // within the double-click interval (X13). A later single click only selects.
+      const id = found.hit.span?.id ?? found.hit.mark?.id ?? "";
+      const t = e.timeStamp;
+      const dbl = e.detail >= 2 || (lastClick.current !== null && lastClick.current.id === id && t - lastClick.current.at < DOUBLE_CLICK_MS);
+      lastClick.current = dbl ? null : { id, at: t };
+      P.onSelect(found.hit, dbl ? "double-click" : "click");
       return;
     }
     // An empty row's edge chevron: pan to the nearest span it points at.
@@ -631,7 +642,7 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     if (result.select) {
       const row = cursorRow({ tree: P.tree, layout: P.layout, cursor: result.cursor ?? P.cursor });
       const hit = row ? cursorHit(row, result.cursor ?? P.cursor, P.viewport.liveAt) : null;
-      if (hit) P.onSelect(hit);
+      if (hit) P.onSelect(hit, "key");
     }
     showCursor();
   };

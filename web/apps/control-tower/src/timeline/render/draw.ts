@@ -19,6 +19,7 @@ import { outcomeKnownAt, type FlatRow, type SpanAuthority, type SpanKind, type T
 import { EMPTY_PLAN, laneIndex, LOD, planRow, runAlpha, spanTimes, subtreeColumns, type PlacedMark, type PlacedSpan, type RowPlan, type SubtreeColumns } from "./lod";
 import { toneInk, toneOf, type Palette, type Tone } from "./palette";
 import { scaleOf, xAt, type Scale } from "./scale";
+import { elapsedWords } from "../../shell/inspector/words";
 import { countsTone, countsWords, durationText, shownCounts, endedWithoutExit, personApproved } from "./words";
 
 export type Family = "lifetime" | "bracket" | "bar" | "task" | "rail" | "claim" | "workflow" | "agent" | "tool" | "wait" | "person";
@@ -163,6 +164,10 @@ export function shortLabel(span: TimelineSpan): string {
 
 /** The short duration drawn at a span's right end. */
 export function shortDuration(span: TimelineSpan, from: number, to: number, open: boolean): string {
+  // Open at the end of a history that is no longer live: no length is claimed.
+  if (!open && span.end === null && span.attrs.historyEndsAt !== undefined) return "no end recorded";
+  // A visit whose exit was stamped after its execution ended: entry to exit is not time spent working.
+  if (span.attrs.interruptedAt !== undefined) return elapsedWords("interrupted", true, !open, durationText(open ? to - from : (span.duration.ms ?? span.duration.maxMs ?? to - from)));
   if (open) return durationText(to - from);
   const d = span.duration;
   if (endedWithoutExit(span)) return `≤ ${durationText(d.maxMs ?? d.ms ?? to - from)}`;
@@ -544,6 +549,8 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
   const inferStart = !startBound && s?.basis === "inferred";
   // Ended without an exit record: the bar runs to the bound in the inferred grammar, then the halt cut.
   const noExit = !open && endedWithoutExit(span);
+  // Open when a history that is no longer live ended: no cap, the ring-query at the history's end.
+  const noEnd = times.noEnd === true;
   const inferEnd = !open && (noExit || (!endBound && e?.basis === "inferred"));
   const w = X1 - X0;
   const inferLen = Math.min(18, Math.max(4, w / 3));
@@ -580,7 +587,7 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
   else if (!head) recordedCap(c, fam, X0, cy, th, ink, -1);
   // The right end: never a cap while open.
   const seat = span.kind === "seat";
-  if (!open && !(seat && !noExit)) {
+  if (!open && !noEnd && !(seat && !noExit)) {
     if (endBound && !noExit) {
       boundBracket(ctx, endBound[0], cy, capH, 1, ink);
       boundBracket(ctx, endBound[1], cy, capH, -1, ink);
@@ -643,7 +650,7 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
   // Interrupted: the halt cut at the recorded stop and a dotted bridge to where work was taken up.
   const reason = e?.reason;
   const cutX = noExit ? X1 + 5 : X1;
-  if (!open && reason === "unknown") {
+  if (noEnd || (!open && reason === "unknown")) {
     // No outcome is known (recovery found the state unknown, or cleanup closed it): the ring-query at the
     // bound, never the halt cut of a recorded stop.
     ringQuery(ctx, cutX, cy, 4.2, p.fInkSoft, p.ground);

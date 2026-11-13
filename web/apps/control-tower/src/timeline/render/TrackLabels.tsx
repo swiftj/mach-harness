@@ -22,7 +22,7 @@ import { countsTone, countsWords, DETAIL_MIN_CHARS, fitLabel, nodeState, showDet
 import "./render.css";
 
 export const LABEL_MIN = 176;
-/** The column's width until a person resizes it: wide enough for "LOCAL-001 · run 2 of 3". */
+/** The column's width until a person resizes it: wide enough for "LOCAL-001 · run 2/3". */
 export const LABEL_DEFAULT = 224;
 export const LABEL_MAX = 320;
 const INDENT = 12;

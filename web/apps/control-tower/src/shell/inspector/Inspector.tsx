@@ -33,7 +33,7 @@ import {
   type WaveState,
   type WorkflowEntity,
 } from "../../sim";
-import { useScene, useSceneStore, useStore } from "../../scene";
+import { historyEndedAt, useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
 import { IconButton } from "../timeline/Transport";
 import { artifactOf, selectable, STATION_WORDS, gateOf, kindOf, gateStateWords, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
@@ -70,7 +70,7 @@ interface Look extends Timing {
 }
 
 /** Glyph, state and phase of an entity that exists at the playhead. */
-function lookOf(entity: AnyRef, value: unknown): Look {
+function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null): Look {
   const id = refId(entity);
   switch (kindOf(entity)) {
     case "actor": {
@@ -132,8 +132,10 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     case "execution": {
       const x = value as ExecutionState;
       // Its process may have ended before the supervisor recorded it (R6): ended, outcome not recorded yet.
-      const status = executionStatusOf(x);
+      const status = executionStatusOf(x, historyEnd);
       const state: FactoryState = status.running ? "active" : x.state === "failed" ? "failed" : x.state === "completed" ? "succeeded" : "idle";
+      // No end recorded on a history that is no longer live: started then, nothing says it finished.
+      if (historyEnd !== null && status.word === "No end recorded") return { glyph: <ExecutionGlyph size={28} state={state} />, state, mark: "ring-query", word: status.word, phase: "finished", since: x.startedAt ?? x.claimedAt, sinceWord: "Started at" };
       return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: status.word, phase: status.running ? "running" : "finished", since: x.endedAt ?? x.processEndedAt ?? x.startedAt };
     }
     case "visit": {
@@ -276,7 +278,8 @@ function Selected({ entity }: { entity: AnyRef }) {
   const kindWord = picked ? "Station visit" : ownKindWord;
   const identity = { name, kindWord, id: picked && detail ? refId(detail as AnyRef) : refId(entity) };
   const focusable = selectable(entity);
-  const look = value ? lookOf(subject, value) : null;
+  const historyEnd = useSceneStore(historyEndedAt);
+  const look = value ? lookOf(subject, value, historyEnd) : null;
   const { all } = useEntityEvents(entity);
   const unknown = all.length === 0 && !value;
   return (

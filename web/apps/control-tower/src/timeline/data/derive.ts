@@ -117,6 +117,38 @@ export function cutAt(span: TimelineSpan, liveAt: number, headAt: number = Numbe
   return { ...span, end: null, outcome: null, duration: { ms: null, minMs: null, maxMs: null, basis: "open" }, attrs: attrsAsOf(span.attrs, liveAt) };
 }
 
+/** The kinds that are work while open and so are said to have no end when the history ends without one. */
+const UNENDED_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["execution", "workflow", "agent", "visit"]);
+const unended = new WeakMap<TimelineSpan, TimelineSpan>();
+
+/**
+ * Presentation on a history that is no longer live (`at`: its last recorded time; null while live):
+ * every execution, workflow, agent or visit (not a wait on a person) still open is tagged
+ * `attrs.historyEndsAt`, so views say "no end recorded; the history ends at …" instead of "at work".
+ * Nothing is closed (`end` stays null) and the observer is not asked to close anything. One tagged
+ * object per span and end, so an unchanged answer keeps its identity.
+ */
+export function endsWithHistory(spans: readonly TimelineSpan[], at: number | null): TimelineSpan[] {
+  if (at === null) return spans as TimelineSpan[];
+  let out: TimelineSpan[] | null = null;
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i] as TimelineSpan;
+    const tag = s.end === null && UNENDED_KINDS.has(s.kind) && !(s.kind === "visit" && s.ids.station === "human-approval") && s.attrs.historyEndsAt !== at;
+    if (!tag) {
+      out?.push(s);
+      continue;
+    }
+    out ??= spans.slice(0, i) as TimelineSpan[];
+    let t = unended.get(s);
+    if (!t || t.attrs.historyEndsAt !== at) {
+      t = { ...s, attrs: { ...s.attrs, historyEndsAt: at } };
+      unended.set(s, t);
+    }
+    out.push(t);
+  }
+  return out ?? (spans as TimelineSpan[]);
+}
+
 /** Bucket boundaries for `buckets` buckets over a window (at least 1 ms each). */
 export function bucketSize(window: TimeWindow, buckets: number): number {
   return Math.max(1, Math.ceil((window.to - window.from) / Math.max(1, Math.floor(buckets))));
