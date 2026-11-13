@@ -11,6 +11,8 @@ handed to verification.
     build.py next <ticket>             show the next task with the spec text it must satisfy
     build.py red <ticket> <task>       a [test] task: the suite must fail; commits the tests
     build.py green <ticket> <task>     an [impl] task: the suite must pass; commits the code
+                                       (--already-done "<why>": an earlier task already implemented it and
+                                        committed tests name every ID it carries; no commit, recorded)
     build.py done <ticket> <task>      a [contract], [refactor] or [docs] task; commits it
     build.py add-task <ticket> ...     add a task during a revision round
     build.py finish <ticket>           final gate; writes build-report.json
@@ -38,13 +40,19 @@ TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 TASK_RE = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s+((?:R\d+-)?T\d+)\s+\[(test|impl|contract|refactor|docs)\]\s+(.*)$")
 ID_RE = re.compile(r"\b(?:FR|INV|AC)-\d{2,}\b")
 PATH_RE = re.compile(r"`([^`\s()<>]+)`")
+# The plan template puts a task's files after an em dash, in backticks, before its ID list:
+#   - [ ] T02 [impl] <what> — `<file>`, `<file>` (<FR-NN>)
+# Backticked words earlier on the line are prose (an example e-mail address, a host name, a value).
+FILES_SEPARATOR = " \u2014 "
+PATH_TOKEN_RE = re.compile(r"^[\w.+\-\[\]]+(?:/[\w.+\-\[\]]+)*$")
 KINDS = ("test", "impl", "contract", "refactor", "docs")
 COMMIT_PREFIX = {"test": "test", "impl": "feat", "contract": "chore", "refactor": "refactor", "docs": "docs"}
 STEP_FOR = {"test": "red", "impl": "green", "contract": "done", "refactor": "done", "docs": "done"}
 HARDENING_LABEL = "repo-hardening"
 # Lifecycle log: the gate each recorded override passes.
 OVERRIDDEN_GATE = {"test-amended": "frozen-tests", "files-outside-plan": "scope", "test-passed-first-run": "red-before-green",
-                   "red-not-attributed": "red-attribution", "test-written-early": "red-before-green", "no-baseline": "baseline"}
+                   "red-not-attributed": "red-attribution", "test-written-early": "red-before-green", "no-baseline": "baseline",
+                   "impl-already-done": "changed-no-files"}
 UI_FILE_RE = re.compile(r"\.(tsx|jsx|vue|svelte|html|astro)$")
 INLINE_STYLE_RE = re.compile(r"style\s*=\s*(\"|'|\{\{)")
 HEX_COLOR_RE = re.compile(r"(?<![\w&])#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b")
@@ -118,13 +126,13 @@ def load_json(path: Path, default: Any = None) -> Any:
 class Cell:
     def __init__(self, project: Path, ticket_id: str) -> None:
         if not TICKET_ID_RE.match(ticket_id):
-            raise BuildError(f"'{ticket_id}' is not a usable ticket ID.")
+            raise BuildError(f"'{ticket_id}' is not a usable ticket ID.", code="bad-ticket-id")
         self.project = project
         self.ticket_id = ticket_id
         self.root = project / ".factory" / "worktrees" / ticket_id
         self.info = load_json(self.root / "cell.json")
         if not isinstance(self.info, dict):
-            raise BuildError(f"No cell for {ticket_id}. Groom the ticket with the intent skill first.")
+            raise BuildError(f"No cell for {ticket_id}. Groom the ticket with the intent skill first.", code="no-cell")
         config = load_json(project / ".factory" / "config.json", {})
         self.config = config if isinstance(config, dict) else {}
         self.state_path = self.root / "build.json"
@@ -154,7 +162,7 @@ class Cell:
         for task in self.state["tasks"]:
             if task["id"] == task_id:
                 return task
-        raise BuildError(f"{task_id} is not a task in this plan. Tasks: {', '.join(t['id'] for t in self.state['tasks'])}.")
+        raise BuildError(f"{task_id} is not a task in this plan. Tasks: {', '.join(t['id'] for t in self.state['tasks'])}.", code="unknown-task")
 
     def next_task(self) -> Optional[Dict[str, Any]]:
         return next((task for task in self.state["tasks"] if task["status"] != "done"), None)
@@ -175,6 +183,20 @@ class Cell:
 
 # ---------------------------------------------------------------- plan
 
+def is_path_token(token: str) -> bool:
+    """A relative file path as a plan writes one: no address, URL, absolute path or parent step."""
+    if not PATH_TOKEN_RE.match(token) or token.startswith("-") or len(token) > 255:
+        return False
+    return not any(part in (".", "..") for part in token.split("/"))
+
+
+def task_line_files(body: str) -> List[str]:
+    """The files a task line names: the backticked paths after its last em dash, and nothing from the prose before it."""
+    if FILES_SEPARATOR not in body:
+        return []
+    return [token for token in PATH_RE.findall(body.rsplit(FILES_SEPARATOR, 1)[1]) if is_path_token(token)]
+
+
 def parse_plan(text: str) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
     """Tasks in order, and the file touch map as {file: [task ids]}."""
     tasks: List[Dict[str, Any]] = []
@@ -192,14 +214,15 @@ def parse_plan(text: str) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
                 tasks.append({
                     "id": match.group(2), "kind": match.group(3), "text": body.strip(),
                     "ids": sorted(set(ID_RE.findall(body))),
-                    "line_files": [p for p in PATH_RE.findall(body) if "/" in p or re.search(r"\.[A-Za-z0-9]{1,6}$", p)],
+                    "line_files": task_line_files(body),
                     "status": "done" if match.group(1).lower() == "x" else "pending",
                 })
         elif section == "file touch map" and line.strip().startswith("|"):
             cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
             if len(cells) >= 3 and "`" in cells[0]:
                 name = cells[0].strip("`").strip()
-                touch[name] = re.findall(r"(?:R\d+-)?T\d+", cells[-1])
+                if is_path_token(name):
+                    touch[name] = re.findall(r"(?:R\d+-)?T\d+", cells[-1])
     for task in tasks:
         mapped = [name for name, ids in touch.items() if task["id"] in ids]
         task["files"] = sorted(set(mapped) | set(task.pop("line_files")))
@@ -272,13 +295,13 @@ def run_command(cell: Cell, command: str, timeout: int) -> Dict[str, Any]:
     try:
         argv = shlex.split(command)
     except ValueError as exc:
-        raise BuildError(f"Cannot parse the command '{command}': {exc}")
+        raise BuildError(f"Cannot parse the command '{command}': {exc}", code="command-unparsable")
     env = dict(os.environ)
     while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):  # leading VAR=value, as in a shell
         key, value = argv.pop(0).split("=", 1)
         env[key] = value
     if not argv or (shutil.which(argv[0]) is None and not (cell.work / argv[0]).is_file()):
-        raise BuildError(f"'{argv[0] if argv else command}' is not installed or not on PATH, so '{command}' cannot run in the cell.")
+        raise BuildError(f"'{argv[0] if argv else command}' is not installed or not on PATH, so '{command}' cannot run in the cell.", code="command-missing")
     started = time.monotonic()
     try:
         done = subprocess.run(argv, cwd=str(cell.work), capture_output=True, text=True, errors="replace", timeout=timeout, stdin=subprocess.DEVNULL, env=env)
@@ -291,7 +314,7 @@ def run_command(cell: Cell, command: str, timeout: int) -> Dict[str, Any]:
 def run_tests(cell: Cell) -> Dict[str, Any]:
     command = cell.state.get("test_cmd")
     if not command:
-        raise BuildError("No test command is known. Start again with --test-cmd \"<command>\", using the command the plan or the project documents.")
+        raise BuildError("No test command is known. Start again with --test-cmd \"<command>\", using the command the plan or the project documents.", code="no-test-command")
     timeout = cell.section("audit").get("timeouts", {}).get("test", 300) if isinstance(cell.section("audit").get("timeouts"), dict) else 300
     return run_command(cell, command, timeout)
 
@@ -309,17 +332,17 @@ def changed_files(cell: Cell) -> List[str]:
 
 def commit(cell: Cell, files: Sequence[str], message: str) -> str:
     if git(cell.work, "add", "-A", "--", *files).returncode != 0:
-        raise BuildError("git could not stage the task's files.")
+        raise BuildError("git could not stage the task's files.", code="git-stage-failed")
     done = git(cell.work, "commit", "-q", "-m", message)
     if done.returncode != 0:
-        raise BuildError("git commit failed: " + (done.stderr.strip() or done.stdout.strip()))
+        raise BuildError("git commit failed: " + (done.stderr.strip() or done.stdout.strip()), code="git-commit-failed")
     return git(cell.work, "rev-parse", "HEAD").stdout.strip()
 
 
 def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: argparse.Namespace) -> None:
     """A task may change only the files the plan gave it, and never a committed test unless it says so."""
     if not files:
-        raise BuildError(f"{task['id']} changed no files. Do the task's work in {cell.work} first.")
+        raise BuildError(f"{task['id']} changed no files. Do the task's work in {cell.work} first.", code="changed-no-files")
     frozen = sorted(set(files) & set(cell.state.get("test_files", []))) if task["kind"] != "test" else []
     if frozen:
         if not args.amend_test:
@@ -347,12 +370,12 @@ def take(cell: Cell, task_id: str, step: str) -> Dict[str, Any]:
         raise BuildError("This cell is already built. Start a revision round with 'revise' if review sent it back.", code="wrong-stage")
     task = cell.task(task_id)
     if task["status"] == "done":
-        raise BuildError(f"{task_id} is already done.")
+        raise BuildError(f"{task_id} is already done.", code="task-already-done")
     first = cell.next_task()
     if first and first["id"] != task_id:
         raise BuildError(f"Tasks are done in plan order. The next task is {first['id']} [{first['kind']}], not {task_id}.", code="plan-order")
     if STEP_FOR[task["kind"]] != step:
-        raise BuildError(f"{task_id} is a [{task['kind']}] task: complete it with '{STEP_FOR[task['kind']]}', not '{step}'.")
+        raise BuildError(f"{task_id} is a [{task['kind']}] task: complete it with '{STEP_FOR[task['kind']]}', not '{step}'.", code="wrong-step")
     return task
 
 
@@ -383,11 +406,11 @@ def ensure_isolated(cell: Cell) -> None:
     if cell.info.get("isolation") == "worktree":
         return
     if git(cell.project, "rev-parse", "--verify", "-q", "HEAD").returncode != 0:
-        raise BuildError("The repository has no commits, so the cell cannot be isolated. Commit the project, including specs/slices/ and any contracts, then start the build.")
+        raise BuildError("The repository has no commits, so the cell cannot be isolated. Commit the project, including specs/slices/ and any contracts, then start the build.", code="no-history")
     spec = cell.info.get("spec_path")
     tracked = bool(spec) and git(cell.project, "ls-files", "--error-unmatch", "--", str(spec)).returncode == 0
     if not tracked or git(cell.project, "status", "--porcelain", "--", str(spec)).stdout.strip():
-        raise BuildError(f"This cell was groomed before the repository had history. Commit {spec} and its contracts on the main branch, then start the build.")
+        raise BuildError(f"This cell was groomed before the repository had history. Commit {spec} and its contracts on the main branch, then start the build.", code="spec-uncommitted")
     if git(cell.project, "check-ignore", "-q", ".factory/worktrees/probe").returncode != 0:
         common = git(cell.project, "rev-parse", "--git-common-dir").stdout.strip()
         exclude = (cell.project / common).resolve() / "info" / "exclude"
@@ -398,7 +421,7 @@ def ensure_isolated(cell: Cell) -> None:
     exists = git(cell.project, "show-ref", "--verify", "-q", f"refs/heads/{branch}").returncode == 0
     added = git(cell.project, "worktree", "add", *([str(cell.root / "repo"), branch] if exists else ["-b", branch, str(cell.root / "repo")]))
     if added.returncode != 0:
-        raise BuildError("git worktree add failed: " + added.stderr.strip())
+        raise BuildError("git worktree add failed: " + added.stderr.strip(), code="worktree-failed")
     cell.info.update({"isolation": "worktree", "branch": branch})
     cell.info.pop("note", None)
     cell.save_info()
@@ -419,7 +442,7 @@ def sync_with_main(cell: Cell) -> Optional[str]:
         raise BuildError(
             f"The cell's branch is behind the main checkout and cannot be brought up to date automatically: merging main conflicts in "
             f"{', '.join(conflicts) or 'some files'}. A person must merge main into {cell.info.get('branch')} in {cell.work} and resolve the conflict; "
-            "if the conflict is in the spec or a contract, the ticket needs regrooming."
+            "if the conflict is in the spec or a contract, the ticket needs regrooming.", code="main-conflict"
         )
     return main_head
 
@@ -427,7 +450,7 @@ def sync_with_main(cell: Cell) -> Optional[str]:
 def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     stage = cell.info.get("stage")
     if cell.state.get("tasks") and stage in ("building", "built"):
-        raise BuildError(f"Building already started for {cell.ticket_id} (stage: {stage}). Use 'next' to continue, or 'revise' after a rejected review.")
+        raise BuildError(f"Building already started for {cell.ticket_id} (stage: {stage}). Use 'next' to continue, or 'revise' after a rejected review.", code="already-started")
     if stage != "planned":
         raise BuildError(f"The cell's stage is '{stage}', not 'planned'. The intent skill must finish the spec, contracts and plan first.", code="wrong-stage")
     gate = audit_gate(cell)
@@ -437,10 +460,10 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         raise BuildError("The slice spec changed after it was finalized. Regroom the ticket with the intent skill before building.", code="spec-changed")
     plan_path = cell.root / "plan.md"
     if not plan_path.is_file() or not (cell.root / "spec.json").is_file():
-        raise BuildError("plan.md or spec.json is missing from the cell.")
+        raise BuildError("plan.md or spec.json is missing from the cell.", code="plan-missing")
     tasks, _ = parse_plan(plan_path.read_text(encoding="utf-8"))
     if not tasks:
-        raise BuildError("plan.md has no tasks.")
+        raise BuildError("plan.md has no tasks.", code="plan-empty")
     dirty = changed_files(cell)
     if dirty:
         raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}). Commit or remove them before building starts.", code="uncommitted-changes")
@@ -450,7 +473,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     if synced:
         spec_now = cell.work / str(cell.info.get("spec_path"))
         if hashlib.sha256(spec_now.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest() != cell.info.get("spec_sha256"):
-            raise BuildError("Bringing the cell up to date with main changed its slice spec. Regroom the ticket with the intent skill before building.")
+            raise BuildError("Bringing the cell up to date with main changed its slice spec. Regroom the ticket with the intent skill before building.", code="spec-changed")
     hardening = HARDENING_LABEL in ticket_labels(cell)
     cell.state = {
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "loop": 0, "started_at": now(),
@@ -470,7 +493,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
             baseline = {"skipped": f"Hardening ticket: the test command could not run at the start ({exc})."}
     elif args.no_baseline:
         if not hardening and gate["tier"] is not None:
-            raise BuildError("--no-baseline is only for a project that has no test suite yet; this repository passed its audit, so its tests must pass in the cell.")
+            raise BuildError("--no-baseline is only for a project that has no test suite yet; this repository passed its audit, so its tests must pass in the cell.", code="no-baseline-not-allowed")
         baseline = {"skipped": args.no_baseline}
         cell.deviation(None, "no-baseline", args.no_baseline)
     elif not hardening:
@@ -543,9 +566,9 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
         # An earlier task committed this task's test along with its own. Nothing is left to write;
         # record the slip for the reviewers rather than strand the ticket or pad a file.
         if files:
-            raise BuildError(f"--written-early is for a test that is already committed, but {task['id']} has uncommitted changes: {', '.join(files)}.")
+            raise BuildError(f"--written-early is for a test that is already committed, but {task['id']} has uncommitted changes: {', '.join(files)}.", code="written-early-has-changes")
         if not cell.state.get("test_files"):
-            raise BuildError("--written-early needs an earlier committed test; none has been committed yet.")
+            raise BuildError("--written-early needs an earlier committed test; none has been committed yet.", code="written-early-no-test")
         cell.deviation(task["id"], "test-written-early", args.written_early)
         task.update({"status": "done", "commit": None, "files_changed": [], "first_run": "not-run", "at": now(), "loop": cell.state.get("loop", 0),
                      "note": "No change: its test was committed by an earlier task. " + args.written_early})
@@ -591,9 +614,56 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
     return 0
 
 
+def committed_text(cell: Cell, names: Sequence[str]) -> str:
+    """The committed (HEAD) contents of the given files, joined; files missing at HEAD add nothing."""
+    parts = []
+    for name in names:
+        shown = git(cell.work, "show", f"HEAD:{name}")
+        if shown.returncode == 0:
+            parts.append(shown.stdout)
+    return "\n".join(parts)
+
+
+def green_already_done(cell: Cell, task: Dict[str, Any], files: Sequence[str], reason: str) -> int:
+    """An [impl] task whose code an earlier task already wrote. Nothing is left to change, so there is
+    nothing to commit; accepted only when the task changed nothing, every spec ID the plan gives it is
+    already named by a committed test, and the whole suite passes. Recorded for the reviewers."""
+    if files:
+        raise BuildError(f"--already-done is for an [impl] task that has nothing left to change, but {task['id']} has uncommitted changes: "
+                         f"{', '.join(files)}. Complete it with 'green' without the flag.", code="already-done-has-changes")
+    ids = list(task.get("ids") or [])
+    if not ids:
+        raise BuildError(f"--already-done needs the plan to give {task['id']} the spec IDs it implements, so that their tests can be checked; "
+                         "it gives none. Do the task's work, or report a plan defect.", code="already-done-no-ids")
+    tests = committed_text(cell, cell.state.get("test_files", []))
+    untested = [identifier for identifier in ids if not re.search(rf"\b{re.escape(identifier)}\b", tests)]
+    if untested:
+        raise BuildError(f"--already-done is accepted only when committed tests already name every ID {task['id']} carries; none names "
+                         f"{', '.join(untested)}. The work is not proven done: do the task's work.", code="already-done-not-covered")
+    result = run_tests(cell)
+    if not result["passed"]:
+        raise BuildError(f"{task['id']}: the suite does not pass, so the task is not already done.\n{result['output_tail'][-1500:]}", code="suite-red")
+    cell.state["suite"] = "green"
+    cell.deviation(task["id"], "impl-already-done", reason)
+    task.update({"status": "done", "commit": None, "files_changed": [], "at": now(), "loop": cell.state.get("loop", 0),
+                 "test_run": {key: result[key] for key in ("exit_code", "seconds")},
+                 "note": "No change: an earlier task already implemented it; suite green. " + reason})
+    tick_plan(cell, task["id"])
+    cell.save()
+    cell.report_overrides(task["id"])
+    telemetry(cell.root, "build.task_completed", "build", lambda: {"task": task["id"], "kind": task["kind"], "step": "green", "first_run": None,
+                                                                   "suite": cell.state.get("suite"), "commit": None})
+    following = cell.next_task()
+    print(json.dumps({"status": "DONE", "task": task["id"], "commit": None, "note": task["note"], "suite": cell.state["suite"],
+                      "next": f"{following['id']} [{following['kind']}]" if following else "All tasks are done. Run: build.py finish " + cell.ticket_id}, indent=2))
+    return 0
+
+
 def cmd_green(cell: Cell, args: argparse.Namespace) -> int:
     task = take(cell, args.task, "green")
     files = changed_files(cell)
+    if args.already_done:
+        return green_already_done(cell, task, files, args.already_done)
     check_scope(cell, task, files, args)
     result = run_tests(cell)
     if not result["passed"]:
@@ -624,7 +694,7 @@ def cmd_add_task(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     loop = cell.state.get("loop", 0)
     if loop == 0 or cell.info.get("stage") != "building":
-        raise BuildError("Tasks are added only during a revision round. The plan comes from the intent skill; if it is wrong, report a plan defect instead.")
+        raise BuildError("Tasks are added only during a revision round. The plan comes from the intent skill; if it is wrong, report a plan defect instead.", code="not-revising")
     count = sum(1 for task in cell.state["tasks"] if task["id"].startswith(f"R{loop}-"))
     task_id = f"R{loop}-T{count + 1:02d}"
     text = " ".join(args.text.split())
@@ -660,7 +730,7 @@ def ui_findings(cell: Cell, baseline: str) -> List[str]:
 def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     if cell.info.get("stage") == "built":
-        raise BuildError("This cell is already built.")
+        raise BuildError("This cell is already built.", code="wrong-stage")
     problems: List[str] = []
     pending = [task["id"] for task in cell.state["tasks"] if task["status"] != "done"]
     if pending:
@@ -706,6 +776,7 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "tests_seen_failing_first": sum(1 for t in cell.state["tasks"] if t.get("first_run") == "fail"),
         "tests_passing_on_first_run": [t["id"] for t in cell.state["tasks"] if t.get("first_run") == "pass"],
         "tests_written_early": [t["id"] for t in cell.state["tasks"] if t.get("first_run") == "not-run"],
+        "impls_already_done": sorted({d.get("task") for d in cell.state.get("deviations") or [] if d.get("type") == "impl-already-done" and d.get("task")}),
         "deviations": cell.state.get("deviations", []), "files_changed": files, "diff": stat,
         "test_files": cell.state.get("test_files", []), "styling_findings": styling,
     }
@@ -728,7 +799,7 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
 def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     if cell.info.get("stage") != "built":
-        raise BuildError("A revision round starts from a built cell that review or verification sent back.")
+        raise BuildError("A revision round starts from a built cell that review or verification sent back.", code="wrong-stage")
     limit = cell.section("review").get("max_loops", 3)
     loop = cell.state.get("loop", 0) + 1
     if loop >= limit:  # the build just sent back was failed round number `limit`
@@ -747,7 +818,7 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     if args.findings:
         source = Path(args.findings)
         if not source.is_file():
-            raise BuildError(f"{source}: findings file not found.")
+            raise BuildError(f"{source}: findings file not found.", code="findings-missing")
         findings = cell.root / f"review-findings-{loop}.md"
         findings.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     cell.state["loop"] = loop
@@ -795,6 +866,9 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--covered", metavar="WHY", help="accept a test that passes on its first run because earlier work satisfies it; recorded for review")
             p.add_argument("--unrelated-failure", metavar="WHY", help="accept a red whose output does not name the new test; recorded for review")
             p.add_argument("--written-early", metavar="WHY", help="complete a test task whose test an earlier task already committed; recorded for review")
+        if name == "green":
+            p.add_argument("--already-done", metavar="WHY", help="complete an [impl] task an earlier task already implemented: no change, committed tests "
+                           "name its IDs, suite green; recorded for review")
         p.set_defaults(func=func)
 
     p = sub.add_parser("add-task", help="add a task during a revision round")
@@ -819,7 +893,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    for name in ("allow_extra", "amend_test", "covered", "no_baseline", "written_early", "unrelated_failure"):
+    for name in ("allow_extra", "amend_test", "covered", "no_baseline", "written_early", "unrelated_failure", "already_done"):
         if not hasattr(args, name):
             setattr(args, name, None)
     project = None

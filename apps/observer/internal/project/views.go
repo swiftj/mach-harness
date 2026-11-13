@@ -102,6 +102,7 @@ type RunView struct {
 	UnderReported bool                   `json:"cost_may_be_under_reported"`
 	UnderReasons  []string               `json:"under_reported_reasons"`
 	RefusedTools  []string               `json:"refused_tools"`
+	RefusedFrom   string                 `json:"refused_tools_authority,omitempty"` // observed (stream) until execution.completed, then authoritative; see refusedTools
 	Recovery      []string               `json:"recovery"`
 	Agents        int                    `json:"agents"`
 	Visits        []string               `json:"visits"`
@@ -115,12 +116,36 @@ type Cost struct {
 	NullReason string   `json:"null_reason,omitempty"`
 }
 
+// refusedTools is what a run summary says was refused. The supervisor's record (execution.completed)
+// is the authority once it exists, even when it lists nothing; before it, the refusals the stream has
+// shown (tool.refused) are reported at once, as observed: each tool name once, sorted, as the
+// supervisor sorts its own list. execution.failed records no list, so the observed one stands.
+func refusedTools(x *Execution) ([]string, string) {
+	if x.RefusedFinal {
+		return nonNilS(x.RefusedTools), "authoritative"
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, r := range x.Refused {
+		if r.Tool != "" && !seen[r.Tool] {
+			seen[r.Tool] = true
+			out = append(out, r.Tool)
+		}
+	}
+	if len(out) == 0 {
+		return out, ""
+	}
+	sort.Strings(out)
+	return out, "observed"
+}
+
 // Run builds an execution's view.
 func Run(x *Execution) RunView {
 	v := RunView{ExecutionID: x.ExecutionID, TicketID: x.TicketID, SliceID: x.SliceID, Workflow: x.Workflow, State: ExecState(x), Attempt: x.Attempt,
 		Claimed: TV(x.Claimed), Ended: x.Ended, ExitCode: x.ExitCode, How: x.How, StageAtStart: x.StageAtStart, StageAtEnd: x.StageAtEnd,
-		RefusedTools: nonNilS(x.RefusedTools), Recovery: nonNilS(x.Recovery), Agents: len(x.Agents) + len(x.Queued), Visits: nonNilS(x.Visits),
+		Recovery: nonNilS(x.Recovery), Agents: len(x.Agents) + len(x.Queued), Visits: nonNilS(x.Visits),
 		Models: map[string]*ModelUsage{}, UnderReasons: []string{}}
+	v.RefusedTools, v.RefusedFrom = refusedTools(x)
 	start, end := x.ProcessStarted, x.ProcessEnded
 	v.TimeBasis = "process"
 	if start == nil {

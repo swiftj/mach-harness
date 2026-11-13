@@ -366,6 +366,50 @@ class ActivationTest(Base):
             self.assertNotIn(word, studio_sources)
 
 
+class CapacityReportTest(Base):
+    """The limit on cells at once that the factory commands report is the one in force here, and a ready slice
+    left waiting for a place is said to be held, with that reason. Neither changes what is dispatched."""
+
+    def two_ready(self):
+        self.first()
+        self.publish(self.a, self.slice(self.a, "Second"))
+        self.config(build={"require_audit": False}, factory={"max_parallel": 3})
+
+    def test_disabled_status_shows_the_project_limit(self):
+        self.two_ready()
+        self.assertEqual(self.product("reconcile")["plan"]["limits"]["max_parallel"], 3)
+        plan = self.factory("status")["plan"]
+        self.assertEqual((plan["limits"], plan["max_parallel_from"]), ({"max_parallel": 3, "active": 0, "free": 3}, {"project": 3, "machine_policy": None, "in_force": 3}))
+        self.assertEqual((plan["dispatchable"], plan["waiting_for_a_place"]), (["SLICE-001", "SLICE-002"], []))
+
+    def test_supervised_reports_the_machine_cap_and_holds_the_slice_waiting_for_a_place(self):
+        self.two_ready()
+        self.enable("--include-backlog", "--max-parallel", "1")
+        report = self.tick()
+        self.assertEqual([item["slice_id"] for item in report["dispatched"]], ["SLICE-001"])  # one place, one dispatch: unchanged
+        self.assertIn({"slice_id": "SLICE-002", "why": "it is ready and waits for a free place: 0 of 1 in use"}, report["held"])
+        self.assertEqual(report["limits"], {"max_parallel": 1, "active": 0, "free": 1})
+        decided = [event for event in self.events() if event["type"] == "scheduling.decided"][-1]
+        self.assertIn({"slice_id": "SLICE-002", "why": "it is ready and waits for a free place: 0 of 1 in use"}, decided["data"]["held"])
+        plan = self.factory("status")["plan"]
+        self.assertEqual((plan["limits"], plan["max_parallel_from"]), ({"max_parallel": 1, "active": 1, "free": 0}, {"project": 3, "machine_policy": 1, "in_force": 1}))
+        self.assertEqual((plan["dispatchable"], plan["waiting_for_a_place"]), ([], ["SLICE-002"]))
+        self.wait()
+        report = self.tick()
+        self.assertEqual(report["dispatched"], [])
+        self.assertIn({"slice_id": "SLICE-002", "why": "it is ready and waits for a free place: 1 of 1 in use"}, report["held"])
+        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])
+        self.assertFalse((self.eng / ".factory/worktrees/LOCAL-002").exists(), "nothing beyond the limit was dispatched")
+
+    def test_observe_mode_says_which_slices_wait_for_a_place(self):
+        self.two_ready()
+        self.enable("--include-backlog", "--max-parallel", "1", autonomy="observe")
+        report = self.tick()
+        self.assertEqual(report["held"], [{"slice_id": "SLICE-001", "why": "the Factory is in observe mode, which never starts work"},
+                                          {"slice_id": "SLICE-002", "why": "it is ready and waits for a free place: 0 of 1 in use"}])
+        self.assertEqual(self.calls(runs_only=False), [])
+
+
 class ObserveTest(Base):
     def test_observe_discovers_and_plans_and_never_starts_an_agent(self):
         self.first()

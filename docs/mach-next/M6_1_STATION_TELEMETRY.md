@@ -67,12 +67,12 @@ The log is **authoritative for what it records, and observational in effect**: i
 | `intent/cell.py: main` | `CellError` in `finalize` / `check-plan` | `gate.evaluated groom.finalize` / `plan.check refuse` |
 | `audit/audit.py: report_to_cells` (from `cmd_run`) | after `audit-report.json`, for each cell in stage `planned` | `station.entered audit`, `gate.evaluated audit.readiness pass/refuse <tier>`, `station.exited audit <tier>` |
 | `build/build.py: cmd_start` | after `build.json` and `cell.json` | `gate.evaluated build.start pass`, overrides (`no-baseline`), `station.entered build` |
-| `build/build.py: complete` / `cmd_red --written-early` | after `build.json` (commit made) | overrides for that task (`Cell.report_overrides`), `build.task_completed` |
+| `build/build.py: complete` / `cmd_red --written-early` / `cmd_green --already-done` | after `build.json` (commit made, or none for the two flags) | overrides for that task (`Cell.report_overrides`; `--already-done` is `gate.evaluated changed-no-files override impl-already-done`), `build.task_completed` |
 | `build/build.py: cmd_finish` | problems, after `build.json` | `gate.evaluated build.finish refuse not-finished` |
 | `build/build.py: cmd_finish` | after `build-report.json`, `build.json`, `cell.json` | `gate.evaluated build.finish pass`, `station.exited build built` |
 | `build/build.py: cmd_revise` | round limit, after `cell.json` (blocked) | `gate.evaluated round-limit refuse`, `station.entered build`, `station.exited build escalated` |
 | `build/build.py: cmd_revise` | after `build.json`, `cell.json` | `station.entered build` (new visit, next round) |
-| `build/build.py: main` | `BuildError` in an acting command (not `next`/`status`) | `gate.evaluated build.<command> refuse <code>` |
+| `build/build.py: main` | `BuildError` in an acting command (not `next`/`status`) | `gate.evaluated build.<command> refuse <code>`; every `BuildError` names its own code (such as `changed-no-files`, `already-started`, `task-already-done`, `wrong-step`, `already-done-not-covered`), never the generic `refused` |
 | `verify/verify.py: cmd_start` | after `results.json` | `gate.evaluated verify.start pass`, `station.entered verify` |
 | `verify/verify.py: cmd_record` | after `results.json` | `verify.check_recorded` |
 | `verify/verify.py: cmd_finish` | incomplete (nothing written) | `gate.evaluated verify.finish refuse incomplete-evidence` |

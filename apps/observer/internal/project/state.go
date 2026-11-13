@@ -475,6 +475,7 @@ type Execution struct {
 	ClaudeError    string               `json:"claude_error,omitempty"`
 	CostUSD        *float64             `json:"cost_usd"` // execution.completed (MACH-recorded)
 	RefusedTools   []string             `json:"refused_tools"`
+	RefusedFinal   bool                 `json:"refused_final,omitempty"` // execution.completed recorded RefusedTools
 	Recovery       []string             `json:"recovery"`
 	Usage          *Usage               `json:"usage"`
 	Session        *Session             `json:"session"`

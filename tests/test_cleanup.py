@@ -270,6 +270,15 @@ class RunTest(Base):
         self.assertEqual((record["deviations"], record["blockers"], record["verify_findings"], record["tests_seen_failing_first"], record["tests_passing_on_first_run"]),
                          ([], [], [], 0, 0))
 
+    def test_an_already_done_task_is_carried_into_the_run_record(self):
+        self.merged_and_approved()
+        report = {"status": "BUILT", "deviations": [{"task": "T04", "type": "impl-already-done", "detail": "T02 implemented it.", "loop": 0, "at": "x"}],
+                  "impls_already_done": ["T04"], "tasks": [{"id": "T04", "kind": "impl", "status": "done", "commit": None}]}
+        self.put(self.cellroot, {"build-report.json": json.dumps(report)})
+        record = self.c_ok("run", "LOCAL-001")["record"]
+        self.assertEqual(record["deviations"], [{"type": "impl-already-done", "task": "T04", "detail": "T02 implemented it."}])
+        self.assertEqual(set(record), RECORD_KEYS, "the run record's shape is unchanged")
+
     def test_existing_archive_is_not_overwritten(self):
         self.merged_and_approved()
         self.put(self.archive, {"LOCAL-001.tar.gz": "an earlier archive", "LOCAL-001-2.tar.gz": "another"})

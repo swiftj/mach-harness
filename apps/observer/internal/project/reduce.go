@@ -459,7 +459,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		x.Completed, x.StageAtEnd, x.Next, x.WaitingFor, x.How = st, d.Stage, d.Next, feed.Str(d.WaitingFor), feed.Str(d.How)
-		x.CostUSD, x.RefusedTools = d.CostUSD, nonNilS(d.RefusedTools)
+		x.CostUSD, x.RefusedTools, x.RefusedFinal = d.CostUSD, nonNilS(d.RefusedTools), true
 		m.Cover("K1", nil, day(st), d.CostUSD != nil)
 		if d.CostUSD != nil {
 			m.Rate("K1", dims("stage", x.StageAtStart), day(st), *d.CostUSD, 1)

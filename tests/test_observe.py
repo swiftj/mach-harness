@@ -236,6 +236,13 @@ class PatternTest(Base):
         self.assertEqual([(p["kind"], p["key"], p["tickets"], p["count"]) for p in found], [("deviation", "files-outside-plan", ["T-1", "T-2", "T-3"], 3)])
         self.assertEqual(found[0]["examples"][0], "T-1: touched app/util.py")
 
+    def test_impl_already_done_is_a_deviation_like_any_other(self):
+        records = [run(f"T-{n}", n, deviations=[{"type": "impl-already-done", "task": "T04", "detail": f"T02 already implemented it ({n})"}]) for n in (1, 2, 3)]
+        found = self.patterns(*records)
+        self.assertEqual([(p["kind"], p["key"], p["tickets"], p["count"]) for p in found], [("deviation", "impl-already-done", ["T-1", "T-2", "T-3"], 3)])
+        self.runs(*records)
+        self.assertEqual(self.collect()["scorecard"]["deviations_per_ticket"]["value"], 1.0)
+
     def test_verify_findings_group_by_kind_of_target(self):
         records = [
             run("T-1", 1, verify_findings=["AC-06 (scenario): expected 'Saved', saw 'Save failed'", "R5 (matrix rule): refusal changed the record"]),
