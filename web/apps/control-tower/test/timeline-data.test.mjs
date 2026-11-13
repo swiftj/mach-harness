@@ -11,7 +11,6 @@ import { beltRun, finalize } from "./fixtures/v3.mjs";
 // The modules behind data/index.ts (its React hook pulls in .tsx, which node's test runner does not load).
 const { createObserverTimelineData } = await import("../src/timeline/data/observer.ts");
 const { createSimulationTimelineData } = await import("../src/timeline/data/simulation.ts");
-const { timelineAvailability } = await import("../src/timeline/data/availability.ts");
 const { spansOfScene } = await import("../src/timeline/data/scene.ts");
 const { readSpan } = await import("../src/timeline/data/parse.ts");
 const { tilesFor } = await import("../src/timeline/data/derive.ts");
@@ -172,9 +171,10 @@ test("an observer before M6.3 (no window, silent cap): filtered here, and said t
   const page = await old.provider.spans({ window: W(0, 5 * MIN) });
   assert.deepEqual(page.spans.map((s) => s.id), ["cell:cell:in"], "out-of-window spans are not shown");
   assert.equal(page.truncated, false);
-  assert.equal(timelineAvailability(old.provider).windowed, false);
+  assert.equal(old.provider.availability().unwindowed, true);
   await provider.spans({ window: W(0, 5 * MIN) });
-  assert.equal(timelineAvailability(provider).windowed, true);
+  assert.equal(provider.availability().unwindowed, false);
+  assert.equal(provider.availability().spans, "ok");
 });
 
 test("a 404 on /marks, /concurrency or /spans degrades to an honest 'not available', never a throw", async () => {
@@ -184,19 +184,18 @@ test("a 404 on /marks, /concurrency or /spans degrades to an honest 'not availab
   const c = await provider.concurrency(W(0, 10 * MIN), 10);
   assert.deepEqual(c.buckets, []);
   assert.equal(c.complete, false);
-  const a = timelineAvailability(provider);
+  const a = provider.availability();
   assert.equal(a.marks, "unavailable");
   assert.equal(a.concurrency, "unavailable");
-  assert.match(a.messages.marks, /does not serve marks/);
   server.spansRoute = false;
   const page = await provider.spans({ window: W(10 * MIN, 20 * MIN) });
   assert.deepEqual(page.spans, []);
-  assert.equal(timelineAvailability(provider).spans, "unavailable");
+  assert.equal(provider.availability().spans, "unavailable");
   server.down = true;
   const d = await provider.density(W(0, 10 * MIN), 10);
   assert.deepEqual(d.buckets, []);
   assert.equal(d.complete, false);
-  assert.equal(timelineAvailability(provider).density, "failed");
+  assert.equal(provider.availability().density, "unknown", "a failed request says nothing about whether it is served");
 });
 
 // ---------------------------------------------------------------- caching, abort, refetch
@@ -325,7 +324,7 @@ test("marks in a window, and the next and previous mark of a kind", async () => 
   assert.equal((await provider.nextMark(T0 + MIN, 1, ["failure"])).id, "m3", "strictly after");
   assert.equal((await provider.nextMark(T0 + 5 * MIN, -1, ["failure"])).id, "m1", "strictly before");
   assert.equal(await provider.nextMark(T0 + 5 * MIN, 1, ["failure"]), null);
-  assert.equal(timelineAvailability(provider).marks, "available");
+  assert.equal(provider.availability().marks, "ok");
 });
 
 test("concurrency and filtered density from the observer", async () => {
@@ -448,4 +447,260 @@ test("scene spans: a count-only (Dynamic Workflow) agent yields no tool span; pe
   for (const t of tools) assert.ok(!countOnly.some((a) => a.entity === t.parent), `${t.id} is not under a count-only agent`);
   for (const a of countOnly) assert.equal(typeof a.attrs.toolCalls, "number", "the count is carried instead");
   for (const s of spans) if (s.outcome !== null) assert.ok(s.end !== null, `${s.id}: no outcome without an end`);
+});
+
+// ---------------------------------------------------------------- wave 2: availability, closed visits, extent, density, robustness
+
+const { recordedExtent } = await import("../src/timeline/data/extent.ts");
+const { closeEndedVisits } = await import("../src/timeline/data/derive.ts");
+const { BACKOFF_MS } = await import("../src/timeline/data/observer.ts");
+const { ev, finalize: finalizeV3 } = await import("./fixtures/v3.mjs");
+
+test("availability(): the simulation serves everything; the observer says ok, unavailable, or unknown after a failure", async () => {
+  const simProvider = createSimulationTimelineData(simStore());
+  assert.deepEqual(simProvider.availability(), { spans: "ok", marks: "ok", concurrency: "ok", density: "ok", unwindowed: false });
+  const { provider } = setup({ spans: [wire("cell", "cell:a", { start: 0, end: 1000 })] });
+  assert.deepEqual(provider.availability(), { spans: "unknown", marks: "unknown", concurrency: "unknown", density: "unknown", unwindowed: false }, "nothing asked yet");
+  const before = provider.availability();
+  assert.equal(provider.availability(), before, "the same object while nothing changed");
+  await provider.spans({ window: W(0, MIN) });
+  assert.equal(provider.availability().spans, "ok");
+  assert.notEqual(provider.availability(), before);
+});
+
+test("parses the M6.3 observer's closed visits, interrupted_at, limits' applies_to and history's capped", async () => {
+  const visit = wire("visit", "visit:T/build#1", {
+    start: 0,
+    end: 136_000,
+    endExtra: { basis: "inferred", rule: "execution-ended", reason: "interrupted", event_id: "e-x-end" },
+    basis: "inferred",
+    authority: "reconstructed",
+    attrs: { interrupted_at_ms: T0 + 136_000, interrupted_reason: "execution-ended" },
+    ids: { ticket_id: "T", execution_id: "x1", station: "build", visit_id: "T/build#1" },
+  });
+  visit.duration = { ms: null, min_ms: null, max_ms: 136_000, basis: "inferred" };
+  const s = readSpan(visit);
+  assert.deepEqual([s.end.basis, s.end.rule, s.end.reason, s.outcome, s.authority], ["inferred", "execution-ended", "interrupted", null, "reconstructed"]);
+  assert.deepEqual([s.duration.ms, s.duration.maxMs, s.duration.basis], [null, 136_000, "inferred"]);
+  assert.equal(s.attrs.interruptedAt, T0 + 136_000);
+  const superseded = readSpan(wire("visit", "visit:T/verify#1", { start: 0, end: 5000, endExtra: { basis: "inferred", rule: "unclosed-visit", reason: "superseded" } }));
+  assert.deepEqual([superseded.end.rule, superseded.end.reason], ["unclosed-visit", "superseded"]);
+
+  const { provider, server } = setup({
+    concurrency: (from, to, bucket) => ({
+      from_ms: from, to_ms: to, bucket_ms: bucket, buckets: [], complete: true,
+      limits: [
+        { name: "max_parallel", value: 2, from: iso(T0), to: null, applies_to: ["execution", "cell"] },
+        { name: "poll_seconds", value: 300, from: iso(T0), to: null, applies_to: null },
+        { name: "older", value: 1, from: iso(T0), to: null },
+      ],
+    }),
+  });
+  const c = await provider.concurrency(W(0, 10 * MIN), 10);
+  assert.deepEqual(c.limits.map((l) => [l.name, l.appliesTo]), [["max_parallel", ["execution", "cell"]], ["poll_seconds", null], ["older", undefined]]);
+  assert.ok(!("appliesTo" in c.limits[2]), "absent stays absent");
+
+  // /history's capped, passed on as is (absent from an older observer).
+  const client = createObserverClient({ fetch: async () => ({ status: 200, json: async () => ({ ok: true, data: { generation: "g", events: [], more: true, capped: true } }) }) });
+  assert.equal((await client.history({ limit: 10 })).capped, true);
+  assert.ok(!("capped" in (await createObserverClient({ fetch: server.fetch }).history({ limit: 10 }))));
+});
+
+test("safety net: an older observer's open visit whose execution ended in the same answer is closed by rule, never 'open'", async () => {
+  const ids = (v) => ({ ticket_id: "T", execution_id: "x1", station: "build", visit_id: v });
+  const spans = [
+    wire("execution", "execution:x1", { start: 0, end: 136_000, ids: { ticket_id: "T", execution_id: "x1" }, outcome: "exited" }),
+    // Open, though x1 ended: the run showed "Revise … 7 h 3 min", still running.
+    wire("visit", "visit:T/build#1", { start: 10_000, end: null, ids: ids("T/build#1"), parent: "execution:x1", attrs: { action: "revise" } }),
+    // Open, its execution still running: it stays open.
+    wire("execution", "execution:x2", { start: 200_000, end: null, ids: { ticket_id: "T", execution_id: "x2" } }),
+    wire("visit", "visit:T/build#2", { start: 210_000, end: null, ids: { ...ids("T/build#2"), execution_id: "x2" } }),
+  ];
+  const { provider } = setup({ spans });
+  const page = await provider.spans({ window: W(0, 60 * MIN) });
+  const v1 = page.spans.find((s) => s.id === "visit:visit:T/build#1");
+  assert.ok(v1.end, "never presented as open");
+  assert.deepEqual([v1.end.at, v1.end.basis, v1.end.rule, v1.end.reason, v1.end.eventId], [T0 + 136_000, "inferred", "execution-ended", "interrupted", "e-execution-execution:x1-e"]);
+  assert.deepEqual([v1.outcome, v1.authority, v1.duration.basis, v1.duration.ms, v1.duration.maxMs], [null, "reconstructed", "inferred", null, 126_000]);
+  const v2 = page.spans.find((s) => s.id === "visit:visit:T/build#2");
+  assert.equal(v2.end, null, "an execution still running leaves its visit open");
+  // A visit that began after the execution ended is not that execution's: left as it is.
+  const late = { ...v1, id: "visit:late", start: { ...v1.start, at: T0 + 500_000 }, end: null };
+  const exec = page.spans.find((s) => s.id === "execution:execution:x1");
+  assert.equal(closeEndedVisits([exec, late])[1].end, null);
+});
+
+test("simulation provider: a visit the scene closed (execution ended without an exit) is inferred, interrupted, reconstructed; a later exit marks it interrupted", async () => {
+  const TICKET = "LOCAL-001";
+  const ids = (x) => ({ ticket_id: TICKET, visit_id: `${TICKET}/build#1`, station: "build", round: 1, execution_id: x });
+  const entities = [`cell:${TICKET}`, `station:${TICKET}/build`, `visit:${TICKET}/build#1`];
+  const out = [
+    ev("station.entered", { stream: "cell-lifecycle", key: `c:${TICKET}:k`, seq: 1, t: T0, ids: ids("x1"), entities, data: { station: "build", stage: "building", action: "build", resumed: false, unclosed_visit: null, head: null, counts: {} } }),
+    ev("execution.process_ended", { stream: "execution-record", key: "x:x1", seq: 2, t: T0 + 136_000, precision: "s", ids: { ticket_id: TICKET, execution_id: "x1" }, entities: ["execution:x1", `cell:${TICKET}`], data: { ended: "exited", exit_code: 0, seconds: 136 } }),
+  ];
+  const logOf = (events) => {
+    const log = sim.createSceneLog({ definitions: live.LIVE_DEFINITIONS, provenance: sim.provenance("live") });
+    log.ingest(events);
+    return log;
+  };
+  const log = logOf(finalizeV3([...out]));
+  const store = fakeStore({ source: "live", log, logVersion: log.version(), liveAt: T0 + 7 * 3_600_000, extent: { kind: "so-far", start: T0, end: T0 + 7 * 3_600_000, events: log.size(), belowFloor: 0 } });
+  const provider = createSimulationTimelineData(store, { source: "live" });
+  const page = await provider.spans({ window: { from: T0, to: T0 + 7 * 3_600_000 } });
+  const v = page.spans.find((s) => s.kind === "visit");
+  assert.deepEqual([v.end.at, v.end.basis, v.end.rule, v.end.reason, v.outcome, v.authority], [T0 + 136_000, "inferred", "execution-ended", "interrupted", null, "reconstructed"]);
+  assert.deepEqual([v.duration.ms, v.duration.maxMs, v.duration.basis], [null, 136_000, "inferred"]);
+  assert.deepEqual(await provider.span(v.id), v);
+
+  out.push(ev("station.exited", { stream: "cell-lifecycle", key: `c:${TICKET}:k`, seq: 3, t: T0 + 3_608_000, ids: ids("x2"), entities, data: { station: "build", outcome: "built", stage: "built", duration_ms: 1000, closed_by: null, head: null, counts: {} } }));
+  const later = logOf(finalizeV3(out));
+  const v2 = spansOfScene(later.head(), later).find((s) => s.kind === "visit");
+  assert.equal(v2.end.basis, "recorded");
+  assert.equal(v2.attrs.interruptedAt, T0 + 136_000, "the stop is carried, so no view says it 'took' entry to exit");
+});
+
+test("recordedExtent: first to last recorded thing, not to the wall clock; null when nothing is held", async () => {
+  // A 73-minute run viewed seven hours later.
+  const HOUR = 3_600_000;
+  const events = Array.from({ length: 37 }, (_, i) => T0 + Math.round((i * 73 * MIN) / 36));
+  const store = fakeStore({ source: "live", liveAt: T0 + 8 * HOUR, extent: { kind: "so-far", start: T0, end: T0 + 8 * HOUR, events: 37, belowFloor: 0 } });
+  const fake = {
+    extent: () => ({ from: T0, to: T0 + 8 * HOUR }),
+    density: async (w, n) => densityOfTimes(events, w, n),
+    nextMark: async () => ({ id: "m", kind: "review", at: T0 + 70 * MIN, until: null }),
+    spans: async () => { throw new Error("not asked when density is served"); },
+  };
+  const r = await recordedExtent(fake);
+  assert.ok(r.from === T0, `from ${r.from - T0}`);
+  assert.ok(r.to >= T0 + 73 * MIN && r.to <= T0 + 73 * MIN + (8 * HOUR) / 1000 + 1000, `to is the last bucket's end (${(r.to - T0) / MIN} min)`);
+  // Without density: the spans' bounds and the last mark.
+  const noDensity = { ...fake, density: async (w) => ({ from: w.from, to: w.to, bucketMs: 1000, buckets: [], complete: false }), spans: async () => ({ spans: [{ ...readSpan(wire("cell", "cell:a", { start: 5 * MIN, end: 80 * MIN })) }, readSpan(wire("visit", "visit:open", { start: 10 * MIN }))] }) };
+  assert.deepEqual(await recordedExtent(noDensity), { from: T0 + 5 * MIN, to: T0 + 80 * MIN });
+  assert.equal(await recordedExtent({ ...fake, extent: () => null }), null);
+  // The observer provider, through its own density: the extent runs to the wall clock, the recorded one does not.
+  const { provider } = setup({ store, series: true });
+  assert.equal(provider.extent().to, T0 + 8 * HOUR);
+  void provider;
+});
+
+function densityOfTimes(times, w, n) {
+  const size = Math.max(1, Math.ceil((w.to - w.from) / n));
+  const m = new Map();
+  for (const t of times) if (t >= w.from && t < w.to) { const k = w.from + Math.floor((t - w.from) / size) * size; m.set(k, (m.get(k) ?? 0) + 1); }
+  return { from: w.from, to: w.to, bucketMs: size, buckets: [...m].sort((a, b) => a[0] - b[0]).map(([from, count]) => ({ from, count })), complete: true };
+}
+
+test("density says whether the ticket or execution filter was applied", async () => {
+  const provider = createSimulationTimelineData(simStore());
+  const window = { from: 0, to: sim.SCENARIO.duration };
+  assert.equal((await provider.density(window, 50)).filtered, false);
+  const ticket = Object.keys(simStore().getState().log.head().cells)[0];
+  assert.equal((await provider.density(window, 50, { ticket })).filtered, true);
+  const { provider: obs } = setup({ series: true });
+  assert.equal((await obs.density(W(0, 10 * MIN), 10)).filtered, false);
+  assert.equal((await obs.density(W(0, 10 * MIN), 10, { ticket: "T" })).filtered, true);
+});
+
+/** Timers on a virtual clock: `advance(ms)` runs what falls due, in order. */
+function clockTimers() {
+  let now = 0;
+  let next = 1;
+  const due = new Map();
+  return {
+    setTimeout(fn, ms) { const h = next++; due.set(h, { fn, at: now + ms }); return h; },
+    clearTimeout(h) { due.delete(h); },
+    get now() { return now; },
+    async advance(ms) {
+      const end = now + ms;
+      for (;;) {
+        const first = [...due.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        if (!first || first[1].at > end) break;
+        due.delete(first[0]);
+        now = first[1].at;
+        first[1].fn();
+        await settle();
+      }
+      now = end;
+    },
+  };
+}
+
+test("robustness: a failed tile keeps its last good answer; back-off 1, 2, 5, then 15 s; no request storm over a minute; subscribers told once on recovery", async () => {
+  assert.deepEqual(BACKOFF_MS, [1000, 2000, 5000, 15_000]);
+  const timers = clockTimers();
+  // At the live edge, so the tile goes stale when events arrive.
+  const spans = [wire("visit", "visit:v1", { start: 55 * MIN, end: 56 * MIN })];
+  const store = fakeStore();
+  const { provider, server, spanRequests } = setup({ spans, store, timers });
+  let told = 0;
+  provider.subscribe(() => (told += 1));
+  const window = W(50 * MIN, 60 * MIN);
+  const good = await provider.spans({ window });
+  assert.equal(good.spans.length, 1);
+  // The live edge moves (events arrive), so the tile is stale; then the observer goes down.
+  server.down = true;
+  store.set({ logVersion: 1 });
+  await timers.advance(600);
+  const toldBefore = told;
+  const before = server.requests.length;
+  // A view re-asking every second for a minute.
+  for (let s = 0; s < 60; s++) {
+    const page = await provider.spans({ window });
+    assert.deepEqual(page.spans.map((x) => x.id), ["visit:visit:v1"], "the last good tile stands");
+    await provider.marks(window);
+    await provider.density(window, 10);
+    await timers.advance(1000);
+  }
+  const sent = server.requests.length - before;
+  assert.ok(spanRequests().length >= 2, "the stale tile was asked for again and failed");
+  // One failing round, then one probe per back-off step: 1 s, 2 s, 5 s, then every 15 s (~7 in a minute).
+  if (process.env.SHOW) console.log("requests while down over a minute:", sent);
+  assert.ok(sent <= 10, `${sent} requests in a minute while the observer is down`);
+  assert.equal(told, toldBefore, "no notice per failure");
+  // It comes back: the next probe succeeds, subscribers are told once, and the view re-asks.
+  server.down = false;
+  await timers.advance(15_000);
+  assert.equal(told, toldBefore + 1, "told once when the observer answers again");
+  await timers.advance(60_000);
+  assert.equal(told, toldBefore + 1, "and not again");
+  store.set({ logVersion: 2 });
+  await timers.advance(600);
+  const after = spanRequests().length;
+  await provider.spans({ window });
+  assert.equal(spanRequests().length, after + 1, "a stale tile is read again at once: requests flow again");
+});
+
+test("robustness: a cursor_reset (409) or a new epoch clears the tiles once and tells subscribers once", async () => {
+  const timers = clockTimers();
+  const spans = [wire("visit", "visit:v1", { start: MIN, end: 2 * MIN })];
+  const { provider, server, spanRequests } = setup({ spans, timers, store: fakeStore({ source: "replay" }) });
+  let told = 0;
+  provider.subscribe(() => (told += 1));
+  const window = W(0, 10 * MIN);
+  await provider.spans({ window });
+  const n = spanRequests().length;
+  // A new epoch: the observer rebuilt its history; the next answer comes from another generation.
+  server.generation = "ffffffffffffffff";
+  await provider.marks(window); // marks 404 here: not a failure, not an epoch
+  server.marks = [];
+  await provider.marks(window);
+  assert.equal(told, 1, "the new epoch is told once");
+  await provider.spans({ window });
+  assert.ok(spanRequests().length > n, "the span tiles were dropped and read again");
+  await provider.spans({ window });
+  assert.equal(told, 1);
+  // A cursor_reset answer.
+  const realFetch = server.fetch;
+  let resets = 0;
+  const client = createObserverClient({ fetch: async (url, init) => (url.includes("/spans?") && resets++ < 1 ? { status: 409, json: async () => ({ ok: false, error: { kind: "cursor_reset", message: "reset" } }) } : realFetch(url, init)) });
+  const store = fakeStore({ source: "replay" });
+  const p2 = createObserverTimelineData(client, store, { timers });
+  let told2 = 0;
+  p2.subscribe(() => (told2 += 1));
+  const first = await p2.spans({ window });
+  assert.deepEqual(first.spans, [], "nothing held yet");
+  assert.equal(told2, 1, "told once, to re-ask");
+  const again = await p2.spans({ window });
+  assert.equal(again.spans.length, 1);
+  assert.equal(told2, 1);
 });

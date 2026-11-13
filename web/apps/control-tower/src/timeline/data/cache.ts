@@ -61,6 +61,8 @@ function raced<T>(promise: Promise<T>, signal: AbortSignal | undefined, onAbort:
 export interface TileCache<T> {
   /** The tile's answer: from the cache when fresh, else from `load` (shared with other waiters). */
   get(key: string, edge: boolean, load: (signal: AbortSignal) => Promise<Loaded<T>>, signal?: AbortSignal): Promise<Loaded<T>>;
+  /** The last good answer held for a tile, fresh or stale, without loading: what a failed refresh falls back to. */
+  peek(key: string): Loaded<T> | null;
   /** Mark every tile that reached the live edge as stale. */
   invalidateEdge(): void;
   clear(): void;
@@ -146,6 +148,9 @@ export function createTileCache<T>(max = 96): TileCache<T> {
           throw error;
         },
       );
+    },
+    peek(key) {
+      return entries.get(key)?.value ?? null;
     },
     invalidateEdge() {
       for (const e of entries.values()) {

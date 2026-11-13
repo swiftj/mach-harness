@@ -9,7 +9,8 @@
 import type { SceneStore } from "../../scene/store";
 import type { ConcurrencySeries, MarkKind, SpanPage, TimeWindow, TimelineData, TimelineMark, TimelineSpan } from "../contract";
 import { abortError } from "./cache";
-import { byStart, concurrencyOf, cutAt, densityOf, honest, spanMatches } from "./derive";
+import { ALL_AVAILABLE } from "./availability";
+import { byStart, closeEndedVisits, concurrencyOf, cutAt, densityOf, honest, spanMatches, type ConcurrencyLimit } from "./derive";
 import { marksOfScene, spansOfScene } from "./scene";
 import { storeWatcher, THROTTLE_MS, type TimerLike } from "./watch";
 
@@ -40,7 +41,8 @@ export function createSimulationTimelineData(store: SceneStore, options: Simulat
     if (held && held.log === log && held.version === version) return held;
     const head = log.head();
     const spans = honest(spansOfScene(head, log));
-    const limits = head.factory.limits ? [{ name: "max_parallel", value: head.factory.limits.max_parallel, from: log.floorTime() ?? 0, to: null }] : [];
+    // As the observer says it: max_parallel bounds executions (and the cells they run).
+    const limits: ConcurrencyLimit[] = head.factory.limits ? [{ name: "max_parallel", value: head.factory.limits.max_parallel, from: log.floorTime() ?? 0, to: null, appliesTo: ["execution", "cell"] }] : [];
     held = { log, version, spans, marks: marksOfScene(head, spans), limits };
     return held;
   };
@@ -51,7 +53,9 @@ export function createSimulationTimelineData(store: SceneStore, options: Simulat
       const cut = cutAt(s, liveAt);
       if (cut) out.push(cut);
     }
-    return out;
+    // The scene closes a visit whose execution ended without its exit (StationVisit.unclosed); the same
+    // rule applied to the cut set keeps any other such visit from reading as still running.
+    return closeEndedVisits(out);
   };
   const check = (signal?: AbortSignal) => {
     if (signal?.aborted) throw abortError(signal);
@@ -82,7 +86,10 @@ export function createSimulationTimelineData(store: SceneStore, options: Simulat
     async span(id, signal) {
       check(signal);
       const found = derived().spans.find((s) => s.id === id);
-      return found ? cutAt(found, store.getState().liveAt) : null;
+      if (!found) return null;
+      const liveAt = store.getState().liveAt;
+      // A visit is read with its execution, so the closing rule applies to it as in spans().
+      return found.kind === "visit" ? (heldAt(liveAt).find((s) => s.id === id) ?? null) : cutAt(found, liveAt);
     },
     async marks(window: TimeWindow, kinds, signal) {
       check(signal);
@@ -99,6 +106,7 @@ export function createSimulationTimelineData(store: SceneStore, options: Simulat
       check(signal);
       const { log, liveAt } = store.getState();
       let times: number[];
+      const filtered = Boolean(filter?.ticket || filter?.execution);
       if (filter?.ticket || filter?.execution) {
         const refs = new Set([filter.ticket ? `cell:${filter.ticket}` : null, filter.execution ? `execution:${filter.execution}` : null].filter((x): x is string => x !== null));
         times = log
@@ -106,18 +114,14 @@ export function createSimulationTimelineData(store: SceneStore, options: Simulat
           .filter((e) => e.refs.some((r) => refs.has(r) || [...refs].some((x) => x.startsWith("cell:") && r.startsWith(`station:${x.slice(5)}/`))))
           .map((e) => e.t);
       } else times = log.times() as number[];
-      return densityOf(
-        times.filter((t) => t <= liveAt),
-        window,
-        buckets,
-        true,
-      );
+      return { ...densityOf(times.filter((t) => t <= liveAt), window, buckets, true), filtered };
     },
     async concurrency(window, buckets, signal) {
       check(signal);
       const { liveAt } = store.getState();
       return concurrencyOf(heldAt(liveAt), window, buckets, liveAt, derived().limits, true);
     },
+    availability: () => ALL_AVAILABLE,
     subscribe: watcher.subscribe,
   };
 }

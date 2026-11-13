@@ -6,6 +6,7 @@
  * (or `*_ms` numbers) and leave as epoch milliseconds.
  */
 import { timeOf } from "../../live/observer";
+import type { ConcurrencyLimit } from "./derive";
 import type {
   ConcurrencyBucket,
   ConcurrencySeries,
@@ -195,13 +196,21 @@ export function readConcurrency(value: unknown, asked: { readonly from: number; 
     buckets.push({ from, active });
   }
   buckets.sort((a, b) => a.from - b.from);
-  const limits: { name: string; value: number; from: number; to: number | null }[] = [];
+  // `applies_to` (M6.3): the span kinds a limit bounds, or null when it bounds none of the counted bands
+  // (a poll interval, a daily run budget). Passed on as `appliesTo` so only a limit on what a band
+  // counts is drawn on that band; absent (an older observer) stays absent.
+  const limits: ConcurrencyLimit[] = [];
   for (const raw of Array.isArray(d.limits) ? d.limits : []) {
     const l = obj(raw);
     const name = str(l.name);
     const v = num(l.value);
     const from = timeField(l, "from");
-    if (name && v !== null && from !== null) limits.push({ name, value: v, from, to: timeField(l, "to") });
+    if (!name || v === null || from === null) continue;
+    const limit: { -readonly [K in keyof ConcurrencyLimit]: ConcurrencyLimit[K] } = { name, value: v, from, to: timeField(l, "to") };
+    if (l.applies_to === null) limit.appliesTo = null;
+    else if (Array.isArray(l.applies_to)) limit.appliesTo = strings(l.applies_to);
+    else if (typeof l.applies_to === "string" && l.applies_to !== "") limit.appliesTo = [l.applies_to];
+    limits.push(limit);
   }
   return { from: num(d.from_ms) ?? asked.from, to: num(d.to_ms) ?? asked.to, bucketMs, buckets, limits, complete: d.complete === true };
 }

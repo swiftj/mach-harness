@@ -20,6 +20,8 @@ const globalTimers: TimerLike = {
 
 export interface StoreWatcher {
   subscribe(listener: () => void): () => void;
+  /** Tell every listener once, now, that earlier answers may be stale (a reset, a recovery). */
+  notify(): void;
 }
 
 export function storeWatcher(
@@ -68,6 +70,9 @@ export function storeWatcher(
   };
 
   return {
+    notify() {
+      for (const l of [...listeners]) l();
+    },
     subscribe(listener) {
       listeners.add(listener);
       if (!unsubscribe) {

@@ -26,6 +26,7 @@ import {
   evidenceRefsOf,
   exactSpanIds,
   hasTimeSection,
+  isStationAcrossCells,
   neighboursOf,
   ORDER_NOTE,
   outcomeAsOf,
@@ -36,9 +37,14 @@ import {
   queryOf,
   refKindOf,
   SPAN_KIND_WORDS,
+  stationVisitsAcross,
+  TIMELINE_RULE_WORDS,
   toolCallsWords,
   type EndFact,
 } from "./model";
+
+/** One vocabulary for rules: the inspector's shared words first, the Timeline's for the rest. */
+const RULES: Readonly<Record<string, string>> = { ...TIMELINE_RULE_WORDS, ...RULE_WORDS };
 
 /** Re-asking the provider at most this often while new events arrive. */
 const REQUERY_MS = 1000;
@@ -96,10 +102,14 @@ export function InTimeSection({ entity }: { entity: EntityRef }) {
 function InTime({ entity }: { entity: EntityRef }) {
   const hint = useScene((s) => queryHintOf(s, entity));
   const loaded = useSpansFor(entity, hint);
-  // As of the playhead: the time of the last event applied there, so this re-renders per event, not per frame.
-  const asOf = useScene((s) => s.at);
-  const workspace = useSceneStore((s) => s.workspace);
   const store = useStore();
+  // As of the playhead itself (order time): an outcome shows once the span's `end.at <= playhead`.
+  // The time of the last event applied would lag by an event when two share a millisecond. It
+  // re-renders when an event is applied (the cursor moves), not per frame: an end is an event, so
+  // the playhead crossing one always moves the cursor.
+  useSceneStore((s) => s.cursor);
+  const asOf = store.getState().playhead;
+  const workspace = useSceneStore((s) => s.workspace);
   const target = selectable(entity);
   const aside = target ? (
     <button
@@ -116,10 +126,30 @@ function InTime({ entity }: { entity: EntityRef }) {
         <p className="text-body-sm text-ink-muted">Reading its timing…</p>
       ) : loaded.status === "unavailable" ? (
         <p className="text-body-sm text-ink-muted">Timing is not available: {loaded.why}</p>
+      ) : isStationAcrossCells(entity) ? (
+        <StationAcrossCells entity={entity} spans={loaded.spans} truncated={loaded.truncated} asOf={asOf} />
       ) : (
         <Spans entity={entity} spans={loaded.spans} truncated={loaded.truncated} asOf={asOf} />
       )}
     </Section>
+  );
+}
+
+/** A station on its own (`station:build`): its visits across every cell, in time order. */
+function StationAcrossCells({ entity, spans, truncated, asOf }: { entity: EntityRef; spans: readonly TimelineSpan[]; truncated: boolean; asOf: number }) {
+  const { shown, rest } = useMemo(() => stationVisitsAcross(entity, spans, asOf), [entity, spans, asOf]);
+  if (!shown.length) return <p className="text-body-sm italic text-ink-subtle">No visit to this station is recorded by the playhead{truncated ? " (the source returned only part of this history)" : ""}.</p>;
+  return (
+    <>
+      <p className="text-caption font-semibold text-ink">Visits across cells, in time order</p>
+      <RefList>
+        {shown.map((v) => (
+          <SpanLink key={v.id} to={v.entity} span={v} asOf={asOf} />
+        ))}
+      </RefList>
+      {rest ? <p className="mt-1 text-caption text-ink-subtle">{rest} earlier not listed.</p> : null}
+      {truncated ? <p className="mt-3 text-caption text-ink-subtle">The source returned only part of this history: some visits may be missing.</p> : null}
+    </>
   );
 }
 
@@ -156,9 +186,9 @@ function Spans({ entity, spans, truncated, asOf }: { entity: EntityRef; spans: r
 }
 
 function PrimarySpan({ entity, primary, spans, truncated, asOf, dependency }: { entity: EntityRef; primary: TimelineSpan; spans: readonly TimelineSpan[]; truncated: boolean; asOf: number; dependency: string | null }) {
-  const began = beganFact(primary, asOf, RULE_WORDS);
-  const ended = endedFact(primary, asOf, RULE_WORDS);
-  const length = durationSentence(primary, asOf, RULE_WORDS);
+  const began = beganFact(primary, asOf, RULES);
+  const ended = endedFact(primary, asOf, RULES);
+  const length = durationSentence(primary, asOf, RULES);
   const { attempt, round, note } = attemptAndRound(primary);
   const outcome = outcomeAsOf(primary, asOf);
   const calls = toolCallsWords(primary);
@@ -199,7 +229,7 @@ function PrimarySpan({ entity, primary, spans, truncated, asOf, dependency }: { 
           <ul className="mt-0.5 flex flex-col gap-0.5 text-body-sm text-ink-muted">
             {companions.slice(-4).map((c) => (
               <li key={c.id}>
-                {SPAN_KIND_WORDS[c.kind]}: {durationSentence(c, asOf, RULE_WORDS).text}
+                {SPAN_KIND_WORDS[c.kind]}: {durationSentence(c, asOf, RULES).text}
               </li>
             ))}
           </ul>
@@ -237,7 +267,7 @@ function PrimarySpan({ entity, primary, spans, truncated, asOf, dependency }: { 
 function SpanLink({ to, span, asOf, prefix, detail }: { to: string; span: TimelineSpan | null; asOf: number; prefix?: string; detail?: string }) {
   const target = linkable(to);
   const what = span ? SPAN_KIND_WORDS[span.kind] : "Not held here";
-  const words = detail ?? (span ? durationSentence(span, asOf, RULE_WORDS).text : "its timing is not held here");
+  const words = detail ?? (span ? durationSentence(span, asOf, RULES).text : "its timing is not held here");
   const body = (
     <>
       {prefix ? <span className="text-ink-subtle">{prefix}: </span> : null}
@@ -252,7 +282,11 @@ function SpanLink({ to, span, asOf, prefix, detail }: { to: string; span: Timeli
   );
 }
 
-/** Evidence references the anatomy already knows (`evidenceRefsOf`), with the events that produced or verified each. */
+/**
+ * Evidence references the anatomy already knows (`evidenceRefsOf`): per artifact, its catalog id, the
+ * event that produced it and the events that verified it. Each carries `data-evidence-artifact` with
+ * its catalog id: M6.4 will make these references open the Evidence Theater on that artifact.
+ */
 function EvidenceRefs({ entity }: { entity: EntityRef }) {
   const scene = useScene();
   const cellRef = useMemo<EntityRef | null>(() => {
@@ -280,11 +314,28 @@ function EvidenceRefs({ entity }: { entity: EntityRef }) {
         {refs.map((r) => {
           const a = artifacts.get(r.artifactId);
           return (
-            <div key={r.artifactId} className="flex flex-col">
+            <div key={r.artifactId} className="flex flex-col" data-evidence-artifact={r.artifactId}>
               {a ? <ArtifactLink artifact={a} /> : null}
+              <span className="px-1.5 font-mono text-[12px] text-ink-muted">
+                <span className="font-sans text-ink-subtle">Catalog id: </span>
+                {r.artifactId}
+              </span>
               <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1.5 pb-1 text-caption text-ink-subtle">
-                {r.producedBy ? <JumpButton eventId={r.producedBy} label="Go to the record of the write" /> : <span>The record of the write is not named</span>}
-                {r.verifiedBy.length ? r.verifiedBy.slice(0, 2).map((id, i) => <JumpButton key={id} eventId={id} label={i === 0 ? "Go to the check that cites it" : "Go to the next check"} />) : null}
+                <span>Produced:</span>
+                {r.producedBy ? <JumpButton eventId={r.producedBy} label="Go to event" /> : <span>no record names the write</span>}
+              </span>
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1.5 pb-1 text-caption text-ink-subtle">
+                <span>Verified:</span>
+                {r.verifiedBy.length ? (
+                  <>
+                    {r.verifiedBy.slice(0, 3).map((id) => (
+                      <JumpButton key={id} eventId={id} label="Go to event" />
+                    ))}
+                    {r.verifiedBy.length > 3 ? <span>and {r.verifiedBy.length - 3} more</span> : null}
+                  </>
+                ) : (
+                  <span>no check cites it by the playhead</span>
+                )}
               </span>
             </div>
           );

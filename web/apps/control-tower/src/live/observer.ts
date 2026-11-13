@@ -99,6 +99,8 @@ export interface HistoryPage {
   /** False when part of the window may have left the observer's memory. */
   readonly complete: boolean;
   readonly watermark: number | null;
+  /** M6.3: the page stopped at the observer's scan cap (`more` is then true too); absent from an older observer. */
+  readonly capped?: boolean;
 }
 
 /** Counts of events per time bucket (`GET /api/v1/series`), for drawing a long history without loading it. */
@@ -596,6 +598,7 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
         more: d.more === true,
         complete: d.complete !== false,
         watermark: timeOf(d.watermark_ms),
+        ...(typeof d.capped === "boolean" ? { capped: d.capped } : {}),
       };
     },
     async snapshot(at) {

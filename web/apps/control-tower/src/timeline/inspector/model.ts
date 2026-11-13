@@ -36,9 +36,20 @@ const refIdOf = (ref: string): string => ref.slice(ref.indexOf(":") + 1);
 
 /** Whether the section applies to this ref at all. */
 export function hasTimeSection(ref: string): boolean {
-  if (!(refKindOf(ref) in PRIMARY_KINDS)) return false;
-  // A station on its own (`station:build`) is every cell's visits: the Timeline's station rows show that, not one inspector section.
-  return refKindOf(ref) !== "station" || refIdOf(ref).includes("/");
+  return refKindOf(ref) in PRIMARY_KINDS;
+}
+
+/** A station on its own (`station:build`), not one cell's: its section lists its visits across cells. */
+export const isStationAcrossCells = (ref: string): boolean => refKindOf(ref) === "station" && !refIdOf(ref).includes("/");
+
+/**
+ * A station's visits across every cell, begun by `asOf`, in time order: the latest `limit` and how
+ * many earlier ones are not listed.
+ */
+export function stationVisitsAcross(ref: string, spans: readonly TimelineSpan[], asOf: number, limit = 12): { shown: TimelineSpan[]; rest: number } {
+  const station = refIdOf(ref);
+  const all = spans.filter((s) => s.kind === "visit" && s.ids["station"] === station && begunBy(s, asOf)).sort(byStart);
+  return { shown: all.slice(Math.max(0, all.length - limit)), rest: Math.max(0, all.length - limit) };
 }
 
 /** Span ids that stand for exactly this ref (`<kind>:<entity>`), for `data.span(id)`. Empty when none is one-to-one. */
@@ -70,6 +81,8 @@ export function queryHintOf(scene: Scene | null, ref: string): string {
     case "cell":
       return `ticket:${id}`;
     case "station":
+      // On its own: every cell's visits to it.
+      return id.includes("/") ? `ticket:${before(id)}` : "kinds:visit";
     case "visit":
     case "seat":
     case "gate":
@@ -106,6 +119,7 @@ export function queryOf(hint: string, window: TimeWindow): SpanQuery {
   const at = hint.indexOf(":");
   if (at < 0) return { window };
   const [key, value] = [hint.slice(0, at), hint.slice(at + 1)];
+  if (key === "kinds") return { window, kinds: value.split(",").filter((k): k is SpanKind => k in SPAN_KIND_WORDS) };
   return key === "ticket" ? { window, ticket: value } : key === "execution" ? { window, execution: value } : key === "wave" ? { window, wave: value } : { window };
 }
 
@@ -119,6 +133,7 @@ export function dependencyEnds(ref: string): { from: string; to: string } | null
 /** Every span about the ref: its own (entity), and for a station visit or a dependency, the spans that stand for them. */
 export function spansAbout(ref: string, spans: readonly TimelineSpan[]): TimelineSpan[] {
   const kind = refKindOf(ref);
+  if (kind === "station" && isStationAcrossCells(ref)) return spans.filter((s) => s.kind === "visit" && s.ids["station"] === refIdOf(ref));
   if (kind === "station") {
     const [ticket, station] = refIdOf(ref).split("/");
     return spans.filter((s) => s.kind === "visit" && s.ids["station"] === station && (s.ids["ticket_id"] === ticket || s.entity.startsWith(`visit:${ticket}/`)));
@@ -219,15 +234,30 @@ export const SPAN_KIND_WORDS: Readonly<Record<SpanKind, string>> = {
   tool: "Tool call",
 };
 
-/** Rules the observer places span ends by that the inspector's Record block has no words for yet. */
-const SPAN_RULE_WORDS: Readonly<Record<string, string>> = {
+/**
+ * Rules spans are placed by, in words, for those the inspector's shared `RULE_WORDS`
+ * (src/shell/inspector/Provenance.tsx) does not hold yet. Merged at the call site, the shared words
+ * first: `{ ...TIMELINE_RULE_WORDS, ...RULE_WORDS }`, so one rule is said one way everywhere. The two
+ * visit rules repeat the shared wording; the lead may move `previous-completion` into RULE_WORDS.
+ */
+export const TIMELINE_RULE_WORDS: Readonly<Record<string, string>> = {
   "previous-completion": "it began when the previous task completed",
+  "execution-ended": "bounded by its execution's end: it never recorded an exit",
+  "unclosed-visit": "bounded by the next entry: it never recorded an exit",
 };
 
-/** A rule in words: the inspector's own (`RULE_WORDS`), then the span rules, then the rule's name made readable. */
+/** A rule in words: the given words (the call site's merge), then the span rules, then the rule's name made readable. */
 export function ruleWords(rule: string | null, rules: Readonly<Record<string, string>> = {}): string {
   if (!rule) return "a rule the record does not name";
-  return rules[rule] ?? SPAN_RULE_WORDS[rule] ?? rule.replace(/[-_]+/g, " ");
+  return rules[rule] ?? TIMELINE_RULE_WORDS[rule] ?? rule.replace(/[-_]+/g, " ");
+}
+
+/** The rules by which a visit with no exit record is closed (the observer's and the scene's D4). */
+const NO_EXIT_RULES: ReadonlySet<string> = new Set(["execution-ended", "unclosed-visit"]);
+
+/** A visit that never recorded an exit and was closed by rule: it ended without an exit record; it has no outcome. */
+export function endedWithoutExit(span: TimelineSpan): boolean {
+  return span.kind === "visit" && span.end !== null && span.end.basis === "inferred" && span.end.rule !== null && NO_EXIT_RULES.has(span.end.rule);
 }
 
 const span1 = (ms: number) => (ms < 1000 ? "under a second" : duration(ms));
@@ -257,12 +287,18 @@ export function durationSentence(span: TimelineSpan, asOf: number, rules: Readon
     const interrupted = span.attrs.interruptedAt !== undefined && span.attrs.interruptedAt <= asOf;
     const mode: LiveDuration["mode"] = interrupted ? "interrupted" : isWait(span) ? "wait" : "work";
     const d = span1(Math.max(0, asOf - start));
-    // The fallback text matches design section 5; the view shows the Elapsed component's live words.
-    const text = mode === "interrupted" ? `open for ${d}` : mode === "wait" ? `waiting for ${d}` : `running for ${d}`;
-    return { text, live: { startedAt: start, mode } };
+    // The app's one vocabulary (the Elapsed component's words): "at work for", "waiting for", "open for".
+    return { text: elapsedWords(mode, true, false, d), live: { startedAt: start, mode } };
   }
   const { ms, minMs, maxMs, basis } = span.duration;
   const known = ms ?? maxMs ?? minMs;
+  if (endedWithoutExit(span)) {
+    // Closed by rule at a bound (its execution's end, or the next entry): at most that long, never "took".
+    const start = span.start?.at ?? null;
+    const bound = maxMs ?? (start !== null && span.end?.at !== null && span.end?.at !== undefined ? span.end.at - start : null);
+    if (bound === null) return { text: "ended without an exit record; how long is not known", live: null };
+    return { text: elapsedWords("ended-unrecorded", true, true, span1(Math.max(0, bound))), live: null };
+  }
   if (isInterrupted(span)) {
     if (known === null) return { text: span.end?.reason === "superseded" ? "Open, then superseded; how long is not known" : "Open, then interrupted; how long is not known", live: null };
     const d = span1(known);
@@ -317,7 +353,7 @@ export function endedFact(span: TimelineSpan, asOf: number, rules: Readonly<Reco
     return { state: "open", text, at: null, eventId: null, inferred: null };
   }
   const inferred = e.basis === "inferred" ? `placed by rule: ${ruleWords(e.rule, rules)}` : null;
-  const how = e.reason === "unknown" ? "; how it ended is not recorded" : "";
+  const how = endedWithoutExit(span) ? "; ended without an exit record" : e.reason === "unknown" ? "; how it ended is not recorded" : "";
   if (e.at !== null) return { state: "at", text: `${clock(e.at)}${how}`, at: e.at, eventId: e.eventId, inferred };
   if (e.notBefore !== null || e.notAfter !== null) return { state: "bounded", text: `${boundsText(e.notBefore, e.notAfter, clock)}${how}`, at: null, eventId: e.eventId, inferred };
   return { state: e.eventId ? "not-known" : "not-recorded", text: e.eventId ? `Not known${how}` : "Not recorded", at: null, eventId: e.eventId, inferred };
@@ -329,8 +365,14 @@ function boundsText(lo: number | null, hi: number | null, clock: (t: number) => 
   return `not after ${clock(hi as number)}`;
 }
 
-/** The outcome as of `asOf`, or null: never before the event that established it. */
+/**
+ * The outcome as of the playhead `asOf`, or null: never before the event that established it, and
+ * never for a visit that ended without an exit record (no record says how it went). `asOf` is the
+ * playhead itself (order time), compared with the span's `end.at`: not the time of the last event
+ * applied, which lags the playhead by an event when two fall in the same millisecond.
+ */
 export function outcomeAsOf(span: TimelineSpan, asOf: number): string | null {
+  if (endedWithoutExit(span)) return null;
   return begunBy(span, asOf) && outcomeKnownAt(span, asOf) ? span.outcome : null;
 }
 
@@ -431,10 +473,17 @@ export function shortDuration(span: TimelineSpan, asOf: number, rules: Readonly<
 
 // ---------------------------------------------------------------- evidence (the hook Evidence Theater, M6.4, uses)
 
-/** One evidence reference: an artifact catalog id, the event that produced it, the events that verified it. */
+/**
+ * One evidence reference, stable for M6.4: an artifact's catalog id (`artifact:<artifactId>` is its
+ * ref; the observer's artifact catalog uses the same id), the event that produced it, and the events
+ * that verified it, newest first. References only: nothing here reads a file.
+ */
 export interface EvidenceRef {
+  /** The artifact catalog id. */
   readonly artifactId: string;
+  /** The event that recorded the write, or null when no record names it. */
   readonly producedBy: string | null;
+  /** Verification records that cite the artifact's file, in log order. */
   readonly verifiedBy: readonly string[];
 }
 

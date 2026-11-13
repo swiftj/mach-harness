@@ -622,3 +622,79 @@ test("scale: 60,000 spans build well under 100 ms and rebuild incrementally in a
   }
   console.log(`# ${spans.length} spans, ${agents} agents, 12 cells\n# ${report.join("\n# ")}`);
 });
+
+// ---------------------------------------------------------------- wave 2
+
+const { spansOnTrack, ancestorsOf, roundsOf, attemptsOf } = tracks;
+
+test("capacity waits as the observer names them (ids: ticket only) sit on their cell's Waits row; an unplaced cell is under 'No wave recorded'", () => {
+  const spans = [
+    ...fixture(),
+    // apps/observer spans.go: capacity-wait:cell:<T>@<event>, entity and parent cell:<T>, ids { ticket_id }.
+    { ...span({ kind: "capacity-wait", entity: "cell:T1", parent: "cell:T1", ids: { ticket_id: "T1" }, start: at(16), end: at(19) }), id: "capacity-wait:cell:T1@ev-9" },
+    { ...span({ kind: "capacity-wait", entity: "cell:T9", parent: "cell:T9", ids: { ticket_id: "T9" }, start: at(3), end: null }), id: "capacity-wait:cell:T9@ev-3" },
+  ];
+  const tree = buildTrackTree(spans, "product", NO_FILTERS, LIVE);
+  assert.equal(tree.ofSpan.get("capacity-wait:cell:T1@ev-9").trackId, "cell:T1/waits");
+  assert.deepEqual(pathTo(tree, "cell:T1/waits"), ["wave:W1", "slice:S1", "cell:T1", "cell:T1/waits"], "its wave through the cell's slice");
+  assert.equal(tree.ofSpan.get("capacity-wait:cell:T9@ev-3").trackId, "cell:T9/waits");
+  assert.equal(tree.byId.get("factory/unplanned").label, "No wave recorded");
+  assert.deepEqual(pathTo(tree, "cell:T9"), ["factory/unplanned", "cell:T9"], "never dropped");
+});
+
+test("the Verification row: verify visits' checks, with a count; not emitted when a cell has none; no 'executions' row is ever emitted", () => {
+  const tree = buildTrackTree(fixture(), "product", NO_FILTERS, LIVE);
+  assert.equal(tree.byId.get("cell:T1/verification").detail, "1 check recorded");
+  assert.ok(!tree.byId.has("cell:T2/verification"), "T2 has no checks: no row");
+  assert.ok(!tree.byId.has("cell:T3/verification"));
+  for (const g of ["product", "execution"]) for (const n of allNodes(buildTrackTree(fixture(), g, NO_FILTERS, LIVE))) assert.notEqual(n.kind, "executions", n.id);
+});
+
+test("attentionOnly: running alone does not count; failed, interrupted, refused and waiting on a person do", () => {
+  const exec = buildTrackTree(fixture(), "execution", { ...NO_FILTERS, attentionOnly: true }, LIVE);
+  assert.ok(!exec.byId.has("execution:E3"), "E3 is merely running");
+  assert.ok(exec.byId.has("execution:E1"), "E1 was interrupted");
+  assert.ok(exec.byId.has("execution:E4"), "E4 failed");
+  const refused = span({ kind: "seat", entity: "seat:T5/review#1/security", parent: "gate:T5/review#1", ids: { ticket_id: "T5", round: "1", seat: "security" }, start: at(1), end: at(2), outcome: "REJECT", reason: "refused" });
+  const running = span({ kind: "visit", entity: "visit:T6/build#1", ids: { ticket_id: "T6", station: "build", visit_id: "T6/build#1" }, start: at(1), end: null });
+  const t = buildTrackTree([refused, running], "product", { ...NO_FILTERS, attentionOnly: true }, LIVE);
+  assert.ok(t.byId.has("seat:T5/review#1/security"), "refused counts");
+  assert.ok(!t.byId.has("cell:T6"), "an open visit alone does not");
+});
+
+test("lens helpers: spansOnTrack, ancestorsOf, roundsOf, attemptsOf (an attempt spanning a round boundary)", () => {
+  const spans = fixture();
+  const tree = buildTrackTree(spans, "product", NO_FILTERS, LIVE);
+  // In time order; at the same instant, by id ("task:…" before "visit:…").
+  assert.deepEqual(spansOnTrack(tree, "station:T1/build").map((s) => s.entity), ["visit:T1/build#1/task:t1#red", "visit:T1/build#1", "visit:T1/build#1/task:t2#green", "visit:T1/build#2", "visit:T1/build#3"]);
+  assert.deepEqual(spansOnTrack(tree, "nope"), []);
+  assert.deepEqual(ancestorsOf(tree, "seat:T1/review#3/product").map((n) => n.id), ["wave:W1", "slice:S1", "cell:T1", "cell:T1/review"]);
+  assert.deepEqual(ancestorsOf(tree, "wave:W1"), []);
+
+  const rounds = roundsOf(spans, "T1");
+  assert.deepEqual(rounds.map((r) => r.round), [1, 2, 3]);
+  assert.deepEqual(rounds[0].visits.map((v) => v.ids.station), ["build", "verify", "review"]);
+  assert.deepEqual(rounds[0].seats.map((s) => s.ids.seat), ["architecture", "product", "security"], "seats in the order they began, then by id");
+  assert.deepEqual(rounds[1].visits.map((v) => v.ids.station), ["build", "verify"]);
+  assert.deepEqual([rounds[1].bounds.from, rounds[1].bounds.to, rounds[1].bounds.basis], [at(61), at(110), "measured"]);
+
+  const attempts = attemptsOf(spans, "T1");
+  assert.deepEqual(attempts.map((a) => [a.execution, a.attempt]), [["E1", 1], ["E2", 2]]);
+  assert.deepEqual([attempts[0].bounds.from, attempts[0].bounds.to], [at(19), at(88)]);
+  assert.equal(attempts[0].span.end.reason, "interrupted");
+  assert.ok(attempts[0].claim);
+  // E1 holds round 1 and the start of round 2; E2 the rest of round 2 and round 3.
+  assert.deepEqual(attempts[0].visits.map((v) => [v.span.ids.visit_id, v.by]), [["T1/build#1", "recorded"], ["T1/verify#1", "recorded"], ["T1/review#1", "recorded"], ["T1/build#2", "recorded"]]);
+  assert.deepEqual(attempts[1].visits.map((v) => v.span.ids.visit_id), ["T1/verify#2", "T1/build#3", "T1/verify#3", "T1/review#3"]);
+  const r2 = new Set(rounds[1].visits.map((v) => v.ids.visit_id));
+  assert.ok(attempts[0].visits.some((v) => r2.has(v.span.ids.visit_id)) && attempts[1].visits.some((v) => r2.has(v.span.ids.visit_id)), "round 2 falls in both attempts");
+  // A visit with no execution on its record is placed by overlap only, and said so.
+  const loose = span({ kind: "visit", entity: "visit:T1/audit#2", ids: { ticket_id: "T1", station: "audit", visit_id: "T1/audit#2" }, start: at(100), end: at(101) });
+  const withLoose = attemptsOf([...spans, loose], "T1");
+  assert.deepEqual(withLoose[1].visits.find((v) => v.span === loose)?.by, "overlap");
+  // The groom visits before any execution are in no attempt.
+  assert.ok(!withLoose.some((a) => a.visits.some((v) => v.span.ids.station === "groom")));
+  // An open attempt has no end.
+  const t2 = attemptsOf(spans, "T2");
+  assert.deepEqual([t2[0].execution, t2[0].bounds.to, t2[0].bounds.basis], ["E3", null, "open"]);
+});

@@ -47,6 +47,8 @@ interface SpanInput {
   readonly attrs?: SpanAttrs;
   /** A recorded duration (more exact than the difference of the ends). */
   readonly durationMs?: number | null;
+  /** The whole duration, when it is not the difference of the ends (a visit closed by rule: bounded, never measured). */
+  readonly duration?: TimelineSpan["duration"];
 }
 
 const PRECISIONS: readonly SpanPrecision[] = ["ms", "s", "arrival", "bounded", "unknown", "simulated"];
@@ -106,7 +108,7 @@ export function spansOfScene(scene: Scene, log: SceneLog | null = null): Timelin
       ids,
       start,
       end: stop,
-      duration: { ms, minMs: ms, maxMs: ms, basis },
+      duration: s.duration ?? { ms, minMs: ms, maxMs: ms, basis },
       outcome: stop ? (s.outcome ?? null) : null,
       authority: s.authority as SpanAuthority,
       attrs: s.attrs ?? {},
@@ -251,12 +253,14 @@ export function spansOfScene(scene: Scene, log: SceneLog | null = null): Timelin
           v.leftAt === null
             ? null
             : unclosed
-              ? { at: unclosed.at, eventId: unclosed.eventId, basis: "inferred", rule: unclosed.reason === "superseded" ? "unclosed-visit" : "execution-ended", reason: unclosed.reason === "superseded" ? "superseded" : "unknown" }
+              ? { at: unclosed.at, eventId: unclosed.eventId, basis: "inferred", rule: unclosed.reason === "superseded" ? "unclosed-visit" : "execution-ended", reason: unclosed.reason === "superseded" ? "superseded" : "interrupted" }
               : { at: v.leftAt, refs, reason: v.outcome === "failed" ? "failed" : "completed" },
-        // A visit the scene closed by inference has no outcome: no exit record said one.
+        // A visit the scene closed by inference (the observer's rule, apps/observer spans.go) has no
+        // outcome, is reconstructed, and its length is only bounded: at most entry to the bound.
         outcome: unclosed ? null : (v.outcomeWord ?? v.outcome),
-        authority: v.meta.authority,
+        authority: unclosed && v.meta.authority !== "simulated" ? "reconstructed" : v.meta.authority,
         durationMs: unclosed ? null : v.durationMs,
+        ...(unclosed && v.leftAt !== null ? { duration: { ms: null, minMs: null, maxMs: Math.max(0, unclosed.at - v.enteredAt), basis: "inferred" as const } } : {}),
         attrs: { action: v.action, round: v.round, ...(v.interrupted ? { interruptedAt: v.interrupted.at } : {}) },
       });
     }

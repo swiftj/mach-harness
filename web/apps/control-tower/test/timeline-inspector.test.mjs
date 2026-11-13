@@ -44,10 +44,10 @@ test("inferred: about, placed by a rule in words (the inspector's RULE_WORDS fir
   assert.match(M.durationSentence({ ...task, start: end(0, { basis: "inferred", rule: "some-new-rule" }) }, 300_000).text, /placed by rule: some new rule$/);
 });
 
-test("open: running for (work) or waiting for (waits), live, never an outcome", () => {
+test("open: at work for (work) or waiting for (waits), live, never an outcome", () => {
   const work = span({ start: 10_000, outcome: "built" });
   const d = M.durationSentence(work, 70_000);
-  assert.equal(d.text, "running for 1 min");
+  assert.equal(d.text, "at work for 1 min");
   assert.deepEqual(d.live, { startedAt: 10_000, mode: "work" });
   assert.equal(M.outcomeAsOf(work, 70_000), null);
   assert.equal(M.endedFact(work, 70_000).text, "Still open");
@@ -74,7 +74,7 @@ test("a span that ends after the playhead is still open there, and its outcome d
   const s = span({ start: 0, finish: 100_000, outcome: "PASS" });
   assert.equal(M.outcomeAsOf(s, 99_999), null);
   assert.equal(M.endedFact(s, 99_999).state, "open");
-  assert.equal(M.durationSentence(s, 60_000).text, "running for 1 min");
+  assert.equal(M.durationSentence(s, 60_000).text, "at work for 1 min");
   assert.equal(M.outcomeAsOf(s, 100_000), "PASS");
   assert.equal(M.durationSentence(s, 100_000).text, "took 1 min 40 s (measured)");
 });
@@ -164,7 +164,9 @@ test("refs map to span ids and queries without parsing opaque ids", () => {
   assert.equal(M.queryHintOf(null, "workflow:x1/w2"), "execution:x1");
   assert.equal(M.queryHintOf(null, "agent:x1/a7"), "", "an agent id is opaque: no scene, no narrowing");
   assert.deepEqual(M.queryOf("execution:x1", { from: 0, to: 9 }), { window: { from: 0, to: 9 }, execution: "x1" });
-  assert.equal(M.hasTimeSection("station:build"), false);
+  assert.equal(M.hasTimeSection("station:build"), true, "a station on its own lists its visits across cells");
+  assert.equal(M.queryHintOf(null, "station:build"), "kinds:visit");
+  assert.deepEqual(M.queryOf("kinds:visit", { from: 0, to: 1 }), { window: { from: 0, to: 1 }, kinds: ["visit"] });
   assert.equal(M.hasTimeSection("station:T-1/build"), true);
   assert.equal(M.hasTimeSection("finding:T-1/r1/security/1"), false);
 });
@@ -238,4 +240,74 @@ test("evidenceRefsOf: the artifacts the anatomies know, newest first, with the w
   // By station, and nothing for a kind whose anatomy lists no artifacts.
   if (a.station) assert.ok(M.evidenceRefsOf(scene, `station:${cell.ticketId}/${a.station}`).some((r) => r.artifactId === a.id));
   assert.deepEqual(M.evidenceRefsOf(scene, "wave:nothing"), []);
+});
+
+// ---------------------------------------------------------------- wave 2
+
+test("the outcome is compared with the playhead (order time), never one event late: two events in the same millisecond", () => {
+  // Two events at t=60 000: the visit's exit and the next entry. Applying only the first leaves the
+  // scene's last-applied time at 60 000 either way; the outcome follows the playhead, not that.
+  const a = span({ entity: "visit:T-1/build#1", ids: { station: "build", ticket_id: "T-1" }, start: 0, finish: 60_000, outcome: "built" });
+  const b = span({ entity: "visit:T-1/verify#1", ids: { station: "verify", ticket_id: "T-1" }, start: 60_000, finish: null });
+  assert.equal(M.outcomeAsOf(a, 59_999), null, "not before its event");
+  assert.equal(M.outcomeAsOf(a, 60_000), "built", "at the playhead's millisecond, with the other event of that millisecond");
+  assert.equal(M.durationSentence(b, 60_000).text, "at work for under a second");
+  assert.equal(M.outcomeAsOf(b, 60_000), null);
+});
+
+test("a station on its own lists its visits across cells in time order, the latest 12 and a count of the rest", () => {
+  const visits = Array.from({ length: 15 }, (_, i) => span({ entity: `visit:T-${i % 3}/build#${i}`, id: `visit:v${i}`, ids: { station: "build", ticket_id: `T-${i % 3}` }, start: i * 60_000, finish: i * 60_000 + 30_000 }));
+  const verify = span({ entity: "visit:T-0/verify#1", ids: { station: "verify", ticket_id: "T-0" }, start: 5_000, finish: 6_000 });
+  const { shown, rest } = M.stationVisitsAcross("station:build", [...visits, verify], 20 * 60_000);
+  assert.equal(shown.length, 12);
+  assert.equal(rest, 3);
+  assert.deepEqual(shown.map((s) => s.id), visits.slice(3).map((s) => s.id), "in time order, latest 12");
+  assert.equal(M.stationVisitsAcross("station:build", visits, 90_000).shown.length, 2, "only those begun by the playhead");
+  assert.ok(M.isStationAcrossCells("station:build") && !M.isStationAcrossCells("station:T-1/build"));
+});
+
+test("rule words: the Timeline's rules are worded, merged at the call site with the shared words first", () => {
+  const shared = { "unclosed-visit": "SHARED" };
+  const merged = { ...M.TIMELINE_RULE_WORDS, ...shared };
+  assert.equal(M.ruleWords("previous-completion", merged), "it began when the previous task completed");
+  assert.equal(M.ruleWords("execution-ended", merged), "bounded by its execution's end: it never recorded an exit");
+  assert.equal(M.ruleWords("unclosed-visit", merged), "SHARED", "the shared vocabulary wins");
+  assert.equal(M.ruleWords("execution-ended"), "bounded by its execution's end: it never recorded an exit", "worded even without the shared words");
+});
+
+test("an ended-without-exit visit: 'ended without an exit record, within <d>', never an outcome, never 'took'", () => {
+  for (const [rule, reason] of [["execution-ended", "interrupted"], ["unclosed-visit", "superseded"]]) {
+    const v = span({
+      start: 0,
+      finish: end(136_000, { basis: "inferred", rule, reason }),
+      duration: { ms: null, minMs: null, maxMs: 136_000, basis: "inferred" },
+      outcome: "built",
+    });
+    assert.ok(M.endedWithoutExit(v));
+    const d = M.durationSentence(v, 7 * 3_600_000).text;
+    assert.equal(d, "ended without an exit record, within 2 min 16 s");
+    assert.doesNotMatch(d, /took|at work/);
+    assert.equal(M.outcomeAsOf(v, 7 * 3_600_000), null, "no record says how it went");
+    assert.match(M.endedFact(v, 7 * 3_600_000, RULES, clock).text, /ended without an exit record/);
+  }
+  // No bound at all: said so.
+  const unbounded = span({ start: end(null, { notBefore: null }), finish: end(136_000, { basis: "inferred", rule: "execution-ended", reason: "interrupted" }), duration: { ms: null, minMs: null, maxMs: null, basis: "inferred" } });
+  assert.equal(M.durationSentence({ ...unbounded, start: null }, 200_000).text, "ended without an exit record; how long is not known");
+  // A task placed by rule is not a visit: it keeps "about, placed by rule".
+  const task = span({ kind: "task", start: end(0, { basis: "inferred", rule: "previous-completion" }), finish: 60_000, duration: { ms: 60_000, minMs: null, maxMs: null, basis: "inferred" } });
+  assert.equal(M.endedWithoutExit(task), false);
+  assert.match(M.durationSentence(task, 100_000).text, /^about 1 min, placed by rule: it began when the previous task completed$/);
+});
+
+test("evidence references carry the catalog id, the producing event and the verifying events (stable for M6.4)", async () => {
+  const scene = sim.fixtureLog(sim.SCENARIO).head();
+  const cell = Object.values(scene.cells).find((c) => c.artifacts.length > 0);
+  const refs = M.evidenceRefsOf(scene, `cell:${cell.ticketId}`);
+  for (const r of refs) {
+    assert.deepEqual(Object.keys(r).sort(), ["artifactId", "producedBy", "verifiedBy"]);
+    assert.ok(cell.artifacts.some((a) => a.id === r.artifactId), "a catalog id the scene knows");
+  }
+  const src = (await import("node:fs")).readFileSync(new URL("../src/timeline/inspector/InTimeSection.tsx", import.meta.url), "utf8");
+  assert.match(src, /data-evidence-artifact=\{r\.artifactId\}/);
+  assert.match(src, /M6\.4 will make these references open the Evidence Theater/);
 });

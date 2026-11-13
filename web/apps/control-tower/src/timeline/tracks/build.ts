@@ -2,7 +2,8 @@
  * The hierarchical track model: two projections of one span set (design section 4).
  *
  * Product: Wave → Slice → Cell → { rounds; one row per station; waits; review → seat per round;
- * verification }, executions as ribbons on the cell. Execution: Execution → { claim; workflow → agents
+ * verification }, executions as ribbons on the cell. The `executions` TrackKind is never emitted:
+ * executions are ribbons here and roots in the execution grouping. Execution: Execution → { claim; workflow → agents
  * (one node each, or lanes) → tools }, station visits as ribbons on the execution. Rounds and attempts
  * are never nested in each other.
  *
@@ -204,7 +205,12 @@ interface Placer {
 
 function productPlacer(rel: Relations): Placer {
   const d = new Drafts();
-  const unplanned = (): Draft => d.get("factory/unplanned") ?? d.make("factory/unplanned", "factory", null, { label: "Not in a delivery wave", order: 1000 });
+  // A cell's wave: the cell span's own wave_id where recorded; otherwise its slice's, read from any span
+  // that names both (a slice wait, an execution, a visit; relations.ts `sliceWave`). A capacity wait
+  // names only its ticket (apps/observer spans.go): it goes to its cell's Waits row through the cell.
+  // A slice or cell whose wave is recorded nowhere goes under this group, never dropped; it says only
+  // that no wave is recorded, not that the work is outside every wave.
+  const unplanned = (): Draft => d.get("factory/unplanned") ?? d.make("factory/unplanned", "factory", null, { label: "No wave recorded", order: 1000 });
   const wave = (w: string): Draft => d.get(`wave:${w}`) ?? d.make(`wave:${w}`, "wave", null, { ref: asRef(`wave:${w}`), label: w, order: 0, byTime: true });
   const slice = (s: string): Draft => {
     const id = `slice:${s}`;
@@ -273,6 +279,8 @@ function productPlacer(rel: Relations): Placer {
             case "visit":
               return { draft: station(t, idOf(span, "station") ?? "unknown"), section: 0 };
             case "task": {
+              // There is no "verification" span kind: the Verification row is the verify visits' tasks
+              // (the checks recorded), and it is not emitted when a cell has none (an empty row is noise).
               const st = stationOf(span, rel) ?? "unknown";
               return st === "verify" ? { draft: cellRow(t, "verification", "Verification", 400), section: 0 } : { draft: station(t, st), section: 1 };
             }
@@ -559,6 +567,11 @@ class Finisher {
       return a.node.id < b.node.id ? -1 : a.node.id > b.node.id ? 1 : 0;
     });
     const memo = this.lanesOf(draft);
+    if (draft.kind === "verification") {
+      let n = 0;
+      for (const lane of memo.lanes) n += lane.spans.length;
+      draft.detail = `${n} ${n === 1 ? "check" : "checks"} recorded`;
+    }
     let attention = memo.own;
     let spanCount = 0;
     let from = memo.from;

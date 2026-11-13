@@ -4,7 +4,17 @@
  * answer passes through (no outcome without an end, no tool span under a count-only agent).
  */
 import { extentOf, overlaps } from "../contract";
-import type { ConcurrencySeries, DensitySeries, SpanKind, SpanQuery, TimeWindow, TimelineSpan } from "../contract";
+import type { ConcurrencySeries, DensitySeries, SpanEnd, SpanKind, SpanQuery, TimeWindow, TimelineSpan } from "../contract";
+
+/**
+ * A density series with whether the caller's ticket or execution filter was applied. The contract's
+ * `density` takes one ticket or execution: a caller with several asks for the unfiltered series, and
+ * `filtered: false` lets the legend say it shows every event, not the filter's.
+ */
+export type FilteredDensity = DensitySeries & { readonly filtered: boolean };
+
+/** A limit with what it limits: `applies_to` from the observer (span kinds), null when it limits none of the counted bands. */
+export type ConcurrencyLimit = ConcurrencySeries["limits"][number] & { readonly appliesTo?: readonly string[] | null };
 
 /** Tile sizes, ascending. A window is cut into tiles of the smallest size that holds half of it, so panning reuses tiles. */
 export const TILE_STEPS: readonly number[] = [
@@ -134,4 +144,47 @@ export function concurrencyOf(spans: readonly TimelineSpan[], window: TimeWindow
     }
   }
   return { from: window.from, to: window.to, bucketMs: size, buckets: out.filter((b) => Object.keys(b.active).length > 0), limits, complete };
+}
+
+/** The execution a visit ran in: its `execution_id`, else its parent when that is an execution. */
+function executionRefOf(span: TimelineSpan): string | null {
+  const id = span.ids.execution_id;
+  if (id) return `execution:${id}`;
+  return span.parent?.startsWith("execution:") ? span.parent : null;
+}
+
+/**
+ * The documented rule for a visit that never recorded an exit (M6_1_SHARED_CONTRACTS, D4): it is
+ * closed at its execution's end, inferred by rule `execution-ended`, reason `interrupted`, no
+ * outcome, reconstructed. An M6.3 observer already sends visits closed this way. This is the CLIENT
+ * applying the same rule, as a safety net for an older observer: a visit is never presented as open
+ * (still running) when the execution it ran in has ended in the same answer. Only spans in the same
+ * answer are compared; a visit whose execution is not in the answer is left as it is. The duration is
+ * bounded, not measured: at most entry to the execution's end (`maxMs`), never "took".
+ */
+export function closeEndedVisits(spans: readonly TimelineSpan[]): TimelineSpan[] {
+  let ended: Map<string, SpanEnd> | null = null;
+  for (const s of spans) {
+    if (s.kind !== "execution" || !s.end || s.end.at === null) continue;
+    (ended ??= new Map()).set(s.entity, s.end);
+  }
+  if (!ended) return spans as TimelineSpan[];
+  const out: TimelineSpan[] = [];
+  for (const s of spans) {
+    const exec = s.kind === "visit" && s.end === null ? executionRefOf(s) : null;
+    const end = exec ? ended.get(exec) : undefined;
+    const startAt = s.start ? (s.start.at ?? s.start.notBefore) : null;
+    if (!end || end.at === null || (startAt !== null && startAt > end.at)) {
+      out.push(s);
+      continue;
+    }
+    out.push({
+      ...s,
+      end: { eventId: end.eventId, at: end.at, precision: end.precision, notBefore: null, notAfter: null, basis: "inferred", rule: "execution-ended", reason: "interrupted" },
+      duration: { ms: null, minMs: null, maxMs: startAt === null ? null : Math.max(0, end.at - startAt), basis: "inferred" },
+      outcome: null,
+      authority: s.authority === "simulated" ? "simulated" : "reconstructed",
+    });
+  }
+  return out;
 }
