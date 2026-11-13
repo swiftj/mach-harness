@@ -10,7 +10,7 @@ import { fc } from "@mach/ui";
 import { durationWords } from "../render";
 import type { BodyProps } from "./body";
 import { Caption, Diamond, Empty, Fig, Figures, FrameFig, Hit, HumanTriangle, LiveEdge, Mark, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
-import { attemptOf, frameOf, markSource, recoveryItems, type RecoveryItem } from "./model";
+import { attemptOf, frameAbout, frameOf, markSource, recoveryItems, type RecoveryItem } from "./model";
 import type { TimeWindow } from "../contract";
 
 const ROW_H = 30;
@@ -61,7 +61,7 @@ export function RecoveryBody(p: BodyProps) {
   );
 }
 
-function ItemRow({ it, y, s, liveAt, onReveal, onFrame }: { it: RecoveryItem; y: number; s: Scale; liveAt: number; onReveal(ref: string, at?: number): void; onFrame(w: TimeWindow): void }) {
+function ItemRow({ it, y, s, liveAt, onReveal, onFrame }: { it: RecoveryItem; y: number; s: Scale; liveAt: number; onReveal(ref: string, at?: number): void; onFrame(w: TimeWindow, about: readonly string[]): void }) {
   const mid = y + 11;
   const isExec = it.span.kind === "execution";
   const a = it.from !== null ? s.cx(it.from) : null;
@@ -78,7 +78,7 @@ function ItemRow({ it, y, s, liveAt, onReveal, onFrame }: { it: RecoveryItem; y:
       <text x={10} y={y + 26} style={{ ...SANS, fontSize: 10, fill: it.kind === "interrupted" ? fc("halt") : MUTED }} aria-hidden="true">
         {word}
       </text>
-      <FrameFig id={it.span.id} what={it.label} frame={frameOf([it.span])} right={s.gutter - 6} y={y + 16} onFrame={onFrame} />
+      <FrameFig id={it.span.id} what={it.label} frame={frameOf([it.span])} about={frameAbout([it.span])} right={s.gutter - 6} y={y + 16} onFrame={onFrame} />
       <line x1={s.gutter} x2={s.gutter + s.plotW} y1={y + ROW_H - 0.5} y2={y + ROW_H - 0.5} style={{ stroke: fc("grid") }} aria-hidden="true" />
       <Fig id={it.span.id} name={name} sources={[...it.sources, ...(it.resumed ? [it.resumed.source] : [])]} onActivate={() => onReveal(it.span.entity, it.stoppedAt ?? it.from ?? undefined)}>
         {a !== null && stop !== null ? (

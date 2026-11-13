@@ -29,6 +29,7 @@ import {
   readTable,
   runningAnimations,
   sceneReady,
+  selectTableRow,
   setTable,
   sleep,
   SOURCES,
@@ -313,6 +314,78 @@ describe("Timeline and Factory Floor over the real supervised run (real observer
     await page.locator("body").press("Shift+T");
     await sleep(300);
     assert.ok(await ruler.count(), "Shift+T did not bring the docked timeline back");
+    await context.close();
+  });
+
+  /** The toolbar row and the transport, measured: nothing clipped, and the pinned control's Follow reachable by a pointer. */
+  const chromeFit = (page) =>
+    page.evaluate(() => {
+      const row = document.querySelector("[data-timeline-toolbar]");
+      const stage = document.querySelector("#stage").getBoundingClientRect();
+      const speed = document.querySelector("[role=toolbar][aria-label=Transport] fieldset").getBoundingClientRect();
+      const pin = document.querySelector("[data-timeline-pinned]");
+      const follow = pin ? [...pin.querySelectorAll("span")].find((x) => x.textContent === "Follow") : null;
+      const f = follow?.getBoundingClientRect();
+      const hit = f ? document.elementFromPoint(f.x + f.width / 2, f.y + f.height / 2) : null;
+      return {
+        rowOverflow: row.scrollWidth - row.clientWidth,
+        speedClipped: speed.right > stage.right + 0.5,
+        pinned: Boolean(pin),
+        followInRow: Boolean(f) && f.right <= row.getBoundingClientRect().right + 0.5 && f.right <= stage.right + 0.5,
+        followHit: Boolean(hit && pin.contains(hit)),
+        inspectorOpen: !document.querySelector("aside[aria-label^='Inspector']").inert,
+      };
+    });
+
+  test("(M6.3 fix 1) the toolbar folds with the pinned control present, the inspector open or closed, at 1512, 1280 and 1100", async () => {
+    for (const [width, height] of [[1512, 982], [1280, 800], [1100, 700]]) {
+      const { page, context } = await open("#timeline", { width, height });
+      await sleep(1200);
+      // Narrow the window: it is pinned, and the live edge (the wall clock, far past the recorded run) is ahead of it.
+      const narrow = page.getByRole("button", { name: "Narrow the time window" });
+      if (await narrow.isVisible()) await narrow.click();
+      else {
+        await page.locator("[data-timeline-more]").click();
+        await page.getByRole("button", { name: "Narrow the window" }).click();
+      }
+      await sleep(1200);
+      for (let pass = 0; pass < 2; pass++) {
+        const fit = await chromeFit(page);
+        const where = `${width} px, inspector ${fit.inspectorOpen ? "open" : "closed"}`;
+        assert.ok(fit.pinned, `${where}: no pinned control after narrowing the window`);
+        assert.ok(fit.rowOverflow <= 1, `${where}: the toolbar overflows by ${fit.rowOverflow} px`);
+        assert.ok(!fit.speedClipped, `${where}: the transport's speed control is clipped`);
+        assert.ok(fit.followInRow && fit.followHit, `${where}: Follow is cut off or covered`);
+        // The other inspector state (I).
+        await page.locator(`${WS} [role=application]`).focus();
+        await page.keyboard.press("i");
+        await sleep(900);
+      }
+      await page.locator("[data-timeline-pinned]").click();
+      await sleep(800);
+      assert.equal(await page.locator("[data-timeline-pinned]").count(), 0, `${width} px: Follow did not follow the live edge again`);
+      await context.close();
+    }
+  });
+
+  test("(M6.3 fix 3) a wait on a person picked on the tracks: In time first, what it waited on, since and until when, and how it is known", async () => {
+    const { page, context } = await open("#timeline?table=1", { height: 1400 });
+    await expandTable(page);
+    const wait = await selectTableRow(page, (r) => spanRows([r], "person-wait").length === 1 && /\d/.test(cols(r).ended) && !/waiting/i.test(cols(r).duration));
+    assert.ok(wait, "no resolved wait on a person in the real run's table");
+    await sleep(1500);
+    const text = await inspectorText(page);
+    assert.doesNotMatch(text, /No further detail/, "the inspector says nothing more is recorded for a wait it holds");
+    const inTime = text.indexOf("In time");
+    assert.ok(inTime >= 0, `no In time section:\n${text.slice(0, 600)}`);
+    assert.ok(inTime < text.indexOf("Facts"), "In time is not shown before the cell's own record");
+    const section = text.slice(inTime, inTime + 900);
+    assert.match(section, /Waiting for a person/);
+    assert.match(section, /Waiting on\s+\S/, "what it waited on (the record's reasons) is not said");
+    assert.match(section, /Began\s+\d\d:\d\d:\d\d/);
+    assert.match(section, /Ended\s+\d\d:\d\d:\d\d/);
+    assert.match(section, /Duration\s+took .*\(measured\)/);
+    assert.match(section, /Recorded as\s+(Authority:\s+)?Authoritative/);
     await context.close();
   });
 

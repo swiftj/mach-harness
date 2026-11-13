@@ -52,7 +52,10 @@ export function InvestigationPanel(props: InvestigationPanelProps) {
     selectedTicket: ticketOfRef(selection),
     onReveal: props.onReveal,
     onWiden: () => props.onView({ window: null }),
-    onFrame: (window) => props.onView({ window }),
+    onFrame: (window, about) => {
+      props.onView({ window });
+      props.onFrameRows?.(about);
+    },
   };
   const incomplete = (lensData.marks as { complete?: boolean; truncated?: boolean }).complete === false || (lensData.marks as { truncated?: boolean }).truncated === true;
   const partial = props.lens === "concurrency" && lensData.series !== null && lensData.series.complete === false && lensData.series.buckets.length > 0;

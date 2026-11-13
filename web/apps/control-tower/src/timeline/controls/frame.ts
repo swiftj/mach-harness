@@ -757,3 +757,55 @@ export function idleSinceOf(spans: readonly TimelineSpan[], recorded: TimeWindow
   if (!Number.isFinite(last) && recorded) last = recorded.to;
   return Number.isFinite(last) ? last : null;
 }
+
+// ---------------------------------------------------------------- fitting the chrome, framing rows
+
+/**
+ * What the toolbar's fit depends on (X8): when any of it changes, the row is measured again from no
+ * squeeze. Everything that changes the row's content width belongs here, not only its own width: the
+ * pinned control arriving or its words changing ("live edge is 3 min ahead"), the window's length in
+ * words, the chips, the lens and the jump kind. A missing input is a row measured once and left
+ * clipped (the pinned control and Follow pushed out of reach).
+ */
+export function toolbarFitKey(p: {
+  readonly rowWidth: number;
+  readonly lens: string | null;
+  readonly filters: number;
+  readonly jump: string;
+  readonly caption: boolean;
+  readonly table: boolean;
+  readonly pinnedAhead: number | null;
+  readonly length: string;
+}): string {
+  const pinned = p.pinnedAhead === null ? "" : windowLengthWords(p.pinnedAhead);
+  return [p.rowWidth, p.lens ?? "", p.filters, p.jump, p.caption ? 1 : 0, p.table ? 1 : 0, pinned, p.length].join("|");
+}
+
+/**
+ * Below this width of the Timeline's own column (not the window: an inspector column beside it takes
+ * its share), the shared transport drops its secondary words (since when nothing runs, how far back),
+ * so its speed control is never clipped.
+ */
+export const TRANSPORT_FULL_WIDTH = 1100;
+
+export function transportCompact(columnWidth: number): boolean {
+  return columnWidth > 0 && columnWidth < TRANSPORT_FULL_WIDTH;
+}
+
+/**
+ * Which of the refs a lens's Frame concerns the tracks should bring into view: the first that has a
+ * track in the tree (so the stage is never left scrolled to rows outside the framed interval), else the
+ * first given (the workspace then finds its span); null when none is given.
+ */
+export function frameRevealRef(refs: readonly string[], hasTrack: (ref: string) => boolean): string | null {
+  for (const r of refs) if (hasTrack(r)) return r;
+  return refs[0] ?? null;
+}
+
+/**
+ * The Timeline workspace's chrome above its stage: the shared transport (40 px) and the toolbar row
+ * (40 px and its 1 px rule). Below 1280 px the inspector is a drawer; over the Timeline it starts
+ * under this chrome, so the transport, the toolbar and its Follow stay in reach while it is open (as
+ * on the floor, where the drawer stops at the timeline).
+ */
+export const TIMELINE_CHROME_HEIGHT = 81;

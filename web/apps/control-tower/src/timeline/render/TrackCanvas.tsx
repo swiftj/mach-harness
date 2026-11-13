@@ -31,7 +31,7 @@ import { drawTracks, hitBox, outlivesExecution, rowGeom, rowKey, type DrawOutput
 import { cursorRow, keyAction, panToShow, rowSpans } from "./keys";
 import { hitRow, spanTimes } from "./lod";
 import { readPalette, type Palette } from "./palette";
-import { clampWindow, dateChanges, frameWindow, isWallTime, panBy, scaleOf, tAt, tickLabel, ticksFor, xAt, zoomAbout, type Scale } from "./scale";
+import { afterPlayheadBand, clampWindow, dateChanges, frameWindow, isWallTime, panBy, scaleOf, tAt, tickLabel, ticksFor, xAt, zoomAbout, type Scale } from "./scale";
 import { openContext, rowSummary } from "../a11y/describe";
 import { markTrackOf } from "../tracks/build";
 import { ATTEMPT_WORDS, AUTHORITY_WORDS, describeSpan, durationText, durationWords, precisionLine, rowWords } from "./words";
@@ -718,14 +718,16 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
       const after = afterRef.current;
       if (after) {
         const behind = asOfPlayhead({ following: s.following, playhead: s.playhead, liveAt: Math.max(s.liveAt, liveAt) }).behind;
-        const a = Math.max(0, Math.min(width, x));
-        if (!behind || live - a < 2) after.style.visibility = "hidden";
+        const band = afterPlayheadBand(behind, x, live, width);
+        const label = after.firstElementChild as HTMLElement | null;
+        // The label inherits the band's visibility when shown (""), never "visible" of its own: that
+        // would keep it on screen once the band is hidden.
+        if (label) label.style.visibility = band?.label ? "" : "hidden";
+        if (!band) after.style.visibility = "hidden";
         else {
           after.style.visibility = "visible";
-          after.style.transform = `translateX(${Math.round(a)}px)`;
-          after.style.width = `${Math.round(live - a)}px`;
-          const label = after.firstElementChild as HTMLElement | null;
-          if (label) label.style.visibility = live - a >= 110 ? "visible" : "hidden";
+          after.style.transform = `translateX(${Math.round(band.left)}px)`;
+          after.style.width = `${Math.round(band.width)}px`;
         }
       }
     },

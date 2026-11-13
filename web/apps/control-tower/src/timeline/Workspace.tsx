@@ -48,6 +48,7 @@ import {
   extentOfSpans,
   fittingExpansion,
   followingAgain,
+  frameRevealRef,
   idleSinceOf,
   isAll,
   isPinned,
@@ -64,6 +65,7 @@ import {
   spansOfRef,
   switchLens,
   TimelineToolbar,
+  transportCompact,
   unionSpans,
   type Activated,
   type SpanSelection,
@@ -450,6 +452,8 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   const pendingReveal = useRef<string | null>(null);
   /** The ref whose span was last looked up (once per reveal: a span that never lands in the tree is not asked for again). */
   const loadingSpanFor = useRef<string | null>(null);
+  /** A reveal asked for by a lens's Frame: its rows are brought into view, the framed window is not panned. */
+  const frameOnly = useRef<string | null>(null);
   const ownSelection = useRef<string | null>(null);
   const [revealTick, setRevealTick] = useState(0);
 
@@ -577,10 +581,28 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
       }
       ownSelection.current = null;
       pendingReveal.current = ref;
+      frameOnly.current = null;
       loadingSpanFor.current = null;
       setRevealTick((t) => t + 1);
     },
     [selectionOf, spanByEntity, store, win, whole],
+  );
+
+  /**
+   * After a lens's Frame (the window already set to the framed interval): the rows it concerns are
+   * brought into view by the same reveal as a selection (ancestors expanded, scrolled to), with no
+   * selection, no seek, and the framed window kept (`frameOnly`: step 3 does not pan).
+   */
+  const onFrameRows = useCallback(
+    (refs: readonly string[]) => {
+      const ref = frameRevealRef(refs, (r) => tree.tracksOf(r).length > 0);
+      if (!ref) return;
+      frameOnly.current = ref;
+      pendingReveal.current = ref;
+      loadingSpanFor.current = null;
+      setRevealTick((t) => t + 1);
+    },
+    [tree],
   );
 
   // ---- revealing a selection made elsewhere (another view, the inspector, "Show in Timeline", 3, F)
@@ -591,6 +613,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
     }
     if (selection !== ownSelection.current) {
       pendingReveal.current = selection;
+      frameOnly.current = null;
       loadingSpanFor.current = null;
     }
     ownSelection.current = null;
@@ -600,6 +623,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
     const sel = store.getState().selection;
     if (focusNonce && sel) {
       pendingReveal.current = sel;
+      frameOnly.current = null;
       loadingSpanFor.current = null;
     }
   }, [focusNonce, store]);
@@ -617,7 +641,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
       data.span(id).then(
         (span) => {
           if (pendingReveal.current !== ref || !span) return;
-          const ext = extentOfSpans([span], store.getState().liveAt);
+          const ext = frameOnly.current === ref ? null : extentOfSpans([span], store.getState().liveAt);
           if (ext) {
             const next = panToInclude(win, ext);
             if (next !== win) store.setTimelineView({ window: clampWindow(next, whole) });
@@ -638,13 +662,15 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
     // 2. Scrolled into view.
     const row = layout.rowOf(trackId);
     if (row && tracksH > 0 && (row.y < top || row.y + row.height > top + tracksH)) setScrollTop(Math.max(0, Math.min(maxScroll, row.y - tracksH / 3)));
-    // 3. Its span in the window: panned to it keeping the zoom, or framed when it is wider than the window.
-    const ext = extentOfSpans(spansOfRef(tree, ref), store.getState().liveAt);
+    // 3. Its span in the window: panned to it keeping the zoom, or framed when it is wider than the
+    //    window. Not after a lens's Frame: the window is the framed interval the person asked for.
+    const ext = frameOnly.current === ref ? null : extentOfSpans(spansOfRef(tree, ref), store.getState().liveAt);
     if (ext) {
       const next = panToInclude(win, ext);
       if (next !== win) store.setTimelineView({ window: clampWindow(next, whole) });
     }
     pendingReveal.current = null;
+    frameOnly.current = null;
   }, [tree, layout, selection, focusNonce, revealTick, data, store, whole, win, top, tracksH, maxScroll]);
 
   // ---- L1: following and a pinned window are never both claimed.
@@ -761,7 +787,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
       <h2 className="sr-only">Execution Timeline</h2>
       {/* The shared transport, without the docked timeline's collapse button. */}
       <div className="shrink-0">
-        <Transport collapsed={false} idleSince={idleSince} />
+        <Transport collapsed={false} idleSince={idleSince} compact={transportCompact(fullWidth)} />
       </div>
       <TimelineToolbar data={data} tree={tree} view={view} onView={store.setTimelineView} spans={spans} drawn={win} whole={whole} lenses={lenses} pinned={pinned} />
 
@@ -795,7 +821,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
       {view.lens ? (
         // eslint-disable-next-line jsx-a11y/no-static-element-interactions
         <div className="shrink-0" data-timeline-band={view.lens} onKeyDown={onBandKey}>
-          <InvestigationPanel lens={view.lens} data={data} tree={tree} spans={spans} viewport={viewport} width={fullWidth} onView={onBandView} onReveal={onReveal} />
+          <InvestigationPanel lens={view.lens} data={data} tree={tree} spans={spans} viewport={viewport} width={fullWidth} onView={onBandView} onReveal={onReveal} onFrameRows={onFrameRows} />
         </div>
       ) : null}
 

@@ -184,3 +184,25 @@ export function sliceTitle(s: { readonly id: string; readonly title: string }): 
   const t = s.title.trim();
   return t && t !== s.id ? t : null;
 }
+
+/** What a Timeline span picked through an ancestor is called, by its ref's grammar. */
+export function pickedWords(detail: string): string {
+  if (/^visit:.*\/task:/.test(detail)) return "a build task";
+  if (detail.startsWith("visit:")) return "a station visit";
+  if (/^gate:.*\/round#/.test(detail)) return "a review round";
+  if (/^gate:.*\/required:/.test(detail)) return "a wait on a person";
+  if (detail.startsWith("workflow:")) return "a workflow";
+  if (detail.startsWith("seat:")) return "a review seat";
+  if (detail.startsWith("gate:")) return "a wait at a gate";
+  return "a span";
+}
+
+/**
+ * The note above an entity selected through a span the store cannot select itself (a wait on a
+ * person, a round, a seat). It never says nothing more is known: what the Timeline holds for the span
+ * (its record's reasons, since when, until when or still open, how it is known) is the In time
+ * section, shown first; the selected ancestor's own record follows.
+ */
+export function pickedThroughWords(detail: string, kindWord: string): string {
+  return `You picked ${pickedWords(detail)} on the Timeline. It is not selectable on its own: what its span records is under In time, first; its ${kindWord.toLowerCase()}'s own record follows.`;
+}

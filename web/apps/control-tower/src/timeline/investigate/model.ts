@@ -123,6 +123,18 @@ const FRAME_PAD = 0.05;
  * The padded extent of `spans` (X15): from the earliest start to the latest recorded instant (an open
  * span counts by its start), padded 5% each side. Null when none has a time.
  */
+/**
+ * The entity refs a Frame concerns, for bringing their rows into view: each span's own ref, then its
+ * parent's (a wait on a person has no row of its own in the Execution grouping; its cell names the
+ * executions that do). In order, without repeats.
+ */
+export function frameAbout(spans: readonly (TimelineSpan | null | undefined)[]): string[] {
+  const out = new Set<string>();
+  for (const s of spans) if (s) out.add(s.entity);
+  for (const s of spans) if (s?.parent) out.add(s.parent);
+  return [...out];
+}
+
 export function frameOf(spans: readonly TimelineSpan[]): TimeWindow | null {
   let from = Infinity;
   let to = -Infinity;

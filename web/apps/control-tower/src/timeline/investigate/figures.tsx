@@ -282,15 +282,16 @@ export function FadeDefs({ id, color }: { id: string; color: string }) {
 }
 
 /**
- * "Frame" for one item of a lens (X15): sets the Timeline's window to the item's padded extent. Drawn as
+ * "Frame" for one item of a lens (X15): sets the Timeline's window to the item's padded extent and
+ * brings the rows of `about` (the entity refs of the spans it frames) into view on the tracks. Drawn as
  * a small labelled figure at the right of the gutter, ending at `right`; nothing when there is no frame.
  */
-export function FrameFig({ id, what, frame, right, y, onFrame }: { id: string; what: string; frame: TimeWindow | null; right: number; y: number; onFrame(w: TimeWindow): void }) {
+export function FrameFig({ id, what, frame, about = [], right, y, onFrame }: { id: string; what: string; frame: TimeWindow | null; about?: readonly string[]; right: number; y: number; onFrame(w: TimeWindow, about: readonly string[]): void }) {
   if (!frame) return null;
   const w = 36;
   const x = right - w;
   return (
-    <Fig id={`frame:${id}`} name={`Frame ${what}: show it from ${when(frame.from)} to ${when(frame.to)} on the tracks`} sources={[]} onActivate={() => onFrame(frame)}>
+    <Fig id={`frame:${id}`} name={`Frame ${what}: show it from ${when(frame.from)} to ${when(frame.to)} on the tracks`} sources={[]} onActivate={() => onFrame(frame, about)}>
       <Hit x={x} y={y} w={w} h={12} />
       <path aria-hidden="true" d={`M${x + 1} ${y + 3}V${y + 1}H${x + 3}M${x + 1} ${y + 9}V${y + 11}H${x + 3}`} style={{ fill: "none", stroke: SUBTLE, strokeWidth: 1 }} />
       <text x={x + 6} y={y + 9.5} style={{ ...SANS, fontSize: 10, fill: "var(--mach-accent-ink)" }}>

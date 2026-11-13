@@ -44,6 +44,7 @@ import {
   spansOfRef,
   switchLens,
   toggled,
+  toolbarFitKey,
   windowLengthWords,
   type JumpKind,
   type LensMemo,
@@ -332,7 +333,8 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
    * into the overflow menu by width; whatever still does not fit (long lens names, many chips, a long
    * caption at an odd width) is squeezed step by step, measured after each render: 1 hides the filter
    * chips (the Filters count stays), 2 turns every label into its icon, 3 moves the time controls into
-   * the overflow menu. Any change of the row's width starts again from 0.
+   * the overflow menu (and shortens the pinned control to "Window pinned — Follow"). Any change of
+   * what the row holds (`toolbarFitKey`) starts again from 0.
    */
   const rowRef = useRef<HTMLDivElement>(null);
   const [squeeze, setSqueeze] = useState(0);
@@ -347,7 +349,17 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const fitKey = `${rowWidth}|${view.lens ?? ""}|${filterCount(view.filters)}|${lastJump}|${caption ? 1 : 0}|${view.table ? 1 : 0}`;
+  // Every input that changes the row's content (the pinned control among them), not only its width.
+  const fitKey = toolbarFitKey({
+    rowWidth,
+    lens: view.lens,
+    filters: filterCount(view.filters),
+    jump: lastJump,
+    caption: caption !== null,
+    table: view.table,
+    pinnedAhead: pinned ? pinned.ahead : null,
+    length: windowLengthWords(shown().to - shown().from),
+  });
   const [fitFor, setFitFor] = useState(fitKey);
   if (fitFor !== fitKey) {
     setFitFor(fitKey);
@@ -627,7 +639,7 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
             className="ml-2 inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-dashed border-line-strong px-2.5 text-caption text-ink-muted hover:text-ink"
           >
             <span>
-              Window pinned<span className="@max-[1099px]:hidden"> · live edge is {windowLengthWords(pinned.ahead)} ahead</span>
+              Window pinned<span className={cn("@max-[1099px]:hidden", squeeze >= 2 && "hidden")}> · live edge is {windowLengthWords(pinned.ahead)} ahead</span>
             </span>
             <span aria-hidden="true">—</span>
             <span className="font-semibold text-accent-ink underline decoration-1 underline-offset-[3px]">Follow</span>

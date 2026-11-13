@@ -18,6 +18,7 @@ import { cn, useTheme, type ThemePreference } from "@mach/ui";
 import { refKind } from "../sim";
 import { heldStore, SceneStoreProvider, showInTimeline, showOnFloor, useSceneStore, useStore, type SceneStore } from "../scene";
 import { timelineDataFor } from "../timeline/data";
+import { TIMELINE_CHROME_HEIGHT } from "../timeline/controls/frame";
 import { TimelineWorkspace } from "../timeline/Workspace";
 import { Announcer } from "./Announcer";
 import { Brand, ModeSwitch, RunIdentity, WorkspaceSwitch } from "./chrome";
@@ -469,8 +470,9 @@ export function Shell() {
                 inspectorOpen && !theater ? "translate-x-0" : "translate-x-full",
               ),
         )}
-        // As a drawer it stops at the timeline, so the transport stays in reach while it is open.
-        style={wide ? undefined : { top: theater ? 0 : TOP, bottom: theater || !onFloor ? 0 : tl }}
+        // As a drawer it stops at the timeline, so the transport stays in reach while it is open; over
+        // the Timeline workspace it starts under that workspace's transport and toolbar, for the same reason.
+        style={wide ? undefined : { top: theater ? 0 : onFloor ? TOP : TOP + TIMELINE_CHROME_HEIGHT, bottom: theater || !onFloor ? 0 : tl }}
       >
         <div className="h-full" style={{ width: wide ? inspectorW : "100%" }}>
           <Inspector />

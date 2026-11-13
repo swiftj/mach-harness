@@ -12,7 +12,7 @@ import type { TimelineSpan, TimeWindow } from "../contract";
 import { describeSpan, durationWords } from "../render";
 import type { BodyProps } from "./body";
 import { Caption, Diamond, Empty, Fig, Figures, FrameFig, Hit, Mark, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when } from "./figures";
-import { compareRungs, endBy, frameOf, retryLadders, rungTimings, spanSource, startAt, verdictWords, type Ladder, type Rung, type RungVerdict } from "./model";
+import { compareRungs, endBy, frameAbout, frameOf, retryLadders, rungTimings, spanSource, startAt, verdictWords, type Ladder, type Rung, type RungVerdict } from "./model";
 
 const BLOCK = 112;
 const CHIP_Y = 40;
@@ -92,7 +92,7 @@ export function RetriesBody(p: BodyProps) {
   );
 }
 
-function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal, onFrame }: { ladder: Ladder; width: number; gutter: number; liveAt: number; chosen: readonly string[]; onPick(r: Rung, shift: boolean): void; onReveal(ref: string, at?: number): void; onFrame(w: TimeWindow): void }) {
+function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal, onFrame }: { ladder: Ladder; width: number; gutter: number; liveAt: number; chosen: readonly string[]; onPick(r: Rung, shift: boolean): void; onReveal(ref: string, at?: number): void; onFrame(w: TimeWindow, about: readonly string[]): void }) {
   const n = ladder.rungs.length;
   const avail = width - gutter - 20;
   const rungW = Math.max(130, Math.min(300, avail / n));
@@ -166,7 +166,7 @@ function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal
           execution not recorded on {ladder.unattemptedSlots}
         </text>
       ) : null}
-      <FrameFig id={`ladder:${ladder.ticket}`} what={`the passes of ${ladder.ticket}`} frame={frameOf(ladder.rungs.flatMap((r) => [r.build, r.verify]).filter((x): x is TimelineSpan => x !== null))} right={gutter - 6} y={BLOCK - 22} onFrame={onFrame} />
+      <FrameFig id={`ladder:${ladder.ticket}`} what={`the passes of ${ladder.ticket}`} frame={frameOf(ladder.rungs.flatMap((r) => [r.build, r.verify]).filter((x): x is TimelineSpan => x !== null))} about={frameAbout(ladder.rungs.flatMap((r) => [r.build, r.verify]))} right={gutter - 6} y={BLOCK - 22} onFrame={onFrame} />
       <line x1={gutter - 0.5} x2={gutter - 0.5} y1={4} y2={BLOCK - 4} style={{ stroke: "var(--mach-line)" }} aria-hidden="true" />
 
       {/* Rounds: brackets above. */}

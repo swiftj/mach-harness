@@ -11,7 +11,7 @@ import { timecode } from "../../shell/time";
 import { findArtifact, type ArtifactState, type EntityRef } from "../../sim";
 import { showInTimeline, showOnFloor, useScene, useSceneStore, useStore } from "../../scene";
 import { ArtifactLink } from "../../shell/inspector/anatomies";
-import { Elapsed, Facts, JumpButton, Mono, RefLink, RefList, Section, precisionWords, useEntityEvents, type Fact } from "../../shell/inspector/parts";
+import { AuthorityBadge, Elapsed, Facts, JumpButton, Mono, RefLink, RefList, Section, precisionWords, useEntityEvents, type Fact } from "../../shell/inspector/parts";
 import { RULE_WORDS } from "../../shell/inspector/Provenance";
 import { selectable } from "../../shell/vocab";
 import type { TimelineData, TimelineSpan } from "../contract";
@@ -45,6 +45,7 @@ import {
   subjectSpan,
   TIMELINE_RULE_WORDS,
   toolCallsWords,
+  waitedOnOf,
   type EndFact,
 } from "./model";
 
@@ -205,8 +206,11 @@ function PrimarySpan({ entity, context, primary, spans, truncated, asOf, depende
   const { before, after } = neighboursOf(primary, spans, asOf);
   const companions = context ? [] : companionsOf(entity, primary, spans, asOf);
   const open = length.live?.mode === "open" ? openContextWords(openContextOf(primary, spans, asOf), (t) => timecode(t, false)) : "";
+  const waitedOn = waitedOnOf(primary, asOf);
   const facts: Fact[] = [
     ["What", SPAN_KIND_WORDS[primary.kind]],
+    // A wait: what it waited on, in its record's own words (never inferred).
+    waitedOn ? ["Waiting on", waitedOn.length === 1 ? waitedOn[0] : <ul key="w" className="flex flex-col gap-0.5">{waitedOn.map((r) => <li key={r}>{r}</li>)}</ul>] : null,
     ["Began", <EndFactValue key="b" fact={began} />],
     primary.start && began.state !== "not-started" && primary.start.precision ? ["Start time", precisionWords(primary.start.precision)] : null,
     ["Ended", <EndFactValue key="e" fact={ended} />],
@@ -227,6 +231,8 @@ function PrimarySpan({ entity, context, primary, spans, truncated, asOf, depende
     round !== null ? ["Round", round] : null,
     outcome !== null ? [outcomeLabel(primary), <OutcomeValue key="o" outcome={outcome} />] : null,
     calls ? ["Tool calls", calls] : null,
+    // Picked through another entity, the Record section below is that entity's: the span's own authority is said here.
+    context ? ["Recorded as", <AuthorityBadge key="a" authority={primary.authority} />] : null,
   ];
   return (
     <>

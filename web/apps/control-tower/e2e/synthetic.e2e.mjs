@@ -1,4 +1,4 @@
-/* global document */
+/* global document, getComputedStyle */
 // The Timeline over a real mach-observer serving a small synthetic history (mach-synth: 12 cells,
 // 12,000 events, seed 7, six hours). The generator's summary names each feature (which ticket has
 // a failed verification, which execution was interrupted, ...), so the tests look for those, not
@@ -331,6 +331,61 @@ describe("Timeline over a synthetic history (real observer)", () => {
     check(/as of the live edge/i.test(caption), "T6", `the table does not say it is as of the live edge while the playhead is back:\n${caption.slice(0, 200)}`);
     const tracks = await page.evaluate((ws) => document.querySelector(ws)?.innerText ?? "", WS);
     check(/after the playhead/i.test(tracks), "T6", "nothing labels the region after the playhead");
+    await context.close();
+  });
+
+  test("(M6.3 fix 2) back at the live edge (L), 'After the playhead' is gone from the tracks", async () => {
+    const rows = await productRows();
+    const cell = spanRows(rows, "cell").find((r) => /merged/i.test(cols(r).outcome));
+    const at = summary.start_ms + clockMs(cols(cell).started);
+    const { page, context } = await open(`#timeline?at=${at}`);
+    await sleep(1500);
+    const label = () =>
+      page.evaluate((ws) => {
+        const band = document.querySelector(`${ws} [data-after-playhead]`);
+        const l = band?.firstElementChild;
+        return { band: band ? getComputedStyle(band).visibility : null, label: l ? getComputedStyle(l).visibility : null };
+      }, WS);
+    const behind = await label();
+    assert.equal(behind.band, "visible", "scrubbed back, the tracks do not tint the stretch after the playhead");
+    await page.locator(`${WS} [role=application]`).focus();
+    await page.keyboard.press("l");
+    await sleep(1500);
+    const back = await label();
+    assert.equal(back.band, "hidden", "at the live edge the after-the-playhead band is still drawn");
+    assert.equal(back.label, "hidden", "at the live edge the label 'After the playhead' is still on screen");
+    await context.close();
+  });
+
+  test("(M6.3 fix 4) a lens's Frame brings the rows it framed into view, without selecting", async () => {
+    const { page, context } = await open("#timeline?group=execution&lens=recovery", { height: 982 });
+    const band = page.locator("[data-timeline-band=recovery]");
+    await band.waitFor({ timeout: 15000 });
+    await sleep(1500);
+    // The tracks scrolled far from anything the lens lists.
+    const box = await page.locator(`${WS} [role=application]`).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    for (let i = 0; i < 12; i++) await page.mouse.wheel(0, 600);
+    await sleep(800);
+    const fig = page.locator("[data-timeline-band] [data-fig^='frame:']").first();
+    const name = await fig.getAttribute("aria-label");
+    const ticket = /SYN-\d{3}/.exec(name ?? "")?.[0];
+    assert.ok(ticket, `the first Frame names no ticket: ${name}`);
+    const sel0 = (await hooks(page)).hash.match(/sel=([^&]*)/)?.[1] ?? null;
+    await fig.click();
+    await sleep(2000);
+    const visible = await page.evaluate((ws) => {
+      const tracks = document.querySelector(`${ws} section[aria-label=Tracks]`).getBoundingClientRect();
+      return [...document.querySelectorAll(`${ws} section[aria-label=Tracks] button`)]
+        .filter((e) => {
+          const r = e.getBoundingClientRect();
+          return r.height > 0 && r.y >= tracks.y && r.bottom <= tracks.bottom;
+        })
+        .map((e) => e.innerText.replace(/\s+/g, " "));
+    }, WS);
+    assert.ok(visible.some((t) => t.includes(ticket)), `after Frame, no row of ${ticket} is in view: ${visible.slice(0, 8).join(" | ")}`);
+    const sel1 = (await hooks(page)).hash.match(/sel=([^&]*)/)?.[1] ?? null;
+    assert.equal(sel1, sel0, "Frame changed the selection");
     await context.close();
   });
 

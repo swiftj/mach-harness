@@ -59,6 +59,7 @@ import {
 import { identityOf, parseStation, pickedVisitOf, selectEntity } from "./entity";
 import { AuthorityBadge, Evidence, JumpButton, precisionWords, useEntityEvents } from "./parts";
 import { Provenance } from "./Provenance";
+import { pickedThroughWords } from "./words";
 import { RunNow } from "./RunNow";
 import { InTimeSection } from "../../timeline/inspector";
 import { cellTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
@@ -283,6 +284,7 @@ function Selected({ entity }: { entity: AnyRef }) {
   const look = value ? lookOf(subject, value, historyEnd) : null;
   const { all } = useEntityEvents(entity);
   const unknown = all.length === 0 && !value;
+  const through = Boolean(detail) && !picked;
   return (
     <div>
       <header className="sticky top-0 z-10 border-b border-line bg-surface px-5 pb-4 pt-4">
@@ -315,6 +317,8 @@ function Selected({ entity }: { entity: AnyRef }) {
       </header>
       {unknown ? <p className="px-5 py-4 text-body-sm text-ink-muted">No record of that entity has been received. If it appears, this shows it.</p> : null}
       {picked && detail ? <PickedVisit entity={entity} /> : picked ? null : <PickedThrough entity={entity} kindWord={identity.kindWord} />}
+      {/* A span picked through this entity (a wait on a person, a seat, a round): its time first, then this entity's record. */}
+      {through ? <InTimeSection entity={entity} detail={detail} /> : null}
       {value ? (
         <div className="pt-4">
           {/* "Why" reads the selection's own latest record: not shown for a visit picked through its station. */}
@@ -322,7 +326,7 @@ function Selected({ entity }: { entity: AnyRef }) {
           <Anatomy entity={subject} value={value} />
         </div>
       ) : null}
-      <InTimeSection entity={entity} detail={detail} />
+      {through ? null : <InTimeSection entity={entity} detail={detail} />}
       {value || all.length ? <Provenance entity={entity} value={value} /> : null}
       <Evidence entity={entity} />
     </div>
@@ -342,17 +346,6 @@ function PickedVisit({ entity }: { entity: AnyRef }) {
   );
 }
 
-/** What a Timeline span picked through an ancestor is called, by its ref's grammar. */
-function pickedWords(detail: string): string {
-  if (/^visit:.*\/task:/.test(detail)) return "a build task";
-  if (detail.startsWith("visit:")) return "a station visit";
-  if (/^gate:.*\/round#/.test(detail)) return "a review round";
-  if (detail.startsWith("workflow:")) return "a workflow";
-  if (detail.startsWith("seat:")) return "a review seat";
-  if (detail.startsWith("gate:")) return "a wait at a gate";
-  return "a span";
-}
-
 /**
  * When the Timeline picked something the store cannot select itself (a visit, a round, a build task in
  * the simulation), the selection is its nearest selectable ancestor: said here, so the inspector never
@@ -363,7 +356,7 @@ function PickedThrough({ entity, kindWord }: { entity: AnyRef; kindWord: string 
   if (!detail) return null;
   return (
     <p className="mx-5 mt-4 rounded-sm border border-dashed border-line-strong px-3 py-2 text-body-sm text-ink-muted" data-inspector-picked={detail}>
-      You picked {pickedWords(detail)} on the Timeline (<span className="font-mono text-[12px] text-ink">{detail}</span>). No further detail is recorded for that kind here, so its {kindWord.toLowerCase()} is shown.
+      {pickedThroughWords(detail, kindWord)} <span className="font-mono text-[12px] text-ink [overflow-wrap:anywhere]">{detail}</span>
     </p>
   );
 }

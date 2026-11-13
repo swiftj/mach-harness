@@ -543,4 +543,6 @@ export interface InvestigationPanelProps {
   onView(patch: Partial<TimelineViewState>): void;
   /** Select in the store and frame in the Timeline. */
   onReveal(ref: string, at?: number): void;
+  /** After a lens's Frame: bring the tracks of these entity refs into view (no selection, no seek, the framed window kept). */
+  onFrameRows?(refs: readonly string[]): void;
 }

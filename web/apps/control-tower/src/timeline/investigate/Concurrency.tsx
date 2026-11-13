@@ -10,7 +10,7 @@ import { duration } from "../../shell/time";
 import { capacityWords, durationWords } from "../render";
 import type { BodyProps } from "./body";
 import { Caption, Empty, Fig, Figures, FrameFig, Hit, LiveEdge, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
-import { activeAt, concurrencyView, spanSource, type ConcurrencyLine, type LaneSegment, frameOf } from "./model";
+import { activeAt, concurrencyView, spanSource, type ConcurrencyLine, type LaneSegment, frameAbout, frameOf } from "./model";
 
 const CHART_TOP = 8;
 const CHART_H = 120;
@@ -172,7 +172,7 @@ export function ConcurrencyBody(p: BodyProps) {
                 </text>
                 <Ring x={8} y={ly + 1} w={Math.min(s.gutter - 16, lane.label.length * 6.5 + 4)} h={12} />
               </Fig>
-              <FrameFig id={lane.key} what={lane.label} frame={frameOf(lane.segments.map((sg) => sg.span))} right={s.gutter - 6} y={ly + 1.5} onFrame={p.onFrame} />
+              <FrameFig id={lane.key} what={lane.label} frame={frameOf(lane.segments.map((sg) => sg.span))} about={frameAbout(lane.segments.map((sg) => sg.span))} right={s.gutter - 6} y={ly + 1.5} onFrame={p.onFrame} />
               <line x1={s.gutter} x2={s.gutter + s.plotW} y1={ly + LANE_H - 0.5} y2={ly + LANE_H - 0.5} style={{ stroke: fc("grid") }} aria-hidden="true" />
               {lane.segments.map((sg) => (
                 <Segment key={sg.span.id} sg={sg} s={s} y={ly} liveAt={liveAt} label={lane.label} onReveal={p.onReveal} />

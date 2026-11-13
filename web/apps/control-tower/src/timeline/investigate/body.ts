@@ -13,6 +13,6 @@ export interface BodyProps {
   onReveal(ref: string, at?: number): void;
   /** Widen the window to the whole history. */
   onWiden(): void;
-  /** Set the Timeline's window to one item's padded extent (X15). */
-  onFrame(window: TimeWindow): void;
+  /** Set the Timeline's window to one item's padded extent (X15), and bring the rows of `about` (entity refs) into view. */
+  onFrame(window: TimeWindow, about: readonly string[]): void;
 }

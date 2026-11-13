@@ -10,7 +10,7 @@ import { fc, StationSymbol } from "@mach/ui";
 import { durationWords } from "../render";
 import type { BodyProps } from "./body";
 import { Caption, Diamond, Empty, FadeDefs, Fig, Figures, FrameFig, Hit, HumanTriangle, LiveEdge, Mark, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
-import { frameOf, markSource, reviewCells, type CellReview, type ReviewRound } from "./model";
+import { frameAbout, frameOf, markSource, reviewCells, type CellReview, type ReviewRound } from "./model";
 import type { TimeWindow } from "../contract";
 
 const HEAD_H = 16;
@@ -39,7 +39,7 @@ export function ReviewBody(p: BodyProps) {
   );
 }
 
-function CellDrawing({ c, s, width, liveAt, onReveal, onFrame }: { c: CellReview; s: Scale; width: number; liveAt: number; onReveal(ref: string, at?: number): void; onFrame(w: TimeWindow): void }) {
+function CellDrawing({ c, s, width, liveAt, onReveal, onFrame }: { c: CellReview; s: Scale; width: number; liveAt: number; onReveal(ref: string, at?: number): void; onFrame(w: TimeWindow, about: readonly string[]): void }) {
   const heights = c.rounds.map((r) => HEAD_H + Math.max(1, r.seats.length) * SEAT_H + 6);
   const tops = heights.map((_, i) => heights.slice(0, i).reduce((a, b) => a + b, 0));
   const y = heights.reduce((a, b) => a + b, 0);
@@ -52,7 +52,7 @@ function CellDrawing({ c, s, width, liveAt, onReveal, onFrame }: { c: CellReview
         <RoundDrawing key={r.round} r={r} top={tops[i]!} s={s} liveAt={liveAt} onReveal={onReveal} />
       ))}
       <AfterReview c={c} top={y} s={s} liveAt={liveAt} onReveal={onReveal} />
-      <FrameFig id={`review:${c.ticket}`} what={`the review of ${c.ticket}`} frame={reviewFrame(c)} right={s.gutter - 6} y={y + 4} onFrame={onFrame} />
+      <FrameFig id={`review:${c.ticket}`} what={`the review of ${c.ticket}`} frame={reviewFrame(c)} about={frameAbout(c.rounds.flatMap((r) => r.seats.map((x) => x.span)))} right={s.gutter - 6} y={y + 4} onFrame={onFrame} />
       {c.notes.map((n, i) => (
         <text key={n} x={s.gutter + 6} y={y + AFTER_H + 10 + i * 13} style={{ ...SANS, fontSize: 10.5, fill: SUBTLE, fontStyle: "italic" }}>
           {n}

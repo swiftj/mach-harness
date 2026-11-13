@@ -254,8 +254,12 @@ function ChapterName() {
   );
 }
 
-/** `onCollapse` is the docked timeline's; without it (the Timeline workspace) there is no collapse button. */
-export const Transport = memo(function Transport({ collapsed, onCollapse, idleSince = null }: { collapsed: boolean; onCollapse?: () => void; idleSince?: number | null }) {
+/**
+ * `onCollapse` is the docked timeline's; without it (the Timeline workspace) there is no collapse button.
+ * `compact`: the column it sits in is narrower than the window (the Timeline beside an inspector), so
+ * the live state drops its secondary words and the speed control keeps its room.
+ */
+export const Transport = memo(function Transport({ collapsed, onCollapse, idleSince = null, compact = false }: { collapsed: boolean; onCollapse?: () => void; idleSince?: number | null; compact?: boolean }) {
   const playing = useSceneStore((s) => s.playing);
   const reduced = useSceneStore((s) => s.reducedMotion);
   const source = useSceneStore((s) => s.source);
@@ -303,7 +307,7 @@ export const Transport = memo(function Transport({ collapsed, onCollapse, idleSi
         <span className="sr-only">{source === "simulation" ? "Simulated factory time" : "Time, UTC"}</span>
       </div>
       <div className="mx-2 h-5 w-px shrink-0 bg-line min-[1100px]:mx-3" aria-hidden="true" />
-      <LiveState idleSince={idleSince} />
+      <LiveState idleSince={idleSince} compact={compact} />
       <span className="ml-2">
         <FollowState />
       </span>

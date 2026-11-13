@@ -186,6 +186,17 @@ export function endedBy(span: TimelineSpan, asOf: number): boolean {
 const WAIT_KINDS: ReadonlySet<SpanKind> = new Set(["slice-wait", "slice-eligible", "capacity-wait", "gate-wait", "person-wait", "agent-queue"]);
 export const isWait = (span: TimelineSpan): boolean => WAIT_KINDS.has(span.kind);
 
+/**
+ * What a wait waited on, in the words its record gave (`attrs.reasons`: the scheduler's or the
+ * Factory's "a person is needed" sentence), once it has begun by `asOf`; null for any other kind, a
+ * wait with no reason recorded, or one not begun yet. Nothing is inferred: no reason, no fact.
+ */
+export function waitedOnOf(span: TimelineSpan, asOf: number): readonly string[] | null {
+  if (!isWait(span) || !begunBy(span, asOf)) return null;
+  const reasons = (span.attrs.reasons ?? []).map((r) => r.trim()).filter(Boolean);
+  return reasons.length ? reasons : null;
+}
+
 const isInterrupted = (span: TimelineSpan) => span.attrs.interruptedAt !== undefined || span.end?.reason === "interrupted" || span.end?.reason === "superseded";
 
 function sortKey(span: TimelineSpan): number {

@@ -163,3 +163,20 @@ export function dateChanges(window: TimeWindow): number[] {
   for (let t = Math.ceil(window.from / DAY) * DAY; t <= window.to && out.length < 400; t += DAY) out.push(t);
   return out;
 }
+
+/** The "After the playhead" band's label is drawn only when the band is at least this wide. */
+export const AFTER_LABEL_MIN_PX = 110;
+
+/**
+ * The tint after the playhead (T6), in the tracks' pixels: null when it is not drawn (the playhead at
+ * the live edge, following, or nothing between the two in the window); else where it starts, how wide
+ * it is, and whether its label fits. The label is a child of the band and is shown or hidden with it:
+ * a label given its own `visibility: visible` stays on screen after its band is hidden (CSS visibility
+ * is inherited, and a child can override it), which left "After the playhead" at the live edge.
+ */
+export function afterPlayheadBand(behind: boolean, playheadX: number, liveX: number, width: number): { readonly left: number; readonly width: number; readonly label: boolean } | null {
+  const a = Math.max(0, Math.min(width, playheadX));
+  if (!behind || liveX - a < 2) return null;
+  const w = liveX - a;
+  return { left: a, width: w, label: w >= AFTER_LABEL_MIN_PX };
+}
