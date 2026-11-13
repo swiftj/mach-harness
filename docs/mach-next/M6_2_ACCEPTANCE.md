@@ -1,5 +1,117 @@
 # MACH Next — M6.1/M6.2 end-to-end acceptance: a real, authorized Factory run watched live by the Control Tower
 
+## Re-check after the fix rounds (2026-11-12 evening, local; 13 Nov 02:10–03:20 UTC)
+
+Independent re-test of everything that failed or was partial below, against the current code: observer and Control
+Tower at `81dc7cb` (`apps/observer/bin/mach-observer`, built 20:58 from that commit with the current
+`web/apps/control-tower` embedded; asset hashes checked against `web/apps/control-tower/dist`). During the check another
+session committed `a0ecc85` (Factory only: supervisor budget, verify/review commands); it does not touch the observer or
+the web app and was only unit-tested here. No model was run, no Factory enabled, no supervisor started. Every observer ran
+on a **copy** of a project with its `.factory/local/observer` removed; the originals were not changed (`diff -rq`, 0
+differences for A, B, SA, SHIM). Scratch area: `/private/tmp/claude-501/-Users-johnswift-Projects-mach-harness/4cf98ed8-7452-4d90-8d38-55769b828040/scratchpad/m63/recheck2/`
+(`<recheck>` below; scripts in `tools/`, results in `logs/`). No screenshot or video capture was run.
+
+**How "live" was exercised without a model.** `tools/replay.py` copies run A with its intake log, cell folder, execution
+folders and ledger removed, then re-appends every line of the intake log, the lifecycle log and both execution streams at
+the moment the independent 20 ms tailer of the real run first saw it (`m62-e2e/logs/tailA.jsonl`, 656 lines), at 4× speed,
+and copies each other cell/execution file in at its own mtime (final content; the ledger with intake's 6th line). One page
+stayed open throughout (`tools/live.mjs`), inspecting 13 refs in both views at four moments (before the plan visit, after
+execution 1's process ended, during verify#3, at the end). Limitation: the replay keeps the original timestamps of
+lifecycle and intake lines, while stream lines (which carry none) are placed at the observer's read time, three hours
+later. So durations such as "working for 3 h 38 min" and "arrived late" marks seen during the replay are artefacts and
+were not judged; everything else was.
+
+### Verdict now
+
+| # | Point | Before | Now |
+|---|---|---|---|
+| 1 | Authorized run producing observable events | Pass, stream unreadable (D1) | **Pass** on the same real streams: 405 events on A (was 222) incl. `workflow.*`, 38 agents, `tool.called/returned`; runtime `proven`. No new real run (no budget spent) |
+| 2 | Station transitions reaching the browser | Pass | **Pass**: replay of A, all 20 `station.*` and 38 `agent.started/finished` arrived over SSE, 0 duplicate ids, 0 page errors |
+| 3 | Real verification result | Pass | **Pass** (unchanged data; "Verification passed 8 of 8" per round) |
+| 4 | Reviewer outcome / human gate | Pass | **Pass** ("Review rejected 2 of 3", "Review awaiting human 3 of 3", "Waiting for a person") |
+| 5 | Live rendering, both views, inspector, honesty | Partly (D3–D11, D13, D14, D23) | **Partly, much improved**: 14 of the 16 listed defects fixed; D6 partial, D10 changed; four new rendering defects (R4–R7) |
+| 6 | Reconnection | Pass | **Pass**: stale → reconnecting → disconnected → live, selection and address kept, same port, 0 duplicates |
+| 7 | Historical replay | Pass; partly at scale (D17) | **Pass**; at scale **partly**: first render 11 s (was 61 s), replay scrub ~60 ms settled (was 688 ms), no `/snapshot`; JS heap still 0.8–1.3 GB |
+| 8 | Provenance and artifact links | Partly (D12) | **Pass**: `visit` on 13 of 13 catalog entries with its basis, round on every `results.json`; "Go to event" works. The artifact inspector shows station and round, not the visit id |
+| 9 | No change to Factory behaviour | Pass | **Pass** for the observer (nothing written outside `.factory/local/observer` in four copies over ~70 min); the SA/SB belt comparison was not repeated |
+| 10 | No unnecessary disclosure | **Fail** (D2) | **Pass for every person MACH's records or git name** (0 hits in A, SA, SHIM over API, SSE, disk index and DOM); **one open residual, R1 (High)**: a name that appears only in prose is served by `artifacts/{id}/content` |
+
+### Defects D1–D25: status
+
+| ID | Sev (then) | Status | Evidence now |
+|---|---|---|---|
+| D1 | High | **Fixed** | Real 2.1.323 streams: A 405 events (`workflow.started` 2, `agent.started` 38, `tool.called` 2), B 283 (25 agents); `stream_observations.state: proven`, `records_refused: 0`. Gaps: A 1, B 2, all class `unknown-type`, `history_lost: false` (`system/thinking_tokens`, `system/task_started`). A copy of B rewritten to 2.1.399 parses identically, state `compatible-unproven`. The page shows "Agents 5" live during execution 1, "25"/"13" per execution, the cell "0 working, 38 so far" |
+| D2 | **Blocker** | **Fixed** | SA `review/round-3/decision.json` content: `"human_approval": {"by": "a person", … "recorded_by": "a person"}`; 0 person hits on SA (70 routes, 1.44 MB, SSE 212 KB, 7 index files) and DOM (34 views). See R1, R2 |
+| D3 | Med | **Fixed** | Before the plan visit (live): `Plan: not reached yet`, `Plan station, LOCAL-001: idle (not reached yet; groom ended: spec-ready)` |
+| D4 | Med | **Fixed** (see R4) | verify#2 after its execution ended: "Ended without an exit record", "Finished at 22:53:10"; not "Working" |
+| D5 | Med | **Fixed** | Live: cell inspector "Slice: SLICE-001"; slice Related "LOCAL-001 SLICE-001 Awaiting a person"; timeline "1 track so far" |
+| D6 | Med | **Partly fixed** | Cell gates list "Red before green Overridden: test-passed-first-run"; the `frozen-tests` override (`test-amended`) is still **absent from the cell's Gates list** (shown in the Blueprint cell label and its own gate inspector) |
+| D7 | Med | **Fixed** | Execution inspector "Agents 5" live, "25" at the end; no "0" |
+| D8 | Med | **Fixed** | Header: "Not all interpreted. Received, not interpreted (1 record)"; no "Partial" |
+| D9 | Low–Med | **Fixed** | Blueprint labels: "since 23:03:20 UTC", "at 22:45:29 UTC" |
+| D10 | Low–Med | **Changed, not fixed** | Same moment: Atlas "Review consensus: Open", "Review consensus gate: no panel sitting"; inspector "Passed … AWAITING_HUMAN: 3 approved, 3 needed" |
+| D11 | Low | **Fixed** | API `app_type: library`, `plan {app_type, risk, contracts 1, tasks 10}`; inspector "App type library" after the plan exit, "Not recorded" before it |
+| D12 | Low | **Fixed** (API) | 13/13 entries carry `visit` (`recorded/check-hash` for the two consumer logs, `reconstructed/folder` or `round-and-time` otherwise); `round` on every `results.json` |
+| D13 | Low | **Fixed** | "Artifacts referenced 27 distinct" and "Artifact records 41 received (a file recorded again counts again)" |
+| D14 | Low | **Fixed** | Human approval visit "Waiting for a person"; its Evidence "1 event" matching Record `c:…:78` |
+| D15 | Low | **Fixed** | G12 copy: 14 cells, all `GEN-*`; no `LOCAL-001` cell in either view though three streams name it |
+| D16 | Low | **Fixed** | Live replay: `factory.activated` (first line of an intake log created after the observer started) has no backfill provenance, `late: false` |
+| D17 | Med | **Partly fixed** | H200 (230,853 events): live at 11.0 s, cells at 11.3 s (was 61 s); "20,002 events received, 20,000 held of 230,853" (explains itself); replay scrub settled median ~60 ms (was 688); 0 `/snapshot` requests. **Still**: JS heap 795 MB after load, 1,274 MB in Blueprint, 1,325 MB at the replay switch; 44,952 nodes (Atlas) and 86,156 (Blueprint) for 1,261 cells |
+| D18 | Med | **Partly fixed** | Peak RSS 257 MiB (exact, `/usr/bin/time -l`; was 1.6 GB). Index 231 MiB for 100 MB of source (was 300 MB). Catch-up **35.2 s (was 19.7 s)**; RSS after catch-up 140–210 MB (was 27 MB). See R3 |
+| D19 | Low | **Fixed** | axe WCAG 2.2 A/AA: 0 violations in all 15 state × size combinations incl. Simulation at 1512×982 |
+| D20 | Low | **Fixed** | After "Go to event": "Reviewing 16 min 40 s back", no "N new events" |
+| D21 | Med | **Fixed in code, not exercised** | `a0ecc85` `supervisor.allowance`: per-run limit cut to what the day has left, running executions counted at their budget; `tests.test_mach_factory_supervisor` + `test_unattended_commands`: 58 tests OK. No real tick run |
+| D22 | High | **Changed in code, unproven** | `a0ecc85`: `verify.py capture/record --from`, `review.py submit` finds its findings file; a test holds the prescribed commands against the tool list. Needs a real supervised run to close |
+| D23 | Low | **Fixed** | Workflow Record: "Authority: Observed", source `s:x13e7bccffc37:200.0` |
+| D24 | Low | **Fixed** | verify#5 "Why": `station.exited, 23:02:09.7 Authoritative` |
+| D25 | Low | **Fixed** | `"findings": "[redacted].factory/worktrees/LOCAL-001/review/round-3/findings.md"` (only the absolute prefix scrubbed) |
+
+### New defects
+
+| ID | Sev | Owner | Defect | Evidence |
+|---|---|---|---|---|
+| R1 | **High** (product-owner decision) | observer | The name deny-list is learned only from records (runner, git config and reflogs, decision/votes/build-report/cell.json, intake `by`). A name that appears **only in prose** is served verbatim by `artifacts/{id}/content`. Once any record names the person, later replies scrub it (the list only grows), but nothing already served is recalled | Copy `ADV` of A with an invented name and e-mail added to `review/round-1/findings.md` and a verifier note in `evidence/results.json`: both contents served with the full name (2 artifacts); the e-mail became `[email]`; the PM's name (known from the reflog) became "a person". Not in events, SSE (0) or DOM (168 views, 0). After setting the copy's `git config user.name` to that name, the same requests returned 0 hits. `<recheck>/logs/leak-ADV1.json`, `leak-ADV2.json`, `dom-ADV.json` |
+| R2 | Low | observer | Served `decision.json` rewrites `"recorded_by": "an agent, on the person's instruction in conversation"` to `"a person"`: an agent's act attributed to a person | SA artifact `ab3e448f98becfb5baf04ed98` |
+| R3 | Medium | observer | **Idle CPU about one third of a core** on a 1,263-cell project after catch-up, with nothing changing and no browser (20.5 s CPU per 60 s, then 10.0 s per 30 s three times). A (1 cell): 0.27 %. Also higher steady RSS (140–210 MB) and slower catch-up than before (D18) | `ps` cputime on the H200 copy, `<recheck>/logs/h200.json` |
+| R4 | Low–Med | shell | Visit inspector prints a JavaScript object: **"Left: no exit record; ended by [object Object] at the latest"** (verify#1, verify#2; live and from backfill) | `<recheck>/logs/live.rounds.json`, `inspect-A.json` |
+| R5 | Low–Med | shell / sim-scene | Two ref vocabularies for one gate. Opened with the observer's entity ref (`gate:LOCAL-001/plan.check`, `verify.verdict#1`, `red-before-green#2`, `frozen-tests#2`), the inspector says **"Not started at this moment. It starts at 22:59:57"** at the live edge, for gates evaluated long before. The scene's own refs (`plan-check`, `verification#1`, `red-before-green`) show the right decision | `<recheck>/logs/inspect-A.json`; `tools/gateclick.mjs` output |
+| R6 | Low | shell | Between an execution's process end and the supervisor's record (API run state `ended`), the execution inspector says **"running"** and the Atlas cell "built, **not known**", while the cell inspector correctly says "Idle: its process ended and the supervisor has not recorded the outcome yet" | Replay paused at tail index 244: API `runs` `state: ended`; `<recheck>/logs/inspect-L3.json` |
+| R7 | Low–Med | shell | The live clock starts from the last event's time and ticks from there for about 10 s before snapping to the wall clock: **"At the live edge 00:00:05.8 UTC, 1 Jan 1970"** on a project with no events; "23:18:50 UTC, 12 Nov" on A at 03:00 UTC 13 Nov. The idle live page also runs requestAnimationFrame at ~60/s with ~550 DOM mutations/s (the clock), although the drawn scene does not change | `tools/motion.mjs` on an empty project and on A |
+
+### Measurements, before and now
+
+| Measure | Before | Now |
+|---|---|---|
+| Append → SSE receipt (replayed A, 258 lines that yield events) | (not measured separately) | median **290 ms**, p95 570 ms, max 2,128 ms (intake 252/504, lifecycle 290/499, stream 315/640) |
+| Append → browser paint (second frame after the message) | median 1,673 ms, p95 2,333 ms, max 2,534 ms | median **319 ms**, p95 600 ms, max 2,153 ms; browser receipt equals a separate Python client's within ±2 ms |
+| Observer peak RSS, H200 backfill | 1.6 GB (`ps`) | **257 MiB** (`/usr/bin/time -l` max RSS; peak footprint 298 MiB) |
+| Catch-up, H200 | 19.7 s | **35.2 s** (head 230,853, lag 0, head stable 2 s) |
+| Index on disk, H200 | 300 MB for 105 MB | **231 MiB** for 100 MB |
+| RSS after catch-up | 27 MB | 140–210 MB |
+| Idle CPU | 0.2 % mean (real run, 1 cell) | A 0.27 %; **H200 ≈ 33 %** (R3) |
+| Page load → live / first cells (H200) | 61 s | **11.0 s / 11.3 s** |
+| JS heap after load (H200) | 872 MB | **795 MB** (Blueprint 1,274 MB) |
+| Live scrub, keyboard (H200) | median 150 ms, p95 334 ms | median ~120 ms, max 581 ms (n = 20) |
+| Drag scrub (H200) | median 267 ms, p95 350 ms | median 249 ms, max 432 ms |
+| Replay scrub (H200) | median 688 ms, p95 1,204 ms | two frames median ~32 ms; until no request in flight median ~60 ms, max 171 ms |
+| Atlas ↔ Blueprint after a seek (H200) | 2.07 s / 0.98 s | 1.11 s / 0.90 s |
+| Replay switch (H200) | 3.3 s | 1.05 s |
+| Reconnection (replay of A: SIGSTOP 45 s, SIGKILL, restart 25 s later) | stale +30.7 s, disconnected kill +15.1 s, live restart +3.3 s | stale **+37.8 s**, reconnecting kill +0.3 s, disconnected kill +15.5 s, live restart **+6.5 s**; `#blueprint?sel=cell:LOCAL-001` and the inspector kept; missed events fetched by `/events` paging, then SSE; 0 duplicates |
+
+**On the fix agent's scripts** (`m63/measure_backfill.py`, `m63/latency.py`): `measure_backfill.py` copies its source with
+any existing index, so it measures a cold backfill only when given a clean source (its `h200src` is clean), and its RSS peak
+is a 100 ms `ps` sample; the figures above use an exact max RSS instead. `latency.py` measures append → SSE receipt
+correctly but on a synthetic 4-cell workload, not on a replayed run; the latency above is from the replay of A.
+
+### Not tested, and why
+
+- A new real supervised run (would spend model budget): D22's fix and D21 in a live tick remain unproven.
+- The deterministic SA/SB comparison (point 9) was not repeated; the observer's read-only behaviour was checked by diff only.
+- Time-dependent wording during the live replay (durations, "arrived late"): the replay cannot reproduce stream timing (see above).
+- Reduced-motion behaviour of script-driven motion beyond R7's counts; `/api/v1/series` content was fetched but not checked for correctness.
+
+---
+
 Independent check, 2026-11-12, on `feature/mach-next-m6-1-live-observability` at `f14448e` (clean). Nothing in the
 repository or this worktree was run as a Factory, changed or committed; this file is the only addition (uncommitted).
 Everything below was observed in this session. Scratch area (raw data, scripts, the few screenshots):
