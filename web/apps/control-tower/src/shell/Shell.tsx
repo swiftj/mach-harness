@@ -329,7 +329,7 @@ export function Shell() {
         }} />
       </header>
 
-      <main id="stage" tabIndex={-1} aria-label={`${stageLabel} (${SOURCE_WORDS[source].label})`} className="relative min-h-0 min-w-0 overflow-hidden bg-factory-ground outline-none [grid-area:stage]">
+      <main id="stage" tabIndex={-1} aria-label={`${stageLabel} (${SOURCE_WORDS[source].label})`} className="relative min-h-0 min-w-0 overflow-clip bg-factory-ground outline-none [grid-area:stage]">
         {/* In Theater Mode the views are inset by two strips that hold the Theater chrome. */}
         <div className="absolute inset-x-0" style={{ top: theater ? THEATER_TOP : 0, bottom: theater ? THEATER_BOTTOM : 0 }}>
           <Stage />

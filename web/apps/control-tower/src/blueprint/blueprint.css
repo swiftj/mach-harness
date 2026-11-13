@@ -4,6 +4,9 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
+  /* clip, not hidden: a hidden box still scrolls when focus lands on a part outside it (a screen
+     reader, a script), which slid the whole drawing and its controls out of view. */
+  overflow: clip;
   background: var(--mach-factory-ground);
   touch-action: none;
   cursor: grab;

@@ -1112,6 +1112,7 @@ function stationExited(input: Scene, e: E<"station.exited">, at: number): Scene 
         outcomeWord: d.outcome,
         durationMs: d.duration_ms,
         unclosed: null,
+        interrupted: v.unclosed ? { reason: v.unclosed.reason, at: v.unclosed.at } : (v.interrupted ?? null),
         meta: touch(v.meta, e, { end: timeQualityOf(e.time.precision), inferred: d.closed_by ? { ...v.meta.inferred, leftAt: "closed-by-cleanup" } : withoutKey(v.meta.inferred, "leftAt"), unknown: without(v.meta.unknown, "outcome") }),
       })),
       stage: stage ?? c.stage,

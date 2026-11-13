@@ -121,9 +121,11 @@ export function completenessWords(c: Completeness): { state: "partial" | "recons
 export { GAP_CLASS_WORDS } from "../../sim";
 
 /** A visit's or a gate's elapsed-time words (D4, D14): at work, waiting for a person, or bounded. */
-export function elapsedWords(status: VisitStatus["state"] | "work" | "wait", started: boolean, finished: boolean, duration: string): string {
+export function elapsedWords(status: VisitStatus["state"] | "work" | "wait" | "interrupted", started: boolean, finished: boolean, duration: string): string {
   if (!started) return "not started";
   if (status === "ended-unrecorded") return `ended without an exit record, within ${duration}`;
+  // Entry to exit of a visit that stopped and was taken up again: a span, never time spent working.
+  if (status === "interrupted") return finished ? `open for ${duration}, not continuous` : `open for ${duration}`;
   if (finished) return `took ${duration}`;
   return status === "waiting-person" || status === "wait" ? `waiting for ${duration}` : `at work for ${duration}`;
 }
@@ -148,6 +150,12 @@ export function deliveryLagWords(ms: number | null): string {
   if (ms === null) return "Not reported";
   if (ms < 1000) return "under a second";
   return `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** Why a visit's span is not working time: where it stopped before it was taken up again. Null when it ran through. */
+export function interruptionWords(visit: Pick<StationVisit, "interrupted">, clock: (t: number) => string): string | null {
+  if (!visit.interrupted) return null;
+  return visit.interrupted.reason === "execution-ended" ? `its execution ended by ${clock(visit.interrupted.at)} and the visit was taken up again later` : `the station was entered again at ${clock(visit.interrupted.at)} before this visit recorded its exit`;
 }
 
 /**

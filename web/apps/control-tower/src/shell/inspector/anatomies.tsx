@@ -61,7 +61,7 @@ import {
 import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
-import { activityNote, agentsWords, planWords, runtimeWords, visitLeftWords } from "./words";
+import { activityNote, agentsWords, interruptionWords, planWords, runtimeWords, visitLeftWords } from "./words";
 import { useFreeTextLabel } from "./catalog";
 import { useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
@@ -405,12 +405,13 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
                     Round {v.round}, {v.action}
                     <span className="text-ink-muted">
                       {" "}
-                      {status.state === "ended" ? (v.outcomeWord ?? v.outcome ?? "ended") : status.word.toLowerCase()}, <Elapsed startedAt={v.enteredAt} finishedAt={v.leftAt} mode={status.state === "waiting-person" ? "wait" : status.state === "ended-unrecorded" ? "ended-unrecorded" : "work"} />
+                      {status.state === "ended" ? `${v.outcomeWord ?? v.outcome ?? "ended"}, ` : status.state === "ended-unrecorded" ? "" : `${status.word.toLowerCase()}, `}<Elapsed startedAt={v.enteredAt} finishedAt={v.leftAt} mode={status.state === "waiting-person" ? "wait" : status.state === "ended-unrecorded" ? "ended-unrecorded" : v.interrupted ? "interrupted" : "work"} />
                     </span>
                   </p>
                   <p className="font-mono text-[11px] text-ink-subtle tabular">
                     {timecode(v.enteredAt, false)} to {v.leftAt === null ? "now" : `${status.state === "ended-unrecorded" ? "at most " : ""}${timecode(v.leftAt, false)}`}
                   </p>
+                  {v.interrupted ? <p className="text-[11px] text-ink-subtle">Not continuous: {interruptionWords(v, (t) => timecode(t, false))}.</p> : null}
                 </div>
                 <JumpButton t={v.enteredAt} label="Go" />
               </li>
@@ -1111,6 +1112,7 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
             ["Entered", at(visit.enteredAt)],
             ["State", status.word],
             ["Left", status.state === "ended" ? at(visit.leftAt) : visitLeftWords(visit, status, (t) => timecode(t, false))],
+            visit.interrupted ? ["Not continuous", interruptionWords(visit, (t) => timecode(t, false))] : null,
             [
               "Duration",
               visit.durationMs !== null ? (
@@ -1119,6 +1121,8 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
                 <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={null} mode={status.state === "waiting-person" ? "wait" : "work"} />
               ) : status.state === "ended-unrecorded" ? (
                 <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={visit.leftAt} mode="ended-unrecorded" />
+              ) : visit.interrupted ? (
+                <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={visit.leftAt} mode="interrupted" />
               ) : (
                 <NotRecorded key="d" />
               ),

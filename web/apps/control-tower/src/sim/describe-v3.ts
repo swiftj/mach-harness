@@ -59,6 +59,11 @@ export function describeEntry(entry: LogEntry): string {
   return describeV3(event);
 }
 
+/** Who acted, by role only: the observer never serves a name. */
+function roleWords(role: string | null | undefined): string {
+  return role === "engineer" ? "An engineer" : role === "supervisor" ? "The supervisor" : "A person";
+}
+
 export function describeV3(event: AnyV3Event | UnknownV3Event): string {
   if (!isKnownV3Kind(event.type)) return `An event this version does not understand (${event.type}).`;
   const e = event as AnyV3Event;
@@ -79,6 +84,14 @@ export function describeV3(event: AnyV3Event | UnknownV3Event): string {
       return `${e.ids.slice_id ?? who} dispatched: cell ${e.ids.ticket_id} opened.`;
     case "human.required":
       return `A person is needed for ${who}: ${e.data.reason}`;
+    case "factory.activated":
+      return `${roleWords(e.data.by_role)} enabled the Factory on this machine (${e.data.autonomy}).`;
+    case "factory.disabled":
+      return `${roleWords(e.data.by_role)} disabled the Factory on this machine${e.data.stopped ? ", stopping what was running" : ""}.`;
+    case "factory.paused":
+      return `${roleWords(e.data.by_role)} paused the Factory${e.data.reason ? `: ${e.data.reason.replace(/[.\s]+$/, "")}` : ""}.`;
+    case "factory.resumed":
+      return `${roleWords(e.data.by_role)} resumed the Factory.`;
     case "work.claimed":
       return `The supervisor claimed ${who} (attempt ${e.data.attempt}).`;
     case "execution.started":
