@@ -5,7 +5,7 @@
  * agents at work, the verification gate outside the door and the retry loop over the line.
  * Before the slice is dispatched the bay stands reserved and empty.
  */
-import { memo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import {
   AgentMarker,
   ArtifactCard,
@@ -40,10 +40,10 @@ import {
   type Vec3,
 } from "@mach/ui";
 import { AgentHead, FloorLettering, PlanDimension, StationSymbol, TaskBoard as TaskBoardMark, cellAnatomy, cellStages, factoryTokens, lampPool, markLook, useFactoryIds, type MarkState, type StationKind, type TaskCell } from "@mach/ui";
-import { BELT_PHASES, activityOf, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog } from "../sim";
+import { BELT_PHASES, activityOf, capacityWaitOf, type CapacityWaitState, type GateRefusal, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog, type StationId } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
-import { activityMark, activityWord, animating, anim, callsOf, countedToolsOf, fmtElapsed, idOf, secondOf, lampLevel, gateView, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PadName, type PlacedAgent, type ViewMode } from "./derive";
+import { activityMark, activityWord, visitMark, visitWord, animating, anim, callsOf, countedToolsOf, fmtElapsed, idOf, secondOf, lampLevel, gateView, gateWord, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PadName, type PlacedAgent, type ViewMode } from "./derive";
 import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot, type PlantLayout } from "./layout";
 import { Card } from "./reduced";
 
@@ -55,16 +55,42 @@ function uiStage(stage: CellState["stage"]): UiStage {
 }
 
 /**
- * A machine's state from the cell's visits. Live and replay: the machine the cell is at shows what is
- * known of the cell's activity (interrupted, as last seen, not known, waiting) when that is not
- * "executing", so a stopped or unseen station is never drawn working.
+ * A machine's state, from the visits to the station it is named for (D3). Passed only once a visit to
+ * that station has exited with a passing outcome; a station not yet visited is not reached (idle,
+ * drawn planned) whatever the cell's stage says and whatever its pad's other station did (a groom
+ * that passed does not pass Plan; an audit does not pass Build). A visit that ended without an exit
+ * record is interrupted, never working. While the cell is at one of the pad's stations the machine
+ * works; live and replay, it shows what is known of the cell's activity when that is not "executing".
+ * A cell with no recorded visits at all (its lifecycle log was not received) whose stage is past the
+ * station is drawn "unknown": reconstructed from the stage, never a recorded pass.
  */
-function machineState(cell: CellState, kinds: readonly string[], activity: ActivityState | null = null): { state: MarkState; round?: number } {
-  if (cell.station && kinds.includes(cell.station)) return { state: activity && activity !== "executing" ? activityMark(activity) : "active", round: cell.round > 1 ? cell.round : undefined };
-  const last = [...cell.visits].reverse().find((v) => kinds.includes(v.station));
-  if (!last) return { state: "idle" };
-  if (last.outcome === "failed") return { state: "failed", round: last.round > 1 ? last.round : undefined };
-  return { state: "succeeded", round: last.round > 1 ? last.round : undefined };
+function machineState(cell: CellState, kinds: readonly StationId[], named: StationId, activity: ActivityState | null = null): MachineState {
+  if (cell.station && kinds.includes(cell.station)) {
+    return { state: activity && activity !== "executing" ? activityMark(activity) : "active", round: cell.round > 1 ? cell.round : undefined, word: cell.station === named ? undefined : `at ${cell.station}` };
+  }
+  const last = [...cell.visits].reverse().find((v) => v.station === named);
+  if (!last) {
+    if (cell.visits.length === 0 && stagePast(cell.stage, named)) return { state: "unknown", word: "reconstructed from the cell's stage, no visit recorded" };
+    const other = [...cell.visits].reverse().find((v) => kinds.includes(v.station));
+    return { state: "idle", word: other ? `not reached yet; ${other.station} ${other.leftAt === null ? "working" : `ended: ${visitWord(other)}`}` : "not reached yet" };
+  }
+  const round = last.round > 1 ? last.round : undefined;
+  const state = visitMark(last);
+  return { state, round, word: state === "succeeded" || state === "failed" || state === "active" ? undefined : visitWord(last) };
+}
+
+interface MachineState {
+  state: MarkState;
+  round?: number;
+  /** Words for its accessible name when the state alone would mislead. */
+  word?: string;
+}
+
+const STAGE_ORDER: readonly CellState["stage"][] = ["interview", "spec-open", "spec-ready", "planned", "building", "built", "verified", "awaiting-human", "approved", "pr-open", "merged"];
+const STAGE_AFTER: Partial<Record<StationId, CellState["stage"]>> = { plan: "planned", build: "built", verify: "verified" };
+function stagePast(stage: CellState["stage"], station: StationId): boolean {
+  const after = STAGE_AFTER[station];
+  return after !== undefined && STAGE_ORDER.indexOf(stage) >= STAGE_ORDER.indexOf(after);
 }
 
 export interface BayProps {
@@ -124,7 +150,7 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
   const mast = project(a.mast);
   const mastTop = project({ ...a.mast, z: a.mast.z + 20 });
   const pool = lampPool(bay.origin, PLATE_Z);
-  const st = { intent: machineState(cell, ["groom", "plan"], activity), build: machineState(cell, ["build", "audit"], activity), verify: machineState(cell, ["verify"], activity) };
+  const st = { intent: machineState(cell, ["groom", "plan"], "plan", activity), build: machineState(cell, ["build", "audit"], "build", activity), verify: machineState(cell, ["verify"], "verify", activity) };
   const agents = placeAgents(L, cell, t, reduced, mode).filter((p) => p.at.z === FLOOR_Z);
   const finished = Boolean(cell.merged);
   const machines: Array<[PadName, StationKind, number]> = [
@@ -132,7 +158,7 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
     ["build", "build", 22],
     ["verify", "verify", 18],
   ];
-  const gate: MarkState | null = vgate ? (vgate.state === "passed" || vgate.state === "skipped" ? "succeeded" : vgate.state === "failed" ? "failed" : vgate.state === "waiting" ? "human" : "active") : null;
+  const gate: MarkState | null = vgate ? (vgate.state === "passed" || vgate.state === "skipped" || vgate.state === "overridden" ? "succeeded" : vgate.state === "failed" ? "failed" : vgate.state === "waiting" ? "human" : "active") : null;
   const gateTop = project({ ...bay.gate, z: (bay.gate.z ?? PLATE_Z) + 30 });
   return (
     <g>
@@ -166,6 +192,8 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
         {gate ? (
           <g aria-hidden="true" transform={`translate(${round(gateTop.x)} ${round(gateTop.y)})`}>
             <StateMark state={gate} r={lod === "far" ? 6 : 4.5} />
+            {/* Overridden, not passed: the mark struck through (shape, not colour alone). */}
+            {vgate?.state === "overridden" ? <path d="M-6 6L6 -6" style={{ stroke: fc("wait"), strokeWidth: 1.6, strokeLinecap: "round" }} /> : null}
           </g>
         ) : null}
         {agents.map((p) => (
@@ -173,9 +201,9 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
         ))}
       </g>
       {visible ? (
-        <BayHits items={bayHits(bay, cell, agents, vgate, "far", t, reduced, st, activity ? activityWord(activity) : undefined).filter((it) => !it.entity.startsWith("gate:"))} />
+        <BayHits items={bayHits(bay, cell, agents, vgate, "far", st, activity ? activityWord(activity) : undefined).filter((it) => !it.entity.startsWith("gate:"))} />
       ) : (
-        <BayHits items={bayHits(bay, cell, [], vgate, "far", t, reduced, st, activity ? activityWord(activity) : undefined).slice(0, 1)} />
+        <BayHits items={bayHits(bay, cell, [], vgate, "far", st, activity ? activityWord(activity) : undefined).slice(0, 1)} />
       )}
     </g>
   );
@@ -302,6 +330,11 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   const activity = useScene((s) => (mode.live ? activityOf(s, ref.cell(ticket), { stale: mode.stale }).state : null));
   const queued = useScene((s) => (mode.live && cell.executionId ? Object.values(s.executions[cell.executionId]?.queued ?? {}).length : 0));
   const log = useSceneStore((s) => s.log);
+  // Recorded facts no gate state or stage stands for: a wait for an execution place, and gate
+  // refusals with no matching gate (build.start, verify.start, merge.run...). Drawn, never folded away.
+  const wait = useScene((s) => capacityWaitOf(s, ticket));
+  // From the cell's own gate log (the same object until the cell changes): never a new array per read.
+  const refusals = useMemo(() => cell.gateLog.filter((g) => g.verdict === "refused" && g.gateId === null).map((g) => ({ ...g, ticketId: ticket })), [cell.gateLog, ticket]);
   const { x, y } = bay.origin;
   const cellRef = ref.cell(cell.ticketId);
   const dimCell = isDimmed(highlight, cellRef);
@@ -321,9 +354,9 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
     return <CellPlate origin={bay.origin} ticket={cell.ticketId} stage={uiStage(cell.stage)} activity={mast} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} />;
   }
 
-  const intent = machineState(cell, ["groom", "plan"], activity);
-  const build = machineState(cell, ["build", "audit"], activity);
-  const verify = machineState(cell, ["verify"], activity);
+  const intent = machineState(cell, ["groom", "plan"], "plan", activity);
+  const build = machineState(cell, ["build", "audit"], "build", activity);
+  const verify = machineState(cell, ["verify"], "verify", activity);
 
   // At far zoom a finished bay, once settled, is its plate alone: the calm done floor, its ticket and
   // the mast's double ring say all there is to say from that distance (spec b.3, "finished work is
@@ -332,7 +365,7 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
     return (
       <g>
         <CellPlate origin={bay.origin} ticket={cell.ticketId} slice={cell.sliceId} stage={uiStage(cell.stage)} activity={mast} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} rail />
-        <BayHits items={bayHits(bay, cell, inBay, vgate, lod, t, reduced, { intent, build, verify }, mast?.label)} />
+        <BayHits items={bayHits(bay, cell, inBay, vgate, lod, { intent, build, verify }, mast?.label, noticesWords(wait, refusals))} />
       </g>
     );
   }
@@ -348,7 +381,7 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   kids.push({ depth: depthOf({ x, y: y + 18 }), node: <Shelf key="shelf" bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} highlight={highlight} /> });
   kids.push({ depth: depthOf({ x: x + 62, y: y + 82 }), node: <TaskBoard key="tasks" bay={bay} cell={cell} lod={lod} /> });
   kids.push({ depth: depthOf({ x: x + 168, y: y + 24 }), node: <ResultsRack key="results" bay={bay} cell={cell} lod={lod} t={t} reduced={reduced} /> });
-  const machine = (key: string, kind: "plan" | "build" | "verify", at: Vec3, st: { state: MarkState; round?: number }, station: "plan" | "build" | "verify", fraction?: { done: number; of: number }) => {
+  const machine = (key: string, kind: "plan" | "build" | "verify", at: Vec3, st: MachineState, station: "plan" | "build" | "verify", fraction?: { done: number; of: number }) => {
     const sref = ref.station(station, cell.ticketId);
     const here = cell.station === station || (station === "plan" && cell.station === "groom") || (station === "build" && cell.station === "audit");
     return {
@@ -389,11 +422,81 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
           // History begins part-way (history.began): said on the floor, beside the ticket.
           <FloorLettering at={{ x: x + 14, y: y + CELL_D - 24, z: FLOOR_Z }} text={`history from ${clock(cell.historyBegan.at)} · reconstructed`} size={6.5} font="mono" tone="subtle" weight={500} decorative />
         ) : null}
+        {lod !== "far" ? <Notices x={x} y={y} wait={wait} refusals={refusals} overrides={overridesOf(cell)} lines={lod === "near" || L.bays.length <= 6 ? 3 : 1} /> : null}
       </CellPlate>
       {/* An unbuilt verdict gate (the cell has not reached verification) is not drawn at far zoom. */}
       {vgate || lod !== "far" ? <VerificationGate bay={bay} gate={vgate} t={t} reduced={reduced} lod={lod} dimmed={dimCell} /> : null}
       <VerifyLoop bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} dimmed={dimCell} />
-      <BayHits items={bayHits(bay, cell, inBay, vgate, lod, t, reduced, { intent, build, verify }, mast?.label)} />
+      <BayHits items={bayHits(bay, cell, inBay, vgate, lod, { intent, build, verify }, mast?.label, noticesWords(wait, refusals))} />
+    </g>
+  );
+}
+
+/** A recorded moment as a clock time to the second, UTC. */
+function clockS(t: number): string {
+  const d = new Date(t);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")} UTC`;
+}
+
+/** Refusals grouped by gate and reason, newest last: "verify.start (incomplete-evidence) ×2, last 22:53:10 UTC". */
+function refusalGroups(refusals: readonly GateRefusal[]): { key: string; gate: string; reason: string | null; count: number; last: number }[] {
+  const groups = new Map<string, { key: string; gate: string; reason: string | null; count: number; last: number }>();
+  for (const r of refusals) {
+    const key = `${r.gate}|${r.reasonCode ?? ""}`;
+    const g = groups.get(key);
+    if (g) {
+      g.count += 1;
+      g.last = Math.max(g.last, r.at);
+    } else groups.set(key, { key, gate: r.gate, reason: r.reasonCode, count: 1, last: r.at });
+  }
+  return [...groups.values()].sort((a, b) => a.last - b.last);
+}
+
+/** The notices in words, for the cell's accessible name. */
+function noticesWords(wait: CapacityWaitState | null, refusals: readonly GateRefusal[]): string {
+  const out: string[] = [];
+  if (wait) out.push(`waits for an execution place since ${clockS(wait.since)}${wait.limit !== null ? `, at most ${wait.limit} at once` : ""}`);
+  for (const g of refusalGroups(refusals)) out.push(`refused at ${g.gate}${g.reason ? ` (${g.reason})` : ""}${g.count > 1 ? ` ${g.count} times` : ""}, last at ${clockS(g.last)}`);
+  return out.join("; ");
+}
+
+/**
+ * The bay's notices, lettered on the clear floor band between the task board and the tool ticker, one
+ * short line each with the grammar's mark: overrides (the bypass hook), a recorded wait for an
+ * execution place (the waiting mark) and gate refusals no gate state stands for (the refused mark),
+ * grouped. The cell's name carries them in full. A dense plant (more than six bays) at mid zoom
+ * letters the first line only, for the element budget.
+ */
+function Notices({ x, y, wait, refusals, overrides, lines: max }: { x: number; y: number; wait: CapacityWaitState | null; refusals: readonly GateRefusal[]; overrides: CellState["gateLog"]; lines: number }) {
+  const groups = refusalGroups(refusals);
+  const lines: { key: string; kind: "wait" | "refused" | "override"; text: string }[] = [];
+  if (overrides.length) lines.push({ key: "over", kind: "override", text: `OVERRIDDEN ${overrides.map((o) => o.gate).join(", ")}` });
+  if (wait) lines.push({ key: "wait", kind: "wait", text: `WAITS FOR AN EXECUTION PLACE${wait.limit !== null ? ` · MAX ${wait.limit}` : ""}` });
+  if (groups.length) lines.push({ key: "ref", kind: "refused", text: `REFUSED ${groups.map((g) => `${g.gate}${g.count > 1 ? ` ×${g.count}` : ""}`).join(", ")}` });
+  if (!lines.length) return null;
+  // A dense plant at mid zoom letters only the first line (the element budget); near zoom letters all.
+  const shown = lines.slice(0, max);
+  return (
+    <g aria-hidden="true">
+      {shown.map((l, i) => {
+        const at = { x: x + 24, y: y + 103 + i * 6.5, z: FLOOR_Z };
+        const m = project({ x: x + 18, y: at.y - 1.6, z: FLOOR_Z });
+        const text = l.text.length > 58 ? `${l.text.slice(0, 57)}…` : l.text;
+        return (
+          <g key={l.key}>
+            {l.kind === "override" ? (
+              <g transform={planeTransform(FLOOR_Z)}>
+                <path d={`M${x + 15} ${at.y - 1}c1.5 -3.4 5 -3.4 6.5 0l-1.6 -0.6m1.6 0.6l0.3 -1.7`} style={{ fill: "none", stroke: fc("wait"), strokeWidth: planeStroke, strokeLinecap: "round" }} />
+              </g>
+            ) : (
+              <g transform={`translate(${round(m.x)} ${round(m.y)})`}>
+                <StateMark state={l.kind === "wait" ? "waiting" : "failed"} r={2.3} />
+              </g>
+            )}
+            <FloorLettering at={at} text={text} size={5.2} font="mono" tone={l.kind === "refused" ? "fail" : "wait"} weight={600} decorative />
+          </g>
+        );
+      })}
     </g>
   );
 }
@@ -438,14 +541,14 @@ interface HitItem {
  * board, the results rack, the verdict gate and a findings card in flight. Drawing them last also
  * puts them on top for pointing, so the picture itself can stay in painter's order.
  */
-function bayHits(bay: BaySlot, cell: CellState, agents: PlacedAgent[], gate: GateState | null, lod: Lod, t: number, reduced: boolean, st: Record<"intent" | "build" | "verify", { state: MarkState; round?: number }>, activity?: string): HitItem[] {
+function bayHits(bay: BaySlot, cell: CellState, agents: PlacedAgent[], gate: GateState | null, lod: Lod, st: Record<"intent" | "build" | "verify", MachineState>, activity?: string, notices = ""): HitItem[] {
   const { x, y } = bay.origin;
   const T = cell.ticketId;
   const title = isKnown(cell.meta, "title") ? cell.title : "title not recorded";
-  const items: HitItem[] = [{ entity: ref.cell(T), label: `Cell ${T}, ${title}: ${cell.stage}${activity ? `, ${activity.toLowerCase()}` : ""}, round ${cell.round} of 3`, box: { x, y, w: CELL_W, d: CELL_D, z: FLOOR_Z, h: 0 } }];
+  const items: HitItem[] = [{ entity: ref.cell(T), label: `Cell ${T}, ${title}: ${cell.stage}${activity ? `, ${activity.toLowerCase()}` : ""}, round ${cell.round} of 3${notices ? `; ${notices}` : ""}`, box: { x, y, w: CELL_W, d: CELL_D, z: FLOOR_Z, h: 0 } }];
   const machine = (pad: "intent" | "build" | "verify", station: "plan" | "build" | "verify", name: string, h: number) => {
     const s = st[pad];
-    items.push({ entity: ref.station(station, T), label: `${name} station, ${T}: ${s.state}${s.round ? `, round ${s.round} of 3` : ""}`, box: boxAt(bay.pads[pad], 40, 40, h) });
+    items.push({ entity: ref.station(station, T), label: `${name} station, ${T}: ${s.state}${s.word ? ` (${s.word})` : ""}${s.round ? `, round ${s.round} of 3` : ""}`, box: boxAt(bay.pads[pad], 40, 40, h) });
   };
   machine("intent", "plan", "Plan", 12);
   machine("build", "build", "Build", 22);
@@ -461,14 +564,14 @@ function bayHits(bay: BaySlot, cell: CellState, agents: PlacedAgent[], gate: Gat
     if (cell.tasks.length) {
       const green = cell.tasks.filter((k) => k.status === "green" || k.status === "done").length;
       const red = cell.tasks.filter((k) => k.status === "red").length;
-      items.push({ entity: `gate:${T}/red-before-green`, label: `Red before green, ${T}: ${cell.tasks.length} tasks, ${red} seen failing first, ${green} passing`, box: { x: x + 60, y: y + 80, w: 38, d: Math.ceil(cell.tasks.length / 5) * 6.4 + 2, z: FLOOR_Z, h: 1 } });
+      const over = overridesOf(cell);
+      items.push({ entity: `gate:${T}/red-before-green`, label: `Red before green, ${T}: ${cell.tasks.length} tasks, ${red} seen failing first, ${green} passing${over.length ? `; overridden: ${over.map((o) => `${o.gate}${o.reasonCode ? ` (${o.reasonCode})` : ""}`).join(", ")}` : ""}`, box: { x: x + 60, y: y + 80, w: 38, d: Math.ceil(cell.tasks.length / 5) * 6.4 + 2, z: FLOOR_Z, h: 1 } });
     }
   }
   // The verdict gate and its results rack are one entity: the gate carries the checks in its name.
-  const v = gateView(gate, t, reduced);
   const ver = cell.verifications[cell.verifications.length - 1];
   const checks = ver ? `, ${ver.checks.filter((c) => c.result === "pass").length} of ${ver.checks.length} checks passed` : "";
-  items.push({ entity: `gate:${gate ? gate.id : `${T}/verification#1`}`, label: `Verification verdict gate, ${T}: ${v.position}${gate ? `, round ${gate.round}` : ""}${checks}`, box: boxAt(bay.gate, 8, 46, 36) });
+  items.push({ entity: `gate:${gate ? gate.id : `${T}/verification#1`}`, label: `Verification verdict gate, ${T}: ${gateWord(gate)}${gate ? `, round ${gate.round}` : ""}${checks}`, box: boxAt(bay.gate, 8, 46, 36) });
   return items;
 }
 
@@ -573,12 +676,23 @@ function Shelf({ bay, cell, t, reduced, lod, highlight }: { bay: BaySlot; cell: 
   );
 }
 
+/**
+ * The build's gate evaluations let through on a recorded override (red-before-green, frozen-tests...),
+ * one per gate (the latest), from the cell's own gate log: an override is never a pass.
+ */
+export function overridesOf(cell: CellState): CellState["gateLog"] {
+  const latest = new Map<string, CellState["gateLog"][number]>();
+  for (const g of cell.gateLog) if (g.verdict === "overridden") latest.set(g.gate, g);
+  return [...latest.values()];
+}
+
 /** Red before green: one chip per build task, a test task fills red when seen failing, an implementation green when the suite passes. */
 function TaskBoard({ bay, cell, lod }: { bay: BaySlot; cell: CellState; lod: Lod }) {
   if (lod === "far" || cell.tasks.length === 0) return null;
   const { x, y } = bay.origin;
   const tasks: TaskCell[] = cell.tasks.map((k) => (k.status === "active" ? "active" : k.status === "red" ? "red" : "green"));
-  // Upright on two legs on the clear floor between the plan bench and the build machine.
+  // Upright on two legs on the clear floor between the plan bench and the build machine. An override
+  // of its gate is lettered with the bay's notices (Notices), with the override's own mark.
   return <TaskBoardMark tasks={tasks} at={{ x: x + 58, y: y + 84, z: FLOOR_Z }} columns={6} lod={lod} />;
 }
 
@@ -739,7 +853,7 @@ export function AgentFigure({ placed, lod, dimmed, proxied }: { placed: PlacedAg
 function VerificationGate({ bay, gate: g, t, reduced, lod, dimmed }: { bay: BaySlot; gate: GateState | null; t: number; reduced: boolean; lod: Lod; dimmed: boolean }) {
   const v = gateView(g, t, reduced);
   return (
-      <GateGlyph kind="verification" position={v.position} from={v.from} progress={v.progress} at={bay.gate} axis="y" lod={lod} dimmed={dimmed} showLabel={false} planned={!g} />
+      <GateGlyph kind="verification" position={v.position} from={v.from} progress={v.progress} overridden={v.overridden} at={bay.gate} axis="y" lod={lod} dimmed={dimmed} showLabel={false} planned={!g} />
   );
 }
 

@@ -29,10 +29,10 @@ import {
   type Vec3,
 } from "@mach/ui";
 import { FloorLettering } from "@mach/ui";
-import { PANELS, eventsInWindow, isKnown, ref, type Risk, type CellState, type EntityRef, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
+import { PANELS, capacityWaitOf, capacityWaits, eventsInWindow, type CapacityWaitState, isKnown, ref, type Risk, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
-import { AFTERGLOW, RATE, agentsElapsedKey, animating, anim, chamberOccupant, gateView, latestGate, placeAgents, q, type PlacedAgent } from "./derive";
+import { AFTERGLOW, RATE, agentsElapsedKey, animating, anim, chamberOccupant, gateView, gateWord, latestGate, panelsSitting, placeAgents, q, ticketOfRef, type PlacedAgent } from "./derive";
 import { PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
 import { AgentFigure, AgentPost, agentLabel, onShelf } from "./Bay";
 import { Card } from "./reduced";
@@ -90,6 +90,9 @@ export function IntakeWorks() {
   const schedulerBusy = actors ? actorBusy(actors.scheduler) : decided.length > 0;
   const supervisorBusy = actors ? actorBusy(actors.supervisor) : decided.length > 0;
   const lastDecision = scene.supervisor.lastDecision;
+  // Recorded waits for an execution place whose ticket has no bay on the floor (no slice or cell known).
+  const placed = new Set(L.bays.map((b) => b.ticketId));
+  const unplacedWaits = capacityWaits(scene).filter((w) => !placed.has(w.ticketId) && !(w.sliceId && L.bayBySlice.has(w.sliceId)));
   const auditGate = latestGate(scene, "audit");
   const auditView = gateView(auditGate, t, reduced);
   const auditBusy = auditGate?.decidedAt != null && t - auditGate.decidedAt < AFTERGLOW;
@@ -111,7 +114,7 @@ export function IntakeWorks() {
       ) : null}
       {/* Supervisor console at the back of intake, its conduit running to the floor. It lights while
           the supervisor's last act is recent (actor:supervisor in the record). */}
-      <Hit entity={"actor:supervisor" as EntityRef} label={`Line supervisor: ${supervisorBusy ? "acting" : "idle"}${lastDecision ? `, last decision dispatched ${lastDecision.dispatched.length}, started ${lastDecision.started.length}, held ${lastDecision.held.length}` : ""}`}>
+      <Hit entity={"actor:supervisor" as EntityRef} label={`Line supervisor: ${supervisorBusy ? "acting" : "idle"}${lastDecision ? `, last decision dispatched ${lastDecision.dispatched.length}, started ${lastDecision.started.length}, held ${lastDecision.held.length}` : ""}${unplacedWaits.length ? `; waiting for an execution place with no bay yet: ${unplacedWaits.map((w) => `${w.ticketId}${w.limit !== null ? ` (at most ${w.limit} at once)` : ""}`).join(", ")}` : ""}`}>
         <Prism box={{ x: I.supervisor.x - 16, y: I.supervisor.y - 12, w: 32, d: 24, z: PLATE_Z, h: 12 }} top={supervisorBusy ? "live-soft" : "machine-top"} edge={supervisorBusy ? "live" : "plate-edge"} hatch="shade">
           <circle cx={I.supervisor.x} cy={I.supervisor.y} r={6} style={{ fill: "none", stroke: fc("ink"), strokeWidth: planeStroke }} />
           <circle cx={I.supervisor.x} cy={I.supervisor.y} r={3.4} style={{ fill: "none", stroke: fc("ink"), strokeWidth: planeStroke }} />
@@ -119,6 +122,14 @@ export function IntakeWorks() {
       </Hit>
       {lod !== "far" && lastDecision ? (
         <FloorLettering at={{ x: I.supervisor.x - 18, y: I.supervisor.y + 22, z: PLATE_Z }} text={`dispatched ${lastDecision.dispatched.length} · started ${lastDecision.started.length} · held ${lastDecision.held.length}`} size={7.5} font="mono" tone={supervisorBusy ? "live" : "subtle"} weight={500} decorative />
+      ) : null}
+      {unplacedWaits.length ? (
+        <g aria-hidden="true">
+          <g transform={`translate(${round(project({ x: I.supervisor.x - 22, y: I.supervisor.y + 32, z: PLATE_Z }).x)} ${round(project({ x: I.supervisor.x - 22, y: I.supervisor.y + 32, z: PLATE_Z }).y)})`}>
+            <StateMark state="waiting" r={3.2} />
+          </g>
+          <FloorLettering at={{ x: I.supervisor.x - 18, y: I.supervisor.y + 32, z: PLATE_Z }} text={`${unplacedWaits.length} WAIT FOR AN EXECUTION PLACE · ${unplacedWaits.slice(0, 2).map((w) => w.ticketId).join(", ")}${unplacedWaits.length > 2 ? " …" : ""}`} size={6.5} font="mono" tone="wait" weight={600} decorative />
+        </g>
       ) : null}
       {/* Inbound: the hopper where the wave is validated and cut into tickets. */}
       <Hit entity={ref.station("intake")} label={`Intake: ${hopperState}`}>
@@ -136,29 +147,50 @@ export function IntakeWorks() {
         <AgentMarker agentRole="scheduler" tier="haiku" state={schedulerBusy ? "active" : "idle"} at={I.scheduler} lod={lod} showLabel={false} />
       </Hit>
       {L.bays.map((b) => (
-        <HoldingPad key={b.sliceId} bay={b} slice={scene.slices[b.sliceId]} cell={scene.cells[b.ticketId]} t={t} reduced={reduced} lod={lod} dimmed={isDimmed(highlight, ref.slice(b.sliceId), ref.cell(b.ticketId))} />
+        <HoldingPad key={b.sliceId} bay={b} slice={scene.slices[b.sliceId]} cell={scene.cells[b.ticketId]} wait={scene.cells[b.ticketId] ? null : capacityWaitOf(scene, scene.slices[b.sliceId]?.ticketId ?? b.ticketId)} t={t} reduced={reduced} lod={lod} dimmed={isDimmed(highlight, ref.slice(b.sliceId), ref.cell(b.ticketId))} />
       ))}
       {/* Audit: the readiness gauge and the gate across intake's exit. */}
-      <Hit entity={ref.station("audit")} label={`Audit: ${auditGate ? auditGate.detail : "not run yet"}`}>
-        <StationMachine nameplate showLabel={false} kind="audit" state={auditBusy ? "active" : auditGate ? "succeeded" : "idle"} at={I.audit} lod={lod} planned={!auditGate} />
+      <Hit entity={ref.station("audit")} label={`Audit: ${auditGate ? `${gateWord(auditGate)}, ${auditGate.detail}` : "not run yet"}`}>
+        <StationMachine nameplate showLabel={false} kind="audit" state={auditBusy ? "active" : gateMark(auditGate)} at={I.audit} lod={lod} planned={!auditGate} />
       </Hit>
-      <Hit entity={auditGate ? `gate:${auditGate.id}` : "gate:audit"} label={`Audit gate: ${auditView.position}${auditGate ? `, ${auditGate.ticketId}` : ""}`}>
-        <GateGlyph kind="audit" position={auditView.position} from={auditView.from} progress={auditView.progress} at={I.auditGate} axis="y" lod={lod} showLabel={false} floorLabel="Audit gate" planned={!auditGate} />
+      <Hit entity={auditGate ? `gate:${auditGate.id}` : "gate:audit"} label={`Audit gate: ${gateWord(auditGate)}${auditGate ? `, ${auditGate.ticketId}` : ""}`}>
+        <GateGlyph kind="audit" position={auditView.position} from={auditView.from} progress={auditView.progress} overridden={auditView.overridden} at={I.auditGate} axis="y" lod={lod} showLabel={false} floorLabel="Audit gate" planned={!auditGate} />
       </Hit>
     </g>
   );
 }
 
-function HoldingPad({ bay, slice, cell, t, reduced, lod, dimmed }: { bay: BaySlot; slice: SliceState | undefined; cell: CellState | undefined; t: number; reduced: boolean; lod: Lod; dimmed: boolean }) {
+/**
+ * A machine's state from its gate's own record (D3): passed only on a recorded pass; an override is
+ * drawn passed by the machine but the gate beside it carries the override's mark and name.
+ */
+function gateMark(gate: GateState | null): FactoryState {
+  if (!gate) return "idle";
+  switch (gate.state) {
+    case "open":
+      return "active";
+    case "waiting":
+      return "human";
+    case "failed":
+      return "failed";
+    case "passed":
+    case "skipped":
+    case "overridden":
+      return "succeeded";
+  }
+}
+
+function HoldingPad({ bay, slice, cell, wait, t, reduced, lod, dimmed }: { bay: BaySlot; slice: SliceState | undefined; cell: CellState | undefined; wait: CapacityWaitState | null; t: number; reduced: boolean; lod: Lod; dimmed: boolean }) {
   const p = bay.pad;
   const state = slice?.scheduler;
-  const waiting = state === "waiting-on-dependency";
-  const gone = state === "dispatched" || state === "integrated";
+  // A recorded wait for an execution place (capacity.wait_changed) before the cell opens: the waiting mark, its own words.
+  const waiting = state === "waiting-on-dependency" || Boolean(wait);
+  const gone = !wait && (state === "dispatched" || state === "integrated");
   const mark: FactoryState = !slice ? "idle" : waiting ? "waiting" : gone ? "succeeded" : "idle";
-  const word = !slice ? "" : waiting ? `WAITS · ${slice.dependsOn.map((d) => d.replace("SLICE-", "")).join(", ")}` : gone ? `→ ${cell?.ticketId ?? slice.ticketId}` : "ELIGIBLE";
+  const word = !slice ? "" : wait ? `WAITS · EXECUTION PLACE${wait.limit !== null ? ` · MAX ${wait.limit}` : ""}` : waiting ? `WAITS · ${slice.dependsOn.map((d) => d.replace("SLICE-", "")).join(", ")}` : gone ? `→ ${cell?.ticketId ?? slice.ticketId}` : "ELIGIBLE";
   const mat = slice ? slice.history[0] : undefined;
   const cardP = mat ? q(anim("artifactMaterialise", t - mat.at - 900 * RATE, reduced)) : 0;
-  const label = slice ? `Slice ${slice.id}, ${isKnown(slice.meta, "title") ? slice.title : "title not recorded"}: ${state}${slice.reasons.length ? `. ${slice.reasons.join(" ")}` : ""}` : `Holding pad ${bay.index + 1}: empty`;
+  const label = slice ? `Slice ${slice.id}, ${isKnown(slice.meta, "title") ? slice.title : "title not recorded"}: ${state}${wait ? `, waits for an execution place${wait.limit !== null ? ` (at most ${wait.limit} at once)` : ""}` : ""}${slice.reasons.length ? `. ${slice.reasons.join(" ")}` : ""}` : `Holding pad ${bay.index + 1}: empty`;
   const pin = project({ x: p.x + 16, y: p.y - 16, z: PLATE_Z + 2 });
   const flat = gone && lod === "far";
   // The pad's lettering is drawn outside its hit target, so the target's name is the whole sentence.
@@ -196,12 +228,16 @@ export function ChamberWorks() {
   const { lod, layout: L, visibleBays } = useAtlas();
   const { t, reduced, scene } = useFrame((f, now) => {
     if (animating(f, now, (e) => e.event.type.startsWith("review.") || e.event.type === "artifact.written" || e.event.type === "artifact.recorded" || e.event.type === "station.entered")) return now;
-    const occ = chamberOccupant(f.sceneAt(now), now);
-    return occ ? `${occ.cell.ticketId}/${occ.roundIndex}` : "empty";
+    return panelsSitting(f.sceneAt(now), now).map((p) => `${p.cell.ticketId}/${p.roundIndex}`).join(",") || "empty";
   });
   const highlight = useHighlight();
+  // Several panels can sit at once (live, replay): the chamber shows the selected cell's panel when it
+  // sits, else the latest to start. Each sitting panel has a plaque; selecting one steps to it.
+  const selection = useSceneStore((s) => s.selection);
+  const prefer = ticketOfRef(scene, selection);
+  const sitting = panelsSitting(scene, t);
   const R = L.review;
-  const occ = chamberOccupant(scene, t);
+  const occ = chamberOccupant(scene, t, prefer);
   const round_ = occ ? occ.cell.reviews[occ.roundIndex] : undefined;
   const gate = occ ? scene.gates[`${occ.cell.ticketId}/review#${round_?.round ?? 1}`] : null;
   const v = gateView(gate, t, reduced);
@@ -227,10 +263,10 @@ export function ChamberWorks() {
   const packet = occ ? occ.cell.artifacts.find((a) => a.kind === "review-packet" && a.round === round_?.round) : undefined;
   const gateRef: EntityRef = gate ? `gate:${gate.id}` : "gate:review";
   const anyReview = Object.values(scene.cells).some((c) => c.reviews.length > 0);
-  const others = Object.values(scene.cells)
-    .filter((c) => c.station === "review" && c.ticketId !== occ?.cell.ticketId)
-    .map((c) => c.ticketId);
   const consensusText = round_?.outcome ? `Consensus · ${round_.outcome === "AWAITING_HUMAN" ? "needs a person" : round_.outcome.toLowerCase()}` : "Consensus";
+  // The consensus gate's state from its own record (D10); the panel's outcome is said beside it, and
+  // a person's approval is the human gate's, a separate gate.
+  const outcomeWords = round_?.outcome === "AWAITING_HUMAN" ? "the panel approved; a person must approve next at the human approval gate" : round_?.outcome ? `panel outcome ${round_.outcome}` : null;
   return (
     <g style={{ opacity: dim ? 0.28 : 1 }}>
       {/* Seats inlaid in the chamber floor, each lettered. */}
@@ -280,16 +316,47 @@ export function ChamberWorks() {
           <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 31, z: PLATE_Z }} text={`${round_.approvalsNeeded} OF ${round_.seats.length} NEEDED`} size={7.5} font="mono" tone={round_.delta ? "live" : "muted"} weight={600} decorative />
         </>
       ) : null}
-      {others.length > 0 && lod !== "far" ? (
-        // Live: other panels sitting at the same time (their seats are the occupant's while it sits).
-        <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 52, z: PLATE_Z }} text={`ALSO SITTING · ${others.slice(0, 2).join(", ")}${others.length > 2 ? ` +${others.length - 2}` : ""}`} size={7} font="mono" tone="muted" weight={500} decorative />
+      {sitting.length > 1 && lod !== "far" ? (
+        lod === "near" || L.bays.length <= 6 ? (
+          <PanelPlaques L={L} sitting={sitting} shown={occ} />
+        ) : (
+          // A dense plant at mid zoom: one line (the element budget); zoom in for a plaque per panel.
+          <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 52, z: PLATE_Z }} text={`${sitting.length} PANELS SITTING · SHOWN ${occ ? `${occ.cell.ticketId} R${round_?.round ?? "?"}` : ""} · SELECT A CELL TO SHOW ITS PANEL`} size={6.5} font="mono" tone="muted" weight={600} decorative />
+        )
       ) : null}
       {round_?.delta && lod !== "far" ? (
         <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 41, z: PLATE_Z }} text={`DELTA ${round_.delta.sinceCommit.slice(0, 7)} · ${round_.delta.filesChanged.length} FILES`} size={7} font="mono" tone="live" weight={500} decorative />
       ) : null}
-      <Hit entity={gateRef} label={`${consensusText}: review consensus gate${occ ? `, ${occ.cell.ticketId} round ${round_?.round}` : ""}: ${v.position}${round_?.outcome ? `, ${round_.outcome}` : ""}`}>
-        <GateGlyph kind="consensus" position={v.position} from={v.from} progress={v.progress} lamps={lamps} at={R.gate} axis="y" lod={lod} showLabel={false} floorLabel={consensusText} planned={!anyReview} />
+      <Hit entity={gateRef} label={`Review consensus gate${occ ? `, ${occ.cell.ticketId} round ${round_?.round}` : ""}: ${occ ? gateWord(gate) : "no panel sitting"}${outcomeWords ? `; ${outcomeWords}` : ""}${sitting.length > 1 ? `. ${sitting.length} panels sitting` : ""}`}>
+        <GateGlyph kind="consensus" position={v.position} from={v.from} progress={v.progress} overridden={v.overridden} lamps={lamps} at={R.gate} axis="y" lod={lod} showLabel={false} floorLabel={consensusText} planned={!anyReview} />
       </Hit>
+    </g>
+  );
+}
+
+/**
+ * One plaque per sitting panel along the chamber's back edge, each naming its ticket and round; the
+ * one the seats show is drawn solid, the others open. Selecting a plaque (its cell) steps the chamber
+ * to that panel.
+ */
+function PanelPlaques({ L, sitting, shown }: { L: PlantLayout; sitting: readonly { cell: CellState; roundIndex: number }[]; shown: { cell: CellState } | null }) {
+  const R = L.regions.review;
+  return (
+    <g>
+      <FloorLettering at={{ x: R.x + 16, y: R.y + 52, z: PLATE_Z }} text={`${sitting.length} PANELS SITTING · SELECT ONE TO SHOW IT`} size={6.5} font="mono" tone="muted" weight={600} decorative />
+      {(shown && !sitting.slice(-3).some((p) => p.cell.ticketId === shown.cell.ticketId) ? [sitting.find((p) => p.cell.ticketId === shown.cell.ticketId)!, ...sitting.slice(-2)] : sitting.slice(-3)).map((p, i) => {
+        const r = p.cell.reviews[p.roundIndex];
+        const on = shown?.cell.ticketId === p.cell.ticketId;
+        const at: Vec3 = { x: R.x + 18 + i * 46, y: R.y + 60, z: PLATE_Z };
+        return (
+          <Hit key={p.cell.ticketId} entity={ref.cell(p.cell.ticketId)} label={`Review panel for ${p.cell.ticketId}, round ${r?.round ?? "?"}${r?.outcome ? `, ${r.outcome}` : ", sitting"}${on ? ", shown on the seats" : ", select to show it on the seats"}`}>
+            {/* A flat plaque (one polygon: the element budget); the shown panel's is solid in the live ink, the others dashed. */}
+            <polygon points={toPoints(prismFaces({ x: at.x, y: at.y, w: 42, d: 11, z: PLATE_Z, h: 0 }).top)} style={{ fill: on ? fc("live-soft") : fc("floor"), stroke: on ? fc("live") : fc("plate-edge"), strokeWidth: 0.8, strokeDasharray: on ? undefined : "3 2" }} />
+            <FloorLettering at={{ x: at.x + 3, y: at.y + 8, z: PLATE_Z + 2 }} text={`${p.cell.ticketId.replace(/^LOCAL-/, "")} · R${r?.round ?? "?"}`} size={6.2} font="mono" tone={on ? "live" : "muted"} weight={600} decorative />
+          </Hit>
+        );
+      })}
+      {sitting.length > 3 ? <FloorLettering at={{ x: R.x + 18 + 3 * 46, y: R.y + 68, z: PLATE_Z }} text={`+${sitting.length - 3} earlier`} size={6.5} font="mono" tone="muted" weight={600} decorative /> : null}
     </g>
   );
 }
@@ -359,8 +426,8 @@ export function GatehouseWorks() {
           ))}
         </>
       ) : null}
-      <Hit entity={gate ? `gate:${gate.id}` : "gate:human-approval"} label={`Human approval gate${gate ? `, ${gate.ticketId}` : ""}: ${waiting ? "waiting for a person" : v.position}`}>
-        <GateGlyph kind="human" position={v.position} from={v.from} progress={v.progress} at={H.gate} axis="x" lod={lod} showLabel={false} floorLabel="Human approval" planned={!gate} />
+      <Hit entity={gate ? `gate:${gate.id}` : "gate:human-approval"} label={`Human approval gate${gate ? `, ${gate.ticketId}` : ""}: ${gateWord(gate)}`}>
+        <GateGlyph kind="human" position={v.position} from={v.from} progress={v.progress} overridden={v.overridden} at={H.gate} axis="x" lod={lod} showLabel={false} floorLabel="Human approval" planned={!gate} />
       </Hit>
     </g>
   );
@@ -376,6 +443,7 @@ export function IntegrationWorks() {
   const gate = latestGate(scene, "merge-revalidation");
   const v = gateView(gate, t, reduced);
   const revalText = gate ? `Revalidation · ${gate.state === "skipped" ? "not needed" : gate.state}` : "Revalidation";
+  const revalWord = gate ? (gate.state === "skipped" ? "skipped, main had not moved" : gateWord(gate)) : "idle";
   const merging = Object.values(scene.cells).filter((c) => c.station === "merge");
   const lastMerge = Object.values(scene.cells).reduce((m, c) => Math.max(m, c.merged?.at ?? -1), -1);
   const state: FactoryState = merging.length ? "active" : lastMerge >= 0 && t - lastMerge < AFTERGLOW ? "succeeded" : lastMerge >= 0 ? "succeeded" : "idle";
@@ -408,8 +476,8 @@ export function IntegrationWorks() {
           <PlanDimension from={{ ...berth(L.bays.length - 1), x: berth(L.bays.length - 1).x - 11, y: I.trunkY - 14 }} to={{ ...berth(0), x: berth(0).x + 11, y: I.trunkY - 14 }} offset={8} label={`${L.bays.length} berths · one per slice of the wave`} />
         ) : null}
       </g>
-      <Hit entity={gate ? `gate:${gate.id}` : "gate:merge-revalidation"} label={`${revalText}: merge revalidation gate${gate ? `, ${gate.ticketId}: ${gate.state === "skipped" ? "skipped, main had not moved" : gate.state}` : ": idle"}`}>
-        <GateGlyph kind="revalidation" position={v.position} from={v.from} progress={v.progress} at={I.gate} axis="x" lod={lod} dimmed={gate ? isDimmed(highlight, ref.cell(gate.ticketId)) : false} showLabel={false} floorLabel={revalText} planned={!gate} />
+      <Hit entity={gate ? `gate:${gate.id}` : "gate:merge-revalidation"} label={`${revalText}: merge revalidation gate${gate ? `, ${gate.ticketId}` : ""}: ${revalWord}`}>
+        <GateGlyph kind="revalidation" position={v.position} from={v.from} progress={v.progress} overridden={v.overridden} at={I.gate} axis="x" lod={lod} dimmed={gate ? isDimmed(highlight, ref.cell(gate.ticketId)) : false} showLabel={false} floorLabel={revalText} planned={!gate} />
       </Hit>
       <Hit entity={ref.station("merge")} label={`Merge machine: ${merging.length ? `merging ${merging.map((c) => c.ticketId).join(", ")}` : state}`}>
         <StationMachine nameplate showLabel={false} kind="merge" state={state} at={I.merge} lod={lod} planned={state === "idle"} />
@@ -502,7 +570,8 @@ export function AwayAgents() {
   const placed: PlacedAgent[] = [];
   // Live and replay: several panels can sit at once. The seats show the chamber's occupant's panel
   // (the latest round to start); the others are lettered in the chamber, not stacked on its seats.
-  const occ = mode.live ? chamberOccupant(scene, t) : null;
+  const selection = useSceneStore((s) => s.selection);
+  const occ = mode.live ? chamberOccupant(scene, t, ticketOfRef(scene, selection)) : null;
   for (const cell of Object.values(scene.cells)) {
     for (const a of placeAgents(L, cell, t, reduced, mode)) {
       if (a.at.z !== PLATE_Z) continue;

@@ -7,10 +7,11 @@
 import { CornerDownRight } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@mach/ui";
-import { describeEntry, EVENT_CATALOG, eventsFor, timingAt, type AnyRef, type AnySimEvent, type Authority, type LogEntry, type Telemetry } from "../../sim";
+import { describeEntry, entriesBehind, EVENT_CATALOG, eventsFor, isSceneLog, timingAt, type AnyRef, type AnySimEvent, type Authority, type LogEntry, type Telemetry } from "../../sim";
 import { useSceneStore, useStore } from "../../scene";
 import { usePlayheadEffect } from "../timeline/playhead";
 import { duration as durationWords, selectable, TELEMETRY_WORDS, timecode } from "../vocab";
+import { elapsedWords } from "./words";
 
 export function Section({ title, children, aside, id }: { title: string; children: ReactNode; aside?: ReactNode; id?: string }) {
   return (
@@ -267,7 +268,8 @@ function upperBoundByT(entries: readonly LogEntry[], t: number): number {
 export function useEntityEvents(entity: AnyRef): { all: readonly LogEntry[]; happened: number } {
   const log = useSceneStore((s) => s.log);
   const version = useSceneStore((s) => s.logVersion);
-  const all = useMemo(() => eventsFor(log, entity), [log, entity, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  // With the event the entity's own record names, so the evidence never reads "0 events" beside a record that names one (D14).
+  const all = useMemo(() => (isSceneLog(log) && log.provenance.source !== "simulation" ? entriesBehind(log, entity) : eventsFor(log, entity)), [log, entity, version]); // eslint-disable-line react-hooks/exhaustive-deps
   const happened = useSceneStore((s) => upperBoundByT(all, s.playhead));
   return { all, happened };
 }
@@ -352,15 +354,16 @@ export function Evidence({ entity }: { entity: AnyRef }) {
  * it has finished. Never a fraction or a time left (nobody knows how long work in flight will take).
  * Written straight to the DOM on each frame, so it never re-renders the inspector.
  */
-export function Elapsed({ startedAt, finishedAt }: { startedAt: number; finishedAt: number | null }) {
+export function Elapsed({ startedAt, finishedAt, mode = "work" }: { startedAt: number; finishedAt: number | null; mode?: "work" | "wait" | "ended-unrecorded" }) {
   const ref = useRef<HTMLSpanElement>(null);
   usePlayheadEffect(
     (s) => {
       const timing = timingAt(startedAt, finishedAt, s.playhead);
-      const text = !timing.started ? "not started" : timing.finished ? `took ${durationWords(timing.elapsed)}` : `at work for ${durationWords(timing.elapsed)}`;
+      // A wait on a person is never "at work" (D14); a visit that never exited is bounded, not "took" (D4).
+      const text = elapsedWords(mode === "ended-unrecorded" && timing.finished ? "ended-unrecorded" : mode, timing.started, timing.finished, durationWords(timing.elapsed));
       if (ref.current && ref.current.textContent !== text) ref.current.textContent = text;
     },
-    [startedAt, finishedAt],
+    [startedAt, finishedAt, mode],
   );
   return <span ref={ref} data-frame="" className="tabular" />;
 }

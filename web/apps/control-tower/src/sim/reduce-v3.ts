@@ -186,17 +186,65 @@ const firstRef = (e: Pick<FactoryEventV3, "entities">, kind: string): string | n
 
 const CELL_PLACEHOLDERS = ["title", "summary", "risk", "appType"] as const;
 
-/** The cell an event belongs to, opened from this event if it has not been seen (hand-driven tickets, AUTO-*, late observers). */
+/**
+ * The cell an event belongs to, opened from this event if it has not been seen (hand-driven tickets,
+ * AUTO-*, late observers). Only records that name the ticket themselves open a cell: an agent's
+ * label never does (D15). A cell opened without a slice takes the slice a record already linked to
+ * its ticket (slice.materialized), so the link does not depend on which arrived first (D5). Agents
+ * met before their cell (stray) are adopted when it opens.
+ */
 function ensureCell(s: Scene, e: AnyV3Event, definitions: ProductDefinitions): Scene {
   const ticket = e.ids.ticket_id;
   if (!ticket || s.cells[ticket]) return s;
-  const sliceId = e.ids.slice_id ?? "";
+  const named = e.ids.slice_id && !labelled(e, "slice_id") ? e.ids.slice_id : "";
+  const sliceId = named || (Object.values(s.slices).find((x) => x.ticketId === ticket)?.id ?? "");
   const def = sliceId ? definitions.slices[sliceId] : undefined;
   const unknown = def ? [] : [...CELL_PLACEHOLDERS, ...(sliceId ? [] : ["sliceId"])];
   // Until a record says otherwise, the stage is a placeholder: unknown, not "interview".
   const meta = metaOf(e, { unknown: [...unknown, "stage"], start: "inferred", fields: { stage: "reconstructed" } });
-  const cell: CellState = { ...newCell(ticket, sliceId, definitions, when(e), meta), title: def?.title ?? (sliceId || ticket), cellInstance: e.ids.cell_instance };
-  return { ...s, cells: put(s.cells, ticket, cell) };
+  let cell: CellState = { ...newCell(ticket, sliceId, definitions, when(e), meta), title: def?.title ?? (sliceId || ticket), cellInstance: e.ids.cell_instance };
+  let strayAgents = s.strayAgents;
+  for (const agent of Object.values(s.strayAgents)) {
+    if (agent.ticketId !== ticket) continue;
+    if (strayAgents === s.strayAgents) strayAgents = { ...strayAgents };
+    delete (strayAgents as Record<string, AgentState>)[agent.id];
+    cell = { ...cell, agents: put(cell.agents, agent.id, agent), agentOrder: [...cell.agentOrder, agent.id], activeAgentIds: agent.lifecycle === "running" ? [...cell.activeAgentIds, agent.id] : cell.activeAgentIds };
+  }
+  if (cell.agentOrder.length > 1) {
+    const order = [...cell.agentOrder].sort((a, b) => (cell.agents[a] as AgentState).startedSeq - (cell.agents[b] as AgentState).startedSeq);
+    cell = { ...cell, agentOrder: order };
+  }
+  return { ...s, cells: put(s.cells, ticket, cell), strayAgents };
+}
+
+/** Whether an id of the event was read from a worker's label (contract `inferred`). */
+function labelled(e: Pick<FactoryEventV3, "inferred">, id: "ticket_id" | "slice_id"): boolean {
+  return Boolean(e.inferred[`ids.${id}`]);
+}
+
+/**
+ * Link a cell and its slice when a record names both (D5): whichever was seen first, the cell gets
+ * the slice and the slice the ticket. Ids read from a label never link anything.
+ */
+function linkSlice(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Scene {
+  const ticket = e.ids.ticket_id;
+  const sliceId = e.ids.slice_id;
+  if (!ticket || !sliceId || labelled(e, "ticket_id") || labelled(e, "slice_id")) return input;
+  let s = input;
+  const cell = s.cells[ticket];
+  if (cell && !cell.sliceId) {
+    const def = definitions.slices[sliceId];
+    const titleUnknown = !isKnownField(cell.meta, "title");
+    s = withCell(s, ticket, (c) => ({
+      ...c,
+      sliceId,
+      title: def?.title ?? (titleUnknown ? sliceId : c.title),
+      meta: { ...c.meta, unknown: def ? without(c.meta.unknown, "sliceId", ...CELL_PLACEHOLDERS) : without(c.meta.unknown, "sliceId") },
+    }));
+  }
+  const slice = s.slices[sliceId];
+  if (slice && !slice.ticketId) s = withSlice(s, sliceId, (x) => ({ ...x, ticketId: ticket }));
+  return s;
 }
 
 function newExecution(e: AnyV3Event, id: string, extra: Partial<ExecutionState> = {}): ExecutionState {
@@ -359,6 +407,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
   const seq = e.pos;
   const ticket = e.ids.ticket_id;
   const at = when(e);
+  s = linkSlice(s, e, definitions);
+  if (e.origin.stream === "execution-stream" && e.ids.execution_id) s = observeStream(ensureExecution(s, e), e);
 
   switch (e.type) {
     // ------------------------------------------------ activation and intake (intake log)
@@ -433,7 +483,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         const edge: DependencyState = { id: key, from: id, to, state: done ? "satisfied" : "blocking", satisfiedAt: done ? at : null, satisfiedSeq: done ? seq : null, meta: metaOf(e) };
         dependencies = put(dependencies, key, edge);
       }
-      return { ...s, slices: put(s.slices, id, slice), dependencies };
+      return linkSlice({ ...s, slices: put(s.slices, id, slice), dependencies }, e, definitions);
     }
     case "dependency.resolved":
       return withSlice(s, e.ids.slice_id, (slice) => ({ ...schedule(slice, "eligible", at, seq, []), meta: touch(slice.meta, e) }));
@@ -520,6 +570,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         meta: touch(x.meta, e, { end: timeQualityOf(e.time.precision), unknown: cost === null && !failed ? withAll(x.meta.unknown, "costUsd") : x.meta.unknown }),
       }));
       s = withCost(s, before, id);
+      s = closeVisitsOf(s, id, at, e);
       return before?.state === "running" ? { ...s, counters: bump(s.counters, { executionsRunning: -1 }) } : s;
     }
     case "station.observed": {
@@ -579,6 +630,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const cell = ticket ? s.cells[ticket] : undefined;
       const reds = cell?.tasks.filter((x) => x.status === "red").length ?? 0;
       const greens = cell?.tasks.filter((x) => x.status === "green").length ?? 0;
+      // A recorded override stays visible: later tasks never turn it back into a plain pass (D6).
+      if (s.gates[gateId(ticket ?? "", "red-before-green")]?.state === "overridden") return s;
       return setGate(s, ticket ?? "", "red-before-green", null, "passed", `${reds} test task(s) seen failing first; ${greens} implementation task(s) green.`, at, seq, metaOf(e));
     }
     case "verify.targets_listed": {
@@ -658,6 +711,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     case "execution.process_ended": {
       s = ensureExecution(s, e);
       s = withExecution(s, e.ids.execution_id, (x) => ({ ...x, processEndedAt: at, ended: e.data.ended, exitCode: e.data.exit_code, workflowRunning: false, meta: touch(x.meta, e, { end: timeQualityOf(e.time.precision) }) }));
+      s = closeVisitsOf(s, e.ids.execution_id, at, e);
       // The main loop is the process: it ends with it (identity, not inference). How it ended is the process's exit.
       const mainId = e.ids.execution_id ? `${e.ids.execution_id}/main` : null;
       if (!mainId || findAgentCell(s, mainId, ticket).agent?.lifecycle !== "running") return s;
@@ -674,14 +728,14 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     // ------------------------------------------------ the execution stream (observed)
     case "session.initialized":
       s = ensureExecution(s, e);
-      return withExecution(s, e.ids.execution_id, (x) => ({ ...x, claudeCodeVersion: e.data.claude_code_version }));
+      return withExecution(s, e.ids.execution_id, (x) => ({ ...x, claudeCodeVersion: e.data.claude_code_version, observation: { ...x.observation, version: e.data.claude_code_version } }));
     case "workflow.started":
       s = ensureExecution(s, e);
-      return withExecution(s, e.ids.execution_id, (x) => ({ ...x, workflowRunning: true, workflow: e.data.workflow, workflowId: firstRef(e, "workflow"), workflowStatus: "running" }));
+      return withExecution(s, e.ids.execution_id, (x) => ({ ...x, workflowRunning: true, workflow: e.data.workflow, workflowId: firstRef(e, "workflow"), workflowStatus: "running", workflowMeta: x.workflowMeta ? touch(x.workflowMeta, e) : metaOf(e) }));
     case "workflow.phases_declared":
-      return withExecution(s, e.ids.execution_id, (x) => ({ ...x, phases: e.data.phases.map((p) => p.title) }));
+      return withExecution(s, e.ids.execution_id, (x) => ({ ...x, phases: e.data.phases.map((p) => p.title), workflowMeta: x.workflowMeta ? touch(x.workflowMeta, e) : metaOf(e) }));
     case "workflow.finished":
-      s = withExecution(s, e.ids.execution_id, (x) => ({ ...x, workflowRunning: false, workflowFinishedAt: at, workflowStatus: e.data.status, stopReason: e.data.stop_reason }));
+      s = withExecution(s, e.ids.execution_id, (x) => ({ ...x, workflowRunning: false, workflowFinishedAt: at, workflowStatus: e.data.status, stopReason: e.data.stop_reason, workflowMeta: x.workflowMeta ? touch(x.workflowMeta, e, { end: timeQualityOf(e.time.precision) }) : metaOf(e, { end: timeQualityOf(e.time.precision) }) }));
       return withCell(s, ticket, (cell) => ({ ...cell, workflowPhase: null }));
     case "agent.queued": {
       s = ensureExecution(s, e);
@@ -692,7 +746,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     case "agent.started": {
       const id = e.ids.agent_id;
       if (!id) return s;
-      s = ensureExecution(ensureCell(s, e, definitions), e);
+      // Never a cell from an agent's label (D15): an agent whose ticket has no cell stays stray, with its execution.
+      s = ensureExecution(s, e);
       if (findAgentCell(s, id, ticket).agent) return s; // a repeated start (a new snapshot of the same agent): the first one stands
       const d = e.data;
       s = withExecution(s, e.ids.execution_id, (x) => {
@@ -741,7 +796,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       return wasRunning ? { ...s, counters: bump(s.counters, { agentsActive: -1 }) } : s;
     }
     case "tool.called":
-      return toolCalled(ensureExecution(ensureCell(s, e, definitions), e), e, at);
+      return toolCalled(ensureExecution(s, e), e, at);
     case "tool.returned": {
       const agentId = e.ids.agent_id;
       const callId = e.ids.tool_call_id;
@@ -826,6 +881,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       }));
     }
     case "history.gap": {
+      const cls = typeof e.data.class === "string" && e.data.class ? e.data.class : gapClassOf(e.data.reason);
+      const lost = typeof e.data.history_lost === "boolean" ? e.data.history_lost : !NOT_LOST.has(cls);
       const gap: HistoryGapState = {
         eventId: e.id,
         at,
@@ -834,19 +891,107 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         from: e.data.from_seq === null ? null : String(e.data.from_seq),
         to: e.data.to_seq === null ? null : String(e.data.to_seq),
         count: e.data.count,
+        class: cls,
+        lost,
       };
-      return { ...s, completeness: { ...s.completeness, state: s.completeness.state === "reconstructed" ? "reconstructed" : "partial", gaps: [...s.completeness.gaps, gap] } };
+      const c = s.completeness;
+      // Records received and not interpreted (unknown-type) lose no history: counted, never partial (D8).
+      const notInterpreted = cls === "unknown-type" ? { ...c.notInterpreted, [gap.source]: (c.notInterpreted[gap.source] ?? 0) + (gap.count ?? 1) } : c.notInterpreted;
+      return { ...s, completeness: { ...c, state: c.state === "reconstructed" ? "reconstructed" : lost ? "partial" : c.state, gaps: [...c.gaps, gap], notInterpreted } };
     }
 
     // ------------------------------------------------ the client's own markers
     case "client.history_missing": {
-      const gap: HistoryGapState = { eventId: e.id, at, reason: e.data.reason === "reset" ? "observer-index-reset" : e.data.reason === "window" ? "before-window" : "cursor-expired", source: "client", from: e.data.after, to: e.data.resumed_at, count: null };
+      const reason = e.data.reason === "reset" ? "observer-index-reset" : e.data.reason === "window" ? "before-window" : "cursor-expired";
+      const gap: HistoryGapState = { eventId: e.id, at, reason, source: "client", from: e.data.after, to: e.data.resumed_at, count: null, class: reason, lost: true };
       return { ...s, completeness: { ...s.completeness, state: s.completeness.state === "reconstructed" ? "reconstructed" : "partial", since: at, gaps: [...s.completeness.gaps, gap] } };
     }
     case "client.snapshot_applied":
       return applySnapshot(s, e, at, definitions);
     default:
       return s;
+  }
+}
+
+// ---------------------------------------------------------------- visits that never exited (D4, D14)
+
+const withoutKey = (record: Readonly<Record<string, string>>, key: string): Readonly<Record<string, string>> => {
+  if (!(key in record)) return record;
+  const out = { ...record };
+  delete out[key];
+  return out;
+};
+
+/**
+ * Close the open visits of a cell that `pick` names, as ended without an exit record: `leftAt` is the
+ * bound (the cell's next entry, or its execution's end), the outcome "stopped" with no word of the
+ * station's own, the end inferred, the authority reconstructed. A cell whose current station was one
+ * of them is at no station any more.
+ */
+function closeVisits(cell: CellState, pick: (v: CellState["visits"][number]) => boolean, reason: "superseded" | "execution-ended", at: number, e: AnyV3Event): CellState {
+  let current = false;
+  let changed = false;
+  const visits = cell.visits.map((v) => {
+    if (v.leftAt !== null || !pick(v)) return v;
+    changed = true;
+    if (cell.station === v.station && cell.visits.lastIndexOf(v) === cell.visits.findLastIndex((x) => x.station === v.station)) current = true;
+    return {
+      ...v,
+      leftAt: Math.max(v.enteredAt, at),
+      outcome: "stopped" as const,
+      outcomeWord: null,
+      durationMs: null,
+      unclosed: { reason, at: Math.max(v.enteredAt, at), eventId: e.id },
+      meta: { ...v.meta, authority: "reconstructed" as const, eventId: e.id, end: "inferred" as const, late: e.late === true, unknown: withAll(v.meta.unknown, "outcome"), inferred: { ...v.meta.inferred, leftAt: reason === "superseded" ? "unclosed-visit" : "execution-ended" } },
+    };
+  });
+  if (!changed) return cell;
+  return current ? { ...cell, visits, station: null, action: null, stationSince: null } : { ...cell, visits };
+}
+
+/** An execution ended: every visit it entered and never exited ended with it. A wait on a person (human approval) is not its work and stays open. */
+function closeVisitsOf(input: Scene, executionId: string | null, at: number, e: AnyV3Event): Scene {
+  if (!executionId) return input;
+  let s = input;
+  for (const cell of Object.values(input.cells)) {
+    if (!cell.visits.some((v) => v.leftAt === null && v.executionId === executionId && v.station !== "human-approval")) continue;
+    s = withCell(s, cell.ticketId, (c) => closeVisits(c, (v) => v.executionId === executionId && v.station !== "human-approval", "execution-ended", at, e));
+  }
+  return s;
+}
+
+// ---------------------------------------------------------------- what a stream showed (D7) and gaps (D8)
+
+const STRUCTURAL = new Set(["workflow.started", "workflow.phases_declared", "workflow.finished", "agent.queued", "agent.started", "agent.progressed", "agent.finished", "tool.called", "tool.returned"]);
+
+/** Count a stream record against its execution, and keep the runtime state the observer stamped on it. */
+function observeStream(s: Scene, e: AnyV3Event): Scene {
+  return withExecution(s, e.ids.execution_id, (x) => {
+    const o = x.observation;
+    const runtime = e.origin.runtime_state ?? o.runtime;
+    return { ...x, observation: { ...o, records: o.records + 1, structural: o.structural + (STRUCTURAL.has(e.type) ? 1 : 0), runtime } };
+  });
+}
+
+/** Gap classes that lose no history: records received and not interpreted, and a conflict (the first record kept). */
+const NOT_LOST = new Set(["unknown-type", "conflict"]);
+
+/** The class of a gap from its precise reason, for observers that send no `class`. */
+export function gapClassOf(reason: string): string {
+  switch (reason) {
+    case "unknown-type":
+    case "unparsable-line":
+    case "state-mismatch":
+    case "evicted":
+    case "conflict":
+      return reason;
+    case "unexpected-shape":
+      return "unknown-type";
+    case "unreadable":
+    case "source-unreadable":
+      return "source-unreadable";
+    default:
+      return "not-received";
   }
 }
 
@@ -873,8 +1018,15 @@ function stationEntered(input: Scene, e: E<"station.entered">, at: number): Scen
     visitId: e.ids.visit_id,
     outcomeWord: null,
     durationMs: null,
+    executionId: e.ids.execution_id,
+    unclosed: null,
     meta: metaOf(e, { unknown: known.unknown ? ["action"] : [], inferred: known.rule ? { action: known.rule } : {} }),
   };
+  // The entry names the visit before it that never exited (`unclosed_visit`): that one ended here (D4).
+  if (d.unclosed_visit) {
+    const id = d.unclosed_visit.includes("/") ? d.unclosed_visit : `${ticket}/${d.unclosed_visit}`;
+    s = withCell(s, ticket, (c) => closeVisits(c, (v) => v.visitId === id, "superseded", at, e));
+  }
   s = withCell(s, ticket, (c) => ({
     ...c,
     station: d.station,
@@ -902,7 +1054,8 @@ function stationExited(input: Scene, e: E<"station.exited">, at: number): Scene 
   const ticket = e.ids.ticket_id;
   const d = e.data;
   const stage = stageOf(d.stage);
-  const match = (v: CellState["visits"][number]): boolean => v.leftAt === null && (e.ids.visit_id ? v.visitId === e.ids.visit_id : v.station === d.station);
+  // An exit record wins over a closing the scene inferred (an unclosed visit resumed and exited after all).
+  const match = (v: CellState["visits"][number]): boolean => (e.ids.visit_id ? v.visitId === e.ids.visit_id && (v.leftAt === null || v.unclosed !== null) : v.leftAt === null && v.station === d.station);
   return withCell(input, ticket, (c) => {
     const closesCurrent = c.station === d.station;
     return {
@@ -916,7 +1069,8 @@ function stationExited(input: Scene, e: E<"station.exited">, at: number): Scene 
         outcome: outcomeOf(d.outcome),
         outcomeWord: d.outcome,
         durationMs: d.duration_ms,
-        meta: touch(v.meta, e, { end: timeQualityOf(e.time.precision), inferred: d.closed_by ? { ...v.meta.inferred, leftAt: "closed-by-cleanup" } : v.meta.inferred }),
+        unclosed: null,
+        meta: touch(v.meta, e, { end: timeQualityOf(e.time.precision), inferred: d.closed_by ? { ...v.meta.inferred, leftAt: "closed-by-cleanup" } : withoutKey(v.meta.inferred, "leftAt"), unknown: without(v.meta.unknown, "outcome") }),
       })),
       stage: stage ?? c.stage,
       stageHistory: stage && stage !== c.stage ? [...c.stageHistory, { stage, at, seq: e.pos, by: d.station }] : c.stageHistory,
@@ -926,7 +1080,8 @@ function stationExited(input: Scene, e: E<"station.exited">, at: number): Scene 
 }
 
 /** The gate state (`scene.gates` id) a lifecycle gate evaluation sets, or null when none stands for it. */
-function gateStateOf(gate: string, passed: boolean, ticket: string, round: number): string | null {
+function gateStateOf(gate: string, verdict: "passed" | "refused" | "overridden", ticket: string, round: number): string | null {
+  const passed = verdict === "passed";
   switch (gate) {
     case "audit.readiness":
       return gateId(ticket, "audit");
@@ -936,6 +1091,7 @@ function gateStateOf(gate: string, passed: boolean, ticket: string, round: numbe
       return gateId(ticket, "verification", round);
     case "build.red":
     case "build.green":
+    case "red-before-green":
       return passed ? null : gateId(ticket, "red-before-green");
     case "merge.land":
       return passed ? null : gateId(ticket, "merge-revalidation");
@@ -944,20 +1100,25 @@ function gateStateOf(gate: string, passed: boolean, ticket: string, round: numbe
   }
 }
 
+/** A gate state from a verdict: an override is its own state, never a pass (D6). */
+const gateWord = (verdict: "passed" | "refused" | "overridden"): "passed" | "failed" | "overridden" => (verdict === "overridden" ? "overridden" : verdict === "passed" ? "passed" : "failed");
+const overrideDetail = (d: V3DataMap["gate.evaluated"]): string => `Overridden${d.subject ? ` for ${d.subject}` : ""}: ${d.reason_code ?? "no reason code"}.`;
+
 function gateEvaluated(input: Scene, e: E<"gate.evaluated">, at: number): Scene {
   let s = input;
   const ticket = e.ids.ticket_id ?? "";
   const d = e.data;
   const round = e.ids.round;
   const passed = d.verdict !== "refused";
-  const matched = gateStateOf(d.gate, passed, ticket, round ?? s.cells[ticket]?.round ?? 1);
+  const word = gateWord(d.verdict);
+  const matched = gateStateOf(d.gate, d.verdict, ticket, round ?? s.cells[ticket]?.round ?? 1);
   s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched }] }));
   const meta = metaOf(e);
   switch (d.gate) {
     case "audit.readiness":
-      return setGate(s, ticket, "audit", null, passed ? "passed" : "failed", d.audit_tier ? `Readiness ${d.audit_tier}.` : passed ? "Readiness gate passed." : "Readiness gate refused.", at, e.pos, meta, d.reason_code);
+      return setGate(s, ticket, "audit", null, word, word === "overridden" ? overrideDetail(d) : d.audit_tier ? `Readiness ${d.audit_tier}.` : passed ? "Readiness gate passed." : "Readiness gate refused.", at, e.pos, meta, d.reason_code);
     case "plan.check":
-      return setGate(s, ticket, "plan-check", null, passed ? "passed" : "failed", passed ? "The plan covers every requirement." : `Refused: ${d.reason_code ?? "no reason code"}.`, at, e.pos, meta, d.reason_code);
+      return setGate(s, ticket, "plan-check", null, word, word === "overridden" ? overrideDetail(d) : passed ? "The plan covers every requirement." : `Refused: ${d.reason_code ?? "no reason code"}.`, at, e.pos, meta, d.reason_code);
     case "verify.verdict": {
       const r = round ?? s.cells[ticket]?.round ?? 1;
       const status = d.status ?? (passed ? "PASS" : "FAIL_WITH_EVIDENCE");
@@ -966,13 +1127,16 @@ function gateEvaluated(input: Scene, e: E<"gate.evaluated">, at: number): Scene 
       const passedCount = typeof counts.checks_passed === "number" ? counts.checks_passed : null;
       const failedCount = typeof counts.checks_failed === "number" ? counts.checks_failed : null;
       const detail = passedCount !== null && failedCount !== null ? `${status}: ${passedCount} passed, ${failedCount} failed` : status;
-      s = setGate(s, ticket, "verification", r, status === "PASS" ? "passed" : "failed", detail, at, e.pos, meta, d.reason_code);
-      return status === "PASS" ? s : { ...s, counters: bump(s.counters, { verificationFailures: 1 }) };
+      s = setGate(s, ticket, "verification", r, word === "overridden" ? "overridden" : status === "PASS" ? "passed" : "failed", word === "overridden" ? overrideDetail(d) : detail, at, e.pos, meta, d.reason_code);
+      return status === "PASS" || word === "overridden" ? s : { ...s, counters: bump(s.counters, { verificationFailures: 1 }) };
     }
     case "build.red":
     case "build.green":
-      return passed ? s : setGate(s, ticket, "red-before-green", null, "failed", `Refused ${d.gate.slice(6)} step${d.subject ? ` for ${d.subject}` : ""}: ${d.reason_code ?? "no reason code"}.`, at, e.pos, meta, d.reason_code);
+    case "red-before-green":
+      if (word === "overridden") return setGate(s, ticket, "red-before-green", null, "overridden", overrideDetail(d), at, e.pos, meta, d.reason_code);
+      return passed ? s : setGate(s, ticket, "red-before-green", null, "failed", `Refused ${d.gate.startsWith("build.") ? `${d.gate.slice(6)} step` : "the red-before-green check"}${d.subject ? ` for ${d.subject}` : ""}: ${d.reason_code ?? "no reason code"}.`, at, e.pos, meta, d.reason_code);
     case "merge.land":
+      if (word === "overridden") return setGate(s, ticket, "merge-revalidation", null, "overridden", overrideDetail(d), at, e.pos, meta, d.reason_code);
       return passed ? s : setGate(s, ticket, "merge-revalidation", null, "failed", `Refused: ${d.reason_code ?? "no reason code"}.`, at, e.pos, meta, d.reason_code);
     default:
       return s;
@@ -1111,7 +1275,7 @@ function artifactRecorded(input: Scene, e: E<"artifact.recorded">, at: number): 
       meta: metaOf(e, { unknown: ["writer", "summary", ...(known ? [] : ["kind"])] }),
     };
     const index = cell.artifacts.findIndex((a) => a.id === id);
-    return { ...cell, artifacts: index >= 0 ? cell.artifacts.map((a, i) => (i === index ? artifact : a)) : [...cell.artifacts, artifact] };
+    return { ...cell, artifactRecords: cell.artifactRecords + 1, artifacts: index >= 0 ? cell.artifacts.map((a, i) => (i === index ? artifact : a)) : [...cell.artifacts, artifact] };
   });
   s = { ...s, counters: bump(s.counters, { artifacts: 1, commits: d.commit && d.nature === "code" ? 1 : 0 }) };
   return s;

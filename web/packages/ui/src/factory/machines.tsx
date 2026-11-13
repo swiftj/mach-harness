@@ -448,6 +448,12 @@ export interface GateGlyphProps extends Common {
   floorLabel?: string;
   /** Not reached yet in this run (Blueprint "unbuilt"): dashed outline, no fill, no bar, no lamps. */
   planned?: boolean;
+  /**
+   * M6.2: the gate let the work through on a recorded override, not on a pass. Drawn open, with a
+   * distinct shape: the Atlas's arm is dashed and its plaque struck through; the Blueprint's diamond
+   * carries a bypass arc over its top. Named "Overridden". Only meaningful with `position="open"`.
+   */
+  overridden?: boolean;
 }
 
 const armAngle: Record<GatePosition, number> = { open: 82, closed: 0, refusing: 0, waiting: 0 };
@@ -458,12 +464,13 @@ const armAngle: Record<GatePosition, number> = { open: 82, closed: 0, refusing: 
  * the span; refusing drops it shut with one damped overshoot and lights the plaque in the fail ink;
  * waiting holds it shut with the plaque in the human ink. The state word is in the accessible name.
  */
-export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps, axis = "y", floorLabel, planned, at, variant = "atlas", lod = "mid", dimmed, showLabel }: GateGlyphProps) {
+export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps, axis = "y", floorLabel, planned, overridden = false, at, variant = "atlas", lod = "mid", dimmed, showLabel }: GateGlyphProps) {
   const g = gates[kind];
   const pos = gatePositions[position];
   const st = factoryStates[pos.state];
-  const ink = position === "closed" ? fc("ink") : fc(st.ink);
-  const name = `${g.label}: ${planned ? "not reached yet" : pos.label}`;
+  const over = overridden && !planned && position === "open";
+  const ink = over ? fc("wait") : position === "closed" ? fc("ink") : fc(st.ink);
+  const name = `${g.label}: ${planned ? "not reached yet" : over ? "Overridden" : pos.label}`;
   const p = clamp01(progress);
 
   if (variant === "blueprint" && planned) {
@@ -485,8 +492,10 @@ export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps
     const r = 14;
     return (
       <g role="img" aria-label={name} transform={`translate(${round(at.x)} ${round(at.y)})`} style={{ opacity: dimmed ? dimmedOpacity : 1 }}>
-        <path d={`M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z`} style={{ fill: position === "closed" ? fc("plate-top") : fc(st.soft), stroke: ink, strokeWidth: 1.4 }} />
+        <path d={`M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z`} style={{ fill: over ? fc("wait-soft") : position === "closed" ? fc("plate-top") : fc(st.soft), stroke: ink, strokeWidth: 1.4 }} />
         <StationSymbol kind={g.symbol} size={13} color={fc("ink")} strokeWidth={1.3} />
+        {/* Overridden: a bypass arc over the diamond's top, from its left vertex round to its right, with an arrowhead. */}
+        {over ? <path d={`M${-r - 2} -2C${-r + 2} ${-r - 12} ${r - 2} ${-r - 12} ${r + 2} -2M${r + 2} -2l-4.6 -1.6M${r + 2} -2l-0.4 -4.8`} aria-hidden="true" style={{ fill: "none", stroke: fc("wait"), strokeWidth: 1.5, strokeLinecap: "round" }} /> : null}
         {/* The bar: horizontal across the diamond when shut, absent when open. */}
         {position !== "open" ? <line x1={-r - 5} y1={r + 4} x2={r + 5} y2={r + 4} aria-hidden="true" style={{ stroke: ink, strokeWidth: 2, strokeLinecap: "round", opacity: position === "refusing" ? 1 : 0.85 }} /> : null}
         {position === "open" ? <path d={`M${-r - 5} ${r + 4}h4M${r + 1} ${r + 4}h4`} aria-hidden="true" style={{ stroke: ink, strokeWidth: 2, strokeLinecap: "round" }} /> : null}
@@ -529,7 +538,7 @@ export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps
       {/* Far post, then lintel, arm, near post. */}
       <line x1={postB[0].x} y1={postB[0].y} x2={postB[1].x} y2={postB[1].y} aria-hidden="true" style={{ stroke: fc("ink"), strokeWidth: 2.4, strokeLinecap: "square" }} />
       <line x1={postA[1].x} y1={postA[1].y} x2={postB[1].x} y2={postB[1].y} aria-hidden="true" style={{ stroke: fc("ink"), strokeWidth: 3, strokeLinecap: "square" }} />
-      <line x1={pivot.x} y1={pivot.y} x2={end.x} y2={end.y} aria-hidden="true" style={{ stroke: ink, strokeWidth: 2.6, strokeLinecap: "round" }} />
+      <line x1={pivot.x} y1={pivot.y} x2={end.x} y2={end.y} aria-hidden="true" style={{ stroke: ink, strokeWidth: 2.6, strokeLinecap: over ? "butt" : "round", strokeDasharray: over ? "4 2.5" : undefined }} />
       {/* Arm banding: drafted stripes on the barrier so its position reads without colour. */}
       {[0.25, 0.5, 0.75].map((t) => {
         const q = { x: pivot.x + (end.x - pivot.x) * t, y: pivot.y + (end.y - pivot.y) * t };
@@ -539,8 +548,10 @@ export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps
       <circle cx={pivot.x} cy={pivot.y} r={2.2} aria-hidden="true" style={{ fill: fc("ink") }} />
       {/* The plaque, standing on the middle of the lintel, carrying the gate symbol. */}
       <g transform={`translate(${round(lintelMid.x)} ${round(lintelMid.y - 8)})`} aria-hidden="true">
-        <rect x={-9} y={-7.5} width={18} height={15} rx={1.5} style={{ fill: plaqueFill, stroke: ink, strokeWidth: 1.1, opacity: flash }} />
+        <rect x={-9} y={-7.5} width={18} height={15} rx={1.5} style={{ fill: over ? fc("wait-soft") : plaqueFill, stroke: ink, strokeWidth: 1.1, opacity: flash }} />
         <StationSymbol kind={g.symbol} size={11} color={fc("ink")} strokeWidth={1.2} />
+        {/* Overridden: the plaque struck through, corner to corner. */}
+        {over ? <path d="M-9 7.5L9 -7.5" style={{ stroke: fc("wait"), strokeWidth: 1.6, strokeLinecap: "round" }} /> : null}
       </g>
       {lamps ? <Lamps lamps={lamps} x={lintelMid.x} y={lintelMid.y - 23} /> : null}
       {floorLabel && lod !== "far" ? (
@@ -558,7 +569,7 @@ export function GateGlyph({ kind, position, progress = 1, from = "closed", lamps
         <g transform={`translate(${round(Math.max(postA[1].x, postB[1].x) + 8)} ${round(Math.min(postA[1].y, postB[1].y) + 2)})`}>
           <text style={{ fill: "var(--mach-ink)", fontSize: 11, fontWeight: 600 }}>{g.label}</text>
           <text y={12} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }}>
-            {pos.label}
+            {over ? "Overridden" : pos.label}
           </text>
         </g>
       ) : null}

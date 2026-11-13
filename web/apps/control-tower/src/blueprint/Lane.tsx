@@ -9,7 +9,7 @@
  * does not hold is said to be not recorded rather than drawn from a placeholder.
  */
 import { memo, useContext } from "react";
-import { ArtifactCard, DependencyLink, fc, StateMark, type FactoryState } from "@mach/ui";
+import { ArtifactCard, DependencyLink, fc, StateMark, type FactoryState, type MarkState } from "@mach/ui";
 import type { ActivityState, EntityRef, Scene } from "../sim";
 import { activityOf, isKnown, refKind } from "../sim";
 import { useScene, useSceneStore } from "../scene";
@@ -22,11 +22,11 @@ import { SHEET, type Lane, type Layout, type Row } from "./layout";
 import { useEventProgress, useLate, useStaleSince } from "./motion";
 import { ExecutionRows } from "./rows";
 import { clock } from "./time";
-import type { TreeNode } from "./tree";
+import { laneNotices, type LaneNotice, type TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, useSelected, useTreeCtx } from "./treeitem";
 import { Gutter } from "./gutter";
 import { LaneDimContext, LodContext } from "./context";
-import { artifactFile, gateState, grammarArtifact, stageState, stageWords } from "./vocab";
+import { artifactFile, gateState, grammarArtifact, stageState, stageWords, visitMark } from "./vocab";
 
 /** Whether a lane is outside the highlighted dependency chain (only slice-level subjects dim the sheet). */
 function useDimmed(entities: readonly EntityRef[]): boolean {
@@ -123,7 +123,14 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   const idY = 22 + lines.length * 17;
   const stageY = idY + 14;
   const schedY = stageY + 13;
-  const depY = (cell ? schedY : stageY) + 13;
+  // Recorded facts the flow has no mark for (a capacity wait, refusals with no gate state, overrides
+  // with no gate state): lettered in the gutter with the waiting, refused or overridden mark, the
+  // latest two; the lane's name lists them all. Keyed as a string so the lane re-renders only when they change.
+  const noticeKey = useScene((sc) => laneNotices(sc, cell, cell?.ticketId ?? slice.ticketId).map((n) => `${n.kind}\t${n.short}`).join("\n"));
+  const notices = noticeKey ? noticeKey.split("\n").map((l) => { const [kind, short] = l.split("\t"); return { kind: kind as LaneNotice["kind"], short: short ?? "" }; }) : [];
+  const shownNotices = cell && lane.expanded ? notices.slice(-2) : [];
+  const waitNotice = !cell ? notices.find((n) => n.kind === "wait") : undefined;
+  const depY = (cell ? schedY : stageY) + 13 + shownNotices.length * 13;
   const onScreen = lane.y + h >= band[0] && lane.y <= band[1];
   // Overview lettering: the title and the lane's story set large, for the establishing view.
   // The lane's header area: down to its first execution row (the rows' own gutters lie below).
@@ -203,12 +210,23 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
               <text x={tx} y={schedY} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }} className="tabular">
                 {schedLine}
               </text>
+              {shownNotices.map((n, i) => (
+                <g key={`${n.kind}${i}`}>
+                  <g transform={`translate(${tx + 3} ${schedY + 13 + i * 13 - 3.5})`}>
+                    {n.kind === "wait" ? <StateMark state="waiting" r={3} /> : n.kind === "refused" ? <StateMark state="failed" r={3} progress={0} /> : <OverrideMark r={3} />}
+                  </g>
+                  <text x={tx + 10} y={schedY + 13 + i * 13} style={{ fill: n.kind === "wait" ? fc("wait") : n.kind === "refused" ? fc("fail") : fc("wait"), fontSize: 9.5 }} className="tabular">
+                    {clip(n.short, 64)}
+                  </text>
+                </g>
+              ))}
             </>
           ) : null}
           {cell && !lane.expanded ? <CollapsedSummary scene={null} ticket={cell.ticketId} x={tx} y={stageY} lane={lane} activity={activity} /> : null}
           {!cell ? (
             <text x={tx} y={stageY} style={{ fill: fc("wait"), fontSize: 9.5 }} className="tabular">
               {slice.scheduler === "waiting-on-dependency" ? `Waiting on a dependency since ${clock(waited?.at ?? slice.since)}` : slice.scheduler}
+              {waitNotice ? ` · ${waitNotice.short}` : ""}
             </text>
           ) : null}
           {lane.expanded ? deps.map((d, i) => <DependencyLine key={d.id} node={d} x={tx} y={depY + i * 13} />) : null}
@@ -260,6 +278,16 @@ function CollapsedSummary({ ticket, x, y, lane, activity }: { scene: Scene | nul
   );
 }
 
+/** An override with no gate state: a diamond with a bypass arc over it (the flow's overridden gate, small). */
+function OverrideMark({ r }: { r: number }) {
+  return (
+    <g aria-hidden="true">
+      <path d={`M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z`} style={{ fill: fc("wait-soft"), stroke: fc("wait"), strokeWidth: 0.9 }} />
+      <path d={`M${-r - 1} ${-1}C${-r} ${-r * 2} ${r} ${-r * 2} ${r + 1} -1`} style={{ fill: "none", stroke: fc("wait"), strokeWidth: 0.9, strokeLinecap: "round" }} />
+    </g>
+  );
+}
+
 /** A closed cell's workflow on one line: a state mark at each column it has run, unbuilt rings for the rest. */
 const Strip = memo(function Strip({ nodes, ax, y }: { nodes: readonly FlowNode[]; ax: number; y: number }) {
   // At the overview the strip's marks are set large enough to read (same marks, same meaning).
@@ -273,12 +301,14 @@ const Strip = memo(function Strip({ nodes, ax, y }: { nodes: readonly FlowNode[]
     <g aria-hidden="true">
       <line x1={ax + (list[0]?.x ?? 0)} y1={y} x2={ax + (list[list.length - 1]?.x ?? 0)} y2={y} style={{ stroke: fc("route"), strokeWidth: big ? 2.4 : 0.75 }} />
       {list.map((n) => {
-        const drawn: FactoryState | null = n.kind === "future" ? null : n.kind === "start" ? "succeeded" : n.gate ? gateState(n.gate) : n.visit ? (n.visit.leftAt === null ? (n.visit.station === "human-approval" ? "human" : "active") : n.visit.outcome === "failed" ? "failed" : "succeeded") : n.kind === "end" && !n.key.startsWith("f:") ? "succeeded" : null;
+        const drawn: MarkState | null = n.kind === "future" ? null : n.kind === "start" ? "succeeded" : n.gate ? gateState(n.gate) : n.visit ? visitMark(n.visit) : n.kind === "end" && !n.key.startsWith("f:") ? "succeeded" : null;
         // Nothing is drawn as working while the connection is stale: the mark is held, as last seen.
         const st = stale && drawn === "active" ? "stale" : drawn;
         return (
           <g key={n.col} transform={`translate(${ax + n.x} ${y})`}>
             {st === "stale" ? <ActivityMark state="stale" r={r} /> : st ? <StateMark state={st} r={r} progress={0} mark={n.kind === "end" ? "double-ring" : undefined} /> : <circle r={r * 0.86} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: big ? 2 : 0.9, strokeDasharray: big ? "5 4" : "2 1.8" }} />}
+            {/* An overridden gate: a bypass arc over its mark (never a plain pass). */}
+            {n.gate?.state === "overridden" ? <path d={`M${-r - 1.5} ${-r * 0.3}C${-r} ${-r * 2} ${r} ${-r * 2} ${r + 1.5} ${-r * 0.3}`} style={{ fill: "none", stroke: fc("wait"), strokeWidth: big ? 2.4 : 1, strokeLinecap: "round" }} /> : null}
             {n.round > 1 && n.kind !== "future" && !big ? (
               <text x={-6} y={-6} textAnchor="end" className="bp-fine" style={{ fill: fc("fail"), fontSize: 8, fontWeight: 700 }}>
                 ×{n.round}

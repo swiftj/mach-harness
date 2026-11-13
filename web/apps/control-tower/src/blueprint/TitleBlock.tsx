@@ -25,11 +25,15 @@ export interface SheetFacts {
 /** What the history's completeness says, in a few words for the title block. */
 export function completenessWords(scene: Scene): string {
   const c = scene.completeness;
-  if (c.state === "complete") return "complete";
-  if (c.state === "reconstructed") return c.since !== null ? `reconstructed, ${clock(c.since)}` : "reconstructed";
+  // Records received but not interpreted (an unknown kind) lose no history: said as such, never "partial".
+  const notRead = Object.values(c.notInterpreted).reduce((n, k) => n + k, 0);
+  const tail = notRead ? ` · ${notRead} received, not interpreted` : "";
+  if (c.state === "complete") return `complete${tail}`;
+  if (c.state === "reconstructed") return `${c.since !== null ? `reconstructed, ${clock(c.since)}` : "reconstructed"}${tail}`;
   const began = Object.keys(c.began).length;
-  const gaps = c.gaps.length;
-  return `partial${c.since !== null ? ` since ${clock(c.since)}` : ""}${gaps ? ` · ${gaps} gap${gaps === 1 ? "" : "s"}` : began ? ` · ${began} begun late` : ""}`;
+  // Only gaps that lost history make it partial.
+  const gaps = c.gaps.filter((g) => g.lost).length;
+  return `partial${c.since !== null ? ` since ${clock(c.since)}` : ""}${gaps ? ` · ${gaps} gap${gaps === 1 ? "" : "s"}` : began ? ` · ${began} begun late` : ""}${tail}`;
 }
 
 /** The title block's subtitle, stamp and facts for a scene and the waves it draws. */
@@ -88,7 +92,8 @@ export function StaleNote({ width, height, factCount }: { width: number; height:
   const tbH = 54 + factCount * 16;
   const x = MARGIN + innerW - TB_W;
   const y = MARGIN + innerH - tbH - 26;
-  const text = `As last seen at ${clock(since)}${state === "disconnected" ? " · disconnected" : state === "reconnecting" ? " · reconnecting" : " · connection stale"}`;
+  // Each connection state as itself: no-session is the observer not knowing this browser, not staleness.
+  const text = `As last seen at ${clock(since)}${state === "disconnected" ? " · disconnected" : state === "reconnecting" ? " · reconnecting" : state === "no-session" ? " · no session: open the observer's link again" : " · connection stale"}`;
   return (
     <g role="status" aria-label={text}>
       <rect x={x} y={y} width={TB_W} height={20} rx={2} style={{ fill: fc("wait-soft"), stroke: fc("wait"), strokeWidth: 1 }} />

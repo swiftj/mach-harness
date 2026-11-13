@@ -132,13 +132,16 @@ export function LiveState({ compact }: { compact?: boolean }) {
   const behind = useSceneStore((s) => (s.following ? 0 : Math.round((s.liveAt - s.playhead) / 10_000) * 10_000));
   const stale = useSceneStore((s) => isStale(s.connection));
   const staleSince = useSceneStore((s) => s.connection?.staleSince ?? null);
-  const newer = useSceneStore((s) => (s.following ? 0 : Math.max(0, s.log.size() - s.cursor)));
+  // Events that ARRIVED since the person left the live edge (D20), not events after the playhead.
+  const newer = useSceneStore((s) => (s.following || s.arrivedAtLeave === null ? 0 : Math.max(0, s.arrived - s.arrivedAtLeave)));
+  const loading = useSceneStore((s) => s.windowLoading);
   const atEnd = useSceneStore((s) => s.playhead >= s.liveAt);
 
   if (source === "replay") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1.5" data-live-state={atEnd ? "replay-end" : "replay"}>
         <Pill kind="review">{atEnd ? "At its last event" : "Replaying"}</Pill>
+        {loading ? <span className="text-caption text-ink-subtle" role="status">Loading this part of the history</span> : null}
         {!atEnd && behind >= 10_000 && !compact ? <span className="text-caption text-ink-subtle max-[1099px]:hidden">{words(behind)} before its end</span> : null}
       </span>
     );
@@ -157,8 +160,9 @@ export function LiveState({ compact }: { compact?: boolean }) {
           Reviewing
           {behind >= 10_000 && !compact ? <span className="font-normal text-ink-subtle max-[1099px]:hidden">{words(behind)} back</span> : null}
         </Pill>
+        {loading ? <span className="text-caption text-ink-subtle" role="status">Loading this part of the history</span> : null}
         {newer > 0 ? (
-          <span className="text-caption font-semibold text-ink tabular" data-new-events={newer}>
+          <span className="text-caption font-semibold text-ink tabular" data-new-events={newer} title="Events that arrived since you left the live edge">
             {newer.toLocaleString("en-GB")} new event{newer === 1 ? "" : "s"}
           </span>
         ) : null}

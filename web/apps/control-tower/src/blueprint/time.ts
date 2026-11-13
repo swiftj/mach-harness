@@ -2,7 +2,9 @@
  * Time words for the drawing. Inputs are factory milliseconds: from the scenario start for the
  * simulation, Unix milliseconds (`order_ms`) for live and replay. The two never overlap (a scenario
  * lasts minutes; a Unix time is past 1973), so one function prints either without being told which:
- * run time as mm:ss for the simulation, the time of day (the viewer's clock) for real execution.
+ * run time as mm:ss for the simulation, the time of day in UTC, with the zone shown, for real
+ * execution: the one time format of the whole product (the transport, the inspector and the Atlas
+ * print UTC too). Durations are unchanged.
  */
 
 /** Factory times at or above this are Unix milliseconds (live, replay), below it scenario time. */
@@ -16,11 +18,17 @@ const two = (n: number): string => String(n).padStart(2, "0");
 
 function timeOfDay(t: number): string {
   const d = new Date(t);
-  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+  return `${two(d.getUTCHours())}:${two(d.getUTCMinutes())}:${two(d.getUTCSeconds())}`;
 }
 
-/** "03:38", "27:19": run time in factory mm:ss, the Shell timeline's format. Live and replay: "14:02:10", the time of day. */
+/** "03:38", "27:19": run time in factory mm:ss, the Shell timeline's format. Live and replay: "14:02:10 UTC", the time of day in UTC. */
 export function clock(t: number): string {
+  if (isAbsolute(t)) return `${timeOfDay(t)} UTC`;
+  return clockBare(t);
+}
+
+/** As `clock`, without the zone: for the first time of a range whose second carries it ("14:02:10 → 14:09:51 UTC"). */
+export function clockBare(t: number): string {
   if (isAbsolute(t)) return timeOfDay(t);
   const s = Math.max(0, Math.floor(t / 1000));
   return `${two(Math.floor(s / 60))}:${two(s % 60)}`;
@@ -29,20 +37,18 @@ export function clock(t: number): string {
 /** "27:19.4": the playhead, to a tenth (live and replay: the time of day, to a tenth). */
 export function clockTenths(t: number): string {
   const tenths = Math.max(0, Math.floor(t / 100));
-  if (isAbsolute(t)) return `${timeOfDay(tenths * 100)}.${tenths % 10}`;
+  if (isAbsolute(t)) return `${timeOfDay(tenths * 100)}.${tenths % 10} UTC`;
   const s = Math.floor(tenths / 10);
   return `${two(Math.floor(s / 60))}:${two(s % 60)}.${tenths % 10}`;
 }
 
 /**
  * What a ruler's times are measured from: zero for the simulation (its labels read run time), the
- * viewer's local midnight before `t` for live and replay (its labels then read the time of day).
+ * UTC midnight before `t` for live and replay (its labels then read the time of day in UTC).
  */
 export function rulerOrigin(t: number): number {
   if (!isAbsolute(t)) return 0;
-  const d = new Date(t);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+  return t - (t % 86_400_000);
 }
 
 /** A duration: "4.2s", "38s", "4m 12s", "1h 02m". */

@@ -317,6 +317,15 @@ export interface StationVisit {
   readonly outcomeWord: string | null;
   /** Live: the measured duration from station.exited (same clock as its entry). Null while open or when not recorded. */
   readonly durationMs: number | null;
+  /** Live: the execution its entry record names (`ids.execution_id`); null when none (groom, hand-driven). */
+  readonly executionId: string | null;
+  /**
+   * Live: the visit never exited, and the scene closed it (D4): the cell's next entry recorded it as
+   * an `unclosed_visit` (`superseded`), or its execution ended (`execution-ended`). `leftAt` is then
+   * the bound (`at`), `outcome` is "stopped", `outcomeWord` null, `meta.end` "inferred" and the
+   * authority reconstructed. Never "still working". Null when an exit record closed it, or while open.
+   */
+  readonly unclosed: { readonly reason: "superseded" | "execution-ended"; readonly at: number; readonly eventId: string } | null;
   readonly meta: EntityMeta;
 }
 
@@ -539,6 +548,8 @@ export interface CellState {
   readonly agentOrder: readonly string[];
   readonly activeAgentIds: readonly string[];
   readonly artifacts: readonly ArtifactState[];
+  /** `artifact.recorded` records received for the cell (a path recorded again counts again); `artifacts` holds the distinct ones. */
+  readonly artifactRecords: number;
   readonly merged: { readonly commit: string; readonly at: number; readonly revalidated: boolean } | null;
   readonly archived: { readonly archive: string; readonly at: number } | null;
   readonly openedAt: number;
@@ -633,7 +644,25 @@ export interface ExecutionState {
   readonly refused: readonly { readonly tool: string; readonly agentId: string | null; readonly at: number }[];
   /** A recorded wait for an execution place (capacity.wait_changed, reconstructed from the scheduler's decision). */
   readonly capacityWait: { readonly since: number; readonly limit: number | null } | null;
+  /** Live: what is known of its stream (agents, tools): see StreamObservation. */
+  readonly observation: StreamObservation;
+  /** Live: the meta of its Dynamic Workflow's own records (workflow.*); null before one is seen. */
+  readonly workflowMeta: EntityMeta | null;
   readonly meta: EntityMeta;
+}
+
+/**
+ * What the execution's stream let the observer see (D7). Counts are of records received for it;
+ * `runtime` is the last `origin.runtime_state` the observer stamped on them (null: an older observer).
+ */
+export interface StreamObservation {
+  /** Stream records received (any kind). */
+  readonly records: number;
+  /** Records that describe agents, the workflow or tool calls. */
+  readonly structural: number;
+  readonly runtime: "proven" | "compatible-unproven" | "incompatible" | "unknown" | null;
+  /** The Claude Code version its stream's `session.initialized` names. */
+  readonly version: string | null;
 }
 
 export interface GateState {
@@ -641,7 +670,8 @@ export interface GateState {
   readonly ticketId: string;
   readonly gate: GateKind;
   readonly round: number | null;
-  readonly state: "open" | "passed" | "failed" | "waiting" | "skipped";
+  /** `overridden`: the gate let the work through on a recorded override (its reason code in `reasonCode`); never the same as passed. */
+  readonly state: "open" | "passed" | "failed" | "waiting" | "skipped" | "overridden";
   readonly detail: string;
   readonly openedAt: number;
   readonly decidedAt: number | null;

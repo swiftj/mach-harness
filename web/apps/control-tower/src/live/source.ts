@@ -45,6 +45,8 @@ import { createSceneStore } from "../scene/store";
 import type { ObserverClient, ObserverSnapshot } from "./observer";
 import type { SceneSource } from "../sim/provenance";
 import { ObserverError, parseCursor, timeOf } from "./observer";
+import { clientEvent } from "./markers";
+import { createWindowedHistory, type WindowedHistory } from "./windows";
 
 /** The parts of the browser's EventSource the source uses. */
 export interface EventSourceLike {
@@ -81,6 +83,16 @@ export interface LiveSourceOptions {
   readonly cursor?: string | null;
   /** The observer's settle window, used when a heartbeat carries no watermark (contract 6.5). */
   readonly settleMs?: number;
+  /**
+   * The most recent events loaded at start (default 20,000). A longer history starts from the
+   * observer's snapshot at the window's first cursor (D17); what is before it is read in windows,
+   * on demand, when the person scrubs back (`windows`).
+   */
+  readonly liveWindow?: number;
+  /** A long history read in windows: initialised here once connected (its span, the series). */
+  readonly windows?: WindowedHistory;
+  /** How often the series is read again (default 30 s). */
+  readonly seriesEveryMs?: number;
 }
 
 export interface LiveSource {
@@ -90,35 +102,6 @@ export interface LiveSource {
   status(): ConnectionStatus;
   /** Apply what is queued now, without waiting for a frame (tests). */
   flush(): void;
-}
-
-const pad = (n: number, width: number): string => String(Math.max(0, Math.floor(n))).padStart(width, "0");
-
-/** A client marker event (`k:` id, rank 7, key `k`): placed at `t`, never sent anywhere. */
-function clientEvent<K extends "client.history_missing" | "client.snapshot_applied">(type: K, n: number, t: number, data: AnyV3Event["data"]): EngineEvent {
-  const iso = new Date(t).toISOString();
-  return {
-    schema_version: 3,
-    schema_revision: 0,
-    id: `k:${type.slice(7)}:${n}`,
-    type,
-    pos: 0,
-    origin: { stream: "observer", key: "k", seq: n, part: 0, writer: "observer", script: null, source_version: "control-tower" },
-    authority: "reconstructed",
-    time: { occurred_at: iso, precision: "bounded", not_before: null, not_after: iso, observed_at: iso, order_ms: t },
-    order: `${pad(t, 15)}~7~k~${pad(n, 12)}~0000`,
-    ids: { project_id: null, wave_id: null, slice_id: null, revision: null, ticket_id: null, cell_instance: null, execution_id: null, runner_id: null, visit_id: null, station: null, round: null, attempt: null, seat: null, agent_id: null, parent_agent_id: null, tool_call_id: null },
-    entities: [],
-    parent: null,
-    cause: null,
-    artifacts: [],
-    unknown: [],
-    inferred: {},
-    provenance: { basis: [], rule: `client-${type.slice(7)}`, files: [] },
-    late: false,
-    withheld: 0,
-    data,
-  } as unknown as EngineEvent;
 }
 
 export function createLiveSource(options: LiveSourceOptions): LiveSource {
@@ -142,6 +125,8 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
   let recovering = false;
   let markers = 0;
   let refused = 0;
+  let seriesTimer: unknown = null;
+  const liveWindow = Math.max(1000, options.liveWindow ?? 20_000);
 
   const publish = (patch: Partial<ConnectionStatus>): void => {
     status = { ...status, ...patch };
@@ -150,14 +135,34 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
 
   const confirmed = (): number => Math.max(status.confirmedAt ?? 0, log.headTime() ?? 0);
 
+  /** The observer's total: its head position, the highest seen (cursors, pages, positions). */
+  const seeTotal = (cursorOrPos: string | number | null | undefined): void => {
+    const pos = typeof cursorOrPos === "number" ? cursorOrPos : parseCursor(cursorOrPos ?? null)?.pos;
+    if (typeof pos === "number" && pos > (status.total ?? 0)) status = { ...status, total: pos };
+  };
+
   const apply = (events: readonly EngineEvent[]): void => {
     if (refused !== status.refused) publish({ refused });
     if (!events.length) return;
+    // The observer's own `late` flag, on events not already held (a re-delivery is not late twice).
+    let flagged = 0;
+    for (const e of events) if (e.schema_version === 3 && e.late && !log.entry(e.id)) flagged += 1;
+    for (const e of events) if (e.schema_version === 3 && !e.id.startsWith("k:")) seeTotal(e.pos);
     const result = log.ingest(events);
     if (result.added) store.logChanged();
     const head = log.headTime();
-    publish({ received: status.received + result.added, duplicates: status.duplicates + result.duplicates, late: status.late + result.late, confirmedAt: head === null ? status.confirmedAt : Math.max(status.confirmedAt ?? 0, head) });
+    publish({
+      received: status.received + result.added,
+      duplicates: status.duplicates + result.duplicates,
+      late: status.late + flagged,
+      reordered: status.reordered + result.late,
+      held: heldEvents(),
+      confirmedAt: head === null ? status.confirmedAt : Math.max(status.confirmedAt ?? 0, head),
+    });
   };
+
+  /** Events held now, the client's own markers apart. */
+  const heldEvents = (): number => Math.max(0, log.stats().events - log.entries().reduce((n, e) => (e.id.startsWith("k:") ? n + 1 : n), 0));
 
   const parseAll = (raw: readonly unknown[]): EngineEvent[] => {
     const out: EngineEvent[] = [];
@@ -195,6 +200,7 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
     let cursor = after;
     for (;;) {
       const page = await client.events(cursor, pageLimit);
+      seeTotal(page.head);
       apply(parseAll(page.events));
       if (page.watermark !== null) {
         store.setLiveEdge(page.watermark);
@@ -237,15 +243,19 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
     es.onmessage = (m) => {
       heard();
       queue.push(m.data);
-      if (m.lastEventId) status = { ...status, cursor: m.lastEventId };
+      if (m.lastEventId) {
+        status = { ...status, cursor: m.lastEventId };
+        seeTotal(m.lastEventId);
+      }
       if (frame === null) frame = clock.request(() => flush());
     };
     es.addEventListener("heartbeat", (m) => {
       heard();
       const d = (safeJson(m.data) ?? {}) as Record<string, unknown>;
-      const at = timeOf(d.at);
+      const at = timeOf(d.at_ms ?? d.at);
       const watermark = timeOf(d.watermark_ms ?? d.watermark) ?? (at === null ? null : at - settleMs);
       if (watermark !== null) store.setLiveEdge(watermark);
+      seeTotal(typeof d.head === "string" ? d.head : null);
       publish({ watermark, sourceLagMs: at !== null && watermark !== null ? Math.max(0, at - watermark) : status.sourceLagMs, confirmedAt: Math.max(confirmed(), watermark ?? 0) });
     });
     es.addEventListener("gap", (m) => {
@@ -326,9 +336,11 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
         return;
       }
       publish({ generation: session.generation, state: status.state === "reconnecting" || status.state === "disconnected" ? status.state : "connecting" });
-      const cursor = await backfill(status.cursor ?? `${session.generation}.0`);
+      const start = status.cursor ?? (await startWindow(session.generation, session.snapshot));
+      const cursor = await backfill(start);
       publish({ cursor });
       openLive();
+      void startWindows();
     } catch (error) {
       if (error instanceof ObserverError && error.kind === "cursor_expired") return recover("expired");
       if (error instanceof ObserverError && error.kind === "cursor_reset") return recover("reset");
@@ -345,6 +357,71 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
     }
   };
 
+  /**
+   * Where a fresh page starts (D17): from the beginning when the history is short; otherwise from the
+   * observer's snapshot at the cursor `liveWindow` events before its head, then the events after it.
+   * Returns the cursor to read on from.
+   */
+  const startWindow = async (generation: string, snapshot: boolean): Promise<string> => {
+    const origin = `${generation}.0`;
+    let head: number | null = null;
+    let floor = 0;
+    try {
+      const probe = await client.events(origin, 1);
+      head = parseCursor(probe.head)?.pos ?? null;
+      floor = parseCursor(probe.floor)?.pos ?? 0;
+    } catch (error) {
+      if (!(error instanceof ObserverError) || error.kind !== "cursor_expired") throw error;
+      head = parseCursor(typeof error.detail.head === "string" ? error.detail.head : null)?.pos ?? null;
+      floor = parseCursor(typeof error.detail.floor === "string" ? error.detail.floor : null)?.pos ?? 0;
+    }
+    seeTotal(head);
+    if (head === null || (head <= liveWindow && floor === 0)) return origin;
+    const from = Math.max(floor, head - liveWindow);
+    const cursor = `${generation}.${from}`;
+    const first = await client.events(cursor, pageLimit);
+    const events = parseAll(first.events);
+    if (!events.length) return cursor;
+    const t0 = Math.min(...events.map((e) => (e.schema_version === 3 ? e.time.order_ms : Infinity)));
+    markers += 1;
+    let seeded = false;
+    if (snapshot) {
+      try {
+        const s = await client.snapshot(cursor);
+        apply([clientEvent("client.snapshot_applied", markers, t0 - 1, { cursor: s.cursor, generation: s.generation, state: s.state } as AnyV3Event["data"])]);
+        seeded = true;
+      } catch (error) {
+        if (!(error instanceof ObserverError)) throw error;
+      }
+    }
+    if (!seeded) apply([clientEvent("client.history_missing", markers, t0 - 1, { reason: "window", after: null, resumed_at: null } as AnyV3Event["data"])]);
+    apply(events);
+    seeTotal(first.head);
+    publish({ cursor: first.next ?? cursor });
+    return first.next ?? cursor;
+  };
+
+  /** The history before what is held: its span and series, so scrubbing back loads windows and the timeline draws it all. */
+  const startWindows = async (): Promise<void> => {
+    try {
+      if (options.windows && !options.windows.span()) await options.windows.init();
+      const series = options.windows?.series() ?? null;
+      if (series) store.setSeries(series);
+      else await readSeries();
+    } catch {
+      // Advisory: without the span the store holds only what it received.
+    }
+  };
+
+  const readSeries = async (): Promise<void> => {
+    try {
+      const s = await client.series();
+      store.setSeries({ bucketMs: s.bucketMs, buckets: s.buckets, total: s.total, coarse: s.coarse });
+    } catch {
+      // `/series` is optional (observer M6.2).
+    }
+  };
+
   const checkStale = (): void => {
     if (status.state !== "live") return;
     if (clock.now() - lastMessageWall > staleAfterMs) publish({ state: "stale", staleSince: confirmed() || null, reason: "Nothing heard from the observer; what is shown may have changed." });
@@ -353,8 +430,17 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
   const readStatus = async (): Promise<void> => {
     try {
       const s = await client.factoryStatus();
-      store.setFactoryStatus(s);
-      publish({ supervisor: { heartbeatAgeSeconds: s.supervisor.heartbeatAgeSeconds, live: s.supervisor.heartbeatFresh, present: s.supervisor.leasePresent === true, readAt: s.readAt } });
+      let merged = s;
+      try {
+        // `/health` adds the delivery hold and the per-stream runtime (observer M6.2); optional.
+        const h = await client.health();
+        merged = { ...s, delivery: h.delivery ?? s.delivery, sources: s.sources.some((x) => x.runtime) || !h.sources.length ? s.sources : h.sources };
+        seeTotal(h.head);
+      } catch {
+        // An older observer: no delivery figure.
+      }
+      store.setFactoryStatus(merged);
+      publish({ deliveryLagMs: merged.delivery?.lastHoldMs ?? status.deliveryLagMs, supervisor: { heartbeatAgeSeconds: s.supervisor.heartbeatAgeSeconds, live: s.supervisor.heartbeatFresh, present: s.supervisor.leasePresent === true, readAt: s.readAt } });
     } catch {
       // Status is advisory; the stream's own state already says whether the observer answers.
     }
@@ -366,6 +452,7 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       publish({ state: "connecting" });
       staleTimer = timers.setInterval(checkStale, 1000);
       statusTimer = timers.setInterval(() => void readStatus(), options.statusEveryMs ?? 10_000);
+      seriesTimer = timers.setInterval(() => void (options.windows?.series() ? undefined : readSeries()), options.seriesEveryMs ?? 30_000);
       void readStatus();
       await connect();
     },
@@ -376,7 +463,8 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       if (retryTimer !== null) timers.clearTimeout(retryTimer);
       if (staleTimer !== null) timers.clearInterval(staleTimer);
       if (statusTimer !== null) timers.clearInterval(statusTimer);
-      retryTimer = staleTimer = statusTimer = null;
+      if (seriesTimer !== null) timers.clearInterval(seriesTimer);
+      retryTimer = staleTimer = statusTimer = seriesTimer = null;
       publish({ state: "disconnected", attempts: 0, reason: "Closed.", staleSince: confirmed() || null });
     },
     status: () => ({ ...status, received: status.received }),
@@ -401,11 +489,40 @@ export function createLiveLog(options: { readonly retain?: number; readonly chec
 }
 
 /** A store and a source wired together: the Live Factory. The caller starts the source. */
-export function createLiveFactory(options: Omit<LiveSourceOptions, "log" | "store"> & { readonly retain?: number }): { readonly store: SceneStore; readonly source: LiveSource; readonly log: SceneLog } {
+export function createLiveFactory(options: Omit<LiveSourceOptions, "log" | "store" | "windows"> & { readonly retain?: number; readonly windowEvents?: number }): { readonly store: SceneStore; readonly source: LiveSource; readonly log: SceneLog; readonly windows: WindowedHistory } {
   const log = createLiveLog({ retain: options.retain });
-  const store = createSceneStore({ source: "live", log, clock: options.clock });
-  const source = createLiveSource({ ...options, log, store });
-  return { store, source, log };
+  // Scrubbing back past what the live log holds reads the history in windows (D17).
+  const windows = createWindowedHistory({ client: options.client, definitions: LIVE_DEFINITIONS, source: "live", windowEvents: options.windowEvents });
+  const store = createSceneStore({ source: "live", log, clock: options.clock, windows });
+  const source = createLiveSource({ ...options, log, store, windows });
+  return { store, source, log, windows };
+}
+
+/**
+ * Historical replay of a long history (D17): nothing is loaded up front but the span and the series;
+ * the store shows the window holding the playhead, starting at the history's first moment. Falls
+ * back to loading the whole retained history (`loadHistory`) when the observer serves no `/history`.
+ */
+export async function createReplay(client: ObserverClient, options: { readonly clock: Clock; readonly reducedMotion?: boolean; readonly windowEvents?: number; readonly keep?: number }): Promise<{ readonly store: SceneStore; readonly windows: WindowedHistory | null }> {
+  const session = await client.session();
+  const windows = createWindowedHistory({ client, definitions: LIVE_DEFINITIONS, source: "replay", origin: session.project, windowEvents: options.windowEvents, keep: options.keep });
+  try {
+    await windows.init();
+  } catch (error) {
+    if (!(error instanceof ObserverError) || (error.kind !== "not_found" && error.kind !== "unavailable")) throw error;
+    const log = await loadHistory(client);
+    return { store: createSceneStore({ source: "replay", log, clock: options.clock, reducedMotion: options.reducedMotion, at: log.floorTime() ?? undefined }), windows: null };
+  }
+  const span = windows.span();
+  if (!span) {
+    const log = createSceneLog({ definitions: LIVE_DEFINITIONS, provenance: provenance("replay", session.project) });
+    return { store: createSceneStore({ source: "replay", log, clock: options.clock, reducedMotion: options.reducedMotion }), windows: null };
+  }
+  // The store's own log is the last window (the replay's end); every other moment is a window on demand.
+  const last = await windows.load(span.end);
+  const store = createSceneStore({ source: "replay", log: last.log, clock: options.clock, reducedMotion: options.reducedMotion, windows, at: span.start });
+  store.setSeries(windows.series());
+  return { store, windows };
 }
 
 /**

@@ -39,12 +39,15 @@ const FIELD_WORDS: Readonly<Record<string, string>> = {
   ticket_id: "Ticket",
   station: "Station",
   seat: "Seat",
+  leftAt: "End time",
 };
 
 const RULE_WORDS: Readonly<Record<string, string>> = {
   label: "read from its label",
   "time-window": "placed by its time window",
   execution: "taken from its execution",
+  "unclosed-visit": "bounded by the next entry: it never recorded an exit",
+  "execution-ended": "bounded by its execution's end: it never recorded an exit",
 };
 
 export const fieldWord = (field: string) => FIELD_WORDS[field] ?? field.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());

@@ -46,6 +46,8 @@ export const EMPTY_EXECUTION_EXTRAS = {
   claudeCodeVersion: null,
   refused: [],
   capacityWait: null,
+  observation: { records: 0, structural: 0, runtime: null, version: null },
+  workflowMeta: null,
 } as const satisfies Partial<ExecutionState>;
 
 export const EMPTY_COUNTERS: Counters = {
@@ -216,6 +218,7 @@ export function newCell(ticketId: string, sliceId: string, definitions: ProductD
     agentOrder: [],
     activeAgentIds: [],
     artifacts: [],
+    artifactRecords: 0,
     merged: null,
     archived: null,
     openedAt: t,
@@ -429,7 +432,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         station: d.station,
         action: d.action,
         stationSince: t,
-        visits: [...cell.visits, { station: d.station, action: d.action, round, enteredAt: t, enteredSeq: seq, leftAt: null, outcome: null, visitId: null, outcomeWord: null, durationMs: null, meta: SIM_META }],
+        visits: [...cell.visits, { station: d.station, action: d.action, round, enteredAt: t, enteredSeq: seq, leftAt: null, outcome: null, visitId: null, outcomeWord: null, durationMs: null, executionId: null, unclosed: null, meta: SIM_META }],
       }));
     }
     case "station.left":
@@ -555,7 +558,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
       s = withCell(s, ticket, (cell) => {
         const index = cell.artifacts.findIndex((a) => a.id === artifact.id);
         const artifacts = index >= 0 ? cell.artifacts.map((a, i) => (i === index ? artifact : a)) : [...cell.artifacts, artifact];
-        let next: CellState = { ...cell, artifacts };
+        let next: CellState = { ...cell, artifacts, artifactRecords: cell.artifactRecords + 1 };
         const agentId = d.writer.agent_id;
         const callId = d.writer.call_id;
         if (agentId && callId) {

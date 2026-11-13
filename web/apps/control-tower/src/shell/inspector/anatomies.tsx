@@ -7,9 +7,15 @@ import { useMemo, type ReactNode } from "react";
 import { stations as stationLooks, type StationKind } from "@mach/ui";
 import {
   ACTOR_KINDS,
+  artifactCountsOf,
   costCompletenessOf,
   describeEntry,
+  gateOverrides,
   isKnown,
+  sourceRuntimeOf,
+  streamObservationOf,
+  visitStatusOf,
+  type Scene,
   MAX_ROUNDS,
   ref,
   type ActorState,
@@ -33,7 +39,7 @@ import { AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, 
 import {
   ACTOR_WORDS,
   artifactOf,
-  GATE_STATE_WORDS,
+  gateStateWords,
   GATE_WORDS,
   gateOf,
   gateState,
@@ -52,6 +58,18 @@ import {
 import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
+import { agentsWords, runtimeWords } from "./words";
+import { useSceneStore } from "../../scene";
+import type { FactoryStatus } from "../../scene/connection";
+
+/** An execution's agents in words (D7): a count when its stream was read, "Not observed" with the reason otherwise. Strings, so selectors stay stable. */
+function agentsOf(scene: Scene, status: FactoryStatus | null, executionId: string | null, started: number, working?: number): string {
+  if (!executionId || !scene.executions[executionId]) return agentsWords(null, started, working);
+  const observation = streamObservationOf(scene, executionId, sourceRuntimeOf(status?.sources, executionId));
+  // The simulation records every agent: its count stands as it is.
+  if (scene.executions[executionId]?.meta.authority === "simulated") return agentsWords(null, started, working);
+  return agentsWords(observation, started, working);
+}
 
 const at = (t: number | null | undefined) => (t === null || t === undefined ? "not yet" : <Mono>{timecode(t, false)}</Mono>);
 
@@ -74,7 +92,7 @@ function ArtifactLink({ artifact }: { artifact: ArtifactState }) {
 
 function GateLink({ gate }: { gate: GateState }) {
   return (
-    <RefLink to={ref.gate(gate.id)} glyph={<GateGlyphSmall kind={gateOf(gate.gate)} size={18} state={gateState(gate.state)} />} detail={GATE_STATE_WORDS[gate.state]}>
+    <RefLink to={ref.gate(gate.id)} glyph={<GateGlyphSmall kind={gateOf(gate.gate)} size={18} state={gateState(gate.state)} />} detail={gateStateWords(gate)}>
       {GATE_WORDS[gate.gate]}
       {gate.round ? `, round ${gate.round}` : ""}
     </RefLink>
@@ -204,6 +222,12 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
   const look = stageLook(cell.stage);
   const active = cell.activeAgentIds.map((id) => cell.agents[id]).filter((a): a is AgentState => Boolean(a));
   const cellGates = Object.values(gates).filter((g) => g.ticketId === cell.ticketId);
+  // Overrides no gate state stands for (frozen-tests...): each one listed with its reason (D6).
+  // (from the cell's own gate log, a stable object: a selector returning a new array would re-render forever)
+  const overrides = useMemo(() => gateOverrides({ cells: { [cell.ticketId]: cell } } as unknown as Scene, cell.ticketId).filter((o) => o.gateId === null), [cell]);
+  const factory = useSceneStore((s) => s.factoryStatus);
+  const agentsLine = useScene((s) => agentsOf(s, factory, cell.executionId, cell.agentOrder.length, active.length));
+  const artifactCounts = artifactCountsOf(cell);
   return (
     <>
       <Section title="Facts">
@@ -218,8 +242,10 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
             ["Branch", <Mono key="b" muted>{cell.branch}</Mono>],
             ["At station", cell.station ? <span key="st">{STATION_WORDS[cell.station as StationKind]}, <Elapsed startedAt={cell.stationSince ?? 0} finishedAt={null} /></span> : "Between stations"],
             ["Suite", cell.lastTest ? `${cell.suite}, ${cell.lastTest.passed} passed, ${cell.lastTest.failed} failed` : cell.suite === "unknown" ? <NotRecorded key="s" /> : cell.suite],
-            ["Agents", `${active.length} working, ${cell.agentOrder.length} so far`],
-            ["Artifacts", cell.artifacts.length],
+            ["Agents", agentsLine],
+            // Two different counts, each named for what it is (D13); the files available to view are the observer's catalog.
+            ["Artifacts referenced", `${artifactCounts.distinct} distinct`],
+            artifactCounts.records !== artifactCounts.distinct ? ["Artifact records", `${artifactCounts.records} received (a file recorded again counts again)`] : null,
             cell.merged ? ["Merged", <Mono key="m">{`${cell.merged.commit.slice(0, 7)} at ${timecode(cell.merged.at, false)}`}</Mono>] : null,
           ]}
         />
@@ -281,10 +307,20 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
         )}
       </Section>
       <Section title="Gates">
-        {cellGates.length ? (
+        {cellGates.length || overrides.length ? (
           <RefList>
             {cellGates.map((g) => (
               <GateLink key={g.id} gate={g} />
+            ))}
+            {overrides.map((o) => (
+              <div key={o.eventId} className="flex items-center gap-2 px-1.5 py-1 text-body-sm" data-gate-override={o.gate}>
+                <StateGlyph state="succeeded" size={12} />
+                <span className="flex-1 text-ink">
+                  {o.gate.replace(/[-.]/g, " ").replace(/^./, (c) => c.toUpperCase())}
+                  {o.subject ? <span className="text-ink-subtle">, {o.subject}</span> : null}
+                </span>
+                <span className="text-caption font-semibold text-ink">Overridden: {o.reasonCode ?? "no reason code"}</span>
+              </div>
             ))}
           </RefList>
         ) : (
@@ -329,7 +365,8 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
       <Section title="Visits">
         <ol className="flex flex-col gap-2">
           {visits.map((v) => {
-            const state = v.leftAt === null ? "active" : outcomeState(v.outcome);
+            const status = visitStatusOf(v);
+            const state = status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(v.outcome);
             return (
               <li key={v.enteredSeq} className="flex items-start gap-2.5 rounded-sm border border-line px-3 py-2">
                 <StationGlyph kind={kind} size={22} state={state} />
@@ -338,11 +375,11 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
                     Round {v.round}, {v.action}
                     <span className="text-ink-muted">
                       {" "}
-                      {v.leftAt === null ? "at work" : v.outcome ?? "ended"}, <Elapsed startedAt={v.enteredAt} finishedAt={v.leftAt} />
+                      {status.state === "ended" ? (v.outcomeWord ?? v.outcome ?? "ended") : status.word.toLowerCase()}, <Elapsed startedAt={v.enteredAt} finishedAt={v.leftAt} mode={status.state === "waiting-person" ? "wait" : status.state === "ended-unrecorded" ? "ended-unrecorded" : "work"} />
                     </span>
                   </p>
                   <p className="font-mono text-[11px] text-ink-subtle tabular">
-                    {timecode(v.enteredAt, false)} to {v.leftAt === null ? "now" : timecode(v.leftAt, false)}
+                    {timecode(v.enteredAt, false)} to {v.leftAt === null ? "now" : `${status.state === "ended-unrecorded" ? "at most " : ""}${timecode(v.leftAt, false)}`}
                   </p>
                 </div>
                 <JumpButton t={v.enteredAt} label="Go" />
@@ -635,11 +672,11 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
         <Facts
           facts={[
             ["Gate", GATE_WORDS[gate.gate]],
-            ["Position", <StateWord key="p" state={state} label={GATE_STATE_WORDS[gate.state]} />],
+            ["Position", <StateWord key="p" state={state} label={gateStateWords(gate)} />],
             gate.round ? ["Round", `${gate.round} of ${MAX_ROUNDS}`] : null,
             ["Reached", at(gate.openedAt)],
             ["Decided", gate.decidedAt === null ? "not yet" : at(gate.decidedAt)],
-            waitingFor !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingFor} finishedAt={null} />] : null,
+            waitingFor !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingFor} finishedAt={null} mode="wait" />] : null,
           ]}
         />
         <p className="mt-3 text-body-sm text-ink-muted">{gate.detail}</p>
@@ -873,7 +910,11 @@ const usd = (n: number) => `$${n.toFixed(2)}`;
 
 export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
   const agents = useScene((s) => s.cells);
-  const count = useMemo(() => allAgentsOf(agents, execution.id), [agents, execution.id]);
+  const strays = useScene((s) => s.strayAgents);
+  const count = useMemo(() => allAgentsOf(agents, execution.id) + Object.values(strays).filter((a) => a.executionId === execution.id).length, [agents, strays, execution.id]);
+  const factory = useSceneStore((s) => s.factoryStatus);
+  const agentsLine = useScene((s) => agentsOf(s, factory, execution.id, count));
+  const runtimeLine = useScene((s) => (execution.meta.authority === "simulated" ? null : runtimeWords(streamObservationOf(s, execution.id, sourceRuntimeOf(factory?.sources, execution.id)))));
   const real = execution.meta.authority !== "simulated";
   const cost = recordedCost(execution);
   const models = useModelCosts(execution.id);
@@ -911,8 +952,16 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
                 </span>
               ),
             ],
-            ["Agents", count],
-            execution.claudeCodeVersion ? ["Claude Code", <Mono key="v">{execution.claudeCodeVersion}</Mono>] : null,
+            ["Agents", agentsLine],
+            execution.claudeCodeVersion || runtimeLine
+              ? [
+                  "Claude Code",
+                  <span key="v">
+                    {execution.claudeCodeVersion ? <Mono>{execution.claudeCodeVersion}</Mono> : <NotRecorded />}
+                    {runtimeLine ? <span className="block text-caption text-ink-subtle">{runtimeLine}</span> : null}
+                  </span>,
+                ]
+              : null,
             execution.refused.length ? ["Refused tools", execution.refused.map((r) => r.tool).join(", ")] : null,
           ]}
         />
@@ -1013,6 +1062,7 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
 /** One station visit: when it began and ended, what the station said, and its round. */
 export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
   const kind = visit.station as StationKind;
+  const status = visitStatusOf(visit);
   return (
     <>
       <Section title="Facts">
@@ -1023,9 +1073,22 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
             ["Round", `${visit.round} of ${MAX_ROUNDS}`],
             ["Step", isKnown(visit.meta, "action") ? visit.action : <NotRecorded key="a" />],
             ["Entered", at(visit.enteredAt)],
-            ["Left", visit.leftAt === null ? "still open" : at(visit.leftAt)],
-            ["Duration", visit.durationMs !== null ? `${Math.round(visit.durationMs / 1000)} s, measured` : visit.leftAt === null ? <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={null} /> : <NotRecorded key="d" />],
+            ["State", status.word],
+            ["Left", visit.leftAt === null ? (status.state === "waiting-person" ? "not yet: waiting for a person" : "still open") : status.state === "ended-unrecorded" ? `no exit record; ended by ${at(visit.leftAt)} at the latest` : at(visit.leftAt)],
+            [
+              "Duration",
+              visit.durationMs !== null ? (
+                `${Math.round(visit.durationMs / 1000)} s, measured`
+              ) : visit.leftAt === null ? (
+                <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={null} mode={status.state === "waiting-person" ? "wait" : "work"} />
+              ) : status.state === "ended-unrecorded" ? (
+                <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={visit.leftAt} mode="ended-unrecorded" />
+              ) : (
+                <NotRecorded key="d" />
+              ),
+            ],
             ["The station said", visit.outcomeWord ? <Mono key="o">{visit.outcomeWord}</Mono> : visit.leftAt === null ? "not yet" : <NotRecorded key="o" />],
+            status.detail ? ["Why", status.detail] : null,
           ]}
         />
       </Section>

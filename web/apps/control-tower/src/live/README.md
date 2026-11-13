@@ -300,3 +300,45 @@ Item 1 changes the Atlas's simulation markup in one way (compared at seven playh
 before this pass): after a revision, a revised cell's build machine and its hit target are labelled
 "round 2 of 3", as they already were while the revision ran and as they are live. No drawn shape or
 position differs; the other four playheads are byte-identical.
+
+## 9. M6.2 acceptance fixes (the real end-to-end run, `docs/mach-next/M6_2_ACCEPTANCE.md`)
+
+Tests: `test/m62-acceptance.test.mjs` (each reproduces its defect against the previous tree first),
+`test/live-windows-scale.test.mjs` (D17, measured).
+
+| Defect | What the scene, client or shell does now |
+|---|---|
+| D5 | A record naming both a ticket and a slice links them whichever was seen first (`linkSlice`); a cell opened without a slice takes the slice a `slice.materialized` already linked to its ticket. Ids read from a label never link. Property-tested over shuffled delivery. |
+| D4, D14 | `StationVisit.unclosed {reason: superseded \| execution-ended, at, eventId}`: the next entry's `unclosed_visit`, or the end of the execution that entered it (`execution.process_ended`, `execution.completed`, `.failed`), closes a visit that never exited: `leftAt` the bound, outcome `stopped`, no word of the station's, end inferred, authority reconstructed. A human-approval visit is a wait on a person and is never closed by its execution. `visitStatusOf` gives working / waiting for a person / ended / ended without an exit record. An exit record arriving after all wins. |
+| D6 | `GateState.state` `overridden` (with `reasonCode`), from any `gate.evaluated` verdict `overridden` (`red-before-green`, `build.red/green`, `merge.land`, audit, plan, verify); a later task completion never turns it back into a pass. `gateOverrides(scene, ticket?)` lists every override, including those no gate state stands for (`frozen-tests`). |
+| D7 | `ExecutionState.observation {records, structural, runtime, version}` from its stream records and their `origin.runtime_state`; `streamObservationOf(scene, x, sourceRuntime?)`: observed, unproven (a quiet note), or not observed with the reason (no stream, an incompatible runtime, records received and not interpreted). The runtime per source is read from `/factory/status` and `/health` `freshness.sources[].runtime` (`stream/<execution>`). |
+| D8 | `history.gap` `class` and `history_lost` (observer M6.2; read from the reason otherwise). Only lost history makes a scene partial; `completeness.notInterpreted` counts unknown-type records by source, said "received, not interpreted". |
+| D15 | Stream records (`agent.started`, `tool.called`) never open a cell; such agents stay in `strayAgents` with their execution and are adopted when the ticket's cell is recorded. |
+| D13 | `CellState.artifactRecords` beside `artifacts`: "Artifacts referenced" (distinct) and "Artifact records" (received). |
+| D23, D24 | A workflow's meta is its own (`ExecutionState.workflowMeta`). `whyEntry`/`whyOf` prefer authoritative > observed > reconstructed at the same moment; `entriesBehind` adds the event the entity's own record names. |
+| D20 | `state.arrived` / `arrivedAtLeave`: "N new events" counts arrivals since the playhead left the live edge. |
+| D17 | Below. |
+
+**D17, long histories.** Live: when the observer's head is beyond `liveWindow` (20,000) events, the
+source reads `/snapshot?at=<head - 20,000>`, seeds it as `client.snapshot_applied` just before the
+window's first event, and reads the events after it; the stream resumes from the cursor as before.
+Without `/snapshot` the window says "partial before here". `ConnectionStatus` gains `total` (the
+observer's head position), `held`, `late` (the observer's own flag), `reordered` (placed before what
+was held; a delivery fact) and `deliveryLagMs` (`/health` `ingest.delivery.last_hold_ms`); the
+popover says "held of total". Replay and scrubbing back past the live window read windows on demand
+(`live/windows.ts`, `createWindowedHistory`): the span is cut once into equal windows of about 5,000
+events (from `/series`, else the first event and a coarse `/history` sampling), each window is the
+snapshot before its first event plus its events in order, four are kept. The store
+(`options.windows`) shows the window holding the playhead (`state.log`), says `windowLoading` while
+one is fetched, and returns to its own log at the live edge; selection, view and camera are kept.
+The ruler draws the whole history's density from `state.series`. A moment maps to one window, so the
+same history gives the same scene there however it was reached (tested).
+
+Measured (Node, the in-memory observer indexed like the real one, 230,853 generated events; no HTTP,
+no React, so the browser's figures will be higher): live first scene 94 ms (the previous tree on the
+same history: 2.6 s, every event paged and reduced), heap +15 MB (previous +42 MB), held 20,000 of
+230,853; scrub within the held window median 0.2 ms; past it, fetching a window, median 15 ms;
+replay first scene 47 ms, heap +6 MB, scrub median 0.1 ms, 16 ms with a fetch.
+
+Not done: the Atlas lays out bays per log, so moving between history windows may re-place bays; the
+received counter does not count events refused below a live log's floor.

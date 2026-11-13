@@ -325,7 +325,7 @@ test("11. /factory/status is read in the observer's documented shape and exposed
   assert.equal(f.paused, false);
   assert.equal(f.mode, "supervised");
   assert.deepEqual(f.supervisor, { leasePresent: true, heartbeatFresh: true, heartbeatAgeSeconds: 4, leaseExpired: false });
-  assert.deepEqual(f.sources, [{ key: "i:0badc0de", state: "live", lagBytes: 0, lastReadAgeMs: 120 }]);
+  assert.deepEqual(f.sources, [{ key: "i:0badc0de", state: "live", lagBytes: 0, lastReadAgeMs: 120, runtime: null }]); // runtime: execution streams only (observer M6.2)
   assert.equal(f.readAt, Date.parse("2026-11-12T09:00:00Z"));
   server.status = { ...server.status, summary: { ...server.status.summary, paused: true } };
   timers.tick();

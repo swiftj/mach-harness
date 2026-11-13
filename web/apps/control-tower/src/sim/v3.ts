@@ -95,6 +95,12 @@ export interface V3Origin {
   readonly writer: Writer;
   readonly script: string | null;
   readonly source_version: string;
+  /**
+   * Execution streams (observer M6.2): the runtime version's state when the record was read:
+   * `proven` (a version the parser was proved on), `compatible-unproven` (a newer version whose
+   * records matched the known shapes), `incompatible`. Absent from older observers.
+   */
+  readonly runtime_state?: "proven" | "compatible-unproven" | "incompatible" | "unknown";
 }
 
 export interface V3Time {
@@ -220,7 +226,17 @@ export interface V3DataMap {
   "verify.targets_listed": { targets: Array<{ id: string; kind: "scenario" | "matrix rule" | "holdout" }>; source: "spec.json" };
   "capacity.wait_changed": { state: "waiting" | "released"; scope: "execution"; limit: number | null };
   "history.began": { reason: string; snapshot: { stage?: string | null; round?: number | null; station?: string | null; state?: string | null } };
-  "history.gap": { source_key: string; from_seq: number | null; to_seq: number | null; reason: string; count: number | null };
+  "history.gap": {
+    source_key: string;
+    from_seq: number | null;
+    to_seq: number | null;
+    /** The precise cause (missing-seq, truncated, rewritten, unparsable-line, unknown-type, unexpected-shape, state-mismatch, conflict, unreadable, evicted). */
+    reason: string;
+    count: number | null;
+    /** Observer M6.2: the class (not-received, unparsable-line, unknown-type, state-mismatch, evicted, source-unreadable, conflict) and whether history was lost. Absent from older observers. */
+    class?: string;
+    history_lost?: boolean;
+  };
   // ---- client-only
   "client.history_missing": { reason: "expired" | "reset" | "window"; after: string | null; resumed_at: string | null };
   "client.snapshot_applied": { cursor: string; generation: string; state: ObserverSnapshotState };

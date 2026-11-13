@@ -4,7 +4,7 @@
  * draw time), so both themes work and nothing is hard-coded.
  */
 import type { AnyRef, EntityRef } from "../../sim";
-import { STATION_WORDS, outcomeState } from "../vocab";
+import { GATE_STATE_WORDS, STATION_WORDS, outcomeState } from "../vocab";
 import type { AgentItem, Track, TimelineModel } from "./model";
 
 export const ROW = { factory: 26, main: 32, agent: 13, pad: 6 } as const;
@@ -131,6 +131,9 @@ function gateColors(p: Palette, state: string): { ink: string; soft: string } {
   switch (state) {
     case "passed":
       return { ink: p.pass, soft: p.passSoft };
+    case "overridden":
+      // Let through on an override: the pass ink, and a bar across the diamond (drawn below), never a plain pass.
+      return { ink: p.pass, soft: p.surface };
     case "failed":
       return { ink: p.fail, soft: p.failSoft };
     case "waiting":
@@ -370,6 +373,12 @@ export function drawTracks(input: DrawInput): void {
       ctx.strokeStyle = c.ink;
       ctx.lineWidth = 1.3;
       ctx.stroke();
+      if (g.state === "overridden") {
+        ctx.beginPath();
+        ctx.moveTo(x - 3, cy + 3);
+        ctx.lineTo(x + 3, cy - 3);
+        ctx.stroke();
+      }
       note(g.ref, [x - 5, cy - 5, x + 5, cy + 5]);
     }
 
@@ -632,7 +641,7 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
     return null;
   }
 
-  for (const g of track.gates) if (near(g.t, 5)) return { ref: g.ref, trackId: track.id, title: g.ref.slice(5), detail: `Gate ${g.state}`, start: g.t, end: g.t };
+  for (const g of track.gates) if (near(g.t, 5)) return { ref: g.ref, trackId: track.id, title: g.ref.slice(5), detail: `Gate ${GATE_STATE_WORDS[g.state].toLowerCase()}`, start: g.t, end: g.t };
   for (const m of track.marks) if (near(m.t, 4)) return { ref: m.ref, trackId: track.id, title: m.text, detail: "", start: m.t, end: m.t };
   if (local > 24) {
     const a = track.artifacts.find((x) => near(x.t, 2));

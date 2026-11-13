@@ -273,6 +273,7 @@ export interface WorkflowEntity {
   /** The declared phase list (not phases entered: those are not observable). */
   readonly phases: readonly string[];
   readonly queued: number;
+  /** The workflow's own records (workflow.*, observed): never its execution's (D23). */
   readonly agentIds: readonly string[];
   readonly meta: EntityMeta;
 }
@@ -435,7 +436,7 @@ export function entityAt(scene: Scene, entity: AnyRef): EntityState | null {
       for (const x of Object.values(scene.executions)) {
         if (x.workflowId !== id) continue;
         const agentIds = allAgents(scene).filter((a) => a.workflowId === id).map((a) => a.id);
-        return { kind: "workflow", value: { id, executionId: x.id, ticketId: x.ticketId, name: x.workflow, status: x.workflowStatus, stopReason: x.stopReason, finishedAt: x.workflowFinishedAt, phases: x.phases, queued: Object.keys(x.queued).length, agentIds, meta: x.meta } };
+        return { kind: "workflow", value: { id, executionId: x.id, ticketId: x.ticketId, name: x.workflow, status: x.workflowStatus, stopReason: x.stopReason, finishedAt: x.workflowFinishedAt, phases: x.phases, queued: Object.keys(x.queued).length, agentIds, meta: x.workflowMeta ?? x.meta } };
       }
       return null;
     case "project":
@@ -1243,4 +1244,151 @@ export function bayOrder(log: SceneLog): BayOrder {
   table.logVersion = logVersion;
   if (changed) table.out = { version: table.out.version + 1, slots: table.slots, waveIds: table.waveIds };
   return table.out;
+}
+
+// ---------------------------------------------------------------- M6.2 acceptance fixes
+
+/** Authority rank for "why it looks like this": the record that decides wins at the same moment (D24). */
+const AUTHORITY_RANK: Readonly<Record<Authority, number>> = { authoritative: 3, observed: 2, reconstructed: 1, simulated: 0 };
+
+/**
+ * The event that explains an entity at t: the latest behind it, and among several sharing that time,
+ * the most authoritative (authoritative > observed > reconstructed), then the latest in order.
+ */
+export function whyEntry(log: SceneLog, entity: AnyRef, t: number): LogEntry | null {
+  const found = entriesFor(log, entity, t);
+  return whyOf(found, found.length);
+}
+
+/** whyEntry over a list already in order: the first `upto` entries (those that have happened). */
+export function whyOf(entries: readonly LogEntry[], upto: number): LogEntry | null {
+  const last = entries[upto - 1];
+  if (!last) return null;
+  let best = last;
+  for (let i = upto - 2; i >= 0; i--) {
+    const e = entries[i] as LogEntry;
+    if (e.t !== last.t) break;
+    if (AUTHORITY_RANK[e.authority] > AUTHORITY_RANK[best.authority]) best = e;
+  }
+  return best;
+}
+
+/**
+ * The events behind an entity, in order: those that name it, and the event its own record names
+ * (`meta.eventId`) when that one does not name it (D14: a human-approval gate set by a station's
+ * entry or a review's decision; a visit closed by its execution's end).
+ */
+export function entriesBehind(log: SceneLog, entity: AnyRef): readonly LogEntry[] {
+  const own = log.entriesFor(entity);
+  const found = entityAt(log.head(), entity);
+  const metaId = found && "meta" in (found.value as object) ? ((found.value as { meta?: EntityMeta }).meta?.eventId ?? null) : null;
+  const extra = metaId ? log.entry(metaId) : undefined;
+  if (!extra || own.includes(extra)) return own;
+  const out = [...own];
+  let i = out.length;
+  while (i > 0 && (out[i - 1] as LogEntry).order > extra.order) i--;
+  out.splice(i, 0, extra);
+  return out;
+}
+
+/** What a station visit is doing, in words a view can print as they are (D4, D14). */
+export interface VisitStatus {
+  /**
+   * `working`: open, at work; `waiting-person`: open, a person must act (never "working");
+   * `ended`: an exit record closed it; `ended-unrecorded`: it never exited, and the scene closed it
+   * at a bound (its next entry, or its execution's end).
+   */
+  readonly state: "working" | "waiting-person" | "ended" | "ended-unrecorded";
+  readonly word: string;
+  /** Why, when it ended without an exit record. */
+  readonly detail: string | null;
+}
+
+export function visitStatusOf(visit: Pick<StationVisit, "station" | "leftAt" | "outcome" | "outcomeWord" | "unclosed">): VisitStatus {
+  if (visit.unclosed) {
+    const detail = visit.unclosed.reason === "superseded" ? "The station was entered again before this visit recorded an exit; its outcome is not known." : "Its execution ended before this visit recorded an exit; its outcome is not known.";
+    return { state: "ended-unrecorded", word: "Ended without an exit record", detail };
+  }
+  if (visit.leftAt === null) return visit.station === "human-approval" ? { state: "waiting-person", word: "Waiting for a person", detail: null } : { state: "working", word: "Working", detail: null };
+  const word = visit.outcomeWord ?? visit.outcome ?? "ended";
+  return { state: "ended", word: word.replace(/^./, (c) => c.toUpperCase()), detail: null };
+}
+
+export interface GateOverride extends GateEvaluation {
+  readonly ticketId: string;
+}
+
+/**
+ * Every gate evaluation recorded as overridden (D6), oldest first, whether or not a gate state stands
+ * for it (frozen-tests has none): reviewers must see each one, with its reason code.
+ */
+export function gateOverrides(scene: Scene, ticketId?: string): readonly GateOverride[] {
+  const cells = ticketId ? (scene.cells[ticketId] ? [scene.cells[ticketId]] : []) : Object.values(scene.cells);
+  const out: GateOverride[] = [];
+  for (const cell of cells) for (const g of cell.gateLog) if (g.verdict === "overridden") out.push({ ...g, ticketId: cell.ticketId });
+  return out.sort((a, b) => a.at - b.at);
+}
+
+/** The runtime state the observer reports for one execution's stream source (`/health` or `/factory/status` freshness). */
+export interface SourceRuntime {
+  readonly state: "proven" | "compatible-unproven" | "incompatible" | "unknown" | null;
+  readonly version: string | null;
+  readonly reason: string | null;
+}
+
+/**
+ * What can be said about an execution's agents and tools (D7):
+ * - `observed`: its stream was read and described agents, the workflow or tools;
+ * - `unproven`: as observed, from a runtime version the observer has not been proved on (say so quietly);
+ * - `not-observed`: no stream was received, the runtime is incompatible, or its records were received
+ *   and not interpreted: agents and tools are "not observed", never zero.
+ */
+export interface StreamObservationState {
+  readonly state: "observed" | "unproven" | "not-observed";
+  readonly reason: string | null;
+  readonly version: string | null;
+  /** Records received and not interpreted. */
+  readonly notInterpreted: number;
+}
+
+export function streamObservationOf(scene: Scene, executionId: string, source: SourceRuntime | null = null): StreamObservationState {
+  const x = scene.executions[executionId];
+  const o = x?.observation;
+  let notInterpreted = 0;
+  for (const [key, n] of Object.entries(scene.completeness.notInterpreted)) if (key === `s:${executionId}` || key === `stream/${executionId}`) notInterpreted += n;
+  const version = source?.version ?? o?.version ?? x?.claudeCodeVersion ?? null;
+  const runtime = source?.state ?? o?.runtime ?? null;
+  const named = version ? `Claude Code ${version}` : "its Claude Code version";
+  if (runtime === "incompatible") return { state: "not-observed", reason: source?.reason ?? `${named} is not supported by the observer.`, version, notInterpreted };
+  if (o && o.structural > 0) return { state: runtime === "compatible-unproven" ? "unproven" : "observed", reason: runtime === "compatible-unproven" ? "unproven runtime version" : null, version, notInterpreted };
+  if (notInterpreted > 0) return { state: "not-observed", reason: `${notInterpreted} stream record${notInterpreted === 1 ? " was" : "s were"} received but not interpreted (${named} is not supported by the observer).`, version, notInterpreted };
+  if (!o || o.records === 0) return { state: "not-observed", reason: "No stream records were received for this execution.", version, notInterpreted };
+  return { state: runtime === "compatible-unproven" ? "unproven" : "observed", reason: runtime === "compatible-unproven" ? "unproven runtime version" : null, version, notInterpreted };
+}
+
+/** The runtime state of one execution's stream, from `/factory/status` freshness sources (`stream/<execution>`), or null. */
+export function sourceRuntimeOf(sources: readonly { readonly key: string; readonly runtime?: SourceRuntime | null }[] | null | undefined, executionId: string): SourceRuntime | null {
+  const found = sources?.find((x) => x.key === `stream/${executionId}` || x.key === `s:${executionId}`);
+  return found?.runtime ?? null;
+}
+
+/**
+ * A cell's artifact counts, each labelled for what it is (D13): `distinct` artifacts the history
+ * references (one per path or ref), `records` received about them (`artifact.recorded`, a path
+ * recorded again counts again). Files available to view are the observer's catalog, not the scene's.
+ */
+export function artifactCountsOf(cell: CellState): { readonly distinct: number; readonly records: number } {
+  return { distinct: cell.artifacts.length, records: cell.artifactRecords };
+}
+
+/** Gaps that lost history (not the ones only not interpreted). */
+export function lostGaps(scene: Scene): readonly Scene["completeness"]["gaps"][number][] {
+  return scene.completeness.gaps.filter((g) => g.lost);
+}
+
+/** Records received and not interpreted, over every source. */
+export function notInterpretedCount(scene: Scene): number {
+  let n = 0;
+  for (const v of Object.values(scene.completeness.notInterpreted)) n += v;
+  return n;
 }

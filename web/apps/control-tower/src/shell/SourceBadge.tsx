@@ -18,7 +18,8 @@ import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@mach/ui";
 import { isStale, useSceneStore, type ConnectionStatus } from "../scene";
-import type { SceneSource } from "../sim";
+import { refId, refKind, sourceRuntimeOf, streamObservationOf, type Completeness, type SceneSource } from "../sim";
+import { completenessWords, deliveryLagWords, receivedWords } from "./inspector/words";
 import { useSource } from "./source/context";
 import type { SourceChoice } from "./source/boot";
 import { duration as durationWords, timecode, utcClock } from "./vocab";
@@ -227,16 +228,27 @@ export function ConnectionFacts({ connection }: { connection: ConnectionStatus }
   const heartbeat = connection.supervisor?.heartbeatAgeSeconds ?? factory?.supervisor.heartbeatAgeSeconds ?? null;
   const leasePresent = connection.supervisor?.present || factory?.supervisor.leasePresent;
   const fresh = factory?.supervisor.heartbeatFresh ?? connection.supervisor?.live ?? null;
+  // The runtime version's state for the selected execution, when one is selected (observer M6.2).
+  const runtime = useSceneStore((s) => {
+    const sel = s.selection;
+    if (!sel || refKind(sel) !== "execution") return null;
+    const id = refId(sel);
+    const o = streamObservationOf(s.log.head(), id, sourceRuntimeOf(s.factoryStatus?.sources, id));
+    const version = o.version ? `Claude Code ${o.version}` : "Claude Code version not recorded";
+    return o.state === "observed" ? `${version}, a proven runtime` : o.state === "unproven" ? `${version}, unproven runtime version` : `${version}: agents and tools not observed`;
+  });
   const rows: Array<[string, ReactNode]> = [
     ["Connection", look.sentence],
     ["Last confirmed", connection.confirmedAt !== null ? `${utcClock(connection.confirmedAt)} UTC` : "Nothing yet"],
-    ["Observer lag", connection.sourceLagMs !== null ? (connection.sourceLagMs < 1000 ? "under a second" : durationWords(connection.sourceLagMs)) : "Not reported"],
+    ["Settled history", connection.sourceLagMs !== null ? `trails now by ${connection.sourceLagMs < 1000 ? "under a second" : durationWords(connection.sourceLagMs)}` : "Not reported"],
+    ["Delivery lag", deliveryLagWords(connection.deliveryLagMs ?? factory?.delivery?.lastHoldMs ?? null)],
     [
       "Supervisor heartbeat",
       leasePresent === false ? "No supervisor lease: no Factory Supervisor is running here." : heartbeat === null ? "Not recorded" : `${ageWords(heartbeat)} ago${fresh === false ? ", not fresh" : fresh ? ", fresh" : ""}`,
     ],
-    ["Received", `${connection.received.toLocaleString("en-GB")} events${connection.duplicates ? `, ${connection.duplicates} repeated` : ""}${connection.late ? `, ${connection.late} late` : ""}`],
+    ["Received", receivedWords(connection)],
   ];
+  if (runtime) rows.push(["Selected execution", runtime]);
   if (connection.gaps || connection.resets) rows.push(["Recovered", `${connection.gaps} gap${connection.gaps === 1 ? "" : "s"}, ${connection.resets} index rebuild${connection.resets === 1 ? "" : "s"}`]);
   if (connection.refused) rows.push(["Not understood", `${connection.refused} line${connection.refused === 1 ? "" : "s"} were not version 3 events and were left out`]);
   if (connection.reason && connection.state !== "live") rows.push(["Why", connection.reason]);
@@ -281,24 +293,25 @@ export function ConnectionBadge() {
 
 // ---------------------------------------------------------------- completeness
 
-/** A key for the head scene's completeness, so the badge re-renders only when it changes. */
-function completenessKey(s: { log: { head(): { completeness: { state: string; since: number | null; gaps: readonly unknown[]; began: Readonly<Record<string, unknown>> } } }; source: SceneSource }): string {
-  if (s.source === "simulation") return "complete";
+/** The head scene's completeness in words, as one string so the badge re-renders only when it changes. */
+function completenessKey(s: { log: { head(): { completeness: Completeness } }; source: SceneSource }): string {
+  if (s.source === "simulation") return "";
   const c = s.log.head().completeness;
-  return `${c.state}|${c.since ?? ""}|${c.gaps.length}|${Object.keys(c.began).length}`;
+  const words = completenessWords(c);
+  return words ? `${words.state}|${c.since ?? ""}|${words.why}` : "";
 }
 
-/** History completeness next to the badge, only when it is not complete. */
+/**
+ * History completeness next to the badge, only when it is not complete (D8): partial only where
+ * history was lost; records received and not interpreted are said as such, quietly.
+ */
 export function CompletenessBadge() {
   const key = useSceneStore(completenessKey);
-  const [state, sinceText, gaps, began] = key.split("|");
-  if (state === "complete" || !state) return null;
+  if (!key) return null;
+  const [state, sinceText, ...rest] = key.split("|");
+  const why = rest.join("|");
   const since = sinceText ? Number(sinceText) : null;
-  const label = state === "reconstructed" ? `Reconstructed${since !== null ? ` since ${timecode(since, false)}` : ""}` : `Partial${since !== null ? ` since ${timecode(since, false)}` : ""}`;
-  const why =
-    state === "reconstructed"
-      ? "Part of what is shown was seeded from an observer snapshot, not from events."
-      : `${Number(gaps) ? `${gaps} range${Number(gaps) === 1 ? "" : "s"} of history could not be received. ` : ""}${Number(began) ? `${began} entit${Number(began) === 1 ? "y's" : "ies'"} history begins part-way.` : ""}`;
+  const label = state === "reconstructed" ? `Reconstructed${since !== null ? ` since ${timecode(since, false)}` : ""}` : state === "partial" ? `Partial${since !== null ? ` since ${timecode(since, false)}` : ""}` : "Not all interpreted";
   return (
     <span
       data-completeness={state}

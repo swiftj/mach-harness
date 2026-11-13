@@ -79,6 +79,26 @@ export interface HistoryPage {
   readonly watermark: number | null;
 }
 
+/** Counts of events per time bucket (`GET /api/v1/series`), for drawing a long history without loading it. */
+export interface SeriesData {
+  readonly fromMs: number;
+  readonly toMs: number;
+  readonly bucketMs: number;
+  /** Sparse: buckets with no event are absent. `atLeast`: the count is a lower bound (coarse sampling). */
+  readonly buckets: readonly { readonly fromMs: number; readonly count: number; readonly atLeast?: boolean }[];
+  /** Events in the range, as the observer counts them (null for coarse sampling). */
+  readonly total: number | null;
+  /** True when sampled through `/history` because `/series` is not served. */
+  readonly coarse: boolean;
+}
+
+/** The parts of `GET /api/v1/health` the Control Tower reads (observer M6.2; absent parts are null). */
+export interface ObserverHealth {
+  readonly delivery: { readonly lastHoldMs: number | null; readonly p95HoldMs: number | null } | null;
+  readonly head: string | null;
+  readonly sources: FactoryStatus["sources"];
+}
+
 export interface ObserverClient {
   session(): Promise<ObserverSession>;
   /** Events after a cursor, in delivery order. */
@@ -88,6 +108,9 @@ export interface ObserverClient {
   /** The projected state at a cursor (default: the observer's own position) and that cursor. */
   snapshot(at?: string): Promise<ObserverSnapshot>;
   factoryStatus(): Promise<FactoryStatus>;
+  /** Counts per time bucket; throws not_found on an observer without the route. */
+  series(window?: { readonly fromMs?: number | null; readonly toMs?: number | null; readonly bucketMs?: number | null }): Promise<SeriesData>;
+  health(): Promise<ObserverHealth>;
 }
 
 export const EVENT_SCHEMA = 3;
@@ -122,11 +145,21 @@ export function readFactoryStatus(data: unknown): FactoryStatus {
     },
     sources: list(freshness.sources).map((x) => {
       const src = obj(x);
-      return { key: str(src.key) ?? "", state: str(src.state), lagBytes: num(src.lag_bytes), lastReadAgeMs: num(src.last_read_age_ms) };
+      return { key: str(src.key) ?? "", state: str(src.state), lagBytes: num(src.lag_bytes), lastReadAgeMs: num(src.last_read_age_ms), runtime: readRuntime(src.runtime) };
     }),
     ingest: { stale: bool(ingest.stale), watermark: timeOf(ingest.watermark_ms), catchingUp: bool(ingest.catching_up) },
+    delivery: ingest.delivery && typeof ingest.delivery === "object" ? { lastHoldMs: num(obj(ingest.delivery).last_hold_ms), p95HoldMs: num(obj(ingest.delivery).hold_ms_p95) } : null,
     readAt: timeOf(d.read_at),
   };
+}
+
+const RUNTIME_STATES = ["proven", "compatible-unproven", "incompatible", "unknown"] as const;
+/** A stream source's runtime (`runtime: {name, version, state, reason, ...}`, observer M6.2), or null when absent. */
+function readRuntime(value: unknown): FactoryStatus["sources"][number]["runtime"] {
+  if (!value || typeof value !== "object") return null;
+  const r = obj(value);
+  const state = typeof r.state === "string" && (RUNTIME_STATES as readonly string[]).includes(r.state) ? (r.state as (typeof RUNTIME_STATES)[number]) : null;
+  return { state, version: str(r.version), reason: str(r.reason) };
 }
 
 /** A gate state word from a human gate of the snapshot. */
@@ -256,6 +289,26 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
     },
     async factoryStatus() {
       return readFactoryStatus(await get("/factory/status"));
+    },
+    async series(window = {}) {
+      const q = new URLSearchParams();
+      if (typeof window.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(window.fromMs))));
+      if (typeof window.toMs === "number") q.set("to_ms", String(Math.max(0, Math.floor(window.toMs))));
+      if (typeof window.bucketMs === "number") q.set("bucket_ms", String(Math.max(1000, Math.floor(window.bucketMs))));
+      const d = await get(`/series${q.size ? `?${q.toString()}` : ""}`);
+      const buckets = list(d.buckets)
+        .map((x) => obj(x))
+        .map((b) => ({ fromMs: num(b.from_ms) ?? 0, count: num(b.count) ?? 0 }))
+        .filter((b) => b.count > 0);
+      return { fromMs: num(d.from_ms) ?? buckets[0]?.fromMs ?? 0, toMs: num(d.to_ms) ?? 0, bucketMs: num(d.bucket_ms) ?? 60_000, buckets, total: num(d.total), coarse: false };
+    },
+    async health() {
+      const d = await get("/health");
+      const freshness = obj(d.freshness);
+      const ingest = obj(d.ingest);
+      const delivery = ingest.delivery && typeof ingest.delivery === "object" ? obj(ingest.delivery) : null;
+      const status = readFactoryStatus({ freshness });
+      return { delivery: delivery ? { lastHoldMs: num(delivery.last_hold_ms), p95HoldMs: num(delivery.hold_ms_p95) } : null, head: str(obj(d.index).head) ?? str(freshness.head), sources: status.sources };
     },
   };
 }

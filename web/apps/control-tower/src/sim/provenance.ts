@@ -99,6 +99,17 @@ export interface HistoryGapState {
   readonly from: string | null;
   readonly to: string | null;
   readonly count: number | null;
+  /**
+   * The gap's class (observer M6.2 `class`, else read from the reason): `not-received`,
+   * `unparsable-line`, `unknown-type`, `state-mismatch`, `evicted`, `source-unreadable`, `conflict`,
+   * or the client's own (`cursor-expired`, `observer-index-reset`, `before-window`).
+   */
+  readonly class: string;
+  /**
+   * Whether history was lost there. False for `unknown-type` (the records were received, not
+   * interpreted) and `conflict` (the first record was kept): those never make a scene partial.
+   */
+  readonly lost: boolean;
 }
 
 /**
@@ -114,9 +125,14 @@ export interface Completeness {
   readonly gaps: readonly HistoryGapState[];
   /** Entities whose history begins part-way (`history.began`), with the reason and when. */
   readonly began: Readonly<Record<string, { readonly reason: string; readonly at: number; readonly eventId: string }>>;
+  /**
+   * Records received but not interpreted (gaps of class unknown-type), by source key (`s:<execution>`
+   * or `stream/<execution>`): they lose no history, so they never make the scene partial.
+   */
+  readonly notInterpreted: Readonly<Record<string, number>>;
 }
 
-export const COMPLETE: Completeness = Object.freeze({ state: "complete", since: null, gaps: Object.freeze([]) as readonly HistoryGapState[], began: Object.freeze({}) });
+export const COMPLETE: Completeness = Object.freeze({ state: "complete", since: null, gaps: Object.freeze([]) as readonly HistoryGapState[], began: Object.freeze({}), notInterpreted: Object.freeze({}) });
 
 /**
  * The degraded and ordinary states a view may draw for a cell, slice, execution or agent

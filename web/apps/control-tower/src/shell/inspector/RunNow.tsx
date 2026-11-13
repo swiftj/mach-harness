@@ -4,7 +4,7 @@
  * working now, who is waiting and why, and the counts so far, from received facts only.
  */
 import { useMemo } from "react";
-import { isKnown, ref, type CellStage } from "../../sim";
+import { isKnown, ref, streamObservationOf, type CellStage } from "../../sim";
 import { useScene, useSceneStore } from "../../scene";
 import { ActorGlyph, CellGlyph, SliceGlyph } from "../glyphs";
 import { indexFor, lastAtOrBefore } from "../history";
@@ -169,13 +169,15 @@ function ReceivedCounts() {
     return { perCall: perCallN, counted: countedN, countOnly: countOnlyN, cost: total, costed: costedN, under: underAny };
   }, [cells, executions]);
   const executionCount = Object.keys(executions).length;
+  // Executions whose agents could not be observed (D7): their agents are not in the count.
+  const unobserved = useScene((s) => Object.keys(s.executions).filter((id) => streamObservationOf(s, id).state === "not-observed").length);
   return (
     <Section title="So far">
       <Facts
         facts={[
           ["Events", `${events.toLocaleString("en-GB")} received up to the playhead`],
           ["Executions", `${counters.executionsRunning} running, ${executionCount} seen`],
-          ["Agents", `${counters.agentsActive} working, ${counters.agentsStarted} started`],
+          ["Agents", `${counters.agentsActive} working, ${counters.agentsStarted} started${unobserved ? `; not observed in ${unobserved} of ${executionCount} execution${executionCount === 1 ? "" : "s"}` : ""}`],
           ["Tool calls", countOnly ? `${perCall.toLocaleString("en-GB")} observed one by one; ${counted.toLocaleString("en-GB")} reported as counts by ${countOnly} workflow agent${countOnly === 1 ? "" : "s"}` : `${perCall.toLocaleString("en-GB")} observed`],
           ["Review rounds", `${counters.reviewRounds}, ${counters.blockers} blockers, ${counters.notes} notes`],
           ["People", `${counters.humanApprovals} approval${counters.humanApprovals === 1 ? "" : "s"} by a person`],

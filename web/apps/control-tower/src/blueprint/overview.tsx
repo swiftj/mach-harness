@@ -10,13 +10,13 @@
  * Detail (task boards, elapsed times, artifact cards, dimension lines, findings flags, callouts) comes
  * back with the full drawing above 0.6. This level draws fewer elements than the full one.
  */
-import { factoryStates, fc, StateMark, type FactoryState } from "@mach/ui";
+import { factoryStates, fc, StateMark, type FactoryState, type MarkState } from "@mach/ui";
 import type { CellState, GateState, ReviewRoundState } from "../sim";
 import { ref } from "../sim";
 import type { Flow, FlowNode } from "./flow";
 import { ActivityMark } from "./marks";
 import { useEventProgress, useLate, useStaleSince } from "./motion";
-import { agentState, gateState } from "./vocab";
+import { agentState, gateState, visitMark } from "./vocab";
 
 /** Sizes in sheet units: about 15 px across on screen at a fit of 0.42. */
 const R = { station: 18, gate: 19, seat: 11, start: 12, end: 18, future: 13 } as const;
@@ -28,14 +28,6 @@ const ink = (s: FactoryState): string => fc(factoryStates[s].ink);
 
 function built(n: FlowNode): boolean {
   return n.kind !== "future" && !(n.kind === "end" && n.key.startsWith("f:"));
-}
-
-function stateOf(n: FlowNode): FactoryState | null {
-  if (!built(n)) return null;
-  if (n.kind === "start" || n.kind === "end") return "succeeded";
-  if (n.gate) return gateState(n.gate);
-  if (n.visit) return n.visit.leftAt === null ? (n.visit.station === "human-approval" ? "human" : "active") : n.visit.outcome === "failed" ? "failed" : "succeeded";
-  return null;
 }
 
 /** Where a route leaves and meets a node at this level (its large mark's edge). */
@@ -185,7 +177,8 @@ function OverviewVisit({ node, cell }: { node: FlowNode; cell: CellState }) {
   const late = useLate(v.meta.eventId);
   const appear = useEventProgress(v.enteredAt, "stateChange", 0, late);
   const stale = useStaleSince() !== null;
-  const st = stateOf(node) ?? "idle";
+  // From the visit's own record; a visit closed without an exit record keeps the interrupted mark.
+  const st: MarkState = visitMark(v);
   return (
     <g data-ref={ref.station(v.station, cell.ticketId)} style={{ cursor: "pointer", opacity: 0.35 + 0.65 * appear }} aria-hidden="true">
       <g transform={`translate(${node.x} ${node.y})`}>
@@ -229,6 +222,8 @@ function OverviewGate({ node, cell }: { node: FlowNode; cell: CellState }) {
       <g transform={`translate(${node.x} ${node.y})`} style={{ opacity: g.state === "skipped" ? 0.7 : 1 }}>
         <path d={`M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z`} style={{ fill: fc("plate-top"), stroke: ink(st), strokeWidth: st === "failed" ? 4 : 3, strokeLinejoin: "round" }} />
         <StateMark state={st} r={8.5} progress={0} />
+        {/* Overridden, not passed: a bypass arc over the diamond. */}
+        {g.state === "overridden" ? <path d={`M${-r - 3} -3C${-r + 3} ${-r - 16} ${r - 3} ${-r - 16} ${r + 3} -3`} style={{ fill: "none", stroke: fc("wait"), strokeWidth: 3, strokeLinecap: "round" }} /> : null}
       </g>
       {/* As the full drawing's callouts: a refusal leans back over the work that failed, a person's gate
           forward over what is to come, so adjacent words (a rejection, then the human gate) never meet. */}

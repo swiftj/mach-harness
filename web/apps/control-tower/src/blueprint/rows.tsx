@@ -27,11 +27,11 @@ import { Gutter } from "./gutter";
 import { SHEET, type Row } from "./layout";
 import { ActivityMark, DimLine } from "./marks";
 import { useEventProgress, useLate, useStaleSince } from "./motion";
-import { clock, duration, rulerOrigin } from "./time";
+import { clock, clockBare, duration, rulerOrigin } from "./time";
 import { ToolTrace } from "./ticks";
 import type { TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, useSelected, useTreeCtx } from "./treeitem";
-import { agentWords, artifactFile, GATE_WORDS, gateState as gateStateOf, grammarArtifact, grammarSeat, modelWord, STATION_WORDS, stationKind, tierOf } from "./vocab";
+import { agentWords, artifactFile, GATE_WORDS, gateState as gateStateOf, grammarArtifact, visitMark, grammarSeat, modelWord, STATION_WORDS, stationKind, tierOf } from "./vocab";
 
 const GX = SHEET.left;
 const INDENT = [22, 36, 50];
@@ -156,7 +156,7 @@ const ExecItem = memo(function ExecItem({ row, pos, size, laneY, ax, width, flow
           <path d={`M${ax + cols.x1 - 16} ${railY - 5}v5H${ax + cols.x2 + (running ? 6 : 16)}${running ? "" : "v-5"}`} style={{ fill: "none", stroke: ink, strokeWidth: running ? 1.6 : 1.1, strokeDasharray: activity === "stale" || activity === "unknown" ? "4 3" : undefined }} />
           {running ? <path d={`M${ax + cols.x2 + 6} ${railY - 3.5}l5 3.5l-5 3.5`} style={{ fill: "none", stroke: ink, strokeWidth: 1.4 }} /> : null}
           <text x={ax + cols.x1 - 16} y={railY - 8} className="bp-fine tabular" style={{ fill: "var(--mach-ink-muted)", fontSize: 9 }}>
-            <tspan style={{ fontFamily: "var(--mach-font-mono)" }}>{clock(span.start)}</tspan>
+            <tspan style={{ fontFamily: "var(--mach-font-mono)" }}>{end !== null ? clockBare(span.start) : clock(span.start)}</tspan>
             {end !== null ? <tspan style={{ fontFamily: "var(--mach-font-mono)" }}> → {clock(end)} · {endPlaced || placed(span.startQuality) ? "≈ " : ""}{duration(end - span.start)}</tspan> : null}
             <tspan style={{ fill: activity === "interrupted" || activity === "failed" ? fc("fail") : undefined }}> · {status}{how}</tspan>
             {queued ? <tspan> · {queued} queued</tspan> : null}
@@ -281,7 +281,9 @@ const SpanItem = memo(function SpanItem({ row, pos, size, laneY, ax, width, axis
   const round = visit ? visitRound(visit) : null;
   const open = span.end === null;
   const stale = open && staleSince !== null;
-  const state: FactoryState = visit ? (open ? (stale ? "idle" : visit.station === "human-approval" ? "human" : "active") : visit.outcome === "failed" || visit.outcome === "rejected" ? "failed" : "succeeded") : open ? (stale ? "idle" : "active") : "succeeded";
+  // A visit the scene closed without an exit record (D4) is interrupted: its span ends at the bound, dashed, never live.
+  const vm = visit ? visitMark(visit) : null;
+  const state: FactoryState = visit ? (open ? (stale ? "idle" : visit.station === "human-approval" ? "human" : "active") : vm === "failed" ? "failed" : vm === "interrupted" || vm === "unknown" || vm === "blocked" ? "idle" : "succeeded") : open ? (stale ? "idle" : "active") : "succeeded";
   const h = row.h;
   const calls = span.agents.reduce((n, a) => n + (callCount(a) ?? 0), 0);
   const counted = span.agents.some((a) => !perCall(a));
@@ -289,7 +291,7 @@ const SpanItem = memo(function SpanItem({ row, pos, size, laneY, ax, width, axis
   return (
     <Item node={node} pos={pos} size={size} expanded={row.expanded} ring={{ x: ax - 12, y: y + 2, w: width - ax - SHEET.left + 10, h: h - 4 }} group={children}>
       <Rule x={ax - 14} w={width - ax - SHEET.left + 14} y={y} weight={0.5} color={fc("grid-major")} />
-      {visit ? <VisitSpan axis={axis} start={span.start} end={span.end} y={y + 14} state={state} placed={visitPlaced} word={visit.outcomeWord} /> : null}
+      {visit ? <VisitSpan axis={axis} start={span.start} end={span.end} y={y + 14} state={state} placed={visitPlaced || Boolean(visit.unclosed)} word={visit.unclosed ? "no exit record" : visit.outcomeWord} /> : null}
       {visit && visit.station === "build" ? <TaskMarks axis={axis} cell={cell} from={span.start} to={span.end} y={y + 24} /> : null}
       {visit && visit.station === "verify" ? <CheckMarks axis={axis} cell={cell} round={round ?? 1} y={y + 24} /> : null}
       <AgentGlance axis={axis} agents={span.agents} y={y + 6} />
@@ -307,7 +309,7 @@ const SpanItem = memo(function SpanItem({ row, pos, size, laneY, ax, width, axis
           {round !== null ? <tspan style={{ fill: round > 1 ? fc("fail") : "var(--mach-ink-muted)", fontWeight: 400 }}> · round {round}</tspan> : null}
         </text>
         <text x={gx + 28} y={25} className="bp-fine tabular" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }}>
-          {clock(span.start)}–{span.end !== null ? clock(span.end) : stale ? `last seen ${clock(staleSince)}` : "now"} · {span.agents.length} agent{span.agents.length === 1 ? "" : "s"} · {calls} calls{counted ? " counted" : ""}
+          {span.end !== null ? clockBare(span.start) : clock(span.start)}–{span.end !== null ? clock(span.end) : stale ? `last seen ${clock(staleSince)}` : "now"} · {span.agents.length} agent{span.agents.length === 1 ? "" : "s"} · {calls} calls{counted ? " counted" : ""}
         </text>
       </Gutter>
       {visit?.visitId ? <title>{`${node.name}.`}</title> : null}
@@ -439,21 +441,25 @@ const GateItem = memo(function GateItem({ row, pos, size, laneY, ax, width, axis
   const stroke = strokeOf(g.meta.authority);
   const mx = xOn(axis, g.decidedAt ?? g.openedAt);
   const left = mx > ax + (width - ax) * 0.55;
+  const over = g.state === "overridden";
   const detail = g.detail.length > 120 ? `${g.detail.slice(0, 119)}…` : g.detail;
   return (
     <Item node={node} pos={pos} size={size} ring={{ x: ax - 12, y: y + 1, w: width - ax - SHEET.left + 10, h: row.h - 2 }}>
       {/* The gate on the execution's axis, at its decision, with what it decided (and its reason code) beside it. */}
-      <path d={`M${mx} ${y + 6}l6 6l-6 6l-6 -6z`} aria-hidden="true" style={{ fill: stroke.open ? fc("ground") : soft, stroke: ink, strokeWidth: 1.1, strokeDasharray: stroke.dash }} />
+      <path d={`M${mx} ${y + 6}l6 6l-6 6l-6 -6z`} aria-hidden="true" style={{ fill: stroke.open ? fc("ground") : over ? fc("wait-soft") : soft, stroke: over ? fc("wait") : ink, strokeWidth: 1.1, strokeDasharray: stroke.dash }} />
+      {/* Overridden, not passed: a bypass arc over the diamond (shape, not colour alone). */}
+      {over ? <path d={`M${mx - 7} ${y + 11}c2 -7 12 -7 14 0`} aria-hidden="true" style={{ fill: "none", stroke: fc("wait"), strokeWidth: 1.2, strokeLinecap: "round" }} /> : null}
       <text x={left ? mx - 10 : mx + 10} y={y + 15.5} textAnchor={left ? "end" : "start"} className="bp-fine" style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }}>
-        <tspan style={{ fill: ink, fontWeight: 600 }}>{g.state}</tspan>
+        <tspan style={{ fill: over ? fc("wait") : ink, fontWeight: 600 }}>{g.state}</tspan>
         {g.reasonCode && g.reasonCode !== g.state ? <tspan style={{ fill: ink, fontFamily: "var(--mach-font-mono)" }}> {g.reasonCode}</tspan> : null}
-        <tspan style={{ fontFamily: "var(--mach-font-mono)" }}> {clock(g.openedAt)}{g.decidedAt !== null && g.decidedAt !== g.openedAt ? ` → ${clock(g.decidedAt)}` : ""}</tspan>
+        <tspan style={{ fontFamily: "var(--mach-font-mono)" }}> {g.decidedAt !== null && g.decidedAt !== g.openedAt ? `${clockBare(g.openedAt)} → ${clock(g.decidedAt)}` : clock(g.openedAt)}</tspan>
         <tspan> · {detail}</tspan>
       </text>
       <Gutter row id={node.id} entity={node.ref} y={row.y} h={row.h} ax={ax}>
         {selected ? <SelectBar x={GX + 26} y={1} h={row.h - 2} /> : null}
         <GutterRing id={node.id} x={GX + 26} h={row.h} />
-        <path d={`M${gx} 6l6 6l-6 6l-6 -6z`} style={{ fill: stroke.open ? fc("ground") : soft, stroke: ink, strokeWidth: 1.1, strokeDasharray: stroke.dash }} />
+        <path d={`M${gx} 6l6 6l-6 6l-6 -6z`} style={{ fill: stroke.open ? fc("ground") : over ? fc("wait-soft") : soft, stroke: over ? fc("wait") : ink, strokeWidth: 1.1, strokeDasharray: stroke.dash }} />
+        {over ? <path d={`M${gx - 7} 11c2 -7 12 -7 14 0`} style={{ fill: "none", stroke: fc("wait"), strokeWidth: 1.2, strokeLinecap: "round" }} /> : null}
         <text x={gx + 12} y={15.5} className="bp-fine" style={{ fill: "var(--mach-ink)", fontSize: 10, fontWeight: 600 }}>
           {GATE_WORDS[g.gate]}
           {g.round ? <tspan style={{ fill: "var(--mach-ink-muted)", fontWeight: 400 }}> #{g.round}</tspan> : null}

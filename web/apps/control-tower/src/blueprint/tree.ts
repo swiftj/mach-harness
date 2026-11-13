@@ -16,10 +16,10 @@
  * count has no tool-call items (contract D13): its node names the count and the last tool instead.
  */
 import type { AgentState, ArtifactState, CellState, DependencyState, EntityRef, ExecutionState, FindingState, GateState, Scene, SliceState, StationVisit, ToolCallState, WaveState } from "../sim";
-import { activityOf, isKnown, ref, SIM_META } from "../sim";
+import { activityOf, capacityWaitOf, cellHome, gateOverrides, gateRefusals, isKnown, ref, SIM_META } from "../sim";
 import { activityWords, agentStatusWords, callCount, execSpan, modelWords, perCall, placed, tokenWords, visitEnd } from "./facts";
 import { visitRound } from "./flow";
-import { agentWords, GATE_WORDS, modelWord, stageWords, visitWords } from "./vocab";
+import { agentWords, GATE_WORDS, gateWords, modelWord, stageWords, visitStateWords, visitWords } from "./vocab";
 import { clock, duration } from "./time";
 
 export type TreeKind = "wave" | "slice" | "dependency" | "artifact" | "execution" | "relay" | "visit" | "gate" | "agent" | "tool" | "finding";
@@ -87,6 +87,8 @@ interface CellTree {
   readonly executions: readonly ExecutionState[];
   readonly deps: readonly DependencyState[];
   readonly gates: readonly GateState[];
+  /** The ticket's recorded capacity wait (held outside the cell), part of the lane's name. */
+  readonly wait: unknown;
   readonly node: TreeNode;
 }
 
@@ -202,14 +204,14 @@ function buildCell(scene: Scene, slice: SliceState, cell: CellState, executions:
       const occurrence = cell.visits.slice(0, i).filter((w) => w.station === v.station).length;
       const vid = visitTreeId(cell.ticketId, i);
       const kids = inVisit.map((a) => agentNode(a, cell, vid, xLevel + 2));
-      const state = v.outcomeWord ?? v.outcome ?? (v.station === "human-approval" ? "waiting" : "running");
+      const state = visitStateWords(v);
       const left = visitEnd(v);
       const span = left !== null ? ` to ${clock(left)}, ${placed(v.meta.start) || placed(v.meta.end) ? "about " : ""}${duration(left - v.enteredAt)}` : "";
       const name = `${visitWords(v)}${v.visitId ? ` (visit ${v.visitId})` : ""}, round ${visitRound(v)}, ${state}, ${clock(v.enteredAt)}${span}, ${plural(inVisit.length, "agent")}`;
       items.push({ t: v.enteredAt, node: { id: vid, ref: ref.station(v.station, cell.ticketId), kind: "visit", level: xLevel + 1, parent: xid, children: kids, name, ticketId: cell.ticketId, data: { kind: "visit", visit: v, index: i, occurrence, agents: inVisit } } });
     }
     for (const g of gatesByExec.get(x.id) ?? []) {
-      items.push({ t: g.openedAt + 0.5, node: leaf(`g:${g.id}`, ref.gate(g.id), "gate", xLevel + 1, xid, `${GATE_WORDS[g.gate]}${g.round ? ` round ${g.round}` : ""}: ${g.state}${g.reasonCode ? `, reason ${g.reasonCode}` : ""}${g.decidedAt !== null ? ` at ${clock(g.decidedAt)}` : ""}. ${g.detail}`, cell.ticketId, { kind: "gate", gate: g }) });
+      items.push({ t: g.openedAt + 0.5, node: leaf(`g:${g.id}`, ref.gate(g.id), "gate", xLevel + 1, xid, `${GATE_WORDS[g.gate]}${g.round ? ` round ${g.round}` : ""}: ${gateWords(g)}${g.reasonCode && g.state !== "overridden" && g.state !== "failed" ? `, reason ${g.reasonCode}` : ""}${g.decidedAt !== null ? ` at ${clock(g.decidedAt)}` : ""}. ${g.detail}`, cell.ticketId, { kind: "gate", gate: g }) });
     }
     items.sort((a, b) => a.t - b.t);
     const relayAgents = own.filter((a) => !claimed.has(a.id));
@@ -228,15 +230,54 @@ function buildCell(scene: Scene, slice: SliceState, cell: CellState, executions:
   // A title or risk the history does not hold is said to be not recorded, never read from a placeholder.
   const title = isKnown(slice.meta, "title") ? slice.title : "Title not recorded";
   const risk = isKnown(cell.meta, "risk") ? `${cell.risk} risk` : isKnown(slice.meta, "risk") ? `${slice.risk} risk` : "risk not recorded";
-  const name = `${title}, ${cell.ticketId}, ${slice.id}, ${risk}, ${stageWords(cell.stage)}${cell.round > 1 ? `, round ${cell.round} of 3` : ""}`;
+  const notices = laneNotices(scene, cell);
+  const name = `${title}, ${cell.ticketId}, ${slice.id}, ${risk}, ${stageWords(cell.stage)}${cell.round > 1 ? `, round ${cell.round} of 3` : ""}${notices.length ? `; ${notices.map((n) => n.words).join("; ")}` : ""}`;
   return { id: laneId, ref: ref.cell(cell.ticketId), kind: "slice", level, parent, children, name, ticketId: cell.ticketId, data: { kind: "slice", slice, cell } };
 }
 
+export interface LaneNotice {
+  readonly kind: "wait" | "refused" | "overridden";
+  /** Short, for the gutter line. */
+  readonly short: string;
+  /** Full, for names. */
+  readonly words: string;
+  readonly at: number;
+}
+
+/**
+ * Recorded facts the flow has no mark for: a wait for an execution place (capacity.wait_changed), gate
+ * refusals no gate state stands for (gateRefusals: build.start, verify.start, merge.run...), grouped by
+ * gate and reason, and overrides with no gate state (frozen-tests). Oldest first.
+ */
+export function laneNotices(scene: Scene, cell: CellState | null, ticketId = cell?.ticketId ?? ""): LaneNotice[] {
+  const out: LaneNotice[] = [];
+  const wait = capacityWaitOf(scene, ticketId);
+  if (wait) out.push({ kind: "wait", short: `waits for an execution place since ${clock(wait.since)}${wait.limit !== null ? ` · at most ${wait.limit}` : ""}`, words: `waits for an execution place since ${clock(wait.since)}${wait.limit !== null ? `, at most ${wait.limit} at once` : ""}`, at: wait.since });
+  if (cell) {
+    const groups = new Map<string, { gate: string; reason: string | null; count: number; last: number }>();
+    for (const r of gateRefusals(scene, ticketId)) {
+      const key = `${r.gate}|${r.reasonCode ?? ""}`;
+      const g = groups.get(key);
+      if (g) {
+        g.count += 1;
+        g.last = Math.max(g.last, r.at);
+      } else groups.set(key, { gate: r.gate, reason: r.reasonCode, count: 1, last: r.at });
+    }
+    for (const g of groups.values()) out.push({ kind: "refused", short: `refused ${g.gate}${g.reason ? ` · ${g.reason}` : ""}${g.count > 1 ? ` ×${g.count}` : ""} · ${clock(g.last)}`, words: `refused at ${g.gate}${g.reason ? ` (${g.reason})` : ""}${g.count > 1 ? ` ${g.count} times` : ""}, last at ${clock(g.last)}`, at: g.last });
+    for (const o of gateOverrides(scene, ticketId)) {
+      if (o.gateId !== null) continue;
+      out.push({ kind: "overridden", short: `overridden ${o.gate}${o.reasonCode ? ` · ${o.reasonCode}` : ""} · ${clock(o.at)}`, words: `${o.gate} overridden${o.reasonCode ? ` (${o.reasonCode})` : ""} at ${clock(o.at)}`, at: o.at });
+    }
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
 /** The lane of a slice that has no cell yet: its dependencies, and why it waits. */
-function waitingLane(slice: SliceState, deps: readonly DependencyState[], wid: string): TreeNode {
+function waitingLane(scene: Scene, slice: SliceState, deps: readonly DependencyState[], wid: string): TreeNode {
   const laneId = `s:${slice.id}`;
   const kids = deps.map((dep) => leaf(`d:${dep.id}`, ref.dependency(dep.from, dep.to), "dependency", 3, laneId, `Waits for ${dep.to}: ${dep.state === "satisfied" ? `satisfied at ${clock(dep.satisfiedAt ?? 0)}` : "blocking"}`, slice.ticketId, { kind: "dependency", dep }));
-  return { id: laneId, ref: ref.slice(slice.id), kind: "slice", level: 2, parent: wid, children: kids, name: `${isKnown(slice.meta, "title") ? slice.title : "Title not recorded"}, ${slice.id}, ${isKnown(slice.meta, "risk") ? `${slice.risk} risk` : "risk not recorded"}, ${slice.scheduler.replace(/-/g, " ")}${slice.reasons[0] ? `: ${slice.reasons[0]}` : ""}`, ticketId: slice.ticketId, data: { kind: "slice", slice, cell: null } };
+  const wait = laneNotices(scene, null, slice.ticketId)[0];
+  return { id: laneId, ref: ref.slice(slice.id), kind: "slice", level: 2, parent: wid, children: kids, name: `${isKnown(slice.meta, "title") ? slice.title : "Title not recorded"}, ${slice.id}, ${isKnown(slice.meta, "risk") ? `${slice.risk} risk` : "risk not recorded"}, ${slice.scheduler.replace(/-/g, " ")}${slice.reasons[0] ? `: ${slice.reasons[0]}` : ""}${wait ? `; ${wait.words}` : ""}`, ticketId: slice.ticketId, data: { kind: "slice", slice, cell: null } };
 }
 
 /** The wave a lane stands under for slices and cells the history never placed in a wave. */
@@ -293,7 +334,13 @@ export function buildTree(scene: Scene): Tree {
     add(owner, slice);
     placed.add(slice.ticketId);
   }
-  for (const cell of Object.values(scene.cells)) if (!placed.has(cell.ticketId) && !scene.slices[cell.sliceId]) add(UNPLACED_WAVE, standInSlice(cell));
+  // A cell with no slice in the scene stands where the scene says it stands (cellHome): under the wave
+  // that lists its slice when one does, else under "wave not recorded".
+  for (const cell of Object.values(scene.cells)) {
+    if (placed.has(cell.ticketId) || scene.slices[cell.sliceId]) continue;
+    const home = cellHome(scene, cell.ticketId);
+    add(home.waveId !== null && scene.waves[home.waveId] ? home.waveId : UNPLACED_WAVE, standInSlice(cell));
+  }
   const ordered = lanesOf.has(UNPLACED_WAVE) ? [...waves, unplacedWave(scene)] : waves;
   const roots: TreeNode[] = [];
   for (const wave of ordered) {
@@ -303,18 +350,19 @@ export function buildTree(scene: Scene): Tree {
       const deps = Object.values(scene.dependencies).filter((d) => d.from === slice.id);
       const cell = scene.cells[slice.ticketId] ?? null;
       if (!cell) {
-        lanes.push(waitingLane(slice, deps, wid));
+        lanes.push(waitingLane(scene, slice, deps, wid));
         continue;
       }
       const executions = (execsByTicket.get(cell.ticketId) ?? []).sort((a, b) => a.claimedAt - b.claimedAt);
       const gates = (gatesByTicket.get(cell.ticketId) ?? []).sort((a, b) => a.openedAt - b.openedAt || a.seq - b.seq);
       const cached = cellCache.get(slice);
-      if (cached && cached.cell === cell && cached.parent === wid && sameList(cached.executions, executions) && sameList(cached.deps, deps) && sameList(cached.gates, gates)) {
+      const wait = capacityWaitOf(scene, cell.ticketId);
+      if (cached && cached.cell === cell && cached.parent === wid && cached.wait === wait && sameList(cached.executions, executions) && sameList(cached.deps, deps) && sameList(cached.gates, gates)) {
         lanes.push(cached.node);
         continue;
       }
       const node = buildCellWithGates(scene, slice, cell, executions, deps, gates, wid);
-      cellCache.set(slice, { cell, executions, deps, gates, parent: wid, node });
+      cellCache.set(slice, { cell, executions, deps, gates, wait, parent: wid, node });
       lanes.push(node);
     }
     const count = lanes.length;

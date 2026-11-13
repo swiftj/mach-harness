@@ -582,6 +582,22 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
   );
 }
 
+/** A connection state as the stamp says it: each state as itself ("no-session" is not "stale"). */
+function connectionWords(state: string): string {
+  switch (state) {
+    case "no-session":
+      return "the observer does not know this browser (no session)";
+    case "disconnected":
+      return "disconnected, retrying";
+    case "reconnecting":
+      return "reconnecting";
+    case "stale":
+      return "connection stale";
+    default:
+      return `connection ${state}`;
+  }
+}
+
 /**
  * The plant as last seen: one stamp on the sheet while the connection is stale or lost, saying since
  * when. A status, so it is announced politely once (the shell's badge carries the detail).
@@ -596,7 +612,7 @@ function StaleStamp({ info }: { info: string }) {
         <StateMark state="stale" r={6} />
       </svg>
       As last seen at {time}
-      <span>· connection {state}: work may have moved on</span>
+      <span>· {connectionWords(state)}: work may have moved on</span>
     </div>
   );
 }

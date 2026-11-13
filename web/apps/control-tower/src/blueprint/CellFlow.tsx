@@ -10,7 +10,7 @@
  * with open arrowheads and "≈"; verification reads "recorded" of "expected" (the targets listed are
  * reconstructed); a gate's reason code is named where it refused.
  */
-import { memo, useContext, type ReactNode } from "react";
+import { createContext, memo, useContext, useMemo, type ReactNode } from "react";
 import {
   AgentMarker,
   ArtifactCard,
@@ -25,6 +25,7 @@ import {
   TaskBoard,
   FindingsFlag,
   type FactoryState,
+  type MarkState,
   type TaskCell,
   type GateLamp,
   type GatePosition,
@@ -41,7 +42,8 @@ import { placed, visitEnd } from "./facts";
 import { DimLine } from "./marks";
 import { PlacedCallout } from "./callout";
 import { OverviewFlow } from "./overview";
-import { artifactFile, agentState, grammarArtifact, grammarGate, grammarSeat, stationKind, tierOf } from "./vocab";
+import { flowBoxes, placeCallouts, type CalloutWish, type Spot } from "./spots";
+import { artifactFile, agentState, grammarArtifact, grammarGate, grammarSeat, stationKind, tierOf, visitMark } from "./vocab";
 
 const SEAT_KEYS = ["architecture", "security", "product"] as const;
 
@@ -72,6 +74,8 @@ export const CellFlow = memo(function CellFlow({ cell, slice, flow, template, ax
   const seats = template.seats;
   // At the overview the full drawing would be specks: the same nodes are drawn large and simple instead.
   const overview = useContext(LodContext) === "overview";
+  const simulated = useContext(SimulatedContext);
+  const spots = useMemo(() => calloutSpots(cell, flow, seats, simulated), [cell, flow, seats, simulated]);
   if (overview) {
     return (
       <g transform={`translate(${ax} ${row0})`}>
@@ -88,6 +92,7 @@ export const CellFlow = memo(function CellFlow({ cell, slice, flow, template, ax
         )}
       </g>
       <g transform={`translate(${ax} ${row0})`}>
+        <SpotsContext.Provider value={spots}>
         {flow.segments.map((s) => (
           <Segment key={`${s.from.key}>${s.to.key}`} from={s.from} to={s.to} retry={s.retry} seats={seats} cell={cell} />
         ))}
@@ -95,10 +100,51 @@ export const CellFlow = memo(function CellFlow({ cell, slice, flow, template, ax
           <FlowMark key={n.key} node={n} cell={cell} slice={slice} seats={seats} next={nextOf(flow, n)} flow={flow} />
         ))}
         <Dimensions flow={flow} cell={cell} y={dimsY - row0} />
+        </SpotsContext.Provider>
       </g>
     </g>
   );
 });
+
+/** Each callout's position in this flow, from the placement pass (spots.ts). */
+const SpotsContext = createContext<ReadonlyMap<string, Spot>>(new Map());
+
+/** The gate callout's preferred position, as it was drawn before the placement pass. */
+function gateSpot(gate: GateState): Spot {
+  const left = gate.gate === "verification" || gate.gate === "review";
+  return { ox: left ? -7 : 7, oy: -9, dx: left ? -18 : 18, dy: gate.gate === "review" ? -74 : -48 };
+}
+const OUTVOTED_SPOT: Spot = { ox: -15, oy: 4, dx: -22, dy: 30 };
+
+/** Every callout the flow can show now, placed clear of the flow's marks and labels and of each other. */
+function calloutSpots(cell: CellState, flow: Flow, seats: readonly number[], simulated: boolean): ReadonlyMap<string, Spot> {
+  const wishes: CalloutWish[] = [];
+  for (const n of flow.nodes) {
+    if (n.gate) {
+      const c = gateCallout(cell, n.gate);
+      if (c) wishes.push({ key: `g:${n.gate.id}`, cx: n.x, cy: n.y, pref: gateSpot(n.gate), text: c.text, detail: c.detail });
+    }
+    if (n.kind === "seats") {
+      const round = reviewRound(cell, n);
+      if (!round?.outcome) continue;
+      SEAT_KEYS.forEach((k, i) => {
+        const f = round.findings.find((x) => x.seat === k && x.severity === "blocker" && x.outvoted);
+        if (f) wishes.push({ key: `o:${round.round}:${i}`, cx: n.x, cy: n.y + (seats[i] ?? 0), pref: OUTVOTED_SPOT, text: `Blocker outvoted · ${f.seat} ${f.rule ?? ""}`, detail: clip(f.title, 60) });
+      });
+    }
+  }
+  if (!wishes.length) return new Map();
+  const fixed = flowBoxes(flow, (n) => {
+    if (n.gate) return { text: SHORT_GATE[n.gate.gate], sub: gateSub(cell, n.gate, simulated) };
+    if (n.visit) return { text: n.visit.station, sub: "00m 00s · 00 of 00" };
+    if (n.kind === "start") return { text: "Opened", sub: "00:00:00 UTC · spec-ready" };
+    if (n.kind === "seats") return null;
+    return { text: n.col };
+  });
+  // The seats: one box per seat.
+  for (const n of flow.nodes) if (n.kind === "seats") for (const dy of seats) fixed.push({ x0: n.x - 12, x1: n.x + 22, y0: n.y + dy - 12, y1: n.y + dy + 12 });
+  return placeCallouts(fixed, wishes);
+}
 
 function nextOf(flow: Flow, n: FlowNode): FlowNode | null {
   const i = flow.nodes.indexOf(n);
@@ -374,7 +420,9 @@ function VisitMark({ node, cell, next }: { node: FlowNode; cell: CellState; next
   const v = node.visit!;
   const stale = useStaleSince() !== null;
   // While the connection is stale an open visit is held as last seen: not working, no clock running.
-  const state: FactoryState = v.leftAt === null ? (stale ? "idle" : "active") : v.outcome === "failed" ? "failed" : "succeeded";
+  // A visit the scene closed without an exit record is interrupted, never working (D4).
+  const mark = visitMark(v);
+  const state: MarkState = mark === "active" && stale ? "idle" : mark;
   const late = useLate(v.meta.eventId);
   const appear = useEventProgress(v.enteredAt, "stateChange", 0, late);
   const elapsed = useElapsed(v.leftAt === null && !stale ? v.enteredAt : null);
@@ -400,6 +448,10 @@ function VisitMark({ node, cell, next }: { node: FlowNode; cell: CellState; next
         {task ? (
           <text x={node.x} y={node.y + 41 + drop} textAnchor="middle" style={{ fill: fc("live"), fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }} className="tabular" aria-hidden="true">
             {task.id} {task.status}
+          </text>
+        ) : v.unclosed ? (
+          <text x={node.x} y={node.y + 41 + drop} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontSize: 8.5 }} aria-hidden="true">
+            no exit record · ≤ {duration((v.leftAt ?? v.enteredAt) - v.enteredAt)}
           </text>
         ) : end !== null ? (
           <text x={node.x} y={node.y + 41 + drop} textAnchor="middle" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }} className="tabular" aria-hidden="true">
@@ -447,6 +499,7 @@ function gatePosition(g: GateState): GatePosition {
       return "closed";
     case "passed":
     case "skipped":
+    case "overridden":
       return "open";
     case "failed":
       return "refusing";
@@ -495,6 +548,7 @@ function gateSub(cell: CellState, g: GateState, simulated: boolean): string {
     if (r) return `${r.risk} · ${r.approvalsNeeded} needed`;
   }
   if (g.state === "skipped") return "not needed";
+  if (g.state === "overridden") return `overridden${g.reasonCode ? ` · ${g.reasonCode}` : ""}`;
   if (g.state === "open") return `since ${clock(g.openedAt)}`;
   return clock(at);
 }
@@ -506,13 +560,13 @@ function GateMark({ node, cell }: { node: FlowNode; cell: CellState }) {
   const late = useLate(g.meta.eventId);
   const p = useEventProgress(g.decidedAt ?? g.openedAt, g.state === "failed" ? "gateRefuse" : g.state === "open" ? "gateClose" : "gateOpen", 0, late);
   const kind = grammarGate(g.gate);
-  const tone = g.state === "failed" ? fc("fail") : g.state === "waiting" ? fc("human") : undefined;
+  const tone = g.state === "failed" ? fc("fail") : g.state === "waiting" ? fc("human") : g.state === "overridden" ? fc("wait") : undefined;
   const callout = gateCallout(cell, g);
   return (
     <>
       <Pick entity={ref.gate(g.id)}>
         <g style={{ opacity: g.state === "skipped" ? 0.7 : 1 }}>
-          <GateGlyph variant="blueprint" kind={kind} position={position} progress={p} lamps={lampsFor(cell, g)} at={{ x: node.x, y: node.y }} showLabel={false} />
+          <GateGlyph variant="blueprint" kind={kind} position={position} progress={p} overridden={g.state === "overridden"} lamps={lampsFor(cell, g)} at={{ x: node.x, y: node.y }} showLabel={false} />
         </g>
         <g transform={`translate(${node.x} ${node.y})`}>
           <Label y={32} text={SHORT_GATE[g.gate]} sub={gateSub(cell, g, simulated)} tone={tone} />
@@ -555,14 +609,14 @@ function clip(s: string, n: number): string {
 function GateCallout({ node, gate, text, detail, tone, at }: { node: FlowNode; gate: GateState; text: string; detail: string; tone: "fail" | "human"; at: number }) {
   // A failed verdict is followed by the review column and a rejection by the human gate, so their
   // notes lean back over the work that failed; the human gate's leans forward over what is to come.
-  const left = gate.gate === "verification" || gate.gate === "review";
-  const dy = gate.gate === "review" ? -74 : -48;
+  // The placement pass moves a note off that side when it would print over another label (spots.ts).
+  const spot = useContext(SpotsContext).get(`g:${gate.id}`) ?? gateSpot(gate);
   const late = useLate(gate.meta.eventId);
   const p = useEventProgress(at, "stateChange", 0, late);
   if (p <= 0) return null;
   return (
     <g style={{ opacity: p }} role="note" aria-label={`${text}. ${detail}`}>
-      <PlacedCallout cx={node.x} cy={node.y} ox={left ? -7 : 7} oy={-9} dx={left ? -18 : 18} dy={dy} text={text} detail={detail} tone={tone} />
+      <PlacedCallout cx={node.x} cy={node.y} ox={spot.ox} oy={spot.oy} dx={spot.dx} dy={spot.dy} text={text} detail={detail} tone={tone} />
     </g>
   );
 }
@@ -633,17 +687,18 @@ function Seat({ index, node, cell, round, dy, consensus }: { index: number; node
           </g>
         ) : null}
       </Pick>
-      {outvoted && round?.outcome ? <OutvotedCallout x={x} y={y} rule={outvoted.rule} title={outvoted.title} seat={outvoted.seat} at={round.decidedAt ?? outvoted.at} /> : null}
+      {outvoted && round?.outcome ? <OutvotedCallout x={x} y={y} spotKey={`o:${round.round}:${index}`} rule={outvoted.rule} title={outvoted.title} seat={outvoted.seat} at={round.decidedAt ?? outvoted.at} /> : null}
     </>
   );
 }
 
-function OutvotedCallout({ x, y, rule, title, seat, at }: { x: number; y: number; rule: string | null; title: string; seat: string; at: number }) {
+function OutvotedCallout({ x, y, spotKey, rule, title, seat, at }: { x: number; y: number; spotKey: string; rule: string | null; title: string; seat: string; at: number }) {
+  const spot = useContext(SpotsContext).get(spotKey) ?? OUTVOTED_SPOT;
   const p = useEventProgress(at, "stateChange");
   if (p <= 0) return null;
   return (
     <g style={{ opacity: p }} role="note" aria-label={`Outvoted ${seat} blocker ${rule ?? ""}: ${title}`}>
-      <PlacedCallout cx={x} cy={y} ox={-15} oy={4} dx={-22} dy={30} text={`Blocker outvoted · ${seat} ${rule ?? ""}`} detail={clip(title, 60)} tone="fail" />
+      <PlacedCallout cx={x} cy={y} ox={spot.ox} oy={spot.oy} dx={spot.dx} dy={spot.dy} text={`Blocker outvoted · ${seat} ${rule ?? ""}`} detail={clip(title, 60)} tone="fail" />
     </g>
   );
 }
@@ -736,12 +791,16 @@ function LiveDim({ g, y }: { g: DimGroup; y: number }) {
       </g>
     );
   }
+  // A wait at the human gate is a wait on a person, never work running: said so, in the person's ink.
+  const person = g.key.startsWith("hu");
+  const ink = fc(person ? "human" : "live");
+  const verb = person ? "waiting" : "running";
   return (
-    <g aria-label={`${g.what}: running for ${duration(t - g.start)}`} role="img">
+    <g aria-label={`${g.what}: ${verb} for ${duration(t - g.start)}`} role="img">
       <path d={`M${g.x1} ${y - 5}V${y + 3}`} aria-hidden="true" style={{ stroke: fc("plate-edge"), strokeWidth: 0.75 }} />
-      <line x1={g.x1} y1={y} x2={g.x2} y2={y} aria-hidden="true" style={{ stroke: fc("live"), strokeWidth: 0.75, strokeDasharray: "4 3" }} />
-      <text x={(g.x1 + g.x2) / 2} y={y - 4} textAnchor="middle" style={{ fill: fc("live"), fontFamily: "var(--mach-font-mono)", fontSize: 9.5 }} className="tabular">
-        running {duration(Math.max(0, t - g.start))}
+      <line x1={g.x1} y1={y} x2={g.x2} y2={y} aria-hidden="true" style={{ stroke: ink, strokeWidth: 0.75, strokeDasharray: "4 3" }} />
+      <text x={(g.x1 + g.x2) / 2} y={y - 4} textAnchor="middle" style={{ fill: ink, fontFamily: "var(--mach-font-mono)", fontSize: 9.5 }} className="tabular">
+        {verb} {duration(Math.max(0, t - g.start))}
       </text>
     </g>
   );

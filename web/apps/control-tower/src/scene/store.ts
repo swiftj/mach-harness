@@ -56,13 +56,49 @@ export interface FocusRequest {
   readonly nonce: number;
 }
 
+/**
+ * A long history read in windows (D17): the store shows the window that holds the playhead when its
+ * own log does not reach it (a replay, a live store scrubbed back past what it holds). Implemented by
+ * src/live/windows.ts over `/api/v1/history` and `/snapshot?at=`.
+ */
+export interface HistoryWindow {
+  readonly log: SceneLog;
+  /** The window covers from <= t < to (`to` Infinity for the last). */
+  readonly from: number;
+  readonly to: number;
+}
+export interface HistoryWindows {
+  /** The earliest time of the history (null: not known yet). */
+  start(): number | null;
+  /** The window holding t, when it is loaded now. */
+  peek(t: number): HistoryWindow | null;
+  /** Load the window holding t (fetching it), and keep it among the recent ones. */
+  load(t: number): Promise<HistoryWindow>;
+}
+
+/** Counts per time bucket for the whole history (`/api/v1/series`), so the timeline can draw what is not held. */
+export interface SeriesState {
+  readonly bucketMs: number;
+  readonly buckets: readonly { readonly fromMs: number; readonly count: number; readonly atLeast?: boolean }[];
+  readonly total: number | null;
+  readonly coarse: boolean;
+}
+
 export interface SceneStoreState {
   /** Where the scenes come from. Persistent: a store never changes source. */
   readonly source: SceneSource;
-  /** The scene log every view reads scenes from (`log.sceneAt(playhead)`). */
+  /** The scene log every view reads scenes from (`log.sceneAt(playhead)`): the store's own, or the history window holding the playhead. */
   readonly log: SceneLog;
-  /** Bumped when the log's events change (live ingest), for change detection. */
+  /** Bumped whenever the shown log's events change or another log is shown, for change detection. */
   readonly logVersion: number;
+  /** Live: events received into the store's own log since it opened (only arrivals count). */
+  readonly arrived: number;
+  /** Live: `arrived` when the playhead left the live edge; null while following. "N new events" is the difference (D20). */
+  readonly arrivedAtLeave: number | null;
+  /** A history window is being fetched for the playhead (D17). */
+  readonly windowLoading: boolean;
+  /** Counts per time bucket over the whole history, when the observer serves them. */
+  readonly series: SeriesState | null;
   /** How far the history reaches: the whole run (simulation) or so far (live, replay). */
   readonly extent: Extent;
   /** Live only: the connection, its staleness, lag and the supervisor's heartbeat. Null for simulation and replay. */
@@ -168,6 +204,8 @@ export interface SceneStore {
   setConnection(status: ConnectionStatus): void;
   /** The Factory's state on this machine, as the observer last read it (live and replay). */
   setFactoryStatus(status: FactoryStatus | null): void;
+  /** Counts per time bucket over the whole history. */
+  setSeries(series: SeriesState | null): void;
   dispose(): void;
 }
 
@@ -188,6 +226,8 @@ export interface SimulationStoreOptions extends CommonOptions {
 export interface LogStoreOptions extends CommonOptions {
   source: "live" | "replay";
   log: SceneLog;
+  /** A long history held in windows: shown when the playhead is outside `log` (D17). */
+  windows?: HistoryWindows;
 }
 export type SceneStoreOptions = SimulationStoreOptions | LogStoreOptions;
 
@@ -196,7 +236,12 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   const isSim = "fixture" in options;
   const source: SceneSource = isSim ? "simulation" : options.source;
   const fixture = isSim ? options.fixture : NO_FIXTURE;
+  /** The store's own log (live: the stream's; replay: the window at its end). */
   const log = isSim ? fixtureLog(options.fixture) : options.log;
+  const windows = isSim ? undefined : options.windows;
+  /** The log shown now: `log`, or the history window holding the playhead. */
+  let shown: HistoryWindow | null = null;
+  let version = 0;
   const rate = options.rate ?? PLAYBACK_BASE_RATE;
   const duration = fixture.duration;
 
@@ -204,7 +249,18 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   let confirmed = log.headTime() ?? 0;
   let confirmedWall = clock.now();
 
-  const floorT = (): number => (isSim ? 0 : (log.floorTime() ?? confirmed));
+  const ownFloor = (): number => (isSim ? 0 : (log.floorTime() ?? confirmed));
+  const floorT = (): number => {
+    const own = ownFloor();
+    const start = windows?.start() ?? null;
+    return start === null ? own : Math.min(own, start);
+  };
+  const currentLog = (): SceneLog => shown?.log ?? log;
+  const extentNow = (liveAt: number) => {
+    const own = extentOf(isSim ? fixture : log, isSim ? undefined : liveAt);
+    if (!windows) return own;
+    return { ...own, start: floorT(), end: Math.max(own.end, liveAt) };
+  };
   const edgeOf = (): number => (isSim ? duration : source === "replay" ? (log.headTime() ?? 0) : Math.max(confirmed, log.headTime() ?? confirmed));
   const clamp = (t: number, edge: number): number => Math.min(edge, Math.max(floorT(), t));
   const startEdge = edgeOf();
@@ -213,8 +269,12 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   let state: SceneStoreState = {
     source,
     log,
-    logVersion: log.version(),
-    extent: extentOf(isSim ? fixture : log, isSim ? undefined : startEdge),
+    logVersion: 0,
+    arrived: isSim ? 0 : log.size(),
+    arrivedAtLeave: null,
+    windowLoading: false,
+    series: null,
+    extent: isSim ? extentOf(fixture) : extentNow(startEdge),
     connection: source === "live" ? INITIAL_CONNECTION : null,
     factoryStatus: null,
     fixture,
@@ -234,18 +294,22 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     follow: true,
   };
   const listeners = new Set<() => void>();
+  let ownVersion = log.version();
   let frame: number | null = null;
   let lastFrameAt = 0;
   let nonce = 0;
 
   const highlightFor = (s: SceneStoreState): readonly EntityRef[] => {
     const subject = s.hovered ?? s.selection;
-    return subject ? relatedRefs(log.sceneAt(s.playhead), subject) : [];
+    return subject ? relatedRefs(s.log.sceneAt(s.playhead), subject) : [];
   };
 
   const set = (patch: Partial<SceneStoreState>): void => {
     let next: SceneStoreState = { ...state, ...patch };
-    if (patch.playhead !== undefined || patch.logVersion !== undefined) next = { ...next, cursor: log.cursorAt(next.playhead) };
+    // Leaving the live edge marks what has arrived so far: "N new events" counts arrivals after it (D20).
+    if (next.following !== state.following) next = { ...next, arrivedAtLeave: next.following || isSim ? null : next.arrived };
+    if (!isSim && windows) next = route(next);
+    if (patch.playhead !== undefined || patch.logVersion !== undefined || next.log !== state.log) next = { ...next, cursor: next.log.cursorAt(next.playhead) };
     const subjectChanged = next.hovered !== state.hovered || next.selection !== state.selection;
     if (subjectChanged || next.cursor !== state.cursor || next.logVersion !== state.logVersion) {
       const highlighted = highlightFor(next);
@@ -254,6 +318,51 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     }
     state = next;
     for (const listener of [...listeners]) listener();
+  };
+
+  /**
+   * Which log holds the playhead: the store's own when it reaches it, else a loaded history window,
+   * else the store's own (clamped) while the window is fetched. Never changes the playhead.
+   */
+  let wanted: number | null = null;
+  const covers = (w: HistoryWindow, t: number): boolean => t >= w.from && t < w.to;
+  const route = (next: SceneStoreState): SceneStoreState => {
+    if (!windows) return next;
+    const t = next.playhead;
+    const ownStart = log.floorTime();
+    const own = next.following || (ownStart !== null && t >= ownStart && source === "live") || (source === "replay" && ownStart !== null && t >= ownStart);
+    let target: HistoryWindow | null = null;
+    let loading = false;
+    if (!own) {
+      target = shown && covers(shown, t) ? shown : windows.peek(t);
+      if (!target) {
+        loading = true;
+        if (wanted === null || !shown || !covers(shown, t)) requestWindow(t);
+      }
+    }
+    if (!loading) wanted = null;
+    // While a window loads, keep showing what was shown (it is labelled loading), never a wrong moment as settled.
+    const nextShown = loading ? shown : target;
+    if (nextShown !== shown) {
+      shown = nextShown;
+      version += 1;
+    }
+    const nextLog = currentLog();
+    return { ...next, log: nextLog, logVersion: nextLog === next.log ? next.logVersion : version, windowLoading: loading };
+  };
+  const requestWindow = (t: number): void => {
+    wanted = t;
+    void windows?.load(t).then(
+      (w) => {
+        if (wanted === null || !covers(w, state.playhead)) return;
+        wanted = null;
+        set({});
+      },
+      () => {
+        if (wanted === t) wanted = null;
+        set({ windowLoading: false });
+      },
+    );
   };
 
   /** Live: the edge now, carried by the browser's clock only while the connection is live. */
@@ -352,7 +461,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       if (event) seek(event.t);
     },
     seekToEvent(id) {
-      const entry = log.entry(id);
+      const entry = state.log.entry(id) ?? log.entry(id);
       if (entry) seek(entry.t);
     },
     seekToChapter(id) {
@@ -363,12 +472,12 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     },
     stepNext() {
       store.pause();
-      const t = nextEventTime(log, state.playhead);
+      const t = nextEventTime(state.log, state.playhead) ?? (shown && shown.to !== Infinity ? nextEventTime(log, shown.to - 1) ?? shown.to : null);
       if (t !== null && (isSim || t <= state.liveAt)) seek(t);
     },
     stepPrevious() {
       store.pause();
-      const t = previousEventTime(log, state.playhead);
+      const t = previousEventTime(state.log, state.playhead) ?? (shown ? shown.from - 1 : windows && state.playhead > floorT() ? (log.floorTime() ?? state.playhead) - 1 : null);
       seek(t ?? floorT());
     },
     setSpeed(speed) {
@@ -404,8 +513,9 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     },
     logChanged() {
       if (isSim) return;
-      const version = log.version();
-      if (version === state.logVersion) return;
+      const arrived = log.size();
+      if (arrived === state.arrived && log.version() === ownVersion) return;
+      ownVersion = log.version();
       const head = log.headTime();
       if (head !== null && head > confirmed) {
         confirmed = head;
@@ -414,14 +524,16 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       const liveAt = Math.max(state.liveAt, edgeOf());
       // Selection, hover, view, camera intent and a replay's playhead are kept; a following playhead stays at the edge.
       const playhead = state.following ? liveAt : clamp(state.playhead, liveAt);
-      set({ logVersion: version, liveAt, playhead, extent: extentOf(log, liveAt) });
+      // The shown log changed only when it is the store's own; a history window does not change with arrivals.
+      if (!shown) version += 1;
+      set({ logVersion: shown ? state.logVersion : version, arrived, liveAt, playhead, extent: extentNow(liveAt) });
     },
     setLiveEdge(t) {
       if (source !== "live" || !(t > confirmed)) return;
       confirmed = t;
       confirmedWall = clock.now();
       const liveAt = Math.max(state.liveAt, t);
-      set({ liveAt, playhead: state.following ? liveAt : state.playhead, extent: extentOf(log, liveAt) });
+      set({ liveAt, playhead: state.following ? liveAt : state.playhead, extent: extentNow(liveAt) });
     },
     setConnection(status) {
       if (source !== "live" || status === state.connection) return;
@@ -434,11 +546,16 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       if (source === "simulation" || status === state.factoryStatus) return;
       set({ factoryStatus: status });
     },
+    setSeries(series) {
+      if (source === "simulation" || series === state.series) return;
+      set({ series });
+    },
     dispose() {
       stopLoop();
       listeners.clear();
     },
   };
+  if (windows) set({});
   if (options.autoplay) store.play();
   return store;
 }

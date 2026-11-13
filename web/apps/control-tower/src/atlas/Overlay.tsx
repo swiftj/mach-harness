@@ -16,7 +16,7 @@ import { Callout, SelectionBrackets, fc, modelTiers, project, regions, round, sc
 import { isKnown, refId, refKind, type EntityRef, type Scene } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { useAtlas, usePlayheadKeyed } from "./context";
-import { AFTERGLOW, agentsElapsedKey, animating, anim, fmtElapsed, fmtElapsedKnown, chamberOccupant, latestGate, placeAgents, q, uiTier, type ViewMode } from "./derive";
+import { AFTERGLOW, agentsElapsedKey, animating, anim, fmtElapsed, fmtElapsedKnown, chamberOccupant, latestGate, ticketOfRef, placeAgents, q, uiTier, type ViewMode } from "./derive";
 import { agentName } from "./Bay";
 import { PLATE_Z, FLOOR_Z, boxAt, type PlantLayout } from "./layout";
 import { locateScreen } from "./locate";
@@ -103,10 +103,11 @@ export const Overlay = memo(function Overlay({ zoom, lod, focused, theater, view
   const labelK = Math.min(1.1, LEVEL_K[lod]);
 
   // What labels should leave clear when they can: machines, gates, agents and findings flags.
-  const fixed = lod === "far" ? [] : obstacles(L, scene, t, mode);
+  const prefer = ticketOfRef(scene, selection);
+  const fixed = lod === "far" ? [] : obstacles(L, scene, t, mode, prefer);
   const agents = lod === "near" ? agentOffers(L, scene, t, labelK, mode) : { offers: [], home: [] };
   // Callouts also leave each agent's own label spot (under its disc) to the agent, when they can.
-  const callouts = calloutOffers(L, scene, t, reduced, LEVEL_K[lod], lod, [...fixed, ...agents.home]);
+  const callouts = calloutOffers(L, scene, t, reduced, LEVEL_K[lod], lod, [...fixed, ...agents.home], prefer);
   const selText = sel && selection ? shortName(scene, selection) : "";
   const selOffer = sel && selection ? selectionOffer(sel, selText, k, zoom, fixed) : null;
   const offers: Offer[] = [...callouts, ...(selOffer ? [selOffer] : []), ...agents.offers];
@@ -330,7 +331,7 @@ const REGION_TITLES: Array<[keyof PlantLayout["regions"], RegionKind, string?]> 
  * floor names with their captions, in projected units. A name runs diagonally on screen, so it is
  * offered as short pieces along its run rather than one box around the whole diagonal.
  */
-function obstacles(L: PlantLayout, scene: Scene, t: number, mode: ViewMode): Box[] {
+function obstacles(L: PlantLayout, scene: Scene, t: number, mode: ViewMode, prefer: string | null): Box[] {
   const out: Box[] = [];
   const add = (b: PlanBox) => {
     const r = screenBounds([b]);
@@ -357,7 +358,7 @@ function obstacles(L: PlantLayout, scene: Scene, t: number, mode: ViewMode): Box
     }
   }
   // The chamber's findings flags (pole 22, flag and rule lettered to the right of the pole).
-  const occ = chamberOccupant(scene, t);
+  const occ = chamberOccupant(scene, t, prefer);
   const round_ = occ ? occ.cell.reviews[occ.roundIndex] : undefined;
   if (occ && round_) {
     const counts = new Map<string, number>();
@@ -405,7 +406,7 @@ const DIRECTIONS: Array<[number, number]> = [
 ];
 const LEADERS = [36, 64, 96];
 
-function calloutOffers(L: PlantLayout, scene: Scene, t: number, reduced: boolean, k: number, lod: Lod, soft: Box[]): Offer[] {
+function calloutOffers(L: PlantLayout, scene: Scene, t: number, reduced: boolean, k: number, lod: Lod, soft: Box[], prefer: string | null): Offer[] {
   const pending: Pending[] = [];
   const put = (key: string, at: Pending["at"], text: string, detail: string | undefined, tone: Pending["tone"], opacity = 1, priority: Priority = 3) => {
     pending.push({ key, at, text, detail, tone, opacity, priority });
@@ -421,7 +422,7 @@ function calloutOffers(L: PlantLayout, scene: Scene, t: number, reduced: boolean
     }
   }
   // The chamber: a rejection, an outvoted blocker.
-  const occ = chamberOccupant(scene, t);
+  const occ = chamberOccupant(scene, t, prefer);
   const r = occ ? occ.cell.reviews[occ.roundIndex] : undefined;
   if (occ && r && r.decidedAt !== null) {
     const op = q(anim("stateChange", t - r.decidedAt, reduced));

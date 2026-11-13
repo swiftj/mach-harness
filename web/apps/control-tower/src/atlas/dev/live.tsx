@@ -3,7 +3,9 @@
  * generator (test/fixtures/v3.mjs, through make-live-fixture.mjs), at /src/atlas/dev/live.html.
  * No production code path knows about it.
  *
- *   ?scenario=twelve|three   which history (default twelve)
+ *   ?scenario=twelve|three   which history (default twelve); any other key of fixture.json too
+ *                            (e.g. a real run's /api/v1/events, added there by hand for a check)
+ *   ?view=blueprint          the Execution Blueprint on the same store instead of the Atlas
  *   ?at=0.3                  where the live edge starts, as a fraction of the history
  *   ?speed=1                 how fast the edge then moves (factory ms per wall ms); 0 holds it
  *   ?stale=1                 the connection goes quiet (reconnecting) after the first feed
@@ -16,12 +18,14 @@ import { createRoot } from "react-dom/client";
 import { ThemeProvider, TooltipProvider, type ThemePreference } from "@mach/ui";
 import "../../index.css";
 import { AtlasView } from "..";
+import { BlueprintView } from "../../blueprint";
 import { INITIAL_CONNECTION, SceneStoreProvider, browserClock, createSceneStore } from "../../scene";
 import { createSceneLog, provenance, type EngineEvent } from "../../sim";
 
 const params = new URLSearchParams(window.location.search);
 const theme = params.get("theme");
-const scenario = params.get("scenario") === "three" ? "three" : "twelve";
+const scenario = params.get("scenario") ?? "twelve";
+const view = params.get("view") === "blueprint" ? "blueprint" : "atlas";
 
 const response = await fetch("/node_modules/.cache/atlas-live/fixture.json");
 if (!response.ok) throw new Error("Run node src/atlas/dev/make-live-fixture.mjs first.");
@@ -70,7 +74,7 @@ Object.defineProperty(window, "__atlasLive", {
 function Stamp() {
   return (
     <div style={{ position: "fixed", left: 16, top: 16, padding: "3px 8px", borderRadius: 4, background: "var(--mach-info-soft)", border: "1px solid var(--mach-info-line)", color: "var(--mach-info-ink)", font: "700 11px/1.4 var(--mach-font-sans)", letterSpacing: "0.04em", pointerEvents: "none" }}>
-      LIVE STORE · TEST FIXTURE ({scenario}) · Factory Atlas dev page
+      LIVE STORE · TEST FIXTURE ({scenario}) · {view === "blueprint" ? "Execution Blueprint" : "Factory Atlas"} dev page
     </div>
   );
 }
@@ -83,7 +87,7 @@ createRoot(root).render(
       <TooltipProvider>
         <SceneStoreProvider store={store}>
           <main style={{ position: "fixed", inset: 0 }}>
-            <AtlasView meter={params.has("meter")} />
+            {view === "blueprint" ? <BlueprintView /> : <AtlasView meter={params.has("meter")} />}
             <Stamp />
           </main>
         </SceneStoreProvider>

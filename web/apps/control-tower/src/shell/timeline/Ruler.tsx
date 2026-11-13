@@ -59,6 +59,21 @@ export const Ruler = memo(function Ruler({ extent, window: win, zoomed, onWindow
   const dragging = useRef(false);
   const v0 = extent.v0;
   const span = Math.max(1, extent.v1 - extent.v0);
+  // The whole history's density (`/api/v1/series`), so what is not held is still drawn (D17).
+  const series = useSceneStore((s) => (s.source === "simulation" ? null : s.series));
+  const density = useMemo(() => {
+    if (!series || !series.buckets.length || width <= 0) return null;
+    const max = Math.max(...series.buckets.map((b) => b.count));
+    let d = "";
+    for (const b of series.buckets) {
+      const x0 = ((b.fromMs - v0) / span) * width;
+      const x1 = ((b.fromMs + series.bucketMs - v0) / span) * width;
+      if (x1 < 0 || x0 > width) continue;
+      const h = Math.max(1, Math.round((Math.log1p(b.count) / Math.log1p(max)) * 8));
+      d += `M${Math.max(0, x0).toFixed(1)} ${8 - h}h${Math.max(1, Math.min(width, x1) - Math.max(0, x0)).toFixed(1)}v${h}h-${Math.max(1, Math.min(width, x1) - Math.max(0, x0)).toFixed(1)}Z`;
+    }
+    return d;
+  }, [series, width, v0, span]);
 
   useLayoutEffect(() => {
     const el = trackRef.current;
@@ -210,6 +225,11 @@ export const Ruler = memo(function Ruler({ extent, window: win, zoomed, onWindow
           className="absolute inset-x-0 bottom-0 h-[16px] outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
         >
           <div className="absolute inset-x-0 bottom-[7px] h-px bg-line-strong" />
+          {density ? (
+            <svg aria-hidden="true" data-series={series?.coarse ? "coarse" : "series"} width={Math.max(1, width)} height="8" className="pointer-events-none absolute left-0 bottom-[8px] h-[8px]">
+              <path d={density} style={{ fill: "var(--mach-ink-subtle)", opacity: 0.35 }} />
+            </svg>
+          ) : null}
           <div ref={liveRef} className="absolute bottom-[6px] left-0 h-[3px] bg-factory-live-soft" />
           <svg aria-hidden="true" width={Math.max(1, width)} height="10" className="absolute left-0 bottom-[3px] h-[10px] overflow-visible">
             <path d={ticks.major} style={{ stroke: "var(--mach-ink-subtle)", strokeWidth: 1 }} />
@@ -238,12 +258,12 @@ export const Ruler = memo(function Ruler({ extent, window: win, zoomed, onWindow
                 title={known ? `${i + 1}. ${c.title} (${timecode(c.t, false)})` : `Chapter ${i + 1} (${timecode(c.t, false)}): not reached yet`}
                 aria-current={isCurrent ? "step" : undefined}
                 className={cn(
-                  "absolute top-[3px] flex h-[16px] items-center gap-1 whitespace-nowrap rounded-xs pl-[3px] pr-1 text-[11px] leading-none",
+                  "absolute top-0 flex h-[24px] min-w-[24px] items-center gap-1 whitespace-nowrap rounded-xs pl-[3px] pr-1 text-[11px] leading-none",
                   isCurrent ? "text-ink" : "text-ink-subtle hover:text-ink",
                 )}
                 style={{ left: `${left}%`, zIndex: isCurrent ? 2 : 1 }}
               >
-                <span aria-hidden="true" className="absolute -left-px top-0 h-[20px] w-px bg-current opacity-60" />
+                <span aria-hidden="true" className="absolute -left-px top-[3px] h-[20px] w-px bg-current opacity-60" />
                 <span className="sr-only">Chapter </span>
                 <span className={cn("font-mono tabular", isCurrent && "font-semibold", !labels[i]?.number && "sr-only")}>{i + 1}</span>
                 {known ? (

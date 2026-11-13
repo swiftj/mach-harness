@@ -11,7 +11,7 @@
  * after it (`late`) is drawn at its end state: its travel already happened and is not replayed.
  */
 import { animationProgress, liftedArc, type ArtifactKind as UiArtifactKind, type FactoryAnimationName, type FactoryState, type GatePosition, type MarkState, type ModelTier as UiTier, type AgentRole as UiRole, type ToolFamily, type Vec3 } from "@mach/ui";
-import { agentTimingAt, eventsInWindow, isKnown, toolActivity, type ActivityState, type AgentState, type ArtifactState, type CellState, type GateState, type LogEntry, type Scene, type SceneLog, type SceneSource, type StationId, type ToolCallState } from "../sim";
+import { agentTimingAt, createLogFold, entityAt, eventsInWindow, isKnown, toolActivity, type ActivityState, type AgentState, type ArtifactState, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SceneSource, type StationId, type StationVisit, type ToolCallState } from "../sim";
 import { PLAYBACK_BASE_RATE } from "../scene";
 import { FLOOR_Z, PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
 
@@ -284,25 +284,51 @@ export interface GateView {
   from: GatePosition;
   progress: number;
   gate: GateState | null;
+  /** Let through on a recorded override (drawn open and marked, never as a plain pass). */
+  overridden: boolean;
 }
 
-const OPEN: GateView = { id: null, position: "open", from: "open", progress: 1, gate: null };
+const OPEN: GateView = { id: null, position: "open", from: "open", progress: 1, gate: null, overridden: false };
 
-/** A gate's arm from its state: closes when work arrives, opens on a pass, refuses on a failure. */
+/** A gate's arm from its state: closes when work arrives, opens on a pass or an override, refuses on a failure. */
 export function gateView(gate: GateState | undefined | null, t: number, reduced: boolean): GateView {
   if (!gate) return OPEN;
   switch (gate.state) {
     case "open":
-      return { id: gate.id, position: "closed", from: "open", progress: q(anim("gateClose", t - gate.openedAt, reduced)), gate };
+      return { id: gate.id, position: "closed", from: "open", progress: q(anim("gateClose", t - gate.openedAt, reduced)), gate, overridden: false };
     case "waiting":
-      return { id: gate.id, position: "waiting", from: "open", progress: q(anim("gateClose", t - gate.openedAt, reduced)), gate };
+      return { id: gate.id, position: "waiting", from: "open", progress: q(anim("gateClose", t - gate.openedAt, reduced)), gate, overridden: false };
     case "passed":
-    case "skipped": {
+    case "skipped":
+    case "overridden": {
       const at = gate.decidedAt ?? gate.openedAt;
-      return { id: gate.id, position: "open", from: "closed", progress: q(anim(gate.gate === "human-approval" ? "humanRelease" : "gateOpen", t - at, reduced)), gate };
+      return { id: gate.id, position: "open", from: "closed", progress: q(anim(gate.gate === "human-approval" ? "humanRelease" : "gateOpen", t - at, reduced)), gate, overridden: gate.state === "overridden" };
     }
     case "failed":
-      return { id: gate.id, position: "refusing", from: "closed", progress: q(anim("gateRefuse", t - (gate.decidedAt ?? gate.openedAt), reduced)), gate };
+      return { id: gate.id, position: "refusing", from: "closed", progress: q(anim("gateRefuse", t - (gate.decidedAt ?? gate.openedAt), reduced)), gate, overridden: false };
+  }
+}
+
+/**
+ * A gate's state in words, from the gate's own record (never from its arm's position, nor from the
+ * cell's stage): "passed", "refused", "overridden (test-passed-first-run)", "waiting for a person",
+ * "deciding", "not needed", or "not reached yet" when no record exists.
+ */
+export function gateWord(gate: GateState | undefined | null): string {
+  if (!gate) return "not reached yet";
+  switch (gate.state) {
+    case "open":
+      return "deciding";
+    case "waiting":
+      return "waiting for a person";
+    case "passed":
+      return "passed";
+    case "skipped":
+      return "not needed";
+    case "overridden":
+      return `overridden${gate.reasonCode ? ` (${gate.reasonCode})` : ""}`;
+    case "failed":
+      return `refused${gate.reasonCode ? ` (${gate.reasonCode})` : ""}`;
   }
 }
 
@@ -314,6 +340,31 @@ export function latestGate(scene: Scene, kind: GateState["gate"], ticketId?: str
     if (!found || g.openedAt > found.openedAt || (g.openedAt === found.openedAt && g.seq > found.seq)) found = g;
   }
   return found;
+}
+
+// ---------------------------------------------------------------- station visits
+
+const PASSING: ReadonlySet<string> = new Set(["done", "passed", "approved", "awaiting-human", "merged", "archived"]);
+
+/**
+ * A visit as drawn, from its own record only: working while open, interrupted when it ended without
+ * an exit record (the scene closed it: superseded or its execution ended), failed or passed by its
+ * outcome, blocked when it stopped (escalated, open questions), unknown when it ended with no outcome.
+ */
+export function visitMark(v: StationVisit): MarkState {
+  if (v.unclosed) return "interrupted";
+  if (v.leftAt === null) return v.station === "human-approval" ? "human" : "active";
+  if (v.outcome === "failed" || v.outcome === "rejected") return "failed";
+  if (v.outcome === "stopped") return "blocked";
+  if (v.outcome !== null && PASSING.has(v.outcome)) return "succeeded";
+  return "unknown";
+}
+
+/** A visit's state in words, for a name: the station's own word, or why it has none. */
+export function visitWord(v: StationVisit): string {
+  if (v.unclosed) return `ended without an exit record (${v.unclosed.reason === "superseded" ? "the station was entered again" : "its execution ended"})`;
+  if (v.leftAt === null) return v.station === "human-approval" ? "waiting for a person" : "working";
+  return v.outcomeWord ?? v.outcome ?? "ended, outcome not recorded";
 }
 
 // ---------------------------------------------------------------- where a cell's work is
@@ -410,6 +461,28 @@ export function routeBetween(L: PlantLayout, bay: BaySlot, from: StationId | nul
   return [stationPoint(L, bay, from, "out"), stationPoint(L, bay, to, "in")];
 }
 
+/** An intake, dispatch or merge event, as the legs need it: read once per log entry (incrementally). */
+interface LegEvent {
+  readonly t: number;
+  readonly id: string;
+  readonly type: "wave.discovered" | "slice.materialized" | "work.scheduled" | "merge.completed";
+  readonly ticket: string | null;
+  readonly slice: string | null;
+  readonly wave: string | null;
+  readonly late: boolean;
+}
+
+/**
+ * The log's leg-making events, kept by the shared incremental fold (`createLogFold`): an append reads
+ * only the new entries, a late insertion re-reads once. (It replaced a scan of the whole log on every
+ * change.)
+ */
+const legEvents = createLogFold<LegEvent>((entry) => {
+  const type = entry.event.type;
+  if (type !== "wave.discovered" && type !== "slice.materialized" && type !== "work.scheduled" && type !== "merge.completed") return null;
+  return { t: entry.t, id: entry.id, type, ticket: idOf(entry, "ticket_id"), slice: idOf(entry, "slice_id"), wave: idOf(entry, "wave_id"), late: entry.late };
+});
+
 /**
  * Every journey known so far: one per intake, dispatch and merge event received, and one per
  * station-to-station move of each cell (from its visits in the head scene: a move is known once the
@@ -424,17 +497,16 @@ export function legsOf(log: SceneLog, L: PlantLayout): readonly Leg[] {
   const TRAVEL_MS = 1400 * RATE;
   const out: Leg[] = [];
   const head = log.head();
-  for (const entry of log.entries()) {
-    const type = entry.event.type;
-    if (type !== "wave.discovered" && type !== "slice.materialized" && type !== "work.scheduled" && type !== "merge.completed") continue;
+  for (const entry of legEvents(log).items) {
+    const type = entry.type;
     if (LIVE && entry.late) continue;
     const t = entry.t;
-    const ticket = idOf(entry, "ticket_id");
+    const ticket = entry.ticket;
     if (type === "wave.discovered") {
-      const wave = idOf(entry, "wave_id");
+      const wave = entry.wave;
       out.push({ id: `wave:${entry.id}`, ticketId: wave ?? "", kind: "wave", start: t, dur: TRAVEL_MS, route: [L.intake.dockEdge, { ...L.intake.hopper, x: L.intake.hopper.x - 22 }], state: "active", card: "spec", label: `${wave ?? "A wave"} arrives`, priority: 3, motion: "packetTravel" });
     } else if (type === "slice.materialized") {
-      const slice = idOf(entry, "slice_id");
+      const slice = entry.slice;
       const bay = slice ? L.bayBySlice.get(slice) : undefined;
       if (!bay) continue;
       const h = L.intake.hopper;
@@ -512,18 +584,43 @@ export function legsInFlight(log: SceneLog, L: PlantLayout, t: number, reduced: 
 
 // ---------------------------------------------------------------- the review chamber
 
-/** The cell whose panel sits in the chamber now (or just decided), if any. */
-export function chamberOccupant(scene: Scene, t: number): { cell: CellState; roundIndex: number } | null {
-  let best: { cell: CellState; roundIndex: number } | null = null;
+export interface SittingPanel {
+  cell: CellState;
+  roundIndex: number;
+}
+
+/**
+ * Every review panel sitting now (or just decided), oldest first. Live and replay can have several at
+ * once; the simulation has one at a time.
+ */
+export function panelsSitting(scene: Scene, t: number): SittingPanel[] {
+  const out: SittingPanel[] = [];
   for (const cell of Object.values(scene.cells)) {
     const i = cell.reviews.length - 1;
     const r = cell.reviews[i];
     if (!r) continue;
     const live = cell.station === "review" || (r.decidedAt !== null && t - r.decidedAt < AFTERGLOW * 2);
-    if (!live) continue;
-    if (!best || r.startedAt > (best.cell.reviews[best.roundIndex]?.startedAt ?? 0)) best = { cell, roundIndex: i };
+    if (live) out.push({ cell, roundIndex: i });
   }
-  return best;
+  return out.sort((a, b) => (a.cell.reviews[a.roundIndex]?.startedAt ?? 0) - (b.cell.reviews[b.roundIndex]?.startedAt ?? 0) || (a.cell.ticketId < b.cell.ticketId ? -1 : 1));
+}
+
+/**
+ * The panel the chamber shows: the one of `prefer` (the ticket of what the person selected) when that
+ * panel sits, else the latest to start. The person steps between sitting panels by selecting them.
+ */
+export function chamberOccupant(scene: Scene, t: number, prefer: string | null = null): SittingPanel | null {
+  const all = panelsSitting(scene, t);
+  if (!all.length) return null;
+  return (prefer ? all.find((p) => p.cell.ticketId === prefer) : undefined) ?? all[all.length - 1]!;
+}
+
+/** The ticket an entity belongs to, read from the scene (never parsed from its id): null when none. */
+export function ticketOfRef(scene: Scene, entity: EntityRef | null): string | null {
+  if (!entity) return null;
+  const found = entityAt(scene, entity);
+  const v = found?.value as { ticketId?: unknown } | undefined;
+  return typeof v?.ticketId === "string" ? v.ticketId : null;
 }
 
 // ---------------------------------------------------------------- agents in place

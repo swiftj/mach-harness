@@ -13,8 +13,8 @@
  * source; nothing the person sets can make a simulation read as real, or real history as simulated.
  * Reads only: no route here writes anything (the observer serves GET only).
  */
-import { createLiveFactory, createObserverClient, loadHistory, ObserverError, type EventSourceLike, type FetchLike, type LiveSource, type ObserverClient, type ObserverSession } from "../../live";
-import { browserClock, createSceneStore, type SceneStore } from "../../scene";
+import { createLiveFactory, createObserverClient, createReplay, ObserverError, type EventSourceLike, type FetchLike, type LiveSource, type ObserverClient, type ObserverSession } from "../../live";
+import { browserClock, type SceneStore } from "../../scene";
 
 export type SourceChoice = "live" | "replay" | "simulation";
 
@@ -86,9 +86,11 @@ export function createBrowserLive(client: ObserverClient, reducedMotion: boolean
   return { store, source };
 }
 
-/** Historical replay: the observer's retained history, loaded once into a replay store (no stream). */
+/**
+ * Historical replay: the observer's history, read in windows around the playhead (D17): its span and
+ * counts first, then the window being watched. A replay is watched from its start.
+ */
 export async function createBrowserReplay(client: ObserverClient, reducedMotion: boolean): Promise<SceneStore> {
-  const log = await loadHistory(client);
-  // Start at the beginning of what is held: a replay is watched from its start.
-  return createSceneStore({ source: "replay", log, clock: browserClock(), reducedMotion, at: log.floorTime() ?? undefined });
+  const { store } = await createReplay(client, { clock: browserClock(), reducedMotion });
+  return store;
 }

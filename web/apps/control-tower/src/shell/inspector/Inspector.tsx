@@ -9,6 +9,8 @@ import { stations as stationLooks, type FactoryMarkShape, type FactoryState, typ
 import {
   describeEntry,
   finalScene,
+  visitStatusOf,
+  whyOf,
   refId,
   SCENARIO,
   type ActorState,
@@ -32,7 +34,7 @@ import {
 import { useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
 import { IconButton } from "../timeline/Transport";
-import { artifactOf, selectable, gateOf, kindOf, GATE_STATE_WORDS, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
+import { artifactOf, selectable, gateOf, kindOf, gateStateWords, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
 import {
   ActorAnatomy,
   AgentAnatomy,
@@ -91,8 +93,9 @@ function lookOf(entity: AnyRef, value: unknown): Look {
       const cell = (value as CellState).visits ? (value as CellState) : null;
       const visits = cell ? cell.visits.filter((v) => v.station === station) : [];
       const last = visits[visits.length - 1];
-      const state: FactoryState = !last ? "idle" : last.leftAt === null ? "active" : outcomeState(last.outcome);
-      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: !last ? "Not visited" : last.leftAt === null ? "Working" : (last.outcome ?? "ended").replace(/^./, (c) => c.toUpperCase()), ...stationTiming(last) };
+      const status = last ? visitStatusOf(last) : null;
+      const state: FactoryState = !last || !status ? "idle" : status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(last.outcome);
+      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: status ? status.word : "Not visited", ...stationTiming(last) };
     }
     case "agent": {
       const a = value as AgentState;
@@ -113,7 +116,7 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     case "gate": {
       const g = value as GateState;
       const state = gateState(g.state);
-      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: GATE_STATE_WORDS[g.state], phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
+      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: gateStateWords(g), phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
     }
     case "dependency": {
       const d = value as DependencyState;
@@ -130,8 +133,9 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     }
     case "visit": {
       const v = value as VisitEntity;
-      const state: FactoryState = v.leftAt === null ? "active" : outcomeState(v.outcome);
-      return { glyph: <StationGlyph kind={v.station as StationKind} size={28} state={state} />, state, word: v.leftAt === null ? "Working" : (v.outcomeWord ?? v.outcome ?? "Ended"), phase: v.leftAt === null ? "running" : "finished", since: v.leftAt ?? v.enteredAt };
+      const status = visitStatusOf(v);
+      const state: FactoryState = status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(v.outcome);
+      return { glyph: <StationGlyph kind={v.station as StationKind} size={28} state={state} />, state, word: status.word, phase: v.leftAt === null ? "running" : "finished", since: v.leftAt ?? v.enteredAt };
     }
     case "seat": {
       const v = value as SeatEntity;
@@ -228,7 +232,8 @@ function TimeStatus({ look, entity }: { look: Look | null; entity: AnyRef }) {
 
 function Why({ entity }: { entity: AnyRef }) {
   const { all, happened } = useEntityEvents(entity);
-  const latest = all[happened - 1];
+  // Among records at the same moment, the deciding one explains it: authoritative > observed > reconstructed (D24).
+  const latest = whyOf(all, happened);
   if (!latest) return null;
   return (
     <div className="mx-5 mb-4 rounded-sm bg-surface-sunken px-3 py-2.5">

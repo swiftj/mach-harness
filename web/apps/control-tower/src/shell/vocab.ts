@@ -221,7 +221,8 @@ export function outcomeState(outcome: StationOutcome | null): FactoryState {
 }
 
 export function gateState(state: GateState["state"]): FactoryState {
-  return ({ open: "active", passed: "succeeded", failed: "failed", waiting: "human", skipped: "idle" } as const)[state];
+  // An override let the work through: drawn as through, and always named "Overridden" beside it (never "Passed").
+  return ({ open: "active", passed: "succeeded", failed: "failed", waiting: "human", skipped: "idle", overridden: "succeeded" } as const)[state];
 }
 
 export const GATE_STATE_WORDS: Record<GateState["state"], string> = {
@@ -230,7 +231,14 @@ export const GATE_STATE_WORDS: Record<GateState["state"], string> = {
   failed: "Refused",
   waiting: "Waiting for a person",
   skipped: "Not needed",
+  overridden: "Overridden",
 };
+
+/** A gate's state in words, with the recorded reason code of an override or a refusal ("Overridden: test-passed-first-run"). */
+export function gateStateWords(gate: Pick<GateState, "state" | "reasonCode">): string {
+  const word = GATE_STATE_WORDS[gate.state];
+  return (gate.state === "overridden" || gate.state === "failed") && gate.reasonCode ? `${word}: ${gate.reasonCode}` : word;
+}
 
 export function runState(status: "running" | "done" | "ok" | "error"): FactoryState {
   return status === "running" ? "active" : status === "error" ? "failed" : "succeeded";

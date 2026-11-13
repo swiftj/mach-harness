@@ -49,10 +49,21 @@ export interface ConnectionStatus {
   readonly supervisor: SupervisorFreshness | null;
   /** Why it is in this state, in words ("cursor expired; reloaded from a snapshot"). */
   readonly reason: string | null;
-  /** Counters for the inspector and tests. */
+  /**
+   * The observer's delivery lag: how long it held the newest event between reading and sending it
+   * (heartbeat `at_ms` minus `watermark_ms`, else `/health` `ingest.delivery.last_hold_ms`). Null: not reported.
+   */
+  readonly deliveryLagMs: number | null;
+  /** Counters for the inspector and tests. Events received over the wire (unique). */
   readonly received: number;
   readonly duplicates: number;
+  /** Events the observer itself marked late (its `late` flag). */
   readonly late: number;
+  /** Events placed before ones this browser already held (a delivery fact, not lateness). */
+  readonly reordered: number;
+  /** Events held in the browser now (the live window), and the observer's own total (its head position). "held of total" when only part is held. */
+  readonly held: number | null;
+  readonly total: number | null;
   readonly gaps: number;
   readonly resets: number;
   /** Received lines that were not version 3 events (refused, never applied). */
@@ -70,9 +81,13 @@ export const INITIAL_CONNECTION: ConnectionStatus = {
   watermark: null,
   supervisor: null,
   reason: null,
+  deliveryLagMs: null,
   received: 0,
   duplicates: 0,
   late: 0,
+  reordered: 0,
+  held: null,
+  total: null,
   gaps: 0,
   resets: 0,
   refused: 0,
@@ -98,9 +113,18 @@ export interface FactoryStatus {
     readonly leaseExpired: boolean | null;
   };
   /** Per source the observer follows: its state and how far its reading lags the file (bytes) and the clock (ms). */
-  readonly sources: readonly { readonly key: string; readonly state: string | null; readonly lagBytes: number | null; readonly lastReadAgeMs: number | null }[];
+  readonly sources: readonly {
+    readonly key: string;
+    readonly state: string | null;
+    readonly lagBytes: number | null;
+    readonly lastReadAgeMs: number | null;
+    /** Execution streams (`stream/<execution>`): the runtime version's state (observer M6.2). Null: not reported. */
+    readonly runtime: { readonly state: "proven" | "compatible-unproven" | "incompatible" | "unknown" | null; readonly version: string | null; readonly reason: string | null } | null;
+  }[];
   /** The observer's ingest: stale, its watermark (Unix ms), catching up. */
   readonly ingest: { readonly stale: boolean | null; readonly watermark: number | null; readonly catchingUp: boolean | null };
+  /** The observer's read-to-send hold, last and 95th percentile (`ingest.delivery`, observer M6.2). Null: not reported. */
+  readonly delivery: { readonly lastHoldMs: number | null; readonly p95HoldMs: number | null } | null;
   /** When the observer read the files (Unix ms). */
   readonly readAt: number | null;
 }
