@@ -35,7 +35,7 @@ export const KEYMAP: KeyBinding[] = [
   { keys: [",", "."], action: "Previous / next event", group: "Playback" },
   { keys: ["Shift+,", "Shift+."], action: "Back / forward 10 s of factory time", group: "Playback" },
   { keys: ["[", "]"], action: "Previous / next chapter (real history: previous / next landmark, such as a wave arriving or an execution ending)", group: "Playback" },
-  { keys: ["{", "}"], action: "Slower / faster (0.5× to 16×; replay and simulation)", group: "Playback" },
+  { keys: ["{", "}"], action: "Slower / faster (real history: 5× to 160× real time; simulation: 0.5× to 16×)", group: "Playback" },
   { keys: ["Home", "End"], action: "Start of what is held / live edge (replay: its last event)", group: "Playback" },
   { keys: ["L"], action: "Return to live (and follow); live keeps arriving while you look back", group: "Playback" },
   { keys: ["1", "2"], action: "Factory Atlas / Execution Blueprint", group: "Views" },

@@ -2,6 +2,9 @@
 .atlas-viewport {
   position: relative;
   overflow: hidden;
+  /* clip, not hidden: a hidden box still scrolls when focus lands on a part outside it (a screen
+     reader, a script), which slid the whole drawing and its controls out of view. */
+  overflow: clip;
   touch-action: none;
   user-select: none;
   background: var(--mach-factory-ground);

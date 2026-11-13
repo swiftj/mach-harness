@@ -107,10 +107,37 @@ redaction; media is off unless `tower.evidence_media` is set in `.factory/config
 
 ## 7. Screenshots and screen recording of real execution
 
-**Not captured.** The product owner asked to choose, before any capture run, between reviewing by hand and automated
-captures. That choice is still open. The acceptance run kept a handful of defect screenshots in its scratch area; they
-are not a deliverable. To look by hand: build with `apps/observer/build.sh`, run `apps/observer/bin/mach-observer
---project <a project with .factory>` and open the printed link.
+**Captured on 13 Nov 2026**, on the product owner's choice of automated capture, from the second real supervised run
+(section 14) read through `mach-observer` built from `main` at `0fe9e0b`. The captures are generated files and are
+git-ignored, like the M6.0 set; nothing from the run is committed.
+
+- `web/apps/control-tower/screenshots/live/`: 21 screenshots. Atlas at the live edge; the cell, the red-before-green
+  gate with its recorded overrides, the verification verdict, the review consensus with its votes and findings, the
+  interrupted build station, an artifact, the line supervisor and a wave selected; the source menu; the connection
+  details; the open timeline; a moment between the two runs; the Blueprint, Theater, and both light-theme views.
+- `web/apps/control-tower/recordings/live/real-run-replay.mp4`: 1 min 43 s, real time. Historical replay of the same
+  history: the first execution on the Atlas, then the second on the Atlas and the Blueprint through both rejected
+  review rounds.
+
+Every screenshot is labelled Live Factory and the recording Historical replay; the capture script refuses a frame
+showing Simulation. The browser spoke only to the observer's loopback origin and logged no console error. The page
+text of every screenshot was searched for home paths, account names, addresses, keys and the session link: none.
+
+Found while capturing, and fixed on `fix/control-tower-capture-defects` (the captures above pre-date the fixes):
+
+1. **The stage went empty.** Cause: the Atlas and Blueprint viewports were `overflow: hidden`, which still scrolls
+   when focus lands on a part outside the visible area (a screen reader or a script; the app's own focus moves
+   already prevented it). The drawing and its controls slid out of view. Both viewports and the stage now clip.
+2. **Playback speed on real history was ten times its label.** Real history's speeds are now named against real time
+   (5x to 160x), in the control, to a screen reader and in the shortcuts sheet. The simulation's stay 0.5x to 16x.
+   Nothing plays at a different rate than before; real-time playback of history is still not offered.
+3. **"factory disabled for the Factory."** The four Factory lifecycle events now read as sentences, by role only:
+   "An engineer disabled the Factory on this machine."
+4. **"took 1 h 0 min" for a build that had stopped in between.** A visit the scene had closed at its execution's end
+   and that a later execution then finished is marked interrupted: "open for 1 h 0 min, not continuous", with when it
+   stopped. A visit that never exited no longer says "ended without an exit record" twice.
+
+Held by `web/apps/control-tower/test/capture-defects.test.mjs` and re-checked in the browser against the same run.
 
 ## 8. Test results
 
@@ -120,7 +147,7 @@ are not a deliverable. To look by hand: build with `apps/observer/build.sh`, run
 | Go (`go vet`, `go test ./...`, `go test -race ./...`) | all packages pass |
 | Observer build with the app embedded, `smoke.sh` | pass (CSP, no source maps, session, GET only) |
 | Web lint, typecheck, build (three apps) | pass |
-| Control Tower unit tests | 158 pass |
+| Control Tower unit tests | 163 pass |
 | Product Studio unit tests | 7 pass |
 | Product Studio browser suites (lifecycle, conformance, security, accessibility) | 177 pass |
 | Security: never-does tests (no exec, no write route, no non-loopback bind), fuzz on the parsers | pass |

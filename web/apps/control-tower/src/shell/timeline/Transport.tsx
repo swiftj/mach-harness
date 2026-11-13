@@ -11,7 +11,7 @@
 import { ChevronsLeft, ChevronsRight, LocateFixed, PanelBottomClose, PanelBottomOpen, Pause, Play, StepBack, StepForward } from "lucide-react";
 import { memo, useId, useRef, type ReactNode } from "react";
 import { cn, Tooltip } from "@mach/ui";
-import { cameraFollows, isStale, SPEEDS, useSceneStore, useStore, type PlaybackSpeed } from "../../scene";
+import { cameraFollows, isStale, playbackFactorLabel, playbackFactorWords, SPEEDS, useSceneStore, useStore, type PlaybackSpeed } from "../../scene";
 import { indexFor, lastAtOrBefore } from "../history";
 import { stepChapter, togglePlayback } from "../keyboard";
 import { duration as words, isMoment, timeCodeText, timecode, utcClock } from "../vocab";
@@ -63,23 +63,24 @@ export function TimeCode({ size = "md" }: { size?: "md" | "lg" }) {
 
 function SpeedControl() {
   const speed = useSceneStore((s) => s.speed);
+  const source = useSceneStore((s) => s.source);
   const { setSpeed } = useStore();
   const name = useId();
   return (
     <fieldset className="flex shrink-0 items-center rounded-sm border border-line p-0.5" aria-keyshortcuts="{ }">
-      <legend className="sr-only">Playback speed</legend>
+      <legend className="sr-only">{source === "simulation" ? "Playback speed" : "Playback speed, against real time"}</legend>
       {SPEEDS.map((s) => (
         <label
           key={s}
           className={cn(
-            "flex h-6 min-w-[30px] cursor-pointer items-center justify-center rounded-xs px-1 font-mono text-[11px] tabular text-ink-muted",
+            "flex h-6 min-w-[30px] cursor-pointer whitespace-nowrap items-center justify-center rounded-xs px-1 font-mono text-[11px] tabular text-ink-muted",
             "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-focus",
             speed === s ? "bg-surface-sunken font-semibold text-ink" : "hover:text-ink",
           )}
         >
           <input type="radio" name={name} value={s} checked={speed === s} onChange={() => setSpeed(s as PlaybackSpeed)} className="sr-only" />
-          <span aria-hidden="true">{s === 0.5 ? "½" : s}×</span>
-          <span className="sr-only">{s} times</span>
+          <span aria-hidden="true">{playbackFactorLabel(source, s)}</span>
+          <span className="sr-only">{playbackFactorWords(source, s)}</span>
         </label>
       ))}
     </fieldset>

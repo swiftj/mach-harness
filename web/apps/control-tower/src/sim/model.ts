@@ -326,6 +326,12 @@ export interface StationVisit {
    * authority reconstructed. Never "still working". Null when an exit record closed it, or while open.
    */
   readonly unclosed: { readonly reason: "superseded" | "execution-ended"; readonly at: number; readonly eventId: string } | null;
+  /**
+   * Live: the scene had closed this visit at a bound (`unclosed`) and an exit record then closed it
+   * after all: the work stopped at `at` and was taken up again later. Its span from entry to exit
+   * is then not time spent working, and no view may say it "took" that long.
+   */
+  readonly interrupted?: { readonly reason: "superseded" | "execution-ended"; readonly at: number } | null;
   readonly meta: EntityMeta;
 }
 

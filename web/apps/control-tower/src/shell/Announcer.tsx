@@ -10,7 +10,7 @@
  * The words come from the history (its own sentences per event), never invented here.
  */
 import { useEffect, useRef, useState } from "react";
-import { useStore } from "../scene";
+import { playbackFactorWords, useStore } from "../scene";
 import { countAtOrBefore, indexFor, lastAtOrBefore } from "./history";
 import { connectionLook } from "./SourceBadge";
 import { spokenTime } from "./vocab";
@@ -34,11 +34,11 @@ export function Announcer() {
       const index = indexFor(s);
       if (s.view !== prev.view) setStatus(s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint");
       if (s.source === "simulation" && (s.playing !== prev.playing || s.speed !== prev.speed || s.following !== prev.following)) {
-        const words = s.playing ? `Playing at ${s.speed} times` : `Paused at ${spokenTime(s.playhead)}`;
+        const words = s.playing ? `Playing at ${playbackFactorWords(s.source, s.speed)}` : `Paused at ${spokenTime(s.playhead)}`;
         setStatus(`${words}${s.following ? ", live" : ", replay"}.`);
       } else if (s.source !== "simulation" && (s.following !== prev.following || (!s.following && s.playing !== prev.playing))) {
         if (s.following) setStatus("Back at the live edge.");
-        else if (s.playing) setStatus(`Replaying at ${s.speed} times from ${spokenTime(s.playhead)}.`);
+        else if (s.playing) setStatus(`Replaying at ${playbackFactorWords(s.source, s.speed)} from ${spokenTime(s.playhead)}.`);
         else setStatus(`Holding ${spokenTime(s.playhead)}${s.source === "live" ? "; events keep arriving" : ""}.`);
       }
       // One announcement per connection change, never for its counters.

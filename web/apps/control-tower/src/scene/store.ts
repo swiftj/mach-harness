@@ -150,6 +150,28 @@ export interface SceneStoreState {
 }
 
 /**
+ * How fast played-back history moves against real time, as the person is told it. Real history
+ * (a replay, or live history being reviewed) moves at PLAYBACK_BASE_RATE x speed, so its speeds are
+ * named for what they are: 5x, 10x ... 160x real time. The simulation's speeds stay relative to its
+ * own scenario (0.5x to 16x), which has no real time to compare with.
+ */
+export function playbackFactorOf(source: SceneSource, speed: PlaybackSpeed): number {
+  return source === "simulation" ? speed : speed * PLAYBACK_BASE_RATE;
+}
+
+/** The factor as written on a control: "½×" for the simulation's half speed, otherwise "N×". */
+export function playbackFactorLabel(source: SceneSource, speed: PlaybackSpeed): string {
+  const factor = playbackFactorOf(source, speed);
+  return `${factor === 0.5 ? "½" : factor}×`;
+}
+
+/** The factor as spoken: "20 times real time" for real history, "2 times" for the simulation. */
+export function playbackFactorWords(source: SceneSource, speed: PlaybackSpeed): string {
+  const factor = playbackFactorOf(source, speed);
+  return source === "simulation" ? `${factor} times` : `${factor} times real time`;
+}
+
+/**
  * The one time scale for motion, in factory ms per wall ms, for every view and every source:
  * - live, at the edge (following): 1, real time;
  * - anything played back (the simulation, a historical replay, and a live store scrubbed back or
