@@ -346,3 +346,100 @@ export function attentionOf(span: TimelineSpan, liveAt: number): TrackNode["atte
   if (span.end.reason === "interrupted" || span.end.reason === "superseded" || span.end.reason === "unknown") return "interrupted";
   return "none";
 }
+
+// ---------------------------------------------------------------- module entry points
+//
+// Each part exports exactly these names from its index.ts. Parts import each other only through
+// them, so the parts can be built at the same time.
+//
+// data/index.ts
+//   createObserverTimelineData(client: ObserverClient, store: SceneStore): TimelineData
+//   createSimulationTimelineData(store: SceneStore): TimelineData
+//   useTimelineData(): TimelineData                       (picks by the store's source; one per app)
+// tracks/index.ts
+//   buildTrackTree(spans, grouping, filters, liveAt, previous?: TrackTree): TrackTree
+//   layoutRows(tree: TrackTree, expanded: ReadonlySet<string>): RowLayout
+//   defaultExpanded(tree: TrackTree): string[]
+// render/index.ts
+//   TrackCanvas(props: TrackCanvasProps), TrackLabels(props: TrackLabelsProps), WindowRuler(props: WindowRulerProps)
+//   describeSpan(span, liveAt): string                    (the one sentence for tooltips and screen readers)
+//   durationWords(span, liveAt): string                   (design section 5, "Words")
+// overview/index.ts
+//   TemporalOverview(props: TemporalOverviewProps)
+// controls/index.ts
+//   TimelineToolbar(props: TimelineToolbarProps)
+// inspector/index.ts
+//   InTimeSection(props: { entity: EntityRef })
+// a11y/index.ts
+//   TimelineTable(props: TimelineTableProps)
+// Workspace.tsx
+//   TimelineWorkspace()
+
+/** Shared by every drawing part: where things are in time and what the pointer did. */
+export interface TimelineViewport {
+  /** The detailed window. */
+  readonly window: TimeWindow;
+  /** CSS px available for time (the gutter excluded). */
+  readonly width: number;
+  /** What is held: spans beyond it are not drawn; nothing is drawn after it. */
+  readonly liveAt: number;
+}
+
+export interface TrackCanvasProps {
+  readonly tree: TrackTree;
+  readonly layout: RowLayout;
+  readonly viewport: TimelineViewport;
+  readonly marks: readonly TimelineMark[];
+  readonly height: number;
+  readonly scrollTop: number;
+  /** True when the provider cut the spans of this window: the canvas says so in place. */
+  readonly truncated: boolean;
+  onScroll(top: number): void;
+  /** Pan or zoom asked for by wheel, drag or keys. */
+  onWindow(next: TimeWindow): void;
+  /** Hover and selection go to the scene store by the caller; the canvas only reports. */
+  onHover(hit: TimelineHit | null): void;
+  onSelect(hit: TimelineHit): void;
+  onToggle(trackId: string): void;
+}
+
+export interface TrackLabelsProps {
+  readonly layout: RowLayout;
+  readonly height: number;
+  readonly scrollTop: number;
+  readonly width: number;
+  onToggle(trackId: string): void;
+  onSelect(node: TrackNode): void;
+  onResize(width: number): void;
+}
+
+export interface WindowRulerProps {
+  readonly viewport: TimelineViewport;
+  onWindow(next: TimeWindow): void;
+}
+
+export interface TemporalOverviewProps {
+  readonly data: TimelineData;
+  readonly extent: TimeWindow;
+  readonly window: TimeWindow;
+  readonly liveAt: number;
+  readonly width: number;
+  readonly height: number;
+  readonly filters: TimelineFilters;
+  onWindow(next: TimeWindow | null): void;
+}
+
+export interface TimelineToolbarProps {
+  readonly data: TimelineData;
+  readonly tree: TrackTree;
+  readonly view: TimelineViewState;
+  onView(patch: Partial<TimelineViewState>): void;
+}
+
+export interface TimelineTableProps {
+  readonly tree: TrackTree;
+  readonly layout: RowLayout;
+  readonly viewport: TimelineViewport;
+  onSelect(span: TimelineSpan): void;
+  onToggle(trackId: string): void;
+}
