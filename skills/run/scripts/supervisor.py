@@ -178,11 +178,21 @@ class Supervisor:
         """The policy in force right now, read from disk every time it is needed."""
         return policy_module.effective(policy_module.read(self.root), self.config)
 
+    def cap(self, pol: Dict[str, Any]) -> Dict[str, Any]:
+        """Hold the line to the limit on cells at once that is in force on this machine: the smaller of the
+        project's setting and this machine's policy. Every plan the factory commands show or act on is made
+        after this, so what they report as free is what the supervisor may actually use. Returns both sources."""
+        project = self.line.max_parallel
+        machine = int(pol["limits"]["max_parallel"]) if pol.get("source") == "local-file" else None
+        if machine is not None:
+            self.line.max_parallel = min(self.line.max_parallel, machine)
+        return {"project": project, "machine_policy": machine, "in_force": self.line.max_parallel}
+
     def attach(self, pol: Dict[str, Any]) -> None:
         """Mark everything the ledger records from here on as this supervisor's doing."""
         self.line.runner_id = pol.get("runner_id")
         self.line.event_source = SUPERVISOR
-        self.line.max_parallel = min(self.line.max_parallel, int(pol["limits"]["max_parallel"]))
+        self.cap(pol)
 
     def authorize(self, plan: Dict[str, Any]) -> Tuple[bool, str]:
         """M3 asks this immediately before it dispatches. The answer comes from the disk, not from memory."""
@@ -236,6 +246,8 @@ class Supervisor:
             else:
                 report["state"] = "paused" if pol.get("paused") else "observe"
                 report["held"] = [{"slice_id": key, "why": why} for key in plan["dispatchable"]] + [{"ticket_id": item["ticket_id"], "why": why} for item in plan["runnable"]]
+            report["held"] += self.waiting_for_a_place(plan)
+            report["limits"] = plan["limits"]
             self.decided(ledger, report)
             supervisor = ledger["supervisor"]
             supervisor["last_tick"] = report["at"]
@@ -244,6 +256,13 @@ class Supervisor:
             report["parked"] = supervisor["parked"]
             self.line.save(ledger)
         return report
+
+    @staticmethod
+    def waiting_for_a_place(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Ready slices this pass did not dispatch because every place was taken when it planned. Reported, never acted on."""
+        limits = plan["limits"]
+        why = f"it is ready and waits for a free place: {limits['active']} of {limits['max_parallel']} in use"
+        return [{"slice_id": key, "why": why} for key in plan.get("waiting_for_a_place") or []]
 
     def observe(self, ledger: Dict[str, Any], plan: Dict[str, Any]) -> None:
         """Record each change of a cell's stage, as the stations themselves recorded it."""

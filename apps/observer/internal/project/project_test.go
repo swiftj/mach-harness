@@ -482,3 +482,57 @@ func TestCellSummaryUnknownRiskAndAppTypeAreNull(t *testing.T) {
 		t.Fatalf("%v %v", v["risk"], v["app_type"])
 	}
 }
+
+// A refusal seen in an execution's stream reaches the run summary at once, marked observed; the
+// supervisor's record replaces it when it arrives, and is the authority even when it lists nothing.
+// A failed execution records no list, so what was observed stands.
+func TestRefusedToolsObservedThenReconciled(t *testing.T) {
+	const pending, recorded, cleared, failed, quiet = "x00000000001a", "x00000000001b", "x00000000001c", "x00000000001d", "x00000000001e"
+	refused := func(x, tool string, ms int64) map[string]any {
+		return feedtest.New("execution-stream", "tool.refused", ms).Exec(x).Ticket("T-1").ID("agent_id", x+"/main").Data(map[string]any{"tool": tool, "summary": tool}).Build()
+	}
+	ran := func(x string) []map[string]any {
+		return []map[string]any{feedtest.New("execution-record", "execution.process_started", 1000).Exec(x).Ticket("T-1").Data(map[string]any{}).Build(),
+			feedtest.New("execution-record", "execution.process_ended", 5000).Exec(x).Ticket("T-1").Data(map[string]any{"ended": "exited", "exit_code": 0, "seconds": 4}).Build()}
+	}
+	completed := func(x string, tools []string) map[string]any {
+		return feedtest.New("intake-log", "execution.completed", 9000).ID("project_id", "P-1").Ticket("T-1").Exec(x).Data(map[string]any{"stage": "built", "next": "verify",
+			"waiting_for": nil, "how": "exited", "seen_to_end": true, "cost_usd": 1.0, "refused_tools": tools}).Build()
+	}
+	m := feedtest.NewMem("", 0)
+	for _, x := range []string{pending, recorded, cleared, failed, quiet} {
+		m.Append(ran(x)...)
+		if x != quiet {
+			m.Append(refused(x, "Write", 2000), refused(x, "Bash", 3000), refused(x, "Bash", 4000))
+		}
+	}
+	view := func(x string) RunView {
+		var v RunView
+		New(Options{Log: m}).View(func(s *State) { v = Run(s.Executions[x]) })
+		return v
+	}
+	check := func(x string, tools []string, from string) {
+		t.Helper()
+		v := view(x)
+		data, _ := json.Marshal(v)
+		var raw map[string]any
+		_ = json.Unmarshal(data, &raw)
+		if fmt.Sprint(v.RefusedTools) != fmt.Sprint(tools) || v.RefusedFrom != from || raw["refused_tools"] == nil {
+			t.Fatalf("%s: refused_tools %v from %q, want %v from %q (%s)", x, v.RefusedTools, v.RefusedFrom, tools, from, data)
+		}
+	}
+	// The process has ended; the supervisor has not recorded the outcome yet.
+	for _, x := range []string{pending, recorded, cleared, failed} {
+		check(x, []string{"Bash", "Write"}, "observed")
+	}
+	check(quiet, []string{}, "")
+
+	m.Append(completed(recorded, []string{"Bash: git push", "Write: notes.md"}), completed(cleared, []string{}), completed(quiet, []string{}),
+		feedtest.New("intake-log", "execution.failed", 9000).ID("project_id", "P-1").Ticket("T-1").Exec(failed).Data(map[string]any{"stage": "building",
+			"next": "build", "how": "exited", "claude_error": nil, "exit_code": 1, "attempt": 1}).Build())
+	check(pending, []string{"Bash", "Write"}, "observed")
+	check(recorded, []string{"Bash: git push", "Write: notes.md"}, "authoritative")
+	check(cleared, []string{}, "authoritative")
+	check(failed, []string{"Bash", "Write"}, "observed")
+	check(quiet, []string{}, "authoritative")
+}

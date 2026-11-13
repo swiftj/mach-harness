@@ -197,3 +197,40 @@ Document: `M6_1_SHARED_CONTRACTS.md`.
 Run on `c9188ee`, the last code commit: Python 590 pass; Go vet, tests and race run pass; observer build and smoke test
 pass; web lint, typecheck and three builds pass; Control Tower 158 and Product Studio 7 unit tests pass; Product Studio
 browser suites 177 pass.
+
+## 14. After the merge: two real supervised runs (13 November 2026)
+
+Run in a throwaway project, $4.73 of a $6 day limit in total, to prove the Factory fixes of section 2. Nothing was
+approved on a person's behalf; the Factory was disabled afterwards.
+
+| Run | Executions | Cost | Where it stopped |
+|---|---|---|---|
+| 1, on `2b18b8d` | 2 | $1.50 | Build, task 4: an implementation task whose code an earlier task had written. `build.py green` had no override, so the ticket parked. |
+| 2, on `3cc372f` | 1 | $3.23 | Build finished, verification passed twice, review rejected rounds 1 and 2 on a real gap in the slice's spec; parked for a person. |
+
+**Proven live**
+- **Refused commands (D22):** no permission denial in run 2 across 31 agents and 66 shell calls, none of them a heredoc,
+  `cd &&`, redirect, pipe or variable. The verifier used `verify.py capture` and `record --from` and reached PASS. All
+  six review submissions were eventually accepted; three first attempts were refused with `findings-invalid` (a cited
+  line past the end of a file) and corrected.
+- **Build override:** the builder used `green --already-done`; it is in `build-report.json` as an `impl-already-done`
+  deviation and in the lifecycle log as an override, and the build went on to finish.
+- **Reporting:** `factory status` shows the parallel limit in force and the slice waiting for a place; build refusals
+  carry specific codes.
+- **Observer:** both runs read as `proven` on Claude Code 2.1.323 with no gaps; agents, cost, plan facts and every gate,
+  including the new override and each refusal, were served correctly.
+
+**Proven by calculation on the real ledger, not by spend**
+- **Daily budget (D21):** each execution was given $3.50, correctly uncut. After run 2 the next run would have been
+  given $1.26. The cut and the under-one-dollar stop never had to happen.
+
+**Fixed after these runs** (`fix/factory-build-already-done`): the build override, specific build refusal codes, the
+plan's file list reading only path-shaped tokens, the supervisor's capacity reporting, the observer's run summary showing
+refusals as soon as the stream does, and the lifecycle log's `security_veto` now matching `decision.json`.
+
+**Found and left for a decision**
+- The line has no stop of its own for "the spec needs regrooming": after two rejections on a spec gap `run.py next`
+  still answers "build", and only the supervisor's attempt limit parked the ticket.
+- The plan agent's `git -C <repo> ls-files` is refused. Allowing it would widen the allow list.
+- `run.py product plan` (the engineer's command) shows the project's parallel setting, not the machine policy's.
+- The ticket never reached the human-approval gate, so that stop was not exercised in these runs.

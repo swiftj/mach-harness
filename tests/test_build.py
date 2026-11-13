@@ -408,6 +408,129 @@ class StepTest(Base):
         self.assertEqual(self.ok("next", "LOCAL-001")["status"], "ALL_TASKS_DONE")
 
 
+class AlreadyDoneTest(Base):
+    """green --already-done: an [impl] task whose code an earlier task already wrote."""
+
+    def setUp(self):
+        super().setUp()
+        self.ready()
+        self.ok("start", "LOCAL-001")
+
+    def through_covered_scenarios(self, scenario=SCENARIO_TEST):
+        """T02 implements everything, so the T03 scenarios pass at once and T04 has nothing left to change."""
+        self.build_through("T01")
+        self.put(self.work, {"app/invite.py": IMPL2})
+        self.ok("green", "LOCAL-001", "T02")
+        self.put(self.work, {"tests/test_scenarios.py": scenario})
+        self.ok("red", "LOCAL-001", "T03", "--covered", "T02 already implements release.")
+
+    def lifecycle(self):
+        return [json.loads(line) for line in (self.cellroot / "lifecycle.jsonl").read_text().splitlines()]
+
+    def test_task_already_implemented_completes_without_a_commit_and_is_recorded(self):
+        self.through_covered_scenarios()
+        refusal = self.refused("green", "LOCAL-001", "T04")
+        self.assertIn("T04 changed no files", refusal)
+        commits = self.log()
+        done = self.ok("green", "LOCAL-001", "T04", "--already-done", "T02 implemented release() together with invite().")
+        self.assertEqual((done["commit"], done["suite"], done["next"]), (None, "green", "T05 [docs]"))
+        self.assertEqual(self.log(), commits, "nothing is committed: the branch head stays the last real change")
+        state = self.state()
+        task = state["tasks"][3]
+        self.assertEqual((task["status"], task["commit"], task["files_changed"], task["test_run"]["exit_code"]), ("done", None, [], 0))
+        self.assertIn("already implemented", task["note"])
+        self.assertEqual([(d["task"], d["type"]) for d in state["deviations"]], [("T03", "test-passed-first-run"), ("T04", "impl-already-done")])
+        self.assertIn("- [x] T04 [impl]", (self.cellroot / "plan.md").read_text())
+
+        gates = [(r["data"]["gate"], r["data"]["outcome"], r["data"]["reason_code"], r["data"]["overridden_by_reason"], r["data"].get("task"))
+                 for r in self.lifecycle() if r["type"] == "gate.evaluated"]
+        self.assertEqual(gates[-2:], [("build.green", "refuse", "changed-no-files", False, "T04"),
+                                      ("changed-no-files", "override", "impl-already-done", True, "T04")])
+        completed = [r["data"] for r in self.lifecycle() if r["type"] == "build.task_completed"][-1]
+        self.assertEqual((completed["task"], completed["step"], completed["commit"]), ("T04", "green", None))
+        self.assertNotIn("together with invite", (self.cellroot / "lifecycle.jsonl").read_text(), "the reason stays in build.json")
+
+        self.put(self.work, {"README.md": "# Sample\n\nAdmins can invite teammates.\n"})
+        self.ok("done", "LOCAL-001", "T05")
+        finished = self.ok("finish", "LOCAL-001")
+        self.assertEqual(finished["deviations"], 2)
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertEqual(report["impls_already_done"], ["T04"])
+        self.assertEqual(report["head"], git(self.work, "rev-parse", "HEAD").stdout.strip())
+        self.assertIn({"id": "T04", "kind": "impl", "status": "done", "commit": None, "note": task["note"], "first_run": None, "loop": 0}, report["tasks"])
+        self.assertEqual([d["type"] for d in report["deviations"]], ["test-passed-first-run", "impl-already-done"])
+
+    def test_refused_when_the_task_changed_files(self):
+        self.through_covered_scenarios()
+        self.put(self.work, {"app/invite.py": IMPL2 + "\n# more\n"})
+        refusal = self.refused("green", "LOCAL-001", "T04", "--already-done", "x")
+        self.assertIn("has uncommitted changes: app/invite.py", refusal)
+        self.put(self.work, {"app/other.py": "x = 1\n"})
+        self.assertIn("has uncommitted changes: app/invite.py, app/other.py", self.refused("green", "LOCAL-001", "T04", "--already-done", "x", "--allow-extra", "y"))
+        state = self.state()
+        self.assertEqual((state["tasks"][3]["status"], [d["type"] for d in state["deviations"]]), ("pending", ["test-passed-first-run"]),
+                         "no override is recorded and scope is not waived")
+        codes = [r["data"]["reason_code"] for r in self.lifecycle() if r["type"] == "gate.evaluated" and r["data"]["outcome"] == "refuse"]
+        self.assertEqual(codes[-2:], ["already-done-has-changes", "already-done-has-changes"])
+
+    def test_refused_when_a_committed_test_does_not_name_every_id_of_the_task(self):
+        self.through_covered_scenarios(SCENARIO_TEST.replace("FR-06 ", ""))
+        refusal = self.refused("green", "LOCAL-001", "T04", "--already-done", "x")
+        self.assertIn("none names FR-06", refusal)
+        self.assertEqual(self.state()["tasks"][3]["status"], "pending")
+        self.assertEqual(self.lifecycle()[-1]["data"]["reason_code"], "already-done-not-covered")
+
+    def test_refused_when_the_suite_fails(self):
+        self.build_through("T01")  # RED_TEST names FR-01 and FR-02 but app/invite.py does not exist yet
+        refusal = self.refused("green", "LOCAL-001", "T02", "--already-done", "x")
+        self.assertIn("the suite does not pass, so the task is not already done", refusal)
+        self.assertEqual((self.state()["tasks"][1]["status"], self.state()["deviations"]), ("pending", []))
+        self.assertEqual(self.lifecycle()[-1]["data"]["reason_code"], "suite-red")
+
+    def test_not_available_to_other_steps(self):
+        for step, task in (("red", "T01"), ("done", "T05")):
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                build.main(["--project", str(self.project), step, "LOCAL-001", task, "--already-done", "x"])
+        self.assertIn("complete it with 'red', not 'green'", self.refused("green", "LOCAL-001", "T01", "--already-done", "x"))
+
+
+class AlreadyDoneWithoutIdsTest(Base):
+    def test_refused_when_the_plan_gives_the_task_no_ids(self):
+        self.ready(plan=PLAN.replace("T04 [impl] Failure handling (FR-06, FR-08)", "T04 [impl] Failure handling"))
+        self.ok("start", "LOCAL-001")
+        self.build_through("T01")
+        self.put(self.work, {"app/invite.py": IMPL2})
+        self.ok("green", "LOCAL-001", "T02")
+        self.put(self.work, {"tests/test_scenarios.py": SCENARIO_TEST})
+        self.ok("red", "LOCAL-001", "T03", "--covered", "T02 already implements release.")
+        self.assertIn("gives none", self.refused("green", "LOCAL-001", "T04", "--already-done", "x"))
+
+
+class RefusalCodeTest(Base):
+    def test_refusals_are_logged_with_their_own_reason_code(self):
+        self.ready()
+        self.ok("start", "LOCAL-001")
+        self.refused("start", "LOCAL-001")
+        self.refused("red", "LOCAL-001", "T01")
+        self.refused("red", "LOCAL-001", "T99")
+        self.put(self.work, {"app/invite.py": IMPL})
+        self.refused("green", "LOCAL-001", "T01")
+        self.refused("finish", "LOCAL-001")
+        self.refused("revise", "LOCAL-001")
+        records = [json.loads(line) for line in (self.cellroot / "lifecycle.jsonl").read_text().splitlines()]
+        codes = [(r["data"]["gate"], r["data"]["reason_code"]) for r in records if r["type"] == "gate.evaluated" and r["data"]["outcome"] == "refuse"]
+        self.assertEqual(codes, [("build.start", "already-started"), ("build.red", "changed-no-files"), ("build.red", "unknown-task"),
+                                 ("build.green", "wrong-step"), ("build.finish", "not-finished"), ("build.revise", "wrong-stage")])
+
+    def test_every_refusal_in_the_script_names_its_reason(self):
+        import ast
+        tree = ast.parse((ROOT / "skills/build/scripts/build.py").read_text(encoding="utf-8"))
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "BuildError"]
+        self.assertGreater(len(calls), 30)
+        unnamed = [node.lineno for node in calls if not any(k.arg == "code" for k in node.keywords)]
+        self.assertEqual(unnamed, [], "a refusal without its own code is logged as the generic 'refused'")
+
+
 class FinishTest(Base):
     def setUp(self):
         super().setUp()
@@ -496,6 +619,29 @@ class PlanParsingTest(unittest.TestCase):
         self.assertEqual(tasks[2]["ids"], ["AC-01", "AC-02", "AC-03", "FR-06", "FR-08", "FR-09", "INV-03"])
         self.assertEqual(touch["app/invite.py"], ["T02", "T04"])
         self.assertEqual(ALL_IDS.split(), sorted({i for t in tasks for i in t["ids"]}, key=ALL_IDS.split().index))
+
+    def test_task_files_come_only_from_the_files_part_of_the_line(self):
+        plan = PLAN.replace(
+            "- [ ] T01 [test] Table-driven test of rules R1 to R5 — `tests/test_invite.py`",
+            "- [ ] T01 [test] Table-driven test of rules R1 to R5 with `sam@example.com`, `sam.example.com`, `app.example.com/x`, `config.json` "
+            "and `https://example.com/a.b` — `tests/test_invite.py`, `tests/fakes.py`, `sam@example.com`, `/etc/hosts.txt`, `../up.py`, `a//b.py`")
+        tasks, _ = build.parse_plan(plan)
+        self.assertEqual(tasks[0]["files"], ["tests/fakes.py", "tests/test_invite.py"])
+        self.assertEqual(tasks[0]["ids"], ["FR-01", "FR-02", "FR-03", "FR-04", "FR-05", "FR-07", "INV-01", "INV-02", "INV-04"])
+
+    def test_a_line_without_the_files_separator_names_no_files_and_the_map_still_applies(self):
+        tasks, touch = build.parse_plan(PLAN.replace("T02 [impl] Invitation service — `app/invite.py`",
+                                                     "T02 [impl] Invitation service sending to `ops@example.com` via `smtp.example.com`")
+                                        .replace("| `README.md` | modify | T05 |", "| `README.md` | modify | T05 |\n| `ops@example.com` | notify | T02 |\n| `Makefile` | modify | T05 |"))
+        self.assertEqual(tasks[1]["files"], ["app/invite.py"])
+        self.assertNotIn("ops@example.com", touch)
+        self.assertEqual((touch["Makefile"], tasks[4]["files"]), (["T05"], ["Makefile", "README.md"]), "a file without an extension is still a file")
+
+    def test_path_shape(self):
+        for token in ("tests/test_x.py", "README.md", "app/[id]/page.tsx", "src/a-b_c.v2/x.ts", ".github/workflows/ci.yml", "Makefile"):
+            self.assertTrue(build.is_path_token(token), token)
+        for token in ("sam@example.com", "https://example.com/x.py", "/etc/passwd.txt", "../x.py", "./x.py", "a//b.py", "app/", "-rf.sh", "a b.py", "C:x.py"):
+            self.assertFalse(build.is_path_token(token), token)
 
 
 if __name__ == "__main__":

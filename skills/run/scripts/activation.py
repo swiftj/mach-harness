@@ -93,6 +93,7 @@ def status(ctx: Context) -> Dict[str, Any]:
     alive = ctx.sup.lease.live(lease)
     ledger = ctx.line.ledger() if ctx.line is not None else {"supervisor": {"executions": {}, "parked": {}, "attempts": {}}}
     state = ledger["supervisor"]
+    limit = ctx.sup.cap(pol) if ctx.line is not None else None  # the plan below shows the limit in force here, not only the project's
     plan = ctx.line.plan() if ctx.line is not None else None
     mode = "disabled" if not in_force else "paused" if pol.get("paused") else pol.get("autonomy")
     return {
@@ -110,7 +111,8 @@ def status(ctx: Context) -> Dict[str, Any]:
         "executions": [{key: record.get(key) for key in ("execution_id", "ticket_id", "slice_id", "state", "started_at", "session_id", "attempt")}
                        for _, record in sorted(state["executions"].items()) if record["state"] in LIVE],
         "waiting_for_a_person": state["parked"],
-        "plan": {key: plan[key] for key in ("counts", "dispatchable", "runnable", "needs_person", "intake_is_current", "limits")} if plan else None,
+        "plan": {**{key: plan[key] for key in ("counts", "dispatchable", "waiting_for_a_place", "runnable", "needs_person", "intake_is_current", "limits")},
+                 "max_parallel_from": limit} if plan else None,
         "git_hooks": service.hooks_status(ctx.root),
         "persistent_service": service.agent_status(ctx.root),
         "pending_activation": policy_module.pending_path(ctx.root).is_file(),
