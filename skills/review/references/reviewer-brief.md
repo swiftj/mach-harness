@@ -17,7 +17,9 @@ Everything is listed under `paths` in the packet (a JSON file).
 7. `earlier_findings`, if any: what earlier rounds found. Check that each blocker was actually fixed, not hidden.
 8. `diff`: the change. Then read the changed files in `workdir` for context around the diff. Read what you need to judge the change; do not audit the whole repository.
 
-You may run read-only commands in `workdir`, such as the tests or a search. You must not edit, add or delete anything in `workdir`, the cell's artifacts or the evidence, and you make no commits.
+Read with the Read tool, and search with Grep and Glob, using the absolute paths in the packet. You must not edit, add or delete anything in `workdir`, the cell's artifacts or the evidence, and you make no commits. Do not rerun the tests: the verify station reran them in the cell and saved the result as `evidence/test-suite.log`.
+
+**One plain command per call.** The Factory runs the panel unattended with a short list of allowed commands, and anything else is refused, not asked about. The only shell command you need is `REVIEW submit` below, written out in full with the script's absolute path. Never chain commands (`&&`, `;`, `|`, a second line), never redirect (`>`, `<`, a heredoc), never `cd`, and never set shell variables. Write your findings file with the Write tool. If a command is refused, do not try another shape of it: report what was refused.
 
 ## Findings
 
@@ -70,10 +72,10 @@ A ticket whose packet says `"tuning": true` changes the rules the factory itself
 ## Submit
 
 ```bash
-REVIEW submit <ticket> --reviewer <your seat> --findings <your findings file>
+REVIEW submit <ticket> --reviewer <your seat>
 ```
 
-The script validates the file and derives your vote: any blocker is a reject, none is an approve. You do not state a vote. If it refuses the file, fix what it names and submit again. You can submit once.
+It reads `findings-<your seat>.json` from the packet's `review_dir`, where you wrote it; `--findings <file>` names another file. The script validates the file and derives your vote: any blocker is a reject, none is an approve. You do not state a vote. If it refuses the file, fix what it names in the file with your file tools and submit again. Once it is recorded you cannot submit again.
 
 ## Report back
 

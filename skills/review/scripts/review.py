@@ -6,7 +6,8 @@ decides everything a script can decide: whether review may start, who sits on th
 which model, what a valid finding looks like, each reviewer's vote, and the outcome.
 
     review.py start <ticket>                                   check the gates, write the review packet
-    review.py submit <ticket> --reviewer ROLE --findings FILE  one reviewer's findings; the vote follows from them
+    review.py submit <ticket> --reviewer ROLE [--findings FILE] one reviewer's findings; the vote follows from them
+                                                               (default FILE: findings-<ROLE>.json in the round's review folder)
     review.py tally <ticket>                                   count the votes and decide
     review.py approve-human <ticket> --by NAME                 record a person's sign-off
     review.py status <ticket>
@@ -335,19 +336,36 @@ def check_findings(cell: Cell, data: Any) -> List[Dict[str, Any]]:
     return clean
 
 
+def findings_file(cell: Cell, reviewer: str, given: Optional[str]) -> Path:
+    """Where a reviewer's findings are read from. Without --findings: findings-<seat>.json in this round's review
+    folder, where the brief tells the reviewer to write it. A relative path that does not exist from the current
+    folder is looked up in the review folder too, so no reviewer ever needs to change directory to submit."""
+    if not given:
+        return cell.folder / f"findings-{reviewer}.json"
+    path = Path(given)
+    if not path.is_absolute() and not path.exists() and (cell.folder / path).exists():
+        return cell.folder / path
+    return path
+
+
 def cmd_submit(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     seats = {seat["role"] for seat in cell.packet["panel"]}
     if args.reviewer not in seats:
-        raise ReviewError(f"'{args.reviewer}' is not a seat on this panel. Seats: {', '.join(sorted(seats))}.")
+        raise ReviewError(f"'{args.reviewer}' is not a seat on this panel. Seats: {', '.join(sorted(seats))}.", code="not-a-seat")
     target = cell.folder / "votes" / f"{args.reviewer}.json"
     if target.is_file():
         raise ReviewError(f"The {args.reviewer} reviewer has already voted in this round. A vote is not revised; a new round follows a new build.", code="already-voted")
-    source = Path(args.findings)
+    source = findings_file(cell, args.reviewer, args.findings)
     data = load_json(source)
     if data is None:
-        raise ReviewError(f"{source} is missing or is not valid JSON.")
-    findings = check_findings(cell, data)
+        raise ReviewError(f"{source} is missing or is not valid JSON. Write your findings there with your file tools, then submit again.", code="findings-unreadable")
+    try:
+        findings = check_findings(cell, data)
+    except ReviewError as exc:
+        if exc.code == "refused":
+            exc.code = "findings-invalid"  # the lifecycle log tells a malformed file apart from a gate (D22)
+        raise
     blockers = sum(1 for finding in findings if finding["severity"] == "blocker")
     vote = "REJECT" if blockers else "APPROVE"
     write_json(target, {"reviewer": args.reviewer, "vote": vote, "summary": " ".join(data["summary"].split()), "findings": findings,
@@ -472,7 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("submit", help="record one reviewer's findings; the vote follows from them")
     p.add_argument("ticket_id")
     p.add_argument("--reviewer", required=True, choices=sorted(ROLES))
-    p.add_argument("--findings", required=True, help="JSON file: {\"summary\": ..., \"findings\": [...]}")
+    p.add_argument("--findings", help="JSON file: {\"summary\": ..., \"findings\": [...]} (default: findings-<reviewer>.json in the round's review folder)")
     p.set_defaults(func=cmd_submit)
     p = sub.add_parser("approve-human", help="record a person's sign-off after the panel approved")
     p.add_argument("ticket_id")

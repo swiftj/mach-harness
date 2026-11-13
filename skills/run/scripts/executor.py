@@ -139,7 +139,7 @@ def command(claude: str, workflow: str, tickets: Sequence[str], until: Optional[
     # --allowedTools stays last: it takes every word after it, and it is exactly the list a person consented to.
     return [claude, "-p", prompt(workflow, tickets, until), "--output-format", "stream-json", "--verbose",
             *boundary_flags(plugin_dir, tools, add_dirs, denied),
-            "--max-budget-usd", str(budget_usd), "--session-id", session_id, "--allowedTools", *tools]
+            "--max-budget-usd", format(budget_usd, "g"), "--session-id", session_id, "--allowedTools", *tools]
 
 
 def environment(base: Mapping[str, str]) -> Dict[str, str]:

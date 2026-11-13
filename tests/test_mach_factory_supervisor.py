@@ -615,7 +615,73 @@ class LimitsTest(Base):
         (self.eng / ".factory/intake/ledger.json").write_text(json.dumps(ledger))
         report = self.tick()
         self.assertEqual(report["started"], [])
-        self.assertIn("limit of $1 in 24 hours is reached ($1.50 spent)", json.dumps(report["held"]))
+        self.assertIn("limit of $1 in 24 hours is reached ($1.50 spent;", json.dumps(report["held"]))
+
+    def budgets(self):
+        return [call["argv"][call["argv"].index("--max-budget-usd") + 1] for call in self.calls()]
+
+    def test_a_run_is_given_no_more_than_the_day_has_left(self):
+        # D21 (M6.2 acceptance): a day limit of $5.50, a first run that cost $1.68, and the next run was still given $5.
+        self.first()
+        self.claude({"default": {"stage": "approved", "cost": 1.68}})
+        self.enable("--include-backlog", "--max-parallel", "2", "--budget-per-run", "5", "--budget-per-day", "5.5")
+        self.assertEqual(len(self.tick()["started"]), 1)
+        self.wait()
+        self.publish(self.a, self.slice(self.a, "Slice 2"))
+        report = self.tick()  # settles the first run ($1.68 spent), then starts the second
+        self.assertEqual([item["ticket_id"] for item in report["started"]], ["LOCAL-002"])
+        self.wait()
+        self.assertEqual(self.budgets(), ["5", "3.82"])  # 5.50 - 1.68, never the whole $5
+        second = [r for r in self.executions().values() if r["ticket_id"] == "LOCAL-002"][0]
+        self.assertEqual(second["budget_usd"], 3.82)
+        started = [e for e in self.events() if e["type"] == "execution.started"]
+        self.assertEqual([e["data"]["limits"]["budget_usd"] for e in started], [5, 3.82])
+
+    def test_runs_started_in_one_pass_never_add_up_to_more_than_the_day(self):
+        self.waves(3)
+        self.claude({"default": {"sleep": 2, "stage": "approved"}})
+        self.enable("--include-backlog", "--max-parallel", "3", "--budget-per-run", "3", "--budget-per-day", "5.5")
+        report = self.tick()
+        self.assertEqual(len(report["started"]), 2)
+        # The first two hold $3 and $2.50 between them while they run; nothing is left for a third.
+        self.assertIn("limit of $5.5 in 24 hours is reached ($0.00 spent, $5.50 committed to executions still running or of unknown cost; "
+                      "a run is not started with less than $1)", json.dumps(report["held"]))
+        self.wait()
+        self.assertEqual(self.budgets(), ["3", "2.5"])
+        self.assertLessEqual(sum(float(budget) for budget in self.budgets()), 5.5)
+
+    def test_too_little_left_to_start_is_the_daily_budget_reached(self):
+        self.waves(2)
+        self.claude({"default": {"sleep": 2, "stage": "approved"}})
+        self.enable("--include-backlog", "--max-parallel", "2", "--budget-per-run", "5", "--budget-per-day", "5.5")
+        report = self.tick()
+        self.assertEqual(len(report["started"]), 1)  # $0.50 would be left for the second: below the $1 a run is started with
+        self.assertIn("limit of $5.5 in 24 hours is reached ($0.00 spent, $5.00 committed", json.dumps(report["held"]))
+        self.wait()
+        self.assertEqual(self.budgets(), ["5"])
+
+    def test_an_execution_of_unknown_cost_counts_at_the_limit_it_was_given(self):
+        self.supervised("--budget-per-run", "4", "--budget-per-day", "6")
+        ledger = {"supervisor": {"executions": {
+            "x000000000001": {"state": "unknown", "started_at": supervisor.stamp(), "cost_usd": None, "budget_usd": 4},
+            "x000000000002": {"state": "finished", "started_at": supervisor.stamp(), "cost_usd": 1.25, "budget_usd": 4},
+            "x000000000003": {"state": "finished", "started_at": "2000-01-01T00:00:00Z", "cost_usd": 400, "budget_usd": 4},  # another day
+            "x000000000004": {"state": "released", "started_at": None, "budget_usd": 4},  # claimed and given back: never ran
+        }}}
+        pol = policy.read(self.eng)
+        allowance = supervisor.Supervisor.allowance
+        budget, why = allowance(None, ledger, pol)
+        self.assertEqual((budget, why), (None, "the limit of $6 in 24 hours is reached ($1.25 spent, $4.00 committed to executions still running or of "
+                                               "unknown cost; a run is not started with less than $1)"))
+        ledger["supervisor"]["executions"]["x000000000001"].update({"state": "finished", "cost_usd": 0.5})
+        self.assertEqual(allowance(None, ledger, pol), (4, None))  # 6 - 1.75 leaves more than the per-run limit
+        ledger["supervisor"]["executions"]["x000000000005"] = {"state": "claimed", "started_at": None}  # an older claim without a recorded budget
+        budget, why = allowance(None, ledger, pol)  # counted at the whole per-run limit: 6 - 1.75 - 4 leaves less than $1
+        self.assertEqual(budget, None)
+        self.assertIn("($1.75 spent, $4.00 committed", why)
+        del ledger["supervisor"]["executions"]["x000000000005"]
+        ledger["supervisor"]["executions"]["x000000000002"]["cost_usd"] = 2.255
+        self.assertEqual(allowance(None, ledger, pol), (3.24, None))  # 6 - 2.755 = 3.245, rounded down to whole cents
 
     def test_an_execution_that_runs_too_long_is_stopped(self):
         self.supervised()

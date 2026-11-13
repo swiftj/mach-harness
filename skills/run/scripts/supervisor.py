@@ -12,7 +12,8 @@ Each pass ("tick") does the same things in the same order:
     6. dispatch what the plan marks dispatchable, through M3's guarded dispatch, with an
        authorization that re-reads the policy at that moment
     7. claim and start an execution for each runnable ticket this supervisor owns, within the
-       limits: places, runs and money per day, attempts, risk
+       limits: places, runs and money per day, attempts, risk. Each run's spending limit is the
+       per-run limit cut to what the day has left, counting what running executions may still spend
 
 It decides nothing about order or eligibility. M3's scheduler says what is ready; run.py's state
 machine says what a ticket's next station is; each station's own gates decide whether it passes.
@@ -27,6 +28,7 @@ Standard library only. Imported by run.py; not a command of its own.
 
 import contextlib
 import json
+import math
 import os
 import platform
 import secrets
@@ -45,6 +47,9 @@ RISKS = ("Low", "Medium", "High")
 LIVE = ("claimed", "started")
 NEVER_RETRIED = ("merge", "cleanup")  # stations whose effects reach beyond the cell: an unknown outcome goes to a person
 LEASE_SECONDS = 180
+# The least an execution is started with: the lowest per-run limit a person can set (policy.LIMITS). When the
+# day has less than this left, the daily budget is reported as reached.
+MIN_RUN_BUDGET_USD = float(policy_module.LIMITS["max_budget_usd_per_run"][1])
 SUPERVISOR = "supervisor"
 
 
@@ -335,14 +340,38 @@ class Supervisor:
 
     def budget(self, ledger: Dict[str, Any], pol: Dict[str, Any]) -> Optional[str]:
         """Why no more executions may start in this 24 hours, or None."""
+        return self.allowance(ledger, pol)[1]
+
+    def allowance(self, ledger: Dict[str, Any], pol: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
+        """The spending limit the next execution may be given, or why none may start in this 24 hours.
+
+        The limit is the per-run limit, cut down to what the day has left. What the day has left is the
+        per-day limit less what executions in the last 24 hours have cost, where an execution still
+        running (or one whose cost was never reported) counts at the whole limit it was given: Claude Code
+        stops it there, so that is the most it can still cost. Executions started in one pass therefore
+        never add up to more than the day. Below MIN_RUN_BUDGET_USD, the lowest per-run limit a person can
+        set, nothing is started: a run with less could not do a station's work."""
+        limits = pol["limits"]
         since = now() - timedelta(hours=24)
-        recent = [record for record in ledger["supervisor"]["executions"].values() if (parse(record.get("started_at")) or since) > since and record.get("started_at")]
-        if len(recent) >= pol["limits"]["max_runs_per_day"]:
-            return f"the limit of {pol['limits']['max_runs_per_day']} executions in 24 hours is reached"
-        spent = sum(float(record.get("cost_usd") or 0) for record in recent)
-        if spent >= pol["limits"]["max_budget_usd_per_day"]:
-            return f"the limit of ${pol['limits']['max_budget_usd_per_day']:g} in 24 hours is reached (${spent:.2f} spent)"
-        return None
+        executions = list(ledger["supervisor"]["executions"].values())
+        recent = [record for record in executions if record.get("started_at") and (parse(record.get("started_at")) or since) > since]
+        counted = recent + [record for record in executions if record.get("state") in LIVE and not any(record is other for other in recent)]
+        if len(recent) >= limits["max_runs_per_day"]:
+            return None, f"the limit of {limits['max_runs_per_day']} executions in 24 hours is reached"
+        day, per_run = float(limits["max_budget_usd_per_day"]), float(limits["max_budget_usd_per_run"])
+        spent = committed = 0.0
+        for record in counted:
+            reported = record.get("cost_usd")
+            if record.get("state") not in LIVE and isinstance(reported, (int, float)) and not isinstance(reported, bool):
+                spent += max(float(reported), 0.0)
+                continue
+            given = record.get("budget_usd")  # still running, or its cost was never reported: the most it can cost
+            committed += float(given) if isinstance(given, (int, float)) and not isinstance(given, bool) and given > 0 else per_run
+        left = math.floor((day - spent - committed) * 100 + 1e-6) / 100  # whole cents, rounded down
+        if left < MIN_RUN_BUDGET_USD:
+            held = f"${spent:.2f} spent" + (f", ${committed:.2f} committed to executions still running or of unknown cost" if committed else "")
+            return None, f"the limit of ${day:g} in 24 hours is reached ({held}; a run is not started with less than ${MIN_RUN_BUDGET_USD:g})"
+        return (limits["max_budget_usd_per_run"] if per_run <= left else left), None
 
     def schedule(self, ledger: Dict[str, Any], pol: Dict[str, Any], plan: Dict[str, Any], report: Dict[str, Any]) -> None:
         intake = type(self.line)
@@ -377,7 +406,7 @@ class Supervisor:
             ticket, slice_id = item["ticket_id"], item["slice_id"]
             entry = ledger["slices"][slice_id]
             live = [record for record in supervisor["executions"].values() if record["state"] in LIVE]
-            reason = None
+            reason, budget_usd = None, None
             if any(record["ticket_id"] == ticket for record in live):
                 continue  # already running
             if entry.get("owner") != SUPERVISOR:
@@ -394,7 +423,7 @@ class Supervisor:
                 reason = f"its risk tier is {self.risk_of(ticket)}, above the {pol['max_risk']} this machine allows unattended"
                 self.park(ledger, ticket, f"Its risk tier ({self.risk_of(ticket)}) is above what this machine runs unattended ({pol['max_risk']}).", {"ticket_id": ticket, "slice_id": slice_id})
             else:
-                reason = self.budget(ledger, pol)
+                budget_usd, reason = self.allowance(ledger, pol)
             until = None if pol.get("allow_merge") else "merge"
             if not reason and until and item.get("next") == until:
                 # Approved, and this machine does not merge unattended: say so once, claim nothing.
@@ -407,7 +436,7 @@ class Supervisor:
             if reason:
                 report["held"].append({"ticket_id": ticket, "slice_id": slice_id, "why": reason})
                 continue
-            started = self.start(ledger, pol, ticket, slice_id)
+            started = self.start(ledger, pol, ticket, slice_id, budget_usd)
             (report["started"] if started.get("started") else report["held"]).append(started)
 
     def risk_of(self, ticket: str) -> Optional[str]:
@@ -417,15 +446,21 @@ class Supervisor:
             return None
         return risk if risk in RISKS else None
 
-    def start(self, ledger: Dict[str, Any], pol: Dict[str, Any], ticket: str, slice_id: str) -> Dict[str, Any]:
-        """Claim, then check everything once more, then start. The claim is on disk before any process exists."""
+    def start(self, ledger: Dict[str, Any], pol: Dict[str, Any], ticket: str, slice_id: str, budget_usd: Optional[float] = None) -> Dict[str, Any]:
+        """Claim, then check everything once more, then start. The claim is on disk before any process exists.
+        `budget_usd` is the spending limit the run is given: the per-run limit, cut to what the day has left (allowance)."""
+        if budget_usd is None:
+            budget_usd, over = self.allowance(ledger, pol)
+            if over:
+                return {"ticket_id": ticket, "slice_id": slice_id, "why": over}
         supervisor = ledger["supervisor"]
         step = self.next_step(ticket)
         execution_id = "x" + secrets.token_hex(6)
         until = None if pol.get("allow_merge") else "merge"
         record = {"execution_id": execution_id, "ticket_id": ticket, "slice_id": slice_id, "state": "claimed", "claimed_at": stamp(), "runner_id": pol["runner_id"],
                   "instance": self.lease.instance, "session_id": str(uuid.uuid4()), "stage_at_start": step.get("stage"), "action_at_start": step.get("action"),
-                  "until": until, "attempt": int((supervisor["attempts"].get(ticket) or {}).get("count") or 0) + 1, "wrapper_pid": None, "started_at": None}
+                  "until": until, "attempt": int((supervisor["attempts"].get(ticket) or {}).get("count") or 0) + 1, "wrapper_pid": None, "started_at": None,
+                  "budget_usd": budget_usd}
         supervisor["executions"][execution_id] = record
         common = {"ticket_id": ticket, "slice_id": slice_id, "execution_id": execution_id}
         self.line.emit(ledger, "work.claimed", stage=step.get("stage"), next=step.get("action"), attempt=record["attempt"], **common)
@@ -443,13 +478,13 @@ class Supervisor:
             record.update({"state": "released", "ended_at": stamp(), "how": "not-started"})
             self.line.save(ledger)
             return {"ticket_id": ticket, "slice_id": slice_id, "why": f"MACH could not be prepared as the run's plugin: {exc}"}
-        argv = executor.command(pol["claude"], boundary["workflow"], [ticket], until, pol["allowed_tools"], pol["limits"]["max_budget_usd_per_run"], record["session_id"],
+        argv = executor.command(pol["claude"], boundary["workflow"], [ticket], until, pol["allowed_tools"], budget_usd, record["session_id"],
                                 boundary["plugin_dir"], boundary["add_dirs"], boundary["denied"])
         executor.prepare(self.root, execution_id, argv, pol["limits"]["max_execution_minutes"])
         record["wrapper_pid"] = executor.launch(self.root, execution_id, self.run_script)
         record.update({"state": "started", "started_at": stamp()})
         self.line.emit(ledger, "execution.started", session_id=record["session_id"], until=until, workflow=boundary["workflow"],
-                       limits={"minutes": pol["limits"]["max_execution_minutes"], "budget_usd": pol["limits"]["max_budget_usd_per_run"]},
+                       limits={"minutes": pol["limits"]["max_execution_minutes"], "budget_usd": budget_usd},
                        refs={"execution": f".factory/local/executions/{execution_id}/", "cell": f".factory/worktrees/{ticket}/cell.json"}, **common)
         self.line.save(ledger)
         return {"started": True, "ticket_id": ticket, "slice_id": slice_id, "execution_id": execution_id, "session_id": record["session_id"]}

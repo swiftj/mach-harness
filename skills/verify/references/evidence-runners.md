@@ -4,6 +4,8 @@ Read only the section for the cell's `app_type`. Each says how to run the slice 
 
 In every type:
 
+- **One plain command per call (a Factory run is unattended).** Only the station scripts and Python may run. Write the driver as a Python script in `evidence_dir` with the Write tool and run it with `verify.py capture <ticket> <driver.py> --out <file>`, which saves its transcript as evidence. Never chain commands, never redirect (`>`, a heredoc), never `cd`, and never set shell variables. A tool this section names that is refused there (a browser, a terminal recorder, `curl`) is a gap to report: let `verify.py finish` say the evidence is incomplete, and do not route the tool through the driver.
+
 - Name files so a reviewer can find a check without opening them: `ac-03-email-failure.png`, `r2-invalid-email.log`.
 - Driver scripts you write (a browser script, a terminal tape, a request collection) are evidence too: save them next to what they produced.
 - Start the slice from the cell's `workdir`, on a port or data store of its own, so nothing touches the main checkout or real data. Stop anything you started.
@@ -23,7 +25,7 @@ In every type:
 ## cli
 
 - **Run it:** the built command from the `workdir`, in a clean temporary directory and environment.
-- **Capture:** the terminal session. Use `vhs` (a `.tape` script producing a `.gif`) or `asciinema` (`.cast`) when available; otherwise a transcript `.log` holding each command, its standard output and standard error. Always write `exit-codes.json`: a list of `{"command": ..., "exit_code": ..., "check": "<ID>"}` for every command you ran, with the command exactly as it was run. `verify.py finish` checks that every scenario and rule has an entry. If no recording tool is installed, say in your report that the session is a plain transcript; the summary records which tools were available.
+- **Capture:** the terminal session. Use `vhs` (a `.tape` script producing a `.gif`) or `asciinema` (`.cast`) when available; otherwise a transcript `.log` holding each command, its standard output and standard error (`verify.py capture` writes one for a Python driver). Always write `exit-codes.json`: a list of `{"command": ..., "exit_code": ..., "check": "<ID>"}` for every command you ran, with the command exactly as it was run. `verify.py finish` checks that every scenario and rule has an entry. If no recording tool is installed, say in your report that the session is a plain transcript; the summary records which tools were available.
 - **Also check:** `--help` output for the new command or flag; that errors go to standard error with a non-zero exit code; that a refusal writes nothing.
 
 ## api, rest, grpc
@@ -42,6 +44,6 @@ In every type:
 
 ## library
 
-- **Run it:** as a consumer would. Write a small driver script in `evidence_dir` that imports the package only through its public interface, the one in the plan's contract, and performs each check. Do not import internals, and do not reuse the builder's fakes: write your own stand-ins for outside services.
-- **Capture:** the driver's transcript (`consumer-run.log`): for each check, the call made, the value returned or error raised, and the state before and after. Print each check's ID in the transcript so the record can point at it.
-- **Also check:** that the public interface matches the contract file: every name it declares exists with that shape, and nothing extra is exported that the contract does not list. Save what you compared as `api-surface.txt`.
+- **Run it:** as a consumer would. Write a small Python driver script in `evidence_dir` (with the Write tool) that imports the package only through its public interface, the one in the plan's contract, and performs each check. `verify.py capture` runs it from the `workdir` with the `workdir` on the import path, so a plain `import` finds the package. Do not import internals, and do not reuse the builder's fakes: write your own stand-ins for outside services.
+- **Capture:** the driver's transcript, with `verify.py capture <ticket> driver.py --out consumer-run.log`: for each check, the call made, the value returned or error raised, and the state before and after. Print each check's ID in the transcript so the record can point at it.
+- **Also check:** that the public interface matches the contract file: every name it declares exists with that shape, and nothing extra is exported that the contract does not list. Have a second driver print what you compared and capture it as `api-surface.txt` (`verify.py capture <ticket> surface.py --out api-surface.txt`).

@@ -15,6 +15,8 @@ Read these first, in this order. Paths come from the cell JSON.
 
 Write only inside `workdir` (contracts) and to `plan_path` (the plan). Never write to the main checkout, never edit the slice spec, `spec.md`, `spec.json`, or `intent.md`.
 
+**One plain command per call.** This brief usually runs unattended, with a short list of allowed commands; anything else is refused, not asked about. The only shell command you need is `CELL check-plan` (see Gate), written out in full with the script's absolute path. Read files with the Read tool, find them with Glob and Grep, and write the contracts and the plan with Write and Edit. Never chain commands (`&&`, `;`, `|`, a second line), never redirect (`>`, `<`, `2>&1`, a heredoc), never `cd`, and never set shell variables. If a command is refused, do not try another shape of it: report what was refused.
+
 ## If the spec is wrong
 
 If the spec contradicts itself, contradicts an existing contract in a way no additive change can absorb, or cannot be built as written, stop. Do not patch it and do not guess. Report a **spec defect**: the IDs involved, what conflicts, and the question that would settle it in business terms. That question goes back to the product manager.

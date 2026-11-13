@@ -239,6 +239,28 @@ class SubmitTest(Base):
         self.assertIn(shape, self.bad(raw=json.dumps({"summary": SUMMARY, "findings": "none"})))
         self.assertIn(shape, self.bad(raw=json.dumps([])))
 
+    def test_findings_are_read_from_the_review_folder_without_a_path(self):
+        """D22: a reviewer submits with one plain command, from wherever it is, with no change of directory."""
+        default = self.round / "findings-security.json"
+        code, _, err = self.run_review("submit", TICKET, "--reviewer", "security")
+        self.assertEqual(code, 1)
+        self.assertIn(str(default) + " is missing or is not valid JSON. Write your findings there", err)
+        default.write_text(json.dumps({"summary": SUMMARY, "findings": [self.note()]}))
+        self.assertEqual(self.r_ok("submit", TICKET, "--reviewer", "security")["vote"], "APPROVE")
+        # A relative name that is not found where the command runs is looked up in the review folder.
+        (self.round / "mine.json").write_text(json.dumps({"summary": SUMMARY, "findings": []}))
+        self.assertEqual(self.r_ok("submit", TICKET, "--reviewer", "product", "--findings", "mine.json")["vote"], "APPROVE")
+        # The checks are those of any submission: a vote is still not revised.
+        self.assertIn("already voted", self.r_refused("submit", TICKET, "--reviewer", "security"))
+
+    def test_a_refused_submission_says_why_in_the_lifecycle_log(self):
+        self.bad(raw="not json {", role="architecture")
+        self.bad(self.blocker(rule=None), role="product")
+        self.run_review("submit", TICKET, "--reviewer", "general", "--findings", self.findings_file())
+        log = [json.loads(line) for line in (self.cellroot / "lifecycle.jsonl").read_text().splitlines()]
+        refused = [(e["data"]["seat"], e["data"]["reason_code"]) for e in log if e["type"] == "gate.evaluated" and e["data"]["gate"] == "review.submit"]
+        self.assertEqual(refused, [("architecture", "findings-unreadable"), ("product", "findings-invalid"), ("general", "not-a-seat")])
+
     def test_each_finding_is_checked(self):
         self.assertIn("Finding 1 must be an object", self.bad("a string"))
         self.assertIn("Finding 2: 'severity' must be 'blocker'", self.bad(self.note(), self.blocker(severity="critical")))
