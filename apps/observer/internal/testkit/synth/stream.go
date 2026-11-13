@@ -85,7 +85,7 @@ func (g *gen) newStream(x *execution) *streamGen {
 		if !in(c.called) {
 			continue
 		}
-		input := map[string]any{"command": "python3 skills/run/scripts/run.py next " + x.cell.ticket}
+		input := map[string]any{"command": "python3 tools/synthetic_step.py next " + x.cell.ticket}
 		switch c.tool {
 		case "Read":
 			input = map[string]any{"file_path": ".factory/worktrees/" + x.cell.ticket + "/cell.json"}

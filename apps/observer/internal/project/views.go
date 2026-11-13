@@ -37,9 +37,26 @@ func TV(st *Stamp) *TimeView {
 
 var terminalExec = map[string]bool{"finished": true, "failed": true, "interrupted": true, "timed-out": true, "could-not-start": true}
 
+// stoppedHow is how an execution's process was stopped before it could run to its end
+// (interrupted, timed-out, could-not-start), from its own record (result.json `ended`) or, when
+// that is missing, the supervisor's execution.failed `how` (which copies it). "" for a process
+// that ran to its end, or one not known to have stopped.
+func stoppedHow(x *Execution) string {
+	stopped := map[string]bool{"interrupted": true, "timed-out": true, "could-not-start": true}
+	switch {
+	case stopped[x.Ended]:
+		return x.Ended
+	case x.Ended == "" && x.Failed != nil && stopped[x.How]:
+		return x.How
+	}
+	return ""
+}
+
 // ExecState is an execution's state from what was recorded, strongest fact first: a recorded
-// unknown outcome, a failure, an interruption, completion, a process that ended (the supervisor
-// has not recorded it yet), a running process, a claim.
+// unknown outcome, an interruption (the process was stopped: execution.failed then says only that
+// it did not finish, so the interruption is the fact that explains it, as the Factory Floor's
+// executionActivity reads it), a failure (it ran to its end and reported one), completion, a
+// process that ended (the supervisor has not recorded it yet), a running process, a claim.
 func ExecState(x *Execution) string {
 	unknown := false
 	for _, k := range x.Recovery {
@@ -48,10 +65,10 @@ func ExecState(x *Execution) string {
 	switch {
 	case unknown && x.Completed == nil && x.Failed == nil:
 		return "unknown"
+	case stoppedHow(x) != "":
+		return stoppedHow(x)
 	case x.Failed != nil:
 		return "failed"
-	case x.Ended == "interrupted" || x.Ended == "timed-out" || x.Ended == "could-not-start":
-		return x.Ended
 	case x.Completed != nil:
 		return "finished"
 	case x.ProcessEnded != nil:
@@ -165,6 +182,9 @@ func Run(x *Execution) RunView {
 	v.Duration = between(start, end, false)
 	if v.TimeBasis == "supervisor" && v.Duration.Basis == "measured" {
 		v.Duration.Basis = "bounded" // the supervisor stamps executions up to a poll late
+	}
+	if stoppedHow(x) != "" && v.Duration.Basis == "measured" {
+		v.Duration.Basis = "bounded" // stopped from outside: it never "took" that long, it ran until stopped
 	}
 	if x.Completed != nil || x.Failed != nil {
 		v.Moved = ptr(x.Completed != nil)

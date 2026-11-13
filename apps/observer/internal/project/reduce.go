@@ -1262,9 +1262,48 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 
 // ---- observer reconstructions ----
 
+// applyClosing applies the observer's closing of an agent or main-loop tool call still open when
+// its process ended (event contract 8: rule open-at-process-end, status unknown, bounded by the
+// process end, reconstructed). It never replaces an end the stream recorded, never creates an
+// agent or call the stream did not start, and records nothing else (no duration, no metric).
+func (s *State) applyClosing(e *feed.Event, st *Stamp) {
+	x := s.Executions[e.Execution()]
+	if x == nil {
+		return
+	}
+	switch e.Type {
+	case "agent.finished":
+		a := x.Agents[feed.Str(e.IDs.AgentID)]
+		if a == nil || a.Finished != nil {
+			return
+		}
+		var d struct {
+			Tokens    *int64 `json:"tokens"`
+			ToolCalls *int64 `json:"tool_calls"`
+		}
+		e.DataAs(&d)
+		a.Finished, a.Status, a.DurationMS = st, "unknown", nil
+		if d.Tokens != nil {
+			a.Tokens = d.Tokens
+		}
+		if d.ToolCalls != nil {
+			a.ToolCalls = d.ToolCalls
+		}
+	case "tool.returned":
+		t := x.Tools[feed.Str(e.IDs.ToolCallID)]
+		if t == nil || t.Returned != nil {
+			return
+		}
+		t.Returned, t.Status, t.DurationMS = st, "unknown", nil
+	}
+	s.touch(entExecution, x.ExecutionID)
+}
+
 func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 	m := s.Metrics
 	switch e.Type {
+	case "agent.finished", "tool.returned":
+		s.applyClosing(e, st)
 	case "history.gap":
 		var d struct {
 			SourceKey string `json:"source_key"`

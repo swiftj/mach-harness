@@ -253,7 +253,7 @@ func (a *appender) tick(now time.Time, budget, ticks int) error {
 		id := fmt.Sprintf("toolu_SYN%06d", st.ToolSeq)
 		st.ToolSeq++
 		call, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"model": "claude-opus-5-5", "role": "assistant", "type": "message",
-			"content": []any{map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": "python3 skills/run/scripts/run.py board"}}}},
+			"content": []any{map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": "python3 tools/synthetic_step.py board"}}}},
 			"parent_tool_use_id": nil, "session_id": st.Session})
 		ret, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result",
 			"tool_use_id": id, "content": "<synthetic>", "is_error": false}}}, "parent_tool_use_id": nil, "session_id": st.Session})

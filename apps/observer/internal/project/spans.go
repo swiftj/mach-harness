@@ -592,12 +592,16 @@ func (sp *Span) closeInferred(start, end *Stamp, rule, reason string) {
 	sp.Authority = "reconstructed"
 }
 
-// unknownEnd is where an execution whose outcome is unknown and that recorded no end is closed: no
-// later than the supervisor's outcome-unknown recovery (a bounded end: not_after, no at). nil for
-// any other execution.
+// unknownEnd is where an execution that recorded no end is closed when its outcome is unknown: no
+// later than the supervisor's outcome-unknown recovery, else no later than the first later record
+// that shows the supervisor had moved on from it (movedOnEnd). A bounded end: not_after, no at.
+// nil for any other execution.
 func unknownEnd(s *State, x *Execution) *Stamp {
-	if x == nil || x.ProcessEnded != nil || x.Completed != nil || x.Failed != nil || ExecState(x) != "unknown" {
+	if x == nil || x.ProcessEnded != nil || x.Completed != nil || x.Failed != nil {
 		return nil
+	}
+	if ExecState(x) != "unknown" {
+		return movedOnEnd(s, x)
 	}
 	at := x.UnknownAt
 	if at == nil { // a projection saved before UnknownAt was kept
@@ -608,6 +612,40 @@ func unknownEnd(s *State, x *Execution) *Stamp {
 			}
 		}
 	}
+	return boundAt(at)
+}
+
+// movedOnEnd bounds an execution that recorded no end and no recovery when later records show the
+// supervisor had moved on from it: a later claim of the same ticket (another execution) or the
+// supervisor parking the ticket for a person. One execution runs a ticket at a time, so whatever
+// ran had ended by the first of those; how it ended is not recorded. nil when nothing bounds it:
+// it may still be running.
+func movedOnEnd(s *State, x *Execution) *Stamp {
+	start := execStart(x)
+	if x.TicketID == "" || start == nil {
+		return nil
+	}
+	var first *Stamp
+	consider := func(st *Stamp) {
+		if st != nil && st.Pos > start.Pos && (first == nil || st.Pos < first.Pos) {
+			first = st
+		}
+	}
+	for _, y := range s.Executions {
+		if y != x && y.TicketID == x.TicketID {
+			consider(execStart(y))
+		}
+	}
+	for _, g := range s.Gates {
+		if g.TicketID == x.TicketID && g.Kind == "required" {
+			consider(g.Opened)
+		}
+	}
+	return boundAt(first)
+}
+
+// boundAt is a bounded, reconstructed end no later than st.
+func boundAt(at *Stamp) *Stamp {
 	if at == nil {
 		return nil
 	}
@@ -616,6 +654,36 @@ func unknownEnd(s *State, x *Execution) *Stamp {
 		hi = at.OrderMS
 	}
 	return &Stamp{EventID: at.EventID, Pos: at.Pos, Precision: "bounded", NotAfter: &hi, OrderMS: at.OrderMS, Authority: "reconstructed"}
+}
+
+// execEnd is where an execution's span ends: its recorded end (the process's own, else the
+// supervisor's completed or failed, which are stamped late), else unknownEnd. inferred says the
+// end is a bound no record states. nil while nothing ends or bounds it.
+func execEnd(s *State, x *Execution) (end *Stamp, inferred bool) {
+	for _, st := range []*Stamp{x.ProcessEnded, x.Completed, x.Failed} {
+		if st != nil {
+			return st, false
+		}
+	}
+	if u := unknownEnd(s, x); u != nil {
+		return u, true
+	}
+	return nil, false
+}
+
+// execStateAt is ExecState with what only the whole projection knows: an execution bounded by
+// later records (movedOnEnd) is of unknown outcome, never "running".
+func execStateAt(s *State, x *Execution) string {
+	state := ExecState(x)
+	if (state == "running" || state == "claimed") && movedOnEnd(s, x) != nil && x.ProcessEnded == nil && x.Completed == nil && x.Failed == nil {
+		return "unknown"
+	}
+	return state
+}
+
+// execReason is an execution span's end reason for its state.
+func execReason(state string) string {
+	return orDefault(map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "interrupted", "unknown": "unknown"}[state], "completed")
 }
 
 // laterThan reports whether a happened after b by their recorded times (a's earliest bound after
@@ -641,49 +709,65 @@ func execSpans(b *spanBuilder, s *State, x *Execution) {
 		cellParent = "cell:" + x.TicketID
 	}
 	group := orDefault(cellParent, ref)
-	if x.Claimed != nil {
-		end := x.ProcessStarted
-		if end == nil {
-			end = x.Started
-		}
-		if sp := b.add("claim", ref, cellParent, group, ids, x.Claimed, end, "", "completed", false, ""); sp != nil {
-			sp.Attrs.Attempt = x.Attempt
-		}
-	}
-	state := ExecState(x)
+	// The state always goes out (attrs.state), so a view never has to guess "running".
+	state := execStateAt(s, x)
 	execAttrs := SpanAttrs{Attempt: x.Attempt, State: state, CostUSD: costOf(x).USD}
-	reason := map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "failed", "unknown": "unknown"}[state]
-	// An execution whose outcome is unknown and that recorded no end ended no later than the
-	// recovery that found it so: never "running" after it. Its open children close there too.
-	unknown := unknownEnd(s, x)
-	start, end := x.ProcessStarted, x.ProcessEnded
+	reason := execReason(state)
+	// An execution ends at its recorded end; with none, an execution whose outcome is unknown ends
+	// no later than the recovery that found it so, or the first later record showing the supervisor
+	// had moved on (unknownEnd): never "running" after it.
+	end, inferred := execEnd(s, x)
+	start := x.ProcessStarted
 	if start == nil {
-		start, end = x.Started, x.Completed
-		if end == nil {
-			end = x.Failed
-		}
+		start = x.Started
 	}
 	if start != nil {
-		inferred := end == nil && unknown != nil
-		if inferred {
-			end = unknown
-		}
-		if sp := b.add("execution", ref, cellParent, group, ids, start, end, state, orDefault(reason, "completed"), false, ""); sp != nil {
+		if sp := b.add("execution", ref, cellParent, group, ids, start, end, state, reason, false, ""); sp != nil {
 			sp.Attrs = execAttrs
 			switch {
 			case inferred:
 				sp.closeInferred(start, end, "execution-outcome-unknown", "unknown")
-			case x.ProcessStarted == nil && sp.Duration.Basis == "measured":
+			case end != nil && sp.Duration.Basis == "measured" && (x.ProcessStarted == nil || x.ProcessEnded == nil):
 				sp.Duration.Basis = "bounded" // the supervisor's own stamps, up to a poll late
+			}
+			if end != nil && reason != "completed" && reason != "failed" && sp.Duration.Basis == "measured" {
+				// Measured only for a process that ran to its end: an interrupted one never "took" it.
+				sp.Duration.Basis = "bounded"
 			}
 		}
 	}
-	// closeOpen ends a child span of an unknown execution, left open, at the same bound.
-	closeOpen := func(sp *Span, from *Stamp) {
-		if sp != nil && unknown != nil && sp.End == nil && from != nil && from.Pos < unknown.Pos {
-			to := unknown.NotAfter
-			sp.to, sp.endKey = max(*to, sp.from), unknown.OrderMS
-			sp.closeInferred(from, unknown, "execution-outcome-unknown", "unknown")
+	// Nothing under an ended execution stays open: every child span left open (no record closed
+	// it) ends at the execution's end, inferred (rule execution-ended), with no outcome. A child
+	// closed only by the observer's own reconstruction at the process end (contract 8:
+	// open-at-process-end, status unknown) reads the same way: no record stated that end.
+	childReason := "interrupted"
+	if reason == "unknown" {
+		childReason = "unknown"
+	}
+	closeOpen := func(sp *Span, from, own *Stamp) {
+		if sp == nil || from == nil {
+			return
+		}
+		switch {
+		case sp.End == nil && end != nil:
+			hi, ok := end.hi()
+			if !ok {
+				hi = end.OrderMS
+			}
+			sp.to, sp.endKey = max(hi, sp.from), end.OrderMS
+			sp.closeInferred(from, end, "execution-ended", childReason)
+		case sp.End != nil && own != nil && own.Authority == "reconstructed":
+			sp.closeInferred(from, own, "execution-ended", childReason)
+		}
+	}
+	if x.Claimed != nil {
+		started := x.ProcessStarted
+		if started == nil {
+			started = x.Started
+		}
+		if sp := b.add("claim", ref, cellParent, group, ids, x.Claimed, started, "", "completed", false, ""); sp != nil {
+			sp.Attrs.Attempt = x.Attempt
+			closeOpen(sp, x.Claimed, nil) // a claim that never started, of an ended execution
 		}
 	}
 	for _, wref := range sortedKeys(x.Workflows) {
@@ -694,7 +778,7 @@ func execSpans(b *spanBuilder, s *State, x *Execution) {
 		} else if w.Status == "unknown" {
 			reason = "unknown"
 		}
-		closeOpen(b.add("workflow", wref, ref, ref, ids, w.Started, w.Finished, w.Status, reason, false, ""), w.Started)
+		closeOpen(b.add("workflow", wref, ref, ref, ids, w.Started, w.Finished, w.Status, reason, false, ""), w.Started, w.Finished)
 	}
 	for _, a := range Agents(x) {
 		aref := "agent:" + a.AgentID
@@ -711,7 +795,7 @@ func execSpans(b *spanBuilder, s *State, x *Execution) {
 		if a.Queued != nil {
 			if sp := b.add("agent-queue", aref, parent, parent, aids, a.Queued, a.Started, "", "completed", false, ""); sp != nil {
 				sp.Attrs = SpanAttrs{Label: a.Label, Model: a.Model, AgentType: a.AgentType}
-				closeOpen(sp, a.Queued)
+				closeOpen(sp, a.Queued, nil)
 			}
 		}
 		if a.Started != nil {
@@ -724,7 +808,7 @@ func execSpans(b *spanBuilder, s *State, x *Execution) {
 				// A workflow agent's calls are seen only as a count; an Agent-tool sub-agent's one by one.
 				sp.Attrs = SpanAttrs{Label: a.Label, Model: a.Model, AgentType: a.AgentType, ToolCalls: a.ToolCalls, ToolsCountOnly: a.Workflow != "",
 					LastTool: a.LastTool, Tokens: a.Tokens}
-				closeOpen(sp, a.Started)
+				closeOpen(sp, a.Started, a.Finished)
 			}
 		}
 	}
@@ -736,7 +820,7 @@ func execSpans(b *spanBuilder, s *State, x *Execution) {
 		}
 		tids := map[string]string{"execution_id": x.ExecutionID, "tool_call_id": t.ToolCallID}
 		reason := map[string]string{"error": "failed", "unknown": "unknown"}[t.Status]
-		closeOpen(b.add("tool", "tool:"+t.ToolCallID, parent, parent, tids, t.Called, t.Returned, t.Status, orDefault(reason, "completed"), false, ""), t.Called)
+		closeOpen(b.add("tool", "tool:"+t.ToolCallID, parent, parent, tids, t.Called, t.Returned, t.Status, orDefault(reason, "completed"), false, ""), t.Called, t.Returned)
 	}
 }
 

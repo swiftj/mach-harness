@@ -127,7 +127,7 @@ func allMarks(s *State) []*Mark {
 		}
 	}
 	for _, id := range sortedKeys(s.Executions) {
-		execMarks(b, s.Executions[id], recovered[id])
+		execMarks(b, s, s.Executions[id], recovered[id])
 	}
 	attemptMarks(b, s)
 	for _, g := range s.Gaps {
@@ -221,24 +221,41 @@ func cellMarks(b *markBuilder, s *State, c *Cell) {
 	}
 }
 
-func execMarks(b *markBuilder, x *Execution, recovered *Stamp) {
+func execMarks(b *markBuilder, s *State, x *Execution, recovered *Stamp) {
+	// Each mark sits at the event that established its verdict, never earlier: an outcome never
+	// appears before the record that says it.
 	ref := "execution:" + x.ExecutionID
-	state := ExecState(x)
+	state := execStateAt(s, x)
+	first := func(sts ...*Stamp) *Stamp {
+		for _, st := range sts {
+			if st != nil {
+				return st
+			}
+		}
+		return nil
+	}
 	switch state {
-	case "failed", "could-not-start":
+	case "failed":
+		b.add("failure", first(x.Failed, x.ProcessEnded), nil, ref, "An execution failed.", state)
+	case "interrupted", "timed-out", "could-not-start":
+		// The process record (result.json ended) says it at the process end; without it, the
+		// supervisor's execution.failed (how) does.
 		at := x.Failed
-		if at == nil {
+		if x.Ended == state {
 			at = x.ProcessEnded
 		}
-		b.add("failure", at, nil, ref, "An execution "+map[string]string{"failed": "failed", "could-not-start": "could not start"}[state]+".", state)
-	case "interrupted", "timed-out":
-		b.add("interruption", x.ProcessEnded, nil, ref, "An execution was "+strings.ReplaceAll(state, "-", " ")+".", state)
+		label := map[string]string{"interrupted": "was interrupted", "timed-out": "timed out", "could-not-start": "could not start"}[state]
+		b.add("interruption", at, nil, ref, "An execution "+label+".", state)
 	case "unknown":
+		// The recovery that found it so, else the later record that shows the supervisor had moved on.
+		label := "An execution's outcome is unknown."
 		at := recovered
 		if at == nil {
-			at = x.ProcessEnded
+			if at = movedOnEnd(s, x); at != nil {
+				label = "An execution's outcome is unknown: the supervisor had moved on from it by here."
+			}
 		}
-		b.add("interruption", at, nil, ref, "An execution's outcome is unknown.", "unknown")
+		b.add("interruption", first(at, x.ProcessEnded), nil, ref, label, "unknown")
 	}
 }
 
