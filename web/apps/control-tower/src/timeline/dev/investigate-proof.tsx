@@ -203,6 +203,7 @@ function fakeData(withLimit: boolean): TimelineData {
     extent: () => ({ from: T0, to: LIVE_AT }),
     spans: async () => ({ spans: SPANS, truncated: false, total: SPANS.length, version: "proof" }),
     span: async (id) => SPANS.find((s) => s.id === id) ?? null,
+    structure: async () => ({ spans: SPANS, truncated: false, total: SPANS.length, version: "proof" }),
     marks: async (w, kinds) => MARKS.filter((m) => (!kinds || kinds.includes(m.kind)) && m.at <= w.to && (m.until ?? m.at) >= w.from),
     nextMark: async () => null,
     density: async (w) => ({ from: w.from, to: w.to, bucketMs: MIN, buckets: [], complete: true }),

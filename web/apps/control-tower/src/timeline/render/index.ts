@@ -3,6 +3,6 @@
  * sticky labels, the window's ruler, and the words of the timing grammar. Siblings import only these.
  */
 export { TrackCanvas } from "./TrackCanvas";
-export { TrackLabels } from "./TrackLabels";
+export { TrackLabels, LABEL_DEFAULT, LABEL_MIN, LABEL_MAX } from "./TrackLabels";
 export { WindowRuler } from "./WindowRuler";
-export { describeSpan, durationWords } from "./words";
+export { describeSpan, durationWords, nodeState, countsWords, shownCounts, fitLabel, openWord } from "./words";

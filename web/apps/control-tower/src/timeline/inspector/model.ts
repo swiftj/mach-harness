@@ -204,6 +204,60 @@ export function primarySpan(ref: string, spans: readonly TimelineSpan[], asOf: n
   return [...about].sort((a, b) => byStart(a, b) || rank(a) - rank(b))[0] ?? null;
 }
 
+/**
+ * The span "In time" is about (X3): when the Timeline picked a span through an ancestor
+ * (`selectionDetail`), that span, if it is held; else the ref's own primary span.
+ */
+export function subjectSpan(ref: string, detail: string | null, spans: readonly TimelineSpan[], asOf: number): { span: TimelineSpan | null; picked: boolean } {
+  if (detail && detail !== ref) {
+    const own = spans.filter((s) => s.entity === detail).sort(byStart);
+    const pick = own.find((s) => s.kind !== "agent-queue") ?? own[0];
+    if (pick) return { span: pick, picked: true };
+  }
+  return { span: primarySpan(ref, spans, asOf), picked: false };
+}
+
+const cap = (w: string) => (w ? `${w[0]!.toUpperCase()}${w.slice(1)}` : w);
+
+/** A span's name in a few words: "Verify, round 1", "Security seat, round 2", "Execution". */
+export function spanName(span: TimelineSpan): string {
+  const round = span.ids["round"] ?? (span.attrs.round !== undefined ? String(span.attrs.round) : null);
+  const r = round ? `, round ${round}` : "";
+  if (span.kind === "visit") return `${cap((span.ids["station"] ?? "station visit").replace(/-/g, " "))}${r}`;
+  if (span.kind === "seat") {
+    const seat = span.ids["seat"] ?? /\/([^/]+)$/.exec(span.entity)?.[1] ?? "review";
+    return `${cap(seat)} seat${r}`;
+  }
+  return `${SPAN_KIND_WORDS[span.kind]}${r}`;
+}
+
+/**
+ * One line naming a span, its state and its time as of `asOf` (X3): "Verify, round 1 — failed,
+ * 21:42–27:20". Never an outcome before its event; an open span says "open" (or "at work" when it is
+ * a kind that works), a visit closed by rule says so.
+ */
+export function spanHeadline(span: TimelineSpan, asOf: number, clock: (t: number) => string = (t) => timecode(t, false)): string {
+  const from = beganAt(span);
+  if (!begunBy(span, asOf)) return `${spanName(span)} — not started at the playhead`;
+  if (!endedBy(span, asOf)) {
+    const state = isWait(span) ? "waiting" : atWorkWhileOpen(span) ? "at work" : "open";
+    return `${spanName(span)} — ${state}${from !== null ? `, from ${clock(from)}` : ""}`;
+  }
+  const to = endTime(span);
+  const outcome = outcomeAsOf(span, asOf);
+  const state = endedWithoutExit(span)
+    ? "ended without an exit record"
+    : outcome
+      ? outcome.toLowerCase()
+      : span.end?.reason === "failed" || span.end?.reason === "refused"
+        ? span.end.reason
+        : span.end?.reason === "interrupted" || span.end?.reason === "superseded"
+          ? span.end.reason
+          : "ended";
+  const times = from !== null && to !== null ? `${clock(from)}–${endedWithoutExit(span) ? "at most " : ""}${clock(to)}` : from !== null ? `from ${clock(from)}` : to !== null ? `until ${clock(to)}` : "";
+  return `${spanName(span)} — ${state}${times ? `, ${times}` : ""}`;
+}
+
 /** Other spans about the same entity, begun by `asOf` (a cell's capacity waits, an agent's queue), in time order. */
 export function companionsOf(ref: string, primary: TimelineSpan, spans: readonly TimelineSpan[], asOf: number): TimelineSpan[] {
   if (refKindOf(ref) === "station" || refKindOf(ref) === "dependency") return [];
@@ -265,7 +319,83 @@ const span1 = (ms: number) => (ms < 1000 ? "under a second" : duration(ms));
 /** What the live duration line needs: when it began and which words the Elapsed component uses. */
 export interface LiveDuration {
   readonly startedAt: number;
-  readonly mode: "work" | "wait" | "interrupted";
+  /** "open": a container (wave, slice, cell, round, claim) still open: never "at work". */
+  readonly mode: "work" | "wait" | "interrupted" | "open";
+}
+
+/** The kinds that are ever "at work" while open: an execution, workflow, agent, tool, task, or a station visit other than human approval. */
+const WORK_KINDS: ReadonlySet<SpanKind> = new Set(["execution", "workflow", "agent", "tool", "task"]);
+export function atWorkWhileOpen(span: TimelineSpan): boolean {
+  if (span.kind === "visit") return (span.ids["station"] ?? "") !== "human-approval";
+  return WORK_KINDS.has(span.kind);
+}
+
+/** Whether `s` lies beneath the container `c` (a wave, slice, cell or round): by its recorded ids, else by its parent chain. */
+function beneath(c: TimelineSpan, s: TimelineSpan, byEntity: ReadonlyMap<string, TimelineSpan>): boolean {
+  if (s.id === c.id) return false;
+  const id = refIdOf(c.entity);
+  switch (c.kind) {
+    case "wave":
+      if (s.ids["wave_id"] === id) return true;
+      break;
+    case "slice-wait":
+    case "slice-eligible":
+      if (s.ids["slice_id"] === id && s.kind !== "slice-wait" && s.kind !== "slice-eligible") return true;
+      break;
+    case "cell":
+      if (s.ids["ticket_id"] === id || s.entity.startsWith(`visit:${id}/`) || s.entity.startsWith(`seat:${id}/`) || s.entity.startsWith(`gate:${id}/`)) return true;
+      break;
+    case "round": {
+      const t = c.ids["ticket_id"];
+      const r = c.ids["round"] ?? (c.attrs.round !== undefined ? String(c.attrs.round) : undefined);
+      if (t && r !== undefined && s.ids["ticket_id"] === t && String(s.ids["round"] ?? s.attrs.round ?? "") === r) return true;
+      break;
+    }
+    default:
+      break;
+  }
+  let p = s.parent;
+  for (let guard = 0; p && guard < 8; guard++) {
+    if (p === c.entity) return true;
+    p = byEntity.get(p)?.parent ?? null;
+  }
+  return false;
+}
+
+/** What an open container says beside how long it has been open (X2): the last thing that happened beneath it, and a wait on a person still open there. */
+export interface OpenContext {
+  /** The latest instant recorded beneath it by `asOf` (an end, or the start of something still open), or null. */
+  readonly lastActivity: number | null;
+  /** The start of the earliest wait on a person still open beneath it (or the container itself) at `asOf`, or null. */
+  readonly waitingSince: number | null;
+}
+
+export function openContextOf(c: TimelineSpan, spans: readonly TimelineSpan[], asOf: number): OpenContext {
+  const byEntity = new Map<string, TimelineSpan>();
+  for (const s of spans) if (!byEntity.has(s.entity)) byEntity.set(s.entity, s);
+  let last: number | null = null;
+  let waiting: number | null = null;
+  for (const s of spans) {
+    if (!beneath(c, s, byEntity) || !begunBy(s, asOf)) continue;
+    const t = endedBy(s, asOf) ? endTime(s) : beganAt(s);
+    if (t !== null && t <= asOf && (last === null || t > last)) last = t;
+    if ((s.kind === "person-wait" || s.kind === "gate-wait") && !endedBy(s, asOf)) {
+      const b = beganAt(s);
+      if (b !== null && (waiting === null || b < waiting)) waiting = b;
+    }
+  }
+  return { lastActivity: last, waitingSince: waiting };
+}
+
+/**
+ * The words after "open for <d>" for an open container: "; last activity 06:42; waiting for a person
+ * since 06:40". Empty when neither is known. Shared wording (the table and the tooltips say the same).
+ */
+export function openContextWords(ctx: OpenContext, clock: (t: number) => string): string {
+  const parts: string[] = [];
+  if (ctx.lastActivity !== null) parts.push(`last activity ${clock(ctx.lastActivity)}`);
+  if (ctx.waitingSince !== null) parts.push(`waiting for a person since ${clock(ctx.waitingSince)}`);
+  return parts.length ? `; ${parts.join("; ")}` : "";
 }
 
 export interface DurationSentence {
@@ -285,7 +415,9 @@ export function durationSentence(span: TimelineSpan, asOf: number, rules: Readon
     const start = span.start?.at ?? null;
     if (start === null) return { text: span.start ? "Still open; its start is known only within bounds, so how long is not known" : "Still open; start not known", live: null };
     const interrupted = span.attrs.interruptedAt !== undefined && span.attrs.interruptedAt <= asOf;
-    const mode: LiveDuration["mode"] = interrupted ? "interrupted" : isWait(span) ? "wait" : "work";
+    const mode: LiveDuration["mode"] = interrupted ? "interrupted" : isWait(span) ? "wait" : atWorkWhileOpen(span) ? "work" : "open";
+    // An open wave, slice, cell, round or claim is "open", never "at work" (X2).
+    if (mode === "open") return { text: elapsedWords("open", true, false, span1(Math.max(0, asOf - start))), live: { startedAt: start, mode } };
     const d = span1(Math.max(0, asOf - start));
     // The app's one vocabulary (the Elapsed component's words): "at work for", "waiting for", "open for".
     return { text: elapsedWords(mode, true, false, d), live: { startedAt: start, mode } };
@@ -302,7 +434,8 @@ export function durationSentence(span: TimelineSpan, asOf: number, rules: Readon
   if (isInterrupted(span)) {
     if (known === null) return { text: span.end?.reason === "superseded" ? "Open, then superseded; how long is not known" : "Open, then interrupted; how long is not known", live: null };
     const d = span1(known);
-    if (span.attrs.interruptedAt !== undefined) return { text: `${elapsedWords("interrupted", true, true, d)}: it stopped at ${clock(span.attrs.interruptedAt)} and was taken up again later`, live: null };
+    // `interruptedAt` only says the exit was stamped after its execution ended: never that work resumed.
+    if (span.attrs.interruptedAt !== undefined) return { text: `open for ${d}; its exit was recorded after its execution ended (at ${clock(span.attrs.interruptedAt)})`, live: null };
     return { text: span.end?.reason === "superseded" ? `open for ${d}, then superseded` : `open for ${d}, then interrupted`, live: null };
   }
   switch (basis) {

@@ -100,7 +100,8 @@ export interface SpanExtent {
 
 // ---------------------------------------------------------------- marks, concurrency, density
 
-export type MarkKind = "failure" | "retry" | "gate" | "review" | "human" | "recovery" | "interruption" | "gap" | "wave" | "merge";
+/** "retry": a revise visit (a judging round's remediation). "attempt": an execution attempt after the first for the same cell. Never the same thing. */
+export type MarkKind = "failure" | "retry" | "attempt" | "gate" | "review" | "human" | "recovery" | "interruption" | "gap" | "wave" | "merge";
 
 /** A moment (or, with `until`, an interval) worth jumping to. */
 export interface TimelineMark {
@@ -177,6 +178,12 @@ export interface TimelineData {
   extent(): TimeWindow | null;
   spans(query: SpanQuery, signal?: AbortSignal): Promise<SpanPage>;
   span(id: string, signal?: AbortSignal): Promise<TimelineSpan | null>;
+  /**
+   * The structural spans of the WHOLE held history (waves, slice waits and eligibility, cells, rounds,
+   * executions, workflows, claims): few and long. The tree's hierarchy is built from these plus the
+   * window's detailed spans, so a track's identity and place never depend on which window is loaded.
+   */
+  structure(signal?: AbortSignal): Promise<SpanPage>;
   marks(window: TimeWindow, kinds?: readonly MarkKind[], signal?: AbortSignal): Promise<readonly TimelineMark[]>;
   /** The nearest mark of `kinds` strictly after (direction 1) or before (-1) `t`, or null. */
   nextMark(t: number, direction: 1 | -1, kinds: readonly MarkKind[], signal?: AbortSignal): Promise<TimelineMark | null>;
@@ -239,10 +246,21 @@ export interface TrackNode {
   /** Spans in the subtree, for the collapsed summary and the count in the label. */
   readonly spanCount: number;
   /** The worst condition in the subtree, so a collapsed group still shows that something failed. */
-  readonly attention: "none" | "open" | "person" | "interrupted" | "failed";
+  readonly attention: Attention;
+  /**
+   * What happened beneath this row, as counts, so a collapsed parent can say "2 rejections" without
+   * wearing a failure it did not have. Absent keys are zero.
+   */
+  readonly counts?: { readonly failed?: number; readonly rejected?: number; readonly interrupted?: number; readonly unknown?: number; readonly waitingPerson?: number; readonly open?: number };
   /** Something that applies to this row but is not recorded ("tool calls are not observable one by one"). */
   readonly note: string | null;
 }
+
+/**
+ * A track's own condition, never inherited as a verdict: a parent whose child failed is NOT "failed"
+ * (see `TrackNode.counts`). "unknown": an outcome that applies but no record holds.
+ */
+export type Attention = "none" | "open" | "person" | "interrupted" | "unknown" | "failed";
 
 export interface TrackTree {
   readonly grouping: Grouping;
@@ -356,11 +374,15 @@ export function outcomeKnownAt(span: TimelineSpan, liveAt: number): boolean {
 }
 
 /** The condition a span contributes to its track's `attention`. */
-export function attentionOf(span: TimelineSpan, liveAt: number): TrackNode["attention"] {
+/** The span kinds `TimelineData.structure()` returns. */
+export const STRUCTURAL_KINDS: readonly SpanKind[] = ["wave", "slice-wait", "slice-eligible", "capacity-wait", "cell", "round", "claim", "execution", "workflow", "person-wait", "gate-wait"];
+
+export function attentionOf(span: TimelineSpan, liveAt: number): Attention {
   if (span.end === null) return span.kind === "person-wait" || span.kind === "gate-wait" ? "person" : "open";
   if (span.end.at !== null && span.end.at > liveAt) return "open";
   if (span.end.reason === "failed" || span.end.reason === "refused") return "failed";
-  if (span.end.reason === "interrupted" || span.end.reason === "superseded" || span.end.reason === "unknown") return "interrupted";
+  if (span.end.reason === "unknown") return "unknown";
+  if (span.end.reason === "interrupted" || span.end.reason === "superseded") return "interrupted";
   return "none";
 }
 

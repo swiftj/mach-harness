@@ -121,8 +121,10 @@ export function completenessWords(c: Completeness): { state: "partial" | "recons
 export { GAP_CLASS_WORDS } from "../../sim";
 
 /** A visit's or a gate's elapsed-time words (D4, D14): at work, waiting for a person, or bounded. */
-export function elapsedWords(status: VisitStatus["state"] | "work" | "wait" | "interrupted", started: boolean, finished: boolean, duration: string): string {
+export function elapsedWords(status: VisitStatus["state"] | "work" | "wait" | "interrupted" | "open", started: boolean, finished: boolean, duration: string): string {
   if (!started) return "not started";
+  // An open wave, slice, cell or round (X2): open, never at work.
+  if (status === "open") return finished ? `open ${duration}, then closed` : `open ${duration}`;
   if (status === "ended-unrecorded") return `ended without an exit record, within ${duration}`;
   // Entry to exit of a visit that stopped and was taken up again: a span, never time spent working.
   if (status === "interrupted") return finished ? `open for ${duration}, not continuous` : `open for ${duration}`;

@@ -23,12 +23,15 @@ import { cn, StateMark, type MarkState } from "@mach/ui";
 import { AuthorityBadge, NotRecorded } from "../../shell/inspector/parts";
 import { getTimeBase, spokenTime, timecode } from "../../shell/vocab";
 import { attentionOf, outcomeKnownAt, type SpanEnd, type TimelineSpan, type TimelineTableProps } from "../contract";
-import { describeSpan, durationWords } from "../render";
-import { attentionWords, countWords, heldEnd, momentWords, summaryWords, windowSummary, type Attention, type TrackSummary } from "./describe";
+import { countsWords, describeSpan, durationWords, nodeState, shownCounts } from "../render";
+import { useAsOf } from "../controls";
+import { attentionWords, countWords, heldEnd, momentWords, openContext, summaryWords, windowSummary, type Attention, type TrackSummary } from "./describe";
 import { useSceneStore } from "../../scene";
 import { buildGridRows, gridKey, indexWindow, scrollToShow, STACK_BELOW, STACKED, visibleRange, WIDE, type GridGeometry, type GridRow } from "./model";
 
-const COLUMNS = "minmax(240px,1.6fr) minmax(220px,2fr) 96px 96px minmax(150px,1.1fr) 104px 132px";
+/** The Track column's width (resizable by its header's separator), then the rest. */
+const columns = (track: number): string => `${track}px minmax(220px,2fr) 96px 96px minmax(150px,1.1fr) 104px 132px`;
+const TRACK_COL = { min: 200, max: 520, initial: 300 } as const;
 /** Stacked (narrow): the track, then what, then the times, duration, outcome and authority on one line. */
 const STACKED_GRID = {
   gridTemplateColumns: "auto auto minmax(0,1fr) auto auto",
@@ -49,10 +52,10 @@ const AREA_PREFIX: Partial<Record<Area, string>> = { start: "from", end: "to" };
 const COLCOUNT = 7;
 const INDENT = 14;
 
-const MARK: Readonly<Record<Attention, MarkState | null>> = { none: null, open: "active", person: "human", interrupted: "interrupted", failed: "failed" };
+const MARK: Readonly<Record<Attention, MarkState | null>> = { none: null, open: "active", person: "human", unknown: "unknown", interrupted: "interrupted", failed: "failed" };
 
-function Mark({ attention }: { attention: Attention }) {
-  const state = MARK[attention];
+function Mark({ attention, state: given }: { attention?: Attention; state?: MarkState | null }) {
+  const state = given !== undefined ? given : attention ? MARK[attention] : null;
   return (
     <svg aria-hidden="true" width="12" height="12" viewBox="-6 -6 12 12" className="shrink-0 overflow-visible">
       {state ? <StateMark state={state} r={5} surface="var(--mach-surface)" /> : null}
@@ -127,10 +130,31 @@ interface RowProps {
   /** The store's selection is this row (aria-selected). */
   readonly selected: boolean;
   readonly geometry: GridGeometry;
+  readonly tree: TimelineTableProps["tree"];
+  readonly trackCol: number;
   onActivate(index: number, row: GridRow): void;
 }
 
-const Row = memo(function Row({ row, index, active, liveAt, summary, selected, geometry, onActivate }: RowProps) {
+/**
+ * A track's label as the label column sets it: its first part (the id) never cut while the " · "
+ * details after it can be cut instead.
+ */
+function TrackLabel({ label, strong }: { label: string; strong: boolean }) {
+  const cut = label.indexOf(" · ");
+  const id = cut < 0 ? label : label.slice(0, cut);
+  // Non-breaking around the separator: a flex item drops its leading space.
+  const rest = cut < 0 ? "" : `\u00a0·\u00a0${label.slice(cut + 3)}`;
+  return (
+    <span className={cn("flex min-w-0 shrink items-baseline", strong && "font-semibold")} title={label}>
+      <span className="min-w-0 shrink-0 truncate" style={{ maxWidth: "100%" }}>
+        {id}
+      </span>
+      {rest ? <span className="min-w-0 truncate">{rest}</span> : null}
+    </span>
+  );
+}
+
+const Row = memo(function Row({ row, index, active, liveAt, summary, selected, geometry, tree, trackCol, onActivate }: RowProps) {
   const stacked = geometry.header === 0;
   const pad = (stacked ? 4 : 8) + (row.level - 1) * INDENT;
   const common = {
@@ -146,7 +170,7 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, selected, g
     style: {
       top: index * geometry.row,
       height: geometry.row,
-      ...(stacked ? { ...(row.type === "span" ? STACKED_SPAN : STACKED_GRID), paddingLeft: pad + (row.type === "track" ? 4 : 22), paddingRight: 8 } : { gridTemplateColumns: COLUMNS }),
+      ...(stacked ? { ...(row.type === "span" ? STACKED_SPAN : STACKED_GRID), paddingLeft: pad + (row.type === "track" ? 4 : 22), paddingRight: 8 } : { gridTemplateColumns: columns(trackCol) }),
       // The selection: a bar in the selection ink at the row's start.
       boxShadow: selected ? "inset 3px 0 0 var(--mach-factory-select)" : undefined,
     },
@@ -173,7 +197,10 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, selected, g
     const word = attentionWords(attention);
     const open = heldEnd(span, liveAt) === null;
     const outcome = outcomeText(span, liveAt);
-    const sentence = describeSpan(span, liveAt);
+    // An open wave, slice, cell or round is "open", with when anything beneath it last ended.
+    const context = openContext(tree, span, liveAt);
+    const sentence = describeSpan(span, liveAt, context);
+    const dur = durationWords(span, liveAt, context);
     return (
       <div {...common}>
         <Cell area="track">
@@ -194,8 +221,8 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, selected, g
           <EndCell end={span.end} which="end" liveAt={liveAt} open={open} />
         </Cell>
         <Cell area="dur">
-          <span className="truncate" title={durationWords(span, liveAt)}>
-            {durationWords(span, liveAt)}
+          <span className="truncate" title={dur}>
+            {dur}
           </span>
         </Cell>
         <Cell area="outcome">{outcome ? <span className="truncate">{outcome}</span> : null}</Cell>
@@ -208,17 +235,21 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, selected, g
 
   const node = row.node;
   const s = summary;
-  const word = attentionWords(node.attention);
+  // The row's own state, never a child's verdict; what happened beneath it as counts (as the label column).
+  const own = nodeState(node, liveAt);
+  const counted = countsWords(shownCounts(node));
+  const word = own.words ? own.words[0]!.toUpperCase() + own.words.slice(1) : "";
   const what = s ? summaryWords(node, s) : node.label;
   return (
     <div {...common} aria-expanded={row.expandable ? row.expanded : undefined}>
       <Cell area="track">
         <span className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: stacked ? 0 : pad }}>
           {row.expandable ? <ChevronRight aria-hidden="true" className={cn("size-3.5 shrink-0 text-ink-subtle", row.expanded && "rotate-90")} /> : <span aria-hidden="true" className="w-3.5 shrink-0" />}
-          <Mark attention={node.attention} />
-          <span className={cn("min-w-0 truncate", row.level <= 2 && "font-semibold")}>{node.label}</span>
-          {node.note ?? node.detail ? <span className={cn("min-w-0 shrink-[4] truncate text-caption text-ink-subtle", node.note && "italic")}>{node.note ?? node.detail}</span> : null}
+          <Mark state={own.state} />
+          <TrackLabel label={node.label} strong={row.level <= 2} />
+          {counted.length ? <span className="shrink-0 text-caption font-medium" style={{ color: node.counts?.failed || node.counts?.rejected ? "var(--mach-factory-fail)" : "var(--mach-factory-halt)" }}>{counted.join(", ")}</span> : null}
           {word ? <span className="shrink-0 text-caption text-ink-muted">· {word}</span> : null}
+          {node.note ?? node.detail ? <span className={cn("min-w-0 shrink-[4] truncate text-caption text-ink-subtle", node.note && "italic")}>{node.note ?? node.detail}</span> : null}
         </span>
       </Cell>
       <Cell area="what">
@@ -234,6 +265,57 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, selected, g
     </div>
   );
 });
+
+/**
+ * The Track column's resizer: a 24 px pointer handle on the header's edge. Not a tab stop: the grid is
+ * one tab stop (the audit holds it), and nothing is lost without it (every cell's full text is in its
+ * title and read in full by a screen reader; narrow, the columns stack).
+ */
+function ColumnResizer({ width, onWidth }: { width: number; onWidth(w: number): void }) {
+  const drag = useRef<{ x: number; w: number } | null>(null);
+  const clamp = (w: number) => Math.round(Math.max(TRACK_COL.min, Math.min(TRACK_COL.max, w)));
+  return (
+    <div
+      aria-hidden="true"
+      title="Drag to resize the Track column"
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        drag.current = { x: e.clientX, w: width };
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (d) onWidth(clamp(d.w + e.clientX - d.x));
+      }}
+      onPointerUp={() => (drag.current = null)}
+      onPointerCancel={() => (drag.current = null)}
+      onDoubleClick={() => onWidth(TRACK_COL.initial)}
+      className="group absolute inset-y-0 -right-3 z-[2] flex w-6 cursor-col-resize touch-none justify-center"
+    >
+      <span className="h-full w-px bg-line group-hover:w-1 group-hover:bg-line-strong" />
+    </div>
+  );
+}
+
+/** windowSummary for the tree and window, computed when idle; the live edge is read when it runs. */
+function useIdleSummary(tree: TimelineTableProps["tree"], win: TimelineTableProps["viewport"]["window"], liveAt: number): string {
+  const live = useRef(liveAt);
+  useLayoutEffect(() => {
+    live.current = liveAt;
+  });
+  const [text, setText] = useState(() => windowSummary(tree, win, liveAt));
+  useEffect(() => {
+    const run = () => setText(windowSummary(tree, win, live.current));
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (h: number) => void };
+    if (w.requestIdleCallback && w.cancelIdleCallback) {
+      const h = w.requestIdleCallback(run, { timeout: 500 });
+      return () => w.cancelIdleCallback!(h);
+    }
+    const h = window.setTimeout(run, 50);
+    return () => window.clearTimeout(h);
+  }, [tree, win.from, win.to]); // eslint-disable-line react-hooks/exhaustive-deps
+  return text;
+}
 
 export const TimelineTable = memo(function TimelineTable({ tree, layout, viewport, onSelect, onToggle }: TimelineTableProps) {
   const { window: win, liveAt } = viewport;
@@ -254,7 +336,11 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
   // Per window: spans and summaries are computed lazily, once each.
   const index = useMemo(() => indexWindow(win, liveAt), [win.from, win.to, liveAt, tree]); // eslint-disable-line react-hooks/exhaustive-deps
   const model = useMemo(() => buildGridRows(layout, index, openLeaves), [layout, index, openLeaves]);
-  const caption = useMemo(() => windowSummary(tree, win, liveAt), [tree, win, liveAt]);
+  // A5: the window's summary walks every span; it is keyed on the tree and the window, not on each step
+  // of the live edge, and computed when the browser is idle (the live edge is read when it runs).
+  const caption = useIdleSummary(tree, win, liveAt);
+  const asOf = useAsOf();
+  const [trackCol, setTrackCol] = useState<number>(TRACK_COL.initial);
 
   const count = model.rows.length;
   const found = active.key === null ? undefined : model.indexOf.get(active.key);
@@ -381,6 +467,7 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {asOf.caption ? <p className="shrink-0 border-b border-line bg-surface-sunken px-3 py-1 text-caption text-ink-muted">{asOf.caption}</p> : null}
       <p id={summaryId} className="shrink-0 border-b border-line px-3 py-1.5 text-caption text-ink-muted">
         {caption}
       </p>
@@ -401,10 +488,11 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
         >
           <div className={narrow ? undefined : "min-w-[1080px]"}>
             <div role="rowgroup" className={narrow ? "sr-only" : "sticky top-0 z-[1] border-b border-line-strong bg-surface"}>
-              <div role="row" aria-rowindex={1} className="grid text-label text-ink-muted" style={{ gridTemplateColumns: COLUMNS, height: WIDE.header }}>
-                {["Track", "What", wall ? "Started (UTC)" : "Started", wall ? "Ended (UTC)" : "Ended", "Duration, and how it is known", "Outcome", "Authority"].map((h) => (
-                  <div key={h} role="columnheader" className="flex items-center px-2 text-[12px] font-semibold">
+              <div role="row" aria-rowindex={1} className="grid text-label text-ink-muted" style={{ gridTemplateColumns: columns(trackCol), height: WIDE.header }}>
+                {["Track", "What", wall ? "Started (UTC)" : "Started", wall ? "Ended (UTC)" : "Ended", "Duration, and how it is known", "Outcome", "Authority"].map((h, i) => (
+                  <div key={h} role="columnheader" className="relative flex items-center px-2 text-[12px] font-semibold">
                     {h}
+                    {i === 0 && !narrow ? <ColumnResizer width={trackCol} onWidth={setTrackCol} /> : null}
                   </div>
                 ))}
               </div>
@@ -423,6 +511,8 @@ export const TimelineTable = memo(function TimelineTable({ tree, layout, viewpor
                       summary={row.type === "track" ? index.summaryOf(row.node) : null}
                       selected={i === selectedIndex}
                       geometry={geometry}
+                      tree={tree}
+                      trackCol={trackCol}
                       onActivate={onActivate}
                     />
                   );

@@ -9,12 +9,47 @@
  * - an interrupted or superseded span never "took" anything;
  * - "not recorded" is never a span: it is the label column's word, not this module's.
  */
-import { duration as durationOf } from "../../shell/time";
+import type { MarkState } from "@mach/ui";
+import { duration as durationOf, timecode } from "../../shell/time";
 import { elapsedWords } from "../../shell/inspector/words";
 import { outcomeKnownAt, type FlatRow, type SpanAuthority, type SpanKind, type SpanPrecision, type TimelineSpan, type TrackNode } from "../contract";
 
 /** Kinds whose open state is a wait, not work: "waiting for", never "running for". */
 export const WAIT_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["slice-wait", "slice-eligible", "capacity-wait", "gate-wait", "person-wait", "agent-queue"]);
+
+/** Kinds that are work while open (the contract's open rule); a human-approval visit is a wait. */
+const WORK_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["execution", "workflow", "agent", "tool", "task", "visit"]);
+
+/** How an open span is said: "running" (work), "waiting" (a wait, a visit to human approval) or "open" (a wave, slice, cell, round, claim, seat). */
+export function openWord(span: TimelineSpan): "running" | "waiting" | "open" {
+  if (WAIT_KINDS.has(span.kind)) return "waiting";
+  if (span.kind === "visit" && span.ids.station === "human-approval") return "waiting";
+  return WORK_KINDS.has(span.kind) ? "running" : "open";
+}
+
+/**
+ * What the tree knows around an open container (a wave, slice, cell or round): when anything beneath it
+ * last ended, and since when a person has been waited on. Both null when not known.
+ */
+export interface OpenContext {
+  readonly lastActivity: number | null;
+  readonly personSince: number | null;
+}
+
+/** A moment in words: UTC HH:MM:SS for wall time, the scenario's elapsed time otherwise. */
+export function clockWords(t: number): string {
+  if (t > 86_400_000) return new Date(t).toISOString().slice(11, 19);
+  return timecode(t, false);
+}
+
+/** "; last activity 06:42:56; waiting for a person since 06:40:12", or "" when nothing is known. */
+export function contextWords(ctx: OpenContext | null | undefined): string {
+  if (!ctx) return "";
+  const parts: string[] = [];
+  if (ctx.lastActivity !== null) parts.push(`last activity ${clockWords(ctx.lastActivity)}`);
+  if (ctx.personSince !== null) parts.push(`waiting for a person since ${clockWords(ctx.personSince)}`);
+  return parts.length ? `; ${parts.join("; ")}` : "";
+}
 
 /** A duration in words, down to milliseconds: "340 ms", "48 s", "4 min 12 s", "1 h 3 min". */
 export function durationText(ms: number): string {
@@ -64,8 +99,16 @@ export function endedBy(span: TimelineSpan, liveAt: number): boolean {
   return at !== null && at <= liveAt;
 }
 
-/** The duration in the words of design section 5. */
-export function durationWords(span: TimelineSpan, liveAt: number): string {
+/** Whether the outcome is not known: closed by a bound with no outcome (the recovery's unknown state, a visit closed by cleanup). */
+export function outcomeUnknown(span: TimelineSpan, liveAt: number): boolean {
+  return span.end !== null && span.end.reason === "unknown" && endedBy(span, liveAt);
+}
+
+/**
+ * The duration in the words of design section 5. `context` (from the tree, for an open wave, slice,
+ * cell or round) adds when anything beneath it last ended.
+ */
+export function durationWords(span: TimelineSpan, liveAt: number, context?: OpenContext | null): string {
   const wait = WAIT_KINDS.has(span.kind);
   const s = span.start;
   const e = span.end;
@@ -81,7 +124,10 @@ export function durationWords(span: TimelineSpan, liveAt: number): string {
   if (e === null || !endedBy(span, liveAt)) {
     if (endUnknown) return "end not known";
     if (t0 === null) return "start not known";
-    return `${wait ? "waiting" : "running"} for ${durationText(liveAt - t0)}`;
+    const word = openWord(span);
+    const d = durationText(liveAt - t0);
+    // Only work is "running"; an open container is open, and says what the tree knows of its activity.
+    return word === "open" ? `open ${d}${contextWords(context)}` : `${word} for ${d}`;
   }
   if (endUnknown) return "end not known";
 
@@ -91,6 +137,12 @@ export function durationWords(span: TimelineSpan, liveAt: number): string {
   const max = span.duration.maxMs ?? (e.notAfter !== null && t0 !== null ? e.notAfter - (s?.notBefore ?? t0) : ms);
   const inferredRule = e.basis === "inferred" ? e.rule : s?.basis === "inferred" ? s.rule : null;
 
+  if (e.reason === "unknown" && span.kind !== "visit") {
+    // Closed at a bound with no outcome (the supervisor's recovery found its state unknown): never "took".
+    const endAt = e.notAfter ?? e.at;
+    const bound = span.duration.maxMs ?? span.duration.ms ?? (endAt !== null && t0 !== null ? endAt - t0 : null);
+    return bound === null ? "outcome not known; when it ended is not known" : `outcome not known; ended within ${durationText(bound)}`;
+  }
   if (endedWithoutExit(span)) {
     // The words of the inspector (src/shell/inspector/words.ts elapsedWords, "ended-unrecorded").
     const endAt = e.notAfter ?? e.at;
@@ -103,7 +155,9 @@ export function durationWords(span: TimelineSpan, liveAt: number): string {
     return `${word} after ${basis === "measured" ? "" : "about "}${durationText(ms)}`;
   }
   if (span.attrs.interruptedAt !== undefined && ms !== null) {
-    return `ran ${basis === "measured" ? "" : "about "}${durationText(ms)}, interrupted once and taken up again`;
+    // `interruptedAt` says only that the exit was stamped after the execution ended (or after the station
+    // was entered again): never that the work was taken up. Entry to exit is a span, not time worked.
+    return `exit recorded ${basis === "measured" ? "" : "about "}${durationText(ms)} after entry, after its execution ended (at ${clockWords(span.attrs.interruptedAt)})`;
   }
 
   switch (basis) {
@@ -170,7 +224,7 @@ export function spanSubject(span: TimelineSpan): string {
       return a.model ? `${who} (${cap(a.model)})` : who;
     }
     case "execution":
-      return a.attempt ? `Execution, attempt ${a.attempt}` : "Execution";
+      return a.attempt ? `Execution, supervisor attempt ${a.attempt}` : "Execution";
     case "tool":
       return a.label ? `Tool call ${a.label}` : "Tool call";
     case "task":
@@ -179,6 +233,9 @@ export function spanSubject(span: TimelineSpan): string {
       return a.label && span.kind !== "slice-wait" && span.kind !== "capacity-wait" ? `${KIND_WORDS[span.kind]}: ${a.label}` : KIND_WORDS[span.kind];
   }
 }
+
+/** What an attempt is, said once in the hover card of an execution. */
+export const ATTEMPT_WORDS = "An attempt is the supervisor's own count of its tries to run this ticket; the run is this execution's order among the cell's executions.";
 
 /** An outcome string in words: "changes-requested" reads "changes requested". */
 export function outcomeWords(outcome: string): string {
@@ -218,17 +275,17 @@ function outcomePhrase(span: TimelineSpan, liveAt: number): string {
   return outcomeWords(o);
 }
 
-/** The one sentence for tooltips and screen readers. */
-export function describeSpan(span: TimelineSpan, liveAt: number): string {
+/** The one sentence for tooltips and screen readers. `context`: as for durationWords. */
+export function describeSpan(span: TimelineSpan, liveAt: number, context?: OpenContext | null): string {
   const subject = spanSubject(span);
   const ticket = ticketOf(span);
   const whose = ticket && !subject.includes(ticket) ? ` for ${ticket}` : "";
-  const parts = [durationWords(span, liveAt)];
+  const parts = [durationWords(span, liveAt, context)];
   if (span.kind === "agent" && span.attrs.toolsCountOnly && span.attrs.toolCalls !== undefined) {
     parts.push(`${span.attrs.toolCalls} tool call${span.attrs.toolCalls === 1 ? "" : "s"}, not observable one by one`);
   }
   if (outcomeKnownAt(span, liveAt) && span.outcome && !isInterrupted(span)) parts.push(outcomePhrase(span, liveAt));
-  else if (OUTCOME_KINDS.has(span.kind) && endedBy(span, liveAt) && !isInterrupted(span) && span.outcome === null) parts.push("no outcome recorded yet");
+  else if (OUTCOME_KINDS.has(span.kind) && endedBy(span, liveAt) && !isInterrupted(span) && span.outcome === null && !outcomeUnknown(span, liveAt)) parts.push("no outcome recorded yet");
   return `${subject}${whose}: ${parts.join(", ")}.`;
 }
 
@@ -258,24 +315,112 @@ export function precisionLine(span: TimelineSpan, liveAt: number): string {
   else if (!e || !endedBy(span, liveAt)) endWords = e && e.at === null && e.notBefore === null ? "end not known" : "not ended by the live edge";
   else if (e.basis === "inferred") endWords = `end placed by rule: ${ruleWords(e.rule)}`;
   else endWords = `end ${PRECISION_WORDS[e.precision]}`;
+  // The simulation's times are all simulated: said once, not once per end.
+  if (s?.precision === "simulated" && (!e || e.precision === "simulated") && s.basis !== "inferred" && e?.basis !== "inferred") return "Simulated times.";
   return `${cap(startWords)}; ${endWords}.`;
 }
 
-const ATTENTION_WORDS: Readonly<Record<TrackNode["attention"], string | null>> = {
-  none: null,
-  open: "work in progress",
-  person: "waiting for a person",
-  interrupted: "something was interrupted",
-  failed: "something failed",
-};
+// ---------------------------------------------------------------- a row's own state and its counts
 
-/** A row in words, for the cursor's card and the live region: its label, then count, attention and state. */
-export function rowWords(row: FlatRow): { title: string; detail: string } {
+/** Track kinds that hold one long-lived container (open is "open", never "running"). */
+const CONTAINER_TRACKS: ReadonlySet<TrackNode["kind"]> = new Set<TrackNode["kind"]>(["wave", "slice", "cell", "rounds", "review", "factory"]);
+
+/**
+ * A row's OWN state, for its mark and its words: never a child's verdict (a cell whose round was
+ * rejected is not failed; it says "2 rejections" beside its own state). Merged is the cell's outcome;
+ * an open container is "open", "open, work running" or "open, waiting for a person" from its counts.
+ */
+export function nodeState(node: TrackNode, liveAt: number): { readonly state: MarkState | null; readonly words: string } {
+  const c = node.counts ?? {};
+  switch (node.attention) {
+    case "failed":
+      return { state: "failed", words: "failed" };
+    case "unknown":
+      return { state: "unknown", words: "outcome not known" };
+    case "interrupted":
+      return { state: "interrupted", words: "interrupted" };
+    case "person":
+      return { state: "human", words: "waiting for a person" };
+    case "open": {
+      if (node.kind === "station" && node.id.endsWith("/human-approval")) return { state: "human", words: "waiting for a person" };
+      if (node.kind === "waits") return { state: "waiting", words: "waiting" };
+      if (CONTAINER_TRACKS.has(node.kind)) {
+        if (c.waitingPerson) return { state: "human", words: "open, waiting for a person" };
+        if (c.open) return { state: "active", words: "open, work running" };
+        return { state: "idle", words: "open" };
+      }
+      return { state: "active", words: "running" };
+    }
+    default: {
+      const own = node.lanes[0]?.spans;
+      if (node.kind === "cell" && own?.some((s) => outcomeKnownAt(s, liveAt) && /merged/i.test(s.outcome ?? ""))) return { state: "succeeded", words: "merged" };
+      return { state: null, words: "" };
+    }
+  }
+}
+
+/** What happened beneath a row, worst first: "2 rejections", "1 failed", "1 interrupted", "1 outcome not known". */
+export function countsWords(counts: TrackNode["counts"]): string[] {
+  if (!counts) return [];
+  const out: string[] = [];
+  const n = (k: number, one: string, many: string) => `${k.toLocaleString("en-GB")} ${k === 1 ? one : many}`;
+  if (counts.rejected) out.push(n(counts.rejected, "rejection", "rejections"));
+  if (counts.failed) out.push(n(counts.failed, "failed", "failed"));
+  if (counts.interrupted) out.push(n(counts.interrupted, "interrupted", "interrupted"));
+  if (counts.unknown) out.push(n(counts.unknown, "outcome not known", "outcomes not known"));
+  return out;
+}
+
+/** The ink the counts are set in: the worst counted condition's. */
+export function countsTone(counts: TrackNode["counts"]): "fail" | "halt" | "muted" | null {
+  if (!counts) return null;
+  if (counts.rejected || counts.failed) return "fail";
+  if (counts.interrupted) return "halt";
+  if (counts.unknown) return "muted";
+  return null;
+}
+
+/**
+ * The counts a row says beside its own mark: what happened beneath it, less the row's own condition (an
+ * execution that itself failed wears the fail mark; it does not also say "1 failed").
+ */
+export function shownCounts(node: TrackNode): TrackNode["counts"] {
+  const c = node.counts;
+  if (!c) return undefined;
+  const key = node.attention === "failed" ? (c.failed ? "failed" : "rejected") : node.attention === "interrupted" ? "interrupted" : node.attention === "unknown" ? "unknown" : null;
+  if (!key || !c[key]) return c;
+  return { ...c, [key]: (c[key] ?? 0) - 1 };
+}
+
+/** Whether a row shows its counts: a group, or a row of several spans (a single span's mark says it). */
+export function showsCounts(node: TrackNode): boolean {
+  return countsWords(shownCounts(node)).length > 0 && (node.children.length > 0 || node.spanCount > 1);
+}
+
+/**
+ * The most of a label that fits `room`, dropping its trailing " · " parts first (they are details:
+ * "LOCAL-001 · run 2 of 3 · 05:37" becomes "LOCAL-001 · run 2 of 3", then "LOCAL-001"), so an id is
+ * never cut in the middle while a detail can go instead. Only the first part is ever truncated.
+ * `dropped` holds what was taken off, for the title. Pure given `width`.
+ */
+export function fitLabel(label: string, room: number, width: (text: string) => number): { readonly text: string; readonly dropped: string; readonly truncated: boolean } {
+  const parts = label.split(" · ");
+  for (let n = parts.length; n >= 1; n--) {
+    const text = parts.slice(0, n).join(" · ");
+    if (width(text) <= room) return { text, dropped: parts.slice(n).join(" · "), truncated: false };
+  }
+  return { text: parts[0] as string, dropped: parts.slice(1).join(" · "), truncated: true };
+}
+
+/** A row in words, for the cursor's card and the live region: its label, then its own state, counts and spans. */
+export function rowWords(row: FlatRow, liveAt = Number.POSITIVE_INFINITY): { title: string; detail: string } {
   const n = row.node;
   const title = n.detail ? `${n.label}, ${n.detail}` : n.label;
-  const parts = [`${n.spanCount.toLocaleString("en-GB")} span${n.spanCount === 1 ? "" : "s"} in this track and below`];
-  const attention = ATTENTION_WORDS[n.attention];
-  if (attention) parts.push(attention);
+  const parts: string[] = [];
+  const own = nodeState(n, liveAt).words;
+  if (own) parts.push(own);
+  parts.push(...countsWords(shownCounts(n)));
+  parts.push(`${n.spanCount.toLocaleString("en-GB")} span${n.spanCount === 1 ? "" : "s"} in this track and below`);
   if (row.hasChildren) parts.push(row.expanded ? "expanded" : "collapsed");
   if (row.lane > 0) parts.push(`lane ${row.lane + 1}`);
   const detail = parts.join(", ");

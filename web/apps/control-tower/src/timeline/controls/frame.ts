@@ -19,6 +19,7 @@ import {
   type TrackNode,
   type TrackTree,
 } from "../contract";
+import { clockAt, getTimeBase } from "../../shell/time";
 
 // ---------------------------------------------------------------- windows: chosen, all, and the default
 
@@ -519,4 +520,155 @@ export function switchLens(
   const preset = applyLens(lens, tree, start, drawn);
   const applied = { filters: preset.filters ?? start.filters, grouping: preset.grouping ?? start.grouping };
   return { patch: { ...left, ...preset }, memo: { base: { filters: start.filters, grouping: start.grouping }, applied } };
+}
+
+// ---------------------------------------------------------------- as of the live edge (T6)
+
+/** What "as of" the tracks, the table and the lenses speak, beside the playhead the inspector follows. */
+export interface AsOf {
+  /** True when the playhead is behind the live edge: the tracks show more than the inspector does. */
+  readonly behind: boolean;
+  readonly playhead: number;
+  readonly liveAt: number;
+}
+
+/** Below this the playhead is "at" the live edge (a frame's worth of rounding). */
+const AS_OF_SLACK_MS = 1000;
+
+/**
+ * The tracks, table and lenses show what is held up to the live edge; the inspector speaks as of the
+ * playhead. They differ when the playhead is not following and lies behind the edge (scrubbed back,
+ * a jump, a seek, a replay paused before its end).
+ */
+export function asOfPlayhead(s: { readonly following: boolean; readonly playhead: number; readonly liveAt: number }): AsOf {
+  return { behind: !s.following && s.playhead < s.liveAt - AS_OF_SLACK_MS, playhead: s.playhead, liveAt: s.liveAt };
+}
+
+/** The time in the caption: the source's clock (simulated time for the simulation, UTC for real history). */
+export function asOfClock(t: number): string {
+  return getTimeBase() === "wall" ? `${clockAt(t)} UTC` : clockAt(t);
+}
+
+/** The toolbar's quiet line while the playhead is behind: null at the live edge. */
+export function asOfCaption(a: AsOf): string | null {
+  return a.behind ? `Tracks show what is held up to the live edge; the playhead is at ${asOfClock(a.playhead)}` : null;
+}
+
+/** The table's and each lens's caption while the playhead is behind: null at the live edge. */
+export function asOfShort(a: AsOf): string | null {
+  return a.behind ? `As of the live edge; playhead at ${asOfClock(a.playhead)}` : null;
+}
+
+// ---------------------------------------------------------------- selecting and seeking (X3, X13)
+
+/** What clicking a span (or Enter on it) selects: the span's own entity when the store resolves it, else the nearest ref with the span kept as the detail. */
+export interface SpanSelection {
+  readonly ref: string | null;
+  /** The span's entity when it is not the ref itself (the inspector's subject within the ref). */
+  readonly detail: string | null;
+}
+
+export function selectionForSpan(span: TimelineSpan, lookup: ReadonlyMap<string, TimelineSpan>, known: (ref: string) => boolean): SpanSelection {
+  if (REF.test(span.entity) && known(span.entity)) return { ref: span.entity, detail: null };
+  const ref = refForSpan(span, lookup, known);
+  return { ref, detail: ref && ref !== span.entity ? span.entity : null };
+}
+
+/** The last span or mark selected from the tracks or the table (its hit key), and the store selection that made. */
+export interface Activated {
+  readonly key: string;
+  readonly selection: string | null;
+}
+
+/**
+ * X13: what selecting a span or mark does. Selecting never moves the playhead; a second select of the
+ * same span or mark (Enter twice, a double-click's second click) while it is still the selection is
+ * "go to": the playhead seeks there.
+ */
+export function activation(last: Activated | null, key: string, selection: string | null): "select" | "seek" {
+  return last !== null && key !== "" && last.key === key && last.selection === selection ? "seek" : "select";
+}
+
+/**
+ * The live edge in steps (about 1/1000 of what is held, at least 250 ms): the workspace re-renders a
+ * few times a second at most. Rounded DOWN (T11): an open span is never drawn past what is held.
+ */
+export function quantizedLiveAt(s: { readonly extent: { readonly start: number; readonly end: number }; readonly liveAt: number }): number {
+  const step = Math.max(250, Math.round((Math.max(s.extent.end, s.liveAt) - s.extent.start) / 1000));
+  return Math.floor(s.liveAt / step) * step;
+}
+
+/** Where "go to" a span or mark seeks: its recorded event when the history holds it, else its time. */
+export function seekTargetOf(hit: { readonly span?: TimelineSpan | null; readonly mark?: TimelineMark | null }): { eventId: string | null; at: number } | null {
+  if (hit.mark) return { eventId: hit.mark.eventId, at: hit.mark.at };
+  const s = hit.span;
+  if (!s?.start || s.start.at === null) return null;
+  return { eventId: s.start.eventId, at: s.start.at };
+}
+
+// ---------------------------------------------------------------- the simulation's default window (X9)
+
+/** While following, the default window ends this share of its length past the live edge. */
+export const LIVE_LEAD = 0.05;
+
+/**
+ * The simulation's default window: from its start to just past what is revealed (5% lead), never a
+ * large hatched future; the whole run once it is all revealed.
+ */
+export function leadWindow(whole: TimeWindow, liveAt: number): TimeWindow {
+  const shown = Math.max(MIN_WINDOW_MS, liveAt - whole.from);
+  const to = Math.min(whole.to, whole.from + shown * (1 + LIVE_LEAD));
+  return to >= whole.to ? whole : { from: whole.from, to };
+}
+
+// ---------------------------------------------------------------- the default expansion (X9)
+
+/** Track kinds opened by default, level by level, while the rows still fit: down to cells' station rows (product) or executions' parts (execution). */
+const OPENED_BY_DEFAULT: ReadonlySet<TrackNode["kind"]> = new Set<TrackNode["kind"]>(["wave", "slice", "cell", "executions", "execution"]);
+
+/**
+ * The expansion the tracks start with: `base` (the tracks' own defaults) plus, one tree level at a
+ * time, the waves, slices and cells (or executions) beneath, as long as every row then fits in
+ * `height`. `heightOf` measures the rows of an expansion (the layout's totalHeight).
+ */
+export function fittingExpansion(tree: TrackTree, base: readonly string[], height: number, heightOf: (expanded: ReadonlySet<string>) => number): string[] {
+  const open = new Set(base);
+  if (height <= 0) return [...open];
+  let level: TrackNode[] = [...tree.roots];
+  while (level.length) {
+    const add = level.filter((n) => OPENED_BY_DEFAULT.has(n.kind) && n.children.length > 0 && !open.has(n.id));
+    if (add.length) {
+      const next = new Set(open);
+      for (const n of add) next.add(n.id);
+      if (heightOf(next) > height) break;
+      for (const n of add) open.add(n.id);
+    }
+    level = level.filter((n) => open.has(n.id)).flatMap((n) => n.children);
+  }
+  return [...open];
+}
+
+// ---------------------------------------------------------------- the tree's spans (X4)
+
+/**
+ * The spans the tree is built from: the structural spans of the whole history plus the window's
+ * detailed spans (a window's copy of a span wins: it is as new or newer). Hierarchy and identity
+ * therefore do not depend on which window was loaded first.
+ */
+export function unionSpans(structural: readonly TimelineSpan[], windowed: readonly TimelineSpan[]): readonly TimelineSpan[] {
+  if (!structural.length) return windowed;
+  if (!windowed.length) return structural;
+  const ids = new Set(windowed.map((s) => s.id));
+  const out = windowed.slice();
+  for (const s of structural) if (!ids.has(s.id)) out.push(s);
+  return out;
+}
+
+// ---------------------------------------------------------------- the end of a jump (X18)
+
+/** Said when a jump finds nothing further: how many lie the other way, and the key that reaches them. */
+export function jumpEndWords(label: string, direction: 1 | -1, otherWay: number): string {
+  const none = `No ${direction > 0 ? "later" : "earlier"} ${label} in what is held`;
+  if (otherWay <= 0) return `${none}.`;
+  return `${none}; ${otherWay} ${direction > 0 ? "earlier" : "later"}: press ${direction > 0 ? "P" : "N"}.`;
 }

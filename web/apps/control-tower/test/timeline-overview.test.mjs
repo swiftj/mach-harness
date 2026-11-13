@@ -365,7 +365,7 @@ test("idle tail: the last record is found from density and marks, and only a rea
   assert.equal(m.idleTail({ at: liveAt - MIN, until: liveAt }, liveAt, EXT, 600), null);
   const clock = (t) => new Date(t).toISOString().slice(11, 16);
   assert.equal(m.lastRecordedWords({ at: T0, until: T0 }, clock), "last recorded 08:00");
-  assert.equal(m.lastRecordedWords(last, clock), "last recorded 09:12–09:13");
+  assert.equal(m.lastRecordedWords(last, clock), "last recorded between 09:12 and 09:13");
   // After the last span ends, the activity series draws nothing.
   assert.deepEqual(m.trimTrailingZero([{ x0: 0, x1: 10, value: 1 }, { x0: 10, x1: 20, value: 0 }, { x0: 20, x1: 30, value: 0 }]), [{ x0: 0, x1: 10, value: 1 }]);
 });
@@ -418,4 +418,79 @@ test("scale: 20,000 marks and a 30-hour series aggregate well inside a frame", (
     ms = Math.min(ms, performance.now() - start);
   }
   assert.ok(ms < 8, `${ms.toFixed(2)} ms`);
+});
+
+// ---------------------------------------------------------------- round 4: X10 (broken axis), X11, T9
+
+// An hour of activity, seven idle hours, then the live edge: the real run viewed later.
+const RUN = { from: T0, to: T0 + 8 * HOUR };
+const runDensity = { from: RUN.from, to: RUN.to, bucketMs: MIN, complete: true, buckets: Array.from({ length: 60 }, (_, i) => ({ from: T0 + i * MIN, count: 3 })) };
+
+test("X10: idle stretches over 20% of the extent are found; compression is on by default when one exceeds half", () => {
+  const gaps = m.idleGaps(runDensity, [], RUN);
+  assert.equal(gaps.length, 1);
+  assert.ok(gaps[0].from > T0 + 60 * MIN && gaps[0].from < T0 + 63 * MIN, "starts just after the last record");
+  assert.ok(gaps[0].to < RUN.to && gaps[0].to > RUN.to - 3 * MIN, "keeps a margin before the live edge");
+  assert.equal(m.compressByDefault(gaps, RUN), true);
+  // A gap of a quarter is compressible but not on by default.
+  const quarter = { ...runDensity, buckets: [...runDensity.buckets, { from: T0 + 3 * HOUR, count: 1 }, { from: T0 + 5 * HOUR, count: 1 }, { from: T0 + 8 * HOUR - MIN, count: 1 }] };
+  const g2 = m.idleGaps(quarter, [], RUN);
+  assert.ok(g2.length >= 1);
+  assert.equal(m.compressByDefault(g2, RUN), false);
+  assert.deepEqual(m.idleGaps(runDensity, [], RUN, 0.95), []);
+});
+
+test("X10: one piecewise scale: x and t invert, the break is BREAK_PX wide, activity gets the rest", () => {
+  const gaps = m.idleGaps(runDensity, [], RUN);
+  const axis = m.brokenAxis(RUN, gaps, 1000);
+  for (const t of [RUN.from, T0 + 30 * MIN, gaps[0].from, (gaps[0].from + gaps[0].to) / 2, gaps[0].to, RUN.to]) {
+    assert.ok(Math.abs(m.tOf(m.xOf(t, axis, 1000), axis, 1000) - t) < 2, `round trip at ${t}`);
+  }
+  assert.equal(Math.round(m.xOf(RUN.to, axis, 1000)), 1000);
+  assert.equal(Math.round(m.xOf(gaps[0].to, axis, 1000) - m.xOf(gaps[0].from, axis, 1000)), m.BREAK_PX);
+  assert.ok(m.xOf(T0 + 60 * MIN, axis, 1000) > 900, "the hour of activity takes most of the width");
+  // Monotone.
+  let prev = -1;
+  for (let t = RUN.from; t <= RUN.to; t += 7 * MIN) {
+    const x = m.xOf(t, axis, 1000);
+    assert.ok(x >= prev);
+    prev = x;
+  }
+});
+
+test("X10: ticks, landmarks, density and brush keys all map through the broken axis", () => {
+  const gaps = m.idleGaps(runDensity, [], RUN);
+  const axis = m.brokenAxis(RUN, gaps, 1000);
+  const { ticks } = m.chooseTicks(axis, 1000, true);
+  assert.ok(ticks.every((t) => !gaps.some((g) => t.t > g.from && t.t < g.to)), "no tick inside a break");
+  for (const t of ticks) assert.equal(t.x, m.xOf(t.t, axis, 1000));
+  const marks = [mark("f", "failure", T0 + 30 * MIN)];
+  assert.equal(m.aggregateMarks(marks, axis, 1000, RUN.to).points[0].x, Math.floor(m.xOf(T0 + 30 * MIN, axis, 1000)));
+  const cols = m.densityColumns(runDensity, axis, 1000);
+  assert.ok(cols.values[Math.floor(m.xOf(T0 + 30 * MIN, axis, 1000))] > 0);
+  // A key step is 1% of the axis on screen, not 1% of the time (which would leap the hour of activity).
+  const w = { from: T0 + 10 * MIN, to: T0 + 20 * MIN };
+  const step = m.windowFromU(m.keyStep("move", "ArrowRight", false, m.windowToU(w, axis), RUN), axis);
+  const dx = m.xOf(step.from, axis, 1000) - m.xOf(w.from, axis, 1000);
+  assert.ok(Math.abs(dx - 10) < 0.5, `moved ${dx} px`);
+  // Without breaks, axis units are time itself.
+  assert.equal(m.uOf(T0 + 5 * MIN, RUN), T0 + 5 * MIN);
+});
+
+test("X11: the last record is exact when known, 'between' its bucket edges when only a bucket is known", () => {
+  assert.deepEqual(m.lastFromRecorded({ from: T0, to: T0 + 42 * MIN + 56_000, lastIsBucket: false }, RUN.to), { at: T0 + 42 * MIN + 56_000, until: T0 + 42 * MIN + 56_000 });
+  const b = m.lastFromRecorded({ from: T0, to: T0 + 43 * MIN, lastIsBucket: true, lastBucket: { from: T0 + 42 * MIN, to: T0 + 43 * MIN } }, RUN.to);
+  assert.deepEqual(b, { at: T0 + 42 * MIN, until: T0 + 43 * MIN });
+  assert.equal(m.lastRecordedWords(b, (t) => new Date(t).toISOString().slice(11, 16)), "last recorded between 08:42 and 08:43");
+  assert.equal(m.lastFromRecorded({ from: T0, to: T0 + MIN }, RUN.to), null, "an older data layer: fall back");
+});
+
+test("T9: the inferred part of cells in a station is read per bucket and said in the column's words", () => {
+  const c = { from: RUN.from, to: RUN.to, bucketMs: MIN, complete: true, limits: [], buckets: [{ from: T0, active: { visit: { max: 3, mean: 2, inferredMax: 1 } } }] };
+  assert.equal(m.inferredPeak(c, "visit"), 1);
+  assert.equal(m.inferredPeak({ ...c, buckets: [{ from: T0, active: { visit: { max: 3, mean: 2 } } }] }, "visit"), null);
+  const recorded = m.concurrencySteps(c, "visit", RUN, 480, (b) => b.active.visit.max - m.inferredOf(b, "visit"));
+  assert.equal(recorded.steps[0].value, 2);
+  const col = m.describeColumn({ x: 0.2, extent: RUN, width: 480, liveAt: RUN.to, density: null, concurrency: c, points: [], bars: [], clock: String });
+  assert.match(col.lines.join(" "), /3 cells in a station, including 1 ended without an exit record/);
 });

@@ -19,7 +19,7 @@ import { outcomeKnownAt, type FlatRow, type SpanAuthority, type SpanKind, type T
 import { EMPTY_PLAN, laneIndex, LOD, planRow, runAlpha, spanTimes, subtreeColumns, type PlacedMark, type PlacedSpan, type RowPlan, type SubtreeColumns } from "./lod";
 import { toneInk, toneOf, type Palette, type Tone } from "./palette";
 import { scaleOf, xAt, type Scale } from "./scale";
-import { durationText, endedWithoutExit, personApproved } from "./words";
+import { countsTone, countsWords, durationText, shownCounts, endedWithoutExit, personApproved } from "./words";
 
 export type Family = "lifetime" | "bracket" | "bar" | "task" | "rail" | "claim" | "workflow" | "agent" | "tool" | "wait" | "person";
 
@@ -87,7 +87,12 @@ function measure(ctx: CanvasRenderingContext2D, font: string, text: string): num
   const key = `${font}|${text}`;
   const w = widths.get(key);
   if (w !== undefined) return w;
+  // Measured in the font asked for, whatever the context holds now (measuring a mono duration in the
+  // sans label's font under-measured it, and the label ran into it: "Verify5 min 39 s").
+  const before = ctx.font;
+  ctx.font = font;
   const m = ctx.measureText(text).width;
+  ctx.font = before;
   if (widths.size > 4000) widths.clear();
   widths.set(key, m);
   return m;
@@ -124,7 +129,8 @@ export function shortLabel(span: TimelineSpan): string {
     case "round":
       return a.round ? `Round ${a.round}` : "Round";
     case "execution":
-      return a.attempt ? `Attempt ${a.attempt}` : "Execution";
+      // The row says which run it is; the supervisor's attempt number is the detail and the hover's.
+      return "Execution";
     case "claim":
       return "Claim";
     case "workflow":
@@ -637,7 +643,11 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
   // Interrupted: the halt cut at the recorded stop and a dotted bridge to where work was taken up.
   const reason = e?.reason;
   const cutX = noExit ? X1 + 5 : X1;
-  if (!open && (noExit || reason === "interrupted" || reason === "superseded")) {
+  if (!open && reason === "unknown") {
+    // No outcome is known (recovery found the state unknown, or cleanup closed it): the ring-query at the
+    // bound, never the halt cut of a recorded stop.
+    ringQuery(ctx, cutX, cy, 4.2, p.fInkSoft, p.ground);
+  } else if (!open && (noExit || reason === "interrupted" || reason === "superseded")) {
     haltCut(ctx, cutX, cy, th, p);
     if (next && next.x0 > cutX + 4) {
       ctx.save();
@@ -879,8 +889,10 @@ function paintMark(c: Paint, m: TimelineMark, x: number, g: RowGeom): Box {
     case "gap":
       ringQuery(ctx, x, cy, 4.2, p.fInkSoft, p.ground);
       return [x - 5, cy - 5, x + 5, cy + 5];
-    case "retry": {
-      ctx.strokeStyle = p.fInk;
+    case "retry":
+    case "attempt": {
+      // A revise visit (retry) in the ink; a further execution attempt (T13) in the quieter ink.
+      ctx.strokeStyle = m.kind === "attempt" ? p.fInkSoft : p.fInk;
       ctx.lineWidth = 1.2;
       ctx.beginPath();
       ctx.arc(x, cy, 3.6, -Math.PI * 0.35, Math.PI * 1.45);
@@ -1056,14 +1068,22 @@ export function drawTracks(input: DrawInput): DrawOutput {
         ctx.fillRect(i * cols.bin, sy, cols.bin, 3);
       }
       ctx.globalAlpha = 1;
-      // Its attention mark: the first failure in view, so a closed group still says something failed there.
-      if (cols.firstFail !== null) {
-        const x = Math.round(xAt(scale, cols.firstFail));
-        if (x >= 0 && x <= W) {
-          ctx.fillStyle = p.fail;
-          ctx.fillRect(x - 1, g.y + 3, 2, g.h - 6);
-          diamond(ctx, x, g.y + 5, 3);
-          ctx.fill();
+      // What happened beneath, as counts in the attention ink at the first failure in view: never a
+      // failure mark on a group that did not itself fail.
+      const said = countsWords(shownCounts(node));
+      const tone = countsTone(shownCounts(node));
+      if (said.length && tone && g.labelTop) {
+        const x = cols.firstFail !== null ? Math.round(xAt(scale, cols.firstFail)) : 4;
+        const font = `500 10px ${p.sans}`;
+        ctx.font = font;
+        const text = fit(ctx, font, said.join(", "), Math.min(W, xLive) - Math.max(4, x) - 6);
+        if (text && x <= Math.min(W, xLive)) {
+          const tx = Math.max(4, x);
+          const tw = measure(ctx, font, text);
+          ctx.fillStyle = p.ground;
+          ctx.fillRect(tx - 3, g.labelY - 9, tw + 6, 12);
+          ctx.fillStyle = tone === "fail" ? p.fail : tone === "halt" ? p.halt : p.inkMuted;
+          ctx.fillText(text, tx, g.labelY);
         }
       }
     }
@@ -1143,29 +1163,42 @@ export function drawTracks(input: DrawInput): DrawOutput {
         ctx.fillRect(r.x0, ry, Math.max(1, r.x1 - r.x0), 3);
       }
       ctx.globalAlpha = 1;
+      // Linked, not nested: a thin 2 px strip below the row's own body, hatched at both ends, so it never
+      // reads as the row's own span. Where a visit outlives this execution (it went on under a later one),
+      // the part after the execution's end is dotted.
+      const ownEnd = node.kind === "execution" ? executionEnd(node, liveAt) : null;
       for (const item of rplan.items) {
         const tone = toneOf(item.span, item.times, liveAt);
         const ink = tone === "neutral" ? p.fInkSoft : toneInk(p, tone).ink;
         const x0 = Math.round(item.x0);
         const x1 = Math.max(x0 + 2, Math.round(item.x1));
+        const xEnd = ownEnd !== null ? Math.round(xAt(scale, ownEnd)) : null;
+        const cut = xEnd !== null && xEnd > x0 && xEnd < x1 - 2 ? xEnd : x1;
         ctx.fillStyle = ink;
-        if (item.times.open) {
+        ctx.globalAlpha = 0.6;
+        if (item.times.open && cut === x1) {
           const fade = Math.min(18, (x1 - x0) / 2);
-          ctx.globalAlpha = 0.7;
-          ctx.fillRect(x0, ry, x1 - x0 - fade, 3);
+          ctx.fillRect(x0, ry + 1, x1 - x0 - fade, 2);
           const step = fade / FADE_STEPS.length;
           FADE_STEPS.forEach((a, i) => {
-            ctx.globalAlpha = a * 0.7;
-            ctx.fillRect(x1 - fade + i * step, ry, step, 3);
+            ctx.globalAlpha = a * 0.6;
+            ctx.fillRect(x1 - fade + i * step, ry + 1, step, 2);
           });
-        } else {
-          ctx.globalAlpha = 0.7;
-          ctx.fillRect(x0, ry, x1 - x0, 3);
-          ctx.globalAlpha = 1;
-          // Linked, not nested: a 1 px gap at each end reads as a separate strip.
-          ctx.fillStyle = p.ground;
-          ctx.fillRect(x1 - 1, ry, 1, 3);
+        } else ctx.fillRect(x0, ry + 1, cut - x0, 2);
+        if (cut < x1) {
+          ctx.globalAlpha = 0.6;
+          for (let x = cut + 1; x < x1; x += 3) ctx.fillRect(x, ry + 1, 1, 2);
         }
+        ctx.globalAlpha = 0.9;
+        // Hatched ends: two short slashes at each end of the strip.
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (const x of x1 - x0 >= 8 ? [x0 + 1, x0 + 4, x1 - 4, x1 - 1] : [x0 + 1]) {
+          ctx.moveTo(x - 1.5, ry + 4);
+          ctx.lineTo(x + 1.5, ry - 1);
+        }
+        ctx.stroke();
         ctx.globalAlpha = 1;
         ribbonBoxes.push({ box: [x0, ry, x1, ry + 3], span: item.span });
         drawn++;
@@ -1199,8 +1232,11 @@ export function drawTracks(input: DrawInput): DrawOutput {
     ctx.fillRect(x - 1.5, yb - 1.5, 3, 3);
   }
 
-  // Selection: corner brackets, as everywhere in the Living Factory.
-  for (const b of selectedBoxes) brackets(ctx, Math.round(b[0]) - 3.5, Math.round(b[1]) - 2.5, Math.round(b[2]) + 3.5, Math.round(b[3]) + 2.5, p.select);
+  // Selection: a 2 px outline in the selection ink, and the corner brackets as everywhere in the Living Factory.
+  ctx.strokeStyle = p.select;
+  ctx.lineWidth = 2;
+  for (const b of selectedBoxes) ctx.strokeRect(Math.round(b[0]) - 1, Math.round(b[1]) - 1, Math.round(b[2] - b[0]) + 2, Math.round(b[3] - b[1]) + 2);
+  for (const b of selectedBoxes) brackets(ctx, Math.round(b[0]) - 4.5, Math.round(b[1]) - 3.5, Math.round(b[2]) + 4.5, Math.round(b[3]) + 3.5, p.select);
 
   ctx.restore();
 
@@ -1217,6 +1253,26 @@ export function drawTracks(input: DrawInput): DrawOutput {
   }
   ctx.globalAlpha = 1;
   return { plans, ribbons, summaries, chevrons, drawn, considered };
+}
+
+/** The end of an execution row's own execution span as held at liveAt, or null while it is open. */
+export function executionEnd(node: FlatRow["node"], liveAt: number): number | null {
+  for (const lane of node.lanes) {
+    for (const span of lane.spans) {
+      if (span.kind !== "execution" || !span.end) continue;
+      const t = span.end.at ?? span.end.notAfter;
+      return t !== null && t <= liveAt ? t : null;
+    }
+  }
+  return null;
+}
+
+/** Whether a ribbon visit outlives its execution (it continued under a later one). Pure. */
+export function outlivesExecution(node: FlatRow["node"], ribbon: TimelineSpan, liveAt: number): boolean {
+  const end = executionEnd(node, liveAt);
+  if (end === null) return false;
+  const t = spanTimes(ribbon, liveAt);
+  return t !== null && t.to > end + 1000;
 }
 
 export function brackets(ctx: Ctx, x0: number, y0: number, x1: number, y1: number, color: string) {

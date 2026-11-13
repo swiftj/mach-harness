@@ -71,6 +71,7 @@ interface NodeInput {
   ribbons?: TimelineSpan[];
   children?: NodeInput[];
   attention?: TrackNode["attention"];
+  counts?: TrackNode["counts"];
   ref?: EntityRef | null;
 }
 
@@ -99,6 +100,7 @@ function build(input: NodeInput, depth: number, parentId: string | null, byId: M
     ribbons: [...(input.ribbons ?? [])].sort((a, b) => (extentOf(a)?.from ?? 0) - (extentOf(b)?.from ?? 0)),
     spanCount: own + children.reduce((n, c) => n + c.spanCount, 0),
     attention: input.attention ?? "none",
+    ...(input.counts ? { counts: input.counts } : {}),
     note: input.note ?? null,
   };
   byId.set(node.id, node);
@@ -261,7 +263,9 @@ export function proofFixture(): ProofFixture {
       label: "WAVE-007",
       detail: "Checkout, second wave",
       ref: "wave:WAVE-007",
-      attention: "failed",
+      // Its OWN condition (open); what happened beneath it is counted, never worn.
+      attention: "open",
+      counts: { rejected: 1, failed: 2, interrupted: 2, waitingPerson: 2 },
       lanes: [[span("wave:WAVE-007", "wave", at(T(0)), null)]],
       children: [
         {
@@ -270,7 +274,8 @@ export function proofFixture(): ProofFixture {
           label: "SLICE-021",
           detail: "Saved addresses",
           ref: "slice:SLICE-021",
-          attention: "interrupted",
+          attention: "open",
+          counts: { rejected: 1, failed: 2, interrupted: 2, waitingPerson: 1 },
           children: [
             {
               id: "cell:LOCAL-031",
@@ -278,7 +283,8 @@ export function proofFixture(): ProofFixture {
               label: "LOCAL-031",
               detail: "Round 2, verifying",
               ref: "cell:LOCAL-031",
-              attention: "interrupted",
+              attention: "open",
+              counts: { rejected: 1, failed: 1, interrupted: 2, waitingPerson: 1, open: 1 },
               lanes: [[cell31]],
               ribbons: [exec1, exec2, exec3],
               children: [
@@ -290,18 +296,17 @@ export function proofFixture(): ProofFixture {
                   kind: "station",
                   label: "Build",
                   detail: "2 rounds",
-                  attention: "interrupted",
+                  counts: { interrupted: 2 },
                   lanes: [[build1, build2, build2b]],
                   children: [{ id: "station:LOCAL-031/build/tasks", kind: "tools", label: "Tasks", detail: `${tasks.length} recorded`, lanes: [tasks] }],
                 },
-                { id: "station:LOCAL-031/verify", kind: "station", label: "Verify", attention: "failed", lanes: [[verify1, verify2]] },
+                { id: "station:LOCAL-031/verify", kind: "station", label: "Verify", attention: "open", counts: { failed: 1, open: 1 }, lanes: [[verify1, verify2]] },
                 { id: "cell:LOCAL-031/waits", kind: "waits", label: "Waits", attention: "person", lanes: [[depWait, capWait, person, lateWait]] },
                 {
                   id: "cell:LOCAL-031/review",
                   kind: "review",
                   label: "Review",
                   detail: "round 1",
-                  attention: "failed",
                   children: [
                     { id: "seat:LOCAL-031/review#1/architecture", kind: "seat", label: "Architecture", detail: "Sonnet", lanes: [[seat("architecture", "sonnet", 29, 31.5, "APPROVE")]] },
                     { id: "seat:LOCAL-031/review#1/security", kind: "seat", label: "Security", detail: "Opus", lanes: [[seat("security", "opus", 29, 33, "REJECT")]] },

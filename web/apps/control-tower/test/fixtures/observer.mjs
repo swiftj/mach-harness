@@ -42,6 +42,10 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
     spanCap: 5000,
     /** Marks in the wire shape (mark_id, kind, at, until, event_id, entity, label, verdict, authority); null: no route (404). */
     marks: null,
+    /** Round 4: `/marks` pages with `offset` and `more` (false: an M6.3 observer that only says `truncated`). */
+    marksPaging: false,
+    /** The observer's cap on marks per reply (MaxMarks). */
+    marksCap: 1000,
     /** `/concurrency`: a function (from, to, bucket) => reply data, or null for no route (404). */
     concurrency: null,
     /** While true, every reply waits for `release()` (to test superseded and aborted requests). */
@@ -236,7 +240,12 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
       const to = q("to_ms") === null ? Infinity : Number(q("to_ms"));
       list = list.filter((x) => x.at <= to && (x.until ?? x.at) >= from);
     }
-    const limit = Number(q("limit") ?? 1000);
+    const limit = Math.min(server.marksCap, Number(q("limit") ?? 1000));
+    if (server.marksPaging) {
+      const offset = Number(q("offset") ?? 0);
+      const page = list.slice(offset, offset + limit);
+      return ok({ items: page.map((x) => x.m), total: list.length, offset, more: offset + page.length < list.length, truncated: offset + page.length < list.length, cursor: cur(head()) });
+    }
     return ok({ items: list.slice(0, limit).map((x) => x.m), truncated: list.length > limit, cursor: cur(head()) });
   };
 

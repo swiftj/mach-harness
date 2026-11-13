@@ -203,7 +203,9 @@ test("recovery: unknown outcomes stay unknown; 'resumed' only from a later recor
   assert.equal(byRef["execution:x3"].resumed, null, "nothing later took T-6 up again");
   assert.equal(byRef["visit:T-6/build#1"].kind, "no-exit");
   assert.equal(byRef["visit:T-6/build#1"].resumed, null);
-  assert.equal(byRef["visit:T-5/build#2"].kind, "taken-up");
+  // T4: an exit recorded after the execution ended is not a resumption; resumed only by a later record.
+  assert.equal(byRef["visit:T-5/build#2"].kind, "late-exit");
+  assert.notEqual(byRef["visit:T-5/build#2"].resumed?.ref, "visit:T-5/build#2", "never resumed by itself");
   assert.equal(looseRecoveries.length, 0);
   // Before the next attempt is held, the interrupted execution is not resumed.
   const early = M.recoveryItems(spans, marks, t(11, 30)).items.find((i) => i.span.entity === "execution:x1");
@@ -259,4 +261,66 @@ test("figures: the accessible name starts with the visible words when the descri
   assert.equal(figureName("Round 1 of LOCAL-031, rejected", "Round 1"), "Round 1 of LOCAL-031, rejected");
   assert.equal(figureName("Build visit, 4 min", "build #2"), "build #2: Build visit, 4 min");
   assert.equal(figureName("A wait", ""), "A wait");
+});
+
+// ---------------------------------------------------------------- round 4
+
+test("T7: a passed verify.start is not a verdict; only verify.verdict, verify.finish or the verification gate decide", () => {
+  const v = visit("L", "verify", 1, t(10), null);
+  const start = mark("g1", "gate", t(10, 30), "visit:L/verify#1", "Gate verify.start passed.", "passed");
+  assert.notEqual(M.verdictOf(v, "L", [start], t(30)).kind, "passed");
+  const done = visit("L", "verify", 1, t(10), t(20));
+  const verdict = mark("g2", "gate", t(20), "visit:L/verify#1", "Gate verify.verdict passed.", "passed");
+  assert.equal(M.verdictOf(done, "L", [start, verdict], t(30)).kind, "passed");
+  const sim = mark("g3", "gate", t(20), "gate:L/verification#1", "Gate verification passed.", "passed");
+  assert.equal(M.verdictOf(done, "L", [sim], t(30)).kind, "passed");
+  // A refusal of any verification gate still counts as refused.
+  assert.equal(M.verdictOf(done, "L", [mark("g4", "gate", t(20), "visit:L/verify#1", "Gate verify.finish refused (incomplete-evidence).", "refused")], t(30)).kind, "refused");
+});
+
+test("T14: the supervisor stopping for a person is not the review's approval; the recovery lens says the line stopped for a person", () => {
+  const seat = span({ kind: "seat", entity: "seat:L/review#1/security", ids: { ticket_id: "L", seat: "security" }, start: t(1), finish: t(3), attrs: { vote: "REJECT" } });
+  const decision = mark("d1", "review", t(4), "gate:L/review#1", "Review round 1 decided REJECTED.", "rejected");
+  const pw = span({ kind: "person-wait", entity: "gate:L/supervisor-stop", ids: { ticket_id: "L" }, start: t(5), finish: null });
+  const stop = mark("h1", "human", t(5), "gate:L/supervisor-stop", "The supervisor stopped for a person.", "required");
+  const cells = M.reviewCells([seat, pw], [decision, stop], t(20));
+  assert.equal(cells[0].rounds[0].human, null, "no approval was required by the review");
+  const gw = span({ kind: "gate-wait", entity: "gate:L/human-approval#1", ids: { ticket_id: "L" }, start: t(5), finish: t(8), outcome: "approved" });
+  const asked = mark("h2", "human", t(5), "gate:L/human-approval#1", "The review asked for a person's approval.", "required", t(8));
+  assert.notEqual(M.reviewCells([seat, gw], [decision, asked], t(20))[0].rounds[0].human, null);
+  const rec = M.recoveryItems([pw], [], t(20)).items;
+  assert.equal(rec.length, 1);
+  assert.equal(rec[0].kind, "person");
+  assert.match(rec[0].label, /Stopped for a person · L/);
+});
+
+test("X15: each lens preset frames the padded extent of what it shows", () => {
+  const tree = buildTrackTree(spansA, "product", { tickets: [], executions: [], slices: [], stations: [], kinds: [], attentionOnly: false }, LIVE);
+  const view = { window: null, grouping: "product", expanded: [], filters: { tickets: [], executions: [], slices: [], stations: [], kinds: [], attentionOnly: false }, table: false, lens: null };
+  const r = L.lensOf("retries").preset(tree, view);
+  assert.ok(r.window, "the retries lens frames its visits");
+  assert.ok(r.window.from < t(1) && r.window.from >= t(1) - 4 * MIN);
+  assert.ok(r.window.to > t(60) && r.window.to <= t(60) + 4 * MIN);
+  const c = L.lensOf("concurrency").preset(tree, view);
+  assert.ok(c.window.from <= t(0) && c.window.to >= t(90));
+  assert.deepEqual(M.frameOf([]), null);
+  for (const l of L.LENSES) assert.match(l.label, /\?$/, `${l.id} leads with a question (X17)`);
+});
+
+test("T9, X14: concurrency keeps the inferred part of cells in a station apart, and leaves headroom above the peak", () => {
+  const series = {
+    from: t(0), to: t(4), bucketMs: MIN, complete: true, limits: [{ name: "max_parallel", value: 2, from: t(0), to: null }],
+    buckets: [
+      { from: t(0), active: { visit: { max: 3, mean: 2, inferredMax: 1 }, execution: { max: 2, mean: 1 } } },
+      { from: t(1), active: { visit: { max: 1, mean: 1, inferredMax: 0 } } },
+    ],
+  };
+  const v = M.concurrencyView(series, [], { from: t(0), to: t(4) }, t(4));
+  const visits = v.lines.find((l) => l.kind === "visit");
+  assert.equal(visits.inferredPeak, 1);
+  assert.deepEqual(visits.inferred.map((s) => s.count), [1, 0]);
+  assert.ok(v.yMax > 3, "headroom above the peak");
+  // A source that does not say has no inferred band.
+  const old = { ...series, buckets: [{ from: t(0), active: { visit: { max: 3, mean: 2 } } }] };
+  assert.deepEqual(M.concurrencyView(old, [], { from: t(0), to: t(4) }, t(4)).lines[0].inferred, []);
 });

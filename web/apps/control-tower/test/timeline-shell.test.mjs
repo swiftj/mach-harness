@@ -738,7 +738,11 @@ test("lens: each of the five real lenses applies its preset through the store; N
       const added = after.expanded.filter((id) => !view.expanded.includes(id));
       if (added.length) assert.ok(added.some((id) => t2.byId.has(id)), `${lens.id}: opens rows of the ${after.grouping} grouping`);
     }
-    assert.equal(after.window, view.window, `${lens.id}: the window the person chose (none) is left alone`);
+    // X15: a preset may frame the window on what the lens shows (padded); then it lies within the history.
+    if (patch.window !== undefined && patch.window !== null) {
+      assert.deepEqual(after.window, patch.window, `${lens.id}: the preset's window`);
+      assert.ok(frame.isAll(after.window) || (after.window.from < after.window.to && after.window.to >= whole.from && after.window.from <= whole.to), `${lens.id}: framed within the history`);
+    } else assert.equal(after.window, view.window, `${lens.id}: the window the person chose (none) is left alone`);
     // The tree of the preset still draws something (no lens empties the simulated run).
     const t3 = buildTrackTree(spans, after.grouping, after.filters, liveAt);
     if (t3.roots.length === 0) emptied.push(lens.id);
@@ -850,4 +854,161 @@ test("lens: switching lenses starts from the person's own view; No lens gives ba
   assert.equal(view.grouping, "execution", "a grouping the person chose stays");
   // A lens applied from the address (no memo) is simply cleared.
   assert.deepEqual(frame.switchLens(null, tree(), { ...view, lens: "waits" }, whole, undefined).patch, { lens: null });
+});
+
+// ---------------------------------------------------------------- round 4 (r4-workspace)
+
+const { STRUCTURAL_KINDS } = await import("../src/timeline/contract.ts");
+const { layoutRows } = await import("../src/timeline/tracks/index.ts");
+const timeMod = await import("../src/shell/time.ts");
+
+test("T6: the caption says the tracks speak as of the live edge only while the playhead is behind it", () => {
+  timeMod.setTimeBase("wall");
+  try {
+    const at = Date.UTC(2026, 10, 12, 5, 42, 10);
+    const edge = frame.asOfPlayhead({ following: true, playhead: at, liveAt: at });
+    assert.equal(edge.behind, false);
+    assert.equal(frame.asOfCaption(edge), null);
+    assert.equal(frame.asOfShort(edge), null);
+    // A paused simulation at its edge (following off, but the playhead is at the edge) is not behind.
+    assert.equal(frame.asOfPlayhead({ following: false, playhead: at, liveAt: at + 400 }).behind, false);
+    const back = frame.asOfPlayhead({ following: false, playhead: at, liveAt: at + 3_600_000 });
+    assert.equal(back.behind, true);
+    assert.equal(frame.asOfCaption(back), "Tracks show what is held up to the live edge; the playhead is at 05:42:10 UTC");
+    assert.equal(frame.asOfShort(back), "As of the live edge; playhead at 05:42:10 UTC");
+  } finally {
+    timeMod.setTimeBase("scenario");
+  }
+  // The simulation: its own clock, no "UTC".
+  assert.doesNotMatch(frame.asOfCaption(frame.asOfPlayhead({ following: false, playhead: 60_000, liveAt: 600_000 })), /UTC/);
+  // Through the store: scrubbing back in the simulation turns it on, following again turns it off.
+  const store = make();
+  store.seek(400_000);
+  store.seek(100_000);
+  assert.equal(frame.asOfPlayhead(store.getState()).behind, true);
+  store.seek(store.getState().liveAt);
+  assert.equal(frame.asOfPlayhead(store.getState()).behind, false);
+});
+
+test("T11: the quantized live edge rounds down, never past what is held", () => {
+  const s = { extent: { start: 0, end: 1_000_000 }, liveAt: 123_456 };
+  const q = frame.quantizedLiveAt(s);
+  assert.ok(q <= s.liveAt, `${q} <= ${s.liveAt}`);
+  assert.ok(s.liveAt - q < 1000, "within one step");
+  assert.equal(frame.quantizedLiveAt({ extent: { start: 0, end: 100 }, liveAt: 999 }), 750, "250 ms steps at least, down");
+});
+
+test("X3: a span selects its own entity when the history resolves it; else its nearest ref with the span as the detail", () => {
+  const span = (o) => ({ id: `${o.kind}:${o.entity}`, kind: o.kind, entity: o.entity, parent: o.parent ?? null, ids: o.ids ?? {}, start: { at: 0, eventId: null }, end: null, outcome: null, attrs: {}, authority: "observed" });
+  const visit = span({ kind: "visit", entity: "visit:LOCAL-001/verify#1", parent: "execution:X1", ids: { ticket_id: "LOCAL-001", station: "verify" } });
+  const lookup = frame.spanLookup([visit]);
+  // Live: visit refs resolve: THAT visit is the selection, nothing else.
+  const live = frame.selectionForSpan(visit, lookup, () => true);
+  assert.deepEqual(live, { ref: "visit:LOCAL-001/verify#1", detail: null });
+  // The simulation: visit refs do not resolve: its station is selected, the visit kept as the detail.
+  const simSel = frame.selectionForSpan(visit, lookup, (r) => r.startsWith("station:"));
+  assert.deepEqual(simSel, { ref: "station:LOCAL-001/verify", detail: "visit:LOCAL-001/verify#1" });
+  for (const entity of ["seat:LOCAL-001/review#1/security", "workflow:X1/belt"]) {
+    const s = span({ kind: entity.startsWith("seat") ? "seat" : "workflow", entity, ids: { ticket_id: "LOCAL-001" } });
+    assert.deepEqual(frame.selectionForSpan(s, frame.spanLookup([s]), (r) => r === entity), { ref: entity, detail: null });
+  }
+  // A store select with a detail equal to the ref keeps no detail (the store's own rule).
+  const store = make();
+  store.select("cell:LOCAL-031", { focus: false, detail: "cell:LOCAL-031" });
+  assert.equal(store.getState().selectionDetail, null);
+});
+
+test("X13: selecting never seeks; a second select of the same span or mark while it is still the selection seeks", () => {
+  assert.equal(frame.activation(null, "span:a", null), "select");
+  const last = { key: "span:a", selection: "cell:X" };
+  assert.equal(frame.activation(last, "span:a", "cell:X"), "seek", "Enter twice / double-click");
+  assert.equal(frame.activation(last, "span:b", "cell:X"), "select", "another span");
+  assert.equal(frame.activation(last, "span:a", "cell:Y"), "select", "the selection changed elsewhere in between");
+  assert.equal(frame.activation(last, "", "cell:X"), "select");
+  // Where "go to" seeks: a mark's event, a span's start event.
+  assert.deepEqual(frame.seekTargetOf({ mark: { at: 5, eventId: "e5" } }), { eventId: "e5", at: 5 });
+  assert.deepEqual(frame.seekTargetOf({ span: { start: { at: 7, eventId: null } } }), { eventId: null, at: 7 });
+  assert.equal(frame.seekTargetOf({ span: { start: null } }), null);
+  // And the store: a select alone leaves the playhead where it was.
+  const store = make();
+  store.seek(200_000);
+  const before = store.getState().playhead;
+  store.select("cell:LOCAL-031", { focus: false, detail: "visit:LOCAL-031/verify#1" });
+  assert.equal(store.getState().playhead, before);
+});
+
+test("X4: the tree's hierarchy does not depend on the window loaded (structure of the whole history plus the window)", async () => {
+  const { spans, liveAt, whole } = await simulationAtEnd();
+  const structural = spans.filter((s) => STRUCTURAL_KINDS.includes(s.kind));
+  assert.ok(structural.length > 0 && structural.length < spans.length);
+  // A deep link to a narrow window late in the run: only the window's spans arrive.
+  const win = { from: whole.from + (whole.to - whole.from) * 0.7, to: whole.from + (whole.to - whole.from) * 0.75 };
+  const inWin = spans.filter((s) => (s.start?.at ?? 0) <= win.to && (s.end?.at ?? Infinity) >= win.from);
+  const shape = (tree) => [...tree.byId.values()].filter((n) => ["wave", "slice", "cell", "rounds", "execution", "executions"].includes(n.kind)).map((n) => `${n.id}<${n.parentId ?? ""}`).sort();
+  for (const grouping of ["product", "execution"]) {
+    const navigated = buildTrackTree(frame.unionSpans(structural, spans), grouping, INITIAL_TIMELINE_VIEW.filters, liveAt);
+    const deepLink = buildTrackTree(frame.unionSpans(structural, inWin), grouping, INITIAL_TIMELINE_VIEW.filters, liveAt);
+    const windowOnly = buildTrackTree(inWin, grouping, INITIAL_TIMELINE_VIEW.filters, liveAt);
+    assert.deepEqual(shape(deepLink), shape(navigated), `${grouping}: the same structural rows under the same parents`);
+    assert.ok(shape(windowOnly).length <= shape(deepLink).length, `${grouping}: the window alone holds fewer`);
+  }
+  // The union keeps the window's copy of a span and adds the rest once.
+  const a = { id: "x", v: 1 };
+  const b = { id: "x", v: 2 };
+  const u = frame.unionSpans([a, { id: "y" }], [b]);
+  assert.equal(u.length, 2);
+  assert.equal(u.find((s) => s.id === "x").v, 2);
+  assert.equal(frame.unionSpans([], u), u);
+});
+
+test("X9: the simulation's default window ends just past what is revealed; the tree opens to cells while it fits", async () => {
+  const whole = { from: 0, to: 1_000_000 };
+  assert.deepEqual(frame.leadWindow(whole, 200_000), { from: 0, to: 210_000 }, "5% lead");
+  assert.equal(frame.leadWindow(whole, 990_000), whole, "the whole run once (nearly) all revealed");
+  assert.ok(frame.leadWindow(whole, 0).to - 0 >= MIN_WINDOW_MS, "never narrower than the minimum");
+  const { spans, liveAt } = await simulationAtEnd();
+  const tree = buildTrackTree(spans, "product", INITIAL_TIMELINE_VIEW.filters, liveAt);
+  const heightOf = (open) => layoutRows(tree, open).totalHeight;
+  const base = defaultExpanded(tree);
+  const tall = frame.fittingExpansion(tree, base, 100_000, heightOf);
+  const cells = [...tree.byId.values()].filter((n) => n.kind === "cell" && n.children.length);
+  assert.ok(cells.length > 0);
+  for (const c of cells) assert.ok(tall.includes(c.id), `${c.id} opened when everything fits`);
+  for (const id of base) assert.ok(tall.includes(id), "keeps the tracks' defaults");
+  const fits = heightOf(new Set(tall));
+  assert.ok(fits <= 100_000);
+  // A short viewport: only what fits is added, never a level that would overflow.
+  const fromNothing = frame.fittingExpansion(tree, [], 100_000, heightOf);
+  for (const c of cells) assert.ok(fromNothing.includes(c.id), "opened level by level down to the cells");
+  const shortH = heightOf(new Set()) + 1;
+  const short = frame.fittingExpansion(tree, [], shortH, heightOf);
+  assert.ok(heightOf(new Set(short)) <= shortH, "never opens a level that would not fit");
+  assert.ok(short.length < fromNothing.length);
+  // Nothing measured yet: the defaults alone.
+  assert.deepEqual(frame.fittingExpansion(tree, base, 0, heightOf).sort(), [...new Set(base)].sort());
+});
+
+test("X18: a jump with nothing further says how many lie the other way and the key", () => {
+  assert.equal(frame.jumpEndWords("failure", 1, 3), "No later failure in what is held; 3 earlier: press P.");
+  assert.equal(frame.jumpEndWords("retry", -1, 1), "No earlier retry in what is held; 1 later: press N.");
+  assert.equal(frame.jumpEndWords("failure", 1, 0), "No later failure in what is held.");
+});
+
+test("X22: half speed is announced as half speed, never 0.5 times", async () => {
+  const scene = await import("../src/scene/store.ts");
+  const half = scene.SPEEDS.find((s) => scene.playbackFactorOf("simulation", s) === 0.5);
+  assert.ok(half !== undefined);
+  assert.equal(scene.playbackFactorWords("simulation", half), "half speed");
+  assert.equal(scene.playbackFactorLabel("simulation", half), "½×");
+});
+
+test("A3: returning through the address frames the selection on the floor, as the workspace switch does", () => {
+  const store = make();
+  store.select("cell:LOCAL-031", { focus: false });
+  showInTimeline(store);
+  const nonce = store.getState().focus.nonce;
+  applyHash(store, parseHash("#blueprint?sel=cell:LOCAL-031"));
+  assert.equal(store.getState().workspace, "floor");
+  assert.equal(store.getState().view, "blueprint");
+  assert.notEqual(store.getState().focus.nonce, nonce, "framed again on the floor");
 });

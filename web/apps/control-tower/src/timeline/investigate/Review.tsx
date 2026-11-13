@@ -9,8 +9,9 @@ import { useMemo } from "react";
 import { fc, StationSymbol } from "@mach/ui";
 import { durationWords } from "../render";
 import type { BodyProps } from "./body";
-import { Caption, Diamond, Empty, FadeDefs, Fig, Figures, Hit, HumanTriangle, LiveEdge, Mark, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
-import { markSource, reviewCells, type CellReview, type ReviewRound } from "./model";
+import { Caption, Diamond, Empty, FadeDefs, Fig, Figures, FrameFig, Hit, HumanTriangle, LiveEdge, Mark, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
+import { frameOf, markSource, reviewCells, type CellReview, type ReviewRound } from "./model";
+import type { TimeWindow } from "../contract";
 
 const HEAD_H = 16;
 const SEAT_H = 15;
@@ -32,13 +33,13 @@ export function ReviewBody(p: BodyProps) {
     <Figures label="Review rounds and a person's decisions">
       <Caption>Seats vote at their recorded times; the rule across them is the panel's decision. A person's approval of the code and the authorization to merge are separate records.</Caption>
       {shown.map((c) => (
-        <CellDrawing key={c.ticket} c={c} s={s} width={p.width} liveAt={liveAt} onReveal={p.onReveal} />
+        <CellDrawing key={c.ticket} c={c} s={s} width={p.width} liveAt={liveAt} onReveal={p.onReveal} onFrame={p.onFrame} />
       ))}
     </Figures>
   );
 }
 
-function CellDrawing({ c, s, width, liveAt, onReveal }: { c: CellReview; s: Scale; width: number; liveAt: number; onReveal(ref: string, at?: number): void }) {
+function CellDrawing({ c, s, width, liveAt, onReveal, onFrame }: { c: CellReview; s: Scale; width: number; liveAt: number; onReveal(ref: string, at?: number): void; onFrame(w: TimeWindow): void }) {
   const heights = c.rounds.map((r) => HEAD_H + Math.max(1, r.seats.length) * SEAT_H + 6);
   const tops = heights.map((_, i) => heights.slice(0, i).reduce((a, b) => a + b, 0));
   const y = heights.reduce((a, b) => a + b, 0);
@@ -51,6 +52,7 @@ function CellDrawing({ c, s, width, liveAt, onReveal }: { c: CellReview; s: Scal
         <RoundDrawing key={r.round} r={r} top={tops[i]!} s={s} liveAt={liveAt} onReveal={onReveal} />
       ))}
       <AfterReview c={c} top={y} s={s} liveAt={liveAt} onReveal={onReveal} />
+      <FrameFig id={`review:${c.ticket}`} what={`the review of ${c.ticket}`} frame={reviewFrame(c)} right={s.gutter - 6} y={y + 4} onFrame={onFrame} />
       {c.notes.map((n, i) => (
         <text key={n} x={s.gutter + 6} y={y + AFTER_H + 10 + i * 13} style={{ ...SANS, fontSize: 10.5, fill: SUBTLE, fontStyle: "italic" }}>
           {n}
@@ -138,6 +140,18 @@ function RoundDrawing({ r, top, s, liveAt, onReveal }: { r: ReviewRound; top: nu
       ) : null}
     </g>
   );
+}
+
+/** One cell's review, padded: its seats, decisions, a person's gate and the merge. */
+function reviewFrame(c: CellReview): TimeWindow | null {
+  const spans = c.rounds.flatMap((r) => r.seats.map((s) => s.span).filter((x): x is NonNullable<typeof x> => x !== null));
+  const base = frameOf(spans);
+  const ts = [...c.rounds.flatMap((r) => [r.decision?.at, r.human?.from, r.human?.to]), c.codeApproval?.at, c.merge?.at].filter((t): t is number => typeof t === "number");
+  if (!base && !ts.length) return null;
+  const from = Math.min(base?.from ?? Infinity, ...ts);
+  const to = Math.max(base?.to ?? -Infinity, ...ts);
+  const pad = Math.max(60_000, (to - from) * 0.05);
+  return base && ts.every((t) => t >= base.from && t <= base.to) ? base : { from: from - pad, to: to + pad };
 }
 
 /** Two different records, two different marks: a person approved the code; the merge was authorized. */

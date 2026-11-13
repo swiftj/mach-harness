@@ -11,7 +11,7 @@
  * - review rounds and execution attempts are different things and are never nested in each other;
  * - the approval of the code by a person and the authorization to merge are different records.
  */
-import { outcomeKnownAt, type ConcurrencySeries, type SpanKind, type TimelineMark, type TimelineSpan, type TimeWindow } from "../contract";
+import { extentOf, outcomeKnownAt, type ConcurrencySeries, type SpanKind, type TimelineMark, type TimelineSpan, type TimeWindow } from "../contract";
 
 // ---------------------------------------------------------------- shared readers
 
@@ -93,6 +93,27 @@ export interface Source {
 export const spanSource = (s: TimelineSpan, what: string): Source => ({ what, ref: s.entity, eventId: s.end?.eventId ?? s.start?.eventId ?? null });
 export const markSource = (m: TimelineMark, what: string): Source => ({ what, ref: m.id, eventId: m.eventId });
 
+/** Padding around what a lens frames, as a share of its length (and at least a minute each side). */
+const FRAME_PAD = 0.05;
+
+/**
+ * The padded extent of `spans` (X15): from the earliest start to the latest recorded instant (an open
+ * span counts by its start), padded 5% each side. Null when none has a time.
+ */
+export function frameOf(spans: readonly TimelineSpan[]): TimeWindow | null {
+  let from = Infinity;
+  let to = -Infinity;
+  for (const s of spans) {
+    const x = extentOf(s);
+    if (!x) continue;
+    from = Math.min(from, x.from);
+    to = Math.max(to, Number.isFinite(x.to) ? x.to : x.from);
+  }
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  const pad = Math.max(60_000, (to - from) * FRAME_PAD);
+  return { from: from - pad, to: to + pad };
+}
+
 // ---------------------------------------------------------------- 1. retries: the build → verify ladder
 
 export type VerdictKind = "failed" | "refused" | "overridden" | "passed" | "none";
@@ -164,6 +185,15 @@ export function checksIn(label: string): string | null {
   return m[2] ? `${m[1]} of ${m[2]} checks` : `${m[1]} check${m[1] === "1" ? "" : "s"}`;
 }
 
+/**
+ * Whether a gate mark records the verification's own decision: `verify.verdict` or `verify.finish`
+ * (the lifecycle log's gate names), or the simulation's `verification` gate. `verify.start` passing
+ * only means the verification began: a running or crashed verification never reads "passed" (T7).
+ */
+export function decidesVerification(m: TimelineMark): boolean {
+  return /\bGate (verify\.verdict|verify\.finish|verification)\b/.test(m.label);
+}
+
 /** The verification's verdict: from the marks recorded for it within the visit, else its recorded outcome, else none. */
 export function verdictOf(verify: TimelineSpan, ticket: string, marks: readonly TimelineMark[], liveAt: number): RungVerdict {
   const s = startAt(verify);
@@ -174,7 +204,7 @@ export function verdictOf(verify: TimelineSpan, ticket: string, marks: readonly 
   const failure = pick((m) => m.kind === "failure");
   const refused = pick((m) => m.kind === "gate" && m.verdict === "refused");
   const overridden = pick((m) => m.kind === "gate" && m.verdict === "overridden");
-  const passed = pick((m) => m.kind === "gate" && m.verdict === "passed");
+  const passed = pick((m) => m.kind === "gate" && m.verdict === "passed" && decidesVerification(m));
   const checks = mine.map((m) => checksIn(m.label)).find((c) => c !== null) ?? null;
   const from = (kind: VerdictKind, m: TimelineMark, what: string): RungVerdict => ({ kind, at: m.at, mark: m, checks, sources: [markSource(m, what)] });
   if (failure) return from("failed", failure, "failure mark");
@@ -369,6 +399,14 @@ export interface ConcurrencyLine {
   readonly kind: ConcurrencyLineKind;
   readonly label: string;
   readonly steps: readonly Step[];
+  /**
+   * Of each step's count, how many are spans whose end is inferred or bounded (a visit that ended
+   * without an exit record; the data layer's per-bucket `inferredMax`): drawn as a lighter band above
+   * the recorded part. Same breaks as `steps`; empty when the source does not say.
+   */
+  readonly inferred: readonly Step[];
+  /** The most such spans in one bucket of the window (0 when none or not said). */
+  readonly inferredPeak: number;
   readonly peak: number;
   readonly peakAt: number | null;
 }
@@ -413,29 +451,44 @@ export function concurrencyView(series: ConcurrencySeries | null, spans: readonl
   if (series && series.buckets.length) {
     for (const kind of ["execution", "visit", "agent"] as const) {
       const steps: Step[] = [];
+      const inferred: Step[] = [];
+      let said = false;
+      let inferredPeak = 0;
       let peak = 0;
       let peakAt: number | null = null;
       series.buckets.forEach((b, i) => {
         const from = b.from;
         const to = series.buckets[i + 1]?.from ?? Math.min(series.to, from + series.bucketMs);
         if (from > liveAt) return;
-        const count = b.active[kind]?.max ?? 0;
+        const a = b.active[kind] as { max: number; inferredMax?: number } | undefined;
+        const count = a?.max ?? 0;
+        const inf = Math.min(count, Math.max(0, a?.inferredMax ?? 0));
+        if (a?.inferredMax !== undefined) said = true;
+        if (inf > inferredPeak) inferredPeak = inf;
         const last = steps[steps.length - 1];
-        if (last && last.count === count && last.to === from) steps[steps.length - 1] = { ...last, to: Math.min(to, liveAt) };
-        else steps.push({ from, to: Math.min(to, liveAt), count });
+        const lastInf = inferred[inferred.length - 1];
+        if (last && lastInf && last.count === count && lastInf.count === inf && last.to === from) {
+          steps[steps.length - 1] = { ...last, to: Math.min(to, liveAt) };
+          inferred[inferred.length - 1] = { ...lastInf, to: Math.min(to, liveAt) };
+        } else {
+          steps.push({ from, to: Math.min(to, liveAt), count });
+          inferred.push({ from, to: Math.min(to, liveAt), count: inf });
+        }
         if (count > peak) {
           peak = count;
           peakAt = from;
         }
       });
-      if (steps.some((s) => s.count > 0)) lines.push({ kind, label: LINE_LABEL[kind], steps, peak, peakAt });
+      if (steps.some((s) => s.count > 0)) lines.push({ kind, label: LINE_LABEL[kind], steps, inferred: said ? inferred : [], inferredPeak, peak, peakAt });
     }
   }
   const limits: LimitLine[] = (series?.limits ?? [])
     .filter((l) => l.name === "max_parallel" && Number.isFinite(l.value))
     .map((l) => ({ value: l.value, from: Math.max(l.from, window.from), to: Math.min(l.to ?? liveAt, window.to, liveAt), appliesTo: String((l as { appliesTo?: unknown }).appliesTo ?? "executions") }))
     .filter((l) => l.to > l.from);
-  const yMax = Math.max(1, ...lines.map((l) => l.peak), ...limits.map((l) => l.value));
+  // Headroom above the highest line or limit, so a peak is never drawn on the frame's edge (X14).
+  const top = Math.max(1, ...lines.map((l) => l.peak), ...limits.map((l) => l.value));
+  const yMax = top + Math.max(1, Math.ceil(top * 0.2));
 
   const lanes = new Map<string, { label: string; ref: string; segments: LaneSegment[]; first: number }>();
   const KIND: Partial<Record<SpanKind, LaneSegmentKind>> = { visit: "station", "capacity-wait": "capacity", "slice-eligible": "eligible", claim: "claim" };
@@ -665,7 +718,9 @@ export function reviewCells(spans: readonly TimelineSpan[], marks: readonly Time
         const a = startAt(s) ?? 0;
         return (s.attrs.round === r.round || (a >= after && a < nextStart)) && s.kind === "gate-wait";
       });
-      const required = humanMarks.find((m) => m.verdict === "required" && m.at >= after && m.at < nextStart);
+      // Only an approval gate the review opened counts; the supervisor stopping for a person is the
+      // recovery lens's "the line stopped for a person" (T14).
+      const required = humanMarks.find((m) => m.verdict === "required" && m.at >= after && m.at < nextStart && reviewAskedForPerson(m, hs));
       if (wait || required) {
         const from = wait ? startAt(wait)! : required!.at;
         const until = wait ? endBy(wait, liveAt) : required!.until !== null && required!.until <= liveAt ? required!.until : null;
@@ -704,6 +759,13 @@ export function reviewCells(spans: readonly TimelineSpan[], marks: readonly Time
   return out;
 }
 
+/** A "person required" mark the review opened (its approval gate), not the supervisor stopping for a person. */
+export function reviewAskedForPerson(m: TimelineMark, spans: readonly TimelineSpan[]): boolean {
+  if (/supervisor stopped|person was needed/i.test(m.label)) return false;
+  if (spans.some((s) => s.entity === m.entity && s.kind === "person-wait")) return false;
+  return spans.some((s) => s.entity === m.entity && s.kind === "gate-wait") || /review asked|approval was required/i.test(m.label);
+}
+
 function SEAT_ORDER(seat: string): number {
   const i = ["architecture", "security", "product", "general"].indexOf(seat);
   return i < 0 ? 9 : i;
@@ -711,7 +773,11 @@ function SEAT_ORDER(seat: string): number {
 
 // ---------------------------------------------------------------- 5. recovery and interruption
 
-export type RecoveryKind = "interrupted" | "unknown" | "no-exit" | "taken-up";
+/**
+ * "late-exit": a visit whose exit was recorded after its execution ended (`interruptedAt`): never by
+ * itself a sign that work resumed (T4). "person": the line stopped for a person (a supervisor wait).
+ */
+export type RecoveryKind = "interrupted" | "unknown" | "no-exit" | "late-exit" | "person";
 
 export interface RecoveryItem {
   readonly kind: RecoveryKind;
@@ -782,12 +848,17 @@ export function recoveryItems(spans: readonly TimelineSpan[], marks: readonly Ti
         resumed: stop !== null ? nextAttempt(ticket, stop, s.entity) : null,
         sources: [spanSource(s, unknown ? "execution whose outcome is not known" : "interrupted execution"), ...recs.map((m) => markSource(m, "recovery mark"))],
       });
+    } else if (s.kind === "person-wait") {
+      // The line stopped for a person (the supervisor's wait), not a review's approval gate.
+      items.push({ kind: "person", span: s, ticket, label: `Stopped for a person${ticket ? ` · ${ticket}` : ""}`, from: startAt(s), stoppedAt: startAt(s), recoveries: recsFor(s.entity), resumed: null, sources: [spanSource(s, "the line stopped for a person")] });
     } else if (s.kind === "visit") {
       const st = stationOf(s) ?? "station";
       const name = `${st[0]!.toUpperCase()}${st.slice(1)} visit${ticket ? ` · ${ticket}` : ""}`;
       if (s.attrs.interruptedAt !== undefined && s.attrs.interruptedAt <= liveAt) {
-        // The visit itself records that it stopped and was taken up again.
-        items.push({ kind: "taken-up", span: s, ticket, label: name, from: startAt(s), stoppedAt: s.attrs.interruptedAt, recoveries: recsFor(s.entity), resumed: { at: s.attrs.interruptedAt, ref: s.entity, words: "taken up again in the same visit", source: spanSource(s, "visit recorded as interrupted and taken up again") }, sources: [spanSource(s, "visit")] });
+        // Its exit was stamped after its execution ended: that is all `interruptedAt` says. Resumed only
+        // when a later record shows it (a later execution of the same cell).
+        const x = executionOfVisit(s);
+        items.push({ kind: "late-exit", span: s, ticket, label: name, from: startAt(s), stoppedAt: s.attrs.interruptedAt, recoveries: recsFor(s.entity), resumed: nextAttempt(ticket, s.attrs.interruptedAt, x ?? ""), sources: [spanSource(s, "visit whose exit was recorded after its execution ended")] });
       } else if (e !== null && s.end?.basis === "inferred" && (reason === "interrupted" || reason === "superseded" || reason === "unknown")) {
         const x = executionOfVisit(s);
         items.push({ kind: "no-exit", span: s, ticket, label: name, from: startAt(s), stoppedAt: e, recoveries: recsFor(s.entity), resumed: nextAttempt(ticket, e, x ?? ""), sources: [spanSource(s, "visit ended without an exit record")] });

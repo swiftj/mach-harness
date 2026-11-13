@@ -12,14 +12,141 @@ import { duration } from "../../shell/time";
 
 // ---------------------------------------------------------------- time and pixels
 
-export function xOf(t: number, extent: TimeWindow, width: number): number {
-  const span = Math.max(1, extent.to - extent.from);
-  return ((t - extent.from) / span) * width;
+/** A stretch of idle time the axis compresses (X10): drawn `breakFrac` of the width wide whatever its length. */
+export interface AxisBreak {
+  readonly from: number;
+  readonly to: number;
 }
 
-export function tOf(x: number, extent: TimeWindow, width: number): number {
-  const span = Math.max(1, extent.to - extent.from);
-  return extent.from + (x / Math.max(1, width)) * span;
+/**
+ * The overview's time axis: the extent, and optionally idle stretches compressed to a fixed share of
+ * the width each (a broken axis). Every pixel mapping (density, activity, landmarks, ticks, brush,
+ * tooltips, playhead) goes through `xOf`/`tOf` with it, so they always agree. Without breaks it is the
+ * plain linear extent.
+ */
+export interface Axis extends TimeWindow {
+  readonly breaks?: readonly AxisBreak[];
+  /** The share of the width each break takes. */
+  readonly breakFrac?: number;
+}
+
+/** Where `t` falls along the axis, 0 to 1 (outside the extent: linear beyond either end). */
+export function fracOf(t: number, axis: Axis): number {
+  const len = Math.max(1, axis.to - axis.from);
+  const breaks = axis.breaks;
+  if (!breaks || !breaks.length) return (t - axis.from) / len;
+  const bf = axis.breakFrac ?? 0;
+  const idle = breaks.reduce((n, b) => n + (b.to - b.from), 0);
+  const k = (1 - bf * breaks.length) / Math.max(1, len - idle);
+  if (t <= axis.from) return (t - axis.from) * k;
+  let f = 0;
+  let cur = axis.from;
+  for (const b of breaks) {
+    if (t <= b.from) return f + (t - cur) * k;
+    f += (b.from - cur) * k;
+    if (t < b.to) return f + ((t - b.from) / Math.max(1, b.to - b.from)) * bf;
+    f += bf;
+    cur = b.to;
+  }
+  return f + (t - cur) * k;
+}
+
+/** The time at a share `f` (0 to 1) of the axis: the inverse of `fracOf`. */
+export function tOfFrac(f: number, axis: Axis): number {
+  const len = Math.max(1, axis.to - axis.from);
+  const breaks = axis.breaks;
+  if (!breaks || !breaks.length) return axis.from + f * len;
+  const bf = axis.breakFrac ?? 0;
+  const idle = breaks.reduce((n, b) => n + (b.to - b.from), 0);
+  const k = (1 - bf * breaks.length) / Math.max(1, len - idle);
+  if (f <= 0) return axis.from + f / k;
+  let at = 0;
+  let cur = axis.from;
+  for (const b of breaks) {
+    const seg = (b.from - cur) * k;
+    if (f <= at + seg) return cur + (f - at) / k;
+    at += seg;
+    if (f < at + bf) return b.from + ((f - at) / bf) * (b.to - b.from);
+    at += bf;
+    cur = b.to;
+  }
+  return cur + (f - at) / k;
+}
+
+export function xOf(t: number, extent: Axis, width: number): number {
+  return fracOf(t, extent) * width;
+}
+
+export function tOf(x: number, extent: Axis, width: number): number {
+  return tOfFrac(x / Math.max(1, width), extent);
+}
+
+/**
+ * Axis units: time measured along the axis, so brush arithmetic (move, resize, zoom, keyboard steps)
+ * is even on screen across a break. Identity without breaks.
+ */
+export function uOf(t: number, axis: Axis): number {
+  return axis.breaks?.length ? axis.from + fracOf(t, axis) * (axis.to - axis.from) : t;
+}
+export function tOfU(u: number, axis: Axis): number {
+  return axis.breaks?.length ? tOfFrac((u - axis.from) / Math.max(1, axis.to - axis.from), axis) : u;
+}
+export const windowToU = (w: TimeWindow, axis: Axis): TimeWindow => ({ from: uOf(w.from, axis), to: uOf(w.to, axis) });
+export const windowFromU = (w: TimeWindow, axis: Axis): TimeWindow => ({ from: tOfU(w.from, axis), to: tOfU(w.to, axis) });
+
+/** A gap must exceed this share of the extent to be compressed. */
+export const BREAK_MIN_SHARE = 0.2;
+/** Compression is on by default when one gap exceeds this share. */
+export const BREAK_DEFAULT_SHARE = 0.5;
+/** Pixels a break takes on the axis. */
+export const BREAK_PX = 28;
+
+/**
+ * Idle stretches of the extent: where nothing is recorded (no density bucket with events, no landmark
+ * instant or interval), longer than `minShare` of it. A margin of one density bucket stays on each
+ * side, so what is recorded at either end keeps its own pixels.
+ */
+export function idleGaps(density: DensitySeries | null, marks: readonly TimelineMark[], extent: TimeWindow, minShare = BREAK_MIN_SHARE): AxisBreak[] {
+  const len = extent.to - extent.from;
+  if (!(len > 0)) return [];
+  const busy: Array<[number, number]> = [];
+  const bucket = density?.bucketMs ?? 0;
+  for (const b of density?.buckets ?? []) if (b.count > 0) busy.push([b.from, b.from + density!.bucketMs]);
+  for (const m of marks) busy.push([m.at, m.until ?? m.at]);
+  if (!busy.length) return [];
+  busy.sort((a, b) => a[0] - b[0]);
+  const out: AxisBreak[] = [];
+  let cur = extent.from;
+  let first = true;
+  const consider = (a: number, b: number, edge: boolean) => {
+    if (b - a <= len * minShare) return;
+    // One density bucket (or a second) of margin: enough that a record at the edge keeps its pixel.
+    const m = Math.max(bucket, 1000);
+    // The history's own ends are not padded on their outer side: there is nothing beyond them.
+    const from = edge && a === extent.from ? a : a + m;
+    const to = b - m;
+    if (to > from) out.push({ from, to });
+  };
+  for (const [a, b] of busy) {
+    if (a > cur) consider(cur, a, first);
+    first = false;
+    cur = Math.max(cur, b);
+  }
+  if (extent.to > cur) consider(cur, extent.to, false);
+  return out;
+}
+
+/** Whether compression should be on before the person chooses: one gap longer than half the extent. */
+export function compressByDefault(gaps: readonly AxisBreak[], extent: TimeWindow): boolean {
+  const len = extent.to - extent.from;
+  return gaps.some((g) => g.to - g.from > len * BREAK_DEFAULT_SHARE);
+}
+
+/** The extent as a broken axis over `gaps`, each `breakPx` wide on `width`; the plain extent when there is nothing to break. */
+export function brokenAxis(extent: TimeWindow, gaps: readonly AxisBreak[], width: number, breakPx = BREAK_PX): Axis {
+  if (!gaps.length || width <= 0) return extent;
+  const bf = Math.min(breakPx / width, 0.3 / gaps.length);
+  return { from: extent.from, to: extent.to, breaks: gaps, breakFrac: bf };
 }
 
 // ---------------------------------------------------------------- density
@@ -71,7 +198,27 @@ export interface Step {
  * The most spans of `kind` active per bucket, as runs of equal value in pixel space (stepped, never
  * smoothed). A bucket the series does not list counts as none active.
  */
-export function concurrencySteps(series: ConcurrencySeries, kind: SpanKind, extent: TimeWindow, width: number): { steps: Step[]; peak: number } {
+/** Of a bucket's count of `kind`, how many are spans whose end was inferred or bounded (the data layer's `inferredMax`), or null when the source does not say. */
+export function inferredOf(b: ConcurrencyBucket, kind: SpanKind): number | null {
+  const a = b.active[kind] as { max: number; inferredMax?: number } | undefined;
+  return a?.inferredMax === undefined ? null : Math.min(a.max, Math.max(0, a.inferredMax));
+}
+
+/** Whether a series says how many of its counts ended without an exit record, and the most in one bucket. */
+export function inferredPeak(series: ConcurrencySeries | null, kind: SpanKind): number | null {
+  if (!series) return null;
+  let said = false;
+  let peak = 0;
+  for (const b of series.buckets) {
+    const v = inferredOf(b, kind);
+    if (v === null) continue;
+    said = true;
+    if (v > peak) peak = v;
+  }
+  return said ? peak : null;
+}
+
+export function concurrencySteps(series: ConcurrencySeries, kind: SpanKind, extent: Axis, width: number, value: (b: ConcurrencyBucket) => number = (b) => b.active[kind]?.max ?? 0): { steps: Step[]; peak: number } {
   const steps: Step[] = [];
   let peak = 0;
   const run: { cur: { x0: number; x1: number; value: number } | null } = { cur: null };
@@ -87,7 +234,7 @@ export function concurrencySteps(series: ConcurrencySeries, kind: SpanKind, exte
   };
   let prevEnd: number | null = null;
   for (const b of series.buckets) {
-    const v = b.active[kind]?.max ?? 0;
+    const v = value(b);
     if (v > peak) peak = v;
     const x0 = xOf(b.from, extent, width);
     const x1 = xOf(b.from + series.bucketMs, extent, width);
@@ -174,8 +321,6 @@ export function aggregateMarks(marks: readonly TimelineMark[], extent: TimeWindo
   const imark: TimelineMark[] = [];
   const next = new Int32Array(n);
   const head = new Int32Array(2 * (w + 1)).fill(-1);
-  const span = Math.max(1, extent.to - extent.from);
-  const scale = w / span;
   for (let k = 0; k < n; k++) {
     const m = marks[k]!;
     const family = familyOf(m);
@@ -183,8 +328,8 @@ export function aggregateMarks(marks: readonly TimelineMark[], extent: TimeWindo
     const openWait = family === "human" && m.until === null && m.verdict === "required";
     if ((family === "human" || family === "gap") && (m.until !== null || openWait)) {
       const end = m.until ?? Math.max(m.at, liveAt);
-      const a = (m.at - extent.from) * scale;
-      const b = (end - extent.from) * scale;
+      const a = xOf(m.at, extent, w);
+      const b = xOf(end, extent, w);
       if (b < 0 || a > w) continue;
       const j = imark.length;
       imark.push(m);
@@ -196,7 +341,7 @@ export function aggregateMarks(marks: readonly TimelineMark[], extent: TimeWindo
       head[slot] = j;
       continue;
     }
-    const x = Math.floor((m.at - extent.from) * scale);
+    const x = Math.floor(xOf(m.at, extent, w));
     if (x < 0 || x >= w) continue;
     const i = FAMILY_INDEX[family] * w + x;
     counts[i]!++;
@@ -577,11 +722,26 @@ export function idleTail(last: { at: number; until: number } | null, liveAt: num
   return { x, liveX, idleMs: liveAt - last.until };
 }
 
-/** "last recorded 06:42:10" when exact; a range at the clock's resolution when only bounded. */
+/**
+ * "last recorded 06:42:10" when the time is exact; "last recorded between 06:41 and 06:42" when only a
+ * bucket is known (X11): a bucket's edges are never said as if they were the record's time.
+ */
 export function lastRecordedWords(last: { at: number; until: number }, clock: (t: number) => string): string {
   const a = clock(last.at);
   const b = clock(last.until);
-  return a === b ? `last recorded ${a}` : `last recorded ${a}–${b}`;
+  return a === b ? `last recorded ${a}` : `last recorded between ${a} and ${b}`;
+}
+
+/**
+ * The last recorded instant from the data layer's `recordedExtent` (X11): exact (`lastIsBucket`
+ * false) as one instant; only a bucket (`lastIsBucket` true, with `lastBucket`) as its bounds. Null
+ * when the answer does not say which (an older data layer): the caller falls back to `lastRecorded`.
+ */
+export function lastFromRecorded(r: (TimeWindow & { lastIsBucket?: boolean; lastBucket?: TimeWindow }) | null, liveAt: number): { at: number; until: number } | null {
+  if (!r || r.lastIsBucket === undefined) return null;
+  if (!r.lastIsBucket) return { at: Math.min(r.to, liveAt), until: Math.min(r.to, liveAt) };
+  const b = r.lastBucket ?? { from: r.to, to: r.to };
+  return { at: Math.min(b.from, liveAt), until: Math.min(b.to, liveAt) };
 }
 
 // ---------------------------------------------------------------- person waits
@@ -692,7 +852,8 @@ export function describeColumn(i: ColumnInput): { title: string; lines: string[]
   if (c && c.buckets.length) {
     const b = bucketAt(c.buckets, c.bucketMs, t);
     const w = b ? activeWords(b.active) : null;
-    lines.push(w ? `Most at once: ${w}` : "No recorded spans active");
+    const inf = b ? inferredOf(b, "visit") : null;
+    lines.push(w ? `Most at once: ${w}${inf ? `, including ${inf} ended without an exit record` : ""}` : "No recorded spans active");
   }
   const near = i.points.filter((p) => Math.abs(p.x + 0.5 - i.x) <= 3);
   const over = i.bars.filter((b) => i.x >= b.x0 - 2 && i.x <= Math.max(b.x0 + 2, b.x1) + 2);
@@ -787,9 +948,34 @@ function scenarioLabel(t: number, step: number): string {
  * apart, aligned to UTC (wall) or to the scenario's start. Wall time: the first tick carries the date
  * and a UTC midnight is labelled by its date.
  */
-export function chooseTicks(extent: TimeWindow, width: number, wall: boolean, minSpacing = 84): { step: number; ticks: Tick[] } {
+export function chooseTicks(extent: Axis, width: number, wall: boolean, minSpacing = 84): { step: number; ticks: Tick[] } {
   const span = extent.to - extent.from;
   if (span <= 0 || width <= 0) return { step: 0, ticks: [] };
+  if (extent.breaks?.length) {
+    // A broken axis: one step for every stretch drawn at the same scale, ticks only outside the breaks.
+    const idle = extent.breaks.reduce((n, b) => n + (b.to - b.from), 0);
+    const pxPerMs = (width * (1 - (extent.breakFrac ?? 0) * extent.breaks.length)) / Math.max(1, span - idle);
+    const step = TICK_STEPS.find((s) => s * pxPerMs >= minSpacing) ?? Math.ceil(minSpacing / pxPerMs / DAY) * DAY;
+    const ticks: Tick[] = [];
+    const parts: Array<[number, number]> = [];
+    let cur = extent.from;
+    for (const b of extent.breaks) {
+      parts.push([cur, b.from]);
+      cur = b.to;
+    }
+    parts.push([cur, extent.to]);
+    for (const [a, b] of parts) {
+      let first = true;
+      for (let t = Math.ceil(a / step) * step; t <= b; t += step) {
+        const midnight = wall && t % DAY === 0;
+        // The first tick after a break carries its date, as the first tick of the axis does.
+        const withDate = (first && ticks.length === 0) || (first && wall && step < DAY);
+        ticks.push({ t, x: xOf(t, extent, width), label: wall ? wallLabel(t, step, withDate && step < DAY && !midnight) : scenarioLabel(t, step), major: wall && (midnight || withDate) });
+        first = false;
+      }
+    }
+    return { step, ticks };
+  }
   const step = TICK_STEPS.find((s) => (s / span) * width >= minSpacing) ?? Math.ceil(span / DAY / Math.max(1, width / minSpacing)) * DAY;
   const ticks: Tick[] = [];
   let t = Math.ceil(extent.from / step) * step;

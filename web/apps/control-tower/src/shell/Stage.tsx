@@ -22,7 +22,7 @@
 import { memo, startTransition, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AtlasView } from "../atlas";
 import { BlueprintView } from "../blueprint";
-import { SceneStoreProvider, useSceneStore, useStore, type SceneStore, type ViewMode } from "../scene";
+import { SceneStoreProvider, storeView, useSceneStore, useStore, type SceneStore, type StoreView, type ViewMode } from "../scene";
 import { isScrubbing, onScrubbing } from "./scrub";
 
 const MODES: readonly ViewMode[] = ["atlas", "blueprint"];
@@ -62,15 +62,8 @@ const View = memo(function View({ mode }: { mode: ViewMode }) {
 const HIDDEN_MS = 500;
 /** How long after a jump the hidden view may wait for an idle moment before it is updated anyway. */
 const JUMP_IDLE_MS = 400;
-interface GatedStore extends SceneStore {
-  setShown(shown: boolean): void;
-  /** Whether the hidden view shows an earlier state than the store's. */
-  stale(): boolean;
-}
+type GatedStore = StoreView;
 function gatedStore(store: SceneStore): GatedStore {
-  const listeners = new Set<() => void>();
-  let shown = true;
-  let state = store.getState();
   let timer = 0;
   let cancelIdle: (() => void) | null = null;
   const cancel = () => {
@@ -79,63 +72,39 @@ function gatedStore(store: SceneStore): GatedStore {
     cancelIdle?.();
     cancelIdle = null;
   };
-  const notify = () => {
-    state = store.getState();
-    for (const l of [...listeners]) l();
-  };
   const flush = () => {
     cancel();
-    if (shown || state === store.getState()) return;
-    notify();
-  };
-  const onChange = () => {
-    if (shown) return notify();
-    if (isScrubbing()) return cancel();
-    if (store.getState().playing) {
-      if (!timer && !cancelIdle) timer = window.setTimeout(flush, HIDDEN_MS);
-      return;
-    }
-    // Paused: a jump. Catch up once the browser is idle (each further change restarts the wait).
-    cancel();
-    cancelIdle = whenIdle(flush, JUMP_IDLE_MS);
+    view.catchUp();
   };
   const onScrub = (dragging: boolean) => {
-    if (!dragging && !shown && state !== store.getState()) {
+    if (!dragging && !view.shown() && view.stale()) {
       cancel();
       cancelIdle = whenIdle(flush, JUMP_IDLE_MS);
     }
   };
-  // Listens to the one store (and to drags) only while the view has listeners of its own.
-  let unsubscribe: (() => void) | null = null;
-  let offScrub: (() => void) | null = null;
-  return {
-    ...store,
-    getState: () => (shown ? store.getState() : state),
-    subscribe(listener) {
-      listeners.add(listener);
-      unsubscribe ??= store.subscribe(onChange);
-      offScrub ??= onScrubbing(onScrub);
+  // The shared view of the store (scene/view.ts, also the floor's heldStore); this is its policy.
+  const view: StoreView = storeView(store, {
+    hiddenChange() {
+      if (isScrubbing()) return cancel();
+      if (store.getState().playing) {
+        if (!timer && !cancelIdle) timer = window.setTimeout(flush, HIDDEN_MS);
+        return;
+      }
+      // Paused: a jump. Catch up once the browser is idle (each further change restarts the wait).
+      cancel();
+      cancelIdle = whenIdle(flush, JUMP_IDLE_MS);
+    },
+    // Listens to drags only while the view has listeners of its own.
+    attach() {
+      const offScrub = onScrubbing(onScrub);
       return () => {
-        listeners.delete(listener);
-        if (!listeners.size && unsubscribe) {
-          unsubscribe();
-          unsubscribe = null;
-          offScrub?.();
-          offScrub = null;
-          cancel();
-        }
+        offScrub();
+        cancel();
       };
     },
-    setShown(next) {
-      if (next === shown) return;
-      shown = next;
-      if (shown) {
-        cancel();
-        if (state !== store.getState()) notify();
-      }
-    },
-    stale: () => state !== store.getState(),
-  };
+    shownAgain: cancel,
+  });
+  return view;
 }
 
 type IdleWindow = Window & { requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };

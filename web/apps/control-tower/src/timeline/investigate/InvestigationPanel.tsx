@@ -3,11 +3,13 @@
  * the lens in use. At most 220 px high with its own scroll, collapsible to its 28 px header. Each lens
  * is a drawing in the Living Factory's language whose every figure reveals the record it comes from.
  */
-import { useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import type { InvestigationPanelProps } from "../contract";
 import { useSceneStore } from "../../scene";
+import { useAsOf } from "../controls";
 import type { BodyProps } from "./body";
+import { BandRoving, rovingKeys, rovingSync } from "./figures";
 import { ConcurrencyBody } from "./Concurrency";
 import { lensOf } from "./lenses";
 import { ticketOfRef } from "./model";
@@ -28,6 +30,15 @@ export function InvestigationPanel(props: InvestigationPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
   const selection = useSceneStore((s) => s.selection);
   const lensData = useLensData(props.data, props.viewport.window, props.lens === "concurrency");
+  const asOf = useAsOf();
+  // ONE tab stop for the whole band: the header buttons and every figure are reached by the arrow keys.
+  const ref = useRef<HTMLElement>(null);
+  const active = useRef<string | null>(null);
+  useLayoutEffect(() => rovingSync(ref.current, active.current));
+  const onKeyDown = useCallback((e: KeyboardEvent<HTMLElement>) => {
+    const k = rovingKeys(ref.current, e);
+    if (k !== undefined) active.current = k;
+  }, []);
   if (!lens) return null;
   const Body = BODIES[lens.id];
   const bodyId = `mach-inv-body-${lens.id}`;
@@ -41,12 +52,27 @@ export function InvestigationPanel(props: InvestigationPanelProps) {
     selectedTicket: ticketOfRef(selection),
     onReveal: props.onReveal,
     onWiden: () => props.onView({ window: null }),
+    onFrame: (window) => props.onView({ window }),
   };
+  const incomplete = (lensData.marks as { complete?: boolean; truncated?: boolean }).complete === false || (lensData.marks as { truncated?: boolean }).truncated === true;
+  const partial = props.lens === "concurrency" && lensData.series !== null && lensData.series.complete === false && lensData.series.buckets.length > 0;
   return (
-    <section aria-label={`Investigation: ${lens.label}`} className="relative shrink-0 border-b border-line bg-surface" style={{ width: props.width, maxHeight: PANEL_MAX_HEIGHT }}>
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- the band's one roving-tabindex group: arrow keys move between its parts.
+    <section
+      ref={ref}
+      aria-label={`Investigation: ${lens.label}`}
+      onKeyDown={onKeyDown}
+      onFocus={(e) => {
+        const t = e.target as HTMLElement;
+        active.current = t.dataset?.rove ?? t.dataset?.fig ?? active.current;
+      }}
+      className="relative shrink-0 border-b border-line bg-surface"
+      style={{ width: props.width, maxHeight: PANEL_MAX_HEIGHT }}
+    >
       <header className="flex items-center gap-2 border-b border-line pr-1" style={{ height: PANEL_HEADER_HEIGHT }}>
         <button
           type="button"
+          data-rove="collapse"
           aria-expanded={!collapsed}
           aria-controls={bodyId}
           onClick={() => setCollapsed((c) => !c)}
@@ -60,7 +86,8 @@ export function InvestigationPanel(props: InvestigationPanelProps) {
         </p>
         <button
           type="button"
-          aria-label={`Close the ${lens.label.toLowerCase()} lens`}
+          data-rove="close"
+          aria-label={`Close the lens: ${lens.label}`}
           onClick={() => props.onView({ lens: null })}
           className="flex size-6 shrink-0 items-center justify-center rounded-xs text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-2 focus-visible:outline-[var(--mach-focus)]"
         >
@@ -69,7 +96,14 @@ export function InvestigationPanel(props: InvestigationPanelProps) {
       </header>
       {collapsed ? null : (
         <div id={bodyId} className="overflow-x-auto overflow-y-auto" style={{ maxHeight: PANEL_MAX_HEIGHT - PANEL_HEADER_HEIGHT - 1 }}>
-          <Body {...body} />
+          {asOf.caption || incomplete || partial ? (
+            <p className="px-2 pt-1 text-[11px] leading-[15px] text-ink-muted" data-lens-caption="">
+              {[asOf.caption, incomplete ? "Landmarks incomplete in this window: the source returned only part of them" : null, partial ? "Counts partial: the source did not answer for the whole window" : null].filter(Boolean).join(". ")}.
+            </p>
+          ) : null}
+          <BandRoving.Provider value={true}>
+            <Body {...body} />
+          </BandRoving.Provider>
         </div>
       )}
     </section>

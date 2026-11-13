@@ -5,17 +5,29 @@
  * activity instead.
  *
  * It never iterates events: it reads the density series over the held extent (the first and the last
- * non-empty bucket), and, where density is not served, the last mark and the spans' bounds. The
- * answer is as coarse as one density bucket (the held extent / RESOLUTION) and never reaches past
- * what is held. Null when nothing is held or nothing recorded is found.
+ * non-empty bucket), and, where density is not served, the last mark and the spans' bounds. It never
+ * reaches past what is held. Null when nothing is held or nothing recorded is found.
+ *
+ * The end (X11) is the real last recorded time whenever a source gives one: the provider's newest
+ * event (`lastRecordedAt`, not in the contract), the last mark, the structural spans' recorded ends.
+ * Only when the density series shows events after every exact time is the end known to a bucket; then
+ * `lastIsBucket` is true, `lastBucket` holds that bucket, and the words must say "between".
  */
 import { extentOf, type MarkKind, type TimeWindow, type TimelineData } from "../contract";
-import { MARK_KINDS } from "./parse";
 
 /** Density buckets asked for over the held extent. */
 const RESOLUTION = 1000;
 
-export async function recordedExtent(data: TimelineData, signal?: AbortSignal): Promise<TimeWindow | null> {
+/** The recorded extent, with how its end is known (X11). */
+export interface RecordedExtent extends TimeWindow {
+  /** True when the last recorded time is known only to a density bucket (`lastBucket`). */
+  readonly lastIsBucket: boolean;
+  readonly lastBucket?: TimeWindow;
+}
+
+type WithLast = TimelineData & { lastRecordedAt?: () => number | null };
+
+export async function recordedExtent(data: TimelineData, signal?: AbortSignal): Promise<RecordedExtent | null> {
   const whole = data.extent();
   if (!whole || !(whole.to >= whole.from)) return null;
   let from = Number.POSITIVE_INFINITY;
@@ -25,14 +37,49 @@ export async function recordedExtent(data: TimelineData, signal?: AbortSignal): 
     if (b > to) to = b;
   };
 
+  /** The latest exact recorded time found. */
+  let exact = Number.NEGATIVE_INFINITY;
+  const exactly = (t: number | null | undefined) => {
+    if (typeof t === "number" && Number.isFinite(t) && t > exact) exact = t;
+  };
+
   const density = await data.density({ from: whole.from, to: Math.max(whole.to, whole.from + 1) }, RESOLUTION, undefined, signal);
   const first = density.buckets[0];
   const last = density.buckets[density.buckets.length - 1];
-  if (first && last) take(first.from, last.from + density.bucketMs);
+  if (first) from = first.from;
 
-  // The last mark (a mark is a recorded moment; one may be an interval that ends later).
-  const mark = await data.nextMark(whole.to + 1, -1, MARK_KINDS as readonly MarkKind[], signal);
-  if (mark) take(mark.at, mark.until ?? mark.at);
+  // The provider's newest event, exactly.
+  exactly((data as WithLast).lastRecordedAt?.() ?? null);
+  // The last mark (a mark is a recorded moment; one may be an interval that ends later). Every kind.
+  const mark = await data.nextMark(whole.to + 1, -1, [] as readonly MarkKind[], signal);
+  if (mark) {
+    take(mark.at, mark.at);
+    exactly(mark.until ?? mark.at);
+  }
+  // The structural spans' recorded starts and ends (exact), when the provider serves them.
+  if (typeof data.structure === "function") {
+    const page = await data.structure(signal);
+    for (const s of page.spans) {
+      const start = s.start?.at;
+      if (typeof start === "number") {
+        take(start, start);
+        exactly(start);
+      }
+      exactly(s.end?.at);
+    }
+  }
+  let lastIsBucket = false;
+  let lastBucket: TimeWindow | undefined;
+  if (last) {
+    const bucket = { from: last.from, to: Math.min(whole.to, last.from + density.bucketMs) };
+    if (exact >= bucket.from) take(exact, exact);
+    else {
+      // Events after every exact time: only their bucket is known.
+      lastIsBucket = true;
+      lastBucket = bucket;
+      take(bucket.from, bucket.to);
+    }
+  } else if (Number.isFinite(exact)) take(exact, exact);
 
   // Without density, the spans' own bounds: first start, last recorded end (an open span's end is not recorded).
   if (!first) {
@@ -44,5 +91,6 @@ export async function recordedExtent(data: TimelineData, signal?: AbortSignal): 
     }
   }
   if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
-  return { from: Math.max(whole.from, from), to: Math.min(whole.to, Math.max(to, from)) };
+  const out = { from: Math.max(whole.from, from), to: Math.min(whole.to, Math.max(to, from)) };
+  return lastIsBucket && lastBucket ? { ...out, lastIsBucket, lastBucket } : { ...out, lastIsBucket };
 }

@@ -7,6 +7,7 @@
  * input, no file contents, no model reasoning.
  */
 import { useEffect, useMemo, useState } from "react";
+import { timecode } from "../../shell/time";
 import { findArtifact, type ArtifactState, type EntityRef } from "../../sim";
 import { showInTimeline, showOnFloor, useScene, useSceneStore, useStore } from "../../scene";
 import { ArtifactLink } from "../../shell/inspector/anatomies";
@@ -28,16 +29,19 @@ import {
   hasTimeSection,
   isStationAcrossCells,
   neighboursOf,
+  openContextOf,
+  openContextWords,
   ORDER_NOTE,
   outcomeAsOf,
   outcomeLabel,
   parentSpanOf,
-  primarySpan,
   queryHintOf,
   queryOf,
   refKindOf,
   SPAN_KIND_WORDS,
+  spanHeadline,
   stationVisitsAcross,
+  subjectSpan,
   TIMELINE_RULE_WORDS,
   toolCallsWords,
   type EndFact,
@@ -93,13 +97,16 @@ function useSpansFor(ref: string, hint: string): Loaded {
   return loaded && loaded.key === key ? loaded.value : { status: "loading" };
 }
 
-/** The section, for any entity with spans; nothing for the rest. */
-export function InTimeSection({ entity }: { entity: EntityRef }) {
+/**
+ * The section, for any entity with spans; nothing for the rest. `detail`: the span the Timeline picked
+ * through this entity (the store's `selectionDetail`): shown first, with this entity as its context.
+ */
+export function InTimeSection({ entity, detail = null }: { entity: EntityRef; detail?: string | null }) {
   if (!hasTimeSection(entity)) return null;
-  return <InTime entity={entity} />;
+  return <InTime entity={entity} detail={detail} />;
 }
 
-function InTime({ entity }: { entity: EntityRef }) {
+function InTime({ entity, detail }: { entity: EntityRef; detail: string | null }) {
   const hint = useScene((s) => queryHintOf(s, entity));
   const loaded = useSpansFor(entity, hint);
   const store = useStore();
@@ -126,10 +133,10 @@ function InTime({ entity }: { entity: EntityRef }) {
         <p className="text-body-sm text-ink-muted">Reading its timing…</p>
       ) : loaded.status === "unavailable" ? (
         <p className="text-body-sm text-ink-muted">Timing is not available: {loaded.why}</p>
-      ) : isStationAcrossCells(entity) ? (
+      ) : isStationAcrossCells(entity) && !detail ? (
         <StationAcrossCells entity={entity} spans={loaded.spans} truncated={loaded.truncated} asOf={asOf} />
       ) : (
-        <Spans entity={entity} spans={loaded.spans} truncated={loaded.truncated} asOf={asOf} />
+        <Spans entity={entity} detail={detail} spans={loaded.spans} truncated={loaded.truncated} asOf={asOf} />
       )}
     </Section>
   );
@@ -171,8 +178,8 @@ function EndFactValue({ fact }: { fact: EndFact }) {
   );
 }
 
-function Spans({ entity, spans, truncated, asOf }: { entity: EntityRef; spans: readonly TimelineSpan[]; truncated: boolean; asOf: number }) {
-  const primary = useMemo(() => primarySpan(entity, spans, asOf), [entity, spans, asOf]);
+function Spans({ entity, detail, spans, truncated, asOf }: { entity: EntityRef; detail: string | null; spans: readonly TimelineSpan[]; truncated: boolean; asOf: number }) {
+  const { span: primary, picked } = useMemo(() => subjectSpan(entity, detail, spans, asOf), [entity, detail, spans, asOf]);
   const dependency = refKindOf(entity) === "dependency" ? dependencyWords(entity, primary) : null;
   if (!primary) {
     return (
@@ -182,10 +189,10 @@ function Spans({ entity, spans, truncated, asOf }: { entity: EntityRef; spans: r
       </>
     );
   }
-  return <PrimarySpan entity={entity} primary={primary} spans={spans} truncated={truncated} asOf={asOf} dependency={dependency} />;
+  return <PrimarySpan entity={picked && detail ? (detail as EntityRef) : entity} context={picked ? entity : null} primary={primary} spans={spans} truncated={truncated} asOf={asOf} dependency={dependency} />;
 }
 
-function PrimarySpan({ entity, primary, spans, truncated, asOf, dependency }: { entity: EntityRef; primary: TimelineSpan; spans: readonly TimelineSpan[]; truncated: boolean; asOf: number; dependency: string | null }) {
+function PrimarySpan({ entity, context, primary, spans, truncated, asOf, dependency }: { entity: EntityRef; context: EntityRef | null; primary: TimelineSpan; spans: readonly TimelineSpan[]; truncated: boolean; asOf: number; dependency: string | null }) {
   const began = beganFact(primary, asOf, RULES);
   const ended = endedFact(primary, asOf, RULES);
   const length = durationSentence(primary, asOf, RULES);
@@ -195,7 +202,8 @@ function PrimarySpan({ entity, primary, spans, truncated, asOf, dependency }: { 
   const parent = parentSpanOf(primary, spans, asOf);
   const children = childrenOf(primary, spans, asOf);
   const { before, after } = neighboursOf(primary, spans, asOf);
-  const companions = companionsOf(entity, primary, spans, asOf);
+  const companions = context ? [] : companionsOf(entity, primary, spans, asOf);
+  const open = length.live?.mode === "open" ? openContextWords(openContextOf(primary, spans, asOf), (t) => timecode(t, false)) : "";
   const facts: Fact[] = [
     ["What", SPAN_KIND_WORDS[primary.kind]],
     ["Began", <EndFactValue key="b" fact={began} />],
@@ -206,8 +214,9 @@ function PrimarySpan({ entity, primary, spans, truncated, asOf, dependency }: { 
       "Duration",
       length.live ? (
         <span key="d">
+          {/* An open container reads "open for", never "at work for" (X2). */}
           <Elapsed startedAt={length.live.startedAt} finishedAt={null} mode={length.live.mode} />
-          <span className="text-ink-subtle">, still open</span>
+          <span className="text-ink-subtle">{length.live.mode === "open" ? open : ", still open"}</span>
         </span>
       ) : (
         length.text
@@ -221,6 +230,14 @@ function PrimarySpan({ entity, primary, spans, truncated, asOf, dependency }: { 
   return (
     <>
       {dependency ? <p className="mb-2 text-body-sm text-ink">{dependency}</p> : null}
+      {context ? (
+        <div className="mb-3" data-in-time-subject={primary.entity}>
+          <p className="text-body-sm font-semibold text-ink">{spanHeadline(primary, asOf)}</p>
+          <p className="text-caption text-ink-subtle">
+            The span you picked, within <span className="font-mono text-[12px] text-ink-muted">{context}</span>.
+          </p>
+        </div>
+      ) : null}
       <Facts facts={facts} />
       {note ? <p className="mt-2 text-caption text-ink-subtle">{note}</p> : null}
       {companions.length ? (
@@ -266,8 +283,9 @@ function PrimarySpan({ entity, primary, spans, truncated, asOf, dependency }: { 
 /** A related span: a link to its entity, with its kind and its duration in words (or a gap for a neighbour). */
 function SpanLink({ to, span, asOf, prefix, detail }: { to: string; span: TimelineSpan | null; asOf: number; prefix?: string; detail?: string }) {
   const target = linkable(to);
-  const what = span ? SPAN_KIND_WORDS[span.kind] : "Not held here";
-  const words = detail ?? (span ? durationSentence(span, asOf, RULES).text : "its timing is not held here");
+  // Said once: a parent whose span is not held is named by its ref, with one line saying so.
+  const what = span ? SPAN_KIND_WORDS[span.kind] : "";
+  const words = detail ?? (span ? durationSentence(span, asOf, RULES).text : "Its timing is not held here.");
   const body = (
     <>
       {prefix ? <span className="text-ink-subtle">{prefix}: </span> : null}

@@ -187,7 +187,7 @@ test("product grouping: waves → slices → cells, a sliceless cell and a cell-
   assert.equal(tree.byId.get("slice:S4/waits").lanes[0].spans[0].kind, "slice-wait");
   const cell = tree.byId.get("cell:T1");
   assert.equal(cell.ref, "cell:T1");
-  assert.equal(cell.detail, "S1");
+  assert.equal(cell.detail, null, "X6: the slice is the parent; its id is not repeated");
   assert.equal(cell.depth, 2);
   assert.equal(cell.lanes[0].spans[0].kind, "cell");
 });
@@ -227,7 +227,7 @@ test("product grouping: a cell holds rounds, stations in belt order, waits, revi
     "seat:T1/review#3/product",
     "seat:T1/review#3/security",
   ]);
-  assert.equal(tree.byId.get("seat:T1/review#1/security").label, "Round 1 · security");
+  assert.equal(tree.byId.get("seat:T1/review#1/security").label, "R1 security");
   assert.equal(tree.byId.get("seat:T1/review#1/security").detail, "opus");
 });
 
@@ -246,8 +246,13 @@ test("product grouping: executions are ribbons on the cell, never rows; rounds a
 test("product grouping: attention, counts, unknown starts and open spans", () => {
   const tree = buildTrackTree(fixture(), "product", NO_FILTERS, LIVE);
   assert.equal(tree.byId.get("cell:T1/waits").attention, "person", "an open person wait");
-  assert.equal(tree.byId.get("cell:T1/rounds").attention, "failed", "rejected rounds");
-  assert.equal(tree.byId.get("cell:T1").attention, "failed", "the worst of the subtree");
+  // X1: a row's attention is its OWN (its latest span's); what failed beneath is counted.
+  const rounds = tree.byId.get("cell:T1/rounds");
+  const lastRound = rounds.lanes.flatMap((l) => l.spans).sort((a, b) => a.start.at - b.start.at).at(-1);
+  assert.equal(rounds.attention, contract.attentionOf(lastRound, LIVE), "the latest round's own condition");
+  assert.ok((rounds.counts?.rejected ?? 0) + (rounds.counts?.failed ?? 0) >= 1, "rejected rounds are counted");
+  assert.notEqual(tree.byId.get("cell:T1").attention, "failed", "a cell does not wear its rounds' failure");
+  assert.ok(tree.byId.get("cell:T1").counts, "the cell counts what happened beneath it");
   assert.equal(tree.byId.get("station:T1/groom").attention, "none");
   assert.equal(tree.byId.get("station:T2/build").attention, "open");
   // A span with only an end recorded still has a place on its station row.
@@ -267,11 +272,11 @@ test("execution grouping: execution → claim → workflow → agents → tools;
   const tree = buildTrackTree(fixture(), "execution", NO_FILTERS, LIVE);
   assert.deepEqual(ids(tree.roots), ["execution:E4", "execution:E1", "execution:E3", "execution:E2"], "by start time");
   const e1 = tree.byId.get("execution:E1");
-  // The ticket first; what tells executions of one cell apart (attempt, start) in the detail.
-  assert.equal(e1.label, "T1");
-  assert.equal(e1.detail, "attempt 1 · started 09:19");
-  assert.equal(tree.byId.get("execution:E2").label, "T1");
-  assert.equal(tree.byId.get("execution:E2").detail, "attempt 2 · started 10:29");
+  // X7: the ticket, its run among the cell's executions and its start; the supervisor's attempt is the detail.
+  assert.equal(e1.label, "T1 · run 1 of 2 · 09:19");
+  assert.equal(e1.detail, "supervisor attempt 1");
+  assert.equal(tree.byId.get("execution:E2").label, "T1 · run 2 of 2 · 10:29");
+  assert.equal(tree.byId.get("execution:E2").detail, "supervisor attempt 2");
   assert.equal(e1.attention, "interrupted");
   assert.deepEqual(ids(e1.children), ["execution:E1/claim"]);
   assert.deepEqual(e1.ribbons.map((s) => s.entity), ["visit:T1/build#1", "visit:T1/verify#1", "visit:T1/review#1", "visit:T1/build#2"]);
@@ -418,7 +423,8 @@ test("filters: tickets, executions, stations and kinds restrict spans; parents o
 
 test("filters: attentionOnly keeps only tracks that failed, were interrupted or wait on a person", () => {
   const tree = buildTrackTree(fixture(), "product", { ...NO_FILTERS, attentionOnly: true }, LIVE);
-  for (const n of allNodes(tree)) assert.ok(["person", "interrupted", "failed"].includes(n.attention), `${n.id}: ${n.attention}`);
+  const needs = (n) => ["person", "unknown", "interrupted", "failed"].includes(n.attention) || Boolean(n.counts && (n.counts.failed || n.counts.rejected || n.counts.interrupted || n.counts.unknown || n.counts.waitingPerson));
+  for (const n of allNodes(tree)) assert.ok(needs(n), `${n.id}: ${n.attention}`);
   assert.ok(tree.byId.has("cell:T1/waits"));
   assert.ok(tree.byId.has("cell:T1/rounds"));
   assert.ok(!tree.byId.has("station:T1/groom"));
@@ -716,5 +722,44 @@ test("execution grouping: an agent or workflow label drops the ticket its execut
   const tree = buildTrackTree(spans, "execution", NO_FILTERS, LIVE);
   assert.equal(tree.byId.get("agent:E3-builder").label, "builder");
   const attempt = buildTrackTree(fixture().filter((s) => !(s.kind === "execution" && s.entity.includes("E3"))), "execution", NO_FILTERS, LIVE);
-  assert.match(attempt.byId.get("execution:E3")?.detail ?? "attempt 1", /^attempt 1$/, "no execution span: no start said");
+  assert.equal(attempt.byId.get("execution:E3")?.detail, "supervisor attempt 1", "the recorded attempt stays in the detail");
+});
+
+// ---------------------------------------------------------------- round 4 (ROUND4.md ids)
+
+test("X4: the tree from structural spans plus a window's detail places every row as the whole history does", async () => {
+  const all = fixture();
+  const structural = all.filter((s) => contract.STRUCTURAL_KINDS.includes(s.kind));
+  const win = { from: at(100), to: at(120) };
+  const detail = all.filter((s) => !contract.STRUCTURAL_KINDS.includes(s.kind) && contract.overlaps(s, win));
+  const union = [...structural, ...detail];
+  const tree = buildTrackTree(union, "product", NO_FILTERS, LIVE);
+  const whole = buildTrackTree(all, "product", NO_FILTERS, LIVE);
+  assert.deepEqual(pathTo(tree, "cell:T1"), pathTo(whole, "cell:T1"), "the cell stays under its slice and wave");
+  assert.ok(!tree.byId.get("factory/unplanned")?.children.some((c) => c.id === "cell:T1"));
+  // The Rounds row holds every round, including those outside the window, so it draws an edge chevron, never vanishes.
+  const rounds = tree.byId.get("cell:T1/rounds");
+  assert.equal(rounds.lanes.flatMap((l) => l.spans).length, 3);
+  const scaleMod = await import("../src/timeline/render/scale.ts");
+  const drawMod = await import("../src/timeline/render/draw.ts");
+  const far = { from: at(400), to: at(420) };
+  const ch = drawMod.edgeChevron(rounds.lanes[0].spans, scaleMod.scaleOf(far, 600), LIVE);
+  assert.ok(ch && ch.side === -1, "a chevron on the side the rounds lie");
+  // Executions are numbered from the structural spans: the same labels whatever the window.
+  const ex = buildTrackTree(union, "execution", NO_FILTERS, LIVE);
+  const exWhole = buildTrackTree(all, "execution", NO_FILTERS, LIVE);
+  assert.equal(ex.byId.get("execution:E2").label, exWhole.byId.get("execution:E2").label);
+});
+
+test("X1: a parent's attention is its own; rejections and failures beneath it are counts", () => {
+  const tree = buildTrackTree(fixture(), "product", NO_FILTERS, LIVE);
+  const rounds = tree.byId.get("cell:T1/rounds");
+  assert.equal(rounds.attention, "none", "the latest round was approved");
+  assert.deepEqual({ rejected: rounds.counts.rejected, failed: rounds.counts.failed }, { rejected: 1, failed: 1 });
+  for (const id of ["cell:T1", "slice:S1", "wave:W1"]) {
+    const n = tree.byId.get(id);
+    assert.notEqual(n.attention, "failed", id);
+    assert.ok(n.counts.rejected >= 1 && n.counts.failed >= 1, `${id} counts what happened beneath it`);
+  }
+  assert.equal(tree.byId.get("wave:W1").attention, "open", "the wave's own span is open");
 });

@@ -288,12 +288,18 @@ export interface ObserverMarksQuery {
   readonly beforeMs?: number | null;
   readonly kinds?: readonly string[];
   readonly limit?: number;
+  /** Paging within a window (round 4); an observer without paging ignores it. */
+  readonly offset?: number;
   readonly signal?: AbortSignal;
 }
 export interface ObserverMarksPage {
   readonly items: readonly unknown[];
   readonly truncated: boolean | null;
   readonly cursor: string | null;
+  /** Round 4 paging: more marks follow at `offset + items.length`; null when the reply does not say. */
+  readonly more?: boolean | null;
+  readonly total?: number | null;
+  readonly offset?: number | null;
 }
 export interface ObserverConcurrencyQuery {
   readonly fromMs: number;
@@ -720,8 +726,9 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       }
       if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
       if (typeof query.limit === "number") q.set("limit", String(query.limit));
+      if (typeof query.offset === "number" && query.offset > 0) q.set("offset", String(Math.floor(query.offset)));
       const d = await get(`/marks?${q.toString()}`, query.signal);
-      return { items: list(d.items), truncated: bool(d.truncated), cursor: str(d.cursor) };
+      return { items: list(d.items), truncated: bool(d.truncated), cursor: str(d.cursor), more: bool(d.more), total: num(d.total), offset: num(d.offset) };
     },
     async concurrency(query) {
       const q = new URLSearchParams();

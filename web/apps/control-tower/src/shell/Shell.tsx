@@ -49,6 +49,8 @@ const SUMMARY_TIMELINE = 142;
 const COLLAPSED_TIMELINE = 41;
 const WIDE = "(min-width: 1280px)";
 const LARGE = "(min-width: 1680px)";
+/** At or below this width the inspector starts closed in the Timeline (X20). */
+const NARROW = "(max-width: 1100px)";
 /** Below this height (a 1080 p screen at 200% zoom is 540) the timeline starts collapsed to its transport. */
 const SHORT = "(max-height: 600px)";
 
@@ -112,16 +114,13 @@ function LostMomentNotice({ at, why, onDismiss }: { at: HashAt; why: LostReason;
   );
 }
 
-/** The floor's view of the store: held still while another workspace is up (set before the first render too). */
-function useFloorStore(store: SceneStore, onFloor: boolean) {
-  const [held] = useState(() => {
-    const h = heldStore(store);
-    h.hold(!onFloor);
-    return h;
-  });
-  useLayoutEffect(() => {
-    held.hold(!onFloor);
-  }, [held, onFloor]);
+/**
+ * The floor's view of the store: held still while another workspace is up. It holds and releases
+ * itself in the store's own change handler (heldStore, A3), so the change that leaves the floor never
+ * reaches it and the one that returns catches it up at once, before any render.
+ */
+function useFloorStore(store: SceneStore) {
+  const [held] = useState(() => heldStore(store));
   return held;
 }
 
@@ -257,15 +256,24 @@ export function Shell() {
   const workspace = useSceneStore((s) => s.workspace);
   const reduced = useSceneStore((s) => s.reducedMotion);
   const onFloor = workspace === "floor";
-  const floorStore = useFloorStore(store, onFloor);
+  const floorStore = useFloorStore(store);
   const floorRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   useArrival(floorRef, onFloor, reduced);
   useArrival(timelineRef, !onFloor, reduced);
   const selection = useSceneStore((s) => s.selection);
+  // For browser tests: the scene's first state is applied (the simulation at once; live once history
+  // holds something or the connection has left "connecting"), and the shell has mounted with it.
+  const sceneApplied = useSceneStore((s) => s.source !== "live" || s.log.size() > 0 || (s.connection !== null && s.connection.state !== "connecting"));
+  const [mountedOnce, setMountedOnce] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMountedOnce(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
   const wide = useMedia(WIDE);
   const large = useMedia(LARGE);
   const short = useMedia(SHORT);
+  const narrow = useMedia(NARROW);
   const viewportH = useViewportHeight();
   const [inspectorWanted, setInspectorWanted] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -285,10 +293,18 @@ export function Shell() {
 
   // On a narrow window the inspector is an overlay: it opens when something is selected and closes
   // when the selection is cleared (derived during render, not in an effect).
+  // X20: at 1100 px wide or less the drawer would cover half the Timeline, so there it starts closed
+  // and a selection does not open it (I, or the inspector button, does).
+  const compactTimeline = narrow && !onFloor;
   const [seenSelection, setSeenSelection] = useState(selection);
   if (seenSelection !== selection) {
     setSeenSelection(selection);
-    setOverlayOpen(Boolean(selection));
+    setOverlayOpen(Boolean(selection) && !compactTimeline);
+  }
+  const [seenCompact, setSeenCompact] = useState(compactTimeline);
+  if (seenCompact !== compactTimeline) {
+    setSeenCompact(compactTimeline);
+    if (compactTimeline) setOverlayOpen(false);
   }
 
   // After a mode switch, ask the new view to keep the selection in view.
@@ -391,7 +407,7 @@ export function Shell() {
   const selectionWord = selection ? refKind(selection) : null;
 
   return (
-    <div className="mach-frame text-ink" style={{ gridTemplateRows: rows, gridTemplateColumns: cols }} data-resizing={resizing ? "" : undefined} data-theater={theater ? "" : undefined}>
+    <div className="mach-frame text-ink" style={{ gridTemplateRows: rows, gridTemplateColumns: cols }} data-resizing={resizing ? "" : undefined} data-theater={theater ? "" : undefined} data-scene-ready={mountedOnce && sceneApplied ? "" : undefined}>
       <a
         href="#stage"
         onClick={(e) => {

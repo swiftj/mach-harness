@@ -20,6 +20,7 @@ import {
   type ArtifactState,
   type CellState,
   type DependencyState,
+  type EntityRef,
   type ExecutionState,
   type FindingState,
   type GateState,
@@ -35,7 +36,7 @@ import {
 import { useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
 import { IconButton } from "../timeline/Transport";
-import { artifactOf, selectable, gateOf, kindOf, gateStateWords, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
+import { artifactOf, selectable, STATION_WORDS, gateOf, kindOf, gateStateWords, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
 import {
   ActorAnatomy,
   AgentAnatomy,
@@ -54,7 +55,7 @@ import {
   WaveAnatomy,
   WorkflowAnatomy,
 } from "./anatomies";
-import { identityOf, parseStation, selectEntity } from "./entity";
+import { identityOf, parseStation, pickedVisitOf, selectEntity } from "./entity";
 import { AuthorityBadge, Evidence, JumpButton, precisionWords, useEntityEvents } from "./parts";
 import { Provenance } from "./Provenance";
 import { RunNow } from "./RunNow";
@@ -261,14 +262,21 @@ function namingScene(s: { source: string; log: { head(): Scene } }): Scene {
 }
 
 function Selected({ entity }: { entity: AnyRef }) {
-  const value = useScene((s) => selectEntity(s, entity));
   const store = useStore();
+  const detail = useSceneStore((s) => (s.selection === entity ? s.selectionDetail : null));
+  // A visit picked on the Timeline through its station (X3): that visit is the subject, not the station's latest.
+  const picked = useScene((s) => pickedVisitOf(s, entity, detail));
+  const own = useScene((s) => selectEntity(s, entity));
+  const subject: AnyRef = picked && detail ? (detail as AnyRef) : entity;
+  const value = picked ?? own;
   // Strings, so a new event re-renders the header only when the name itself changes.
-  const name = useSceneStore((s) => identityOf(entity, namingScene(s)).name);
-  const kindWord = useSceneStore((s) => identityOf(entity, namingScene(s)).kindWord);
-  const identity = { name, kindWord, id: refId(entity) };
+  const ownName = useSceneStore((s) => identityOf(entity, namingScene(s)).name);
+  const ownKindWord = useSceneStore((s) => identityOf(entity, namingScene(s)).kindWord);
+  const name = picked ? `${STATION_WORDS[picked.station as StationKind] ?? picked.station}, round ${picked.round}, in ${picked.ticketId}` : ownName;
+  const kindWord = picked ? "Station visit" : ownKindWord;
+  const identity = { name, kindWord, id: picked && detail ? refId(detail as AnyRef) : refId(entity) };
   const focusable = selectable(entity);
-  const look = value ? lookOf(entity, value) : null;
+  const look = value ? lookOf(subject, value) : null;
   const { all } = useEntityEvents(entity);
   const unknown = all.length === 0 && !value;
   return (
@@ -302,17 +310,31 @@ function Selected({ entity }: { entity: AnyRef }) {
         <TimeStatus look={look} entity={entity} />
       </header>
       {unknown ? <p className="px-5 py-4 text-body-sm text-ink-muted">No record of that entity has been received. If it appears, this shows it.</p> : null}
-      <PickedThrough entity={entity} kindWord={identity.kindWord} />
+      {picked && detail ? <PickedVisit entity={entity} /> : picked ? null : <PickedThrough entity={entity} kindWord={identity.kindWord} />}
       {value ? (
         <div className="pt-4">
-          <Why entity={entity} />
-          <Anatomy entity={entity} value={value} />
+          {/* "Why" reads the selection's own latest record: not shown for a visit picked through its station. */}
+          {picked ? null : <Why entity={entity} />}
+          <Anatomy entity={subject} value={value} />
         </div>
       ) : null}
-      <InTimeSection entity={entity} />
+      <InTimeSection entity={entity} detail={detail} />
       {value || all.length ? <Provenance entity={entity} value={value} /> : null}
       <Evidence entity={entity} />
     </div>
+  );
+}
+
+/** The picked visit's context: the station it was picked through, one link away. */
+function PickedVisit({ entity }: { entity: AnyRef }) {
+  const store = useStore();
+  return (
+    <p className="mx-5 mt-4 text-body-sm text-ink-muted" data-inspector-picked-visit="">
+      The visit you picked on the Timeline.{" "}
+      <button type="button" onClick={() => store.select(entity as EntityRef, { focus: false })} className="font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2">
+        Every visit to this station
+      </button>
+    </p>
   );
 }
 

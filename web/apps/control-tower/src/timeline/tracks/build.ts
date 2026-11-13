@@ -29,14 +29,73 @@ import { packLanes } from "./lanes";
 import { filterOf, idOf, individual, relationsOf, sliceOf, stationOf, ticketOf, execOf, type AgentGroup, type Relations } from "./relations";
 
 type Attention = TrackNode["attention"];
+type Counts = NonNullable<TrackNode["counts"]>;
+type MutableCounts = { -readonly [K in keyof Counts]-?: number };
 
 /** The stations in belt order; others follow alphabetically. */
 export const STATION_ORDER: readonly string[] = ["groom", "plan", "audit", "build", "verify", "review", "human-approval", "merge", "cleanup"];
 
-const ATTENTION_RANK: Readonly<Record<Attention, number>> = { none: 0, open: 1, person: 2, interrupted: 3, failed: 4 };
-/** What attentionOnly keeps (the contract: failed, interrupted, refused, or waiting on a person). */
-const NEEDS_ATTENTION = new Set<Attention>(["person", "interrupted", "failed"]);
+/** What attentionOnly keeps (the contract: failed, interrupted, refused, or waiting on a person; and an outcome not known). */
+const NEEDS_ATTENTION = new Set<Attention>(["person", "unknown", "interrupted", "failed"]);
 
+const ZERO: MutableCounts = { failed: 0, rejected: 0, interrupted: 0, unknown: 0, waitingPerson: 0, open: 0 };
+
+/** Spans that are work while open (the contract's open rule): everything else open is "open" or a wait. */
+const AT_WORK = new Set<string>(["execution", "workflow", "agent", "tool", "task", "visit"]);
+
+/** One span's contribution to the counts beneath a row. A rejected round is a rejection, not a failure. */
+function countSpan(acc: MutableCounts, span: TimelineSpan, liveAt: number): void {
+  const a = attentionOf(span, liveAt);
+  // A verify or review visit and a seat that failed are the round's verdict, counted once on the round
+  // (a failed verification, a rejection), not again for each part of it.
+  if (a === "failed" && (span.kind === "seat" || (span.kind === "visit" && (span.ids.station === "verify" || span.ids.station === "review")))) return;
+  switch (a) {
+    case "failed":
+      if (span.kind === "round" && /reject|changes/i.test(span.outcome ?? "")) acc.rejected++;
+      else acc.failed++;
+      break;
+    case "interrupted":
+      acc.interrupted++;
+      break;
+    case "unknown":
+      acc.unknown++;
+      break;
+    case "person":
+      acc.waitingPerson++;
+      break;
+    case "open":
+      if (AT_WORK.has(span.kind) && !(span.kind === "visit" && span.ids.station === "human-approval")) acc.open++;
+      break;
+    default:
+      break;
+  }
+}
+
+/** The counts without zero keys (absent keys are zero), or undefined when nothing is counted. */
+function frozenCounts(c: MutableCounts): Counts | undefined {
+  const out: { -readonly [K in keyof Counts]?: number } = {};
+  let any = false;
+  for (const k of Object.keys(c) as (keyof Counts)[]) {
+    if (c[k]) {
+      out[k] = c[k];
+      any = true;
+    }
+  }
+  return any ? out : undefined;
+}
+
+function sameCounts(a: Counts | undefined, b: Counts | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  for (const k of Object.keys(ZERO) as (keyof Counts)[]) if ((a[k] ?? 0) !== (b[k] ?? 0)) return false;
+  return true;
+}
+
+function needsAttention(own: Attention, c: Counts | undefined): boolean {
+  return NEEDS_ATTENTION.has(own) || Boolean(c && (c.failed || c.rejected || c.interrupted || c.unknown || c.waitingPerson));
+}
+
+const NO_TICKET = "Ticket not recorded";
 const COUNT_ONLY_GROUP_NOTE = "Tool calls are counted, not observable one by one";
 
 interface Draft {
@@ -46,7 +105,7 @@ interface Draft {
   readonly ref: EntityRef | null;
   label: string;
   detail: string | null;
-  /** An execution's detail before its start is known to the finisher ("attempt 2"). */
+  /** An execution's label before its run and start are known ("LOCAL-001"). */
   base?: string;
   note: string | null;
   /** Children sort by order, then (when byTime) by their earliest instant, then by id. */
@@ -70,6 +129,8 @@ interface LaneMemo {
   readonly lanes: readonly TrackLane[];
   readonly liveAt: number;
   readonly own: Attention;
+  /** The counts of the node's own spans. */
+  readonly counts: MutableCounts;
   readonly from: number;
 }
 
@@ -244,7 +305,8 @@ function productPlacer(rel: Relations): Placer {
     const existing = d.get(id);
     if (existing) return existing;
     const s = rel.ticketSlice.get(t) ?? null;
-    return d.make(id, "cell", s ? slice(s) : unplanned(), { ref: asRef(id), label: t, detail: s, order: 2, byTime: true });
+    // No detail: the slice is the row's parent, and repeating its id only cuts the ticket off.
+    return d.make(id, "cell", s ? slice(s) : unplanned(), { ref: asRef(id), label: t, order: 2, byTime: true });
   };
   const cellRow = (t: string, kind: TrackKind, label: string, order: number): Draft => {
     const id = `cell:${t}/${kind}`;
@@ -263,7 +325,7 @@ function productPlacer(rel: Relations): Placer {
     if (existing) return existing;
     const round = Number(idOf(span, "round") ?? span.attrs.round ?? 0);
     const seat = idOf(span, "seat") ?? "seat";
-    return d.make(span.entity, "seat", cellRow(t, "review", "Review", 300), { ref: asRef(span.entity), label: `Round ${round} · ${seat}`, detail: span.attrs.model ?? null, order: round });
+    return d.make(span.entity, "seat", cellRow(t, "review", "Review", 300), { ref: asRef(span.entity), label: `R${round} ${seat}`, detail: span.attrs.model ?? null, order: round });
   };
 
   return {
@@ -342,12 +404,12 @@ function executionPlacer(rel: Relations): Placer {
     const id = `execution:${x}`;
     const existing = d.get(id);
     if (existing) return existing;
-    // What tells executions apart comes first: the ticket as the label; the attempt and the start time
-    // (added by the finisher) as the detail, so three executions of one cell differ in both.
+    // What tells executions apart comes first: the ticket, its run among the cell's executions and its
+    // start (numbered by numberRuns before finishing); the supervisor's recorded attempt is the detail.
     const attempt = rel.execAttempt.get(x);
     const ticket = rel.execTicket.get(x);
-    const base = attempt ? `attempt ${attempt}` : "attempt not recorded";
-    const draft = d.make(id, "execution", null, { ref: asRef(id), label: ticket ?? "Ticket not recorded", detail: base, order: 0, byTime: true });
+    const base = ticket ?? NO_TICKET;
+    const draft = d.make(id, "execution", null, { ref: asRef(id), label: base, detail: attempt ? `supervisor attempt ${attempt}` : "attempt not recorded", order: 0, byTime: true });
     draft.base = base;
     return draft;
   };
@@ -554,7 +616,7 @@ class Finisher {
     const old = this.prev?.memo.get(draft.id);
     if (old && sameSections(old.sections, draft.sections)) {
       if (old.liveAt === this.liveAt) return old;
-      return { ...old, liveAt: this.liveAt, own: this.ownAttention(old.lanes) };
+      return { ...old, liveAt: this.liveAt, own: this.ownAttention(old.sections), counts: this.countsOf(old.lanes) };
     }
     const lanes: TrackLane[] = [];
     let from = Number.POSITIVE_INFINITY;
@@ -565,19 +627,34 @@ class Finisher {
         if (x && x.from < from) from = x.from;
       }
     }
-    return { sections: draft.sections, lanes, liveAt: this.liveAt, own: this.ownAttention(lanes), from };
+    return { sections: draft.sections, lanes, liveAt: this.liveAt, own: this.ownAttention(draft.sections), counts: this.countsOf(lanes), from };
   }
 
-  private ownAttention(lanes: readonly TrackLane[]): Attention {
-    let worst: Attention = "none";
-    for (const lane of lanes) {
-      for (const span of lane.spans) {
-        const a = attentionOf(span, this.liveAt);
-        if (ATTENTION_RANK[a] > ATTENTION_RANK[worst]) worst = a;
-        if (worst === "failed") return worst;
+  /**
+   * The row's OWN condition: that of its latest span (by start) in its first section (a station's
+   * visits, not their tasks), as held at liveAt. A Verify row whose round-1 visit failed and whose
+   * round-2 visit passed is not failed; the failure is in its counts. A span not started by liveAt
+   * does not count.
+   */
+  private ownAttention(sections: readonly (readonly TimelineSpan[])[]): Attention {
+    const list = sections.find((s) => s.length > 0) ?? [];
+    let latest: TimelineSpan | null = null;
+    let at = Number.NEGATIVE_INFINITY;
+    for (const span of list) {
+      const x = extentOf(span);
+      if (!x || x.from > this.liveAt) continue;
+      if (x.from > at || (x.from === at && latest !== null && span.id > latest.id)) {
+        latest = span;
+        at = x.from;
       }
     }
-    return worst;
+    return latest ? attentionOf(latest, this.liveAt) : "none";
+  }
+
+  private countsOf(lanes: readonly TrackLane[]): MutableCounts {
+    const c = { ...ZERO };
+    for (const lane of lanes) for (const span of lane.spans) countSpan(c, span, this.liveAt);
+    return c;
   }
 
   finish(draft: Draft, depth: number): Finished | null {
@@ -595,26 +672,25 @@ class Finisher {
       return a.node.id < b.node.id ? -1 : a.node.id > b.node.id ? 1 : 0;
     });
     const memo = this.lanesOf(draft);
-    if (draft.kind === "execution" && draft.base !== undefined) {
-      let start: number | null = null;
-      for (const lane of memo.lanes) for (const span of lane.spans) if (span.kind === "execution" && span.start?.at != null && (start === null || span.start.at < start)) start = span.start.at;
-      draft.detail = start === null ? draft.base : `${draft.base} · started ${startWords(start)}`;
-    }
     if (draft.kind === "verification") {
       let n = 0;
       for (const lane of memo.lanes) n += lane.spans.length;
       draft.detail = `${n} ${n === 1 ? "check" : "checks"} recorded`;
     }
-    let attention = memo.own;
+    // The node's own condition, never a child's; what happened beneath it is counted.
+    const attention = memo.own;
+    const sum = { ...memo.counts };
     let spanCount = 0;
     let from = memo.from;
     for (const lane of memo.lanes) spanCount += lane.spans.length;
     for (const k of kids) {
-      if (ATTENTION_RANK[k.node.attention] > ATTENTION_RANK[attention]) attention = k.node.attention;
       spanCount += k.node.spanCount;
       if (k.from < from) from = k.from;
+      const c = k.node.counts;
+      if (c) for (const key of Object.keys(c) as (keyof Counts)[]) sum[key] += c[key] ?? 0;
     }
-    if (this.attentionOnly && !NEEDS_ATTENTION.has(attention)) return null;
+    const counts = frozenCounts(sum);
+    if (this.attentionOnly && !needsAttention(attention, counts)) return null;
     if (spanCount === 0 && draft.ribbons.length === 0) return null;
     this.memo.set(draft.id, memo);
 
@@ -631,6 +707,7 @@ class Finisher {
       prev.detail === draft.detail &&
       prev.note === draft.note &&
       prev.attention === attention &&
+      sameCounts(prev.counts, counts) &&
       prev.spanCount === spanCount &&
       prev.lanes === memo.lanes &&
       sameList(prev.ribbons, ribbons) &&
@@ -653,6 +730,7 @@ class Finisher {
       ribbons: prev && sameList(prev.ribbons, ribbons) ? prev.ribbons : ribbons,
       spanCount,
       attention,
+      ...(counts ? { counts } : {}),
       note: draft.note,
     };
     this.index(node);
@@ -661,6 +739,50 @@ class Finisher {
 
   private index(node: TrackNode): void {
     this.byId.set(node.id, node);
+  }
+}
+
+/** An execution's start: its execution span's recorded start, else the earliest instant of its own spans. */
+function executionStart(draft: Draft): number | null {
+  let start: number | null = null;
+  let any: number | null = null;
+  for (const section of draft.sections) {
+    for (const span of section) {
+      if (span.kind === "execution" && span.start?.at != null && (start === null || span.start.at < start)) start = span.start.at;
+      const x = extentOf(span);
+      if (x && (any === null || x.from < any)) any = x.from;
+    }
+  }
+  return start ?? any;
+}
+
+/**
+ * Labels the execution roots by what tells them apart: "LOCAL-001 · run 2 of 3 · 05:37", the run being
+ * the execution's order among its cell's executions by start (from the structural spans, so it does not
+ * depend on the window). An execution not started by liveAt is not counted yet.
+ */
+function numberRuns(roots: readonly Draft[], liveAt: number): void {
+  const byTicket = new Map<string, { draft: Draft; start: number }[]>();
+  for (const draft of roots) {
+    if (draft.kind !== "execution" || draft.base === undefined) continue;
+    const start = executionStart(draft);
+    if (start === null || start > liveAt) {
+      draft.label = draft.base;
+      continue;
+    }
+    if (draft.base === NO_TICKET) {
+      draft.label = `${NO_TICKET} · ${startWords(start)}`;
+      continue;
+    }
+    const list = byTicket.get(draft.base);
+    if (list) list.push({ draft, start });
+    else byTicket.set(draft.base, [{ draft, start }]);
+  }
+  for (const list of byTicket.values()) {
+    list.sort((a, b) => a.start - b.start || (a.draft.id < b.draft.id ? -1 : 1));
+    list.forEach(({ draft, start }, i) => {
+      draft.label = list.length > 1 ? `${draft.base} · run ${i + 1} of ${list.length} · ${startWords(start)}` : `${draft.base} · ${startWords(start)}`;
+    });
   }
 }
 
@@ -779,6 +901,7 @@ export function buildTrackTree(spans: readonly TimelineSpan[], grouping: Groupin
   }
   const drafts = placer.drafts;
   const version = ++drafts.version;
+  if (grouping === "execution") numberRuns(drafts.roots, liveAt);
   const finisher = new Finisher(liveAt, filters.attentionOnly, before);
   const finished: Finished[] = [];
   const orderOf = new Map(drafts.roots.map((r) => [r.id, r] as const));

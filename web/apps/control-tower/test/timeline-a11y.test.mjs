@@ -279,3 +279,33 @@ test("60,000 spans: building, a keystroke and the drawn rows' summaries stay wit
   assert.ok(keyMs < 0.05, `keystroke ${keyMs}`);
   assert.ok(captionMs < 200, `caption ${captionMs}`);
 });
+
+// ---------------------------------------------------------------- round 4 (ROUND4.md ids)
+
+test("X2: an open cell's context is its last activity beneath it and the person it waits on", async () => {
+  const { buildTrackTree } = await import("../src/timeline/tracks/build.ts");
+  const { NO_FILTERS } = await import("../src/timeline/contract.ts");
+  const ids = { ticket_id: "LOCAL-001", slice_id: "SLICE-001", wave_id: "WAVE-001" };
+  const cell = span("cell:cell:LOCAL-001", "cell", at(T0), null, { entity: "cell:LOCAL-001", ids });
+  const visit = span("visit:visit:v1", "visit", at(T0 + M), at(T0 + 9 * M), { entity: "visit:v1", ids: { ...ids, station: "review", visit_id: "v1" }, outcome: "completed" });
+  const wait = span("person-wait:gate:p", "person-wait", at(T0 + 8 * M), null, { entity: "gate:LOCAL-001/human-approval#1", ids });
+  const live = T0 + 8 * 60 * M;
+  const tree = buildTrackTree([cell, visit, wait], "product", NO_FILTERS, live);
+  const ctx = describe.openContext(tree, cell, live);
+  assert.deepEqual(ctx, { lastActivity: T0 + 9 * M, personSince: T0 + 8 * M });
+  assert.equal(describe.openContext(tree, visit, live), null, "a visit is not a container");
+  const words = await import("../src/timeline/render/words.ts");
+  const said = words.describeSpan(cell, live, ctx);
+  assert.match(said, /open 8 h 0 min; last activity 23:27:00; waiting for a person since 23:26:00/);
+  assert.match(said, /last activity/);
+  assert.doesNotMatch(said, /running|at work/);
+});
+
+test("T10: summaries count an outcome not known on its own", () => {
+  const x = span("x", "execution", at(T0), at(null, { notAfter: T0 + 5 * M, basis: "inferred", reason: "unknown" }));
+  const s = describe.summariseSpans([x], { from: T0, to: T0 + 30 * M }, LIVE);
+  assert.equal(s.unknown, 1);
+  assert.equal(s.failed + s.interrupted, 0);
+  assert.match(describe.countWords(s), /one with the outcome not known/);
+  assert.equal(describe.attentionWords("unknown"), "Outcome not known");
+});

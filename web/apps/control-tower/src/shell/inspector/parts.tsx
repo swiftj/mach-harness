@@ -354,7 +354,7 @@ export function Evidence({ entity }: { entity: AnyRef }) {
  * it has finished. Never a fraction or a time left (nobody knows how long work in flight will take).
  * Written straight to the DOM on each frame, so it never re-renders the inspector.
  */
-export function Elapsed({ startedAt, finishedAt, mode = "work" }: { startedAt: number; finishedAt: number | null; mode?: "work" | "wait" | "ended-unrecorded" | "interrupted" }) {
+export function Elapsed({ startedAt, finishedAt, mode = "work" }: { startedAt: number; finishedAt: number | null; mode?: "work" | "wait" | "ended-unrecorded" | "interrupted" | "open" }) {
   const ref = useRef<HTMLSpanElement>(null);
   usePlayheadEffect(
     (s) => {

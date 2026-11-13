@@ -311,6 +311,7 @@ function fakeData(s: Scenario, mode: Mode): TimelineData {
     extent: () => s.extent,
     spans: () => Promise.reject(new Error("not used by the overview")),
     span: () => Promise.resolve(null),
+    structure: () => Promise.resolve({ spans: [], truncated: false, total: 0, version: "proof" }),
     async marks(w, kinds, signal) {
       if (mode === "loading") return never;
       await wait(signal);

@@ -23,13 +23,14 @@ import { factoryTokens, useTheme } from "@mach/ui";
 import { useSceneStore } from "../../scene";
 import { usePlayheadEffect } from "../../shell/timeline/playhead";
 import { type FlatRow, type TimelineCursor, type TimelineHit, type TimelineMark, type TimeWindow, type TrackCanvasProps } from "../contract";
-import { drawTracks, hitBox, rowGeom, rowKey, type DrawOutput } from "./draw";
+import { asOfPlayhead } from "../controls";
+import { drawTracks, hitBox, outlivesExecution, rowGeom, rowKey, type DrawOutput } from "./draw";
 import { cursorRow, keyAction, panToShow, rowSpans } from "./keys";
 import { hitRow, spanTimes } from "./lod";
 import { readPalette, type Palette } from "./palette";
 import { clampWindow, dateChanges, frameWindow, isWallTime, panBy, scaleOf, tAt, tickLabel, ticksFor, xAt, zoomAbout, type Scale } from "./scale";
-import { rowSummary } from "../a11y/describe";
-import { AUTHORITY_WORDS, describeSpan, durationText, durationWords, precisionLine, rowWords } from "./words";
+import { openContext, rowSummary } from "../a11y/describe";
+import { ATTEMPT_WORDS, AUTHORITY_WORDS, describeSpan, durationText, durationWords, precisionLine, rowWords } from "./words";
 import "./render.css";
 
 /** Where a time reads in the hover card: UTC to the tenth for wall time, elapsed for the simulation. */
@@ -137,6 +138,7 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
   const playRef = useRef<HTMLDivElement>(null);
   const liveRef = useRef<HTMLDivElement>(null);
   const futureRef = useRef<HTMLDivElement>(null);
+  const afterRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const cardTitle = useRef<HTMLParagraphElement>(null);
   const cardDur = useRef<HTMLParagraphElement>(null);
@@ -362,16 +364,24 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     let how: string;
     if (!hit) {
       // The keyboard cursor on a row: what the row holds, as the label column says it.
-      const r = rowWords(h.row);
+      const r = rowWords(h.row, P.viewport.liveAt);
       title = r.title;
       dur = r.detail;
       how = h.row.node.note ?? "";
       if (cardWhen.current) cardWhen.current.textContent = "";
     } else if (hit.span) {
-      title = describeSpan(hit.span, at);
-      dur = durationWords(hit.span, at);
+      const context = openContext(P.tree, hit.span, at);
+      title = describeSpan(hit.span, at, context);
+      dur = durationWords(hit.span, at, context);
       dur = dur[0] ? dur[0].toUpperCase() + dur.slice(1) : dur;
       how = `${AUTHORITY_WORDS[hit.span.authority]}. ${precisionLine(hit.span, at)}`;
+      if (hit.span.kind === "execution" && hit.span.attrs.attempt !== undefined) how = `${ATTEMPT_WORDS} ${how}`;
+      // A ribbon is the other hierarchy's span, linked here: said so, apart from the row's own spans.
+      if (P.tree.ofSpan.get(hit.span.id)?.trackId !== h.row.node.id && h.row.node.ribbons.includes(hit.span)) {
+        if (hit.span.kind === "visit") {
+          title = `Station visit made during this execution${outlivesExecution(h.row.node, hit.span, at) ? "; continued under a later execution" : ""}. ${title}`;
+        } else title = `Linked: ${title}`;
+      }
       const t = spanTimes(hit.span, at);
       if (cardWhen.current) {
         cardWhen.current.textContent = !t
@@ -598,7 +608,7 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     const [x0, , x1, y1] = c.box;
     showCard({ row: c.row, hit: c.hit }, c.hit ? Math.max(0, Math.min(P.viewport.width - 8, (Math.max(0, x0) + Math.min(P.viewport.width, x1)) / 2)) : 24, y1 - 8);
     // A row: the same summary of it in the window as the table gives, and whether it is open.
-    say(c.hit?.span ? describeSpan(c.hit.span, P.viewport.liveAt) : rowSpoken(c.row, P.viewport.window, P.viewport.liveAt));
+    say(c.hit?.span ? describeSpan(c.hit.span, P.viewport.liveAt, openContext(P.tree, c.hit.span, P.viewport.liveAt)) : rowSpoken(c.row, P.viewport.window, P.viewport.liveAt));
   }
   useLayoutEffect(() => {
     showCursor();
@@ -688,8 +698,23 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
         futureRef.current.style.left = `${Math.round(live) + 1}px`;
         futureRef.current.style.visibility = live >= width ? "hidden" : "visible";
       }
+      // Scrubbed back (T6): the tracks speak as of the live edge, so the stretch after the playhead is
+      // tinted, and labelled once, while the inspector speaks as of the playhead.
+      const after = afterRef.current;
+      if (after) {
+        const behind = asOfPlayhead({ following: s.following, playhead: s.playhead, liveAt: Math.max(s.liveAt, liveAt) }).behind;
+        const a = Math.max(0, Math.min(width, x));
+        if (!behind || live - a < 2) after.style.visibility = "hidden";
+        else {
+          after.style.visibility = "visible";
+          after.style.transform = `translateX(${Math.round(a)}px)`;
+          after.style.width = `${Math.round(live - a)}px`;
+          const label = after.firstElementChild as HTMLElement | null;
+          if (label) label.style.visibility = live - a >= 110 ? "visible" : "hidden";
+        }
+      }
     },
-    [win.from, win.to, width, liveAt],
+    [win.from, win.to, width, liveAt, following],
   );
 
   return (
@@ -730,6 +755,11 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
       <canvas ref={overRef} aria-hidden="true" className="pointer-events-none absolute inset-0 block" />
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">
         <div ref={futureRef} className="mach-tl-future absolute inset-y-0 right-0" style={{ left: width, opacity: 0.9 }} />
+        <div ref={afterRef} data-after-playhead="" className="mach-tl-after absolute inset-y-0 left-0" style={{ visibility: "hidden", width: 0 }}>
+          <span className="absolute left-1.5 top-1 whitespace-nowrap rounded-xs px-1 text-[10.5px] text-ink-muted" style={{ background: "var(--mach-factory-ground)" }}>
+            After the playhead
+          </span>
+        </div>
         <div ref={liveRef} className="absolute inset-y-0 left-0 w-0">
           <div className="absolute inset-y-0 left-0 border-l border-dashed" style={{ borderColor: "var(--mach-factory-plate-edge)" }} />
         </div>

@@ -12,7 +12,7 @@
  * selection, hover, focus and playback are the store's; the window, grouping, expansion, filters,
  * lens and the table are the Timeline's interface state, kept in the store (`timeline`).
  */
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Button, LoadingState } from "@mach/ui";
 import { entityAt, stableEntityAt, type EntityRef } from "../sim";
 import { useSceneStore, useStore, type SceneStore } from "../scene";
@@ -20,12 +20,10 @@ import { quantizedEdge } from "../shell/timeline/Timeline";
 import { Transport } from "../shell/timeline/Transport";
 import { utcClock } from "../shell/vocab";
 import {
-  LABEL_GUTTER,
   NO_FILTERS,
   OVERVIEW_HEIGHT,
   RULER_HEIGHT,
   type Grouping,
-  type InvestigationPanelProps,
   type LensDefinition,
   type SpanPage,
   type TimelineCursor,
@@ -33,84 +31,53 @@ import {
   type TimelineHit,
   type TimelineMark,
   type TimelineSpan,
-  type TimelineTableProps,
   type TimelineViewport,
   type TimelineViewState,
   type TimeWindow,
   type TrackNode,
   type TrackTree,
 } from "./contract";
-import { lensMemos, TimelineToolbar } from "./controls";
-import { activityWindow, ancestorsOf, anyInWindow, cellsInInterval, clampWindow, extentOfSpans, isAll, panToInclude, refForSpan, resolveWindow, spanIdForRef, spanLookup, spansOfRef, switchLens } from "./controls/frame";
-import { windowSummary } from "./a11y/describe";
+import {
+  activation,
+  activityWindow,
+  ancestorsOf,
+  anyInWindow,
+  cellsInInterval,
+  clampWindow,
+  extentOfSpans,
+  fittingExpansion,
+  isAll,
+  leadWindow,
+  lensMemos,
+  panToInclude,
+  quantizedLiveAt,
+  resolveWindow,
+  seekTargetOf,
+  selectionForSpan,
+  spanIdForRef,
+  spanLookup,
+  spansOfRef,
+  switchLens,
+  TimelineToolbar,
+  unionSpans,
+  type Activated,
+  type SpanSelection,
+} from "./controls";
+import { TimelineTable, windowSummary } from "./a11y";
 import { recordedExtent, useTimelineData } from "./data";
+import { InvestigationPanel, LENSES } from "./investigate";
 import { TemporalOverview } from "./overview";
-import { TrackCanvas, TrackLabels, WindowRuler } from "./render";
+import { LABEL_DEFAULT, LABEL_MAX, LABEL_MIN, TrackCanvas, TrackLabels, WindowRuler } from "./render";
 import { buildTrackTree, defaultExpanded, layoutRows } from "./tracks";
 
 /** The overview is shorter on a short window (design section 3A). */
 const SHORT_OVERVIEW = 72;
-const MAX_GUTTER = 320;
 /** How often new events may re-query the window's spans. */
 const REQUERY_MS = 500;
 /** How often new events may re-read the activity the default window is framed on. */
 const ACTIVITY_REQUERY_MS = 2000;
 const NO_SPANS: readonly TimelineSpan[] = [];
 const NO_MARKS: readonly TimelineMark[] = [];
-
-// ---------------------------------------------------------------- parts built separately, when they exist
-
-/**
- * The table (./a11y) and the investigation lenses (./investigate) are built separately. Each is looked
- * up with import.meta.glob, which yields nothing (and no build error) while the module is absent, so
- * their controls fail soft until they land.
- */
-const a11yModules = import.meta.glob<{ TimelineTable: ComponentType<TimelineTableProps> }>("./a11y/index.ts");
-const loadA11y = a11yModules["./a11y/index.ts"];
-const LazyTable = loadA11y
-  ? lazy<ComponentType<TimelineTableProps>>(() =>
-      loadA11y().then(
-        (m) => ({ default: m.TimelineTable }),
-        () => ({ default: TableUnavailable }),
-      ),
-    )
-  : null;
-
-function TableUnavailable(_props: Partial<TimelineTableProps>) {
-  return <p className="px-4 py-3 text-body-sm text-ink-muted">The table view is not available in this build.</p>;
-}
-
-type InvestigateModule = { LENSES: readonly LensDefinition[]; InvestigationPanel: ComponentType<InvestigationPanelProps> };
-const investigateModules = import.meta.glob<InvestigateModule>("./investigate/index.ts");
-const loadInvestigate = investigateModules["./investigate/index.ts"];
-let investigate: Promise<InvestigateModule | null> | null = null;
-const investigateModule = (): Promise<InvestigateModule | null> =>
-  (investigate ??= loadInvestigate ? loadInvestigate().then(
-    (m) => m,
-    () => null,
-  ) : Promise.resolve(null));
-const LazyPanel = loadInvestigate
-  ? lazy<ComponentType<InvestigationPanelProps>>(() => investigateModule().then((m) => ({ default: m?.InvestigationPanel ?? PanelUnavailable })))
-  : null;
-
-function PanelUnavailable(_props: Partial<InvestigationPanelProps>) {
-  return <p className="px-3 py-2 text-body-sm text-ink-muted">The investigation lenses are not available in this build.</p>;
-}
-
-/** The lenses, once their module has loaded; null while it has not or when it is absent. */
-function useLenses(): readonly LensDefinition[] | null {
-  const [lenses, setLenses] = useState<readonly LensDefinition[] | null>(null);
-  useEffect(() => {
-    let live = true;
-    void investigateModule().then((m) => {
-      if (live) setLenses(m?.LENSES ?? null);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
-  return lenses;
-}
 
 // ---------------------------------------------------------------- helpers
 
@@ -145,11 +112,6 @@ function useSize<T extends HTMLElement>(): [(el: T | null) => void, { width: num
   return [ref, size];
 }
 
-/** The live edge in steps (about 1/1000 of what is held, at least 250 ms): the workspace re-renders a few times a second at most. */
-function quantizedLiveAt(s: { extent: { start: number; end: number }; liveAt: number }): number {
-  const step = Math.max(250, Math.round((Math.max(s.extent.end, s.liveAt) - s.extent.start) / 1000));
-  return Math.ceil(s.liveAt / step) * step;
-}
 
 const contains = (outer: TimeWindow, inner: TimeWindow): boolean => inner.from >= outer.from && inner.to <= outer.to;
 const widen = (w: TimeWindow): TimeWindow => {
@@ -260,10 +222,42 @@ function useActivity(data: TimelineData, whole: TimeWindow): { recorded: TimeWin
   return got;
 }
 
-/** Which ref a span selects or hovers: its entity when the history knows it, else its nearest known parent's. */
-function makeRefOf(store: SceneStore, spans: readonly TimelineSpan[]) {
+/**
+ * The structural spans of the whole history (X4: waves, cells, rounds, executions, workflows and the
+ * waits between them), read once and again when the data says it changed (at most every
+ * ACTIVITY_REQUERY_MS). An answer at the same version and size as the last keeps the previous object,
+ * so nothing downstream rebuilds for it. A provider without `structure()` builds from the window alone.
+ */
+function useStructure(data: TimelineData): { page: SpanPage | null; settled: boolean } {
+  const tick = useDataTick(data, ACTIVITY_REQUERY_MS);
+  const [got, setGot] = useState<{ data: TimelineData; page: SpanPage | null; settled: boolean }>({ data, page: null, settled: false });
+  useEffect(() => {
+    if (typeof data.structure !== "function") return;
+    const ctl = new AbortController();
+    data.structure(ctl.signal).then(
+      (page) => {
+        if (ctl.signal.aborted) return;
+        setGot((g) => (g.data === data && g.page && g.page.version === page.version && g.page.total === page.total && g.page.spans.length === page.spans.length ? (g.settled ? g : { ...g, settled: true }) : { data, page, settled: true }));
+      },
+      (e: unknown) => {
+        if (ctl.signal.aborted || isAbort(e)) return;
+        setGot((g) => (g.data === data ? { ...g, settled: true } : { data, page: null, settled: true }));
+      },
+    );
+    return () => ctl.abort();
+  }, [data, tick]);
+  if (typeof data.structure !== "function") return NO_STRUCTURE;
+  return got.data === data ? got : { page: null, settled: false };
+}
+const NO_STRUCTURE = { page: null, settled: true } as const;
+
+/**
+ * What a span selects (X3): its own entity when the history resolves it (`visit:`, `seat:`,
+ * `workflow:` and the rest), else its nearest known parent's ref with the span kept as the detail.
+ */
+function makeSelectionOf(store: SceneStore, spans: readonly TimelineSpan[]) {
   const byId = spanLookup(spans);
-  return (span: TimelineSpan): EntityRef | null => {
+  return (span: TimelineSpan): SpanSelection => {
     const s = store.getState();
     const head = s.log.head();
     const now = s.log.sceneAt(s.playhead);
@@ -274,15 +268,27 @@ function makeRefOf(store: SceneStore, spans: readonly TimelineSpan[]) {
         return false;
       }
     };
-    return refForSpan(span, byId, known) as EntityRef | null;
+    return selectionForSpan(span, byId, known);
   };
 }
+
+const REF = /^[a-z]+:.+/;
+/** A key naming what a hit points at, for telling a second select of the same thing from a first. */
+const hitKey = (hit: TimelineHit): string => (hit.span ? `span:${hit.span.id}` : hit.mark ? `mark:${hit.mark.id}` : "");
 
 /** The last tree built for a data source: the next build starts from it (stable identity, incremental). */
 const previousTrees = new WeakMap<TimelineData, TrackTree>();
 
-/** Groupings already seeded with their default expansion, per store: seeded once, then the person's. */
-const seeded = new WeakMap<SceneStore, Set<Grouping>>();
+/**
+ * Groupings whose expansion the person has changed, per store: until then the expansion is seeded
+ * (the tracks' defaults, opened further while the rows fit: X9), only ever adding; after, it is theirs.
+ */
+const touched = new WeakMap<SceneStore, Set<Grouping>>();
+const touchedFor = (store: SceneStore): Set<Grouping> => {
+  let t = touched.get(store);
+  if (!t) touched.set(store, (t = new Set()));
+  return t;
+};
 
 /** Scroll position, label column width and the band's state, per store: kept across workspace switches. */
 interface Kept {
@@ -291,17 +297,27 @@ interface Kept {
 }
 const kept = new WeakMap<SceneStore, Kept>();
 function keptFor(store: SceneStore): Kept {
-  return kept.get(store) ?? { scrollTop: 0, gutter: LABEL_GUTTER };
+  return kept.get(store) ?? { scrollTop: 0, gutter: LABEL_DEFAULT };
 }
-
-const LENS_WORDS: Record<NonNullable<TimelineViewState["lens"]>, string> = { retries: "Retries", concurrency: "Concurrency", waits: "Waits", review: "Review", recovery: "Recovery" };
 
 // ---------------------------------------------------------------- the workspace
 
-export function TimelineWorkspace() {
+/**
+ * Rebuild triggers (the performance guard: nothing here rebuilds per frame or per hover):
+ * - the tree: the spans (a new window fetch or structural answer, each throttled by the data's
+ *   notifications: REQUERY_MS / ACTIVITY_REQUERY_MS), the grouping, the filters, and the quantized
+ *   live edge (at most 1/1000 of the history per step, rounded down);
+ * - the layout: the tree and the expansion;
+ * - the window: the person's choice, or the default (the recorded activity, or the simulation's
+ *   lead window) which moves only with the quantized edge;
+ * Hover goes to the store (store.hover) and never reaches these memos; the playhead is read by the
+ * toolbar's caption alone (useAsOf, which changes only when the playhead is behind and moves a second).
+ */
+export function TimelineWorkspace({ data: given }: { readonly data?: TimelineData } = {}) {
   const store = useStore();
-  const data = useTimelineData();
-  const lenses = useLenses();
+  const provided = useTimelineData();
+  const data = given ?? provided;
+  const lenses: readonly LensDefinition[] = LENSES;
   const view = useSceneStore((s) => s.timeline);
   const source = useSceneStore((s) => s.source);
   const connection = useSceneStore((s) => s.connection?.state ?? null);
@@ -323,15 +339,22 @@ export function TimelineWorkspace() {
   // It is framed from the spans loaded for the previous default, so it settles in a query or two.
   const activity = useActivity(data, whole);
   const [framedOn, setFramedOn] = useState<readonly TimelineSpan[]>(NO_SPANS);
-  // The simulation's whole run is recorded from the start (its future is only hidden): its default is the whole run.
+  // The simulation's run is recorded from the start (its future is only hidden): its default runs from
+  // the start to just past what is revealed (X9), the whole run once all of it is.
   const fallback = useMemo(
-    () => (source === "simulation" ? whole : activityWindow({ whole, dataFrom, density: null, recorded: activity.recorded, spans: framedOn, lastMark: null, followingLive })),
-    [source, whole, dataFrom, activity, framedOn, followingLive],
+    () => (source === "simulation" ? leadWindow(whole, liveAt) : activityWindow({ whole, dataFrom, density: null, recorded: activity.recorded, spans: framedOn, lastMark: null, followingLive })),
+    [source, whole, liveAt, dataFrom, activity, framedOn, followingLive],
   );
   const win = resolveWindow(view.window, whole, fallback);
 
   const fetched = useWindowSpans(data, win);
-  const spans = fetched.page?.spans ?? NO_SPANS;
+  const structure = useStructure(data);
+  const windowSpans = fetched.page?.spans ?? NO_SPANS;
+  // X4: the tree is built from the whole history's structural spans and the window's detailed ones,
+  // so a track's identity and place do not depend on which window was loaded (a fresh `win=` deep link
+  // builds the same tree as navigating there).
+  const structural = structure.page?.spans ?? NO_SPANS;
+  const spans = useMemo(() => unionSpans(structural, windowSpans), [structural, windowSpans]);
   // The loaded spans feed the default window (derived during render: the next render frames on them).
   if (view.window === null && spans !== framedOn) setFramedOn(spans);
 
@@ -342,17 +365,6 @@ export function TimelineWorkspace() {
     previousTrees.set(data, tree);
   }, [data, tree]);
 
-  // Expansion: the store's, seeded once per grouping with the tracks' defaults.
-  useEffect(() => {
-    if (!tree.roots.length) return;
-    let done = seeded.get(store);
-    if (!done) seeded.set(store, (done = new Set()));
-    if (done.has(tree.grouping)) return;
-    done.add(tree.grouping);
-    const current = store.getState().timeline.expanded;
-    const add = defaultExpanded(tree).filter((id) => !current.includes(id));
-    if (add.length) store.setTimelineView({ expanded: [...current, ...add] });
-  }, [tree, store]);
   const expanded = useMemo(() => new Set(view.expanded), [view.expanded]);
   const layout = useMemo(() => layoutRows(tree, expanded), [tree, expanded]);
 
@@ -370,6 +382,21 @@ export function TimelineWorkspace() {
   useEffect(() => {
     kept.set(store, { scrollTop, gutter });
   }, [store, scrollTop, gutter]);
+
+  // Expansion (X9): until the person opens or closes a row in this grouping, the tracks' defaults,
+  // opened level by level (waves, slices, cells; or executions) while every row fits the tracks'
+  // height. Only ever adds. Re-run only when the tree gains or loses rows (its size), never per step.
+  const treeSize = tree.byId.size;
+  useEffect(() => {
+    if (!tree.roots.length || tracksH <= 0 || touchedFor(store).has(tree.grouping)) return;
+    const current = store.getState().timeline.expanded;
+    const base = [...new Set([...current, ...defaultExpanded(tree)])];
+    const want = fittingExpansion(tree, base, tracksH, (open) => layoutRows(tree, open).totalHeight);
+    const add = want.filter((id) => !current.includes(id));
+    if (add.length) store.setTimelineView({ expanded: [...current, ...add] });
+    // `tree` is read as of its size: a rebuild with the same rows changes nothing here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [treeSize, tree.grouping, tracksH, store]);
 
   const viewport = useMemo<TimelineViewport>(() => ({ window: win, width: timeWidth, liveAt }), [win, timeWidth, liveAt]);
 
@@ -397,25 +424,55 @@ export function TimelineWorkspace() {
   );
   const onToggle = useCallback(
     (id: string) => {
+      touchedFor(store).add(store.getState().timeline.grouping);
       const current = store.getState().timeline.expanded;
       store.setTimelineView({ expanded: current.includes(id) ? current.filter((x) => x !== id) : [...current, id] });
     },
     [store],
   );
-  const refOf = useMemo(() => makeRefOf(store, spans), [store, spans]);
+  const selectionOf = useMemo(() => makeSelectionOf(store, spans), [store, spans]);
+  const refOf = useCallback((span: TimelineSpan) => selectionOf(span).ref as EntityRef | null, [selectionOf]);
   const spanById = useMemo(() => new Map(spans.map((s) => [s.id, s] as const)), [spans]);
   const selectRef = useCallback(
-    (ref: EntityRef | null, detail?: string) => {
+    (ref: EntityRef | null, detail?: string | null) => {
       ownSelection.current = ref;
       store.select(ref, { focus: false, detail: detail ?? null });
     },
     [store],
   );
-  /** A span selects its own entity, or its nearest selectable ancestor with the span kept as the detail (still marked on the canvas). */
-  const selectSpan = useCallback((span: TimelineSpan) => selectRef(refOf(span), span.entity), [refOf, selectRef]);
+  /** "Go to": seek the playhead to a span's start or a mark's moment (by its event when the history holds it). */
+  const goTo = useCallback(
+    (hit: TimelineHit) => {
+      const target = seekTargetOf(hit);
+      if (!target) return;
+      if (target.eventId && store.getState().log.entry(target.eventId)) store.seekToEvent(target.eventId);
+      else store.seek(target.at);
+    },
+    [store],
+  );
+  /** The last thing selected from the tracks or the table, and the selection it made. */
+  const lastActivated = useRef<Activated | null>(null);
+  /**
+   * X13: selecting never seeks. A second select of the same span or mark (Enter twice, the second
+   * click of a double-click) while it is still the selection is "go to": the playhead seeks there, and
+   * the transport's live control says it is reviewing an earlier moment.
+   */
+  const activate = useCallback(
+    (hit: TimelineHit, sel: SpanSelection) => {
+      const key = hitKey(hit);
+      if (activation(lastActivated.current, key, store.getState().selection) === "seek") {
+        goTo(hit);
+        return;
+      }
+      lastActivated.current = { key, selection: sel.ref ?? store.getState().selection };
+      if (sel.ref) selectRef(sel.ref as EntityRef, sel.detail);
+    },
+    [goTo, selectRef, store],
+  );
+  const selectSpan = useCallback((span: TimelineSpan) => activate({ trackId: "", lane: 0, span, mark: null, count: 1, from: span.start?.at ?? 0, to: span.end?.at ?? 0 }, selectionOf(span)), [activate, selectionOf]);
   const onHover = useCallback(
     (hit: TimelineHit | null) => {
-      const ref = hit?.span ? refOf(hit.span) : hit?.mark?.entity && /^[a-z]+:.+/.test(hit.mark.entity) ? (hit.mark.entity as EntityRef) : null;
+      const ref = hit?.span ? refOf(hit.span) : hit?.mark?.entity && REF.test(hit.mark.entity) ? (hit.mark.entity as EntityRef) : null;
       store.hover(ref);
     },
     [refOf, store],
@@ -423,20 +480,18 @@ export function TimelineWorkspace() {
   const onSelect = useCallback(
     (hit: TimelineHit) => {
       if (hit.span) {
-        selectSpan(hit.span);
+        activate(hit, selectionOf(hit.span));
         return;
       }
       if (hit.mark) {
         const m = hit.mark;
-        if (m.eventId && store.getState().log.entry(m.eventId)) store.seekToEvent(m.eventId);
-        else store.seek(m.at);
-        if (m.entity && /^[a-z]+:.+/.test(m.entity)) selectRef(m.entity as EntityRef);
+        activate(hit, { ref: m.entity && REF.test(m.entity) ? m.entity : null, detail: null });
         return;
       }
       // An aggregate of spans too small to draw one by one: zoom to it.
       if (hit.count > 0 && hit.to > hit.from) onWindow({ from: hit.from, to: hit.to });
     },
-    [onWindow, selectSpan, selectRef, store],
+    [activate, onWindow, selectionOf],
   );
 
   // The keyboard cursor: the canvas moves it, the workspace keeps it; on a span, that span is hovered.
@@ -453,13 +508,22 @@ export function TimelineWorkspace() {
   const liveCursor = cursor && tree.byId.has(cursor.trackId) ? cursor : null;
 
   const onLabelSelect = useCallback((node: TrackNode) => selectRef(node.ref), [selectRef]);
-  const onGutter = useCallback((w: number) => setGutter(Math.round(Math.max(LABEL_GUTTER, Math.min(MAX_GUTTER, w)))), []);
+  const onGutter = useCallback((w: number) => setGutter(Math.round(Math.max(LABEL_MIN, Math.min(LABEL_MAX, w)))), []);
   const onTableSelect = selectSpan;
 
-  /** From the investigation band: select, seek when a moment is given, and frame it in the Timeline. */
+  /**
+   * From the investigation band: select by the same rule as a click on the tracks (X3: the span's own
+   * ref when the history resolves it, else its nearest known ref with the span as the detail), seek when
+   * a moment is given (the band's items are "go to"), and frame it in the Timeline.
+   */
+  const spanByEntity = useMemo(() => spanLookup(spans), [spans]);
   const onReveal = useCallback(
     (ref: string, at?: number) => {
-      if (/^[a-z]+:.+/.test(ref)) store.select(ref as EntityRef, { focus: false });
+      const span = spanByEntity.get(ref);
+      if (span) {
+        const sel = selectionOf(span);
+        if (sel.ref) store.select(sel.ref as EntityRef, { focus: false, detail: sel.detail });
+      } else if (REF.test(ref)) store.select(ref as EntityRef, { focus: false });
       if (at !== undefined && Number.isFinite(at)) {
         store.seek(at);
         const next = panToInclude(win, { from: at, to: at });
@@ -470,7 +534,7 @@ export function TimelineWorkspace() {
       loadingSpanFor.current = null;
       setRevealTick((t) => t + 1);
     },
-    [store, win, whole],
+    [selectionOf, spanByEntity, store, win, whole],
   );
 
   // ---- revealing a selection made elsewhere (another view, the inspector, "Show in Timeline", 3, F)
@@ -549,7 +613,8 @@ export function TimelineWorkspace() {
 
   // ---- ready for measurement: once the first tracks (or the table, or a designed empty state) are on screen
   const [ready, setReady] = useState(false);
-  const settled = !fetched.loading && fetched.page !== null;
+  // Both the window's spans and the whole history's structure have answered (X4: the tree is final).
+  const settled = !fetched.loading && (fetched.page !== null || fetched.error !== null) && structure.settled;
   const drawable = view.table || (timeWidth > 0 && tracksH > 0);
   useEffect(() => {
     if (ready || !settled || !drawable) return;
@@ -559,13 +624,23 @@ export function TimelineWorkspace() {
 
   // ---- states
   const spansUnserved = available.spans === "unavailable";
+  const filtered = hasFilters(view.filters);
   const empty = !fetched.loading && fetched.page !== null && fetched.page.total === 0 && spans.length === 0;
-  const nothingHere = !fetched.loading && spans.length > 0 && !anyInWindow(tree, win);
-  const disconnected = source === "live" && (connection === "disconnected" || connection === "stale" || connection === "reconnecting");
+  // Spans are held, but the filters leave no track at all.
+  const filteredOut = !fetched.loading && !empty && filtered && spans.length > 0 && tree.roots.length === 0;
+  const nothingHere = !fetched.loading && !filteredOut && spans.length > 0 && !anyInWindow(tree, win);
+  const link = source === "live" && (connection === "disconnected" || connection === "stale" || connection === "reconnecting" || connection === "no-session") ? connection : null;
+  // Re-reading the window while the previous answer stays on screen.
+  const refreshing = fetched.loading && fetched.page !== null;
 
   // ---- accessibility: the window in words (aria-describedby of the tracks), and Escape out of the band
   const summaryId = useId();
-  const summary = useMemo(() => windowSummary(tree, win, liveAt), [tree, win, liveAt]);
+  // Worded when the browser is idle, never in the render: it walks every span (A5).
+  const [summary, setSummary] = useState("");
+  useEffect(() => {
+    const id = globalThis.setTimeout(() => setSummary(windowSummary(tree, win, liveAt)), 300);
+    return () => globalThis.clearTimeout(id);
+  }, [tree, win, liveAt]);
   const tracksBox = useRef<HTMLDivElement>(null);
   useEffect(() => {
     // The canvas names its keys in aria-describedby; the window's summary is added beside them.
@@ -597,7 +672,15 @@ export function TimelineWorkspace() {
   }, []);
 
   return (
-    <div ref={frameRef} className="flex h-full min-h-0 flex-col bg-surface" data-timeline-workspace="" data-timeline-ready={ready ? "" : undefined} data-timeline-spans={spans.length}>
+    <div
+      ref={frameRef}
+      className="flex h-full min-h-0 flex-col bg-surface"
+      data-timeline-workspace=""
+      data-timeline-ready={ready ? "" : undefined}
+      data-timeline-spans={spans.length}
+      data-timeline-window={`${Math.round(win.from)}-${Math.round(win.to)}`}
+      data-timeline-grouping={view.grouping}
+    >
       <h2 className="sr-only">Execution Timeline</h2>
       {/* The shared transport, without the docked timeline's collapse button. */}
       <div className="shrink-0">
@@ -605,11 +688,7 @@ export function TimelineWorkspace() {
       </div>
       <TimelineToolbar data={data} tree={tree} view={view} onView={store.setTimelineView} spans={spans} drawn={win} whole={whole} lenses={lenses} />
 
-      {disconnected ? (
-        <p role="status" className="shrink-0 border-b border-line bg-warning-soft px-3 py-1.5 text-body-sm text-ink">
-          Not connected to the observer: showing what was received, up to {utcClock(liveAt)} UTC. Nothing after it is drawn.
-        </p>
-      ) : null}
+      {link ? <LinkNotice state={link} liveAt={liveAt} /> : null}
       {available.unwindowed ? (
         <p role="status" className="shrink-0 border-b border-line bg-surface-sunken px-3 py-1 text-caption text-ink-muted" data-timeline-unwindowed="">
           This observer cannot read spans by time window: every span it holds is read, whatever the window.
@@ -639,13 +718,7 @@ export function TimelineWorkspace() {
       {view.lens ? (
         // eslint-disable-next-line jsx-a11y/no-static-element-interactions
         <div className="shrink-0" data-timeline-band={view.lens} onKeyDown={onBandKey}>
-          {LazyPanel ? (
-            <Suspense fallback={<LoadingState label={`Preparing the ${LENS_WORDS[view.lens].toLowerCase()} lens`} className="border-b border-line px-3 py-2" />}>
-              <LazyPanel lens={view.lens} data={data} tree={tree} spans={spans} viewport={viewport} width={fullWidth} onView={onBandView} onReveal={onReveal} />
-            </Suspense>
-          ) : (
-            <PanelUnavailable />
-          )}
+          <InvestigationPanel lens={view.lens} data={data} tree={tree} spans={spans} viewport={viewport} width={fullWidth} onView={onBandView} onReveal={onReveal} />
         </div>
       ) : null}
 
@@ -657,13 +730,7 @@ export function TimelineWorkspace() {
         </div>
         {view.table ? (
           <div className="min-h-0 flex-1 overflow-auto" data-timeline-table="">
-            {LazyTable ? (
-              <Suspense fallback={<LoadingState label="Preparing the table" className="px-4" />}>
-                <LazyTable tree={tree} layout={layout} viewport={viewport} onSelect={onTableSelect} onToggle={onToggle} />
-              </Suspense>
-            ) : (
-              <TableUnavailable />
-            )}
+            <TimelineTable tree={tree} layout={layout} viewport={viewport} onSelect={onTableSelect} onToggle={onToggle} />
           </div>
         ) : (
           // The canvas comes first in the document so the tracks are reached by Tab before the label
@@ -699,12 +766,14 @@ export function TimelineWorkspace() {
             </div>
           </div>
         )}
+        {refreshing ? <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 h-0.5 animate-pulse bg-accent" style={{ top: RULER_HEIGHT - 1 }} data-timeline-refreshing="" /> : null}
         <StateOverlay
           loading={fetched.loading && fetched.page === null && !spansUnserved}
           unserved={spansUnserved}
           empty={empty}
+          filteredOut={filteredOut}
           nothingHere={nothingHere}
-          filtered={hasFilters(view.filters)}
+          filtered={filtered}
           source={source}
           onShowAll={() => onWindow(null)}
           onClearFilters={() => store.setTimelineView({ filters: NO_FILTERS })}
@@ -718,11 +787,36 @@ function hasFilters(f: { tickets: readonly string[]; executions: readonly string
   return f.tickets.length + f.executions.length + f.slices.length + f.stations.length + f.kinds.length > 0 || f.attentionOnly;
 }
 
-/** The designed states over the tracks: reading, not served, nothing recorded yet, nothing in this window. */
-function StateOverlay({ loading, unserved, empty, nothingHere, filtered, source, onShowAll, onClearFilters }: { loading: boolean; unserved: boolean; empty: boolean; nothingHere: boolean; filtered: boolean; source: string; onShowAll: () => void; onClearFilters: () => void }) {
-  if (!loading && !unserved && !empty && !nothingHere) return null;
+/**
+ * The observer link, when it is not live (X23). Stale: answers have stopped arriving but the link is
+ * open; reconnecting and disconnected: the link is down and being retried; no session: the one-time
+ * link was used up. In each case what was received stays drawn, and nothing after it is.
+ */
+function LinkNotice({ state, liveAt }: { state: "stale" | "reconnecting" | "disconnected" | "no-session"; liveAt: number }) {
+  const upTo = `${utcClock(liveAt)} UTC`;
+  const words =
+    state === "stale"
+      ? { title: "The observer has gone quiet", body: `Nothing new has arrived for a while. The tracks show what was received, up to ${upTo}; nothing after it is drawn.` }
+      : state === "reconnecting"
+        ? { title: "Reconnecting to the observer", body: `The tracks show what was received, up to ${upTo}. They catch up when the link is back.` }
+        : state === "no-session"
+          ? { title: "This page's observer session has ended", body: `The tracks show what was received, up to ${upTo}. Open a new link from the observer to see more.` }
+          : { title: "Not connected to the observer", body: `Still trying. The tracks show what was received, up to ${upTo}; nothing after it is drawn.` };
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-6" style={{ top: RULER_HEIGHT }}>
+    <p role="status" className="flex shrink-0 items-baseline gap-2 border-b border-warning-line bg-warning-soft px-3 py-1.5 text-body-sm text-ink" data-timeline-link={state}>
+      <span className="shrink-0 font-semibold">{words.title}.</span>
+      <span className="min-w-0 truncate text-ink-muted" title={words.body}>
+        {words.body}
+      </span>
+    </p>
+  );
+}
+
+/** The designed states over the tracks: reading, not served, nothing recorded yet, filtered to nothing, nothing in this window. */
+function StateOverlay({ loading, unserved, empty, filteredOut, nothingHere, filtered, source, onShowAll, onClearFilters }: { loading: boolean; unserved: boolean; empty: boolean; filteredOut: boolean; nothingHere: boolean; filtered: boolean; source: string; onShowAll: () => void; onClearFilters: () => void }) {
+  if (!loading && !unserved && !empty && !filteredOut && !nothingHere) return null;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-6" style={{ top: RULER_HEIGHT }} data-timeline-state={unserved ? "unserved" : loading ? "loading" : empty ? "empty" : filteredOut ? "filtered" : "nothing-here"}>
       <div className="pointer-events-auto mt-10 h-fit max-w-md rounded-md border border-dashed border-line-strong bg-surface px-5 py-4">
         {unserved ? (
           <>
@@ -733,24 +827,23 @@ function StateOverlay({ loading, unserved, empty, nothingHere, filtered, source,
           <LoadingState label={source === "simulation" ? "Laying out the simulated run" : "Reading the history held for this window"} className="py-0" />
         ) : empty ? (
           <>
-            <p className="text-label text-ink">{filtered ? "Nothing matches these filters" : "No execution recorded yet"}</p>
+            <p className="text-label text-ink">No execution recorded yet</p>
             <p className="mt-1 text-body-sm text-ink-muted">
-              {filtered
-                ? "No span in what is held matches the filters chosen."
-                : source === "live"
-                  ? "Spans appear here as the Factory records work: waves, cells, station visits, executions and their agents."
-                  : "This history holds no span to draw."}
+              {source === "live" ? "Spans appear here as the Factory records work: waves, cells, station visits, executions and their agents." : "This history holds no span to draw."}
             </p>
-            {filtered ? (
-              <Button size="sm" className="mt-3" onClick={onClearFilters}>
-                Clear filters
-              </Button>
-            ) : null}
+          </>
+        ) : filteredOut ? (
+          <>
+            <p className="text-label text-ink">Nothing matches these filters</p>
+            <p className="mt-1 text-body-sm text-ink-muted">Work is recorded in what is held, but no track matches every filter chosen.</p>
+            <Button size="sm" className="mt-3" onClick={onClearFilters}>
+              Clear filters
+            </Button>
           </>
         ) : (
           <>
             <p className="text-label text-ink">Nothing recorded in this window</p>
-            <p className="mt-1 text-body-sm text-ink-muted">The history holds spans before or after it.</p>
+            <p className="mt-1 text-body-sm text-ink-muted">{filtered ? "Nothing that matches the filters lies in this window; the history holds some before or after it." : "The history holds spans before or after it."}</p>
             <Button size="sm" className="mt-3" onClick={onShowAll}>
               Show all
             </Button>

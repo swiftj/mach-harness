@@ -14,7 +14,7 @@ import { attentionOf, extentOf, overlaps, type SpanKind, type TimelineSpan, type
 
 export type Attention = TrackNode["attention"];
 
-const RANK: Readonly<Record<Attention, number>> = { none: 0, open: 1, person: 2, interrupted: 3, failed: 4 };
+const RANK: Readonly<Record<Attention, number>> = { none: 0, open: 1, person: 2, unknown: 3, interrupted: 4, failed: 5 };
 
 /** The worse of two conditions (failed > interrupted > person > open > none), as the track model ranks them. */
 export function worse(a: Attention, b: Attention): Attention {
@@ -30,6 +30,8 @@ export function attentionWords(a: Attention): string {
       return factoryConditions.interrupted.label;
     case "person":
       return stateWord("human");
+    case "unknown":
+      return "Outcome not known";
     case "open":
       return "Still open";
     default:
@@ -55,8 +57,11 @@ export function heldEnd(span: TimelineSpan, liveAt: number): number | null {
 export interface TrackSummary {
   readonly count: number;
   readonly failed: number;
+  /** Rounds rejected by review: said as rejections, as the track labels say them (X1). */
+  readonly rejected: number;
   readonly interrupted: number;
   readonly person: number;
+  readonly unknown: number;
   readonly open: number;
   readonly firstStart: number | null;
   /** The last held end; meaningful only when nothing is still open. */
@@ -65,13 +70,15 @@ export interface TrackSummary {
   readonly worst: Attention;
 }
 
-export const EMPTY_SUMMARY: TrackSummary = { count: 0, failed: 0, interrupted: 0, person: 0, open: 0, firstStart: null, lastEnd: null, stillOpen: false, worst: "none" };
+export const EMPTY_SUMMARY: TrackSummary = { count: 0, failed: 0, rejected: 0, interrupted: 0, person: 0, unknown: 0, open: 0, firstStart: null, lastEnd: null, stillOpen: false, worst: "none" };
 
 interface Acc {
   count: number;
   failed: number;
+  rejected: number;
   interrupted: number;
   person: number;
+  unknown: number;
   open: number;
   firstStart: number | null;
   lastEnd: number | null;
@@ -83,9 +90,11 @@ function add(acc: Acc, span: TimelineSpan, liveAt: number): void {
   if (!x) return;
   acc.count++;
   const a = attentionOf(span, liveAt);
-  if (a === "failed") acc.failed++;
+  if (a === "failed" && span.kind === "round" && /reject|changes/i.test(span.outcome ?? "")) acc.rejected++;
+  else if (a === "failed") acc.failed++;
   else if (a === "interrupted") acc.interrupted++;
   else if (a === "person") acc.person++;
+  else if (a === "unknown") acc.unknown++;
   else if (a === "open") acc.open++;
   acc.worst = worse(acc.worst, a);
   if (acc.firstStart === null || x.from < acc.firstStart) acc.firstStart = x.from;
@@ -100,15 +109,17 @@ function freeze(acc: Acc): TrackSummary {
 function merge(into: Acc, s: TrackSummary): void {
   into.count += s.count;
   into.failed += s.failed;
+  into.rejected += s.rejected;
   into.interrupted += s.interrupted;
   into.person += s.person;
+  into.unknown += s.unknown;
   into.open += s.open;
   if (s.firstStart !== null && (into.firstStart === null || s.firstStart < into.firstStart)) into.firstStart = s.firstStart;
   if (s.lastEnd !== null && (into.lastEnd === null || s.lastEnd > into.lastEnd)) into.lastEnd = s.lastEnd;
   into.worst = worse(into.worst, s.worst);
 }
 
-const blank = (): Acc => ({ count: 0, failed: 0, interrupted: 0, person: 0, open: 0, firstStart: null, lastEnd: null, worst: "none" });
+const blank = (): Acc => ({ count: 0, failed: 0, rejected: 0, interrupted: 0, person: 0, unknown: 0, open: 0, firstStart: null, lastEnd: null, worst: "none" });
 
 /** A summary of the given spans that lie in the window. */
 export function summariseSpans(spans: Iterable<TimelineSpan>, window: TimeWindow, liveAt: number): TrackSummary {
@@ -181,8 +192,10 @@ export function rangeWords(s: TrackSummary): string {
 /** The conditions worth saying, worst first: "one failed, two interrupted, one waiting for a person". */
 function conditionWords(s: TrackSummary): string[] {
   const out: string[] = [];
+  if (s.rejected) out.push(`${countWord(s.rejected)} rejected by review`);
   if (s.failed) out.push(`${countWord(s.failed)} ${stateWord("failed").toLowerCase()}`);
   if (s.interrupted) out.push(`${countWord(s.interrupted)} ${factoryConditions.interrupted.label.toLowerCase()}`);
+  if (s.unknown) out.push(`${countWord(s.unknown)} with the outcome not known`);
   if (s.person) out.push(`${countWord(s.person)} ${stateWord("human").toLowerCase()}`);
   return out;
 }
@@ -281,8 +294,10 @@ export function windowSummary(tree: TrackTree, window: TimeWindow, liveAt: numbe
   if (acc.count === 0) return `${bounds}: nothing recorded in this window.`;
   const sentences = [`${bounds}, ${plural(acc.count, "span", "spans")}: ${list(byNoun(counts))}.`];
   const bad: string[] = [];
+  if (acc.rejected) bad.push(`${countWord(acc.rejected)} rejected by review`);
   if (acc.failed) bad.push(`${countWord(acc.failed)} ${stateWord("failed").toLowerCase()}`);
   if (acc.interrupted) bad.push(`${countWord(acc.interrupted)} ${factoryConditions.interrupted.label.toLowerCase()}`);
+  if (acc.unknown) bad.push(`${countWord(acc.unknown)} with the outcome not known`);
   if (bad.length) sentences.push(`${capitalise(list(bad))}.`);
   if (personWaits) sentences.push(`${capitalise(plural(personWaits, "wait on a person", "waits on a person"))}${acc.person ? `, ${countWord(acc.person)} still waiting` : ""}.`);
   const stillOpen = byNoun(open);
@@ -292,4 +307,55 @@ export function windowSummary(tree: TrackTree, window: TimeWindow, liveAt: numbe
 
 function capitalise(s: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : s;
+}
+
+// ---------------------------------------------------------------- activity around an open container
+
+const CONTAINER_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["wave", "slice-wait", "slice-eligible", "cell", "round", "claim", "seat"]);
+const activityMemo = new WeakMap<TrackNode, { liveAt: number; last: number | null; person: number | null }>();
+
+function walkActivity(node: TrackNode, liveAt: number, skip: TimelineSpan | null, round: string | null): { last: number | null; person: number | null } {
+  let last: number | null = null;
+  let person: number | null = null;
+  const visit = (n: TrackNode): void => {
+    for (const lane of n.lanes) {
+      for (const s of lane.spans) {
+        if (s === skip) continue;
+        if (round !== null && (s.ids.round ?? (s.attrs.round !== undefined ? String(s.attrs.round) : null)) !== round) continue;
+        const x = extentOf(s);
+        if (!x || x.from > liveAt) continue;
+        const end = heldEnd(s, liveAt);
+        if (end !== null && (last === null || end > last)) last = end;
+        if (end === null && (s.kind === "person-wait" || s.kind === "gate-wait") && (person === null || x.from < person)) person = x.from;
+      }
+    }
+    for (const c of n.children) visit(c);
+  };
+  visit(node);
+  return { last, person };
+}
+
+/**
+ * For an open wave, slice, cell or round on `node` (the track it is drawn on): the latest end held among
+ * the spans beneath it (its descendants in the tree; for a round, the spans of that round under its cell)
+ * and since when a person has been waited on. Null for spans that are not open containers.
+ */
+export function openContext(tree: TrackTree, span: TimelineSpan, liveAt: number): { lastActivity: number | null; personSince: number | null } | null {
+  if (!CONTAINER_KINDS.has(span.kind) || heldEnd(span, liveAt) !== null) return null;
+  const at = tree.ofSpan.get(span.id);
+  const node = at ? tree.byId.get(at.trackId) : undefined;
+  if (!node) return null;
+  if (span.kind === "round") {
+    // A round's activity: its own round's spans under the cell that holds its Rounds row.
+    const cell = node.parentId ? tree.byId.get(node.parentId) : undefined;
+    const r = span.ids.round ?? (span.attrs.round !== undefined ? String(span.attrs.round) : null);
+    if (!cell || r === null) return null;
+    const a = walkActivity(cell, liveAt, span, r);
+    return { lastActivity: a.last, personSince: a.person };
+  }
+  const hit = activityMemo.get(node);
+  if (hit && hit.liveAt === liveAt) return { lastActivity: hit.last, personSince: hit.person };
+  const a = walkActivity(node, liveAt, span, null);
+  activityMemo.set(node, { liveAt, ...a });
+  return { lastActivity: a.last, personSince: a.person };
 }

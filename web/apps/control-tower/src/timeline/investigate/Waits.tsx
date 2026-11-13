@@ -8,8 +8,8 @@ import { useMemo } from "react";
 import { fc } from "@mach/ui";
 import { durationWords } from "../render";
 import type { BodyProps } from "./body";
-import { Caption, Diamond, Empty, FadeDefs, Fig, Figures, Hit, LiveEdge, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when } from "./figures";
-import { RELEASE_NOT_RECORDED, spanSource, waitItems, type WaitItem } from "./model";
+import { Caption, Diamond, Empty, FadeDefs, Fig, Figures, FrameFig, Hit, LiveEdge, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when } from "./figures";
+import { RELEASE_NOT_RECORDED, spanSource, waitItems, type WaitItem, frameOf } from "./model";
 
 const ROW_H = 40;
 const BAND_Y = 6;
@@ -50,6 +50,7 @@ export function WaitsBody(p: BodyProps) {
                 </text>
                 <Ring x={8} y={y + 2} w={s.gutter - 20} h={14} />
               </Fig>
+              <FrameFig id={`slice:${slice}`} what={`the waits of ${slice}`} frame={frameOf(waits.map((w) => w.span))} right={s.gutter - 6} y={y + 19} onFrame={p.onFrame} />
               <line x1={s.gutter} x2={s.gutter + s.plotW} y1={y + ROW_H - 2.5} y2={y + ROW_H - 2.5} style={{ stroke: fc("grid") }} aria-hidden="true" />
               {waits.map((w, k) => (
                 <WaitBand key={w.span.id} w={w} next={waits[k + 1]?.from ?? null} y={y} s={s} liveAt={liveAt} onReveal={p.onReveal} />

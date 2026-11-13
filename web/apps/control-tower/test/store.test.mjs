@@ -256,3 +256,79 @@ test("heldStore: held, a hidden workspace sees nothing change and is told nothin
   assert.equal(told, 2, "released, it follows every change");
   off();
 });
+
+test("A3: heldStore holds itself in its change handler when the workspace leaves the floor; the switch's focusOn never reaches it", async () => {
+  const { heldStore, showInTimeline, showOnFloor } = await import("../src/scene/store.ts");
+  const { store } = make();
+  const held = heldStore(store);
+  const seen = [];
+  const off = held.subscribe(() => seen.push(held.getState()));
+  store.select("cell:LOCAL-031", { focus: false });
+  assert.equal(seen.length, 1, "on the floor it follows every change");
+  const before = held.getState();
+  showInTimeline(store);
+  // No render in between (no layout effect): it is already held, and was told nothing of the switch or its focusOn.
+  assert.equal(held.held(), true);
+  assert.equal(seen.length, 1);
+  assert.equal(held.getState(), before);
+  assert.equal(held.getState().workspace, "floor", "the hidden floor still sees itself as it was");
+  assert.notEqual(store.getState().focus, null, "the Timeline was asked to frame");
+  assert.notEqual(held.getState().focus?.nonce, store.getState().focus.nonce, "the floor never saw that request");
+  store.select("cell:LOCAL-033", { focus: false });
+  assert.equal(seen.length, 1, "nothing while the Timeline is up");
+  // Back by any route (here the plain switch): caught up at once, in the same change.
+  store.setWorkspace("floor");
+  assert.equal(held.held(), false);
+  assert.equal(seen.length, 1 + 1);
+  assert.equal(held.getState(), store.getState());
+  showOnFloor(store);
+  off();
+});
+
+test("A3: a heldStore made while the Timeline is up starts held", async () => {
+  const { heldStore } = await import("../src/scene/store.ts");
+  const { store } = make();
+  store.setWorkspace("timeline");
+  const held = heldStore(store);
+  assert.equal(held.held(), true);
+  held.hold(false);
+  assert.equal(held.held(), true, "releasing by hand does not show the floor while it is not up");
+});
+
+test("A4: one shared store view; the Stage's gated policy (catch up on a timer while hidden) runs on it", async () => {
+  const { storeView } = await import("../src/scene/view.ts");
+  const { clock, store } = make();
+  let hiddenChanges = 0;
+  let attached = 0;
+  let detached = 0;
+  const view = storeView(store, {
+    hiddenChange: () => hiddenChanges++,
+    attach: () => {
+      attached++;
+      return () => detached++;
+    },
+  });
+  let told = 0;
+  const off = view.subscribe(() => told++);
+  assert.equal(attached, 1);
+  store.seek(1000);
+  assert.equal(told, 1, "shown: every change");
+  view.setShown(false);
+  const frozen = view.getState();
+  store.seek(2000);
+  store.seek(3000);
+  assert.equal(told, 1);
+  assert.equal(hiddenChanges, 2, "the policy hears each hidden change");
+  assert.equal(view.getState(), frozen);
+  assert.equal(view.stale(), true);
+  view.catchUp();
+  assert.equal(told, 2, "caught up once");
+  assert.equal(view.getState(), store.getState());
+  view.catchUp();
+  assert.equal(told, 2, "nothing when current");
+  view.setShown(true);
+  assert.equal(told, 2, "shown again while current: nothing to tell");
+  off();
+  assert.equal(detached, 1, "the policy stops with the last listener");
+  void clock;
+});

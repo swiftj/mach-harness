@@ -19,7 +19,7 @@
  * Timeline's `win` once the window has stayed put for SETTLE_MS. An `at` not yet honoured is kept in
  * the address until it is.
  */
-import type { SceneStore, SceneStoreState } from "../../scene/store";
+import { showOnFloor, type SceneStore, type SceneStoreState } from "../../scene/store";
 import { formatHash, parseHash, type HashAt, type HashState } from "./hash";
 
 export const SETTLE_MS = 400;
@@ -37,8 +37,9 @@ export interface HashHost {
 /** Apply everything in the hash that needs no history (route, selection, Theater Mode, Timeline window, grouping, lens and table). */
 export function applyHash(store: SceneStore, h: HashState): void {
   if (h.route === "atlas" || h.route === "blueprint") {
-    store.setView(h.route);
-    store.setWorkspace("floor");
+    // Back from the Timeline through the address: as the switch does (showOnFloor), the floor frames the selection.
+    if (store.getState().workspace !== "floor") showOnFloor(store, h.route);
+    else store.setView(h.route);
   } else if (h.route === "timeline") {
     store.setWorkspace("timeline");
   }

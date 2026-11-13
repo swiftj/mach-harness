@@ -4,5 +4,5 @@
  * live region and the workspace's visually hidden summary of the window.
  */
 export { TimelineTable } from "./TimelineTable";
-export { rowSummary, windowSummary, summaryWords, attentionWords } from "./describe";
+export { rowSummary, windowSummary, summaryWords, attentionWords, openContext } from "./describe";
 export { GRID_KEYS } from "./model";

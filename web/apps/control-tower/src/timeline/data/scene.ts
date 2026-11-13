@@ -20,7 +20,7 @@ import type {
   SceneLog,
   StationVisit,
 } from "../../sim";
-import type { DurationBasis, SpanAttrs, SpanAuthority, SpanEnd, SpanEndReason, SpanKind, SpanPrecision, TimelineMark, TimelineSpan } from "../contract";
+import type { DurationBasis, MarkKind, SpanAttrs, SpanAuthority, SpanEnd, SpanEndReason, SpanKind, SpanPrecision, TimelineMark, TimelineSpan } from "../contract";
 
 interface EndInput {
   readonly at: number | null;
@@ -500,7 +500,8 @@ export function marksOfScene(scene: Scene, spans: readonly TimelineSpan[]): Time
       out.push({ id: `retry:${s.id}`, kind: "retry", at: s.start.at, until: null, eventId: s.start.eventId, entity: s.entity, label: "The build station revised the work.", verdict: null, authority: auth(s.authority) });
     }
     if (s.kind === "execution" && (s.attrs.attempt ?? 1) > 1 && s.start?.at !== null && s.start?.at !== undefined) {
-      out.push({ id: `retry:${s.id}`, kind: "retry", at: s.start.at, until: null, eventId: s.start.eventId, entity: s.entity, label: `Execution attempt ${s.attrs.attempt} started.`, verdict: null, authority: auth(s.authority) });
+      // An execution attempt is not a judging round: its own kind, "attempt", as the observer sends it (T13; not yet a contract MarkKind).
+      out.push({ id: `attempt:${s.id}`, kind: "attempt" as MarkKind, at: s.start.at, until: null, eventId: s.start.eventId, entity: s.entity, label: `The supervisor started attempt ${s.attrs.attempt}.`, verdict: null, authority: auth(s.authority) });
     }
   }
   for (const s of spans) {

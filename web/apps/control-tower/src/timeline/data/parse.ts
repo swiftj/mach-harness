@@ -6,7 +6,7 @@
  * (or `*_ms` numbers) and leave as epoch milliseconds.
  */
 import { timeOf } from "../../live/observer";
-import type { ConcurrencyLimit } from "./derive";
+import type { ActiveCount, ConcurrencyLimit } from "./derive";
 import type {
   ConcurrencyBucket,
   ConcurrencySeries,
@@ -42,6 +42,13 @@ export const SPAN_KINDS: readonly SpanKind[] = [
   "tool",
 ];
 export const MARK_KINDS: readonly MarkKind[] = ["failure", "retry", "gate", "review", "human", "recovery", "interruption", "gap", "wave", "merge"];
+/**
+ * The mark kinds read from the wire: the contract's, plus "attempt" (an execution attempt after the
+ * first, T13), which the contract's MarkKind does not name yet. It is passed through as sent, typed
+ * loosely at this boundary; "retry" is then only a revise visit. Never ask an observer for "attempt"
+ * in a `kinds` filter unless it is known to serve it (an older one refuses an unknown kind).
+ */
+export const WIRE_MARK_KINDS: readonly string[] = [...MARK_KINDS, "attempt"];
 
 const BASES: readonly DurationBasis[] = ["measured", "bounded", "inferred", "open", "unknown"];
 const AUTHORITIES: readonly SpanAuthority[] = ["authoritative", "observed", "reconstructed", "simulated"];
@@ -143,9 +150,10 @@ export function readSpan(value: unknown): TimelineSpan | null {
   };
 }
 
-const MARK_WORDS: Readonly<Record<MarkKind, string>> = {
+const MARK_WORDS: Readonly<Record<string, string>> = {
   failure: "A failure was recorded.",
-  retry: "Work was tried again.",
+  retry: "The work was revised.",
+  attempt: "The supervisor started the ticket again.",
   gate: "A gate was evaluated.",
   review: "A review was decided.",
   human: "A person was involved.",
@@ -159,7 +167,7 @@ const MARK_WORDS: Readonly<Record<MarkKind, string>> = {
 /** One mark from the wire, or null when it has no kind or no time. */
 export function readMark(value: unknown): TimelineMark | null {
   const m = obj(value);
-  const kind = oneOf(m.kind, MARK_KINDS);
+  const kind = oneOf(m.kind, WIRE_MARK_KINDS) as MarkKind | null;
   const at = timeField(m, "at");
   if (!kind || at === null) return null;
   const eventId = str(m.event_id);
@@ -170,7 +178,7 @@ export function readMark(value: unknown): TimelineMark | null {
     until: timeField(m, "until"),
     eventId,
     entity: str(m.entity),
-    label: str(m.label) ?? MARK_WORDS[kind],
+    label: str(m.label) ?? MARK_WORDS[kind] ?? "",
     verdict: str(m.verdict),
     authority: oneOf(m.authority, AUTHORITIES) ?? "reconstructed",
   };
@@ -186,12 +194,18 @@ export function readConcurrency(value: unknown, asked: { readonly from: number; 
     const b = obj(raw);
     const from = timeField(b, "from");
     if (from === null) continue;
-    const active: Partial<Record<SpanKind, { max: number; mean: number }>> = {};
+    const active: Partial<Record<SpanKind, ActiveCount>> = {};
+    // `inferred_max` (T9): per kind, how many of `max` ended by rule or only within bounds. Read from the
+    // kind's own object, or from a bucket-level map (`inferred_max: {kind: n}` or `inferred: {kind: {max}}`).
+    const bucketInferred = obj(b.inferred_max);
+    const bucketInferred2 = obj(b.inferred);
     for (const [k, v] of Object.entries(obj(b.active))) {
       if (!isSpanKind(k)) continue;
       const max = num(obj(v).max);
       const mean = num(obj(v).mean);
-      if (max !== null) active[k] = { max, mean: mean ?? max };
+      if (max === null) continue;
+      const inferred = num(obj(v).inferred_max) ?? num(bucketInferred[k]) ?? num(obj(bucketInferred2[k]).max) ?? num(bucketInferred2[k]);
+      active[k] = inferred === null ? { max, mean: mean ?? max } : { max, mean: mean ?? max, inferredMax: Math.min(max, Math.max(0, inferred)) };
     }
     buckets.push({ from, active });
   }

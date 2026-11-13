@@ -7,7 +7,7 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { Button, fc, StateMark, type MarkState } from "@mach/ui";
 import { timecode } from "../../shell/time";
-import type { TimelineViewport } from "../contract";
+import type { TimelineViewport, TimeWindow } from "../contract";
 import { figureName, type Source } from "./model";
 
 // ---------------------------------------------------------------- type
@@ -63,6 +63,41 @@ interface FigureCtx {
 const Ctx = createContext<FigureCtx | null>(null);
 
 /**
+ * True inside the investigation band, which makes itself ONE tab stop and moves focus with the arrow
+ * keys across its header buttons and every figure (`rovingKeys`): the groups inside then leave their
+ * figures' tabindex and arrows to it.
+ */
+export const BandRoving = createContext(false);
+
+/** The band's focusable parts in document order: its buttons and every figure. */
+export function rovingItems(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return [...root.querySelectorAll<HTMLElement>("button:not([disabled]), [data-fig]")];
+}
+
+/** Exactly one of the band's parts is reachable by Tab: `keep`, else the first. */
+export function rovingSync(root: HTMLElement | null, keep: string | null): void {
+  const items = rovingItems(root);
+  const k = items.find((el) => (el.dataset.rove ?? el.dataset.fig) === keep) ?? items[0];
+  for (const el of items) el.setAttribute("tabindex", el === k ? "0" : "-1");
+}
+
+/** Arrow keys, Home and End across the band's parts; returns the newly focused part's key, or undefined when the key is not handled. */
+export function rovingKeys(root: HTMLElement | null, e: KeyboardEvent<HTMLElement>): string | null | undefined {
+  const keys = ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"];
+  if (!keys.includes(e.key)) return undefined;
+  const items = rovingItems(root);
+  const i = items.indexOf(document.activeElement as HTMLElement);
+  if (i < 0 || items.length === 0) return undefined;
+  e.preventDefault();
+  const j = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : Math.max(0, Math.min(items.length - 1, i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1)));
+  const next = items[j]!;
+  for (const el of items) el.setAttribute("tabindex", el === next ? "0" : "-1");
+  next.focus();
+  return next.dataset.rove ?? next.dataset.fig ?? null;
+}
+
+/**
  * A group of figures: one tab stop, arrow keys between figures in document order, Home and End.
  * Hover and focus show which records a figure comes from.
  */
@@ -70,15 +105,18 @@ export function Figures({ children, label, className, style }: { children: React
   const ref = useRef<HTMLDivElement>(null);
   const active = useRef<string | null>(null);
   const [tip, setTip] = useState<Tip | null>(null);
+  const inBand = useContext(BandRoving);
 
-  // Exactly one figure is reachable by Tab: the last one used, else the first.
+  // Exactly one figure is reachable by Tab: the last one used, else the first (the band does it when inside one).
   useLayoutEffect(() => {
+    if (inBand) return;
     const figs = [...(ref.current?.querySelectorAll<SVGElement>("[data-fig]") ?? [])];
     const keep = figs.find((f) => f.dataset.fig === active.current) ?? figs[0];
     for (const f of figs) f.setAttribute("tabindex", f === keep ? "0" : "-1");
   });
 
   const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    if (inBand) return;
     const keys = ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"];
     if (!keys.includes(e.key)) return;
     const figs = [...(ref.current?.querySelectorAll<SVGElement>("[data-fig]") ?? [])];
@@ -90,7 +128,7 @@ export function Figures({ children, label, className, style }: { children: React
     for (const f of figs) f.setAttribute("tabindex", f === next ? "0" : "-1");
     active.current = next.dataset.fig ?? null;
     next.focus();
-  }, []);
+  }, [inBand]);
 
   const ctx = useMemo<FigureCtx>(
     () => ({
@@ -240,6 +278,26 @@ export function FadeDefs({ id, color }: { id: string; color: string }) {
         <stop offset="1" stopColor={color} stopOpacity={0} />
       </linearGradient>
     </defs>
+  );
+}
+
+/**
+ * "Frame" for one item of a lens (X15): sets the Timeline's window to the item's padded extent. Drawn as
+ * a small labelled figure at the right of the gutter, ending at `right`; nothing when there is no frame.
+ */
+export function FrameFig({ id, what, frame, right, y, onFrame }: { id: string; what: string; frame: TimeWindow | null; right: number; y: number; onFrame(w: TimeWindow): void }) {
+  if (!frame) return null;
+  const w = 36;
+  const x = right - w;
+  return (
+    <Fig id={`frame:${id}`} name={`Frame ${what}: show it from ${when(frame.from)} to ${when(frame.to)} on the tracks`} sources={[]} onActivate={() => onFrame(frame)}>
+      <Hit x={x} y={y} w={w} h={12} />
+      <path aria-hidden="true" d={`M${x + 1} ${y + 3}V${y + 1}H${x + 3}M${x + 1} ${y + 9}V${y + 11}H${x + 3}`} style={{ fill: "none", stroke: SUBTLE, strokeWidth: 1 }} />
+      <text x={x + 6} y={y + 9.5} style={{ ...SANS, fontSize: 10, fill: "var(--mach-accent-ink)" }}>
+        Frame
+      </text>
+      <Ring x={x} y={y} w={w} h={12} />
+    </Fig>
   );
 }
 

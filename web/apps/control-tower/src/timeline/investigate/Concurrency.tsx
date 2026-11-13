@@ -9,11 +9,11 @@ import { fc } from "@mach/ui";
 import { duration } from "../../shell/time";
 import { durationWords } from "../render";
 import type { BodyProps } from "./body";
-import { Caption, Empty, Fig, Figures, Hit, LiveEdge, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
-import { activeAt, concurrencyView, spanSource, type ConcurrencyLine, type LaneSegment } from "./model";
+import { Caption, Empty, Fig, Figures, FrameFig, Hit, LiveEdge, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
+import { activeAt, concurrencyView, spanSource, type ConcurrencyLine, type LaneSegment, frameOf } from "./model";
 
 const CHART_TOP = 8;
-const CHART_H = 62;
+const CHART_H = 120;
 const LANE_H = 15;
 
 const LINE_STYLE: Readonly<Record<ConcurrencyLine["kind"], { stroke: string; width: number }>> = {
@@ -37,6 +37,10 @@ export function ConcurrencyBody(p: BodyProps) {
   const y = (c: number) => CHART_TOP + CHART_H - (c / v.yMax) * CHART_H;
   const grid = Array.from({ length: v.yMax + 1 }, (_, i) => i).filter((i) => v.yMax <= 6 || i % Math.ceil(v.yMax / 6) === 0);
   const lanesTop = CHART_TOP + CHART_H + 16;
+  const visitLine = v.lines.find((l) => l.kind === "visit");
+  const inferredNote = visitLine && visitLine.inferredPeak > 0 ? visitLine.inferredPeak : 0;
+  // Legend rows: one per line, then the inferred note under "cells in a station", then the limit.
+  const legendRows = v.lines.length + (inferredNote ? 1 : 0);
   const H = lanesTop + v.lanes.length * LANE_H + 8;
 
   return (
@@ -54,7 +58,7 @@ export function ConcurrencyBody(p: BodyProps) {
             <Fig
               key={l.kind}
               id={`peak:${l.kind}`}
-              name={`Most ${l.label} at once in this window: ${l.peak}${l.peakAt !== null ? `, from ${when(l.peakAt)}` : ""}, counted from recorded spans active at once`}
+              name={`Most ${l.label} at once in this window: ${l.peak}${l.peakAt !== null ? `, from ${when(l.peakAt)}` : ""}, counted from recorded spans active at once${l.inferredPeak ? `, including ${l.inferredPeak} ended without an exit record` : ""}`}
               sources={peak.slice(0, 6).map((sp) => spanSource(sp, l.kind === "visit" ? "station visit" : l.kind))}
               onActivate={() => p.onReveal(peak[0]?.entity ?? "actor:supervisor", l.peakAt ?? undefined)}
             >
@@ -72,11 +76,19 @@ export function ConcurrencyBody(p: BodyProps) {
             </Fig>
           );
         })}
+        {inferredNote ? (
+          <g aria-hidden="true">
+            <rect x={10} y={CHART_TOP + 8 + v.lines.length * 15 - 4} width={16} height={8} style={{ fill: fc("plate-lit"), opacity: 0.45, stroke: fc("ink-soft"), strokeWidth: 0.6, strokeDasharray: "2 1.5" }} />
+            <text x={31} y={CHART_TOP + 11.5 + v.lines.length * 15} style={{ ...SANS, fontSize: 10, fill: SUBTLE }}>
+              including {inferredNote} ended without an exit record
+            </text>
+          </g>
+        ) : null}
         {v.limits.length ? (
           <g aria-hidden="true">
-            <line x1={10} x2={26} y1={CHART_TOP + 8 + v.lines.length * 15} y2={CHART_TOP + 8 + v.lines.length * 15} style={{ stroke: INK, strokeWidth: 1, strokeDasharray: "5 3" }} />
-            <text x={31} y={CHART_TOP + 11.5 + v.lines.length * 15} style={{ ...SANS, fontSize: 10.5, fill: MUTED }}>
-              recorded limit
+            <line x1={10} x2={26} y1={CHART_TOP + 8 + legendRows * 15} y2={CHART_TOP + 8 + legendRows * 15} style={{ stroke: INK, strokeWidth: 1, strokeDasharray: "5 3" }} />
+            <text x={31} y={CHART_TOP + 11.5 + legendRows * 15} style={{ ...SANS, fontSize: 10.5, fill: MUTED }}>
+              recorded limit <tspan style={{ ...MONO, fill: INK }}>{[...new Set(v.limits.map((l) => l.value))].join("→")}</tspan>
             </text>
           </g>
         ) : null}
@@ -100,9 +112,6 @@ export function ConcurrencyBody(p: BodyProps) {
             <Fig key={i} id={`limit:${i}`} name={`Recorded limit: ${l.value} parallel ${l.appliesTo}, from ${when(l.from)}${l.to < liveAt ? ` to ${when(l.to)}` : ""}, as the Factory's limits record it`} sources={[{ what: "the Factory's recorded limits (max_parallel)", ref: `limit:max_parallel@${l.from}`, eventId: null }]} onActivate={() => p.onReveal("actor:supervisor", l.from)}>
               <Hit x={a} y={y(l.value) - 2} w={b - a} h={4} />
               <line className="mach-inv-hover" x1={a} x2={b} y1={y(l.value)} y2={y(l.value)} style={{ stroke: INK, strokeWidth: 1, strokeDasharray: "5 3" }} />
-              <text x={b - 4} y={y(l.value) - 4} textAnchor="end" style={{ ...SANS, fontSize: 10, fill: MUTED }}>
-                max_parallel <tspan style={{ ...MONO, fill: INK }}>{l.value}</tspan>
-              </text>
               <Ring x={a} y={y(l.value) - 2} w={b - a} h={4} />
             </Fig>
           );
@@ -117,7 +126,25 @@ export function ConcurrencyBody(p: BodyProps) {
           if (l.kind === "visit") {
             const first = l.steps[0]!;
             const last = l.steps[l.steps.length - 1]!;
-            return <path key={l.kind} d={`M${s.cx(first.from)} ${y(0)}${d.replace(/^M/, "L")}L${s.cx(last.to)} ${y(0)}Z`} aria-hidden="true" style={{ fill: fc("plate-lit"), stroke: fc("ink-soft"), strokeWidth: 0.6, opacity: 0.9 }} />;
+            if (!l.inferred.length) return <path key={l.kind} d={`M${s.cx(first.from)} ${y(0)}${d.replace(/^M/, "L")}L${s.cx(last.to)} ${y(0)}Z`} aria-hidden="true" style={{ fill: fc("plate-lit"), stroke: fc("ink-soft"), strokeWidth: 0.6, opacity: 0.9 }} />;
+            // The recorded part as the quiet area with its line; the part whose end was inferred as a lighter band above it (T9).
+            let rec = "";
+            l.steps.forEach((st, i) => {
+              const r = st.count - (l.inferred[i]?.count ?? 0);
+              rec += `${i === 0 ? "M" : "L"}${s.cx(st.from)} ${y(r)}H${s.cx(st.to)}`;
+            });
+            const band = l.steps
+              .map((st, i) => ({ st, inf: l.inferred[i]?.count ?? 0 }))
+              .filter((x) => x.inf > 0)
+              .map(({ st, inf }) => `M${s.cx(st.from)} ${y(st.count)}H${s.cx(st.to)}V${y(st.count - inf)}H${s.cx(st.from)}Z`)
+              .join("");
+            return (
+              <g key={l.kind} aria-hidden="true">
+                <path d={`M${s.cx(first.from)} ${y(0)}${rec.replace(/^M/, "L")}L${s.cx(last.to)} ${y(0)}Z`} style={{ fill: fc("plate-lit"), stroke: "none", opacity: 0.9 }} />
+                {band ? <path d={band} style={{ fill: fc("plate-lit"), opacity: 0.45, stroke: fc("ink-soft"), strokeWidth: 0.6, strokeDasharray: "2 1.5" }} /> : null}
+                <path d={rec} style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 0.8 }} />
+              </g>
+            );
           }
           return <path key={l.kind} d={d} aria-hidden="true" style={{ fill: "none", stroke: LINE_STYLE[l.kind].stroke, strokeWidth: LINE_STYLE[l.kind].width, strokeLinejoin: "miter" }} />;
         })}
@@ -145,6 +172,7 @@ export function ConcurrencyBody(p: BodyProps) {
                 </text>
                 <Ring x={8} y={ly + 1} w={Math.min(s.gutter - 16, lane.label.length * 6.5 + 4)} h={12} />
               </Fig>
+              <FrameFig id={lane.key} what={lane.label} frame={frameOf(lane.segments.map((sg) => sg.span))} right={s.gutter - 6} y={ly + 1.5} onFrame={p.onFrame} />
               <line x1={s.gutter} x2={s.gutter + s.plotW} y1={ly + LANE_H - 0.5} y2={ly + LANE_H - 0.5} style={{ stroke: fc("grid") }} aria-hidden="true" />
               {lane.segments.map((sg) => (
                 <Segment key={sg.span.id} sg={sg} s={s} y={ly} liveAt={liveAt} label={lane.label} onReveal={p.onReveal} />

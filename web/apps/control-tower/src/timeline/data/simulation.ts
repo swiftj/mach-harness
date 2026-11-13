@@ -7,10 +7,11 @@
  * outcome not yet reached).
  */
 import type { SceneStore } from "../../scene/store";
+import { STRUCTURAL_KINDS } from "../contract";
 import type { ConcurrencySeries, MarkKind, SpanPage, TimeWindow, TimelineData, TimelineMark, TimelineSpan } from "../contract";
 import { abortError } from "./cache";
 import { ALL_AVAILABLE } from "./availability";
-import { byStart, closeEndedVisits, concurrencyOf, cutAt, densityOf, honest, spanMatches, type ConcurrencyLimit } from "./derive";
+import { byStart, closeEndedVisits, concurrencyOf, cutAt, densityOf, honest, marksAnswer, spanMatches, type ConcurrencyLimit } from "./derive";
 import { marksOfScene, spansOfScene } from "./scene";
 import { storeWatcher, THROTTLE_MS, type TimerLike } from "./watch";
 
@@ -31,7 +32,10 @@ interface Derived {
   readonly spans: readonly TimelineSpan[];
   readonly marks: readonly TimelineMark[];
   readonly limits: ConcurrencySeries["limits"];
+  /** The time of the newest record the spans were derived from. */
+  readonly headAt: number;
 }
+
 
 export function createSimulationTimelineData(store: SceneStore, options: SimulationTimelineOptions = {}): TimelineData {
   let held: Derived | null = null;
@@ -43,14 +47,15 @@ export function createSimulationTimelineData(store: SceneStore, options: Simulat
     const spans = honest(spansOfScene(head, log));
     // As the observer says it: max_parallel bounds executions (and the cells they run).
     const limits: ConcurrencyLimit[] = head.factory.limits ? [{ name: "max_parallel", value: head.factory.limits.max_parallel, from: log.floorTime() ?? 0, to: null, appliesTo: ["execution", "cell"] }] : [];
-    held = { log, version, spans, marks: marksOfScene(head, spans), limits };
+    held = { log, version, spans, marks: marksOfScene(head, spans), limits, headAt: log.headTime() ?? Number.NEGATIVE_INFINITY };
     return held;
   };
   /** The spans as they stood at the simulated now. */
   const heldAt = (liveAt: number): TimelineSpan[] => {
     const out: TimelineSpan[] = [];
-    for (const s of derived().spans) {
-      const cut = cutAt(s, liveAt);
+    const d = derived();
+    for (const s of d.spans) {
+      const cut = cutAt(s, liveAt, d.headAt);
       if (cut) out.push(cut);
     }
     // The scene closes a visit whose execution ended without its exit (StationVisit.unclosed); the same
@@ -89,11 +94,17 @@ export function createSimulationTimelineData(store: SceneStore, options: Simulat
       if (!found) return null;
       const liveAt = store.getState().liveAt;
       // A visit is read with its execution, so the closing rule applies to it as in spans().
-      return found.kind === "visit" ? (heldAt(liveAt).find((s) => s.id === id) ?? null) : cutAt(found, liveAt);
+      return found.kind === "visit" ? (heldAt(liveAt).find((s) => s.id === id) ?? null) : cutAt(found, liveAt, derived().headAt);
+    },
+    async structure(signal) {
+      check(signal);
+      const { liveAt, log } = store.getState();
+      const spans = heldAt(liveAt).filter((s) => STRUCTURAL_KINDS.includes(s.kind)).sort(byStart);
+      return { spans, truncated: false, total: spans.length, version: `sim:${log.version()}:${liveAt}` };
     },
     async marks(window: TimeWindow, kinds, signal) {
       check(signal);
-      return marksAt(store.getState().liveAt, kinds).filter((m) => m.at <= window.to && (m.until ?? m.at) >= window.from);
+      return marksAnswer(marksAt(store.getState().liveAt, kinds).filter((m) => m.at <= window.to && (m.until ?? m.at) >= window.from), false, true);
     },
     async nextMark(t, direction, kinds, signal) {
       check(signal);
@@ -123,5 +134,18 @@ export function createSimulationTimelineData(store: SceneStore, options: Simulat
     },
     availability: () => ALL_AVAILABLE,
     subscribe: watcher.subscribe,
-  };
+    // Not in the contract: the exact time of the last record held as of the simulated now (recordedExtent reads it).
+    lastRecordedAt(): number | null {
+      const { log, liveAt } = store.getState();
+      const times = log.times();
+      let lo = 0;
+      let hi = times.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if ((times[mid] as number) <= liveAt) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo > 0 ? (times[lo - 1] as number) : null;
+    },
+  } as TimelineData;
 }

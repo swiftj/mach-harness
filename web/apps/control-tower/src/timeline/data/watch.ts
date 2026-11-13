@@ -1,7 +1,9 @@
 /**
  * Tells a provider's subscribers that earlier answers may be stale, throttled: the first change is
  * told at once, then at most one more per `throttleMs` however many events arrive. Subscribes to the
- * store only while someone listens.
+ * store only while someone listens. The last state seen is kept across unsubscribing: when someone
+ * subscribes again (the workspace mounted again) and the store moved meanwhile, earlier answers are
+ * dropped (`before`) and listeners are told once, so nothing held from before is served as current.
  */
 import type { SceneStore, SceneStoreState } from "../../scene/store";
 
@@ -76,8 +78,17 @@ export function storeWatcher(
     subscribe(listener) {
       listeners.add(listener);
       if (!unsubscribe) {
-        last = store.getState();
+        const prev = last;
+        const next = store.getState();
+        last = next;
         unsubscribe = store.subscribe(onStore);
+        if (next !== prev && options.changed(prev, next)) {
+          // Moved while nobody listened: what is held is stale now; tell the new listeners once, after they settle.
+          options.before?.();
+          queueMicrotask(() => {
+            if (listeners.size) for (const l of [...listeners]) l();
+          });
+        }
       }
       return () => {
         listeners.delete(listener);

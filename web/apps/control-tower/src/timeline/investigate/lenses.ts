@@ -4,9 +4,18 @@
  * the presets are tested in node. A preset only adds to what the person has expanded; they may change
  * any of it afterwards.
  */
-import type { LensDefinition, SpanKind, TimelineFilters, TimelineSpan, TimelineViewState, TrackNode, TrackTree } from "../contract";
+import { type LensDefinition, type SpanKind, type TimelineFilters, type TimelineSpan, type TimelineViewState, type TimeWindow, type TrackNode, type TrackTree } from "../contract";
 import { buildTrackTree } from "../tracks/build";
-import { ladderOf, hasRetries, sliceOf, ticketOf } from "./model";
+import { frameOf, ladderOf, hasRetries, recoveryItems, sliceOf, ticketOf } from "./model";
+
+export { frameOf };
+
+/** The preset's window: the frame of what the lens shows, or the person's window when it shows nothing. */
+const windowFor = (spans: readonly TimelineSpan[], view: TimelineViewState): { window?: TimeWindow | null } => {
+  const w = frameOf(spans);
+  void view;
+  return w ? { window: w } : {};
+};
 
 /** Every span on the tree's rows (lanes and ribbons), once. */
 export function spansOfTree(tree: TrackTree): TimelineSpan[] {
@@ -68,26 +77,28 @@ const WAIT_KINDS: readonly SpanKind[] = ["slice-wait", "slice-eligible", "capaci
 export const LENSES: readonly LensDefinition[] = [
   {
     id: "retries",
-    label: "Verification failures and retries",
+    label: "Why did it retry?",
     about: "Each pass through build and verify for a cell, with the gate verdict and what followed, from the station visits and the gate and failure marks.",
     preset(tree, view) {
       const spans = spansOfTree(tree);
       const focus = view.filters.tickets.length ? view.filters.tickets : ticketsWith(spans, "visit").filter((t) => hasRetries(ladderOf(t, spans, [], Number.POSITIVE_INFINITY)));
       const add = focus.flatMap((t) => [...cellPath(t, spans), `station:${t}/build`, `station:${t}/verify`, `cell:${t}/review`]);
-      return { grouping: "product", expanded: merge(view, productRows(spans, view.filters, add)) };
+      const shown = spans.filter((s) => s.kind === "visit" && focus.includes(ticketOf(s) ?? ""));
+      return { grouping: "product", expanded: merge(view, productRows(spans, view.filters, add)), ...windowFor(shown, view) };
     },
   },
   {
     id: "concurrency",
-    label: "Parallel execution",
+    label: "What ran at once?",
     about: "How many executions, cells in a station and agents were active at once against the recorded limit, from the concurrency series and the wait, eligibility and claim spans.",
-    preset(_tree, view) {
-      return { grouping: "execution", filters: { ...view.filters, attentionOnly: false } };
+    preset(tree, view) {
+      const shown = spansOfTree(tree).filter((s) => s.kind === "execution" || s.kind === "claim" || s.kind === "capacity-wait" || s.kind === "slice-eligible");
+      return { grouping: "execution", filters: { ...view.filters, attentionOnly: false }, ...windowFor(shown, view) };
     },
   },
   {
     id: "waits",
-    label: "Dependency waits",
+    label: "What was it waiting on?",
     about: "Each time a slice waited on a dependency, the slices it named and when those were integrated, from the scheduler's wait spans and the merge records.",
     preset(tree, view) {
       const spans = spansOfTree(tree);
@@ -100,27 +111,30 @@ export const LENSES: readonly LensDefinition[] = [
         else if (sl) add.push(...slicePath(sl, spans), `slice:${sl}/waits`);
       }
       const filters = { ...view.filters, kinds: WAIT_KINDS };
-      return { grouping: "product", expanded: merge(view, productRows(spans, filters, add)), filters };
+      const shown = spans.filter((s) => s.kind === "slice-wait" || s.kind === "capacity-wait" || s.kind === "slice-eligible");
+      return { grouping: "product", expanded: merge(view, productRows(spans, filters, add)), filters, ...windowFor(shown, view) };
     },
   },
   {
     id: "review",
-    label: "Review and human intervention",
+    label: "Who decided what?",
     about: "Each review round's seats and votes, the panel's decision, a person's approval of the code and the authorization to merge, from the seat spans and the review, human and merge marks.",
     preset(tree, view) {
       const spans = spansOfTree(tree);
       const add = ticketsWith(spans, "seat").flatMap((t) => [...cellPath(t, spans), `cell:${t}/review`]);
-      return { grouping: "product", expanded: merge(view, productRows(spans, view.filters, add)) };
+      const shown = spans.filter((s) => s.kind === "seat" || s.kind === "gate-wait" || (s.kind === "visit" && (s.ids.station === "review" || s.ids.station === "merge")));
+      return { grouping: "product", expanded: merge(view, productRows(spans, view.filters, add)), ...windowFor(shown, view) };
     },
   },
   {
     id: "recovery",
-    label: "Recovery and interruption",
+    label: "What was interrupted?",
     about: "Executions interrupted or with an outcome not known, visits ended without an exit record, the supervisor's recoveries and what took the work up again, from execution and visit spans and recovery marks.",
     // Every execution, not only those needing attention: what was interrupted reads against what took
     // the work up again (and failures elsewhere, rounds and seats, have no row in this grouping).
-    preset(_tree, view) {
-      return { grouping: "execution", filters: { ...view.filters, attentionOnly: false } };
+    preset(tree, view) {
+      const shown = recoveryItems(spansOfTree(tree), [], Number.MAX_SAFE_INTEGER).items.map((i) => i.span);
+      return { grouping: "execution", filters: { ...view.filters, attentionOnly: false }, ...windowFor(shown, view) };
     },
   },
 ];

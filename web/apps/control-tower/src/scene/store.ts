@@ -31,6 +31,7 @@ import type { Clock, SwitchableClock } from "./clock";
 import type { ConnectionStatus, FactoryStatus } from "./connection";
 import { INITIAL_CONNECTION } from "./connection";
 import { INITIAL_TIMELINE_VIEW, type TimelineViewState } from "../timeline/contract";
+import { storeView } from "./view";
 
 /** Factory milliseconds per wall millisecond at 1x: the 55-minute run plays in about 5.5 minutes. Simulation and replay playback only; live time runs at 1. */
 export const PLAYBACK_BASE_RATE = 10;
@@ -204,9 +205,10 @@ export function playbackFactorLabel(source: SceneSource, speed: PlaybackSpeed): 
   return `${factor === 0.5 ? "½" : factor}×`;
 }
 
-/** The factor as spoken: "20 times real time" for real history, "2 times" for the simulation. */
+/** The factor as spoken: "20 times real time" for real history, "2 times" for the simulation; a half is "half speed" (X22), never "0.5 times". */
 export function playbackFactorWords(source: SceneSource, speed: PlaybackSpeed): string {
   const factor = playbackFactorOf(source, speed);
+  if (factor === 0.5) return source === "simulation" ? "half speed" : "half real time";
   return source === "simulation" ? `${factor} times` : `${factor} times real time`;
 }
 
@@ -771,48 +773,33 @@ export interface HeldStore extends SceneStore {
 }
 
 /**
- * The store as a hidden workspace sees it. While held, a subtree reading it renders nothing new and
- * runs no effect a change would start (no camera framing, no drawing, no catching up), so a hidden
- * Factory Floor costs nothing while the Timeline is up, and is exactly where it was when it returns.
- * Actions go straight to the one store. It listens to the store only while it has listeners itself.
+ * The store as the Factory Floor sees it (a StoreView, view.ts). While held, a subtree reading it
+ * renders nothing new and runs no effect a change would start (no camera framing, no drawing, no
+ * catching up), so a hidden floor costs nothing while the Timeline is up, and is exactly where it was
+ * when it returns.
+ *
+ * It holds itself (A3) in its own change handler whenever the store's workspace is not "floor", before
+ * any listener is told: the change that switched workspaces (and a `focusOn` issued with it, as
+ * "Show in Timeline" does) never reaches the hidden floor, whose views therefore never animate while
+ * hidden. It is released, and caught up at once, by the change that brings the floor back, whichever
+ * way it comes (the switch, a key, the address).
  */
 export function heldStore(store: SceneStore): HeldStore {
-  const listeners = new Set<() => void>();
-  let isHeld = false;
-  let snapshot = store.getState();
-  let off: (() => void) | null = null;
-  const notify = () => {
-    snapshot = store.getState();
-    for (const l of [...listeners]) l();
-  };
-  const onChange = () => {
-    if (!isHeld) notify();
-  };
+  // Held by request (hold(true)), or by the store's workspace not being the floor's: either holds it.
+  let asked = false;
+  const away = (s: SceneStoreState) => s.workspace !== "floor";
+  const view = storeView(store, {
+    snapshotOnHide: true,
+    decide: (s) => (asked || away(s) ? "hide" : "show"),
+  });
+  if (away(store.getState())) view.setShown(false);
   return {
-    ...store,
-    getState: () => (isHeld ? snapshot : store.getState()),
-    subscribe(listener) {
-      listeners.add(listener);
-      off ??= store.subscribe(onChange);
-      return () => {
-        listeners.delete(listener);
-        if (!listeners.size && off) {
-          off();
-          off = null;
-        }
-      };
+    ...view,
+    hold(held) {
+      asked = held;
+      view.setShown(!(held || away(store.getState())));
     },
-    hold(next) {
-      if (next === isHeld) return;
-      if (next) {
-        snapshot = store.getState();
-        isHeld = true;
-        return;
-      }
-      isHeld = false;
-      if (snapshot !== store.getState()) notify();
-    },
-    held: () => isHeld,
+    held: () => !view.shown(),
   };
 }
 

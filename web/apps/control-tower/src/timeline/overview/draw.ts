@@ -67,6 +67,11 @@ export function overviewLayout(height: number): OverviewLayout {
 export interface ActivityLayer {
   readonly executions: readonly Step[];
   readonly visits: readonly Step[];
+  /**
+   * Where some of the cells in a station ended without an exit record (the end inferred or bounded):
+   * a lighter band from the recorded count (`visits` is then the recorded part) up to the total (T9).
+   */
+  readonly visitsInferred?: ReadonlyArray<{ readonly x0: number; readonly x1: number; readonly lo: number; readonly hi: number }>;
   readonly agents: readonly Step[];
   /** Recorded limits that bound something counted here, each interval at its own level. */
   readonly limits: readonly LimitSegment[];
@@ -103,6 +108,8 @@ export interface OverviewFrame {
   readonly bars: readonly MarkBar[];
   readonly ticks: readonly Tick[];
   readonly tail: TailLayer | null;
+  /** Compressed idle stretches (X10), in pixels, with their length in words for the label under the axis. */
+  readonly breaks?: ReadonlyArray<{ readonly x0: number; readonly x1: number; readonly label: string }>;
 }
 
 function hatch(ctx: CanvasRenderingContext2D, x0: number, x1: number, top: number, bottom: number, p: OverviewPalette) {
@@ -238,6 +245,13 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
       ctx.stroke();
     }
     ctx.setLineDash([]);
+    // Cells in a station whose end was inferred: a lighter band above the recorded line (T9).
+    if (a.visitsInferred?.length) {
+      ctx.fillStyle = p.fInkSoft;
+      ctx.globalAlpha = 0.18;
+      for (const b of a.visitsInferred) ctx.fillRect(b.x0, y(b.hi), Math.max(1, b.x1 - b.x0), Math.max(1, y(b.lo) - y(b.hi)));
+      ctx.globalAlpha = 1;
+    }
     // Cells in a station: a stepped outline.
     if (a.visits.length) {
       ctx.strokeStyle = p.fInkSoft;
@@ -432,6 +446,27 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
     }
   }
 
+  // 5b. Breaks in the axis (X10): the plot cleared over the compressed stretch, a double slash across
+  // the baseline (the Blueprint's ExecRuler mark), and how long it was under the axis.
+  for (const b of frame.breaks ?? []) {
+    const x0 = Math.floor(b.x0);
+    const x1 = Math.ceil(b.x1);
+    ctx.fillStyle = p.surface;
+    ctx.fillRect(x0 + 2, L.plotTop, Math.max(0, x1 - x0 - 4), L.plotBottom - L.plotTop);
+    const cx = (x0 + x1) / 2;
+    const base = L.plotBottom;
+    ctx.fillStyle = p.surface;
+    ctx.fillRect(cx - 6, base - 5, 12, 10);
+    ctx.strokeStyle = p.fInkSoft;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - 4.5, base + 4);
+    ctx.lineTo(cx - 0.5, base - 4);
+    ctx.moveTo(cx + 0.5, base + 4);
+    ctx.lineTo(cx + 4.5, base - 4);
+    ctx.stroke();
+  }
+
   // 6. Time labels: ticks on the baseline, mono, tabular.
   ctx.font = `${L.compact ? 10 : 11}px ${p.mono}`;
   ctx.textBaseline = "alphabetic";
@@ -445,5 +480,17 @@ export function drawOverview(ctx: CanvasRenderingContext2D, frame: OverviewFrame
     ctx.fillStyle = t.major ? p.inkMuted : p.inkSubtle;
     ctx.fillText(t.label, lx, L.labels);
     labelEnd = lx + tw;
+  }
+  // The length of each break, on a ground-coloured box over its middle: how much idle time it stands for.
+  ctx.font = `${L.compact ? 9 : 10}px ${p.mono}`;
+  for (const b of frame.breaks ?? []) {
+    const tw = ctx.measureText(b.label).width;
+    const cx = (b.x0 + b.x1) / 2;
+    const lx = Math.round(Math.max(0, Math.min(width - tw - 2, cx - tw / 2)));
+    const ly = Math.round((L.plotTop + L.plotBottom) / 2);
+    ctx.fillStyle = p.surface;
+    ctx.fillRect(lx - 3, ly - 9, tw + 6, 13);
+    ctx.fillStyle = p.inkMuted;
+    ctx.fillText(b.label, lx, ly + 1);
   }
 }

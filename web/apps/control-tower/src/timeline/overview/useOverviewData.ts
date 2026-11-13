@@ -23,6 +23,8 @@ export interface OverviewData {
   readonly failed: boolean;
   /** Filters the density cannot follow (more than one ticket or execution): it is drawn for all. */
   readonly unfiltered: boolean;
+  /** The marks answer was cut or partial (the data layer's `complete: false` / `truncated` on the array, T8). */
+  readonly marksIncomplete: boolean;
 }
 
 interface Answer {
@@ -102,5 +104,6 @@ export function useOverviewData(data: TimelineData, extent: TimeWindow, width: n
     pending: settled && answer.key !== key,
     failed: settled && !answer.answered,
     unfiltered,
+    marksIncomplete: (answer.marks as { complete?: boolean }).complete === false || (answer.marks as { truncated?: boolean }).truncated === true,
   };
 }

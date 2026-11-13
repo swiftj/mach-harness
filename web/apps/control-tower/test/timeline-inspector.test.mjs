@@ -88,11 +88,11 @@ test("a span that begins after the playhead is not started there", () => {
 
 // ---------------------------------------------------------------- interruptions, attempts, rounds, agents, seats, waits
 
-test("an interrupted visit is open for its span, not continuous, and never 'took'", () => {
+test("T4: a late exit is not a resumption: open for its span, exit recorded after its execution ended, never 'took'", () => {
   const v = span({ start: 0, finish: 300_000, attrs: { interruptedAt: 120_000 }, outcome: "built" });
   const text = M.durationSentence(v, 400_000, {}, clock).text;
-  assert.equal(text, "open for 5 min, not continuous: it stopped at t120000 and was taken up again later");
-  assert.doesNotMatch(text, /took/);
+  assert.equal(text, "open for 5 min; its exit was recorded after its execution ended (at t120000)");
+  assert.doesNotMatch(text, /took|taken up|resum/);
   // While still open after the stop: open for, live, interrupted mode.
   const live = M.durationSentence(v, 200_000);
   assert.equal(live.live.mode, "interrupted");
@@ -310,4 +310,47 @@ test("evidence references carry the catalog id, the producing event and the veri
   const src = (await import("node:fs")).readFileSync(new URL("../src/timeline/inspector/InTimeSection.tsx", import.meta.url), "utf8");
   assert.match(src, /data-evidence-artifact=\{r\.artifactId\}/);
   assert.match(src, /M6\.4 will make these references open the Evidence Theater/);
+});
+
+// ---------------------------------------------------------------- round 4: X2 (open is not at work), X3 (the picked span)
+
+test("X2: an open cell, wave, slice or round is 'open', never 'at work'; work kinds and visits (not human approval) are at work", () => {
+  for (const kind of ["cell", "wave", "round", "claim"]) {
+    const d = M.durationSentence(span({ kind, entity: `${kind}:X`, start: 0 }), 600_000);
+    assert.equal(d.text, "open 10 min", kind);
+    assert.equal(d.live.mode, "open");
+  }
+  for (const kind of ["execution", "workflow", "agent", "tool", "task"]) assert.equal(M.durationSentence(span({ kind, entity: `${kind}:X`, start: 0 }), 60_000).live.mode, "work", kind);
+  assert.equal(M.durationSentence(span({ ids: { station: "build" }, start: 0 }), 60_000).live.mode, "work");
+  assert.equal(M.durationSentence(span({ ids: { station: "human-approval" }, start: 0 }), 60_000).live.mode, "open");
+});
+
+test("X2: an open cell says its last activity and since when it waits for a person", () => {
+  const cell = span({ kind: "cell", entity: "cell:L-1", ids: { ticket_id: "L-1" }, start: 0 });
+  const visit = span({ entity: "visit:L-1/review#2", parent: "execution:x3", ids: { ticket_id: "L-1", station: "review" }, start: 1_000, finish: 4_000 });
+  const exec = span({ kind: "execution", entity: "execution:x3", ids: { ticket_id: "L-1" }, start: 500, finish: 4_200 });
+  const wait = span({ kind: "person-wait", entity: "gate:L-1/supervisor", ids: { ticket_id: "L-1" }, start: 4_100 });
+  const other = span({ kind: "execution", entity: "execution:y", ids: { ticket_id: "OTHER" }, start: 9_000, finish: 9_500 });
+  const ctx = M.openContextOf(cell, [cell, visit, exec, wait, other], 10_000);
+  assert.deepEqual(ctx, { lastActivity: 4_200, waitingSince: 4_100 });
+  assert.equal(M.openContextWords(ctx, clock), "; last activity t4200; waiting for a person since t4100");
+  // As of a playhead before the wait began: no wait.
+  assert.equal(M.openContextOf(cell, [cell, visit, exec, wait], 4_050).waitingSince, null);
+  assert.equal(M.openContextWords({ lastActivity: null, waitingSince: null }, clock), "");
+});
+
+test("X3: the span picked through an ancestor is the subject, headlined with its own state and time", () => {
+  const r1 = span({ entity: "visit:L/verify#1", ids: { ticket_id: "L", station: "verify", round: "1" }, start: 1_000, finish: 5_000, reason: "failed", outcome: "failed" });
+  const r2 = span({ entity: "visit:L/verify#2", ids: { ticket_id: "L", station: "verify", round: "2" }, start: 8_000, finish: 9_000, outcome: "passed" });
+  const latest = M.subjectSpan("station:L/verify", null, [r1, r2], 10_000);
+  assert.equal(latest.span.entity, "visit:L/verify#2");
+  assert.equal(latest.picked, false);
+  const picked = M.subjectSpan("station:L/verify", "visit:L/verify#1", [r1, r2], 10_000);
+  assert.equal(picked.span.entity, "visit:L/verify#1");
+  assert.equal(picked.picked, true);
+  assert.equal(M.spanHeadline(picked.span, 10_000, clock), "Verify, round 1 — failed, t1000–t5000");
+  // Before its end the outcome is not said.
+  assert.equal(M.spanHeadline(r1, 3_000, clock), "Verify, round 1 — at work, from t1000");
+  // A detail not held falls back to the ref's own span.
+  assert.equal(M.subjectSpan("station:L/verify", "visit:L/verify#9", [r1, r2], 10_000).span.entity, "visit:L/verify#2");
 });

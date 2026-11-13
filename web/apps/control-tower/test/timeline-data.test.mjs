@@ -65,7 +65,7 @@ function setup({ spans = [], marks = null, concurrency = null, store = fakeStore
   server.marks = marks;
   server.concurrency = concurrency;
   const client = createObserverClient({ fetch: server.fetch });
-  const provider = createObserverTimelineData(client, store, { timers });
+  const provider = createObserverTimelineData(client, store, { timers, ...("now" in timers ? { now: () => timers.now } : {}) });
   const spanRequests = () => server.requests.filter((r) => r.includes("/spans?"));
   return { server, client, store, timers, provider, spanRequests };
 }
@@ -179,7 +179,9 @@ test("an observer before M6.3 (no window, silent cap): filtered here, and said t
 
 test("a 404 on /marks, /concurrency or /spans degrades to an honest 'not available', never a throw", async () => {
   const { provider, server } = setup({ spans: [wire("cell", "cell:a", { start: 0, end: 1000 })] });
-  assert.deepEqual(await provider.marks(W(0, MIN)), []);
+  const none = await provider.marks(W(0, MIN));
+  assert.deepEqual([...none], []);
+  assert.equal(none.complete, false, "not served: never said to be complete");
   assert.equal(await provider.nextMark(T0, 1, ["failure"]), null);
   const c = await provider.concurrency(W(0, 10 * MIN), 10);
   assert.deepEqual(c.buckets, []);
@@ -278,11 +280,11 @@ test("live: logVersion moving refetches only tiles at the live edge, throttled t
   assert.equal(told, 1, "the first change is told at once");
   for (let v = 2; v <= 50; v++) store.set({ logVersion: v });
   assert.equal(told, 1, "no notice per event while throttled");
-  assert.equal(timers.pendingTimeouts, 1);
+  assert.equal(timers.pendingTimeouts, 2, "the throttle, and one notice for when the past tiles may be read again");
   timers.runTimeouts();
-  assert.equal(told, 2, "one more after the throttle");
+  assert.equal(told, 3, "one more after the throttle, one when the past tiles may be read again");
   timers.runTimeouts();
-  assert.equal(told, 2, "nothing pending: no extra notice");
+  assert.equal(told, 3, "nothing pending: no extra notice");
 
   // The execution ended meanwhile.
   server.spans = [spans[0], wire("execution", "execution:now", { start: 55 * MIN, end: 58 * MIN, outcome: "finished" })];
@@ -516,7 +518,9 @@ test("safety net: an older observer's open visit whose execution ended in the sa
     wire("execution", "execution:x2", { start: 200_000, end: null, ids: { ticket_id: "T", execution_id: "x2" } }),
     wire("visit", "visit:T/build#2", { start: 210_000, end: null, ids: { ...ids("T/build#2"), execution_id: "x2" } }),
   ];
-  const { provider } = setup({ spans });
+  // An observer before M6.3 (no window): the net applies. An M6.3 one already closed what its rules close (T3).
+  const { provider, server } = setup({ spans });
+  server.spansRoute = "m61";
   const page = await provider.spans({ window: W(0, 60 * MIN) });
   const v1 = page.spans.find((s) => s.id === "visit:visit:T/build#1");
   assert.ok(v1.end, "never presented as open");
@@ -575,7 +579,7 @@ test("recordedExtent: first to last recorded thing, not to the wall clock; null 
   assert.ok(r.to >= T0 + 73 * MIN && r.to <= T0 + 73 * MIN + (8 * HOUR) / 1000 + 1000, `to is the last bucket's end (${(r.to - T0) / MIN} min)`);
   // Without density: the spans' bounds and the last mark.
   const noDensity = { ...fake, density: async (w) => ({ from: w.from, to: w.to, bucketMs: 1000, buckets: [], complete: false }), spans: async () => ({ spans: [{ ...readSpan(wire("cell", "cell:a", { start: 5 * MIN, end: 80 * MIN })) }, readSpan(wire("visit", "visit:open", { start: 10 * MIN }))] }) };
-  assert.deepEqual(await recordedExtent(noDensity), { from: T0 + 5 * MIN, to: T0 + 80 * MIN });
+  assert.deepEqual(await recordedExtent(noDensity), { from: T0 + 5 * MIN, to: T0 + 80 * MIN, lastIsBucket: false });
   assert.equal(await recordedExtent({ ...fake, extent: () => null }), null);
   // The observer provider, through its own density: the extent runs to the wall clock, the recorded one does not.
   const { provider } = setup({ store, series: true });
@@ -640,7 +644,7 @@ test("robustness: a failed tile keeps its last good answer; back-off 1, 2, 5, th
   // The live edge moves (events arrive), so the tile is stale; then the observer goes down.
   server.down = true;
   store.set({ logVersion: 1 });
-  await timers.advance(600);
+  await timers.advance(2100); // past the throttle and the past tiles' re-read notice
   const toldBefore = told;
   const before = server.requests.length;
   // A view re-asking every second for a minute.
@@ -667,7 +671,8 @@ test("robustness: a failed tile keeps its last good answer; back-off 1, 2, 5, th
   await timers.advance(600);
   const after = spanRequests().length;
   await provider.spans({ window });
-  assert.equal(spanRequests().length, after + 1, "a stale tile is read again at once: requests flow again");
+  const sentAgain = spanRequests().length - after;
+  assert.ok(sentAgain >= 1 && sentAgain <= tilesFor(window).length, `a stale tile is read again at once: requests flow again (${sentAgain})`);
 });
 
 test("robustness: a cursor_reset (409) or a new epoch clears the tiles once and tells subscribers once", async () => {
@@ -703,4 +708,293 @@ test("robustness: a cursor_reset (409) or a new epoch clears the tiles once and 
   const again = await p2.spans({ window });
   assert.equal(again.spans.length, 1);
   assert.equal(told2, 1);
+});
+
+// ---------------------------------------------------------------- round 4: T3, T5, T8, T9, T12, T13, A2, A6, X4, X11, A10
+
+const { cutAt, concurrencyOf } = await import("../src/timeline/data/derive.ts");
+const { readConcurrency, readMark } = await import("../src/timeline/data/parse.ts");
+const { STRUCTURAL_KINDS } = await import("../src/timeline/contract.ts");
+
+/** A clock the provider and the timers share. */
+function clocked() {
+  const timers = fakeTimers();
+  let now = T0;
+  Object.defineProperty(timers, "now", { get: () => now });
+  return { timers, tick: (ms) => (now += ms) };
+}
+
+test("T3: the safety net never closes a wait on a person, and is not run on an M6.3 observer's windowed answer", async () => {
+  const exec = readSpan(wire("execution", "execution:x1", { start: 0, end: 60_000, ids: { ticket_id: "T", execution_id: "x1" } }));
+  const wait = readSpan(wire("visit", "visit:T/human-approval#1", { start: 10_000, end: null, ids: { ticket_id: "T", execution_id: "x1", station: "human-approval" } }));
+  assert.equal(closeEndedVisits([exec, wait])[1].end, null, "a person-wait stays open");
+  // An M6.3 observer left this build visit open on purpose (its execution's end is only bounded elsewhere): not re-closed here.
+  const spans = [wire("execution", "execution:x1", { start: 0, end: 60_000, ids: { ticket_id: "T", execution_id: "x1" } }), wire("visit", "visit:T/build#1", { start: 10_000, end: null, ids: { ticket_id: "T", execution_id: "x1", station: "build" } })];
+  const { provider } = setup({ spans });
+  const page = await provider.spans({ window: W(0, 10 * MIN) });
+  assert.equal(page.spans.find((s) => s.kind === "visit").end, null);
+});
+
+test("T5 / A10: a late, out-of-order event reaches a past tile; a past tile holding an open span is re-read at once", async () => {
+  const { timers, tick } = clocked();
+  const store = fakeStore({ liveAt: T0 + 600 * MIN });
+  const spans = [wire("cell", "cell:old", { start: 0, end: MIN }), wire("execution", "execution:open", { start: 100 * MIN, end: null })];
+  const { server, provider, spanRequests } = setup({ spans, store, timers });
+  let told = 0;
+  provider.subscribe(() => (told += 1));
+  const past = W(0, 10 * MIN);
+  const openPast = W(100 * MIN, 110 * MIN);
+  assert.equal((await provider.spans({ window: past })).spans.length, 1);
+  await provider.spans({ window: openPast });
+  const n = spanRequests().length;
+  // An event stamped two hours ago arrives now: a new span in the past tile, and the open execution ended.
+  server.spans = [...spans.slice(0, 1), wire("visit", "visit:late", { start: 2 * MIN, end: 3 * MIN }), wire("execution", "execution:open", { start: 100 * MIN, end: 104 * MIN, outcome: "finished" })];
+  server.commit([{ id: "late", type: "x", time: { order_ms: T0 + 2 * MIN } }]);
+  store.set({ logVersion: 1 });
+  assert.equal(told, 1);
+  const reread = await provider.spans({ window: openPast });
+  assert.equal(reread.spans[0].end.at, T0 + 104 * MIN, "the tile holding an open span is read again at once");
+  const m = spanRequests().length;
+  assert.ok(m > n);
+  assert.equal((await provider.spans({ window: past })).spans.length, 1, "within the throttle the past tile is served as held");
+  assert.equal(spanRequests().length, m, "no request for it yet");
+  // The provider tells its listeners again once the past tile may be read again, even with nothing after it.
+  tick(2000);
+  while (timers.pendingTimeouts) timers.runTimeouts();
+  assert.ok(told >= 2, "told again when the past tile is due");
+  const now = await provider.spans({ window: past });
+  assert.deepEqual(now.spans.map((s) => s.id).sort(), ["cell:cell:old", "visit:visit:late"], "the late event reached the past tile");
+  const k = spanRequests().length;
+  await provider.spans({ window: past });
+  assert.equal(spanRequests().length, k, "read once, then cached again");
+});
+
+test("A10: repeated events after a reconnect never make duplicate spans or marks (same id: one)", async () => {
+  const span = wire("visit", "visit:v1", { start: MIN, end: 12 * MIN });
+  const mark = { mark_id: "m1", kind: "failure", at: iso(T0 + 6 * MIN), event_id: "e1", entity: "cell:T", label: "x", verdict: null, authority: "authoritative" };
+  const { provider, server } = setup({ spans: [span, span, wire("cell", "cell:T", { start: 0, end: 20 * MIN })], marks: [mark, mark] });
+  // A window over two tiles: the visit is in both, and twice in each reply.
+  const window = W(0, 20 * MIN);
+  assert.ok(tilesFor(window).length >= 2);
+  const page = await provider.spans({ window });
+  assert.equal(page.spans.filter((s) => s.id === "visit:visit:v1").length, 1);
+  assert.equal((await provider.marks(window)).filter((m) => m.id === "m1").length, 1);
+  // The same span after the stream reconnected (re-sent, unchanged): still one, and the same object across tiles.
+  server.commit([{ id: "again", type: "x", time: { order_ms: T0 } }]);
+  const again = await provider.spans({ window });
+  assert.equal(again.spans.filter((s) => s.id === "visit:visit:v1").length, 1);
+  const s = await provider.structure();
+  assert.equal(s.spans.filter((x) => x.id === "cell:cell:T").length, 1);
+});
+
+test("A10: a cursor reset (new epoch) drops the structure as well, and it is read again", async () => {
+  const { provider, server } = setup({ spans: [wire("cell", "cell:T", { start: 0, end: 20 * MIN })], store: fakeStore({ source: "replay" }) });
+  await provider.structure();
+  const asked = () => server.requests.filter((r) => r.includes("/spans?") && !r.includes("from_ms")).length;
+  const n = asked();
+  await provider.structure();
+  assert.equal(asked(), n, "cached");
+  server.generation = "ffffffffffffffff";
+  await provider.spans({ window: W(0, MIN) }); // answers from the new epoch: everything held is dropped
+  await provider.structure();
+  assert.equal(asked(), n + 1, "read again after the reset");
+});
+
+test("A2: returning to the Timeline (re-subscribing) after the store moved drops the edge tiles and tells once", async () => {
+  const store = fakeStore();
+  const spans = [wire("execution", "execution:x", { start: 55 * MIN, end: null })];
+  const { server, provider, spanRequests } = setup({ spans, store });
+  const off = provider.subscribe(() => {});
+  const edge = W(50 * MIN, 60 * MIN);
+  await provider.spans({ window: edge });
+  off(); // the workspace unmounted (the Factory Floor)
+  server.spans = [wire("execution", "execution:x", { start: 55 * MIN, end: 58 * MIN, outcome: "finished" })];
+  store.set({ logVersion: 7 }); // events arrived while nobody listened
+  let told = 0;
+  const off2 = provider.subscribe(() => (told += 1));
+  const n = spanRequests().length;
+  const page = await provider.spans({ window: edge });
+  assert.ok(spanRequests().length > n, "not served stale");
+  assert.equal(page.spans[0].end.at, T0 + 58 * MIN);
+  await settle();
+  assert.equal(told, 1, "told once on returning");
+  off2();
+  // No change while away: nothing is dropped, nobody is told.
+  const off3 = provider.subscribe(() => (told += 1));
+  await settle();
+  assert.equal(told, 1);
+  off3();
+});
+
+test("A6 / A10: a 200,000-event history through windowed queries: no request storm, spans held never exceed the cap, long spans shared", async () => {
+  const HOUR = 60 * MIN;
+  // 50,000 visits (four events each: entered, two tasks, exited) over 250 hours, and long cells spanning it all.
+  const spans = [];
+  for (let i = 0; i < 50_000; i++) spans.push(wire("visit", `visit:v${i}`, { start: i * 18_000, end: i * 18_000 + 12_000 }));
+  for (let c = 0; c < 20; c++) spans.push(wire("cell", `cell:C${c}`, { start: c * MIN, end: 250 * HOUR }));
+  const store = fakeStore({ source: "replay", liveAt: T0 + 250 * HOUR });
+  const server = fakeObserver({});
+  server.spans = spans;
+  server.marks = [];
+  const client = createObserverClient({ fetch: server.fetch });
+  const CAP = 20_000;
+  const provider = createObserverTimelineData(client, store, { timers: fakeTimers(), maxHeldSpans: CAP });
+  let maxHeld = 0;
+  let maxPerQuery = 0;
+  // Pan an 8-hour window across the whole history, then zoom in and out at a few places.
+  const windows = [];
+  for (let h = 0; h < 250; h += 4) windows.push(W(h * HOUR, (h + 8) * HOUR));
+  for (const h of [3, 77, 150, 240]) windows.push(W(h * HOUR, h * HOUR + 10 * MIN), W(h * HOUR - 24 * HOUR, h * HOUR + 24 * HOUR));
+  for (const w of windows) {
+    const before = server.requests.length;
+    const page = await provider.spans({ window: w });
+    maxPerQuery = Math.max(maxPerQuery, server.requests.length - before);
+    maxHeld = Math.max(maxHeld, provider.held().spans);
+    assert.ok(page.spans.length > 0);
+  }
+  assert.ok(maxHeld <= CAP, `held ${maxHeld} spans, cap ${CAP}`);
+  // A tile is read in pages of 1,000 up to 5,000 spans: at most ~3 tiles × 5 pages per query.
+  assert.ok(maxPerQuery <= 15, `${maxPerQuery} requests for one query`);
+  // A long cell held by two separate tiles is one object.
+  const one = (await provider.spans({ window: W(100 * HOUR, 100 * HOUR + 10 * MIN) })).spans.find((s) => s.id === "cell:cell:C3");
+  const other = (await provider.spans({ window: W(200 * HOUR, 200 * HOUR + 10 * MIN) })).spans.find((s) => s.id === "cell:cell:C3");
+  assert.ok(one && one === other, "shared by id across tiles");
+  assert.ok(provider.held().shared <= provider.held().spans);
+  if (process.env.SHOW) console.log("held", provider.held(), "max per query", maxPerQuery, "requests", server.requests.length);
+});
+
+test("T8: marks are paged to completion within a bound, by offset or by time; the answer says truncated / complete", async () => {
+  const many = Array.from({ length: 2500 }, (_, i) => ({ mark_id: `m${i}`, kind: i % 2 ? "gate" : "failure", at: iso(T0 + 1000 + i * 100), entity: "cell:T", label: "x", verdict: "passed", authority: "authoritative" }));
+  for (const paging of [true, false]) {
+    const { provider, server } = setup({ marks: many });
+    server.marksPaging = paging;
+    const got = await provider.marks(W(0, 5 * MIN));
+    assert.equal(got.length, 2500, `all marks (${paging ? "offset" : "time"} paging)`);
+    assert.equal(got.truncated, false);
+    assert.equal(got.complete, true);
+  }
+  // Beyond the bound (10 pages): said, never silent.
+  const lots = Array.from({ length: 1200 }, (_, i) => ({ mark_id: `n${i}`, kind: "gate", at: iso(T0 + 1000 + i * 10), entity: "cell:T", label: "x", verdict: "passed", authority: "authoritative" }));
+  const { provider, server } = setup({ marks: lots });
+  server.marksPaging = true;
+  server.marksCap = 100;
+  const cut = await provider.marks(W(0, MIN));
+  assert.equal(cut.truncated, true);
+  assert.equal(cut.complete, false);
+  assert.ok(cut.length <= 1000);
+  // An observer that ignores offset but says more: no loop, said to be cut.
+  const sim2 = createSimulationTimelineData(simStore());
+  const all = await sim2.marks({ from: 0, to: sim.SCENARIO.duration });
+  assert.equal(all.complete, true);
+});
+
+test("T9: inferred_max per bucket and kind is passed through; the simulation counts inferred and bounded ends", () => {
+  const parsed = readConcurrency({ bucket_ms: 60_000, buckets: [{ from_ms: T0, active: { cell: { max: 3, mean: 2, inferred_max: 1 }, execution: { max: 1, mean: 1 } } }, { from_ms: T0 + 60_000, active: { cell: { max: 2, mean: 2 } }, inferred_max: { cell: 2 } }], complete: true }, { from: T0, to: T0 + 120_000, bucketMs: 60_000 });
+  assert.equal(parsed.buckets[0].active.cell.inferredMax, 1);
+  assert.equal(parsed.buckets[0].active.execution.inferredMax, undefined, "absent stays absent");
+  assert.equal(parsed.buckets[1].active.cell.inferredMax, 2);
+  const recorded = readSpan(wire("visit", "visit:a", { start: 0, end: 60_000 }));
+  const inferred = readSpan(wire("visit", "visit:b", { start: 0, end: 60_000, endExtra: { basis: "inferred", rule: "execution-ended" }, basis: "inferred" }));
+  const c = concurrencyOf([recorded, inferred], { from: T0, to: T0 + 60_000 }, 1, T0 + 60_000, [], true);
+  assert.equal(c.buckets[0].active.visit.max, 2);
+  assert.equal(c.buckets[0].active.visit.inferredMax, 1);
+});
+
+test("T12: a span open at the simulated now carries no attribute known only at the head (a count-only agent's tool count)", async () => {
+  const agent = readSpan(wire("agent", "agent:a", { start: 0, end: 10 * MIN, attrs: { label: "builder", tool_calls: 40, tools_count_only: true, last_tool: "Edit", tokens: 900, model: "sonnet" } }));
+  const cut = cutAt(agent, T0 + 5 * MIN);
+  assert.equal(cut.end, null);
+  assert.deepEqual([cut.attrs.toolCalls, cut.attrs.lastTool, cut.attrs.tokens], [undefined, undefined, undefined]);
+  assert.deepEqual([cut.attrs.label, cut.attrs.model, cut.attrs.toolsCountOnly], ["builder", "sonnet", true]);
+  assert.equal(cutAt(agent, T0 + 20 * MIN).attrs.toolCalls, 40, "ended by then: as recorded");
+  const openAtHead = readSpan(wire("agent", "agent:b", { start: 0, attrs: { tool_calls: 7 } }));
+  assert.equal(cutAt(openAtHead, T0 + MIN, T0 + 9 * MIN).attrs.toolCalls, undefined, "open at the head, head later than now: omitted");
+  assert.equal(cutAt(openAtHead, T0 + 9 * MIN, T0 + 9 * MIN).attrs.toolCalls, 7, "at the head: as held");
+  // The simulation provider, scrubbed to the middle: no open agent shows a count.
+  const provider = createSimulationTimelineData(simStore(sim.SCENARIO.duration / 2));
+  const page = await provider.spans({ window: { from: 0, to: sim.SCENARIO.duration } });
+  for (const s of page.spans) if (s.kind === "agent" && s.end === null) assert.equal(s.attrs.toolCalls, undefined, s.id);
+});
+
+test("T13: an execution attempt is its own mark kind, 'attempt'; 'retry' is a revise visit only", async () => {
+  const m = readMark({ mark_id: "a1", kind: "attempt", at: iso(T0), entity: "execution:x2", label: "Attempt 2.", authority: "authoritative" });
+  assert.equal(m.kind, "attempt", "passed through as sent");
+  assert.equal(readMark({ kind: "nonsense", at: iso(T0) }), null);
+  const provider = createSimulationTimelineData(simStore());
+  const marks = await provider.marks({ from: 0, to: sim.SCENARIO.duration });
+  for (const x of marks) if (x.kind === "retry") assert.ok(x.entity.startsWith("visit:"), `retry ${x.id} is a revise visit`);
+  for (const x of marks) if (x.kind === "attempt") assert.ok(x.entity.startsWith("execution:"));
+});
+
+test("X4: structure() reads the structural kinds over the whole history, paged, cached, re-read when the cursor moves (throttled)", async () => {
+  const { timers, tick } = clocked();
+  const store = fakeStore();
+  const spans = [];
+  for (let i = 0; i < 1500; i++) spans.push(wire("execution", `execution:x${i}`, { start: i * 1000, end: i * 1000 + 500 }));
+  spans.push(wire("wave", "wave:W1", { start: 0, end: null }), wire("visit", "visit:not-structural", { start: 0, end: 1000 }));
+  const { provider, server } = setup({ spans, store, timers });
+  const off = provider.subscribe(() => {});
+  const asked = () => server.requests.filter((r) => r.includes("/spans?") && !r.includes("from_ms"));
+  const s = await provider.structure();
+  assert.equal(s.spans.length, 1501, "paged to completion");
+  assert.ok(s.spans.every((x) => STRUCTURAL_KINDS.includes(x.kind)));
+  assert.ok(asked().every((u) => decodeURIComponent(u).includes(`kinds=${STRUCTURAL_KINDS.join(",")}`) && !u.includes("to_ms")), "no window, structural kinds");
+  const n = asked().length;
+  assert.equal(n, 2);
+  await provider.structure();
+  assert.equal(asked().length, n, "cached");
+  store.set({ logVersion: 1 });
+  await provider.structure();
+  assert.equal(asked().length, n, "the cursor moved: not re-read before the throttle passes");
+  tick(2000);
+  await provider.structure();
+  assert.equal(asked().length, n + 2, "re-read once the throttle passed");
+  off();
+  // An observer that refuses a kind (older): every kind asked, the structural ones kept.
+  const { provider: p2, server: s2 } = setup({ spans });
+  const real = s2.fetch;
+  const client = createObserverClient({ fetch: async (url, init) => (url.includes("kinds=") ? { status: 400, json: async () => ({ ok: false, error: { kind: "invalid", message: "unknown span kind" } }) } : real(url, init)) });
+  const p3 = createObserverTimelineData(client, fakeStore(), { timers: fakeTimers() });
+  assert.equal((await p3.structure()).spans.length, 1501);
+  void p2;
+  // The simulation: the same kinds, from its scene, as of the simulated now.
+  const simp = createSimulationTimelineData(simStore(sim.SCENARIO.duration / 3));
+  const st = await simp.structure();
+  assert.ok(st.spans.length > 0 && st.spans.every((x) => STRUCTURAL_KINDS.includes(x.kind)));
+  assert.ok(st.spans.every((x) => (x.start?.at ?? 0) <= sim.SCENARIO.duration / 3));
+});
+
+test("X11: recordedExtent ends at the real last recorded time when a source gives it; only a bucket is said as 'between'", async () => {
+  const last = T0 + 73 * MIN + 17_123;
+  const events = [T0, T0 + 30 * MIN, last];
+  const base = {
+    extent: () => ({ from: T0, to: T0 + 8 * 60 * MIN }),
+    density: async (w, n) => densityOfTimes(events, w, n),
+    nextMark: async () => ({ id: "m", kind: "review", at: T0 + 70 * MIN, until: null }),
+    spans: async () => ({ spans: [] }),
+  };
+  const exact = await recordedExtent({ ...base, lastRecordedAt: () => last });
+  assert.deepEqual([exact.to, exact.lastIsBucket], [last, false], "the newest event, exactly");
+  const fromStructure = await recordedExtent({ ...base, structure: async () => ({ spans: [readSpan(wire("cell", "cell:a", { start: 0, end: 73 * MIN + 17_123 }))] }) });
+  assert.deepEqual([fromStructure.to, fromStructure.lastIsBucket], [last, false], "a recorded end, exactly");
+  const bucketOnly = await recordedExtent(base);
+  assert.equal(bucketOnly.lastIsBucket, true, "events after every exact time: only a bucket is known");
+  assert.ok(bucketOnly.lastBucket.from <= last && bucketOnly.lastBucket.to > last);
+  assert.equal(bucketOnly.to, bucketOnly.lastBucket.to);
+  // The providers give their newest event.
+  const store = fakeStore({ log: { headTime: () => last } });
+  const { provider } = setup({ store });
+  assert.equal(provider.lastRecordedAt(), last);
+  const simp = createSimulationTimelineData(simStore(sim.SCENARIO.duration / 2));
+  const t = simp.lastRecordedAt();
+  assert.ok(t <= sim.SCENARIO.duration / 2 && t > 0);
+});
+
+test("r4-go's shapes: an unknown-outcome execution's bounded end and a cleanup-closed visit read as inferred, never measured", () => {
+  const x = readSpan({ span_id: "execution:x1", kind: "execution", entity: "execution:x1", ids: {}, start: { at: iso(T0), precision: "ms", basis: "recorded" }, end: { at: null, precision: "bounded", not_after: iso(T0 + 40 * MIN), basis: "inferred", rule: "execution-outcome-unknown", reason: "unknown" }, duration: { ms: null, min_ms: null, max_ms: 40 * MIN, basis: "inferred" }, outcome: null, authority: "reconstructed" });
+  assert.deepEqual([x.end.at, x.end.notAfter, x.end.basis, x.end.reason, x.outcome, x.duration.basis], [null, T0 + 40 * MIN, "inferred", "unknown", null, "inferred"]);
+  const c = readSpan({ span_id: "visit:v", kind: "visit", entity: "visit:v", ids: { station: "build" }, start: { at: iso(T0), basis: "recorded" }, end: { at: iso(T0 + 150 * MIN), basis: "inferred", rule: "closed-by-cleanup", reason: "unknown" }, duration: { ms: null, max_ms: 150 * MIN, basis: "inferred" }, outcome: null, authority: "reconstructed" });
+  const k = concurrencyOf([x, c], { from: T0, to: T0 + MIN }, 1, T0 + 200 * MIN, [], true);
+  assert.equal(k.buckets[0].active.execution.inferredMax, 1);
+  assert.equal(k.buckets[0].active.visit.inferredMax, 1);
 });

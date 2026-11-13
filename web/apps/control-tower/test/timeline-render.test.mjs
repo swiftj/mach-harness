@@ -204,7 +204,10 @@ test("durationWords: an interrupted span never 'took'; one ended after the live 
   const sup = visit("s", T0, T0 + 2 * M, { end: { reason: "superseded" } });
   assert.equal(words.durationWords(sup, live), "superseded after 2 min");
   const resumed = visit("r", T0, T0 + 9 * M, { attrs: { action: "build", interruptedAt: T0 + 3 * M } });
-  assert.match(words.durationWords(resumed, live), /^ran 9 min, interrupted once/);
+  // T4: a late exit is not proof that work was taken up again.
+  const late = words.durationWords(resumed, live);
+  assert.match(late, /^exit recorded 9 min after entry, after its execution ended \(at [0-9:]+\)$/);
+  assert.doesNotMatch(late, /taken up|resum|ran /);
   assert.equal(words.durationWords(visit("f", T0, T0 + 9 * M), T0 + 4 * M), "running for 4 min");
 });
 
@@ -243,7 +246,7 @@ test("people and the line: a seat votes, a person approves the review, a merge v
   const live = T0 + 60 * M;
   const seat = span("s", "seat", at(T0), at(T0 + 3 * M, { reason: "refused" }), { outcome: "REJECT", attrs: { model: "opus", vote: "REJECT" }, ids: { ticket_id: "LOCAL-029", seat: "security" } });
   assert.equal(words.describeSpan(seat, live), "Review seat security (Opus) for LOCAL-029: took 3 min, voted reject.");
-  assert.equal(words.describeSpan(seat, T0 + M), "Review seat security (Opus) for LOCAL-029: running for 1 min.", "no vote before the verdict");
+  assert.equal(words.describeSpan(seat, T0 + M), "Review seat security (Opus) for LOCAL-029: open 1 min.", "no vote before the verdict; a seat is not work by the open rule");
   const wait = span("w", "person-wait", at(T0), at(T0 + 6 * M), { outcome: "human.approval_recorded", entity: "gate:LOCAL-029/human-approval#1", ids: { ticket_id: "LOCAL-029" } });
   assert.equal(words.personApproved(wait, live), true);
   assert.equal(words.personApproved(wait, T0 + M), false);
@@ -399,4 +402,133 @@ test("the proof fixture holds what the page must show", () => {
   assert.ok(fx.tree.byId.has("grammar/no-exit"));
   assert.ok(fx.marks.some((m) => m.kind === "merge") && fx.marks.some((m) => m.kind === "human" && m.verdict === "approved"));
   assert.ok(fx.tree.byId.get("seat:LOCAL-029/review#1/security"));
+});
+
+// ---------------------------------------------------------------- round 4 (ROUND4.md ids)
+
+
+/** A recording 2D context: text widths by font (mono wider than sans), every call kept with the ink it used. */
+function recorder() {
+  const calls = [];
+  const state = { font: "10px sans", fillStyle: "", strokeStyle: "", lineWidth: 1, globalAlpha: 1, textAlign: "left", textBaseline: "alphabetic", lineCap: "butt", lineDashOffset: 0 };
+  const ctx = new Proxy(state, {
+    get(t, k) {
+      if (k in t) return t[k];
+      if (k === "measureText") return (text) => ({ width: text.length * (/mono/.test(t.font) ? 7 : 5) });
+      return (...args) => calls.push({ op: k, args, fill: t.fillStyle, stroke: t.strokeStyle, lineWidth: t.lineWidth, font: t.font, align: t.textAlign });
+    },
+    set(t, k, v) {
+      t[k] = v;
+      return true;
+    },
+  });
+  return { ctx, calls };
+}
+/** A palette whose every ink is its own name, so a test can say which ink drew what. */
+const PALETTE = new Proxy({ sans: "sans", mono: "mono" }, { get: (t, k) => (k in t ? t[k] : String(k)) });
+const node = (o) => ({ id: "n", kind: "station", ref: null, label: "n", detail: null, depth: 1, parentId: null, children: [], lanes: [], ribbons: [], spanCount: 1, attention: "none", note: null, ...o });
+const row = (n, o = {}) => ({ node: n, lane: 0, y: 0, height: 26, expanded: false, hasChildren: n.children.length > 0, ...o });
+function frame(rows, extra = {}) {
+  const { ctx, calls } = recorder();
+  const out = draw.drawTracks({ ctx, width: 600, height: 200, scrollTop: 0, rows, window: { from: T0, to: T0 + 10 * M }, liveAt: T0 + 20 * M, palette: PALETTE, marks: new Map(), selection: null, highlighted: new Set(), grid: [], dateLines: [], ...extra });
+  return { calls, out };
+}
+
+test("X8: a bar's label never runs into its duration (each measured in its own font); the duration goes first", () => {
+  const v = visit("x8", T0 + M, T0 + 6 * M + 39 * S, { attrs: { action: "verify" } });
+  const n = node({ lanes: [{ spans: [v] }] });
+  const { calls } = frame([row(n)]);
+  const texts = calls.filter((c) => c.op === "fillText");
+  const label = texts.find((c) => c.args[0] === "Verify");
+  const dur = texts.find((c) => /min/.test(c.args[0]));
+  assert.ok(label && dur, "both drawn at this width");
+  const labelRight = label.args[1] + label.args[0].length * 5;
+  const durLeft = dur.args[1] - dur.args[0].length * 7; // right-aligned, in mono
+  assert.ok(labelRight + 6 <= durLeft, `label ends at ${labelRight}, duration starts at ${durLeft}`);
+  // Narrow: the duration is dropped before the label is cut.
+  const narrow = visit("x8n", T0 + M, T0 + M + 70 * S, { attrs: { action: "verify" } });
+  const t2 = frame([row(node({ lanes: [{ spans: [narrow] }] }))], { window: { from: T0, to: T0 + 60 * M } }).calls.filter((c) => c.op === "fillText").map((c) => c.args[0]);
+  assert.ok(!t2.some((t) => /\d s|min/.test(t)), `no duration when there is no room: ${t2}`);
+});
+
+test("X12: the selected span has a 2 px outline in the selection ink, and its corner brackets", () => {
+  const v = visit("x12", T0 + M, T0 + 4 * M);
+  const { calls } = frame([row(node({ lanes: [{ spans: [v] }] }))], { selection: "x12" });
+  assert.ok(calls.some((c) => c.op === "strokeRect" && c.stroke === "select" && c.lineWidth === 2), "outline");
+  assert.ok(calls.filter((c) => c.op === "stroke" && c.stroke === "select").length >= 1, "brackets");
+});
+
+test("X1: a collapsed group shows its counts in the attention ink, never a failure mark it did not have", () => {
+  const failedRound = span("r1", "round", at(T0 + M), at(T0 + 3 * M, { reason: "failed" }), { outcome: "REJECTED" });
+  const child = node({ id: "c", lanes: [{ spans: [failedRound] }], attention: "none", counts: { rejected: 2 } });
+  const cell = node({ id: "cell:X", kind: "cell", depth: 0, children: [child], attention: "open", counts: { rejected: 2 }, spanCount: 1 });
+  const { calls } = frame([row(cell, { hasChildren: true, expanded: false, height: 32 })]);
+  const said = calls.find((c) => c.op === "fillText" && c.args[0] === "2 rejections");
+  assert.ok(said, "the counts are said");
+  assert.equal(said.fill, "fail");
+  // The old fail mark: a full-height bar in the fail ink at the first failure.
+  assert.ok(!calls.some((c) => c.op === "fillRect" && c.fill === "fail" && c.args[3] >= 20), "no failure bar on the parent");
+  assert.deepEqual(words.countsWords({ rejected: 2, failed: 1, interrupted: 1, unknown: 1 }), ["2 rejections", "1 failed", "1 interrupted", "1 outcome not known"]);
+});
+
+test("X1: a row's own state: merged, open, waiting for a person; never a child's failure", () => {
+  const live = T0 + 60 * M;
+  const cellSpan = span("cell:A", "cell", at(T0), at(T0 + 30 * M), { outcome: "merged" });
+  assert.deepEqual(words.nodeState(node({ kind: "cell", lanes: [{ spans: [cellSpan] }], attention: "none", counts: { rejected: 2 } }), live), { state: "succeeded", words: "merged" });
+  assert.deepEqual(words.nodeState(node({ kind: "cell", attention: "open", counts: { waitingPerson: 1, rejected: 2 } }), live), { state: "human", words: "open, waiting for a person" });
+  assert.deepEqual(words.nodeState(node({ kind: "wave", attention: "open" }), live), { state: "idle", words: "open" });
+  assert.deepEqual(words.nodeState(node({ kind: "cell", attention: "open", counts: { open: 1 } }), live), { state: "active", words: "open, work running" });
+  assert.equal(words.nodeState(node({ kind: "cell", attention: "none", counts: { failed: 3 } }), live).state, null, "no fail mark on a parent that did not fail");
+});
+
+test("X2: only work is 'running'; an open container is 'open' with its last activity; a wait is 'waiting'", () => {
+  const live = T0 + 8 * 60 * M;
+  const open = (kind, ids = {}) => span(`o-${kind}`, kind, at(T0), null, { ids });
+  for (const k of ["execution", "workflow", "agent", "tool", "task", "visit"]) assert.equal(words.openWord(open(k)), "running", k);
+  for (const k of ["wave", "cell", "round", "slice-wait"].slice(0, 3)) assert.equal(words.openWord(open(k)), "open", k);
+  assert.equal(words.openWord(open("visit", { station: "human-approval" })), "waiting");
+  assert.equal(words.openWord(open("person-wait")), "waiting");
+  const cell = open("cell");
+  assert.equal(words.durationWords(cell, live), "open 8 h 0 min");
+  assert.equal(words.durationWords(cell, live, { lastActivity: T0 + 73 * M, personSince: T0 + 71 * M }), "open 8 h 0 min; last activity 00:31:00; waiting for a person since 00:29:00");
+  assert.doesNotMatch(words.describeSpan(cell, live), /running|at work/);
+});
+
+test("T10: an outcome not known is said so, with the ring-query mark; never 'took' or 'interrupted'", () => {
+  const live = T0 + 60 * M;
+  const x = span("x", "execution", at(T0), at(null, { notBefore: null, notAfter: T0 + 9 * M, basis: "inferred", rule: "recovery-unknown", reason: "unknown" }), { basis: "bounded" });
+  const said = words.durationWords(x, live);
+  assert.match(said, /^outcome not known/);
+  assert.doesNotMatch(said, /took|interrupted/);
+  assert.doesNotMatch(words.describeSpan(x, live), /no outcome recorded yet/);
+  assert.deepEqual(words.nodeState(node({ kind: "execution", attention: "unknown" }), live), { state: "unknown", words: "outcome not known" });
+  const { calls } = frame([row(node({ kind: "execution", lanes: [{ spans: [x] }] }))]);
+  assert.ok(calls.some((c) => c.op === "arc" && c.stroke === "fInkSoft") || calls.some((c) => c.op === "stroke" && c.stroke === "fInkSoft"), "ring-query drawn");
+  assert.ok(!calls.some((c) => c.op === "stroke" && c.stroke === "halt"), "no halt cut");
+});
+
+test("X6: a label drops its ' · ' details before its id is cut", () => {
+  const w = (t) => t.length * 6;
+  assert.deepEqual(words.fitLabel("LOCAL-001 · run 2 of 3 · 05:37", 200, w), { text: "LOCAL-001 · run 2 of 3 · 05:37", dropped: "", truncated: false });
+  assert.deepEqual(words.fitLabel("LOCAL-001 · run 2 of 3 · 05:37", 140, w), { text: "LOCAL-001 · run 2 of 3", dropped: "05:37", truncated: false });
+  assert.deepEqual(words.fitLabel("LOCAL-001 · run 2 of 3 · 05:37", 60, w), { text: "LOCAL-001", dropped: "run 2 of 3 · 05:37", truncated: false });
+  assert.equal(words.fitLabel("LOCAL-001 · run 2 of 3", 30, w).truncated, true, "only then is the id cut");
+});
+
+test("X16: a visit ribbon is thin and hatched, apart from the row's rail; one that outlives its execution says so", () => {
+  const exec = span("execution:E1", "execution", at(T0), at(T0 + 5 * M), { outcome: "completed" });
+  const v = visit("visit:V1", T0 + M, T0 + 8 * M);
+  const n = node({ id: "execution:E1", kind: "execution", depth: 0, lanes: [{ spans: [exec] }], ribbons: [v] });
+  assert.equal(draw.outlivesExecution(n, v, T0 + 20 * M), true);
+  assert.equal(draw.outlivesExecution(n, visit("visit:V2", T0 + M, T0 + 4 * M), T0 + 20 * M), false);
+  const { calls } = frame([row(n)]);
+  const strips = calls.filter((c) => c.op === "fillRect" && c.args[3] === 2);
+  assert.ok(strips.length >= 1, "a 2 px strip");
+  assert.ok(!calls.some((c) => c.op === "fillRect" && c.args[3] === 3 && c.args[1] >= 20), "not the old 3 px strip");
+  assert.ok(calls.some((c) => c.op === "fillRect" && c.args[2] === 1 && c.args[3] === 2), "dotted after the execution's end");
+});
+
+test("X21: the simulation's precision is said once: 'Simulated times.'", () => {
+  const sim = span("s", "visit", at(T0, { precision: "simulated" }), at(T0 + M, { precision: "simulated" }), { attrs: { action: "build" } });
+  assert.equal(words.precisionLine(sim, T0 + 2 * M), "Simulated times.");
 });

@@ -62,7 +62,14 @@ The label column beside the tracks is for the pointer: each row is one target, i
 thinner than 24 px (rounds, waits, seats, agents, claims: 18 px; tools: 12 px) never overlap their
 neighbours; their target-size case is WCAG 2.5.8's equivalent-control exception, and the audit reports them
 as such (`data-target-equivalent="tracks"`). The column's width separator is a 24 px target centred on its right
-edge, after the tracks in Tab order.
+edge, after the tracks in Tab order. The column is 224 px wide by default; a label too long for it drops its
+trailing " · " details ("LOCAL-001 · run 2 of 3 · 05:37" reads "LOCAL-001 · run 2 of 3") before an id is cut.
+
+A press on a label row never takes focus (Space stays play and pause everywhere in the workspace; Enter in
+the tracks selects). The row's mark is its OWN state (merged, open, waiting for a person, failed); what
+happened beneath it is said beside it as counts in the attention ink ("2 rejections, 1 interrupted"), in its
+accessible name and in its hover title, never as a failure mark on a parent that did not itself fail. The
+tracks' focus ring is 1 px of the focus ink at 0.7, inset; the cursor's 2 px bracket is the visible focus.
 
 ### The overview's brush (three sliders: "Move window", "Window start", "Window end")
 
@@ -101,7 +108,9 @@ with children in the table expands it in the canvas too; a leaf's span list is t
   start and last end ("Still open" when anything is). Opening a track lists its own spans in the window as
   child rows in time order, before its child tracks; at most 200, then a row "n more: narrow the window".
   A leaf opened with nothing in the window says so in a row of its own.
-- Columns: Track (label, detail, the attention mark and its word), What (`describeSpan`), Started, Ended
+- Columns: Track (label, its own state's mark and word, the counts beneath it in the attention ink, the
+  detail; the id is never cut while a " · " detail can be; the column can be widened by dragging its
+  header's edge, a pointer-only convenience that is not a tab stop, so the grid stays one stop), What (`describeSpan`), Started, Ended
   (UTC time codes in mono tabular figures; a bounded end reads "between … and …", a placed end "≈";
   "Not recorded" in italic where a value applies but no record holds it; "Still open" until the end is held),
   Duration and how it is known (`durationWords`), Outcome (only once `outcomeKnownAt` allows it), Authority
@@ -116,7 +125,13 @@ with children in the table expands it in the canvas too; a leaf's span list is t
 - The store's selection is marked (`aria-selected`, a bar in the selection ink): the span row that is it
   (or the span the selection stands for, `selectionDetail`), else the track that is it or shows it. It is
   scrolled into view when it changes, wherever it was made.
-- A caption above the grid (`windowSummary`) says the window in words; the grid is described by it.
+- A caption above the grid (`windowSummary`) says the window in words; the grid is described by it. It is
+  computed when the browser is idle and keyed on the tree and the window, not on each step of the live edge.
+  While the playhead is behind the live edge a second caption says the grid is "as of the live edge" and
+  where the playhead is (`useAsOf`).
+- An open wave, slice, cell or round reads "open 8 h 52 min; last activity 06:42:56; waiting for a person
+  since 06:40:12" (`openContext`): only executions, workflows, agents, tools, tasks and station visits other
+  than human approval are ever "running".
 
 Cost, measured in node on 60,000 spans (300 tracks of 200, `test/timeline-a11y.test.mjs`): building the
 rows 0.1 ms; one screen of track summaries 1.6 ms; opening 20 tracks (4,000 span rows) 1.5 ms; a keystroke
@@ -182,7 +197,20 @@ What the first run found and how it was fixed:
 5. Lens figures (`g[data-fig]`) whose names omitted their drawn words: the name now starts with the drawn
    words when the description lacks them (`figureName`), and a visit chip's two words are spaced.
 
+### Results, 2026-11-13, round 4 (r4-render, port 4232; other parts were still changing)
+
+| Check | Result | Details |
+|---|---|---|
+| axe | pass | 0 violations in 26 states (after the overview moved "Compress idle time" away from "Show all") |
+| keyboard | pass | 38 stops; order header > transport > toolbar > overview > tracks > inspector; 2 stops in the tracks; every stop with a visible ring; the grid is one stop |
+| targets | pass | 0 undersized and crowded; 2 small but spaced; 20 thin label rows under the equivalent-control exception ("Compress idle time" is now a 24 px target, clear of the brush) |
+| contrast | pass | 0 pairs under their minimum |
+| reduced motion | pass | zoom, brush drag, workspace switch: nothing running, canvas still |
+| shortcuts | pass | no duplicate, nothing shadowed; grid Home/End keep the playhead |
+
 ## 6. Known gaps
+
+- The table's Track column is resized by pointer only (its text is never lost: titles and the stacked layout).
 
 - The table does not follow hover.
 - The table's leaf expansion is its own and is not kept across a workspace switch.

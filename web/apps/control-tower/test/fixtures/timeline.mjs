@@ -382,7 +382,10 @@ export function fakeTimelineData({ source = "replay", cap = 5000, delayMs = 0, m
   const listeners = new Set();
   let liveAt = fixture.liveAt;
   let version = 1;
-  const calls = { spans: 0, span: 0, marks: 0, nextMark: 0, density: 0, concurrency: 0 };
+  const calls = { spans: 0, span: 0, structure: 0, marks: 0, nextMark: 0, density: 0, concurrency: 0 };
+  // The contract's STRUCTURAL_KINDS (structure(): the whole history's few long spans).
+  const STRUCTURAL = new Set(["wave", "slice-wait", "slice-eligible", "capacity-wait", "cell", "round", "claim", "execution", "workflow", "person-wait", "gate-wait"]);
+  const structural = all.filter((s) => STRUCTURAL.has(s.kind));
   const lower = (arr, v) => {
     let lo = 0;
     let hi = arr.length;
@@ -433,6 +436,11 @@ export function fakeTimelineData({ source = "replay", cap = 5000, delayMs = 0, m
       );
       return settle(signal, { spans: hits.length > cap ? hits.slice(0, cap) : hits, truncated: hits.length > cap, total: hits.length, version: `fixture.${version}` });
     },
+    async structure(signal) {
+      calls.structure++;
+      return settle(signal, { spans: structural, truncated: false, total: structural.length, version: `fixture.${version}` });
+    },
+    availability: () => ({ spans: "ok", marks: "ok", concurrency: "ok", density: "ok", unwindowed: false }),
     async span(id, signal) {
       calls.span++;
       return settle(signal, byId.get(id) ?? null);
@@ -442,7 +450,7 @@ export function fakeTimelineData({ source = "replay", cap = 5000, delayMs = 0, m
       const set = kinds?.length ? new Set(kinds) : null;
       const out = [];
       for (let k = lower(markAt, window.from); k < marks.length && marks[k].at <= window.to; k++) if (!set || set.has(marks[k].kind)) out.push(marks[k]);
-      return settle(signal, out);
+      return settle(signal, Object.assign(out, { truncated: false, complete: true }));
     },
     async nextMark(t, direction, kinds, signal) {
       calls.nextMark++;

@@ -5,16 +5,25 @@
  * mark of the subtree's worst condition, the label, a quieter detail (or the row's note, in italic
  * subtle ink), and the span count. The rows are out of the Tab order: the tracks are one tab stop and
  * their keys do the same (the equivalent control under WCAG 2.5.8 for rows thinner than 24 px).
- * Resizable from 176 to 320 px by pointer or by arrow keys on the separator, a 24 px target.
+ * Resizable from 176 to 320 px by pointer or by arrow keys on the separator, a 24 px target; 224 px
+ * by default (LABEL_DEFAULT), so ids are not cut.
+ *
+ * The mark is the row's OWN state (render/words.ts nodeState): a parent never wears a child's failure;
+ * what happened beneath it is said as counts in the attention ink ("2 rejections"). A label too long
+ * for the column drops its trailing " · " details before its id is ever cut (fitLabel).
+ *
+ * A press never moves focus here (Space stays play and pause everywhere in the workspace).
  */
 import { ChevronRight } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useRef, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { cn, StateMark, type MarkState } from "@mach/ui";
 import type { FlatRow, TrackKind, TrackLabelsProps, TrackNode } from "../contract";
-import { DETAIL_MIN_CHARS, showDetail } from "./words";
+import { countsTone, countsWords, DETAIL_MIN_CHARS, fitLabel, nodeState, showDetail, showsCounts, shownCounts } from "./words";
 import "./render.css";
 
 export const LABEL_MIN = 176;
+/** The column's width until a person resizes it: wide enough for "LOCAL-001 · run 2 of 3". */
+export const LABEL_DEFAULT = 224;
 export const LABEL_MAX = 320;
 const INDENT = 12;
 /**
@@ -22,14 +31,6 @@ const INDENT = 12;
  * rows stop, and 12 px over the tracks' edge.
  */
 const SEPARATOR = 12;
-
-const ATTENTION: Readonly<Record<TrackNode["attention"], { state: MarkState; words: string } | null>> = {
-  none: null,
-  open: { state: "active", words: "work in progress" },
-  person: { state: "human", words: "waiting for a person" },
-  interrupted: { state: "interrupted", words: "something was interrupted" },
-  failed: { state: "failed", words: "something failed" },
-};
 
 
 let measurer: CanvasRenderingContext2D | null = null;
@@ -53,14 +54,15 @@ function textWidth(text: string, font: string): number {
 
 const MONO_KINDS: ReadonlySet<TrackKind> = new Set<TrackKind>(["wave", "slice", "cell", "execution"]);
 
-function AttentionMark({ attention }: { attention: TrackNode["attention"] }) {
-  const a = ATTENTION[attention];
+function OwnMark({ state }: { state: MarkState | null }) {
   return (
     <svg aria-hidden="true" width="12" height="12" viewBox="-6 -6 12 12" className="shrink-0 overflow-visible">
-      {a ? <StateMark state={a.state} r={5} surface="var(--mach-factory-ground)" /> : null}
+      {state ? <StateMark state={state} r={5} surface="var(--mach-factory-ground)" /> : null}
     </svg>
   );
 }
+
+const TONE_INK = { fail: "var(--mach-factory-fail)", halt: "var(--mach-factory-halt)", muted: "var(--mach-ink-muted)" } as const;
 
 function Rails({ depth }: { depth: number }) {
   if (depth <= 0) return null;
@@ -89,13 +91,16 @@ function fullTitle(layout: TrackLabelsProps["layout"], node: TrackNode): string 
   while (id) {
     const parent = layout.rowOf(id, 0)?.node;
     if (!parent) return null;
-    if (parent.kind === "execution") return node.label.startsWith(parent.label) ? null : `${parent.label}: ${node.label}`;
+    if (parent.kind === "execution") {
+      const ticket = parent.label.split(" · ")[0] as string;
+      return node.label.startsWith(ticket) ? null : `${ticket}: ${node.label}`;
+    }
     id = parent.parentId;
   }
   return null;
 }
 
-const LabelRow = memo(function LabelRow({ row, width, title, onToggle, onSelect }: { row: FlatRow; width: number; title: string | null; onToggle: (id: string) => void; onSelect: (node: TrackNode) => void }) {
+const LabelRow = memo(function LabelRow({ row, width, title, liveAt, onToggle, onSelect }: { row: FlatRow; width: number; title: string | null; liveAt: number; onToggle: (id: string) => void; onSelect: (node: TrackNode) => void }) {
   const { node } = row;
   const h = row.height;
   const group = row.hasChildren && node.depth <= 1;
@@ -111,24 +116,45 @@ const LabelRow = memo(function LabelRow({ row, width, title, onToggle, onSelect 
     );
   }
   const thin = h < 22;
-  const attention = ATTENTION[node.attention];
+  const own = nodeState(node, liveAt);
   const mono = MONO_KINDS.has(node.kind);
   const quiet = node.note ?? node.detail;
-  // The label has priority: the detail shows only when a useful part of it fits.
+  const counted = showsCounts(node) ? countsWords(shownCounts(node)) : [];
+  const tone = countsTone(shownCounts(node));
   const f = fonts();
   const labelPx = thin ? 11 : group ? 12.5 : mono ? 11.5 : 12;
   const labelFont = `${group && !thin ? 600 : 400} ${labelPx}px ${mono ? f.mono : f.sans}`;
   const detailFont = `${node.note ? "italic " : ""}400 ${thin ? 10.5 : 11}px ${f.sans}`;
-  const countW = node.spanCount > 0 && !thin ? textWidth(node.spanCount.toLocaleString("en-GB"), `400 10.5px ${f.mono}`) + 8 : 0;
-  const available = width - indent - 16 - 4 - 2 - 12 - 6 - SEPARATOR - 4 - countW;
-  // An execution's detail (attempt and start) is what tells executions of one cell apart: it takes a
-  // second line under the ticket, starting below the triangle, rather than whatever is left beside it.
-  const twoLines = node.kind === "execution" && Boolean(quiet) && h >= 26;
-  const detailShown = twoLines ? true : quiet ? showDetail(available, textWidth(node.label, labelFont), textWidth(quiet, detailFont), textWidth(`${quiet.slice(0, DETAIL_MIN_CHARS)}…`, detailFont)) : false;
-  const full = [title ?? node.label, quiet, node.spanCount > 0 ? `${node.spanCount} span${node.spanCount === 1 ? "" : "s"}` : null].filter(Boolean).join(" · ");
+  const countsFont = `500 ${thin ? 10 : 10.5}px ${f.sans}`;
+  const countText = node.spanCount.toLocaleString("en-GB");
+  const countW = node.spanCount > 0 && !thin ? textWidth(countText, `400 10.5px ${f.mono}`) + 8 : 0;
+  const base = width - indent - 16 - 4 - 2 - 12 - 6 - SEPARATOR - 4;
+  // Priority: the label (dropping its " · " details before cutting an id), the counts, the span count,
+  // then the quieter detail; what does not fit is in the title.
+  const label = fitLabel(node.label, base, (t) => textWidth(t, labelFont));
+  const labelW = textWidth(label.text, labelFont);
+  let room = base - labelW;
+  let countsText = counted.join(", ");
+  if (countsText) {
+    const short = counted[0] as string;
+    if (textWidth(countsText, countsFont) + 6 <= room) room -= textWidth(countsText, countsFont) + 6;
+    else if (textWidth(short, countsFont) + 6 <= room) {
+      countsText = counted.length > 1 ? `${short} +` : short;
+      room -= textWidth(countsText, countsFont) + 6;
+    } else countsText = "";
+  }
+  const countShown = countW > 0 && countW <= room;
+  if (countShown) room -= countW;
+  // A label that had to drop its own details (a run, a start) keeps the room: the quieter detail goes first.
+  const detailShown = quiet && !label.truncated && !label.dropped ? showDetail(room + labelW, labelW, textWidth(quiet, detailFont), textWidth(`${quiet.slice(0, DETAIL_MIN_CHARS)}…`, detailFont)) : false;
+  // For sighted readers: the full label, then its state and counts, then the spans; one line each.
+  const head = [node.label, quiet].filter(Boolean).join(" — ");
+  const state = [own.words, ...counted].filter(Boolean).join("; ");
+  const full = [title ?? head, state ? state[0]!.toUpperCase() + state.slice(1) : null, node.spanCount > 0 ? `${countText} span${node.spanCount === 1 ? "" : "s"} recorded here and below` : null].filter(Boolean).join("\n");
   // One target per row, the row's full width and height: a press on the disclosure triangle (or the
-  // indent before it) opens or closes the row, anywhere else selects it. Out of the Tab order: the
-  // tracks are one tab stop and their keys do both (Enter, Alt+Left / Alt+Right).
+  // indent before it) opens or closes the row, anywhere else selects it. Out of the Tab order, and a
+  // press never takes focus (Space must stay play and pause): the tracks are one tab stop and their
+  // keys do both (Enter, Alt+Left / Alt+Right).
   const onClick = (e: MouseEvent<HTMLButtonElement>) => {
     const tri = disclosure.current;
     if (row.hasChildren && tri && e.clientX <= tri.getBoundingClientRect().right + 2) onToggle(node.id);
@@ -140,51 +166,55 @@ const LabelRow = memo(function LabelRow({ row, width, title, onToggle, onSelect 
       <button
         type="button"
         tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
+        onKeyDown={(e) => {
+          // Never reached by Tab; should focus land here anyway, Space is play and pause, not a press.
+          if (e.key === " ") e.preventDefault();
+        }}
         onClick={onClick}
         title={full}
         data-target-equivalent="tracks"
-        className={cn("absolute inset-y-0 left-0 right-3 z-[1] flex text-left hover:bg-surface-sunken focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus", twoLines ? "flex-col justify-center" : "items-center gap-1")}
-        data-two-lines={twoLines || undefined}
+        className="absolute inset-y-0 left-0 right-3 z-[1] flex items-center gap-1 text-left hover:bg-surface-sunken focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
         style={{ paddingLeft: indent }}
       >
-        <span className={cn("flex w-full min-w-0 items-center gap-1", twoLines && "h-[13px]")}>
         <span ref={disclosure} aria-hidden="true" className="inline-flex size-4 shrink-0 items-center justify-center text-ink-subtle">
           {row.hasChildren ? <ChevronRight className={cn("size-3.5", row.expanded && "rotate-90")} /> : null}
         </span>
-        <AttentionMark attention={node.attention} />
-        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 pl-0.5">
+        <OwnMark state={own.state} />
+        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden whitespace-nowrap pl-0.5">
           <span
             className={cn(
-              "block min-w-0 max-w-full shrink-0 truncate leading-tight",
+              "block min-w-0 shrink-0 truncate leading-tight",
               mono ? "font-mono" : "",
               thin ? "text-[11px] text-ink-muted" : group ? "text-[12.5px] font-semibold text-ink" : "text-[12px] text-ink",
               mono && !thin && "text-[11.5px]",
             )}
+            style={{ maxWidth: "100%" }}
           >
-            {node.label}
+            {label.text}
           </span>
-          {quiet && detailShown && !twoLines ? (
+          {label.dropped ? <span className="sr-only"> · {label.dropped}</span> : null}
+          {countsText ? (
+            <span className={cn("block shrink-0 font-medium leading-tight", thin ? "text-[10px]" : "text-[10.5px]")} style={{ color: tone ? TONE_INK[tone] : undefined }} aria-hidden="true">
+              {countsText}
+            </span>
+          ) : null}
+          {quiet && detailShown ? (
             <span className={cn("block min-w-0 flex-1 truncate leading-tight text-ink-subtle", thin ? "text-[10.5px]" : "text-[11px]", node.note && "italic")}>
               {quiet}
             </span>
           ) : quiet ? (
             <span className="sr-only">, {quiet}</span>
           ) : null}
-          {attention ? <span className="sr-only">, {attention.words}</span> : null}
+          {own.words ? <span className="sr-only">, {own.words}</span> : null}
+          {counted.length ? <span className="sr-only">, {counted.join(", ")}</span> : null}
           {row.hasChildren ? <span className="sr-only">, {row.expanded ? "expanded" : "collapsed"}</span> : null}
         </span>
-        {node.spanCount > 0 && !thin ? (
-          <span className="min-w-[3ch] shrink-0 pr-1 text-right font-mono text-[10.5px] text-ink-subtle tabular-nums" title={`${node.spanCount} span${node.spanCount === 1 ? "" : "s"} in this track and below`}>
+        {countShown ? (
+          <span className="min-w-[3ch] shrink-0 pr-1 text-right font-mono text-[10.5px] text-ink-subtle tabular-nums">
             <span className="sr-only">, </span>
-            {node.spanCount.toLocaleString("en-GB")}
+            {countText}
             <span className="sr-only"> spans</span>
-          </span>
-        ) : null}
-        </span>
-        {twoLines ? (
-          <span className="block h-[12px] min-w-0 truncate text-[10.5px] leading-[12px] text-ink-subtle tabular-nums">
-            <span className="sr-only">, </span>
-            {quiet}
           </span>
         ) : null}
       </button>
@@ -193,6 +223,9 @@ const LabelRow = memo(function LabelRow({ row, width, title, onToggle, onSelect 
 });
 
 export const TrackLabels = memo(function TrackLabels({ layout, height, scrollTop, width, onToggle, onSelect, onResize, onScroll }: TrackLabelsProps) {
+  // The tree was built at the live edge: a node's attention already holds what is known there, so the
+  // labels need no subscription to time (they would re-render every frame).
+  const liveAt = Number.POSITIVE_INFINITY;
   // One screen of overscan above and below.
   const rows = layout.slice(Math.max(0, scrollTop - height), scrollTop + 2 * height);
   const drag = useRef<{ x: number; w: number } | null>(null);
@@ -245,7 +278,7 @@ export const TrackLabels = memo(function TrackLabels({ layout, height, scrollTop
       <div className="absolute inset-0 overflow-hidden">
       <div className="absolute inset-x-0 top-0" style={{ transform: `translateY(${-scrollTop}px)`, height: layout.totalHeight }}>
         {rows.map((r) => (
-          <LabelRow key={`${r.node.id}#${r.lane}`} row={r} width={width} title={fullTitle(layout, r.node)} onToggle={onToggle} onSelect={onSelect} />
+          <LabelRow key={`${r.node.id}#${r.lane}`} row={r} width={width} title={fullTitle(layout, r.node)} liveAt={liveAt} onToggle={onToggle} onSelect={onSelect} />
         ))}
       </div>
       </div>

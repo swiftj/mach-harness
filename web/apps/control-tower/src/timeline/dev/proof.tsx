@@ -18,8 +18,8 @@ import { ThemeProvider, TooltipProvider, type ThemePreference } from "@mach/ui";
 import "../../index.css";
 import { browserClock, createSceneStore, SceneStoreProvider } from "../../scene";
 import { createSceneLog, provenance, type EntityRef } from "../../sim";
-import { LABEL_GUTTER, RULER_HEIGHT, type TimelineCursor, type TimeWindow, type TimelineHit, type TrackNode } from "../contract";
-import { TrackCanvas, TrackLabels, WindowRuler } from "../render";
+import { RULER_HEIGHT, type TimelineCursor, type TimeWindow, type TimelineHit, type TrackNode } from "../contract";
+import { LABEL_DEFAULT, TrackCanvas, TrackLabels, WindowRuler } from "../render";
 import { drawTracks } from "../render/draw";
 import { readPalette } from "../render/palette";
 import { dateChanges, ticksFor } from "../render/scale";
@@ -154,7 +154,7 @@ function Proof() {
   const layout = useMemo(() => layoutOf(fx.tree, expanded), [expanded]);
   const [win, setWin] = useState<TimeWindow>(ZOOMS[zoomName]!);
   const [top, setTop] = useState(Number(params.get("top") ?? 0));
-  const [gutter, setGutter] = useState(LABEL_GUTTER);
+  const [gutter, setGutter] = useState(LABEL_DEFAULT);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cursor, setCursor] = useState<TimelineCursor | null>(() => {
     const c = params.get("cursor");
