@@ -96,13 +96,109 @@ Rules that were added because reviews or a real run showed the need:
 
 Generated files are git-ignored, as for M6.0 and M6.2.
 
-- `web/apps/control-tower/recordings/timeline/live-supervised-run.mp4`: the Timeline during the live supervised
-  run of section 6, 14 min 47 s, six joined segments. It shows the build before the live-run fixes.
-- `web/apps/control-tower/screenshots/timeline/`: progress captures on the simulation and on the real runs, and
-  three frames from the live run.
+Earlier material, kept: `recordings/timeline/live-supervised-run.mp4` (the live run of section 6, 14 min 47 s, the
+build before the live-run fixes) and progress captures in `screenshots/timeline/`.
 
-The brief's ten-item capture list has not been produced as a set on the final build: the product owner chooses
-between reviewing by hand and an automated capture pass, and that choice is open.
+**The final set**, made on the product owner's request by an automated pass on commit `c2f3b2b` (the tip of this
+branch, clean tree): the Control Tower built and embedded by `apps/observer/build.sh` and served by that
+`mach-observer` on 127.0.0.1 (ports 4320–4324), each source a copy without its `.factory/local/observer`.
+Screenshots 1512×982 at device scale 2, dark unless named light; recordings real time, 1512×982, a drawn pointer,
+H.264 MP4. Every frame shows a real source label (Live Factory, or Historical replay for 08); none shows Simulation.
+
+Sources. **REAL-A**: the recorded real supervised run (one cell, three executions, two rejected rounds, a wait on a
+person). **REAL-B**: the live supervised run of section 6 (one execution, 17 agents, a three-seat review, the human
+gate open, a dependency and a capacity wait). **SYN-S**: `mach-synth --cells 12 --events 12000 --seed 7 --hours 6`.
+**SYN-L**: `--cells 12 --events 220000 --seed 1 --hours 30`. **LIVE**: SYN-S regenerated with `--end now` (same
+seed and shape; at the fixed end date the appended activity sat 37 h before the live edge and nothing visible
+moved), appended with `--append --rate 20`. SYN-*, LIVE and every `syn-` file are a real observer reading invented
+records.
+
+`web/apps/control-tower/screenshots/timeline/final/` (37 screenshots, 3 contact sheets):
+
+| File | Shows | Source |
+|---|---|---|
+| `01-syn-s-temporal-overview.png`, `-light.png` | whole 6 h history, tracks collapsed to cells, idle break | SYN-S |
+| `02-real-a-expanded-cell.png`, `-light.png`, `-whole.png` | LOCAL-001 open: rounds, stations, tasks, waits, six seats (10 min and whole) | REAL-A |
+| `03a-real-b-parallel-agents-execution.png` | Execution grouping, 17 agents on lanes with tool counts, an agent's inspector | REAL-B |
+| `03b-syn-s-what-ran-at-once-lens.png` | "What ran at once?" against the recorded limit 3 | SYN-S |
+| `04a-syn-s-verification-failure-two-passes-compared.png` | SYN-002's failed verification and revise on the tracks, two passes compared | SYN-S |
+| `04b-real-a-two-rejected-rounds-retry-lens.png` | the retry ladder: rounds 1 and 2 rejected | REAL-A |
+| `05-real-a-who-decided-what-seat-inspector.png` | "Who decided what?", R1 security seat in the inspector | REAL-A |
+| `06a-real-b-human-approval-gate-in-time.png` | the approval wait selected, inspector "In time" | REAL-B |
+| `06b-real-a-wait-on-a-person-selected.png` | the wait on a person clicked (see defect 3) | REAL-A |
+| `07a`–`07c-syn-live-*.png` | following at the live edge while appending; a lens while following; a pinned window with "Follow" | LIVE |
+| `07d-syn-live-pinned-follow-control-clipped-defect.png` | the pinned control cut off (defect 1) | LIVE |
+| `08-real-a-historical-replay-mid-run.png` | Historical replay, playhead 06:35, tint after it, inspector as of it | REAL-A |
+| `09a`/`09b-syn-l-whole-history-*.png` | 220,268 events, both groupings, the 41 h idle break | SYN-L |
+| `09c`/`09d`/`09e-syn-l-*.png` | densest ten minutes; 30 s; the tree-table | SYN-L |
+| `10a`/`10b-real-a-1280x800-*.png`, `10c`–`10e-real-a-1100x700-*.png` | tracks, a lens, the inspector drawer at both sizes | REAL-A |
+| `11a-syn-s-timing-grammar-*.png` | measured, bounded, inferred, interrupted and unknown together (no open span there) | SYN-S |
+| `11b-syn-s-stale-after-the-playhead-chip-at-live-edge-defect.png` | defect 2 | SYN-S |
+| `12a-real-b-…`, `12b-syn-s-what-was-it-waiting-on.png` | the waits lens | REAL-B, SYN-S |
+| `13a`/`13b`/`13c-syn-s-*.png` | "What was interrupted?"; the interrupted and recovered runs on the tracks; defect 4 | SYN-S |
+| `14a`/`14b`/`14c-real-a-cross-view-*.png` | one selection on the Atlas, the Blueprint and the Timeline | REAL-A |
+| `contact-sheet-1-…`, `-2-…`, `-3-…png` | the set on three sheets, the third with a still from each recording (labelled with PIL, not ffmpeg) | |
+
+`web/apps/control-tower/recordings/timeline/final/`: `R1-real-a-investigation.mp4` (71 s: Atlas, `3`, overview,
+collapse and expand, three "previous failure" jumps to round 1, zoom to it, the security seat, the inspector,
+"Why did it retry?", two passes compared, `1` and `3`); `R2-live-follow-syn-live.mp4` (69 s, LIVE appending:
+filter, following, grouping switch, a lens while following, pinned, Follow); `R3-syn-l-large-history.mp4` (84 s:
+brush moved and drawn, whole history, wheel zoom to 10 s, pan, widen back to 2 d 20 h, Alt-drag scrub, groupings,
+table); `R4-syn-s-keyboard-only.mp4` (64 s, no pointer: Tab to the tracks, arrows, Enter, Alt+arrows, Home, `n`,
+`z`, `g`, the table by Shift+Tab and Enter, `l`). No console error in any recording.
+
+Retaken: 06a (the page itself had scrolled), 07c (the first take is 07d), 09c (wrong runs open), 11a (stale
+playhead and an old selection), 12b and 13 (filters and stale chip left from earlier steps), R1 twice (the pass
+comparison did not engage), R3 twice (the brush began full width; wheel zoom-out did not respond after a ruler pan,
+replaced by Widen; not reproduced in isolation).
+
+**Privacy and requests.** The visible text of every screenshot was saved and scanned: no home path, account name,
+e-mail address, key, token or one-time link value. 5,622 requests across 15 browser sessions: all GET to
+127.0.0.1. The source projects were not written (copies only); every process started was stopped; `git status`
+stayed clean.
+
+**Visual defects still visible on the final build**, ranked:
+
+Must fix
+1. The toolbar overflows instead of folding: the pinned-window control and its **Follow** are cut off or pushed
+   under the inspector (`07d`, `10a`, `10c`), and the speed group is clipped at 1280 (`10a`). The same width folds
+   correctly in other states (`10e`), so the fit is not recomputed.
+2. "After the playhead" stays on screen at the live edge after Return to live or `l` (`11b`; last seconds of R3).
+3. Clicking a wait on a person shows "No further detail is recorded for that kind here" and the cell, with no In
+   time section (`06b`).
+4. A lens's **Frame** changes the window but leaves the tracks scrolled elsewhere: an empty stage (`13c`).
+
+Should fix
+5. Agent rows packed into lanes have blank labels in the label column, with tall empty bands (`07a`, `11a`); the
+   same agents get named rows in other executions.
+6. The waits lens shows dependency waits only; the capacity waits on the tracks are absent (`12a`, `12b`); overprinted
+   "SLICE-002 merged" (`12b`).
+7. A fresh `win=` deep link drops Groom and Plan rows that the navigated view keeps (`02`-light vs `02`).
+8. Narrowing the window while following zooms about the centre, pins, and leaves the live edge hours ahead (R2).
+9. Lens bands clip their content: last row cut (`03b`, `12b`, `13a`), right-hand text cut (R1, `13b`), and at
+   1100×700 a lens leaves the tracks a third of the height (`10e`).
+10. The concurrency lens scales to agents (23) so the limit of 3 and the executions line sit flat at the bottom (`03b`).
+11. Table: the Track column truncates "SYN-006 · run…" (the run number is lost), "between … and" wraps (`09e`).
+12. The "Factory is not enabled" notice covers part of the Atlas and the Blueprint (`14a`, `14b`).
+13. Labels collide: break label under the brush edge ("12 h 3|5 min", `02`, `01`); duration text struck by
+    marks (`09b`); "Live edge later" over the execution's verdicts and length (`03a`); "after the playhead" over
+    overview landmarks (`04a`).
+14. Lens rung clicks seek the playhead (contradicting "selection does not seek"); the inspector then says
+    "at work for 0 s" (`04a`).
+15. Raw words: `FAIL_WITH_EVIDENCE` in the inspector (R4), "Workflow between 0 ms and …" (`03a`, `09e`), the
+    reviewer as a hex id (`05`), "Live edge later" in Historical replay (`08`).
+16. 32 Tab stops before the tracks (R4).
+
+Nice to have
+17. Default windows on long-open work show the history in the left 5% (`01` before framing; REAL-B's 17 min).
+18. Seat order differs between the lens and the tracks (`05`); first seat's label dropped (`06a`).
+19. Execution row label "LOCAL-001 from 16:55 · s…" truncated; "Tool calls are c…" (`03a`, `07a`).
+
+Judgement: the typography, the drawing-sheet ground, the state marks and the timing grammar are coherent with the
+Atlas and Blueprint, and selection, playhead and `1`/`2`/`3` carry across cleanly (14a–c, R1), so the Timeline reads
+as part of the Living Factory rather than a bolted-on monitor. What breaks that impression is chrome under
+pressure: the toolbar at narrower widths and with chips, lens bands that clip, stale state labels, and empty
+stages after framing.
 
 ## 6. Actual execution testing
 
