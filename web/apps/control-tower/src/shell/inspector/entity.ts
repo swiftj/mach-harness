@@ -7,6 +7,7 @@ import {
   findAgent,
   findArtifact,
   findToolCall,
+  gateOfRef,
   isKnown,
   refId,
   stableEntityAt,
@@ -16,7 +17,7 @@ import {
   type Scene,
   type StationId,
 } from "../../sim";
-import { ACTOR_WORDS, GATE_WORDS, kindOf, KIND_WORDS, ROLE_WORDS, STATION_WORDS, type ShellKind } from "../vocab";
+import { ACTOR_WORDS, gateName, kindOf, KIND_WORDS, ROLE_WORDS, STATION_WORDS, type ShellKind } from "../vocab";
 
 export function findFinding(scene: Scene, id: string): FindingState | null {
   const ticket = id.split("/")[0] ?? "";
@@ -48,7 +49,8 @@ export function selectEntity(scene: Scene, entity: AnyRef): unknown {
     case "execution":
       return scene.executions[id] ?? null;
     case "gate":
-      return scene.gates[id] ?? null;
+      // Either vocabulary: the scene's gate id, or the observer's own ref for an evaluation (R5).
+      return gateOfRef(scene, id);
     case "dependency":
       return scene.dependencies[id] ?? null;
     case "agent":
@@ -110,8 +112,8 @@ export function identityOf(entity: AnyRef, scene: Scene): Identity {
     case "execution":
       return { ...base, name: `Execution of ${scene.executions[id]?.ticketId ?? "a ticket"}` };
     case "gate": {
-      const g = scene.gates[id];
-      return { ...base, name: g ? `${GATE_WORDS[g.gate]}${g.round ? `, round ${g.round}` : ""}` : id };
+      const g = gateOfRef(scene, id);
+      return { ...base, name: g ? `${gateName(g)}${g.round ? `, round ${g.round}` : ""}` : id };
     }
     case "dependency": {
       const [from, to] = id.split("->");

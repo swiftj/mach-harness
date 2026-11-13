@@ -20,7 +20,6 @@ import {
   type AgentState,
   type AnyRef,
   type EntityRef,
-  type GateKind,
   type GateState,
   type CellState,
   type Moment,
@@ -47,7 +46,7 @@ export interface StationItem {
 }
 export interface GateItem {
   ref: EntityRef;
-  gate: GateKind;
+  gate: GateState["gate"];
   t: number;
   state: GateState["state"];
   round: number | null;

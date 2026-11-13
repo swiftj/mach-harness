@@ -263,6 +263,8 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       heard();
       const d = (safeJson(m.data) ?? {}) as Record<string, unknown>;
       const at = timeOf(d.at_ms ?? d.at);
+      // The heartbeat's time is the observer's clock: the live edge runs on the browser's, corrected by it.
+      if (at !== null) store.observeClock(at);
       const watermark = timeOf(d.watermark_ms ?? d.watermark) ?? (at === null ? null : at - settleMs);
       if (watermark !== null) store.setLiveEdge(watermark);
       seeTotal(typeof d.head === "string" ? d.head : null);
@@ -323,6 +325,7 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
     if (stopped) return;
     try {
       const session = await client.session();
+      if (session.nowMs !== null) store.observeClock(session.nowMs);
       const held = parseCursor(status.cursor);
       if (held && held.generation !== session.generation) {
         publish({ generation: held.generation });
@@ -518,14 +521,14 @@ export function createLiveLog(options: { readonly retain?: number; readonly chec
 }
 
 /** A store and a source wired together: the Live Factory. The caller starts the source. */
-export function createLiveFactory(options: Omit<LiveSourceOptions, "log" | "store" | "windows"> & { readonly retain?: number; readonly windowEvents?: number }): { readonly store: SceneStore; readonly source: LiveSource; readonly log: SceneLog; readonly windows: WindowedHistory } {
+export function createLiveFactory(options: Omit<LiveSourceOptions, "log" | "store" | "windows"> & { readonly retain?: number; readonly windowEvents?: number; readonly wallClock?: () => number }): { readonly store: SceneStore; readonly source: LiveSource; readonly log: SceneLog; readonly windows: WindowedHistory } {
   // One history: the live log and the windows read behind it share a lineage, so a ticket keeps its
   // Atlas bay when the playhead moves between them.
   const lineage = {};
   const log = createLiveLog({ retain: options.retain, lineage });
   // Scrubbing back past what the live log holds reads the history in windows (D17).
   const windows = createWindowedHistory({ client: options.client, definitions: LIVE_DEFINITIONS, source: "live", windowEvents: options.windowEvents, lineage });
-  const store = createSceneStore({ source: "live", log, clock: options.clock, windows });
+  const store = createSceneStore({ source: "live", log, clock: options.clock, windows, wallClock: options.wallClock });
   const source = createLiveSource({ ...options, log, store, windows });
   return { store, source, log, windows };
 }

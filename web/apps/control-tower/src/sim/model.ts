@@ -599,6 +599,12 @@ export interface GateEvaluation {
    * still a recorded fact, read with `gateRefusals`.
    */
   readonly gateId: string | null;
+  /**
+   * The ref the record names this evaluation by (the observer's `gate:<cell>/<gate>[#<round>]`, e.g.
+   * `gate:LOCAL-001/plan.check`, `gate:LOCAL-001/frozen-tests#2`). `entityAt` resolves it to the gate
+   * state the evaluation set, or, when none stands for it, to the evaluation itself (`gateOfEvaluations`).
+   */
+  readonly ref: string;
 }
 
 /** An agent a workflow has queued but not started: known by its index only (contract 5.2). */
@@ -685,7 +691,12 @@ export interface StreamObservation {
 export interface GateState {
   readonly id: string;
   readonly ticketId: string;
-  readonly gate: GateKind;
+  /**
+   * The gate kind the line closes. `recorded`: a gate the lifecycle log evaluated that no gate state
+   * stands for (frozen-tests, build.start, verify.start...): never in `scene.gates`, only what
+   * `entityAt` gives for its ref, built from its evaluations (`recorded`).
+   */
+  readonly gate: GateKind | "recorded";
   readonly round: number | null;
   /** `overridden`: the gate let the work through on a recorded override (its reason code in `reasonCode`); never the same as passed. */
   readonly state: "open" | "passed" | "failed" | "waiting" | "skipped" | "overridden";
@@ -696,6 +707,8 @@ export interface GateState {
   /** Live: the reason code the gate recorded (gate.evaluated), when one exists. */
   readonly reasonCode: string | null;
   readonly meta: EntityMeta;
+  /** Only for `gate: "recorded"`: the lifecycle gate's own name and its evaluations, oldest first. */
+  readonly recorded?: { readonly name: string; readonly evaluations: readonly GateEvaluation[] };
 }
 
 export interface Counters {

@@ -131,6 +131,8 @@ const ExecItem = memo(function ExecItem({ row, pos, size, laneY, ax, width, flow
   const selected = useSelected(node.ref);
   const staleSince = useStaleSince();
   const activity = useActivity(node.ref, staleSince !== null);
+  // Its own label when the state says too little (R6: its process ended, the outcome is not recorded yet).
+  const label = useScene((sc) => activityOf(sc, node.ref, { stale: staleSince !== null }).label ?? null);
   if (node.data.kind !== "execution") return null;
   const { execution: x, index, count } = node.data;
   const y = row.y - laneY;
@@ -142,7 +144,7 @@ const ExecItem = memo(function ExecItem({ row, pos, size, laneY, ax, width, flow
   const endPlaced = end !== null && placed(span.endQuality);
   const waiting = x.outcome?.waitingFor && x.outcome.waitingFor !== "nothing" ? `, waiting for ${x.outcome.waitingFor}` : "";
   const how = x.ended === "exited" ? (x.exitCode !== null && x.exitCode !== 0 ? ` · exit ${x.exitCode}` : "") : x.ended ? ` · ${x.ended.replace(/-/g, " ")}` : "";
-  const status = activity === "unknown" ? (x.recovery === "outcome-unknown" ? "outcome unknown" : "not recorded") : activity === "stale" ? `as last seen at ${clock(staleSince ?? span.start)}` : x.state === "completed" ? `completed${waiting || (x.outcome?.stage ? `, ${x.outcome.stage}` : "")}` : activityWords(activity);
+  const status = activity === "unknown" ? (x.recovery === "outcome-unknown" ? "outcome unknown" : label ? label.toLowerCase() : "not recorded") : activity === "stale" ? `as last seen at ${clock(staleSince ?? span.start)}` : x.state === "completed" ? `completed${waiting || (x.outcome?.stage ? `, ${x.outcome.stage}` : "")}` : activityWords(activity);
   const queued = Object.keys(x.queued).length;
   const cost = x.outcome?.costUsd ?? x.usage?.costUsd ?? null;
   const gx = GX + INDENT[0]!;

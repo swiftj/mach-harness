@@ -8,6 +8,7 @@ import { createContext, useContext, useMemo } from "react";
 import { indexFor, type HistoryIndex } from "../history";
 import { useSceneStore } from "../../scene";
 import type { SourceChoice } from "./boot";
+import type { ObserverClient } from "../../live";
 
 export type ObserverPresence = "answered" | "none" | "no-session";
 
@@ -22,6 +23,8 @@ export interface SourceInfo {
   readonly project: string | null;
   /** Switch to another source: a new store; selection and view carry over through the address. */
   readonly switchTo: (choice: SourceChoice) => void;
+  /** The observer's client when one answered (reads its evidence catalog); null for the simulation. */
+  readonly client?: ObserverClient | null;
 }
 
 const FALLBACK: SourceInfo = {
@@ -30,6 +33,7 @@ const FALLBACK: SourceInfo = {
   notice: null,
   project: null,
   switchTo: () => undefined,
+  client: null,
 };
 
 export const SourceContext = createContext<SourceInfo>(FALLBACK);
@@ -45,6 +49,6 @@ export function useHistoryIndex(): HistoryIndex {
 
 /** The value for the provider, stable while its parts are. */
 export function useSourceInfo(info: SourceInfo): SourceInfo {
-  const { requested, observer, notice, project, switchTo } = info;
-  return useMemo(() => ({ requested, observer, notice, project, switchTo }), [requested, observer, notice, project, switchTo]);
+  const { requested, observer, notice, project, switchTo, client = null } = info;
+  return useMemo(() => ({ requested, observer, notice, project, switchTo, client }), [requested, observer, notice, project, switchTo, client]);
 }

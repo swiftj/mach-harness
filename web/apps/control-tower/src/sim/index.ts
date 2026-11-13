@@ -17,6 +17,7 @@ export { describeEntry, describeV3, significanceOf } from "./describe-v3";
 export { modelIdOf, gapClassOf } from "./reduce-v3";
 export { emptyScene, reduce } from "./reducer";
 export * from "./selectors";
+export * from "./gates";
 export * from "./fold";
 export { describe } from "./describe";
 export { actorOf, ACTOR_INFO, ACTOR_KINDS } from "./actors";

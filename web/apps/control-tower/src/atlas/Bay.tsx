@@ -40,7 +40,7 @@ import {
   type Vec3,
 } from "@mach/ui";
 import { AgentHead, FloorLettering, PlanDimension, StationSymbol, TaskBoard as TaskBoardMark, cellAnatomy, cellStages, factoryTokens, lampPool, markLook, useFactoryIds, type MarkState, type StationKind, type TaskCell } from "@mach/ui";
-import { BELT_PHASES, activityOf, capacityWaitOf, type CapacityWaitState, type GateRefusal, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog, type StationId } from "../sim";
+import { BELT_PHASES, activityLabel, activityOf, capacityWaitOf, type CapacityWaitState, type GateRefusal, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog, type StationId } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
 import { activityMark, activityWord, visitMark, visitWord, animating, anim, callsOf, countedToolsOf, fmtElapsed, idOf, secondOf, lampLevel, gateView, gateWord, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PadName, type PlacedAgent, type ViewMode } from "./derive";
@@ -135,6 +135,8 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
   });
   const reduced = useSceneStore((s) => s.reducedMotion);
   const activity = useScene((s) => (mode.live ? activityOf(s, ref.cell(ticket), { stale: mode.stale }).state : null));
+  // Its words: the activity's own label when the state alone says too little (R6: idle, outcome not recorded yet).
+  const activityText = useScene((s) => (mode.live ? activityLabel(activityOf(s, ref.cell(ticket), { stale: mode.stale }), activityWord) : null));
   const vgate = useScene((s) => latestGate(s, "verification", ticket));
   const { x, y } = bay.origin;
   const a = cellAnatomy(bay.origin, PLATE_Z);
@@ -165,7 +167,7 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
   // cell's group (both are aria-hidden, as their wrapper was).
   return (
     <>
-      <g role="group" aria-label={`Cell ${ticket}: ${activity ? activityWord(activity) : stage.label}`} style={{ opacity: dim ? dimmedOpacity : 1 }}>
+      <g role="group" aria-label={`Cell ${ticket}: ${activityText ?? stage.label}`} style={{ opacity: dim ? dimmedOpacity : 1 }}>
         <polygon aria-hidden="true" points={toPoints(floor.top)} style={{ fill: fc("floor"), stroke: fc("plate-edge"), strokeWidth: 0.8 }} />
         <g transform={planeTransform(FLOOR_Z)} aria-hidden="true">
           {lamp > 0 ? <ellipse cx={pool.cx} cy={pool.cy} rx={pool.rx} ry={pool.ry} style={{ fill: `url(#${ids.lamp})`, opacity: lamp }} /> : null}
@@ -204,9 +206,9 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
         ))}
       </g>
       {visible ? (
-        <BayHits items={bayHits(bay, cell, agents, vgate, "far", st, activity ? activityWord(activity) : undefined).filter((it) => !it.entity.startsWith("gate:"))} />
+        <BayHits items={bayHits(bay, cell, agents, vgate, "far", st, activityText ?? undefined).filter((it) => !it.entity.startsWith("gate:"))} />
       ) : (
-        <BayHits items={bayHits(bay, cell, [], vgate, "far", st, activity ? activityWord(activity) : undefined).slice(0, 1)} />
+        <BayHits items={bayHits(bay, cell, [], vgate, "far", st, activityText ?? undefined).slice(0, 1)} />
       )}
     </>
   );
@@ -331,6 +333,8 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   const vgate = useScene((s) => latestGate(s, "verification", ticket));
   // Live and replay: what is known about the cell's activity (the nine states; stale on a stale connection).
   const activity = useScene((s) => (mode.live ? activityOf(s, ref.cell(ticket), { stale: mode.stale }).state : null));
+  // Its words: the activity's own label when the state alone says too little (R6: idle, outcome not recorded yet).
+  const activityText = useScene((s) => (mode.live ? activityLabel(activityOf(s, ref.cell(ticket), { stale: mode.stale }), activityWord) : null));
   const queued = useScene((s) => (mode.live && cell.executionId ? Object.values(s.executions[cell.executionId]?.queued ?? {}).length : 0));
   const log = useSceneStore((s) => s.log);
   // Recorded facts no gate state or stage stands for: a wait for an execution place, and gate
@@ -351,7 +355,7 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   const agents = placeAgents(L, cell, t, reduced, mode);
   const inBay = agents.filter((a) => a.at.z === FLOOR_Z).sort((a, b) => depthOf(a.at) - depthOf(b.at));
   // The mast shows what is known about the cell's activity (live, replay); a merged cell keeps its double ring.
-  const mast = activity && !(activity === "completed" && cell.merged) ? { state: activityMark(activity), label: activityWord(activity) } : undefined;
+  const mast = activity && !(activity === "completed" && cell.merged) ? { state: activityMark(activity), label: activityText ?? activityWord(activity) } : undefined;
 
   if (!visible) {
     return <CellPlate origin={bay.origin} ticket={cell.ticketId} stage={uiStage(cell.stage)} activity={mast} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} />;

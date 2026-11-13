@@ -119,15 +119,35 @@ const Regions = memo(function Regions({ layout: L, lod, captions, active }: Omit
   );
 });
 
+/**
+ * One track. A new layout (a bay added) rebuilds every track's points; a track whose points are the
+ * same is not drawn again (each draw computes its chevrons: on a 1,261-cell plant, the Atlas's largest
+ * allocation while a long history loads, D17). Same output as RoutePath itself.
+ */
+const samePoints = (a: readonly Vec3[], b: readonly Vec3[]): boolean => a === b || (a.length === b.length && a.every((p, i) => p.x === b[i]!.x && p.y === b[i]!.y && (p.z ?? 0) === (b[i]!.z ?? 0)));
+const Track = memo(
+  function Track({ points, lod, arrow, chevrons }: { points: readonly Vec3[]; lod: Lod; arrow: boolean; chevrons?: boolean }) {
+    return <RoutePath points={points as Vec3[]} lod={lod} label={undefined} arrow={arrow} chevrons={chevrons} />;
+  },
+  (a, b) => a.lod === b.lod && a.arrow === b.arrow && a.chevrons === b.chevrons && samePoints(a.points, b.points),
+);
+/** Bays beyond which a plant's spurs and exits are drawn without chevrons (the simulation has a dozen at most). */
+export const DENSE_TRACKS = 48;
+
 /** 4. Tracks on the plate tops, the main line's ruler and lettering. */
 const Infrastructure = memo(function Infrastructure({ layout: L, lod, dimRoutes }: { layout: PlantLayout; lod: Lod; dimRoutes: boolean }) {
   const I = L.integration;
+  // A very large plant (more than DENSE_TRACKS bays: a long real history, never the simulation) draws
+  // its bays' spurs and exits as rails without chevrons: their aisles run the plant's whole depth, and
+  // chevrons every 48 units on each came to some 680,000 paths on 1,261 bays (D17). The arrowed
+  // tracks keep theirs, so the direction of travel still reads.
+  const dense = L.bays.length > DENSE_TRACKS;
   return (
     <g>
       <g style={{ opacity: dimRoutes ? 0.4 : 1 }}>
         {lod === "far" ? <FarRails tracks={L.tracks} /> : null}
         {Object.entries(L.tracks).map(([name, pts]) =>
-          name === "trunk" || (lod === "far" && !ARROWED.has(name)) ? null : <RoutePath key={name} points={pts} lod={lod} label={undefined} arrow={ARROWED.has(name)} />,
+          name === "trunk" || (lod === "far" && !ARROWED.has(name)) ? null : <Track key={name} points={pts} lod={lod} arrow={ARROWED.has(name)} chevrons={dense && !ARROWED.has(name) ? false : undefined} />,
         )}
         <RoutePath points={L.tracks.trunk ?? []} lod={lod} state="succeeded" chevrons={lod !== "far"} />
       </g>

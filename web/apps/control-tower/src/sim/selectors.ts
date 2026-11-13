@@ -36,8 +36,9 @@ import type {
   ToolCallState,
   WaveState,
 } from "./model";
-import { isActorRef, ref, refId, refKind } from "./model";
+import { gateId, isActorRef, ref, refId, refKind } from "./model";
 import type { CapacityWaitState, GateEvaluation, LiveEntityKind, LiveRef } from "./model";
+import { gateOfRef } from "./gates";
 
 /**
  * Where events come from: a simulation fixture (the M6.0 API, returning the fixture's own events) or
@@ -365,8 +366,11 @@ export function entityAt(scene: Scene, entity: AnyRef): EntityState | null {
       return scene.cells[id] ? { kind: "cell", value: scene.cells[id] } : null;
     case "execution":
       return scene.executions[id] ? { kind: "execution", value: scene.executions[id] } : null;
-    case "gate":
-      return scene.gates[id] ? { kind: "gate", value: scene.gates[id] } : null;
+    case "gate": {
+      // Either vocabulary: the scene's gate id or the observer's evaluation ref (R5).
+      const gate = gateOfRef(scene, id);
+      return gate ? { kind: "gate", value: gate } : null;
+    }
     case "dependency":
       return scene.dependencies[id] ? { kind: "dependency", value: scene.dependencies[id] } : null;
     case "agent": {
@@ -541,7 +545,7 @@ export function relatedRefs(scene: Scene, entity: EntityRef): readonly EntityRef
       break;
     }
     case "gate": {
-      const gate = scene.gates[id];
+      const gate = gateOfRef(scene, id);
       if (gate) out.add(ref.cell(gate.ticketId));
       break;
     }
@@ -878,6 +882,17 @@ export interface Activity {
    * what it stopped waiting for. Nothing says when the next execution starts.
    */
   readonly between?: { readonly executionId: string; readonly endedAt: number | null; readonly stage: CellStage | null; readonly next: StepAction | null; readonly waitingFor: string | null; readonly outcomeRecorded: boolean };
+  /**
+   * A short label for what is known when the state alone would say too little (R6): an execution
+   * whose process ended before the supervisor recorded it is "ended, outcome not recorded yet", never
+   * "running" nor "not known"; a cell idle between executions says so.
+   */
+  readonly label?: string;
+}
+
+/** The words a mast, a label or a status line prints for an activity: its own label, else the state's. */
+export function activityLabel(activity: Activity, words: (state: ActivityState) => string): string {
+  return activity.label ?? words(activity.state);
 }
 
 export interface ActivityOptions {
@@ -893,7 +908,20 @@ const unknownActivity = (reason: string, authority: Authority = "reconstructed")
  * interrupted, stale (the connection is lost while it was executing) or unknown. Every state comes
  * from a recorded fact; silence is never read as waiting (contract D16).
  */
+const activityCache = new WeakMap<Scene, Map<string, Activity>>();
 export function activityOf(scene: Scene, entity: EntityRef, options: ActivityOptions = {}): Activity {
+  // A scene never changes; views ask this for every bay on every store change, so it is answered once per scene.
+  let perScene = activityCache.get(scene);
+  if (!perScene) activityCache.set(scene, (perScene = new Map()));
+  const key = options.stale ? `${entity}\u0000stale` : entity;
+  const hit = perScene.get(key);
+  if (hit) return hit;
+  const out = activityOfUncached(scene, entity, options);
+  perScene.set(key, out);
+  return out;
+}
+
+function activityOfUncached(scene: Scene, entity: EntityRef, options: ActivityOptions): Activity {
   const id = refId(entity);
   const stale = (a: Activity): Activity => (options.stale && a.state === "executing" ? { ...a, state: "stale", reason: `${a.reason} The connection is lost: this may have changed.` } : a);
   switch (refKind(entity)) {
@@ -939,6 +967,17 @@ export function activityOf(scene: Scene, entity: EntityRef, options: ActivityOpt
   }
 }
 
+/**
+ * An execution's state in words, from what is recorded (R6): its process may have ended before the
+ * supervisor recorded the outcome; it is then "Ended, outcome not recorded yet", never "running".
+ */
+export function executionStatusOf(x: Pick<ExecutionState, "state" | "processEndedAt" | "ended">): { readonly word: string; readonly running: boolean } {
+  if (x.state === "completed") return { word: "Completed", running: false };
+  if (x.state === "failed") return { word: "Failed", running: false };
+  if (x.processEndedAt !== null || x.ended !== null) return { word: "Ended, outcome not recorded yet", running: false };
+  return x.state === "claimed" ? { word: "Claimed, not started", running: true } : { word: "Running", running: true };
+}
+
 function executionActivity(x: ExecutionState): Activity {
   const authority = x.meta.authority;
   if (x.ended === "interrupted" || x.ended === "timed-out") return { state: "interrupted", reason: x.ended === "timed-out" ? "Its process timed out." : "Its process was interrupted.", since: x.processEndedAt, authority };
@@ -946,7 +985,7 @@ function executionActivity(x: ExecutionState): Activity {
   if (x.state === "failed") return { state: "failed", reason: "The supervisor recorded a failure.", since: x.endedAt, authority };
   if (x.state === "completed") return { state: "completed", reason: "The supervisor recorded its end.", since: x.endedAt, authority };
   if (x.capacityWait) return { state: "waiting-resources", reason: "Held: every execution place is in use (recorded).", since: x.capacityWait.since, authority: "reconstructed" };
-  if (x.ended) return { state: "unknown", reason: "Its process ended; the supervisor has not recorded the outcome yet.", since: x.processEndedAt, authority };
+  if (x.ended || x.processEndedAt !== null) return { state: "unknown", reason: "Its process ended; the supervisor has not recorded the outcome yet.", since: x.processEndedAt, authority, label: "Ended, outcome not recorded yet" };
   return { state: "executing", reason: x.state === "claimed" ? "Claimed by the supervisor." : "Running.", since: x.startedAt ?? x.claimedAt, authority };
 }
 
@@ -956,7 +995,9 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
   if (cell.runRecord?.outcome === "abandoned") return { state: "failed", reason: "Abandoned.", since: cell.runRecord.at, authority };
   if (cell.stage === "awaiting-human" || cell.stage === "spec-open") return { state: "waiting-person", reason: cell.stage === "spec-open" ? "The spec has open questions." : "A person must approve.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
   if (cell.stage === "blocked") return { state: "waiting-person", reason: "Escalated to a person.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
-  const waitingGate = Object.values(scene.gates).find((g) => g.ticketId === cell.ticketId && g.gate === "human-approval" && g.state === "waiting");
+  // The human gate's id is the ticket's (one per ticket): looked up, never a scan of every gate per cell.
+  const human = scene.gates[gateId(cell.ticketId, "human-approval")];
+  const waitingGate = human?.state === "waiting" ? human : undefined;
   if (waitingGate) return { state: "waiting-person", reason: "A person must approve.", since: waitingGate.openedAt, authority: waitingGate.meta.authority };
   const execution = cell.executionId ? scene.executions[cell.executionId] : undefined;
   if (execution) {
@@ -987,7 +1028,7 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
 }
 
 /** The execution has ended: the supervisor recorded its end, or its process ended (D4). */
-const hasEnded = (x: ExecutionState): boolean => x.state === "completed" || x.state === "failed" || x.ended !== null;
+const hasEnded = (x: ExecutionState): boolean => x.state === "completed" || x.state === "failed" || x.ended !== null || x.processEndedAt !== null;
 
 /**
  * A live cell whose last execution has ended and none is running: idle between executions. Said from
@@ -1001,14 +1042,14 @@ function betweenExecutions(cell: CellState, x: ExecutionState): Activity {
   const between = { executionId: x.id, endedAt, stage: x.outcome?.stage ?? null, next: x.outcome?.next ?? null, waitingFor: x.outcome?.waitingFor ?? null, outcomeRecorded: recorded };
   const authority = x.meta.authority;
   if (!recorded) {
-    return { state: "unknown", reason: "Idle: its process ended and the supervisor has not recorded the outcome yet. No execution is running.", since: endedAt, authority, between };
+    return { state: "unknown", reason: "Idle: its process ended and the supervisor has not recorded the outcome yet. No execution is running.", since: endedAt, authority, between, label: "Idle, outcome not recorded yet" };
   }
   const left = between.stage ? ` at ${between.stage}` : "";
   if (between.waitingFor && (between.stage === null || between.stage === cell.stage)) {
     return { state: "waiting-person", reason: `Idle between executions: the last one stopped${left}, waiting for ${between.waitingFor}.`, since: endedAt, authority, between };
   }
   const next = between.next && between.next !== "stop" ? ` The next step recorded is ${between.next}.` : "";
-  return { state: "unknown", reason: `Idle between executions: the last one ended${left}.${next} No execution is running; nothing recorded says when the next starts.`, since: endedAt, authority, between };
+  return { state: "unknown", reason: `Idle between executions: the last one ended${left}.${next} No execution is running; nothing recorded says when the next starts.`, since: endedAt, authority, between, label: "Idle between executions" };
 }
 
 /**

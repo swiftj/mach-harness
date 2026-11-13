@@ -146,6 +146,8 @@ export function App() {
     notice,
     project: answer?.kind === "observer" ? answer.session.project : null,
     switchTo,
+    // The evidence catalog is read for real history only (free-text labels, R1).
+    client: target === "live" || target === "replay" ? client : null,
   });
 
   if (target === "pending") return <Probing label="Looking for the observer" />;

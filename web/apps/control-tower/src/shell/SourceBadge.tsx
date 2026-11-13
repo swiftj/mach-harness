@@ -22,7 +22,7 @@ import { refId, refKind, sourceRuntimeOf, streamObservationOf, type Completeness
 import { completenessWords, deliveryLagWords, receivedWords, runtimeStateWords, runtimeSummaryWords } from "./inspector/words";
 import { useSource } from "./source/context";
 import type { SourceChoice } from "./source/boot";
-import { duration as durationWords, timecode, utcClock } from "./vocab";
+import { duration as durationWords, isMoment, timecode, utcClock } from "./vocab";
 
 // ---------------------------------------------------------------- the three sources
 
@@ -170,7 +170,7 @@ export interface ConnectionLook {
 
 /** The words for a connection. Times are factory time (the stream's), never the browser's clock. */
 export function connectionLook(c: ConnectionStatus): ConnectionLook {
-  const since = c.staleSince !== null ? utcClock(c.staleSince) : null;
+  const since = isMoment(c.staleSince) ? utcClock(c.staleSince) : null;
   switch (c.state) {
     case "connecting":
       return { state: "connecting", label: "Connecting", sentence: "Connecting to the observer." };
@@ -239,7 +239,7 @@ export function ConnectionFacts({ connection }: { connection: ConnectionStatus }
   const runtimes = factory?.runtime ? runtimeSummaryWords(factory.runtime) : null;
   const rows: Array<[string, ReactNode]> = [
     ["Connection", look.sentence],
-    ["Last confirmed", connection.confirmedAt !== null ? `${utcClock(connection.confirmedAt)} UTC` : "Nothing yet"],
+    ["Last confirmed", isMoment(connection.confirmedAt) ? `${utcClock(connection.confirmedAt)} UTC` : "Nothing yet"],
     ["Settled history", connection.sourceLagMs !== null ? `trails now by ${connection.sourceLagMs < 1000 ? "under a second" : durationWords(connection.sourceLagMs)}` : "Not reported"],
     ["Delivery lag", deliveryLagWords(connection.deliveryLagMs ?? factory?.delivery?.lastHoldMs ?? null)],
     [

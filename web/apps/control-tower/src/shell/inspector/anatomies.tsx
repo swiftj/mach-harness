@@ -11,7 +11,8 @@ import {
   artifactCountsOf,
   costCompletenessOf,
   describeEntry,
-  gateOverrides,
+  cellGateList,
+  executionStatusOf,
   isKnown,
   sourceRuntimeOf,
   streamObservationOf,
@@ -24,6 +25,7 @@ import {
   type ArtifactState,
   type CellState,
   type DependencyState,
+  type EntityRef,
   type ExecutionState,
   type FindingState,
   type GateState,
@@ -41,7 +43,7 @@ import {
   ACTOR_WORDS,
   artifactOf,
   gateStateWords,
-  GATE_WORDS,
+  gateName,
   gateOf,
   gateState,
   modelName,
@@ -59,7 +61,8 @@ import {
 import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
-import { activityNote, agentsWords, planWords, runtimeWords } from "./words";
+import { activityNote, agentsWords, planWords, runtimeWords, visitLeftWords } from "./words";
+import { useFreeTextLabel } from "./catalog";
 import { useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
 
@@ -97,19 +100,34 @@ function AgentLink({ agent }: { agent: AgentState }) {
   );
 }
 
+/**
+ * The persistent label on an evidence document served as free text the observer could not check for
+ * names (R1, the product owner's decision): text, so it is read with the row or fact it sits in.
+ */
+function FreeTextNote({ label, block = false }: { label: string; block?: boolean }) {
+  return (
+    <span data-free-text="" className={block ? "mt-1 block text-caption font-semibold text-warning-ink" : "ml-1.5 text-caption font-semibold text-warning-ink"}>
+      {block ? label : `· ${label}`}
+    </span>
+  );
+}
+
 function ArtifactLink({ artifact }: { artifact: ArtifactState }) {
+  const freeText = useFreeTextLabel(artifact);
   return (
     <RefLink to={ref.artifact(artifact.id)} glyph={<ArtifactGlyph kind={artifactOf(artifact.kind)} size={18} failed={/findings/.test(artifact.kind)} />} detail={timecode(artifact.writtenAt, false)}>
       <span className="font-mono text-[12px]">{artifact.label}</span>
+      {freeText ? <FreeTextNote label={freeText} /> : null}
     </RefLink>
   );
 }
 
-function GateLink({ gate }: { gate: GateState }) {
+function GateLink({ gate, to }: { gate: GateState; to?: EntityRef }) {
   return (
-    <RefLink to={ref.gate(gate.id)} glyph={<GateGlyphSmall kind={gateOf(gate.gate)} size={18} state={gateState(gate.state)} />} detail={gateStateWords(gate)}>
-      {GATE_WORDS[gate.gate]}
+    <RefLink to={to ?? ref.gate(gate.id)} glyph={<GateGlyphSmall kind={gateOf(gate.gate)} size={18} state={gateState(gate.state)} />} detail={gateStateWords(gate)}>
+      {gateName(gate)}
       {gate.round ? `, round ${gate.round}` : ""}
+      {gate.recorded && gate.recorded.evaluations.at(-1)?.subject ? <span className="text-ink-subtle">, {gate.recorded.evaluations.at(-1)?.subject}</span> : null}
     </RefLink>
   );
 }
@@ -236,10 +254,10 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
   const gates = useScene((s) => s.gates);
   const look = stageLook(cell.stage);
   const active = cell.activeAgentIds.map((id) => cell.agents[id]).filter((a): a is AgentState => Boolean(a));
-  const cellGates = Object.values(gates).filter((g) => g.ticketId === cell.ticketId);
-  // Overrides no gate state stands for (frozen-tests...): each one listed with its reason (D6).
-  // (from the cell's own gate log, a stable object: a selector returning a new array would re-render forever)
-  const overrides = useMemo(() => gateOverrides({ cells: { [cell.ticketId]: cell } } as unknown as Scene, cell.ticketId).filter((o) => o.gateId === null), [cell]);
+  // Every gate evaluated for this cell (D6): its gate states and every evaluation no gate state
+  // stands for (each override, refusal and pass: frozen-tests, build.start...), each a link.
+  // (from the cell and the gate record, both stable objects: a selector returning a new array would re-render forever)
+  const gateList = useMemo(() => cellGateList({ cells: { [cell.ticketId]: cell }, gates } as unknown as Scene, cell.ticketId), [cell, gates]);
   const factory = useSceneStore((s) => s.factoryStatus);
   const agentsLine = useScene((s) => agentsOf(s, factory, cell.executionId, cell.agentOrder.length, active.length));
   const artifactCounts = artifactCountsOf(cell);
@@ -329,20 +347,10 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
         )}
       </Section>
       <Section title="Gates">
-        {cellGates.length || overrides.length ? (
+        {gateList.length ? (
           <RefList>
-            {cellGates.map((g) => (
-              <GateLink key={g.id} gate={g} />
-            ))}
-            {overrides.map((o) => (
-              <div key={o.eventId} className="flex items-center gap-2 px-1.5 py-1 text-body-sm" data-gate-override={o.gate}>
-                <StateGlyph state="succeeded" size={12} />
-                <span className="flex-1 text-ink">
-                  {o.gate.replace(/[-.]/g, " ").replace(/^./, (c) => c.toUpperCase())}
-                  {o.subject ? <span className="text-ink-subtle">, {o.subject}</span> : null}
-                </span>
-                <span className="text-caption font-semibold text-ink">Overridden: {o.reasonCode ?? "no reason code"}</span>
-              </div>
+            {gateList.map((g) => (
+              <GateLink key={g.ref} gate={g.gate} to={g.ref} />
             ))}
           </RefList>
         ) : (
@@ -621,6 +629,7 @@ export function ToolAnatomy({ call }: { call: ToolCallState }) {
 
 export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
   const cell = useScene((s) => s.cells[artifact.ticketId] ?? null);
+  const freeText = useFreeTextLabel(artifact);
   const writer = artifact.writer.agentId && cell ? (cell.agents[artifact.writer.agentId] ?? null) : null;
   const base = artifact.path.split("/").pop() ?? artifact.path;
   // Consumers: tool calls in this cell, after the write, whose target names the file. Derived from the
@@ -652,6 +661,7 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
             artifact.round ? ["Round", artifact.round] : null,
             ["Written by", writer ? `${ROLE_WORDS[writer.role]} (${writer.label})` : artifact.writer.script ? <Mono key="w">{artifact.writer.script}</Mono> : <NotRecorded key="w" />],
             artifact.record ? ["Integrity", `${artifact.record.integrity}, ${artifact.record.nature}${artifact.record.bytes !== null ? `, ${artifact.record.bytes.toLocaleString("en-GB")} bytes` : ""}`] : null,
+            freeText ? ["Content", <FreeTextNote key="ft" label={freeText} block />] : null,
           ]}
         />
         {artifact.summary && isKnown(artifact.meta, "summary") ? <p className="mt-3 text-body-sm text-ink-muted">{artifact.summary}</p> : null}
@@ -697,7 +707,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
       <Section title="Decision">
         <Facts
           facts={[
-            ["Gate", GATE_WORDS[gate.gate]],
+            ["Gate", gateName(gate)],
             ["Position", <StateWord key="p" state={state} label={gateStateWords(gate)} />],
             gate.round ? ["Round", `${gate.round} of ${MAX_ROUNDS}`] : null,
             ["Reached", at(gate.openedAt)],
@@ -951,7 +961,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
         <Facts
           facts={[
             ["Ticket", <Mono key="t">{execution.ticketId}</Mono>],
-            ["State", execution.state],
+            ["State", executionStatusOf(execution).word],
             ["Attempt", isKnown(execution.meta, "attempt") ? execution.attempt : <NotRecorded key="at" />],
             ["Asked to", isKnown(execution.meta, "next") ? execution.next : <NotRecorded key="n" />],
             execution.workflow ? ["Workflow", <Mono key="w">{execution.workflow}</Mono>] : null,
@@ -1100,7 +1110,7 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
             ["Step", isKnown(visit.meta, "action") ? visit.action : <NotRecorded key="a" />],
             ["Entered", at(visit.enteredAt)],
             ["State", status.word],
-            ["Left", visit.leftAt === null ? (status.state === "waiting-person" ? "not yet: waiting for a person" : "still open") : status.state === "ended-unrecorded" ? `no exit record; ended by ${at(visit.leftAt)} at the latest` : at(visit.leftAt)],
+            ["Left", status.state === "ended" ? at(visit.leftAt) : visitLeftWords(visit, status, (t) => timecode(t, false))],
             [
               "Duration",
               visit.durationMs !== null ? (

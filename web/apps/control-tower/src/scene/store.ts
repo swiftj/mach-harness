@@ -9,10 +9,14 @@
  * Sources (`state.source`, fixed for the store's life, stamped on every scene as `scene.provenance`):
  * - `simulation`: the M6.0 fixture. Its future is recorded: `liveAt` is moved by the frame loop,
  *   seeking past it moves it forward, the run has a duration and chapters. Unchanged from M6.0.
- * - `live`: the observer's stream. `liveAt` is the live edge, set by what the stream confirmed
- *   (`setLiveEdge`) and carried forward by the browser's clock only while the connection is live and
- *   at most LIVE_EXTRAPOLATION_MS past the last confirmation; it never moves on its own when the
- *   connection is stale. Seeking clamps to it: nobody can seek into execution not yet observed.
+ * - `live`: the observer's stream. `liveAt` is the live edge. With a wall clock (`wallClock`, the
+ *   browser's; corrected by the observer's own clock when it says one, `observeClock`) the edge is
+ *   now from the first frame while the connection is connecting or live, and never before what the
+ *   stream confirmed (R7). Without one (tests), it is set by what the stream confirmed (`setLiveEdge`)
+ *   and carried forward by the store's clock at most LIVE_EXTRAPOLATION_MS past the last
+ *   confirmation. Either way it never moves on its own when the connection is stale or lost. While
+ *   nothing moves, the follow loop asks for no frames: it wakes once a second for the clock label
+ *   (and at once when an event arrives); it runs every frame only while a motion is in progress. Seeking clamps to it: nobody can seek into execution not yet observed.
  *   Replay is a client-side playhead over received events: ingest continues while the playhead is
  *   elsewhere; `followLive` re-attaches to the edge, and a replay that reaches the edge re-attaches.
  * - `replay`: a history loaded from the observer, not connected. Its edge is its last event.
@@ -34,6 +38,12 @@ export type PlaybackSpeed = (typeof SPEEDS)[number];
 export type ViewMode = "atlas" | "blueprint";
 /** How far the live edge may run ahead of the last thing the stream confirmed (a heartbeat comes every 15 s). */
 export const LIVE_EXTRAPOLATION_MS = 20_000;
+/**
+ * How long after an event's time its motion can still be in progress at the live edge (time scale
+ * 1): the longest event window the views animate (the Atlas's `slice.materialized`, 1,900 ms) with
+ * margin. Past it, the follow loop stops asking for frames until the next event or clock tick.
+ */
+export const LIVE_MOTION_MS = 2_500;
 
 /**
  * Compatibility only: the `fixture` a live or replay store reports, so the M6.0 views (which still
@@ -201,6 +211,12 @@ export interface SceneStore {
   logChanged(): void;
   /** The stream confirmed history up to factory time `t` (an event or a heartbeat). Moves the live edge, never backwards. */
   setLiveEdge(t: number): void;
+  /**
+   * The observer's own clock read `observerNowMs` (Unix ms) just now (a heartbeat's `at_ms`, or the
+   * session's time when it gives one): the live edge then runs on the browser's wall clock corrected
+   * by the difference. Ignored without a wall clock.
+   */
+  observeClock(observerNowMs: number): void;
   setConnection(status: ConnectionStatus): void;
   /** The Factory's state on this machine, as the observer last read it (live and replay). */
   setFactoryStatus(status: FactoryStatus | null): void;
@@ -219,6 +235,11 @@ interface CommonOptions {
   autoplay?: boolean;
   /** Factory ms per wall ms at 1x for simulation and replay playback (default PLAYBACK_BASE_RATE). */
   rate?: number;
+  /**
+   * Live only: the wall clock (Unix ms; the browser passes Date.now). The live edge is then now from
+   * the first frame, not the last event's time carried forward (R7).
+   */
+  wallClock?: () => number;
 }
 export interface SimulationStoreOptions extends CommonOptions {
   fixture: Fixture;
@@ -248,6 +269,12 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   // Live: what the stream last confirmed, and when (wall time) it did.
   let confirmed = log.headTime() ?? 0;
   let confirmedWall = clock.now();
+  // Live with a wall clock: now, corrected by the observer's clock when it said one.
+  const wallClock = !isSim && options.source === "live" ? options.wallClock : undefined;
+  let clockOffset = 0;
+  const wallNow = (): number | null => (wallClock ? wallClock() + clockOffset : null);
+  // Until when (factory ms; at the live edge, wall ms) a motion may be in progress: frames are asked for until then.
+  let motionUntil = Number.NEGATIVE_INFINITY;
 
   const ownFloor = (): number => (isSim ? 0 : (log.floorTime() ?? confirmed));
   const floorT = (): number => {
@@ -263,7 +290,8 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   };
   const edgeOf = (): number => (isSim ? duration : source === "replay" ? (log.headTime() ?? 0) : Math.max(confirmed, log.headTime() ?? confirmed));
   const clamp = (t: number, edge: number): number => Math.min(edge, Math.max(floorT(), t));
-  const startEdge = edgeOf();
+  // A live store with a wall clock starts at now (its connection starts as "connecting"), never at the last event's time.
+  const startEdge = Math.max(edgeOf(), wallNow() ?? Number.NEGATIVE_INFINITY);
   const start = isSim ? Math.min(duration, Math.max(0, options.at ?? 0)) : clamp(options.at ?? startEdge, startEdge);
 
   let state: SceneStoreState = {
@@ -296,6 +324,8 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   const listeners = new Set<() => void>();
   let ownVersion = log.version();
   let frame: number | null = null;
+  /** A wait (no frames) while nothing moves at the live edge. */
+  let wait: number | null = null;
   let lastFrameAt = 0;
   let nonce = 0;
 
@@ -365,11 +395,18 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     );
   };
 
-  /** Live: the edge now, carried by the browser's clock only while the connection is live. */
+  /**
+   * Live: the edge now. With a wall clock: now (corrected), while the connection is connecting or
+   * live. Without one: carried by the store's clock past the last confirmation, only while live.
+   * Frozen otherwise (stale, reconnecting, disconnected, no session).
+   */
   const liveEdgeNow = (now: number): number => {
     const head = log.headTime() ?? confirmed;
     const base = Math.max(confirmed, head);
-    if (state.connection?.state !== "live") return Math.max(state.liveAt, base);
+    const conn = state.connection?.state;
+    const wall = wallNow();
+    if (wall !== null) return conn === "live" || conn === "connecting" ? Math.max(state.liveAt, base, wall) : Math.max(state.liveAt, base);
+    if (conn !== "live") return Math.max(state.liveAt, base);
     return Math.max(state.liveAt, base, confirmed + Math.min(LIVE_EXTRAPOLATION_MS, Math.max(0, now - confirmedWall)));
   };
 
@@ -377,6 +414,25 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   // (a subscriber): a store made and dropped unwatched (React's development double render) holds no
   // frame loop, so none leaks.
   const loopWanted = (): boolean => state.playing || (source === "live" && state.following && listeners.size > 0);
+
+  /**
+   * The next wake-up of a live store following the edge: a frame while a motion is in progress (or
+   * on a clock without waits); otherwise one wait until the clock label's next whole second (R7).
+   */
+  const scheduleIdle = (): void => {
+    if (frame !== null || wait !== null) return;
+    const edge = state.liveAt;
+    if (edge < motionUntil || !clock.later) {
+      frame = clock.request(onFrame);
+      return;
+    }
+    // Just past the next whole second of the edge, so the label's second changes when it is shown.
+    const delay = 1000 - (((edge % 1000) + 1000) % 1000) + 4;
+    wait = clock.later((now) => {
+      wait = null;
+      onFrame(now);
+    }, delay);
+  };
 
   const onFrame = (now: number): void => {
     frame = null;
@@ -401,17 +457,27 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       // A replay that reaches the edge re-attaches (live) or stops (replay: there is nothing after it).
       set({ liveAt, playhead, following: reached && source === "live", playing: !(reached && source === "replay") && state.playing });
     } else if (liveAt !== state.liveAt) set({ liveAt });
-    if (loopWanted()) frame = clock.request(onFrame);
+    if (!loopWanted()) return;
+    // Playback moves every frame; following the live edge with nothing moving waits instead (R7).
+    if (state.playing) frame = clock.request(onFrame);
+    else scheduleIdle();
   };
 
   const startLoop = (): void => {
     if (frame !== null) return;
+    if (wait !== null) {
+      // Something to show now (playback, an arrival, a seek): wake at the next frame, not the next second.
+      clock.cancelLater?.(wait);
+      wait = null;
+    }
     lastFrameAt = clock.now();
     frame = clock.request(onFrame);
   };
   const stopLoop = (): void => {
     if (frame !== null) clock.cancel(frame);
     frame = null;
+    if (wait !== null) clock.cancelLater?.(wait);
+    wait = null;
   };
 
   const seek = (t: number): void => {
@@ -521,12 +587,15 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
         confirmed = head;
         confirmedWall = clock.now();
       }
+      // An arrival may start a motion: frames until its window has passed, then waits again (R7).
+      if (head !== null) motionUntil = Math.max(motionUntil, head + LIVE_MOTION_MS);
       const liveAt = Math.max(state.liveAt, edgeOf());
       // Selection, hover, view, camera intent and a replay's playhead are kept; a following playhead stays at the edge.
       const playhead = state.following ? liveAt : clamp(state.playhead, liveAt);
       // The shown log changed only when it is the store's own; a history window does not change with arrivals.
       if (!shown) version += 1;
       set({ logVersion: shown ? state.logVersion : version, arrived, liveAt, playhead, extent: extentNow(liveAt) });
+      if (source === "live" && loopWanted() && liveAt < motionUntil) startLoop();
     },
     setLiveEdge(t) {
       if (source !== "live" || !(t > confirmed)) return;
@@ -534,6 +603,12 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       confirmedWall = clock.now();
       const liveAt = Math.max(state.liveAt, t);
       set({ liveAt, playhead: state.following ? liveAt : state.playhead, extent: extentNow(liveAt) });
+    },
+    observeClock(observerNowMs) {
+      if (!wallClock || !Number.isFinite(observerNowMs)) return;
+      const offset = observerNowMs - wallClock();
+      // Small differences are the request's own latency, not a clock difference.
+      if (Math.abs(offset - clockOffset) > 250) clockOffset = offset;
     },
     setConnection(status) {
       if (source !== "live" || status === state.connection) return;

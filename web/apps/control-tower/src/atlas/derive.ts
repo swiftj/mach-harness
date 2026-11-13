@@ -11,7 +11,7 @@
  * after it (`late`) is drawn at its end state: its travel already happened and is not replayed.
  */
 import { animationProgress, liftedArc, type ArtifactKind as UiArtifactKind, type FactoryAnimationName, type FactoryState, type GatePosition, type MarkState, type ModelTier as UiTier, type AgentRole as UiRole, type ToolFamily, type Vec3 } from "@mach/ui";
-import { agentTimingAt, createLogFold, entityAt, eventsInWindow, isKnown, toolActivity, type ActivityState, type AgentState, type ArtifactState, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SceneSource, type StationId, type StationVisit, type ToolCallState } from "../sim";
+import { agentTimingAt, createLogFold, entityAt, eventsInWindow, gateStateWords, isKnown, latestGateOf, toolActivity, type ActivityState, type AgentState, type ArtifactState, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SceneSource, type StationId, type StationVisit, type ToolCallState } from "../sim";
 import { PLAYBACK_BASE_RATE } from "../scene";
 import { FLOOR_Z, PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
 
@@ -311,35 +311,21 @@ export function gateView(gate: GateState | undefined | null, t: number, reduced:
 
 /**
  * A gate's state in words, from the gate's own record (never from its arm's position, nor from the
- * cell's stage): "passed", "refused", "overridden (test-passed-first-run)", "waiting for a person",
- * "deciding", "not needed", or "not reached yet" when no record exists.
+ * cell's stage), in the inspector's words (`gateStateWords`, one source for every view, D10):
+ * "passed", "refused: <reason>", "overridden: <reason>", "waiting for a person", "checking", "not
+ * needed", or "not reached yet" when no record exists.
  */
 export function gateWord(gate: GateState | undefined | null): string {
   if (!gate) return "not reached yet";
-  switch (gate.state) {
-    case "open":
-      return "deciding";
-    case "waiting":
-      return "waiting for a person";
-    case "passed":
-      return "passed";
-    case "skipped":
-      return "not needed";
-    case "overridden":
-      return `overridden${gate.reasonCode ? ` (${gate.reasonCode})` : ""}`;
-    case "failed":
-      return `refused${gate.reasonCode ? ` (${gate.reasonCode})` : ""}`;
-  }
+  const words = gateStateWords(gate);
+  return words[0]!.toLowerCase() + words.slice(1);
 }
 
 /** The most recent gate of a kind (optionally for one ticket) that has opened by now. */
 export function latestGate(scene: Scene, kind: GateState["gate"], ticketId?: string): GateState | null {
-  let found: GateState | null = null;
-  for (const g of Object.values(scene.gates)) {
-    if (g.gate !== kind || (ticketId && g.ticketId !== ticketId)) continue;
-    if (!found || g.openedAt > found.openedAt || (g.openedAt === found.openedAt && g.seq > found.seq)) found = g;
-  }
-  return found;
+  // Indexed per gate record (a bay asks this on every store change; a scan of every gate per bay
+  // was the Atlas's largest allocation on a long history, D17).
+  return latestGateOf(scene, kind, ticketId);
 }
 
 // ---------------------------------------------------------------- station visits

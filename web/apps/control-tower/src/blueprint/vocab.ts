@@ -101,6 +101,8 @@ export function stationKind(station: string): StationKind {
 /** Simulation gate kinds to the grammar's glyphs (pass 3 added `plan-check`). */
 export function grammarGate(gate: GateState["gate"]): GrammarGate {
   switch (gate) {
+    case "recorded":
+      return "audit";
     case "plan-check":
       return "plan-check";
     case "audit":
@@ -126,6 +128,7 @@ export const GATE_WORDS: Record<GateState["gate"], string> = {
   review: "Review consensus",
   "human-approval": "Human approval",
   "merge-revalidation": "Merge revalidation",
+  recorded: "Recorded gate",
 };
 
 /** A gate's grammar state. An override lets the work through (succeeded), and every caller marks it overridden by shape too (`gateOverridden`). */

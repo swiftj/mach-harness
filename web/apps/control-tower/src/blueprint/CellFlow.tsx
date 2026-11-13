@@ -55,6 +55,7 @@ const SHORT_GATE: Record<GateState["gate"], string> = {
   review: "Consensus",
   "human-approval": "Human",
   "merge-revalidation": "Revalidate",
+  recorded: "Gate",
 };
 
 export interface CellFlowProps {
@@ -189,12 +190,24 @@ function Route({ from, to }: { from: FlowNode; to: FlowNode }) {
   const pts = routePoints(from, to);
   if (!built) {
     // Not reached yet: the grammar's planned route, a dashed hairline at full contrast (spec c.3.1).
-    return <RoutePath variant="blueprint" points={pts} planned />;
+    return <FlowPath points={pts} planned />;
   }
   const active = !stale && ((to.visit && to.visit.leftAt === null && to.visit.station !== "human-approval") || (to.gate?.state === "open" && to.gate.gate !== "red-before-green"));
   const state: FactoryState = active ? "active" : "succeeded";
-  return <RoutePath variant="blueprint" points={pts} state={state} progress={startT === null ? 1 : draw} />;
+  return <FlowPath points={pts} state={state} progress={startT === null ? 1 : draw} />;
 }
+
+/**
+ * A flow route, drawn again only when its points, state or progress change: a lane re-renders on
+ * every change to its cell, and each draw of a route computes its marks (a 1,261-lane sheet's largest
+ * allocation while a long history loads, D17). Same output as RoutePath itself.
+ */
+const FlowPath = memo(
+  function FlowPath({ points, planned, state, progress }: { points: { x: number; y: number }[]; planned?: boolean; state?: FactoryState; progress?: number }) {
+    return planned ? <RoutePath variant="blueprint" points={points} planned /> : <RoutePath variant="blueprint" points={points} state={state} progress={progress} />;
+  },
+  (a, b) => a.planned === b.planned && a.state === b.state && a.progress === b.progress && a.points.length === b.points.length && a.points.every((p, i) => p.x === b.points[i]!.x && p.y === b.points[i]!.y),
+);
 
 function Retry({ from, to }: { from: FlowNode; to: FlowNode }) {
   const late = useLate(from.gate?.meta.eventId);

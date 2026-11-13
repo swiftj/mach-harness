@@ -17,6 +17,9 @@ export type { FactoryStatus, RuntimeState, RuntimeSummary };
 export interface FetchResponseLike {
   readonly status: number;
   json(): Promise<unknown>;
+  /** The reply's headers (the browser's fetch has them; a test double may not). */
+  readonly headers?: { get(name: string): string | null };
+  text?(): Promise<string>;
 }
 export type FetchLike = (url: string, init?: { readonly headers?: Readonly<Record<string, string>>; readonly credentials?: "same-origin" }) => Promise<FetchResponseLike>;
 
@@ -58,6 +61,8 @@ export interface ObserverSession {
   } | null;
   readonly people: "role";
   readonly project: string | null;
+  /** The observer's clock when it answered (Unix ms), if the session says it (`now_ms`, or `now`); else null. */
+  readonly nowMs: number | null;
 }
 
 export interface EventsPage {
@@ -172,6 +177,35 @@ export interface ArtifactEntry {
   /** The visit it belongs to; null when no visit fits. */
   readonly visit: ArtifactVisitLink | null;
   readonly contentAccess: string | null;
+  /**
+   * The served text holds free prose the observer cannot check for names no record gives (`free_text`,
+   * R1, the product owner's decision): it is served, and must be labelled wherever it is listed or
+   * opened. False for media, records of identifiers only, and content that is not served.
+   */
+  readonly freeText: boolean;
+  /** The observer's own words for it (`free_text_note`), e.g. "free text, not checked for names"; null when not free text. */
+  readonly freeTextNote: string | null;
+}
+
+/** The label every listing or opening of a free-text evidence document carries (R1). */
+export const FREE_TEXT_LABEL = "Free text, not checked for names";
+
+/** The label for a catalog entry, or null when it holds no free text. */
+export function freeTextLabel(entry: Pick<ArtifactEntry, "freeText"> | null | undefined): string | null {
+  return entry?.freeText ? FREE_TEXT_LABEL : null;
+}
+
+/** What an artifact content reply's headers say (`X-MACH-Free-Text`, `X-MACH-Redacted`). */
+export interface ContentLabels {
+  readonly freeText: boolean;
+  /** Replacements the observer made, when it says. */
+  readonly redacted: number | null;
+}
+export function readContentLabels(headers: { get(name: string): string | null } | null | undefined): ContentLabels {
+  const free = headers?.get("X-MACH-Free-Text") ?? null;
+  const red = headers?.get("X-MACH-Redacted") ?? null;
+  const n = red === null ? NaN : Number(red);
+  return { freeText: free !== null && free.trim().toLowerCase() === "unchecked-for-names", redacted: Number.isFinite(n) ? n : null };
 }
 
 /**
@@ -201,6 +235,8 @@ export interface ObserverClient {
   cell(ticket: string): Promise<ObserverCell>;
   /** The evidence catalog, metadata only (`/artifacts`), one page. */
   artifacts(query?: { readonly ticket?: string; readonly limit?: number; readonly offset?: number }): Promise<{ readonly items: readonly ArtifactEntry[]; readonly more: boolean }>;
+  /** One served text (`/artifacts/{id}/content`) with what its headers say (free text, redactions). */
+  artifactContent(id: string): Promise<{ readonly text: string; readonly labels: ContentLabels }>;
   /** The current waves, slices, cells and executions, paged through (see ObserverSummaries). */
   summaries(): Promise<ObserverSummaries>;
 }
@@ -322,6 +358,8 @@ export function readArtifactEntry(value: unknown): ArtifactEntry {
     commit: str(a.commit) || null,
     visit,
     contentAccess: str(a.content_access),
+    freeText: a.free_text === true,
+    freeTextNote: a.free_text === true ? (str(a.free_text_note) ?? "free text, not checked for names") : null,
   };
 }
 
@@ -438,6 +476,7 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
           : null,
         people: "role",
         project: str(obj(d.project).folder),
+        nowMs: num(d.now_ms) ?? (typeof d.now === "string" && Number.isFinite(Date.parse(d.now)) ? Date.parse(d.now) : null),
       };
     },
     async events(after, limit = 1000) {
@@ -513,6 +552,17 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       if (query.offset) q.set("offset", String(query.offset));
       const d = await get(`/artifacts?${q.toString()}`);
       return { items: list(d.items).map(readArtifactEntry), more: d.more === true };
+    },
+    async artifactContent(id) {
+      let response: FetchResponseLike;
+      try {
+        response = await options.fetch(`${base}/artifacts/${encodeURIComponent(id)}/content`, { credentials: "same-origin" });
+      } catch (error) {
+        throw new ObserverError("network", error instanceof Error ? error.message : "The observer did not answer.", 0);
+      }
+      if (response.status !== 200) throw new ObserverError(response.status === 404 ? "not_found" : response.status === 401 ? "unauthorized" : "unavailable", `The artifact's content was not served (${response.status}).`, response.status);
+      const text = response.text ? await response.text() : String(await response.json());
+      return { text, labels: readContentLabels(response.headers) };
     },
     async summaries() {
       let cursor: string | null = null;

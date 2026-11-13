@@ -222,7 +222,7 @@ function buildCell(scene: Scene, slice: SliceState, cell: CellState, executions:
     }
     for (const i of items) kids.push(i.node);
     const activity = activityOf(scene, ref.execution(x.id));
-    const state = `${activityWords(activity.state)}${x.state === "completed" && x.outcome?.waitingFor ? `, waiting for ${x.outcome.waitingFor}` : ""}`;
+    const state = `${activity.label ? activity.label.toLowerCase() : activityWords(activity.state)}${x.state === "completed" && x.outcome?.waitingFor ? `, waiting for ${x.outcome.waitingFor}` : ""}`;
     const span = execSpan(x);
     const name = `Execution ${xi + 1} of ${executions.length}, ${x.workflow ?? "workflow"}, ${state}, started ${clock(span.start)}${span.end !== null ? `, ended ${clock(span.end)}` : ""}`;
     children.push({ id: xid, ref: ref.execution(x.id), kind: "execution", level: xLevel, parent: laneId, children: kids, name, ticketId: cell.ticketId, data: { kind: "execution", execution: x, index: xi, count: executions.length } });

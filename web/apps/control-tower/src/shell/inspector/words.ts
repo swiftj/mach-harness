@@ -3,7 +3,7 @@
  * D8, D13, D14, D17), as plain functions over the scene's own state, so they are tested
  * (test/m62-acceptance.test.mjs) rather than left inside JSX. No React here.
  */
-import { GAP_CLASS_WORDS, type Completeness, type PlanFacts, type StreamObservationState, type VisitStatus } from "../../sim";
+import { GAP_CLASS_WORDS, type Completeness, type PlanFacts, type StationVisit, type StreamObservationState, type VisitStatus } from "../../sim";
 import type { ConnectionStatus, RuntimeSummary } from "../../scene/connection";
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString("en-GB")} ${n === 1 ? one : many}`;
@@ -148,4 +148,15 @@ export function deliveryLagWords(ms: number | null): string {
   if (ms === null) return "Not reported";
   if (ms < 1000) return "under a second";
   return `${(ms / 1000).toFixed(1)} s`;
+}
+
+/**
+ * When a visit left, in words (R4): still open, waiting for a person, or ended without an exit
+ * record at a bound. Plain text with the time formatted by `clock` (never an element, so it can
+ * never print as "[object Object]"). An ended visit with an exit record is its own time.
+ */
+export function visitLeftWords(visit: Pick<StationVisit, "leftAt">, status: Pick<VisitStatus, "state">, clock: (t: number) => string): string {
+  if (visit.leftAt === null) return status.state === "waiting-person" ? "not yet: waiting for a person" : "still open";
+  if (status.state === "ended-unrecorded") return `no exit record; ended by ${clock(visit.leftAt)} at the latest`;
+  return clock(visit.leftAt);
 }

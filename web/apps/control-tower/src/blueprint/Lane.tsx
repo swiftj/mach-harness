@@ -56,10 +56,10 @@ export function wrap(text: string, max: number): string[] {
 }
 
 /** The lane's story in a few words, for the overview lettering: what happened that matters. */
-function storyOf(lane: Lane, activity: ActivityState | null): string[] {
+function storyOf(lane: Lane, activity: ActivityState | null, label: string | null = null): string[] {
   const { cell, slice } = lane;
   if (!cell) return [slice.scheduler === "waiting-on-dependency" ? `Waits for ${slice.dependsOn.map((d) => d.replace("SLICE-", "")).join(" and ")}` : slice.scheduler];
-  const out = [`${stageWords(cell.stage)}${cell.round > 1 ? ` · round ${cell.round}` : ""}${activity === "stale" || activity === "unknown" || activity === "interrupted" ? ` · ${activityWords(activity)}` : ""}`];
+  const out = [`${stageWords(cell.stage)}${cell.round > 1 ? ` · round ${cell.round}` : ""}${activity === "stale" || activity === "unknown" || activity === "interrupted" ? ` · ${label ? label.toLowerCase() : activityWords(activity)}` : ""}`];
   const human = [...cell.reviews].reverse().find((r) => r.humanApproval)?.humanApproval;
   const rejected = cell.reviews.find((r) => r.outcome === "REJECTED");
   const failedCheck = cell.verifications.find((v) => v.status === "FAIL_WITH_EVIDENCE")?.checks.find((c) => c.result === "fail");
@@ -96,6 +96,8 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   // The simulation's lanes keep the stage's mark (M6.0); a real history's lanes carry its activity state.
   const simulated = useScene((sc) => sc.provenance.source === "simulation");
   const activity = useScene((sc) => (simulated ? null : activityOf(sc, cell ? `cell:${cell.ticketId}` : `slice:${slice.id}`, { stale: staleSince !== null }).state));
+  // Its own label when the state says too little (R6: idle, the outcome not recorded yet).
+  const activityText = useScene((sc) => (simulated ? null : (activityOf(sc, cell ? `cell:${cell.ticketId}` : `slice:${slice.id}`, { stale: staleSince !== null }).label?.toLowerCase() ?? null)));
   const { ax, aw, width } = layout;
   const x = SHEET.left;
   const w = width - SHEET.left * 2;
@@ -138,7 +140,7 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   const overSize = Math.max(30, Math.min(44, headH / 6));
   // Characters per line at Source Sans 3 bold: about 0.5 em each (measured 0.48 on the fixture's titles).
   const overLines = wrap(slice.title, Math.floor((SHEET.gutter - 66) / (overSize * 0.5))).slice(0, headH > 200 ? 4 : 3);
-  const story = storyOf(lane, activity);
+  const story = storyOf(lane, activity, activityText);
   const group = (
     <LaneDimContext.Provider value={dimmed}>
       {lane.expanded ? deps.map((d) => <DependencyItem key={d.id} node={d} pos={at(d)} size={kids} />) : null}
@@ -205,7 +207,7 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
               <text x={tx} y={stageY} style={{ fill: "var(--mach-ink)", fontSize: 10 }}>
                 {stageWords(cell.stage)}
                 <tspan style={{ fill: cell.round > 1 ? fc("fail") : "var(--mach-ink-muted)" }}> · round {cell.round} of 3</tspan>
-                {activity ? <tspan style={{ fill: activity === "interrupted" || activity === "failed" ? fc("fail") : "var(--mach-ink-muted)" }}> · {activity === "stale" ? `as last seen at ${clock(staleSince ?? 0)}` : activityWords(activity)}</tspan> : null}
+                {activity ? <tspan style={{ fill: activity === "interrupted" || activity === "failed" ? fc("fail") : "var(--mach-ink-muted)" }}> · {activity === "stale" ? `as last seen at ${clock(staleSince ?? 0)}` : (activityText ?? activityWords(activity))}</tspan> : null}
               </text>
               <text x={tx} y={schedY} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }} className="tabular">
                 {schedLine}

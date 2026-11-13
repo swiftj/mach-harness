@@ -28,6 +28,7 @@ import {
   type Lod,
   type Vec3,
 } from "@mach/ui";
+import { chamberGate } from "./consensus";
 import { FloorLettering } from "@mach/ui";
 import { PANELS, capacityWaitOf, capacityWaits, eventsInWindow, type CapacityWaitState, isKnown, ref, type Risk, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
@@ -247,6 +248,8 @@ export function ChamberWorks() {
   const occ = chamberOccupant(scene, t, prefer);
   const round_ = occ ? occ.cell.reviews[occ.roundIndex] : undefined;
   const gate = occ ? scene.gates[`${occ.cell.ticketId}/review#${round_?.round ?? 1}`] : null;
+  // What the chamber's gate names and selects: one gate, in the inspector's words (D10).
+  const named = chamberGate(scene, occ, prefer, sitting.length);
   const v = gateView(gate, t, reduced);
   const lamps: GateLamp[] = SEATS.map((s) => {
     const seat = round_?.seats.find((x) => x.seat === s);
@@ -268,12 +271,9 @@ export function ChamberWorks() {
   const fanStates: FactoryState[] = SEATS.map((_, i) => (round_?.decidedAt != null ? (joinStates[i] ?? "idle") : "active"));
   const dim = occ ? isDimmed(highlight, ref.cell(occ.cell.ticketId)) : false;
   const packet = occ ? occ.cell.artifacts.find((a) => a.kind === "review-packet" && a.round === round_?.round) : undefined;
-  const gateRef: EntityRef = gate ? `gate:${gate.id}` : "gate:review";
+  const gateRef: EntityRef = named.ref;
   const anyReview = Object.values(scene.cells).some((c) => c.reviews.length > 0);
   const consensusText = round_?.outcome ? `Consensus · ${round_.outcome === "AWAITING_HUMAN" ? "needs a person" : round_.outcome.toLowerCase()}` : "Consensus";
-  // The consensus gate's state from its own record (D10); the panel's outcome is said beside it, and
-  // a person's approval is the human gate's, a separate gate.
-  const outcomeWords = round_?.outcome === "AWAITING_HUMAN" ? "the panel approved; a person must approve next at the human approval gate" : round_?.outcome ? `panel outcome ${round_.outcome}` : null;
   return (
     <g style={{ opacity: dim ? 0.28 : 1 }}>
       {/* Seats inlaid in the chamber floor, each lettered. */}
@@ -334,8 +334,11 @@ export function ChamberWorks() {
       {round_?.delta && lod !== "far" ? (
         <FloorLettering at={{ x: L.regions.review.x + 16, y: L.regions.review.y + 41, z: PLATE_Z }} text={`DELTA ${round_.delta.sinceCommit.slice(0, 7)} · ${round_.delta.filesChanged.length} FILES`} size={7} font="mono" tone="live" weight={500} decorative />
       ) : null}
-      <Hit entity={gateRef} label={`Review consensus gate${occ ? `, ${occ.cell.ticketId} round ${round_?.round}` : ""}: ${occ ? gateWord(gate) : "no panel sitting"}${outcomeWords ? `; ${outcomeWords}` : ""}${sitting.length > 1 ? `. ${sitting.length} panels sitting` : ""}`}>
-        <GateGlyph kind="consensus" position={v.position} from={v.from} progress={v.progress} overridden={v.overridden} lamps={lamps} at={R.gate} axis="y" lod={lod} showLabel={false} floorLabel={consensusText} planned={!anyReview} />
+      <Hit entity={gateRef} label={named.label}>
+        {/* The drawing's own name (its arm's position) is not the gate's state: the hit target's name is (D10). */}
+        <g aria-hidden="true">
+          <GateGlyph kind="consensus" position={v.position} from={v.from} progress={v.progress} overridden={v.overridden} lamps={lamps} at={R.gate} axis="y" lod={lod} showLabel={false} floorLabel={consensusText} planned={!anyReview} />
+        </g>
       </Hit>
     </g>
   );

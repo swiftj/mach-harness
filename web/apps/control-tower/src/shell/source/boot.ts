@@ -81,6 +81,8 @@ export function createBrowserLive(client: ObserverClient, reducedMotion: boolean
     openStream: (url) => new EventSource(url) as unknown as EventSourceLike,
     clock,
     timers: browserTimers,
+    // The live edge is now from the first frame (R7), on the browser's wall clock corrected by the observer's.
+    wallClock: () => Date.now(),
   });
   store.setReducedMotion(reducedMotion);
   return { store, source };

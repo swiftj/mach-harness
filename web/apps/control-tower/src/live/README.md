@@ -424,3 +424,45 @@ What changed:
 Tests: `test/m62-observer-followups.test.mjs` (each defect reproduced against the previous tree
 first); `live-source`, `m62-followups`, `m62-acceptance` and `live-windows-scale` re-baselined where
 they asserted a snapshot.
+
+## 11. Re-check after the fix rounds (`docs/mach-next/M6_2_ACCEPTANCE.md`, top section)
+
+Tests: `test/m62-recheck-fixes.test.mjs` (each fails against the tree before this pass).
+
+| Item | What the scene, client or views do now |
+|---|---|
+| D6 | `cellGateList(scene, ticket)` (`sim/gates.ts`): every gate the history evaluated for the cell, once: its gate states and every lifecycle evaluation no gate state stands for (each override, refusal and pass: `frozen-tests`, `build.start`, `verify.start`...), oldest first, each a link to its ref. The cell inspector's Gates list is this list. |
+| R5 | Each `GateEvaluation` keeps the ref the observer names it by (`gate:<cell>/<gate>[#<round>]`). `gateOfRef` (used by `entityAt`, `relatedRefs` and the inspector's `selectEntity`) resolves an observer ref to the gate state the evaluation set, or whose kind it is (`plan.check` to `plan-check`, `verify.verdict#1` to `verification#1`, `red-before-green#2` to `red-before-green`), else to a `recorded` gate built from its evaluations (`GateState.gate: "recorded"`, never in `scene.gates`). |
+| D10 | The gate's state in words is one function, `gateStateWords` (moved to `sim/gates.ts`; the shell re-exports it, the Atlas's `gateWord` is it in lower case). The review chamber's gate (`atlas/consensus.ts`, `chamberGate`) names and selects one real gate: the sitting round's, else the latest review gate ("no panel sitting. Last review: LOCAL-001 round 2, passed; the panel approved; a person must approve next..."); the glyph's own name (its arm's position, "Open") is hidden from assistive technology. |
+| R4 | `visitLeftWords` (`shell/inspector/words.ts`): plain text with the time formatted, never an element interpolated into a string. |
+| R6 | `executionStatusOf(x)`: "Ended, outcome not recorded yet" once its process ended (`processEndedAt` or `ended`) and the supervisor has not recorded it. `Activity.label` carries the same for views (`activityLabel`): the execution's "Ended, outcome not recorded yet", the cell's "Idle, outcome not recorded yet" or "Idle between executions"; the Atlas mast and cell labels, the Blueprint's lanes, rows and tree, and the inspector use it. |
+| R7 | The store takes a `wallClock` (the browser passes `Date.now`): while connecting or live, the live edge is now from the first frame, corrected by the observer's clock (`observeClock`, from each heartbeat's `at_ms` and a session `now_ms`/`now` when the observer gives one); frozen when stale or lost, as before. Without a wall clock (tests) the old extrapolation stands. Following the edge with nothing moving, the loop asks for no frames: one wait (`Clock.later`) to the next whole second for the clock label, frames only for `LIVE_MOTION_MS` (2.5 s) after an arrival, every frame while playing. `timeCodeText` (`shell/time.ts`) shows "--:--:--, No events yet" before any moment, never 1 January 1970; stale and confirmed times are guarded the same way (`isMoment`). |
+| R1 label | Catalog entries carry `freeText` and `freeTextNote` (`free_text`, `free_text_note`); `readContentLabels` reads `X-MACH-Free-Text` and `X-MACH-Redacted`; `client.artifactContent(id)` returns both. The inspector reads the catalog once per ticket (`shell/inspector/catalog.ts`) and labels every artifact row and the artifact's facts "Free text, not checked for names" (`FREE_TEXT_LABEL`). |
+
+**D17, memory on a 230,853-event history** (the H200 copy, built observer, headless Chromium, 1512x982;
+`performance.memory` sampled every 100 ms, and `Runtime.getHeapUsage` after two forced GCs):
+
+| Measure | Before | After |
+|---|---|---|
+| Peak JS heap used while loading (total reserved) | 827 to 856 MB (880 to 919) | **340 MB (398)** |
+| Used 4 s after load, no forced GC | 799 to 845 MB | 229 to 232 MB |
+| Live after a forced GC (Atlas / Blueprint) | 185 / 183 MB | 179 / 179 MB |
+| Allocated during load and 4 s after (sampling profile, garbage included) | 6.9 GB | 0.9 GB |
+| Page load to live | 10.4 to 11.6 s | 2.8 to 3.0 s |
+| Idle live page: frames per second, DOM mutations per second | every frame; 36 mutations/s (headless, throttled) | 0.2; 13 |
+
+Where it went, and what changed: (1) `activityOf` scanned every gate for every cell
+(`Object.values(scene.gates).find(...)`), and the Atlas's `latestGate` and the Blueprint's
+`revisionsOf` did the same per bay or cell, on every store change, and the live loop changed the
+store every frame: 5.1 GB of the 6.9 GB was that scan. Now the human gate is looked up by id,
+gates are indexed per ticket once per `scene.gates` object (`gatesOfTicket`, `latestGateOf`),
+`activityOf` is answered once per scene, and the idle loop no longer changes the store 60 times a
+second. (2) On a plant of 1,261 bays every spur and exit track ran the plant's depth with a chevron
+every 48 units: about 680,000 chevron paths drawn on the first (mid-zoom) frame and dropped at the
+far fit. A plant of more than `DENSE_TRACKS` (48) bays draws its bay tracks without chevrons (the
+arrowed tracks keep theirs; the simulation and the twelve-cell fixture are unchanged), and tracks
+and Blueprint flow routes are drawn again only when their points change (`Track`, `FlowPath`).
+What remains live (about 180 MB) is mostly React's fibers for both views (153,000 DOM nodes: the
+hidden view stays mounted for fast switching) and the scene log (about 25 MB); the suspected
+per-checkpoint copies and summary seeds are small (ingest 12 MB, the bounded start 12 MB).
+Culling the Blueprint's off-screen lanes would be the next step.

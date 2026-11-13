@@ -1154,7 +1154,10 @@ function gateEvaluated(input: Scene, e: E<"gate.evaluated">, at: number): Scene 
   const passed = d.verdict !== "refused";
   const word = gateWord(d.verdict);
   const matched = gateStateOf(d.gate, d.verdict, ticket, round ?? s.cells[ticket]?.round ?? 1);
-  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched }] }));
+  // The observer names the evaluation with its own gate ref (`gate:<cell>/<gate>[#<round>]`, contract
+  // 5.2); kept so that ref resolves to this evaluation (and to the gate state it set), never parsed.
+  const ownRef = e.entities.find((x) => x.startsWith("gate:")) ?? `gate:${ticket}/${d.gate}${round ? `#${round}` : ""}`;
+  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched, ref: ownRef }] }));
   const meta = metaOf(e);
   switch (d.gate) {
     case "audit.readiness":

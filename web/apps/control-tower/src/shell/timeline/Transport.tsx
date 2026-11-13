@@ -14,7 +14,7 @@ import { cn, Tooltip } from "@mach/ui";
 import { cameraFollows, isStale, SPEEDS, useSceneStore, useStore, type PlaybackSpeed } from "../../scene";
 import { indexFor, lastAtOrBefore } from "../history";
 import { stepChapter, togglePlayback } from "../keyboard";
-import { clockAt, duration as words, getTimeBase, timecode, utcClock, utcDate } from "../vocab";
+import { duration as words, isMoment, timeCodeText, timecode, utcClock } from "../vocab";
 import { usePlayheadEffect } from "./playhead";
 
 export function IconButton({ label, shortcut, onClick, children, pressed, className, disabled }: { label: string; shortcut?: string; onClick: () => void; children: ReactNode; pressed?: boolean; className?: string; disabled?: boolean }) {
@@ -46,9 +46,10 @@ export function TimeCode({ size = "md" }: { size?: "md" | "lg" }) {
   const codeRef = useRef<HTMLSpanElement>(null);
   const clockRef = useRef<HTMLSpanElement>(null);
   usePlayheadEffect((s) => {
-    const wall = getTimeBase() === "wall";
-    if (codeRef.current) codeRef.current.textContent = wall ? `${timecode(s.playhead)}${size === "lg" ? " UTC" : ""}` : timecode(s.playhead);
-    if (clockRef.current) clockRef.current.textContent = wall ? `UTC, ${utcDate(s.playhead)}` : `${clockAt(s.playhead)} UTC`;
+    // Never 1 January 1970: a real history with no moment yet says so (R7).
+    const text = timeCodeText(s, size);
+    if (codeRef.current) codeRef.current.textContent = text.code;
+    if (clockRef.current) clockRef.current.textContent = text.clock;
   }, []);
   return (
     <span className="flex items-baseline gap-2 tabular" aria-hidden="true">
@@ -150,7 +151,7 @@ export function LiveState({ compact }: { compact?: boolean }) {
     if (following) {
       return (
         <span className="inline-flex shrink-0 items-center" data-live-state={stale ? "stale" : "live"}>
-          {stale ? <Pill kind="stale">As last seen{staleSince !== null ? ` ${utcClock(staleSince)}` : ""}</Pill> : <Pill kind="edge">At the live edge</Pill>}
+          {stale ? <Pill kind="stale">As last seen{isMoment(staleSince) ? ` ${utcClock(staleSince)}` : ""}</Pill> : <Pill kind="edge">At the live edge</Pill>}
         </span>
       );
     }

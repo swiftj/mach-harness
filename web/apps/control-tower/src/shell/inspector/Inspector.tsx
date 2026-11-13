@@ -8,6 +8,7 @@ import { type ReactNode } from "react";
 import { stations as stationLooks, type FactoryMarkShape, type FactoryState, type StationKind } from "@mach/ui";
 import {
   describeEntry,
+  executionStatusOf,
   finalScene,
   visitStatusOf,
   whyOf,
@@ -128,8 +129,10 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     }
     case "execution": {
       const x = value as ExecutionState;
-      const state: FactoryState = x.state === "running" || x.state === "claimed" ? "active" : x.state === "failed" ? "failed" : "succeeded";
-      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: x.state, phase: state === "active" ? "running" : "finished", since: x.endedAt ?? x.startedAt };
+      // Its process may have ended before the supervisor recorded it (R6): ended, outcome not recorded yet.
+      const status = executionStatusOf(x);
+      const state: FactoryState = status.running ? "active" : x.state === "failed" ? "failed" : x.state === "completed" ? "succeeded" : "idle";
+      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: status.word, phase: status.running ? "running" : "finished", since: x.endedAt ?? x.processEndedAt ?? x.startedAt };
     }
     case "visit": {
       const v = value as VisitEntity;
