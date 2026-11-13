@@ -1,0 +1,1151 @@
+/**
+ * The tracks' canvas drawing: every visible row in one pass, imperatively. Colours come from the
+ * palette (CSS variables), geometry from the timing grammar of design section 5:
+ *
+ *   measured     solid body, square caps (2 px) or the family's own ends (tick, bracket)
+ *   bounded      solid between the certain parts; the uncertain end a bracket pair over
+ *                not_before..not_after, hatched inside
+ *   inferred     the inferred end unfilled with a dashed 3/2 outline and an open arrowhead cap; "≈"
+ *   open         runs to the live edge, its right end fading in steps, no cap, never an outcome
+ *   unknown      a ring-query mark at the known end and a dotted 24 px stub away from it
+ *   interrupted  a halt cut mark at the recorded stop and a dotted bridge to where work was taken up
+ *
+ * Families differ by shape: visits are 8 px bars; executions 5 px hollow rails with tick ends;
+ * workflows a bracketed rail; agents a tier-shaped head and a 3 px line; waits dashed bands with a
+ * stop bar; a person's wait a terracotta band under a down-triangle; tools 1 x 6 ticks; ribbons
+ * 3 px strips under the row's own spans. Nothing is drawn after the live edge.
+ */
+import { type FlatRow, type SpanAuthority, type SpanKind, type TimelineMark, type TimelineSpan, type TimeWindow } from "../contract";
+import { EMPTY_PLAN, LOD, planRow, runAlpha, subtreeColumns, type PlacedSpan, type RowPlan, type SubtreeColumns } from "./lod";
+import { toneInk, toneOf, type Palette, type Tone } from "./palette";
+import { scaleOf, xAt, type Scale } from "./scale";
+import { durationText } from "./words";
+
+export type Family = "lifetime" | "bracket" | "bar" | "task" | "rail" | "claim" | "workflow" | "agent" | "tool" | "wait" | "person";
+
+export function familyOf(kind: SpanKind): Family {
+  switch (kind) {
+    case "wave":
+    case "cell":
+      return "lifetime";
+    case "round":
+      return "bracket";
+    case "visit":
+      return "bar";
+    case "task":
+      return "task";
+    case "execution":
+      return "rail";
+    case "claim":
+      return "claim";
+    case "workflow":
+      return "workflow";
+    case "agent":
+    case "seat":
+      return "agent";
+    case "tool":
+      return "tool";
+    case "person-wait":
+    case "gate-wait":
+      return "person";
+    default:
+      return "wait";
+  }
+}
+
+/** Body thickness per family, CSS px. */
+export const THICKNESS: Readonly<Record<Family, number>> = { lifetime: 1, bracket: 1, bar: 8, task: 5, rail: 5, claim: 1, workflow: 2, agent: 3, tool: 6, wait: 6, person: 6 };
+
+// ---------------------------------------------------------------- row geometry
+
+export interface RowGeom {
+  readonly y: number;
+  readonly h: number;
+  /** The body's centre line. */
+  readonly cy: number;
+  /** Labels above the body (rows 24 px and taller) or inline after its start (thin rows). */
+  readonly labelTop: boolean;
+  readonly labelY: number;
+  /** Top of the 3 px ribbon strip, when the row carries ribbons. */
+  readonly ribbonY: number | null;
+}
+
+export function rowGeom(row: FlatRow, y: number): RowGeom {
+  const h = row.height;
+  const ribbons = row.lane === 0 && row.node.ribbons.length > 0;
+  const labelTop = h >= 24;
+  const top = y + (labelTop ? 12 : 0);
+  const bottom = y + h - (ribbons ? 6 : 0);
+  const cy = Math.round((top + bottom) / 2) + (labelTop ? 0 : 0.5);
+  return { y, h, cy, labelTop, labelY: y + 10, ribbonY: ribbons ? y + h - 5 : null };
+}
+
+// ---------------------------------------------------------------- text
+
+const widths = new Map<string, number>();
+function measure(ctx: CanvasRenderingContext2D, font: string, text: string): number {
+  const key = `${font}|${text}`;
+  const w = widths.get(key);
+  if (w !== undefined) return w;
+  const m = ctx.measureText(text).width;
+  if (widths.size > 4000) widths.clear();
+  widths.set(key, m);
+  return m;
+}
+
+/** The text, or as much of it as fits followed by an ellipsis, or null when not even three characters fit. */
+function fit(ctx: CanvasRenderingContext2D, font: string, text: string, max: number): string | null {
+  if (max <= 6) return null;
+  if (measure(ctx, font, text) <= max) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (measure(ctx, font, `${text.slice(0, mid)}…`) <= max) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo >= 3 ? `${text.slice(0, lo).trimEnd()}…` : null;
+}
+
+const STATION_SHORT: Readonly<Record<string, string>> = { "human-approval": "Approval" };
+
+function cap(s: string): string {
+  return s ? s[0]!.toUpperCase() + s.slice(1) : s;
+}
+
+/** The short label drawn on a span (the sentence is the hover card's). */
+export function shortLabel(span: TimelineSpan): string {
+  const a = span.attrs;
+  switch (span.kind) {
+    case "visit": {
+      const st = a.action ?? span.ids.station ?? "visit";
+      return STATION_SHORT[st] ?? cap(st.replace(/-/g, " "));
+    }
+    case "round":
+      return a.round ? `Round ${a.round}` : "Round";
+    case "execution":
+      return a.attempt ? `Attempt ${a.attempt}` : "Execution";
+    case "claim":
+      return "Claim";
+    case "workflow":
+      return a.label ?? "Workflow";
+    case "agent":
+      return a.label ?? a.agentType ?? "Agent";
+    case "seat":
+      return a.label ?? "Seat";
+    case "task":
+      return a.label ?? "Task";
+    case "slice-wait":
+      return "Waiting on a dependency";
+    case "slice-eligible":
+      return "Eligible";
+    case "capacity-wait":
+      return "Waiting for capacity";
+    case "agent-queue":
+      return "Queued";
+    case "person-wait":
+      return "Waiting for a person";
+    case "gate-wait":
+      return a.label ?? "Waiting at a gate";
+    case "wave":
+    case "cell":
+      return a.label ?? "";
+    case "tool":
+      return a.label ?? "";
+  }
+}
+
+/** The short duration drawn at a span's right end. */
+export function shortDuration(span: TimelineSpan, from: number, to: number, open: boolean): string {
+  if (open) return durationText(to - from);
+  const d = span.duration;
+  if (d.basis === "bounded" && d.minMs !== null && d.maxMs !== null) {
+    const a = durationText(d.minMs);
+    const b = durationText(d.maxMs);
+    return a === b ? a : `${a} – ${b}`;
+  }
+  const ms = d.ms ?? to - from;
+  return d.basis === "inferred" ? `≈ ${durationText(ms)}` : durationText(ms);
+}
+
+// ---------------------------------------------------------------- glyphs
+
+type Ctx = CanvasRenderingContext2D;
+
+function diamond(ctx: Ctx, x: number, y: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - r);
+  ctx.lineTo(x + r, y);
+  ctx.lineTo(x, y + r);
+  ctx.lineTo(x - r, y);
+  ctx.closePath();
+}
+
+function triangleDown(ctx: Ctx, x: number, y: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x - r, y - r * 0.75);
+  ctx.lineTo(x + r, y - r * 0.75);
+  ctx.lineTo(x, y + r * 0.85);
+  ctx.closePath();
+}
+
+/** The model tier's head: Fable diamond, Opus square, Sonnet circle, Haiku triangle (the grammar's shapes). */
+export function tierHead(ctx: Ctx, model: string | undefined, x: number, y: number) {
+  const m = (model ?? "").toLowerCase();
+  ctx.beginPath();
+  if (m.includes("fable")) {
+    ctx.moveTo(x, y - 4.4);
+    ctx.lineTo(x + 3.6, y);
+    ctx.lineTo(x, y + 4.4);
+    ctx.lineTo(x - 3.6, y);
+    ctx.closePath();
+  } else if (m.includes("opus")) ctx.rect(x - 3.2, y - 3.2, 6.4, 6.4);
+  else if (m.includes("haiku")) {
+    ctx.moveTo(x, y - 3.8);
+    ctx.lineTo(x + 3.6, y + 2.8);
+    ctx.lineTo(x - 3.6, y + 2.8);
+    ctx.closePath();
+  } else if (m.includes("sonnet")) ctx.arc(x, y, 3.4, 0, Math.PI * 2);
+  else {
+    // A model not recorded: a dashed ring, never a tier it may not be.
+    ctx.arc(x, y, 3.4, 0, Math.PI * 2);
+  }
+}
+
+/** The authority glyph (the same shapes as AuthorityBadge): filled, ring with dot, open triangle, dashed ring. */
+export function authorityGlyph(ctx: Ctx, authority: SpanAuthority, x: number, y: number, ink: string, ground: string) {
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = ink;
+  ctx.fillStyle = ink;
+  switch (authority) {
+    case "authoritative":
+      ctx.beginPath();
+      ctx.arc(x, y, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    case "observed":
+      ctx.beginPath();
+      ctx.arc(x, y, 2.6, 0, Math.PI * 2);
+      ctx.fillStyle = ground;
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y, 1.1, 0, Math.PI * 2);
+      ctx.fillStyle = ink;
+      ctx.fill();
+      break;
+    case "reconstructed":
+      ctx.beginPath();
+      ctx.moveTo(x - 2.8, y + 2.4);
+      ctx.lineTo(x, y - 2.8);
+      ctx.lineTo(x + 2.8, y + 2.4);
+      ctx.closePath();
+      ctx.stroke();
+      break;
+    case "simulated":
+      ctx.setLineDash([1.4, 1.3]);
+      ctx.beginPath();
+      ctx.arc(x, y, 2.6, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+  }
+  ctx.restore();
+}
+
+/** The grammar's ring-query: "not known". An open hairline ring with a question mark. */
+export function ringQuery(ctx: Ctx, x: number, y: number, r: number, ink: string, ground: string) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = ground;
+  ctx.fill();
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.lineCap = "round";
+  ctx.lineWidth = 1;
+  ctx.arc(x, y - r * 0.22, r * 0.36, Math.PI * 1.05, Math.PI * 2.35);
+  ctx.lineTo(x, y + r * 0.22);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y + r * 0.55, 0.65, 0, Math.PI * 2);
+  ctx.fillStyle = ink;
+  ctx.fill();
+  ctx.restore();
+}
+
+/** The halt cut: a gap through the body and two slashes in the halt ink, at x. */
+function haltCut(ctx: Ctx, x: number, cy: number, th: number, p: Palette) {
+  const h = Math.max(10, th + 6);
+  ctx.save();
+  ctx.fillStyle = p.ground;
+  ctx.beginPath();
+  ctx.moveTo(x - 2.5, cy + h / 2);
+  ctx.lineTo(x + 0.5, cy - h / 2);
+  ctx.lineTo(x + 3.5, cy - h / 2);
+  ctx.lineTo(x + 0.5, cy + h / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = p.halt;
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(x - 2.8, cy + h / 2);
+  ctx.lineTo(x + 0.2, cy - h / 2);
+  ctx.moveTo(x + 0.8, cy + h / 2);
+  ctx.lineTo(x + 3.8, cy - h / 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function hatch(ctx: Ctx, x0: number, y0: number, x1: number, y1: number, ink: string) {
+  if (x1 - x0 < 0.5) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y0, x1 - x0, y1 - y0);
+  ctx.clip();
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 0.9;
+  ctx.globalAlpha *= 0.75;
+  ctx.beginPath();
+  const h = y1 - y0;
+  for (let x = x0 - h; x < x1 + h; x += 3.5) {
+    ctx.moveTo(x, y1);
+    ctx.lineTo(x + h, y0);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A bound bracket: `[` (dir 1) or `]` (dir -1) of height h about cy. */
+function boundBracket(ctx: Ctx, x: number, cy: number, h: number, dir: 1 | -1, ink: string) {
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(x + 3 * dir, cy - h / 2);
+  ctx.lineTo(x, cy - h / 2);
+  ctx.lineTo(x, cy + h / 2);
+  ctx.lineTo(x + 3 * dir, cy + h / 2);
+  ctx.stroke();
+}
+
+/** An open arrowhead cap pointing outward (dir 1: right, -1: left), as the Blueprint's inferred DimLine. */
+function openArrow(ctx: Ctx, x: number, cy: number, dir: 1 | -1, ink: string) {
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(x - 4.5 * dir, cy - 3.2);
+  ctx.lineTo(x, cy);
+  ctx.lineTo(x - 4.5 * dir, cy + 3.2);
+  ctx.stroke();
+}
+
+// ---------------------------------------------------------------- span painting
+
+interface Paint {
+  readonly ctx: Ctx;
+  readonly p: Palette;
+  readonly scale: Scale;
+  readonly liveAt: number;
+  readonly xLive: number;
+}
+
+export type Box = readonly [number, number, number, number];
+
+type SegKind = "solid" | "inferred" | "hatch" | "fade";
+
+/** One stretch of a body. Fill and edges per family; the caps are drawn after. */
+function segment(c: Paint, fam: Family, xa: number, xb: number, cy: number, th: number, ink: string, soft: string, kind: SegKind, alpha = 1) {
+  const { ctx } = c;
+  if (xb - xa <= 0.01) return;
+  const top = cy - th / 2;
+  ctx.globalAlpha = alpha;
+  switch (fam) {
+    case "bar":
+    case "task":
+    case "rail":
+    case "wait":
+    case "person": {
+      const filled = fam !== "rail";
+      if (kind === "hatch") {
+        hatch(ctx, xa, top, xb, top + th, ink);
+      } else if (filled && kind !== "inferred") {
+        ctx.fillStyle = soft;
+        ctx.fillRect(xa, top, xb - xa, th);
+      }
+      if (fam === "wait" || fam === "person") {
+        // A dashed centre line: waiting, not working.
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 3]);
+        ctx.lineDashOffset = -xa;
+        ctx.beginPath();
+        ctx.moveTo(xa, cy);
+        ctx.lineTo(xb, cy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (kind === "inferred") {
+          ctx.setLineDash([3, 2]);
+          ctx.lineWidth = 1;
+          ctx.strokeRect(xa, top + 0.5, xb - xa, th - 1);
+          ctx.setLineDash([]);
+        }
+        break;
+      }
+      if (kind === "inferred") {
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        ctx.moveTo(xa, top + 0.5);
+        ctx.lineTo(xb, top + 0.5);
+        ctx.moveTo(xa, top + th - 0.5);
+        ctx.lineTo(xb, top + th - 0.5);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        // Solid edges as rectangles: far cheaper than stroked paths, and pixel-exact.
+        ctx.fillStyle = ink;
+        ctx.fillRect(xa, top, xb - xa, 1);
+        ctx.fillRect(xa, top + th - 1, xb - xa, 1);
+      }
+      break;
+    }
+    case "agent":
+    case "claim":
+    case "workflow":
+    case "lifetime": {
+      if (kind === "hatch") {
+        hatch(ctx, xa, cy - 3, xb, cy + 3, ink);
+        break;
+      }
+      const lw = fam === "agent" ? 3 : fam === "workflow" ? 2 : 1;
+      const color = fam === "lifetime" ? c.p.route : ink;
+      if (fam === "agent") ctx.globalAlpha = alpha * 0.6;
+      if (kind === "inferred") {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lw;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        ctx.moveTo(xa, cy);
+        ctx.lineTo(xb, cy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        ctx.fillStyle = color;
+        ctx.fillRect(xa, cy - lw / 2, xb - xa, lw);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** A recorded end's cap, in the family's own form. `dir` -1 is the left end, 1 the right. */
+function recordedCap(c: Paint, fam: Family, x: number, cy: number, th: number, ink: string, dir: 1 | -1) {
+  const { ctx } = c;
+  ctx.fillStyle = ink;
+  switch (fam) {
+    case "bar":
+    case "task":
+      // Square caps, 2 px, standing 2 px proud of the body.
+      ctx.fillRect(dir < 0 ? x : x - 2, cy - th / 2 - 2, 2, th + 4);
+      break;
+    case "rail":
+      ctx.fillRect(dir < 0 ? x : x - 1.5, cy - 6, 1.5, 12);
+      break;
+    case "claim":
+    case "lifetime":
+      ctx.fillStyle = fam === "lifetime" ? c.p.route : ink;
+      ctx.fillRect(dir < 0 ? x : x - 1, cy - 3.5, 1, 7);
+      break;
+    case "workflow":
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(x - 3 * dir, cy - 5);
+      ctx.lineTo(x, cy - 5);
+      ctx.lineTo(x, cy + 5);
+      ctx.lineTo(x - 3 * dir, cy + 5);
+      ctx.stroke();
+      break;
+    case "agent":
+      if (dir > 0) ctx.fillRect(x - 1, cy - 3, 1, 6);
+      break;
+    case "wait":
+      if (dir < 0) ctx.fillRect(x, cy - 6, 1.5, 12); // the stop bar
+      else ctx.fillRect(x - 1, cy - 3, 1, 6);
+      break;
+    case "person":
+      if (dir > 0) ctx.fillRect(x - 1, cy - 3, 1, 6);
+      break;
+    default:
+      break;
+  }
+}
+
+/** Stepped fade at an open right end: work in progress, no cap, no outcome. */
+const FADE_STEPS = [0.82, 0.62, 0.44, 0.28, 0.16, 0.08];
+
+interface Painted {
+  readonly box: Box;
+}
+
+function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | undefined, labels: boolean): Painted {
+  const { ctx, p } = c;
+  const { span, times } = item;
+  const fam = familyOf(span.kind);
+  const th = THICKNESS[fam];
+  const tone: Tone = toneOf(span, times, c.liveAt);
+  const { ink, soft } = toneInk(p, tone);
+  const cy = g.cy;
+
+  // Unknown: a mark at the known end and a fixed stub, never a length.
+  if (times.startUnknown || times.endUnknown) {
+    const x = Math.round(item.x0) + 0.5;
+    const dir = times.startUnknown ? -1 : 1;
+    ctx.save();
+    ctx.strokeStyle = p.fInkSoft;
+    ctx.lineWidth = 1;
+    ctx.lineCap = "round";
+    ctx.setLineDash([1, 2.4]);
+    ctx.beginPath();
+    ctx.moveTo(x + 5 * dir, cy);
+    ctx.lineTo(x + (5 + LOD.stubPx) * dir, cy);
+    ctx.stroke();
+    ctx.restore();
+    ringQuery(ctx, x, cy, 4.2, p.fInkSoft, p.ground);
+    const x0 = dir < 0 ? x - 5 - LOD.stubPx : x - 5;
+    return { box: [x0, cy - 5, x0 + LOD.stubPx + 10, cy + 5] };
+  }
+
+  const X0 = Math.round(item.x0);
+  const X1 = Math.max(X0 + 2, Math.round(item.x1));
+  const s = span.start;
+  const e = span.end;
+  const xOf = (t: number) => Math.round(xAt(c.scale, Math.min(t, c.liveAt)));
+  const open = times.open;
+
+  // Uncertain stretches.
+  const startBound = s && s.at === null && s.notBefore !== null && s.notAfter !== null && s.notAfter > s.notBefore ? [xOf(s.notBefore), xOf(s.notAfter)] as const : null;
+  const endBound = !open && e && e.notBefore !== null && e.notAfter !== null && e.notAfter > e.notBefore ? [xOf(e.notBefore), xOf(e.notAfter)] as const : null;
+  const inferStart = !startBound && s?.basis === "inferred";
+  const inferEnd = !open && !endBound && e?.basis === "inferred";
+  const w = X1 - X0;
+  const inferLen = Math.min(18, Math.max(4, w / 3));
+  const fadeLen = open ? Math.min(24, Math.max(0, w / 2)) : 0;
+
+  let a = startBound ? startBound[1] : inferStart ? X0 + inferLen : X0;
+  let b = endBound ? endBound[0] : inferEnd ? X1 - inferLen : open ? X1 - fadeLen : X1;
+  if (b < a) b = a;
+  // The agent's head stands at its start; its line begins after it.
+  const head = fam === "agent";
+  if (head) a = Math.max(a, X0 + 5);
+
+  if (fam === "bracket") {
+    return paintBracket(c, item, g, ink, labels);
+  }
+
+  // Person waits: the down-triangle at the start, above the band.
+  if (startBound) segment(c, fam, startBound[0], startBound[1], cy, th, ink, soft, "hatch");
+  if (inferStart) segment(c, fam, X0, a, cy, th, ink, soft, "inferred");
+  segment(c, fam, a, b, cy, th, ink, soft, "solid");
+  if (inferEnd) segment(c, fam, b, X1, cy, th, ink, soft, "inferred");
+  if (endBound) segment(c, fam, endBound[0], endBound[1], cy, th, ink, soft, "hatch");
+  if (open && fadeLen > 0) {
+    const step = fadeLen / FADE_STEPS.length;
+    FADE_STEPS.forEach((alpha, i) => segment(c, fam, b + i * step, b + (i + 1) * step, cy, th, ink, soft, "solid", alpha));
+  }
+
+  // Caps: the left end.
+  const capH = th + 6;
+  if (startBound) {
+    boundBracket(ctx, startBound[0], cy, capH, 1, ink);
+    boundBracket(ctx, startBound[1], cy, capH, -1, ink);
+  } else if (inferStart) openArrow(ctx, X0, cy, -1, ink);
+  else if (!head) recordedCap(c, fam, X0, cy, th, ink, -1);
+  // The right end: never a cap while open.
+  if (!open) {
+    if (endBound) {
+      boundBracket(ctx, endBound[0], cy, capH, 1, ink);
+      boundBracket(ctx, endBound[1], cy, capH, -1, ink);
+    } else if (inferEnd) openArrow(ctx, X1, cy, 1, ink);
+    else recordedCap(c, fam, X1, cy, th, ink, 1);
+  }
+
+  if (fam === "person") {
+    triangleDown(ctx, X0 + 0.5, cy - th / 2 - 4, 4);
+    ctx.fillStyle = p.human;
+    ctx.fill();
+  }
+
+  let textFrom = X0 + (fam === "wait" || fam === "person" ? 5 : 3);
+  if (head) {
+    tierHead(ctx, span.attrs.model, X0 + 0.5, cy);
+    ctx.fillStyle = p.ground;
+    ctx.fill();
+    ctx.strokeStyle = tone === "live" ? p.live : p.fInk;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    textFrom = X0 + 7;
+    // A count-only agent: its tool-call count after the head, never invented ticks.
+    if (span.attrs.toolsCountOnly && span.attrs.toolCalls !== undefined && w >= 18) {
+      const font = `500 9.5px ${p.mono}`;
+      ctx.font = font;
+      const text = String(span.attrs.toolCalls);
+      const tw = measure(ctx, font, text);
+      ctx.fillStyle = p.ground;
+      ctx.fillRect(textFrom - 1, cy - 5, tw + 4, 10);
+      ctx.fillStyle = p.inkMuted;
+      ctx.fillText(text, textFrom + 1, cy + 3.4);
+      textFrom += tw + 5;
+    }
+  }
+
+  // Interrupted: the halt cut at the recorded stop and a dotted bridge to where work was taken up.
+  const reason = e?.reason;
+  if (!open && (reason === "interrupted" || reason === "superseded")) {
+    haltCut(ctx, X1, cy, th, p);
+    if (next && next.x0 > X1 + 4) {
+      ctx.save();
+      ctx.strokeStyle = p.halt;
+      ctx.lineWidth = 1;
+      ctx.lineCap = "round";
+      ctx.setLineDash([1, 2.4]);
+      ctx.beginPath();
+      ctx.moveTo(X1 + 5, cy + 0.5);
+      ctx.lineTo(Math.min(next.x0 - 2, c.xLive), cy + 0.5);
+      ctx.stroke();
+      ctx.restore();
+    }
+  } else if (span.attrs.interruptedAt !== undefined && span.attrs.interruptedAt <= c.liveAt) {
+    const xi = xOf(span.attrs.interruptedAt);
+    if (xi > X0 + 3 && xi < X1 - 3) haltCut(ctx, xi, cy, th, p);
+  }
+
+  // A lifetime (wave, cell) is named by its row's label: the line alone.
+  if (labels && item.lod !== "geometry" && fam !== "lifetime") paintLabel(c, item, g, X0, X1, textFrom, tone, fam);
+
+  const half = Math.max(th / 2, 3) + 2;
+  return { box: [X0 - 1, cy - half, X1 + 1, cy + half] };
+}
+
+/** A round: a dimension bracket over the row, its name set in a gap in the line. */
+function paintBracket(c: Paint, item: PlacedSpan, g: RowGeom, ink: string, labels: boolean): Painted {
+  const { ctx, p } = c;
+  const X0 = Math.round(item.x0) + 0.5;
+  const X1 = Math.max(X0 + 2, Math.round(item.x1) - 0.5);
+  const y = Math.round(g.y + g.h / 2) + 0.5;
+  const open = item.times.open;
+  ctx.strokeStyle = ink === p.fInkSoft ? p.plateEdge : ink;
+  ctx.lineWidth = 1;
+  if (item.span.start?.basis === "inferred" || item.span.end?.basis === "inferred") ctx.setLineDash([3, 2]);
+  ctx.beginPath();
+  ctx.moveTo(X0, y + 4);
+  ctx.lineTo(X0, y);
+  ctx.lineTo(X1, y);
+  if (!open) ctx.lineTo(X1, y + 4);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if (labels && item.lod !== "geometry") {
+    const font = `500 10px ${p.mono}`;
+    ctx.font = font;
+    const text = fit(ctx, font, `${item.span.end?.basis === "inferred" ? "≈ " : ""}${shortLabel(item.span)}`, X1 - X0 - 16);
+    if (text) {
+      const tw = measure(ctx, font, text);
+      const left = Math.max(X0 + 8, Math.min(X1 - tw - 8, Math.max(0, X0) + 8));
+      ctx.fillStyle = p.ground;
+      ctx.fillRect(left - 4, y - 6, tw + 8, 12);
+      ctx.fillStyle = p.inkMuted;
+      ctx.fillText(text, left, y + 3.5);
+    }
+  }
+  return { box: [X0 - 1, y - 3, X1 + 1, y + 5] };
+}
+
+function paintLabel(c: Paint, item: PlacedSpan, g: RowGeom, X0: number, X1: number, textFrom: number, tone: Tone, fam: Family) {
+  const { ctx, p } = c;
+  const span = item.span;
+  const label = shortLabel(span);
+  const approx = span.start?.basis === "inferred" || span.end?.basis === "inferred";
+  const text = label ? `${approx ? "≈ " : ""}${label}` : "";
+  const sans = `600 10.5px ${p.sans}`;
+  const mono = `400 10px ${p.mono}`;
+  // A span partly off the left edge keeps its label in view.
+  const visible0 = Math.max(X0, 0);
+  if (g.labelTop) {
+    const y = g.labelY;
+    let x = Math.max(textFrom - 3, visible0 + 1);
+    // Clear of whatever begins where this ends (the next span's own label and glyph).
+    const right = Math.min(X1 - 8, c.xLive - 2, c.scale.width - 2);
+    authorityGlyph(ctx, span.authority, x + 2.6, y - 3.4, p.fInkSoft, p.ground);
+    x += 8;
+    let room = right - x;
+    let dur: string | null = null;
+    if (item.lod === "duration") {
+      dur = shortDuration(span, item.times.from, item.times.to, item.times.open);
+      const dw = measure(ctx, mono, dur);
+      ctx.font = sans;
+      const lw = text ? measure(ctx, sans, text) : 0;
+      if (lw + dw + 12 <= room) room -= dw + 10;
+      else dur = null;
+    }
+    ctx.font = sans;
+    const shown = text ? fit(ctx, sans, text, room) : null;
+    if (shown) {
+      ctx.fillStyle = tone === "fail" ? p.fail : p.inkMuted;
+      ctx.fillText(shown, x, y);
+    }
+    if (dur) {
+      ctx.font = mono;
+      ctx.fillStyle = p.inkSubtle;
+      ctx.textAlign = "right";
+      ctx.fillText(dur, right, y);
+      ctx.textAlign = "left";
+    }
+    return;
+  }
+  // Thin rows: the label inline after the start, on a knock-out of the ground.
+  if (!text) return;
+  const y = g.cy + 3.5;
+  const x = Math.max(textFrom + 2, visible0 + 4);
+  const font = fam === "agent" ? `500 10px ${p.sans}` : `500 10px ${p.sans}`;
+  ctx.font = font;
+  // Clear of the end cap and of whatever begins where this ends (an agent's head after its queue).
+  const right = Math.min(X1 - 6, c.xLive, c.scale.width - 4);
+  const shown = fit(ctx, font, text, right - x - 3);
+  if (!shown) return;
+  const tw = measure(ctx, font, shown);
+  ctx.fillStyle = p.ground;
+  ctx.fillRect(x - 3, g.cy - 5.5, tw + 6, 11);
+  ctx.fillStyle = tone === "fail" ? p.fail : p.inkMuted;
+  ctx.fillText(shown, x, y);
+  if (item.lod === "duration" && fam !== "agent") {
+    const dur = shortDuration(span, item.times.from, item.times.to, item.times.open);
+    const mono = `400 9.5px ${p.mono}`;
+    ctx.font = mono;
+    const dw = measure(ctx, mono, dur);
+    if (x + tw + dw + 16 < right) {
+      ctx.fillStyle = p.ground;
+      ctx.fillRect(right - dw - 3, g.cy - 5.5, dw + 6, 11);
+      ctx.fillStyle = p.inkSubtle;
+      ctx.textAlign = "right";
+      ctx.fillText(dur, right, y);
+      ctx.textAlign = "left";
+    }
+  }
+}
+
+/** A tool call: a 1 x 6 tick; its length as a faint body when there is room to show it. */
+function paintTick(c: Paint, item: PlacedSpan, cy: number): Box {
+  const { ctx, p } = c;
+  const tone = toneOf(item.span, item.times, c.liveAt);
+  const ink = tone === "fail" ? p.fail : tone === "live" ? p.live : p.fInk;
+  const x = Math.round(item.x0);
+  const w = item.x1 - item.x0;
+  if (w >= 6) {
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = ink;
+    ctx.fillRect(x, cy - 2, w, 4);
+    ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle = ink;
+  ctx.fillRect(x, cy - 3, 1, 6);
+  // Room for its name: set small on a knock-out, after the tick.
+  const name = item.span.attrs.label;
+  if (name && w >= LOD.labelPx) {
+    const font = `500 9px ${p.mono}`;
+    ctx.font = font;
+    const shown = fit(ctx, font, name, Math.min(w, c.scale.width - x) - 6);
+    if (shown) {
+      const tw = measure(ctx, font, shown);
+      ctx.fillStyle = p.ground;
+      ctx.fillRect(x + 2, cy - 4.5, tw + 4, 9);
+      ctx.fillStyle = p.inkMuted;
+      ctx.fillText(shown, x + 4, cy + 3);
+    }
+  }
+  return [x - 2, cy - 4, x + Math.max(3, w) + 1, cy + 4];
+}
+
+function verdictInk(p: Palette, verdict: string | null): { ink: string; soft: string } {
+  const v = (verdict ?? "").toLowerCase();
+  if (/refus|reject|fail|block/.test(v)) return { ink: p.fail, soft: p.failSoft };
+  if (/escalat|required/.test(v)) return { ink: p.human, soft: p.humanSoft };
+  if (/pass|approv|overrid/.test(v)) return { ink: p.pass, soft: p.passSoft };
+  return { ink: p.fInkSoft, soft: p.ground };
+}
+
+/** A mark on a row: gates and verdicts as diamonds, people as down-triangles, failures as a stroke. */
+function paintMark(c: Paint, m: TimelineMark, x: number, g: RowGeom): Box {
+  const { ctx, p } = c;
+  const cy = g.cy;
+  switch (m.kind) {
+    case "gate":
+    case "review": {
+      const { ink, soft } = verdictInk(p, m.verdict);
+      diamond(ctx, x, cy, 4.6);
+      ctx.fillStyle = soft;
+      ctx.fill();
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+      if ((m.verdict ?? "").toLowerCase().includes("overrid")) {
+        // Let through on an override: a bar across the diamond, never a plain pass.
+        ctx.beginPath();
+        ctx.moveTo(x - 3, cy + 3);
+        ctx.lineTo(x + 3, cy - 3);
+        ctx.stroke();
+      }
+      return [x - 6, cy - 6, x + 6, cy + 6];
+    }
+    case "human": {
+      triangleDown(ctx, x, cy, 4.6);
+      const approved = (m.verdict ?? "").toLowerCase().includes("approv");
+      if (approved) {
+        ctx.fillStyle = p.human;
+        ctx.fill();
+      } else {
+        ctx.fillStyle = p.humanSoft;
+        ctx.fill();
+        ctx.strokeStyle = p.human;
+        ctx.lineWidth = 1.3;
+        ctx.stroke();
+      }
+      return [x - 6, cy - 6, x + 6, cy + 6];
+    }
+    case "failure":
+      ctx.fillStyle = p.fail;
+      ctx.fillRect(Math.round(x) - 1, g.y + 3, 2, g.h - 6);
+      return [x - 3, g.y + 2, x + 3, g.y + g.h - 2];
+    case "interruption":
+    case "recovery":
+      haltCut(ctx, x, cy, 6, p);
+      return [x - 4, cy - 7, x + 5, cy + 7];
+    case "gap":
+      ringQuery(ctx, x, cy, 4.2, p.fInkSoft, p.ground);
+      return [x - 5, cy - 5, x + 5, cy + 5];
+    case "retry": {
+      ctx.strokeStyle = p.fInk;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(x, cy, 3.6, -Math.PI * 0.35, Math.PI * 1.45);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x + 3.9, cy - 4.4);
+      ctx.lineTo(x + 3.1, cy - 1.4);
+      ctx.lineTo(x + 0.6, cy - 2.6);
+      ctx.stroke();
+      return [x - 5, cy - 5, x + 5, cy + 5];
+    }
+    case "merge": {
+      ctx.beginPath();
+      ctx.arc(x, cy, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = p.ground;
+      ctx.fill();
+      ctx.strokeStyle = p.pass;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, cy, 2.1, 0, Math.PI * 2);
+      ctx.fillStyle = p.pass;
+      ctx.fill();
+      return [x - 6, cy - 6, x + 6, cy + 6];
+    }
+    case "wave":
+      ctx.fillStyle = p.ground;
+      ctx.strokeStyle = p.fInk;
+      ctx.lineWidth = 1;
+      ctx.fillRect(x - 4, cy - 5.5, 8, 11);
+      ctx.strokeRect(x - 3.5, cy - 5, 7, 10);
+      ctx.fillStyle = p.fInk;
+      ctx.fillRect(x - 2, cy - 2, 4, 1);
+      ctx.fillRect(x - 2, cy + 1, 4, 1);
+      return [x - 5, cy - 6, x + 5, cy + 6];
+  }
+}
+
+// ---------------------------------------------------------------- the frame
+
+export interface DrawInput {
+  readonly ctx: CanvasRenderingContext2D;
+  readonly width: number;
+  readonly height: number;
+  readonly scrollTop: number;
+  /** The rows intersecting the viewport (layout.slice). */
+  readonly rows: readonly FlatRow[];
+  readonly window: TimeWindow;
+  readonly liveAt: number;
+  readonly palette: Palette;
+  /** Marks by track id (lane 0 of that track). */
+  readonly marks: ReadonlyMap<string, readonly TimelineMark[]>;
+  readonly selection: string | null;
+  readonly highlighted: ReadonlySet<string>;
+  /** Major tick times, for the sheet's vertical grid; UTC midnights, drawn heavier. */
+  readonly grid: readonly number[];
+  readonly dateLines: readonly number[];
+}
+
+export interface DrawOutput {
+  /** Per visible row, keyed `${trackId}#${lane}`: what was drawn, for hit-testing. */
+  readonly plans: Map<string, RowPlan>;
+  readonly ribbons: Map<string, RowPlan>;
+  readonly summaries: Map<string, SubtreeColumns>;
+  /** Spans drawn one by one, spans looked at after culling, spans merged into runs and pips. */
+  readonly drawn: number;
+  readonly considered: number;
+}
+
+export const rowKey = (trackId: string, lane: number) => `${trackId}#${lane}`;
+
+const summaryCache = new WeakMap<object, { key: string; cols: SubtreeColumns }>();
+
+export function drawTracks(input: DrawInput): DrawOutput {
+  const { ctx, width: W, height: H, scrollTop, palette: p, liveAt } = input;
+  const scale = scaleOf(input.window, W);
+  const xLive = Math.min(W + 40, Math.max(-40, xAt(scale, liveAt)));
+  const c: Paint = { ctx, p, scale, liveAt, xLive };
+  const plans = new Map<string, RowPlan>();
+  const ribbons = new Map<string, RowPlan>();
+  const summaries = new Map<string, SubtreeColumns>();
+  let drawn = 0;
+  let considered = 0;
+
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+  ctx.lineCap = "butt";
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = p.ground;
+  ctx.fillRect(0, 0, W, H);
+
+  // Row grounds: group rows on a plate tint, quieter with depth; a hairline under every row.
+  for (const row of input.rows) {
+    const y = row.y - scrollTop;
+    if (row.hasChildren && row.lane === 0) {
+      ctx.globalAlpha = Math.max(0.35, 1 - row.node.depth * 0.25);
+      ctx.fillStyle = p.plateLit;
+      ctx.fillRect(0, y, W, row.height);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = p.gridMajor;
+      ctx.fillRect(0, y, W, 1);
+    }
+    ctx.fillStyle = p.grid;
+    ctx.fillRect(0, y + row.height - 1, W, 1);
+  }
+
+  // The sheet's grid: one hairline per major tick; date changes heavier.
+  ctx.fillStyle = p.grid;
+  for (const t of input.grid) {
+    const x = Math.round(xAt(scale, t));
+    if (x >= 0 && x <= W) ctx.fillRect(x, 0, 1, H);
+  }
+  ctx.fillStyle = p.gridMajor;
+  for (const t of input.dateLines) {
+    const x = Math.round(xAt(scale, t));
+    if (x >= 0 && x <= W) ctx.fillRect(x, 0, 1, H);
+  }
+
+  // Nothing after the live edge.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, Math.max(0, Math.min(W, xLive + 1)), H);
+  ctx.clip();
+
+  const selectedBoxes: Box[] = [];
+  const selectedIds = new Set<string>();
+  const highlightBoxes: Box[] = [];
+  const ribbonBoxes: { box: Box; span: TimelineSpan }[] = [];
+  const isSelected = (s: TimelineSpan) => input.selection !== null && (s.entity === input.selection || s.id === input.selection);
+  const isHighlighted = (s: TimelineSpan) => input.highlighted.has(s.entity);
+
+  for (const row of input.rows) {
+    const y = row.y - scrollTop;
+    const g = rowGeom(row, y);
+    const node = row.node;
+    const lane = node.lanes[row.lane];
+    const marks = row.lane === 0 ? (input.marks.get(node.id) ?? []) : [];
+    const collapsed = row.hasChildren && !row.expanded && row.lane === 0;
+
+    // A collapsed group: a quiet density strip of its whole subtree, failures in the fail ink.
+    if (collapsed) {
+      const key = `${scale.from}|${scale.to}|${W}|${liveAt}`;
+      let entry = summaryCache.get(node);
+      if (!entry || entry.key !== key) {
+        entry = { key, cols: subtreeColumns(node, scale, liveAt) };
+        summaryCache.set(node, entry);
+      }
+      const cols = entry.cols;
+      summaries.set(node.id, cols);
+      const sy = g.cy + 3;
+      for (let i = 0; i < cols.counts.length; i++) {
+        const n = cols.counts[i]!;
+        if (!n) continue;
+        ctx.globalAlpha = runAlpha(n) * 0.8;
+        ctx.fillStyle = cols.failed[i] ? p.fail : p.fInkSoft;
+        ctx.fillRect(i * cols.bin, sy, cols.bin, 3);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    const plan = lane ? planRow(lane.spans, marks, scale, liveAt) : marks.length ? planRow([], marks, scale, liveAt) : EMPTY_PLAN;
+    plans.set(rowKey(node.id, row.lane), plan);
+    considered += plan.considered;
+
+    // Density runs first, under everything.
+    for (const r of plan.runs) {
+      ctx.globalAlpha = runAlpha(r.count);
+      ctx.fillStyle = p.fInkSoft;
+      ctx.fillRect(r.x0, g.cy - 3, Math.max(1, r.x1 - r.x0), 6);
+    }
+    ctx.globalAlpha = 1;
+
+    const bodyCy = collapsed ? g.cy - 3 : g.cy;
+    const gg: RowGeom = bodyCy === g.cy ? g : { ...g, cy: bodyCy };
+    plan.items.forEach((item, i) => {
+      const painted = paintSpan(c, item, gg, plan.items[i + 1], true);
+      drawn++;
+      if (isSelected(item.span)) {
+        selectedBoxes.push(painted.box);
+        selectedIds.add(item.span.id);
+      } else if (isHighlighted(item.span)) highlightBoxes.push(painted.box);
+    });
+    for (const item of plan.instants) {
+      const box = paintTick(c, item, g.cy);
+      drawn++;
+      if (isSelected(item.span)) {
+        selectedBoxes.push(box);
+        selectedIds.add(item.span.id);
+      } else if (isHighlighted(item.span)) highlightBoxes.push(box);
+    }
+    for (const m of plan.marks) {
+      const box = paintMark(c, m.mark, m.x, g);
+      drawn++;
+      if (m.mark.entity && (m.mark.entity === input.selection || m.mark.id === input.selection)) selectedBoxes.push(box);
+    }
+    // Count pips: instants too dense to draw one by one.
+    if (plan.pips.length) {
+      const font = `500 9px ${p.mono}`;
+      ctx.font = font;
+      plan.pips.forEach((pip, i) => {
+        const x = Math.round((pip.x0 + pip.x1) / 2);
+        ctx.fillStyle = p.fInk;
+        ctx.fillRect(x - 1, g.cy - 3, 2, 6);
+        const after = plan.pips[i + 1];
+        const room = after ? (after.x0 + after.x1) / 2 - x - 8 : Infinity;
+        if (pip.count > 1 && measure(ctx, font, String(pip.count)) <= room) {
+          ctx.fillStyle = p.inkSubtle;
+          ctx.fillText(String(pip.count), x + 4, g.cy + 3);
+        }
+      });
+    }
+
+    // Ribbons: thin linked strips from the other hierarchy, under the row's own spans.
+    if (g.ribbonY !== null) {
+      const rplan = planRow(node.ribbons, [], scale, liveAt);
+      ribbons.set(node.id, rplan);
+      const ry = g.ribbonY;
+      for (const r of rplan.runs) {
+        ctx.globalAlpha = runAlpha(r.count) * 0.8;
+        ctx.fillStyle = p.fInkSoft;
+        ctx.fillRect(r.x0, ry, Math.max(1, r.x1 - r.x0), 3);
+      }
+      ctx.globalAlpha = 1;
+      for (const item of rplan.items) {
+        const tone = toneOf(item.span, item.times, liveAt);
+        const ink = tone === "neutral" ? p.fInkSoft : toneInk(p, tone).ink;
+        const x0 = Math.round(item.x0);
+        const x1 = Math.max(x0 + 2, Math.round(item.x1));
+        ctx.fillStyle = ink;
+        if (item.times.open) {
+          const fade = Math.min(18, (x1 - x0) / 2);
+          ctx.globalAlpha = 0.7;
+          ctx.fillRect(x0, ry, x1 - x0 - fade, 3);
+          const step = fade / FADE_STEPS.length;
+          FADE_STEPS.forEach((a, i) => {
+            ctx.globalAlpha = a * 0.7;
+            ctx.fillRect(x1 - fade + i * step, ry, step, 3);
+          });
+        } else {
+          ctx.globalAlpha = 0.7;
+          ctx.fillRect(x0, ry, x1 - x0, 3);
+          ctx.globalAlpha = 1;
+          // Linked, not nested: a 1 px gap at each end reads as a separate strip.
+          ctx.fillStyle = p.ground;
+          ctx.fillRect(x1 - 1, ry, 1, 3);
+        }
+        ctx.globalAlpha = 1;
+        ribbonBoxes.push({ box: [x0, ry, x1, ry + 3], span: item.span });
+        drawn++;
+      }
+      considered += rplan.considered;
+    }
+  }
+
+  // Cross-track highlight: the store's related set, a select underline.
+  ctx.fillStyle = p.select;
+  ctx.globalAlpha = 0.75;
+  for (const [x0, , x1, y1] of highlightBoxes) ctx.fillRect(x0, y1 + 1, Math.max(2, x1 - x0), 1);
+  ctx.globalAlpha = 1;
+
+  // Ribbon counterparts of the selection: outlined, and joined to it by a 1 px connector.
+  const counterparts = ribbonBoxes.filter((r) => selectedIds.has(r.span.id) || isSelected(r.span));
+  ctx.strokeStyle = p.select;
+  ctx.lineWidth = 1;
+  for (const { box } of counterparts) {
+    ctx.strokeRect(box[0] - 1.5, box[1] - 1.5, box[2] - box[0] + 3, box[3] - box[1] + 3);
+    const from = selectedBoxes[0];
+    if (!from) continue;
+    const x = Math.round(Math.max(from[0], box[0])) + 0.5;
+    const ya = from[1] > box[3] ? from[1] : from[3];
+    const yb = from[1] > box[3] ? box[3] + 2 : box[1] - 2;
+    ctx.beginPath();
+    ctx.moveTo(x, ya + (ya < yb ? 2 : -2));
+    ctx.lineTo(x, yb);
+    ctx.stroke();
+    ctx.fillStyle = p.select;
+    ctx.fillRect(x - 1.5, yb - 1.5, 3, 3);
+  }
+
+  // Selection: corner brackets, as everywhere in the Living Factory.
+  for (const b of selectedBoxes) brackets(ctx, Math.round(b[0]) - 3.5, Math.round(b[1]) - 2.5, Math.round(b[2]) + 3.5, Math.round(b[3]) + 2.5, p.select);
+
+  ctx.restore();
+  return { plans, ribbons, summaries, drawn, considered };
+}
+
+export function brackets(ctx: Ctx, x0: number, y0: number, x1: number, y1: number, color: string) {
+  const arm = Math.min(7, Math.max(3, (x1 - x0) / 3));
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0 + arm);
+  ctx.lineTo(x0, y0);
+  ctx.lineTo(x0 + arm, y0);
+  ctx.moveTo(x1 - arm, y0);
+  ctx.lineTo(x1, y0);
+  ctx.lineTo(x1, y0 + arm);
+  ctx.moveTo(x1, y1 - arm);
+  ctx.lineTo(x1, y1);
+  ctx.lineTo(x1 - arm, y1);
+  ctx.moveTo(x0 + arm, y1);
+  ctx.lineTo(x0, y1);
+  ctx.lineTo(x0, y1 - arm);
+  ctx.stroke();
+}
+
+/** The box the hover outline draws around a hit, in canvas px. */
+export function hitBox(row: FlatRow, y: number, from: number, to: number, kind: SpanKind | null, window: TimeWindow, width: number): Box {
+  const scale = scaleOf(window, width);
+  const g = rowGeom(row, y);
+  const th = kind ? THICKNESS[familyOf(kind)] : 6;
+  const half = Math.max(th / 2, 3) + 3;
+  const cy = row.hasChildren && !row.expanded && row.lane === 0 ? g.cy - 3 : g.cy;
+  const x0 = xAt(scale, from);
+  const x1 = Math.max(x0 + 2, xAt(scale, to));
+  return [x0 - 2, cy - half, x1 + 2, cy + half];
+}
+
