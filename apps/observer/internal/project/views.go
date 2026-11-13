@@ -539,7 +539,7 @@ func CellSummary(c *Cell) map[string]any {
 		last = c.Visits[n-1].Outcome
 	}
 	return map[string]any{"ticket_id": c.TicketID, "cell_instance": c.CellInstance, "slice_id": c.SliceID, "wave_id": c.WaveID, "stage": c.Stage,
-		"stage_source": c.StageSource, "risk": c.Risk, "app_type": c.AppType,
+		"stage_source": c.StageSource, "risk": orNil(c.Risk), "app_type": orNil(c.AppType),
 		"plan": map[string]any{"app_type": orNil(c.AppType), "risk": orNil(c.Risk), "contracts": c.Contracts, "tasks": c.TasksPlanned,
 			"recorded_by": orNil(c.AppTypeSource)}, "created_at": TV(c.FirstSeen), "updated_at": TV(c.Updated),
 		"current_visit": c.CurrentVisit, "round": c.Round, "visits": len(c.Visits), "last_outcome": last, "lifecycle": c.Lifecycle,

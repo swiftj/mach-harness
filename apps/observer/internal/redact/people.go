@@ -54,10 +54,65 @@ var notAName = map[string]bool{
 	"observe": true, "supervised": true, "manual": true, "auto": true, "operator": true, "owner": true, "approver": true,
 }
 
+// roleWords are what MACH writes, after an optional article, where a person could be named but
+// the actor was a role: "an agent, on the person's instruction in conversation" (review.py's
+// recorded_by), "the line", "the supervisor", "a person".
+var roleWords = map[string]bool{
+	"agent": true, "agents": true, "line": true, "supervisor": true, "scheduler": true, "engineer": true, "person": true,
+	"people": true, "human": true, "reviewer": true, "seat": true, "panel": true, "model": true, "workflow": true, "station": true,
+	"factory": true, "observer": true, "belt": true, "runner": true, "operator": true, "owner": true, "approver": true,
+	"pm": true, "orchestrator": true, "executor": true, "system": true, "mach": true, "claude": true, "automation": true,
+}
+
+// RolePhrase reports a value that names a role, not a person: one of the words MACH writes for a
+// role (notAName), or a phrase whose first word, after an optional "a", "an" or "the", is a role
+// word ("an agent, on the person's instruction in conversation", "the line", "product manager").
+// Such a value is kept where a person field holds it (R2 of the M6.2 re-check: an agent's act
+// must not be credited to a person), and is never learned as a name. A phrase that also names a
+// known person is still replaced (the caller checks People.Hit), and so is one with a capitalised
+// word after its role word (it may hold a name); an e-mail never counts.
+func RolePhrase(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" || len(v) > 120 || strings.ContainsAny(v, "@<>\n\r\t") {
+		return false
+	}
+	if notAName[strings.ToLower(v)] {
+		return true
+	}
+	words := strings.Fields(v)
+	switch strings.ToLower(words[0]) {
+	case "a", "an", "the":
+		words = words[1:]
+	}
+	if len(words) == 0 {
+		return false
+	}
+	first := strings.ToLower(words[0])
+	rest := words[1:]
+	if first == "product" && len(rest) > 0 && strings.HasPrefix(strings.ToLower(rest[0]), "manager") {
+		rest = rest[1:]
+	} else {
+		if i := strings.IndexFunc(first, func(r rune) bool { return !unicode.IsLetter(r) && r != '-' }); i >= 0 {
+			first = first[:i]
+		}
+		if !roleWords[first] {
+			return false
+		}
+	}
+	// After the role word a role phrase is lower case: a capitalised word may be a name ("the
+	// engineer Jane Doe" is not a role phrase).
+	for _, w := range rest {
+		if r, _ := utf8.DecodeRuneInString(w); unicode.IsUpper(r) {
+			return false
+		}
+	}
+	return true
+}
+
 // candidate normalises a value that may be a person's name or e-mail; "" when it is not one.
 func candidate(v string) string {
 	v = strings.TrimSpace(v)
-	if strings.ContainsAny(v, "\n\r\t") || !utf8.ValidString(v) {
+	if strings.ContainsAny(v, "\n\r\t") || !utf8.ValidString(v) || RolePhrase(v) {
 		return ""
 	}
 	if n := utf8.RuneCountInString(v); n < 3 || n > 80 {

@@ -343,6 +343,7 @@ Superseded text of the first draft: a second browser needed a new link, which th
 | **Kept sessions read by another local user** | `sessions.json`, `session-secret` and `port` are `0600` in a `0700` folder; another user cannot read them. Were they read anyway, they hold no token: only HMAC-SHA256 hashes, which cannot be turned back into a cookie. A file made readable by others is not trusted: both files are discarded and remade at start. Not a defence against root or the same user, who can read the browser's cookie store directly. |
 | **Kept sessions copied to another project, or the folder copied** | The hash key is derived from the secret **and** the project's absolute folder, and the file names its project; records from another folder match nothing and are ignored (stderr says so). |
 | **A stolen session cookie** | No worse than before the sessions were kept: the cookie was already the credential for as long as the observer ran. It now also works after a restart, for at most 12 hours from its link's use; a session is never extended by use. Ending every session early: stop the observer and delete `.factory/local/observer/session-secret`. The cookie is host-only, `HttpOnly` and `SameSite=Strict`, so a page cannot read it or send it cross-site. |
+| **A person's name served to the browser** (people are shown by role, D2/D10) | Person fields of every record by role, except a role phrase MACH itself wrote (R2: "an agent, on the person's instruction in conversation" is kept, so an agent's act is not credited to a person); a per-project deny-list of every name and e-mail MACH's records and the project's git identities give, applied to every stored event, served document and reply; e-mail addresses scrubbed wherever they appear. **Known limit, decided by the product owner (R1): label, do not withhold.** Guaranteed: a name known from a record or a git identity is never served once that record has been read. Not guaranteed: a name that appears only in free text (a finding, a verifier's note, a transcript) and in no record is served as written. Every artifact whose text can hold such prose is labelled: catalog entry `free_text: true`, `free_text_note: "free text, not checked for names"`; content header `X-MACH-Free-Text: unchecked-for-names`. What was served before a record named the person is not recalled. |
 | **Another process takes the remembered port** | The observer binds a new port and says so on stdout; it never connects to whatever holds the old one. Browsers do not separate cookies by port, so a page left open on the old origin would send its cookie to that process; but that is already true of any page on `127.0.0.1` the browser opens, today as before, and the cookie is `SameSite=Strict` and `HttpOnly`. What changes is only that a cookie captured that way also works on the restarted observer, for the rest of its 12 hours. Accepted; deleting `session-secret` ends every session. |
 
 ---
@@ -419,7 +420,7 @@ differ, this one describes what is built.
 
 - **People by role, everywhere (D2).** A served JSON record of a known kind goes through structured redaction
   (`redact.ScrubRecord`: decision, vote, results, summary, build report, cell, run record): person-bearing keys become
-  `"a person"`, unknown keys are kept only when their value passes the scrubber, key order is kept; any other text goes
+  `"a person"` unless they hold a role phrase MACH wrote (R2, `redact.RolePhrase`), unknown keys are kept only when their value passes the scrubber, key order is kept; any other text goes
   through the text scrubber. A per-project deny-list (`redact.People`) holds the names and e-mails MACH's own files
   give for people (approvals, the intake log's `by` and `actor`, `runner.json` `enabled_by`, cell records' person
   fields, the `[user]` of `.git/config` and the identities in `.git/logs/HEAD` and each worktree's reflog, read as
@@ -428,9 +429,18 @@ differ, this one describes what is built.
 - **Stream records by shape (D1).** Section 4.4's version pin is gone: `M6_1_STREAM_COMPATIBILITY.md` section 8.
 - **Gap classes.** `history.gap` gains `class` and `history_lost`; only history-losing classes make history partial
   (contract 6.5).
-- **Adaptive settle (section 9).** An event is committed once every tailed source with a file has been read through
+- **Adaptive settle (section 9).** An event is committed once every hot tailed source with a file has been read through
   past its time; the 1.5 s window is only the bound for a source that is behind or unreadable. An idle poll is one
   `lstat` per source (no open); the idle poll interval is at most 500 ms.
+- **Polling tiers (R3 of the re-check).** Idle, a 1,263-cell history cost a third of a core: polling every source
+  twice a second allocated about 3 MB/s while the live heap sat at the soft memory limit, so the collector ran on every
+  tick. Now a source is hot (polled every tick) while new, while its execution runs (its cell too) and for 2 minutes
+  after it last changed (at the end of the catch-up, a file written in the last 2 minutes counts); other sources are
+  cold: one `lstat` every 2 s, spread over the ticks, not holding the settle. Source folders are listed again only when
+  their time changes (at least every 10 s); an idle tick makes no allocation per source (health rows are kept as
+  values and turned into the reply on request). Idle CPU on that history: 25–36 % → 0.95–1.27 % of a core. Price: the first
+  line of a cell quiet for 2 minutes or more arrives up to 2 s after it was written (median 0.9 s, p95 2.0 s) and is
+  often marked `late`; hot sources are unchanged (median 128 ms, p95 302 ms on the busy load).
 - **Memory (D18).** Reading the 230,853-event history of the acceptance (93 MB of sources) peaked at 1.6 GB: projection
   checkpoints were full copies of a 20 MB state (64 of them), a tick read up to 20,000 events, the store kept every
   event of its memory window decoded, and the window's evicted slots kept their bytes. Now: a checkpoint is the state's
@@ -439,7 +449,12 @@ differ, this one describes what is built.
   next tick follows at once while a backlog remains; the store keeps an event's index fields (`event.Head`) and its
   encoded bytes only; evicted slots are cleared; the saved projection is written at most every 15 s; and the Go
   runtime is given a soft memory limit of 208 MB (`GOMEMLIMIT` overrides). Peak RSS 283–295 MB, catch-up 26–27 s at
-  load average 10 (was 1.6 GB, 16–20 s).
+  load average 10 (was 1.6 GB, 16–20 s). The re-check measured 35.2 s: the live heap sat at the memory limit and the
+  collector ran hundreds of times a second. Now the store keeps the served envelope of only the newest 16,384 events
+  of its window (store `HotRaw`); older ones keep their index fields and the segment, offset and length of their line,
+  and are read back and expanded when asked for, byte for byte what was served when new (98 MB of a 176 MB live heap
+  became about 30 MB). Measured with `/usr/bin/time -l` on a clean copy: catch-up 16.5–18.7 s, peak RSS 260–281 MiB
+  (before, same machine and method: 29.6–36.4 s, 300–331 MiB).
 - **Index format 3 (section 7.2).** Segments hold each event in a compact form (the envelope without its nulls, empty
   lists and objects, `false` and zeros; `data`, `cause` and `provenance` exact), expanded to the full envelope when
   read: 213 MB of segments for that history instead of 281 MB. A format change rebuilds the index.
@@ -452,5 +467,8 @@ differ, this one describes what is built.
 - **Plan facts and evidence visits (D11, D12).** The plan's exit carries `app_type` and `risk` (revision 2); the cell
   shows them with the contract and task counts. Each catalogued artifact is linked to a visit: `recorded` when a
   verification check names it with its hash, otherwise `reconstructed` by its folder, round and file time.
+- **Unknown is null.** A cell's `risk` and `app_type`, in the cell list and detail as in its `plan`, are `null` while
+  unknown (they were `""` outside `plan`). The snapshot's `state` still omits them while empty.
+- **Free text labelled (R1).** Section 15, "A person's name served to the browser"; README, Artifact content.
 - **A file created while the observer watches is live from its first line (D16)**, also when it did not exist at the
   first poll.

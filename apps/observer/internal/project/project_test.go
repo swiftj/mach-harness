@@ -465,3 +465,20 @@ func TestLinkArtifactToVisits(t *testing.T) {
 		}
 	})
 }
+
+// A cell's risk and app type are null while unknown, in the list and the plan alike (never "").
+func TestCellSummaryUnknownRiskAndAppTypeAreNull(t *testing.T) {
+	v := CellSummary(&Cell{TicketID: "T-1"})
+	plan := v["plan"].(map[string]any)
+	for _, m := range []map[string]any{v, plan} {
+		for _, k := range []string{"risk", "app_type"} {
+			if got, ok := m[k]; !ok || got != nil {
+				t.Fatalf("%s = %#v (present %v), want null", k, got, ok)
+			}
+		}
+	}
+	v = CellSummary(&Cell{TicketID: "T-1", Risk: "High", AppType: "web"})
+	if v["risk"] != "High" || v["app_type"] != "web" {
+		t.Fatalf("%v %v", v["risk"], v["app_type"])
+	}
+}

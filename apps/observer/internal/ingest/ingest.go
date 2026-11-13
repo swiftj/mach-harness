@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"hash"
+	"hash/fnv"
 	"io"
 	"io/fs"
 	"log"
@@ -80,6 +81,23 @@ const DefaultPollMax = 500 * time.Millisecond
 // DefaultSlack: see Options.Slack.
 const DefaultSlack = 10 * time.Millisecond
 
+// DefaultHotFor and DefaultColdEvery are the observer's polling tiers (R3 of the M6.2 re-check:
+// polling every source of a 1,263-cell history twice a second cost a third of a core). A source
+// is hot while it is new, while its execution is running (an execution's cell too), and for
+// DefaultHotFor after it last changed; a hot source is polled every tick. Any other source is cold
+// and polled once every DefaultColdEvery, spread over the ticks, and does not hold back the
+// adaptive settle (a cold source's first line after its quiet spell can therefore be late, and is
+// marked so). Options.HotFor 0 polls every source every tick (the package default, for tests).
+const (
+	DefaultHotFor    = 2 * time.Minute
+	DefaultColdEvery = 2 * time.Second
+)
+
+// relistEvery: a folder whose entries are cached (worktrees, executions, archive) is listed again
+// at least this often even when its own time has not changed (a safety net; creating or removing
+// an entry changes a folder's time on every file system the Factory runs on).
+const relistEvery = 10 * time.Second
+
 // Options configure the loop.
 type Options struct {
 	Root    string // absolute project root
@@ -105,6 +123,10 @@ type Options struct {
 	StaleAfter time.Duration
 	// TickBudget: events one tick reads at most (0: TickBudget).
 	TickBudget int
+	// HotFor and ColdEvery set the polling tiers (DefaultHotFor, DefaultColdEvery). HotFor 0
+	// polls every source every tick.
+	HotFor    time.Duration
+	ColdEvery time.Duration
 }
 
 // SourceStat is one source's state, for the status endpoint. Only the key, the
@@ -278,6 +300,130 @@ type source struct {
 	// executions
 	stream             *normalize.Stream
 	startedMS, endedMS int64
+
+	// Polling tiers (Options.HotFor). lastChange is when this loop last saw the source change
+	// (a live line, a note, a new cell.json, the source appearing after the catch-up), on the
+	// loop's clock; backfill is not a change. cold: this tick the source is cold (it then does not
+	// hold the horizon); nextPoll: when a cold source is polled next.
+	lastChange time.Time
+	nextPoll   time.Time
+	cold       bool
+	polled     bool
+	jitter     time.Duration
+	coldPolls  int // cold polls since the source turned cold: a cold cell's cell.json is looked at every fourth
+
+	// Paths made once (an idle poll allocates nothing).
+	cellDir, cellJSON string
+	files             normalize.DirFiles
+}
+
+// row is a source's health row as the last tick left it; Stats turns it into a SourceStat.
+type row struct {
+	stat     SourceStat
+	size     int64
+	hasSize  bool
+	lastRead time.Time
+}
+
+// dirWatch caches a folder's subfolder names, listed again only when the folder changed.
+type dirWatch struct {
+	ok       bool
+	ino      uint64
+	mtime    int64
+	listedAt time.Time
+	names    []string
+}
+
+// changed lists the folder again when it is new, gone, has another inode or time, was changed in
+// the last two seconds (a coarse file-system clock could hide a second change), or was last listed
+// relistEvery ago; it reports whether it did. dirsOnly keeps folders only (not links); otherwise
+// regular files only. The wall clock is used: folder times are the file system's.
+func (w *dirWatch) changed(dir string, dirsOnly bool) bool {
+	now := time.Now()
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() {
+		if !w.ok && w.names == nil {
+			return false
+		}
+		*w = dirWatch{}
+		return true
+	}
+	_, ino := tail.FileID(info)
+	mt := info.ModTime().UnixNano()
+	if w.ok && ino == w.ino && mt == w.mtime && now.Sub(info.ModTime()) > 2*time.Second && now.Sub(w.listedAt) < relistEvery {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	names := w.names[:0]
+	for _, e := range entries {
+		if dirsOnly && (!e.IsDir() || e.Type()&fs.ModeSymlink != 0) || !dirsOnly && !e.Type().IsRegular() {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	w.ok, w.ino, w.mtime, w.listedAt, w.names = true, ino, mt, now, names
+	return true
+}
+
+// hot: the source is polled every tick (Options.HotFor).
+func (o *Observer) hot(src *source, now time.Time) bool {
+	return o.catchingUp || o.opts.HotFor <= 0 || !src.polled || src.running() || now.Sub(src.lastChange) < o.opts.HotFor
+}
+
+func (src *source) running() bool {
+	return src.kind == kindStream && src.startedMS != 0 && src.endedMS == 0
+}
+
+// due decides whether src is polled this tick, and marks it cold or not for the horizon.
+func (o *Observer) due(src *source, now time.Time) bool {
+	if o.hot(src, now) {
+		src.cold = false
+		return true
+	}
+	if !src.cold {
+		// Turning cold: the first cold poll is spread over the interval, so cold sources do not
+		// all fall on one tick.
+		src.cold = true
+		src.nextPoll = now.Add(src.jitter)
+	}
+	if now.Before(src.nextPoll) {
+		return false
+	}
+	src.nextPoll = now.Add(o.opts.ColdEvery)
+	src.coldPolls++
+	return true
+}
+
+// warmFromFileTimes runs once, when the catch-up ends: a source whose file (or cell.json) was
+// written within HotFor of the wall clock starts hot, for the rest of that HotFor, as if this loop
+// had seen the write; the rest start cold. (Backfill is not a change, so without this every cell
+// a station was working in when the observer started would wait for its next cold poll.)
+func (o *Observer) warmFromFileTimes(now time.Time) {
+	if o.opts.HotFor <= 0 {
+		return
+	}
+	wall := time.Now()
+	for _, src := range o.sources {
+		newest := max(src.tailer.ModNS, src.cellMTime)
+		if newest <= 0 {
+			continue
+		}
+		if age := wall.Sub(time.Unix(0, newest)); age < o.opts.HotFor {
+			if at := now.Add(-max(age, 0)); at.After(src.lastChange) {
+				src.lastChange = at
+			}
+		}
+	}
+}
+
+// changedAt notes that the source changed at now: it is hot again.
+func (src *source) changedAt(now time.Time) {
+	src.lastChange = now
+	src.cold = false
+	src.coldPolls = 0
 }
 
 type pending struct {
@@ -304,6 +450,17 @@ type Observer struct {
 	// catchingUp is true from start until a tick reads within its budget and every source has
 	// read past what was in it when first looked at. Until then every event is backfill.
 	catchingUp bool
+
+	// Cached listings and sorted source lists (ticks walk them; no listing per tick).
+	cellsDir, execsDir, archDir dirWatch
+	cells                       []*source // by ticket
+	execs                       []string  // execution ids, sorted
+	archRetry                   bool      // an archive was left for a later tick
+	rows                        []row
+	order                       []*source // every source by key, for health (rebuilt when one is added)
+	orderDirty                  bool
+	rootFactory, worktrees      string
+	executions, archives, local string
 
 	mu       sync.RWMutex
 	stats    Stats
@@ -375,10 +532,15 @@ func New(opts Options) *Observer {
 	if opts.StaleAfter <= 0 {
 		opts.StaleAfter = time.Minute
 	}
+	if opts.ColdEvery <= 0 {
+		opts.ColdEvery = DefaultColdEvery
+	}
 	o := &Observer{opts: opts, identity: normalize.NewIdentity(), seq: normalize.NewSequencer(), sources: map[string]*source{},
 		records: map[string]tail.Checkpoint{}, interval: opts.PollMin, catchingUp: true, people: newPeopleScan(opts.Root)}
 	o.stats.CatchingUp = true
 	o.stats.Unrecognised = map[string]int64{}
+	o.rootFactory, o.worktrees, o.executions = o.abs(".factory"), o.abs(WorktreesPath), o.abs(ExecutionsPath)
+	o.archives, o.local = o.abs(ArchivePath), o.abs(".factory/local")
 	for key, cp := range opts.Store.Checkpoints() {
 		switch {
 		case key == LedgerKey:
@@ -415,8 +577,37 @@ func (o *Observer) addSource(key string, k kind, ticket, execution, rel string) 
 	// it is live.
 	src.tailer.LiveFromStart = !o.catchingUp
 	src.preexisting = o.catchingUp
+	if !o.catchingUp {
+		src.lastChange = o.opts.Now()
+	}
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	src.jitter = time.Duration(h.Sum32()) % o.opts.ColdEvery
+	if k == kindCell {
+		src.cellDir = o.abs(WorktreesPath + "/" + ticket)
+		src.cellJSON = filepath.Join(src.cellDir, "cell.json")
+		src.files = normalize.DirFiles{Dir: src.cellDir}
+		// The people the cell's records name are learned before its new lines are normalised, so
+		// a name in a line (or a finding) is scrubbed the first time it is stored.
+		src.beforeLines = func() { o.people.cell(src.ticket, src.files, src.tailer.CP.Offset+int64(src.tailer.CP.LineNo)) }
+		o.cells = insertCell(o.cells, src)
+	}
 	o.sources[key] = src
+	o.orderDirty = true
 	return src
+}
+
+// insertCell keeps the cell sources sorted by ticket, replacing one of the same ticket.
+func insertCell(list []*source, src *source) []*source {
+	i := sort.Search(len(list), func(i int) bool { return list[i].ticket >= src.ticket })
+	if i < len(list) && list[i].ticket == src.ticket {
+		list[i] = src
+		return list
+	}
+	list = append(list, nil)
+	copy(list[i+1:], list[i:])
+	list[i] = src
+	return list
 }
 
 // realDir: the path exists and is a folder, not a link to one.
@@ -505,7 +696,7 @@ func (o *Observer) Tick() (int, error) {
 	now := o.opts.Now()
 	t := &tickCtx{now: now, prev: o.lastTick, cps: map[string]tail.Checkpoint{}, budget: o.opts.TickBudget}
 	o.lastTick = now
-	factory := realDir(o.abs(".factory"))
+	factory := realDir(o.rootFactory)
 	if factory {
 		o.people.project()
 		o.readLedgerJSON()
@@ -521,6 +712,7 @@ func (o *Observer) Tick() (int, error) {
 	n, err := o.release(now, o.horizon(now))
 	if o.catchingUp && !t.full() && o.caughtUp() {
 		o.catchingUp = false
+		o.warmFromFileTimes(now)
 	}
 	o.backlog = t.full()
 	o.record(now, factory, errors.Join(t.err, err), t.suppress)
@@ -565,7 +757,7 @@ func (o *Observer) horizon(now time.Time) int64 {
 	h := now.UnixMilli()
 	for _, src := range o.sources {
 		cp := src.tailer.CP
-		if src.gone || cp.Gone || src.tailer.Size < 0 && !cp.Blocked {
+		if src.gone || cp.Gone || src.cold || src.tailer.Size < 0 && !cp.Blocked {
 			continue
 		}
 		if src.readThrough.IsZero() {
@@ -595,6 +787,10 @@ func (o *Observer) readLedgerJSON() {
 func (o *Observer) pollTailed(t *tickCtx, src *source, make func(gen string) lineNorm) int {
 	before := src.tailer.CP
 	lines, notes, err := src.tailer.Poll()
+	src.polled = true
+	if len(notes) > 0 && !o.catchingUp {
+		src.changedAt(t.now)
+	}
 	if err != nil {
 		t.err = errors.Join(t.err, errors.New("could not read "+src.rel))
 	} else if src.tailer.Size >= 0 {
@@ -636,6 +832,7 @@ func (o *Observer) pollTailed(t *tickCtx, src *source, make func(gen string) lin
 		evs := src.norm.Line(line.Bytes, t.read(line.Number, line.Live))
 		if line.Live {
 			src.liveSeen = true
+			src.changedAt(t.now)
 		} else {
 			markBackfill(evs)
 		}
@@ -751,64 +948,73 @@ func (o *Observer) holdouts(ticket string) []string {
 }
 
 func (o *Observer) pollCells(t *tickCtx) {
-	dir := o.abs(WorktreesPath)
-	if !realDir(dir) {
-		return
+	relisted := o.cellsDir.changed(o.worktrees, true)
+	if !o.cellsDir.ok {
+		return // no worktrees folder (or a link): nothing is read, nothing is taken for gone
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
+	if relisted {
+		present := make(map[string]bool, len(o.cellsDir.names))
+		for _, name := range o.cellsDir.names {
+			ticket, ok := normalize.Ticket(name)
+			if !ok {
+				continue
+			}
+			present[ticket] = true
+			key := cellKey + ticket
+			src := o.sources[key]
+			if src != nil && src.gone {
+				// The cell came back: a new incarnation. Its file is a new generation.
+				delete(o.sources, key)
+				src = nil
+			}
+			if src == nil {
+				o.addSource(key, kindCell, ticket, "", WorktreesPath+"/"+ticket+"/"+LifecycleFile)
+			}
+		}
+		for _, src := range o.cells {
+			if !present[src.ticket] && !src.gone {
+				src.gone = true
+				cp := src.tailer.CP
+				cp.Gone = true
+				src.tailer.CP = cp
+				t.cps[src.key] = cp
+			}
+		}
 	}
-	present := map[string]bool{}
-	for _, e := range entries {
-		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 {
-			continue
+	for _, src := range o.cells {
+		if t.full() {
+			return
 		}
-		ticket, ok := normalize.Ticket(e.Name())
-		if !ok {
-			continue
-		}
-		present[ticket] = true
-		key := cellKey + ticket
-		src := o.sources[key]
-		if src != nil && src.gone {
-			// The cell came back: a new incarnation. Its file is a new generation.
-			delete(o.sources, key)
-			src = nil
-		}
-		if src == nil {
-			src = o.addSource(key, kindCell, ticket, "", WorktreesPath+"/"+ticket+"/"+LifecycleFile)
-		}
-		if !t.full() {
+		if !src.gone && o.due(src, t.now) {
 			o.pollCell(t, src)
-		}
-	}
-	for key, src := range o.sources {
-		if src.kind == kindCell && !present[src.ticket] && !src.gone {
-			src.gone = true
-			cp := src.tailer.CP
-			cp.Gone = true
-			src.tailer.CP = cp
-			t.cps[key] = cp
 		}
 	}
 }
 
-func (o *Observer) pollCell(t *tickCtx, src *source) {
-	cellDir := o.abs(WorktreesPath + "/" + src.ticket)
-	if info, err := os.Lstat(filepath.Join(cellDir, "cell.json")); err == nil && info.Mode().IsRegular() &&
-		(info.Size() != src.cellSize || info.ModTime().UnixNano() != src.cellMTime) {
-		if b, _, ok := readSmall(filepath.Join(cellDir, "cell.json"), 4<<20); ok {
-			src.cellInfo = normalize.ParseCell(b)
-			src.cellSize, src.cellMTime = info.Size(), info.ModTime().UnixNano()
-			src.cellStage = src.cellInfo.Stage
-			o.identity.LearnProduct(src.ticket, src.cellInfo.Product)
-		}
+// readCellJSON reads cell.json again when its size or time changed.
+func (o *Observer) readCellJSON(t *tickCtx, src *source) {
+	info, err := os.Lstat(src.cellJSON)
+	if err != nil || !info.Mode().IsRegular() || info.Size() == src.cellSize && info.ModTime().UnixNano() == src.cellMTime {
+		return
 	}
-	files := normalize.DirFiles{Dir: cellDir}
-	// The people the cell's records name are learned before its new lines are normalised, so a
-	// name in a line (or a finding) is scrubbed the first time it is stored.
-	src.beforeLines = func() { o.people.cell(src.ticket, files, src.tailer.CP.Offset+int64(src.tailer.CP.LineNo)) }
+	if b, _, ok := readSmall(src.cellJSON, 4<<20); ok {
+		if src.cellSize != 0 && !o.catchingUp {
+			src.changedAt(t.now)
+		}
+		src.cellInfo = normalize.ParseCell(b)
+		src.cellSize, src.cellMTime = info.Size(), info.ModTime().UnixNano()
+		src.cellStage = src.cellInfo.Stage
+		o.identity.LearnProduct(src.ticket, src.cellInfo.Product)
+	}
+}
+
+func (o *Observer) pollCell(t *tickCtx, src *source) {
+	cellDir, files := src.cellDir, src.files
+	// A cold cell (quiet for HotFor) is one stat a poll: its lifecycle log. Its cell.json is looked
+	// at every fourth cold poll; a line in the log makes the cell hot again, cell.json and all.
+	if !src.cold || src.coldPolls%4 == 1 {
+		o.readCellJSON(t, src)
+	}
 	n := o.pollTailed(t, src, func(gen string) lineNorm {
 		l := normalize.NewLifecycle(src.ticket, gen, o.opts.Root, o.identity)
 		l.Files, l.Holdouts = files, o.holdouts
@@ -845,23 +1051,35 @@ func (o *Observer) pollCell(t *tickCtx, src *source) {
 }
 
 func (o *Observer) pollExecutions(t *tickCtx) {
-	dir := o.abs(ExecutionsPath)
-	if !realDir(dir) || !realDir(o.abs(".factory/local")) {
+	if !realDir(o.local) {
+		o.execs = o.execs[:0]
 		return
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
+	if o.execsDir.changed(o.executions, true) {
+		o.execs = o.execs[:0]
+		for _, name := range o.execsDir.names {
+			if x, ok := normalize.ExecutionID(name); ok {
+				o.execs = append(o.execs, x)
+			}
+		}
 	}
-	for _, e := range entries {
-		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 {
-			continue
+	for _, x := range o.execs {
+		if t.full() {
+			return
 		}
-		x, ok := normalize.ExecutionID(e.Name())
-		if !ok || t.full() {
-			continue
+		src := o.sources[streamKey+x]
+		if src == nil {
+			src = o.addSource(streamKey+x, kindStream, "", x, ExecutionsPath+"/"+x+"/stream.jsonl")
 		}
-		o.pollExecution(t, x)
+		if o.due(src, t.now) {
+			o.pollExecution(t, x)
+			if src.running() {
+				// A running execution keeps its cell hot: its stations write while it runs.
+				if cell := o.sources[cellKey+o.identity.TicketOf(x)]; cell != nil && !o.catchingUp {
+					cell.changedAt(t.now)
+				}
+			}
+		}
 	}
 }
 
@@ -1016,24 +1234,21 @@ func readArchive(p string) (*archive, error) {
 }
 
 func (o *Observer) pollArchives(t *tickCtx) {
-	dir := o.abs(ArchivePath)
-	if !realDir(dir) {
+	dir := o.archives
+	if !o.archDir.changed(dir, false) && !o.archRetry {
 		return
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if !e.Type().IsRegular() || !strings.HasSuffix(name, ".tar.gz") || len(name) > 200 {
+	o.archRetry = false
+	for _, name := range o.archDir.names {
+		if !strings.HasSuffix(name, ".tar.gz") || len(name) > 200 {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil {
+		info, err := os.Lstat(filepath.Join(dir, name))
+		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
 		if t.full() {
+			o.archRetry = true
 			return
 		}
 		key := archKey + name
@@ -1044,6 +1259,7 @@ func (o *Observer) pollArchives(t *tickCtx) {
 		a, err := readArchive(filepath.Join(dir, name))
 		if err != nil {
 			t.err = errors.Join(t.err, errors.New("could not read "+ArchivePath+"/"+name))
+			o.archRetry = true
 			continue
 		}
 		ticket, ok := normalize.Ticket(a.prefix)
@@ -1051,6 +1267,7 @@ func (o *Observer) pollArchives(t *tickCtx) {
 			continue
 		}
 		if !o.catchUp(t, ticket, a) {
+			o.archRetry = true
 			continue // the live cell is still being read; the archive is read once it is gone
 		}
 		rec = tail.Checkpoint{Path: ArchivePath + "/" + name, Flags: flagArchive, Size: info.Size(), MTime: info.ModTime().UnixNano()}
@@ -1304,20 +1521,28 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 	}
 	o.stats.Pending = pend
 	o.stats.Delivery = o.delivery.stats(o.opts.Settle)
-	o.stats.Sources = o.stats.Sources[:0]
+	if o.orderDirty {
+		o.order = o.order[:0]
+		for _, src := range o.sources {
+			o.order = append(o.order, src)
+		}
+		sort.Slice(o.order, func(i, j int) bool { return o.order[i].key < o.order[j].key })
+		o.orderDirty = false
+	}
+	// One row per source, made without allocating (Stats turns them into SourceStats): this runs
+	// every tick, over every source.
+	o.rows = o.rows[:0]
 	unrec := map[string]int64{}
 	versions := map[string]RuntimeVersion{}
 	worst := normalize.RuntimeProven
 	streams := 0
-	for _, src := range o.sources {
+	for _, src := range o.order {
 		cp := src.tailer.CP
-		st := SourceStat{Key: src.key, Path: cp.Path, Offset: cp.Offset, Lines: cp.Lines, Refused: cp.Refused, Duplicates: cp.Dupes,
-			Oversized: cp.Oversize, Resets: cp.Resets, Gone: cp.Gone || src.gone, Blocked: cp.Blocked}
+		r := row{stat: SourceStat{Key: src.key, Path: cp.Path, Offset: cp.Offset, Lines: cp.Lines, Refused: cp.Refused, Duplicates: cp.Dupes,
+			Oversized: cp.Oversize, Resets: cp.Resets, Gone: cp.Gone || src.gone, Blocked: cp.Blocked}, lastRead: src.lastRead}
+		st := &r.stat
 		if size := src.tailer.Size; size >= 0 && !st.Gone && !st.Blocked {
-			st.Size = &size
-		}
-		if !src.lastRead.IsZero() {
-			st.LastReadAt = normalize.Stamp(src.lastRead)
+			r.size, r.hasSize = size, true
 		}
 		switch {
 		case cp.Blocked:
@@ -1369,7 +1594,7 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 				}
 			}
 		}
-		o.stats.Sources = append(o.stats.Sources, st)
+		o.rows = append(o.rows, r)
 	}
 	o.stats.Unrecognised = unrec
 	if streams == 0 {
@@ -1381,7 +1606,6 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 	}
 	sort.Slice(summary.Versions, func(i, j int) bool { return summary.Versions[i].Version < summary.Versions[j].Version })
 	o.stats.Runtime = summary
-	sort.Slice(o.stats.Sources, func(i, j int) bool { return o.stats.Sources[i].Key < o.stats.Sources[j].Key })
 	o.stats.IntervalMS = o.interval.Milliseconds()
 }
 
@@ -1390,7 +1614,18 @@ func (o *Observer) Stats() Stats {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	s := o.stats
-	s.Sources = append([]SourceStat(nil), o.stats.Sources...)
+	s.Sources = make([]SourceStat, len(o.rows))
+	for i := range o.rows {
+		r := &o.rows[i]
+		s.Sources[i] = r.stat
+		if r.hasSize {
+			size := r.size
+			s.Sources[i].Size = &size
+		}
+		if !r.lastRead.IsZero() {
+			s.Sources[i].LastReadAt = normalize.Stamp(r.lastRead)
+		}
+	}
 	return s
 }
 

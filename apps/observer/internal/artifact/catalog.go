@@ -80,12 +80,19 @@ type Entry struct {
 	Visit      *VisitLink `json:"visit"`
 	RoundBasis string     `json:"round_basis,omitempty"`
 	// ModifiedMS is the file's modification time (Unix ms), for the join; never served.
-	ModifiedMS    int64      `json:"-"`
-	ContentAccess string     `json:"content_access"` // text | media | media-disabled | none
-	AccessReason  string     `json:"access_reason,omitempty"`
-	Provenance    Provenance `json:"provenance"`
+	ModifiedMS    int64  `json:"-"`
+	ContentAccess string `json:"content_access"` // text | media | media-disabled | none
+	AccessReason  string `json:"access_reason,omitempty"`
+	// FreeText: the served text holds prose the observer cannot check for names (R1): a name
+	// MACH's records or git identities give is replaced wherever it appears, a name that appears
+	// only in prose is not. FreeTextNote is then redact.FreeTextNote, else null. False for media
+	// and for content that is not served.
+	FreeText     bool       `json:"free_text"`
+	FreeTextNote *string    `json:"free_text_note"`
+	Provenance   Provenance `json:"provenance"`
 
 	member string // archive member name
+	free   bool   // the file's text holds prose (redact.HasFreeText), whatever its access
 }
 
 // VisitLink links an artifact to a station visit.
@@ -136,6 +143,7 @@ type hashed struct {
 	id    fileID
 	sum   string
 	media string
+	free  bool
 }
 
 type archiveScan struct {
@@ -237,8 +245,13 @@ func (c *Catalog) refreshLocked() {
 			c.add(e)
 		}
 	}
+	note := redact.FreeTextNote
 	for _, e := range c.order {
 		e.ContentAccess, e.AccessReason = access(e, c.set)
+		e.FreeText, e.FreeTextNote = e.ContentAccess == "text" && e.free, nil
+		if e.FreeText {
+			e.FreeTextNote = &note
+		}
 	}
 }
 
@@ -345,7 +358,7 @@ func roundFolders(names []string) []int {
 // source abstracts a live cell folder and an archive's members.
 type source interface {
 	read(rel string, max int64) ([]byte, error) // a record (results.json)
-	hash(rel string) (sum, media string, size, modMS int64, err error)
+	hash(rel string) (h hashed, size, modMS int64, err error)
 }
 
 // plan lists what a cell's records name, as entries without hashes; fill completes them.
@@ -439,7 +452,9 @@ func (c *Catalog) fill(src source, origin string, planned []*Entry) []*Entry {
 	var out []*Entry
 	for _, e := range planned {
 		e.Origin = origin
-		sum, media, size, mod, err := src.hash(e.Path)
+		h, size, mod, err := src.hash(e.Path)
+		sum, media := h.sum, h.media
+		e.free = h.free
 		e.ModifiedMS = mod
 		if errors.Is(err, ErrTooLarge) {
 			e.Integrity, e.Bytes = "unchecked", size
@@ -488,25 +503,36 @@ func (s cellSource) read(rel string, max int64) ([]byte, error) {
 	return data, err
 }
 
-func (s cellSource) hash(rel string) (string, string, int64, int64, error) {
+func (s cellSource) hash(rel string) (hashed, int64, int64, error) {
 	full := s.prefix + rel
 	id, err := statFile(s.root, full)
 	if err != nil {
-		return "", "", 0, 0, err
+		return hashed{}, 0, 0, err
 	}
 	mod := id.ModNS / 1e6
 	key := "cell:" + full
 	if h, ok := s.c.hashes[key]; ok && h.id == id {
-		return h.sum, h.media, id.Size, mod, nil
+		return h, id.Size, mod, nil
 	}
 	data, id, err := readFile(s.root, full, MaxVideo)
 	if err != nil {
-		return "", "", id.Size, mod, err
+		return hashed{}, id.Size, mod, err
 	}
-	sum := sha256.Sum256(data)
-	h := hashed{id: id, sum: hex.EncodeToString(sum[:]), media: Sniff(data)}
+	h := hashOf(rel, data)
+	h.id = id
 	s.c.hashes[key] = h
-	return h.sum, h.media, id.Size, mod, nil
+	return h, id.Size, mod, nil
+}
+
+// hashOf hashes a file's bytes, sniffs its type and notes whether its text holds free prose.
+func hashOf(rel string, data []byte) hashed {
+	sum := sha256.Sum256(data)
+	media := Sniff(data)
+	h := hashed{sum: hex.EncodeToString(sum[:]), media: media}
+	if class, ok := Allowed(rel, media); ok && class == ClassText {
+		h.free = redact.HasFreeText(rel, data)
+	}
+	return h
 }
 
 func (c *Catalog) scanCell(root *os.Root, ticket string) []*Entry {
@@ -524,6 +550,7 @@ func (c *Catalog) scanCell(root *os.Root, ticket string) []*Entry {
 
 type member struct {
 	sum, media string
+	free       bool
 	size       int64
 	modMS      int64
 	tooLarge   bool
@@ -540,15 +567,15 @@ func (s archiveSource) read(rel string, max int64) ([]byte, error) {
 	return m.data, nil
 }
 
-func (s archiveSource) hash(rel string) (string, string, int64, int64, error) {
+func (s archiveSource) hash(rel string) (hashed, int64, int64, error) {
 	m, ok := s.members[rel]
 	if !ok {
-		return "", "", 0, 0, ErrNotHeld
+		return hashed{}, 0, 0, ErrNotHeld
 	}
 	if m.tooLarge {
-		return "", "", m.size, m.modMS, ErrTooLarge
+		return hashed{}, m.size, m.modMS, ErrTooLarge
 	}
-	return m.sum, m.media, m.size, m.modMS, nil
+	return hashed{sum: m.sum, media: m.media, free: m.free}, m.size, m.modMS, nil
 }
 
 // archived reports whether a cell-relative member name is one the catalog may hold.
@@ -593,8 +620,8 @@ func (c *Catalog) scanArchive(root *os.Root, ticket string) []*Entry {
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(data)
-		m := member{sum: hex.EncodeToString(sum[:]), media: Sniff(data), size: int64(len(data)), modMS: hdr.ModTime.UnixMilli()}
+		h := hashOf(name, data)
+		m := member{sum: h.sum, media: h.media, free: h.free, size: int64(len(data)), modMS: hdr.ModTime.UnixMilli()}
 		if (strings.HasSuffix(name, "results.json") || strings.HasSuffix(name, "decision.json")) && len(data) <= maxRecord {
 			m.data = data
 		}

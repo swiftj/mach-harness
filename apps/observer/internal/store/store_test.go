@@ -398,3 +398,73 @@ func TestSeriesCountsAndSurvivesARestart(t *testing.T) {
 		t.Fatalf("after a restart %+v", again)
 	}
 }
+
+// R3: only the most recent HotRaw events keep their envelope in memory; older events of the
+// window are read back from their line on disk, byte for byte what was served when they were new,
+// by every reader (After, Get, Run, History), also after a restart and across a segment roll.
+func TestColdWindowEnvelopesReadBackExactly(t *testing.T) {
+	dir := t.TempDir()
+	opts := Options{MaxMemory: 400, HotRaw: 25, SegmentBytes: 16 << 10}
+	s, err := OpenWith(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := map[string][]byte{}
+	for i := 0; i < 30; i++ {
+		var b []*event.Event
+		for j := 0; j < 10; j++ {
+			n := i*10 + j
+			b = append(b, evAt(fmt.Sprintf("e%03d", n), fmt.Sprintf("T-%d", n%3), fmt.Sprintf("%015d~2~c~000000000001~0000", 300-n), "cell:T"))
+		}
+		if _, err := s.Append(b, map[string]tail.Checkpoint{"ledger": {Offset: int64(i)}}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := s.After(s.Head()-10, 10) // read while hot, as a stream does
+		for _, e := range got {
+			served[e.Event.ID] = e.Raw
+		}
+	}
+	if s.Info().Segments < 2 {
+		t.Fatalf("expected a segment roll: %+v", s.Info())
+	}
+	held := 0
+	for _, e := range s.entries {
+		if e.Raw != nil {
+			held++
+		}
+	}
+	if held != 25 {
+		t.Fatalf("%d envelopes held in memory, want 25", held)
+	}
+	check := func(s *Store, label string) {
+		t.Helper()
+		all, err := s.After(0, 1000)
+		if err != nil || len(all) != 300 {
+			t.Fatalf("%s: %d %v", label, len(all), err)
+		}
+		for _, e := range all {
+			if string(e.Raw) != string(served[e.Event.ID]) {
+				t.Fatalf("%s: %s read back as %s, served %s", label, e.Event.ID, e.Raw, served[e.Event.ID])
+			}
+		}
+		if e, ok := s.Get("e007"); !ok || string(e.Raw) != string(served["e007"]) {
+			t.Fatalf("%s: get", label)
+		}
+		p, err := s.ByTicket("T-1", 0, 1000)
+		if err != nil || len(p.Entries) != 100 || string(p.Entries[0].Raw) != string(served[p.Entries[0].Event.ID]) {
+			t.Fatalf("%s: by ticket %d %v", label, len(p.Entries), err)
+		}
+		h := s.History(HistoryQuery{Limit: 1000})
+		if len(h.Entries) != 300 || !h.Complete || h.Entries[0].Event.ID != "e299" || string(h.Entries[0].Raw) != string(served["e299"]) {
+			t.Fatalf("%s: history %d %v", label, len(h.Entries), h.Complete)
+		}
+	}
+	check(s, "live")
+	s.Close()
+	r, err := OpenWith(dir, opts)
+	if err != nil || r.Info().Rebuilt != "" {
+		t.Fatalf("%v %q", err, r.Info().Rebuilt)
+	}
+	defer r.Close()
+	check(r, "after a restart")
+}

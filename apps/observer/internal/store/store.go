@@ -31,7 +31,12 @@ const Format = 3
 
 // Defaults.
 const (
-	DefaultMaxMemory    = 50000
+	DefaultMaxMemory = 50000
+	// DefaultHotRaw: of the memory window, only the most recent this many events keep their
+	// served envelope in memory; older ones keep their index fields and where their line is on
+	// disk, and are read back from it (one positioned read) when asked for. The window's bytes
+	// were most of the observer's steady memory (R3 of the M6.2 re-check: 98 MB of 176 MB live).
+	DefaultHotRaw       = 16384
 	DefaultSegmentBytes = 64 << 20
 	DefaultRetainBytes  = 512 << 20
 	sparseEvery         = 1024
@@ -59,6 +64,14 @@ type Meta struct {
 type Entry struct {
 	Event *event.Head
 	Raw   []byte
+	loc   diskLoc
+}
+
+// diskLoc is where an event's compact line is: its segment's number, offset and length (no
+// newline). seg 0: not on disk (a store kept in memory only).
+type diskLoc struct {
+	seg, n int32
+	off    int64
 }
 
 // Info summarises the store.
@@ -79,6 +92,7 @@ type Info struct {
 // Options configure a store.
 type Options struct {
 	MaxMemory    int   // events held in memory (and indexed by ticket, execution and entity)
+	HotRaw       int   // of those, the most recent this many keep their envelope in memory (DefaultHotRaw)
 	SegmentBytes int64 // a segment is closed when it grows past this
 	RetainBytes  int64 // whole oldest segments are dropped while the total is above this
 }
@@ -144,6 +158,9 @@ func OpenWith(dir string, opts Options) (*Store, error) {
 	}
 	if opts.SegmentBytes <= 0 {
 		opts.SegmentBytes = DefaultSegmentBytes
+	}
+	if opts.HotRaw <= 0 {
+		opts.HotRaw = DefaultHotRaw
 	}
 	if opts.RetainBytes <= 0 {
 		opts.RetainBytes = DefaultRetainBytes
@@ -414,6 +431,69 @@ func (s *Store) push(e Entry) {
 			s.trimIndexes()
 		}
 	}
+	// The event leaving the hot tail keeps only where its line is (read back by fill).
+	if i := len(s.entries) - 1 - s.opts.HotRaw; i >= 0 && s.entries[i].loc.seg > 0 {
+		s.entries[i].Raw = nil
+	}
+}
+
+// fill reads back the envelope of every entry that left the hot tail, from its line on disk
+// (the caller holds the lock, so no segment is dropped meanwhile). The entries are copies: what
+// is read is not kept.
+func (s *Store) fill(out []Entry) error {
+	var files map[int32]*os.File
+	defer func() {
+		for _, f := range files {
+			f.Close()
+		}
+	}()
+	for i := range out {
+		if out[i].Raw != nil {
+			continue
+		}
+		l := out[i].loc
+		if l.seg <= 0 {
+			return errors.New("an event's envelope is not held")
+		}
+		f := files[l.seg]
+		if f == nil {
+			var err error
+			if f, err = os.Open(s.segmentPath(int(l.seg))); err != nil {
+				return fmt.Errorf("could not read the index log: %w", err)
+			}
+			if files == nil {
+				files = map[int32]*os.File{}
+			}
+			files[l.seg] = f
+		}
+		line := make([]byte, l.n)
+		if _, err := f.ReadAt(line, l.off); err != nil {
+			return fmt.Errorf("could not read the index log: %w", err)
+		}
+		e, err := s.expand(line)
+		if err != nil {
+			return err
+		}
+		if e.Event.Pos != out[i].Event.Pos {
+			return errors.New("the index log does not match its memory window")
+		}
+		out[i].Raw = e.Raw
+	}
+	return nil
+}
+
+// expand turns a compact line from a segment into an entry with the served envelope.
+func (s *Store) expand(compact []byte) (Entry, error) {
+	var ev event.Event
+	if err := json.Unmarshal(compact, &ev); err != nil {
+		return Entry{}, err
+	}
+	ev.Cursor = event.Cursor{Generation: s.meta.Generation, Position: ev.Pos}.String()
+	full, err := json.Marshal(&ev) // the compact form, expanded to the served envelope
+	if err != nil {
+		return Entry{}, err
+	}
+	return Entry{Event: ev.Slim(), Raw: full}, nil
 }
 
 // trimIndexes drops positions that left the memory window from the secondary indexes.
@@ -592,6 +672,7 @@ func (s *Store) write(data []byte, fresh []Entry, sizes []int) error {
 		count = int(seg.last - seg.first + 1)
 	}
 	for i, e := range fresh {
+		fresh[i].loc = diskLoc{seg: int32(seg.n), off: offset, n: int32(sizes[i] - 1)}
 		if seg.first == 0 || count == 0 {
 			seg.first = e.Event.Pos
 		}
@@ -703,7 +784,11 @@ func (s *Store) After(c uint64, limit int) ([]Entry, error) {
 	if c >= s.memFloor() {
 		start := int(c + 1 - s.first)
 		end := min(start+limit, len(s.entries))
-		return append([]Entry(nil), s.entries[start:end]...), nil
+		out := append([]Entry(nil), s.entries[start:end]...)
+		if err := s.fill(out); err != nil {
+			return nil, err
+		}
+		return out, nil
 	}
 	return s.readDisk(c, limit)
 }
@@ -730,24 +815,22 @@ func (s *Store) readDisk(c uint64, limit int) ([]Entry, error) {
 			return nil, err
 		}
 		r := bufio.NewReaderSize(f, 1<<16)
+		at := offset
 		for len(out) < limit {
 			line, err := r.ReadBytes('\n')
+			start := at
+			at += int64(len(line))
 			if len(line) > 0 && line[len(line)-1] == '\n' {
-				raw := bytes.TrimRight(line, "\n")
+				raw := line[:len(line)-1]
 				var p posLine
 				if json.Unmarshal(raw, &p) == nil && p.Pos > c {
-					var ev event.Event
-					if err := json.Unmarshal(raw, &ev); err != nil {
-						f.Close()
-						return nil, err
-					}
-					ev.Cursor = event.Cursor{Generation: s.meta.Generation, Position: ev.Pos}.String()
-					full, err := json.Marshal(&ev) // the compact form, expanded to the served envelope
+					e, err := s.expand(raw)
 					if err != nil {
 						f.Close()
 						return nil, err
 					}
-					out = append(out, Entry{Event: ev.Slim(), Raw: full})
+					e.loc = diskLoc{seg: int32(seg.n), off: start, n: int32(len(raw))}
+					out = append(out, e)
 				}
 			}
 			if err != nil {
@@ -770,7 +853,11 @@ func (s *Store) Get(id string) (Entry, bool) {
 	if !ok || h.pos < s.first {
 		return Entry{}, false
 	}
-	return s.entries[h.pos-s.first], true
+	out := []Entry{s.entries[h.pos-s.first]}
+	if s.fill(out) != nil {
+		return Entry{}, false
+	}
+	return out[0], true
 }
 
 // Query selects events after a position. Every filter set must match (an event matches Entity
@@ -867,7 +954,11 @@ func (s *Store) Run(q Query) (Page, error) {
 				}
 				page.Entries = append(page.Entries, e)
 			}
+			err := s.fill(page.Entries)
 			s.mu.RUnlock()
+			if err != nil {
+				return Page{}, err
+			}
 			return page, nil
 		}
 	}
@@ -994,6 +1085,16 @@ func (s *Store) History(q HistoryQuery) HistoryPage {
 				break
 			}
 		}
+	}
+	if s.fill(out) != nil {
+		// An envelope could not be read back: leave it out and say the window is not complete.
+		kept := out[:0]
+		for _, e := range out {
+			if e.Raw != nil {
+				kept = append(kept, e)
+			}
+		}
+		out, complete = kept, false
 	}
 	s.mu.RUnlock()
 	page := HistoryPage{Complete: complete}

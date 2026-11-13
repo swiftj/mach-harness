@@ -94,3 +94,73 @@ func TestDocumentKeepsSafeNames(t *testing.T) {
 		t.Fatalf("without the catalog's names the long run is still scrubbed: %q", got)
 	}
 }
+
+// R2: a person field that holds a role MACH wrote keeps it (an agent's act is not credited to a
+// person); a person field that names someone, or a role phrase that may carry a name, is replaced;
+// role phrases are never learned as names.
+func TestPersonFieldsKeepRolePhrases(t *testing.T) {
+	root := "/work/r2"
+	PeopleFor(root).Learn("Ada Lovelace")
+	agent := "an agent, on the person's instruction in conversation"
+	decision := []byte(`{"ticket_id":"T-1","human_approval":{"by":"Ada Lovelace","recorded_by":"` + agent + `",` +
+		`"recorded_at":"2026-11-12T22:57:15+00:00","approved_by":"the line"},"note":"x"}`)
+	out, _, err := ScrubRecord(decision, KindDecision, root, RecordOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"by": "a person"`, `"recorded_by": "` + agent + `"`, `"approved_by": "the line"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s in %s", want, out)
+		}
+	}
+	run := []byte(`{"ticket_id":"T-1","human_approval":{"by":"supervisor","recorded_by":"The Supervisor"}}` + "\n")
+	if out, _, _ := ScrubRecord(run, KindRunRecord, root, RecordOptions{}); !strings.Contains(out, `"by":"supervisor"`) || !strings.Contains(out, `"recorded_by":"The Supervisor"`) {
+		t.Errorf("a role was replaced: %s", out)
+	}
+	for _, v := range []string{agent, "the line", "The supervisor", "a person", "product manager", "the engineer", "an agent", "Reviewer"} {
+		if !RolePhrase(v) {
+			t.Errorf("%q is a role phrase", v)
+		}
+	}
+	for _, v := range []string{"Ada Lovelace", "someone else", "the engineer Jane Doe", "an agent, on Jane's instruction", "agent@example.org",
+		"Grace <grace@example.org>", "Jane", ""} {
+		if RolePhrase(v) {
+			t.Errorf("%q is not a role phrase", v)
+		}
+	}
+	// A role phrase that names a known person is still replaced.
+	named := []byte(`{"human_approval":{"recorded_by":"an agent, for ada lovelace"}}`)
+	if out, _, _ := ScrubRecord(named, KindDecision, root, RecordOptions{}); strings.Contains(strings.ToLower(out), "lovelace") || !strings.Contains(out, `"recorded_by": "a person"`) {
+		t.Errorf("a known name in a role phrase was served: %s", out)
+	}
+	p := &People{names: map[string]bool{}}
+	p.LearnJSON(decision)
+	if p.Is(agent) || p.Is("the line") || !p.Is("ada lovelace") {
+		t.Fatalf("learned %v", p.names)
+	}
+}
+
+// R1: which served texts hold prose the observer cannot check for names.
+func TestHasFreeText(t *testing.T) {
+	cases := []struct {
+		rel  string
+		data string
+		want bool
+	}{
+		{"review/round-1/findings.md", "# Findings\nThe parser drops a field.\n", true},
+		{"evidence/AC-01.txt", "ok", true},
+		{"evidence/AC-01.txt", "  \n", false},
+		{"review/round-1/decision.json", `{"ticket_id":"T-1","outcome":"APPROVED","findings":"review/round-1/findings.md","human_approval":{"by":"Ada","recorded_by":"an agent, on the person's instruction in conversation","note":null},"human_approval_reasons":["High risk ticket"]}`, false},
+		{"review/round-1/decision.json", `{"human_approval":{"note":"thanks, ship it"}}`, true},
+		{"evidence/results.json", `{"records":{"AC-01":{"result":"pass","note":"checked by hand"}},"suite":{"command":"go test ./..."}}`, true},
+		{"evidence/results.json", `{"records":{"AC-01":{"result":"pass","evidence":[{"file":"AC-01.txt","sha256":"ab"}]}},"suite":{"command":"go test ./..."}}`, false},
+		{"review/round-1/votes/security.json", `{"seat":"security","findings":[{"severity":"blocker","title":"Unchecked input","file":"a.go"}]}`, true},
+		{"evidence/data.json", `{"a":1}`, true}, // a JSON file of no known kind is served as text
+		{"evidence/results.json", `not json`, true},
+	}
+	for _, c := range cases {
+		if got := HasFreeText(c.rel, []byte(c.data)); got != c.want {
+			t.Errorf("%s %s: %v, want %v", c.rel, c.data, got, c.want)
+		}
+	}
+}

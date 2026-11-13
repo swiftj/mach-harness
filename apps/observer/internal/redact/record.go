@@ -194,6 +194,10 @@ func (w *walker) value(v any, key string, known, approval bool, depth int) any {
 					kept = append(kept, kv) // a seat, not a person
 					continue
 				}
+				if s, ok := kv.v.(string); ok && RolePhrase(s) && !w.people.Hit(s) && !Sensitive(s) {
+					kept = append(kept, kv) // a role MACH wrote ("an agent, on the person's instruction…"), not a person
+					continue
+				}
 				if kv.v != nil {
 					w.n++
 					kv.v = Role

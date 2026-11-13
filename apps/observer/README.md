@@ -84,7 +84,7 @@ means 3; any other value is 400 `invalid` with `supported: [3]`. Cursors are `<g
 | `project` | slice counts by scheduler state, active cells, running executions, open human gates, integration commit, recorded Factory mode, history gaps | |
 | `waves`, `waves/{wave}` | delivery waves; detail with each slice's state and wait | |
 | `slices`, `slices/{slice}` | scheduler state (`completed`, `active`, `ready`, `blocked`, `superseded`), dependencies, recorded reasons, `waiting {kind: dependency \| capacity \| person \| unknown, basis, reasons, since}`, state history, earlier revisions | `wave`, `state`, `limit`, `offset`; capacity only from `capacity.wait_changed` or the scheduler's fixed sentence; never from silence |
-| `cells`, `cells/{ticket}` | cells; detail: `app_type` and `risk`, `plan {app_type, risk, contracts, tasks, recorded_by}` (the plan station's exit), visits (with gates, tasks, checks, measured duration), rounds, gates, build tasks, verification checks and targets, review rounds with panel, verdicts and decision, findings (prose), human approvals (role only), merge, cleanup, human gates, wait | `stage`, `archived`, `limit`, `offset`; gates capped at 1,000 per cell (`gates_dropped`) |
+| `cells`, `cells/{ticket}` | cells; `app_type` and `risk` (`null` while unknown, never `""`; the same in `plan`), `plan {app_type, risk, contracts, tasks, recorded_by}` (the plan station's exit); detail adds visits (with gates, tasks, checks, measured duration), rounds, gates, build tasks, verification checks and targets, review rounds with panel, verdicts and decision, findings (prose), human approvals (role only), merge, cleanup, human gates, wait | `stage`, `archived`, `limit`, `offset`; gates capped at 1,000 per cell (`gates_dropped`) |
 | `cells/{ticket}/visits/{visit}` | one visit and its events (visit as `build%232`) | up to 1,000 events still held |
 | `cells/{ticket}/evidence` | the cell's catalogued artifacts and its recorded checks, each evidence file linked to its catalog id and integrity | |
 | `runs`, `runs/{execution}` | executions: state (`claimed`, `running`, `ended`, `finished`, `failed`, `interrupted`, `timed-out`, `could-not-start`, `unknown`), true process times (`time_basis: process`) or the supervisor's (`bounded`), cost with its source (stream usage, else MACH's record; null with a reason), tokens and cost per model, `cost_may_be_under_reported` with reasons (from the stream's own `execution.usage.cost_complete` when there is one; the process ending interrupted, timed out or unknown also counts), refused tools, recovery; detail adds workflows, usage, session | `state=active\|finished\|unknown`, `ticket`, `limit` (200, max 1000), `offset` |
@@ -115,7 +115,7 @@ size, lag_bytes (size − offset), last_read_at, last_read_age_ms, lines, refuse
 oversized, resets}`. `size` is the file's size at its last read; `size`, `lag_bytes` and
 `last_read_at` are null for a source that is missing or refused, or not read yet. A busy tick
 (more than 20,000 events waiting) leaves some sources for the next one, so a source's
-`last_read_at` can be older than the last tick.
+`last_read_at` can be older than the last tick; so can a cold source's (polled every 2 s, [Latency](#latency)).
 
 ### Late and backfill
 
@@ -123,7 +123,9 @@ oversized, resets}`. `size` is the file's size at its last read; `size`, `lag_by
 an event that sorts after it in history order. Events are held only as long as needed (the
 **adaptive settle**, contract 6.5): an event is committed as soon as every tailed source that has a
 file has been read through past its time (less 10 ms); the 1.5 s window bounds the hold when a source
-is behind (a backlog over a tick's 5,000-event budget) or cannot be read. History that was on disk before the observer
+is behind (a backlog over a tick's 5,000-event budget) or cannot be read. A cold source ([Latency](#latency)) holds
+nothing back, so its first line after a quiet spell can be committed after a hot source's later event and be marked late.
+History that was on disk before the observer
 started (or before an index rebuild), and anything derived from it, is **backfill**: delivered in
 read order while `catching_up` is true, never late, with `provenance: {basis: [], rule:
 "backfill", files: []}` (or its own provenance if it is reconstructed). A file that appears while
@@ -140,21 +142,43 @@ append to paint at median 1,673 ms, p95 2,333 ms, nearly all of it the fixed 1.5
 | busy: 4 cells, a line every 0.3–1.1 s each, 40 s (two runs) | 123–132 ms | 301–357 ms | 1,666 / 1,749 ms |
 | a quiet Factory waking up: one line every 3 s (14 lines per run) | 136–297 ms | 484–511 ms | 2,090 / 2,503 ms |
 
-An idle poll is one `lstat` per source (no open), so a project with a thousand cells is polled several times a second
-cheaply. `heartbeat.at_ms` and `watermark_ms` on the stream, and `health.ingest.delivery`, show the live edge and the
-holds.
+**Polling tiers (R3 of the M6.2 re-check).** A source is **hot** while it is new, while its execution is running (and
+so is that execution's cell), and for 2 minutes after this observer last saw it change (a live line, a rewrite, a new
+`cell.json`; when the catch-up ends, a file written in the last 2 minutes counts); a hot source is polled every tick
+(150 ms while anything changes, doubling to 500 ms). Every other source is **cold**: polled once every 2 s, spread over
+the ticks, one `lstat` of its log (a cold cell's `cell.json` every fourth cold poll), and it does not hold back the
+adaptive settle. The folders that hold sources (`worktrees/`, `local/executions/`, `archive/`) are listed again only
+when their own time changes (and at least every 10 s); an idle tick allocates nothing per source. Cost and price, on
+the same machine:
+
+| Measure | Before | Now |
+|---|---|---|
+| busy: 4 cells, a line every 0.3–1.1 s each, 40 s | 127 ms / 297 ms (median / p95) | 128 ms / 302 ms |
+| one line every 3 s on one cell | 271 ms / 444 ms | 319 ms / 498 ms |
+| a hot cell (a line every 0.7 s) while 12 quiet cells wake | 193 ms / 433 ms | 227 ms / 477 ms |
+| **the first line on a cell quiet for 2 minutes or more** | 290 ms / 510 ms, never late | **905 ms / 1,960 ms; 9 of 12 marked `late`** |
+| idle CPU, 1,263 cells and 230,853 events, no client (steady, 60 s, `ps` CPU time) | 25–36 % of a core | **0.95–1.27 %** |
+
+So a cell that wakes after a quiet spell can have its first line arrive up to 2 s after it was written and be marked
+`late: true` (an event of a hot source sorting after it was committed first); every following line is hot. A 1 s cold
+interval gave 1.48 % idle and 778 / 1,225 ms for that first line. `heartbeat.at_ms` and `watermark_ms` on the stream,
+and `health.ingest.delivery`, show the live edge and the holds.
 
 ### Memory and the index
 
-Reading a 230,853-event history (93 MB of sources) at start, measured with `ps` every 100 ms: peak RSS **283–295 MB**
-(was 1.6 GB), catch-up 26–27 s on a machine at load average 10 (was 16–20 s unloaded), index on disk 225 MB (was
-300 MB; segments 213 MB). After catch-up the head snapshot (35 MB of JSON for that history) is kept encoded, so RSS then
-sits around 320–360 MB. Bounded by: a tick reads at most
-5,000 events (and the next follows at once while a backlog remains); the store keeps a memory window of 50,000
-events as their index fields and encoded bytes only; projection checkpoints share every cell, slice, execution and wave
-that did not change (32 kept); the saved projection is written at most every 15 s; the segments hold each event in a
-compact form (the envelope without nulls, empties and zeros; `data` exact), expanded when read; the Go runtime has a
-soft memory limit of 208 MB (`GOMEMLIMIT` overrides).
+Reading a 230,853-event history (100 MB of sources, 1,261 cells) from a clean copy, measured with `/usr/bin/time -l`
+(maximum resident set size) and catch-up as the first `health` with `catching_up: false`, lag 0 and the head unchanged
+for 2 s: **catch-up 16.5–18.7 s, peak RSS 260–281 MiB** (before this round, on the same machine: 29.6–36.4 s and
+300–331 MiB; the M6.2 re-check measured 35.2 s and 257 MiB), index on disk 233 MiB. The catch-up had slowed because the
+live heap sat at the soft memory limit, so the collector ran hundreds of times a second (and, after catch-up, three times
+per idle tick: R3). Now the store keeps the served envelope of only the newest 16,384 events of its 50,000-event memory
+window; the older ones keep their index fields and where their line is in a segment, and are read back (one positioned
+read, then expanded) when asked for, byte for byte what was served when they were new. That took 98 MB of a 176 MB live
+heap down to about 30 MB. Also bounded by: a tick reads at most 5,000 events (and the next follows at once while a
+backlog remains); projection checkpoints share every cell, slice, execution and wave that did not change (32 kept); the
+saved projection is written at most every 15 s; the segments hold each event in a compact form (the envelope without
+nulls, empties and zeros; `data` exact), expanded when read; the Go runtime has a soft memory limit of 208 MB
+(`GOMEMLIMIT` overrides).
 
 ### `factory/status`
 
@@ -214,7 +238,11 @@ with no `.factory/` answers `factory_present: false` and the same keys.
 - **MACH's JSON records are redacted by kind** (`redact.ScrubRecord`): `decision.json`, votes, `results.json`,
   `summary.json`, `build-report.json`, `cell.json`, run records. Every person-bearing field (`by`, `recorded_by`,
   `approved_by`, `enabled_by`, `author`, `committer`, names and e-mails, a vote's `reviewer` unless it is a seat, and
-  every person field of a `human_approval` or `approval` object) becomes `"a person"`; known keys are scrubbed as
+  every person field of a `human_approval` or `approval` object) becomes `"a person"`, unless it holds a role MACH
+  wrote (R2): a role word, or a phrase whose first word after "a", "an" or "the" is a role (`agent`, `line`,
+  `supervisor`, `engineer`, `reviewer`, `person`, ...) with no capitalised word after it and no known name in it, such
+  as review.py's `"recorded_by": "an agent, on the person's instruction in conversation"`, which is kept so an agent's
+  act is not credited to a person. Role phrases are never learned as names. Known keys are scrubbed as
   text; an unknown key keeps its value only if the scrubber would leave it untouched (else `"[withheld]"`); key order
   is kept; `X-MACH-Redacted` counts all of it. A record that is not JSON, and any other file, is scrubbed as text.
 - **Text is scrubbed** by the one text scrubber the event path uses (`redact.ScrubDocument`, the same
@@ -227,6 +255,14 @@ with no `.factory/` answers `factory_present: false` and the same keys.
   digest. The adversarial redaction test (`TestRedactionCoverage`) reads its corpus back through
   this path with zero leaks. The extension's class must match the contents (415 otherwise); HTML, SVG and
   binaries are refused. Caps: text 16 MiB read, images 16 MiB, video 64 MiB (413).
+- **Free text is labelled, not withheld (R1, the product owner's decision).** A served text that holds prose the
+  observer cannot check for names that no record gives says so. On the catalog entry (`artifacts`, `artifacts/{id}`,
+  `cells/{ticket}/evidence`): `"free_text": true` and `"free_text_note": "free text, not checked for names"` (else
+  `false` and `null`; always `false` for media and for content that is not served). On the content reply: the header
+  `X-MACH-Free-Text: unchecked-for-names` (absent otherwise), next to `X-MACH-Redacted`. Free text: any text that is not
+  a MACH record of a known kind (`findings.md`, transcripts, logs, unknown JSON), and a record any of whose values is
+  a string of more than one word outside its person fields and `command` (a verifier's `note`, a finding's `title` and
+  `detail`, an approval note). A record of identifiers, numbers, times, hashes and paths only is not labelled.
 - **Images and video only when the project opts in:** `.factory/config.json`
   `{"tower": {"evidence_media": true}}` (tracked; read only; off by default, 403 `media-disabled`).
 - **Headers:** `Content-Security-Policy: default-src 'none'; img-src 'self'; media-src 'self';
@@ -241,11 +277,20 @@ a per-project deny-list of the names and e-mail addresses MACH's own files give 
 decisions, the intake log's `by` and `approval.actor`, `runner.json`'s `enabled_by`, the person fields of a cell's
 records, and the project's git identities (`[user]` in `.git/config`, the name and e-mail of each entry of
 `.git/logs/HEAD` and of each worktree's reflog, read as files; git is never run). Role words MACH writes (`engineer`,
-`supervisor`, seat names) are never taken for names. Every name is replaced by `"a person"`, case-insensitively and as
-a whole word, in every event string before it is stored, in every served document, and, as the last filter, in every
-API reply body. Limit: a name that first appears in free text (a finding) before any record or identity names that
-person is not recognised; the reply filter still removes it from what is served once it is learned, but the stored
-index may hold it until a rebuild.
+`supervisor`, seat names, and role phrases such as "an agent, on the person's instruction in conversation") are never
+taken for names. Every name is replaced by `"a person"`, case-insensitively and as a whole word, in every event string
+before it is stored, in every served document, and, as the last filter, in every API reply body.
+
+What is guaranteed and what is not (a known limit, decided by the product owner: label, do not withhold):
+
+- **Guaranteed:** a name or e-mail address that MACH's records or the project's git identities give is never served,
+  in any event, document or reply, once the observer has read that record (the deny-list only grows; it is read before
+  a cell's new lines are normalised). E-mail addresses are scrubbed wherever they appear, known or not.
+- **Not guaranteed:** a name that appears **only in free text** (a reviewer's finding, a verifier's note, a transcript)
+  and in no record or identity is not recognised and is served as written. Every artifact whose text can hold such
+  prose is labelled (`free_text`, `X-MACH-Free-Text`, [Artifact content](#artifact-content)), so the Control Tower can
+  say so. Once a record names that person, later replies scrub it, but what was already served is not recalled, and the
+  stored index may hold it until a rebuild.
 
 ## Stream records by shape
 

@@ -13,6 +13,7 @@ import (
 
 	"mach/observer/internal/artifact"
 	"mach/observer/internal/project"
+	"mach/observer/internal/redact"
 )
 
 // ArtifactCSP is the policy on artifact content: nothing may load or run, and the response is a
@@ -233,6 +234,11 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 	if got.Class == "text" {
 		h.Set("Content-Type", "text/plain; charset=utf-8")
 		h.Set("X-MACH-Redacted", strconv.Itoa(got.Redacted))
+		if e.FreeText {
+			// R1: names known from records and git identities are replaced; a name that appears
+			// only in this prose is not known, and is served as written.
+			h.Set(redact.FreeTextHeader, redact.FreeTextValue)
+		}
 		if got.Truncated {
 			h.Set("X-MACH-Truncated", "true")
 		}

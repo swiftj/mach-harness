@@ -21,6 +21,7 @@ import (
 	"mach/observer/internal/feed"
 	"mach/observer/internal/feedtest"
 	"mach/observer/internal/project"
+	"mach/observer/internal/redact"
 	"mach/observer/internal/security"
 	"mach/observer/internal/testkit"
 	"mach/observer/internal/webui"
@@ -919,6 +920,50 @@ func TestSeries(t *testing.T) {
 		resp, _, _ := h.do(t, "GET", "/api/v1/series?"+bad, nil)
 		if resp.StatusCode != 400 {
 			t.Fatalf("%s: %d", bad, resp.StatusCode)
+		}
+	}
+}
+
+// R1 (product-owner decision: label, do not withhold): an artifact whose served text holds prose
+// the observer cannot check for unknown names says so, on its catalog entry (free_text,
+// free_text_note) and on its content (X-MACH-Free-Text); a record of identifiers only does not.
+// Known names are still replaced.
+func TestFreeTextArtifactsAreLabelled(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	cell := filepath.Join(h.root, ".factory/worktrees/T-1")
+	redact.PeopleFor(h.root).Learn("Ada Lovelace")
+	writeFile(t, filepath.Join(cell, "review/round-1/findings.md"), []byte("# Findings\nZed Quill and Ada Lovelace looked at the parser.\n"))
+	writeFile(t, filepath.Join(cell, "review/round-1/decision.json"), []byte(`{"ticket_id":"T-1","round":1,"outcome":"APPROVED","approvals":3,"head":"abcdef1",`+
+		`"human_approval":{"by":"Ada Lovelace","recorded_by":"an agent, on the person's instruction in conversation","note":null}}`))
+	text := []byte("verifier transcript\n")
+	writeFile(t, filepath.Join(cell, "evidence/AC-01.txt"), text)
+	res, _ := json.Marshal(map[string]any{"head": "abcdef1", "review_loop": 0, "records": map[string]any{"AC-01": map[string]any{"kind": "scenario", "result": "pass",
+		"note": "checked with Zed Quill's account", "evidence": []map[string]string{{"file": "AC-01.txt", "sha256": sha(text)}}}}})
+	writeFile(t, filepath.Join(cell, "evidence/results.json"), res)
+
+	byPath := map[string]map[string]any{}
+	for _, it := range h.get(t, "/api/v1/artifacts?ticket=T-1")["items"].([]any) {
+		m := it.(map[string]any)
+		byPath[m["path_rel"].(string)] = m
+	}
+	want := map[string]bool{"review/round-1/findings.md": true, "evidence/results.json": true, "evidence/AC-01.txt": true, "review/round-1/decision.json": false}
+	for p, free := range want {
+		m := byPath[p]
+		if m == nil {
+			t.Fatalf("%s not catalogued: %v", p, byPath)
+		}
+		if m["free_text"] != free || free && m["free_text_note"] != redact.FreeTextNote || !free && m["free_text_note"] != nil {
+			t.Errorf("%s: free_text %v note %v, want %v", p, m["free_text"], m["free_text_note"], free)
+		}
+		resp, _, body := h.do(t, "GET", "/api/v1/artifacts/"+m["id"].(string)+"/content", nil)
+		if got := resp.Header.Get(redact.FreeTextHeader); resp.StatusCode != 200 || free && got != redact.FreeTextValue || !free && got != "" {
+			t.Errorf("%s: %d %s=%q", p, resp.StatusCode, redact.FreeTextHeader, got)
+		}
+		if strings.Contains(string(body), "Lovelace") {
+			t.Errorf("%s: a known name was served: %s", p, body)
+		}
+		if p == "review/round-1/decision.json" && !strings.Contains(string(body), "an agent, on the person's instruction in conversation") {
+			t.Errorf("the agent's act was credited to a person: %s", body)
 		}
 	}
 }

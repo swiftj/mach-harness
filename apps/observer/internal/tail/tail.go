@@ -110,6 +110,9 @@ func (t *Tailer) CaughtUp() bool { return !t.started || t.CP.Offset >= t.startSi
 // ReadToEnd reports whether the last poll read every complete line the file had.
 func (t *Tailer) ReadToEnd() bool { return t.readToEnd }
 
+// FileID is the file's device and inode (0, 0 where the platform has none).
+func FileID(info fs.FileInfo) (dev, ino uint64) { return fileID(info) }
+
 // Poll reads what is new. It never blocks on the file and never holds it open between calls.
 func (t *Tailer) Poll() ([]Line, []Note, error) {
 	var notes []Note

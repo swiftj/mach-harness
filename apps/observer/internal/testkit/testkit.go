@@ -36,17 +36,25 @@ func Project(t testing.TB) string {
 
 // LedgerLine is one events.jsonl line (schema version 2).
 func LedgerLine(seq int, typ string, ticket string, data map[string]any) []byte {
+	return LedgerLineFor(seq, typ, ticket, "", data)
+}
+
+// LedgerLineFor is LedgerLine for a line that names an execution.
+func LedgerLineFor(seq int, typ, ticket, execution string, data map[string]any) []byte {
 	if data == nil {
 		data = map[string]any{}
 	}
-	var tk any
+	var tk, x any
 	if ticket != "" {
 		tk = ticket
+	}
+	if execution != "" {
+		x = execution
 	}
 	line, _ := json.Marshal(map[string]any{
 		"schema_version": 2, "seq": seq, "at": "2026-11-12T10:00:00Z", "type": typ, "project_id": "P-1",
 		"source_commit": nil, "wave_id": "WAVE-001", "slice_id": "SLICE-001", "revision": 1, "ticket_id": tk,
-		"runner_id": nil, "execution_id": nil, "source": "intake", "cause": nil, "refs": nil, "data": data,
+		"runner_id": nil, "execution_id": x, "source": "intake", "cause": nil, "refs": nil, "data": data,
 	})
 	return append(line, '\n')
 }

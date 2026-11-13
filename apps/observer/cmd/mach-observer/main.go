@@ -135,7 +135,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		listener.Close()
 		return err
 	}
-	loop := ingest.New(ingest.Options{Root: root, Store: st, Logger: logger})
+	loop := ingest.New(ingest.Options{Root: root, Store: st, Logger: logger, HotFor: ingest.DefaultHotFor, ColdEvery: ingest.DefaultColdEvery})
 	feedLog := storeLog{st}
 	proj := project.New(project.Options{Log: feedLog, PersistDir: projectionDir(indexDir), Logger: logger})
 	defer proj.Close()
