@@ -219,3 +219,180 @@ test("describeSpan: one sentence; the outcome only once it is known", () => {
   const wait = span("w", "person-wait", at(T0), null);
   assert.equal(words.describeSpan(wait, T0 + 5 * M), "Waiting for a person: waiting for 5 min.");
 });
+
+// ---------------------------------------------------------------- wave 2: ended without an exit record
+
+test("ended without an exit record: never running, never 'took'; 'within' the bound, in the inspector's words", () => {
+  const live = T0 + 8 * 60 * M; // viewed hours later
+  const raw = span("v", "visit", at(T0), at(T0 + 73 * M, { basis: "inferred", rule: "execution-ended", reason: "interrupted" }), { attrs: { action: "build", round: 2 } });
+  const s = { ...raw, duration: { ms: null, minMs: null, maxMs: 73 * M, basis: "inferred" } };
+  assert.equal(words.endedWithoutExit(s), true);
+  assert.equal(words.durationWords(s, live), "ended without an exit record, within 1 h 13 min");
+  const d = words.describeSpan(s, live);
+  assert.ok(!/took|running/.test(d), d);
+  assert.ok(!d.includes("no outcome recorded yet"));
+  const t = lod.spanTimes(s, live);
+  assert.equal(t.open, false, "drawn to the bound, not to the live edge");
+  assert.equal(t.to, T0 + 73 * M);
+  assert.match(words.precisionLine(s, live), /no exit recorded; closed at a bound by rule: execution ended/);
+  // A recorded interruption is still "interrupted after".
+  assert.equal(words.durationWords(visit("i", T0, T0 + 2 * M, { end: { reason: "interrupted" } }), live), "interrupted after 2 min");
+});
+
+test("people and the line: a seat votes, a person approves the review, a merge visit merges; different words", () => {
+  const live = T0 + 60 * M;
+  const seat = span("s", "seat", at(T0), at(T0 + 3 * M, { reason: "refused" }), { outcome: "REJECT", attrs: { model: "opus", vote: "REJECT" }, ids: { ticket_id: "LOCAL-029", seat: "security" } });
+  assert.equal(words.describeSpan(seat, live), "Review seat security (Opus) for LOCAL-029: took 3 min, voted reject.");
+  assert.equal(words.describeSpan(seat, T0 + M), "Review seat security (Opus) for LOCAL-029: running for 1 min.", "no vote before the verdict");
+  const wait = span("w", "person-wait", at(T0), at(T0 + 6 * M), { outcome: "human.approval_recorded", entity: "gate:LOCAL-029/human-approval#1", ids: { ticket_id: "LOCAL-029" } });
+  assert.equal(words.personApproved(wait, live), true);
+  assert.equal(words.personApproved(wait, T0 + M), false);
+  assert.equal(words.describeSpan(wait, live), "Waiting for a person for LOCAL-029: waited 6 min, a person approved the review.");
+  const merge = span("m", "visit", at(T0), at(T0 + M), { outcome: "merged", attrs: { action: "merge" }, ids: { ticket_id: "LOCAL-029", station: "merge" } });
+  assert.equal(words.isMergeVisit(merge), true);
+  assert.equal(words.describeSpan(merge, live), "Merge visit for LOCAL-029: took 1 min, merged into the main branch.");
+  assert.notEqual(words.describeSpan(wait, live).includes("merged"), true);
+});
+
+// ---------------------------------------------------------------- wave 2: label placement
+
+const draw = await import("../src/timeline/render/draw.ts");
+
+test("inline labels in thin rows keep clear of marks: pushed past one at the start, cut before one further on, dropped without room", () => {
+  assert.deepEqual(draw.inlineRoom(10, 200, []), { x: 10, right: 200 });
+  const pushed = draw.inlineRoom(10, 200, [{ x: 12 }]);
+  assert.ok(pushed.x >= 12 + draw.MARK_HALF + 4, "after the mark at the start");
+  const cut = draw.inlineRoom(10, 200, [{ x: 120 }]);
+  assert.equal(cut.x, 10);
+  assert.ok(cut.right <= 120 - draw.MARK_HALF - 4);
+  assert.equal(draw.inlineRoom(10, 40, [{ x: 14 }, { x: 36 }]), null, "no room: no label");
+  assert.deepEqual(draw.inlineRoom(10, 200, [{ x: 400 }]), { x: 10, right: 200 }, "marks elsewhere change nothing");
+});
+
+test("the label column drops a detail that cannot show six characters; the label has priority", () => {
+  const { showDetail } = words;
+  assert.equal(words.DETAIL_MIN_CHARS, 6);
+  assert.equal(showDetail(120, 60, 80, 30), true);
+  assert.equal(showDetail(120, 100, 80, 30), false);
+  assert.equal(showDetail(120, 60, 20, 30), true, "a short detail shows whole");
+});
+
+test("an empty row's chevron points at the nearest span, on its side", () => {
+  const sc = scale.scaleOf({ from: T0 + 60 * M, to: T0 + 70 * M }, 1000);
+  const live = T0 + 200 * M;
+  const before = visit("a", T0, T0 + 50 * M);
+  const after = visit("b", T0 + 90 * M, T0 + 95 * M);
+  assert.equal(draw.edgeChevron([before, after], sc, live).spanId, "a");
+  assert.equal(draw.edgeChevron([before, after], sc, live).side, -1);
+  assert.equal(draw.edgeChevron([visit("c", T0, T0 + 30 * M), after], sc, live).spanId, "b");
+  assert.equal(draw.edgeChevron([visit("c", T0, T0 + 30 * M), after], sc, live).side, 1);
+  assert.equal(draw.edgeChevron([visit("in", T0 + 62 * M, T0 + 63 * M)], sc, live), null, "something in view: no chevron");
+  assert.equal(draw.edgeChevron([visit("open", T0, null)], sc, live), null, "an open span reaches the window");
+});
+
+test("a collapsed group's summary knows its first failure in view", async () => {
+  const fx = (await import("../src/timeline/dev/fixture.ts")).proofFixture();
+  const node = fx.tree.byId.get("cell:LOCAL-032");
+  const cols = lod.subtreeColumns(node, scale.scaleOf({ from: T0, to: T0 + 80 * M }, 1000), T0 + 80 * M);
+  assert.equal(cols.firstFail, T0 + 41 * M);
+});
+
+// ---------------------------------------------------------------- wave 2: keyboard model
+
+const keys = await import("../src/timeline/render/keys.ts");
+const { layoutOf, proofFixture, makeTree } = await import("../src/timeline/dev/fixture.ts");
+
+function keyWorld() {
+  const a1 = visit("a1", T0 + 1 * M, T0 + 2 * M);
+  const a2 = visit("a2", T0 + 4 * M, T0 + 5 * M);
+  const a3 = visit("a3", T0 + 30 * M, T0 + 31 * M);
+  const b1 = visit("b1", T0 + 1 * M + 30 * S, T0 + 3 * M);
+  const tree = makeTree([
+    { id: "g", kind: "cell", label: "Group", children: [
+      { id: "a", kind: "station", label: "A", lanes: [[a1, a2, a3]] },
+      { id: "b", kind: "station", label: "B", lanes: [[b1]] },
+    ] },
+    { id: "z", kind: "station", label: "Z", lanes: [] },
+  ]);
+  const layout = layoutOf(tree, new Set(["g"]));
+  return { tree, layout, window: { from: T0, to: T0 + 10 * M }, liveAt: T0 + 60 * M, scrollTop: 0, height: 60 };
+}
+
+test("keys: Up and Down stop on every row, a group row too, keeping the time on the new row", () => {
+  const w = keyWorld();
+  let r = keys.keyAction({ key: "ArrowDown" }, { ...w, cursor: null });
+  assert.deepEqual(r.cursor, { trackId: "g", lane: 0, spanId: null }, "the first key lands on the first row");
+  r = keys.keyAction({ key: "ArrowDown" }, { ...w, cursor: { trackId: "g", lane: 0, spanId: null } });
+  assert.equal(r.cursor.trackId, "a");
+  // From span a1 (01:00 - 02:00, middle 01:30) down to b: b1 spans 01:30, so the cursor lands on it.
+  r = keys.keyAction({ key: "ArrowDown" }, { ...w, cursor: { trackId: "a", lane: 0, spanId: "a1" } });
+  assert.deepEqual(r.cursor, { trackId: "b", lane: 0, spanId: "b1" });
+  r = keys.keyAction({ key: "ArrowUp" }, { ...w, cursor: { trackId: "g", lane: 0, spanId: null } });
+  assert.equal(r.handled, true);
+  assert.equal(r.cursor, undefined, "nothing above the first row");
+  // Scrolled into view: the last row lies below a 60 px screen.
+  r = keys.keyAction({ key: "ArrowDown" }, { ...w, cursor: { trackId: "b", lane: 0, spanId: null } });
+  assert.equal(r.cursor.trackId, "z");
+  assert.ok(r.scrollTop > 0);
+});
+
+test("keys: Left and Right walk the row's spans, panning them into view, and stop at the ends", () => {
+  const w = keyWorld();
+  let r = keys.keyAction({ key: "ArrowRight" }, { ...w, cursor: { trackId: "a", lane: 0, spanId: null } });
+  assert.equal(r.cursor.spanId, "a1");
+  r = keys.keyAction({ key: "ArrowRight" }, { ...w, cursor: { trackId: "a", lane: 0, spanId: "a2" } });
+  assert.equal(r.cursor.spanId, "a3");
+  assert.ok(r.window.from <= T0 + 30 * M && r.window.to >= T0 + 31 * M, "a3 panned into view");
+  assert.equal(r.window.to - r.window.from, 10 * M, "a pan, not a zoom");
+  r = keys.keyAction({ key: "ArrowRight" }, { ...w, cursor: { trackId: "a", lane: 0, spanId: "a3" } });
+  assert.equal(r.handled, true);
+  assert.equal(r.cursor.spanId, "a3", "at the row's end nothing moves");
+  assert.equal(r.window, undefined);
+  r = keys.keyAction({ key: "ArrowLeft" }, { ...w, cursor: { trackId: "a", lane: 0, spanId: "a1" } });
+  assert.equal(r.cursor.spanId, "a1");
+});
+
+test("keys: Enter selects or toggles; Alt+arrows and * expand and collapse", () => {
+  const w = keyWorld();
+  let r = keys.keyAction({ key: "Enter" }, { ...w, cursor: { trackId: "a", lane: 0, spanId: "a2" } });
+  assert.equal(r.select.id, "a2");
+  r = keys.keyAction({ key: "Enter" }, { ...w, cursor: { trackId: "g", lane: 0, spanId: null } });
+  assert.equal(r.toggle, "g");
+  r = keys.keyAction({ key: "ArrowLeft", altKey: true }, { ...w, cursor: { trackId: "g", lane: 0, spanId: null } });
+  assert.equal(r.toggle, "g", "collapse an open group");
+  r = keys.keyAction({ key: "ArrowRight", altKey: true }, { ...w, cursor: { trackId: "g", lane: 0, spanId: null } });
+  assert.equal(r.toggle, undefined, "already open");
+  const closed = { ...w, layout: layoutOf(w.tree, new Set()) };
+  assert.equal(keys.keyAction({ key: "*" }, { ...closed, cursor: { trackId: "g", lane: 0, spanId: null } }).toggle, "g");
+  // A cursor whose row was collapsed away stands on its nearest shown ancestor.
+  assert.equal(keys.cursorRow({ ...closed, cursor: { trackId: "a", lane: 0, spanId: "a1" } }).node.id, "g");
+});
+
+test("keys: + - 0 zoom about the cursor; Shift+arrows pan a tenth; PageDown a screen; global keys pass through", () => {
+  const w = keyWorld();
+  const c = { trackId: "a", lane: 0, spanId: "a2" };
+  const anchor = T0 + 4 * M + 30 * S;
+  const zin = keys.keyAction({ key: "+" }, { ...w, cursor: c }).window;
+  assert.ok(zin.to - zin.from < 10 * M);
+  assert.ok(Math.abs((anchor - zin.from) / (zin.to - zin.from) - (anchor - w.window.from) / (10 * M)) < 1e-9, "the cursor stays where it was on screen");
+  assert.ok(keys.keyAction({ key: "=" }, { ...w, cursor: c }).window.to - keys.keyAction({ key: "=" }, { ...w, cursor: c }).window.from < 10 * M);
+  const zout = keys.keyAction({ key: "-" }, { ...w, cursor: c }).window;
+  assert.ok(zout.to - zout.from > 10 * M);
+  const framed = keys.keyAction({ key: "0" }, { ...w, cursor: c }).window;
+  assert.ok(framed.from <= T0 + 4 * M && framed.to >= T0 + 5 * M && framed.to - framed.from < 2 * M);
+  const pan = keys.keyAction({ key: "ArrowRight", shiftKey: true }, { ...w, cursor: c }).window;
+  assert.equal(pan.from - w.window.from, M);
+  const page = keys.keyAction({ key: "PageDown" }, { ...w, cursor: { trackId: "g", lane: 0, spanId: null } });
+  assert.ok(page.cursor.trackId !== "g");
+  for (const key of [",", ".", "<", ">", "[", "]", "{", "}", " ", "Home", "End", "l", "f", "i", "s", "t", "1", "2", "3", "?", "g", "/", "n", "p", "z", "a", "Escape"]) {
+    assert.equal(keys.keyAction({ key }, { ...w, cursor: c }).handled, false, `${key} is the global map's`);
+  }
+  assert.equal(keys.keyAction({ key: "+", ctrlKey: true }, { ...w, cursor: c }).handled, false, "browser zoom is left alone");
+});
+
+test("the proof fixture holds what the page must show", () => {
+  const fx = proofFixture();
+  assert.ok(fx.tree.byId.has("grammar/no-exit"));
+  assert.ok(fx.marks.some((m) => m.kind === "merge") && fx.marks.some((m) => m.kind === "human" && m.verdict === "approved"));
+  assert.ok(fx.tree.byId.get("seat:LOCAL-029/review#1/security"));
+});

@@ -23,3 +23,15 @@
   height: 24px;
   transform: translate(-50%, -50%);
 }
+
+/* The tracks' focus ring: 2 px of the focus token, 2 px in from the edge (the workspace clips outside it). */
+.mach-tl-tracks:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  z-index: 20;
+  pointer-events: none;
+  border-radius: 2px;
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 0;
+}

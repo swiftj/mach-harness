@@ -8,17 +8,27 @@
  * (and a trackpad pinch) zooms about the pointer; dragging pans both; a click selects (the caller
  * puts it in the store); a double-click frames a span, or opens a group from its empty row. Never
  * narrower than MIN_WINDOW_MS. With reduced motion every change cuts.
+ *
+ * Keyboard (render/keys.ts): the tracks are one tab stop, `role="application"`; the cursor is the
+ * caller's (props.cursor / onCursor) and is drawn as a focus bracket on the overlay, distinct from the
+ * selection's corner brackets. The hover card opens for it too, and a polite live region says what it
+ * is on, at most once a second.
+ *
+ * Motion: only a span that has just arrived while following the live edge fades in (opacity, over
+ * factoryTokens.motion.stateChange), never under reduced motion (the store's flag or the media
+ * query). An end that grows simply extends; nothing animates on scrub or pan.
  */
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { useTheme } from "@mach/ui";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { factoryTokens, useTheme } from "@mach/ui";
 import { useSceneStore } from "../../scene";
 import { usePlayheadEffect } from "../../shell/timeline/playhead";
-import { type FlatRow, type TimelineHit, type TimelineMark, type TimeWindow, type TrackCanvasProps } from "../contract";
+import { type FlatRow, type TimelineCursor, type TimelineHit, type TimelineMark, type TimeWindow, type TrackCanvasProps } from "../contract";
 import { drawTracks, hitBox, rowGeom, rowKey, type DrawOutput } from "./draw";
+import { cursorRow, keyAction, panToShow, rowSpans } from "./keys";
 import { hitRow, spanTimes } from "./lod";
 import { readPalette, type Palette } from "./palette";
 import { clampWindow, dateChanges, frameWindow, isWallTime, panBy, scaleOf, tAt, tickLabel, ticksFor, xAt, zoomAbout, type Scale } from "./scale";
-import { AUTHORITY_WORDS, describeSpan, durationText, durationWords, precisionLine } from "./words";
+import { AUTHORITY_WORDS, describeSpan, durationText, durationWords, precisionLine, rowWords } from "./words";
 import "./render.css";
 
 /** Where a time reads in the hover card: UTC to the tenth for wall time, elapsed for the simulation. */
@@ -74,13 +84,43 @@ export function hitAt(out: DrawOutput | null, layout: TrackCanvasProps["layout"]
   return null;
 }
 
+/** The keys, said once for screen readers (the element's description). */
+export const TRACK_KEYS_WORDS =
+  "Up and Down move between rows. Left and Right move to the previous or next span on the row. Enter selects the span, or opens or closes a group. Alt+Right or * expands, Alt+Left collapses. Plus, minus and 0 zoom in, out, or frame the span. Shift+Left and Shift+Right pan. Page Up and Page Down move a screen of rows.";
+
+/** The hit the cursor stands for, or null on a row without a span. */
+function cursorHit(row: FlatRow, cursor: TimelineCursor | null, liveAt: number): TimelineHit | null {
+  if (!cursor?.spanId) return null;
+  const span = rowSpans(row, liveAt).find((s) => s.id === cursor.spanId);
+  const t = span ? spanTimes(span, liveAt) : null;
+  if (!span || !t) return null;
+  return { trackId: row.node.id, lane: row.lane, span, mark: null, count: 1, from: t.from, to: t.to };
+}
+
+/** Whether motion should cut: the store's flag or the media query. */
+function reducedNow(flag: boolean): boolean {
+  return flag || (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+const FADE_MS = factoryTokens.motion.stateChange;
+
 export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
-  const { tree, layout, viewport, marks, height, scrollTop, truncated } = props;
+  const { tree, layout, viewport, marks, height, scrollTop, truncated, cursor } = props;
   const { window: win, width, liveAt } = viewport;
   const { resolved: theme } = useTheme();
   const selection = useSceneStore((s) => s.selection);
   const highlighted = useSceneStore((s) => s.highlighted);
   const reducedMotion = useSceneStore((s) => s.reducedMotion);
+  const following = useSceneStore((s) => s.following);
+  const keysId = useId();
+  const boxRef = useRef<HTMLDivElement>(null);
+  const sayRef = useRef<HTMLParagraphElement>(null);
+  const spoke = useRef<{ at: number; timer: number | null; text: string }>({ at: 0, timer: null, text: "" });
+  const keyboard = useRef(false);
+  // New spans fade in: ids seen so far, and when each new one arrived.
+  const seen = useRef<Set<string> | null>(null);
+  const arrivals = useRef(new Map<string, number>());
+  const fadeFrame = useRef<number | null>(null);
   const highlightSet = useMemo(() => new Set<string>(highlighted), [highlighted]);
 
   const mainRef = useRef<HTMLCanvasElement>(null);
@@ -126,8 +166,51 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     pendingTop.current = null;
   });
 
-  // The frame: redrawn only when what is drawn changes.
+  // Spans new to the tree: fade in only while following the live edge, never under reduced motion.
   useLayoutEffect(() => {
+    const ids = new Set(tree.ofSpan.keys());
+    const before = seen.current;
+    seen.current = ids;
+    if (!before || !following || reducedNow(reducedMotionRef.current)) {
+      arrivals.current.clear();
+      return;
+    }
+    const now = performance.now();
+    for (const id of ids) if (!before.has(id)) arrivals.current.set(id, now);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tree]);
+
+  /** The opacity of each span still fading in; schedules the next frame while any is. */
+  function freshAlphas(): Map<string, number> | undefined {
+    if (!arrivals.current.size) return undefined;
+    const now = performance.now();
+    const out = new Map<string, number>();
+    for (const [id, t] of arrivals.current) {
+      const k = (now - t) / FADE_MS;
+      if (k >= 1) arrivals.current.delete(id);
+      else out.set(id, Math.max(0.02, k));
+    }
+    if (out.size && fadeFrame.current === null) {
+      fadeFrame.current = requestAnimationFrame(() => {
+        fadeFrame.current = null;
+        drawMain();
+      });
+    }
+    return out.size ? out : undefined;
+  }
+
+  const frame = useRef<{ marksByTrack: typeof marksByTrack; selection: typeof selection; highlightSet: typeof highlightSet }>({ marksByTrack, selection, highlightSet });
+  useLayoutEffect(() => {
+    frame.current = { marksByTrack, selection, highlightSet };
+  });
+
+  /** The frame, from the latest props. */
+  function drawMain() {
+    const P = latest.current;
+    const { width, height, scrollTop, layout, viewport } = { width: P.viewport.width, height: P.height, scrollTop: P.scrollTop, layout: P.layout, viewport: P.viewport };
+    const win = viewport.window;
+    const liveAt = viewport.liveAt;
+    const { marksByTrack, selection, highlightSet } = frame.current;
     const canvas = mainRef.current;
     const over = overRef.current;
     if (!canvas || !over || width <= 0 || height <= 0) return;
@@ -160,11 +243,24 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
       highlighted: highlightSet,
       grid: ticks.majors,
       dateLines: dateChanges(win),
+      fresh: freshAlphas(),
     });
     // The hover outline belongs to the old frame: redraw it on the new one.
     drawOverlay();
+  }
+
+  // The frame: redrawn only when what is drawn changes.
+  useLayoutEffect(() => {
+    latest.current = props;
+    drawMain();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tree, layout, win.from, win.to, width, liveAt, height, scrollTop, marksByTrack, selection, highlightSet, theme]);
+  useEffect(
+    () => () => {
+      if (fadeFrame.current !== null) cancelAnimationFrame(fadeFrame.current);
+    },
+    [],
+  );
 
   /** The overlay: the pointer's time hairline and the hover outline. Cheap; written on every pointer move. */
   function drawOverlay() {
@@ -177,6 +273,7 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     const P = latest.current;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, P.viewport.width, P.height);
+    drawCursor(ctx, P, p);
     const pt = pointer.current;
     if (!pt || drag.current?.moved) return;
     const xLive = xAt(scaleOf(P.viewport.window, P.viewport.width), P.viewport.liveAt);
@@ -196,8 +293,52 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     ctx.globalAlpha = 1;
   }
 
+  /** Whether the cursor is shown: the tracks hold the keyboard's focus. */
+  function cursorShown(): boolean {
+    const el = boxRef.current;
+    return Boolean(el && document.activeElement === el && keyboard.current);
+  }
+
+  /** The cursor's box in canvas px: its span's, or its whole row's. */
+  function cursorBox(P: TrackCanvasProps): { row: FlatRow; hit: TimelineHit | null; box: readonly [number, number, number, number] } | null {
+    const row = cursorRow(P);
+    if (!row) return null;
+    const hit = cursorHit(row, P.cursor, P.viewport.liveAt);
+    const y = row.y - P.scrollTop;
+    if (hit) {
+      const [x0, y0, x1, y1] = hitBox(row, y, hit.from, hit.to, hit.span?.kind ?? null, P.viewport.window, P.viewport.width);
+      // Rows with their labels above the body: the bracket holds the label too.
+      const top = rowGeom(row, y).labelTop ? Math.min(y0, y + 2) : y0;
+      return { row, hit, box: [Math.max(3, x0), top, Math.min(P.viewport.width - 3, x1), y1] };
+    }
+    return { row, hit: null, box: [1, y + 1, P.viewport.width - 1, y + row.height - 1] };
+  }
+
+  /** The focus bracket: a full outline in the focus ink (the selection keeps its corner brackets). */
+  function drawCursor(ctx: CanvasRenderingContext2D, P: TrackCanvasProps, p: Palette) {
+    if (!cursorShown()) return;
+    const c = cursorBox(P);
+    if (!c) return;
+    const [x0, y0, x1, y1] = c.box;
+    ctx.strokeStyle = p.focus;
+    ctx.lineWidth = 2;
+    if (c.hit) {
+      const a = Math.max(1, Math.round(x0) - 3);
+      const b = Math.min(P.viewport.width - 1, Math.round(x1) + 3);
+      ctx.strokeRect(a, Math.round(y0) - 2, b - a, Math.round(y1 - y0) + 4);
+    } else {
+      // A row: a bar at its left edge and a quiet outline of the row.
+      ctx.fillStyle = p.focus;
+      ctx.fillRect(0, y0, 3, y1 - y0);
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+      ctx.globalAlpha = 1;
+    }
+  }
+
   /** The hover card: written to the DOM directly. */
-  function showCard(h: { row: FlatRow; hit: TimelineHit } | null, x: number, y: number) {
+  function showCard(h: { row: FlatRow; hit: TimelineHit | null } | null, x: number, y: number) {
     const card = cardRef.current;
     if (!card) return;
     if (!h) {
@@ -210,7 +351,14 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     let title: string;
     let dur: string;
     let how: string;
-    if (hit.span) {
+    if (!hit) {
+      // The keyboard cursor on a row: what the row holds, as the label column says it.
+      const r = rowWords(h.row);
+      title = r.title;
+      dur = r.detail;
+      how = h.row.node.note ?? "";
+      if (cardWhen.current) cardWhen.current.textContent = "";
+    } else if (hit.span) {
       title = describeSpan(hit.span, at);
       dur = durationWords(hit.span, at);
       dur = dur[0] ? dur[0].toUpperCase() + dur.slice(1) : dur;
@@ -240,7 +388,8 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
       const { from, to } = hit;
       if (cardWhen.current) cardWhen.current.textContent = `${when(from)} – ${when(to)}, ${durationText(to - from)}`;
     }
-    if (cardWhen.current && isWallTime(hit.from) && !cardWhen.current.textContent?.endsWith("UTC")) cardWhen.current.textContent += " UTC";
+    if (cardWhen.current && hit && isWallTime(hit.from) && !cardWhen.current.textContent?.endsWith("UTC")) cardWhen.current.textContent += " UTC";
+    if (cardWhen.current) cardWhen.current.style.display = cardWhen.current.textContent ? "" : "none";
     if (cardTitle.current) cardTitle.current.textContent = title;
     if (cardDur.current) cardDur.current.textContent = dur;
     if (cardHow.current) {
@@ -323,13 +472,17 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
       hoverKey.current = key;
       P.onHover(found?.hit ?? null);
     }
-    if (mainRef.current) mainRef.current.style.cursor = found?.hit.span || found?.hit.mark ? "pointer" : "grab";
+    const row = found ? null : rowAt(P.layout, pt.y + P.scrollTop);
+    const ch = row ? out.current?.chevrons.get(rowKey(row.node.id, row.lane)) : undefined;
+    const onChevron = Boolean(ch && Math.abs(pt.x - ch.x) <= 10);
+    if (mainRef.current) mainRef.current.style.cursor = found?.hit.span || found?.hit.mark || onChevron ? "pointer" : "grab";
     showCard(found, pt.x, pt.y);
     drawOverlay();
   }
 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (e.button !== 0) return;
+    keyboard.current = false;
     stopAnim();
     e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = { x: e.clientX, y: e.clientY, win: currentWin(), top: currentTop(), moved: false, id: e.pointerId };
@@ -366,7 +519,18 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     if (!pt) return;
     const P = latest.current;
     const found = hitAt(out.current, P.layout, P.scrollTop, pt.x, pt.y, scaleOf(P.viewport.window, P.viewport.width));
-    if (found) P.onSelect(found.hit);
+    if (found) {
+      P.onCursor({ trackId: found.row.node.id, lane: found.row.lane, spanId: found.hit.span?.id ?? null });
+      P.onSelect(found.hit);
+      return;
+    }
+    // An empty row's edge chevron: pan to the nearest span it points at.
+    const row = rowAt(P.layout, pt.y + P.scrollTop);
+    const ch = row ? out.current?.chevrons.get(rowKey(row.node.id, row.lane)) : undefined;
+    if (row && ch && Math.abs(pt.x - ch.x) <= 10) {
+      setWin(panToShow(currentWin(), ch.from, ch.to));
+      P.onCursor({ trackId: row.node.id, lane: row.lane, spanId: ch.spanId });
+    }
   };
   const onDoubleClick = (e: ReactMouseEvent<HTMLCanvasElement>) => {
     const pt = point(e);
@@ -390,6 +554,82 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     }
     showCard(null, 0, 0);
     drawOverlay();
+  };
+
+  /** Say what the cursor is on, politely, at most once a second (the latest wins). */
+  function say(text: string) {
+    const s = spoke.current;
+    s.text = text;
+    const write = () => {
+      s.timer = null;
+      s.at = performance.now();
+      if (sayRef.current) sayRef.current.textContent = s.text;
+    };
+    const wait = 1000 - (performance.now() - s.at);
+    if (wait <= 0 && s.timer === null) write();
+    else if (s.timer === null) s.timer = window.setTimeout(write, Math.max(0, wait));
+  }
+  useEffect(
+    () => () => {
+      if (spoke.current.timer !== null) window.clearTimeout(spoke.current.timer);
+    },
+    [],
+  );
+
+  /** After the cursor moves: the bracket, the card beside it, and the words. */
+  function showCursor() {
+    drawOverlay();
+    if (!cursorShown() || pointer.current) return;
+    const P = latest.current;
+    const c = cursorBox(P);
+    if (!c) {
+      showCard(null, 0, 0);
+      return;
+    }
+    const [x0, , x1, y1] = c.box;
+    showCard({ row: c.row, hit: c.hit }, c.hit ? Math.max(0, Math.min(P.viewport.width - 8, (Math.max(0, x0) + Math.min(P.viewport.width, x1)) / 2)) : 24, y1 - 8);
+    say(c.hit?.span ? describeSpan(c.hit.span, P.viewport.liveAt) : `${rowWords(c.row).title}. ${rowWords(c.row).detail}.`);
+  }
+  useLayoutEffect(() => {
+    showCursor();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cursor?.trackId, cursor?.lane, cursor?.spanId, layout, win.from, win.to, scrollTop]);
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const P = latest.current;
+    const result = keyAction(e, { tree: P.tree, layout: P.layout, cursor: P.cursor, window: currentWin(), liveAt: P.viewport.liveAt, scrollTop: currentTop(), height: P.height });
+    if (!result.handled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    keyboard.current = true;
+    stopAnim();
+    // Keys cut: the window and the rows move at once, never eased.
+    if (result.window) setWin(result.window);
+    if (result.scrollTop !== undefined) setTop(result.scrollTop);
+    if (result.cursor) P.onCursor(result.cursor);
+    if (result.toggle) P.onToggle(result.toggle);
+    if (result.select) {
+      const row = cursorRow({ tree: P.tree, layout: P.layout, cursor: result.cursor ?? P.cursor });
+      const hit = row ? cursorHit(row, result.cursor ?? P.cursor, P.viewport.liveAt) : null;
+      if (hit) P.onSelect(hit);
+    }
+    showCursor();
+  };
+  const onFocus = () => {
+    const el = boxRef.current;
+    keyboard.current = Boolean(el?.matches(":focus-visible"));
+    const P = latest.current;
+    // The first time in: the cursor starts on the first row in view.
+    if (!P.cursor && keyboard.current) {
+      const first = P.layout.slice(P.scrollTop, P.scrollTop + 1)[0] ?? P.layout.rows[0];
+      if (first) P.onCursor({ trackId: first.node.id, lane: first.lane, spanId: null });
+    }
+    showCursor();
+  };
+  const onBlur = () => {
+    keyboard.current = false;
+    drawOverlay();
+    if (!pointer.current) showCard(null, 0, 0);
   };
 
   // The wheel must be cancellable (Ctrl+wheel would zoom the page): React's listener is passive.
@@ -443,7 +683,26 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
   );
 
   return (
-    <div className="relative overflow-hidden" style={{ width, height, background: "var(--mach-factory-ground)" }}>
+    // A canvas widget (WAI-ARIA application): the keys are its own and described for screen readers.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+    <div
+      ref={boxRef}
+      role="application"
+      aria-label="Tracks"
+      aria-roledescription="timeline tracks"
+      aria-describedby={keysId}
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      className="mach-tl-tracks relative overflow-hidden outline-none"
+      style={{ width, height, background: "var(--mach-factory-ground)" }}
+    >
+      <p id={keysId} className="sr-only">
+        {TRACK_KEYS_WORDS}
+      </p>
+      <p ref={sayRef} className="sr-only" aria-live="polite" aria-atomic="true" />
       <canvas
         ref={mainRef}
         aria-hidden="true"

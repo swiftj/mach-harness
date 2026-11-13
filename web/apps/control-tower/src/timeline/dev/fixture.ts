@@ -182,12 +182,12 @@ export function proofFixture(): ProofFixture {
 
   const depWait = span("slice-wait:SLICE-021#1", "slice-wait", at(T(0, 0)), at(T(1, 10)), { ids: ticket });
   const capWait = span("capacity-wait:LOCAL-031#1", "capacity-wait", at(T(34, 40)), at(T(35, 20)), { ids: ticket });
-  const person = span("person-wait:LOCAL-031/override#1", "person-wait", at(T(46, 52)), at(T(52, 30)), { ids: ticket, attrs: { label: "Override the scope gate" } });
+  const person = span("person-wait:LOCAL-031/override#1", "person-wait", at(T(46, 52)), at(T(52, 30)), { ids: ticket, outcome: "approved", attrs: { label: "Override the scope gate" } });
   const lateWait = span("slice-wait:SLICE-021#2", "slice-wait", null, at(T(66, 0)), { ids: ticket, basis: "unknown" });
 
   // Review seats in round 1 (closed by default: a collapsed group shows its density strip).
-  const seat = (name: string, model: string, a: number, b: number, vote: string) =>
-    span(`seat:LOCAL-031/review#1/${name}`, "seat", at(T(a)), at(T(b)), { outcome: vote, attrs: { label: name, model, vote }, ids: ticket });
+  const seat = (name: string, model: string, a: number, b: number, vote: string, t = "LOCAL-031") =>
+    span(`seat:${t}/review#1/${name}`, "seat", at(T(a)), at(T(b), vote === "REJECT" ? { reason: "refused" } : {}), { outcome: vote, attrs: { model, vote, round: 1 }, ids: { ticket_id: t, seat: name } });
 
   // Execution ex-031-2: claim, workflow, agents and their queue waits, and the builder's tool calls.
   const exStart = T(35, 2);
@@ -232,6 +232,10 @@ export function proofFixture(): ProofFixture {
     { id: "interrupted", label: "Interrupted", detail: "stopped, taken up again", s: g("interrupted", at(T(40)), at(T(44, 30), { reason: "interrupted" }), { outcome: "interrupted", authority: "observed" }) },
     { id: "simulated", label: "Simulated", detail: "authority: the fixture", s: g("simulated", at(T(40)), at(T(47, 40)), { outcome: "failed", authority: "simulated", attrs: { action: "verify" } }) },
   ];
+  // Ended without an exit record: its execution ended first; closed at that bound, never running.
+  const noExitRaw = g("no-exit", at(T(40)), at(T(46, 30), { basis: "inferred", rule: "execution-ended", reason: "interrupted" }), { authority: "reconstructed", attrs: { action: "build", round: 2 } });
+  const noExit: TimelineSpan = { ...noExitRaw, duration: { ms: null, minMs: null, maxMs: T(46, 30) - T(40), basis: "inferred" } };
+  grammar.push({ id: "no-exit", label: "No exit record", detail: "closed at its execution's end", s: noExit });
   // The interrupted one is taken up again later on its row.
   const resumed = g("interrupted-resumed", at(T(49, 10)), at(T(55, 20)), { outcome: "completed", authority: "observed" });
 
@@ -240,6 +244,12 @@ export function proofFixture(): ProofFixture {
     span(`visit:LOCAL-032/${st}#1`, "visit", at(T(6 + i * 9)), at(T(6 + i * 9 + 8), st === "verify" ? { reason: "failed" } : {}), { outcome: st === "verify" ? "failed" : "completed", attrs: { action: st }, ids: { ticket: "LOCAL-032" } }),
   );
   const cell32 = span("cell:LOCAL-032", "cell", at(T(5, 40)), at(T(42, 30)), { outcome: "blocked" });
+  // LOCAL-029: approved by its panel and by a person, then merged by the line.
+  const t29 = { ticket_id: "LOCAL-029" };
+  const review29 = span("visit:LOCAL-029/review#1", "visit", at(T(36)), at(T(41, 10)), { outcome: "approved", attrs: { action: "review", round: 1 }, ids: { ...t29, station: "review" } });
+  const human29 = span("person-wait:LOCAL-029/human-approval#1", "person-wait", at(T(41, 20)), at(T(47, 40)), { outcome: "human.approval_recorded", ids: t29, entity: "gate:LOCAL-029/human-approval#1" });
+  const merge29 = span("visit:LOCAL-029/merge#1", "visit", at(T(48, 10)), at(T(49, 30)), { outcome: "merged", attrs: { action: "merge" }, ids: { ...t29, station: "merge" } });
+  const cell29 = span("cell:LOCAL-029", "cell", at(T(34)), at(T(49, 30)), { outcome: "merged" });
   // SLICE-025: waits on a person.
   const s25 = span("slice-wait:SLICE-025#1", "slice-wait", at(T(3)), at(T(31)), {});
   const s25p = span("person-wait:SLICE-025/approve#1", "person-wait", at(T(31)), null, { attrs: { label: "Approve the wave" } });
@@ -293,9 +303,9 @@ export function proofFixture(): ProofFixture {
                   detail: "round 1",
                   attention: "failed",
                   children: [
-                    { id: "seat:LOCAL-031/review#1/architecture", kind: "seat", label: "Architecture", detail: "Sonnet", lanes: [[seat("architecture", "sonnet", 29, 31.5, "approve")]] },
-                    { id: "seat:LOCAL-031/review#1/security", kind: "seat", label: "Security", detail: "Opus", lanes: [[seat("security", "opus", 29, 33, "reject")]] },
-                    { id: "seat:LOCAL-031/review#1/product", kind: "seat", label: "Product", detail: "Sonnet", lanes: [[seat("product", "sonnet", 29.2, 32, "approve")]] },
+                    { id: "seat:LOCAL-031/review#1/architecture", kind: "seat", label: "Architecture", detail: "Sonnet", lanes: [[seat("architecture", "sonnet", 29, 31.5, "APPROVE")]] },
+                    { id: "seat:LOCAL-031/review#1/security", kind: "seat", label: "Security", detail: "Opus", lanes: [[seat("security", "opus", 29, 33, "REJECT")]] },
+                    { id: "seat:LOCAL-031/review#1/product", kind: "seat", label: "Product", detail: "Sonnet", lanes: [[seat("product", "sonnet", 29.2, 32, "APPROVE")]] },
                   ],
                 },
                 { id: "cell:LOCAL-031/verification", kind: "verification", label: "Verification", note: "not recorded" },
@@ -311,6 +321,29 @@ export function proofFixture(): ProofFixture {
               lanes: [[cell32]],
               children: cell32Visits.map((v) => ({ id: `station:LOCAL-032/${v.attrs.action}`, kind: "station" as const, label: (v.attrs.action ?? "").replace(/^./, (c) => c.toUpperCase()), lanes: [[v]] })),
             },
+          ],
+        },
+        {
+          id: "cell:LOCAL-029",
+          kind: "cell",
+          label: "LOCAL-029",
+          detail: "Approved, merged",
+          ref: "cell:LOCAL-029",
+          lanes: [[cell29]],
+          children: [
+            { id: "station:LOCAL-029/review", kind: "station", label: "Review", lanes: [[review29]] },
+            {
+              id: "cell:LOCAL-029/review",
+              kind: "review",
+              label: "Review seats",
+              detail: "round 1",
+              children: [
+                { id: "seat:LOCAL-029/review#1/architecture", kind: "seat", label: "Architecture", detail: "Sonnet", lanes: [[seat("architecture", "sonnet", 36.2, 38.4, "APPROVE", "LOCAL-029")]] },
+                { id: "seat:LOCAL-029/review#1/security", kind: "seat", label: "Security", detail: "Opus", lanes: [[seat("security", "opus", 36.2, 40.6, "APPROVE", "LOCAL-029")]] },
+              ],
+            },
+            { id: "cell:LOCAL-029/waits", kind: "waits", label: "Person", detail: "approval of the review", lanes: [[human29]] },
+            { id: "station:LOCAL-029/merge", kind: "station", label: "Merge", lanes: [[merge29]] },
           ],
         },
         { id: "slice:SLICE-025", kind: "slice", label: "SLICE-025", detail: "Waiting for a person", ref: "slice:SLICE-025", attention: "person", lanes: [[s25, s25p]], children: [{ id: "slice:SLICE-025/waits", kind: "waits", label: "Waits", lanes: [[s25, s25p]] }] },
@@ -364,6 +397,7 @@ export function proofFixture(): ProofFixture {
     "review:LOCAL-031#1": "cell:LOCAL-031/rounds",
     "human:LOCAL-031/override": "cell:LOCAL-031/waits",
     "retry:LOCAL-031#2": "execution:ex-031-3",
+    "gate:LOCAL-029/human-approval#1": "cell:LOCAL-029/waits",
   });
   // Two executions of the same cell appear as ribbons; the one in this grouping is also a row.
   const marks: TimelineMark[] = [
@@ -375,9 +409,12 @@ export function proofFixture(): ProofFixture {
     mark("m6", "human", T(52, 20), "human:LOCAL-031/override", "A person overrode the scope gate", "approved"),
     mark("m7", "gate", T(52, 24), "gate:LOCAL-031/scope#2", "The scope gate let LOCAL-031 through on an override", "overridden"),
     mark("m8", "retry", T(52, 20), "retry:LOCAL-031#2", "Execution retried as attempt 3"),
+    mark("m9", "review", T(41, 10), "cell:LOCAL-029", "Review round 1 approved LOCAL-029", "approved"),
+    mark("m10", "human", T(47, 40), "cell:LOCAL-029", "A person approved the review", "approved"),
+    mark("m11", "merge", T(49, 30), "cell:LOCAL-029", "LOCAL-029 was merged.", null),
   ];
 
-  const expanded = ["wave:WAVE-007", "slice:SLICE-021", "cell:LOCAL-031", "station:LOCAL-031/build", "execution:ex-031-3", "execution:ex-031-3/workflow", "agent:ag-03-builder", "grammar"];
+  const expanded = ["wave:WAVE-007", "slice:SLICE-021", "cell:LOCAL-031", "cell:LOCAL-031/review", "cell:LOCAL-029", "cell:LOCAL-029/review", "station:LOCAL-031/build", "execution:ex-031-3", "execution:ex-031-3/workflow", "agent:ag-03-builder", "grammar"];
   return { tree, marks, expanded, selection: "visit:LOCAL-031/build#2b" as EntityRef };
 }
 

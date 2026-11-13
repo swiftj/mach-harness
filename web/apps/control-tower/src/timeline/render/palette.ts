@@ -36,6 +36,8 @@ export interface Palette {
   readonly lineStrong: string;
   readonly sans: string;
   readonly mono: string;
+  /** The keyboard focus ink (the cursor's bracket). */
+  readonly focus: string;
 }
 
 export function readPalette(el: Element): Palette {
@@ -73,6 +75,7 @@ export function readPalette(el: Element): Palette {
     lineStrong: v("--mach-line-strong"),
     sans: v("--mach-font-sans") || "sans-serif",
     mono: v("--mach-font-mono") || "monospace",
+    focus: v("--mach-focus"),
   };
 }
 

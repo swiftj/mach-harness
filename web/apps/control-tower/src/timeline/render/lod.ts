@@ -329,6 +329,8 @@ export interface SubtreeColumns {
   readonly failed: Uint8Array;
   readonly bin: number;
   readonly total: number;
+  /** The earliest failure recorded in view (a failed or refused end at or before the live edge), or null. */
+  readonly firstFail: number | null;
 }
 
 function* descendants(node: TrackNode): Generator<TrackNode> {
@@ -344,6 +346,7 @@ export function subtreeColumns(node: TrackNode, scale: Scale, liveAt: number, bi
   const counts = new Uint16Array(n);
   const failed = new Uint8Array(n);
   let total = 0;
+  let firstFail: number | null = null;
   const qTo = Math.min(scale.to, liveAt);
   for (const d of descendants(node)) {
     for (const lane of d.lanes) {
@@ -357,6 +360,7 @@ export function subtreeColumns(node: TrackNode, scale: Scale, liveAt: number, bi
         const c1 = Math.min(n - 1, Math.floor(xAt(scale, t.to) / bin));
         const bad = !t.open && span.end !== null && span.end.at !== null && span.end.at <= liveAt && (span.end.reason === "failed" || span.end.reason === "refused");
         total++;
+        if (bad && span.end!.at! >= scale.from && (firstFail === null || span.end!.at! < firstFail)) firstFail = span.end!.at!;
         for (let c = c0; c <= c1; c++) {
           const v = counts[c] ?? 0;
           if (v < 65535) counts[c] = v + 1;
@@ -365,5 +369,5 @@ export function subtreeColumns(node: TrackNode, scale: Scale, liveAt: number, bi
       }
     }
   }
-  return { counts, failed, bin, total };
+  return { counts, failed, bin, total, firstFail };
 }

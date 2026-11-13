@@ -8,8 +8,9 @@
  *   ?top=<px>              initial vertical scroll
  *   ?sel=none              no selection (default: the resumed build visit, linked to its ribbon)
  *   ?bench=1               draws 5,000 visible spans 60 times and prints the frame time
+ *   ?cursor=<track>~<span> the keyboard cursor's start (focus the tracks to see it)
  *
- * window.__proof: { bench(), setWindow(w), store } for a Playwright script.
+ * window.__proof: { bench(), setWindow(w), setCursor(c), store } for a Playwright script.
  */
 import { StrictMode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -17,7 +18,7 @@ import { ThemeProvider, TooltipProvider, type ThemePreference } from "@mach/ui";
 import "../../index.css";
 import { browserClock, createSceneStore, SceneStoreProvider } from "../../scene";
 import { createSceneLog, provenance, type EntityRef } from "../../sim";
-import { LABEL_GUTTER, RULER_HEIGHT, type TimeWindow, type TimelineHit, type TrackNode } from "../contract";
+import { LABEL_GUTTER, RULER_HEIGHT, type TimelineCursor, type TimeWindow, type TimelineHit, type TrackNode } from "../contract";
 import { TrackCanvas, TrackLabels, WindowRuler } from "../render";
 import { drawTracks } from "../render/draw";
 import { readPalette } from "../render/palette";
@@ -155,6 +156,12 @@ function Proof() {
   const [top, setTop] = useState(Number(params.get("top") ?? 0));
   const [gutter, setGutter] = useState(LABEL_GUTTER);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [cursor, setCursor] = useState<TimelineCursor | null>(() => {
+    const c = params.get("cursor");
+    if (!c) return null;
+    const [trackId, spanId] = c.split("~");
+    return trackId ? { trackId, lane: 0, spanId: spanId || null } : null;
+  });
   const [benchOut, setBenchOut] = useState<BenchResult | null>(null);
   const [said, setSaid] = useState("Hover a span: the card says what it is, how long, and how that is known.");
   const body = useRef<HTMLDivElement>(null);
@@ -170,7 +177,7 @@ function Proof() {
 
   useLayoutEffect(() => {
     Object.defineProperty(window, "__proof", {
-      value: { bench: () => { const r = bench(); setBenchOut(r); return r; }, benchFrames, setWindow: setWin, store, layout },
+      value: { bench: () => { const r = bench(); setBenchOut(r); return r; }, benchFrames, setWindow: setWin, setCursor, store, layout },
       configurable: true,
     });
   }, [layout]);
@@ -235,9 +242,9 @@ function Proof() {
         <div ref={body} className="flex min-h-0 flex-1">
           {size.h > 0 ? (
             <>
-              <TrackLabels layout={layout} height={trackH} scrollTop={top} width={gutter} onToggle={toggle} onSelect={onLabel} onResize={setGutter} />
+              <TrackLabels layout={layout} height={trackH} scrollTop={top} width={gutter} onToggle={toggle} onSelect={onLabel} onResize={setGutter} onScroll={setTop} />
               {trackW > 0 ? (
-                <TrackCanvas tree={fx.tree} layout={layout} viewport={viewport} marks={fx.marks} height={trackH} scrollTop={top} truncated={false} onScroll={setTop} onWindow={setWin} onHover={onHover} onSelect={onSelect} onToggle={toggle} />
+                <TrackCanvas tree={fx.tree} layout={layout} viewport={viewport} marks={fx.marks} height={trackH} scrollTop={top} truncated={false} cursor={cursor} onCursor={setCursor} onScroll={setTop} onWindow={setWin} onHover={onHover} onSelect={onSelect} onToggle={toggle} />
               ) : null}
             </>
           ) : null}

@@ -15,11 +15,11 @@
  * stop bar; a person's wait a terracotta band under a down-triangle; tools 1 x 6 ticks; ribbons
  * 3 px strips under the row's own spans. Nothing is drawn after the live edge.
  */
-import { type FlatRow, type SpanAuthority, type SpanKind, type TimelineMark, type TimelineSpan, type TimeWindow } from "../contract";
-import { EMPTY_PLAN, LOD, planRow, runAlpha, subtreeColumns, type PlacedSpan, type RowPlan, type SubtreeColumns } from "./lod";
+import { outcomeKnownAt, type FlatRow, type SpanAuthority, type SpanKind, type TimelineMark, type TimelineSpan, type TimeWindow } from "../contract";
+import { EMPTY_PLAN, laneIndex, LOD, planRow, runAlpha, spanTimes, subtreeColumns, type PlacedMark, type PlacedSpan, type RowPlan, type SubtreeColumns } from "./lod";
 import { toneInk, toneOf, type Palette, type Tone } from "./palette";
 import { scaleOf, xAt, type Scale } from "./scale";
-import { durationText } from "./words";
+import { durationText, endedWithoutExit, personApproved } from "./words";
 
 export type Family = "lifetime" | "bracket" | "bar" | "task" | "rail" | "claim" | "workflow" | "agent" | "tool" | "wait" | "person";
 
@@ -118,7 +118,7 @@ export function shortLabel(span: TimelineSpan): string {
   const a = span.attrs;
   switch (span.kind) {
     case "visit": {
-      const st = a.action ?? span.ids.station ?? "visit";
+      const st = span.ids.station === "merge" || span.ids.station === "human-approval" ? span.ids.station : (a.action ?? span.ids.station ?? "visit");
       return STATION_SHORT[st] ?? cap(st.replace(/-/g, " "));
     }
     case "round":
@@ -132,7 +132,7 @@ export function shortLabel(span: TimelineSpan): string {
     case "agent":
       return a.label ?? a.agentType ?? "Agent";
     case "seat":
-      return a.label ?? "Seat";
+      return cap(a.label ?? span.ids.seat ?? "Seat");
     case "task":
       return a.label ?? "Task";
     case "slice-wait":
@@ -159,6 +159,7 @@ export function shortLabel(span: TimelineSpan): string {
 export function shortDuration(span: TimelineSpan, from: number, to: number, open: boolean): string {
   if (open) return durationText(to - from);
   const d = span.duration;
+  if (endedWithoutExit(span)) return `≤ ${durationText(d.maxMs ?? d.ms ?? to - from)}`;
   if (d.basis === "bounded" && d.minMs !== null && d.maxMs !== null) {
     const a = durationText(d.minMs);
     const b = durationText(d.maxMs);
@@ -349,6 +350,8 @@ interface Paint {
   readonly scale: Scale;
   readonly liveAt: number;
   readonly xLive: number;
+  /** The opacity everything of the current span is drawn at (a newly arrived span fades in). */
+  base: number;
 }
 
 export type Box = readonly [number, number, number, number];
@@ -360,7 +363,7 @@ function segment(c: Paint, fam: Family, xa: number, xb: number, cy: number, th: 
   const { ctx } = c;
   if (xb - xa <= 0.01) return;
   const top = cy - th / 2;
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = alpha * c.base;
   switch (fam) {
     case "bar":
     case "task":
@@ -422,7 +425,7 @@ function segment(c: Paint, fam: Family, xa: number, xb: number, cy: number, th: 
       }
       const lw = fam === "agent" ? 3 : fam === "workflow" ? 2 : 1;
       const color = fam === "lifetime" ? c.p.route : ink;
-      if (fam === "agent") ctx.globalAlpha = alpha * 0.6;
+      if (fam === "agent") ctx.globalAlpha = alpha * 0.6 * c.base;
       if (kind === "inferred") {
         ctx.strokeStyle = color;
         ctx.lineWidth = lw;
@@ -441,7 +444,7 @@ function segment(c: Paint, fam: Family, xa: number, xb: number, cy: number, th: 
     default:
       break;
   }
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = c.base;
 }
 
 /** A recorded end's cap, in the family's own form. `dir` -1 is the left end, 1 the right. */
@@ -494,7 +497,7 @@ interface Painted {
   readonly box: Box;
 }
 
-function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | undefined, labels: boolean): Painted {
+function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | undefined, labels: boolean, marks: readonly PlacedMark[]): Painted {
   const { ctx, p } = c;
   const { span, times } = item;
   const fam = familyOf(span.kind);
@@ -533,13 +536,15 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
   const startBound = s && s.at === null && s.notBefore !== null && s.notAfter !== null && s.notAfter > s.notBefore ? [xOf(s.notBefore), xOf(s.notAfter)] as const : null;
   const endBound = !open && e && e.notBefore !== null && e.notAfter !== null && e.notAfter > e.notBefore ? [xOf(e.notBefore), xOf(e.notAfter)] as const : null;
   const inferStart = !startBound && s?.basis === "inferred";
-  const inferEnd = !open && !endBound && e?.basis === "inferred";
+  // Ended without an exit record: the bar runs to the bound in the inferred grammar, then the halt cut.
+  const noExit = !open && endedWithoutExit(span);
+  const inferEnd = !open && (noExit || (!endBound && e?.basis === "inferred"));
   const w = X1 - X0;
   const inferLen = Math.min(18, Math.max(4, w / 3));
   const fadeLen = open ? Math.min(24, Math.max(0, w / 2)) : 0;
 
   let a = startBound ? startBound[1] : inferStart ? X0 + inferLen : X0;
-  let b = endBound ? endBound[0] : inferEnd ? X1 - inferLen : open ? X1 - fadeLen : X1;
+  let b = endBound && !noExit ? endBound[0] : inferEnd ? X1 - inferLen : open ? X1 - fadeLen : X1;
   if (b < a) b = a;
   // The agent's head stands at its start; its line begins after it.
   const head = fam === "agent";
@@ -554,7 +559,7 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
   if (inferStart) segment(c, fam, X0, a, cy, th, ink, soft, "inferred");
   segment(c, fam, a, b, cy, th, ink, soft, "solid");
   if (inferEnd) segment(c, fam, b, X1, cy, th, ink, soft, "inferred");
-  if (endBound) segment(c, fam, endBound[0], endBound[1], cy, th, ink, soft, "hatch");
+  if (endBound && !noExit) segment(c, fam, endBound[0], endBound[1], cy, th, ink, soft, "hatch");
   if (open && fadeLen > 0) {
     const step = fadeLen / FADE_STEPS.length;
     FADE_STEPS.forEach((alpha, i) => segment(c, fam, b + i * step, b + (i + 1) * step, cy, th, ink, soft, "solid", alpha));
@@ -568,8 +573,9 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
   } else if (inferStart) openArrow(ctx, X0, cy, -1, ink);
   else if (!head) recordedCap(c, fam, X0, cy, th, ink, -1);
   // The right end: never a cap while open.
-  if (!open) {
-    if (endBound) {
+  const seat = span.kind === "seat";
+  if (!open && !(seat && !noExit)) {
+    if (endBound && !noExit) {
       boundBracket(ctx, endBound[0], cy, capH, 1, ink);
       boundBracket(ctx, endBound[1], cy, capH, -1, ink);
     } else if (inferEnd) openArrow(ctx, X1, cy, 1, ink);
@@ -580,6 +586,29 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
     triangleDown(ctx, X0 + 0.5, cy - th / 2 - 4, 4);
     ctx.fillStyle = p.human;
     ctx.fill();
+    // Approved: an up-tick at the approval, the wait's other end.
+    if (!open && personApproved(span, c.liveAt)) {
+      ctx.fillStyle = p.human;
+      ctx.fillRect(X1 - 1, cy - th / 2 - 5, 1.5, th + 5);
+      ctx.beginPath();
+      ctx.moveTo(X1 - 3.8, cy - th / 2 - 3);
+      ctx.lineTo(X1 + 0.25, cy - th / 2 - 8);
+      ctx.lineTo(X1 + 4.3, cy - th / 2 - 3);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  // A review seat: its verdict diamond at the verdict, coloured by the vote only once it is known.
+  if (seat && !open && !noExit && e && e.at !== null && e.at <= c.liveAt) {
+    const known = outcomeKnownAt(span, c.liveAt);
+    const vote = known ? (span.attrs.vote ?? span.outcome ?? "") : "";
+    const { ink: vi, soft: vs } = /reject|refus|block/i.test(vote) ? { ink: p.fail, soft: p.failSoft } : /approv/i.test(vote) ? { ink: p.pass, soft: p.passSoft } : { ink: p.fInkSoft, soft: p.ground };
+    diamond(ctx, X1, cy, 4.6);
+    ctx.fillStyle = vs;
+    ctx.fill();
+    ctx.strokeStyle = vi;
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
   }
 
   let textFrom = X0 + (fam === "wait" || fam === "person" ? 5 : 3);
@@ -607,16 +636,17 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
 
   // Interrupted: the halt cut at the recorded stop and a dotted bridge to where work was taken up.
   const reason = e?.reason;
-  if (!open && (reason === "interrupted" || reason === "superseded")) {
-    haltCut(ctx, X1, cy, th, p);
-    if (next && next.x0 > X1 + 4) {
+  const cutX = noExit ? X1 + 5 : X1;
+  if (!open && (noExit || reason === "interrupted" || reason === "superseded")) {
+    haltCut(ctx, cutX, cy, th, p);
+    if (next && next.x0 > cutX + 4) {
       ctx.save();
       ctx.strokeStyle = p.halt;
       ctx.lineWidth = 1;
       ctx.lineCap = "round";
       ctx.setLineDash([1, 2.4]);
       ctx.beginPath();
-      ctx.moveTo(X1 + 5, cy + 0.5);
+      ctx.moveTo(cutX + 5, cy + 0.5);
       ctx.lineTo(Math.min(next.x0 - 2, c.xLive), cy + 0.5);
       ctx.stroke();
       ctx.restore();
@@ -627,10 +657,10 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
   }
 
   // A lifetime (wave, cell) is named by its row's label: the line alone.
-  if (labels && item.lod !== "geometry" && fam !== "lifetime") paintLabel(c, item, g, X0, X1, textFrom, tone, fam);
+  if (labels && item.lod !== "geometry" && fam !== "lifetime") paintLabel(c, item, g, X0, X1 - (seat ? 6 : 0), textFrom, tone, fam, marks);
 
   const half = Math.max(th / 2, 3) + 2;
-  return { box: [X0 - 1, cy - half, X1 + 1, cy + half] };
+  return { box: [X0 - 1, cy - half, (noExit ? cutX + 4 : seat ? X1 + 5 : X1 + 1), cy + half] };
 }
 
 /** A round: a dimension bracket over the row, its name set in a gap in the line. */
@@ -666,7 +696,7 @@ function paintBracket(c: Paint, item: PlacedSpan, g: RowGeom, ink: string, label
   return { box: [X0 - 1, y - 3, X1 + 1, y + 5] };
 }
 
-function paintLabel(c: Paint, item: PlacedSpan, g: RowGeom, X0: number, X1: number, textFrom: number, tone: Tone, fam: Family) {
+function paintLabel(c: Paint, item: PlacedSpan, g: RowGeom, X0: number, X1: number, textFrom: number, tone: Tone, fam: Family, marks: readonly PlacedMark[]) {
   const { ctx, p } = c;
   const span = item.span;
   const label = shortLabel(span);
@@ -711,11 +741,12 @@ function paintLabel(c: Paint, item: PlacedSpan, g: RowGeom, X0: number, X1: numb
   // Thin rows: the label inline after the start, on a knock-out of the ground.
   if (!text) return;
   const y = g.cy + 3.5;
-  const x = Math.max(textFrom + 2, visible0 + 4);
-  const font = fam === "agent" ? `500 10px ${p.sans}` : `500 10px ${p.sans}`;
+  const font = `500 10px ${p.sans}`;
   ctx.font = font;
   // Clear of the end cap and of whatever begins where this ends (an agent's head after its queue).
-  const right = Math.min(X1 - 6, c.xLive, c.scale.width - 4);
+  const room = inlineRoom(Math.max(textFrom + 2, visible0 + 4), Math.min(X1 - 6, c.xLive, c.scale.width - 4), marks);
+  if (!room) return;
+  const { x, right } = room;
   const shown = fit(ctx, font, text, right - x - 3);
   if (!shown) return;
   const tw = measure(ctx, font, shown);
@@ -739,6 +770,26 @@ function paintLabel(c: Paint, item: PlacedSpan, g: RowGeom, X0: number, X1: numb
   }
 }
 
+/**
+ * Where an inline label may go in a thin row, clear of the row's marks (a person's triangle, a gate's
+ * diamond): a mark near the start pushes the label after it, a mark further on ends the room before
+ * it. Null when no room is left. Pure.
+ */
+export function inlineRoom(x: number, right: number, marks: readonly { readonly x: number }[], half = MARK_HALF): { x: number; right: number } | null {
+  let a = x;
+  let b = right;
+  for (const m of [...marks].sort((u, v) => u.x - v.x)) {
+    if (m.x + half < a - 3 || m.x - half > b) continue;
+    // A mark within the first stretch of the room moves the label past it; otherwise the room ends there.
+    if (m.x - half <= a + 12) a = Math.max(a, m.x + half + 4);
+    else b = Math.min(b, m.x - half - 4);
+  }
+  return b - a >= 18 ? { x: a, right: b } : null;
+}
+
+/** Half the width a mark takes on a row, with its stroke. */
+export const MARK_HALF = 6;
+
 /** A tool call: a 1 x 6 tick; its length as a faint body when there is room to show it. */
 function paintTick(c: Paint, item: PlacedSpan, cy: number): Box {
   const { ctx, p } = c;
@@ -747,10 +798,10 @@ function paintTick(c: Paint, item: PlacedSpan, cy: number): Box {
   const x = Math.round(item.x0);
   const w = item.x1 - item.x0;
   if (w >= 6) {
-    ctx.globalAlpha = 0.28;
+    ctx.globalAlpha = 0.28 * c.base;
     ctx.fillStyle = ink;
     ctx.fillRect(x, cy - 2, w, 4);
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = c.base;
   }
   ctx.fillStyle = ink;
   ctx.fillRect(x, cy - 3, 1, 6);
@@ -887,6 +938,18 @@ export interface DrawInput {
   /** Major tick times, for the sheet's vertical grid; UTC midnights, drawn heavier. */
   readonly grid: readonly number[];
   readonly dateLines: readonly number[];
+  /** Spans that arrived moments ago, by id, with the opacity they are drawn at while they fade in. */
+  readonly fresh?: ReadonlyMap<string, number>;
+}
+
+/** A row whose spans all lie outside the window: which side the nearest is on, and where to pan to see it. */
+export interface EdgeChevron {
+  readonly side: -1 | 1;
+  readonly x: number;
+  readonly cy: number;
+  readonly spanId: string;
+  readonly from: number;
+  readonly to: number;
 }
 
 export interface DrawOutput {
@@ -894,6 +957,8 @@ export interface DrawOutput {
   readonly plans: Map<string, RowPlan>;
   readonly ribbons: Map<string, RowPlan>;
   readonly summaries: Map<string, SubtreeColumns>;
+  /** Empty rows' edge chevrons, keyed like `plans`. */
+  readonly chevrons: Map<string, EdgeChevron>;
   /** Spans drawn one by one, spans looked at after culling, spans merged into runs and pips. */
   readonly drawn: number;
   readonly considered: number;
@@ -907,7 +972,9 @@ export function drawTracks(input: DrawInput): DrawOutput {
   const { ctx, width: W, height: H, scrollTop, palette: p, liveAt } = input;
   const scale = scaleOf(input.window, W);
   const xLive = Math.min(W + 40, Math.max(-40, xAt(scale, liveAt)));
-  const c: Paint = { ctx, p, scale, liveAt, xLive };
+  const c: Paint = { ctx, p, scale, liveAt, xLive, base: 1 };
+  const chevrons = new Map<string, EdgeChevron>();
+  const fresh = input.fresh;
   const plans = new Map<string, RowPlan>();
   const ribbons = new Map<string, RowPlan>();
   const summaries = new Map<string, SubtreeColumns>();
@@ -989,6 +1056,16 @@ export function drawTracks(input: DrawInput): DrawOutput {
         ctx.fillRect(i * cols.bin, sy, cols.bin, 3);
       }
       ctx.globalAlpha = 1;
+      // Its attention mark: the first failure in view, so a closed group still says something failed there.
+      if (cols.firstFail !== null) {
+        const x = Math.round(xAt(scale, cols.firstFail));
+        if (x >= 0 && x <= W) {
+          ctx.fillStyle = p.fail;
+          ctx.fillRect(x - 1, g.y + 3, 2, g.h - 6);
+          diamond(ctx, x, g.y + 5, 3);
+          ctx.fill();
+        }
+      }
     }
 
     const plan = lane ? planRow(lane.spans, marks, scale, liveAt) : marks.length ? planRow([], marks, scale, liveAt) : EMPTY_PLAN;
@@ -1006,7 +1083,10 @@ export function drawTracks(input: DrawInput): DrawOutput {
     const bodyCy = collapsed ? g.cy - 3 : g.cy;
     const gg: RowGeom = bodyCy === g.cy ? g : { ...g, cy: bodyCy };
     plan.items.forEach((item, i) => {
-      const painted = paintSpan(c, item, gg, plan.items[i + 1], true);
+      const fade = fresh?.get(item.span.id);
+      if (fade !== undefined) ctx.globalAlpha = c.base = fade;
+      const painted = paintSpan(c, item, gg, plan.items[i + 1], true, plan.marks);
+      if (fade !== undefined) ctx.globalAlpha = c.base = 1;
       drawn++;
       if (isSelected(item.span)) {
         selectedBoxes.push(painted.box);
@@ -1014,7 +1094,10 @@ export function drawTracks(input: DrawInput): DrawOutput {
       } else if (isHighlighted(item.span)) highlightBoxes.push(painted.box);
     });
     for (const item of plan.instants) {
+      const fade = fresh?.get(item.span.id);
+      if (fade !== undefined) ctx.globalAlpha = c.base = fade;
       const box = paintTick(c, item, g.cy);
+      if (fade !== undefined) ctx.globalAlpha = c.base = 1;
       drawn++;
       if (isSelected(item.span)) {
         selectedBoxes.push(box);
@@ -1041,6 +1124,12 @@ export function drawTracks(input: DrawInput): DrawOutput {
           ctx.fillText(String(pip.count), x + 4, g.cy + 3);
         }
       });
+    }
+
+    // A row with spans, none of them in view: a quiet chevron at the side the nearest lies on.
+    if (lane && lane.spans.length && !plan.items.length && !plan.instants.length && !plan.runs.length && !plan.pips.length) {
+      const ch = edgeChevron(lane.spans, scale, liveAt);
+      if (ch) chevrons.set(rowKey(node.id, row.lane), { ...ch, x: ch.side < 0 ? 7 : Math.min(W, xLive) - 7, cy: g.cy });
     }
 
     // Ribbons: thin linked strips from the other hierarchy, under the row's own spans.
@@ -1114,7 +1203,20 @@ export function drawTracks(input: DrawInput): DrawOutput {
   for (const b of selectedBoxes) brackets(ctx, Math.round(b[0]) - 3.5, Math.round(b[1]) - 2.5, Math.round(b[2]) + 3.5, Math.round(b[3]) + 2.5, p.select);
 
   ctx.restore();
-  return { plans, ribbons, summaries, drawn, considered };
+
+  // Chevrons sit on the edges, outside the live-edge clip (the right one stands just inside it).
+  ctx.strokeStyle = p.fInkSoft;
+  ctx.lineWidth = 1.3;
+  ctx.globalAlpha = 0.8;
+  for (const ch of chevrons.values()) {
+    ctx.beginPath();
+    ctx.moveTo(ch.x - 2 * ch.side, ch.cy - 4);
+    ctx.lineTo(ch.x + 2 * ch.side, ch.cy);
+    ctx.lineTo(ch.x - 2 * ch.side, ch.cy + 4);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  return { plans, ribbons, summaries, chevrons, drawn, considered };
 }
 
 export function brackets(ctx: Ctx, x0: number, y0: number, x1: number, y1: number, color: string) {
@@ -1149,3 +1251,37 @@ export function hitBox(row: FlatRow, y: number, from: number, to: number, kind: 
   return [x0 - 2, cy - half, x1 + 2, cy + half];
 }
 
+
+/**
+ * For a lane none of whose spans is in the window: the nearest span and the side it lies on. Pure.
+ * Null when the lane holds nothing known by `liveAt`, or something is in view.
+ */
+export function edgeChevron(spans: readonly TimelineSpan[], scale: Scale, liveAt: number): Omit<EdgeChevron, "x" | "cy"> | null {
+  const index = laneIndex(spans);
+  const n = index.spans.length;
+  // The first span starting after the window (binary search on starts); everything before it starts in or before the window.
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (index.starts[mid]! <= scale.to) lo = mid + 1;
+    else hi = mid;
+  }
+  const split = lo;
+  if (split > 0 && index.maxTo[split - 1]! >= scale.from) return null; // something reaches into the window
+  let before: { span: TimelineSpan; from: number; to: number } | null = null;
+  // The span that ends latest before the window: the prefix maximum's owner, found by a short scan back.
+  for (let i = split - 1, k = 0; i >= 0 && k < 256; i--, k++) {
+    const t = spanTimes(index.spans[i]!, liveAt);
+    if (t && (!before || t.to > before.to)) before = { span: index.spans[i]!, from: t.from, to: t.to };
+    if (before && before.to >= index.maxTo[split - 1]!) break;
+  }
+  let after: { span: TimelineSpan; from: number; to: number } | null = null;
+  if (split < n) {
+    const t = spanTimes(index.spans[split]!, liveAt);
+    if (t) after = { span: index.spans[split]!, from: t.from, to: t.to };
+  }
+  const pick = before && after ? (scale.from - before.to <= after.from - scale.to ? before : after) : (before ?? after);
+  if (!pick) return null;
+  return { side: pick === before ? -1 : 1, spanId: pick.span.id, from: pick.from, to: pick.to };
+}

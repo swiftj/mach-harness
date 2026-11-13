@@ -10,7 +10,8 @@
  * - "not recorded" is never a span: it is the label column's word, not this module's.
  */
 import { duration as durationOf } from "../../shell/time";
-import { outcomeKnownAt, type SpanAuthority, type SpanKind, type SpanPrecision, type TimelineSpan } from "../contract";
+import { elapsedWords } from "../../shell/inspector/words";
+import { outcomeKnownAt, type FlatRow, type SpanAuthority, type SpanKind, type SpanPrecision, type TimelineSpan, type TrackNode } from "../contract";
 
 /** Kinds whose open state is a wait, not work: "waiting for", never "running for". */
 export const WAIT_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["slice-wait", "slice-eligible", "capacity-wait", "gate-wait", "person-wait", "agent-queue"]);
@@ -37,7 +38,22 @@ function startAt(span: TimelineSpan): number | null {
 
 function isInterrupted(span: TimelineSpan): boolean {
   const r = span.end?.reason;
-  return r === "interrupted" || r === "superseded";
+  return r === "interrupted" || r === "superseded" || endedWithoutExit(span);
+}
+
+/**
+ * A span closed at a bound because nothing recorded its exit (its execution ended, or a later visit
+ * superseded it): the end is inferred and the reason says it stopped from outside. Drawn and said as
+ * "ended without an exit record", never as running and never as "took".
+ */
+export function endedWithoutExit(span: TimelineSpan): boolean {
+  const e = span.end;
+  return e !== null && e.basis === "inferred" && (e.reason === "interrupted" || e.reason === "superseded" || e.reason === "unknown");
+}
+
+/** The ticket a span is about, under either spelling of its id. */
+export function ticketOf(span: TimelineSpan): string | null {
+  return span.ids.ticket ?? span.ids.ticket_id ?? span.ids.cell ?? null;
 }
 
 /** Whether the end is recorded at or before what is held. A span ending after `liveAt` is still open there. */
@@ -75,6 +91,12 @@ export function durationWords(span: TimelineSpan, liveAt: number): string {
   const max = span.duration.maxMs ?? (e.notAfter !== null && t0 !== null ? e.notAfter - (s?.notBefore ?? t0) : ms);
   const inferredRule = e.basis === "inferred" ? e.rule : s?.basis === "inferred" ? s.rule : null;
 
+  if (endedWithoutExit(span)) {
+    // The words of the inspector (src/shell/inspector/words.ts elapsedWords, "ended-unrecorded").
+    const endAt = e.notAfter ?? e.at;
+    const bound = span.duration.maxMs ?? span.duration.ms ?? (endAt !== null && t0 !== null ? endAt - t0 : null);
+    return bound === null ? "ended without an exit record, when is not known" : elapsedWords("ended-unrecorded", true, true, durationText(bound));
+  }
   if (isInterrupted(span)) {
     const word = e.reason === "superseded" ? "superseded" : "interrupted";
     if (ms === null) return `${word}, after a time not known`;
@@ -135,7 +157,7 @@ export function spanSubject(span: TimelineSpan): string {
   const a = span.attrs;
   switch (span.kind) {
     case "visit": {
-      const station = a.action ?? span.ids.station ?? null;
+      const station = span.ids.station === "merge" || span.ids.station === "human-approval" ? span.ids.station : (a.action ?? span.ids.station ?? null);
       const base = station ? `${cap(station.replace(/-/g, " "))} visit` : "Station visit";
       return a.round && a.round > 1 ? `${base}, round ${a.round}` : base;
     }
@@ -143,7 +165,8 @@ export function spanSubject(span: TimelineSpan): string {
       return a.round ? `Round ${a.round}` : "Round";
     case "agent":
     case "seat": {
-      const who = span.kind === "seat" ? (a.label ? `Review seat ${a.label}` : "Review seat") : a.label ? `Agent ${a.label}` : "Agent";
+      const seat = a.label ?? span.ids.seat;
+      const who = span.kind === "seat" ? (seat ? `Review seat ${seat}` : "Review seat") : a.label ? `Agent ${a.label}` : "Agent";
       return a.model ? `${who} (${cap(a.model)})` : who;
     }
     case "execution":
@@ -159,19 +182,52 @@ export function spanSubject(span: TimelineSpan): string {
 
 /** An outcome string in words: "changes-requested" reads "changes requested". */
 export function outcomeWords(outcome: string): string {
-  return outcome.replace(/[-_]+/g, " ").toLowerCase();
+  if (/^human\.approval/i.test(outcome)) return "approved by a person";
+  return outcome.replace(/[-_.]+/g, " ").toLowerCase();
+}
+
+const FAILED_OUTCOME = /fail|reject|refus|declin|denied/i;
+
+/** Whether a wait on a person ended in an approval, as recorded by `liveAt`. */
+export function personApproved(span: TimelineSpan, liveAt: number): boolean {
+  if (span.kind !== "person-wait" && span.kind !== "gate-wait") return false;
+  if (!outcomeKnownAt(span, liveAt) || !span.outcome) return false;
+  if (span.end?.reason === "refused" || span.end?.reason === "failed" || FAILED_OUTCOME.test(span.outcome)) return false;
+  return /approv|pass|completed/i.test(span.outcome);
+}
+
+/** A merge visit: the station that lands the approved commit. */
+export function isMergeVisit(span: TimelineSpan): boolean {
+  return span.kind === "visit" && (span.ids.station === "merge" || span.attrs.action === "merge");
+}
+
+/**
+ * The outcome in the words the events already use (src/sim/describe-v3.ts): a seat "voted reject",
+ * a person "approved the review" (the code: review's human approval), a merge visit "merged" (the
+ * authorization to land it; who merged is not in the records, so it is not said).
+ */
+function outcomePhrase(span: TimelineSpan, liveAt: number): string {
+  const o = span.outcome ?? "";
+  if (span.kind === "seat") return `voted ${outcomeWords(o)}`;
+  if (span.kind === "person-wait" || span.kind === "gate-wait") {
+    if (personApproved(span, liveAt)) return /approval|review|human-approval/i.test(`${o} ${span.entity}`) ? "a person approved the review" : "a person approved";
+    if (FAILED_OUTCOME.test(o)) return "a person declined";
+    return outcomeWords(o);
+  }
+  if (isMergeVisit(span) && /merged|completed/i.test(o)) return "merged into the main branch";
+  return outcomeWords(o);
 }
 
 /** The one sentence for tooltips and screen readers. */
 export function describeSpan(span: TimelineSpan, liveAt: number): string {
   const subject = spanSubject(span);
-  const ticket = span.ids.ticket ?? span.ids.cell ?? null;
+  const ticket = ticketOf(span);
   const whose = ticket && !subject.includes(ticket) ? ` for ${ticket}` : "";
   const parts = [durationWords(span, liveAt)];
   if (span.kind === "agent" && span.attrs.toolsCountOnly && span.attrs.toolCalls !== undefined) {
     parts.push(`${span.attrs.toolCalls} tool call${span.attrs.toolCalls === 1 ? "" : "s"}, not observable one by one`);
   }
-  if (outcomeKnownAt(span, liveAt) && span.outcome && !isInterrupted(span)) parts.push(outcomeWords(span.outcome));
+  if (outcomeKnownAt(span, liveAt) && span.outcome && !isInterrupted(span)) parts.push(outcomePhrase(span, liveAt));
   else if (OUTCOME_KINDS.has(span.kind) && endedBy(span, liveAt) && !isInterrupted(span) && span.outcome === null) parts.push("no outcome recorded yet");
   return `${subject}${whose}: ${parts.join(", ")}.`;
 }
@@ -198,8 +254,41 @@ export function precisionLine(span: TimelineSpan, liveAt: number): string {
   const e = span.end;
   const startWords = !s || (s.at === null && s.notBefore === null) ? "start not known" : s.basis === "inferred" ? `start placed by rule: ${ruleWords(s.rule)}` : `start ${PRECISION_WORDS[s.precision]}`;
   let endWords: string;
-  if (!e || !endedBy(span, liveAt)) endWords = e && e.at === null && e.notBefore === null ? "end not known" : "not ended by the live edge";
+  if (e && endedWithoutExit(span) && endedBy(span, liveAt)) endWords = `no exit recorded; closed at a bound by rule: ${ruleWords(e.rule)}`;
+  else if (!e || !endedBy(span, liveAt)) endWords = e && e.at === null && e.notBefore === null ? "end not known" : "not ended by the live edge";
   else if (e.basis === "inferred") endWords = `end placed by rule: ${ruleWords(e.rule)}`;
   else endWords = `end ${PRECISION_WORDS[e.precision]}`;
   return `${cap(startWords)}; ${endWords}.`;
+}
+
+const ATTENTION_WORDS: Readonly<Record<TrackNode["attention"], string | null>> = {
+  none: null,
+  open: "work in progress",
+  person: "waiting for a person",
+  interrupted: "something was interrupted",
+  failed: "something failed",
+};
+
+/** A row in words, for the cursor's card and the live region: its label, then count, attention and state. */
+export function rowWords(row: FlatRow): { title: string; detail: string } {
+  const n = row.node;
+  const title = n.detail ? `${n.label}, ${n.detail}` : n.label;
+  const parts = [`${n.spanCount.toLocaleString("en-GB")} span${n.spanCount === 1 ? "" : "s"} in this track and below`];
+  const attention = ATTENTION_WORDS[n.attention];
+  if (attention) parts.push(attention);
+  if (row.hasChildren) parts.push(row.expanded ? "expanded" : "collapsed");
+  if (row.lane > 0) parts.push(`lane ${row.lane + 1}`);
+  const detail = parts.join(", ");
+  return { title, detail: detail[0]!.toUpperCase() + detail.slice(1) };
+}
+
+/** Below this many characters a label column detail says nothing: it is dropped (the full text is in the title). */
+export const DETAIL_MIN_CHARS = 6;
+
+/**
+ * Whether a row's quieter detail is shown beside its label: only when at least DETAIL_MIN_CHARS of it
+ * (or all of a shorter one) fit after the label, which has priority. Pure given the widths.
+ */
+export function showDetail(available: number, labelWidth: number, detailWidth: number, minWidth: number): boolean {
+  return available - labelWidth - 6 >= Math.min(detailWidth, minWidth);
 }
