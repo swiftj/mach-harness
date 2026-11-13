@@ -5,4 +5,4 @@
 export { TrackCanvas } from "./TrackCanvas";
 export { TrackLabels, LABEL_DEFAULT, LABEL_MIN, LABEL_MAX } from "./TrackLabels";
 export { WindowRuler } from "./WindowRuler";
-export { describeSpan, durationWords, nodeState, countsWords, shownCounts, fitLabel, openWord } from "./words";
+export { capacityWords, describeSpan, durationWords, nodeState, countsWords, shownCounts, fitLabel, openWord } from "./words";

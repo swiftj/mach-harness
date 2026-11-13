@@ -170,3 +170,17 @@ export function visitLeftWords(visit: Pick<StationVisit, "leftAt">, status: Pick
   if (status.state === "ended-unrecorded") return `no exit record; ended by ${clock(visit.leftAt)} at the latest`;
   return clock(visit.leftAt);
 }
+
+/** Cost by model from the last `execution.usage` among `entries` (the caller passes only what happened by the playhead). */
+export function modelCostsOf(entries: readonly { readonly event: { readonly type: string } }[]): Array<[string, number | null]> {
+  const usage = [...entries].reverse().find((e) => e.event.type === "execution.usage");
+  if (!usage) return [];
+  const models = ((usage.event as { data?: { models?: Record<string, { cost_usd?: number | null }> } }).data?.models ?? {}) as Record<string, { cost_usd?: number | null }>;
+  return Object.entries(models).map(([name, m]): [string, number | null] => [name, typeof m.cost_usd === "number" ? m.cost_usd : null]);
+}
+
+/** A slice's own title, or null when it has none but its id (the reducer names an untitled slice by its id). */
+export function sliceTitle(s: { readonly id: string; readonly title: string }): string | null {
+  const t = s.title.trim();
+  return t && t !== s.id ? t : null;
+}

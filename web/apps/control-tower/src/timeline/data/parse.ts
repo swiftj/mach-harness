@@ -111,6 +111,7 @@ export function readAttrs(value: unknown): SpanAttrs {
   if (reasons) out.reasons = reasons;
   const deps = strings(a.depends_on);
   if (deps) out.dependsOn = deps;
+  if (n("limit") !== undefined) out.limit = n("limit");
   const interrupted = timeField(a, "interrupted_at");
   if (interrupted !== null) out.interruptedAt = interrupted;
   return out;

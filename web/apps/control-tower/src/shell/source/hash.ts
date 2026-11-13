@@ -9,7 +9,8 @@
  * - `at`: all digits is a time in ms (the simulation's scenario ms, or Unix ms for real history);
  *   anything else is an event id (event ids always hold a letter or a colon: `sim:12`, `<key>:<line>`).
  * - `win`: two whole non-negative ms, the first before the second; or `all`, all of the history held
- *   (following the live edge). Absent: the recorded activity (the default window). Timeline only.
+ *   (following the live edge); or `live-<ms>`, the last <ms> up to the live edge, following it (a lens
+ *   chosen while following). Absent: the recorded activity (the default window). Timeline only.
  * - `group`: `product` or `execution`. Timeline only.
  * - `lens`: an investigation lens (`retries`, `concurrency`, `waits`, `review`, `recovery`). Timeline only.
  * - `table=1`: the Timeline as a table (the structured alternative). Timeline only.
@@ -42,6 +43,7 @@ export interface HashState {
 const REF = /^[a-z]+:.+/;
 const MS = /^\d{1,16}$/;
 const WIN = /^(\d{1,16})-(\d{1,16})$/;
+const WIN_LIVE = /^live-(\d{1,16})$/;
 /** Longer than any event id the observer writes, short enough that a pasted essay is not one. */
 const MAX_ID = 512;
 
@@ -82,6 +84,12 @@ export function parseAt(value: string | null | undefined): HashAt | null {
 
 export function parseWin(value: string | null | undefined): { from: number; to: number } | null {
   if (value && value.trim() === "all") return { ...WIN_ALL };
+  const live = value ? WIN_LIVE.exec(value.trim()) : null;
+  if (live) {
+    const length = Number(live[1]);
+    // The store's following window (timeline/controls followWindow): `{ from: -length, to: +Infinity }`.
+    return Number.isSafeInteger(length) && length > 0 ? { from: -length, to: Number.POSITIVE_INFINITY } : null;
+  }
   const m = value ? WIN.exec(value.trim()) : null;
   if (!m) return null;
   const from = Number(m[1]);
@@ -134,7 +142,7 @@ export function formatHash(w: HashWrite): string {
   if (w.sel) parts.push(`sel=${encodeURIComponent(w.sel)}`);
   if (w.at) parts.push(`at=${formatAt(w.at)}`);
   if (w.route === "timeline") {
-    if (w.win) parts.push(Number.isFinite(w.win.from) && Number.isFinite(w.win.to) ? `win=${Math.round(w.win.from)}-${Math.round(w.win.to)}` : "win=all");
+    if (w.win) parts.push(Number.isFinite(w.win.from) && Number.isFinite(w.win.to) ? `win=${Math.round(w.win.from)}-${Math.round(w.win.to)}` : Number.isFinite(w.win.from) && w.win.from < 0 ? `win=live-${Math.round(-w.win.from)}` : "win=all");
     if (w.group !== "product") parts.push(`group=${w.group}`);
     if (w.lens) parts.push(`lens=${w.lens}`);
     if (w.table) parts.push("table=1");

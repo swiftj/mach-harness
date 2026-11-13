@@ -15,6 +15,15 @@ import { elapsedWords } from "../../shell/inspector/words";
 import { noEndRecorded, outcomeKnownAt, type FlatRow, type SpanAuthority, type SpanKind, type SpanPrecision, type TimelineSpan, type TrackNode } from "../contract";
 
 /** Kinds whose open state is a wait, not work: "waiting for", never "at work for". */
+/**
+ * A capacity wait in words: "waiting for a free place (1 of 1 in use)" when the record names the
+ * limit (the supervisor holds a ready slice only while every place is taken), else "waiting for capacity".
+ */
+export function capacityWords(span: Pick<TimelineSpan, "attrs">): string {
+  const n = span.attrs.limit;
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? `waiting for a free place (${n} of ${n} in use)` : "waiting for capacity";
+}
+
 export const WAIT_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["slice-wait", "slice-eligible", "capacity-wait", "gate-wait", "person-wait", "agent-queue"]);
 
 /** Kinds that are work while open (the contract's open rule); a human-approval visit is a wait. */
@@ -289,8 +298,12 @@ export function spanSubject(span: TimelineSpan): string {
       return a.label ? `Tool call ${a.label}` : "Tool call";
     case "task":
       return a.label ? `Build task ${a.label}` : "Build task";
+    case "capacity-wait": {
+      const w = capacityWords(span);
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    }
     default:
-      return a.label && span.kind !== "slice-wait" && span.kind !== "capacity-wait" ? `${KIND_WORDS[span.kind]}: ${a.label}` : KIND_WORDS[span.kind];
+      return a.label && span.kind !== "slice-wait" ? `${KIND_WORDS[span.kind]}: ${a.label}` : KIND_WORDS[span.kind];
   }
 }
 

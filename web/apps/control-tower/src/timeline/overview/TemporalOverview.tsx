@@ -67,7 +67,7 @@ import {
   type MarkPoint,
 } from "./model";
 import { useOverviewData } from "./useOverviewData";
-import { recordedExtent } from "../data";
+import { sharedRecordedExtent } from "../data";
 import { asOfPlayhead } from "../controls/frame";
 
 /** Room on the right so the end handle can be grabbed at the live edge. */
@@ -596,7 +596,7 @@ function useRecordedLast(data: TemporalOverviewProps["data"], density: unknown):
   const [got, setGot] = useState<(TimeWindow & { lastIsBucket?: boolean; lastBucket?: TimeWindow }) | null>(null);
   useEffect(() => {
     const ac = new AbortController();
-    recordedExtent(data, ac.signal).then(
+    sharedRecordedExtent(data, ac.signal).then(
       (r) => !ac.signal.aborted && setGot(r),
       () => !ac.signal.aborted && setGot(null),
     );

@@ -47,10 +47,14 @@ import {
   clampWindow,
   extentOfSpans,
   fittingExpansion,
+  followingAgain,
+  idleSinceOf,
   isAll,
+  isPinned,
   leadWindow,
   lensMemos,
   panToInclude,
+  pinnedBehind,
   quantizedLiveAt,
   resolveWindow,
   seekTargetOf,
@@ -65,7 +69,7 @@ import {
   type SpanSelection,
 } from "./controls";
 import { TimelineTable, useIdleSummary } from "./a11y";
-import { recordedExtent, useTimelineData } from "./data";
+import { sharedRecordedExtent, useTimelineData } from "./data";
 import { InvestigationPanel, LENSES } from "./investigate";
 import { TemporalOverview } from "./overview";
 import { LABEL_DEFAULT, LABEL_MAX, LABEL_MIN, TrackCanvas, TrackLabels, WindowRuler } from "./render";
@@ -73,10 +77,16 @@ import { buildTrackTree, defaultExpanded, layoutRows } from "./tracks";
 
 /** The overview is shorter on a short window (design section 3A). */
 const SHORT_OVERVIEW = 72;
-/** How often new events may re-query the window's spans. */
-const REQUERY_MS = 500;
-/** How often new events may re-read the activity the default window is framed on. */
-const ACTIVITY_REQUERY_MS = 2000;
+/**
+ * How often new events may re-query the window's spans (L8 of the live run: at 500 ms the tracks alone
+ * asked twice a second while busy). Only the data layer's notices (its cursor moved) re-query, never a
+ * timer of the workspace's own, never a live-edge step.
+ */
+const REQUERY_MS = 2000;
+/** How often new events may re-read the activity the default window is framed on, and the structure. */
+const ACTIVITY_REQUERY_MS = 4000;
+/** A re-query of the same range on a notice re-reads the window's marks at most this often (the spans every notice). */
+const MARKS_REQUERY_MS = 5000;
 const NO_SPANS: readonly TimelineSpan[] = [];
 const NO_MARKS: readonly TimelineMark[] = [];
 
@@ -127,7 +137,10 @@ function useDataTick(data: TimelineData, ms: number): number {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | 0 = 0;
-    let last = 0;
+    // From the subscription, not from 0 (P1): the mount's own query is the first; a notice the provider
+    // gives as the workspace subscribes (it moved while nobody listened) waits `ms`, instead of asking
+    // for the same tiles again 40 ms later.
+    let last = performance.now();
     const off = data.subscribe(() => {
       if (timer) return;
       timer = globalThis.setTimeout(() => {
@@ -178,15 +191,21 @@ function useWindowSpans(data: TimelineData, win: TimeWindow, hold: Hold = null):
   const asked = useRef("");
   /** The key whose answer is held: any other key is still loading (derived, not set in the effect). */
   const answered = useRef("");
+  /** The marks last read, for which range and when: a notice on the same range within MARKS_REQUERY_MS keeps them. */
+  const marksHeld = useRef<{ from: number; to: number; at: number; marks: readonly TimelineMark[] } | null>(null);
   useEffect(() => {
     if (asked.current === key) return;
     if (hold) return;
     asked.current = key;
     const ctl = new AbortController();
     const range = want;
-    Promise.all([data.spans({ window: range }, ctl.signal), data.marks(range, undefined, ctl.signal).catch((e: unknown) => (isAbort(e) ? Promise.reject(e) : NO_MARKS))]).then(
+    const held = marksHeld.current;
+    const keep = held !== null && held.from === range.from && held.to === range.to && performance.now() - held.at < MARKS_REQUERY_MS;
+    const marksAsked = keep ? Promise.resolve(held.marks) : data.marks(range, undefined, ctl.signal).catch((e: unknown) => (isAbort(e) ? Promise.reject(e) : NO_MARKS));
+    Promise.all([data.spans({ window: range }, ctl.signal), marksAsked]).then(
       ([page, marks]) => {
         if (!ctl.signal.aborted) {
+          if (!keep) marksHeld.current = { from: range.from, to: range.to, at: performance.now(), marks };
           answered.current = key;
           setFetched({ range, page, marks, loading: false, error: null });
         }
@@ -227,7 +246,7 @@ function useActivity(data: TimelineData, whole: TimeWindow): { recorded: TimeWin
     const ctl = new AbortController();
     // Read when the history's span moves (`asked`); the data layer measures from its own extent.
     void asked;
-    recordedExtent(data, ctl.signal).then(
+    sharedRecordedExtent(data, ctl.signal).then(
       (recorded) => {
         if (!ctl.signal.aborted) setGot({ recorded });
       },
@@ -246,15 +265,22 @@ function useActivity(data: TimelineData, whole: TimeWindow): { recorded: TimeWin
  * ACTIVITY_REQUERY_MS). An answer at the same version and size as the last keeps the previous object,
  * so nothing downstream rebuilds for it. A provider without `structure()` builds from the window alone.
  */
+/** The last structure answered per provider: a workspace mounted again starts from it, settled (P1). */
+const lastStructure = new WeakMap<TimelineData, SpanPage>();
+
 function useStructure(data: TimelineData): { page: SpanPage | null; settled: boolean } {
   const tick = useDataTick(data, ACTIVITY_REQUERY_MS);
-  const [got, setGot] = useState<{ data: TimelineData; page: SpanPage | null; settled: boolean }>({ data, page: null, settled: false });
+  const [got, setGot] = useState<{ data: TimelineData; page: SpanPage | null; settled: boolean }>(() => {
+    const cached = lastStructure.get(data) ?? null;
+    return { data, page: cached, settled: cached !== null };
+  });
   useEffect(() => {
     if (typeof data.structure !== "function") return;
     const ctl = new AbortController();
     data.structure(ctl.signal).then(
       (page) => {
         if (ctl.signal.aborted) return;
+        lastStructure.set(data, page);
         setGot((g) => (g.data === data && g.page && g.page.version === page.version && g.page.total === page.total && g.page.spans.length === page.spans.length ? (g.settled ? g : { ...g, settled: true }) : { data, page, settled: true }));
       },
       (e: unknown) => {
@@ -621,6 +647,41 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
     pendingReveal.current = null;
   }, [tree, layout, selection, focusNonce, revealTick, data, store, whole, win, top, tracksH, maxScroll]);
 
+  // ---- L1: following and a pinned window are never both claimed.
+  // A pinned window the live edge has passed says so in the toolbar ("Window pinned · live edge is 3 min
+  // ahead — Follow") and takes the camera-follow claim off the transport; "Return to live" (L, End), the
+  // transport's follow chip and "Follow" give the following window back.
+  const live = source === "live";
+  const aheadRaw = live ? pinnedBehind(view.window, win, liveAt) : null;
+  // Rounded to 10 s: the words change slowly; nothing re-renders per live-edge step for it.
+  const ahead = aheadRaw === null ? null : Math.max(1000, Math.round(aheadRaw / 10_000) * 10_000);
+  const followAgain = useCallback(() => {
+    const s = store.getState();
+    if (!isPinned(s.timeline.window)) return;
+    store.setTimelineView({ window: followingAgain(win, s.timeline.lens !== null) });
+  }, [store, win]);
+  const onFollow = useCallback(() => {
+    followAgain();
+    if (!store.getState().follow) store.setFollow(true);
+  }, [followAgain, store]);
+  const pinned = useMemo(() => (ahead === null ? null : { ahead, onFollow }), [ahead, onFollow]);
+  // L1 (iv): live with nothing running, the transport's live-state says since when, so the default
+  // window (framed on the recorded activity) is never read as the tracks tracking the clock.
+  const idleSince = useMemo(() => (live ? idleSinceOf(spans, activity.recorded) : null), [live, spans, activity.recorded]);
+  const cameraFollow = useSceneStore((s) => s.follow);
+  const liveReturns = useSceneStore((s) => s.liveReturns);
+  const seen = useRef({ cameraFollow, liveReturns });
+  useEffect(() => {
+    const was = seen.current;
+    seen.current = { cameraFollow, liveReturns };
+    if (!live) return;
+    if (liveReturns !== was.liveReturns || (cameraFollow && !was.cameraFollow)) {
+      followAgain();
+      return;
+    }
+    if (cameraFollow && ahead !== null) store.setFollow(false);
+  }, [live, cameraFollow, liveReturns, ahead, followAgain, store]);
+
   // ---- the chosen interval, for the floor: the cells active in a window the person chose
   const explicit = view.window !== null && !isAll(view.window);
   useEffect(() => {
@@ -700,9 +761,9 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
       <h2 className="sr-only">Execution Timeline</h2>
       {/* The shared transport, without the docked timeline's collapse button. */}
       <div className="shrink-0">
-        <Transport collapsed={false} />
+        <Transport collapsed={false} idleSince={idleSince} />
       </div>
-      <TimelineToolbar data={data} tree={tree} view={view} onView={store.setTimelineView} spans={spans} drawn={win} whole={whole} lenses={lenses} />
+      <TimelineToolbar data={data} tree={tree} view={view} onView={store.setTimelineView} spans={spans} drawn={win} whole={whole} lenses={lenses} pinned={pinned} />
 
       {link ? <LinkNotice state={link} liveAt={liveAt} /> : null}
       {available.unwindowed ? (
@@ -798,6 +859,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
     </div>
   );
 }
+
 
 function hasFilters(f: { tickets: readonly string[]; executions: readonly string[]; slices: readonly string[]; stations: readonly string[]; kinds: readonly string[]; attentionOnly: boolean }): boolean {
   return f.tickets.length + f.executions.length + f.slices.length + f.stations.length + f.kinds.length > 0 || f.attentionOnly;

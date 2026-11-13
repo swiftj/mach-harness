@@ -990,9 +990,9 @@ export function executionStatusOf(x: Pick<ExecutionState, "state" | "processEnde
 function executionActivity(x: ExecutionState): Activity {
   const authority = x.meta.authority;
   if (x.ended === "interrupted" || x.ended === "timed-out") return { state: "interrupted", reason: x.ended === "timed-out" ? "Its process timed out." : "Its process was interrupted.", since: x.processEndedAt, authority };
-  if (x.recovery === "outcome-unknown" && x.state !== "completed" && x.state !== "failed") return { state: "unknown", reason: "The supervisor could not learn how it ended.", since: x.endedAt, authority };
-  if (x.state === "failed") return { state: "failed", reason: "The supervisor recorded a failure.", since: x.endedAt, authority };
-  if (x.state === "completed") return { state: "completed", reason: "The supervisor recorded its end.", since: x.endedAt, authority };
+  if (x.recovery === "outcome-unknown" && x.state !== "completed" && x.state !== "failed") return { state: "unknown", reason: "The supervisor could not learn how it ended.", since: executionEndedAt(x), authority };
+  if (x.state === "failed") return { state: "failed", reason: "The supervisor recorded a failure.", since: executionEndedAt(x), authority };
+  if (x.state === "completed") return { state: "completed", reason: "The supervisor recorded its end.", since: executionEndedAt(x), authority };
   if (x.capacityWait) return { state: "waiting-resources", reason: "Held: every execution place is in use (recorded).", since: x.capacityWait.since, authority: "reconstructed" };
   if (x.ended || x.processEndedAt !== null) return { state: "unknown", reason: "Its process ended; the supervisor has not recorded the outcome yet.", since: x.processEndedAt, authority, label: "Ended, outcome not recorded yet" };
   if (x.movedOnAt !== null) return { state: "unknown", reason: "A later record (another claim of the same ticket, or the supervisor stopping for a person) shows the supervisor had moved on from it; how it ended is not recorded.", since: x.movedOnAt, authority: "reconstructed", label: "Outcome not known" };
@@ -1037,6 +1037,15 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
   return { state: "unknown", reason: "Between stations; nothing recorded says what it waits for.", since: null, authority };
 }
 
+/**
+ * When an execution ended: when its process ended (measured, from the process record), else when the
+ * supervisor recorded its end. One rule for the span, the inspector and every view; the supervisor's
+ * record of the end, when later, is a separate fact (`endedAt`).
+ */
+export function executionEndedAt(x: Pick<ExecutionState, "processEndedAt" | "endedAt">): number | null {
+  return x.processEndedAt ?? x.endedAt;
+}
+
 /** The execution has ended: the supervisor recorded its end, or its process ended (D4). */
 const hasEnded = (x: ExecutionState): boolean => x.state === "completed" || x.state === "failed" || x.ended !== null || x.processEndedAt !== null || x.movedOnAt !== null;
 
@@ -1048,7 +1057,7 @@ const hasEnded = (x: ExecutionState): boolean => x.state === "completed" || x.st
  */
 function betweenExecutions(cell: CellState, x: ExecutionState): Activity {
   const recorded = x.state === "completed" || x.state === "failed";
-  const endedAt = recorded ? x.endedAt : x.processEndedAt;
+  const endedAt = recorded ? executionEndedAt(x) : x.processEndedAt;
   const between = { executionId: x.id, endedAt, stage: x.outcome?.stage ?? null, next: x.outcome?.next ?? null, waitingFor: x.outcome?.waitingFor ?? null, outcomeRecorded: recorded };
   const authority = x.meta.authority;
   if (!recorded) {

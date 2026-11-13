@@ -20,7 +20,7 @@ import { EMPTY_PLAN, laneIndex, LOD, planRow, runAlpha, spanTimes, subtreeColumn
 import { toneInk, toneOf, type Palette, type Tone } from "./palette";
 import { scaleOf, xAt, type Scale } from "./scale";
 import { elapsedWords } from "../../shell/inspector/words";
-import { countsTone, countsWords, durationText, shownCounts, endedWithoutExit, personApproved } from "./words";
+import { capacityWords, countsTone, countsWords, durationText, shownCounts, endedWithoutExit, personApproved } from "./words";
 
 export type Family = "lifetime" | "bracket" | "bar" | "task" | "rail" | "claim" | "workflow" | "agent" | "tool" | "wait" | "person";
 
@@ -52,6 +52,19 @@ export function familyOf(kind: SpanKind): Family {
     default:
       return "wait";
   }
+}
+
+/**
+ * A span's family: its kind's, except a human-approval visit, which is a wait on a person (the open
+ * rule, words.ts): drawn in the person-wait grammar on its station row, never as a work bar.
+ */
+export function familyOfSpan(span: Pick<TimelineSpan, "kind" | "ids">): Family {
+  return isPersonVisit(span) ? "person" : familyOf(span.kind);
+}
+
+/** A station visit that is a wait on a person (the human-approval station). */
+export function isPersonVisit(span: Pick<TimelineSpan, "kind" | "ids">): boolean {
+  return span.kind === "visit" && span.ids.station === "human-approval";
 }
 
 /** Body thickness per family, CSS px. */
@@ -124,7 +137,8 @@ export function shortLabel(span: TimelineSpan): string {
   const a = span.attrs;
   switch (span.kind) {
     case "visit": {
-      const st = span.ids.station === "merge" || span.ids.station === "human-approval" ? span.ids.station : (a.action ?? span.ids.station ?? "visit");
+      if (isPersonVisit(span)) return "Waiting for a person";
+      const st = span.ids.station === "merge" ? span.ids.station : (a.action ?? span.ids.station ?? "visit");
       return STATION_SHORT[st] ?? cap(st.replace(/-/g, " "));
     }
     case "round":
@@ -147,7 +161,7 @@ export function shortLabel(span: TimelineSpan): string {
     case "slice-eligible":
       return "Eligible";
     case "capacity-wait":
-      return "Waiting for capacity";
+      return cap(capacityWords(span));
     case "agent-queue":
       return "Queued";
     case "person-wait":
@@ -511,7 +525,7 @@ interface Painted {
 function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | undefined, labels: boolean, marks: readonly PlacedMark[]): Painted {
   const { ctx, p } = c;
   const { span, times } = item;
-  const fam = familyOf(span.kind);
+  const fam = familyOfSpan(span);
   const th = THICKNESS[fam];
   const tone: Tone = toneOf(span, times, c.liveAt);
   const { ink, soft } = toneInk(p, tone);
@@ -890,9 +904,26 @@ function paintMark(c: Paint, m: TimelineMark, x: number, g: RowGeom): Box {
       ctx.fillRect(Math.round(x) - 1, g.y + 3, 2, g.h - 6);
       return [x - 3, g.y + 2, x + 3, g.y + g.h - 2];
     case "interruption":
-    case "recovery":
       haltCut(ctx, x, cy, 6, p);
       return [x - 4, cy - 7, x + 5, cy + 7];
+    case "recovery":
+      // The supervisor looked again at an execution. Only a recovery that found the outcome unknown says
+      // anything was lost (the ring-query); the others (ended while unwatched, still running, a claim never
+      // started, a takeover) interrupted nothing, so never the halt cut of a recorded stop.
+      if (m.verdict === "outcome-unknown") {
+        ringQuery(ctx, x, cy, 4.2, p.fInkSoft, p.ground);
+        return [x - 5, cy - 5, x + 5, cy + 5];
+      }
+      ctx.strokeStyle = p.fInkSoft;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(x, cy, 3.4, Math.PI * 0.2, Math.PI * 1.8);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, cy, 1.2, 0, Math.PI * 2);
+      ctx.fillStyle = p.fInkSoft;
+      ctx.fill();
+      return [x - 5, cy - 5, x + 5, cy + 5];
     case "gap":
       ringQuery(ctx, x, cy, 4.2, p.fInkSoft, p.ground);
       return [x - 5, cy - 5, x + 5, cy + 5];

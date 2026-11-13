@@ -30,15 +30,66 @@ import { clockAt, getTimeBase } from "../../shell/time";
  */
 export const ALL_WINDOW: TimeWindow = Object.freeze({ from: Number.NEGATIVE_INFINITY, to: Number.POSITIVE_INFINITY });
 
-/** Whether a stored window means "all of the history held". */
-export function isAll(w: TimeWindow | null): boolean {
-  return w !== null && (!Number.isFinite(w.from) || !Number.isFinite(w.to));
+/**
+ * A window of a fixed length that follows the live edge (L1 of the live run: a lens chosen while
+ * following froze the tracks). Stored as `{ from: -length, to: +Infinity }`: drawn as the last
+ * `length` ms of the history up to the live edge, whatever the edge is now.
+ */
+export function followWindow(length: number): TimeWindow {
+  return { from: -Math.max(MIN_WINDOW_MS, Math.round(length)), to: Number.POSITIVE_INFINITY };
 }
 
-/** The window to draw: the person's, the whole history for ALL_WINDOW, or the default when none is chosen. */
+/** Whether a stored window follows the live edge at a fixed length (`followWindow`). */
+export function isFollow(w: TimeWindow | null): boolean {
+  return w !== null && Number.isFinite(w.from) && w.from < 0 && w.to === Number.POSITIVE_INFINITY;
+}
+
+/** The length a following window shows. */
+export function followLength(w: TimeWindow): number {
+  return -w.from;
+}
+
+/** Whether a stored window means "all of the history held". */
+export function isAll(w: TimeWindow | null): boolean {
+  return w !== null && !isFollow(w) && (!Number.isFinite(w.from) || !Number.isFinite(w.to));
+}
+
+/**
+ * Whether a stored window is pinned to fixed moments (the person's, a lens's): not the default, not
+ * "all" and not a following window. A pinned window stays where it is while the live edge moves on.
+ */
+export function isPinned(w: TimeWindow | null): boolean {
+  return w !== null && Number.isFinite(w.from) && Number.isFinite(w.to);
+}
+
+/** The window to draw: the person's, the whole history for ALL_WINDOW, the last stretch for a following window, or the default when none is chosen. */
 export function resolveWindow(chosen: TimeWindow | null, whole: TimeWindow, fallback: TimeWindow): TimeWindow {
   if (chosen === null) return fallback;
+  if (isFollow(chosen)) {
+    const length = followLength(chosen);
+    if (whole.to - whole.from <= length) return whole;
+    return { from: whole.to - length, to: whole.to };
+  }
   return isAll(chosen) ? whole : chosen;
+}
+
+/**
+ * How far the live edge is ahead of a pinned window, in ms, when the edge is outside it (more than a
+ * second past its end); null when the window is not pinned or still holds the edge. When not null,
+ * the Timeline says so ("Window pinned · live edge is 3 min ahead — Follow") and never claims to follow.
+ */
+export function pinnedBehind(chosen: TimeWindow | null, drawn: TimeWindow, liveEdge: number): number | null {
+  if (!isPinned(chosen)) return null;
+  const ahead = liveEdge - drawn.to;
+  return ahead > 1000 ? ahead : null;
+}
+
+/**
+ * The window that follows the live edge again after a pinned one ("Return to live", L, "Follow", "No
+ * lens"): the length shown kept while a lens is on (its zoom level); otherwise the default (null).
+ */
+export function followingAgain(drawn: TimeWindow, lensOn: boolean): TimeWindow | null {
+  return lensOn ? followWindow(drawn.to - drawn.from) : null;
 }
 
 /**
@@ -476,16 +527,26 @@ export function cellsInInterval(spans: readonly TimelineSpan[], window: TimeWind
  * Choosing a lens: its preset (grouping, filters, expansion, window) and the lens itself. The preset
  * sees the window as drawn (never the stored ALL_WINDOW sentinel). The person may change any of it after.
  */
-export function applyLens(lens: Pick<LensDefinition, "id" | "preset">, tree: TrackTree, view: TimelineViewState, drawn: TimeWindow): Partial<TimelineViewState> {
+export function applyLens(lens: Pick<LensDefinition, "id" | "preset">, tree: TrackTree, view: TimelineViewState, drawn: TimeWindow, following = false): Partial<TimelineViewState> {
   const preset = lens.preset(tree, { ...view, window: view.window === null ? null : drawn });
+  // L1: chosen while following the live edge, the lens's framing sets the zoom level only: the window
+  // keeps following, at the length of the lens's frame. Chosen while not following, it pins as framed.
+  if (following && preset.window && isPinned(preset.window)) return { ...preset, window: followWindow(preset.window.to - preset.window.from), lens: lens.id };
   return { ...preset, lens: lens.id };
+}
+
+/** Whether the stored window follows the live edge (the default, "all", or a following window): a lens chosen then keeps following. */
+export function windowFollows(w: TimeWindow | null): boolean {
+  return !isPinned(w);
 }
 
 /** What a lens changed, and what was there before it: so the next lens (or none) starts from the person's own view. */
 export interface LensMemo {
-  readonly base: Pick<TimelineViewState, "filters" | "grouping">;
-  readonly applied: Pick<TimelineViewState, "filters" | "grouping">;
+  readonly base: Pick<TimelineViewState, "filters" | "grouping"> & { readonly window?: TimeWindow | null };
+  readonly applied: Pick<TimelineViewState, "filters" | "grouping"> & { readonly window?: TimeWindow | null };
 }
+
+const sameWindow = (a: TimeWindow | null | undefined, b: TimeWindow | null | undefined): boolean => a === b || (!!a && !!b && a.from === b.from && a.to === b.to);
 
 const sameList = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
 export function sameFilters(a: TimelineFilters, b: TimelineFilters): boolean {
@@ -498,9 +559,12 @@ export function sameFilters(a: TimelineFilters, b: TimelineFilters): boolean {
  */
 export function leaveLens(view: TimelineViewState, memo: LensMemo | null | undefined): Partial<TimelineViewState> {
   if (!memo || view.lens === null) return {};
-  const out: { filters?: TimelineFilters; grouping?: TimelineViewState["grouping"] } = {};
+  const out: { filters?: TimelineFilters; grouping?: TimelineViewState["grouping"]; window?: TimeWindow | null } = {};
   if (sameFilters(view.filters, memo.applied.filters)) out.filters = memo.base.filters;
   if (view.grouping === memo.applied.grouping) out.grouping = memo.base.grouping;
+  // The window the lens framed goes back to the one before it (the following default, L1), unless the
+  // person has moved it since.
+  if (memo.applied.window !== undefined && sameWindow(view.window, memo.applied.window)) out.window = memo.base.window ?? null;
   return out;
 }
 
@@ -514,13 +578,14 @@ export function switchLens(
   view: TimelineViewState,
   drawn: TimeWindow,
   memo: LensMemo | null | undefined,
+  following = false,
 ): { patch: Partial<TimelineViewState>; memo: LensMemo | null } {
   const left = leaveLens(view, memo);
   const start: TimelineViewState = { ...view, ...left };
   if (!lens) return { patch: { ...left, lens: null }, memo: null };
-  const preset = applyLens(lens, tree, start, drawn);
-  const applied = { filters: preset.filters ?? start.filters, grouping: preset.grouping ?? start.grouping };
-  return { patch: { ...left, ...preset }, memo: { base: { filters: start.filters, grouping: start.grouping }, applied } };
+  const preset = applyLens(lens, tree, start, drawn, following && windowFollows(start.window));
+  const applied = { filters: preset.filters ?? start.filters, grouping: preset.grouping ?? start.grouping, ...(preset.window !== undefined ? { window: preset.window } : {}) };
+  return { patch: { ...left, ...preset }, memo: { base: { filters: start.filters, grouping: start.grouping, window: start.window }, applied } };
 }
 
 // ---------------------------------------------------------------- as of the live edge (T6)
@@ -674,4 +739,21 @@ export function jumpEndWords(label: string, direction: 1 | -1, otherWay: number)
   const none = `No ${direction > 0 ? "later" : "earlier"} ${label} in what is held`;
   if (otherWay <= 0) return `${none}.`;
   return `${none}; ${otherWay} ${direction > 0 ? "earlier" : "later"}: press ${direction > 0 ? "P" : "N"}.`;
+}
+
+/**
+ * When nothing has been running since (L1 iv): null while something runs (`isRunning`); else when the
+ * last work that runs ended (an execution, workflow, agent, or a station visit other than human
+ * approval); with no such work recorded, the recorded activity's end. Null when none is known.
+ */
+export function idleSinceOf(spans: readonly TimelineSpan[], recorded: TimeWindow | null): number | null {
+  let last = Number.NEGATIVE_INFINITY;
+  for (const s of spans) {
+    if (isRunning(s)) return null;
+    if (!RUNNING_KINDS.has(s.kind) || (s.kind === "visit" && s.ids.station === "human-approval")) continue;
+    const end = s.end?.at ?? null;
+    if (end !== null && end > last) last = end;
+  }
+  if (!Number.isFinite(last) && recorded) last = recorded.to;
+  return Number.isFinite(last) ? last : null;
 }

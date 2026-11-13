@@ -7,7 +7,7 @@
 import { useMemo } from "react";
 import { fc } from "@mach/ui";
 import { duration } from "../../shell/time";
-import { durationWords } from "../render";
+import { capacityWords, durationWords } from "../render";
 import type { BodyProps } from "./body";
 import { Caption, Empty, Fig, Figures, FrameFig, Hit, LiveEdge, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when, type Scale } from "./figures";
 import { activeAt, concurrencyView, spanSource, type ConcurrencyLine, type LaneSegment, frameOf } from "./model";
@@ -192,7 +192,8 @@ function Segment({ sg, s, y, liveAt, label, onReveal }: { sg: LaneSegment; s: Sc
   const b = Math.max(a + 1.5, s.cx(sg.to ?? liveAt));
   const mid = y + LANE_H / 2;
   const open = sg.to === null;
-  const name = `${label}, ${SEGMENT_WORDS[sg.kind]}, from ${when(sg.from)}: ${durationWords(sg.span, liveAt)}`;
+  const words = sg.kind === "capacity" ? capacityWords(sg.span) : SEGMENT_WORDS[sg.kind];
+  const name = `${label}, ${words}, from ${when(sg.from)}: ${durationWords(sg.span, liveAt)}`;
   let drawing;
   switch (sg.kind) {
     case "station":
@@ -214,9 +215,14 @@ function Segment({ sg, s, y, liveAt, label, onReveal }: { sg: LaneSegment; s: Sc
       break;
   }
   return (
-    <Fig id={`seg:${sg.span.id}`} name={name} sources={[spanSource(sg.span, SEGMENT_WORDS[sg.kind])]} onActivate={() => onReveal(sg.span.entity, sg.from)}>
+    <Fig id={`seg:${sg.span.id}`} name={name} sources={[spanSource(sg.span, words)]} onActivate={() => onReveal(sg.span.entity, sg.from)}>
       <Hit x={a} y={y + 2} w={b - a} h={LANE_H - 4} />
       {drawing}
+      {sg.kind === "capacity" && b - a > 150 ? (
+        <text x={a + 4} y={mid + 3} style={{ ...MONO, fontSize: 8, fill: INK }} data-capacity-label="">
+          {words}
+        </text>
+      ) : null}
       {sg.kind === "claim" && b - a > 40 ? (
         <text x={(a + b) / 2} y={mid - 2.5} textAnchor="middle" style={{ ...MONO, fontSize: 8.5, fill: SUBTLE }}>
           {duration((sg.to ?? liveAt) - sg.from)}

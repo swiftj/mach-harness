@@ -33,6 +33,9 @@ import {
   filterOptionsOfSpans,
   frameExtent,
   isAll,
+  isFollow,
+  isRunning,
+  followWindow,
   JUMPS,
   jumpEndWords,
   jumpOf,
@@ -92,6 +95,11 @@ export interface ToolbarExtras {
   readonly whole?: TimeWindow;
   /** The investigation lenses, once their module has loaded (null while it has not, or when it is absent). */
   readonly lenses?: readonly LensDefinition[] | null;
+  /**
+   * The window is pinned and the live edge has moved past it (`pinnedBehind`): how far ahead the edge
+   * is, and how to follow it again. Said in the row ("Window pinned · live edge is 3 min ahead — Follow").
+   */
+  readonly pinned?: { readonly ahead: number; readonly onFollow: () => void } | null;
 }
 
 function Sep() {
@@ -163,7 +171,7 @@ function FilterList({ title, values, chosen, words, onToggle }: { title: string;
 /** At most this many chips are drawn; the rest are counted. */
 const MAX_CHIPS = 3;
 
-export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole: wholeProp, lenses }: TimelineToolbarProps & ToolbarExtras) {
+export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole: wholeProp, lenses, pinned }: TimelineToolbarProps & ToolbarExtras) {
   const store = useStore();
   const selection = useSceneStore((s) => s.selection);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -258,11 +266,17 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
   const zoom = useCallback(
     (factor: number) => {
       const w = shown();
+      // A window following the live edge keeps following at the new length (L1).
+      if (isFollow(view.window)) {
+        const next = clampWindow({ from: w.to - (w.to - w.from) * factor, to: w.to }, whole());
+        onView({ window: isAll(next) ? next : followWindow(next.to - next.from) });
+        return;
+      }
       const mid = (w.from + w.to) / 2;
       const half = ((w.to - w.from) * factor) / 2;
       onView({ window: clampWindow({ from: mid - half, to: mid + half }, whole()) });
     },
-    [onView, shown, whole],
+    [onView, shown, whole, view.window],
   );
   const showAll = useCallback(() => onView({ window: ALL_WINDOW }), [onView]);
   const fitActivity = useCallback(() => onView({ window: null }), [onView]);
@@ -270,13 +284,17 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
   const chooseLens = useCallback(
     (lens: LensDefinition | null) => {
       setLensOpen(false);
-      const next = switchLens(lens, tree, view, shown(), lensMemos.get(store));
+      // L1: a lens chosen while following the live edge keeps following (its frame sets the zoom level).
+      const s = store.getState();
+      // With nothing running there is nothing at the live edge to follow: the lens frames what it shows (pinned).
+      const running = (spans ?? []).some(isRunning);
+      const next = switchLens(lens, tree, view, shown(), lensMemos.get(store), s.source === "live" && s.following && running);
       if (next.memo) lensMemos.set(store, next.memo);
       else lensMemos.delete(store);
       onView(next.patch);
       setSaid(lens ? `${lens.label}: ${lens.about}` : "No investigation lens.");
     },
-    [onView, tree, view, shown, store],
+    [onView, tree, view, shown, store, spans],
   );
 
   useEffect(
@@ -598,6 +616,23 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
           </PopoverContent>
         </Popover>
 
+        {pinned ? (
+          // L1: a pinned window never sits beside a claim of following: it says where the live edge is, and follows it on a click.
+          <button
+            type="button"
+            onClick={pinned.onFollow}
+            data-timeline-pinned={Math.round(pinned.ahead)}
+            title={`The window is pinned; the live edge is ${windowLengthWords(pinned.ahead)} ahead of its end. Follow the live edge (L).`}
+            aria-keyshortcuts="L"
+            className="ml-2 inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-dashed border-line-strong px-2.5 text-caption text-ink-muted hover:text-ink"
+          >
+            <span>
+              Window pinned<span className="@max-[1099px]:hidden"> · live edge is {windowLengthWords(pinned.ahead)} ahead</span>
+            </span>
+            <span aria-hidden="true">—</span>
+            <span className="font-semibold text-accent-ink underline decoration-1 underline-offset-[3px]">Follow</span>
+          </button>
+        ) : null}
         {/* What a control just said (announced), else the standing caption (not announced: it moves with the playhead). */}
         <div className="ml-2 min-w-0 flex-1 text-caption">
           <p role="status" className={said ? "truncate text-ink-subtle" : "sr-only"} title={said || undefined}>

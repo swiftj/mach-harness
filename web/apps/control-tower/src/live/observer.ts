@@ -524,7 +524,7 @@ const KINDS: Readonly<Record<string, ObserverErrorKind>> = {
 
 export function createObserverClient(options: { readonly fetch: FetchLike; readonly base?: string }): ObserverClient {
   const base = options.base ?? "/api/v1";
-  const get = async (path: string, signal?: AbortSignal): Promise<Record<string, unknown>> => {
+  const getOnce = async (path: string, signal?: AbortSignal): Promise<Record<string, unknown>> => {
     const aborted = (): never => {
       throw signal?.reason ?? new DOMException("The request was superseded.", "AbortError");
     };
@@ -547,6 +547,57 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
     if (body.ok === true) return obj(body.data);
     const error = obj(body.error);
     throw new ObserverError(KINDS[str(error.kind) ?? ""] ?? "protocol", str(error.message) ?? `The observer answered ${response.status}.`, response.status, error);
+  };
+  // Identical requests in flight are one request (L8 of the live run: the overview, the lenses and the
+  // default window asked the same thing at once). Each caller keeps its own abort: the shared request is
+  // aborted only when every caller waiting on it has given up.
+  const inflight = new Map<string, { readonly promise: Promise<Record<string, unknown>>; readonly ctl: AbortController; waiting: number }>();
+  const get = (path: string, signal?: AbortSignal): Promise<Record<string, unknown>> => {
+    if (signal?.aborted) return Promise.reject(signal.reason ?? new DOMException("The request was superseded.", "AbortError"));
+    let entry = inflight.get(path);
+    if (!entry) {
+      const ctl = new AbortController();
+      const promise = getOnce(path, ctl.signal);
+      const made = { promise, ctl, waiting: 0 };
+      entry = made;
+      inflight.set(path, made);
+      const forget = () => {
+        if (inflight.get(path) === made) inflight.delete(path);
+      };
+      promise.then(forget, forget);
+    }
+    const shared = entry;
+    shared.waiting += 1;
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const settle = () => {
+        done = true;
+        shared.waiting -= 1;
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        if (done) return;
+        settle();
+        if (shared.waiting === 0) {
+          if (inflight.get(path) === shared) inflight.delete(path);
+          shared.ctl.abort();
+        }
+        reject(signal?.reason ?? new DOMException("The request was superseded.", "AbortError"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      shared.promise.then(
+        (value) => {
+          if (done) return;
+          settle();
+          resolve(value);
+        },
+        (error: unknown) => {
+          if (done) return;
+          settle();
+          reject(error);
+        },
+      );
+    });
   };
 
   return {

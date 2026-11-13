@@ -94,3 +94,61 @@ export async function recordedExtent(data: TimelineData, signal?: AbortSignal): 
   const out = { from: Math.max(whole.from, from), to: Math.min(whole.to, Math.max(to, from)) };
   return lastIsBucket && lastBucket ? { ...out, lastIsBucket, lastBucket } : { ...out, lastIsBucket };
 }
+
+interface Shared {
+  from: number | null;
+  promise: Promise<RecordedExtent | null> | null;
+}
+const shared = new WeakMap<TimelineData, Shared>();
+
+/**
+ * `recordedExtent`, one read for every caller (the default window and the overview ask the same thing):
+ * the answer is kept until the provider says its cursor moved (`subscribe`) or the held history's
+ * start changes; callers asking meanwhile share it, in flight or answered. A caller's `signal` only
+ * stops it waiting; the read itself goes on for the others. A failed read is not kept.
+ */
+export function sharedRecordedExtent(data: TimelineData, signal?: AbortSignal): Promise<RecordedExtent | null> {
+  const from = data.extent()?.from ?? null;
+  let entry = shared.get(data);
+  if (!entry) {
+    const made: Shared = { from, promise: null };
+    entry = made;
+    shared.set(data, made);
+    // Kept for the provider's life (one per provider): any change of what is held drops the answer.
+    data.subscribe(() => {
+      made.promise = null;
+    });
+  }
+  if (entry.from !== from) {
+    entry.from = from;
+    entry.promise = null;
+  }
+  const held = entry;
+  if (!held.promise) {
+    const p = recordedExtent(data);
+    held.promise = p;
+    p.catch(() => {
+      if (held.promise === p) held.promise = null;
+    });
+  }
+  const p = held.promise;
+  if (!signal) return p;
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException("The request was superseded.", "AbortError"));
+      return;
+    }
+    const onAbort = () => reject(signal.reason ?? new DOMException("The request was superseded.", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
+}

@@ -63,6 +63,8 @@ type SpanAttrs struct {
 	Vote           string   `json:"vote,omitempty"`
 	Reasons        []string `json:"reasons,omitempty"`
 	DependsOn      []string `json:"depends_on,omitempty"`
+	// Limit is the recorded number of places a capacity wait waited on (max_parallel).
+	Limit *int64 `json:"limit,omitempty"`
 	// A visit whose exit was recorded only after its execution ended (or after its station was
 	// entered again): where the span had stopped before the exit arrived, and why.
 	InterruptedAt     *int64 `json:"interrupted_at,omitempty"`
@@ -273,6 +275,12 @@ func buildSpans(s *State) []*Span {
 					sp.SpanID += "#" + itoa(&n)
 				}
 				sp.Attrs.Reasons, sp.Attrs.DependsOn = nonEmpty(w.Reasons), nonEmpty(w.DependsOn)
+				// dependency.blocked names its slices only in its sentences: of the slice's
+				// dependencies recorded at materialization (the wait's own revision), the ones its
+				// sentences name are what it waits on. A dependency they do not name is not claimed.
+				if sp.Attrs.DependsOn == nil && sameRevision(w.Revision, sl.Revision) {
+					sp.Attrs.DependsOn = nonEmpty(namedIn(sl.Dependencies, w.Reasons))
+				}
 			}
 		}
 		if el := sl.eligible(); el != nil {
@@ -305,6 +313,33 @@ func buildSpans(s *State) []*Span {
 	for _, t := range sortedKeys(s.Pending.Capacity) {
 		capacity(t, s.Pending.Capacity[t], nil)
 	}
+	// A ready slice's waits for a free place, closed then open: reconstructed from the scheduler's
+	// decisions (rule held-sentence), both ends bounded by the decisions that sampled them.
+	sliceCapacity := func(w *SliceCapacityWait) {
+		ticket := ""
+		if sl := s.Slices[w.SliceID]; sl != nil {
+			ticket = sl.TicketID
+		}
+		b.cur = spanMeta{src: srcSlice, ticket: ticket, wave: w.WaveID}
+		ref := "slice:" + w.SliceID
+		ids := map[string]string{"slice_id": w.SliceID}
+		if w.WaveID != "" {
+			ids["wave_id"] = w.WaveID
+		}
+		if sp := b.add("capacity-wait", ref, ref, ref, ids, w.Opened, w.Released, "", "completed", false, "held-sentence"); sp != nil {
+			sp.SpanID += "@" + w.Opened.EventID
+			if w.Limit > 0 {
+				sp.Attrs.Limit = ptr(w.Limit)
+			}
+			sp.Attrs.Reasons = nonEmpty([]string{w.Why})
+		}
+	}
+	for _, w := range s.SliceCapacityWaits {
+		sliceCapacity(w)
+	}
+	for _, id := range sortedKeys(s.Pending.SliceCapacity) {
+		sliceCapacity(s.Pending.SliceCapacity[id])
+	}
 	for _, id := range sortedKeys(s.Waves) {
 		w := s.Waves[id]
 		b.cur = spanMeta{src: srcWave, wave: id}
@@ -322,6 +357,34 @@ func buildSpans(s *State) []*Span {
 		return x.SpanID < y.SpanID
 	})
 	return b.out
+}
+
+// namedIn returns the ids of deps that one of the sentences names as a whole word.
+func namedIn(deps, sentences []string) []string {
+	var out []string
+	for _, d := range deps {
+		for _, r := range sentences {
+			if i := strings.Index(r, d); i >= 0 && !idChar(r, i-1) && !idChar(r, i+len(d)) {
+				out = append(out, d)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// idChar reports a character at i that would continue an id (a letter, digit, - or _).
+func idChar(s string, i int) bool {
+	if i < 0 || i >= len(s) {
+		return false
+	}
+	c := s[i]
+	return c == '-' || c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// sameRevision reports two recorded revisions that are the same (or not recorded on either side).
+func sameRevision(a, b *int64) bool {
+	return a == nil || b == nil || *a == *b
 }
 
 // waveDone is when a wave's last slice was integrated, once every slice is integrated or

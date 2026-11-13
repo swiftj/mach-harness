@@ -100,6 +100,8 @@ export function outcomeTone(outcome: string): Tone {
  */
 export function toneOf(span: TimelineSpan, times: SpanTimes, liveAt: number): Tone {
   if (PERSON_KINDS.has(span.kind)) return "human";
+  // A human-approval visit is a wait on a person (words.ts): terracotta, open or ended.
+  if (span.kind === "visit" && span.ids.station === "human-approval") return "human";
   if (WAIT_TONE_KINDS.has(span.kind)) return "wait";
   if (span.kind === "slice-eligible") return "neutral";
   if (times.open) return "live";

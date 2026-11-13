@@ -11,7 +11,7 @@ import { timecode } from "../../shell/time";
 import { findArtifact, type ArtifactState, type EntityRef } from "../../sim";
 import { showInTimeline, showOnFloor, useScene, useSceneStore, useStore } from "../../scene";
 import { ArtifactLink } from "../../shell/inspector/anatomies";
-import { Elapsed, Facts, JumpButton, RefLink, RefList, Section, precisionWords, useEntityEvents, type Fact } from "../../shell/inspector/parts";
+import { Elapsed, Facts, JumpButton, Mono, RefLink, RefList, Section, precisionWords, useEntityEvents, type Fact } from "../../shell/inspector/parts";
 import { RULE_WORDS } from "../../shell/inspector/Provenance";
 import { selectable } from "../../shell/vocab";
 import type { TimelineData, TimelineSpan } from "../contract";
@@ -33,6 +33,7 @@ import {
   openContextWords,
   ORDER_NOTE,
   outcomeAsOf,
+  outcomeWordsOf,
   outcomeLabel,
   parentSpanOf,
   queryHintOf,
@@ -198,7 +199,7 @@ function PrimarySpan({ entity, context, primary, spans, truncated, asOf, depende
   const length = durationSentence(primary, asOf, RULES);
   const { attempt, round, note } = attemptAndRound(primary);
   const outcome = outcomeAsOf(primary, asOf);
-  const calls = toolCallsWords(primary);
+  const calls = toolCallsWords(primary, asOf);
   const parent = parentSpanOf(primary, spans, asOf);
   const children = childrenOf(primary, spans, asOf);
   const { before, after } = neighboursOf(primary, spans, asOf);
@@ -224,7 +225,7 @@ function PrimarySpan({ entity, context, primary, spans, truncated, asOf, depende
     ],
     attempt !== null ? ["Attempt", attempt] : null,
     round !== null ? ["Round", round] : null,
-    outcome !== null ? [outcomeLabel(primary), outcome] : null,
+    outcome !== null ? [outcomeLabel(primary), <OutcomeValue key="o" outcome={outcome} />] : null,
     calls ? ["Tool calls", calls] : null,
   ];
   return (
@@ -281,6 +282,22 @@ function PrimarySpan({ entity, context, primary, spans, truncated, asOf, depende
 }
 
 /** A related span: a link to its entity, with its kind and its duration in words (or a gap for a neighbour). */
+/** An outcome in words, with the station's own word in mono beside it when it is one ("AWAITING_HUMAN"). */
+function OutcomeValue({ outcome }: { outcome: string }) {
+  const { words, own } = outcomeWordsOf(outcome);
+  return (
+    <span data-outcome={outcome}>
+      {words}
+      {own ? (
+        <>
+          {" "}
+          <Mono muted>{own}</Mono>
+        </>
+      ) : null}
+    </span>
+  );
+}
+
 function SpanLink({ to, span, asOf, prefix, detail }: { to: string; span: TimelineSpan | null; asOf: number; prefix?: string; detail?: string }) {
   const target = linkable(to);
   // Said once: a parent whose span is not held is named by its ref, with one line saying so.

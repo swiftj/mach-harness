@@ -33,6 +33,7 @@ import { hitRow, spanTimes } from "./lod";
 import { readPalette, type Palette } from "./palette";
 import { clampWindow, dateChanges, frameWindow, isWallTime, panBy, scaleOf, tAt, tickLabel, ticksFor, xAt, zoomAbout, type Scale } from "./scale";
 import { openContext, rowSummary } from "../a11y/describe";
+import { markTrackOf } from "../tracks/build";
 import { ATTEMPT_WORDS, AUTHORITY_WORDS, describeSpan, durationText, durationWords, precisionLine, rowWords } from "./words";
 import "./render.css";
 
@@ -140,6 +141,7 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
   const overRef = useRef<HTMLCanvasElement>(null);
   const playRef = useRef<HTMLDivElement>(null);
   const liveRef = useRef<HTMLDivElement>(null);
+  const liveOffRef = useRef<HTMLDivElement>(null);
   const futureRef = useRef<HTMLDivElement>(null);
   const afterRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -166,7 +168,7 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
     const m = new Map<string, TimelineMark[]>();
     for (const mark of marks) {
       if (!mark.entity) continue;
-      const id = tree.tracksOf(mark.entity)[0];
+      const id = markTrackOf(tree, mark.entity);
       if (!id) continue;
       const list = m.get(id);
       if (list) list.push(mark);
@@ -705,6 +707,8 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
         liveRef.current.style.transform = `translateX(${Math.round(live)}px)`;
         liveRef.current.style.visibility = live >= width ? "hidden" : "visible";
       }
+      // The live edge past the window's right end (a pinned window it has left, L1): said at that edge.
+      if (liveOffRef.current) liveOffRef.current.style.visibility = xAt(scale, Math.max(s.liveAt, liveAt)) > width + 1 ? "visible" : "hidden";
       if (futureRef.current) {
         futureRef.current.style.left = `${Math.round(live) + 1}px`;
         futureRef.current.style.visibility = live >= width ? "hidden" : "visible";
@@ -773,6 +777,11 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
         </div>
         <div ref={liveRef} className="absolute inset-y-0 left-0 w-0">
           <div className="absolute inset-y-0 left-0 border-l border-dashed" style={{ borderColor: "var(--mach-factory-plate-edge)" }} />
+        </div>
+        <div ref={liveOffRef} data-live-off-window="" className="absolute inset-y-0 right-0 flex items-start border-r-2 border-dashed" style={{ visibility: "hidden", borderColor: "var(--mach-factory-plate-edge)" }}>
+          <span className="mr-1 mt-1 whitespace-nowrap rounded-xs px-1 text-[10.5px] text-ink-muted" style={{ background: "var(--mach-factory-ground)" }}>
+            Live edge later →
+          </span>
         </div>
         <div ref={playRef} className="absolute inset-y-0 left-0 w-0">
           <div className="absolute inset-y-0 -left-px w-0.5 bg-ink" />

@@ -1,15 +1,33 @@
 /**
  * What the overview draws, fetched from the Timeline's data provider: density, concurrency and marks
- * for the whole extent. Asked for on mount, when the extent grows by more than one bucket, when the
- * filters or the width change, and when the provider says something changed (at most once a second).
- * A superseded request is aborted; the last good answer stays drawn while the next is in flight.
+ * for the whole extent. Asked for on mount, when the filters or the width change, when the provider
+ * says something changed (its cursor moved: at most once per NOTIFY_THROTTLE_MS), and when the live
+ * edge passes the end of what was asked for. Each answer reaches AHEAD past the edge (nothing is
+ * recorded there yet, so it is empty), so a live edge stepping forward with nothing new never asks
+ * again on its own (L8 of the live run: the overview asked on every live-edge step, about 100 requests
+ * a minute with nothing happening). A superseded request is aborted; the last good answer stays drawn
+ * while the next is in flight.
  */
 import { useEffect, useState } from "react";
 import type { ConcurrencySeries, DensitySeries, TimelineData, TimelineFilters, TimelineMark, TimeWindow } from "../contract";
 import { OVERVIEW_MARK_KINDS } from "./model";
 
 /** The fewest milliseconds between two re-queries caused by the provider's notifications. */
-export const NOTIFY_THROTTLE_MS = 1000;
+export const NOTIFY_THROTTLE_MS = 5000;
+
+/** How far past the live edge an answer reaches: a tenth of the history, at least a minute. */
+export function aheadOf(extent: TimeWindow): number {
+  return Math.max(60_000, (extent.to - extent.from) * 0.1);
+}
+
+/**
+ * The extent to ask for, given the one asked for last: unchanged while it still covers `extent` (the
+ * live edge moving inside it asks nothing), else `extent` reaching AHEAD past its end.
+ */
+export function askedExtent(prev: TimeWindow | null, extent: TimeWindow): TimeWindow {
+  if (prev && prev.from === extent.from && extent.to <= prev.to && extent.to >= prev.to - 2 * aheadOf(extent)) return prev;
+  return { from: extent.from, to: extent.to + aheadOf(extent) };
+}
 
 export interface OverviewData {
   readonly density: DensitySeries | null;
@@ -58,10 +76,10 @@ export function useOverviewData(data: TimelineData, extent: TimeWindow, width: n
     };
   }, [data]);
 
-  // The extent asked for: moved only when the real one grew by more than a bucket (or changed start).
-  const [asked, setAsked] = useState<TimeWindow>(extent);
-  const bucket = (extent.to - extent.from) / Math.max(1, width);
-  if (asked.from !== extent.from || extent.to > asked.to + bucket || extent.to < asked.to) setAsked(extent);
+  // The extent asked for: moved only when the real one passes its end (or changed start, or shrank far).
+  const [asked, setAsked] = useState<TimeWindow>(() => askedExtent(null, extent));
+  const nextAsked = askedExtent(asked, extent);
+  if (nextAsked !== asked) setAsked(nextAsked);
 
   const ticket = filters.tickets.length === 1 ? filters.tickets[0] : undefined;
   const execution = filters.executions.length === 1 ? filters.executions[0] : undefined;

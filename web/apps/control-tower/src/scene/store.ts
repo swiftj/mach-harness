@@ -143,6 +143,8 @@ export interface SceneStoreState {
   readonly liveAt: number;
   /** Live-follow: the playhead is pinned to liveAt. Off while replaying an earlier moment. */
   readonly following: boolean;
+  /** Bumped by every `followLive()` ("Return to live", L, End), even one already at the live edge: views that pinned something to a moment let it follow again. */
+  readonly liveReturns: number;
   readonly playing: boolean;
   readonly speed: PlaybackSpeed;
   /** Events applied at the playhead (log.cursorAt(playhead)), for cheap change detection. */
@@ -371,6 +373,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     logVersion: 0,
     arrived: isSim ? 0 : log.size(),
     arrivedAtLeave: null,
+    liveReturns: 0,
     windowLoading: false,
     series: null,
     extent: isSim ? extentOf(fixture) : extentNow(startEdge),
@@ -631,7 +634,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       if (SPEEDS.includes(speed)) set({ speed });
     },
     followLive() {
-      set({ following: true, playhead: state.liveAt, follow: true });
+      set({ following: true, playhead: state.liveAt, follow: true, liveReturns: state.liveReturns + 1 });
       if (loopWanted()) startLoop();
     },
     select(entity, opts) {

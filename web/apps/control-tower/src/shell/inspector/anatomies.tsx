@@ -36,6 +36,7 @@ import {
   type VisitEntity,
   type WaveState,
   type WorkflowEntity,
+  executionEndedAt,
 } from "../../sim";
 import { useScene } from "../../scene";
 import { AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateGlyph, StateWord, StationGlyph, ToolGlyph } from "../glyphs";
@@ -61,7 +62,7 @@ import {
 import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
-import { activityNote, agentsWords, interruptionWords, planWords, runtimeWords, visitLeftWords } from "./words";
+import { activityNote, agentsWords, interruptionWords, modelCostsOf, planWords, runtimeWords, visitLeftWords } from "./words";
 import { useFreeTextLabel } from "./catalog";
 import { historyEndedAt, useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
@@ -910,15 +911,12 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
 // ---------------------------------------------------------------- execution
 
 /** Recorded spend per model, from the execution's own usage record (never per agent). */
+/** Cost by model as of the playhead: the last usage record received by then (never one recorded later). */
 function useModelCosts(executionId: string): Array<[string, number | null]> {
-  const { all } = useEntityEvents(ref.execution(executionId));
-  return useMemo(() => {
-    const usage = [...all].reverse().find((e) => e.event.type === "execution.usage");
-    if (!usage) return [];
-    const models = ((usage.event as { data?: { models?: Record<string, { cost_usd?: number | null }> } }).data?.models ?? {}) as Record<string, { cost_usd?: number | null }>;
-    return Object.entries(models).map(([name, m]): [string, number | null] => [name, typeof m.cost_usd === "number" ? m.cost_usd : null]);
-  }, [all]);
+  const { all, happened } = useEntityEvents(ref.execution(executionId));
+  return useMemo(() => modelCostsOf(all.slice(0, happened)), [all, happened]);
 }
+
 
 const COST_REASON_WORDS: Readonly<Record<string, string>> = {
   "budget-stop": "a budget stop ended the run",
@@ -972,7 +970,12 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
             execution.phases.length ? ["Declared phases", execution.phases.join(", ")] : null,
             ["Claimed", isKnown(execution.meta, "claimedAt") ? at(execution.claimedAt) : <NotRecorded key="c" />],
             ["Started", at(execution.startedAt)],
-            ["Ended", at(execution.endedAt)],
+            // The execution ended when its process ended (measured, from the process record); the
+            // supervisor's record of its end, when later, is said on its own line (one rule everywhere).
+            ["Ended", at(executionEndedAt(execution))],
+            real && execution.processEndedAt !== null && execution.endedAt !== null && execution.endedAt !== execution.processEndedAt
+              ? ["Recorded by the supervisor", at(execution.endedAt)]
+              : null,
             real && execution.processStartedAt !== null
               ? ["Process", `${timecode(execution.processStartedAt, false)} to ${execution.processEndedAt !== null ? timecode(execution.processEndedAt, false) : historyEnd !== null ? `no end recorded (the history ends at ${timecode(historyEnd, false)})` : "now"}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
               : null,

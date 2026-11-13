@@ -17,7 +17,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 3 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history
+const FormatVersion = 4 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -61,6 +61,11 @@ type State struct {
 	// oldest first; the open ones are Pending.Capacity.
 	CapacityWaits        []CapacityWait `json:"capacity_waits"`
 	CapacityWaitsDropped int64          `json:"capacity_waits_dropped"`
+	// SliceCapacityWaits are closed waits of a ready slice for a free place (scheduling.decided's
+	// held[] with the supervisor's fixed sentence), oldest first; the open ones are
+	// Pending.SliceCapacity.
+	SliceCapacityWaits        []*SliceCapacityWait `json:"slice_capacity_waits"`
+	SliceCapacityWaitsDropped int64                `json:"slice_capacity_waits_dropped"`
 	// Recoveries are recovery.started events with their time, oldest first.
 	Recoveries        []Recovery `json:"recoveries"`
 	RecoveriesDropped int64      `json:"recoveries_dropped"`
@@ -134,6 +139,9 @@ func (s *State) fill() {
 	if s.Pending.Capacity == nil {
 		s.Pending.Capacity = map[string]*Stamp{}
 	}
+	if s.Pending.SliceCapacity == nil {
+		s.Pending.SliceCapacity = map[string]*SliceCapacityWait{}
+	}
 	if s.Pending.CostTickets == nil {
 		s.Pending.CostTickets = map[string]bool{}
 	}
@@ -162,9 +170,11 @@ func fillExecution(x *Execution) {
 
 // Pending holds fold bookkeeping that is part of the state (so checkpoints carry it).
 type Pending struct {
-	Capacity         map[string]*Stamp `json:"capacity"`          // ticket -> capacity wait opened
-	CostTickets      map[string]bool   `json:"cost_tickets"`      // tickets already counted in K4's denominator
-	LifecycleTickets map[string]bool   `json:"lifecycle_tickets"` // tickets already counted in C2's denominator
+	Capacity map[string]*Stamp `json:"capacity"` // ticket -> capacity wait opened
+	// SliceCapacity is slice -> its open wait for a free place.
+	SliceCapacity    map[string]*SliceCapacityWait `json:"slice_capacity"`
+	CostTickets      map[string]bool               `json:"cost_tickets"`      // tickets already counted in K4's denominator
+	LifecycleTickets map[string]bool               `json:"lifecycle_tickets"` // tickets already counted in C2's denominator
 }
 
 // StreamInfo is what the execution stream said about itself.
@@ -204,6 +214,21 @@ type LimitSpan struct {
 type CapacityWait struct {
 	TicketID string `json:"ticket_id"`
 	Opened   *Stamp `json:"opened"`
+	Released *Stamp `json:"released"`
+}
+
+// SliceCapacityWait is a ready slice's wait for a free place, reconstructed from the scheduler's
+// recorded decisions (rule "held-sentence"): a decision is a sample, not the moment the wait began
+// or ended, so both ends are bounded by decisions (Opened: from the previous decision to the one
+// that first held it; Released: from the last decision that held it to what ended it).
+type SliceCapacityWait struct {
+	SliceID string `json:"slice_id"`
+	WaveID  string `json:"wave_id,omitempty"`
+	// Limit is the number of places the sentence says were in use of ("<n> of <limit> in use").
+	Limit    int64  `json:"limit"`
+	Why      string `json:"why"`
+	Opened   *Stamp `json:"opened"`
+	LastHeld *Stamp `json:"last_held"`
 	Released *Stamp `json:"released"`
 }
 

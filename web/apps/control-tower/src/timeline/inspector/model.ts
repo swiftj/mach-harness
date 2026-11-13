@@ -530,6 +530,25 @@ export function outcomeAsOf(span: TimelineSpan, asOf: number): string | null {
   return begunBy(span, asOf) && outcomeKnownAt(span, asOf) ? span.outcome : null;
 }
 
+/** The stations' own outcome words (review.py, verify.py) in plain words; the raw word stays beside them. */
+const STATION_OUTCOME_WORDS: Readonly<Record<string, string>> = {
+  AWAITING_HUMAN: "review approved; waiting for a person's approval",
+  APPROVED: "approved",
+  REJECTED: "rejected",
+  ESCALATE: "escalated to a person",
+  PASS: "passed",
+  FAIL_WITH_EVIDENCE: "failed, with evidence",
+  INCOMPLETE_EVIDENCE: "evidence incomplete",
+  APPROVE: "approve",
+  REJECT: "reject",
+};
+
+/** An outcome in words, and the station's own word when it is one (shown beside them, in mono); null words when it is already plain. */
+export function outcomeWordsOf(outcome: string): { words: string; own: string | null } {
+  const words = STATION_OUTCOME_WORDS[outcome];
+  return words ? { words, own: outcome } : { words: outcome, own: null };
+}
+
 /** What the outcome is called: a seat's is its verdict. */
 export const outcomeLabel = (span: TimelineSpan): string => (span.kind === "seat" ? "Verdict" : "Outcome");
 
@@ -543,8 +562,11 @@ export function attemptAndRound(span: TimelineSpan): { attempt: number | null; r
 }
 
 /** A count-only agent's tool calls in words (design section 5: no calls are invented), or null for an agent seen call by call. */
-export function toolCallsWords(span: TimelineSpan): string | null {
+export function toolCallsWords(span: TimelineSpan, asOf: number = Number.POSITIVE_INFINITY): string | null {
   if (!span.attrs.toolsCountOnly) return null;
+  // The count is the latest reported (as of the newest record held); before the agent's end at the
+  // playhead it may include calls made after the playhead (L3), so it is not shown then.
+  if (span.end !== null && !endedBy(span, asOf)) return "Tool calls reported as a count as it works; the count at the playhead is not held here; individual calls are not observable";
   const n = span.attrs.toolCalls;
   if (n === undefined || n === null) return "Tool calls reported as a count, none reported yet; individual calls are not observable";
   return `${n.toLocaleString("en-GB")} tool call${n === 1 ? "" : "s"} reported as a count; individual calls are not observable`;

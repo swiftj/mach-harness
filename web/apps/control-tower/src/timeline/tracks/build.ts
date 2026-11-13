@@ -882,6 +882,27 @@ function makeTree(grouping: Grouping, roots: readonly TrackNode[], byId: Readonl
   };
 }
 
+/**
+ * The track a mark about `ref` is drawn on: the most specific track that is about it (the track is the
+ * ref, one of its spans is, or a ribbon on it is), or null. Never a track that only names it in a
+ * span's ids (L6 of the live run: a wave's intake mark, about no row of the execution grouping, was
+ * drawn on an agent row two minutes before that agent's execution began, because every agent's spans
+ * name their slice's wave).
+ */
+export function markTrackOf(tree: TrackTree, ref: string): string | null {
+  const rel = internals.get(tree)?.rel;
+  if (!rel) return tree.tracksOf(ref)[0] ?? null;
+  let best: { id: string; rank: number; depth: number } | null = null;
+  for (const node of tree.byId.values()) {
+    const rank = refsOfNode(node, rel).get(ref);
+    // About it: the track is it (-1), a span is it (0), or a ribbon is it (4). A span's parent (2) or
+    // ids (3) only name it: a station row is not where its execution's recovery happened.
+    if (rank === undefined || (rank !== -1 && rank !== 0 && rank !== 4)) continue;
+    if (!best || rank < best.rank || (rank === best.rank && (node.depth > best.depth || (node.depth === best.depth && node.id < best.id)))) best = { id: node.id, rank, depth: node.depth };
+  }
+  return best?.id ?? null;
+}
+
 function sameFilters(a: TimelineFilters, b: TimelineFilters): boolean {
   if (a === b) return true;
   const same = (x: readonly string[], y: readonly string[]): boolean => x.length === y.length && x.every((v, i) => v === y[i]);

@@ -30,7 +30,7 @@
  * to completion within the observer's cap, cached, and re-read when the cursor moves, throttled.
  */
 import { ObserverError, parseCursor, type ObserverClient } from "../../live/observer";
-import type { SceneStore } from "../../scene/store";
+import type { SceneStore, SceneStoreState } from "../../scene/store";
 import { historyEndedAt } from "../../scene/connection";
 import { STRUCTURAL_KINDS } from "../contract";
 import type { ConcurrencySeries, DensitySeries, SpanPage, SpanQuery, TimeWindow, TimelineData, TimelineMark, TimelineSpan } from "../contract";
@@ -135,6 +135,36 @@ const notFound = (error: unknown): boolean => error instanceof ObserverError && 
 const isReset = (error: unknown): boolean => error instanceof ObserverError && (error.kind === "cursor_reset" || error.status === 409);
 const cursorPos = (version: string | null): number => parseCursor(version)?.pos ?? -1;
 
+/**
+ * Whether a store change may have made the provider's answers stale: events taken in (`arrived`, or a
+ * new version of the same shown log), a new series, the Factory's recorded state or lease. Never the
+ * playhead alone, and never the store showing another history window for it (P3: scrubbing swapped the
+ * shown log, bumped `logVersion`, and the Timeline re-queried on a playhead move): the history held
+ * did not change, only where the scene is read from. A series read again with the same counts (the
+ * live source re-reads it every 30 s) is not a change either (L8: idle pages re-asked everything twice
+ * a minute for it).
+ */
+function sameSeries(a: SceneStoreState["series"], b: SceneStoreState["series"]): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.bucketMs !== b.bucketMs || a.total !== b.total || a.coarse !== b.coarse || a.buckets.length !== b.buckets.length) return false;
+  for (let i = 0; i < a.buckets.length; i++) {
+    const x = a.buckets[i]!;
+    const y = b.buckets[i]!;
+    if (x.fromMs !== y.fromMs || x.count !== y.count || x.atLeast !== y.atLeast) return false;
+  }
+  return true;
+}
+
+export function observerDataChanged(prev: SceneStoreState, next: SceneStoreState): boolean {
+  return (
+    (prev.logVersion !== next.logVersion && prev.log === next.log) ||
+    prev.arrived !== next.arrived ||
+    !sameSeries(prev.series, next.series) ||
+    prev.factoryStatus?.recordedState !== next.factoryStatus?.recordedState ||
+    prev.factoryStatus?.supervisor.leasePresent !== next.factoryStatus?.supervisor.leasePresent
+  );
+}
+
 export function createObserverTimelineData(client: ObserverClient, store: SceneStore, options: ObserverTimelineOptions = {}): TimelineData {
   const source = store.getState().source === "replay" ? "replay" : "live";
   const timers: TimerLike = options.timers ?? { setTimeout: (f, ms) => globalThis.setTimeout(f, ms), clearTimeout: (h) => globalThis.clearTimeout(h as ReturnType<typeof globalThis.setTimeout>) };
@@ -199,12 +229,7 @@ export function createObserverTimelineData(client: ObserverClient, store: SceneS
     // `logVersion` is the SHOWN log's version: while the scene shows a history window (the playhead or the
     // Timeline's window away from the live edge) it does not move with arrivals. `arrived` does, for every
     // event the store takes in, late and out-of-order ones included (T5).
-    changed: (prev, next) =>
-      prev.logVersion !== next.logVersion ||
-      prev.arrived !== next.arrived ||
-      prev.series !== next.series ||
-      prev.factoryStatus?.recordedState !== next.factoryStatus?.recordedState ||
-      prev.factoryStatus?.supervisor.leasePresent !== next.factoryStatus?.supervisor.leasePresent,
+    changed: observerDataChanged,
     before: () => {
       if (source !== "live") return;
       let wait: number | null = null;

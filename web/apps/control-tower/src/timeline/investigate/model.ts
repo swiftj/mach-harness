@@ -518,12 +518,16 @@ export function concurrencyView(series: ConcurrencySeries | null, spans: readonl
 
   const lanes = new Map<string, { label: string; ref: string; segments: LaneSegment[]; first: number }>();
   const KIND: Partial<Record<SpanKind, LaneSegmentKind>> = { visit: "station", "capacity-wait": "capacity", "slice-eligible": "eligible", claim: "claim" };
+  // A slice's own wait (a ready slice held for a free place names only its slice) goes on its cell's
+  // lane, beside its eligibility, when a span records which cell the slice became.
+  const sliceCell = new Map<string, string>();
+  for (const s of spans) if (s.ids.slice_id && s.ids.ticket_id && !sliceCell.has(s.ids.slice_id)) sliceCell.set(s.ids.slice_id, s.ids.ticket_id);
   for (const s of held(spans, liveAt)) {
     const kind = KIND[s.kind];
     if (!kind) continue;
     const from = startAt(s);
     if (from === null) continue;
-    const t = ticketOf(s);
+    const t = ticketOf(s) ?? (s.ids.slice_id ? (sliceCell.get(s.ids.slice_id) ?? null) : null);
     const sl = sliceOf(s);
     const key = t ? `cell:${t}` : sl ? `slice:${sl}` : null;
     if (!key) continue;

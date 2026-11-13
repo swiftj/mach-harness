@@ -11,6 +11,97 @@ import (
 	"mach/observer/internal/metrics"
 )
 
+// freePlaceSentence is the supervisor's fixed sentence for a ready slice a pass did not dispatch
+// because every place was taken when it planned (supervisor.py waiting_for_a_place):
+// "it is ready and waits for a free place: <in use> of <max_parallel> in use". The count in use is
+// as the plan saw it, which may lag the place just taken; the limit is the recorded max_parallel.
+var freePlaceSentence = regexp.MustCompile(`^it is ready and waits for a free place: ([0-9]{1,4}) of ([0-9]{1,4}) in use$`)
+
+// ticketPlaceSentence is the supervisor's fixed sentence for a runnable ticket held because every
+// place is in use (supervisor.py schedule); normalize reconstructs its capacity.wait_changed.
+var ticketPlaceSentence = regexp.MustCompile(`^all [0-9]{1,4} place\(s\) are in use$`)
+
+// bounded is a reconstructed moment known only to lie between lo (when given) and the decision
+// st that sampled it: at is the decision's time, the bounds say where the moment itself may lie.
+func bounded(st, lo *Stamp) *Stamp {
+	out := &Stamp{EventID: st.EventID, Pos: st.Pos, At: st.At, Precision: "bounded", OrderMS: st.OrderMS, Authority: "reconstructed"}
+	if hi, ok := st.hi(); ok {
+		out.NotAfter = ptr(hi)
+	}
+	if l, ok := lo.lo(); ok && (out.NotAfter == nil || l <= *out.NotAfter) {
+		out.NotBefore = ptr(l)
+	}
+	return out
+}
+
+// sliceCapacity applies one scheduling decision to the slices waiting for a free place: a slice
+// held with freePlaceSentence opens a wait at this decision (not before the previous decision, or
+// the activation when there was none) and stays waiting while decisions keep holding it for that
+// reason; one no longer held for it is released here. A slice whose own ticket is held for
+// capacity (ticketPlaceSentence, or a per-ticket wait already open) is not counted twice: its
+// per-ticket wait is the one that stands. Silence is never read as waiting (D16).
+func (s *State) sliceCapacity(st, prev *Stamp, held []Held) {
+	ticketHeld := map[string]bool{}
+	for _, h := range held {
+		if h.TicketID != "" && ticketPlaceSentence.MatchString(h.Why) {
+			ticketHeld[h.TicketID] = true
+		}
+	}
+	now := map[string]Held{}
+	limits := map[string]int64{}
+	for _, h := range held {
+		if h.SliceID == "" || h.TicketID != "" {
+			continue
+		}
+		m := freePlaceSentence.FindStringSubmatch(h.Why)
+		if m == nil {
+			continue
+		}
+		if sl := s.Slices[h.SliceID]; sl != nil && sl.TicketID != "" && (ticketHeld[sl.TicketID] || s.Pending.Capacity[sl.TicketID] != nil) {
+			continue
+		}
+		n, _ := strconv.ParseInt(m[2], 10, 64)
+		now[h.SliceID], limits[h.SliceID] = h, n
+	}
+	for _, id := range sortedKeys(s.Pending.SliceCapacity) {
+		if _, still := now[id]; !still {
+			s.releaseSliceCapacity(id, st)
+		}
+	}
+	lo := prev
+	if lo == nil {
+		lo = s.Factory.Since
+	}
+	for _, id := range sortedKeys(now) {
+		w := s.Pending.SliceCapacity[id]
+		if w == nil {
+			wave := ""
+			if sl := s.Slices[id]; sl != nil {
+				wave = sl.WaveID
+			}
+			w = &SliceCapacityWait{SliceID: id, WaveID: wave, Opened: bounded(st, lo)}
+			s.Pending.SliceCapacity[id] = w
+		}
+		w.Limit, w.Why, w.LastHeld = limits[id], now[id].Why, st
+	}
+}
+
+// releaseSliceCapacity ends a slice's open wait for a free place at st: after the last decision
+// that held it, by st at the latest.
+func (s *State) releaseSliceCapacity(id string, st *Stamp) {
+	w := s.Pending.SliceCapacity[id]
+	if w == nil {
+		return
+	}
+	delete(s.Pending.SliceCapacity, id)
+	w.Released = bounded(st, w.LastHeld)
+	s.SliceCapacityWaits = append(s.SliceCapacityWaits, w)
+	if n := len(s.SliceCapacityWaits); n > maxCapacityWaits {
+		s.SliceCapacityWaitsDropped += int64(n - maxCapacityWaits)
+		s.SliceCapacityWaits = append([]*SliceCapacityWait(nil), s.SliceCapacityWaits[n-maxCapacityWaits:]...)
+	}
+}
+
 // capacitySentence is the supervisor's fixed sentence for an execution-capacity hold
 // (supervisor.py schedule): "all <n> place(s) are in use". Only this recorded sentence makes a
 // capacity wait; silence never does (contract D16).
@@ -370,6 +461,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 				m.Duration("W2", dims("wave", sl.WaveID), day(st), ms)
 			}
 			sl.Scheduled = st
+			s.releaseSliceCapacity(sl.SliceID, st)
 			if t := e.Ticket(); t != "" {
 				sl.TicketID = t
 			}
@@ -417,6 +509,10 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		s.Factory.AllowMerge, s.Factory.Persistent, s.Factory.Since, s.Factory.PausedReason = d.AllowMerge, d.Persistent, st, ""
 	case "factory.disabled":
 		s.Factory.State, s.Factory.Since = "disabled", st
+		// No scheduler decides while the Factory is off: nothing waits for one of its places.
+		for _, id := range sortedKeys(s.Pending.SliceCapacity) {
+			s.releaseSliceCapacity(id, st)
+		}
 		s.closeLimits(st)
 	case "factory.paused":
 		var d struct {
@@ -440,6 +536,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			Held       []Held   `json:"held"`
 		}
 		e.DataAs(&d)
+		s.sliceCapacity(st, s.Factory.LastDecision, nonNil(d.Held))
 		s.Factory.SchedulerState, s.Factory.LastDecision = d.State, st
 		s.Factory.Held, s.Factory.Dispatched, s.Factory.Started = nonNil(d.Held), nonNilS(d.Dispatched), nonNilS(d.Started)
 	case "work.claimed":

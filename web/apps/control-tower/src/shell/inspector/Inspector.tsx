@@ -32,6 +32,7 @@ import {
   type VisitEntity,
   type WaveState,
   type WorkflowEntity,
+  executionEndedAt,
 } from "../../sim";
 import { historyEndedAt, useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
@@ -136,7 +137,7 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
       const state: FactoryState = status.running ? "active" : x.state === "failed" ? "failed" : x.state === "completed" ? "succeeded" : "idle";
       // No end recorded on a history that is no longer live: started then, nothing says it finished.
       if (historyEnd !== null && status.word === "No end recorded") return { glyph: <ExecutionGlyph size={28} state={state} />, state, mark: "ring-query", word: status.word, phase: "finished", since: x.startedAt ?? x.claimedAt, sinceWord: "Started at" };
-      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: status.word, phase: status.running ? "running" : "finished", since: x.endedAt ?? x.processEndedAt ?? x.startedAt };
+      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: status.word, phase: status.running ? "running" : "finished", since: executionEndedAt(x) ?? x.startedAt };
     }
     case "visit": {
       const v = value as VisitEntity;

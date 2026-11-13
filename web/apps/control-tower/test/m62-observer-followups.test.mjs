@@ -77,12 +77,13 @@ test("activityOf: a cell idle between two executions is not 'executing'; it says
   assert.equal(ended.between.outcomeRecorded, false);
   assert.equal(ended.between.endedAt, T0 + 70_000);
 
-  // Between the two executions: idle, with the last one's recorded end, stage and next step.
+  // Between the two executions: idle, with the last one's end, stage and next step. The end is its
+  // process's (T0 + 70 s, measured); the supervisor recorded it at T0 + 80 s (M6.3 live pass, L5).
   const idle = activityOf(log.sceneAt(T0 + 150_000), `cell:${TICKET}`);
   assert.equal(idle.state, "unknown");
   assert.match(idle.reason, /^Idle between executions: the last one ended at built\. The next step recorded is verify\./);
-  assert.deepEqual({ ...idle.between }, { executionId: X1, endedAt: T0 + 80_000, stage: "built", next: "verify", waitingFor: null, outcomeRecorded: true });
-  assert.equal(idle.since, T0 + 80_000);
+  assert.deepEqual({ ...idle.between }, { executionId: X1, endedAt: T0 + 70_000, stage: "built", next: "verify", waitingFor: null, outcomeRecorded: true });
+  assert.equal(idle.since, T0 + 70_000);
   // A lost connection never turns idle into "executing" or "stale" (it was not executing).
   assert.equal(activityOf(log.sceneAt(T0 + 150_000), `cell:${TICKET}`, { stale: true }).state, "unknown");
 

@@ -16,7 +16,7 @@
  * count has no tool-call items (contract D13): its node names the count and the last tool instead.
  */
 import type { AgentState, ArtifactState, CellState, DependencyState, EntityRef, ExecutionState, FindingState, GateState, Scene, SliceState, StationVisit, ToolCallState, WaveState } from "../sim";
-import { activityOf, capacityWaitOf, cellHome, gateOverrides, gateRefusals, isKnown, ref, SIM_META } from "../sim";
+import { activityOf, capacityWaitOf, executionEndedAt, cellHome, gateOverrides, gateRefusals, isKnown, ref, SIM_META } from "../sim";
 import { activityWords, agentStatusWords, callCount, execSpan, modelWords, perCall, placed, tokenWords, visitEnd } from "./facts";
 import { visitRound } from "./flow";
 import { agentWords, GATE_WORDS, gateWords, modelWord, stageWords, visitStateWords, visitWords } from "./vocab";
@@ -73,7 +73,7 @@ function executionAt(executions: readonly ExecutionState[], t: number): Executio
   for (const x of executions) {
     if (x.claimedAt <= t + 1) found = x;
   }
-  for (const x of executions) if (x.claimedAt <= t && (x.endedAt === null || t <= x.endedAt)) return x;
+  for (const x of executions) if (x.claimedAt <= t && (executionEndedAt(x) === null || t <= (executionEndedAt(x) as number))) return x;
   return found;
 }
 

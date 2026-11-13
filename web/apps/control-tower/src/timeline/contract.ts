@@ -68,6 +68,8 @@ export interface SpanAttrs {
   readonly vote?: string;
   readonly reasons?: readonly string[];
   readonly dependsOn?: readonly string[];
+  /** A capacity wait: the recorded number of places it waited on (max_parallel). */
+  readonly limit?: number;
   /** The scene marked this visit as stopped and taken up again: when it stopped. */
   readonly interruptedAt?: number;
   /**
