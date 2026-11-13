@@ -33,6 +33,27 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
     streams: [],
     requests: [],
     down: false,
+    // ---- M6.3 (Execution Timeline): /spans windowed, /marks, /concurrency, /series by kind.
+    /** Spans in the observer's wire shape (span_id, kind, start/end with RFC 3339 `at`, attrs...). */
+    spans: [],
+    /** "m63": windowed with `truncated`/`total_uncapped`; "m61": today's route (no window, silent cap); false: 404. */
+    spansRoute: "m63",
+    /** The observer's cap on spans per reply (MaxSpans). */
+    spanCap: 5000,
+    /** Marks in the wire shape (mark_id, kind, at, until, event_id, entity, label, verdict, authority); null: no route (404). */
+    marks: null,
+    /** `/concurrency`: a function (from, to, bucket) => reply data, or null for no route (404). */
+    concurrency: null,
+    /** While true, every reply waits for `release()` (to test superseded and aborted requests). */
+    hold: false,
+    held: [],
+    /** Requests whose caller aborted them before the reply. */
+    aborted: [],
+  };
+  server.release = () => {
+    const due = server.held.splice(0);
+    for (const go of due) go();
+    return due.length;
   };
   const head = () => (server.events.length ? server.events.at(-1).pos : 0);
   const sorted = () => (server.inOrder ??= [...server.events].sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0)));
@@ -51,9 +72,27 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
   const ok = (data) => ({ status: 200, json: async () => ({ ok: true, data }) });
   const fail = (status, kind, extra = {}) => ({ status, json: async () => ({ ok: false, error: { kind, message: kind, ...extra } }) });
 
-  server.fetch = async (url) => {
+  server.fetch = async (url, init = {}) => {
     server.requests.push(url);
     if (server.down) throw new Error("connection refused");
+    const signal = init.signal;
+    const abortError = () => Object.assign(new Error("aborted"), { name: "AbortError" });
+    if (server.hold) {
+      await new Promise((resolve, reject) => {
+        server.held.push(resolve);
+        signal?.addEventListener("abort", () => {
+          server.aborted.push(url);
+          reject(abortError());
+        }, { once: true });
+      });
+    }
+    if (signal?.aborted) {
+      if (!server.aborted.includes(url)) server.aborted.push(url);
+      throw abortError();
+    }
+    return route(url);
+  };
+  const route = (url) => {
     const u = new URL(url, "http://127.0.0.1");
     const path = u.pathname.replace(/^\/api\/v1/, "");
     if (path === "/session") return ok({ project: { folder: "team-space" }, generation: server.generation, versions: { event: { schema: 3, revision: 0, kinds: [] } }, read_only: true, capabilities: { snapshot: server.snapshotCapability, stream_observations: { ok: true, reason: null } }, display_policy: { people: "role" } });
@@ -102,14 +141,28 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
       const bucketMs = Number(u.searchParams.get("bucket_ms") ?? Math.max(1000, Math.ceil((toMs - fromMs) / 500)));
       const counts = new Map();
       let total = 0;
+      const kindsParam = u.searchParams.get("kinds");
+      const kinds = kindsParam ? new Set(kindsParam.split(",")) : null;
+      const ticket = u.searchParams.get("ticket");
+      const execution = u.searchParams.get("execution");
       for (const e of inOrder) {
         const t = e.time.order_ms;
         if (t < fromMs || t >= toMs) continue;
+        if (kinds && !kinds.has(e.type)) continue;
+        if (ticket && e.ids?.ticket_id !== ticket) continue;
+        if (execution && e.ids?.execution_id !== execution) continue;
         const k = fromMs + Math.floor((t - fromMs) / bucketMs) * bucketMs;
         counts.set(k, (counts.get(k) ?? 0) + 1);
         total += 1;
       }
-      return ok({ from_ms: fromMs, to_ms: toMs, bucket_ms: bucketMs, buckets: [...counts].map(([from_ms, count]) => ({ from_ms, count, kinds: {}, authorities: {} })), total, kinds: {}, authorities: {}, head: cur(head()), watermark_ms: null, complete: server.floor === 0 });
+      return ok({ from_ms: fromMs, to_ms: toMs, bucket_ms: bucketMs, buckets: [...counts].map(([from_ms, count]) => ({ from_ms, count, kinds: {}, authorities: {} })), total, kinds: {}, authorities: {}, head: cur(head()), watermark_ms: null, complete: server.floor === 0, ...(kinds ? { kinds_applied: [...kinds] } : {}) });
+    }
+    if (path === "/spans") return spansReply(u);
+    if (path === "/marks") return marksReply(u);
+    if (path === "/concurrency") {
+      if (!server.concurrency) return fail(404, "not_found");
+      const n = (k) => Number(u.searchParams.get(k));
+      return ok({ ...server.concurrency(n("from_ms"), n("to_ms"), n("bucket_ms")), cursor: cur(head()) });
     }
     if (path === "/factory/status") return ok({ ...server.status, report: {}, recorded_mode: null, read_at: "2026-11-12T09:00:00Z" });
     // The summaries (observer M6.2 shapes): lists paged with limit/offset and the projection's cursor.
@@ -133,6 +186,58 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
     }
     if (path === "/health") return ok({ status: "ok", index: { head: cur(head()), floor: cur(server.floor) }, projection: { history: server.summaries.history }, ingest: { runtime: server.runtime, delivery: { last_hold_ms: 120, hold_ms_p95: 300 } }, freshness: server.status.freshness });
     return fail(404, "not_found");
+  };
+
+  /** Earliest and latest a wire span can touch (ms), for the window filter. */
+  const wireMs = (v) => (typeof v === "string" ? Date.parse(v) : typeof v === "number" ? v : null);
+  const wireExtent = (sp) => {
+    const s = sp.start;
+    const e = sp.end;
+    const from = s ? (wireMs(s.not_before) ?? wireMs(s.at)) : e ? (wireMs(e.not_before) ?? wireMs(e.at)) : null;
+    const to = e ? (wireMs(e.not_after) ?? wireMs(e.at) ?? from) : Infinity;
+    return from === null ? null : { from, to };
+  };
+  const spansReply = (u) => {
+    if (!server.spansRoute) return fail(404, "not_found");
+    const q = (k) => u.searchParams.get(k);
+    const limit = Math.min(1000, Number(q("limit") ?? 200));
+    const offset = Number(q("offset") ?? 0);
+    const kinds = q("kinds") ? new Set(q("kinds").split(",")) : null;
+    let all = server.spans.filter((sp) => (!kinds || kinds.has(sp.kind)) && (!q("ticket") || sp.ids?.ticket_id === q("ticket")) && (!q("execution") || sp.ids?.execution_id === q("execution")) && (!q("wave") || sp.ids?.wave_id === q("wave")));
+    if (server.spansRoute === "m61") {
+      all = all.slice(0, server.spanCap);
+      return ok({ items: all.slice(offset, offset + limit), total: all.length, offset, more: offset + limit < all.length, cursor: cur(head()), basis_vocabulary: [] });
+    }
+    if (q("span")) {
+      const one = server.spans.filter((sp) => sp.span_id === q("span"));
+      return one.length ? ok({ items: one, total: 1, offset: 0, more: false, cursor: cur(head()), truncated: false, total_uncapped: 1 }) : fail(404, "not_found");
+    }
+    const from = q("from_ms") === null ? -Infinity : Number(q("from_ms"));
+    const to = q("to_ms") === null ? Infinity : Number(q("to_ms"));
+    all = all.filter((sp) => {
+      const x = wireExtent(sp);
+      return x !== null && x.from <= to && x.to >= from;
+    });
+    all.sort((a, b) => wireExtent(a).from - wireExtent(b).from);
+    const uncapped = all.length;
+    all = all.slice(0, server.spanCap);
+    return ok({ items: all.slice(offset, offset + limit), total: all.length, offset, more: offset + limit < all.length, cursor: cur(head()), truncated: uncapped > all.length, total_uncapped: uncapped, basis_vocabulary: [] });
+  };
+  const marksReply = (u) => {
+    if (!server.marks) return fail(404, "not_found");
+    const q = (k) => u.searchParams.get(k);
+    const kinds = q("kinds") ? new Set(q("kinds").split(",")) : null;
+    let list = server.marks.filter((m) => !kinds || kinds.has(m.kind)).map((m) => ({ m, at: wireMs(m.at), until: wireMs(m.until) }));
+    list.sort((a, b) => a.at - b.at);
+    if (q("after_ms") !== null) list = list.filter((x) => x.at > Number(q("after_ms")));
+    else if (q("before_ms") !== null) list = list.filter((x) => x.at < Number(q("before_ms"))).reverse();
+    else {
+      const from = q("from_ms") === null ? -Infinity : Number(q("from_ms"));
+      const to = q("to_ms") === null ? Infinity : Number(q("to_ms"));
+      list = list.filter((x) => x.at <= to && (x.until ?? x.at) >= from);
+    }
+    const limit = Number(q("limit") ?? 1000);
+    return ok({ items: list.slice(0, limit).map((x) => x.m), truncated: list.length > limit, cursor: cur(head()) });
   };
 
   server.openStream = (url) => {
