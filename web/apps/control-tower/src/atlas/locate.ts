@@ -3,8 +3,8 @@
  * framing. Pure, from the layout and the scene at the playhead.
  */
 import { factoryTokens, screenBounds, type PlanBox } from "@mach/ui";
-import { findAgent, findArtifact, refId, refKind, type EntityRef, type Scene } from "../sim";
-import { chamberOccupant, placeAgents } from "./derive";
+import { entityAt, findAgent, findArtifact, findToolCall, ref, refId, refKind, type EntityRef, type Scene } from "../sim";
+import { SIM_MODE, chamberOccupant, placeAgents, type ViewMode } from "./derive";
 import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot, type PlantLayout } from "./layout";
 import type { ScreenRect } from "./camera";
 
@@ -18,7 +18,11 @@ function regionBox(r: { x: number; y: number; w: number; d: number }): PlanBox {
   return { ...r, z: 0, h: PLATE_Z };
 }
 
-export function locate(L: PlantLayout, scene: Scene, t: number, entity: EntityRef): PlanBox[] {
+/**
+ * Ids are opaque (contract 5.1): nothing here reads a ticket or a station out of an agent's,
+ * artifact's or tool call's id. They are found in the scene and placed from its fields.
+ */
+export function locate(L: PlantLayout, scene: Scene, t: number, entity: EntityRef, mode: ViewMode = SIM_MODE): PlanBox[] {
   const id = refId(entity);
   switch (refKind(entity)) {
     // actor:scheduler and actor:supervisor (the simulation's non-agent actors).
@@ -67,7 +71,7 @@ export function locate(L: PlantLayout, scene: Scene, t: number, entity: EntityRe
       if (!agent) return [];
       const cell = scene.cells[agent.ticketId];
       if (!cell) return [];
-      const placed = placeAgents(scene, L, cell, t, true).find((p) => p.agent.id === id);
+      const placed = placeAgents(L, cell, t, true, mode).find((p) => p.agent.id === id);
       return placed ? [boxAt(placed.at, 18, 18, 34)] : [];
     }
     case "artifact":
@@ -75,15 +79,21 @@ export function locate(L: PlantLayout, scene: Scene, t: number, entity: EntityRe
       const artifact = refKind(entity) === "artifact" ? findArtifact(scene, id) : null;
       if (artifact?.kind === "merge-commit") return [{ x: L.integration.trunkTo, y: L.integration.trunkY - 12, w: L.integration.trunkFrom - L.integration.trunkTo, d: 24, z: PLATE_Z, h: 18 }];
       if (artifact?.kind === "archive") return [boxAt(L.archive.stack, 30, 30, 20)];
-      const ticket = artifact?.ticketId ?? id.split(":")[0] ?? "";
-      const bay = L.bayByTicket.get(ticket) ?? L.bayByTicket.get(`LOCAL-${id.slice(3, 6)}`);
+      // A tool call is found in the scene by its identity, never parsed for a ticket.
+      const call = refKind(entity) === "tool" ? findToolCall(scene, id) : null;
+      const ticket = artifact?.ticketId ?? call?.ticketId;
+      const bay = ticket ? L.bayByTicket.get(ticket) : undefined;
       if (!bay) return [];
       if (refKind(entity) === "tool") return [{ x: bay.origin.x + 10, y: bay.origin.y + CELL.y - 36, w: CELL.x - 24, d: 10, z: FLOOR_Z, h: 14 }];
       return [{ x: bay.origin.x + 24, y: bay.origin.y + 12, w: 140, d: 12, z: FLOOR_Z, h: 20 }];
     }
     case "gate": {
-      const [ticket = "", rest = ""] = id.split("/");
-      const kind = rest.split("#")[0];
+      // The gate's own fields where the scene holds it; the ref's documented shape only for a gate
+      // not reached yet (`<ticket>/<kind>#<round>`, model.gateId).
+      const g = scene.gates[id];
+      const [refTicket = "", rest = ""] = id.split("/");
+      const ticket = g?.ticketId ?? refTicket;
+      const kind = g?.gate ?? rest.split("#")[0];
       const bay = L.bayByTicket.get(ticket);
       switch (kind) {
         case "verification":
@@ -106,18 +116,37 @@ export function locate(L: PlantLayout, scene: Scene, t: number, entity: EntityRe
     }
     case "dependency": {
       const [from = "", to = ""] = id.split("->");
-      return [...locate(L, scene, t, `slice:${from}`), ...locate(L, scene, t, `slice:${to}`)];
+      return [...locate(L, scene, t, `slice:${from}`, mode), ...locate(L, scene, t, `slice:${to}`, mode)];
     }
     case "finding": {
-      const seat = id.split("/")[2] as "architecture" | "security" | "product" | undefined;
-      if (seat && seat in L.review.seats) return [boxAt(L.review.seats[seat], 40, 30, 20)];
+      let seat: string | undefined;
+      for (const c of Object.values(scene.cells)) for (const r of c.reviews) for (const f of r.findings) if (f.id === id) seat = f.seat;
+      seat ??= id.split("/")[2];
+      if (seat && seat in L.review.seats) return [boxAt(L.review.seats[seat as keyof PlantLayout["review"]["seats"]], 40, 30, 20)];
       return [regionBox(L.regions.review)];
     }
+    // The kinds real history adds: found in the scene by identity, placed where what they belong to is.
+    case "visit": {
+      const found = entityAt(scene, entity);
+      return found?.kind === "visit" ? locate(L, scene, t, ref.station(found.value.station, found.value.ticketId), mode) : [];
+    }
+    case "seat": {
+      const found = entityAt(scene, entity);
+      if (found?.kind !== "seat") return [];
+      const seat = found.value.seat;
+      return seat in L.review.seats ? [boxAt(L.review.seats[seat as keyof PlantLayout["review"]["seats"]], 40, 30, 20)] : [regionBox(L.regions.review)];
+    }
+    case "workflow": {
+      const found = entityAt(scene, entity);
+      return found?.kind === "workflow" ? locate(L, scene, t, ref.execution(found.value.executionId), mode) : [];
+    }
+    case "project":
+      return [{ ...L.extent, z: 0, h: PLATE_Z }];
   }
 }
 
-export function locateScreen(L: PlantLayout, scene: Scene, t: number, entity: EntityRef, pad = 0): ScreenRect | null {
-  const boxes = locate(L, scene, t, entity);
+export function locateScreen(L: PlantLayout, scene: Scene, t: number, entity: EntityRef, pad = 0, mode: ViewMode = SIM_MODE): ScreenRect | null {
+  const boxes = locate(L, scene, t, entity, mode);
   if (!boxes.length) return null;
   return screenBounds(boxes, pad);
 }

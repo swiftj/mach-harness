@@ -127,6 +127,10 @@ export const roleNames = [
   "factory-human-soft",
   "factory-select",
   "factory-lamp",
+  // Factory, M6.2 (live execution): an execution interrupted (process killed or timed out), and the
+  // whole plant as last seen while the connection is stale. Additive; nothing above changes meaning.
+  "factory-halt",
+  "factory-stale",
 ] as const;
 
 export type Role = (typeof roleNames)[number];
@@ -214,6 +218,8 @@ const light: Theme = {
   "factory-human-soft": "#F6E3D9",
   "factory-select": "#B5512F",
   "factory-lamp": "#FFF0D6",
+  "factory-halt": "#74488A",
+  "factory-stale": "#56636F",
 };
 
 const dark: Theme = {
@@ -297,6 +303,8 @@ const dark: Theme = {
   "factory-human-soft": "#42291F",
   "factory-select": "#E48B6C",
   "factory-lamp": "#4A3A27",
+  "factory-halt": "#C6A6DA",
+  "factory-stale": "#97A4B0",
 };
 
 export const themes: Record<ThemeName, Theme> = { light, dark };
@@ -371,6 +379,12 @@ export const contrastPairs: ReadonlyArray<{ fg: Role; bg: Role; min: 3 | 4.5; us
   { fg: "ink-muted", bg: "factory-done", min: 4.5, use: "Floor lettering in a finished bay" },
   { fg: "factory-ink", bg: "factory-done", min: 4.5, use: "Glyph ink in a finished bay" },
   { fg: "factory-pass", bg: "factory-done", min: 3, use: "Passed mark in a finished bay" },
+  // Factory, M6.2: the live states the simulation never had.
+  { fg: "factory-halt", bg: "factory-floor", min: 3, use: "Interrupted mark" },
+  { fg: "factory-halt", bg: "factory-plate-top", min: 3, use: "Interrupted mark on a plate" },
+  { fg: "factory-stale", bg: "factory-floor", min: 3, use: "Stale (as last seen) mark" },
+  { fg: "factory-stale", bg: "factory-plate-top", min: 3, use: "Stale mark on a plate" },
+  { fg: "factory-stale", bg: "factory-ground", min: 3, use: "Stale stamp on the ground" },
 ];
 
 /**

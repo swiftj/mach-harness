@@ -7,7 +7,17 @@ import { useMemo, type ReactNode } from "react";
 import { stations as stationLooks, type StationKind } from "@mach/ui";
 import {
   ACTOR_KINDS,
-  describe,
+  activityOf,
+  artifactCountsOf,
+  costCompletenessOf,
+  describeEntry,
+  cellGateList,
+  executionStatusOf,
+  isKnown,
+  sourceRuntimeOf,
+  streamObservationOf,
+  visitStatusOf,
+  type Scene,
   MAX_ROUNDS,
   ref,
   type ActorState,
@@ -15,20 +25,25 @@ import {
   type ArtifactState,
   type CellState,
   type DependencyState,
+  type EntityRef,
   type ExecutionState,
   type FindingState,
   type GateState,
+  type ProjectEntity,
+  type SeatEntity,
   type SliceState,
   type ToolCallState,
+  type VisitEntity,
   type WaveState,
+  type WorkflowEntity,
 } from "../../sim";
 import { useScene } from "../../scene";
 import { AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateGlyph, StateWord, StationGlyph, ToolGlyph } from "../glyphs";
 import {
   ACTOR_WORDS,
   artifactOf,
-  GATE_STATE_WORDS,
-  GATE_WORDS,
+  gateStateWords,
+  gateName,
   gateOf,
   gateState,
   modelName,
@@ -43,9 +58,36 @@ import {
   timecode,
   toolFamily,
 } from "../vocab";
-import { Elapsed, Facts, JumpButton, Mono, RefLink, RefList, Section, useEntityEvents } from "./parts";
+import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RefLink, RefList, Section, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
+import { activityNote, agentsWords, planWords, runtimeWords, visitLeftWords } from "./words";
+import { useFreeTextLabel } from "./catalog";
+import { useSceneStore } from "../../scene";
+import { isStale, type FactoryStatus } from "../../scene/connection";
+
+/**
+ * How a live agent's activity was read (observer M6.2 runtime states): a phrase when its stream's
+ * runtime is not proven (unproven, not stated yet, some records refused), else null. A string, so the
+ * selector stays stable.
+ */
+function useAgentNote(agent: AgentState): string | null {
+  const status = useSceneStore((s) => s.factoryStatus);
+  return useScene((s) => {
+    const x = agent.executionId ? s.executions[agent.executionId] : undefined;
+    if (!x || agent.meta.authority === "simulated") return null;
+    return activityNote(streamObservationOf(s, x.id, sourceRuntimeOf(status?.sources, x.id)));
+  });
+}
+
+/** An execution's agents in words (D7): a count when its stream was read, "Not observed" with the reason otherwise. Strings, so selectors stay stable. */
+function agentsOf(scene: Scene, status: FactoryStatus | null, executionId: string | null, started: number, working?: number): string {
+  if (!executionId || !scene.executions[executionId]) return agentsWords(null, started, working);
+  const observation = streamObservationOf(scene, executionId, sourceRuntimeOf(status?.sources, executionId));
+  // The simulation records every agent: its count stands as it is.
+  if (scene.executions[executionId]?.meta.authority === "simulated") return agentsWords(null, started, working);
+  return agentsWords(observation, started, working);
+}
 
 const at = (t: number | null | undefined) => (t === null || t === undefined ? "not yet" : <Mono>{timecode(t, false)}</Mono>);
 
@@ -58,19 +100,34 @@ function AgentLink({ agent }: { agent: AgentState }) {
   );
 }
 
+/**
+ * The persistent label on an evidence document served as free text the observer could not check for
+ * names (R1, the product owner's decision): text, so it is read with the row or fact it sits in.
+ */
+function FreeTextNote({ label, block = false }: { label: string; block?: boolean }) {
+  return (
+    <span data-free-text="" className={block ? "mt-1 block text-caption font-semibold text-warning-ink" : "ml-1.5 text-caption font-semibold text-warning-ink"}>
+      {block ? label : `· ${label}`}
+    </span>
+  );
+}
+
 function ArtifactLink({ artifact }: { artifact: ArtifactState }) {
+  const freeText = useFreeTextLabel(artifact);
   return (
     <RefLink to={ref.artifact(artifact.id)} glyph={<ArtifactGlyph kind={artifactOf(artifact.kind)} size={18} failed={/findings/.test(artifact.kind)} />} detail={timecode(artifact.writtenAt, false)}>
       <span className="font-mono text-[12px]">{artifact.label}</span>
+      {freeText ? <FreeTextNote label={freeText} /> : null}
     </RefLink>
   );
 }
 
-function GateLink({ gate }: { gate: GateState }) {
+function GateLink({ gate, to }: { gate: GateState; to?: EntityRef }) {
   return (
-    <RefLink to={ref.gate(gate.id)} glyph={<GateGlyphSmall kind={gateOf(gate.gate)} size={18} state={gateState(gate.state)} />} detail={GATE_STATE_WORDS[gate.state]}>
-      {GATE_WORDS[gate.gate]}
+    <RefLink to={to ?? ref.gate(gate.id)} glyph={<GateGlyphSmall kind={gateOf(gate.gate)} size={18} state={gateState(gate.state)} />} detail={gateStateWords(gate)}>
+      {gateName(gate)}
       {gate.round ? `, round ${gate.round}` : ""}
+      {gate.recorded && gate.recorded.evaluations.at(-1)?.subject ? <span className="text-ink-subtle">, {gate.recorded.evaluations.at(-1)?.subject}</span> : null}
     </RefLink>
   );
 }
@@ -97,8 +154,8 @@ export function WaveAnatomy({ wave }: { wave: WaveState }) {
       <Section title="Facts">
         <Facts
           facts={[
-            ["Epic", wave.epicTitle],
-            ["Approved by", `${wave.approvedBy}, ${wave.approvedAt.slice(11, 16)} UTC`],
+            ["Epic", isKnown(wave.meta, "epicTitle") && wave.epicTitle ? wave.epicTitle : <NotRecorded key="e" />],
+            ["Approved by", wave.approvedAt ? `${wave.approvedBy}, ${wave.approvedAt.slice(11, 16)} UTC` : <span key="a">{wave.approvedBy}, time <NotRecorded /></span>],
             ["Intake", wave.state === "validated" ? "Verified against its source commit" : "Seen, not yet verified"],
             ["Arrived", at(wave.discoveredAt)],
             ["Slices", wave.sliceIds.length],
@@ -138,8 +195,8 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
           facts={[
             ["State", <StateWord key="s" state={look.state} mark={look.mark} label={look.label} />],
             ["Since", at(slice.since)],
-            ["Risk", slice.risk],
-            ["Ticket", <Mono key="t">{slice.ticketId}</Mono>],
+            ["Risk", isKnown(slice.meta, "risk") ? slice.risk : <NotRecorded key="r" />],
+            ["Ticket", slice.ticketId ? <Mono key="t">{slice.ticketId}</Mono> : <NotRecorded key="t" />],
             slice.integratedCommit ? ["Integrated", <Mono key="c">{slice.integratedCommit.slice(0, 7)}</Mono>] : null,
           ]}
         />
@@ -153,7 +210,7 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
             </ul>
           </div>
         ) : null}
-        <p className="mt-3 text-body-sm text-ink-muted">{slice.summary}</p>
+        {slice.summary ? <p className="mt-3 text-body-sm text-ink-muted">{slice.summary}</p> : null}
       </Section>
       <Section title="Related">
         <RefList>
@@ -197,7 +254,18 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
   const gates = useScene((s) => s.gates);
   const look = stageLook(cell.stage);
   const active = cell.activeAgentIds.map((id) => cell.agents[id]).filter((a): a is AgentState => Boolean(a));
-  const cellGates = Object.values(gates).filter((g) => g.ticketId === cell.ticketId);
+  // Every gate evaluated for this cell (D6): its gate states and every evaluation no gate state
+  // stands for (each override, refusal and pass: frozen-tests, build.start...), each a link.
+  // (from the cell and the gate record, both stable objects: a selector returning a new array would re-render forever)
+  const gateList = useMemo(() => cellGateList({ cells: { [cell.ticketId]: cell }, gates } as unknown as Scene, cell.ticketId), [cell, gates]);
+  const factory = useSceneStore((s) => s.factoryStatus);
+  const agentsLine = useScene((s) => agentsOf(s, factory, cell.executionId, cell.agentOrder.length, active.length));
+  const artifactCounts = artifactCountsOf(cell);
+  // Live: what the cell is doing now, from what is recorded (the nine states; idle between two
+  // executions is said as such, never "working"). A string, so the selector is stable.
+  const live = cell.meta.authority !== "simulated";
+  const stale = useSceneStore((s) => isStale(s.connection));
+  const now = useScene((s) => (live ? activityOf(s, ref.cell(cell.ticketId), { stale }).reason : null));
   return (
     <>
       <Section title="Facts">
@@ -206,14 +274,18 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
             ["Stage", <StateWord key="s" state={look.state} mark={look.mark} label={look.label} />],
             ["Round", `${cell.round} of ${MAX_ROUNDS}`],
             ["Slice", <Mono key="sl">{cell.sliceId}</Mono>],
-            ["Risk", cell.risk],
-            ["App type", cell.appType],
+            now ? ["Now", now] : null,
+            ["Risk", isKnown(cell.meta, "risk") ? cell.risk : <NotRecorded key="r" />],
+            ["App type", isKnown(cell.meta, "appType") ? cell.appType : cell.plan?.appType ? <Mono key="a">{cell.plan.appType}</Mono> : <NotRecorded key="a" />],
+            live ? ["Plan", cell.plan ? planWords(cell.plan) : <NotRecorded key="p" />] : null,
             ["Worktree", <Mono key="w" muted>{`.factory/worktrees/${cell.ticketId}/repo`}</Mono>],
             ["Branch", <Mono key="b" muted>{cell.branch}</Mono>],
             ["At station", cell.station ? <span key="st">{STATION_WORDS[cell.station as StationKind]}, <Elapsed startedAt={cell.stationSince ?? 0} finishedAt={null} /></span> : "Between stations"],
-            ["Suite", cell.lastTest ? `${cell.suite}, ${cell.lastTest.passed} passed, ${cell.lastTest.failed} failed` : cell.suite],
-            ["Agents", `${active.length} working, ${cell.agentOrder.length} so far`],
-            ["Artifacts", cell.artifacts.length],
+            ["Suite", cell.lastTest ? `${cell.suite}, ${cell.lastTest.passed} passed, ${cell.lastTest.failed} failed` : cell.suite === "unknown" ? <NotRecorded key="s" /> : cell.suite],
+            ["Agents", agentsLine],
+            // Two different counts, each named for what it is (D13); the files available to view are the observer's catalog.
+            ["Artifacts referenced", `${artifactCounts.distinct} distinct`],
+            artifactCounts.records !== artifactCounts.distinct ? ["Artifact records", `${artifactCounts.records} received (a file recorded again counts again)`] : null,
             cell.merged ? ["Merged", <Mono key="m">{`${cell.merged.commit.slice(0, 7)} at ${timecode(cell.merged.at, false)}`}</Mono>] : null,
           ]}
         />
@@ -275,10 +347,10 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
         )}
       </Section>
       <Section title="Gates">
-        {cellGates.length ? (
+        {gateList.length ? (
           <RefList>
-            {cellGates.map((g) => (
-              <GateLink key={g.id} gate={g} />
+            {gateList.map((g) => (
+              <GateLink key={g.ref} gate={g.gate} to={g.ref} />
             ))}
           </RefList>
         ) : (
@@ -323,7 +395,8 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
       <Section title="Visits">
         <ol className="flex flex-col gap-2">
           {visits.map((v) => {
-            const state = v.leftAt === null ? "active" : outcomeState(v.outcome);
+            const status = visitStatusOf(v);
+            const state = status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(v.outcome);
             return (
               <li key={v.enteredSeq} className="flex items-start gap-2.5 rounded-sm border border-line px-3 py-2">
                 <StationGlyph kind={kind} size={22} state={state} />
@@ -332,14 +405,14 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
                     Round {v.round}, {v.action}
                     <span className="text-ink-muted">
                       {" "}
-                      {v.leftAt === null ? "at work" : v.outcome ?? "ended"}, <Elapsed startedAt={v.enteredAt} finishedAt={v.leftAt} />
+                      {status.state === "ended" ? (v.outcomeWord ?? v.outcome ?? "ended") : status.word.toLowerCase()}, <Elapsed startedAt={v.enteredAt} finishedAt={v.leftAt} mode={status.state === "waiting-person" ? "wait" : status.state === "ended-unrecorded" ? "ended-unrecorded" : "work"} />
                     </span>
                   </p>
                   <p className="font-mono text-[11px] text-ink-subtle tabular">
-                    {timecode(v.enteredAt, false)} to {v.leftAt === null ? "now" : timecode(v.leftAt, false)}
+                    {timecode(v.enteredAt, false)} to {v.leftAt === null ? "now" : `${status.state === "ended-unrecorded" ? "at most " : ""}${timecode(v.leftAt, false)}`}
                   </p>
                 </div>
-                <JumpButton seq={v.enteredSeq} label="Go" />
+                <JumpButton t={v.enteredAt} label="Go" />
               </li>
             );
           })}
@@ -380,7 +453,58 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
 
 // ---------------------------------------------------------------- agent
 
+/**
+ * A Dynamic Workflow agent (count-only, contract 8.1): its label, phase, model, elapsed time, token
+ * total, tool-call count and last tool name. Its individual tool calls are not observable, so none is
+ * listed, ticked or timed; no cost is shown for it (no per-agent cost exists).
+ */
+function CountOnlyAgent({ agent }: { agent: AgentState }) {
+  const cell = useScene((s) => s.cells[agent.ticketId] ?? null);
+  const known = (field: string) => isKnown(agent.meta, field);
+  const note = useAgentNote(agent);
+  return (
+    <>
+      <Section title="Facts">
+        <Facts
+          facts={[
+            ["Label", agent.label || <NotRecorded key="l" />],
+            ["Phase", known("phase") && agent.phase ? agent.phase : <NotRecorded key="p" />],
+            ["Model", known("model") ? `${modelName(agent.model)}${agent.modelName && agent.modelName !== agent.model ? ` (${agent.modelName})` : ""}` : agent.modelName ? <Mono key="m">{agent.modelName}</Mono> : <NotRecorded key="m" />],
+            agent.agentType ? ["Agent type", <Mono key="t">{agent.agentType}</Mono>] : null,
+            ["State", agent.lifecycle === "queued" ? "Queued in its workflow" : agent.lifecycle === "unknown" ? "Ended; how is not recorded" : agent.lifecycle === "running" ? "Running" : agent.lifecycle === "error" ? "Ended in an error" : "Finished"],
+            agent.lifecycle === "queued" ? null : ["Started", known("startedAt") ? at(agent.startedAt) : <NotRecorded key="s" />],
+            agent.lifecycle === "queued" ? null : ["Elapsed", agent.durationMs !== null ? `took ${durationOf(agent.durationMs)} (measured)` : <Elapsed key="e" startedAt={agent.startedAt} finishedAt={agent.finishedAt} />],
+            ["Tokens", agent.tokens !== null ? agent.tokens.toLocaleString("en-GB") : <NotRecorded key="k" />],
+            ["Tool calls", agent.toolCallCount !== null ? agent.toolCallCount.toLocaleString("en-GB") : <NotRecorded key="c" />],
+            ["Last tool", agent.lastTool ? <Mono key="lt">{agent.lastTool}</Mono> : <NotRecorded key="lt" />],
+            agent.refused.length ? ["Refused tools", agent.refused.join(", ")] : null,
+            note ? ["Read as", note] : null,
+          ]}
+        />
+        <p className="mt-3 text-body-sm text-ink-muted">Individual tool calls are not observable for workflow agents. The count and the last tool's name come from the workflow's progress snapshots.</p>
+      </Section>
+      <Section title="Related">
+        <RefList>
+          {cell ? <CellLink cell={cell} /> : null}
+          {agent.executionId ? (
+            <RefLink to={ref.execution(agent.executionId)} glyph={<ExecutionGlyph size={18} />} detail="execution">
+              <span className="font-mono text-[12px]">{agent.executionId}</span>
+            </RefLink>
+          ) : null}
+        </RefList>
+      </Section>
+    </>
+  );
+}
+
+const durationOf = (ms: number) => (ms < 1000 ? `${ms} ms` : ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`);
+
 export function AgentAnatomy({ agent }: { agent: AgentState }) {
+  if (agent.observation === "count-only") return <CountOnlyAgent agent={agent} />;
+  return <PerCallAgent agent={agent} />;
+}
+
+function PerCallAgent({ agent }: { agent: AgentState }) {
   const cell = useScene((s) => s.cells[agent.ticketId] ?? null);
   const parent = agent.parentId && cell ? (cell.agents[agent.parentId] ?? null) : null;
   const children = cell ? cell.agentOrder.map((id) => cell.agents[id]).filter((a): a is AgentState => Boolean(a && a.parentId === agent.id)) : [];
@@ -393,6 +517,7 @@ export function AgentAnatomy({ agent }: { agent: AgentState }) {
     return [...c.entries()];
   }, [agent.toolCalls]);
   const produced = cell ? cell.artifacts.filter((a) => a.writer.agentId === agent.id) : [];
+  const note = useAgentNote(agent);
   return (
     <>
       <Section title="Facts">
@@ -400,16 +525,17 @@ export function AgentAnatomy({ agent }: { agent: AgentState }) {
           facts={[
             ["Role", ROLE_WORDS[agent.role]],
             agent.seat ? ["Seat", agent.seat] : null,
-            ["Model", `${modelName(agent.model)} (${agent.tier} tier)`],
-            ["Effort", agent.effort],
+            ["Model", isKnown(agent.meta, "model") ? `${modelName(agent.model)} (${agent.tier} tier)` : agent.modelName ? <Mono key="m">{agent.modelName}</Mono> : <NotRecorded key="m" />],
+            ["Effort", isKnown(agent.meta, "effort") ? agent.effort : <NotRecorded key="ef" />],
             agent.agentType ? ["Agent type", <Mono key="t">{agent.agentType}</Mono>] : null,
             ["Working on", agent.label],
-            ["Belt phase", agent.phase],
+            ["Belt phase", isKnown(agent.meta, "phase") ? agent.phase : <NotRecorded key="ph" />],
             agent.station ? ["Station", STATION_WORDS[agent.station as StationKind]] : null,
             ["Started", at(agent.startedAt)],
             ["Finished", agent.finishedAt === null ? "not yet" : at(agent.finishedAt)],
             ["Time at work", <Elapsed key="e" startedAt={agent.startedAt} finishedAt={agent.finishedAt} />],
             agent.summary ? ["Reported", agent.summary] : null,
+            note ? ["Read as", note] : null,
           ]}
         />
       </Section>
@@ -477,11 +603,11 @@ export function ToolAnatomy({ call }: { call: ToolCallState }) {
         </figure>
         <Facts
           facts={[
-            ["Tool", call.tool],
+            ["Tool", call.toolName || call.tool],
             ["Family", toolFamily(call.tool, call.target)],
             ["Started", at(call.startedAt)],
             ["Time", <Elapsed key="e" startedAt={call.startedAt} finishedAt={call.finishedAt} />],
-            ["Outcome", call.status === "running" ? "Running" : call.status === "ok" ? "Returned" : "Returned an error"],
+            ["Outcome", call.result === "unknown" ? "Not recorded: its execution ended before it returned" : call.status === "running" ? "Running" : call.status === "ok" ? "Returned" : "Returned an error"],
             call.summary ? ["Result", call.summary] : null,
           ]}
         />
@@ -503,6 +629,7 @@ export function ToolAnatomy({ call }: { call: ToolCallState }) {
 
 export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
   const cell = useScene((s) => s.cells[artifact.ticketId] ?? null);
+  const freeText = useFreeTextLabel(artifact);
   const writer = artifact.writer.agentId && cell ? (cell.agents[artifact.writer.agentId] ?? null) : null;
   const base = artifact.path.split("/").pop() ?? artifact.path;
   // Consumers: tool calls in this cell, after the write, whose target names the file. Derived from the
@@ -532,10 +659,12 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
             ["Written", at(artifact.writtenAt)],
             artifact.station ? ["At station", STATION_WORDS[artifact.station as StationKind]] : null,
             artifact.round ? ["Round", artifact.round] : null,
-            ["Written by", writer ? `${ROLE_WORDS[writer.role]} (${writer.label})` : artifact.writer.script ? <Mono key="w">{artifact.writer.script}</Mono> : "unknown"],
+            ["Written by", writer ? `${ROLE_WORDS[writer.role]} (${writer.label})` : artifact.writer.script ? <Mono key="w">{artifact.writer.script}</Mono> : <NotRecorded key="w" />],
+            artifact.record ? ["Integrity", `${artifact.record.integrity}, ${artifact.record.nature}${artifact.record.bytes !== null ? `, ${artifact.record.bytes.toLocaleString("en-GB")} bytes` : ""}`] : null,
+            freeText ? ["Content", <FreeTextNote key="ft" label={freeText} block />] : null,
           ]}
         />
-        <p className="mt-3 text-body-sm text-ink-muted">{artifact.summary}</p>
+        {artifact.summary && isKnown(artifact.meta, "summary") ? <p className="mt-3 text-body-sm text-ink-muted">{artifact.summary}</p> : null}
       </Section>
       <Section title="Writer and readers">
         <RefList>
@@ -578,12 +707,12 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
       <Section title="Decision">
         <Facts
           facts={[
-            ["Gate", GATE_WORDS[gate.gate]],
-            ["Position", <StateWord key="p" state={state} label={GATE_STATE_WORDS[gate.state]} />],
+            ["Gate", gateName(gate)],
+            ["Position", <StateWord key="p" state={state} label={gateStateWords(gate)} />],
             gate.round ? ["Round", `${gate.round} of ${MAX_ROUNDS}`] : null,
             ["Reached", at(gate.openedAt)],
             ["Decided", gate.decidedAt === null ? "not yet" : at(gate.decidedAt)],
-            waitingFor !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingFor} finishedAt={null} />] : null,
+            waitingFor !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingFor} finishedAt={null} mode="wait" />] : null,
           ]}
         />
         <p className="mt-3 text-body-sm text-ink-muted">{gate.detail}</p>
@@ -756,9 +885,9 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
             ]}
           />
         </div>
-        {dependency.satisfiedSeq !== null ? (
+        {dependency.satisfiedAt !== null ? (
           <div className="mt-2">
-            <JumpButton seq={dependency.satisfiedSeq} label="Go to when it cleared" />
+            <JumpButton t={dependency.satisfiedAt} label="Go to when it cleared" />
           </div>
         ) : null}
       </Section>
@@ -779,29 +908,106 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
 
 // ---------------------------------------------------------------- execution
 
+/** Recorded spend per model, from the execution's own usage record (never per agent). */
+function useModelCosts(executionId: string): Array<[string, number | null]> {
+  const { all } = useEntityEvents(ref.execution(executionId));
+  return useMemo(() => {
+    const usage = [...all].reverse().find((e) => e.event.type === "execution.usage");
+    if (!usage) return [];
+    const models = ((usage.event as { data?: { models?: Record<string, { cost_usd?: number | null }> } }).data?.models ?? {}) as Record<string, { cost_usd?: number | null }>;
+    return Object.entries(models).map(([name, m]): [string, number | null] => [name, typeof m.cost_usd === "number" ? m.cost_usd : null]);
+  }, [all]);
+}
+
+const COST_REASON_WORDS: Readonly<Record<string, string>> = {
+  "budget-stop": "a budget stop ended the run",
+  "agents-killed-in-flight": "agents were stopped with work in flight",
+};
+
+/** A cost the record itself says may be low (execution.usage.cost_complete: false). Never guessed. */
+export function mayBeUnderReported(x: ExecutionState): boolean {
+  return costCompletenessOf(x).complete === false;
+}
+
+/** Why the record says the cost may be low, in words. */
+export function underReportedWhy(x: ExecutionState): string {
+  const reasons = costCompletenessOf(x).reasons.map((r) => COST_REASON_WORDS[r] ?? r);
+  return reasons.length ? reasons.join("; ") : "the record does not say why";
+}
+
+/** The execution's recorded cost, or null when none is recorded (never 0 for "not recorded"). */
+export function recordedCost(x: ExecutionState): number | null {
+  if (x.usage && x.usage.costUsd !== null) return x.usage.costUsd;
+  if (x.outcome && isKnown(x.meta, "costUsd")) return x.outcome.costUsd;
+  return null;
+}
+
+const usd = (n: number) => `$${n.toFixed(2)}`;
+
 export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
   const agents = useScene((s) => s.cells);
-  const count = useMemo(() => allAgentsOf(agents, execution.id), [agents, execution.id]);
+  const strays = useScene((s) => s.strayAgents);
+  const count = useMemo(() => allAgentsOf(agents, execution.id) + Object.values(strays).filter((a) => a.executionId === execution.id).length, [agents, strays, execution.id]);
+  const factory = useSceneStore((s) => s.factoryStatus);
+  const agentsLine = useScene((s) => agentsOf(s, factory, execution.id, count));
+  const runtimeLine = useScene((s) => (execution.meta.authority === "simulated" ? null : runtimeWords(streamObservationOf(s, execution.id, sourceRuntimeOf(factory?.sources, execution.id)))));
+  const real = execution.meta.authority !== "simulated";
+  const cost = recordedCost(execution);
+  const models = useModelCosts(execution.id);
+  const under = mayBeUnderReported(execution);
   return (
     <>
       <Section title="Facts">
         <Facts
           facts={[
             ["Ticket", <Mono key="t">{execution.ticketId}</Mono>],
-            ["State", execution.state],
-            ["Attempt", execution.attempt],
-            ["Asked to", execution.next],
+            ["State", executionStatusOf(execution).word],
+            ["Attempt", isKnown(execution.meta, "attempt") ? execution.attempt : <NotRecorded key="at" />],
+            ["Asked to", isKnown(execution.meta, "next") ? execution.next : <NotRecorded key="n" />],
             execution.workflow ? ["Workflow", <Mono key="w">{execution.workflow}</Mono>] : null,
+            execution.workflowStatus ? ["Workflow ended", execution.workflowStatus === "running" ? "Still running" : execution.workflowStatus] : null,
             execution.phase ? ["Belt phase", execution.phase] : null,
-            ["Claimed", at(execution.claimedAt)],
+            execution.phases.length ? ["Declared phases", execution.phases.join(", ")] : null,
+            ["Claimed", isKnown(execution.meta, "claimedAt") ? at(execution.claimedAt) : <NotRecorded key="c" />],
             ["Started", at(execution.startedAt)],
             ["Ended", at(execution.endedAt)],
+            real && execution.processStartedAt !== null
+              ? ["Process", `${timecode(execution.processStartedAt, false)} to ${execution.processEndedAt === null ? "now" : timecode(execution.processEndedAt, false)}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
+              : null,
+            execution.recovery ? ["Recovery", execution.recovery] : null,
             execution.outcome ? ["Outcome", `${execution.outcome.stage ?? "?"}, next ${execution.outcome.next}${execution.outcome.waitingFor ? `, waiting for ${execution.outcome.waitingFor}` : ""}`] : null,
-            execution.outcome ? ["Cost", `$${execution.outcome.costUsd.toFixed(2)}`] : null,
-            ["Agents", count],
+            [
+              "Cost",
+              cost === null ? (
+                <NotRecorded key="cost" />
+              ) : (
+                <span key="cost">
+                  {usd(cost)}
+                  {real ? " (recorded)" : " (simulated)"}
+                  {under ? <span className="block text-caption text-warning-ink">May be under-reported: {underReportedWhy(execution)}.</span> : null}
+                </span>
+              ),
+            ],
+            ["Agents", agentsLine],
+            execution.claudeCodeVersion || runtimeLine
+              ? [
+                  "Claude Code",
+                  <span key="v">
+                    {execution.claudeCodeVersion ? <Mono>{execution.claudeCodeVersion}</Mono> : <NotRecorded />}
+                    {runtimeLine ? <span className="block text-caption text-ink-subtle">{runtimeLine}</span> : null}
+                  </span>,
+                ]
+              : null,
+            execution.refused.length ? ["Refused tools", execution.refused.map((r) => r.tool).join(", ")] : null,
           ]}
         />
       </Section>
+      {models.length ? (
+        <Section title="Cost by model" aside={<span className="text-caption text-ink-subtle">recorded; never per agent</span>}>
+          <Facts facts={models.map(([name, cost]): [string, ReactNode] => [name, cost === null ? <NotRecorded key={name} /> : usd(cost)])} />
+          {under ? <p className="mt-2 text-caption text-warning-ink">These may be under-reported: {underReportedWhy(execution)}.</p> : null}
+        </Section>
+      ) : null}
       <Section title="Related">
         <RefList>
           <RefLink to={ref.cell(execution.ticketId)} glyph={<CellGlyph size={18} />}>
@@ -828,11 +1034,12 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
   const past = useMemo(() => all.slice(0, happened), [all, happened]);
   const byKind = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const e of past) counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+    for (const e of past) counts.set(e.event.type, (counts.get(e.event.type) ?? 0) + 1);
     return ACTOR_KINDS[actor.id].map((k) => [k, counts.get(k) ?? 0] as const);
   }, [past, actor.id]);
   const decisionKinds = actor.id === "supervisor" ? ["scheduling.decided"] : ["work.scheduled", "dependency.resolved", "dependency.blocked"];
-  const decision = [...past].reverse().find((e) => decisionKinds.includes(e.type)) ?? null;
+  const decision = [...past].reverse().find((e) => decisionKinds.includes(e.event.type)) ?? null;
+  const held = decision?.event.type === "scheduling.decided" ? ((decision.event as { data?: { held?: Array<{ slice_id?: string | null; ticket_id?: string | null; why: string }> } }).data?.held ?? []) : [];
   const words = ACTOR_WORDS[actor.id];
   return (
     <>
@@ -852,12 +1059,12 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
         {decision ? (
           <div className="border-l-2 border-factory-select pl-3">
             <p className="font-mono text-[11px] text-ink-subtle tabular">
-              {decision.type}, {timecode(decision.t)}
+              {decision.event.type}, {timecode(decision.t)}
             </p>
-            <p className="mt-0.5 text-body-sm text-ink">{describe(decision)}</p>
-            {decision.type === "scheduling.decided" && decision.data.held.length ? (
+            <p className="mt-0.5 text-body-sm text-ink">{describeEntry(decision)}</p>
+            {held.length ? (
               <ul className="mt-1 list-disc pl-4 text-caption text-ink-muted">
-                {decision.data.held.map((h) => (
+                {held.map((h) => (
                   <li key={`${h.slice_id ?? h.ticket_id}`}>
                     <span className="font-mono">{h.slice_id ?? h.ticket_id}</span>: {h.why}
                   </li>
@@ -865,7 +1072,7 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
               </ul>
             ) : null}
             <div className="mt-1">
-              <JumpButton seq={decision.seq} />
+              <JumpButton eventId={decision.id} />
             </div>
           </div>
         ) : (
@@ -883,5 +1090,142 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
         </ul>
       </Section>
     </>
+  );
+}
+
+// ---------------------------------------------------------------- the kinds real history adds (contract 5.2)
+
+/** One station visit: when it began and ended, what the station said, and its round. */
+export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
+  const kind = visit.station as StationKind;
+  const status = visitStatusOf(visit);
+  return (
+    <>
+      <Section title="Facts">
+        <Facts
+          facts={[
+            ["Station", STATION_WORDS[kind] ?? visit.station],
+            ["Cell", <Mono key="c">{visit.ticketId}</Mono>],
+            ["Round", `${visit.round} of ${MAX_ROUNDS}`],
+            ["Step", isKnown(visit.meta, "action") ? visit.action : <NotRecorded key="a" />],
+            ["Entered", at(visit.enteredAt)],
+            ["State", status.word],
+            ["Left", status.state === "ended" ? at(visit.leftAt) : visitLeftWords(visit, status, (t) => timecode(t, false))],
+            [
+              "Duration",
+              visit.durationMs !== null ? (
+                `${Math.round(visit.durationMs / 1000)} s, measured`
+              ) : visit.leftAt === null ? (
+                <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={null} mode={status.state === "waiting-person" ? "wait" : "work"} />
+              ) : status.state === "ended-unrecorded" ? (
+                <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={visit.leftAt} mode="ended-unrecorded" />
+              ) : (
+                <NotRecorded key="d" />
+              ),
+            ],
+            ["The station said", visit.outcomeWord ? <Mono key="o">{visit.outcomeWord}</Mono> : visit.leftAt === null ? "not yet" : <NotRecorded key="o" />],
+            status.detail ? ["Why", status.detail] : null,
+          ]}
+        />
+      </Section>
+      <Section title="Related">
+        <RefList>
+          <RefLink to={ref.station(visit.station, visit.ticketId)} glyph={<StationGlyph kind={kind} size={18} />}>
+            Every visit to this station
+          </RefLink>
+          <RefLink to={ref.cell(visit.ticketId)} glyph={<CellGlyph size={18} />}>
+            <span className="font-mono text-[12px]">{visit.ticketId}</span>
+          </RefLink>
+        </RefList>
+      </Section>
+    </>
+  );
+}
+
+/** One review seat: it exists from its round's start, whether or not its reviewer is seen. */
+export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
+  return (
+    <>
+      <Section title="Facts">
+        <Facts
+          facts={[
+            ["Seat", seat.seat],
+            ["Cell", <Mono key="c">{seat.ticketId}</Mono>],
+            ["Round", `${seat.round} of ${MAX_ROUNDS}`],
+            ["Model", seat.model],
+            ["Vote", seat.vote ?? "not yet"],
+            seat.votedAt !== null ? ["Voted", at(seat.votedAt)] : null,
+            seat.votedLate ? ["Arrived", "late: recorded after events that come after it"] : null,
+            ["Findings", seat.findings],
+            ["Reviewer", seat.agentId ? <Mono key="r">{seat.agentId}</Mono> : "not seen"],
+          ]}
+        />
+        {seat.votedEventId ? <JumpButton eventId={seat.votedEventId} label="Go to the vote" /> : null}
+      </Section>
+      <Section title="Related">
+        <RefList>
+          <RefLink to={ref.gate(`${seat.ticketId}/review#${seat.round}`)} glyph={<GateGlyphSmall kind={gateOf("review")} size={18} />}>
+            Review, round {seat.round}
+          </RefLink>
+          {seat.agentId ? (
+            <RefLink to={ref.agent(seat.agentId)} glyph={<AgentGlyph tier={tierOf(seat.model)} agentRole={roleOf("reviewer")} size={18} />}>
+              The reviewer
+            </RefLink>
+          ) : null}
+        </RefList>
+      </Section>
+    </>
+  );
+}
+
+/** A Dynamic Workflow: its recorded status, declared phases and agents. Its agents' tool calls are counts only. */
+export function WorkflowAnatomy({ workflow }: { workflow: WorkflowEntity }) {
+  return (
+    <>
+      <Section title="Facts">
+        <Facts
+          facts={[
+            ["Workflow", workflow.name ? <Mono key="n">{workflow.name}</Mono> : <NotRecorded key="n" />],
+            ["Execution", <Mono key="x">{workflow.executionId}</Mono>],
+            ["Ticket", workflow.ticketId ? <Mono key="t">{workflow.ticketId}</Mono> : <NotRecorded key="t" />],
+            ["Status", workflow.status === null ? <NotRecorded key="s" /> : workflow.status === "running" ? "Running" : workflow.status],
+            workflow.stopReason ? ["Stopped by", workflow.stopReason] : null,
+            ["Ended", workflow.finishedAt === null ? "not yet" : at(workflow.finishedAt)],
+            ["Declared phases", workflow.phases.length ? workflow.phases.join(", ") : <NotRecorded key="p" />],
+            ["Agents started", workflow.agentIds.length],
+            workflow.queued ? ["Queued, not started", workflow.queued] : null,
+          ]}
+        />
+        <p className="mt-3 text-caption text-ink-subtle">A phase list is declared, not entered: when the belt is in a phase is not recorded.</p>
+      </Section>
+      <Section title="Related">
+        <RefList>
+          <RefLink to={ref.execution(workflow.executionId)} glyph={<ExecutionGlyph size={18} />}>
+            <span className="font-mono text-[12px]">{workflow.executionId}</span>
+          </RefLink>
+        </RefList>
+      </Section>
+    </>
+  );
+}
+
+/** The project: what the history holds about it. */
+export function ProjectAnatomy({ project }: { project: ProjectEntity }) {
+  const f = project.factory;
+  return (
+    <Section title="Facts">
+      <Facts
+        facts={[
+          ["Project", <Mono key="p">{project.id}</Mono>],
+          ["Name", project.name ?? <NotRecorded key="n" />],
+          ["Integration branch", project.integrationBranch ? <Mono key="b">{project.integrationBranch}</Mono> : <NotRecorded key="b" />],
+          ["Factory", f.enabled ? `${f.paused ? "Paused" : "Enabled"}${f.autonomy ? `, ${f.autonomy}` : ""}` : "Not enabled in the history received"],
+          ["Waves", project.waves],
+          ["Slices", project.slices],
+          ["Cells", project.cells],
+          ["Executions", project.executions],
+        ]}
+      />
+    </Section>
   );
 }

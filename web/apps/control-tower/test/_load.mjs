@@ -25,3 +25,4 @@ registerHooks({
 
 export const sim = await import("../src/sim/index.ts");
 export const scene = await import("../src/scene/store.ts");
+export const live = await import("../src/live/index.ts");

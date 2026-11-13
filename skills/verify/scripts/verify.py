@@ -7,9 +7,19 @@ may start, what must be proven, whether each claim has a real, fresh evidence fi
 and the verdict.
 
     verify.py start <ticket>     check the gates, rerun the suite and contract checks, print what to prove
+    verify.py capture <ticket> <driver.py> --out FILE [--input FILE] [-- ARG...]
+                                 run a Python driver from the evidence folder and save its transcript there
     verify.py record <ticket> <ID> --result pass|fail --evidence FILE --note "what was observed"
+    verify.py record <ticket> --from FILE    record several checks from a JSON list, all or none
     verify.py finish <ticket>    verdict: PASS, FAIL_WITH_EVIDENCE or INCOMPLETE_EVIDENCE
     verify.py status <ticket>
+
+Every form is one plain command: no shell redirect, pipe, heredoc or change of directory is ever
+needed, so the station works inside the Factory's restricted tool list (M4 known issue 9, D22).
+`capture` replaces `python3 driver.py > evidence/run.log 2>&1`; `record --from` replaces a series of
+`record` calls chained in one shell command. Neither relaxes a check: `capture` runs only the
+station's own Python on a script inside the evidence folder, which the tool list already allows,
+and every record from a file passes exactly the checks of a single `record`.
 
 What must be proven: every scenario (AC-NN) in spec.json with the scenario's own data, every
 decision matrix rule (RN) with data the verifier chooses, and any holdout check a person left
@@ -36,6 +46,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 AUTO_FILES = ("test-suite.log", "contract-check.log", "results.json", "summary.json", "findings.md")
+RECORDS_FILE = "verify-records.json"  # in the cell folder, never in evidence/: an input to `record --from`, not evidence
+CAPTURE_TIMEOUT = 600
 IMAGE = ["*.png", "*.jpg", "*.jpeg"]
 VIDEO = ["*.webm", "*.mp4", "*.mov", "*.gif", "*trace*.zip"]
 # For each app type: the kinds of evidence a reviewer needs, each satisfied by any matching file.
@@ -65,7 +77,27 @@ def is_byproduct(name: str) -> bool:
 
 
 class VerifyError(Exception):
-    """A gate refused. Printed without a traceback; exit code 1."""
+    """A gate refused. Printed without a traceback; exit code 1. `code` names the gate's reason for the lifecycle log."""
+
+    def __init__(self, message: str = "", code: str = "refused") -> None:
+        super().__init__(message)
+        self.code = code
+
+# M6.1 station telemetry. The shared helper lives with the intent station. It is observational only: if it
+# cannot be loaded, nothing is recorded and this station behaves exactly as before.
+try:
+    _SKILL = Path(__file__).resolve().parent.parent
+    sys.path.append(str(_SKILL.parent / ("mach-intent" if _SKILL.name.startswith("mach-") else "intent") / "scripts"))
+    import lifecycle  # noqa: E402
+except Exception:  # noqa: BLE001
+    lifecycle = None
+
+
+def telemetry(*args: Any, **kwargs: Any) -> None:
+    """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
+    if lifecycle is not None:
+        lifecycle.record(*args, **kwargs)
+
 
 
 def now() -> str:
@@ -139,7 +171,7 @@ class Cell:
 
     def require_started(self) -> None:
         if not self.results.get("started_at") or self.results.get("head") != self.head():
-            raise VerifyError(f"Verification has not started for this build of {self.ticket_id}. Run: verify.py start {self.ticket_id}")
+            raise VerifyError(f"Verification has not started for this build of {self.ticket_id}. Run: verify.py start {self.ticket_id}", code="not-started")
 
     def head(self) -> str:
         return git(self.work, "rev-parse", "HEAD").stdout.strip()
@@ -281,15 +313,15 @@ def changed_files(cell: Cell) -> List[str]:
 def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     stage = cell.info.get("stage")
     if stage not in ("built", "verified"):
-        raise VerifyError(f"The cell's stage is '{stage}'. Only a built cell can be verified; the build station must finish first.")
+        raise VerifyError(f"The cell's stage is '{stage}'. Only a built cell can be verified; the build station must finish first.", code="wrong-stage")
     if not cell.build or cell.build.get("status") != "BUILT":
-        raise VerifyError("build-report.json is missing from the cell, so there is nothing certified as built to verify.")
+        raise VerifyError("build-report.json is missing from the cell, so there is nothing certified as built to verify.", code="not-built")
     head = cell.head()
     if cell.build.get("head") != head:
-        raise VerifyError("The cell's code changed after the build finished. Finish the build again before verifying.")
+        raise VerifyError("The cell's code changed after the build finished. Finish the build again before verifying.", code="code-changed")
     dirty = changed_files(cell)
     if dirty:
-        raise VerifyError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}). Verification runs exactly what was built.")
+        raise VerifyError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}). Verification runs exactly what was built.", code="uncommitted-changes")
     app_type = cell.info.get("app_type")
     if app_type not in REQUIRED_EVIDENCE:
         raise VerifyError(f"The cell has no usable app type ('{app_type}'). The plan sets it; regroom the ticket.")
@@ -299,11 +331,13 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
 
     cell.evidence.mkdir(exist_ok=True)
     stale = [p for p in cell.evidence.iterdir() if not p.name.startswith("previous-")]
+    archive = None
     if stale:
         archive = cell.evidence / f"previous-{len(list(cell.evidence.glob('previous-*'))) + 1}"
         archive.mkdir()
         for path in stale:
             path.rename(archive / path.name)
+    (cell.root / RECORDS_FILE).unlink(missing_ok=True)  # an input already applied to an earlier run's results
     started = time.time()
     suite = run_logged(cell, command, cell.evidence / "test-suite.log")
     contracts = check_contracts(cell)
@@ -317,6 +351,10 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "suite": suite, "contracts": contracts, "records": {},
     }
     cell.save()
+    telemetry(cell.root, "gate.evaluated", "verify", lambda: {"gate": "verify.start", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
+    telemetry(cell.root, "station.entered", "verify", lambda: {
+        "stage": stage, "head": lifecycle.short(head), "items": len(targets), "suite_passed": bool(suite["passed"]), "contracts_valid": bool(contracts["valid"]),
+        "previous_evidence": f"evidence/{archive.name}" if archive else None})
     print(json.dumps({
         "status": "STARTED", "ticket_id": cell.ticket_id, "app_type": app_type, "workdir": str(cell.work), "evidence_dir": str(cell.evidence),
         "suite": suite, "contracts": contracts,
@@ -324,38 +362,150 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "tools_available": tools,
         "builder_notes": {"deviations": cell.build.get("deviations", []), "tests_passing_on_first_run": cell.build.get("tests_passing_on_first_run", [])},
         "prove": targets,
-        "next": "Prove each item yourself, save what you capture under evidence_dir, and record each with 'record'.",
+        "records_file": str(cell.root / RECORDS_FILE),
+        "next": "Prove each item yourself: write a driver into evidence_dir, run it with 'capture', and record each item with 'record' "
+                "(or all at once with 'record --from' and the records_file).",
     }, indent=2, ensure_ascii=False))
     return 0
+
+
+def evidence_path(cell: Cell, name: str, what: str) -> Path:
+    """A path named relative to the evidence folder, refused if it leaves it."""
+    if not isinstance(name, str) or not name.strip() or Path(name).is_absolute():
+        raise VerifyError(f"{what} must be named relative to the evidence folder ({cell.evidence}), such as 'consumer-run.log'.", code="outside-evidence")
+    path = (cell.evidence / name).resolve()
+    if cell.evidence.resolve() not in path.parents:
+        raise VerifyError(f"'{name}' is outside the evidence folder. Save evidence under {cell.evidence} and name it relative to that folder.", code="outside-evidence")
+    return path
+
+
+def checked_record(cell: Cell, known: Dict[str, Dict[str, Any]], target: Any, result: Any, evidence: Any, note: Any) -> Dict[str, Any]:
+    """One check, with every condition a record must meet. Raises VerifyError; changes nothing."""
+    if target not in known:
+        raise VerifyError(f"{target} is not something this verification must prove. Expected one of: {', '.join(known)}.", code="unknown-item")
+    if result not in ("pass", "fail"):
+        raise VerifyError(f"{target}: the result must be 'pass' or 'fail'.")
+    note = " ".join(note.split()) if isinstance(note, str) else ""
+    if len(note) < 20:
+        raise VerifyError("The note must say what you did and what you observed, in a sentence; for a failure, what was expected and what happened instead.")
+    names = [evidence] if isinstance(evidence, str) else evidence
+    if not isinstance(names, list) or not names or not all(isinstance(name, str) for name in names):
+        raise VerifyError(f"{target}: name at least one evidence file, relative to the evidence folder.")
+    files = []
+    for name in names:
+        path = evidence_path(cell, name, "Evidence")
+        if not path.is_file() or path.stat().st_size == 0:
+            raise VerifyError(f"Evidence file '{name}' does not exist or is empty.")
+        if path.stat().st_mtime < cell.results["started_epoch"] - 1:
+            raise VerifyError(f"Evidence file '{name}' is older than this verification run. Capture it again; old evidence proves nothing about this build.", code="stale-evidence")
+        relative = path.relative_to(cell.evidence.resolve()).as_posix()
+        if relative == "test-suite.log":
+            raise VerifyError("The builder's own test run is not evidence for a check. Exercise the behavior yourself and capture that.", code="builder-evidence")
+        if relative in AUTO_FILES:
+            raise VerifyError(f"'{relative}' is written by this script and cannot stand as your evidence.", code="station-file-as-evidence")
+        files.append({"file": relative, "sha256": sha(path), "bytes": path.stat().st_size})
+    return {"id": target, "kind": known[target]["kind"], "result": result, "note": note, "evidence": files}
+
+
+def records_from(cell: Cell, source: Path) -> List[Any]:
+    """The checks listed in a records file the verifier wrote with its file tools (no heredoc or chained commands)."""
+    path = source if source.is_absolute() else Path.cwd() / source
+    if not path.is_file() and not source.is_absolute() and (cell.root / source).is_file():
+        path = cell.root / source
+    resolved = path.resolve()
+    if resolved == cell.evidence.resolve() or cell.evidence.resolve() in resolved.parents:
+        raise VerifyError(f"The records file must not be in the evidence folder, where it would count as evidence. Write it to {cell.root / RECORDS_FILE}.",
+                          code="records-in-evidence")
+    data = load_json(path)
+    if data is None:
+        raise VerifyError(f"{source} is missing or is not valid JSON.", code="records-unreadable")
+    if not isinstance(data, list) or not data or not all(isinstance(item, dict) for item in data):
+        raise VerifyError('The records file must be a JSON list of {"id": "AC-01", "result": "pass" or "fail", "evidence": ["<file in the evidence folder>"], '
+                          '"note": "<what you did and what you observed>"} objects.', code="records-invalid")
+    ids = [item.get("id") for item in data]
+    repeated = sorted({str(item) for item in ids if ids.count(item) > 1})
+    if repeated:
+        raise VerifyError(f"The records file lists {', '.join(repeated)} more than once.", code="records-invalid")
+    return data
 
 
 def cmd_record(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     known = {target["id"]: target for target in cell.targets()}
-    if args.target not in known:
-        raise VerifyError(f"{args.target} is not something this verification must prove. Expected one of: {', '.join(known)}.")
-    note = " ".join(args.note.split())
-    if len(note) < 20:
-        raise VerifyError("The note must say what you did and what you observed, in a sentence; for a failure, what was expected and what happened instead.")
-    files = []
-    for name in args.evidence:
-        path = (cell.evidence / name).resolve()
-        if cell.evidence.resolve() not in path.parents:
-            raise VerifyError(f"'{name}' is outside the evidence folder. Save evidence under {cell.evidence} and name it relative to that folder.")
-        if not path.is_file() or path.stat().st_size == 0:
-            raise VerifyError(f"Evidence file '{name}' does not exist or is empty.")
-        if path.stat().st_mtime < cell.results["started_epoch"] - 1:
-            raise VerifyError(f"Evidence file '{name}' is older than this verification run. Capture it again; old evidence proves nothing about this build.")
-        relative = path.relative_to(cell.evidence.resolve()).as_posix()
-        if relative == "test-suite.log":
-            raise VerifyError("The builder's own test run is not evidence for a check. Exercise the behavior yourself and capture that.")
-        if relative in AUTO_FILES:
-            raise VerifyError(f"'{relative}' is written by this script and cannot stand as your evidence.")
-        files.append({"file": relative, "sha256": sha(path), "bytes": path.stat().st_size})
-    cell.results["records"][args.target] = {"kind": known[args.target]["kind"], "result": args.result, "note": note, "evidence": files, "at": now()}
+    if args.records_from is not None:
+        if args.target or args.result or args.evidence or args.note:
+            raise VerifyError("Give either --from with a records file, or one check (ID, --result, --evidence, --note), not both.")
+        items = records_from(cell, args.records_from)
+        # Every check is validated before any is recorded: a file with one bad entry records nothing.
+        records = [checked_record(cell, known, item.get("id"), item.get("result"), item.get("evidence"), item.get("note")) for item in items]
+    else:
+        missing = [flag for flag, value in (("an item ID", args.target), ("--result", args.result), ("--evidence", args.evidence), ("--note", args.note)) if not value]
+        if missing:
+            raise VerifyError(f"record needs {', '.join(missing)} (or --from with a records file).")
+        records = [checked_record(cell, known, args.target, args.result, args.evidence, args.note)]
+    for record in records:
+        cell.results["records"][record["id"]] = {"kind": record["kind"], "result": record["result"], "note": record["note"], "evidence": record["evidence"], "at": now()}
     cell.save()
+    for record in records:
+        telemetry(cell.root, "verify.check_recorded", "verify", lambda record=record: {
+            "item": record["id"], "kind": record["kind"], "result": record["result"],
+            "evidence": [{"path": f"evidence/{entry['file']}", "sha256": entry["sha256"]} for entry in record["evidence"]]})
     remaining = [target for target in known if target not in cell.results["records"]]
-    print(json.dumps({"status": "RECORDED", "id": args.target, "result": args.result, "remaining": remaining or "none; run finish"}, indent=2))
+    if len(records) == 1:
+        print(json.dumps({"status": "RECORDED", "id": records[0]["id"], "result": records[0]["result"], "remaining": remaining or "none; run finish"}, indent=2))
+    else:
+        print(json.dumps({"status": "RECORDED", "ids": [record["id"] for record in records], "results": {record["id"]: record["result"] for record in records},
+                          "remaining": remaining or "none; run finish"}, indent=2))
+    return 0
+
+
+def cmd_capture(cell: Cell, args: argparse.Namespace) -> int:
+    """Run the verifier's own Python driver from the evidence folder and save what it printed as evidence.
+
+    It runs exactly `<this interpreter> -B <driver> <args>`, with the cell's workdir as the current directory
+    and on the import path, and writes a transcript (the command, its output, its errors, exit code and time)
+    to the named file. It replaces a shell redirect; it runs nothing the tool list did not already allow."""
+    cell.require_started()
+    if not 1 <= args.timeout <= 3600:
+        raise VerifyError("--timeout is in seconds, from 1 to 3600.")
+    driver = evidence_path(cell, args.driver, "The driver")
+    if driver.suffix != ".py" or not driver.is_file():
+        raise VerifyError(f"'{args.driver}' is not a Python script in the evidence folder. Write the driver there with your file tools first.", code="no-driver")
+    out = evidence_path(cell, args.out, "The output file")
+    relative = out.relative_to(cell.evidence.resolve()).as_posix()
+    if relative in AUTO_FILES or relative.split("/")[0].startswith("previous-") or out == driver or out.suffix == ".py":
+        raise VerifyError(f"'{relative}' cannot be written by capture: it is the driver, a script, an earlier run's evidence, or a file this station writes itself.",
+                          code="reserved-file")
+    stdin = None
+    if args.input:
+        stdin = evidence_path(cell, args.input, "The input file")
+        if not stdin.is_file():
+            raise VerifyError(f"Input file '{args.input}' does not exist in the evidence folder.", code="no-input")
+    passed = list(args.args or [])
+    if passed and passed[0] == "--":
+        passed = passed[1:]
+    argv = [sys.executable, "-B", str(driver), *passed]
+    env = dict(os.environ)
+    env.update({"PYTHONDONTWRITEBYTECODE": "1", "MACH_VERIFY_WORKDIR": str(cell.work), "MACH_VERIFY_EVIDENCE": str(cell.evidence),
+                "PYTHONPATH": os.pathsep.join([str(cell.work), *([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])])})
+    shown = " ".join(shlex.quote(part) for part in ["python3", "-B", f"evidence/{driver.relative_to(cell.evidence.resolve()).as_posix()}", *passed])
+    started = time.monotonic()
+    try:
+        with (stdin.open("rb") if stdin else open(os.devnull, "rb")) as feed:
+            done = subprocess.run(argv, cwd=str(cell.work), stdin=feed, capture_output=True, timeout=args.timeout, env=env)
+        code = done.returncode
+        output, errors = done.stdout.decode("utf-8", "replace"), done.stderr.decode("utf-8", "replace")
+    except subprocess.TimeoutExpired as exc:
+        code = 124
+        output = (exc.stdout or b"").decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        errors = f"Still running after {args.timeout} seconds; stopped."
+    seconds = round(time.monotonic() - started, 1)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    text = (f"$ {shown}" + (f" < evidence/{args.input}" if args.input else "") + f"\n(in {cell.work}, at {now()})\n\n"
+            f"--- standard output ---\n{output.rstrip()}\n\n--- standard error ---\n{errors.rstrip()}\n\nexit code: {code}\nseconds: {seconds}\n")
+    out.write_text(text, encoding="utf-8")
+    print(json.dumps({"status": "CAPTURED", "file": relative, "exit_code": code, "seconds": seconds, "bytes": out.stat().st_size,
+                      "next": f"Read evidence/{relative}, then record what it shows."}, indent=2))
     return 0
 
 
@@ -391,6 +541,8 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
 
     status = "FAIL_WITH_EVIDENCE" if failures else "INCOMPLETE_EVIDENCE" if incomplete else "PASS"
     if status == "INCOMPLETE_EVIDENCE":
+        telemetry(cell.root, "gate.evaluated", "verify", lambda: {"gate": "verify.finish", "outcome": "refuse", "reason_code": "incomplete-evidence",
+                                                                  "overridden_by_reason": False, "problems": len(incomplete), "unproven": missing})
         print("INCOMPLETE_EVIDENCE:\n- " + "\n- ".join(incomplete))
         return 1
 
@@ -418,6 +570,11 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     cell.info["stage"] = "verified" if status == "PASS" else "built"
     cell.info["verification"] = status
     cell.save_info()
+    telemetry(cell.root, "gate.evaluated", "verify", lambda: {"gate": "verify.verdict", "outcome": "pass" if status == "PASS" else "refuse",
+                                                              "reason_code": status, "overridden_by_reason": False})
+    telemetry(cell.root, "station.exited", "verify", lambda: {
+        "outcome": status, "stage": cell.info["stage"], "checks_passed": sum(1 for r in records.values() if r["result"] == "pass"),
+        "checks_failed": sum(1 for r in records.values() if r["result"] == "fail"), "suite_passed": bool(suite["passed"]), "contracts_valid": bool(contracts["valid"])})
     passed = sum(1 for r in records.values() if r["result"] == "pass")
     print(json.dumps({
         "status": status, "summary": str(cell.evidence / "summary.json"), "checks_passed": passed, "checks_failed": len(records) - passed,
@@ -450,23 +607,37 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=text)
         p.add_argument("ticket_id")
         p.set_defaults(func=func)
-    p = sub.add_parser("record", help="record one proven or failed check with its evidence")
+    p = sub.add_parser("record", help="record one proven or failed check with its evidence, or several from a file")
     p.add_argument("ticket_id")
-    p.add_argument("target", help="the scenario, rule or holdout ID, such as AC-03 or R2")
-    p.add_argument("--result", choices=("pass", "fail"), required=True)
-    p.add_argument("--evidence", action="append", required=True, help="evidence file, relative to the evidence folder (repeatable)")
-    p.add_argument("--note", required=True, help="what you did and what you observed")
+    p.add_argument("target", nargs="?", help="the scenario, rule or holdout ID, such as AC-03 or R2")
+    p.add_argument("--result", choices=("pass", "fail"))
+    p.add_argument("--evidence", action="append", help="evidence file, relative to the evidence folder (repeatable)")
+    p.add_argument("--note", help="what you did and what you observed")
+    p.add_argument("--from", dest="records_from", type=Path, metavar="FILE",
+                   help=f"a JSON list of checks, each {{id, result, evidence, note}}, written outside the evidence folder (start prints the path: {RECORDS_FILE} in the cell)")
     p.set_defaults(func=cmd_record)
+    p = sub.add_parser("capture", help="run a Python driver from the evidence folder and save its transcript as evidence")
+    p.add_argument("ticket_id")
+    p.add_argument("driver", help="the driver script, relative to the evidence folder, such as driver.py")
+    p.add_argument("--out", required=True, help="the transcript file to write, relative to the evidence folder, such as consumer-run.log")
+    p.add_argument("--input", help="a file in the evidence folder to feed the driver as its standard input")
+    p.add_argument("--timeout", type=int, default=CAPTURE_TIMEOUT, help="seconds before the driver is stopped")
+    p.add_argument("args", nargs="*", help="after --: arguments passed to the driver")
+    p.set_defaults(func=cmd_capture)
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
         return args.func(Cell(project, args.ticket_id), args)
     except VerifyError as exc:
         print(f"refused: {exc}", file=sys.stderr)
+        if project is not None and args.command != "status":
+            telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", "verify", lambda: {
+                "gate": f"verify.{args.command}", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False, "item": getattr(args, "target", None)})
         return 1
 
 

@@ -10,12 +10,13 @@
  * Detail (task boards, elapsed times, artifact cards, dimension lines, findings flags, callouts) comes
  * back with the full drawing above 0.6. This level draws fewer elements than the full one.
  */
-import { factoryStates, fc, StateMark, type FactoryState } from "@mach/ui";
+import { factoryStates, fc, StateMark, type FactoryState, type MarkState } from "@mach/ui";
 import type { CellState, GateState, ReviewRoundState } from "../sim";
 import { ref } from "../sim";
 import type { Flow, FlowNode } from "./flow";
-import { useEventProgress } from "./motion";
-import { agentState, gateState } from "./vocab";
+import { ActivityMark } from "./marks";
+import { useEventProgress, useLate, useStaleSince } from "./motion";
+import { agentState, gateState, visitMark } from "./vocab";
 
 /** Sizes in sheet units: about 15 px across on screen at a fit of 0.42. */
 const R = { station: 18, gate: 19, seat: 11, start: 12, end: 18, future: 13 } as const;
@@ -27,14 +28,6 @@ const ink = (s: FactoryState): string => fc(factoryStates[s].ink);
 
 function built(n: FlowNode): boolean {
   return n.kind !== "future" && !(n.kind === "end" && n.key.startsWith("f:"));
-}
-
-function stateOf(n: FlowNode): FactoryState | null {
-  if (!built(n)) return null;
-  if (n.kind === "start" || n.kind === "end") return "succeeded";
-  if (n.gate) return gateState(n.gate);
-  if (n.visit) return n.visit.leftAt === null ? (n.visit.station === "human-approval" ? "human" : "active") : n.visit.outcome === "failed" ? "failed" : "succeeded";
-  return null;
 }
 
 /** Where a route leaves and meets a node at this level (its large mark's edge). */
@@ -52,7 +45,7 @@ export function OverviewFlow({ cell, flow, seats }: { cell: CellState; flow: Flo
         <OverviewSegment key={`${s.from.key}>${s.to.key}`} from={s.from} to={s.to} retry={s.retry} seats={seats} cell={cell} />
       ))}
       {flow.nodes.map((n) => (
-        <OverviewNode key={n.key} node={n} cell={cell} seats={seats} />
+        <OverviewNode key={n.key} node={n} cell={cell} seats={seats} flow={flow} />
       ))}
     </g>
   );
@@ -82,12 +75,14 @@ function routeD(a: FlowNode, b: FlowNode): string {
 
 function OverviewRoute({ from, to }: { from: FlowNode; to: FlowNode }) {
   const start = startOf(to);
-  const draw = useEventProgress(start, "pathDraw");
+  const late = useLate(to.visit?.meta.eventId ?? to.gate?.meta.eventId);
+  const draw = useEventProgress(start, "pathDraw", 0, late);
+  const stale = useStaleSince() !== null;
   const d = routeD(from, to);
   if (!built(to)) return <path d={d} aria-hidden="true" style={{ fill: "none", stroke: fc("route"), strokeWidth: STROKE.planned, strokeDasharray: "8 7" }} />;
   const p = start === null ? 1 : draw;
   if (p <= 0) return null;
-  const active = (to.visit && to.visit.leftAt === null && to.visit.station !== "human-approval") || (to.gate?.state === "open" && to.gate.gate !== "red-before-green");
+  const active = !stale && ((to.visit && to.visit.leftAt === null && to.visit.station !== "human-approval") || (to.gate?.state === "open" && to.gate.gate !== "red-before-green"));
   return (
     <path
       d={d}
@@ -99,7 +94,8 @@ function OverviewRoute({ from, to }: { from: FlowNode; to: FlowNode }) {
 }
 
 function OverviewRetry({ from, to }: { from: FlowNode; to: FlowNode }) {
-  const p = useEventProgress(from.gate?.decidedAt, "verifyReturn");
+  const late = useLate(from.gate?.meta.eventId);
+  const p = useEventProgress(from.gate?.decidedAt, "verifyReturn", 0, late);
   if (p <= 0) return null;
   // Down from the refusing gate, back along under the round, and into the build that starts the next one.
   const crest = from.y + Math.max(40, (to.y - from.y) * 0.55);
@@ -156,8 +152,8 @@ function Unbuilt({ node, gate }: { node: FlowNode; gate: boolean }) {
   );
 }
 
-function OverviewNode({ node, cell, seats }: { node: FlowNode; cell: CellState; seats: readonly number[] }) {
-  if (node.kind === "seats") return <OverviewSeats node={node} cell={cell} seats={seats} />;
+function OverviewNode({ node, cell, seats, flow }: { node: FlowNode; cell: CellState; seats: readonly number[]; flow: Flow }) {
+  if (node.kind === "seats") return <OverviewSeats node={node} cell={cell} seats={seats} flow={flow} />;
   if (node.kind === "future") {
     if (node.col === "review") return <g aria-hidden="true">{seats.map((dy, i) => <circle key={i} cx={node.x} cy={node.y + dy} r={R.seat} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: 2, strokeDasharray: "5 4" }} />)}</g>;
     return <Unbuilt node={node} gate={radius(node) === R.gate} />;
@@ -178,12 +174,16 @@ function OverviewNode({ node, cell, seats }: { node: FlowNode; cell: CellState; 
 
 function OverviewVisit({ node, cell }: { node: FlowNode; cell: CellState }) {
   const v = node.visit!;
-  const appear = useEventProgress(v.enteredAt, "stateChange");
-  const st = stateOf(node) ?? "idle";
+  const late = useLate(v.meta.eventId);
+  const appear = useEventProgress(v.enteredAt, "stateChange", 0, late);
+  const stale = useStaleSince() !== null;
+  // From the visit's own record; a visit closed without an exit record keeps the interrupted mark.
+  const st: MarkState = visitMark(v);
   return (
     <g data-ref={ref.station(v.station, cell.ticketId)} style={{ cursor: "pointer", opacity: 0.35 + 0.65 * appear }} aria-hidden="true">
       <g transform={`translate(${node.x} ${node.y})`}>
-        <StateMark state={st} r={R.station} progress={0} />
+        {/* Held, never working, while the connection is stale. */}
+        {stale && st === "active" ? <ActivityMark state="stale" r={R.station} /> : <StateMark state={st} r={R.station} progress={0} />}
       </g>
     </g>
   );
@@ -222,6 +222,8 @@ function OverviewGate({ node, cell }: { node: FlowNode; cell: CellState }) {
       <g transform={`translate(${node.x} ${node.y})`} style={{ opacity: g.state === "skipped" ? 0.7 : 1 }}>
         <path d={`M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z`} style={{ fill: fc("plate-top"), stroke: ink(st), strokeWidth: st === "failed" ? 4 : 3, strokeLinejoin: "round" }} />
         <StateMark state={st} r={8.5} progress={0} />
+        {/* Overridden, not passed: a bypass arc over the diamond. */}
+        {g.state === "overridden" ? <path d={`M${-r - 3} -3C${-r + 3} ${-r - 16} ${r - 3} ${-r - 16} ${r + 3} -3`} style={{ fill: "none", stroke: fc("wait"), strokeWidth: 3, strokeLinecap: "round" }} /> : null}
       </g>
       {/* As the full drawing's callouts: a refusal leans back over the work that failed, a person's gate
           forward over what is to come, so adjacent words (a rejection, then the human gate) never meet. */}
@@ -234,7 +236,11 @@ function OverviewGate({ node, cell }: { node: FlowNode; cell: CellState }) {
   );
 }
 
-function OverviewSeats({ node, cell, seats }: { node: FlowNode; cell: CellState; seats: readonly number[] }) {
+function flowGate(flow: Flow, round: number): GateState | null {
+  return flow.nodes.find((n) => n.gate?.gate === "review" && n.round === round)?.gate ?? null;
+}
+
+function OverviewSeats({ node, cell, seats, flow }: { node: FlowNode; cell: CellState; seats: readonly number[]; flow: Flow }) {
   const round = roundOf(cell, node);
   return (
     <g>
@@ -243,7 +249,9 @@ function OverviewSeats({ node, cell, seats }: { node: FlowNode; cell: CellState;
         if (!seat) return null;
         const agent = seat.agentId ? (cell.agents[seat.agentId] ?? null) : null;
         const st: FactoryState = seat.vote === "APPROVE" ? "succeeded" : seat.vote === "REJECT" ? "failed" : agent ? agentState(agent) : "idle";
-        const entity = agent ? ref.agent(agent.id) : ref.gate(`${cell.ticketId}/review#${round?.round ?? 1}`);
+        // A seat with no agent yet names the round's consensus gate, found in the flow (never built from an id).
+        const consensus = flowGate(flow, node.round);
+        const entity = agent ? ref.agent(agent.id) : consensus ? ref.gate(consensus.id) : ref.cell(cell.ticketId);
         return (
           <g key={key} data-ref={entity} style={{ cursor: "pointer" }} aria-hidden="true" transform={`translate(${node.x} ${node.y + (seats[i] ?? 0)})`}>
             <StateMark state={st} r={R.seat} progress={0} />

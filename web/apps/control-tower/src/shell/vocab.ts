@@ -14,40 +14,12 @@ import {
   type StationKind,
   type ToolFamily,
 } from "@mach/ui";
-import { ENTITY_KINDS, isoAt, MODELS, type ActorId, type AgentRole, type AnyRef, type EntityRef, type ArtifactKind, type CellStage, type EntityKind, type GateKind, type GateState, type ModelId, type SchedulerState, type StationOutcome, type Telemetry, type ToolName } from "../sim";
+import { ENTITY_KINDS, gateNameWords, MODELS, type ActorId, type AgentRole, type AnyRef, type EntityRef, type ArtifactKind, type CellStage, type EntityKind, type GateKind, type GateState, type ModelId, type SchedulerState, type StationOutcome, type Telemetry, type ToolName } from "../sim";
 
 // ---------------------------------------------------------------- time
 
-/** Factory time as mm:ss.s from the scenario start (the spec's time code). */
-export function timecode(t: number, tenths = true): string {
-  const total = Math.max(0, t) / 1000;
-  const m = Math.floor(total / 60);
-  const s = total - m * 60;
-  const ss = tenths ? s.toFixed(1).padStart(4, "0") : String(Math.floor(s)).padStart(2, "0");
-  return `${String(m).padStart(2, "0")}:${ss}`;
-}
-
-/** The simulated wall clock at factory time t (UTC, HH:MM:SS). */
-export function clockAt(t: number): string {
-  return isoAt(Math.max(0, Math.floor(t / 1000) * 1000)).slice(11, 19);
-}
-
-/** A duration in plain words: 48 s, 4 min 12 s, 1 h 3 min. */
-export function duration(ms: number): string {
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s} s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return s % 60 ? `${m} min ${s % 60} s` : `${m} min`;
-  return `${Math.floor(m / 60)} h ${m % 60} min`;
-}
-
-/** Spoken form of a time code, for screen readers. */
-export function spokenTime(t: number): string {
-  const total = Math.floor(Math.max(0, t) / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m} minute${m === 1 ? "" : "s"} ${s} second${s === 1 ? "" : "s"}`;
-}
+// The time words live in a module of their own (no grammar import), so plain tests can read them.
+export { setTimeBase, getTimeBase, utcClock, utcDate, timecode, clockAt, duration, spokenTime, timeCodeText, isMoment, type TimeBase } from "./time";
 
 // ---------------------------------------------------------------- grammar mapping
 
@@ -88,8 +60,10 @@ export const ROLE_WORDS: Record<AgentRole, string> = {
   observe: "Observer",
 };
 
-export function gateOf(gate: GateKind): GrammarGate {
+export function gateOf(gate: GateKind | "recorded"): GrammarGate {
   switch (gate) {
+    // A gate no gate kind stands for (frozen-tests, build.start...): the plain check glyph.
+    case "recorded":
     case "audit":
     case "plan-check":
       return "audit";
@@ -184,16 +158,17 @@ export function outcomeState(outcome: StationOutcome | null): FactoryState {
 }
 
 export function gateState(state: GateState["state"]): FactoryState {
-  return ({ open: "active", passed: "succeeded", failed: "failed", waiting: "human", skipped: "idle" } as const)[state];
+  // An override let the work through: drawn as through, and always named "Overridden" beside it (never "Passed").
+  return ({ open: "active", passed: "succeeded", failed: "failed", waiting: "human", skipped: "idle", overridden: "succeeded" } as const)[state];
 }
 
-export const GATE_STATE_WORDS: Record<GateState["state"], string> = {
-  open: "Checking",
-  passed: "Passed",
-  failed: "Refused",
-  waiting: "Waiting for a person",
-  skipped: "Not needed",
-};
+// One source of truth for a gate's state in words, shared with the Atlas and the Blueprint (D10).
+export { GATE_STATE_WORDS, gateStateWords } from "../sim";
+
+/** A gate's name: its kind's words, or a recorded gate's own lifecycle name ("Frozen tests"). */
+export function gateName(gate: Pick<GateState, "gate" | "recorded">): string {
+  return gateNameWords(gate, GATE_WORDS);
+}
 
 export function runState(status: "running" | "done" | "ok" | "error"): FactoryState {
   return status === "running" ? "active" : status === "error" ? "failed" : "succeeded";
@@ -277,6 +252,10 @@ export const KIND_WORDS: Record<ShellKind, string> = {
   gate: "Gate",
   dependency: "Dependency",
   finding: "Review finding",
+  project: "Project",
+  workflow: "Workflow",
+  visit: "Visit",
+  seat: "Review seat",
 };
 
 export const TELEMETRY_WORDS: Record<Telemetry, { label: string; description: string }> = {

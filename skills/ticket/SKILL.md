@@ -20,6 +20,7 @@ The tracker comes from `.factory/config.json` (`tickets.provider`, `local` by de
 3. **Never invent a ticket's content.** If a field is not in the tracker's output, leave it empty.
 4. **Keep personal data out.** Do not copy email addresses, user names or IDs, tokens, cookies or request headers from a payload into a ticket, a comment, or your reply. The script redacts what it writes; do not undo that from the raw file.
 5. **Changing a ticket is outward-facing.** Create, update and comment only when the user or the calling station asked for exactly that.
+6. **One plain command per call.** The Factory runs this station unattended with a short list of allowed commands, and anything else is refused, not asked about. Every shell command you run is one `TICKET` command, written out in full with the script's absolute path; a long body or comment goes in quotes, with no `$` or backtick inside. Never chain commands (`&&`, `;`, `|`, a second line), never redirect (`>`, `<`, `2>&1`, a heredoc), never `cd`, and never set shell variables or define functions. Read files with the Read tool, find them with Glob and Grep, and create or change them with Write and Edit. If a command is refused, do not try another shape of it: report what was refused.
 
 ## Actions
 

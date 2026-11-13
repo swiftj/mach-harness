@@ -1,0 +1,166 @@
+package redact
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestPeopleDenyList(t *testing.T) {
+	p := &People{names: map[string]bool{}}
+	// Role words MACH writes are never taken for names; names and e-mails are, with their parts.
+	p.Learn("engineer", "supervisor", "a person", "security", "Ann Lee", "Bo Ek <bo.ek@example.org>", "x", "")
+	if p.Len() != 4 || !p.Is("ann lee") || !p.Is("bo ek") || !p.Is("bo.ek@example.org") || !p.Is("bo.ek") {
+		t.Fatalf("learned %v", p.names)
+	}
+	out, n := p.Replace("Approved by ANN LEE; ann lee's note; Bo Ek wrote to bo.ek@example.org")
+	if n != 4 || strings.Contains(strings.ToLower(out), "ann") || strings.Contains(out, "Bo Ek") {
+		t.Fatalf("%d %q", n, out)
+	}
+	// Whole words only: a name inside another word stays.
+	p.Learn("Ann")
+	if out, n := p.Replace("planning an annual review"); n != 0 || out != "planning an annual review" {
+		t.Fatalf("%d %q", n, out)
+	}
+	b, n := p.ReplaceBytes([]byte(`{"t":"planning by Ann","u":"Ann Lee\nAnn","v":"annual"}`))
+	if n != 3 || string(b) != `{"t":"planning by a person","u":"a person\na person","v":"annual"}` {
+		t.Fatalf("%d %s", n, b)
+	}
+}
+
+func TestLearnJSONFindsPeopleByKey(t *testing.T) {
+	p := &People{names: map[string]bool{}}
+	p.LearnJSON([]byte(`{"human_approval":{"by":"Ada Lovelace","recorded_by":"Grace Hopper","recorded_at":"2026-11-12T10:00:00Z","note":"ok"},
+		"votes":{"security":"APPROVE"},"tasks":[{"author":"Linus T","commit":"abcdef1"}],"reviewer":"security","approval":{"actor":"Kay J"}}`))
+	for _, want := range []string{"ada lovelace", "grace hopper", "linus t", "kay j"} {
+		if !p.Is(want) {
+			t.Errorf("%s not learned: %v", want, p.names)
+		}
+	}
+	if p.Is("security") || p.Is("ok") || p.Is("approve") {
+		t.Fatalf("a non-person was learned: %v", p.names)
+	}
+}
+
+// Structured records: person fields by role, unknown keys only when clean, the catalog's relative
+// names kept (D25), the known hashes kept, unknown kinds refused (served as text instead).
+func TestScrubRecordByKind(t *testing.T) {
+	root := "/work/p"
+	PeopleFor(root).Learn("Ada Lovelace")
+	decision := []byte(`{"ticket_id":"T-1","round":3,"outcome":"APPROVED","human_approval":{"by":"Ada Lovelace","note":"thanks Ada Lovelace",` +
+		`"recorded_at":"2026-11-12T22:57:15+00:00","recorded_by":"someone else"},"head":"b68db4be71fe56e6e4264e79472987a639dc8773",` +
+		`"findings":"/work/p/.factory/worktrees/T-1/review/round-3/findings.md","extra":"/Users/x/secret","fine":"plain words"}`)
+	out, n, err := ScrubRecord(decision, KindDecision, root, RecordOptions{HashKeys: []string{"head"},
+		SafeNames: []string{".factory/worktrees/T-1/review/round-3/findings.md"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"by": "a person"`, `"recorded_by": "a person"`, `"note": "thanks a person"`,
+		`"head": "b68db4be71fe56e6e4264e79472987a639dc8773"`, `"findings": ".factory/worktrees/T-1/review/round-3/findings.md"`,
+		`"extra": "[withheld]"`, `"fine": "plain words"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s in %s", want, out)
+		}
+	}
+	if strings.Contains(out, "Lovelace") || strings.Contains(out, "someone else") || n < 5 {
+		t.Fatalf("%d %s", n, out)
+	}
+	if strings.Index(out, `"ticket_id"`) > strings.Index(out, `"round"`) {
+		t.Fatal("key order not kept")
+	}
+	vote, _, _ := ScrubRecord([]byte(`{"reviewer":"security","vote":"REJECT"}`), KindVote, root, RecordOptions{})
+	if !strings.Contains(vote, `"reviewer": "security"`) {
+		t.Fatalf("a seat was taken for a person: %s", vote)
+	}
+	if _, _, err := ScrubRecord([]byte(`{"a":1}`), KindUnknown, root, RecordOptions{}); err != ErrNotRecord {
+		t.Fatal("an unknown kind was scrubbed as a record")
+	}
+	if _, _, err := ScrubRecord([]byte(`not json`), KindDecision, root, RecordOptions{}); err != ErrNotRecord {
+		t.Fatal("not JSON")
+	}
+	if KindOf("review/round-2/votes/security.json") != KindVote || KindOf("evidence/previous-1/results.json") != KindResults || KindOf("evidence/x.json") != KindUnknown {
+		t.Fatal("kinds")
+	}
+}
+
+// D25: a relative name the catalog knows is kept in text; an unknown long one still is not.
+func TestDocumentKeepsSafeNames(t *testing.T) {
+	name := ".factory/worktrees/LOCAL-001/review/round-3/findings.md"
+	got, _ := ScrubDocument("see "+name+" and /work/p/"+name, "/work/p", DocOptions{SafeNames: []string{name}})
+	if got != "see "+name+" and "+name {
+		t.Fatalf("%q", got)
+	}
+	got, _ = ScrubDocument("see "+name, "/work/p", DocOptions{})
+	if strings.Contains(got, "LOCAL-001/review/round-3/findings") {
+		t.Fatalf("without the catalog's names the long run is still scrubbed: %q", got)
+	}
+}
+
+// R2: a person field that holds a role MACH wrote keeps it (an agent's act is not credited to a
+// person); a person field that names someone, or a role phrase that may carry a name, is replaced;
+// role phrases are never learned as names.
+func TestPersonFieldsKeepRolePhrases(t *testing.T) {
+	root := "/work/r2"
+	PeopleFor(root).Learn("Ada Lovelace")
+	agent := "an agent, on the person's instruction in conversation"
+	decision := []byte(`{"ticket_id":"T-1","human_approval":{"by":"Ada Lovelace","recorded_by":"` + agent + `",` +
+		`"recorded_at":"2026-11-12T22:57:15+00:00","approved_by":"the line"},"note":"x"}`)
+	out, _, err := ScrubRecord(decision, KindDecision, root, RecordOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"by": "a person"`, `"recorded_by": "` + agent + `"`, `"approved_by": "the line"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s in %s", want, out)
+		}
+	}
+	run := []byte(`{"ticket_id":"T-1","human_approval":{"by":"supervisor","recorded_by":"The Supervisor"}}` + "\n")
+	if out, _, _ := ScrubRecord(run, KindRunRecord, root, RecordOptions{}); !strings.Contains(out, `"by":"supervisor"`) || !strings.Contains(out, `"recorded_by":"The Supervisor"`) {
+		t.Errorf("a role was replaced: %s", out)
+	}
+	for _, v := range []string{agent, "the line", "The supervisor", "a person", "product manager", "the engineer", "an agent", "Reviewer"} {
+		if !RolePhrase(v) {
+			t.Errorf("%q is a role phrase", v)
+		}
+	}
+	for _, v := range []string{"Ada Lovelace", "someone else", "the engineer Jane Doe", "an agent, on Jane's instruction", "agent@example.org",
+		"Grace <grace@example.org>", "Jane", ""} {
+		if RolePhrase(v) {
+			t.Errorf("%q is not a role phrase", v)
+		}
+	}
+	// A role phrase that names a known person is still replaced.
+	named := []byte(`{"human_approval":{"recorded_by":"an agent, for ada lovelace"}}`)
+	if out, _, _ := ScrubRecord(named, KindDecision, root, RecordOptions{}); strings.Contains(strings.ToLower(out), "lovelace") || !strings.Contains(out, `"recorded_by": "a person"`) {
+		t.Errorf("a known name in a role phrase was served: %s", out)
+	}
+	p := &People{names: map[string]bool{}}
+	p.LearnJSON(decision)
+	if p.Is(agent) || p.Is("the line") || !p.Is("ada lovelace") {
+		t.Fatalf("learned %v", p.names)
+	}
+}
+
+// R1: which served texts hold prose the observer cannot check for names.
+func TestHasFreeText(t *testing.T) {
+	cases := []struct {
+		rel  string
+		data string
+		want bool
+	}{
+		{"review/round-1/findings.md", "# Findings\nThe parser drops a field.\n", true},
+		{"evidence/AC-01.txt", "ok", true},
+		{"evidence/AC-01.txt", "  \n", false},
+		{"review/round-1/decision.json", `{"ticket_id":"T-1","outcome":"APPROVED","findings":"review/round-1/findings.md","human_approval":{"by":"Ada","recorded_by":"an agent, on the person's instruction in conversation","note":null},"human_approval_reasons":["High risk ticket"]}`, false},
+		{"review/round-1/decision.json", `{"human_approval":{"note":"thanks, ship it"}}`, true},
+		{"evidence/results.json", `{"records":{"AC-01":{"result":"pass","note":"checked by hand"}},"suite":{"command":"go test ./..."}}`, true},
+		{"evidence/results.json", `{"records":{"AC-01":{"result":"pass","evidence":[{"file":"AC-01.txt","sha256":"ab"}]}},"suite":{"command":"go test ./..."}}`, false},
+		{"review/round-1/votes/security.json", `{"seat":"security","findings":[{"severity":"blocker","title":"Unchecked input","file":"a.go"}]}`, true},
+		{"evidence/data.json", `{"a":1}`, true}, // a JSON file of no known kind is served as text
+		{"evidence/results.json", `not json`, true},
+	}
+	for _, c := range cases {
+		if got := HasFreeText(c.rel, []byte(c.data)); got != c.want {
+			t.Errorf("%s %s: %v, want %v", c.rel, c.data, got, c.want)
+		}
+	}
+}

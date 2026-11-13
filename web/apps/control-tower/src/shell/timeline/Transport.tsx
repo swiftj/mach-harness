@@ -1,15 +1,20 @@
 /**
- * The transport: play and pause, stepping by event and by chapter, speed, live versus replay, the
- * factory time code, the current chapter, and the reduced-motion note. Re-renders only when the
- * transport's own state changes; the time code is written directly every frame.
+ * The transport: play and pause, stepping by event and by chapter (or, for real history, landmark),
+ * speed, where the playhead is (the live edge, reviewing earlier history while live keeps arriving,
+ * a replay), the time code, the current chapter or landmark, and the reduced-motion note. Re-renders
+ * only when the transport's own state changes; the time code is written directly every frame.
+ *
+ * Live: the live edge is the right end of time; nothing here can move past it, and nothing here can
+ * pause the Factory. Pausing at the live edge holds the view on that moment while events keep
+ * arriving ("N new events"); "Return to live" re-attaches.
  */
 import { ChevronsLeft, ChevronsRight, LocateFixed, PanelBottomClose, PanelBottomOpen, Pause, Play, StepBack, StepForward } from "lucide-react";
 import { memo, useId, useRef, type ReactNode } from "react";
 import { cn, Tooltip } from "@mach/ui";
-import { chapterAt, SCENARIO } from "../../sim";
-import { cameraFollows, SPEEDS, useSceneStore, useStore, type PlaybackSpeed } from "../../scene";
-import { stepChapter } from "../keyboard";
-import { clockAt, duration as words, timecode } from "../vocab";
+import { cameraFollows, isStale, SPEEDS, useSceneStore, useStore, type PlaybackSpeed } from "../../scene";
+import { indexFor, lastAtOrBefore } from "../history";
+import { stepChapter, togglePlayback } from "../keyboard";
+import { duration as words, isMoment, timeCodeText, timecode, utcClock } from "../vocab";
 import { usePlayheadEffect } from "./playhead";
 
 export function IconButton({ label, shortcut, onClick, children, pressed, className, disabled }: { label: string; shortcut?: string; onClick: () => void; children: ReactNode; pressed?: boolean; className?: string; disabled?: boolean }) {
@@ -33,13 +38,18 @@ export function IconButton({ label, shortcut, onClick, children, pressed, classN
   );
 }
 
-/** The time code: factory time from the start (mm:ss.s), and the simulated clock. Written per frame, never rendered. */
+/**
+ * The time code. Simulation: factory time from the start (mm:ss.s) and the simulated clock. Real
+ * history: wall-clock UTC (HH:MM:SS.s) and the date. Written per frame, never rendered.
+ */
 export function TimeCode({ size = "md" }: { size?: "md" | "lg" }) {
   const codeRef = useRef<HTMLSpanElement>(null);
   const clockRef = useRef<HTMLSpanElement>(null);
   usePlayheadEffect((s) => {
-    if (codeRef.current) codeRef.current.textContent = timecode(s.playhead);
-    if (clockRef.current) clockRef.current.textContent = `${clockAt(s.playhead)} UTC`;
+    // Never 1 January 1970: a real history with no moment yet says so (R7).
+    const text = timeCodeText(s, size);
+    if (codeRef.current) codeRef.current.textContent = text.code;
+    if (clockRef.current) clockRef.current.textContent = text.clock;
   }, []);
   return (
     <span className="flex items-baseline gap-2 tabular" aria-hidden="true">
@@ -76,40 +86,105 @@ function SpeedControl() {
   );
 }
 
-/** Live or replay, said in words and shape; in replay, how far behind live and a way back. */
-function LiveState() {
+/** "Return to live": re-attaches the playhead to the live edge. */
+function ReturnToLive({ compact }: { compact?: boolean }) {
+  const { followLive } = useStore();
+  return (
+    <Tooltip content="Return to live (L)">
+      <button
+        type="button"
+        onClick={followLive}
+        aria-keyshortcuts="L"
+        data-return-live=""
+        className={cn("inline-flex h-6 shrink-0 items-center rounded-sm px-2 text-caption font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2", compact && "h-7")}
+      >
+        Return to live
+      </button>
+    </Tooltip>
+  );
+}
+
+function Pill({ kind, children }: { kind: "edge" | "review" | "stale"; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-caption font-semibold",
+        kind === "edge" ? "border-factory-live text-factory-live" : kind === "stale" ? "border-warning-line bg-warning-soft text-warning-ink" : "border-line-strong text-ink-muted",
+      )}
+    >
+      <svg aria-hidden="true" width="8" height="8" viewBox="0 0 8 8">
+        {kind === "edge" ? <circle cx="4" cy="4" r="3.2" style={{ fill: "currentColor" }} /> : kind === "stale" ? <path d="M1 1H7V7H1Z" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.4 }} /> : <circle cx="4" cy="4" r="3" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.4 }} />}
+      </svg>
+      {children}
+    </span>
+  );
+}
+
+/**
+ * Where the playhead is, in words and shape:
+ * - simulation: Live or Replay, and how far behind;
+ * - live: at the live edge (or "as last seen" when the connection is stale), or reviewing an earlier
+ *   moment with the count of events received since and a way back;
+ * - replay: replaying, or at its last event.
+ */
+export function LiveState({ compact }: { compact?: boolean }) {
+  const source = useSceneStore((s) => s.source);
   const following = useSceneStore((s) => s.following);
   const behind = useSceneStore((s) => (s.following ? 0 : Math.round((s.liveAt - s.playhead) / 10_000) * 10_000));
-  const { followLive } = useStore();
+  const stale = useSceneStore((s) => isStale(s.connection));
+  const staleSince = useSceneStore((s) => s.connection?.staleSince ?? null);
+  // Events that ARRIVED since the person left the live edge (D20), not events after the playhead.
+  const newer = useSceneStore((s) => (s.following || s.arrivedAtLeave === null ? 0 : Math.max(0, s.arrived - s.arrivedAtLeave)));
+  const loading = useSceneStore((s) => s.windowLoading);
+  const atEnd = useSceneStore((s) => s.playhead >= s.liveAt);
+
+  if (source === "replay") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5" data-live-state={atEnd ? "replay-end" : "replay"}>
+        <Pill kind="review">{atEnd ? "At its last event" : "Replaying"}</Pill>
+        {loading ? <span className="text-caption text-ink-subtle" role="status">Loading this part of the history</span> : null}
+        {!atEnd && behind >= 10_000 && !compact ? <span className="text-caption text-ink-subtle max-[1099px]:hidden">{words(behind)} before its end</span> : null}
+      </span>
+    );
+  }
+  if (source === "live") {
+    if (following) {
+      return (
+        <span className="inline-flex shrink-0 items-center" data-live-state={stale ? "stale" : "live"}>
+          {stale ? <Pill kind="stale">As last seen{isMoment(staleSince) ? ` ${utcClock(staleSince)}` : ""}</Pill> : <Pill kind="edge">At the live edge</Pill>}
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5" data-live-state="reviewing">
+        <Pill kind="review">
+          Reviewing
+          {behind >= 10_000 && !compact ? <span className="font-normal text-ink-subtle max-[1099px]:hidden">{words(behind)} back</span> : null}
+        </Pill>
+        {loading ? <span className="text-caption text-ink-subtle" role="status">Loading this part of the history</span> : null}
+        {newer > 0 ? (
+          <span className="text-caption font-semibold text-ink tabular" data-new-events={newer} title="Events that arrived since you left the live edge">
+            {newer.toLocaleString("en-GB")} new event{newer === 1 ? "" : "s"}
+          </span>
+        ) : null}
+        <ReturnToLive compact={compact} />
+      </span>
+    );
+  }
   if (following) {
     return (
-      <span className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border border-factory-live px-2 text-caption font-semibold text-factory-live" data-live-state="live">
-        <svg aria-hidden="true" width="8" height="8" viewBox="0 0 8 8">
-          <circle cx="4" cy="4" r="3.2" style={{ fill: "currentColor" }} />
-        </svg>
-        Live
+      <span className="inline-flex shrink-0 items-center" data-live-state="live">
+        <Pill kind="edge">Live</Pill>
       </span>
     );
   }
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5" data-live-state="replay">
-      <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-line-strong px-2 text-caption font-semibold text-ink-muted">
-        <svg aria-hidden="true" width="8" height="8" viewBox="0 0 8 8">
-          <circle cx="4" cy="4" r="3" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.4 }} />
-        </svg>
+      <Pill kind="review">
         Replay
-        {behind >= 10_000 ? <span className="font-normal text-ink-subtle max-[1099px]:hidden">{words(behind)} behind</span> : null}
-      </span>
-      <Tooltip content="Return to live (L)">
-        <button
-          type="button"
-          onClick={followLive}
-          aria-keyshortcuts="L"
-          className="inline-flex h-6 items-center rounded-sm px-2 text-caption font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2"
-        >
-          Return to live
-        </button>
-      </Tooltip>
+        {behind >= 10_000 && !compact ? <span className="font-normal text-ink-subtle max-[1099px]:hidden">{words(behind)} behind</span> : null}
+      </Pill>
+      <ReturnToLive compact={compact} />
     </span>
   );
 }
@@ -133,7 +208,7 @@ export function FollowState({ compact }: { compact?: boolean }) {
         aria-keyshortcuts="Shift+F"
         data-follow-state={active ? "following" : follow ? "armed" : "off"}
         className={cn(
-          "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-caption font-semibold transition-colors duration-[var(--mach-duration-fast)] [&_svg]:size-3.5",
+          "inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 text-caption font-semibold transition-colors duration-[var(--mach-duration-fast)] [&_svg]:size-3.5",
           active ? "border-factory-live text-factory-live" : follow ? "border-line-strong text-ink-muted" : "border-dashed border-line-strong text-ink-muted hover:text-ink",
         )}
       >
@@ -145,15 +220,21 @@ export function FollowState({ compact }: { compact?: boolean }) {
   );
 }
 
+/** The chapter (simulation) or the latest landmark (real history) at the playhead. */
 function ChapterName() {
-  const chapter = useSceneStore((s) => chapterAt(s.fixture, s.playhead));
+  const index = useSceneStore(indexFor);
+  const chapter = useSceneStore((s) => lastAtOrBefore(indexFor(s).landmarks, s.playhead));
   if (!chapter) return null;
-  const n = SCENARIO.chapters.indexOf(chapter) + 1;
+  const n = index.landmarks.indexOf(chapter) + 1;
   return (
-    <span className="flex min-w-0 items-baseline gap-1.5 text-body-sm">
-      <span className="shrink-0 text-caption text-ink-subtle tabular">
-        {n} of {SCENARIO.chapters.length}
-      </span>
+    <span className="flex min-w-0 items-baseline gap-1.5 text-body-sm" title={chapter.title}>
+      {index.storyboard ? (
+        <span className="shrink-0 text-caption text-ink-subtle tabular">
+          {n} of {index.landmarks.length}
+        </span>
+      ) : (
+        <span className="min-w-0 shrink truncate text-caption text-ink-subtle">Last landmark, {timecode(chapter.t, false)}</span>
+      )}
       <span className="truncate font-sans font-semibold text-ink">{chapter.title}</span>
     </span>
   );
@@ -162,7 +243,12 @@ function ChapterName() {
 export const Transport = memo(function Transport({ collapsed, onCollapse }: { collapsed: boolean; onCollapse: () => void }) {
   const playing = useSceneStore((s) => s.playing);
   const reduced = useSceneStore((s) => s.reducedMotion);
+  const source = useSceneStore((s) => s.source);
+  // Live at the edge, the button holds the view on this moment; the Factory goes on regardless.
+  const atEdge = useSceneStore((s) => s.source === "live" && s.following);
   const store = useStore();
+  const chapterWord = source === "simulation" ? "chapter" : "landmark";
+  const playLabel = atEdge ? "Hold this moment (events keep arriving)" : playing ? "Pause" : "Play";
   return (
     // The bar lies over the timeline's 24 px resize handle: only its controls take the pointer, so the
     // bar's empty space is the handle.
@@ -172,34 +258,34 @@ export const Transport = memo(function Transport({ collapsed, onCollapse }: { co
       aria-label="Transport"
     >
       {/* On a very narrow window the chapter buttons give way; [ and ] still step by chapter. */}
-      <IconButton label="Previous chapter" shortcut="[" onClick={() => stepChapter(store, -1)} className="max-[759px]:hidden">
+      <IconButton label={`Previous ${chapterWord}`} shortcut="[" onClick={() => stepChapter(store, -1)} className="max-[759px]:hidden">
         <ChevronsLeft aria-hidden="true" />
       </IconButton>
       <IconButton label="Previous event" shortcut="," onClick={store.stepPrevious}>
         <StepBack aria-hidden="true" />
       </IconButton>
-      <Tooltip content={`${playing ? "Pause" : "Play"} (Space)`}>
+      <Tooltip content={`${playLabel} (Space)`}>
         <button
           type="button"
-          onClick={store.toggle}
-          aria-label={playing ? "Pause" : "Play"}
+          onClick={() => togglePlayback(store)}
+          aria-label={playLabel}
           aria-keyshortcuts="Space"
           data-transport="play"
           className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-ink text-ink-inverse transition-colors hover:bg-ink-muted [&_svg]:size-4"
         >
-          {playing ? <Pause aria-hidden="true" fill="currentColor" /> : <Play aria-hidden="true" fill="currentColor" className="translate-x-px" />}
+          {playing || atEdge ? <Pause aria-hidden="true" fill="currentColor" /> : <Play aria-hidden="true" fill="currentColor" className="translate-x-px" />}
         </button>
       </Tooltip>
       <IconButton label="Next event" shortcut="." onClick={store.stepNext}>
         <StepForward aria-hidden="true" />
       </IconButton>
-      <IconButton label="Next chapter" shortcut="]" onClick={() => stepChapter(store, 1)} className="max-[759px]:hidden">
+      <IconButton label={`Next ${chapterWord}`} shortcut="]" onClick={() => stepChapter(store, 1)} className="max-[759px]:hidden">
         <ChevronsRight aria-hidden="true" />
       </IconButton>
 
       <div className="ml-2 flex shrink-0 flex-col justify-center leading-none">
         <TimeCode />
-        <span className="sr-only">Simulated factory time</span>
+        <span className="sr-only">{source === "simulation" ? "Simulated factory time" : "Time, UTC"}</span>
       </div>
       <div className="mx-2 h-5 w-px shrink-0 bg-line min-[1100px]:mx-3" aria-hidden="true" />
       <LiveState />
@@ -207,10 +293,10 @@ export const Transport = memo(function Transport({ collapsed, onCollapse }: { co
         <FollowState />
       </span>
       <div className="mx-3 hidden h-5 w-px shrink-0 bg-line min-[1280px]:block" aria-hidden="true" />
-      <div className="hidden min-w-0 flex-1 min-[1280px]:flex">
+      <div className={cn("hidden min-w-0 flex-1 overflow-hidden", source === "simulation" ? "min-[1280px]:flex" : "min-[1600px]:flex")}>
         <ChapterName />
       </div>
-      <div className="flex-1 min-[1280px]:hidden" />
+      <div className={cn("flex-1", source === "simulation" ? "min-[1280px]:hidden" : "min-[1600px]:hidden")} />
       {reduced ? (
         <span className="mr-2 inline-flex h-6 shrink-0 items-center rounded-sm border border-dashed border-line-strong px-2 text-caption text-ink-muted" title="Your system asks for reduced motion: changes appear without travel; stepping by event still works.">
           Motion reduced

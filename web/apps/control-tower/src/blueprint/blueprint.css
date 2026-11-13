@@ -186,3 +186,12 @@
   border-left-color: var(--mach-factory-select);
   box-shadow: inset 0 0 0 1.5px var(--mach-focus);
 }
+/* A held frame (live, the connection stale or lost): the pinned chip says "as last seen at". */
+.bp-title[data-stale="1"] {
+  border-color: var(--mach-factory-wait);
+  background: var(--mach-factory-wait-soft);
+}
+.bp-title[data-stale="1"] .bp-title-fact {
+  color: var(--mach-ink);
+  font-weight: 600;
+}

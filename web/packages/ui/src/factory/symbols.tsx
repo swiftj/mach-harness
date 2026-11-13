@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fc, factoryStates, type AgentRole, type ArtifactKind, type FactoryColor, type FactoryMarkShape, type FactoryState, type ModelTier, type StationKind, type ToolFamily } from "./grammar";
+import { fc, markLook, type MarkState, type AgentRole, type ArtifactKind, type FactoryColor, type FactoryMarkShape, type ModelTier, type StationKind, type ToolFamily } from "./grammar";
 
 /**
  * The symbol alphabet: one drafted mark per station kind, artifact kind, tool family, agent tier
@@ -335,8 +335,8 @@ export function RoleEmblem({ role, color }: { role: AgentRole; color: string }) 
 }
 
 /* State marks: shape carries the state, colour reinforces it. Centred at (0, 0), radius `r`. */
-export function StateMark({ state, r = 6, progress, mark, surface = fc("plate-top") }: { state: FactoryState; r?: number; progress?: number; mark?: FactoryMarkShape; surface?: string }) {
-  const look = factoryStates[state];
+export function StateMark({ state, r = 6, progress, mark, surface = fc("plate-top") }: { state: MarkState; r?: number; progress?: number; mark?: FactoryMarkShape; surface?: string }) {
+  const look = markLook(state);
   const ink = fc(look.ink);
   const shape = mark ?? look.mark;
   const sw = Math.max(1.1, r * 0.22);
@@ -416,11 +416,43 @@ export function StateMark({ state, r = 6, progress, mark, surface = fc("plate-to
           <circle r={r * 0.55} style={{ fill: ink }} />
         </g>
       );
+    case "ring-cut": {
+      // Interrupted: the ring is cut open at the top and a bar stands in the cut (a process switched off).
+      const rr = r - sw / 2;
+      const a0 = -Math.PI / 2 + 0.55;
+      const a1 = -Math.PI / 2 + 0.55 + Math.PI * 2 - 1.1;
+      const p0 = { x: Math.cos(a0) * rr, y: Math.sin(a0) * rr };
+      const p1 = { x: Math.cos(a1) * rr, y: Math.sin(a1) * rr };
+      return (
+        <g aria-hidden="true">
+          <circle r={rr} style={{ fill: surface, stroke: "none" }} />
+          <path d={`M${p0.x} ${p0.y}A${rr} ${rr} 0 1 1 ${p1.x} ${p1.y}`} style={{ fill: "none", stroke: ink, strokeWidth: sw, strokeLinecap: "round" }} />
+          <path d={`M0 ${-r * 1.0}V${-r * 0.15}`} style={{ stroke: ink, strokeWidth: sw, strokeLinecap: "round" }} />
+        </g>
+      );
+    }
+    case "ring-last-seen":
+      // Stale: a ring of dots (as last seen) and one clock hand: "as of then", not "paused".
+      return (
+        <g aria-hidden="true">
+          <circle r={r - sw / 2} style={{ fill: surface, stroke: ink, strokeWidth: sw, strokeDasharray: `${sw * 0.15} ${r * 0.42}`, strokeLinecap: "round" }} />
+          <path d={`M0 0V${-r * 0.55}M0 0L${r * 0.4} ${r * 0.18}`} style={{ fill: "none", stroke: ink, strokeWidth: sw * 0.85, strokeLinecap: "round" }} />
+        </g>
+      );
+    case "ring-query":
+      // Unknown: an open hairline ring with a question mark. Never read as zero or as idle.
+      return (
+        <g aria-hidden="true">
+          <circle r={r - sw / 2} style={{ fill: surface, stroke: ink, strokeWidth: sw * 0.6 }} />
+          <path d={`M${-r * 0.3} ${-r * 0.28}A${r * 0.3} ${r * 0.3} 0 1 1 ${r * 0.08} ${r * 0.04}V${r * 0.2}`} style={{ fill: "none", stroke: ink, strokeWidth: sw * 0.8, strokeLinecap: "round", strokeLinejoin: "round" }} />
+          <circle cy={r * 0.5} r={sw * 0.5} style={{ fill: ink }} />
+        </g>
+      );
   }
 }
 
 /** The ink and tint of a state, as CSS colours. */
-export function stateInk(state: FactoryState): { ink: string; soft: string; color: FactoryColor } {
-  const look = factoryStates[state];
+export function stateInk(state: MarkState): { ink: string; soft: string; color: FactoryColor } {
+  const look = markLook(state);
   return { ink: fc(look.ink), soft: fc(look.soft), color: look.ink };
 }

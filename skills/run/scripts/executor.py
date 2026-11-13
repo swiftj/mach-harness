@@ -66,6 +66,9 @@ WORKFLOW = "mach:belt"  # MACH is always loaded as the plugin named mach, whiche
 # run signs in with the person's own Claude Code login. CLAUDE_CONFIG_DIR is a folder, needed to find that login.
 PASSED_ENV = ("HOME", "USER", "LOGNAME", "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "SHELL", "TERM", "CLAUDE_CONFIG_DIR")
 PROXY_ENV = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy")  # passed only without a user:password part
+# The execution's own ID, so the station scripts the run starts can stamp their lifecycle records with it (M6.1).
+# The same name as lifecycle.ENV in the intent station. An identifier, never a credential.
+EXECUTION_ENV = "MACH_EXECUTION_ID"
 CREDENTIAL_NAME_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE", re.IGNORECASE)
 # The flags the boundary depends on. A Claude Code whose --help lacks any of them is refused by the preflight.
 REQUIRED_FLAGS = ("--restricted", "--strict-mcp-config", "--plugin-dir", "--permission-mode", "--permission-prompts", "--tools",
@@ -136,7 +139,7 @@ def command(claude: str, workflow: str, tickets: Sequence[str], until: Optional[
     # --allowedTools stays last: it takes every word after it, and it is exactly the list a person consented to.
     return [claude, "-p", prompt(workflow, tickets, until), "--output-format", "stream-json", "--verbose",
             *boundary_flags(plugin_dir, tools, add_dirs, denied),
-            "--max-budget-usd", str(budget_usd), "--session-id", session_id, "--allowedTools", *tools]
+            "--max-budget-usd", format(budget_usd, "g"), "--session-id", session_id, "--allowedTools", *tools]
 
 
 def environment(base: Mapping[str, str]) -> Dict[str, str]:
@@ -327,6 +330,7 @@ def wrapper(root: Path, execution_id: str) -> int:
     if not spec or (home / "result.json").exists() or (home / "started.json").exists():
         return 2  # nothing prepared, or this execution was already started once: never run it twice
     env = environment(os.environ)  # never the supervisor's whole environment: no key or token reaches the run
+    env[EXECUTION_ENV] = execution_id  # inherited by the run's shell commands, so station scripts can say which execution ran them
     interrupted = {"signal": None}
 
     def stop(number: int, frame: Any) -> None:

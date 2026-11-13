@@ -75,6 +75,8 @@
   --mach-factory-human-soft: #F6E3D9;
   --mach-factory-select: #B5512F;
   --mach-factory-lamp: #FFF0D6;
+  --mach-factory-halt: #74488A;
+  --mach-factory-stale: #56636F;
   --mach-shadow-1: 0 1px 2px rgba(20, 20, 19, 0.06);
   --mach-shadow-2: 0 2px 8px rgba(20, 20, 19, 0.08), 0 1px 2px rgba(20, 20, 19, 0.06);
   --mach-shadow-3: 0 12px 32px rgba(20, 20, 19, 0.14), 0 2px 6px rgba(20, 20, 19, 0.08);
@@ -227,6 +229,8 @@
     --mach-factory-human-soft: #42291F;
     --mach-factory-select: #E48B6C;
     --mach-factory-lamp: #4A3A27;
+    --mach-factory-halt: #C6A6DA;
+    --mach-factory-stale: #97A4B0;
     --mach-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
     --mach-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
     --mach-shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);
@@ -308,6 +312,8 @@
   --mach-factory-human-soft: #42291F;
   --mach-factory-select: #E48B6C;
   --mach-factory-lamp: #4A3A27;
+  --mach-factory-halt: #C6A6DA;
+  --mach-factory-stale: #97A4B0;
   --mach-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --mach-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
   --mach-shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);

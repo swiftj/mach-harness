@@ -38,10 +38,18 @@ class Base(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.project = Path(self.tmp.name).resolve() / "project"
         self.project.mkdir()
-        # The visual app's host is a download; these tests never touch the network. StudioTest covers it.
-        previous = os.environ.get("MACH_STUDIO")
-        os.environ["MACH_STUDIO"] = "skip"
-        self.addCleanup(lambda: os.environ.pop("MACH_STUDIO", None) if previous is None else os.environ.__setitem__("MACH_STUDIO", previous))
+        # The visual app's host and the Control Tower are downloads; these tests never touch the network.
+        # StudioTest and TowerTest cover them.
+        for name in ("MACH_STUDIO", "MACH_TOWER"):
+            self.setenv(name, "skip")
+
+    def setenv(self, name, value):
+        previous = os.environ.get(name)
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+        self.addCleanup(lambda: os.environ.pop(name, None) if previous is None else os.environ.__setitem__(name, previous))
 
     def mach(self, command, *extra):
         return run(command, "--project", str(self.project), *extra)
@@ -53,6 +61,7 @@ class InstallTest(Base):
         self.assertEqual(code, 0, out)
         files = snapshot(self.project)
         for expected in (SKILL, ".claude/skills/mach-intent/scripts/cell.py", ".claude/skills/mach-intent/scripts/validate_slice.py",
+                         ".claude/skills/mach-intent/scripts/lifecycle.py",
                          ".claude/skills/mach-intent/assets/slice-template.md", ".claude/skills/mach-intent/references/headless.md",
                          ".claude/skills/mach-ticket/SKILL.md", ".claude/skills/mach-ticket/scripts/ticket.py",
                          ".claude/skills/mach-audit/SKILL.md", ".claude/skills/mach-audit/scripts/audit.py",
@@ -358,6 +367,138 @@ class StudioTest(Base):
         self.assertFalse((self.project / mach.STUDIO_DEST).exists())
 
 
+class TowerTest(Base):
+    """The Control Tower's observer: downloaded for this machine, checked, never required, and absent
+    from releases made before it shipped (v0.12.0 has none) without that being an error."""
+
+    def setUp(self):
+        super().setUp()
+        self.setenv("MACH_TOWER", None)
+        self.release = Path(self.tmp.name).resolve() / "release"
+        self.release.mkdir()
+        self.setenv("MACH_TOWER_URL", self.release.as_uri())
+        self.setenv("MACH_STUDIO_URL", None)
+        self.local = mach.TOWER_LOCAL_BUILD
+        mach.TOWER_LOCAL_BUILD = "apps/observer/bin/no-such-build"
+        self.addCleanup(lambda: setattr(mach, "TOWER_LOCAL_BUILD", self.local))
+
+    def publish(self, data=b"#!/bin/sh\necho observer\n", listed=None, studio=True):
+        """A release folder like the workflow makes: SHA256SUMS lists the studio and, if data, the observer."""
+        lines = []
+        if studio:
+            body = b"studio"
+            (self.release / mach.studio_asset()).write_bytes(body)
+            lines.append(f"{mach.sha(body)}  {mach.studio_asset()}")
+        if data is not None:
+            (self.release / mach.tower_asset()).write_bytes(data)
+            lines.append(f"{listed or mach.sha(data)}  {mach.tower_asset()}")
+        (self.release / mach.STUDIO_SUMS).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return data
+
+    def test_the_observer_is_published_for_the_same_machines_as_the_studio(self):
+        self.assertEqual(mach.tower_asset(), (mach.studio_asset() or "").replace("mach-studio-", "mach-observer-") or None)
+        self.assertEqual(mach.TOWER_DEST, ".factory/bin/mach-observer")
+
+    def test_install_downloads_checks_records_and_ignores_it(self):
+        data = self.publish()
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        path = self.project / mach.TOWER_DEST
+        self.assertEqual(path.read_bytes(), data)
+        self.assertTrue(os.access(path, os.X_OK))
+        self.assertIn("The Control Tower was downloaded and checked", out)
+        manifest = json.loads((self.project / mach.MANIFEST).read_text())
+        self.assertEqual(manifest["files"][mach.TOWER_DEST], mach.sha(data))
+        self.assertIn(mach.TOWER_DEST, (self.project / ".gitignore").read_text())
+        self.assertFalse((self.project / mach.STUDIO_DEST).exists())  # MACH_STUDIO=skip still holds
+        code, out = self.mach("status")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"mach-observer:\s+installed \(\.factory/bin/mach-observer\)")
+        self.assertRegex(out, r"mach-studio:\s+not installed")
+
+    def test_scaffold_downloads_it_too_for_plugin_users(self):
+        self.publish()
+        code, out = self.mach("scaffold")
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.project / mach.TOWER_DEST).is_file())
+
+    def test_a_wrong_checksum_is_refused_and_the_rest_still_installs(self):
+        self.publish(listed="0" * 64)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.project / mach.TOWER_DEST).exists())
+        self.assertIn("does not match the release's published checksum", out)
+        self.assertNotIn(mach.TOWER_DEST, json.loads((self.project / mach.MANIFEST).read_text())["files"])
+        self.assertTrue((self.project / SKILL).is_file())
+
+    def test_a_release_from_before_the_observer_is_one_note_and_a_successful_install(self):
+        self.publish(data=None)  # like v0.12.0: SHA256SUMS lists only mach-studio-*
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.project / mach.TOWER_DEST).exists())
+        notes = [line for line in out.splitlines() if "Control Tower" in line]
+        self.assertEqual(len(notes), 1, out)
+        self.assertIn("does not include it; it is published from a later release", notes[0])
+        self.assertNotIn("error", out.lower())
+        self.assertNotIn("Run the installer again", out)  # nothing to retry
+        code, out = self.mach("status")
+        self.assertRegex(out, r"mach-observer:\s+not installed")
+
+    def test_studio_url_alone_also_serves_the_observer(self):
+        data = self.publish()
+        self.setenv("MACH_TOWER_URL", None)
+        self.setenv("MACH_STUDIO_URL", self.release.as_uri())
+        self.assertEqual(mach.tower_base("9.9.9"), self.release.as_uri())
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.project / mach.TOWER_DEST).read_bytes(), data)
+
+    def test_a_failed_update_keeps_the_copy_already_installed(self):
+        data = self.publish()
+        self.mach("install")
+        self.publish(data=None)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.project / mach.TOWER_DEST).read_bytes(), data)
+        self.assertIn("The copy already installed was kept", out)
+
+    def test_no_tower_flag_and_environment_skip_it(self):
+        self.publish()
+        code, out = self.mach("install", "--no-tower")
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.project / mach.TOWER_DEST).exists())
+        self.assertIn("The Control Tower was not installed (skipped).", out)
+        code, out = self.mach("scaffold", "--no-tower")
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.project / mach.TOWER_DEST).exists())
+        self.setenv("MACH_TOWER", "skip")
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.project / mach.TOWER_DEST).exists())
+
+    def test_dry_run_downloads_nothing(self):
+        self.publish()
+        code, out = self.mach("install", "--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"Would download the Control Tower ({mach.tower_asset()})", out)
+        self.assertEqual(snapshot(self.project), {})
+
+    def test_a_build_in_this_checkout_is_used_without_downloading(self):
+        mach.TOWER_LOCAL_BUILD = "bin/mach"  # any real file in the checkout stands in for a built observer
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.project / mach.TOWER_DEST).read_bytes(), (ROOT / "bin/mach").read_bytes())
+        self.assertIn("this MACH checkout's own build", out)
+
+    def test_uninstall_removes_it_and_leaves_an_empty_project(self):
+        self.publish()
+        self.mach("install")
+        code, out = self.mach("uninstall")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"remove   {mach.TOWER_DEST}", out)
+        self.assertEqual(list(self.project.iterdir()), [], out)
+
+
 class BlockTest(unittest.TestCase):
     def test_block_round_trip(self):
         for original in ("", "# Title\n", "# Title\n\ntext\n", "no newline at end"):
@@ -391,6 +532,16 @@ class PackagingTest(unittest.TestCase):
         self.assertEqual(published, expected)
         self.assertIn(f"> {mach.STUDIO_SUMS}", workflow)
         self.assertIn('tags: ["v*"]', workflow)
+
+    def test_the_release_workflow_builds_smokes_and_attests_the_observer(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn('OUT="$PWD/dist/mach-observer-${target%/*}-${target#*/}" sh apps/observer/build.sh', workflow)
+        self.assertIn("sha256sum mach-studio-* mach-observer-* > SHA256SUMS", workflow)
+        self.assertIn("sh apps/observer/smoke.sh", workflow)
+        smoked = set(re.findall(r"observer: (mach-observer-[a-z0-9-]+) \}", workflow))
+        self.assertEqual(smoked, {f"mach-observer-{build}" for build in mach.STUDIO_BUILDS})
+        self.assertRegex(workflow, r"subject-path: \|\n\s+dist/mach-studio-\*\n\s+dist/mach-observer-\*")
+        self.assertNotIn("windows", workflow.lower())
 
     def test_plugin_manifests_agree(self):
         plugin = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())

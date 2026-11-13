@@ -1,7 +1,10 @@
-# Publishes a MACH release when a version tag is pushed: the visual Product Studio's host program,
-# built for each supported machine with the web app embedded, plus SHA256SUMS. The installer
-# (bin/mach) downloads the file for the person's machine from this release and checks it against
-# SHA256SUMS, so the file names here and in bin/mach must stay the same.
+# Publishes a MACH release when a version tag is pushed: two prebuilt programs for each supported
+# machine, plus SHA256SUMS covering both:
+#   mach-studio-<os>-<arch>    the visual Product Studio's host, with the Product Studio web app embedded
+#   mach-observer-<os>-<arch>  the Control Tower's read-only observer, with the Control Tower embedded
+# The installer (bin/mach) downloads the files for the person's machine from this release and checks
+# them against SHA256SUMS, so the file names here and in bin/mach must stay the same. Releases made
+# before the observer shipped have no mach-observer-* file; the installer treats that as normal.
 #
 # Run by hand (workflow_dispatch) it builds and smoke-tests everything and publishes nothing.
 name: release
@@ -37,25 +40,35 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
+      # Both modules declare the same Go version; the studio's go.mod picks it.
       - uses: actions/setup-go@v7
         with:
           go-version-file: apps/studio/go.mod
-          cache-dependency-path: apps/studio/go.mod
+          cache-dependency-path: |
+            apps/studio/go.mod
+            apps/observer/go.mod
 
       - name: Test the engine, the installer and the host
         run: |
           python3 -m unittest tests.test_installer tests.test_mach_product_studio tests.test_mach_product_host
           cd apps/studio && go vet ./... && go test ./...
 
-      - name: Build the host for every supported machine
+      - name: Test the observer and the station telemetry it reads
+        run: |
+          python3 -m unittest tests.test_lifecycle tests.test_mach_tower
+          cd apps/observer && go vet ./... && go test -race -count=1 ./...
+
+      - name: Build both programs for every supported machine
         run: |
           mkdir -p dist
           (cd web && pnpm install --frozen-lockfile)
           for target in darwin/arm64 linux/arm64 linux/amd64; do
             SKIP_INSTALL=1 CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} \
               OUT="$PWD/dist/mach-studio-${target%/*}-${target#*/}" sh apps/studio/build.sh
+            SKIP_INSTALL=1 CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} \
+              OUT="$PWD/dist/mach-observer-${target%/*}-${target#*/}" sh apps/observer/build.sh
           done
-          (cd dist && sha256sum mach-studio-* > SHA256SUMS && cat SHA256SUMS)
+          (cd dist && sha256sum mach-studio-* mach-observer-* > SHA256SUMS && cat SHA256SUMS)
 
       - uses: actions/upload-artifact@v7
         with:
@@ -70,9 +83,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest, file: mach-studio-linux-amd64 }
-          - { runner: ubuntu-24.04-arm, file: mach-studio-linux-arm64 }
-          - { runner: macos-latest, file: mach-studio-darwin-arm64 }
+          - { runner: ubuntu-latest, file: mach-studio-linux-amd64, observer: mach-observer-linux-amd64 }
+          - { runner: ubuntu-24.04-arm, file: mach-studio-linux-arm64, observer: mach-observer-linux-arm64 }
+          - { runner: macos-latest, file: mach-studio-darwin-arm64, observer: mach-observer-darwin-arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -84,6 +97,16 @@ jobs:
         run: |
           chmod +x "dist/${{ matrix.file }}"
           sh apps/studio/smoke.sh "dist/${{ matrix.file }}"
+      - name: Start the observer, open the link, read the API, stop it cleanly
+        run: |
+          chmod +x "dist/${{ matrix.observer }}"
+          sh apps/observer/smoke.sh "dist/${{ matrix.observer }}"
+      - name: The observer embeds the Control Tower, not the placeholder page
+        run: |
+          if grep -q 'built without the Control Tower app' "dist/${{ matrix.observer }}"; then
+            echo "dist/${{ matrix.observer }} serves the placeholder page: build.sh did not embed the Control Tower" >&2
+            exit 1
+          fi
 
   publish:
     if: github.ref_type == 'tag'
@@ -101,7 +124,9 @@ jobs:
           path: dist
       - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: dist/mach-studio-*
+          subject-path: |
+            dist/mach-studio-*
+            dist/mach-observer-*
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -4,7 +4,7 @@
  * draw time), so both themes work and nothing is hard-coded.
  */
 import type { AnyRef, EntityRef } from "../../sim";
-import { STATION_WORDS, outcomeState } from "../vocab";
+import { GATE_STATE_WORDS, STATION_WORDS, outcomeState } from "../vocab";
 import type { AgentItem, Track, TimelineModel } from "./model";
 
 export const ROW = { factory: 26, main: 32, agent: 13, pad: 6 } as const;
@@ -131,6 +131,9 @@ function gateColors(p: Palette, state: string): { ink: string; soft: string } {
   switch (state) {
     case "passed":
       return { ink: p.pass, soft: p.passSoft };
+    case "overridden":
+      // Let through on an override: the pass ink, and a bar across the diamond (drawn below), never a plain pass.
+      return { ink: p.pass, soft: p.surface };
     case "failed":
       return { ink: p.fail, soft: p.failSoft };
     case "waiting":
@@ -212,6 +215,8 @@ export interface DrawInput {
   chapters: readonly number[];
   /** The live edge: a visit that has not ended by then is drawn as work in progress, with no outcome. */
   liveAt: number;
+  /** Where open spans are drawn to: the run's end (simulation, hidden by the mask) or the live edge (real history). */
+  openEnd?: number;
 }
 
 /** Draw every track. The live edge is a DOM mask laid over this, so the canvas is redrawn only when its inputs change. */
@@ -219,7 +224,7 @@ export function drawTracks(input: DrawInput): void {
   const { ctx, rows, view, palette: p, height, selection, hovered, highlighted, focusedTrack } = input;
   const W = view.width;
   ctx.clearRect(0, 0, W, height);
-  const end = input.model.duration;
+  const end = input.openEnd ?? input.model.end;
   const span = (t: number | null) => xOf(view, t ?? end);
 
   // Chapter guides.
@@ -368,6 +373,12 @@ export function drawTracks(input: DrawInput): void {
       ctx.strokeStyle = c.ink;
       ctx.lineWidth = 1.3;
       ctx.stroke();
+      if (g.state === "overridden") {
+        ctx.beginPath();
+        ctx.moveTo(x - 3, cy + 3);
+        ctx.lineTo(x + 3, cy - 3);
+        ctx.stroke();
+      }
       note(g.ref, [x - 5, cy - 5, x + 5, cy + 5]);
     }
 
@@ -548,6 +559,12 @@ function drawAgents(ctx: CanvasRenderingContext2D, track: Track, top: number, vi
       ctx.fillRect(Math.round(tx0), cy - 4.5, msPerPx < 400 ? 1.5 : 1, 9);
       note(t.ref, [tx0 - 1, cy - 5, Math.max(tx1, tx0 + 1) + 1, cy + 5]);
     }
+    // A Dynamic Workflow agent's calls are not observable: its count and last tool, as words on its span.
+    if (a.agent.observation === "count-only" && a.agent.toolCallCount !== null && x1 - x0 > 70) {
+      ctx.font = `10px ${p.sans}`;
+      ctx.fillStyle = p.inkMuted;
+      ctx.fillText(`${a.agent.toolCallCount} calls${a.agent.lastTool ? `, last ${a.agent.lastTool}` : ""}`, Math.max(x0, 0) + 7, cy - 2);
+    }
     head(ctx, a.agent.model, x0, cy);
     ctx.fillStyle = p.surface;
     ctx.fill();
@@ -556,6 +573,12 @@ function drawAgents(ctx: CanvasRenderingContext2D, track: Track, top: number, vi
     ctx.stroke();
     note(a.ref, [x0 - 4, cy - 5, x1, cy + 5]);
   }
+}
+
+/** ", times placed, not measured" when the observer placed a visit's start or end rather than a record measuring it. */
+function placed(s: { startQuality: string; endQuality: string }): string {
+  if (s.startQuality === "inferred" || s.endQuality === "inferred") return ". Times placed by the observer, not measured";
+  return s.startQuality === "measured" ? ". Times measured" : "";
 }
 
 export interface Hit {
@@ -586,7 +609,7 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
     for (const s of track.stations) {
       if (t >= s.start - slack && t <= (s.end ?? end) + slack) {
         const ended = known(s.end);
-        return { ref: s.ref, trackId: track.id, title: `${track.ticketId ?? track.sliceId}: ${STATION_WORDS[s.station]}, round ${s.round}`, detail: ended !== null && s.outcome ? `Ended: ${s.outcome}` : "At work", start: s.start, end: ended };
+        return { ref: s.ref, trackId: track.id, title: `${track.ticketId ?? track.sliceId}: ${STATION_WORDS[s.station]}, round ${s.round}`, detail: `${ended !== null && s.outcome ? `Ended: ${s.outcome}` : "At work"}${placed(s)}`, start: s.start, end: ended };
       }
     }
     for (const w of track.waits) {
@@ -608,13 +631,17 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
       if (t < a.start - 4 * slack || t > (a.end ?? end) + slack) continue;
       const tool = a.tools.find((c) => t >= c.start - 2 * slack && t <= (c.end ?? end) + 2 * slack);
       if (tool) return { ref: tool.ref, trackId: track.id, title: `${tool.tool} ${tool.target}`, detail: `${a.agent.label}`, start: tool.start, end: known(tool.end) };
+      if (a.agent.observation === "count-only") {
+        const n = a.agent.toolCallCount;
+        return { ref: a.ref, trackId: track.id, title: a.agent.label, detail: `${n === null ? "Tool calls not reported yet" : `${n} tool call${n === 1 ? "" : "s"} (a count; each call is not observable)`}${a.agent.lastTool ? `, last ${a.agent.lastTool}` : ""}`, start: a.start, end: known(a.end) };
+      }
       const calls = a.tools.filter((c) => c.start <= liveAt).length;
       return { ref: a.ref, trackId: track.id, title: a.agent.label, detail: `${calls} tool call${calls === 1 ? "" : "s"}, ${a.agent.model}`, start: a.start, end: known(a.end) };
     }
     return null;
   }
 
-  for (const g of track.gates) if (near(g.t, 5)) return { ref: g.ref, trackId: track.id, title: g.ref.slice(5), detail: `Gate ${g.state}`, start: g.t, end: g.t };
+  for (const g of track.gates) if (near(g.t, 5)) return { ref: g.ref, trackId: track.id, title: g.ref.slice(5), detail: `Gate ${GATE_STATE_WORDS[g.state].toLowerCase()}`, start: g.t, end: g.t };
   for (const m of track.marks) if (near(m.t, 4)) return { ref: m.ref, trackId: track.id, title: m.text, detail: "", start: m.t, end: m.t };
   if (local > 24) {
     const a = track.artifacts.find((x) => near(x.t, 2));
@@ -623,7 +650,7 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
   for (const s of track.stations) {
     if (t >= s.start - slack && t <= (s.end ?? end) + slack) {
       const ended = known(s.end);
-      return { ref: s.ref, trackId: track.id, title: `${STATION_WORDS[s.station]}, round ${s.round}`, detail: ended !== null && s.outcome ? `Ended: ${s.outcome}` : "At work", start: s.start, end: ended };
+      return { ref: s.ref, trackId: track.id, title: `${STATION_WORDS[s.station]}, round ${s.round}`, detail: `${ended !== null && s.outcome ? `Ended: ${s.outcome}` : "At work"}${placed(s)}`, start: s.start, end: ended };
     }
   }
   for (const w of track.waits) {

@@ -2,7 +2,7 @@
  * React bindings for the one store. React 19's useSyncExternalStore; no other dependency.
  *
  *   const playhead = useSceneStore((s) => s.playhead);
- *   const scene = useScene();                       // sceneAt(fixture, playhead), stable between events
+ *   const scene = useScene();                       // log.sceneAt(playhead), stable between events
  *   const cell = useScene((scene) => scene.cells["LOCAL-031"]);
  *   const { select, seek } = useSceneActions();
  *
@@ -11,7 +11,6 @@
  */
 import { createContext, createElement, useContext, useEffect, useSyncExternalStore, type ReactNode } from "react";
 import type { Scene } from "../sim/model";
-import { sceneAt } from "../sim/engine";
 import { SCENARIO } from "../sim/scenario";
 import { browserClock, switchableClock } from "./clock";
 import { createSceneStore, installMachSimHook, shouldExposeHook, type SceneStore, type SceneStoreState } from "./store";
@@ -54,7 +53,8 @@ export function useScene<T>(selector?: (scene: Scene) => T): T | Scene {
   const store = useStore();
   const read = () => {
     const s = store.getState();
-    const scene = sceneAt(s.fixture, s.playhead);
+    // Any source: simulation, live or replay. The log returns the same object for the same moment while it is in use.
+    const scene = s.log.sceneAt(s.playhead);
     return selector ? selector(scene) : scene;
   };
   return useSyncExternalStore(store.subscribe, read, read);

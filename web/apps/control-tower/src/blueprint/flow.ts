@@ -52,9 +52,12 @@ export interface Flow {
 const REPEATS = new Set<ColumnKey>(["build", "verify", "verification", "review", "consensus"]);
 const colIndex = (c: ColumnKey): number => COLUMN_ORDER.indexOf(c);
 
-/** The judging round a visit belongs to: a revision starts the next round. */
-export function visitRound(v: StationVisit): number {
-  return v.action === "revise" ? v.round + 1 : v.round;
+/**
+ * The judging round a visit belongs to: the scene's (the lifecycle log's meaning, the round it
+ * starts, for every source; the simulation is converted where it enters the scene).
+ */
+export function visitRound(v: Pick<StationVisit, "round">): number {
+  return v.round;
 }
 
 function roundAt(cell: CellState, t: number): number {

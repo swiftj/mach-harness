@@ -6,6 +6,15 @@
 
 Import from `src/sim/index.ts` (`../sim`) and `src/scene/index.ts` (`../scene`) only. Anything deeper may move.
 
+> **M6.2 (live execution).** The engine is now incremental and serves three sources: the simulation
+> below, the Live Factory and Historical Replay. `reduce` also takes the observer's version 3 events
+> (`v3.ts`, `reduce-v3.ts`); every scene comes from a scene log (`log.ts`: ordered, de-duplicated
+> events, checkpoints plus forward reduction, late-event re-derivation, bounded memory); every scene
+> carries `provenance` and `completeness`, every entity a `meta` (authority, unknown and inferred
+> fields, time quality). `indexFixture` keeps its M6.0 shape on top of a log, without precomputing
+> every scene. Every selector that takes a fixture also takes a log. The design, the measured costs,
+> the scene-model changes and the changes the views must make are in `../live/README.md`.
+
 ## Contents
 
 1. [Quick start for a view](#1-quick-start-for-a-view)

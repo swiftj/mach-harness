@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { factoryTokens } from "../tokens/tokens";
-import { cellStages, dimmedOpacity, fc, regions, type CellStage, type FactoryColor, type Lod, type RegionKind } from "./grammar";
+import { cellStages, dimmedOpacity, fc, regions, type CellStage, type FactoryColor, type FactoryMarkShape, type Lod, type MarkState, type RegionKind } from "./grammar";
 import { planeStroke, planeTransform, prismFaces, project, round, screenBounds, shadowPolygon, toPoints, type PlanBox, type Vec2 } from "./projection";
 import { useFactoryIds } from "./scene";
 import { StateMark } from "./symbols";
@@ -297,6 +297,14 @@ export interface CellPlateProps {
   progress?: number;
   /** How long the current stage has run, in factory ms: shown beside the stage word on the mast at near zoom. */
   elapsed?: number;
+  /** M6.2: the elapsed time's start was placed, not measured: lettered "≈ 6 min". */
+  elapsedInferred?: boolean;
+  /**
+   * M6.2, live: what the mast shows instead of the stage's own mark, when what is known about the
+   * cell's activity says more than its stage (waiting for an execution place, interrupted, as last
+   * seen, not known). The label replaces the stage word.
+   */
+  activity?: { state: MarkState; label: string };
   lod?: Lod;
   dimmed?: boolean;
   /** Draw the cell's own conveyor rail. */
@@ -312,13 +320,14 @@ export interface CellPlateProps {
  * back corner carries the stage mark (and, at near zoom, how long the stage has run). The ticket ID
  * is lettered on the floor. A finished cell's floor settles to the calm `done` tone.
  */
-export function CellPlate({ origin, ticket, slice, stage, z = factoryTokens.elevation.regionPlate as number, lit, lampIntensity, completion = 0, elapsed, lod = "mid", dimmed, rail = true, children }: CellPlateProps) {
+export function CellPlate({ origin, ticket, slice, stage, z = factoryTokens.elevation.regionPlate as number, lit, lampIntensity, completion = 0, elapsed, elapsedInferred, activity, lod = "mid", dimmed, rail = true, children }: CellPlateProps) {
   const ids = useFactoryIds();
   const a = cellAnatomy(origin, z);
   const { x: w, y: d } = a.size;
   const { x, y } = origin;
   const wallH = factoryTokens.elevation.cellRim;
-  const look = cellStages[stage];
+  const stageLook = cellStages[stage];
+  const look: { label: string; state: MarkState; mark?: FactoryMarkShape } = activity ? { label: activity.label, state: activity.state } : stageLook;
   const lamp = Math.min(1, Math.max(0, lampIntensity ?? (lit ? 1 : 0)));
   const pool = lampPool(origin, z);
   const mast = project(a.mast);
@@ -358,7 +367,7 @@ export function CellPlate({ origin, ticket, slice, stage, z = factoryTokens.elev
         {lod === "near" ? (
           <text x={10} y={4} className="tabular" style={{ fill: "var(--mach-ink)", fontSize: 10.5, fontWeight: 600 }}>
             {look.label}
-            {look.state === "active" && elapsed !== undefined ? <tspan style={{ fill: "var(--mach-ink-muted)", fontWeight: 400 }}>{` · ${formatElapsed(elapsed)}`}</tspan> : null}
+            {look.state === "active" && elapsed !== undefined ? <tspan style={{ fill: "var(--mach-ink-muted)", fontWeight: 400 }}>{` · ${elapsedInferred ? "≈ " : ""}${formatElapsed(elapsed)}`}</tspan> : null}
           </text>
         ) : null}
       </g>

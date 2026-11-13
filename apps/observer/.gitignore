@@ -1,0 +1,3 @@
+bin/
+# a `go build` run inside cmd/mach-observer
+cmd/mach-observer/mach-observer

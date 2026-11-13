@@ -19,6 +19,7 @@ A script does the measuring and the scoring. `AUDIT` below means `python3 "${CLA
 2. **Never make the audit pass by weakening the project.** Do not skip, delete or loosen tests, disable lint rules, or edit code so a check goes green. Fixing the repository is separate work that goes through a ticket.
 3. **It runs the project's code.** The audit executes the project's own build, test and lint commands. If the repository is not one the user would build themselves, say so and stop.
 4. **Do not guess commands.** Only pass a command you found written down in the repository.
+5. **One plain command per call.** The Factory runs this station unattended with a short list of allowed commands, and anything else is refused, not asked about. Every shell command you run is one `AUDIT` command, written out in full with the script's absolute path; its exit status is in what it prints, so nothing needs to be added to the command (no `; echo $?`). A command you pass with `--test-cmd` and the like is a quoted argument, not a second command. Never chain commands (`&&`, `;`, `|`, a second line), never redirect (`>`, `<`, `2>&1`, a heredoc), never `cd`, and never set shell variables or define functions. Read files with the Read tool, find them with Glob and Grep, and create or change them with Write and Edit. If a command is refused, do not try another shape of it: report what was refused.
 
 ## Steps
 

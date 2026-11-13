@@ -3,7 +3,7 @@
  * (clerks, intent workers, Bash, `verification#2`); the grammar has one symbol per kind of thing.
  * Every mapping here is presentation only and is listed in the Blueprint report.
  */
-import type { AgentRole as GrammarRole, ArtifactKind as GrammarArtifact, FactoryState, GateKind as GrammarGate, ModelTier as GrammarTier, ReviewerSeat, StationKind, ToolFamily } from "@mach/ui";
+import type { AgentRole as GrammarRole, ArtifactKind as GrammarArtifact, FactoryState, MarkState, GateKind as GrammarGate, ModelTier as GrammarTier, ReviewerSeat, StationKind, ToolFamily } from "@mach/ui";
 import type { AgentState, ArtifactState, CellStage, GateState, ModelId, ReviewSeat, StationVisit, ToolCallState } from "../sim";
 
 export function tierOf(model: ModelId): GrammarTier {
@@ -101,6 +101,8 @@ export function stationKind(station: string): StationKind {
 /** Simulation gate kinds to the grammar's glyphs (pass 3 added `plan-check`). */
 export function grammarGate(gate: GateState["gate"]): GrammarGate {
   switch (gate) {
+    case "recorded":
+      return "audit";
     case "plan-check":
       return "plan-check";
     case "audit":
@@ -126,13 +128,16 @@ export const GATE_WORDS: Record<GateState["gate"], string> = {
   review: "Review consensus",
   "human-approval": "Human approval",
   "merge-revalidation": "Merge revalidation",
+  recorded: "Recorded gate",
 };
 
+/** A gate's grammar state. An override lets the work through (succeeded), and every caller marks it overridden by shape too (`gateOverridden`). */
 export function gateState(gate: GateState): FactoryState {
   switch (gate.state) {
     case "open":
       return "active";
     case "passed":
+    case "overridden":
       return "succeeded";
     case "failed":
       return "failed";
@@ -143,8 +148,37 @@ export function gateState(gate: GateState): FactoryState {
   }
 }
 
-export function visitState(visit: StationVisit): FactoryState {
-  if (visit.outcome === null) return visit.station === "human-approval" ? "human" : "active";
+export function gateOverridden(gate: Pick<GateState, "state"> | null | undefined): boolean {
+  return gate?.state === "overridden";
+}
+
+/** A gate's state in words, from its own record: "passed", "overridden, test-passed-first-run", "refused"... */
+export function gateWords(gate: GateState): string {
+  switch (gate.state) {
+    case "open":
+      return "deciding";
+    case "waiting":
+      return "waiting for a person";
+    case "passed":
+      return "passed";
+    case "skipped":
+      return "not needed";
+    case "overridden":
+      return `overridden${gate.reasonCode ? `, ${gate.reasonCode}` : ""}`;
+    case "failed":
+      return `refused${gate.reasonCode ? `, ${gate.reasonCode}` : ""}`;
+  }
+}
+
+/**
+ * A visit as drawn, from its own record only: working while open (waiting at the human gate),
+ * interrupted when it ended without an exit record (the scene closed it: `unclosed`), failed or passed
+ * by its outcome, blocked when it stopped, unknown when it ended with no outcome. Never "working" once
+ * the scene has closed it.
+ */
+export function visitMark(visit: StationVisit): MarkState {
+  if (visit.unclosed) return "interrupted";
+  if (visit.leftAt === null) return visit.station === "human-approval" ? "human" : "active";
   switch (visit.outcome) {
     case "failed":
     case "rejected":
@@ -152,10 +186,19 @@ export function visitState(visit: StationVisit): FactoryState {
     case "awaiting-human":
       return "human";
     case "stopped":
-      return "idle";
+      return "blocked";
+    case null:
+      return "unknown";
     default:
       return "succeeded";
   }
+}
+
+/** The visit's state in words for names: the station's own word, or why there is none. */
+export function visitStateWords(visit: StationVisit): string {
+  if (visit.unclosed) return `ended without an exit record (${visit.unclosed.reason === "superseded" ? "entered again before it exited" : "its execution ended"})`;
+  if (visit.leftAt === null) return visit.station === "human-approval" ? "waiting" : "running";
+  return visit.outcomeWord ?? visit.outcome ?? "ended, outcome not recorded";
 }
 
 export function agentState(agent: Pick<AgentState, "status">): FactoryState {

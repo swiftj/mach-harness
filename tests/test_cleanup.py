@@ -299,7 +299,13 @@ class RunTest(Base):
         self.assertEqual((done["removed"], done["branch_deleted"]), ([".factory/worktrees/LOCAL-009"], False))
         self.assertFalse(root.exists())
         self.assertEqual((git(self.project, "status", "--porcelain").stdout, self.branches(), sorted(p.name for p in self.project.iterdir())), before)
-        self.assertEqual(sorted(self.members("LOCAL-009.tar.gz")), ["LOCAL-009/build-report.json", "LOCAL-009/cell.json", "LOCAL-009/intent.md"])
+        # M6.1: the refused run above was recorded in the cell's lifecycle log, so the log is archived with the cell, closed by cleanup.
+        self.assertEqual(sorted(self.members("LOCAL-009.tar.gz")),
+                         ["LOCAL-009/build-report.json", "LOCAL-009/cell.json", "LOCAL-009/intent.md", "LOCAL-009/lifecycle.jsonl"])
+        history = [json.loads(line) for line in self.read_member("LOCAL-009/lifecycle.jsonl", "LOCAL-009.tar.gz").splitlines()]
+        self.assertEqual([(r["type"], r["data"].get("outcome")) for r in history],
+                         [("gate.evaluated", "refuse"), ("gate.evaluated", "pass"), ("station.entered", None), ("cleanup.completed", "merged"),
+                          ("station.exited", "merged")])
         record = self.records()[0]
         self.assertEqual(set(record), RECORD_KEYS)
         self.assertEqual((record["rounds"], record["first_pass"], record["slice_id"], record["risk"], record["mode"], record["tests_seen_failing_first"]), (1, True, None, "Low", "headless", 3))

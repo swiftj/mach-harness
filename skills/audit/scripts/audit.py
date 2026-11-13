@@ -466,6 +466,35 @@ def fix_gitignore(repo: Repo) -> Optional[str]:
     return "Created .gitignore for: " + (", ".join(repo.stacks) or "general use") + "."
 
 
+# M6.1 station telemetry. The shared helper lives with the intent station. It is observational only: if it
+# cannot be loaded, nothing is recorded and this station behaves exactly as before.
+try:
+    _SKILL = Path(__file__).resolve().parent.parent
+    sys.path.append(str(_SKILL.parent / ("mach-intent" if _SKILL.name.startswith("mach-") else "intent") / "scripts"))
+    import lifecycle  # noqa: E402
+except Exception:  # noqa: BLE001
+    lifecycle = None
+
+
+def report_to_cells(project: Path, report: Dict[str, Any]) -> None:
+    """Lifecycle: the audit is repository-wide, so it is recorded in each cell waiting on it (stage 'planned'). Never raises."""
+    if lifecycle is None:
+        return
+    try:
+        for path in sorted((project / ".factory" / "worktrees").glob("*/cell.json")):
+            info = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(info, dict) or info.get("stage") != "planned":
+                continue
+            tier, allowed = report["readiness_tier"], report["readiness_tier"] in ("Gold", "Silver")
+            lifecycle.record(path.parent, "station.entered", "audit", {"stage": "planned", "head": lifecycle.short(report.get("head"))})
+            lifecycle.record(path.parent, "gate.evaluated", "audit", {"gate": "audit.readiness", "outcome": "pass" if allowed else "refuse",
+                                                                       "reason_code": tier.lower(), "overridden_by_reason": False,
+                                                                       "score": report["readiness_score"], "blockers": len(report["blockers"])})
+            lifecycle.record(path.parent, "station.exited", "audit", {"outcome": tier.lower(), "stage": "planned"})
+    except Exception:  # noqa: BLE001 - telemetry only
+        pass
+
+
 def cmd_run(project: Path, args: argparse.Namespace) -> int:
     repo = Repo(project)
     fixed = []
@@ -517,6 +546,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
     path = project / REPORT
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    report_to_cells(project, report)
 
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))

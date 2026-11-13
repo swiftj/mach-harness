@@ -1,32 +1,20 @@
 /**
- * Frame pieces: the simulation stamp, the brand and run identity, the mode switch.
+ * Frame pieces: the source stamp, the brand and run identity, the mode switch.
  */
 import { useId } from "react";
 import { cn, MachMark, fc } from "@mach/ui";
 import { SCENARIO, WAVE } from "../sim";
-import type { ViewMode } from "../scene";
+import { useScene, useSceneStore, type ViewMode } from "../scene";
+import { SourceStamp } from "./SourceBadge";
+import { useSource } from "./source/context";
+import { utcClock, utcDate } from "./vocab";
 
 /**
- * The permanent label: this is a simulation. Same stamp as the Blueprint's title block (warning
- * tint, warning line, bold), so it reads as one mark wherever it appears. Never hidden.
+ * The simulation's permanent label (the M6.0 stamp), kept for places that only ever show the
+ * simulation. Anything that can show real history uses SourceStamp with the store's source.
  */
 export function SimulationStamp({ size = "md", className }: { size?: "md" | "lg"; className?: string }) {
-  return (
-    <span
-      data-simulation-stamp=""
-      title="Everything here plays back a recorded fixture. It reads no Factory state and changes nothing."
-      className={cn(
-        "inline-flex shrink-0 select-none items-center gap-1.5 rounded-xs border border-warning-line bg-warning-soft font-sans font-bold text-warning-ink",
-        size === "md" ? "h-6 px-2 text-caption" : "h-7 px-2.5 text-label",
-        className,
-      )}
-    >
-      <svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" className="shrink-0">
-        <circle cx="5" cy="5" r="4" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeDasharray: "2 1.6" }} />
-      </svg>
-      Simulation
-    </span>
-  );
+  return <SourceStamp source="simulation" size={size} className={className} />;
 }
 
 const startDate = new Date(SCENARIO.startAt);
@@ -51,8 +39,8 @@ export function Brand() {
   );
 }
 
-/** Which run this is: the wave, its title, the product and the simulated date. */
-export function RunIdentity({ compact }: { compact?: boolean }) {
+/** The simulation's run: the wave, its title, the product and the simulated date. */
+function SimulatedRun({ compact }: { compact?: boolean }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2.5">
       <h1 className="truncate font-sans text-body-lg font-bold leading-none text-ink">
@@ -67,6 +55,47 @@ export function RunIdentity({ compact }: { compact?: boolean }) {
       )}
     </div>
   );
+}
+
+/** Real history: the observer's project, the waves received so far, and where the history held begins. */
+function RealRun({ compact }: { compact?: boolean }) {
+  const source = useSceneStore((s) => s.source);
+  const { project } = useSource();
+  const start = useSceneStore((s) => s.extent.start);
+  const held = useSceneStore((s) => s.log.size() > 0);
+  // Wave ids, in arrival order: a string so the title re-renders only when a wave arrives.
+  const waves = useScene((s) =>
+    Object.values(s.waves)
+      .sort((a, b) => a.discoveredAt - b.discoveredAt)
+      .map((w) => w.id)
+      .join(" "),
+  );
+  const list = waves ? waves.split(" ") : [];
+  const title = project ?? "This project";
+  return (
+    <div className="flex min-w-0 items-baseline gap-2.5">
+      <h1 className="truncate font-sans text-body-lg font-bold leading-none text-ink">
+        {title}
+        <span className="sr-only">, {source === "live" ? "real execution of the MACH Factory, live" : "real execution of the MACH Factory, replayed"}</span>
+      </h1>
+      {list.length ? (
+        <span className="shrink-0 font-mono text-caption text-ink-subtle max-[799px]:hidden" title={list.join(", ")}>
+          {list.length > 2 ? `${list.at(-1)} and ${list.length - 1} more` : list.join(", ")}
+        </span>
+      ) : null}
+      {compact || !held ? null : (
+        <span className="hidden shrink-0 text-caption text-ink-subtle min-[1360px]:inline">
+          History held from {utcDate(start)}, {utcClock(start)} UTC
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Which run this is. */
+export function RunIdentity({ compact }: { compact?: boolean }) {
+  const source = useSceneStore((s) => s.source);
+  return source === "simulation" ? <SimulatedRun compact={compact} /> : <RealRun compact={compact} />;
 }
 
 const MODES: Array<{ value: ViewMode; label: string; key: string; hint: string }> = [

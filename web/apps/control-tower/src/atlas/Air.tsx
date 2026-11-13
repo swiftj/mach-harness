@@ -21,7 +21,7 @@ function sliceAnchor(L: PlantLayout, cells: Readonly<Record<string, CellState>>,
 
 export function Dependencies() {
   const { layout: L } = useAtlas();
-  const t = usePlayheadKeyed((s) => (animating(s.fixture, s.playhead, (e) => e.type === "dependency.resolved" || e.type === "slice.integrated") ? s.playhead : "settled"));
+  const t = usePlayheadKeyed((s) => (animating(s.log, s.playhead, (e) => e.event.type === "dependency.resolved" || e.event.type === "slice.integrated") ? s.playhead : "settled"));
   const reduced = useSceneStore((s) => s.reducedMotion);
   const deps = useScene((s) => s.dependencies);
   const cells = useScene((s) => s.cells);
@@ -46,28 +46,37 @@ export function Dependencies() {
 }
 
 export function Transit() {
-  const { layout: L, lod, visibleBays } = useAtlas();
-  const fixture = useSceneStore((s) => s.fixture);
+  const { layout: L, lod, visibleBays, mode } = useAtlas();
+  const log = useSceneStore((s) => s.log);
   const t = usePlayheadKeyed((s) => {
     const now = s.playhead;
-    if (legsInFlight(s.fixture, now, s.reducedMotion).length > 0) return now;
-    return animating(s.fixture, now, (e) => e.type === "review.decided" || e.type === "build.revised") ? now : "settled";
+    if (legsInFlight(s.log, L, now, s.reducedMotion).length > 0) return now;
+    return animating(s.log, now, (e) => e.event.type === "review.decided" || e.event.type === "build.revised") ? now : "settled";
   });
   const reduced = useSceneStore((s) => s.reducedMotion);
   const cells = useScene((s) => s.cells);
   const highlight = useHighlight();
-  const legs = legsInFlight(fixture, t, reduced);
+  const legs = legsInFlight(log, L, t, reduced);
   const moving = new Set(legs.filter((l) => l.leg.kind === "travel" || l.leg.kind === "return" || l.leg.kind === "integrate").map((l) => l.leg.ticketId));
 
   // Work parked at a station outside its bay: a carriage standing still, no motion.
   const parked: { ticket: string; at: Vec3; state: "active" | "human"; angle: number }[] = [];
-  for (const cell of Object.values(cells)) {
+  // Live: several cells can wait at one station; they queue back along the track that brought them
+  // (one carriage length apart), oldest arrival in front, rather than stacking on one spot.
+  const queue = new Map<string, number>();
+  const place = (key: string, front: Vec3, dx: number, dy: number): Vec3 => {
+    const k = mode.live ? (queue.get(key) ?? 0) : 0;
+    queue.set(key, k + 1);
+    return { ...front, x: front.x + dx * k, y: front.y + dy * k };
+  };
+  const waiting = mode.live ? Object.values(cells).sort((a, b) => (a.stationSince ?? 0) - (b.stationSince ?? 0)) : Object.values(cells);
+  for (const cell of waiting) {
     if (moving.has(cell.ticketId) || cell.archived) continue;
     const st = workStation(cell);
     if (onFloor(st) || st === "cleanup") continue;
-    if (st === "review") parked.push({ ticket: cell.ticketId, at: { ...L.review.entry, x: L.review.entry.x + 18 }, state: "active", angle: 0 });
-    else if (st === "human-approval") parked.push({ ticket: cell.ticketId, at: L.human.parked, state: "human", angle: 0 });
-    else if (st === "merge" && !cell.merged) parked.push({ ticket: cell.ticketId, at: L.integration.entry, state: "active", angle: 0 });
+    if (st === "review") parked.push({ ticket: cell.ticketId, at: place("review", { ...L.review.entry, x: L.review.entry.x + 18 }, -16, 0), state: "active", angle: 0 });
+    else if (st === "human-approval") parked.push({ ticket: cell.ticketId, at: place("human", L.human.parked, 0, -16), state: "human", angle: 0 });
+    else if (st === "merge" && !cell.merged) parked.push({ ticket: cell.ticketId, at: place("merge", L.integration.entry, 0, -16), state: "active", angle: 0 });
   }
 
   // The review's return to build: one arc over the plant per rejected round, until the next review starts.
@@ -127,9 +136,12 @@ export function Transit() {
   );
 }
 
-/** The supervisor's conduit lit, from its console to each bay with a running execution. */
+/**
+ * The supervisor's conduit lit, from its console to each bay with a running execution. On a stale
+ * connection it is not lit: drawn dotted in the stale ink, as last seen.
+ */
 export function LiveConduits() {
-  const { layout: L } = useAtlas();
+  const { layout: L, mode } = useAtlas();
   const executions = useScene((s) => s.executions);
   const running = new Set(Object.values(executions).filter((e) => e.state === "running" || e.state === "claimed").map((e) => e.ticketId));
   if (running.size === 0) return null;
@@ -146,7 +158,7 @@ export function LiveConduits() {
             ? [...base.slice(0, 3), { x: L.floor.conduitX, y: tapY, z: PLATE_Z + 1 }, { x: bay.origin.x + 2, y: tapY, z: FLOOR_Z + 2 }]
             : [...base.slice(0, 2), { x: bay.origin.x - 6, y: 7, z: PLATE_Z + 1 }, { x: bay.origin.x - 6, y: tapY, z: PLATE_Z + 1 }, { x: bay.origin.x + 2, y: tapY, z: FLOOR_Z + 2 }];
         const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${round(project(p).x)} ${round(project(p).y)}`).join("");
-        return <path key={ticket} d={d} style={{ fill: "none", stroke: fc("live"), strokeWidth: 0.9, strokeLinejoin: "round", opacity: 0.85 }} />;
+        return <path key={ticket} d={d} style={{ fill: "none", stroke: mode.stale ? fc("stale") : fc("live"), strokeWidth: 0.9, strokeLinejoin: "round", strokeDasharray: mode.stale ? "1 3" : undefined, opacity: 0.85 }} />;
       })}
     </g>
   );

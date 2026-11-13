@@ -7,12 +7,15 @@ import type { Lod } from "@mach/ui";
 import { useSceneActions, useSceneStore, useStore, type SceneStoreState } from "../scene";
 import type { EntityRef } from "../sim";
 import type { PlantLayout } from "./layout";
+import type { ViewMode } from "./derive";
 
 export interface AtlasContextValue {
   lod: Lod;
   layout: PlantLayout;
   /** Tickets whose bays are drawn whole, with their hit targets (bays out of view are plates only). */
   visibleBays: ReadonlySet<string>;
+  /** Simulation (drawn as M6.0) or real execution (live, replay), and whether the connection is stale. */
+  mode: ViewMode;
 }
 
 export const AtlasContext = createContext<AtlasContextValue | null>(null);

@@ -5,7 +5,7 @@
  */
 import { memo, type ReactNode } from "react";
 import { AgentHead, ArtifactCard, blueprintSheetLayout, fc, StateMark, StationSymbol, ToolCap, type FactoryState } from "@mach/ui";
-import type { Scene } from "../sim";
+import { gatesOfTicket, type Scene } from "../sim";
 import { useScene } from "../scene";
 import type { ColumnKey, ColumnTemplate } from "./columns";
 import { SHEET, type Layout } from "./layout";
@@ -207,8 +207,9 @@ interface Revision {
 function revisionsOf(scene: Scene): Revision[] {
   const out: Revision[] = [];
   for (const cell of Object.values(scene.cells)) {
-    for (const g of Object.values(scene.gates)) {
-      if (g.ticketId !== cell.ticketId || g.decidedAt === null) continue;
+    // The cell's own gates, indexed once per gate record (a scan of every gate per cell was D17's churn).
+    for (const g of gatesOfTicket(scene, cell.ticketId)) {
+      if (g.decidedAt === null) continue;
       if (g.gate === "verification" && g.state === "failed") {
         const failed = cell.verifications.find((v) => v.round === g.round)?.checks.filter((c) => c.result === "fail").map((c) => c.targetId) ?? [];
         out.push({ at: g.decidedAt, ticket: cell.ticketId, text: `Verification failed (${failed.join(", ")}); back to build, round ${(g.round ?? 1) + 1} of 3`, short: `${failed.join(", ")} failed, round ${(g.round ?? 1) + 1}`, tone: "fail" });
@@ -233,7 +234,7 @@ function revisionsOf(scene: Scene): Revision[] {
 }
 
 /** The revision table: rounds and decisions as the drawing's revisions, lettered A, B, C as they happen. */
-export function Revisions({ x, y, w, h }: { x: number; y: number; w: number; h: number }) {
+export function Revisions({ x, y, w, h, overview = false }: { x: number; y: number; w: number; h: number; overview?: boolean }) {
   const scene = useScene();
   const all = revisionsOf(scene);
   const rows = Math.floor((h - 22) / 13);
@@ -266,7 +267,8 @@ export function Revisions({ x, y, w, h }: { x: number; y: number; w: number; h: 
           </text>
         ))}
       </g>
-      {shown.map((r, i) => (
+      {/* The fine rows are hidden at the overview; they are not drawn there at all. */}
+      {(overview ? [] : shown).map((r, i) => (
         <g key={`${r.at}${r.text}`} className="bp-fine" style={{ fontSize: 9 }}>
           <text x={x + 9} y={y + 29 + i * 13} style={{ fill: "var(--mach-ink)", fontWeight: 700 }}>
             {String.fromCharCode(65 + ((first + i) % 26))}
@@ -282,7 +284,7 @@ export function Revisions({ x, y, w, h }: { x: number; y: number; w: number; h: 
           </text>
         </g>
       ))}
-      {!all.length ? (
+      {!all.length && !overview ? (
         <text x={x + 144} y={y + 29} className="bp-fine" style={{ fill: "var(--mach-ink-subtle)", fontSize: 9 }}>
           No rounds or decisions yet.
         </text>

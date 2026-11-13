@@ -1,7 +1,10 @@
 /**
  * The sheet's layout: where every lane and row stands. Pure arithmetic over the tree, the ELK
- * column template and the expansion set; no measuring, no async, nothing per frame. Lanes stack in
- * wave order, so expanding one cell moves only the lanes below it and never reorders anything.
+ * column template and the expansion set; no measuring, no async, nothing per frame. Waves stack in
+ * history order and lanes in each wave in history order, so a wave, slice, execution, visit or round
+ * that becomes known is added after what is already drawn, expanding one cell moves only the lanes
+ * below it, and nothing is ever reordered. The view keeps the camera on what it shows when rows
+ * below or above it change (index.tsx, `anchorShift`).
  */
 import type { CellState, GateState, Scene, SliceState } from "../sim";
 import { PANELS } from "../sim";
@@ -71,15 +74,28 @@ export interface Row {
   readonly expandable: boolean;
 }
 
+/** One wave's band on the sheet: its header row and the lanes under it. */
+export interface WaveBand {
+  readonly id: string;
+  readonly node: TreeNode;
+  readonly y: number;
+  readonly h: number;
+  readonly expanded: boolean;
+  readonly lanes: readonly Lane[];
+}
+
 export interface Layout {
   readonly width: number;
   readonly height: number;
   /** x where the drawing (columns, time axes) starts, and its width. */
   readonly ax: number;
   readonly aw: number;
+  /** The first wave's band (where the column head hangs), or where it will be. */
   readonly waveY: number;
   readonly waveH: number;
   readonly waveExpanded: boolean;
+  readonly waves: readonly WaveBand[];
+  /** Every lane of every wave, top to bottom. */
   readonly lanes: readonly Lane[];
   readonly rows: readonly Row[];
   /** Visible tree items in order, for keyboard navigation. */
@@ -109,76 +125,82 @@ export function computeLayout(scene: Scene, tree: Tree, expanded: ReadonlySet<st
   const bounds = new Map<string, Rect>();
   const laneW = width - SHEET.left * 2;
   let y: number = SHEET.top;
-  const root = tree.root;
-  if (!root) return { width, height: Math.max(y + 220 + SHEET.titleBlock, minHeight), ax, aw, waveY: y, waveH: 0, waveExpanded: false, lanes, rows, visible, bounds };
-
-  const waveY = y;
-  const waveExpanded = expanded.has(root.id);
-  visible.push(root.id);
-  y += SHEET.waveHeader;
-  if (waveExpanded) {
-    const gatesByTicket = new Map<string, GateState[]>();
-    for (const g of Object.values(scene.gates)) {
-      let list = gatesByTicket.get(g.ticketId);
-      if (!list) gatesByTicket.set(g.ticketId, (list = []));
-      list.push(g);
-    }
-    for (const laneNode of root.children) {
-      if (laneNode.data.kind !== "slice") continue;
-      const { slice, cell } = laneNode.data;
-      const laneY = y;
-      const isOpen = expanded.has(laneNode.id);
-      visible.push(laneNode.id);
-      const gates = cell ? (gatesByTicket.get(cell.ticketId) ?? []).sort((a, b) => a.openedAt - b.openedAt || a.seq - b.seq) : [];
-      if (!cell) {
-        const h = isOpen ? SHEET.sliceWaiting + 12 + laneNode.children.length * 13 : SHEET.sliceWaiting;
-        lanes.push({ id: laneNode.id, node: laneNode, slice, cell, gates, y: laneY, h, expanded: isOpen, flow: null, row0: laneY + 30, dimsY: laneY + h, dimRows: 0, rows: [] });
-        bounds.set(laneNode.id, { x: SHEET.left, y: laneY, w: laneW, h });
-        if (isOpen) for (const d of laneNode.children) {
-          visible.push(d.id);
-          bounds.set(d.id, { x: SHEET.left, y: laneY, w: laneW, h });
-        }
-        y += h;
-        continue;
-      }
-      const flow = flowOf(cell, gates, slice, template, needsHuman(slice));
-      if (!isOpen) {
-        const h = SHEET.cellCollapsed;
-        lanes.push({ id: laneNode.id, node: laneNode, slice, cell, gates, y: laneY, h, expanded: false, flow, row0: laneY + 29, dimsY: laneY + h, dimRows: 0, rows: [] });
-        bounds.set(laneNode.id, { x: SHEET.left, y: laneY, w: laneW, h });
-        y += h;
-        continue;
-      }
-      const row0 = laneY + 88;
-      const { rowsBottom, dimRows } = flowHeight(flow);
-      const dimsY = row0 + rowsBottom + 6;
-      let cy = Math.max(laneY + 128, dimsY + dimRows * SHEET.dimBand + 2);
-      const laneStartRows = rows.length;
-      // Children: dependencies and script-written artifacts are drawn in the workflow; executions get rows.
-      for (const child of laneNode.children) {
-        if (child.kind !== "execution") {
-          visible.push(child.id);
-          continue;
-        }
-        cy = placeExecution(child, cy, expanded, rows, visible);
-      }
-      cy += 10;
-      const h = cy - laneY;
-      lanes.push({ id: laneNode.id, node: laneNode, slice, cell, gates, y: laneY, h, expanded: true, flow, row0, dimsY, dimRows, rows: rows.slice(laneStartRows) });
-      bounds.set(laneNode.id, { x: SHEET.left, y: laneY, w: laneW, h: Math.min(h, row0 - laneY + 60) });
-      for (let i = laneStartRows; i < rows.length; i++) {
-        const r = rows[i] as Row;
-        bounds.set(r.id, { x: SHEET.left, y: r.y, w: laneW, h: r.h });
-      }
-      y = cy;
-    }
-  } else {
-    y += 10;
+  if (!tree.roots.length) return { width, height: Math.max(y + 220 + SHEET.titleBlock, minHeight), ax, aw, waveY: y, waveH: 0, waveExpanded: false, waves: [], lanes, rows, visible, bounds };
+  const gatesByTicket = new Map<string, GateState[]>();
+  for (const g of Object.values(scene.gates)) {
+    let list = gatesByTicket.get(g.ticketId);
+    if (!list) gatesByTicket.set(g.ticketId, (list = []));
+    list.push(g);
   }
-  const waveH = y - waveY;
-  bounds.set(root.id, { x: SHEET.left, y: waveY, w: laneW, h: SHEET.waveHeader });
+  const waves: WaveBand[] = [];
+  for (const root of tree.roots) {
+    const waveY = y;
+    const waveExpanded = expanded.has(root.id);
+    const firstLane = lanes.length;
+    visible.push(root.id);
+    y += SHEET.waveHeader;
+    if (waveExpanded) y = placeLanes(root, y, gatesByTicket, expanded, template, laneW, lanes, rows, visible, bounds);
+    else y += 10;
+    bounds.set(root.id, { x: SHEET.left, y: waveY, w: laneW, h: SHEET.waveHeader });
+    waves.push({ id: root.id, node: root, y: waveY, h: y - waveY, expanded: waveExpanded, lanes: lanes.slice(firstLane) });
+  }
+  const first = waves[0] as WaveBand;
   const height = Math.max(y + 24 + SHEET.titleBlock, 700, minHeight);
-  return { width, height, ax, aw, waveY, waveH, waveExpanded, lanes, rows, visible, bounds };
+  return { width, height, ax, aw, waveY: first.y, waveH: first.h, waveExpanded: first.expanded, waves, lanes, rows, visible, bounds };
+}
+
+/** One wave's lanes, from `y`; returns the y after the last. */
+function placeLanes(root: TreeNode, y: number, gatesByTicket: ReadonlyMap<string, GateState[]>, expanded: ReadonlySet<string>, template: ColumnTemplate, laneW: number, lanes: Lane[], rows: Row[], visible: string[], bounds: Map<string, Rect>): number {
+  for (const laneNode of root.children) {
+    if (laneNode.data.kind !== "slice") continue;
+    const { slice, cell } = laneNode.data;
+    const laneY = y;
+    const isOpen = expanded.has(laneNode.id);
+    visible.push(laneNode.id);
+    const gates = cell ? [...(gatesByTicket.get(cell.ticketId) ?? [])].sort((a, b) => a.openedAt - b.openedAt || a.seq - b.seq) : [];
+    if (!cell) {
+      const h = isOpen ? SHEET.sliceWaiting + 12 + laneNode.children.length * 13 : SHEET.sliceWaiting;
+      lanes.push({ id: laneNode.id, node: laneNode, slice, cell, gates, y: laneY, h, expanded: isOpen, flow: null, row0: laneY + 30, dimsY: laneY + h, dimRows: 0, rows: [] });
+      bounds.set(laneNode.id, { x: SHEET.left, y: laneY, w: laneW, h });
+      if (isOpen) for (const d of laneNode.children) {
+        visible.push(d.id);
+        bounds.set(d.id, { x: SHEET.left, y: laneY, w: laneW, h });
+      }
+      y += h;
+      continue;
+    }
+    const flow = flowOf(cell, gates, slice, template, needsHuman(slice));
+    if (!isOpen) {
+      const h = SHEET.cellCollapsed;
+      lanes.push({ id: laneNode.id, node: laneNode, slice, cell, gates, y: laneY, h, expanded: false, flow, row0: laneY + 29, dimsY: laneY + h, dimRows: 0, rows: [] });
+      bounds.set(laneNode.id, { x: SHEET.left, y: laneY, w: laneW, h });
+      y += h;
+      continue;
+    }
+    const row0 = laneY + 88;
+    const { rowsBottom, dimRows } = flowHeight(flow);
+    const dimsY = row0 + rowsBottom + 6;
+    let cy = Math.max(laneY + 128, dimsY + dimRows * SHEET.dimBand + 2);
+    const laneStartRows = rows.length;
+    // Children: dependencies and script-written artifacts are drawn in the workflow; executions get rows.
+    for (const child of laneNode.children) {
+      if (child.kind !== "execution") {
+        visible.push(child.id);
+        continue;
+      }
+      cy = placeExecution(child, cy, expanded, rows, visible);
+    }
+    cy += 10;
+    const h = cy - laneY;
+    lanes.push({ id: laneNode.id, node: laneNode, slice, cell, gates, y: laneY, h, expanded: true, flow, row0, dimsY, dimRows, rows: rows.slice(laneStartRows) });
+    bounds.set(laneNode.id, { x: SHEET.left, y: laneY, w: laneW, h: Math.min(h, row0 - laneY + 60) });
+    for (let i = laneStartRows; i < rows.length; i++) {
+      const r = rows[i] as Row;
+      bounds.set(r.id, { x: SHEET.left, y: r.y, w: laneW, h: r.h });
+    }
+    y = cy;
+  }
+  return y;
 }
 
 function placeExecution(node: TreeNode, y: number, expanded: ReadonlySet<string>, rows: Row[], visible: string[]): number {
@@ -213,6 +235,16 @@ function placeExecution(node: TreeNode, y: number, expanded: ReadonlySet<string>
 
 /** The sheet's proportion: cut landscape to the stage (16:10 to 16:9, with the inspector open about 1.85). */
 export const SHEET_ASPECT = 1.8;
+
+/**
+ * The sheet's height before anything grows it, and so (at SHEET_ASPECT) its width. Fixed, never taken
+ * from a run: the width sets every column's x, so it may not change as a history grows. It is the
+ * height the M6.0 scenario planned at the default expansion, so the simulation's sheet is cut as before.
+ */
+export const SHEET_BASE_HEIGHT = 1552;
+
+/** The sheet grows in steps of this many units, so a fitted camera re-frames rarely, never per event. */
+export const SHEET_STEP = 260;
 
 /** The drawing width that makes a sheet of this height landscape at SHEET_ASPECT. */
 export function drawingWidthFor(height: number, min: number): number {

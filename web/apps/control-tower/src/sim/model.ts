@@ -4,6 +4,7 @@
  * convention (never mutate them): the engine shares unchanged parts between moments.
  */
 import type { AnySimEvent, FactoryLimits, ReviewOutcome, StationOutcome, TargetKind, VerificationStatus } from "./events";
+import type { Authority, Completeness, EntityMeta, SceneProvenance } from "./provenance";
 import type {
   AgentRole,
   AppType,
@@ -38,8 +39,25 @@ export const ENTITY_KINDS = [
   "dependency",
   "finding",
   "actor",
+  // The kinds the contract adds (5.2). Live and replay make them; the simulation does not.
+  "project",
+  "workflow",
+  "visit",
+  "seat",
 ] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
+
+/**
+ * The kinds only real history makes (contract 5.2): a project, a Dynamic Workflow, one station
+ * visit, one review seat. They are ordinary EntityKinds since M6.2's second wave; the list is kept
+ * for code that asks "is this a kind the simulation never makes?".
+ */
+export const LIVE_ENTITY_KINDS = ["project", "workflow", "visit", "seat"] as const;
+export type LiveEntityKind = (typeof LIVE_ENTITY_KINDS)[number];
+/** A reference of one of the live-only kinds. Every LiveRef is an EntityRef. */
+export type LiveRef = `${LiveEntityKind}:${string}`;
+/** Kept for compatibility: every reference is an EntityRef now. */
+export type AnyEntityRef = EntityRef;
 
 /**
  * One string names any selectable thing: `<kind>:<id>`.
@@ -50,6 +68,11 @@ export type EntityKind = (typeof ENTITY_KINDS)[number];
  * - `dependency:SLICE-024->SLICE-021` (the first waits for the second)
  * - `finding:LOCAL-032/r1/security/1`
  * - `actor:supervisor`, `actor:scheduler`
+ * - live only: `visit:LOCAL-031/build#2`, `seat:LOCAL-031/review#2/security`,
+ *   `workflow:<execution>/<task>`, `project:<id>`
+ *
+ * Agent and tool ids are opaque (contract 5.2): `agent:<execution>/<agentId>` in production. Nothing
+ * may parse meaning out of them; read the agent's ticket, station and seat from the scene.
  */
 export type EntityRef = `${EntityKind}:${string}`;
 
@@ -83,6 +106,10 @@ export const ref = {
   dependency: (from: string, to: string): EntityRef => `dependency:${from}->${to}`,
   finding: (id: string): EntityRef => `finding:${id}`,
   actor: (id: ActorId): ActorRef => `actor:${id}`,
+  visit: (visitId: string): EntityRef => `visit:${visitId}`,
+  seat: (ticketId: string, round: number, seat: string): EntityRef => `seat:${ticketId}/review#${round}/${seat}`,
+  workflow: (workflowId: string): EntityRef => `workflow:${workflowId}`,
+  project: (id: string): EntityRef => `project:${id}`,
 };
 
 /**
@@ -152,11 +179,18 @@ export interface Fixture {
 // ---------------------------------------------------------------- the scene
 
 export interface Scene {
+  /** Where this scene comes from: live, replay or simulation. The same object for every scene of one log. */
+  readonly provenance: SceneProvenance;
+  /** How complete its history is up to this moment: complete, partial (gaps, late beginnings) or reconstructed (snapshot). */
+  readonly completeness: Completeness;
   /** How many events are applied (events[0 .. cursor-1]). */
   readonly cursor: number;
-  /** `t` of the last applied event (0 before any). */
+  /** `t` of the last applied event (0 before any). Simulation: ms from the scenario start; live and replay: the event's `order_ms`. */
   readonly at: number;
+  /** Simulation: the event's seq. Live and replay: the event's delivery position (`pos`); link by `lastEventId`, never by this. */
   readonly lastSeq: number | null;
+  /** Id of the last applied event (`sim:<seq>` for the simulation). */
+  readonly lastEventId: string | null;
   readonly project: ProductDefinitions["project"];
   readonly factory: FactoryState;
   readonly supervisor: SupervisorState;
@@ -169,6 +203,28 @@ export interface Scene {
   /** The supervisor and the scheduler: who they are and when they last acted. */
   readonly actors: Readonly<Record<ActorId, ActorState>>;
   readonly counters: Counters;
+  /**
+   * Live only: agents seen in an execution whose cell is not in the scene (its ticket is not known,
+   * or its cell has not been seen). Kept so they can be selected; never placed in a cell by guessing.
+   */
+  readonly strayAgents: Readonly<Record<string, AgentState>>;
+  /**
+   * Live: recorded waits for an execution place (capacity.wait_changed, `waiting`), by ticket, held
+   * whether or not the ticket's cell or execution is in the scene. Released waits are removed.
+   */
+  readonly capacityWaits: Readonly<Record<string, CapacityWaitState>>;
+}
+
+/** A recorded wait for an execution place (contract 10.6, `capacity.wait_changed`; reconstructed). */
+export interface CapacityWaitState {
+  readonly ticketId: string;
+  readonly sliceId: string | null;
+  readonly executionId: string | null;
+  readonly scope: string;
+  readonly limit: number | null;
+  readonly since: number;
+  readonly eventId: string;
+  readonly late: boolean;
 }
 
 export interface ActorState {
@@ -192,6 +248,8 @@ export interface FactoryState {
   readonly runnerId: string | null;
   /** The product commit intake last read (revision.discovered). */
   readonly productCommit: string | null;
+  /** factory.paused / factory.resumed. */
+  readonly paused: boolean;
 }
 
 export interface SupervisorState {
@@ -212,6 +270,7 @@ export interface WaveState {
   readonly state: "discovered" | "validated";
   readonly discoveredAt: number;
   readonly seq: number;
+  readonly meta: EntityMeta;
 }
 
 export interface SliceState {
@@ -229,6 +288,7 @@ export interface SliceState {
   readonly since: number;
   readonly integratedCommit: string | null;
   readonly history: readonly { readonly state: SchedulerState; readonly at: number; readonly seq: number }[];
+  readonly meta: EntityMeta;
 }
 
 export interface DependencyState {
@@ -240,6 +300,7 @@ export interface DependencyState {
   readonly state: "blocking" | "satisfied";
   readonly satisfiedAt: number | null;
   readonly satisfiedSeq: number | null;
+  readonly meta: EntityMeta;
 }
 
 export interface StationVisit {
@@ -250,6 +311,22 @@ export interface StationVisit {
   readonly enteredSeq: number;
   readonly leftAt: number | null;
   readonly outcome: StationOutcome | null;
+  /** Live: the lifecycle visit id (`<ticket>/<station>#<n>`), the `visit:` ref's id. Simulation: null. */
+  readonly visitId: string | null;
+  /** Live: the station's own outcome word, verbatim (`built`, `PASS`, `APPROVED`, a merge error code...); `outcome` is its mapping. */
+  readonly outcomeWord: string | null;
+  /** Live: the measured duration from station.exited (same clock as its entry). Null while open or when not recorded. */
+  readonly durationMs: number | null;
+  /** Live: the execution its entry record names (`ids.execution_id`); null when none (groom, hand-driven). */
+  readonly executionId: string | null;
+  /**
+   * Live: the visit never exited, and the scene closed it (D4): the cell's next entry recorded it as
+   * an `unclosed_visit` (`superseded`), or its execution ended (`execution-ended`). `leftAt` is then
+   * the bound (`at`), `outcome` is "stopped", `outcomeWord` null, `meta.end` "inferred" and the
+   * authority reconstructed. Never "still working". Null when an exit record closed it, or while open.
+   */
+  readonly unclosed: { readonly reason: "superseded" | "execution-ended"; readonly at: number; readonly eventId: string } | null;
+  readonly meta: EntityMeta;
 }
 
 export interface TaskState {
@@ -263,6 +340,8 @@ export interface TaskState {
   readonly startedAt: number;
   readonly doneAt: number | null;
   readonly commit: string | null;
+  /** Live: no record says when a task started (contract 11, `task.started` has no source); `startedAt` is then its completion and `meta.unknown` lists it. */
+  readonly meta: EntityMeta;
 }
 
 export interface TestRun {
@@ -293,6 +372,12 @@ export interface VerificationState {
   readonly decidedAt: number | null;
   readonly checks: readonly VerificationCheck[];
   readonly requiredEvidence: readonly string[];
+  /**
+   * The list of targets to prove, when one was received (`verify.targets_listed`, reconstructed by
+   * the observer from spec.json; the simulation's `verification.started`). Checks still `pending`
+   * are then "expected" as a fact; without it, nothing is expected.
+   */
+  readonly listed: { readonly eventId: string; readonly authority: Authority; readonly count: number; readonly late: boolean } | null;
 }
 
 export interface FindingState {
@@ -306,6 +391,7 @@ export interface FindingState {
   readonly at: number;
   /** Set when the round is decided: a blocker that did not stop an approval. */
   readonly outvoted: boolean;
+  readonly meta: EntityMeta;
 }
 
 export interface SeatState {
@@ -314,6 +400,9 @@ export interface SeatState {
   readonly agentId: string | null;
   readonly vote: "APPROVE" | "REJECT" | null;
   readonly votedAt: number | null;
+  /** The verdict's event (`review.verdict_submitted`; simulation `review.vote`), and whether it arrived late. */
+  readonly votedEventId: string | null;
+  readonly votedLate: boolean;
 }
 
 export interface ReviewRoundState {
@@ -323,6 +412,8 @@ export interface ReviewRoundState {
   readonly humanApprovalRequired: boolean;
   readonly humanApprovalReasons: readonly string[];
   readonly delta: { readonly sinceCommit: string; readonly filesChanged: readonly string[]; readonly earlierBlockerFiles: readonly string[] } | null;
+  /** Live: whether this round is a delta review (the lifecycle log records only the flag; `delta` stays null). */
+  readonly isDelta: boolean;
   readonly seats: readonly SeatState[];
   readonly findings: readonly FindingState[];
   readonly startedAt: number;
@@ -330,7 +421,13 @@ export interface ReviewRoundState {
   readonly decidedAt: number | null;
   readonly approvals: number | null;
   readonly overruledBlockersFrom: readonly ReviewSeat[];
-  readonly humanApproval: { readonly by: string; readonly note: string | null; readonly at: number } | null;
+  readonly humanApproval: { readonly by: string; readonly note: string | null; readonly at: number; readonly eventId: string; readonly late: boolean } | null;
+  /** The event that started the round (its seats exist from it), and whether it arrived late. */
+  readonly eventId: string;
+  readonly late: boolean;
+  /** The decision's event, and whether it arrived late. */
+  readonly decidedEventId: string | null;
+  readonly decidedLate: boolean;
 }
 
 export interface ToolCallState {
@@ -343,8 +440,13 @@ export interface ToolCallState {
   readonly startedSeq: number;
   readonly finishedAt: number | null;
   readonly status: "running" | "ok" | "error";
+  /** The honest result: `unknown` when the call was still open when its execution ended (an observer closing). `status` is its legacy projection. */
+  readonly result: "running" | "ok" | "error" | "unknown";
   readonly summary: string | null;
   readonly artifactIds: readonly string[];
+  /** The tool's own name as recorded (`tool` is its mapping onto the simulation's vocabulary). */
+  readonly toolName: string;
+  readonly meta: EntityMeta;
 }
 
 export interface AgentState {
@@ -367,7 +469,33 @@ export interface AgentState {
   readonly finishedAt: number | null;
   readonly summary: string | null;
   readonly currentToolCallId: string | null;
+  /**
+   * Per-call tool activity. Only when `observation` is "per-call" (the simulation, a main loop, an
+   * Agent-tool sub-agent). For a Dynamic Workflow agent it is empty and says nothing: its calls are
+   * not observable (contract D13, 8.1); read `toolCallCount` and `lastTool`.
+   */
   readonly toolCalls: readonly ToolCallState[];
+  // ---- added in M6.2
+  /** The honest status: queued, running, done, error, or ended with no closing record (`unknown`). `status` is its legacy projection. */
+  readonly lifecycle: "queued" | "running" | "done" | "error" | "unknown";
+  /** How its tools are known: each call (`per-call`) or only a count and the last tool's name (`count-only`). */
+  readonly observation: "per-call" | "count-only";
+  /** How many tool calls it has made, when known (null: not reported yet). For `per-call` agents, toolCalls.length. */
+  readonly toolCallCount: number | null;
+  /** The name of the last tool a snapshot reported (count-only), or of the last call (per-call). */
+  readonly lastTool: string | null;
+  /** One token total, as reported. No split, no cost (contract 8.1). Null when not reported. */
+  readonly tokens: number | null;
+  /** Measured duration once finished (agent.finished duration_ms). */
+  readonly durationMs: number | null;
+  /** Tools this agent was refused, by name, in order. */
+  readonly refused: readonly string[];
+  /** Live: the workflow it ran in (`workflow:` ref id) and its index there. */
+  readonly workflowId: string | null;
+  readonly index: number | null;
+  /** The model as recorded (`claude-sonnet-5-5`, `sonnet`); `model` is its mapping onto the four tiers. */
+  readonly modelName: string | null;
+  readonly meta: EntityMeta;
 }
 
 export interface ArtifactState {
@@ -384,6 +512,20 @@ export interface ArtifactState {
   readonly writer: { readonly agentId: string | null; readonly callId: string | null; readonly script: string | null };
   readonly writtenAt: number;
   readonly seq: number;
+  /** Live: what the observer recorded (artifact.recorded). Simulation: null. */
+  readonly record: { readonly nature: string; readonly integrity: string; readonly bytes: number | null; readonly mediaType: string | null; readonly commit: string | null } | null;
+  readonly meta: EntityMeta;
+}
+
+/** The facts the plan station fixed for a cell (D11), and the record they came from. */
+export interface PlanFacts {
+  readonly appType: string | null;
+  readonly risk: Risk | null;
+  readonly contracts: number | null;
+  readonly tasks: number | null;
+  /** The plan exit's event id (or the observer's `recorded_by`), null when seeded without one. */
+  readonly eventId: string | null;
+  readonly authority: Authority;
 }
 
 export interface CellState {
@@ -417,9 +559,63 @@ export interface CellState {
   readonly agentOrder: readonly string[];
   readonly activeAgentIds: readonly string[];
   readonly artifacts: readonly ArtifactState[];
+  /** `artifact.recorded` records received for the cell (a path recorded again counts again); `artifacts` holds the distinct ones. */
+  readonly artifactRecords: number;
+  /**
+   * Live: what the plan station fixed (schema revision 2: `station.exited` of the plan carries
+   * `app_type` and `risk`, its counts `contracts` and `tasks`; the observer's `/cells/{t}` `plan`).
+   * Null until a plan exit (or the observer's summary) is received; each part null when not recorded.
+   */
+  readonly plan: PlanFacts | null;
   readonly merged: { readonly commit: string; readonly at: number; readonly revalidated: boolean } | null;
   readonly archived: { readonly archive: string; readonly at: number } | null;
   readonly openedAt: number;
+  // ---- added in M6.2
+  /** Live: the cell's generation (`ids.cell_instance`). */
+  readonly cellInstance: string | null;
+  /** Live: every gate evaluation the lifecycle log recorded, in order (`gate.evaluated`), including refusals M6.0 could not show. */
+  readonly gateLog: readonly GateEvaluation[];
+  /** Live: a recorded wait for an execution place (capacity.wait_changed); null when none is recorded. */
+  readonly capacityWait: { readonly since: number; readonly limit: number | null; readonly eventId: string } | null;
+  /** Live: the run record cleanup wrote (run.recorded): the cell's authoritative completion. */
+  readonly runRecord: { readonly outcome: "merged" | "abandoned"; readonly rounds: number | null; readonly firstPass: boolean; readonly at: number } | null;
+  /** Live: where this cell's history begins when it begins part-way (history.began). */
+  readonly historyBegan: { readonly reason: string; readonly at: number } | null;
+  readonly meta: EntityMeta;
+}
+
+export interface GateEvaluation {
+  readonly gate: string;
+  readonly verdict: "passed" | "refused" | "overridden";
+  readonly reasonCode: string | null;
+  readonly subject: string | null;
+  readonly round: number | null;
+  readonly at: number;
+  readonly eventId: string;
+  readonly late: boolean;
+  /**
+   * The gate state this evaluation set (`scene.gates` id), or null when no gate state stands for it
+   * (a refused `build.start`, `verify.start`, `merge.run`, the round limit...): such an evaluation is
+   * still a recorded fact, read with `gateRefusals`.
+   */
+  readonly gateId: string | null;
+  /**
+   * The ref the record names this evaluation by (the observer's `gate:<cell>/<gate>[#<round>]`, e.g.
+   * `gate:LOCAL-001/plan.check`, `gate:LOCAL-001/frozen-tests#2`). `entityAt` resolves it to the gate
+   * state the evaluation set, or, when none stands for it, to the evaluation itself (`gateOfEvaluations`).
+   */
+  readonly ref: string;
+}
+
+/** An agent a workflow has queued but not started: known by its index only (contract 5.2). */
+export interface QueuedAgentState {
+  readonly index: number;
+  readonly label: string;
+  readonly phase: string | null;
+  readonly modelName: string | null;
+  readonly ticketId: string | null;
+  readonly queuedAt: number;
+  readonly eventId: string;
 }
 
 export interface ExecutionState {
@@ -439,18 +635,80 @@ export interface ExecutionState {
   readonly workflowFinishedAt: number | null;
   readonly endedAt: number | null;
   readonly outcome: { readonly stage: CellStage | null; readonly next: StepAction; readonly waitingFor: string | null; readonly costUsd: number } | null;
+  // ---- added in M6.2 (live; the simulation leaves them empty)
+  /** The process's own start and end (execution.process_started / _ended), measured to the second. */
+  readonly processStartedAt: number | null;
+  readonly processEndedAt: number | null;
+  readonly ended: "exited" | "timed-out" | "interrupted" | "could-not-start" | null;
+  readonly exitCode: number | null;
+  /** The supervisor's recovery kind, when it recovered this execution (recovery.started). */
+  readonly recovery: string | null;
+  /** The Dynamic Workflow it ran: its `workflow:` ref id and recorded status (`completed` only from task_updated, D14). */
+  readonly workflowId: string | null;
+  readonly workflowStatus: "running" | "completed" | "killed" | "unknown" | null;
+  readonly stopReason: "budget" | "unknown" | null;
+  /** The declared phase list (not phases entered: those are not observable). */
+  readonly phases: readonly string[];
+  /** Agents queued and not yet started, by index. */
+  readonly queued: Readonly<Record<string, QueuedAgentState>>;
+  /** Recorded spend (execution.usage); never per agent. */
+  readonly usage: {
+    readonly costUsd: number | null;
+    readonly budgetExhausted: boolean;
+    readonly terminalReason: string | null;
+    /** The stream's own verdict (execution.usage.cost_complete): false when the spend may be under-reported; null when the record does not say (before schema revision 1). */
+    readonly costComplete: boolean | null;
+    /** Why it may be incomplete, as recorded (`budget-stop`, `agents-killed-in-flight`). */
+    readonly costIncompleteReasons: readonly string[];
+    /** The `execution.usage` event. */
+    readonly eventId: string;
+  } | null;
+  readonly claudeCodeVersion: string | null;
+  readonly refused: readonly { readonly tool: string; readonly agentId: string | null; readonly at: number }[];
+  /** A recorded wait for an execution place (capacity.wait_changed, reconstructed from the scheduler's decision). */
+  readonly capacityWait: { readonly since: number; readonly limit: number | null } | null;
+  /** Live: what is known of its stream (agents, tools): see StreamObservation. */
+  readonly observation: StreamObservation;
+  /** Live: the meta of its Dynamic Workflow's own records (workflow.*); null before one is seen. */
+  readonly workflowMeta: EntityMeta | null;
+  readonly meta: EntityMeta;
+}
+
+/**
+ * What the execution's stream let the observer see (D7). Counts are of records received for it;
+ * `runtime` is the last `origin.runtime_state` the observer stamped on them (null: an older observer).
+ */
+export interface StreamObservation {
+  /** Stream records received (any kind). */
+  readonly records: number;
+  /** Records that describe agents, the workflow or tool calls. */
+  readonly structural: number;
+  readonly runtime: "proven" | "compatible-unproven" | "incompatible" | "unknown" | null;
+  /** The Claude Code version its stream's `session.initialized` names. */
+  readonly version: string | null;
 }
 
 export interface GateState {
   readonly id: string;
   readonly ticketId: string;
-  readonly gate: GateKind;
+  /**
+   * The gate kind the line closes. `recorded`: a gate the lifecycle log evaluated that no gate state
+   * stands for (frozen-tests, build.start, verify.start...): never in `scene.gates`, only what
+   * `entityAt` gives for its ref, built from its evaluations (`recorded`).
+   */
+  readonly gate: GateKind | "recorded";
   readonly round: number | null;
-  readonly state: "open" | "passed" | "failed" | "waiting" | "skipped";
+  /** `overridden`: the gate let the work through on a recorded override (its reason code in `reasonCode`); never the same as passed. */
+  readonly state: "open" | "passed" | "failed" | "waiting" | "skipped" | "overridden";
   readonly detail: string;
   readonly openedAt: number;
   readonly decidedAt: number | null;
   readonly seq: number;
+  /** Live: the reason code the gate recorded (gate.evaluated), when one exists. */
+  readonly reasonCode: string | null;
+  readonly meta: EntityMeta;
+  /** Only for `gate: "recorded"`: the lifecycle gate's own name and its evaluations, oldest first. */
+  readonly recorded?: { readonly name: string; readonly evaluations: readonly GateEvaluation[] };
 }
 
 export interface Counters {

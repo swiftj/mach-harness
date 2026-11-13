@@ -7,6 +7,7 @@
 # Arguments are passed to 'mach' (install, uninstall, status, scaffold; --dry-run, --force).
 # MACH_REPO=owner/name and MACH_REF=branch choose where to download from.
 # MACH_SOURCE=/path/to/mach-harness uses a local copy instead of downloading.
+# MACH_STUDIO=skip and MACH_TOWER=skip (or --no-studio, --no-tower) skip the prebuilt programs.
 set -euo pipefail
 
 REPO="${MACH_REPO:-swiftj/mach-harness}"

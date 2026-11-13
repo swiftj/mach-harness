@@ -9,13 +9,15 @@
  * which prevents the default so this map skips the event.
  */
 import { useEffect } from "react";
-import { chapterAt, SCENARIO } from "../sim";
 import { SPEEDS, useStore, type SceneStore } from "../scene";
+import { indexFor, lastAtOrBefore } from "./history";
 
 export interface ShellCommands {
   toggleInspector(): void;
   toggleTimeline(): void;
   openHelp(): void;
+  /** Open the source menu. */
+  openSource(): void;
   /** True while a dialog (the help sheet) owns the keyboard. */
   modalOpen(): boolean;
 }
@@ -32,10 +34,10 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["Space"], action: "Play or pause", group: "Playback" },
   { keys: [",", "."], action: "Previous / next event", group: "Playback" },
   { keys: ["Shift+,", "Shift+."], action: "Back / forward 10 s of factory time", group: "Playback" },
-  { keys: ["[", "]"], action: "Previous / next chapter", group: "Playback" },
-  { keys: ["{", "}"], action: "Slower / faster (0.5× to 16×)", group: "Playback" },
-  { keys: ["Home", "End"], action: "Start of the run / live edge", group: "Playback" },
-  { keys: ["L"], action: "Return to live (and follow)", group: "Playback" },
+  { keys: ["[", "]"], action: "Previous / next chapter (real history: previous / next landmark, such as a wave arriving or an execution ending)", group: "Playback" },
+  { keys: ["{", "}"], action: "Slower / faster (0.5× to 16×; replay and simulation)", group: "Playback" },
+  { keys: ["Home", "End"], action: "Start of what is held / live edge (replay: its last event)", group: "Playback" },
+  { keys: ["L"], action: "Return to live (and follow); live keeps arriving while you look back", group: "Playback" },
   { keys: ["1", "2"], action: "Factory Atlas / Execution Blueprint", group: "Views" },
   { keys: ["T"], action: "Theater Mode", group: "Views" },
   { keys: ["F"], action: "Focus the selection", group: "Views" },
@@ -44,6 +46,7 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["I"], action: "Show or hide the inspector", group: "Panels" },
   { keys: ["Shift+T"], action: "Expand or collapse the timeline", group: "Panels" },
   { keys: ["?"], action: "This list", group: "Panels" },
+  { keys: ["S"], action: "Choose the source: Live Factory, Historical replay or Simulation", group: "Panels" },
   { keys: ["+", "-", "0"], action: "Zoom in / out / fit", group: "In a view", view: true },
   { keys: ["Shift+Arrows"], action: "Pan", group: "In a view", view: true },
   { keys: ["Enter", "Space"], action: "Select the focused entity", group: "In a view", view: true },
@@ -55,7 +58,7 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["Home", "End"], action: "First / last item", group: "Blueprint", view: true },
   { keys: ["*"], action: "Open every sibling of the focused item (on a lane: every lane of the wave)", group: "Blueprint", view: true },
   { keys: ["←", "→"], action: "Previous / next event (playhead or tracks focused)", group: "Timeline", view: true },
-  { keys: ["PageUp", "PageDown"], action: "Previous / next chapter (playhead focused)", group: "Timeline", view: true },
+  { keys: ["PageUp", "PageDown"], action: "Previous / next chapter or landmark (playhead focused)", group: "Timeline", view: true },
   { keys: ["↑", "↓"], action: "Previous / next track (tracks focused)", group: "Timeline", view: true },
   { keys: ["Enter"], action: "Select the focused track's entity", group: "Timeline", view: true },
   { keys: ["Alt+→", "Alt+←"], action: "Expand / collapse the focused track (* also expands)", group: "Timeline", view: true },
@@ -74,19 +77,44 @@ function ownsActivation(target: HTMLElement | null): boolean {
   return role === "button" || role === "radio" || role === "slider" || role === "checkbox" || role === "menuitem" || role === "tab";
 }
 
+/**
+ * Step by chapter (the simulation's storyboard) or, for real history, by landmark: a real moment
+ * such as a wave arriving, the Factory enabled or paused, an execution starting or ending, a verdict,
+ * a person needed or approving. Never past the live edge.
+ */
 export function stepChapter(store: SceneStore, direction: 1 | -1): void {
-  const { playhead } = store.getState();
-  const chapters = SCENARIO.chapters;
+  const state = store.getState();
+  const { playhead } = state;
+  const index = indexFor(state);
+  const marks = index.landmarks;
+  const go = (mark: { id: string; t: number } | undefined) => {
+    if (!mark) return;
+    if (index.storyboard) store.seekToChapter(mark.id);
+    else store.seek(mark.t);
+  };
   if (direction > 0) {
-    const next = chapters.find((c) => c.t > playhead + 1);
-    if (next) store.seekToChapter(next.id);
+    go(marks.find((c) => c.t > playhead + 1 && c.t <= state.liveAt + (state.source === "simulation" ? Infinity : 0)));
     return;
   }
-  // Back: to the start of the current chapter, or the one before when already at its start.
-  const current = chapterAt(SCENARIO, playhead);
-  const index = current ? chapters.indexOf(current) : 0;
-  const target = current && playhead - current.t > 1500 ? current : chapters[Math.max(0, index - 1)];
-  if (target) store.seekToChapter(target.id);
+  // Back: to the start of the current one, or the one before when already at its start.
+  const current = lastAtOrBefore(marks, playhead);
+  const at = current ? marks.indexOf(current) : 0;
+  go(current && playhead - current.t > 1500 ? current : marks[Math.max(0, at - 1)]);
+}
+
+/**
+ * Space and the play button. Live at the edge, "pause" holds the view on the moment shown (a replay
+ * of what was received; ingest goes on, and nothing in the Control Tower can pause the Factory);
+ * playing from there runs towards the edge and re-attaches when it gets there. Otherwise play or pause.
+ */
+export function togglePlayback(store: SceneStore): void {
+  const s = store.getState();
+  if (s.source === "live" && s.following) {
+    store.seek(s.playhead - 1);
+    store.pause();
+    return;
+  }
+  store.toggle();
 }
 
 export function stepSpeed(store: SceneStore, direction: 1 | -1): void {
@@ -116,7 +144,7 @@ export function useShellKeys(commands: ShellCommands): void {
       switch (key) {
         case " ":
           if (ownsActivation(target) || e.altKey) handled = false;
-          else store.toggle();
+          else togglePlayback(store);
           break;
         case ",":
           store.stepPrevious();
@@ -144,7 +172,7 @@ export function useShellKeys(commands: ShellCommands): void {
           break;
         case "Home":
           if (ownsActivation(target) && target?.getAttribute("role") === "slider") handled = false;
-          else store.seek(0);
+          else store.seek(s.extent.start);
           break;
         case "End":
           if (ownsActivation(target) && target?.getAttribute("role") === "slider") handled = false;
@@ -179,6 +207,10 @@ export function useShellKeys(commands: ShellCommands): void {
           break;
         case "?":
           commands.openHelp();
+          break;
+        case "s":
+        case "S":
+          commands.openSource();
           break;
         case "Escape":
           if (s.hovered) store.hover(null);

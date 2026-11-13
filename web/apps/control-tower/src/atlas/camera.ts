@@ -33,6 +33,8 @@ export interface CameraStore {
   fitted: boolean;
   setFitted(on: boolean): void;
   setViewport(size: { width: number; height: number }): void;
+  /** The plant grew (live): new clamping bounds; the camera itself does not move. */
+  setBounds(bounds: ScreenRect): void;
 }
 
 const Z = factoryTokens.zoom;
@@ -54,6 +56,9 @@ export function createCamera(bounds: ScreenRect): CameraStore {
     },
     setViewport(size) {
       store.viewport = size;
+    },
+    setBounds(next) {
+      store.bounds = next;
     },
     get: () => cam,
     set(next, opts) {

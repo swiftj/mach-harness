@@ -3,24 +3,30 @@
  * dependencies it waits on), the cell's workflow drawing when open, a one-line process strip when
  * closed, and the execution rows below. Waiting slices that have no cell yet show the belt they
  * will run, unbuilt, and why they wait.
+ *
+ * Live and replay: the section mark is the cell's activity (the nine states, "as last seen" while the
+ * connection is stale, "not recorded" where nothing says), and a title, risk or app type the history
+ * does not hold is said to be not recorded rather than drawn from a placeholder.
  */
 import { memo, useContext } from "react";
-import { ArtifactCard, DependencyLink, fc, StateMark, type FactoryState } from "@mach/ui";
-import type { EntityRef, Scene } from "../sim";
-import { refKind } from "../sim";
-import { useSceneStore } from "../scene";
+import { ArtifactCard, DependencyLink, fc, StateMark, type FactoryState, type MarkState } from "@mach/ui";
+import type { ActivityState, EntityRef, Scene } from "../sim";
+import { activityOf, isKnown, refKind } from "../sim";
+import { useScene, useSceneStore } from "../scene";
+import { activityWords, callCount } from "./facts";
+import { ActivityMark } from "./marks";
 import { CellFlow } from "./CellFlow";
 import { COLUMN_ORDER, type ColumnTemplate } from "./columns";
 import type { FlowNode } from "./flow";
 import { SHEET, type Lane, type Layout, type Row } from "./layout";
-import { useEventProgress } from "./motion";
+import { useEventProgress, useLate, useStaleSince } from "./motion";
 import { ExecutionRows } from "./rows";
 import { clock } from "./time";
-import type { TreeNode } from "./tree";
+import { laneNotices, type LaneNotice, type TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, useSelected, useTreeCtx } from "./treeitem";
 import { Gutter } from "./gutter";
 import { LaneDimContext, LodContext } from "./context";
-import { artifactFile, gateState, grammarArtifact, stageState, stageWords } from "./vocab";
+import { artifactFile, gateState, grammarArtifact, stageState, stageWords, visitMark } from "./vocab";
 
 /** Whether a lane is outside the highlighted dependency chain (only slice-level subjects dim the sheet). */
 function useDimmed(entities: readonly EntityRef[]): boolean {
@@ -50,10 +56,10 @@ export function wrap(text: string, max: number): string[] {
 }
 
 /** The lane's story in a few words, for the overview lettering: what happened that matters. */
-function storyOf(lane: Lane): string[] {
+function storyOf(lane: Lane, activity: ActivityState | null, label: string | null = null): string[] {
   const { cell, slice } = lane;
   if (!cell) return [slice.scheduler === "waiting-on-dependency" ? `Waits for ${slice.dependsOn.map((d) => d.replace("SLICE-", "")).join(" and ")}` : slice.scheduler];
-  const out = [`${stageWords(cell.stage)}${cell.round > 1 ? ` · round ${cell.round}` : ""}`];
+  const out = [`${stageWords(cell.stage)}${cell.round > 1 ? ` · round ${cell.round}` : ""}${activity === "stale" || activity === "unknown" || activity === "interrupted" ? ` · ${label ? label.toLowerCase() : activityWords(activity)}` : ""}`];
   const human = [...cell.reviews].reverse().find((r) => r.humanApproval)?.humanApproval;
   const rejected = cell.reviews.find((r) => r.outcome === "REJECTED");
   const failedCheck = cell.verifications.find((v) => v.status === "FAIL_WITH_EVIDENCE")?.checks.find((c) => c.result === "fail");
@@ -85,12 +91,23 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   const ctx = useTreeCtx();
   const band = useContext(BandContext);
   const dimmed = useDimmed(cell ? [`cell:${cell.ticketId}`, `slice:${slice.id}`] : [`slice:${slice.id}`]);
+  const staleSince = useStaleSince();
+  const overviewLod = useContext(LodContext) === "overview";
+  // The simulation's lanes keep the stage's mark (M6.0); a real history's lanes carry its activity state.
+  const simulated = useScene((sc) => sc.provenance.source === "simulation");
+  const activity = useScene((sc) => (simulated ? null : activityOf(sc, cell ? `cell:${cell.ticketId}` : `slice:${slice.id}`, { stale: staleSince !== null }).state));
+  // Its own label when the state says too little (R6: idle, the outcome not recorded yet).
+  const activityText = useScene((sc) => (simulated ? null : (activityOf(sc, cell ? `cell:${cell.ticketId}` : `slice:${slice.id}`, { stale: staleSince !== null }).label?.toLowerCase() ?? null)));
   const { ax, aw, width } = layout;
   const x = SHEET.left;
   const w = width - SHEET.left * 2;
   const h = lane.h;
   const state: FactoryState = cell ? stageState(cell.stage) : slice.scheduler === "waiting-on-dependency" ? "waiting" : "idle";
   const mark = cell?.stage === "merged" ? "double-ring" : undefined;
+  const titled = isKnown(slice.meta, "title");
+  // The cell's risk once work is scheduled (the scheduler records it there), else the slice's.
+  const riskKnown = cell ? isKnown(cell.meta, "risk") : isKnown(slice.meta, "risk");
+  const risk = cell && riskKnown ? cell.risk : slice.risk;
   const execRows = rows.filter((r) => r.depth === 0);
   const deps = node.children.filter((c) => c.kind === "dependency");
   const scriptArtifacts = node.children.filter((c) => c.kind === "artifact");
@@ -108,7 +125,14 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   const idY = 22 + lines.length * 17;
   const stageY = idY + 14;
   const schedY = stageY + 13;
-  const depY = (cell ? schedY : stageY) + 13;
+  // Recorded facts the flow has no mark for (a capacity wait, refusals with no gate state, overrides
+  // with no gate state): lettered in the gutter with the waiting, refused or overridden mark, the
+  // latest two; the lane's name lists them all. Keyed as a string so the lane re-renders only when they change.
+  const noticeKey = useScene((sc) => laneNotices(sc, cell, cell?.ticketId ?? slice.ticketId).map((n) => `${n.kind}\t${n.short}`).join("\n"));
+  const notices = noticeKey ? noticeKey.split("\n").map((l) => { const [kind, short] = l.split("\t"); return { kind: kind as LaneNotice["kind"], short: short ?? "" }; }) : [];
+  const shownNotices = cell && lane.expanded ? notices.slice(-2) : [];
+  const waitNotice = !cell ? notices.find((n) => n.kind === "wait") : undefined;
+  const depY = (cell ? schedY : stageY) + 13 + shownNotices.length * 13;
   const onScreen = lane.y + h >= band[0] && lane.y <= band[1];
   // Overview lettering: the title and the lane's story set large, for the establishing view.
   // The lane's header area: down to its first execution row (the rows' own gutters lie below).
@@ -116,7 +140,7 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   const overSize = Math.max(30, Math.min(44, headH / 6));
   // Characters per line at Source Sans 3 bold: about 0.5 em each (measured 0.48 on the fixture's titles).
   const overLines = wrap(slice.title, Math.floor((SHEET.gutter - 66) / (overSize * 0.5))).slice(0, headH > 200 ? 4 : 3);
-  const story = storyOf(lane);
+  const story = storyOf(lane, activity, activityText);
   const group = (
     <LaneDimContext.Provider value={dimmed}>
       {lane.expanded ? deps.map((d) => <DependencyItem key={d.id} node={d} pos={at(d)} size={kids} />) : null}
@@ -154,9 +178,11 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
             {pos}
           </text>
           <g transform="translate(0 5.5)">
-            <StateMark state={state} r={3.2} mark={mark} progress={0} />
+            {activity ? <ActivityMark state={activity} r={3.2} mark={mark} /> : <StateMark state={state} r={3.2} mark={mark} progress={0} />}
           </g>
         </g>
+        {/* Fine lettering is hidden at the overview: it is not drawn there at all (the element budget at Fit). */}
+        {overviewLod ? null : (
         <g className="bp-fine">
           {lines.map((l, i) => (
             <text key={i} x={tx} y={22 + i * 17} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: 15, fontWeight: 700 }}>
@@ -165,28 +191,49 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
           ))}
           <text x={tx} y={idY} style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 9.5 }} className="notranslate">
             {cell ? `${cell.ticketId} · ` : ""}
-            {slice.id}
-            <tspan style={{ fontFamily: "var(--mach-font-sans)", fill: slice.risk === "High" ? fc("human") : "var(--mach-ink-muted)", fontWeight: slice.risk === "High" ? 600 : 400 }}> · {slice.risk} risk</tspan>
+            {titled ? slice.id : null}
+            {riskKnown ? (
+              <tspan style={{ fontFamily: "var(--mach-font-sans)", fill: risk === "High" ? fc("human") : "var(--mach-ink-muted)", fontWeight: risk === "High" ? 600 : 400 }}>
+                {titled ? " · " : ""}
+                {risk} risk
+              </tspan>
+            ) : (
+              <tspan style={{ fontFamily: "var(--mach-font-sans)", fill: "var(--mach-ink-subtle)" }}>{titled ? " · " : ""}risk not recorded</tspan>
+            )}
+            {titled ? null : <tspan style={{ fontFamily: "var(--mach-font-sans)", fill: "var(--mach-ink-subtle)" }}> · title not recorded</tspan>}
           </text>
           {cell && lane.expanded ? (
             <>
               <text x={tx} y={stageY} style={{ fill: "var(--mach-ink)", fontSize: 10 }}>
                 {stageWords(cell.stage)}
                 <tspan style={{ fill: cell.round > 1 ? fc("fail") : "var(--mach-ink-muted)" }}> · round {cell.round} of 3</tspan>
+                {activity ? <tspan style={{ fill: activity === "interrupted" || activity === "failed" ? fc("fail") : "var(--mach-ink-muted)" }}> · {activity === "stale" ? `as last seen at ${clock(staleSince ?? 0)}` : (activityText ?? activityWords(activity))}</tspan> : null}
               </text>
               <text x={tx} y={schedY} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }} className="tabular">
                 {schedLine}
               </text>
+              {shownNotices.map((n, i) => (
+                <g key={`${n.kind}${i}`}>
+                  <g transform={`translate(${tx + 3} ${schedY + 13 + i * 13 - 3.5})`}>
+                    {n.kind === "wait" ? <StateMark state="waiting" r={3} /> : n.kind === "refused" ? <StateMark state="failed" r={3} progress={0} /> : <OverrideMark r={3} />}
+                  </g>
+                  <text x={tx + 10} y={schedY + 13 + i * 13} style={{ fill: n.kind === "wait" ? fc("wait") : n.kind === "refused" ? fc("fail") : fc("wait"), fontSize: 9.5 }} className="tabular">
+                    {clip(n.short, 64)}
+                  </text>
+                </g>
+              ))}
             </>
           ) : null}
-          {cell && !lane.expanded ? <CollapsedSummary scene={null} ticket={cell.ticketId} x={tx} y={stageY} lane={lane} /> : null}
+          {cell && !lane.expanded ? <CollapsedSummary scene={null} ticket={cell.ticketId} x={tx} y={stageY} lane={lane} activity={activity} /> : null}
           {!cell ? (
             <text x={tx} y={stageY} style={{ fill: fc("wait"), fontSize: 9.5 }} className="tabular">
               {slice.scheduler === "waiting-on-dependency" ? `Waiting on a dependency since ${clock(waited?.at ?? slice.since)}` : slice.scheduler}
+              {waitNotice ? ` · ${waitNotice.short}` : ""}
             </text>
           ) : null}
           {lane.expanded ? deps.map((d, i) => <DependencyLine key={d.id} node={d} x={tx} y={depY + i * 13} />) : null}
         </g>
+        )}
         <g className="bp-over">
           {overLines.map((l, i) => (
             <text key={i} x={tx} y={overSize + 4 + i * overSize * 1.12} style={{ fill: "var(--mach-ink)", fontFamily: "var(--mach-font-sans)", fontSize: overSize, fontWeight: 700 }}>
@@ -216,16 +263,30 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   );
 });
 
-function CollapsedSummary({ ticket, x, y, lane }: { scene: Scene | null; ticket: string; x: number; y: number; lane: Lane }) {
+function CollapsedSummary({ ticket, x, y, lane, activity }: { scene: Scene | null; ticket: string; x: number; y: number; lane: Lane; activity: ActivityState | null }) {
   const cell = lane.cell!;
   const agents = cell.agentOrder.length;
-  const calls = cell.agentOrder.reduce((n, id) => n + (cell.agents[id]?.toolCalls.length ?? 0), 0);
+  const calls = cell.agentOrder.reduce((n, id) => {
+    const a = cell.agents[id];
+    return n + (a ? (callCount(a) ?? 0) : 0);
+  }, 0);
   const visits = cell.visits.length;
   void ticket;
   return (
     <text x={x} y={y} style={{ fill: "var(--mach-ink-muted)", fontSize: 9.5 }} className="tabular">
-      {stageWords(cell.stage)} · {visits} visits · {agents} agents · {calls} calls · {cell.artifacts.length} artifacts
+      {stageWords(cell.stage)}
+      {activity ? ` · ${activityWords(activity)}` : ""} · {visits} visits · {agents} agents · {calls} calls · {cell.artifacts.length} artifacts
     </text>
+  );
+}
+
+/** An override with no gate state: a diamond with a bypass arc over it (the flow's overridden gate, small). */
+function OverrideMark({ r }: { r: number }) {
+  return (
+    <g aria-hidden="true">
+      <path d={`M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z`} style={{ fill: fc("wait-soft"), stroke: fc("wait"), strokeWidth: 0.9 }} />
+      <path d={`M${-r - 1} ${-1}C${-r} ${-r * 2} ${r} ${-r * 2} ${r + 1} -1`} style={{ fill: "none", stroke: fc("wait"), strokeWidth: 0.9, strokeLinecap: "round" }} />
+    </g>
   );
 }
 
@@ -233,6 +294,7 @@ function CollapsedSummary({ ticket, x, y, lane }: { scene: Scene | null; ticket:
 const Strip = memo(function Strip({ nodes, ax, y }: { nodes: readonly FlowNode[]; ax: number; y: number }) {
   // At the overview the strip's marks are set large enough to read (same marks, same meaning).
   const big = useContext(LodContext) === "overview";
+  const stale = useStaleSince() !== null;
   const r = big ? 13 : 4.2;
   const latest = new Map<string, FlowNode>();
   for (const n of nodes) latest.set(n.col, n);
@@ -241,11 +303,15 @@ const Strip = memo(function Strip({ nodes, ax, y }: { nodes: readonly FlowNode[]
     <g aria-hidden="true">
       <line x1={ax + (list[0]?.x ?? 0)} y1={y} x2={ax + (list[list.length - 1]?.x ?? 0)} y2={y} style={{ stroke: fc("route"), strokeWidth: big ? 2.4 : 0.75 }} />
       {list.map((n) => {
-        const st: FactoryState | null = n.kind === "future" ? null : n.kind === "start" ? "succeeded" : n.gate ? gateState(n.gate) : n.visit ? (n.visit.leftAt === null ? (n.visit.station === "human-approval" ? "human" : "active") : n.visit.outcome === "failed" ? "failed" : "succeeded") : n.kind === "end" && !n.key.startsWith("f:") ? "succeeded" : null;
+        const drawn: MarkState | null = n.kind === "future" ? null : n.kind === "start" ? "succeeded" : n.gate ? gateState(n.gate) : n.visit ? visitMark(n.visit) : n.kind === "end" && !n.key.startsWith("f:") ? "succeeded" : null;
+        // Nothing is drawn as working while the connection is stale: the mark is held, as last seen.
+        const st = stale && drawn === "active" ? "stale" : drawn;
         return (
           <g key={n.col} transform={`translate(${ax + n.x} ${y})`}>
-            {st ? <StateMark state={st} r={r} progress={0} mark={n.kind === "end" ? "double-ring" : undefined} /> : <circle r={r * 0.86} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: big ? 2 : 0.9, strokeDasharray: big ? "5 4" : "2 1.8" }} />}
-            {n.round > 1 && n.kind !== "future" ? (
+            {st === "stale" ? <ActivityMark state="stale" r={r} /> : st ? <StateMark state={st} r={r} progress={0} mark={n.kind === "end" ? "double-ring" : undefined} /> : <circle r={r * 0.86} style={{ fill: fc("ground"), stroke: fc("ink-soft"), strokeWidth: big ? 2 : 0.9, strokeDasharray: big ? "5 4" : "2 1.8" }} />}
+            {/* An overridden gate: a bypass arc over its mark (never a plain pass). */}
+            {n.gate?.state === "overridden" ? <path d={`M${-r - 1.5} ${-r * 0.3}C${-r} ${-r * 2} ${r} ${-r * 2} ${r + 1.5} ${-r * 0.3}`} style={{ fill: "none", stroke: fc("wait"), strokeWidth: big ? 2.4 : 1, strokeLinecap: "round" }} /> : null}
+            {n.round > 1 && n.kind !== "future" && !big ? (
               <text x={-6} y={-6} textAnchor="end" className="bp-fine" style={{ fill: fc("fail"), fontSize: 8, fontWeight: 700 }}>
                 ×{n.round}
               </text>
@@ -304,15 +370,21 @@ function DependencyLine({ node, x, y }: { node: TreeNode; x: number; y: number }
 
 function ScriptArtifact({ node, pos, size, x, y }: { node: TreeNode; pos: number; size: number; x: number; y: number }) {
   const at = node.data.kind === "artifact" ? node.data.artifact.writtenAt : 0;
-  const p = useEventProgress(at, "artifactMaterialise");
+  const late = useLate(node.data.kind === "artifact" ? node.data.artifact.meta.eventId : null);
+  const p = useEventProgress(at, "artifactMaterialise", 0, late);
   // At the overview the cards are specks: the tree item stays (it is reachable and named), the card goes.
   const overview = useContext(LodContext) === "overview";
   if (node.data.kind !== "artifact") return null;
   const a = node.data.artifact;
   return (
     <Item node={node} pos={pos} size={size} ring={{ x: x - 9, y: y - 11, w: 18, h: 22, r: 2 }}>
-      {overview ? null : <ArtifactCard variant="blueprint" kind={grammarArtifact(a.kind)} progress={Math.max(0.001, p)} at={{ x, y }} showLabel={false} />}
-      <title>{`${artifactFile(a)} · ${a.writer.script ?? ""} · ${clock(a.writtenAt)}`}</title>
+      {overview ? null : a.meta.authority === "reconstructed" ? (
+        // Recorded by the observer from the cell's files, not written by a station: the card's outline, open and dashed.
+        <path d={`M${x - 7} ${y - 9}h10l4 4v14h-14z`} style={{ fill: "none", stroke: fc("ink-soft"), strokeWidth: 0.9, strokeDasharray: "2.5 1.8", opacity: p }} />
+      ) : (
+        <ArtifactCard variant="blueprint" kind={grammarArtifact(a.kind)} progress={Math.max(0.001, p)} at={{ x, y }} showLabel={false} />
+      )}
+      <title>{`${artifactFile(a)} · ${a.writer.script ?? (a.meta.authority === "reconstructed" ? "recorded by the observer" : "")} · ${clock(a.writtenAt)}`}</title>
     </Item>
   );
 }
@@ -343,14 +415,15 @@ export const DependencyLayer = memo(function DependencyLayer({ scene, lanes, ax,
         const to = bySlice.get(dep.from);
         if (!from || !to) return null;
         const x = x0 + i * 16;
-        return <Dependency key={dep.id} id={dep.id} stubFrom={endX} x={x} fromY={anchorY(from)} toY={anchorY(to)} labelX={x0 + deps.length * 16 + 8} satisfiedAt={dep.satisfiedAt} state={dep.state} fromSlice={dep.to} toSlice={dep.from} />;
+        return <Dependency key={dep.id} id={dep.id} stubFrom={endX} x={x} fromY={anchorY(from)} toY={anchorY(to)} labelX={x0 + deps.length * 16 + 8} satisfiedAt={dep.satisfiedAt} state={dep.state} fromSlice={dep.to} toSlice={dep.from} eventId={dep.meta.eventId} />;
       })}
     </g>
   );
 });
 
-function Dependency({ id, stubFrom, x, fromY, toY, labelX, satisfiedAt, state, fromSlice, toSlice }: { id: string; stubFrom: number; x: number; fromY: number; toY: number; labelX: number; satisfiedAt: number | null; state: "blocking" | "satisfied"; fromSlice: string; toSlice: string }) {
-  const p = useEventProgress(satisfiedAt, "dependencyUnlock");
+function Dependency({ id, stubFrom, x, fromY, toY, labelX, satisfiedAt, state, fromSlice, toSlice, eventId }: { id: string; stubFrom: number; x: number; fromY: number; toY: number; labelX: number; satisfiedAt: number | null; state: "blocking" | "satisfied"; fromSlice: string; toSlice: string; eventId: string }) {
+  const late = useLate(eventId);
+  const p = useEventProgress(satisfiedAt, "dependencyUnlock", 0, late);
   const entity = `dependency:${id}` as EntityRef;
   const highlighted = useSceneStore((s) => s.highlighted.includes(entity));
   const dimmed = useSceneStore((s) => s.highlighted.length > 0 && !s.highlighted.includes(entity) && (s.hovered ?? s.selection) !== null && ["cell", "slice", "dependency"].includes(refKind((s.hovered ?? s.selection) as EntityRef)));

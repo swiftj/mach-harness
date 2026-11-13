@@ -35,6 +35,7 @@ RISKS = ("High", "Medium", "Low")
 MODES = ("interactive", "headless")
 MIN_REASON = 10
 RUN_LOG = "runs.jsonl"
+LIFECYCLE_LOG = "lifecycle.jsonl"  # the cell's station history (M6.1); archived with the cell
 # Files that running a build or test suite leaves behind. They are never part of a change, so the
 # gates ignore them even when the project forgot to git-ignore them.
 BYPRODUCT_RE = re.compile(
@@ -48,7 +49,27 @@ def is_byproduct(name: str) -> bool:
 
 
 class CleanupError(Exception):
-    """A gate refused. Printed without a traceback; exit code 1."""
+    """A gate refused. Printed without a traceback; exit code 1. `code` names the gate's reason for the lifecycle log."""
+
+    def __init__(self, message: str = "", code: str = "refused") -> None:
+        super().__init__(message)
+        self.code = code
+
+# M6.1 station telemetry. The shared helper lives with the intent station. It is observational only: if it
+# cannot be loaded, nothing is recorded and this station behaves exactly as before.
+try:
+    _SKILL = Path(__file__).resolve().parent.parent
+    sys.path.append(str(_SKILL.parent / ("mach-intent" if _SKILL.name.startswith("mach-") else "intent") / "scripts"))
+    import lifecycle  # noqa: E402
+except Exception:  # noqa: BLE001
+    lifecycle = None
+
+
+def telemetry(*args: Any, **kwargs: Any) -> None:
+    """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
+    if lifecycle is not None:
+        lifecycle.record(*args, **kwargs)
+
 
 
 def now() -> str:
@@ -401,10 +422,14 @@ def bundle_branch(cell: Cell, refs: List[str], path: Path) -> None:
         raise CleanupError(f"The bundle of {cell.branch} does not verify: {check.stderr.strip()}")
 
 
-def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optional[List[str]] = None, merged_as: Optional[str] = None) -> List[str]:
+def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optional[List[str]] = None, merged_as: Optional[str] = None,
+                  log: Optional[bytes] = None) -> List[str]:
     """Write the archive beside the others, check it, and return its member names. On any failure nothing is left behind.
 
     bundle_refs, when given, are the default branch refs: the cell's branch is bundled against them and added.
+    log, when given, is the cell's lifecycle log with cleanup's own closing records appended; it is archived in
+    place of the file on disk, which is never changed (the cell folder is deleted next). A cell with no lifecycle
+    log (made before M6.1, or by hand) is archived exactly as before, with no log added.
     """
     project, prefix = cell.project, cell.ticket_id
     partial = project / ".factory" / "tmp" / f"cleanup-{target.name}.partial"
@@ -417,6 +442,8 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
             for entry in sorted(cell.root.iterdir()):
                 if entry.name == "cell.json" and merged_as:
                     add_bytes(tar, f"{prefix}/cell.json", (json.dumps({**cell.info, "merged_as": merged_as}, indent=2) + "\n").encode("utf-8"))
+                elif entry.name == LIFECYCLE_LOG and log is not None:
+                    add_bytes(tar, f"{prefix}/{LIFECYCLE_LOG}", log)
                 elif entry.name != "repo":
                     tar.add(str(entry), arcname=f"{prefix}/{entry.name}")
             if bundle_refs is not None:
@@ -449,7 +476,7 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
     except (OSError, tarfile.TarError, CleanupError) as exc:
         if partial.exists():
             partial.unlink()
-        raise CleanupError(f"Archiving failed, so nothing was deleted. {exc}")
+        raise CleanupError(f"Archiving failed, so nothing was deleted. {exc}", code="archive-failed")
     finally:
         if bundle.exists():
             bundle.unlink()
@@ -471,13 +498,21 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
     cell = Cell(project, args.ticket_id)
     plan = survey(cell, args.abandon, args.merged_as)
     if plan["refusals"]:
-        raise CleanupError(plan["refusals"][0] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]))
+        raise CleanupError(plan["refusals"][0] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="cleanup-refused")
     abandoning = args.abandon is not None
     target = next_archive(project, cell.ticket_id)
     archive = relative(project, target)
     record = run_record(cell, plan["outcome"], plan["abandon_reason"], archive, plan)
     bundled = plan["would"]["bundle_branch"]
-    members = write_archive(cell, target, plan["uncommitted"], default_branch(project)[1] if bundled else None, plan["merged_as"])
+    # The cell folder is about to be deleted, so cleanup's own lifecycle records go only into the archived copy of the log,
+    # after closing any visit still open. If archiving fails nothing claims the cleanup happened; runs.jsonl carries the rest.
+    log = None if lifecycle is None else lifecycle.closing(cell.root, [
+        ("gate.evaluated", "cleanup", {"gate": "cleanup.run", "outcome": "pass", "reason_code": None, "overridden_by_reason": False}),
+        ("station.entered", "cleanup", {"stage": plan["stage"]}),
+        ("cleanup.completed", "cleanup", {"outcome": plan["outcome"], "archive": archive, "bundle": bool(bundled), "uncommitted_saved": bool(plan["uncommitted"])}),
+        ("station.exited", "cleanup", {"outcome": plan["outcome"]}),
+    ], "abandoned" if abandoning else "closed")
+    members = write_archive(cell, target, plan["uncommitted"], default_branch(project)[1] if bundled else None, plan["merged_as"], log)
 
     kept = f"The archive is at {archive}; the run record is not written yet. Fix the cause and run cleanup again."
     root = locked_cell_path(project, cell.ticket_id)  # asked again, immediately before deleting
@@ -613,11 +648,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
         return args.func(project, args)
     except CleanupError as exc:
         print(f"refused: {exc}", file=sys.stderr)
+        if project is not None and args.command == "run":
+            telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", "cleanup", lambda: {
+                "gate": "cleanup.run", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False, "abandon": args.abandon is not None})
         return 1
 
 

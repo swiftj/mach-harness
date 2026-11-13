@@ -42,6 +42,9 @@ KINDS = ("test", "impl", "contract", "refactor", "docs")
 COMMIT_PREFIX = {"test": "test", "impl": "feat", "contract": "chore", "refactor": "refactor", "docs": "docs"}
 STEP_FOR = {"test": "red", "impl": "green", "contract": "done", "refactor": "done", "docs": "done"}
 HARDENING_LABEL = "repo-hardening"
+# Lifecycle log: the gate each recorded override passes.
+OVERRIDDEN_GATE = {"test-amended": "frozen-tests", "files-outside-plan": "scope", "test-passed-first-run": "red-before-green",
+                   "red-not-attributed": "red-attribution", "test-written-early": "red-before-green", "no-baseline": "baseline"}
 UI_FILE_RE = re.compile(r"\.(tsx|jsx|vue|svelte|html|astro)$")
 INLINE_STYLE_RE = re.compile(r"style\s*=\s*(\"|'|\{\{)")
 HEX_COLOR_RE = re.compile(r"(?<![\w&])#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b")
@@ -61,7 +64,27 @@ def is_byproduct(name: str) -> bool:
 
 
 class BuildError(Exception):
-    """A gate refused. Printed without a traceback; exit code 1."""
+    """A gate refused. Printed without a traceback; exit code 1. `code` names the gate's reason for the lifecycle log."""
+
+    def __init__(self, message: str = "", code: str = "refused") -> None:
+        super().__init__(message)
+        self.code = code
+
+# M6.1 station telemetry. The shared helper lives with the intent station. It is observational only: if it
+# cannot be loaded, nothing is recorded and this station behaves exactly as before.
+try:
+    _SKILL = Path(__file__).resolve().parent.parent
+    sys.path.append(str(_SKILL.parent / ("mach-intent" if _SKILL.name.startswith("mach-") else "intent") / "scripts"))
+    import lifecycle  # noqa: E402
+except Exception:  # noqa: BLE001
+    lifecycle = None
+
+
+def telemetry(*args: Any, **kwargs: Any) -> None:
+    """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
+    if lifecycle is not None:
+        lifecycle.record(*args, **kwargs)
+
 
 
 def now() -> str:
@@ -125,7 +148,7 @@ class Cell:
 
     def require_started(self) -> None:
         if not self.state.get("tasks"):
-            raise BuildError(f"Building has not started for {self.ticket_id}. Run: build.py start {self.ticket_id}")
+            raise BuildError(f"Building has not started for {self.ticket_id}. Run: build.py start {self.ticket_id}", code="not-started")
 
     def task(self, task_id: str) -> Dict[str, Any]:
         for task in self.state["tasks"]:
@@ -138,6 +161,16 @@ class Cell:
 
     def deviation(self, task_id: Optional[str], kind: str, detail: str) -> None:
         self.state.setdefault("deviations", []).append({"task": task_id, "type": kind, "detail": detail, "loop": self.state.get("loop", 0), "at": now()})
+
+    def report_overrides(self, task_id: Optional[str]) -> None:
+        """Lifecycle: each gate this step passed by a recorded override, once build.json holds it. The reason text stays in build.json."""
+        try:
+            for item in [d for d in self.state.get("deviations") or [] if d.get("task") == task_id and d.get("loop") == self.state.get("loop", 0)]:
+                telemetry(self.root, "gate.evaluated", "build", lambda item=item: {
+                    "gate": OVERRIDDEN_GATE.get(item.get("type"), item.get("type")), "outcome": "override", "reason_code": item.get("type"),
+                    "overridden_by_reason": True, "task": task_id})
+        except Exception:  # noqa: BLE001 - telemetry only
+            pass
 
 
 # ---------------------------------------------------------------- plan
@@ -203,7 +236,7 @@ def audit_gate(cell: Cell) -> Dict[str, Any]:
     hardening = HARDENING_LABEL in ticket_labels(cell)
     report = load_json(cell.project / ".factory" / "audit-report.json")
     if not isinstance(report, dict):
-        raise BuildError("There is no audit report. Run the audit skill on the main checkout first; building is gated on it.")
+        raise BuildError("There is no audit report. Run the audit skill on the main checkout first; building is gated on it.", code="audit-missing")
     head = git(cell.project, "rev-parse", "HEAD").stdout.strip() or None
     limit = cell.section("audit").get("max_age_days", 7)
     try:
@@ -211,13 +244,13 @@ def audit_gate(cell: Cell) -> Dict[str, Any]:
     except (KeyError, ValueError, TypeError):
         age = float("inf")
     if report.get("head") != head or age > limit:
-        raise BuildError("The audit report is stale (a different commit, or too old). Run the audit skill again, then start the build.")
+        raise BuildError("The audit report is stale (a different commit, or too old). Run the audit skill again, then start the build.", code="audit-stale")
     tier = report.get("readiness_tier")
     if tier not in ("Gold", "Silver"):
         if not hardening:
             raise BuildError(
                 "The repository's readiness tier is Bronze, so autonomous building is blocked: " + " ".join(report.get("blockers") or [])
-                + f" Only tickets labelled '{HARDENING_LABEL}' may be built until it is hardened."
+                + f" Only tickets labelled '{HARDENING_LABEL}' may be built until it is hardened.", code="audit-bronze"
             )
         return {"tier": tier, "human_review_required": True, "note": "Bronze repository: allowed because this is a hardening ticket. A person must review it."}
     return {"tier": tier, "human_review_required": tier == "Silver", "note": "Silver: a person must review before merge." if tier == "Silver" else "Gold."}
@@ -292,7 +325,8 @@ def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: ar
         if not args.amend_test:
             raise BuildError(
                 f"{task['id']} is a [{task['kind']}] task but it changes tests that are already committed: {', '.join(frozen)}. "
-                "Make the code satisfy the tests, not the reverse. If a test is genuinely wrong, rerun with --amend-test \"<why>\"; the reason goes to the reviewers."
+                "Make the code satisfy the tests, not the reverse. If a test is genuinely wrong, rerun with --amend-test \"<why>\"; the reason goes to the reviewers.",
+                code="frozen-tests"
             )
         cell.deviation(task["id"], "test-amended", f"{', '.join(frozen)}: {args.amend_test}")
     allowed = set(task.get("files") or [])
@@ -301,7 +335,8 @@ def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: ar
         if not args.allow_extra:
             raise BuildError(
                 f"{task['id']} changed files the plan did not give it: {', '.join(extra)}. Its files are: {', '.join(sorted(allowed))}. "
-                "Undo the extra changes, or if they are truly needed rerun with --allow-extra \"<why>\"; the reason goes to the reviewers."
+                "Undo the extra changes, or if they are truly needed rerun with --allow-extra \"<why>\"; the reason goes to the reviewers.",
+                code="scope"
             )
         cell.deviation(task["id"], "files-outside-plan", f"{', '.join(extra)}: {args.allow_extra}")
 
@@ -309,13 +344,13 @@ def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: ar
 def take(cell: Cell, task_id: str, step: str) -> Dict[str, Any]:
     cell.require_started()
     if cell.info.get("stage") == "built":
-        raise BuildError("This cell is already built. Start a revision round with 'revise' if review sent it back.")
+        raise BuildError("This cell is already built. Start a revision round with 'revise' if review sent it back.", code="wrong-stage")
     task = cell.task(task_id)
     if task["status"] == "done":
         raise BuildError(f"{task_id} is already done.")
     first = cell.next_task()
     if first and first["id"] != task_id:
-        raise BuildError(f"Tasks are done in plan order. The next task is {first['id']} [{first['kind']}], not {task_id}.")
+        raise BuildError(f"Tasks are done in plan order. The next task is {first['id']} [{first['kind']}], not {task_id}.", code="plan-order")
     if STEP_FOR[task["kind"]] != step:
         raise BuildError(f"{task_id} is a [{task['kind']}] task: complete it with '{STEP_FOR[task['kind']]}', not '{step}'.")
     return task
@@ -331,6 +366,9 @@ def complete(cell: Cell, task: Dict[str, Any], files: Sequence[str], result: Opt
         task["test_run"] = {key: result[key] for key in ("exit_code", "seconds")}
     tick_plan(cell, task["id"])
     cell.save()
+    cell.report_overrides(task["id"])
+    telemetry(cell.root, "build.task_completed", "build", lambda: {"task": task["id"], "kind": task["kind"], "step": STEP_FOR[task["kind"]],
+                                                                   "first_run": task.get("first_run"), "suite": cell.state.get("suite"), "commit": lifecycle.short(sha)})
     following = cell.next_task()
     print(json.dumps({
         "status": "DONE", "task": task["id"], "commit": sha[:10], "note": note, "suite": cell.state["suite"],
@@ -391,12 +429,12 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     if cell.state.get("tasks") and stage in ("building", "built"):
         raise BuildError(f"Building already started for {cell.ticket_id} (stage: {stage}). Use 'next' to continue, or 'revise' after a rejected review.")
     if stage != "planned":
-        raise BuildError(f"The cell's stage is '{stage}', not 'planned'. The intent skill must finish the spec, contracts and plan first.")
+        raise BuildError(f"The cell's stage is '{stage}', not 'planned'. The intent skill must finish the spec, contracts and plan first.", code="wrong-stage")
     gate = audit_gate(cell)
     ensure_isolated(cell)
     spec = cell.work / str(cell.info.get("spec_path"))
     if not spec.is_file() or hashlib.sha256(spec.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest() != cell.info.get("spec_sha256"):
-        raise BuildError("The slice spec changed after it was finalized. Regroom the ticket with the intent skill before building.")
+        raise BuildError("The slice spec changed after it was finalized. Regroom the ticket with the intent skill before building.", code="spec-changed")
     plan_path = cell.root / "plan.md"
     if not plan_path.is_file() or not (cell.root / "spec.json").is_file():
         raise BuildError("plan.md or spec.json is missing from the cell.")
@@ -405,7 +443,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         raise BuildError("plan.md has no tasks.")
     dirty = changed_files(cell)
     if dirty:
-        raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}). Commit or remove them before building starts.")
+        raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}). Commit or remove them before building starts.", code="uncommitted-changes")
     for task in tasks:
         task["status"] = "pending"
     synced = sync_with_main(cell)
@@ -439,12 +477,17 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         baseline = run_tests(cell)
         if not baseline["passed"]:
             raise BuildError("The tests already fail in the cell before any change, so building cannot start. The cell is up to date with the main checkout, "
-                             "so the main checkout's tests fail too: run the audit, and harden the repository first.\n" + baseline["output_tail"][-800:])
+                             "so the main checkout's tests fail too: run the audit, and harden the repository first.\n" + baseline["output_tail"][-800:],
+                             code="baseline-red")
         cell.state["suite"] = "green"
     cell.state["baseline_run"] = {k: v for k, v in baseline.items() if k not in ("output_tail", "output")}
     cell.info.update({"stage": "building", "human_review_required": bool(gate["human_review_required"]) or cell.info.get("risk") == "High"})
     cell.save()
     cell.save_info()
+    telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.start", "outcome": "pass", "reason_code": None, "overridden_by_reason": False,
+                                                             "audit_tier": gate.get("tier")})
+    cell.report_overrides(None)
+    telemetry(cell.root, "station.entered", "build", lambda: {"stage": "building", "tasks": len(tasks), "synced_with_main": bool(synced)})
     print(json.dumps({
         "status": "STARTED", "ticket_id": cell.ticket_id, "workdir": str(cell.work), "branch": cell.info.get("branch"),
         "tasks": len(tasks), "test_cmd": cell.state["test_cmd"], "lint_cmd": cell.state["lint_cmd"], "audit": gate,
@@ -508,6 +551,9 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
                      "note": "No change: its test was committed by an earlier task. " + args.written_early})
         tick_plan(cell, task["id"])
         cell.save()
+        cell.report_overrides(task["id"])
+        telemetry(cell.root, "build.task_completed", "build", lambda: {"task": task["id"], "kind": task["kind"], "step": "red", "first_run": "not-run",
+                                                                       "suite": cell.state.get("suite"), "commit": None})
         following = cell.next_task()
         print(json.dumps({"status": "DONE", "task": task["id"], "commit": None, "note": task["note"], "suite": cell.state["suite"],
                           "next": f"{following['id']} [{following['kind']}]" if following else "All tasks are done. Run: build.py finish " + cell.ticket_id}, indent=2))
@@ -520,7 +566,7 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
             raise BuildError(
                 f"{task['id']}: the suite passes with the new test, so the test was never seen failing. Either it does not exercise new behavior "
                 "(check that it runs and asserts what the task says), or earlier work already satisfies it. If earlier work satisfies it, "
-                "rerun with --covered \"<which task and why>\"; the reviewers are told."
+                "rerun with --covered \"<which task and why>\"; the reviewers are told.", code="red-before-green"
             )
         cell.deviation(task["id"], "test-passed-first-run", args.covered)
         note = "Passed on its first run: " + args.covered
@@ -534,7 +580,7 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
                     f"{task['id']}: the suite fails, but its output never mentions the test you wrote ({', '.join(stems)}), so it may be failing before it "
                     "reaches that test: a wrong test command, a folder the runner cannot load, or an unrelated error. Read the output below. If the test "
                     "command or layout is wrong, that is a plan defect to report. If the failure really is your test's, rerun with "
-                    "--unrelated-failure \"<how you know>\"; the reviewers are told.\n" + result["output_tail"][-1200:]
+                    "--unrelated-failure \"<how you know>\"; the reviewers are told.\n" + result["output_tail"][-1200:], code="red-attribution"
                 )
             cell.deviation(task["id"], "red-not-attributed", args.unrelated_failure)
         cell.state["suite"] = "red"
@@ -551,7 +597,7 @@ def cmd_green(cell: Cell, args: argparse.Namespace) -> int:
     check_scope(cell, task, files, args)
     result = run_tests(cell)
     if not result["passed"]:
-        raise BuildError(f"{task['id']}: the suite does not pass yet, so nothing was committed.\n{result['output_tail'][-1500:]}")
+        raise BuildError(f"{task['id']}: the suite does not pass yet, so nothing was committed.\n{result['output_tail'][-1500:]}", code="suite-red")
     cell.state["suite"] = "green"
     complete(cell, task, files, result, "Suite green.")
     return 0
@@ -566,7 +612,7 @@ def cmd_done(cell: Cell, args: argparse.Namespace) -> int:
     if cell.state["suite"] == "green":
         result = run_tests(cell)
         if not result["passed"]:
-            raise BuildError(f"{task['id']}: the suite was green and this change broke it, so nothing was committed.\n{result['output_tail'][-1500:]}")
+            raise BuildError(f"{task['id']}: the suite was green and this change broke it, so nothing was committed.\n{result['output_tail'][-1500:]}", code="suite-broken")
         note = "Suite still green."
     elif cell.state["suite"] == "unknown":
         note = "Committed before the suite exists."
@@ -642,6 +688,8 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         problems.append(f"No test names these spec IDs: {', '.join(untraced)}. Name the ID each test proves in the test's name, docstring or a comment.")
     if problems:
         cell.save()
+        telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.finish", "outcome": "refuse", "reason_code": "not-finished",
+                                                                 "overridden_by_reason": False, "problems": len(problems), "tasks_pending": len(pending)})
         print("NOT FINISHED:\n- " + "\n- ".join(problems))
         return 1
 
@@ -665,6 +713,9 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     cell.info["stage"] = "built"
     cell.save()
     cell.save_info()
+    telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.finish", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
+    telemetry(cell.root, "station.exited", "build", lambda: {"outcome": "built", "stage": "built", "tasks": len(report["tasks"]), "head": lifecycle.short(report["head"]),
+                                                             "deviations": len(report["deviations"]), "tests_seen_failing_first": report["tests_seen_failing_first"]})
     print(json.dumps({
         "status": "BUILT", "report": str(cell.root / "build-report.json"), "diff": stat, "tasks": len(report["tasks"]),
         "tests_seen_failing_first": report["tests_seen_failing_first"], "deviations": len(report["deviations"]),
@@ -683,6 +734,10 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     if loop >= limit:  # the build just sent back was failed round number `limit`
         cell.info["stage"] = "blocked"
         cell.save_info()
+        telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "round-limit", "outcome": "refuse", "reason_code": "round-limit",
+                                                                 "overridden_by_reason": False, "rounds": limit})
+        telemetry(cell.root, "station.entered", "build", lambda: {"stage": "blocked", "revision": loop})
+        telemetry(cell.root, "station.exited", "build", lambda: {"outcome": "escalated", "stage": "blocked"})
         print(json.dumps({
             "status": "ESCALATE", "loops_used": limit,
             "action": f"This ticket has now failed {limit} rounds of verification or review, which is the limit. Do not build again. Label the ticket 'blocked-requires-sme', set its state to blocked, and report to a person.",
@@ -699,6 +754,7 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     cell.info["stage"] = "building"
     cell.save()
     cell.save_info()
+    telemetry(cell.root, "station.entered", "build", lambda: {"stage": "building", "revision": loop, "findings_copied": findings is not None})
     print(json.dumps({
         "status": "REVISING", "loop": loop, "round": loop + 1, "rounds_left": limit - loop - 1, "findings": str(findings) if findings else None,
         "next": "Add one task per finding with 'add-task' (a [test] task first for any behavior that was wrong), then work them with red, green and done.",
@@ -766,11 +822,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for name in ("allow_extra", "amend_test", "covered", "no_baseline", "written_early", "unrelated_failure"):
         if not hasattr(args, name):
             setattr(args, name, None)
+    project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
         return args.func(Cell(project, args.ticket_id), args)
     except BuildError as exc:
         print(f"refused: {exc}", file=sys.stderr)
+        if project is not None and args.command not in ("next", "status"):
+            telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", "build", lambda: {
+                "gate": f"build.{args.command}", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False, "task": getattr(args, "task", None)})
         return 1
 
 

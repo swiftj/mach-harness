@@ -2,15 +2,16 @@
  * The Blueprint's columns: one per station or gate of the belt, at a fixed x for the whole run
  * (M6_0_VISUAL_SPEC.md c.2), so the drawing never re-lays out as time passes.
  *
- * The template is laid out once with ELK's layered algorithm: its nodes are the columns the fixture
- * actually uses (every cell's visits and gates), in belt order, with the review column as three seat
- * nodes between the verification verdict (fan-out) and the consensus gate (join). ELK decides the
- * spacing from each node's drawn width and the seats' vertical offsets. It runs off the frame path,
- * once per fixture, and the result is cached; the per-cell rows are arithmetic on top of it.
+ * The template is laid out once with ELK's layered algorithm: its nodes are every column of the belt
+ * in its static order (spec c.2), with the review column as three seat nodes between the verification
+ * verdict (fan-out) and the consensus gate (join). ELK decides the spacing from each node's drawn width
+ * and the seats' vertical offsets. Nothing in it depends on a run: it is the same for the simulation,
+ * a replay and a live history that has barely begun, so a column never moves when a station is first
+ * reached. It runs off the frame path, once per page, and the result is cached; the per-cell rows are
+ * arithmetic on top of it.
  */
 import { useEffect, useState } from "react";
 import type { ELK as ElkInstance, ElkNode } from "elkjs/lib/elk-api";
-import { finalScene, type Fixture } from "../sim";
 
 export const COLUMN_ORDER = [
   "start",
@@ -68,31 +69,19 @@ export function columnOfGate(gate: string): ColumnKey {
   return gate === "review" ? "consensus" : (gate as ColumnKey);
 }
 
-/** The columns the fixture uses, in belt order. */
-function usedColumns(fixture: Fixture): ColumnKey[] {
-  const used = new Set<ColumnKey>(["start", "end"]);
-  const scene = finalScene(fixture);
-  for (const cell of Object.values(scene.cells)) for (const v of cell.visits) {
-    const c = columnOfStation(v.station);
-    if (c) used.add(c);
-  }
-  for (const gate of Object.values(scene.gates)) used.add(columnOfGate(gate.gate));
-  return COLUMN_ORDER.filter((c) => used.has(c));
-}
-
 let elk: Promise<ElkInstance> | null = null;
-const cache = new WeakMap<Fixture, Promise<ColumnTemplate>>();
-const ready = new WeakMap<Fixture, ColumnTemplate>();
+let cache: Promise<ColumnTemplate> | null = null;
+let ready: ColumnTemplate | null = null;
 
-export function loadColumns(fixture: Fixture): Promise<ColumnTemplate> {
-  const cached = cache.get(fixture);
-  if (cached) return cached;
+/** The belt's column template (laid out once, then cached for the page's life). */
+export function loadColumns(): Promise<ColumnTemplate> {
+  if (cache) return cache;
   const promise = (async () => {
     const t0 = performance.now();
     elk ??= import("elkjs/lib/elk.bundled.js").then(({ default: ELK }) => new ELK());
     const engine = await elk;
     const t1 = performance.now();
-    const cols = usedColumns(fixture);
+    const cols: readonly ColumnKey[] = COLUMN_ORDER;
     const seatIds = ["seat-architecture", "seat-security", "seat-product"];
     const children: ElkNode[] = [];
     const edges: { id: string; sources: string[]; targets: string[] }[] = [];
@@ -139,26 +128,27 @@ export function loadColumns(fixture: Fixture): Promise<ColumnTemplate> {
     const mid = seatY.length === 3 ? (seatY[0]! + seatY[2]!) / 2 : 0;
     const seats = (seatY.length === 3 ? seatY.map((y) => Math.round(y - mid)) : [-28, 0, 28]) as [number, number, number];
     const template: ColumnTemplate = { x, seats, width: out.width ?? 0, cost: { load: t1 - t0, layout: t2 - t1 } };
-    ready.set(fixture, template);
+    ready = template;
     return template;
   })();
-  cache.set(fixture, promise);
+  cache = promise;
   return promise;
 }
 
-/** The template once ELK has laid it out (null for the first few milliseconds). */
-export function useColumns(fixture: Fixture): ColumnTemplate | null {
-  const [template, setTemplate] = useState<ColumnTemplate | null>(() => ready.get(fixture) ?? null);
+/** The template once ELK has laid it out (null for the first few milliseconds of the page). */
+export function useColumns(): ColumnTemplate | null {
+  const [template, setTemplate] = useState<ColumnTemplate | null>(() => ready);
   useEffect(() => {
+    if (template) return;
     let live = true;
-    void loadColumns(fixture).then((t) => {
+    void loadColumns().then((t) => {
       if (live) setTemplate(t);
     });
     return () => {
       live = false;
     };
-  }, [fixture]);
-  return template && ready.get(fixture) === template ? template : (ready.get(fixture) ?? template);
+  }, [template]);
+  return template ?? ready;
 }
 
 const spreadCache = new WeakMap<ColumnTemplate, Map<number, ColumnTemplate>>();

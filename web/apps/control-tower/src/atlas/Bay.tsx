@@ -5,7 +5,7 @@
  * agents at work, the verification gate outside the door and the retry loop over the line.
  * Before the slice is dispatched the bay stands reserved and empty.
  */
-import { memo, type ReactNode } from "react";
+import { Fragment, memo, useMemo, type ReactNode } from "react";
 import {
   AgentMarker,
   ArtifactCard,
@@ -39,11 +39,11 @@ import {
   type PlanBox,
   type Vec3,
 } from "@mach/ui";
-import { FloorLettering, PlanDimension, TaskBoard as TaskBoardMark, type TaskCell } from "@mach/ui";
-import { BELT_PHASES, agentTimingAt, ref, sceneAt, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState } from "../sim";
+import { AgentHead, FloorLettering, PlanDimension, StationSymbol, TaskBoard as TaskBoardMark, cellAnatomy, cellStages, factoryTokens, lampPool, markLook, useFactoryIds, type MarkState, type StationKind, type TaskCell } from "@mach/ui";
+import { BELT_PHASES, activityLabel, activityOf, capacityWaitOf, type CapacityWaitState, type GateRefusal, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog, type StationId } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
-import { animating, anim, callsOf, secondOf, lampLevel, gateView, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PlacedAgent } from "./derive";
+import { activityMark, activityWord, visitMark, visitWord, animating, anim, callsOf, countedToolsOf, fmtElapsed, idOf, secondOf, lampLevel, gateView, gateWord, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PadName, type PlacedAgent, type ViewMode } from "./derive";
 import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot, type PlantLayout } from "./layout";
 import { Card } from "./reduced";
 
@@ -54,26 +54,191 @@ function uiStage(stage: CellState["stage"]): UiStage {
   return stage === "spec-open" ? "interview" : stage;
 }
 
-function machineState(cell: CellState, kinds: readonly string[]): { state: FactoryState; round?: number } {
-  if (cell.station && kinds.includes(cell.station)) return { state: "active", round: cell.round > 1 ? cell.round : undefined };
-  const last = [...cell.visits].reverse().find((v) => kinds.includes(v.station));
-  if (!last) return { state: "idle" };
-  if (last.outcome === "failed") return { state: "failed", round: last.round > 1 ? last.round : undefined };
-  return { state: "succeeded", round: last.round > 1 ? last.round : undefined };
+/**
+ * A machine's state, from the visits to the station it is named for (D3). Passed only once a visit to
+ * that station has exited with a passing outcome; a station not yet visited is not reached (idle,
+ * drawn planned) whatever the cell's stage says and whatever its pad's other station did (a groom
+ * that passed does not pass Plan; an audit does not pass Build). A visit that ended without an exit
+ * record is interrupted, never working. While the cell is at one of the pad's stations the machine
+ * works; live and replay, it shows what is known of the cell's activity when that is not "executing".
+ * A cell with no recorded visits at all (its lifecycle log was not received) whose stage is past the
+ * station is drawn "unknown": reconstructed from the stage, never a recorded pass.
+ */
+function machineState(cell: CellState, kinds: readonly StationId[], named: StationId, activity: ActivityState | null = null): MachineState {
+  if (cell.station && kinds.includes(cell.station)) {
+    return { state: activity && activity !== "executing" ? activityMark(activity) : "active", round: cell.round > 1 ? cell.round : undefined, word: cell.station === named ? undefined : `at ${cell.station}` };
+  }
+  const last = [...cell.visits].reverse().find((v) => v.station === named);
+  if (!last) {
+    if (cell.visits.length === 0 && stagePast(cell.stage, named)) return { state: "unknown", word: "reconstructed from the cell's stage, no visit recorded" };
+    const other = [...cell.visits].reverse().find((v) => kinds.includes(v.station));
+    return { state: "idle", word: other ? `not reached yet; ${other.station} ${other.leftAt === null ? "working" : `ended: ${visitWord(other)}`}` : "not reached yet" };
+  }
+  const round = last.round > 1 ? last.round : undefined;
+  const state = visitMark(last);
+  return { state, round, word: state === "succeeded" || state === "failed" || state === "active" ? undefined : visitWord(last) };
+}
+
+interface MachineState {
+  state: MarkState;
+  round?: number;
+  /** Words for its accessible name when the state alone would mislead. */
+  word?: string;
+}
+
+const STAGE_ORDER: readonly CellState["stage"][] = ["interview", "spec-open", "spec-ready", "planned", "building", "built", "verified", "awaiting-human", "approved", "pr-open", "merged"];
+const STAGE_AFTER: Partial<Record<StationId, CellState["stage"]>> = { plan: "planned", build: "built", verify: "verified" };
+function stagePast(stage: CellState["stage"], station: StationId): boolean {
+  const after = STAGE_AFTER[station];
+  return after !== undefined && STAGE_ORDER.indexOf(stage) >= STAGE_ORDER.indexOf(after);
 }
 
 export interface BayProps {
   bay: BaySlot;
   visible: boolean;
+  /**
+   * M6.2, a dense plant (more than six bays): this bay is drawn as its summary (plate, mast, machines
+   * by symbol, agents as posts and heads) because it is at far zoom, or at mid zoom away from the
+   * centre of the view while more than six bays are in it (spec b.6 and b.7; the element budgets).
+   */
+  summary?: boolean;
 }
 
 /** A bay subscribes to its own cell and the playhead; other bays do not re-render with it. */
-export const Bay = memo(function Bay({ bay, visible }: BayProps) {
+export const Bay = memo(function Bay({ bay, visible, summary = false }: BayProps) {
   const cell = useScene((s) => s.cells[bay.ticketId]);
   const slice = useScene((s) => s.slices[bay.sliceId]);
   if (!cell) return <ReservedBay bay={bay} waiting={slice?.scheduler === "waiting-on-dependency"} known={Boolean(slice)} />;
+  if (summary) return <SummaryBay bay={bay} cell={cell} visible={visible} />;
   return <LiveBay bay={bay} cell={cell} visible={visible} />;
 });
+
+/**
+ * A bay at a dense plant's summary level of detail: the floor, the back walls as one line, the lamp,
+ * the ticket, the mast with what is known of the cell's activity, the three machines as tinted
+ * footprints with their symbols, the verdict gate's state, and the agents as posts and heads (no
+ * emblems, no ticks, no shelf, no ticker). Everything stays where the full bay draws it, so zooming
+ * in or bringing it to the centre only adds detail. Hit targets: the cell, its machines and agents
+ * when on screen; the cell alone when off screen (so the arrows can still reach it).
+ */
+function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visible: boolean }) {
+  const { lod, layout: L, mode } = useAtlas();
+  const highlight = useHighlight();
+  const ids = useFactoryIds();
+  const ticket = cell.ticketId;
+  const t = usePlayheadKeyed((s) => {
+    const now = s.playhead;
+    if (animating(s.log, now, (e) => idOf(e, "ticket_id") === ticket && (e.event.type === "agent.started" || e.event.type === "agent.finished" || e.event.type === "station.entered" || e.event.type === "station.exited" || e.event.type === "station.left"))) return now;
+    // Settled: re-render only when an agent comes or goes or the lamp changes (no elapsed is lettered here).
+    const c = s.log.sceneAt(now).cells[ticket];
+    return c ? `${c.activeAgentIds.join(",")}|${c.station ?? "-"}` : "none";
+  });
+  const reduced = useSceneStore((s) => s.reducedMotion);
+  const activity = useScene((s) => (mode.live ? activityOf(s, ref.cell(ticket), { stale: mode.stale }).state : null));
+  // Its words: the activity's own label when the state alone says too little (R6: idle, outcome not recorded yet).
+  const activityText = useScene((s) => (mode.live ? activityLabel(activityOf(s, ref.cell(ticket), { stale: mode.stale }), activityWord) : null));
+  const vgate = useScene((s) => latestGate(s, "verification", ticket));
+  const { x, y } = bay.origin;
+  const a = cellAnatomy(bay.origin, PLATE_Z);
+  const dim = isDimmed(highlight, ref.cell(ticket));
+  const lamp = q(lampLevel(cell, t, reduced));
+  const completion = cell.merged ? q(anim("cellComplete", t - cell.merged.at, reduced)) : 0;
+  const stage = cellStages[uiStage(cell.stage)];
+  const mastState: MarkState = activity && !(activity === "completed" && cell.merged) ? activityMark(activity) : stage.state;
+  const mastMark = activity && !(activity === "completed" && cell.merged) ? undefined : stage.mark;
+  const floor = prismFaces({ x, y, w: CELL_W, d: CELL_D, z: PLATE_Z, h: 4 });
+  const wallZ = FLOOR_Z + factoryTokens.elevation.cellRim;
+  const walls = [project({ x, y: y + CELL_D, z: wallZ }), project({ x, y, z: wallZ }), project({ x: x + CELL_W, y, z: wallZ })];
+  const mast = project(a.mast);
+  const mastTop = project({ ...a.mast, z: a.mast.z + 20 });
+  const pool = lampPool(bay.origin, PLATE_Z);
+  const st = { intent: machineState(cell, ["groom", "plan"], "plan", activity), build: machineState(cell, ["build", "audit"], "build", activity), verify: machineState(cell, ["verify"], "verify", activity) };
+  const agents = placeAgents(L, cell, t, reduced, mode).filter((p) => p.at.z === FLOOR_Z);
+  const finished = Boolean(cell.merged);
+  const machines: Array<[PadName, StationKind, number]> = [
+    ["intent", "plan", 12],
+    ["build", "build", 22],
+    ["verify", "verify", 18],
+  ];
+  const gate: MarkState | null = vgate ? (vgate.state === "passed" || vgate.state === "skipped" || vgate.state === "overridden" ? "succeeded" : vgate.state === "failed" ? "failed" : vgate.state === "waiting" ? "human" : "active") : null;
+  const gateTop = project({ ...bay.gate, z: (bay.gate.z ?? PLATE_Z) + 30 });
+  // Element budget (a dense plant draws nine or more of these at mid zoom): no wrapper elements that
+  // carry nothing. The bay is a fragment; each machine's footprint and symbol sit directly in the
+  // cell's group (both are aria-hidden, as their wrapper was).
+  return (
+    <>
+      <g role="group" aria-label={`Cell ${ticket}: ${activityText ?? stage.label}`} style={{ opacity: dim ? dimmedOpacity : 1 }}>
+        <polygon aria-hidden="true" points={toPoints(floor.top)} style={{ fill: fc("floor"), stroke: fc("plate-edge"), strokeWidth: 0.8 }} />
+        <g transform={planeTransform(FLOOR_Z)} aria-hidden="true">
+          {lamp > 0 ? <ellipse cx={pool.cx} cy={pool.cy} rx={pool.rx} ry={pool.ry} style={{ fill: `url(#${ids.lamp})`, opacity: lamp }} /> : null}
+          {completion > 0 ? <rect x={x} y={y} width={CELL_W} height={CELL_D} style={{ fill: fc("done"), opacity: completion }} /> : null}
+          <text x={x + 14} y={y + CELL_D - 9} className="notranslate" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: lod === "far" ? 16 : 11, fontWeight: 500 }}>
+            {ticket}
+          </text>
+        </g>
+        <polyline aria-hidden="true" points={toPoints(walls)} style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: 1.4, strokeLinejoin: "round" }} />
+        <line aria-hidden="true" x1={mast.x} y1={mast.y} x2={mastTop.x} y2={mastTop.y} style={{ stroke: fc("ink-soft"), strokeWidth: 1.2 }} />
+        <g transform={`translate(${round(mastTop.x)} ${round(mastTop.y - 6)})`}>
+          <StateMark state={mastState} mark={mastMark} r={lod === "far" ? 8 : 6} />
+        </g>
+        {machines.map(([pad, kind, h]) => {
+          const at = bay.pads[pad];
+          const look = markLook(st[pad].state);
+          const top = prismFaces({ x: at.x - 18, y: at.y - 18, w: 36, d: 36, z: FLOOR_Z, h }).top;
+          const c = project({ ...at, z: FLOOR_Z + h });
+          const idle = st[pad].state === "idle" || finished;
+          return (
+            <Fragment key={pad}>
+              <polygon aria-hidden="true" points={toPoints(top)} style={{ fill: idle ? fc("machine-top") : fc(look.soft), stroke: idle ? fc("plate-edge") : fc(look.ink), strokeWidth: 1 }} />
+              <StationSymbol kind={kind} x={round(c.x)} y={round(c.y)} size={lod === "far" ? 18 : 14} color={idle ? fc("ink-soft") : fc(look.ink === "live" ? "live" : "ink")} strokeWidth={1.3} />
+            </Fragment>
+          );
+        })}
+        {gate ? (
+          <g aria-hidden="true" transform={`translate(${round(gateTop.x)} ${round(gateTop.y)})`}>
+            <StateMark state={gate} r={lod === "far" ? 6 : 4.5} />
+            {/* Overridden, not passed: the mark struck through (shape, not colour alone). */}
+            {vgate?.state === "overridden" ? <path d="M-6 6L6 -6" style={{ stroke: fc("wait"), strokeWidth: 1.6, strokeLinecap: "round" }} /> : null}
+          </g>
+        ) : null}
+        {agents.map((p) => (
+          <AgentPost key={p.agent.id} placed={p} />
+        ))}
+      </g>
+      {visible ? (
+        <BayHits items={bayHits(bay, cell, agents, vgate, "far", st, activityText ?? undefined).filter((it) => !it.entity.startsWith("gate:"))} />
+      ) : (
+        <BayHits items={bayHits(bay, cell, [], vgate, "far", st, activityText ?? undefined).slice(0, 1)} />
+      )}
+    </>
+  );
+}
+
+/** An agent at the summary level: its post and head only (spec b.6: agents drop role emblems at a dense plant). */
+export function AgentPost({ placed }: { placed: PlacedAgent }) {
+  const a = placed.agent;
+  const tier = modelTiers[uiTier(a.model)];
+  const present = (placed.reduced ? 1 : placed.arrive) * (1 - (placed.reduced ? 0 : placed.leave));
+  const base = project(placed.at);
+  const top = project({ ...placed.at, z: (placed.at.z ?? 0) + tier.height * (placed.reduced ? 1 : present) });
+  const look = markLook(placed.state);
+  const condition = placed.state === "interrupted" || placed.state === "stale" || placed.state === "unknown";
+  const fill = placed.state === "active" ? fc("live") : condition || placed.open ? fc("plate-top") : fc(look.soft);
+  const opacity = placed.reduced ? q(Math.max(0, Math.min(1, placed.arrive * (1 - placed.leave)))) : Math.min(1, present * 1.6);
+  return (
+    <g aria-hidden="true" style={{ opacity }}>
+      <line x1={base.x} y1={base.y} x2={top.x} y2={top.y} style={{ stroke: fc(look.ink === "ink-soft" ? "ink" : look.ink), strokeWidth: 1.6, strokeLinecap: "round", strokeDasharray: placed.open ? "2 2" : placed.state === "stale" ? "0.1 2.6" : undefined }} />
+      <g transform={`translate(${round(top.x)} ${round(top.y - 4)})`}>
+        {placed.tierKnown ? <AgentHead tier={uiTier(a.model)} fill={fill} stroke={fc(look.ink)} /> : <circle r={4.4} style={{ fill, stroke: fc(look.ink), strokeWidth: 1.2, strokeDasharray: "1.6 1.4" }} />}
+        {condition ? (
+          <g transform="translate(7 -7)">
+            <StateMark state={placed.state} r={4.2} />
+          </g>
+        ) : null}
+      </g>
+    </g>
+  );
+}
 
 function ReservedBay({ bay, waiting, known }: { bay: BaySlot; waiting: boolean; known: boolean }) {
   const { lod } = useAtlas();
@@ -135,15 +300,20 @@ export function FreeBay({ slot, maxParallel }: { slot: { x: number; y: number; i
   );
 }
 
+/** Whether the scene log records the round's list of targets (the verification dial's denominator). */
+function targetsListed(log: SceneLog, ticket: string, round: number): boolean {
+  return log.entriesFor(ref.cell(ticket)).some((e) => e.event.type === "verify.targets_listed" && ((e.event as unknown as { ids?: { round?: number | null } }).ids?.round ?? round) === round);
+}
+
 function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visible: boolean }) {
-  const { lod, layout: L } = useAtlas();
+  const { lod, layout: L, mode } = useAtlas();
   const highlight = useHighlight();
   const ticket = cell.ticketId;
   // Re-render with the playhead only while one of this cell's animations runs.
   const t = usePlayheadKeyed((s) => {
     const now = s.playhead;
-    if (animating(s.fixture, now, (e) => e.ticket_id === ticket)) return now;
-    const c = sceneAt(s.fixture, now).cells[ticket];
+    if (animating(s.log, now, (e) => idOf(e, "ticket_id") === ticket)) return now;
+    const c = s.log.sceneAt(now).cells[ticket];
     if (!c) return "none";
     // Settled: the picture changes only at the next event, or when the elapsed time of a working
     // agent or of the current station passes another second. The ticks change once a minute, but the
@@ -161,25 +331,39 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
     return c?.executionId ? s.executions[c.executionId] : undefined;
   });
   const vgate = useScene((s) => latestGate(s, "verification", ticket));
+  // Live and replay: what is known about the cell's activity (the nine states; stale on a stale connection).
+  const activity = useScene((s) => (mode.live ? activityOf(s, ref.cell(ticket), { stale: mode.stale }).state : null));
+  // Its words: the activity's own label when the state alone says too little (R6: idle, outcome not recorded yet).
+  const activityText = useScene((s) => (mode.live ? activityLabel(activityOf(s, ref.cell(ticket), { stale: mode.stale }), activityWord) : null));
+  const queued = useScene((s) => (mode.live && cell.executionId ? Object.values(s.executions[cell.executionId]?.queued ?? {}).length : 0));
+  const log = useSceneStore((s) => s.log);
+  // Recorded facts no gate state or stage stands for: a wait for an execution place, and gate
+  // refusals with no matching gate (build.start, verify.start, merge.run...). Drawn, never folded away.
+  const wait = useScene((s) => capacityWaitOf(s, ticket));
+  // From the cell's own gate log (the same object until the cell changes): never a new array per read.
+  const refusals = useMemo(() => cell.gateLog.filter((g) => g.verdict === "refused" && g.gateId === null).map((g) => ({ ...g, ticketId: ticket })), [cell.gateLog, ticket]);
   const { x, y } = bay.origin;
   const cellRef = ref.cell(cell.ticketId);
   const dimCell = isDimmed(highlight, cellRef);
   const lamp = q(lampLevel(cell, t, reduced));
   // Work in flight is "working, for this long" (spec principle 7): elapsed, never a fill.
   const visit = cell.station ? cell.visits[cell.visits.length - 1] : undefined;
-  const stationElapsed = visit && visit.leftAt === null ? visitTimingAt(visit, t).elapsed : undefined;
+  const stationElapsed = visit && visit.leftAt === null && isKnown(visit.meta, "enteredAt") ? visitTimingAt(visit, t).elapsed : undefined;
+  const elapsedInferred = visit?.meta.start === "inferred";
   const finished = Boolean(cell.merged);
   const completion = cell.merged ? q(anim("cellComplete", t - cell.merged.at, reduced)) : 0;
-  const agents = placeAgents(null, L, cell, t, reduced);
+  const agents = placeAgents(L, cell, t, reduced, mode);
   const inBay = agents.filter((a) => a.at.z === FLOOR_Z).sort((a, b) => depthOf(a.at) - depthOf(b.at));
+  // The mast shows what is known about the cell's activity (live, replay); a merged cell keeps its double ring.
+  const mast = activity && !(activity === "completed" && cell.merged) ? { state: activityMark(activity), label: activityText ?? activityWord(activity) } : undefined;
 
   if (!visible) {
-    return <CellPlate origin={bay.origin} ticket={cell.ticketId} stage={uiStage(cell.stage)} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} />;
+    return <CellPlate origin={bay.origin} ticket={cell.ticketId} stage={uiStage(cell.stage)} activity={mast} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} />;
   }
 
-  const intent = machineState(cell, ["groom", "plan"]);
-  const build = machineState(cell, ["build", "audit"]);
-  const verify = machineState(cell, ["verify"]);
+  const intent = machineState(cell, ["groom", "plan"], "plan", activity);
+  const build = machineState(cell, ["build", "audit"], "build", activity);
+  const verify = machineState(cell, ["verify"], "verify", activity);
 
   // At far zoom a finished bay, once settled, is its plate alone: the calm done floor, its ticket and
   // the mast's double ring say all there is to say from that distance (spec b.3, "finished work is
@@ -187,23 +371,24 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   if (lod === "far" && finished && completion >= 1) {
     return (
       <g>
-        <CellPlate origin={bay.origin} ticket={cell.ticketId} slice={cell.sliceId} stage={uiStage(cell.stage)} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} rail />
-        <BayHits items={bayHits(bay, cell, inBay, vgate, lod, t, reduced, { intent, build, verify })} />
+        <CellPlate origin={bay.origin} ticket={cell.ticketId} slice={cell.sliceId} stage={uiStage(cell.stage)} activity={mast} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} rail />
+        <BayHits items={bayHits(bay, cell, inBay, vgate, lod, { intent, build, verify }, mast?.label, noticesWords(wait, refusals))} />
       </g>
     );
   }
   const ver = cell.verifications[cell.verifications.length - 1];
-  // A real denominator: checks proven of checks declared.
-  const verifyFraction = ver ? { done: ver.checks.filter((c) => c.result === "pass").length, of: ver.checks.length } : undefined;
+  // A real denominator: checks proven of checks declared. Live and replay: only when the round's
+  // list of targets is recorded (verify.targets_listed); otherwise the dial shows no fraction.
+  const verifyFraction = ver && (!mode.live || targetsListed(log, ticket, ver.round)) ? { done: ver.checks.filter((c) => c.result === "pass").length, of: ver.checks.length } : undefined;
 
   // Children in painter's order: things at the back (shelf, panel) first, then machines, agents.
   const kids: { depth: number; node: ReactNode }[] = [];
   // The line console and its phase panel are detail: not at far zoom (spec b.7; the far element budget).
-  if (lod !== "far") kids.push({ depth: depthOf({ x: x + 16, y: y + 26 }), node: <Console key="console" bay={bay} cell={cell} exec={exec} t={t} reduced={reduced} lod={lod} /> });
+  if (lod !== "far") kids.push({ depth: depthOf({ x: x + 16, y: y + 26 }), node: <Console key="console" bay={bay} cell={cell} exec={exec} t={t} reduced={reduced} lod={lod} queued={queued} stale={mode.stale} /> });
   kids.push({ depth: depthOf({ x, y: y + 18 }), node: <Shelf key="shelf" bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} highlight={highlight} /> });
   kids.push({ depth: depthOf({ x: x + 62, y: y + 82 }), node: <TaskBoard key="tasks" bay={bay} cell={cell} lod={lod} /> });
   kids.push({ depth: depthOf({ x: x + 168, y: y + 24 }), node: <ResultsRack key="results" bay={bay} cell={cell} lod={lod} t={t} reduced={reduced} /> });
-  const machine = (key: string, kind: "plan" | "build" | "verify", at: Vec3, st: { state: FactoryState; round?: number }, station: "plan" | "build" | "verify", fraction?: { done: number; of: number }) => {
+  const machine = (key: string, kind: "plan" | "build" | "verify", at: Vec3, st: MachineState, station: "plan" | "build" | "verify", fraction?: { done: number; of: number }) => {
     const sref = ref.station(station, cell.ticketId);
     const here = cell.station === station || (station === "plan" && cell.station === "groom") || (station === "build" && cell.station === "audit");
     return {
@@ -231,22 +416,124 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   kids.push(machine("m-intent", "plan", bay.pads.intent, intent, "plan"));
   kids.push(machine("m-build", "build", bay.pads.build, build, "build"));
   kids.push(machine("m-verify", "verify", bay.pads.verify, verify, "verify", verifyFraction));
-  kids.push({ depth: depthOf({ x, y: y + 118 }), node: <Ticker key="ticker" bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} /> });
+  kids.push({ depth: depthOf({ x, y: y + 118 }), node: <Ticker key="ticker" bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} mode={mode} /> });
   kids.push({ depth: depthOf({ x, y: y + 128 }), node: <Branch key="branch" bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} /> });
   for (const a of inBay) kids.push({ depth: depthOf(a.at) + 0.5, node: <AgentFigure key={a.agent.id} placed={a} lod={lod} dimmed={!dimCell && isDimmed(highlight, cellRef, ref.agent(a.agent.id))} proxied /> });
   kids.sort((a, b) => a.depth - b.depth);
 
   return (
     <g>
-      <CellPlate origin={bay.origin} ticket={cell.ticketId} slice={cell.sliceId} stage={uiStage(cell.stage)} lampIntensity={lamp} completion={completion} elapsed={stationElapsed} lod={lod} dimmed={dimCell} rail>
+      <CellPlate origin={bay.origin} ticket={cell.ticketId} slice={cell.sliceId} stage={uiStage(cell.stage)} activity={mast} lampIntensity={lamp} completion={completion} elapsed={stationElapsed} elapsedInferred={elapsedInferred} lod={lod} dimmed={dimCell} rail>
         {kids.map((k) => k.node)}
+        {cell.historyBegan && lod !== "far" ? (
+          // History begins part-way (history.began): said on the floor, beside the ticket.
+          <FloorLettering at={{ x: x + 14, y: y + CELL_D - 24, z: FLOOR_Z }} text={`history from ${clock(cell.historyBegan.at)} · reconstructed`} size={6.5} font="mono" tone="subtle" weight={500} decorative />
+        ) : null}
+        {lod !== "far" ? <Notices x={x} y={y} wait={wait} refusals={refusals} overrides={overridesOf(cell)} lines={lod === "near" || L.bays.length <= 6 ? 3 : 1} /> : null}
       </CellPlate>
       {/* An unbuilt verdict gate (the cell has not reached verification) is not drawn at far zoom. */}
       {vgate || lod !== "far" ? <VerificationGate bay={bay} gate={vgate} t={t} reduced={reduced} lod={lod} dimmed={dimCell} /> : null}
       <VerifyLoop bay={bay} cell={cell} t={t} reduced={reduced} lod={lod} dimmed={dimCell} />
-      <BayHits items={bayHits(bay, cell, inBay, vgate, lod, t, reduced, { intent, build, verify })} />
+      <BayHits items={bayHits(bay, cell, inBay, vgate, lod, { intent, build, verify }, mast?.label, noticesWords(wait, refusals))} />
     </g>
   );
+}
+
+/** A recorded moment as a clock time to the second, UTC. */
+function clockS(t: number): string {
+  const d = new Date(t);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")} UTC`;
+}
+
+/** Refusals grouped by gate and reason, newest last: "verify.start (incomplete-evidence) ×2, last 22:53:10 UTC". */
+function refusalGroups(refusals: readonly GateRefusal[]): { key: string; gate: string; reason: string | null; count: number; last: number }[] {
+  const groups = new Map<string, { key: string; gate: string; reason: string | null; count: number; last: number }>();
+  for (const r of refusals) {
+    const key = `${r.gate}|${r.reasonCode ?? ""}`;
+    const g = groups.get(key);
+    if (g) {
+      g.count += 1;
+      g.last = Math.max(g.last, r.at);
+    } else groups.set(key, { key, gate: r.gate, reason: r.reasonCode, count: 1, last: r.at });
+  }
+  return [...groups.values()].sort((a, b) => a.last - b.last);
+}
+
+/** The notices in words, for the cell's accessible name. */
+function noticesWords(wait: CapacityWaitState | null, refusals: readonly GateRefusal[]): string {
+  const out: string[] = [];
+  if (wait) out.push(`waits for an execution place since ${clockS(wait.since)}${wait.limit !== null ? `, at most ${wait.limit} at once` : ""}`);
+  for (const g of refusalGroups(refusals)) out.push(`refused at ${g.gate}${g.reason ? ` (${g.reason})` : ""}${g.count > 1 ? ` ${g.count} times` : ""}, last at ${clockS(g.last)}`);
+  return out.join("; ");
+}
+
+/**
+ * The bay's notices, lettered on the clear floor band between the task board and the tool ticker, one
+ * short line each with the grammar's mark: overrides (the bypass hook), a recorded wait for an
+ * execution place (the waiting mark) and gate refusals no gate state stands for (the refused mark),
+ * grouped. The cell's name carries them in full. A dense plant (more than six bays) at mid zoom
+ * letters the first line only, for the element budget.
+ */
+function Notices({ x, y, wait, refusals, overrides, lines: max }: { x: number; y: number; wait: CapacityWaitState | null; refusals: readonly GateRefusal[]; overrides: CellState["gateLog"]; lines: number }) {
+  const groups = refusalGroups(refusals);
+  const lines: { key: string; kind: "wait" | "refused" | "override"; text: string }[] = [];
+  if (overrides.length) lines.push({ key: "over", kind: "override", text: `OVERRIDDEN ${overrides.map((o) => o.gate).join(", ")}` });
+  if (wait) lines.push({ key: "wait", kind: "wait", text: `WAITS FOR AN EXECUTION PLACE${wait.limit !== null ? ` · MAX ${wait.limit}` : ""}` });
+  if (groups.length) lines.push({ key: "ref", kind: "refused", text: `REFUSED ${groups.map((g) => `${g.gate}${g.count > 1 ? ` ×${g.count}` : ""}`).join(", ")}` });
+  if (!lines.length) return null;
+  // A dense plant at mid zoom letters only the first line (the element budget); near zoom letters all.
+  const shown = lines.slice(0, max);
+  return (
+    <g aria-hidden="true">
+      {shown.map((l, i) => {
+        const at = { x: x + 24, y: y + 103 + i * 6.5, z: FLOOR_Z };
+        const m = project({ x: x + 18, y: at.y - 1.6, z: FLOOR_Z });
+        const text = l.text.length > 58 ? `${l.text.slice(0, 57)}…` : l.text;
+        return (
+          <g key={l.key}>
+            {l.kind === "override" ? (
+              <g transform={planeTransform(FLOOR_Z)}>
+                <path d={`M${x + 15} ${at.y - 1}c1.5 -3.4 5 -3.4 6.5 0l-1.6 -0.6m1.6 0.6l0.3 -1.7`} style={{ fill: "none", stroke: fc("wait"), strokeWidth: planeStroke, strokeLinecap: "round" }} />
+              </g>
+            ) : (
+              <g transform={`translate(${round(m.x)} ${round(m.y)})`}>
+                <StateMark state={l.kind === "wait" ? "waiting" : "failed"} r={2.3} />
+              </g>
+            )}
+            <FloorLettering at={at} text={text} size={5.2} font="mono" tone={l.kind === "refused" ? "fail" : "wait"} weight={600} decorative />
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/** A recorded moment as a clock time (live and replay times are Unix ms). */
+function clock(t: number): string {
+  const d = new Date(t);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC`;
+}
+
+/** An agent's state in words, for its accessible name. */
+export function agentWord(placed: PlacedAgent): string {
+  switch (placed.state) {
+    case "active":
+      return "working";
+    case "succeeded":
+      return "done";
+    case "failed":
+      return "error";
+    case "waiting":
+      return "queued";
+    case "interrupted":
+      return "interrupted";
+    case "stale":
+      return "working when last seen; the connection is not live";
+    case "unknown":
+      return "ended, how is not recorded";
+    default:
+      return placed.agent.status;
+  }
 }
 
 interface HitItem {
@@ -261,35 +548,37 @@ interface HitItem {
  * board, the results rack, the verdict gate and a findings card in flight. Drawing them last also
  * puts them on top for pointing, so the picture itself can stay in painter's order.
  */
-function bayHits(bay: BaySlot, cell: CellState, agents: PlacedAgent[], gate: GateState | null, lod: Lod, t: number, reduced: boolean, st: Record<"intent" | "build" | "verify", { state: FactoryState; round?: number }>): HitItem[] {
+function bayHits(bay: BaySlot, cell: CellState, agents: PlacedAgent[], gate: GateState | null, lod: Lod, st: Record<"intent" | "build" | "verify", MachineState>, activity?: string, notices = ""): HitItem[] {
   const { x, y } = bay.origin;
   const T = cell.ticketId;
-  const items: HitItem[] = [{ entity: ref.cell(T), label: `Cell ${T}, ${cell.title}: ${cell.stage}, round ${cell.round} of 3`, box: { x, y, w: CELL_W, d: CELL_D, z: FLOOR_Z, h: 0 } }];
+  const title = isKnown(cell.meta, "title") ? cell.title : "title not recorded";
+  const items: HitItem[] = [{ entity: ref.cell(T), label: `Cell ${T}, ${title}: ${cell.stage}${activity ? `, ${activity.toLowerCase()}` : ""}, round ${cell.round} of 3${notices ? `; ${notices}` : ""}`, box: { x, y, w: CELL_W, d: CELL_D, z: FLOOR_Z, h: 0 } }];
   const machine = (pad: "intent" | "build" | "verify", station: "plan" | "build" | "verify", name: string, h: number) => {
     const s = st[pad];
-    items.push({ entity: ref.station(station, T), label: `${name} station, ${T}: ${s.state}${s.round ? `, round ${s.round} of 3` : ""}`, box: boxAt(bay.pads[pad], 40, 40, h) });
+    items.push({ entity: ref.station(station, T), label: `${name} station, ${T}: ${s.state}${s.word ? ` (${s.word})` : ""}${s.round ? `, round ${s.round} of 3` : ""}`, box: boxAt(bay.pads[pad], 40, 40, h) });
   };
   machine("intent", "plan", "Plan", 12);
   machine("build", "build", "Build", 22);
   machine("verify", "verify", "Verify", 18);
   for (const a of [...agents].sort((m, n) => m.at.x - n.at.x)) {
-    items.push({ entity: ref.agent(a.agent.id), label: `${agentName(a)}${a.agent.role === "reviewer" ? " reviewer" : ""}, ${modelTiers[uiTier(a.agent.model)].label}, ${T}: ${a.agent.status === "running" ? "working" : a.agent.status}`, box: boxAt(a.at, 18, 18, modelTiers[uiTier(a.agent.model)].height + 8) });
+    items.push({ entity: ref.agent(a.agent.id), label: agentLabel(a), box: boxAt(a.at, 18, 18, modelTiers[uiTier(a.agent.model)].height + 8) });
   }
   if (lod !== "far") {
     for (const { artifact: a, at } of shelfSlots(bay, cell)) {
-      items.push({ entity: ref.artifact(a.id), label: `Artifact ${a.label} (${a.path}), written ${a.writer.agentId ? "by an agent" : "by a script"}`, box: { x: at.x - 7, y: at.y - 1.5, w: 14, d: 3, z: FLOOR_Z, h: 18 } });
+      const by = a.meta.authority === "reconstructed" ? "found by the observer (reconstructed)" : `written ${a.writer.agentId ? "by an agent" : "by a script"}`;
+      items.push({ entity: ref.artifact(a.id), label: `Artifact ${a.label} (${a.path}), ${by}`, box: { x: at.x - 7, y: at.y - 1.5, w: 14, d: 3, z: FLOOR_Z, h: 18 } });
     }
     if (cell.tasks.length) {
       const green = cell.tasks.filter((k) => k.status === "green" || k.status === "done").length;
       const red = cell.tasks.filter((k) => k.status === "red").length;
-      items.push({ entity: `gate:${T}/red-before-green`, label: `Red before green, ${T}: ${cell.tasks.length} tasks, ${red} seen failing first, ${green} passing`, box: { x: x + 60, y: y + 80, w: 38, d: Math.ceil(cell.tasks.length / 5) * 6.4 + 2, z: FLOOR_Z, h: 1 } });
+      const over = overridesOf(cell);
+      items.push({ entity: `gate:${T}/red-before-green`, label: `Red before green, ${T}: ${cell.tasks.length} tasks, ${red} seen failing first, ${green} passing${over.length ? `; overridden: ${over.map((o) => `${o.gate}${o.reasonCode ? ` (${o.reasonCode})` : ""}`).join(", ")}` : ""}`, box: { x: x + 60, y: y + 80, w: 38, d: Math.ceil(cell.tasks.length / 5) * 6.4 + 2, z: FLOOR_Z, h: 1 } });
     }
   }
   // The verdict gate and its results rack are one entity: the gate carries the checks in its name.
-  const v = gateView(gate, t, reduced);
   const ver = cell.verifications[cell.verifications.length - 1];
   const checks = ver ? `, ${ver.checks.filter((c) => c.result === "pass").length} of ${ver.checks.length} checks passed` : "";
-  items.push({ entity: `gate:${gate ? gate.id : `${T}/verification#1`}`, label: `Verification verdict gate, ${T}: ${v.position}${gate ? `, round ${gate.round}` : ""}${checks}`, box: boxAt(bay.gate, 8, 46, 36) });
+  items.push({ entity: `gate:${gate ? gate.id : `${T}/verification#1`}`, label: `Verification verdict gate, ${T}: ${gateWord(gate)}${gate ? `, round ${gate.round}` : ""}${checks}`, box: boxAt(bay.gate, 8, 46, 36) });
   return items;
 }
 
@@ -328,9 +617,10 @@ function shelfSlots(bay: BaySlot, cell: CellState): { artifact: CellState["artif
 }
 
 /** The line console at the entrance, and the wall panel showing the belt workflow's phases. */
-function Console({ bay, cell, exec, t, reduced, lod }: { bay: BaySlot; cell: CellState; exec: ExecutionState | undefined; t: number; reduced: boolean; lod: Lod }) {
+function Console({ bay, cell, exec, t, reduced, lod, queued, stale }: { bay: BaySlot; cell: CellState; exec: ExecutionState | undefined; t: number; reduced: boolean; lod: Lod; queued: number; stale: boolean }) {
   const { x, y } = bay.origin;
-  const running = Boolean(exec && exec.workflowRunning);
+  // On a stale connection the workflow is not said to be running: its panel shows the phase as last seen.
+  const running = Boolean(exec && exec.workflowRunning) && !stale;
   const phaseIdx = cell.workflowPhase ? BELT_PHASES.indexOf(cell.workflowPhase) : -1;
   const lit = exec?.startedAt != null ? q(anim("pathDraw", t - exec.startedAt, reduced)) : 0;
   const c = bay.console;
@@ -350,7 +640,11 @@ function Console({ bay, cell, exec, t, reduced, lod }: { bay: BaySlot; cell: Cel
         })}
       </g>
       {lod === "near" ? (
-        <FloorLettering at={{ x: x + 162, y: y + 14, z: FLOOR_Z }} text={running ? `mach:belt · ${cell.workflowPhase ?? "Preflight"}` : exec ? "mach:belt · idle" : "no execution"} size={6.5} font="mono" tone={running ? "live" : "subtle"} weight={500} decorative />
+        <FloorLettering at={{ x: x + 162, y: y + 14, z: FLOOR_Z }} text={running ? `mach:belt · ${cell.workflowPhase ?? "Preflight"}` : stale && exec?.workflowRunning ? `mach:belt · ${cell.workflowPhase ?? "Preflight"} · as last seen` : exec ? "mach:belt · idle" : "no execution"} size={6.5} font="mono" tone={running ? "live" : "subtle"} weight={500} decorative />
+      ) : null}
+      {queued > 0 ? (
+        // Workflow agents queued and not started (agent.queued): a count at the console, no figures.
+        <FloorLettering at={{ x: c.x - 8, y: c.y + 30, z: FLOOR_Z }} text={`${queued} queued`} size={6.5} font="mono" tone="wait" weight={600} decorative />
       ) : null}
     </g>
   );
@@ -382,10 +676,21 @@ function Shelf({ bay, cell, t, reduced, lod, highlight }: { bay: BaySlot; cell: 
         const p = q(anim("artifactMaterialise", t - a.writtenAt, reduced));
         const aref = ref.artifact(a.id);
         const failed = a.kind === "verification-findings" || (a.kind === "review-findings" && cell.reviews.some((r) => r.outcome === "REJECTED" && r.round === a.round));
-        return <Card key={a.id} reduced={reduced} kind={uiArtifact(a.kind)} state={failed ? "failed" : "succeeded"} progress={p} file={a.label} at={at} lod={lod} showLabel={false} dimmed={highlight.size > 0 && !highlight.has(aref) && !highlight.has(ref.cell(cell.ticketId))} />;
+        // An artifact known from the observer's reconstruction (it found the file) stands open: dashed, unfilled.
+        return <Card key={a.id} reduced={reduced} kind={uiArtifact(a.kind)} state={failed ? "failed" : "succeeded"} open={a.meta.authority === "reconstructed"} progress={p} file={a.label} at={at} lod={lod} showLabel={false} dimmed={highlight.size > 0 && !highlight.has(aref) && !highlight.has(ref.cell(cell.ticketId))} />;
       })}
     </g>
   );
+}
+
+/**
+ * The build's gate evaluations let through on a recorded override (red-before-green, frozen-tests...),
+ * one per gate (the latest), from the cell's own gate log: an override is never a pass.
+ */
+export function overridesOf(cell: CellState): CellState["gateLog"] {
+  const latest = new Map<string, CellState["gateLog"][number]>();
+  for (const g of cell.gateLog) if (g.verdict === "overridden") latest.set(g.gate, g);
+  return [...latest.values()];
 }
 
 /** Red before green: one chip per build task, a test task fills red when seen failing, an implementation green when the suite passes. */
@@ -393,7 +698,8 @@ function TaskBoard({ bay, cell, lod }: { bay: BaySlot; cell: CellState; lod: Lod
   if (lod === "far" || cell.tasks.length === 0) return null;
   const { x, y } = bay.origin;
   const tasks: TaskCell[] = cell.tasks.map((k) => (k.status === "active" ? "active" : k.status === "red" ? "red" : "green"));
-  // Upright on two legs on the clear floor between the plan bench and the build machine.
+  // Upright on two legs on the clear floor between the plan bench and the build machine. An override
+  // of its gate is lettered with the bay's notices (Notices), with the override's own mark.
   return <TaskBoardMark tasks={tasks} at={{ x: x + 58, y: y + 84, z: FLOOR_Z }} columns={6} lod={lod} />;
 }
 
@@ -420,11 +726,18 @@ function ResultsRack({ bay, cell, lod, t, reduced }: { bay: BaySlot; cell: CellS
   );
 }
 
-/** Tool calls accumulate along the ticker; past 24, the oldest merge into a counted density bar. */
-function Ticker({ bay, cell, t, reduced, lod }: { bay: BaySlot; cell: CellState; t: number; reduced: boolean; lod: Lod }) {
+/**
+ * Tool calls accumulate along the ticker; past 24, the oldest merge into a counted density bar. Only
+ * calls observed one by one (the simulation, a main loop) are ticks. A Dynamic Workflow agent's calls
+ * are not observable (contract 8.1): its count and the last tool's name are lettered under the ticker,
+ * and nothing on the ticker moves for them.
+ */
+function Ticker({ bay, cell, t, reduced, lod, mode }: { bay: BaySlot; cell: CellState; t: number; reduced: boolean; lod: Lod; mode: ViewMode }) {
   const { x, y } = bay.origin;
   const calls = callsOf(cell);
-  if (calls.length === 0) return null;
+  const counted = countedToolsOf(cell);
+  if (calls.length === 0 && counted.agents === 0) return null;
+  if (calls.length === 0) return <CountedTicker bay={bay} cell={cell} lod={lod} mode={mode} />;
   const tickerY = y + CELL_D - 30;
   const x0 = x + 16;
   const x1 = x + CELL_W - 24;
@@ -438,6 +751,7 @@ function Ticker({ bay, cell, t, reduced, lod }: { bay: BaySlot; cell: CellState;
   const running = calls.filter((c) => c.status === "running").length;
   return (
     <g role="img" aria-label={`${calls.length} tool calls in ${cell.ticketId}, ${running} running`}>
+      {counted.agents > 0 ? <CountedTicker bay={bay} cell={cell} lod={lod} mode={mode} below /> : null}
       {bar ? (
         <g transform={planeTransform(FLOOR_Z)} aria-hidden="true">
           <line x1={x0} y1={tickerY} x2={barEnd} y2={tickerY} style={{ stroke: fc("ink"), strokeWidth: 1.5 * planeStroke }} />
@@ -495,6 +809,32 @@ function Branch({ bay, cell, t, reduced, lod }: { bay: BaySlot; cell: CellState;
   );
 }
 
+/** A cell's count-only agents on the ticker: a count and the last tool's name, lettered; never ticks. */
+function CountedTicker({ bay, cell, lod, mode, below }: { bay: BaySlot; cell: CellState; lod: Lod; mode: ViewMode; below?: boolean }) {
+  const { x, y } = bay.origin;
+  const c = countedToolsOf(cell);
+  const tickerY = y + CELL_D - 30;
+  const calls = c.calls === null ? "no count yet" : `${c.calls} tool call${c.calls === 1 ? "" : "s"}`;
+  const last = c.lastTool ? ` · last ${c.lastTool}` : "";
+  const live = c.running > 0 && !mode.stale;
+  const text = lod === "far" ? (c.calls === null ? "count not reported" : `${c.calls} calls`) : `${calls} counted${last}${mode.stale && c.running > 0 ? " · as last seen" : ""}`;
+  return (
+    <g role="img" aria-label={`${cell.ticketId}: ${calls} counted for ${c.agents} workflow agent${c.agents === 1 ? "" : "s"}${last ? `, the last tool reported ${c.lastTool}` : ""}${c.running ? `, ${c.running} running` : ""}. Individual calls are not observable.`}>
+      <FloorLettering at={{ x: x + 16, y: tickerY + (below ? 11 : 2), z: FLOOR_Z }} text={text} size={lod === "far" ? 10 : 6.5} font="mono" tone={live ? "live" : "muted"} weight={500} decorative />
+    </g>
+  );
+}
+
+/** The agent's accessible name: role, model (or "model not recorded"), ticket, state, and what is known of its tools. */
+export function agentLabel(a: PlacedAgent): string {
+  // The simulation keeps its M6.0 names.
+  if (a.agent.meta.authority === "simulated") return `${agentName(a)}${a.agent.role === "reviewer" ? " reviewer" : ""}, ${modelTiers[uiTier(a.agent.model)].label}, ${a.agent.ticketId}: ${agentWord(a)}`;
+  const tier = a.tierKnown ? modelTiers[uiTier(a.agent.model)].label : "model not recorded";
+  const tools = a.agent.observation === "count-only" ? `, ${a.agent.toolCallCount === null ? "tool calls not reported yet" : `${a.agent.toolCallCount} tool calls`}${a.agent.lastTool ? `, last ${a.agent.lastTool}` : ""}` : "";
+  const elapsed = a.state === "active" || a.state === "stale" ? (a.elapsedKnown ? `, for ${a.elapsedInferred ? "about " : ""}${fmtElapsed(a.elapsed)}` : ", start not recorded") : "";
+  return `${agentName(a)}${a.agent.role === "reviewer" ? " reviewer" : ""}, ${tier}, ${a.agent.ticketId}: ${agentWord(a)}${elapsed}${tools}${a.open ? " (reconstructed)" : ""}`;
+}
+
 export function agentName(placed: PlacedAgent): string {
   const a = placed.agent;
   const role = a.role === "reviewer" && a.seat && a.seat !== "general" ? reviewerSeats[a.seat].label : a.role === "clerk" ? "Clerk" : a.role === "intent" ? "Plan worker" : a.role === "merge" ? "Merge worker" : a.role === "cleanup" ? "Cleanup worker" : agentRoles[uiRole(a)].label;
@@ -506,11 +846,11 @@ export function AgentFigure({ placed, lod, dimmed, proxied }: { placed: PlacedAg
   const seat = a.seat && a.seat !== "general" ? a.seat : undefined;
   // Reduced motion (spec e: agentArrive / agentLeave "fade"): the figure stands at full height and
   // only its opacity follows arrival and departure; the post never grows or sinks.
-  const marker = <AgentMarker agentRole={uiRole(a)} tier={uiTier(a.model)} seat={seat} state={placed.state} elapsed={placed.state === "active" ? placed.elapsed : undefined} arrive={placed.reduced ? 1 : placed.arrive} leave={placed.reduced ? 0 : placed.leave} at={placed.at} lod={lod} dimmed={dimmed} showLabel={false} />;
+  const marker = <AgentMarker agentRole={uiRole(a)} tier={uiTier(a.model)} tierKnown={placed.tierKnown} open={placed.open} seat={seat} state={placed.state} elapsed={placed.state === "active" && placed.elapsedKnown ? placed.elapsed : undefined} arrive={placed.reduced ? 1 : placed.arrive} leave={placed.reduced ? 0 : placed.leave} at={placed.at} lod={lod} dimmed={dimmed} showLabel={false} />;
   const figure = placed.reduced ? <g style={{ opacity: q(Math.max(0, Math.min(1, placed.arrive * (1 - placed.leave)))) }}>{marker}</g> : marker;
   if (proxied) return figure;
   return (
-    <Hit entity={ref.agent(a.id)} label={`${agentName(placed)}${a.role === "reviewer" ? " reviewer" : ""}, ${modelTiers[uiTier(a.model)].label}, ${a.ticketId}: ${a.status === "running" ? "working" : a.status}`}>
+    <Hit entity={ref.agent(a.id)} label={agentLabel(placed)}>
       {figure}
     </Hit>
   );
@@ -520,7 +860,7 @@ export function AgentFigure({ placed, lod, dimmed, proxied }: { placed: PlacedAg
 function VerificationGate({ bay, gate: g, t, reduced, lod, dimmed }: { bay: BaySlot; gate: GateState | null; t: number; reduced: boolean; lod: Lod; dimmed: boolean }) {
   const v = gateView(g, t, reduced);
   return (
-      <GateGlyph kind="verification" position={v.position} from={v.from} progress={v.progress} at={bay.gate} axis="y" lod={lod} dimmed={dimmed} showLabel={false} planned={!g} />
+      <GateGlyph kind="verification" position={v.position} from={v.from} progress={v.progress} overridden={v.overridden} at={bay.gate} axis="y" lod={lod} dimmed={dimmed} showLabel={false} planned={!g} />
   );
 }
 

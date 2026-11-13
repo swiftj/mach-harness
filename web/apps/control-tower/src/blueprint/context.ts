@@ -125,3 +125,9 @@ export const LodContext = createContext<"overview" | "detail" | "near">("detail"
 
 /** Whether the lane a row belongs to is dimmed by a dependency highlight (row gutters dim with it). */
 export const LaneDimContext = createContext(false);
+
+/**
+ * Whether the scene drawn is the simulation. A few words differ for a real history (verification's
+ * checks recorded of targets listed, which the observer reconstructs); the simulation keeps M6.0's.
+ */
+export const SimulatedContext = createContext(true);

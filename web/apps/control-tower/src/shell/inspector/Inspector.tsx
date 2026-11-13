@@ -7,8 +7,11 @@ import { Crosshair, X } from "lucide-react";
 import { type ReactNode } from "react";
 import { stations as stationLooks, type FactoryMarkShape, type FactoryState, type StationKind } from "@mach/ui";
 import {
-  describe,
-  eventsFor,
+  describeEntry,
+  executionStatusOf,
+  finalScene,
+  visitStatusOf,
+  whyOf,
   refId,
   SCENARIO,
   type ActorState,
@@ -20,14 +23,19 @@ import {
   type ExecutionState,
   type FindingState,
   type GateState,
+  type ProjectEntity,
+  type Scene,
+  type SeatEntity,
   type SliceState,
   type ToolCallState,
+  type VisitEntity,
   type WaveState,
+  type WorkflowEntity,
 } from "../../sim";
 import { useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
 import { IconButton } from "../timeline/Transport";
-import { artifactOf, selectable, gateOf, kindOf, GATE_STATE_WORDS, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
+import { artifactOf, selectable, gateOf, kindOf, gateStateWords, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
 import {
   ActorAnatomy,
   AgentAnatomy,
@@ -37,13 +45,18 @@ import {
   ExecutionAnatomy,
   FindingAnatomy,
   GateAnatomy,
+  ProjectAnatomy,
+  SeatAnatomy,
   SliceAnatomy,
   StationAnatomy,
   ToolAnatomy,
+  VisitAnatomy,
   WaveAnatomy,
+  WorkflowAnatomy,
 } from "./anatomies";
 import { identityOf, parseStation, selectEntity } from "./entity";
-import { Evidence, JumpButton, useEntityEvents } from "./parts";
+import { AuthorityBadge, Evidence, JumpButton, precisionWords, useEntityEvents } from "./parts";
+import { Provenance } from "./Provenance";
 import { RunNow } from "./RunNow";
 import { cellTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
 
@@ -81,13 +94,16 @@ function lookOf(entity: AnyRef, value: unknown): Look {
       const cell = (value as CellState).visits ? (value as CellState) : null;
       const visits = cell ? cell.visits.filter((v) => v.station === station) : [];
       const last = visits[visits.length - 1];
-      const state: FactoryState = !last ? "idle" : last.leftAt === null ? "active" : outcomeState(last.outcome);
-      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: !last ? "Not visited" : last.leftAt === null ? "Working" : (last.outcome ?? "ended").replace(/^./, (c) => c.toUpperCase()), ...stationTiming(last) };
+      const status = last ? visitStatusOf(last) : null;
+      const state: FactoryState = !last || !status ? "idle" : status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(last.outcome);
+      return { glyph: <StationGlyph kind={station as StationKind} size={28} state={state} />, state, word: status ? status.word : "Not visited", ...stationTiming(last) };
     }
     case "agent": {
       const a = value as AgentState;
-      const state = runState(a.status);
-      return { glyph: <AgentGlyph tier={tierOf(a.model)} agentRole={roleOf(a.role)} size={28} state={state} />, state, word: a.status === "running" ? "Working" : a.status === "error" ? "Failed" : "Finished", phase: a.status === "running" ? "running" : "finished", since: a.status === "running" ? a.startedAt : a.finishedAt };
+      // The honest lifecycle: queued, running, done, error, or ended with no record of how.
+      const state: FactoryState = a.lifecycle === "queued" ? "waiting" : a.lifecycle === "unknown" ? "idle" : runState(a.status);
+      const word = a.lifecycle === "queued" ? "Queued in its workflow" : a.lifecycle === "unknown" ? "Ended; how is not recorded" : a.status === "running" ? "Working" : a.status === "error" ? "Failed" : "Finished";
+      return { glyph: <AgentGlyph tier={tierOf(a.model)} agentRole={roleOf(a.role)} size={28} state={state} />, state, word, phase: a.status === "running" || a.lifecycle === "queued" ? "running" : "finished", since: a.status === "running" ? a.startedAt : a.finishedAt };
     }
     case "tool": {
       const c = value as ToolCallState;
@@ -101,7 +117,7 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     case "gate": {
       const g = value as GateState;
       const state = gateState(g.state);
-      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: GATE_STATE_WORDS[g.state], phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
+      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: gateStateWords(g), phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
     }
     case "dependency": {
       const d = value as DependencyState;
@@ -113,9 +129,29 @@ function lookOf(entity: AnyRef, value: unknown): Look {
     }
     case "execution": {
       const x = value as ExecutionState;
-      const state: FactoryState = x.state === "running" || x.state === "claimed" ? "active" : x.state === "failed" ? "failed" : "succeeded";
-      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: x.state, phase: state === "active" ? "running" : "finished", since: x.endedAt ?? x.startedAt };
+      // Its process may have ended before the supervisor recorded it (R6): ended, outcome not recorded yet.
+      const status = executionStatusOf(x);
+      const state: FactoryState = status.running ? "active" : x.state === "failed" ? "failed" : x.state === "completed" ? "succeeded" : "idle";
+      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: status.word, phase: status.running ? "running" : "finished", since: x.endedAt ?? x.processEndedAt ?? x.startedAt };
     }
+    case "visit": {
+      const v = value as VisitEntity;
+      const status = visitStatusOf(v);
+      const state: FactoryState = status.state === "working" ? "active" : status.state === "waiting-person" ? "human" : status.state === "ended-unrecorded" ? "idle" : outcomeState(v.outcome);
+      return { glyph: <StationGlyph kind={v.station as StationKind} size={28} state={state} />, state, word: status.word, phase: v.leftAt === null ? "running" : "finished", since: v.leftAt ?? v.enteredAt };
+    }
+    case "seat": {
+      const v = value as SeatEntity;
+      const state: FactoryState = v.vote === "APPROVE" ? "succeeded" : v.vote === "REJECT" ? "failed" : "waiting";
+      return { glyph: <GateGlyphSmall kind={gateOf("review")} size={28} state={state} />, state, word: v.vote === "APPROVE" ? "Approved" : v.vote === "REJECT" ? "Rejected" : "No vote yet", phase: v.vote ? "finished" : "running", since: v.votedAt };
+    }
+    case "workflow": {
+      const v = value as WorkflowEntity;
+      const state: FactoryState = v.status === "running" ? "active" : v.status === "completed" ? "succeeded" : v.status === "killed" ? "failed" : "idle";
+      return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: v.status === "running" ? "Running" : v.status === "completed" ? "Completed" : v.status === "killed" ? "Killed" : "Not recorded", phase: v.status === "running" ? "running" : "finished", since: v.finishedAt };
+    }
+    case "project":
+      return { glyph: <WaveGlyph size={28} />, state: "idle", word: "Project", phase: "running", since: null };
   }
 }
 
@@ -145,6 +181,14 @@ function Anatomy({ entity, value }: { entity: AnyRef; value: unknown }) {
       return <FindingAnatomy finding={value as FindingState} />;
     case "execution":
       return <ExecutionAnatomy execution={value as ExecutionState} />;
+    case "visit":
+      return <VisitAnatomy visit={value as VisitEntity} />;
+    case "seat":
+      return <SeatAnatomy seat={value as SeatEntity} />;
+    case "workflow":
+      return <WorkflowAnatomy workflow={value as WorkflowEntity} />;
+    case "project":
+      return <ProjectAnatomy project={value as ProjectEntity} />;
   }
 }
 
@@ -169,7 +213,7 @@ function TimeStatus({ look, entity }: { look: Look | null; entity: AnyRef }) {
     return (
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-dashed border-line-strong px-3 py-2 text-body-sm">
         <span className="text-ink">Not started at this moment.</span>
-        {first ? <JumpButton seq={first.seq} label={`It starts at ${timecode(first.t, false)}`} /> : null}
+        {first ? <JumpButton eventId={first.id} label={`It starts at ${timecode(first.t, false)}`} /> : null}
       </div>
     );
   }
@@ -191,29 +235,41 @@ function TimeStatus({ look, entity }: { look: Look | null; entity: AnyRef }) {
 
 function Why({ entity }: { entity: AnyRef }) {
   const { all, happened } = useEntityEvents(entity);
-  const latest = all[happened - 1];
+  // Among records at the same moment, the deciding one explains it: authoritative > observed > reconstructed (D24).
+  const latest = whyOf(all, happened);
   if (!latest) return null;
   return (
     <div className="mx-5 mb-4 rounded-sm bg-surface-sunken px-3 py-2.5">
       <p className="text-caption text-ink-subtle">Why it looks like this</p>
-      <p className="mt-0.5 text-body-sm text-ink">{describe(latest)}</p>
+      <p className="mt-0.5 text-body-sm text-ink">{describeEntry(latest)}</p>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-mono text-[11px] text-ink-subtle tabular">
-          {latest.type}, seq {latest.seq}, {timecode(latest.t)}, {latest.source}
+          {latest.event.type}, {timecode(latest.t)}
         </span>
-        <JumpButton seq={latest.seq} label="Go to event" />
+        {latest.event.schema_version === 3 ? <AuthorityBadge authority={latest.authority} /> : null}
+        {latest.event.schema_version === 3 ? <span className="text-caption text-ink-subtle">{precisionWords(latest.precision)}</span> : null}
+        <JumpButton eventId={latest.id} label="Go to event" />
       </div>
     </div>
   );
 }
 
+/** The scene names are read from: the simulation's final scene, or the newest scene received. */
+function namingScene(s: { source: string; log: { head(): Scene } }): Scene {
+  return s.source === "simulation" ? finalScene(SCENARIO) : s.log.head();
+}
+
 function Selected({ entity }: { entity: AnyRef }) {
   const value = useScene((s) => selectEntity(s, entity));
   const store = useStore();
-  const identity = identityOf(entity);
+  // Strings, so a new event re-renders the header only when the name itself changes.
+  const name = useSceneStore((s) => identityOf(entity, namingScene(s)).name);
+  const kindWord = useSceneStore((s) => identityOf(entity, namingScene(s)).kindWord);
+  const identity = { name, kindWord, id: refId(entity) };
   const focusable = selectable(entity);
   const look = value ? lookOf(entity, value) : null;
-  const unknown = eventsFor(SCENARIO, entity).length === 0 && !value;
+  const { all } = useEntityEvents(entity);
+  const unknown = all.length === 0 && !value;
   return (
     <div>
       <header className="sticky top-0 z-10 border-b border-line bg-surface px-5 pb-4 pt-4">
@@ -244,13 +300,14 @@ function Selected({ entity }: { entity: AnyRef }) {
         ) : null}
         <TimeStatus look={look} entity={entity} />
       </header>
-      {unknown ? <p className="px-5 py-4 text-body-sm text-ink-muted">This run has no record of that entity.</p> : null}
+      {unknown ? <p className="px-5 py-4 text-body-sm text-ink-muted">No record of that entity has been received. If it appears, this shows it.</p> : null}
       {value ? (
         <div className="pt-4">
           <Why entity={entity} />
           <Anatomy entity={entity} value={value} />
         </div>
       ) : null}
+      {value || all.length ? <Provenance entity={entity} value={value} /> : null}
       <Evidence entity={entity} />
     </div>
   );

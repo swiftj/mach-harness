@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mach:schema:cell-lifecycle:v1",
+  "title": "MACH Cell Lifecycle Record v1",
+  "description": "One line of .factory/worktrees/<ticket_id>/lifecycle.jsonl (M6.1). Written by the station scripts through skills/intent/scripts/lifecycle.py after each station has recorded the fact in its own files, which stay authoritative. Readers order records by file offset and skip any line that is not a whole JSON object (a torn last line). The log is archived with the cell by cleanup. Every value is safe to show in a browser: identifiers, counts, outcomes, short commits, hashes and paths relative to the cell or the project, never a command, file content, absolute path, prompt, finding text or environment value.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "seq", "at", "ticket_id", "type", "station", "visit", "round", "execution_id", "data"],
+  "properties": {
+    "v": {"const": 1},
+    "seq": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Per file, from 1, strictly increasing in file order among non-null values; allocated under an advisory lock. null when the writer could not take the lock within 0.2 s and wrote rather than wait. Gaps are possible (a lost write); order is the file offset."
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "description": "UTC wall clock, milliseconds, when the record was written (just after the station's own write)."
+    },
+    "ticket_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9_-]+)*$"},
+    "type": {
+      "enum": ["station.entered", "station.exited", "gate.evaluated", "build.task_completed", "verify.check_recorded", "review.round_started",
+               "review.verdict_submitted", "review.decided", "human.approval_recorded", "merge.completed", "cleanup.completed"]
+    },
+    "station": {"$ref": "#/$defs/station"},
+    "visit": {
+      "type": "string",
+      "pattern": "^(groom|plan|audit|build|verify|review|human-approval|merge|cleanup)#[1-9][0-9]*$",
+      "description": "<station>#<n>, n counting station.entered records for that station in this file. A record other than entered or exited belongs to the open visit; when none is open, to the next visit (a gate refused at the door)."
+    },
+    "round": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "The judging round, 1..3 (build.json loop + 1), for build, verify, review and human-approval; null for every other station. Not an execution attempt: Factory events v2 use attempt for that."
+    },
+    "execution_id": {
+      "type": ["string", "null"],
+      "pattern": "^x[0-9a-f]{12}$",
+      "description": "The Factory execution that ran the station (environment variable MACH_EXECUTION_ID, set by the executor); null when a person or a hand-started belt drove it."
+    },
+    "data": {"$ref": "#/$defs/data"}
+  },
+  "allOf": [
+    {"if": {"properties": {"type": {"const": "station.entered"}}},
+     "then": {"properties": {"data": {"required": ["stage"]}}}},
+    {"if": {"properties": {"type": {"const": "station.exited"}}},
+     "then": {"properties": {"data": {"required": ["outcome"], "properties": {"outcome": {"type": "string"}}}}}},
+    {"if": {"properties": {"type": {"const": "gate.evaluated"}}},
+     "then": {"properties": {"data": {"required": ["gate", "outcome", "reason_code", "overridden_by_reason"], "properties": {
+       "gate": {"type": "string"}, "outcome": {"enum": ["pass", "refuse", "override"]}, "reason_code": {"type": ["string", "null"]},
+       "overridden_by_reason": {"type": "boolean"}}}}}},
+    {"if": {"properties": {"type": {"const": "build.task_completed"}}},
+     "then": {"properties": {"station": {"const": "build"}, "data": {"required": ["task", "kind", "step", "commit"], "properties": {
+       "task": {"type": "string", "pattern": "^(?:R\\d+-)?T\\d+$"}, "kind": {"enum": ["test", "impl", "contract", "refactor", "docs"]},
+       "step": {"enum": ["red", "green", "done"]}, "first_run": {"enum": ["pass", "fail", "not-run", null]},
+       "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,12}$"}}}}}},
+    {"if": {"properties": {"type": {"const": "verify.check_recorded"}}},
+     "then": {"properties": {"station": {"const": "verify"}, "data": {"required": ["item", "kind", "result", "evidence"], "properties": {
+       "item": {"type": "string"}, "kind": {"enum": ["scenario", "matrix rule", "holdout"]}, "result": {"enum": ["pass", "fail"]},
+       "evidence": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {
+         "path": {"type": "string", "pattern": "^evidence/"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}}}}}}},
+    {"if": {"properties": {"type": {"const": "review.round_started"}}},
+     "then": {"properties": {"station": {"const": "review"}, "data": {"required": ["round", "seats", "models", "approvals_needed", "human_approval_required"]}}}},
+    {"if": {"properties": {"type": {"const": "review.verdict_submitted"}}},
+     "then": {"properties": {"station": {"const": "review"}, "data": {"required": ["round", "seat", "vote", "blockers", "notes", "rules"], "properties": {
+       "vote": {"enum": ["APPROVE", "REJECT"]}, "blockers": {"type": "integer", "minimum": 0}, "notes": {"type": "integer", "minimum": 0},
+       "rules": {"type": "array", "items": {"type": "string", "pattern": "^(?:(?:FR|INV|AC)-\\d{2,}|R\\d{1,3})$"}}}}}}},
+    {"if": {"properties": {"type": {"const": "review.decided"}}},
+     "then": {"properties": {"station": {"const": "review"}, "data": {"required": ["round", "decision", "approvals", "needed", "security_veto"], "properties": {
+       "decision": {"enum": ["APPROVED", "AWAITING_HUMAN", "REJECTED", "ESCALATE"]}, "security_veto": {"type": "boolean"}}}}}},
+    {"if": {"properties": {"type": {"const": "human.approval_recorded"}}},
+     "then": {"properties": {"station": {"const": "human-approval"}, "data": {"required": ["round", "decision"]}}}},
+    {"if": {"properties": {"type": {"const": "merge.completed"}}},
+     "then": {"properties": {"station": {"const": "merge"}, "data": {"required": ["method", "approved_commit", "landed_commit", "merge_commit", "pull_request"], "properties": {
+       "method": {"enum": ["local", "pr"]}, "pull_request": {"type": ["integer", "null"]}}}}}},
+    {"if": {"properties": {"type": {"const": "cleanup.completed"}}},
+     "then": {"properties": {"station": {"const": "cleanup"}, "data": {"required": ["outcome", "archive"], "properties": {
+       "outcome": {"enum": ["merged", "abandoned"]}, "archive": {"type": "string", "pattern": "^\\.factory/archive/[^/]+\\.tar\\.gz$"}}}}}}
+  ],
+  "$defs": {
+    "station": {"enum": ["groom", "plan", "audit", "build", "verify", "review", "human-approval", "merge", "cleanup"]},
+    "text": {
+      "type": "string",
+      "maxLength": 120,
+      "pattern": "^(?![/\\\\~]|[A-Za-z]:[/\\\\])[^\\n]*$",
+      "description": "Never an absolute path and never more than one line."
+    },
+    "value": {
+      "anyOf": [
+        {"type": ["null", "boolean", "integer", "number"]},
+        {"$ref": "#/$defs/text"},
+        {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/value"}},
+        {"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,39}$"}, "additionalProperties": {"$ref": "#/$defs/value"}}
+      ]
+    },
+    "data": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,39}$"},
+      "additionalProperties": {"$ref": "#/$defs/value"}
+    }
+  }
+}
