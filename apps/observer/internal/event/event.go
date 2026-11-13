@@ -58,7 +58,9 @@ func GapClass(reason string) (string, bool) {
 	case "conflict":
 		return GapConflict, false
 	}
-	return GapUnknownType, false
+	// A reason this table does not know is treated as lost history: saying "complete" about a
+	// gap nobody classified would be the dishonest direction to fail in.
+	return GapNotReceived, true
 }
 
 // Authority (contract section 7).
