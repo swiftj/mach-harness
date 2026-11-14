@@ -313,7 +313,9 @@ func (t *Table) row(d Def, q Query) Row {
 		}
 		return m[key]
 	}
-	for k, a := range src.Cells[d.ID] {
+	cells := src.Cells[d.ID]
+	for _, k := range src.keys(d.ID) {
+		a := cells[k]
 		f := src.fact(k)
 		if q.Windowed {
 			if f.day == "" {

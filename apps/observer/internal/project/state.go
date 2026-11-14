@@ -17,7 +17,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 4 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits
+const FormatVersion = 5 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -71,6 +71,10 @@ type State struct {
 	RecoveriesDropped int64      `json:"recoveries_dropped"`
 	// LastMS is the latest order time of any event applied: what the projection holds up to.
 	LastMS int64 `json:"last_ms"`
+	// DroppedWaits are the waits no longer kept one by one, folded into flow cells as they were
+	// dropped (flow_dropped.go); Sources tallies applied events per source class (flow_sources.go).
+	DroppedWaits map[string]*WaitCell    `json:"dropped_waits"`
+	Sources      map[string]*SourceTally `json:"sources"`
 
 	// Derived lists cached for the position they were built at (never encoded).
 	spanCache *spanSet

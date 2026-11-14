@@ -277,3 +277,17 @@ func TestQuerySurface(t *testing.T) {
 		t.Fatalf("every day of the window is a bucket; an empty one is null, never 0: %+v", days.Buckets)
 	}
 }
+
+// Float sums are merged in a fixed order: the same cells give the same bits on every read.
+func TestReadsAreBitStable(t *testing.T) {
+	tb := NewTable()
+	for i, v := range []float64{0.1, 0.7, 1e-9, 3.3, 0.2, 1e9, 0.03} {
+		tb.Rate("K1", []Dim{{"ticket", string(rune('a' + i))}}, "2026-11-12", v, 1)
+	}
+	first := *tb.Rows([]string{"K1"}, "")[0].Value
+	for range 50 {
+		if v := *tb.Rows([]string{"K1"}, "")[0].Value; v != first {
+			t.Fatalf("%v then %v", first, v)
+		}
+	}
+}

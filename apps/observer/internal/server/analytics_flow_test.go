@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -173,7 +175,8 @@ func TestAnalyticsFlowParametersAreChecked(t *testing.T) {
 		"/api/v1/analytics/contributors?metric=C1&group=model:x",
 		"/api/v1/analytics/contributors?metric=C1&group=station",
 		"/api/v1/analytics/contributors?metric=X1&station=build",
-		"/api/v1/analytics/contributors?metric=C1&last_runs=5",
+		"/api/v1/analytics/contributors?metric=Q4&group=target_kind:drop%20table%20cells",
+		"/api/v1/analytics/contributors?metric=Q4&group=target_kind:a%0Ab",
 		"/api/v1/analytics/runs?of=agents",
 		"/api/v1/analytics/runs?station=build",
 		"/api/v1/analytics/runs?of=executions&outcome=merged",
@@ -359,6 +362,10 @@ func TestAnalyticsAsOfBackfilledEqualsLive(t *testing.T) {
 	strip := func(d map[string]any) string {
 		delete(d, "cursor")
 		delete(d, "generated_ms")
+		// When the observer last read a source is its own clock (each harness reads at its own time).
+		for _, x := range d["history"].(map[string]any)["sources"].([]any) {
+			delete(x.(map[string]any), "last_read_ms")
+		}
 		data, _ := json.Marshal(d)
 		return string(data)
 	}
@@ -375,6 +382,104 @@ func TestAnalyticsAsOfBackfilledEqualsLive(t *testing.T) {
 				lo := max(0, k-200)
 				t.Errorf("%s%s differs at %d:\nlive     ...%s\nbackfill ...%s", path, q, k, x[lo:min(len(x), k+200)], y[lo:min(len(y), k+200)])
 			}
+		}
+	}
+}
+
+// A group code the metrics route emits can be asked of contributors (Q4's target_kind
+// "matrix rule"); a code no record carries is refused; last_runs selects the last runs' tickets.
+func TestContributorGroupCodesRoundTrip(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	_, head := h.log.Bounds()
+	waitForPos(t, h, head)
+	m := h.get(t, "/api/v1/analytics/metrics?ids=Q4&group_by=target_kind")["metrics"].([]any)[0].(map[string]any)
+	groups, _ := m["groups"].([]any)
+	if len(groups) == 0 {
+		t.Fatalf("Q4 groups: %v", m)
+	}
+	for _, g := range groups {
+		key := g.(map[string]any)["key"]
+		code := ""
+		switch k := key.(type) {
+		case map[string]any:
+			code, _ = k["target_kind"].(string)
+		case string:
+			code = k
+		}
+		if code == "" {
+			t.Fatalf("group key %v", key)
+		}
+		c := h.get(t, "/api/v1/analytics/contributors?metric=Q4&group=target_kind:"+url.QueryEscape(code))
+		if c["total"].(float64) < 1 {
+			t.Errorf("Q4 %q: %v", code, c["total"])
+		}
+	}
+	if c := h.get(t, "/api/v1/analytics/contributors?metric=C1&last_runs=1"); c["total"].(float64) != 6 {
+		t.Fatalf("C1 of the last run's ticket: %v", c["total"])
+	}
+	for _, id := range []string{"C3", "C4", "K4"} {
+		if c := h.get(t, "/api/v1/analytics/contributors?metric="+id); c["total"].(float64) != 1 {
+			t.Errorf("%s: %v", id, c["total"])
+		}
+	}
+}
+
+// C3, C4 and K4 list what the engine counts: the same number of members and the same values.
+func TestContributorsMatchTheEngine(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	_, head := h.log.Bounds()
+	waitForPos(t, h, head)
+	rows := h.get(t, "/api/v1/analytics/metrics?ids=C3,C4,K4")["metrics"].([]any)
+	for _, r := range rows {
+		row := r.(map[string]any)
+		id := row["id"].(string)
+		c := h.get(t, "/api/v1/analytics/contributors?metric="+id)
+		var sum float64
+		n := 0
+		for _, it := range c["items"].([]any) {
+			if v, ok := it.(map[string]any)["value"].(float64); ok {
+				sum += v
+				n++
+			}
+		}
+		num, _ := row["numerator_value"].(float64)
+		den, _ := row["denominator_value"].(float64)
+		if float64(n) != den || math.Abs(sum-num) > 1e-6 {
+			t.Errorf("%s: engine %v/%v, contributors sum %v over %d: %v", id, num, den, sum, n, row)
+		}
+	}
+}
+
+// history.sources: every route carries, per source class, the newest event's time, the events
+// applied and when the class was last read; as_of_ms limits the first two.
+func TestHistorySources(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	_, head := h.log.Bounds()
+	waitForPos(t, h, head)
+	for _, path := range []string{"/api/v1/analytics/flow", "/api/v1/analytics/contributors?metric=C1", "/api/v1/analytics/runs", "/api/v1/analytics/metrics?ids=T1",
+		"/api/v1/analytics/insights"} {
+		src := h.get(t, path)["history"].(map[string]any)["sources"].([]any)
+		if len(src) != 4 {
+			t.Fatalf("%s: %v", path, src)
+		}
+		byName := map[string]map[string]any{}
+		for _, x := range src {
+			byName[x.(map[string]any)["source"].(string)] = x.(map[string]any)
+		}
+		if r := byName["runs"]; r["events"].(float64) != 1 || r["last_event_ms"] == nil {
+			t.Fatalf("%s runs: %v", path, r)
+		}
+		if i := byName["intake"]; i["last_read_ms"] == nil {
+			t.Fatalf("%s intake read time: %v", path, i)
+		}
+		if l := byName["lifecycle"]; l["last_read_ms"] != nil {
+			t.Fatalf("%s: the fake ingest read no lifecycle file: %v", path, l)
+		}
+	}
+	runs := h.get(t, "/api/v1/analytics/flow?as_of_ms="+strconv.FormatInt(feedtest.At(43500), 10))["history"].(map[string]any)["sources"].([]any)
+	for _, x := range runs {
+		if m := x.(map[string]any); m["source"] == "runs" && m["last_event_ms"] != nil {
+			t.Fatalf("as of before the run record: %v", m)
 		}
 	}
 }

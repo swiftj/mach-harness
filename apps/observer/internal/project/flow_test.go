@@ -305,7 +305,7 @@ func TestContributors(t *testing.T) {
 	check("executions", map[string]string{"state": "interrupted"}, 1, "execution:"+xi)
 	check("S1", map[string]string{"kind": "outcome-unknown"}, 1, "execution:"+xu)
 	check("K1", nil, 1, "execution:"+xk)
-	if p := ix.Contributors("K1", ContributorQuery{Order: "impact", Limit: 5}); *p.Items[0].Value != 1.25 || p.Items[0].Unit != "USD" {
+	if p := ix.Contributors("K1", ContributorQuery{Order: "impact", Limit: 5}); *p.Items[0].Value != 1.25 || p.Items[0].Unit != "usd" {
 		t.Fatalf("K1 %+v", p.Items[0])
 	}
 	// No free text: every string is an identifier or a code.
@@ -503,6 +503,94 @@ func TestContributorsForInsights(t *testing.T) {
 			if strings.Contains(string(data), bad) {
 				t.Fatalf("%s carries prose: %s", id, data)
 			}
+		}
+	}
+}
+
+// Waits the projection no longer keeps one by one are still counted in the flow totals (folded per
+// day when dropped); only the contributor list is bounded; restart and rebuild agree.
+func TestDroppedWaitsAreCounted(t *testing.T) {
+	var evs []*feedtest.Ev
+	capw := func(state string, ms int64) *feedtest.Ev {
+		return feedtest.New("observer", "capacity.wait_changed", ms).Ticket("T-1").Data(map[string]any{"state": state, "scope": "execution", "limit": 2})
+	}
+	for k := int64(0); k < maxCapacityWaits+5; k++ {
+		evs = append(evs, capw("waiting", k*2000), capw("released", k*2000+1000))
+	}
+	for k := int64(0); k < maxWaitsPerSlice+5; k++ {
+		evs = append(evs, slice(intake("dependency.blocked", 2_000_000+k*2000), "SLICE-1"), slice(intake("dependency.resolved", 2_000_000+k*2000+1000), "SLICE-1"))
+	}
+	m := feedtest.NewMem("", 0)
+	for _, e := range evs {
+		m.Append(e.Build())
+	}
+	dir := t.TempDir()
+	p := New(Options{Log: m, PersistDir: dir, PersistEvery: 1, PersistMinInterval: -1})
+	p.Sync()
+	answer := func(p *Projector) (FlowReport, string) {
+		ix, err := p.Flow()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rep := ix.Flow(FlowQuery{})
+		data, _ := json.Marshal(rep)
+		return rep, string(data)
+	}
+	rep, live := answer(p)
+	capacity, dep := waitOf(rep.Waits, WaitCapacity), waitOf(rep.Waits, WaitDependency)
+	if capacity == nil || capacity.Count != maxCapacityWaits+5 || capacity.Duration.Measured.Count != maxCapacityWaits+5 || capacity.Duration.Measured.TotalMS != (maxCapacityWaits+5)*1000 {
+		t.Fatalf("capacity waits: %+v", capacity)
+	}
+	if dep == nil || dep.Count != maxWaitsPerSlice+5 {
+		t.Fatalf("dependency waits: %+v", dep)
+	}
+	if rep.Coverage.WaitsDropped[WaitCapacity] != 5 || rep.Coverage.WaitsDropped[WaitDependency] != 5 {
+		t.Fatalf("dropped: %+v", rep.Coverage.WaitsDropped)
+	}
+	ix, _ := p.Flow()
+	if c := ix.Contributors("W2b", ContributorQuery{Order: "impact", Limit: 500}); c.Total != maxCapacityWaits {
+		t.Fatalf("listed capacity waits: %d", c.Total)
+	}
+	p.Close()
+	if _, restarted := answer(New(Options{Log: m, PersistDir: dir})); restarted != live {
+		t.Fatalf("restart differs:\n%s\n%s", live, restarted)
+	}
+	if _, rebuilt := answer(New(Options{Log: m})); rebuilt != live {
+		t.Fatalf("rebuild differs:\n%s\n%s", live, rebuilt)
+	}
+}
+
+func TestSourceFacts(t *testing.T) {
+	s := project(flowScenario()...)
+	facts := map[string]SourceFact{}
+	for _, f := range SourceFacts(s, nil) {
+		facts[f.Source] = f
+	}
+	if f := facts["lifecycle"]; f.Events == nil || *f.Events == 0 || f.LastEventMS == nil || *f.LastEventMS != feedtest.At(900000) {
+		t.Fatalf("lifecycle %+v", f)
+	}
+	if f := facts["runs"]; f.Events == nil || *f.Events != 0 || f.LastEventMS != nil || len(f.Reason) != 1 || f.Reason[0] != "no-events" {
+		t.Fatalf("runs %+v", f)
+	}
+	// As of a time inside an hour that also holds later events: whole hours only, said so.
+	at := feedtest.At(30000)
+	for _, f := range SourceFacts(s, &at) {
+		if f.Source == "lifecycle" && (f.Precision != "hour" || f.LastEventMS != nil && *f.LastEventMS > at) {
+			t.Fatalf("as of: %+v", f)
+		}
+	}
+	// As of after everything: the same as at the head.
+	late := feedtest.At(10_000_000)
+	if a, b := SourceFacts(s, &late), SourceFacts(s, nil); !reflect.DeepEqual(a, b) {
+		t.Fatalf("%+v\n%+v", a, b)
+	}
+}
+
+func TestSourceClassOfKey(t *testing.T) {
+	for key, want := range map[string]string{"ledger": "intake", "runs": "runs", "cell/T-1": "lifecycle", "archive/T-1": "lifecycle", "exec/x1": "stream",
+		"stream/x1": "stream", "i:0badc0de": "intake", "c:T-1:9a0c": "lifecycle", "s:x1": "stream", "x:x1": "stream", "r:0badc0de": "runs", "o": ""} {
+		if got := SourceClassOfKey(key); got != want {
+			t.Errorf("%s: %q, want %q", key, got, want)
 		}
 	}
 }

@@ -246,6 +246,7 @@ type FlowIndex struct {
 	mu      sync.Mutex
 	contrib map[string][]Contributor
 	asOf    map[int64]*FlowIndex // indexes as of a time (flow_asof.go)
+	base    *FlowIndex           // for an index as of a time: the index it was cut from
 }
 
 // BuildFlow builds the flow index of a state from its spans (allSpans(s) or a timeline's).
@@ -270,7 +271,8 @@ func BuildFlow(s *State, spans []*Span) *FlowIndex {
 	entries := map[string][]entry{}
 	for _, t := range sortedKeys(s.Cells) {
 		c := s.Cells[t]
-		base := flowDims{risk: c.Risk, app: c.AppType, wave: c.WaveID}
+		td := TicketDims(s, t) // the metric engine's join, so flow and metrics group alike
+		base := flowDims{risk: td["risk"], app: td["app_type"], wave: td["wave"]}
 		first := int64(math.MaxInt64)
 		stationOf := map[string]string{}
 		prev, prevVisit := "", (*Visit)(nil)
@@ -363,12 +365,22 @@ func BuildFlow(s *State, spans []*Span) *FlowIndex {
 	for _, l := range entries {
 		sort.SliceStable(l, func(i, j int) bool { return l[i].from < l[j].from })
 	}
+	// Waits no longer kept one by one: folded when they were dropped (flow_dropped.go).
+	for _, k := range sortedKeys(s.DroppedWaits) {
+		c := s.DroppedWaits[k]
+		wk := waitKey{flowDims{day: c.Day, risk: c.Risk, app: c.AppType, wave: c.Wave}, c.Kind, c.Next}
+		if a := ix.waits[wk]; a != nil {
+			a.merge(durAggOf(c))
+		} else {
+			ix.waits[wk] = durAggOf(c)
+		}
+	}
 	for _, sp := range waits {
 		kind := waitKindOf(sp)
 		t := sp.meta.ticket
 		d := flowDims{day: flowDay(sp.from), wave: sp.meta.wave}
-		if c := s.Cells[t]; t != "" && c != nil {
-			d.risk, d.app, d.wave = c.Risk, c.AppType, c.WaveID
+		if td := TicketDims(s, t); t != "" && td != nil {
+			d.risk, d.app, d.wave = td["risk"], td["app_type"], td["wave"]
 		}
 		next := ""
 		for _, e := range entries[t] {
@@ -564,8 +576,9 @@ type FlowCoverage struct {
 	TicketsWithLifecycle int64 `json:"tickets_with_lifecycle"` // of which have a lifecycle log (the only source of visits)
 	Visits               int64 `json:"visits"`
 	VisitsMeasured       int64 `json:"visits_measured"`
-	// WaitsDropped counts, by wait kind, the oldest waits the projection no longer keeps (its
-	// bounds per slice and overall): they are in no figure above, whatever the window or filter.
+	// WaitsDropped counts, by wait kind, the oldest waits the projection no longer keeps one by one
+	// (its bounds per slice and overall): they are counted in every figure above (folded per day
+	// as they were dropped) but are not listed as contributors.
 	WaitsDropped map[string]int64 `json:"waits_dropped"`
 }
 

@@ -67,8 +67,11 @@ var ContributorFigures = map[string]ContributorFigure{
 	"X1":         {"X1", true, "executions with an execution.failed record (X1's numerator; state says how they ended, e.g. interrupted)", "executions", []string{"state", "recovered"}},
 	"S1":         {"S1", true, "recoveries by kind", "recoveries", []string{"kind"}},
 	"S2":         {"S2", true, "executions whose outcome is unknown", "executions", []string{"state", "recovered"}},
-	"K1":         {"K1", true, "executions by the cost the supervisor recorded", "USD", []string{"state", "source"}},
-	"K2":         {"K2", true, "executions by the cost recorded per model", "USD", []string{"model", "state"}},
+	"K1":         {"K1", true, "executions by the cost the supervisor recorded", "usd", []string{"state", "source"}},
+	"C3":         {"C3", true, "merged product tickets, dispatch (work.scheduled) to merge (placed at the merge)", "ms", []string{"basis"}},
+	"C4":         {"C4", true, "integrated slices, eligible to integrated (placed at the integration)", "ms", []string{"basis"}},
+	"K4":         {"K4", true, "tickets by the sum of the cost the supervisor recorded for their executions (placed at the latest)", "usd", []string{"basis"}},
+	"K2":         {"K2", true, "executions by the cost recorded per model", "usd", []string{"model", "state"}},
 	"Q2":         {"Q2", true, "merged tickets' run records (value 1 when first_pass, else 0)", "tickets", []string{"first_pass", "outcome"}},
 	"Q3": {"Q3", true, "merged tickets' run records (value: judging rounds; not-recorded when the record has none)", "rounds",
 		[]string{"rounds_recorded", "outcome"}},
@@ -85,7 +88,8 @@ var RunFigures = map[string]bool{"Q2": true, "Q3": true, "R5": true}
 
 // ContributorQuery selects and orders contributors.
 type ContributorQuery struct {
-	// LastRuns (run figures only): keep the run records among the last N by closed_at.
+	// LastRuns: keep the run records among the last N by closed_at (run figures), or the items of
+	// those runs' tickets (every other figure).
 	LastRuns            int
 	Window              bool
 	From, To            int64
@@ -114,14 +118,18 @@ func (ix *FlowIndex) Contributors(id string, q ContributorQuery) ContributorPage
 	}
 	all := ix.contributorList(id, q.Order)
 	page := ContributorPage{Figure: ContributorFigures[id], Items: []Contributor{}, ByBasis: map[string]int{}, Order: q.Order, Limit: q.Limit}
-	var keep map[string]bool
-	if q.LastRuns > 0 && RunFigures[id] {
-		keep = lastRunEvents(ix.st, q.LastRuns)
+	// last_runs: run figures keep the run records among the last N by closed_at; every other figure
+	// keeps the items of those runs' tickets (the population an observe-scorecard figure reads).
+	var keepRuns, keepTickets map[string]bool
+	if q.LastRuns > 0 {
+		keepRuns, keepTickets = lastRunEvents(ix.st, q.LastRuns)
 	}
 	for i := range all {
 		c := &all[i]
-		if keep != nil && !keep[c.runEvent] {
-			continue
+		if keepRuns != nil {
+			if RunFigures[id] && !keepRuns[c.runEvent] || !RunFigures[id] && (c.Ticket == nil || !keepTickets[*c.Ticket]) {
+				continue
+			}
 		}
 		if q.Window && (c.AtMS < q.From || c.AtMS >= q.To) {
 			continue
@@ -221,7 +229,9 @@ func (ix *FlowIndex) cellFacts(c *Contributor, ticket string) {
 		return
 	}
 	c.Cell = strp("cell:" + ticket)
-	c.Risk, c.AppType, c.Wave = strp(cell.Risk), strp(cell.AppType), strp(cell.WaveID)
+	// The same join the metric engine makes (TicketDims), so a figure's groups and its contributors agree.
+	d := TicketDims(ix.st, ticket)
+	c.Risk, c.AppType, c.Wave = strp(d["risk"]), strp(d["app_type"]), strp(d["wave"])
 }
 
 func f64(v int64) *float64 {
@@ -518,7 +528,7 @@ func (ix *FlowIndex) buildContributors(id string) []Contributor {
 				}
 				out = append(out, base)
 			case "K1":
-				base.Value, base.Unit, base.Group["source"] = x.CostUSD, "USD", "execution.completed"
+				base.Value, base.Unit, base.Group["source"] = x.CostUSD, "usd", "execution.completed"
 				out = append(out, base)
 			case "K2":
 				if x.Usage == nil {
@@ -528,13 +538,57 @@ func (ix *FlowIndex) buildContributors(id string) []Contributor {
 					u := x.Usage.Models[m]
 					c := base
 					c.Group = map[string]string{"state": state, "recovered": base.Group["recovered"], "model": m}
-					c.Unit, c.Value = "USD", u.CostUSD
+					c.Unit, c.Value = "usd", u.CostUSD
 					if u.CostUSD == nil {
 						c.Basis = "not-recorded"
 					}
 					out = append(out, c)
 				}
 			}
+		}
+	case "C3":
+		// The engine's C3: a merged product ticket whose slice was dispatched to it (reduce.go
+		// merge.completed: work.scheduled of the cell's slice, same ticket, to the merge).
+		for _, t := range sortedKeys(s.Cells) {
+			c := s.Cells[t]
+			sl := s.Slices[c.SliceID]
+			if c.Merge == nil || c.Merge.At == nil || sl == nil || sl.Scheduled == nil || sl.TicketID != t {
+				continue
+			}
+			out = append(out, ix.durationContributor("cell:"+t, t, sl.Scheduled, c.Merge.At))
+		}
+	case "C4":
+		// The engine's C4: an integrated slice, from when it became eligible (dependency.resolved,
+		// else its first materialization when it has no dependencies) to slice.integrated.
+		for _, id := range sortedKeys(s.Slices) {
+			sl := s.Slices[id]
+			if sl.Integrated == nil {
+				continue
+			}
+			c := ix.durationContributor("slice:"+id, sl.TicketID, sl.eligible(), sl.Integrated)
+			if c.Wave == nil || *c.Wave == "" {
+				c.Wave = strp(sl.WaveID)
+			}
+			out = append(out, c)
+		}
+	case "K4":
+		// The engine's K4: per ticket, the sum of execution.completed.cost_usd over its executions.
+		sum, last := map[string]float64{}, map[string]*Stamp{}
+		for _, xid := range sortedKeys(s.Executions) {
+			x := s.Executions[xid]
+			if x.TicketID == "" || x.CostUSD == nil || x.Completed == nil {
+				continue
+			}
+			sum[x.TicketID] += *x.CostUSD
+			if l := last[x.TicketID]; l == nil || x.Completed.OrderMS > l.OrderMS {
+				last[x.TicketID] = x.Completed
+			}
+		}
+		for _, t := range sortedKeys(sum) {
+			v, at := sum[t], stampMS(last[t])
+			c := Contributor{Ref: "cell:" + t, Value: &v, Unit: "usd", Basis: "recorded", AtMS: at, ToMS: ptr(at), Group: map[string]string{"basis": "recorded"}}
+			ix.cellFacts(&c, t)
+			out = append(out, c)
 		}
 	case "S1":
 		for _, r := range s.Recoveries {
@@ -618,8 +672,9 @@ func ruleCode(v string) bool {
 }
 
 // lastRunEvents are the run records among the last n by closed_at, as the observe station selects
-// them (metrics.LastRuns: stable by the earliest instant closed_at allows, unreadable first).
-func lastRunEvents(s *State, n int) map[string]bool {
+// them (metrics.LastRuns: stable by the earliest instant closed_at allows, unreadable first), and
+// their tickets.
+func lastRunEvents(s *State, n int) (events, tickets map[string]bool) {
 	runs := append([]*RunRecord(nil), s.Runs...)
 	at := func(r *RunRecord) int64 {
 		if f := RunFactsOf(r); f.ClosedOK {
@@ -631,9 +686,64 @@ func lastRunEvents(s *State, n int) map[string]bool {
 	if n < len(runs) {
 		runs = runs[len(runs)-n:]
 	}
-	out := make(map[string]bool, len(runs))
+	events, tickets = make(map[string]bool, len(runs)), make(map[string]bool, len(runs))
 	for _, r := range runs {
-		out[r.EventID] = true
+		events[r.EventID], tickets[r.TicketID] = true, true
+	}
+	return events, tickets
+}
+
+// durationContributor is an end-to-end interval: its value when measured, else its bounds; placed
+// at its end (the record that closed it, as the metric engine places it).
+func (ix *FlowIndex) durationContributor(ref, ticket string, start, end *Stamp) Contributor {
+	d := between(start, end, false)
+	at := stampMS(end)
+	c := Contributor{Ref: ref, Unit: "ms", Basis: d.Basis, AtMS: at, ToMS: ptr(at), Group: map[string]string{"basis": d.Basis}}
+	if start != nil {
+		c.FromMS = ptr(stampMS(start))
+	}
+	if d.Basis == "measured" && d.MS != nil {
+		c.Value = f64(*d.MS)
+	} else {
+		c.MinMS, c.MaxMS = d.MinMS, d.MaxMS
+	}
+	ix.cellFacts(&c, ticket)
+	return c
+}
+
+// GroupCodes are the codes dimension dim takes among figure id's contributors (at the head, for an
+// index cut at a time): with the fixed enumerations, the codes a group may name. Every code the
+// metric engine emits for the figure's records is among them, so a group read from
+// /analytics/metrics can be asked here.
+func (ix *FlowIndex) GroupCodes(id, dim string) map[string]bool {
+	src := ix
+	if ix.base != nil {
+		src = ix.base
+	}
+	out := map[string]bool{}
+	for _, v := range fixedCodes[dim] {
+		out[v] = true
+	}
+	for _, c := range src.contributorList(id, "impact") {
+		if v, ok := c.Group[dim]; ok {
+			out[v] = true
+		}
 	}
 	return out
+}
+
+// fixedCodes are the enumerations a dimension can take whatever was recorded.
+var fixedCodes = map[string][]string{
+	"basis":           {"measured", "bounded", "inferred", "open", "unknown", "recorded", "not-recorded"},
+	"kind":            append(append([]string{}, WaitKinds...), "outcome-unknown", "interrupted", "orphan-claim", "unknown"),
+	"state":           {"claimed", "running", "ended", "finished", "failed", "interrupted", "timed-out", "could-not-start", "unknown"},
+	"recovered":       {"true", "false"},
+	"first_pass":      {"true", "false"},
+	"rounds_recorded": {"true", "false"},
+	"archived":        {"true", "false"},
+	"usage":           {"true", "false"},
+	"outcome":         {"merged", "abandoned", "unknown", "REJECTED", "ESCALATE"},
+	"station":         {"groom", "intent", "plan", "audit", "build", "verify", "review", "human-approval", "merge", "cleanup", "unknown"},
+	"rule":            {"none", "not-a-code"},
+	"source":          {"execution.completed"},
 }

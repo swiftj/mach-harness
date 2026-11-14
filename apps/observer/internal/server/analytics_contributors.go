@@ -65,8 +65,8 @@ func (s *Server) analyticsContributors(w http.ResponseWriter, r *http.Request) {
 				invalid("group must be dimension:code pairs; " + id + " has the dimensions " + strings.Join(fig.Dimensions, ", ") + ".")
 				return
 			}
-			if _, good := ident(code); !good {
-				invalid("The code for " + k + " is not an identifier.")
+			if !groupCode(code) {
+				invalid("The code for " + k + " is not a code.")
 				return
 			}
 			if _, dup := cq.Group[k]; dup {
@@ -91,11 +91,9 @@ func (s *Server) analyticsContributors(w http.ResponseWriter, r *http.Request) {
 		}
 		cq.Group[name] = v
 	}
-	supported := []string{"risk", "app_type", "wave", "station", "model"}
-	if project.RunFigures[id] {
-		supported = append(supported, "last_runs")
-		cq.LastRuns = p.LastRuns
-	}
+	// last_runs: the run records among the last N (run figures), or their tickets' items.
+	supported := []string{"risk", "app_type", "wave", "station", "model", "last_runs"}
+	cq.LastRuns = p.LastRuns
 	if e := unsupported(p, supported...); e != nil {
 		writeJSON(w, http.StatusBadRequest, *e)
 		return
@@ -104,6 +102,17 @@ func (s *Server) analyticsContributors(w http.ResponseWriter, r *http.Request) {
 	if bad != nil {
 		writeJSON(w, status, *bad)
 		return
+	}
+	// A group code must be one this figure's records carry (or a fixed enumeration): the codes
+	// /analytics/metrics emits round-trip; free text is refused.
+	for k, v := range cq.Group {
+		if k == "station" && v == p.Station || k == "model" && v == p.Model {
+			continue
+		}
+		if !ix.GroupCodes(id, k)[v] {
+			invalid("The code " + kindQuote(v) + " is not one recorded for " + k + " in " + id + ".")
+			return
+		}
 	}
 	cq.From, cq.To, cq.Window = p.EffectiveWindow()
 	page := ix.Contributors(id, cq)
@@ -117,4 +126,19 @@ func (s *Server) analyticsContributors(w http.ResponseWriter, r *http.Request) {
 		"impact orders by value, then by the upper bound; recent by at_ms",
 	}
 	writeJSON(w, http.StatusOK, ok(env))
+}
+
+// groupCode accepts a recorded code: up to 128 characters of letters, digits, spaces and the
+// punctuation codes use, no control characters. Whether it is a code the figure carries is
+// checked against the figure's own codes (FlowIndex.GroupCodes).
+func groupCode(v string) bool {
+	if v == "" || len(v) > 128 {
+		return false
+	}
+	for _, r := range v {
+		if r < 32 || r == 127 || r == ',' {
+			return false
+		}
+	}
+	return true
 }

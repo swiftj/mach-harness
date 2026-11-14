@@ -405,6 +405,30 @@ func analyticsEnvelopeAt(s *Server, epoch string, pos uint64, st *project.State,
 			"from_precision":  "minute",
 			"partial":         st.Partial,
 			"gaps":            gaps,
+			"sources":         s.sourceFacts(st, p),
 		},
 	}
+}
+
+// sourceFacts are history.sources: per source class, the newest event's time and the events the
+// projection applied (at its cursor, as of as_of_ms when asked; hour precision then), and when the
+// observer last read a file of that class (the observer's own clock now: not a time-travel value).
+func (s *Server) sourceFacts(st *project.State, p analyticsParams) []project.SourceFact {
+	facts := project.SourceFacts(st, p.AsOfMS)
+	read := map[string]int64{}
+	for _, src := range s.ingestState().Sources {
+		class := project.SourceClassOfKey(src.Key)
+		if class == "" || src.LastReadAt.IsZero() {
+			continue
+		}
+		read[class] = max(read[class], src.LastReadAt.UnixMilli())
+	}
+	for i := range facts {
+		if ms, ok := read[facts[i].Source]; ok {
+			facts[i].LastReadMS = &ms
+		} else {
+			facts[i].Reason = append(facts[i].Reason, "not-read")
+		}
+	}
+	return facts
 }

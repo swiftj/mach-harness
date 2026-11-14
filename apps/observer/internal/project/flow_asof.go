@@ -67,6 +67,13 @@ func CutAt(s *State, t int64) *State {
 			n.Runs = append(n.Runs, r)
 		}
 	}
+	// Dropped waits are kept per day only: as of t, the days before t's day.
+	n.DroppedWaits = map[string]*WaitCell{}
+	for k, c := range s.DroppedWaits {
+		if c.Day < flowDay(t) {
+			n.DroppedWaits[k] = c
+		}
+	}
 	n.Gaps = nil
 	for _, g := range s.Gaps {
 		if !later(g.At, t) {
@@ -392,7 +399,7 @@ func (ix *FlowIndex) AsOf(t int64) *FlowIndex {
 	}
 	ix.mu.Unlock()
 	a := BuildFlow(CutAt(ix.st, t), cutSpans(ix.spans, t))
-	a.Pos, a.Epoch = ix.Pos, ix.Epoch
+	a.Pos, a.Epoch, a.base = ix.Pos, ix.Epoch, ix
 	ix.mu.Lock()
 	if ix.asOf == nil || len(ix.asOf) >= 8 {
 		ix.asOf = map[int64]*FlowIndex{}

@@ -128,10 +128,25 @@ type Table struct {
 
 	parsed map[string]fact     // fact key -> its parts (a cache, never encoded)
 	dirty  map[string]struct{} // parts (metric, day) written since TakeDirty (for checkpoints)
+	order  map[string][]string // each metric's cell keys, sorted (a cache, never encoded)
 }
 
 // A part is one metric's cells of one day ("C1\x002026-11-12"): the unit a checkpoint encodes
 // and shares, so a checkpoint re-encodes only the days events wrote to.
+
+// keys is a metric's cell keys in a fixed order, so float sums merge the same way on every read.
+func (t *Table) keys(id string) []string {
+	m := t.Cells[id]
+	if k, ok := t.order[id]; ok && len(k) == len(m) {
+		return k
+	}
+	k := sortedKeys(m)
+	if t.order == nil {
+		t.order = map[string][]string{}
+	}
+	t.order[id] = k
+	return k
+}
 
 // TakeDirty returns the parts whose cells changed since the last call, and forgets them.
 func (t *Table) TakeDirty() []string {

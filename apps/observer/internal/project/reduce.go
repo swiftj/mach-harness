@@ -97,6 +97,7 @@ func (s *State) releaseSliceCapacity(id string, st *Stamp) {
 	w.Released = bounded(st, w.LastHeld)
 	s.SliceCapacityWaits = append(s.SliceCapacityWaits, w)
 	if n := len(s.SliceCapacityWaits); n > maxCapacityWaits {
+		s.dropSliceCapacity(s.SliceCapacityWaits[:n-maxCapacityWaits])
 		s.SliceCapacityWaitsDropped += int64(n - maxCapacityWaits)
 		s.SliceCapacityWaits = append([]*SliceCapacityWait(nil), s.SliceCapacityWaits[n-maxCapacityWaits:]...)
 	}
@@ -117,6 +118,7 @@ func (s *State) Apply(e *feed.Event) {
 		s.LastMS = st.OrderMS
 	}
 	defer s.syncVisits(e)
+	s.noteSource(e, st)
 	switch e.Origin.Stream {
 	case "intake-log":
 		s.applyIntake(e, st)
@@ -530,6 +532,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			sl.Waits = append(sl.Waits, &DependencyWait{Revision: sl.Revision, Blocked: st, Reasons: nonNilS(d.Reasons)})
 			m.OpenAdd("W1", day(st), 1)
 			if len(sl.Waits) > maxWaitsPerSlice {
+				s.dropDependency(sl, sl.Waits[:len(sl.Waits)-maxWaitsPerSlice])
 				sl.WaitsDropped += int64(len(sl.Waits) - maxWaitsPerSlice)
 				sl.Waits = append([]*DependencyWait(nil), sl.Waits[len(sl.Waits)-maxWaitsPerSlice:]...)
 			}
@@ -1662,6 +1665,7 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 				delete(s.Pending.Capacity, t)
 				s.CapacityWaits = append(s.CapacityWaits, CapacityWait{TicketID: t, Opened: open, Released: st})
 				if n := len(s.CapacityWaits); n > maxCapacityWaits {
+					s.dropCapacity(s.CapacityWaits[:n-maxCapacityWaits])
 					s.CapacityWaitsDropped += int64(n - maxCapacityWaits)
 					s.CapacityWaits = append([]CapacityWait(nil), s.CapacityWaits[n-maxCapacityWaits:]...)
 				}
