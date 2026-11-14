@@ -224,9 +224,38 @@ func (s *State) waveOf(c *Cell) string {
 	return ""
 }
 
+// exNoUsage: a completed execution with no execution.usage from the stream.
+const exNoUsage = "completed with no usage record from the stream"
+
 // exK1NoResult: a claimed execution with no execution.completed (failed, running, or of unknown
 // outcome) has no recorded cost.
 const exK1NoResult = "no result recorded: the execution failed, is still running, or its outcome is unknown"
+
+// exR2NoFinding: blockers a run record counts with no review finding read for them.
+const exR2NoFinding = "blockers counted in the run record with no review finding in the lifecycle (no vote file read)"
+
+// syncR2 discloses in R2's coverage the blockers a ticket's run record counts beyond the blocker
+// findings read for it: R2 counts findings only, so those are excluded with a reason, never added.
+func (s *State) syncR2(c *Cell, dd string) {
+	var found int64
+	for _, f := range c.Findings {
+		if f.Severity == "blocker" {
+			found++
+		}
+	}
+	want := max(0, c.MRunBlockers-found)
+	if want == c.MR2Ex {
+		return
+	}
+	if c.MR2Ex != 0 {
+		s.Metrics.Exclude("R2", s.cdims(c.TicketID), dayKey(c.MR2Day), exR2NoFinding, -float64(c.MR2Ex))
+	}
+	c.MR2Ex, c.MR2Day = want, orDefault(dd, "-")
+	if want != 0 {
+		s.Metrics.Exclude("R2", s.cdims(c.TicketID), dayKey(c.MR2Day), exR2NoFinding, float64(want))
+	}
+	s.touch(entCell, c.TicketID)
+}
 
 // exT1NoMerge: a ticket merged by its run record whose lifecycle log has no merge.
 const exT1NoMerge = "no merge in the lifecycle log"
@@ -737,6 +766,19 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			}
 		}
 		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), 1, 1)
+		if first {
+			// K2 and K3's coverage: completed executions, with a usage record from the stream or not.
+			for _, id := range []string{"K2", "K3"} {
+				if x.Usage != nil {
+					m.Covered(id, s.cdims(x.TicketID), day(st), 1)
+				} else {
+					m.Exclude(id, s.cdims(x.TicketID), day(st), exNoUsage, 1)
+				}
+			}
+			if x.Usage == nil {
+				x.MUsageDay = orDefault(day(st), "-")
+			}
+		}
 		if x.ProcessEnded != nil && first {
 			s.span("W5", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), x.ProcessEnded, st)
 		}
@@ -1200,6 +1242,10 @@ func (s *State) applyRun(e *feed.Event, st *Stamp) {
 	}
 	// The observe station's scorecard, record by record (observe.py scorecard).
 	s.Metrics.FoldRun(RunFactsOf(r), day(st))
+	if c := s.Cells[r.TicketID]; c != nil {
+		c.MRunBlockers = max(c.MRunBlockers, d.Blockers)
+		s.syncR2(c, day(st))
+	}
 	// T1 counts merges written in lifecycle logs; a ticket the run record says merged with no merge
 	// in its log is disclosed in T1's coverage, never added to the count.
 	if c := s.Cells[r.TicketID]; c != nil && d.Outcome == "merged" && c.Merge == nil && c.MT1Day == "" {
@@ -1473,6 +1519,14 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 		if d.Models == nil {
 			d.Models = map[string]*ModelUsage{}
 		}
+		if x.Usage == nil && x.MUsageDay != "" {
+			// The usage arrived after the completion: the execution moves to counted.
+			for _, id := range []string{"K2", "K3"} {
+				m.Exclude(id, s.cdims(x.TicketID), dayKey(x.MUsageDay), exNoUsage, -1)
+				m.Covered(id, s.cdims(x.TicketID), dayKey(x.MUsageDay), 1)
+			}
+			x.MUsageDay = ""
+		}
 		x.Usage = &Usage{TotalCostUSD: d.TotalCostUSD, Subtype: feed.Str(d.Subtype), IsError: d.IsError, TerminalReason: feed.Str(d.TerminalReason),
 			BudgetExhausted: d.BudgetExhausted, Models: d.Models, CostComplete: d.CostComplete, CostIncompleteReasons: d.Reasons, At: st}
 		models := make([]string, 0, len(d.Models))
@@ -1488,7 +1542,7 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 			if u.CostUSD != nil {
 				m.Rate("K2", s.cdims(x.TicketID, "model", model), day(st), *u.CostUSD, 1)
 			} else {
-				m.Exclude("K2", s.cdims(x.TicketID, "model", model), day(st), "the model's usage carries no cost", 1)
+				m.Exclude("K2", s.cdims(x.TicketID, "model", model), day(st), metrics.ExPairNoCost, 1)
 			}
 			for _, k := range []struct {
 				kind string
@@ -1619,6 +1673,9 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 		}
 		if d.Severity == "blocker" {
 			m.Count("R2", s.cdims(e.Ticket(), "rule", feed.Str(d.Rule), "seat", d.Seat), day(st), 1)
+			if c := s.Cells[e.Ticket()]; c != nil {
+				s.syncR2(c, day(st))
+			}
 		}
 	case "artifact.recorded":
 		var d struct {

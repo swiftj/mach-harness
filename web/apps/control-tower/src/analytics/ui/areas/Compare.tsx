@@ -164,7 +164,8 @@ function DotCompare({ chart, title, cohorts, values, kind }: { chart: string; ti
   if (all.length === 0) return <p className="text-body-sm text-ink-muted">{title}: nothing recorded for these cohorts.</p>;
   const left = Math.min(196, Math.max(120, width * 0.3));
   const right = 14;
-  const rowH = 46;
+  // Tall enough for the strip's three rows of dots each way (3 x 7.4 px) plus a dot's radius, so no dot is cut or spills into the next cohort.
+  const rowH = Math.ceil(2 * (3 * (3.2 * 2 + 1) + 3.2)) + 8;
   const height = rows.length * rowH + 24;
   const lo = kind === "ms" ? Math.max(60_000, Math.min(...all) * 0.8) : 0;
   const hi = Math.max(...all) * (kind === "ms" ? 1.2 : 1) || 1;

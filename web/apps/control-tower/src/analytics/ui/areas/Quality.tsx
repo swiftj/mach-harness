@@ -25,6 +25,19 @@ export function Quality(props: QualityProps) {
   );
 }
 
+/**
+ * Why a count figure observed no member although members are known by exclusion (the observer's
+ * coverage says so): its value is null, or members were excluded with a reason. Null when "none" is true.
+ */
+function unobserved(row: MetricRow | undefined): string | null {
+  if (!row) return null;
+  const excluded = (row.coverage.excluded ?? []).filter((e) => e.count > 0);
+  if (row.value !== null && !excluded.length) return null;
+  if (row.value !== null && (row.numerator_value ?? 0) > 0) return null;
+  const parts = excluded.map((e) => `${e.count} ${e.reason}`);
+  return parts.length ? `Not counted here: ${parts.join("; ")}.` : row.null_reason ? `${row.null_reason.charAt(0).toUpperCase()}${row.null_reason.slice(1)}.` : null;
+}
+
 const PICK_WORDS: Readonly<Record<string, string>> = { target_kind: "Failed check", rule: "Blocker rule" };
 
 function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | null): void }) {
@@ -95,11 +108,19 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
       <div className="an-grid-2">
         <section className="an-section" id="failures">
           <SectionHead title="Verification failures by kind" question="Failed checks (Q4), grouped as the observe station groups them." />
-          <CategoryTable groups={q4} chart="quality-failures" caption="Failed checks by kind" noun="failed check" selected={active?.dim === "target_kind" ? active.value : null} onPick={(k) => toggle("target_kind", k)} mono empty="No failed checks in this window." />
+          {q4.length === 0 && unobserved(t.Q4) ? (
+            <NotRecorded title="Failed checks not observed" what={unobserved(t.Q4)!} why="Missing is not zero: these figures are not counted as none." state="not-recorded" compact />
+          ) : (
+            <CategoryTable groups={q4} chart="quality-failures" caption="Failed checks by kind" noun="failed check" selected={active?.dim === "target_kind" ? active.value : null} onPick={(k) => toggle("target_kind", k)} mono empty="No failed checks in this window." />
+          )}
         </section>
         <section className="an-section" id="blockers">
           <SectionHead title="Review blockers by rule" question="Blocker findings (R2), reconstructed from review rounds." />
-          <CategoryTable groups={r2} chart="quality-blockers" caption="Blocker findings by rule" noun="blocker" selected={active?.dim === "rule" ? active.value : null} onPick={(k) => toggle("rule", k)} empty="No blocker findings in this window." />
+          {r2.length === 0 && unobserved(t.R2) ? (
+            <NotRecorded title="Blocker findings not observed" what={unobserved(t.R2)!} why="Missing is not zero: the run records hold blockers this figure could not read, so it does not say none." state="not-recorded" compact />
+          ) : (
+            <CategoryTable groups={r2} chart="quality-blockers" caption="Blocker findings by rule" noun="blocker" selected={active?.dim === "rule" ? active.value : null} onPick={(k) => toggle("rule", k)} empty="No blocker findings in this window." />
+          )}
         </section>
       </div>
 

@@ -80,10 +80,7 @@ export function readEnvelope(data: unknown, source: AnalyticsSource): AnalyticsE
         return { source: oneOf(o.source, ["intake", "lifecycle", "stream", "runs"] as const), last_event_ms: num(o.last_event_ms), events: num(o.events), last_read_ms: num(o.last_read_ms), precision: str(o.precision), reason: strings(o.reason) };
       }),
     },
-    as_of:
-      d.as_of && typeof d.as_of === "object" && num(obj(d.as_of).ms) !== null
-        ? { ms: num(obj(d.as_of).ms)!, exact: obj(d.as_of).exact === true, effective_to_ms: num(obj(d.as_of).effective_to_ms), rule: str(obj(d.as_of).rule) }
-        : null,
+    as_of: readAsOf(d.as_of),
     rules,
   };
 }
@@ -91,13 +88,28 @@ export function readEnvelope(data: unknown, source: AnalyticsSource): AnalyticsE
 // ------------------------------------------------------------------------------------- metrics
 
 function readExcluded(v: unknown): Excluded[] {
-  return arr(v).map((x) => ({ reason: str(obj(x).reason) ?? "unknown", count: num(obj(x).count) }));
+  return arr(v).map((x) => ({ reason: str(obj(x).reason) ?? "unknown", count: num(obj(x).count), unit: str(obj(x).unit) }));
+}
+
+const pair = (v: unknown): readonly [number, number] | null => {
+  const a = arr(v);
+  const lo = num(a[0]);
+  const hi = num(a[1]);
+  return lo !== null && hi !== null ? [lo, hi] : null;
+};
+
+/** `as_of` on a reply or a metric row; null when absent. */
+function readAsOf(v: unknown): { ms: number; exact: boolean; effective_to_ms: number | null; rule: string | null } | null {
+  if (!v || typeof v !== "object") return null;
+  const a = obj(v);
+  const ms = num(a.ms);
+  return ms === null ? null : { ms, exact: a.exact === true, effective_to_ms: num(a.effective_to_ms), rule: str(a.rule) };
 }
 
 /** `coverage`: `eligible`/`counted` (M6.5), else the older `of`/`covered`. */
 export function readCoverage(v: unknown): Coverage {
   const c = obj(v);
-  return { eligible: num(c.eligible) ?? num(c.of), counted: num(c.counted) ?? num(c.covered), share: num(c.share), reason: str(c.reason), excluded: readExcluded(c.excluded) };
+  return { eligible: num(c.eligible) ?? num(c.of), counted: num(c.counted) ?? num(c.covered), share: num(c.share), reason: str(c.reason), excluded: readExcluded(c.excluded), unit: str(c.unit), other: readExcluded(c.other) };
 }
 
 function readBasisCounts(v: unknown): BasisCounts | null {
@@ -152,6 +164,9 @@ function readFigure(f: Obj, row: boolean): Figure {
     max_ms: num(f.max_ms),
     met: bool(f.met),
     distribution: readDistribution(f.distribution),
+    percentile_basis: f.percentile_basis === "exact" || f.percentile_basis === "histogram" ? f.percentile_basis : null,
+    p50_bounds_ms: pair(f.p50_bounds_ms),
+    p90_bounds_ms: pair(f.p90_bounds_ms),
   };
 }
 
@@ -217,6 +232,7 @@ export function readMetricRow(v: unknown, policy: DisplayPolicy = UNDECLARED_POL
     groups_omitted: num(r.groups_omitted),
     buckets: Array.isArray(r.buckets) ? r.buckets.map(readBucket).filter((b): b is TrendBucket => b !== null) : null,
     suspect: r.suspect === true,
+    as_of: readAsOf(r.as_of),
   };
 }
 

@@ -8,7 +8,7 @@
  */
 import { groupedKey, type AnalyticsSnapshot, type MetricId } from "../contract";
 import { bottleneckRanking, rankGroups } from "./charts";
-import { durationText, pct, plural, SMALL_SAMPLE, usd, windowText } from "./format";
+import { durationText, p50Text, p90Text, pct, plural, SMALL_SAMPLE, usd, windowText } from "./format";
 
 export type AreaId = "pulse" | "flow" | "quality" | "economics" | "reliability" | "compare" | "opportunities";
 
@@ -111,8 +111,8 @@ export function findings(s: AnalyticsSnapshot): Finding[] {
       title: "Tickets wait hours for a person's approval",
       condition: "The 90th percentile of human approval waits (W3) is over 8 hours, over at least five waits.",
       measurements: [
-        { label: "Median wait", value: durationText(w3.p50_ms) },
-        { label: "90th percentile", value: durationText(w3.p90_ms) },
+        { label: "Median wait", value: p50Text(w3) },
+        { label: "90th percentile", value: p90Text(w3) },
         { label: "Rounds awaiting a person", value: String(w3.denominator_value) },
       ],
       sample: plural(w3.denominator_value ?? 0, "approval wait"),

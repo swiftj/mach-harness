@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -99,8 +99,20 @@ func TestS12IncompleteUsage(t *testing.T) {
 	// 1.75 / 3. X3's opus usage has no cost: excluded with its reason. X2 has no usage: no pair.
 	k2 := metric(t, d, "K2")
 	fig(t, "K2", k2, f64(1.75/3), f64(1.75), f64(3), f64(3))
-	if ex := excluded(k2); ex["the model's usage carries no cost"] != 1 {
+	// Coverage counts executions: X2 completed with no usage record, so it is excluded. The pair with
+	// no cost (X3's opus usage) is a different unit and is listed apart, under coverage.other.
+	if ex := excluded(k2); ex["completed with no usage record from the stream"] != 1 {
 		t.Errorf("K2 excluded %v", ex)
+	}
+	other := map[string]float64{}
+	for _, e := range arr(obj(k2["coverage"])["other"]) {
+		em := obj(e)
+		reason, _ := em["reason"].(string)
+		key, _, _ := strings.Cut(reason, ":")
+		other[key] += em["count"].(float64)
+	}
+	if other["the model's usage carries no cost"] != 1 {
+		t.Errorf("K2 coverage.other %v", other)
 	}
 	k2m := metric(t, o.metrics("K2", "&group_by=model"), "K2")
 	fig(t, "K2 sonnet", group(t, k2m, "model=claude-sonnet-5-5"), f64(0.85), f64(1.7), f64(2), f64(2))

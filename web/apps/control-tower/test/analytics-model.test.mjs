@@ -146,6 +146,8 @@ test("transition kinds and reference words come from the record alone", () => {
   assert.equal(M.transitionKind({ from: "review", to: "build" }), "revise");
   assert.equal(M.transitionKind({ from: "build", to: "verify" }), "forward");
   assert.equal(M.transitionKind({ from: "review", to: "blocked" }), "exit");
-  assert.deepEqual(M.refLabel({ ref: "visit:SYN-050/build#2", ticket: "SYN-050", execution: null }), { primary: "SYN-050 build #2", secondary: null });
+  assert.deepEqual(M.refLabel({ ref: "visit:SYN-050/build#2", ticket: "SYN-050", execution: null }), { primary: "SYN-050", secondary: "build, visit 2" });
+  // A kind without its own wording: the ticket and the kind in words, never the raw id.
+  assert.deepEqual(M.refLabel({ ref: "human:SYN-004/required:i:beca3d62:95", ticket: null, execution: null }), { primary: "SYN-004", secondary: "waiting for a person" });
   assert.deepEqual(M.refLabel({ ref: "gate:SYN-003/review#2", ticket: "SYN-003", execution: null }), { primary: "SYN-003", secondary: "review round 2" });
 });

@@ -29,11 +29,23 @@ type Query struct {
 	Runs *Table
 	// Resolve gives a ticket's risk, app type and wave at the cursor read: ticket-keyed cells take
 	// those dimensions from it, never from when the event was applied.
-	Resolve  func(ticket string) map[string]string
-	joined   map[string]map[string]string // Resolve's answers, shared by the rows of one query
+	Resolve func(ticket string) map[string]string
+	joined  map[string]map[string]string // Resolve's answers, shared by the rows of one query
+	// AsOf, when set, is put on every row: what the figure stands on when a playhead is asked.
+	AsOf     *AsOf
 	LastRuns int
 	// RunsSelected is how many run records the last_runs population holds.
 	RunsSelected int
+}
+
+// AsOf says how a figure is cut at a playhead (as_of_ms). Day-celled figures end at the UTC
+// midnight at or before it (Exact false, EffectiveToMS that midnight); open members are kept by
+// their start day and cannot be cut, so basis_counts.open is null.
+type AsOf struct {
+	MS            int64  `json:"ms"`
+	Exact         bool   `json:"exact"`
+	EffectiveToMS int64  `json:"effective_to_ms"`
+	Rule          string `json:"rule"`
 }
 
 // MaxResponseGroups bounds the groups one metric returns; the rest are counted.
@@ -60,7 +72,12 @@ type Bounds struct {
 type Excluded struct {
 	Reason string  `json:"reason"`
 	Count  float64 `json:"count"`
+	// Unit, when set, says the count is in another unit than the coverage's and is not part of it.
+	Unit string `json:"unit,omitempty"`
 }
+
+// ExPairNoCost: a model's usage within an execution that carries no cost (K2, per pair).
+const ExPairNoCost = "the model's usage carries no cost"
 
 // Coverage is how much of the population the value stands on. Covered, Of and Share are the
 // fields served before M6.5 (Covered = Counted, Of = Eligible); Eligible = Counted + the excluded.
@@ -72,6 +89,11 @@ type Coverage struct {
 	Eligible *float64   `json:"eligible"`
 	Counted  *float64   `json:"counted"`
 	Excluded []Excluded `json:"excluded"`
+	// Unit names the population the coverage counts when it is not the denominator's.
+	Unit string `json:"unit,omitempty"`
+	// Other are exclusions counted in another unit (K2: execution-model pairs with no cost):
+	// reported beside the coverage, not part of eligible = counted + excluded.
+	Other []Excluded `json:"other,omitempty"`
 }
 
 // TargetCheck is a scorecard target, decided on the unrounded value (observe.py measure).
@@ -88,8 +110,9 @@ type HistBucket struct {
 	Count int64   `json:"count"`
 }
 
-// Distribution is read from the log histogram: a percentile is the upper bound of the bucket
-// holding it (clamped to the observed minimum and maximum), and Bounds gives that bucket.
+// Distribution: percentiles exact (nearest rank) while the population's values are all kept, else
+// interpolated in the log histogram (Percentile); Bounds gives, per percentile, the bucket it lies in
+// (equal bounds when exact).
 type Distribution struct {
 	P10       *float64              `json:"p10"`
 	P25       *float64              `json:"p25"`
@@ -113,8 +136,11 @@ type Figure struct {
 	P90         *float64 `json:"p90_ms,omitempty"`
 	Min         *float64 `json:"min_ms,omitempty"`
 	Max         *float64 `json:"max_ms,omitempty"`
-	// PercentileBasis says p50_ms and p90_ms are read from the log histogram (bucket upper bounds).
+	// PercentileBasis is "exact" (nearest rank over every measured duration) or "histogram"
+	// (interpolated in the log-histogram bucket; P50Bounds and P90Bounds are that bucket's bounds).
 	PercentileBasis string        `json:"percentile_basis,omitempty"`
+	P50Bounds       *[2]float64   `json:"p50_bounds_ms,omitempty"`
+	P90Bounds       *[2]float64   `json:"p90_bounds_ms,omitempty"`
 	NullReason      string        `json:"null_reason,omitempty"`
 	ValueRounded    *float64      `json:"value_rounded,omitempty"`
 	SampleCount     *float64      `json:"sample_count"`
@@ -153,13 +179,16 @@ type Row struct {
 	Min         *float64 `json:"min_ms,omitempty"`
 	Max         *float64 `json:"max_ms,omitempty"`
 	Met         *bool    `json:"met,omitempty"`
-	// PercentileBasis says p50_ms and p90_ms are read from the log histogram (bucket upper bounds).
-	PercentileBasis string   `json:"percentile_basis,omitempty"`
-	Basis           string   `json:"basis"`
-	NullReason      string   `json:"null_reason,omitempty"`
-	Coverage        Coverage `json:"coverage"`
-	GroupBy         string   `json:"group_by,omitempty"`
-	Groups          []Group  `json:"groups"` // null when not grouped, [] when grouped and empty
+	// PercentileBasis is "exact" or "histogram"; with the histogram, P50Bounds and P90Bounds say
+	// between which values the percentile lies.
+	PercentileBasis string      `json:"percentile_basis,omitempty"`
+	P50Bounds       *[2]float64 `json:"p50_bounds_ms,omitempty"`
+	P90Bounds       *[2]float64 `json:"p90_bounds_ms,omitempty"`
+	Basis           string      `json:"basis"`
+	NullReason      string      `json:"null_reason,omitempty"`
+	Coverage        Coverage    `json:"coverage"`
+	GroupBy         string      `json:"group_by,omitempty"`
+	Groups          []Group     `json:"groups"` // null when not grouped, [] when grouped and empty
 
 	Family       string        `json:"family"`
 	Description  string        `json:"description"`
@@ -179,6 +208,8 @@ type Row struct {
 	Buckets      []Bucket      `json:"buckets,omitempty"`
 	Distribution *Distribution `json:"distribution,omitempty"`
 	Suspect      bool          `json:"suspect"`
+	// AsOf: with a playhead, how this figure is cut (every figure of the reply has the same).
+	AsOf *AsOf `json:"as_of,omitempty"`
 }
 
 // joinable are the dimensions a read joins to a ticket-keyed cell (Query.Resolve).
@@ -376,6 +407,17 @@ func (t *Table) row(d Def, q Query) Row {
 		if len(q.GroupBy) == 0 || !groupable {
 			continue
 		}
+		if d.CoverUnit != "" && a.Num == 0 && a.Den == 0 && a.Count == 0 {
+			// A coverage-only cell (Def.CoverUnit: an execution with or without usage) carries no
+			// group dimension: it counts in the total's coverage and forms no "unknown" group.
+			missing := false
+			for _, g := range q.GroupBy {
+				missing = missing || g != "day" && g != "week" && dimOf(f, g) == ""
+			}
+			if missing {
+				continue
+			}
+		}
 		var parts, poolParts []string
 		isDen := false
 		for _, g := range q.GroupBy {
@@ -436,7 +478,7 @@ func (t *Table) row(d Def, q Query) Row {
 		}
 	}
 	var open *int64
-	if d.Open && q.Runs == nil && len(q.Filters) == 0 {
+	if d.Open && q.Runs == nil && len(q.Filters) == 0 && q.AsOf == nil {
 		var n int64
 		for day, c := range t.Open[d.ID] {
 			if !q.Windowed || day != "" && (q.FromDay == "" || day >= q.FromDay) && (q.ToDay == "" || day <= q.ToDay) {
@@ -462,6 +504,7 @@ func (t *Table) row(d Def, q Query) Row {
 	}
 	row.Value, row.Numerator, row.Denominator, row.NullReason = fig.Value, fig.Numerator, fig.Denominator, fig.NullReason
 	row.P50, row.P90, row.Min, row.Max, row.PercentileBasis = fig.P50, fig.P90, fig.Min, fig.Max, fig.PercentileBasis
+	row.P50Bounds, row.P90Bounds = fig.P50Bounds, fig.P90Bounds
 	row.ValueRounded, row.SampleCount, row.BasisCounts, row.Bounds, row.Coverage = fig.ValueRounded, fig.SampleCount, fig.BasisCounts, fig.Bounds, fig.Coverage
 	row.Met, row.Distribution = fig.Met, fig.Distribution
 	if row.TargetCheck != nil {
@@ -471,6 +514,7 @@ func (t *Table) row(d Def, q Query) Row {
 		row.Limitations = joinText(row.Limitations, "records the observer refused cannot be attributed to a filter and are not counted in this coverage")
 	}
 	row.Suspect = t.suspectIn(q.FromDay, q.ToDay, q.Windowed)
+	row.AsOf = q.AsOf
 
 	if len(q.GroupBy) > 0 {
 		row.Groups = []Group{}
@@ -541,7 +585,16 @@ func (t *Table) figure(d Def, a *Agg, distinct map[string]bool, extra map[string
 	}
 	switch d.Kind {
 	case "count":
-		if !empty {
+		excluded := false
+		for _, n := range a.Ex {
+			excluded = excluded || n > 0
+		}
+		switch {
+		case !empty && a.Num == 0 && excluded:
+			// Members are known only from records this count does not read: no count of 0.
+			g.Numerator = ptr(a.Num)
+			g.NullReason = "none of the known members is counted by this metric's source; the coverage says why"
+		case !empty:
 			g.Value, g.Numerator = ptr(a.Num), ptr(a.Num)
 		}
 		counted = a.Num
@@ -575,10 +628,13 @@ func (t *Table) figure(d Def, a *Agg, distinct map[string]bool, extra map[string
 			}
 		} else {
 			g.Value = ptr(a.Sum / float64(a.Count))
-			h := a.full()
-			g.P50, _ = quantile(h, a.Count, 0.5, &a.Min, &a.Max)
-			g.P90, _ = quantile(h, a.Count, 0.9, &a.Min, &a.Max)
-			g.PercentileBasis = "histogram"
+			h, sv := a.full(), a.sortedVals()
+			p50, _ := Percentile(sv, h, a.Count, a.Min, a.Max, 0.5)
+			p90, _ := Percentile(sv, h, a.Count, a.Min, a.Max, 0.9)
+			g.P50, g.P90, g.PercentileBasis = ptr(p50.Value), ptr(p90.Value), p50.Basis
+			if p50.Basis == "histogram" {
+				g.P50Bounds, g.P90Bounds = &[2]float64{p50.Lo, p50.Hi}, &[2]float64{p90.Lo, p90.Hi}
+			}
 			g.Min, g.Max = ptr(a.Min), ptr(a.Max)
 		}
 		counted = float64(a.Count)
@@ -616,17 +672,28 @@ func (t *Table) figure(d Def, a *Agg, distinct map[string]bool, extra map[string
 	for k, n := range extra {
 		ex[k] += n
 	}
-	eligible := counted
+	covCounted := counted
+	if d.CoverUnit != "" {
+		covCounted = float64(a.Cov)
+	}
+	eligible := covCounted
 	for _, k := range sortedKeys(ex) {
 		if ex[k] == 0 {
 			continue // an exclusion later undone (a member that became counted)
 		}
+		if u := d.OtherUnit[k]; u != "" {
+			g.Coverage.Other = append(g.Coverage.Other, Excluded{Reason: k, Count: ex[k], Unit: u})
+			continue // another unit: reported beside the coverage, not part of it
+		}
 		g.Coverage.Excluded = append(g.Coverage.Excluded, Excluded{Reason: k, Count: ex[k]})
 		eligible += ex[k]
 	}
-	g.Coverage.Eligible, g.Coverage.Counted = ptr(eligible), ptr(counted)
+	g.Coverage.Eligible, g.Coverage.Counted = ptr(eligible), ptr(covCounted)
+	if d.CoverUnit != "" {
+		g.Coverage.Unit = d.CoverUnit
+	}
 	if eligible > 0 {
-		g.Coverage.Covered, g.Coverage.Of, g.Coverage.Share = ptr(counted), ptr(eligible), ptr(counted/eligible)
+		g.Coverage.Covered, g.Coverage.Of, g.Coverage.Share = ptr(covCounted), ptr(eligible), ptr(covCounted/eligible)
 	} else {
 		g.Coverage.Reason = "no member of the population was observed"
 	}
@@ -647,8 +714,12 @@ func distribution(d Def, a *Agg) *Distribution {
 	if d.Kind != "duration" {
 		return nil
 	}
-	hist := a.full()
-	out := &Distribution{Basis: "histogram", Bounds: map[string][2]float64{}, Histogram: []HistBucket{},
+	hist, sv := a.full(), a.sortedVals()
+	basis := "histogram"
+	if sv != nil {
+		basis = "exact"
+	}
+	out := &Distribution{Basis: basis, Bounds: map[string][2]float64{}, Histogram: []HistBucket{},
 		Over: "measured durations only"}
 	if a.Count > 0 {
 		out.Min, out.Max = ptr(a.Min), ptr(a.Max)
@@ -658,10 +729,9 @@ func distribution(d Def, a *Agg) *Distribution {
 		q    float64
 		dst  **float64
 	}{{"p10", 0.1, &out.P10}, {"p25", 0.25, &out.P25}, {"p50", 0.5, &out.P50}, {"p75", 0.75, &out.P75}, {"p90", 0.9, &out.P90}} {
-		v, b := quantile(hist, a.Count, p.q, &a.Min, &a.Max)
-		*p.dst = v
-		if v != nil {
-			out.Bounds[p.name] = b
+		if v, ok := Percentile(sv, hist, a.Count, a.Min, a.Max, p.q); ok {
+			*p.dst = ptr(v.Value)
+			out.Bounds[p.name] = [2]float64{v.Lo, v.Hi}
 		}
 	}
 	for i, n := range hist {

@@ -165,3 +165,17 @@ export function targetText(target: string | undefined, kind: MetricRow["kind"]):
   const shown = kind === "rate" ? pct(v) : String(v);
   return `${op === "<" ? "below" : "above"} ${shown}`;
 }
+
+type Percentiled = { readonly p50_ms?: number; readonly p90_ms?: number; readonly percentile_basis?: "exact" | "histogram" } | null | undefined;
+/**
+ * A median or 90th percentile in words. Exact when the observer computed it over every value; read
+ * inside a histogram bucket otherwise, said "about" (the bucket's bounds are in the definition), never
+ * printed as if exact. Missing: "–".
+ */
+export function percentileText(f: Percentiled, which: "p50" | "p90"): string {
+  const v = which === "p50" ? f?.p50_ms : f?.p90_ms;
+  if (v === undefined || v === null) return "–";
+  return f?.percentile_basis === "histogram" ? `about ${durationText(v)}` : durationText(v);
+}
+export const p50Text = (f: Percentiled): string => percentileText(f, "p50");
+export const p90Text = (f: Percentiled): string => percentileText(f, "p90");

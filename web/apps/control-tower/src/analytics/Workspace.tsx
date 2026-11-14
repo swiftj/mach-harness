@@ -75,6 +75,7 @@ interface Loaded {
   readonly cursor: string | null;
   readonly metricsExact: boolean | null;
   readonly widened: boolean;
+  readonly dayCut: number | null;
   readonly notes: readonly string[];
 }
 
@@ -166,11 +167,11 @@ export function AnalyticsWorkspace() {
           setRefresh((n) => n + 1);
           return;
         }
-        setLoaded({ key: loadKey, data: r.data, insights: r.insights, configs: r.configs, cursor: r.cursor, metricsExact: r.asOf ? r.asOf.exact : null, widened: r.asOf?.widened ?? false, notes: r.notes });
+        setLoaded({ key: loadKey, data: r.data, insights: r.insights, configs: r.configs, cursor: r.cursor, metricsExact: r.asOf ? r.asOf.exact : null, widened: r.asOf?.widened ?? false, dayCut: r.dayCut ?? null, notes: r.notes });
       },
       (e: unknown) => {
         if (!live || (e instanceof DOMException && e.name === "AbortError")) return;
-        setLoaded({ key: loadKey, data: failureState(e), insights: undefined, configs: undefined, cursor: null, metricsExact: null, widened: false, notes: [] });
+        setLoaded({ key: loadKey, data: failureState(e), insights: undefined, configs: undefined, cursor: null, metricsExact: null, widened: false, dayCut: null, notes: [] });
       },
     );
     return () => {
@@ -256,26 +257,9 @@ export function AnalyticsWorkspace() {
     );
   }
 
-  const caption = asOfWords({ area, asOfMs, window: state.window, metricsExact: current?.metricsExact ?? null, widened: current?.widened ?? false, cut: wq?.ok ? wq.cut : false }, clockText);
+  const caption = asOfWords({ area, asOfMs, window: state.window, metricsExact: current?.metricsExact ?? null, widened: current?.widened ?? false, dayCut: current?.dayCut ?? null, cut: wq?.ok ? wq.cut : false }, clockText);
   return (
     <div className="flex h-full min-h-0 flex-col" data-analytics-home="" tabIndex={-1} data-analytics-cursor={current?.cursor ?? undefined} data-analytics-pending={current ? undefined : ""}>
-      {edgeMoved || (current && current.notes.length) ? (
-        <div className="flex flex-wrap items-center gap-3 border-b border-line bg-surface-sunken px-5 py-1.5 text-caption text-ink-muted" role="status">
-          {edgeMoved ? (
-            <>
-              <span>New events have been recorded since these figures were read.</span>
-              <button type="button" className="inline-flex h-6 items-center gap-1 rounded-sm border border-line-control px-2 text-ink hover:bg-surface" onClick={() => {
-                  forgetCursor(store);
-                  setRefresh((n) => n + 1);
-                }} data-analytics-refresh="">
-                <RefreshCw size={12} aria-hidden="true" />
-                Refresh
-              </button>
-            </>
-          ) : null}
-          {current && current.notes.length ? <span data-analytics-notes={current.notes.length}>Not read for this view: {current.notes.join("; ")}.</span> : null}
-        </div>
-      ) : null}
       <div className="min-h-0 flex-1">
         <AnalyticsView
           data={areaData}
@@ -289,6 +273,34 @@ export function AnalyticsWorkspace() {
           onOpen={onOpen}
           rowsFor={rowsFor}
           {...(canOpen ? { canOpen } : {})}
+          notice={
+            edgeMoved || (current && current.notes.length) ? (
+              <div className="mb-6 flex max-w-[72ch] flex-wrap items-center gap-3 rounded-md border border-line bg-surface-sunken px-3 py-2 text-body-sm text-ink-muted" role="status">
+                {edgeMoved ? (
+                  <>
+                    <span>New events have been recorded since these figures were read.</span>
+                    <button
+                      type="button"
+                      className="inline-flex h-7 items-center gap-1 rounded-sm border border-line-control px-2 text-ink hover:bg-surface"
+                      onClick={() => {
+                        forgetCursor(store);
+                        setRefresh((n) => n + 1);
+                      }}
+                      data-analytics-refresh=""
+                    >
+                      <RefreshCw size={12} aria-hidden="true" />
+                      Refresh
+                    </button>
+                  </>
+                ) : null}
+                {current && current.notes.length ? (
+                  <span data-analytics-notes={current.notes.length}>
+                    Some figures in this view are not shown: {current.notes.join("; ")}.
+                  </span>
+                ) : null}
+              </div>
+            ) : undefined
+          }
         />
       </div>
     </div>

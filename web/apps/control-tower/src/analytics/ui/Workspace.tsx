@@ -11,7 +11,7 @@
  * `AnalyticsWorkspace` is the prototype's uncontrolled wrapper (a `load` function over the simulated
  * fixture), kept so the Shell's bridge keeps working until it mounts `AnalyticsView` itself.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Undo2 } from "lucide-react";
 import { APP_TYPES, RISKS, type AnalyticsFilters, type AnalyticsSnapshot, type ContributorPage, type Model, type Station, type WindowKey } from "../contract";
 import type { InsightsReply } from "../data/types";
@@ -73,6 +73,8 @@ export interface AnalyticsViewProps {
   readonly historyFrom?: number;
   /** Whether a row's entity can be opened here (the Simulation's fixture tickets are not in its run); absent: every row opens. */
   readonly canOpen?: (ref: string) => boolean;
+  /** A line about this view (not current, parts not read), shown at the top of the sheet. */
+  readonly notice?: ReactNode;
 }
 
 const WINDOWS: readonly { key: WindowKey; label: string }[] = [
@@ -84,7 +86,7 @@ const WINDOWS: readonly { key: WindowKey; label: string }[] = [
 
 const sameWindow = (a: WindowChoice, b: WindowChoice) => (typeof a === "string" || typeof b === "string" ? a === b : a.from === b.from && a.to === b.to);
 
-export function AnalyticsView({ data, insights, configs, source, asOf, sourceLabel, view, onView, onOpen, rowsFor, canOpen }: AnalyticsViewProps) {
+export function AnalyticsView({ data, insights, configs, source, asOf, sourceLabel, view, onView, onOpen, rowsFor, canOpen, notice }: AnalyticsViewProps) {
   const sheet = useRef<HTMLElement>(null);
   const [undo, setUndo] = useState<WindowChoice | null>(null);
   // The control that opened the Rows drawer gets focus back when it closes.
@@ -207,6 +209,7 @@ export function AnalyticsView({ data, insights, configs, source, asOf, sourceLab
 
         <main ref={sheet} className="an-sheet focus:outline-none" aria-label={area.label} tabIndex={-1}>
           <div className="an-sheet-inner">
+            {notice ?? null}
             {view.area === "pulse" ? <Pulse {...common} insights={insights} /> : null}
             {view.area === "flow" ? <Flow {...common} station={view.station} onStation={(st) => onView({ station: st })} /> : null}
             {view.area === "quality" ? <Quality {...common} pick={view.pick} onPick={(p) => onView({ pick: p })} /> : null}

@@ -136,9 +136,14 @@ function Lead() {
       </>
     );
   }
+  // An active filter is said first: the sentence's counts are of those tickets only.
+  const narrowed = [s.filters.risk ? `${s.filters.risk}-risk` : null, s.filters.app_type ? s.filters.app_type : null].filter((x): x is string => x !== null);
   return (
     <div className="an-lead-row">
-      <p className="an-lead text-body-lg text-ink">{body}</p>
+      <p className="an-lead text-body-lg text-ink" data-pulse-filter={narrowed.length ? narrowed.join(",") : undefined}>
+        {narrowed.length ? <>Counting only {narrowed.join(" ")} tickets. </> : null}
+        {body}
+      </p>
       <LeadNote />
     </div>
   );

@@ -53,6 +53,8 @@ export interface LoadResult {
   readonly cursor: string | null;
   /** The totals reply's "as of", when one was asked. */
   readonly asOf: AsOf | null;
+  /** Under a playhead: the UTC midnight every figure of the view is counted to (metrics by day, the run list cut there too). */
+  readonly dayCut?: number | null;
   /** Parts not read, in words. */
   readonly notes: readonly string[];
   /** The view's cursor can no longer be read: begin a new snapshot at the head. */
@@ -183,7 +185,10 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
     const [runItems, flowReply, insightsData, fixedC, groupC] = await Promise.all([runs, flow, insights, fixed, perGroup]);
 
     // The window the figures describe: the observer's effective window, else the history's start and the end the caller knows.
-    const to = t.window.effective_to_ms ?? input.toMs ?? input.endMs ?? t.generated_ms ?? Date.now();
+    // The whole recorded history ends with the day of the newest event the observer applied (history.sources), never earlier.
+    const lastEvent = Math.max(-Infinity, ...(t.history.sources ?? []).map((x) => x.last_event_ms ?? -Infinity));
+    const lastDay = Number.isFinite(lastEvent) ? Math.floor(lastEvent / D) * D + D : null;
+    const to = t.window.effective_to_ms ?? input.toMs ?? (input.source !== "simulation" && t.asOf === null && lastDay !== null ? Math.max(lastDay, input.endMs ?? 0) : null) ?? input.endMs ?? t.generated_ms ?? Date.now();
     // Nothing held yet (an empty history): the window is the last day, not an invented period.
     const from = t.window.effective_from_ms ?? input.fromMs ?? t.history.from_ms ?? Math.floor((to - 1) / D) * D;
     const window = { from_ms: Math.min(from, to), to_ms: to };
@@ -193,6 +198,7 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
       plan.freshness ? part("freshness", () => input.data.freshness()) : Promise.resolve(null),
     ]);
 
+    const dayCut = t.asOf && !t.asOf.exact && t.asOf.effectiveToMs !== null ? t.asOf.effectiveToMs : null;
     const groupedMetrics: MetricRow[] = groupedRows.flatMap((r) => r?.metrics ?? []).filter((m) => m.group_dims.length === 1);
     const contributors = [...fixedC, ...groupC].filter((c): c is { metric: string; dim: string | undefined; value: string | undefined; reply: ContributorsReply } => c !== null);
     const parts: SnapshotParts = {
@@ -203,7 +209,9 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
       totals: t.metrics,
       grouped: groupedMetrics,
       contributors: contributors.map((c) => ({ metric: c.metric as MetricId, ...(c.dim ? { dimension: c.dim as Dimension, value: c.value ?? "" } : {}), reply: c.reply })),
-      runs: runItems ?? [],
+      // Under a playhead the metrics count whole UTC days (to effective_to_ms); finished tickets are cut at the
+      // same midnight, so a figure read from the run list never disagrees with the same quantity from /metrics.
+      runs: dayCut !== null ? (runItems ?? []).filter((r) => r.closed_at?.at_ms != null && r.closed_at.at_ms < dayCut) : (runItems ?? []),
       transitions: flowReply?.transitions ?? [],
       definitions_version: t.definitions_version ?? t.projection.definitions,
       partial: t.history.complete === false && t.history.partial !== null && t.history.partial !== "",
@@ -218,6 +226,7 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
       data: { state: "ready", value: toContractSnapshot(parts) },
       insights: insightsData,
       configs: runItems ? configsOf(runItems) : undefined,
+      dayCut,
       cursor: session.cursor,
       asOf: t.asOf,
       notes,

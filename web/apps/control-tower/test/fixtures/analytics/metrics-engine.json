@@ -1,0 +1,386 @@
+{
+ "body": {
+  "data": {
+   "as_of": {
+    "effective_to_ms": 1793232000000,
+    "exact": false,
+    "ms": 1793232000000,
+    "rule": "whole UTC days before the playhead; the day of the playhead is not included"
+   },
+   "cursor": "571e4cfc6691171d.12684",
+   "definitions_version": 4,
+   "filters": {},
+   "generated_ms": 1794654652019,
+   "group_overflow": 0,
+   "history": {
+    "complete": false,
+    "complete_window": true,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793344003999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": "",
+    "sources": [
+     {
+      "events": 499,
+      "last_event_ms": 1793231156999,
+      "last_read_ms": 1794654651623,
+      "precision": "hour",
+      "source": "intake"
+     },
+     {
+      "events": 1038,
+      "last_event_ms": 1793231795028,
+      "last_read_ms": 1794654651623,
+      "precision": "hour",
+      "source": "lifecycle"
+     },
+     {
+      "events": 2566,
+      "last_event_ms": 1793231117999,
+      "last_read_ms": 1794654651623,
+      "precision": "hour",
+      "source": "stream"
+     },
+     {
+      "events": 19,
+      "last_event_ms": 1793186009999,
+      "last_read_ms": 1794654651623,
+      "source": "runs"
+     }
+    ]
+   },
+   "metrics": [
+    {
+     "as_of": {
+      "effective_to_ms": 1793232000000,
+      "exact": false,
+      "ms": 1793232000000,
+      "rule": "metrics are kept per UTC day: every figure here ends at the midnight at or before as_of_ms (effective_to_ms); open members cannot be cut there and are not counted"
+     },
+     "authority": "authoritative",
+     "availability": "lifecycle",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 1,
+      "measured": 186,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 1
+     },
+     "coverage": {
+      "counted": 186,
+      "covered": 186,
+      "eligible": 188,
+      "excluded": [
+       {
+        "count": 1,
+        "reason": "inferred: the duration is reconstructed, not measured"
+       },
+       {
+        "count": 1,
+        "reason": "unknown: an end's time, or its start, was not recorded"
+       }
+      ],
+      "of": 188,
+      "share": 0.9893617021276596
+     },
+     "denominator": "visits with a measured duration",
+     "denominator_value": 186,
+     "description": "Station cycle time: sum of measured visit durations / visits with a measured duration",
+     "dimensions": [
+      "station",
+      "round",
+      "risk",
+      "app_type"
+     ],
+     "family": "C",
+     "formula": "sum of measured visit durations / visits with a measured duration",
+     "group_by": "station",
+     "group_dims": [
+      "station"
+     ],
+     "groups": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 15,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 15,
+        "covered": 15,
+        "eligible": 15,
+        "excluded": [],
+        "of": 15,
+        "share": 1
+       },
+       "denominator": 15,
+       "key": "audit",
+       "keys": {
+        "station": "audit"
+       },
+       "max_ms": 2212972,
+       "min_ms": 1179021,
+       "numerator": 25205283,
+       "p50_ms": 1628109,
+       "p90_ms": 2130177,
+       "percentile_basis": "exact",
+       "sample_count": 15,
+       "value": 1680352.2
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 1,
+        "measured": 27,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 27,
+        "covered": 27,
+        "eligible": 28,
+        "excluded": [
+         {
+          "count": 1,
+          "reason": "inferred: the duration is reconstructed, not measured"
+         }
+        ],
+        "of": 28,
+        "share": 0.9642857142857143
+       },
+       "denominator": 27,
+       "key": "build",
+       "keys": {
+        "station": "build"
+       },
+       "max_ms": 46522931,
+       "min_ms": 15360449,
+       "numerator": 919495148,
+       "p50_ms": 35348096,
+       "p90_ms": 45798318,
+       "percentile_basis": "exact",
+       "sample_count": 27,
+       "value": 34055375.85185185
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 19,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 19,
+        "covered": 19,
+        "eligible": 19,
+        "excluded": [],
+        "of": 19,
+        "share": 1
+       },
+       "denominator": 19,
+       "key": "cleanup",
+       "keys": {
+        "station": "cleanup"
+       },
+       "max_ms": 78553,
+       "min_ms": 78553,
+       "numerator": 1492507,
+       "p50_ms": 78553,
+       "p90_ms": 78553,
+       "percentile_basis": "exact",
+       "sample_count": 19,
+       "value": 78553
+      }
+     ],
+     "id": "C1",
+     "kind": "duration",
+     "limitations": "cells without a lifecycle log are excluded; bounded, unknown and open visits are counted apart, not averaged",
+     "max_ms": 46522931,
+     "min_ms": 78553,
+     "name": "Station cycle time",
+     "numerator": "sum of measured visit durations",
+     "numerator_value": 2089863503,
+     "p50_ms": 7283547,
+     "p90_ms": 31003390,
+     "percentile_basis": "exact",
+     "population": "visits with a measured duration",
+     "sample_count": 186,
+     "source": "cell lifecycle (station.entered to station.exited)",
+     "sources": [
+      "cell lifecycle (station.entered to station.exited)"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "ms",
+     "value": 11235825.284946237
+    },
+    {
+     "as_of": {
+      "effective_to_ms": 1793232000000,
+      "exact": false,
+      "ms": 1793232000000,
+      "rule": "metrics are kept per UTC day: every figure here ends at the midnight at or before as_of_ms (effective_to_ms); open members cannot be cut there and are not counted"
+     },
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 19,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 19,
+      "covered": 19,
+      "eligible": 19,
+      "excluded": [],
+      "of": 19,
+      "share": 1
+     },
+     "denominator": "merged tickets",
+     "denominator_value": 19,
+     "description": "First-pass rate (observe): merged tickets with first_pass / merged tickets",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "Q",
+     "formula": "merged tickets with first_pass / merged tickets",
+     "group_by": "station",
+     "group_dims": [
+      "station"
+     ],
+     "groups": [],
+     "groups_reason": "this metric is not recorded by station",
+     "id": "Q2",
+     "kind": "rate",
+     "limitations": "",
+     "met": false,
+     "name": "First-pass rate (observe)",
+     "numerator": "merged tickets with first_pass",
+     "numerator_value": 16,
+     "parity_with": "observe.py scorecard first_pass_rate",
+     "population": "merged tickets",
+     "sample_count": 19,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "target": "> 0.85",
+     "target_check": {
+      "direction": "above",
+      "met": false,
+      "value": 0.85
+     },
+     "unit": "",
+     "value": 0.8421052631578947,
+     "value_rounded": 0.842
+    },
+    {
+     "as_of": {
+      "effective_to_ms": 1793232000000,
+      "exact": false,
+      "ms": 1793232000000,
+      "rule": "metrics are kept per UTC day: every figure here ends at the midnight at or before as_of_ms (effective_to_ms); open members cannot be cut there and are not counted"
+     },
+     "authority": "observed",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 101,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 37,
+      "covered": 37,
+      "eligible": 41,
+      "excluded": [
+       {
+        "count": 4,
+        "reason": "completed with no usage record from the stream"
+       }
+      ],
+      "of": 41,
+      "share": 0.9024390243902439,
+      "unit": "completed executions"
+     },
+     "denominator": "executions that used the model",
+     "denominator_value": 101,
+     "description": "Recorded cost per model: execution.usage.models[m].cost_usd / executions that used the model",
+     "dimensions": [
+      "model",
+      "risk",
+      "app_type"
+     ],
+     "family": "K",
+     "formula": "execution.usage.models[m].cost_usd / executions that used the model",
+     "group_by": "station",
+     "group_dims": [
+      "station"
+     ],
+     "groups": [],
+     "groups_reason": "this metric is not recorded by station",
+     "id": "K2",
+     "kind": "mean",
+     "limitations": "per execution, never per agent; the coverage counts completed executions with a usage record, the denominator execution-model pairs with a cost",
+     "name": "Recorded cost per model",
+     "numerator": "execution.usage.models[m].cost_usd",
+     "numerator_value": 186.27430000000004,
+     "population": "executions that used the model",
+     "sample_count": 101,
+     "source": "execution stream",
+     "sources": [
+      "execution stream"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "usd",
+     "value": 1.8443000000000005,
+     "value_rounded": 1.844
+    }
+   ],
+   "partial": "",
+   "projection": {
+    "definitions": 4,
+    "format": 5
+   },
+   "rules": "recorded values only; an empty denominator is null with a reason; nothing is estimated or apportioned; durations are averaged over measured spans only, the others counted apart; value is unrounded, value_rounded is observe.py's round(value, 3)",
+   "suspect_days": [],
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": 1793232000000,
+    "from_ms": null,
+    "last_runs": null,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/metrics?ids=C1,K2,Q2&as_of_ms=1793232000000&group_by=station",
+ "recorded": "mach-observer (worktree build with the engine's percentile_basis, row as_of and coverage unit) over the synthetic medium project, settled at 12684; groups trimmed to 3; synthetic data",
+ "status": 200
+}

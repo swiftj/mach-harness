@@ -14,6 +14,7 @@ import { brushIndices, brushWindow, pageOf, sortRows, type SortDir } from "../..
 import { chartKey } from "../keys";
 import { cardWords, Mark, useMarkNav, useTip, useWidth, type Card } from "../kit";
 import type { Interval } from "../types";
+import { tickLabel, ticksFor } from "../../../timeline/render/scale";
 
 const NUM = { fontFamily: "var(--mach-font-sans)", fontVariantNumeric: "tabular-nums" } as const;
 const AXIS_TEXT = { ...NUM, fontSize: 11, fill: "var(--an-subtle)" } as const;
@@ -166,6 +167,12 @@ export function Columns({ points, height = 150, format, tone = "var(--an-bar)", 
           }
         }}
       >
+        {/* Weekend days banded, as on the Timeline's ruler (day columns only). */}
+        {points.map((p, i) => {
+          if (p.from === undefined || p.to === undefined || p.to - p.from !== 86_400_000) return null;
+          const d = new Date(p.from).getUTCDay();
+          return d === 0 || d === 6 ? <rect key={`w${p.key}`} x={left + i * step} y={top - 4} width={step} height={height - bottom - top + 4} style={{ fill: "var(--an-grid)", fillOpacity: 0.35 }} aria-hidden="true" /> : null;
+        })}
         {ticks.map((t) => (
           <g key={t} aria-hidden="true">
             <line x1={left} x2={width - right} y1={y(t)} y2={y(t)} style={{ stroke: t === 0 ? "var(--an-axis)" : "var(--an-grid)", strokeWidth: 1 }} />
@@ -627,17 +634,24 @@ export function StepPanels({ lines, from, to, bucketMs }: { lines: readonly Step
   const height = lines.length * (panelH + gap) + 18;
   const x = linear(from, to, gutter, width - 4);
   const D = 86_400_000;
-  const days: number[] = [];
-  for (let t = Math.ceil(from / D) * D; t < to; t += D) days.push(t);
-  const every = Math.max(1, Math.ceil(days.length / Math.max(2, Math.floor((width - gutter) / 72))));
+  // The Timeline's ruler: its tick steps and labels (timeline/render/scale.ts), and the weekend days banded.
+  const ticks = ticksFor({ from, to }, Math.max(1, width - gutter - 4));
+  const weekends: number[] = [];
+  for (let t = Math.floor(from / D) * D; t < to; t += D) {
+    const day = new Date(t).getUTCDay();
+    if (day === 0 || day === 6) weekends.push(t);
+  }
   return (
     <div ref={ref} style={{ height }}>
       <svg width={width} height={height} role="presentation" style={{ display: "block" }}>
-        {days.map((t, i) => (i % every === 0 ? <line key={t} x1={x(t)} x2={x(t)} y1={0} y2={height - 18} style={{ stroke: "var(--an-grid)" }} aria-hidden="true" /> : null))}
-        {days.map((t, i) =>
-          i % every === 0 && x(t) < width - 48 ? (
+        {weekends.map((t) => (
+          <rect key={`w${t}`} x={x(Math.max(from, t))} y={0} width={Math.max(0, x(Math.min(to, t + D)) - x(Math.max(from, t)))} height={height - 18} style={{ fill: "var(--an-grid)", fillOpacity: 0.35 }} aria-hidden="true" />
+        ))}
+        {ticks.majors.map((t) => <line key={t} x1={x(t)} x2={x(t)} y1={0} y2={height - 18} style={{ stroke: "var(--an-grid)" }} aria-hidden="true" />)}
+        {ticks.majors.map((t) =>
+          x(t) < width - 48 ? (
             <text key={`l${t}`} x={x(t) + 2} y={height - 4} style={AXIS_TEXT} aria-hidden="true">
-              {dayText(t)}
+              {tickLabel(t, ticks.major)}
             </text>
           ) : null,
         )}

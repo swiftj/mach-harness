@@ -106,6 +106,8 @@ export interface BasisCounts {
 export interface Excluded {
   readonly reason: string;
   readonly count: number | null;
+  /** Set when the count is in another unit than the coverage's (and is not part of it). */
+  readonly unit: string | null;
 }
 
 export interface Coverage {
@@ -115,6 +117,10 @@ export interface Coverage {
   readonly share: number | null;
   readonly reason: string | null;
   readonly excluded: readonly Excluded[];
+  /** The population the coverage counts, when it is not the denominator's. */
+  readonly unit: string | null;
+  /** Exclusions counted in another unit (K2: execution-model pairs with no cost), beside the coverage, not part of it. */
+  readonly other: readonly Excluded[];
 }
 
 export interface HistBucket {
@@ -157,6 +163,11 @@ export interface Figure {
   readonly max_ms: number | null;
   readonly met: boolean | null;
   readonly distribution: Distribution | null;
+  /** How p50_ms and p90_ms were found: "exact" (nearest rank) or "histogram" (a bucket's upper bound); null when not said (or a word this client does not know). */
+  readonly percentile_basis: "exact" | "histogram" | null;
+  /** With "histogram": the bucket holding the percentile, [ge_ms, le_ms]. */
+  readonly p50_bounds_ms: readonly [number, number] | null;
+  readonly p90_bounds_ms: readonly [number, number] | null;
 }
 
 /** A group value: a code, or prose (`group_by=phase`) that must be contained. */
@@ -210,6 +221,8 @@ export interface MetricRow extends Figure {
   readonly groups_omitted: number | null;
   readonly buckets: readonly TrendBucket[] | null;
   readonly suspect: boolean;
+  /** How this row is cut at the playhead (as_of_ms): whole UTC days before it; null when not asked. */
+  readonly as_of: { readonly ms: number; readonly exact: boolean; readonly effective_to_ms: number | null; readonly rule: string | null } | null;
 }
 
 export interface MetricsReply extends AnalyticsEnvelope {

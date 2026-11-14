@@ -41,6 +41,12 @@ type Def struct {
 	Runs bool `json:"-"`
 	// Open marks duration metrics whose open members (started, not yet ended) are counted.
 	Open bool `json:"-"`
+	// CoverUnit, when set, is the population the coverage counts when it differs from the
+	// denominator's (K2, K3: completed executions, while the denominator is execution-model pairs).
+	CoverUnit string `json:"-"`
+	// OtherUnit names exclusion reasons counted in another unit than the coverage's (reported, not
+	// added to the eligible count).
+	OtherUnit map[string]string `json:"-"`
 }
 
 const (
@@ -134,9 +140,10 @@ var Catalog = []Def{
 	{ID: "K1", Name: "Recorded cost per execution", Kind: "mean", Unit: "usd", Numerator: "execution.completed.cost_usd", Denominator: "executions with a recorded cost",
 		Dimensions: with("stage", "ticket"), Source: "intake log (Claude-reported, recorded by MACH)", Authority: "authoritative", Limitations: "null when the run had no result; coverage says how many executions had one; execution.failed carries no cost", Avail: "yes", Stream: "intake"},
 	{ID: "K2", Name: "Recorded cost per model", Kind: "mean", Unit: "usd", Numerator: "execution.usage.models[m].cost_usd", Denominator: "executions that used the model",
-		Dimensions: with("model"), Source: "execution stream", Authority: "observed", Limitations: "per execution, never per agent", Avail: "yes", Stream: "stream"},
+		Dimensions: with("model"), Source: "execution stream", Authority: "observed", Limitations: "per execution, never per agent; the coverage counts completed executions with a usage record, the denominator execution-model pairs with a cost", Avail: "yes", Stream: "stream", CoverUnit: "completed executions",
+		OtherUnit: map[string]string{ExPairNoCost: "execution-model pairs"}},
 	{ID: "K3", Name: "Tokens per model", Kind: "mean", Unit: "tokens", Numerator: "input + output + cache tokens from execution.usage.models[m]", Denominator: "executions that used the model",
-		Dimensions: with("model", "token_kind"), Source: "execution stream", Authority: "observed", Limitations: "as K2; by token kind, the denominator is every execution that used the model", Avail: "yes", Stream: "stream", Split: []string{"token_kind"}},
+		Dimensions: with("model", "token_kind"), Source: "execution stream", Authority: "observed", Limitations: "as K2; by token kind, the denominator is every execution that used the model", Avail: "yes", Stream: "stream", Split: []string{"token_kind"}, CoverUnit: "completed executions"},
 	{ID: "K4", Name: "Recorded cost per ticket", Kind: "mean", Unit: "usd", Numerator: "sum of K1 over the ticket's executions", Denominator: "tickets with a recorded cost",
 		Dimensions: with("ticket"), Source: "intake log", Authority: "authoritative", Limitations: "excludes hand-driven work (no execution); includes other tickets' work run inside the execution (the belt's tuning ticket); in a window, a ticket counts once and only its cost recorded in the window", Avail: "yes", Stream: "intake", Distinct: "ticket"},
 	{ID: "K5", Name: "Cost per station or per agent", Kind: "mean", Source: "none", Avail: "no", Unavailable: "not available: the stream gives no per-agent cost, and no price table is applied to tokens", Limitations: "never estimated"},

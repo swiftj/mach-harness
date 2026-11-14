@@ -61,6 +61,10 @@ export interface Coverage {
   readonly eligible?: number | null;
   readonly counted?: number | null;
   readonly excluded?: readonly Excluded[];
+  /** What one eligible member is ("completed executions"), where the observer says. */
+  readonly unit?: string;
+  /** Counts beside the population that are not its members (e.g. execution-model pairs with no cost). */
+  readonly other?: readonly { readonly reason: string; readonly count: number; readonly unit: string | null }[];
 }
 
 /** query.go `BasisCounts`: members by how their value is known. `open` is null where it cannot be attributed. */
@@ -90,7 +94,9 @@ export interface Distribution {
   readonly min: number | null;
   readonly max: number | null;
   readonly histogram: readonly HistBucket[];
-  readonly percentile_basis: "histogram";
+  /** "exact": nearest rank over every measured value; "histogram": inside a log-histogram bucket (see `percentile_bounds`). */
+  readonly percentile_basis: "histogram" | "exact";
+  readonly percentile_bounds?: Readonly<Record<string, readonly [number, number]>>;
   readonly over: string;
 }
 
@@ -110,6 +116,10 @@ export interface Figure {
   readonly coverage: Coverage;
   readonly met?: boolean;
   readonly distribution?: Distribution;
+  /** How p50_ms and p90_ms were found: exact, or inside a histogram bucket whose bounds are given (then show the range, never an exact time). */
+  readonly percentile_basis?: "exact" | "histogram";
+  readonly p50_bounds_ms?: readonly [number, number];
+  readonly p90_bounds_ms?: readonly [number, number];
 }
 
 /** query.go `Group`. `key` is the value ("a|b" for two dimensions); `keys` names them. */
@@ -175,7 +185,13 @@ export interface MetricRow {
   readonly groups_reason?: string;
   readonly buckets?: readonly TrendBucket[];
   readonly distribution?: Distribution;
+  /** As on a Figure: how p50_ms and p90_ms were found, and the bucket's bounds when it was a histogram. */
+  readonly percentile_basis?: "exact" | "histogram";
+  readonly p50_bounds_ms?: readonly [number, number];
+  readonly p90_bounds_ms?: readonly [number, number];
   readonly suspect?: boolean;
+  /** Under a playhead: the figure counts whole UTC days, up to `effective_to_ms` (exact false). */
+  readonly as_of?: { readonly exact: boolean; readonly effective_to_ms: number | null } | null;
 }
 
 /** `GET /api/v1/metrics` data. */

@@ -13,8 +13,8 @@ func TestDurationsAndNulls(t *testing.T) {
 		tb.Duration("C1", []Dim{{"station", "build"}}, "2026-11-12", ms)
 	}
 	row := tb.Rows([]string{"C1"}, "station")[0]
-	if row.PercentileBasis != "histogram" || row.Groups[0].PercentileBasis != "histogram" {
-		t.Fatalf("p50 and p90 must say they come from the histogram: %+v", row)
+	if row.PercentileBasis != "exact" || row.Groups[0].PercentileBasis != "exact" || *row.P50 != 2000 || *row.P90 != 60000 {
+		t.Fatalf("a small population's p50 and p90 are exact: %+v", row)
 	}
 	if *row.Value != 16625 || *row.Min != 500 || *row.Max != 60000 || row.P50 == nil || len(row.Groups) != 1 || row.Groups[0].Key != "build" {
 		t.Fatalf("%+v", row)
@@ -269,7 +269,7 @@ func TestQuerySurface(t *testing.T) {
 		t.Fatal("a week bucket is seven days")
 	}
 	d := b.Distribution
-	if d == nil || d.P10 == nil || d.P90 == nil || *d.P90 != 60000 || len(d.Histogram) != 4 || d.Basis != "histogram" || d.Bounds["p50"][1] < *d.P50 {
+	if d == nil || d.P10 == nil || d.P90 == nil || *d.P90 != 60000 || len(d.Histogram) != 4 || d.Basis != "exact" || *d.P50 != 4000 || d.Bounds["p50"] != [2]float64{4000, 4000} {
 		t.Fatalf("%+v", d)
 	}
 	days := tb.Query(Query{IDs: []string{"C1"}, Bucket: "day", Windowed: true, FromDay: "2026-11-01", ToDay: "2026-11-04"})[0]
@@ -289,5 +289,38 @@ func TestReadsAreBitStable(t *testing.T) {
 		if v := *tb.Rows([]string{"K1"}, "")[0].Value; v != first {
 			t.Fatalf("%v then %v", first, v)
 		}
+	}
+}
+
+// Percentiles are exact (nearest rank) while every value is kept; past ValueCap a cell keeps the
+// histogram only, and the percentile is interpolated inside its bucket and says between what.
+func TestPercentilesExactThenInterpolated(t *testing.T) {
+	tb := NewTable()
+	for i := int64(1); i <= 10; i++ {
+		tb.Duration("W3", nil, "2026-11-12", i*60_000)
+	}
+	r := tb.Rows([]string{"W3"}, "")[0]
+	if r.PercentileBasis != "exact" || *r.P50 != 300_000 || *r.P90 != 540_000 || r.P50Bounds != nil {
+		t.Fatalf("exact %v %v %v", *r.P50, *r.P90, r.PercentileBasis)
+	}
+	big := NewTable()
+	for i := int64(0); i < ValueCap+100; i++ {
+		big.Duration("W3", nil, "2026-11-12", 8_192_000+i*10) // all in one bucket
+	}
+	b := big.Rows([]string{"W3"}, "")[0]
+	if b.PercentileBasis != "histogram" || b.P50Bounds == nil || b.P50Bounds[0] > *b.P50 || b.P50Bounds[1] < *b.P50 {
+		t.Fatalf("histogram %v %v %v", *b.P50, b.P50Bounds, b.PercentileBasis)
+	}
+	if *b.P50 == 8_192_000 || *b.P50 == b.P50Bounds[1] && b.P50Bounds[1] != *b.Max {
+		t.Fatalf("the median must be interpolated, not a bucket edge: %v in %v", *b.P50, *b.P50Bounds)
+	}
+	// Cells that each hold all their values merge into an exact population at read time.
+	two := NewTable()
+	for i := int64(0); i < ValueCap; i++ {
+		two.Duration("W3", []Dim{{"ticket", "a"}}, "2026-11-12", i)
+		two.Duration("W3", []Dim{{"ticket", "b"}}, "2026-11-12", 10_000+i)
+	}
+	if r := two.Rows([]string{"W3"}, "")[0]; r.PercentileBasis != "exact" || *r.P50 != ValueCap-1 {
+		t.Fatalf("merged %v %v", *r.P50, r.PercentileBasis)
 	}
 }

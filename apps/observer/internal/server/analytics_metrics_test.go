@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/url"
+	"strconv"
 	"testing"
 
 	"mach/observer/internal/feedtest"
@@ -71,5 +72,28 @@ func TestAnalyticsMetricsQuery(t *testing.T) {
 		if resp, env, _ := h.do(t, "GET", "/api/v1/analytics/metrics"+path, nil); resp.StatusCode != 400 || env.Error.Kind != KindInvalid {
 			t.Fatalf("%s: %d", path, resp.StatusCode)
 		}
+	}
+}
+
+// With a playhead, every figure says how it is cut (day cells end at the midnight at or before
+// as_of_ms), open members are not counted, and last_runs is cut at the same midnight.
+func TestAnalyticsMetricsAsOfLabelsEveryFigure(t *testing.T) {
+	h := start(t, config{events: feedtest.Scenario()})
+	asOf := feedtest.At(60_000) // 2026-11-12T10:01Z: midnight before it is 2026-11-12T00:00Z
+	mid := asOf - asOf%86_400_000
+	d := h.get(t, "/api/v1/analytics/metrics?ids=C1,Q2,T1&as_of_ms="+strconv.FormatInt(asOf, 10))
+	for _, m := range d["metrics"].([]any) {
+		row := m.(map[string]any)
+		a, _ := row["as_of"].(map[string]any)
+		if a == nil || a["exact"] != false || a["effective_to_ms"].(float64) != float64(mid) {
+			t.Fatalf("%s as_of %v", row["id"], row["as_of"])
+		}
+	}
+	if b := metricRow(t, d, "C1")["basis_counts"].(map[string]any); b["open"] != nil {
+		t.Fatalf("open members cannot be cut at as_of: %v", b)
+	}
+	lr := h.get(t, "/api/v1/analytics/metrics?ids=Q2&last_runs=20&as_of_ms="+strconv.FormatInt(asOf, 10))
+	if q2 := metricRow(t, lr, "Q2"); q2["value"] != nil { // the only run closed on the as_of day itself
+		t.Fatalf("last_runs must be cut at the same midnight: %v", q2["value"])
 	}
 }

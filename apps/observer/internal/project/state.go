@@ -370,6 +370,11 @@ type Cell struct {
 	// MT1Day is the day T1's coverage counts this ticket as merged by its run record with no merge in
 	// its lifecycle log ("" when not; "-" for no day).
 	MT1Day string `json:"m_t1_day,omitempty"`
+	// MRunBlockers is the blockers the ticket's run record counts; MR2Day and MR2Ex are how many of
+	// them R2's coverage shows as excluded (no review finding for them) and on which day.
+	MRunBlockers int64  `json:"m_run_blockers,omitempty"`
+	MR2Day       string `json:"m_r2_day,omitempty"`
+	MR2Ex        int64  `json:"m_r2_ex,omitempty"`
 }
 
 // ArtifactCounts counts artifact.recorded events by nature and integrity.
@@ -605,6 +610,9 @@ type Execution struct {
 	// MUnknownDay is the day S2 counts this execution as of unknown outcome (ExecStateIn), or ""
 	// while it does not (metric_visits.go syncExecutions).
 	MUnknownDay string `json:"m_unknown_day,omitempty"`
+	// MUsageDay is the day K2 and K3's coverage counts this completed execution as having no usage
+	// record ("" when it has one or has not completed).
+	MUsageDay string `json:"m_usage_day,omitempty"`
 }
 
 // Usage is execution.usage: Claude-reported cost and tokens, per execution and per model.

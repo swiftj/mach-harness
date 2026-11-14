@@ -189,3 +189,79 @@ func TestT1CoverageDisclosesMissingMerges(t *testing.T) {
 		}
 	}
 }
+
+// One percentile function: C1's median and 90th percentile for a station equal the flow route's
+// for the same visits (they disagreed when C1 read bucket edges).
+func TestStationPercentilesAgreeWithFlow(t *testing.T) {
+	m := feedtest.NewMem("", 0)
+	c := func(typ string, ms int64, visit string) map[string]any {
+		return feedtest.New("cell-lifecycle", typ, ms).Ticket("T-1").Visit("T-1", visit, 1).Data(map[string]any{"station": "build"}).Build()
+	}
+	for i, d := range []int64{61_000, 125_000, 250_000, 7_000_000, 9_000_000} {
+		v := "build#" + string(rune('1'+i))
+		start := int64(i) * 20_000_000
+		m.Append(c("station.entered", start, v), c("station.exited", start+d, v))
+	}
+	p := New(Options{Log: m})
+	ix, err := p.Flow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fl *MeasuredStats
+	for _, s := range ix.Flow(FlowQuery{}).Stations {
+		if s.Station == "build" {
+			fl = s.Duration.Measured
+		}
+	}
+	p.View(func(s *State) {
+		r := s.MetricQuery(metrics.Query{IDs: []string{"C1"}, GroupBy: []string{"station"}})[0]
+		g := r.Groups[0]
+		if fl == nil || g.PercentileBasis != "exact" || int64(*g.P50) != fl.MedianMS || int64(*g.P90) != fl.P90MS || *g.P50 != 250_000 {
+			t.Fatalf("metric p50 %v p90 %v (%s), flow %+v", *g.P50, *g.P90, g.PercentileBasis, fl)
+		}
+	})
+}
+
+// R2 counts blocker findings read from vote files; blockers a run record counts beyond them are
+// disclosed in R2's coverage (excluded with a reason), in either arrival order.
+func TestR2CoverageDisclosesRunRecordBlockers(t *testing.T) {
+	run := func(ms int64) map[string]any {
+		return feedtest.New("run-record", "run.recorded", ms).Ticket("T-1").Data(map[string]any{"outcome": "merged", "rounds": 2, "blockers": 3}).Build()
+	}
+	finding := func(ms int64) map[string]any {
+		return feedtest.New("observer", "review.finding", ms).Ticket("T-1").Data(map[string]any{"seat": "security", "n": 1, "severity": "blocker", "rule": "SEC-1"}).Build()
+	}
+	for name, ev := range map[string][]map[string]any{"run first": {run(0), finding(1000)}, "finding first": {finding(0), run(1000)}} {
+		r := rowsOf(t, ev, []string{"R2"}, "")["R2"]
+		cv := r.Coverage
+		if *r.Value != 1 || *cv.Eligible != 3 || len(cv.Excluded) != 1 || cv.Excluded[0].Reason != exR2NoFinding || cv.Excluded[0].Count != 2 {
+			t.Fatalf("%s: R2 %v coverage %+v", name, *r.Value, cv)
+		}
+	}
+	// No finding at all: no value is invented, and the coverage says 3 blockers were recorded.
+	r := rowsOf(t, []map[string]any{run(0)}, []string{"R2"}, "")["R2"]
+	if r.Value != nil || *r.Coverage.Eligible != 3 || *r.Coverage.Counted != 0 {
+		t.Fatalf("R2 %+v", r.Coverage)
+	}
+}
+
+// K2 and K3's coverage counts completed executions (eligible) and those with a usage record from
+// the stream (counted); the rest are excluded with a reason. A usage that arrives after the
+// completion moves the execution to counted.
+func TestUsageCoverageCountsExecutions(t *testing.T) {
+	usage := func(x string, ms int64) map[string]any {
+		return feedtest.New("execution-stream", "execution.usage", ms).Exec(x).Ticket("T-1").Data(map[string]any{"models": map[string]any{
+			"m1": map[string]any{"cost_usd": 1.0, "input_tokens": 10}}}).Build()
+	}
+	ev := []map[string]any{
+		claim("x000000000001", "T-1", 0).Build(), usage("x000000000001", 500), completed("x000000000001", "T-1", 1000, 1).Build(),
+		claim("x000000000002", "T-1", 2000).Build(), completed("x000000000002", "T-1", 3000, 1).Build(), usage("x000000000002", 3500),
+		claim("x000000000003", "T-1", 4000).Build(), completed("x000000000003", "T-1", 5000, 1).Build(),
+	}
+	for _, id := range []string{"K2", "K3"} {
+		cv := rowsOf(t, ev, []string{id}, "")[id].Coverage
+		if *cv.Eligible != 3 || *cv.Counted != 2 || len(cv.Excluded) != 1 || cv.Excluded[0].Reason != exNoUsage || cv.Unit != "completed executions" {
+			t.Fatalf("%s coverage %+v", id, cv)
+		}
+	}
+}

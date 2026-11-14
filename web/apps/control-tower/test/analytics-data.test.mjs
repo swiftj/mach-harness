@@ -27,6 +27,7 @@ const R = {
   asofMetrics: rec("asof-metrics"),
   sourcesHead: rec("sources-head"),
   sourcesAsOf: rec("sources-asof"),
+  engine: rec("metrics-engine"),
   flow: rec("flow"),
   contributors: rec("contributors"),
   runs: rec("runs"),
@@ -141,7 +142,7 @@ test("unknown statuses, bases and kinds become unknown, never a guess; malformed
   assert.equal(row.availability, "unknown");
   assert.equal(row.value, null);
   assert.equal(row.numerator, null);
-  assert.deepEqual(row.coverage, { eligible: null, counted: null, share: null, reason: null, excluded: [] });
+  assert.deepEqual(row.coverage, { eligible: null, counted: null, share: null, reason: null, excluded: [], unit: null, other: [] });
   assert.equal(row.groups, null, "not grouped: null");
   assert.throws(() => D.readMetrics({ metrics: [] }, "observer"), D.AnalyticsProtocolError, "no cursor: not an analytics reply");
 });
@@ -554,6 +555,38 @@ test("history.sources: the four classes with their newest applied event and coun
   assert.equal(none[0].last_read_ms, null);
   assert.match(none[0].note, /did not say when it last read/);
   assert.equal(D.freshnessFor(f, D.readFlow(R.sourcesHead.body.data, "observer").history, null)[0].events, 57);
+});
+
+test("the engine's percentile basis and bounds, per-row as_of and coverage units are read and carried to the contract", () => {
+  const m = D.readMetrics(R.engine.body.data, "observer");
+  const c1 = m.metrics.find((r) => r.id === "C1");
+  assert.equal(c1.percentile_basis, "exact");
+  assert.equal(c1.p50_bounds_ms, null, "exact percentiles have no bucket bounds");
+  assert.ok(c1.groups.every((g) => g.percentile_basis === "exact"));
+  assert.equal(c1.as_of.exact, false);
+  assert.equal(c1.as_of.effective_to_ms, 1793232000000);
+  assert.match(c1.as_of.rule, /midnight/);
+  const k2 = m.metrics.find((r) => r.id === "K2");
+  assert.equal(k2.coverage.unit, "completed executions");
+  assert.deepEqual(k2.coverage.other, []);
+  assert.equal(m.metrics.find((r) => r.id === "Q2").percentile_basis, null, "a rate has no percentiles: null, not guessed");
+  const row = D.toContractRow(c1);
+  assert.equal(row.percentile_basis, "exact");
+  assert.deepEqual(row.as_of, { effective_to_ms: 1793232000000, exact: false });
+  assert.equal(D.toContractRow(k2).coverage.unit, "completed executions");
+  // Histogram percentiles with bounds, exclusions in another unit, an exact distribution: synthetic, as the medium project has none.
+  const syn = D.readMetricRow({
+    id: "K9", kind: "duration", value: 5, percentile_basis: "histogram", p50_bounds_ms: [1000, 1260], p90_bounds_ms: [4000, 5039], p50_ms: 1260,
+    coverage: { eligible: 3, counted: 2, excluded: [{ reason: "x", count: 1 }], other: [{ reason: "the model's usage carries no cost", count: 4, unit: "execution-model pairs" }] },
+    distribution: { p50: 1, histogram: [], percentile_basis: "exact" },
+  });
+  assert.deepEqual(syn.p50_bounds_ms, [1000, 1260]);
+  assert.deepEqual(syn.coverage.other, [{ reason: "the model's usage carries no cost", count: 4, unit: "execution-model pairs" }]);
+  const out = D.toContractRow(syn);
+  assert.deepEqual(out.p90_bounds_ms, [4000, 5039]);
+  assert.equal(out.coverage.other[0].unit, "execution-model pairs");
+  assert.equal(out.distribution.percentile_basis, "exact", "exact distributions are kept");
+  assert.equal(D.readMetricRow({ id: "Z", percentile_basis: "guessed", coverage: {} }).percentile_basis, null);
 });
 
 test("recorded figures equal the generator's ground truth (expected.json): tickets merged, first pass, recorded cost", async () => {

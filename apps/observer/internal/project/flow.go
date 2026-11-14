@@ -1,6 +1,7 @@
 package project
 
 import (
+	"mach/observer/internal/metrics"
 	"math"
 	"sort"
 	"strings"
@@ -491,9 +492,10 @@ func summarize(a *durAgg) DurationSummary {
 		for _, x := range v {
 			sum += x
 		}
+		// The one percentile function every analytics route uses (metrics.Percentile).
 		rank := func(p float64) int64 {
-			k := int(math.Ceil(p*float64(n))) - 1
-			return v[max(0, min(n-1, k))]
+			pc, _ := metrics.Percentile(v, nil, int64(n), float64(v[0]), float64(v[n-1]), p)
+			return int64(pc.Value)
 		}
 		out.Measured = &MeasuredStats{Count: int64(n), TotalMS: sum, MeanMS: int64(math.Round(float64(sum) / float64(n))), MedianMS: rank(0.5),
 			P90MS: rank(0.9), MinMS: v[0], MaxMS: v[n-1], PercentileBasis: "exact"}

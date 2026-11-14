@@ -115,6 +115,8 @@ export interface AsOfFacts {
   readonly metricsExact: boolean | null;
   readonly widened: boolean;
   readonly cut: boolean;
+  /** The UTC midnight the figures are counted to (metrics by whole days, finished tickets cut there too); null when not cut so. */
+  readonly dayCut?: number | null;
 }
 
 /**
@@ -123,6 +125,9 @@ export interface AsOfFacts {
  */
 export function asOfWords(f: AsOfFacts, clock: (t: number) => string): string {
   if (f.area === "simulation") return f.window === "all" ? "The whole simulated history; the playhead does not apply to it" : "A selected window of the simulated history; the playhead does not apply to it";
+  if (f.asOfMs !== null && f.dayCut != null && !f.widened) {
+    return `Through ${clock(f.dayCut)}, the last whole UTC day before the playhead at ${clock(f.asOfMs)}: every figure is counted to then; the rows behind a figure are cut exactly at the playhead${f.cut ? ". The chosen period was cut at the playhead" : ""}`;
+  }
   if (f.asOfMs !== null) {
     const head = `Through the playhead at ${clock(f.asOfMs)}: nothing recorded later is counted`;
     const metrics = f.widened

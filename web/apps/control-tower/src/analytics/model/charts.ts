@@ -114,7 +114,7 @@ export function refLabel(c: Pick<Contributor, "ref" | "ticket" | "execution">): 
   const id = rest.join(":");
   if (kind === "visit") {
     const m = /^(.+)\/(\w+)#(\d+)$/.exec(id);
-    if (m) return { primary: `${m[1]} ${m[2]} #${m[3]}`, secondary: null };
+    if (m) return { primary: m[1]!, secondary: `${m[2]}, visit ${m[3]}` };
   }
   if (kind === "gate") {
     const m = /^(.+)\/(\w+)(?:#(\d+))?$/.exec(id);
@@ -125,8 +125,13 @@ export function refLabel(c: Pick<Contributor, "ref" | "ticket" | "execution">): 
     if (m) return { primary: m[1]!, secondary: `round ${m[2]}, ${m[3]} seat` };
   }
   if (kind === "execution" || kind === "agent") return { primary: c.ticket ?? id, secondary: kind === "agent" ? "agent" : `execution ${c.execution ?? id}` };
+  // Any other kind (a wait, a human hold, a task): the ticket in words, the kind beside it; never the raw id as text.
+  const ticket = c.ticket ?? (id.includes("/") ? id.split("/")[0]! : null);
+  if (ticket) return { primary: ticket, secondary: KIND_WORDS[kind ?? ""] ?? (kind ? kind.replace(/[-_]/g, " ") : null) };
   return { primary: id, secondary: null };
 }
+
+const KIND_WORDS: Readonly<Record<string, string>> = { human: "waiting for a person", wait: "wait", task: "build task", cell: "ticket", slice: "slice", review: "review", verification: "verification" };
 
 
 

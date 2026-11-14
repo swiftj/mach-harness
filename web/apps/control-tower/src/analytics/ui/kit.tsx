@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger, Spinner } from "@mach/ui";
 import { ChartColumn, Info, Rows3, Table2, X } from "lucide-react";
 import type { AnalyticsSnapshot, MetricRow } from "../contract";
 import type { AreaId } from "../model/findings";
-import { BASIS_WORDS, coverageText, durationText, sampleText, targetText, valueText, windowText } from "../model/format";
+import { BASIS_WORDS, clockText, coverageText, durationText, p50Text, p90Text, sampleText, targetText, valueText, windowText } from "../model/format";
 import { densityOf, durationShows, verdictAllowed, type Density } from "../model/sample";
 import { nextMark } from "../model/series";
 import { chartKey } from "./keys";
@@ -175,6 +175,24 @@ export function Definition({ row, children, label }: { row: MetricRow; children?
               <dd className="an-num">{durationText(row.value)} (the catalog's value; the median leads because durations are skewed)</dd>
             </>
           ) : null}
+          {row.p50_ms !== undefined ? (
+            <>
+              <dt className="text-ink-muted">Percentiles</dt>
+              <dd className="an-num">
+                {row.percentile_basis === "histogram"
+                  ? `read inside log-histogram buckets, so each is about: median between ${row.p50_bounds_ms ? `${durationText(row.p50_bounds_ms[0])} and ${durationText(row.p50_bounds_ms[1])}` : "its bucket's bounds"}${row.p90_bounds_ms ? `, 90th between ${durationText(row.p90_bounds_ms[0])} and ${durationText(row.p90_bounds_ms[1])}` : ""}`
+                  : row.percentile_basis === "exact"
+                    ? "exact: nearest rank over every measured value"
+                    : "basis not stated by this observer"}
+              </dd>
+            </>
+          ) : null}
+          {row.as_of && !row.as_of.exact && row.as_of.effective_to_ms !== null ? (
+            <>
+              <dt className="text-ink-muted">Counted to</dt>
+              <dd className="an-num">{clockText(row.as_of.effective_to_ms)}: whole UTC days before the playhead</dd>
+            </>
+          ) : null}
           {row.status === "partial" ? (
             <>
               <dt className="text-ink-muted">In part</dt>
@@ -225,7 +243,7 @@ export function headline(row: MetricRow): { readonly text: string | null; readon
     const shows = durationShows(n);
     if (row.value === null) return { text: null, lead: null, raw: null };
     if (shows.single) return { text: durationText(row.value), lead: "the one measured", raw: row.value };
-    if (row.p50_ms !== undefined) return { text: durationText(row.p50_ms), lead: "median", raw: row.p50_ms };
+    if (row.p50_ms !== undefined) return { text: p50Text(row), lead: "median", raw: row.p50_ms };
     return { text: durationText(row.value), lead: "mean", raw: row.value };
   }
   return { text: valueText(row), lead: null, raw: row.value };
@@ -262,7 +280,7 @@ export function Readout({ row, label, drill, size = "md", note }: { row: MetricR
       <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-caption text-ink-subtle">
         {h.text !== null && !missing ? <span className="an-num">n {sampleText(row)}</span> : <span>{(row.null_reason ?? missing?.why ?? "").replace(/^not (recorded|available):\s*/, "")}</span>}
         {isDuration && shows.mean && h.lead === "median" ? <span className="an-num">mean {durationText(row.value)}</span> : null}
-        {isDuration && shows.p90 && row.p90_ms !== undefined ? <span className="an-num">90th {durationText(row.p90_ms)}</span> : null}
+        {isDuration && shows.p90 && row.p90_ms !== undefined ? <span className="an-num">90th {p90Text(row)}</span> : null}
         {row.coverage.share !== null && row.coverage.share < 1 ? <span className="an-num">coverage {coverageText(row.coverage)}</span> : null}
         {row.basis !== "measured" && h.text !== null && !missing ? <span>{BASIS_WORDS[row.basis]}</span> : null}
         {note}
@@ -296,7 +314,7 @@ export function stateOf(row: MetricRow | undefined): "not-recorded" | "unavailab
 export function rowMissing(row: MetricRow | undefined): { readonly title: string; readonly why: string } | null {
   if (!row) return { title: "Not served", why: "This observer returned no row for the metric." };
   const why = (row.status_reason ?? row.null_reason ?? "").replace(/^not (recorded|available):\s*/, "");
-  if (row.status === "unavailable") return { title: "Not available with these filters", why: `${row.name} is ${why}.` };
+  if (row.status === "unavailable") return { title: "Not available with these filters", why: `${row.name}: ${why.replace(/\.$/, "")}.` };
   if (row.status === "deferred") return { title: "Not computed yet", why: `${row.name}: ${why}.` };
   if (row.status === "not-recorded" || row.basis === "not-recorded") return { title: "Not recorded", why: `${row.name}: ${why}.` };
   return null;
@@ -604,7 +622,8 @@ export function TooFew({ what, n, need, periods }: { what: string; n: number; ne
     <div className="rounded-md border border-line bg-surface-sunken px-4 py-3" data-state="sparse">
       <div className="text-label text-ink">Too few records for a trend</div>
       <p className="text-body-sm text-ink-muted">
-        <span className="an-num font-semibold text-ink">{n}</span> {what} in this window. A direction needs at least <span className="an-num">{need}</span> across {periods ?? 3} periods, so none is drawn or claimed.
+        <span className="an-num font-semibold text-ink">{n}</span> {n === 1 ? what.replace(/(?<=[a-z])s(?=\b|$)/, "") : what} in this window. A direction needs at least <span className="an-num">{need}</span>
+        {(periods ?? 3) > 1 ? ` across ${periods ?? 3} periods` : ""}, so none is drawn or claimed.
       </p>
     </div>
   );

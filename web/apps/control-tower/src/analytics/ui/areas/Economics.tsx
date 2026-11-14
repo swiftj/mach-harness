@@ -8,7 +8,7 @@
  */
 import { contributorKey, groupedKey, MODELS, type MetricGroup } from "../../contract";
 import { rankGroups, valueBins } from "../../model/charts";
-import { count, dayText, durationCompact, durationText, pct, plural, tokens, usd } from "../../model/format";
+import { count, dayText, durationCompact, p50Text, pct, plural, tokens, usd } from "../../model/format";
 import { costSeries } from "../../model/pulse";
 import { grainFor } from "../../model/series";
 import { Columns, PartsBar, RankTable } from "../charts";
@@ -57,8 +57,12 @@ function EconomicsBody({ model, setModel }: { model: string | null; setModel(m: 
   const t = s.totals;
   if (density === "empty") return <NothingYet about="No execution was claimed in this window, so nothing was recorded as spent. Economics reads:" />;
   const k1 = t.K1;
-  const noCost = (k1?.coverage.of ?? 0) - (k1?.coverage.covered ?? 0);
-  const noUsage = (t.K2?.coverage.of ?? 0) - (t.K2?.coverage.covered ?? 0);
+  // One count each, used everywhere it is said: the members the observer excluded (cost: K1's; usage: K2's, over completed executions).
+  const excludedOf = (c: { of: number | null; covered: number | null; excluded?: readonly { count: number }[] } | undefined) =>
+    c?.excluded && c.excluded.length ? c.excluded.reduce((n, e) => n + e.count, 0) : Math.max(0, (c?.of ?? 0) - (c?.covered ?? 0));
+  const noCost = excludedOf(k1?.coverage);
+  const noUsage = excludedOf(t.K2?.coverage);
+  const usageOf = t.K2?.coverage.of ?? null;
   const k2 = s.grouped[groupedKey("K2", "model")];
   const k3m = s.grouped[groupedKey("K3", "model")];
   const k3k = s.grouped[groupedKey("K3", "token_kind")];
@@ -80,7 +84,7 @@ function EconomicsBody({ model, setModel }: { model: string | null; setModel(m: 
 
       {rowMissing(k1) ? null : noCost || noUsage ? (
         <div className="rounded-md border border-warning-line bg-warning-soft px-4 py-3 text-body-sm text-warning-ink" role="note">
-          <strong className="font-semibold">Recording is incomplete.</strong> {plural(noCost, "execution")} of {count(k1?.coverage.of ?? 0)} carry no recorded cost (a run without a result reports none), and {plural(noUsage, "execution")} carry no per-model usage. Hand-driven work has no execution and no cost. Every total here is what was recorded, not what was spent.{" "}
+          <strong className="font-semibold">Recording is incomplete.</strong> {plural(noCost, "execution")} of {count(k1?.coverage.of ?? 0)} carry no recorded cost (a run without a result reports none), and {plural(noUsage, "execution")}{usageOf !== null ? ` of ${count(usageOf)} ${t.K2?.coverage.unit ?? "completed executions"}` : ""} carry no per-model usage. Hand-driven work has no execution and no cost. Every total here is what was recorded, not what was spent.{" "}
           {rows ? (
             <button type="button" className="underline" onClick={() => rows({ key: "K1", title: "Executions by recorded cost, including those without one", unit: "usd" })}>
               List them
@@ -153,7 +157,7 @@ function EconomicsBody({ model, setModel }: { model: string | null; setModel(m: 
           ) : known.length < 5 ? (
             <TooFew what="executions with a recorded cost" n={known.length} need={5} periods={1} />
           ) : (
-            <CostDistribution values={known} missing={costs.length - known.length} />
+            <CostDistribution values={known} missing={noCost} />
           )}
           <div className="mt-6 flex flex-col gap-3">
             <NotRecorded title="Cost per agent or per station: not available" what={sentence(t.K5?.null_reason ?? "the stream gives no per-agent cost.")} why="Splitting an execution's cost by agent time or by tokens would be an estimate; it is never shown." compact />
@@ -284,9 +288,9 @@ function Agents() {
         chart="economics-agents"
         title="Agents by station"
         question="Time from agent.started to agent.finished, tool calls (a count; which tools and how long each took are not recorded), and one token total per agent (no kinds). Sort by any column; select a row for its agents."
-        summary={data.map((d) => `${d.g.key}: ${d.g.denominator} agents, median ${durationText(d.g.p50_ms)}, ${d.tools?.value?.toFixed(1) ?? "–"} tool calls each, ${tokens(d.tokens?.value)} tokens each`).join("; ")}
-        table={{ columns: [{ label: "Station" }, { label: "Agents", num: true }, { label: "Median time", num: true }, { label: "Mean", num: true }, { label: "Tool calls each", num: true }, { label: "Tokens each", num: true }], rows: data.map((d) => [d.g.key, count(d.g.denominator), durationText(d.g.p50_ms), durationCompact(d.g.value), d.tools?.value === null || d.tools?.value === undefined ? "–" : d.tools.value.toFixed(1), tokens(d.tokens?.value)]) }}
-        foot={<>{rowMissing(k9) ? "Queue time is not recorded per model." : (k9?.groups ?? []).length ? `Queue median: ${(k9?.groups ?? []).map((g) => `${g.key} ${durationText(g.p50_ms)}`).join(", ")}.` : `Queue time by phase is not listed${k9?.groups_reason ? `: ${k9.groups_reason}` : ""}.`} Clerks that relay “what next?” carry no station{s.totals.K8?.coverage.share !== null && s.totals.K8 ? `; ${pct(s.totals.K8.coverage.share)} of agents covered` : ""}. Tool-call counts are not tool-call spans.</>}
+        summary={data.map((d) => `${d.g.key}: ${d.g.denominator} agents, median ${p50Text(d.g)}, ${d.tools?.value?.toFixed(1) ?? "–"} tool calls each, ${tokens(d.tokens?.value)} tokens each`).join("; ")}
+        table={{ columns: [{ label: "Station" }, { label: "Agents", num: true }, { label: "Median time", num: true }, { label: "Mean", num: true }, { label: "Tool calls each", num: true }, { label: "Tokens each", num: true }], rows: data.map((d) => [d.g.key, count(d.g.denominator), p50Text(d.g), durationCompact(d.g.value), d.tools?.value === null || d.tools?.value === undefined ? "–" : d.tools.value.toFixed(1), tokens(d.tokens?.value)]) }}
+        foot={<>{rowMissing(k9) ? "Queue time is not recorded per model." : (k9?.groups ?? []).length ? `Queue median: ${(k9?.groups ?? []).map((g) => `${g.key} ${p50Text(g)}`).join(", ")}.` : `Queue time by phase is not listed${k9?.groups_reason ? `: ${k9.groups_reason}` : ""}.`} Clerks that relay “what next?” carry no station{s.totals.K8?.coverage.share !== null && s.totals.K8 ? `; ${pct(s.totals.K8.coverage.share)} of agents covered` : ""}. Tool-call counts are not tool-call spans.</>}
       >
         <RankTable<(typeof data)[number]>
           caption="Agents by station"
@@ -298,7 +302,7 @@ function Agents() {
           columns={[
             { key: "station", label: "Station", sort: (d) => d.g.key, cell: (d) => d.g.key, width: "14%" },
             { key: "n", label: "Agents", num: true, sort: (d) => d.g.denominator, cell: (d) => count(d.g.denominator) },
-            { key: "time", label: "Median time", sort: (d) => d.g.p50_ms ?? null, cell: (d) => durationText(d.g.p50_ms), bar: { value: (d) => d.g.p50_ms ?? null } },
+            { key: "time", label: "Median time", sort: (d) => d.g.p50_ms ?? null, cell: (d) => p50Text(d.g), bar: { value: (d) => d.g.p50_ms ?? null } },
             { key: "mean", label: "Mean", num: true, sort: (d) => d.g.value, cell: (d) => durationCompact(d.g.value) },
             { key: "tools", label: "Tool calls each", num: true, sort: (d) => d.tools?.value ?? null, cell: (d) => (d.tools?.value === null || d.tools?.value === undefined ? "–" : d.tools.value.toFixed(1)) },
             { key: "tokens", label: "Tokens each", num: true, sort: (d) => d.tokens?.value ?? null, cell: (d) => tokens(d.tokens?.value) },

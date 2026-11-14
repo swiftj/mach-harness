@@ -31,7 +31,9 @@ import (
 //
 // 3: smaller cells (min and max without pointers, basis counts as fields), so a saved projection
 // of version 2 is rebuilt.
-const DefinitionsVersion = 3
+//
+// 4: cells keep their measured values up to ValueCap, for exact percentiles.
+const DefinitionsVersion = 4
 
 // Buckets is the histogram size: bucket 0 is under one second; bucket i (1..63) holds durations
 // in [2^((i-1)/3), 2^(i/3)) seconds, so bucket 63 reaches about 30 days.
@@ -59,6 +61,9 @@ type Agg struct {
 	// Buckets: most cells' durations span a few buckets.
 	Hist   []int64 `json:"hist,omitempty"`
 	HistLo int     `json:"hlo,omitempty"`
+	// Vals are the measured durations themselves while Count <= ValueCap (then len(Vals) ==
+	// Count), so a small population's percentiles are exact; nil beyond it.
+	Vals []int64 `json:"vals,omitempty"`
 	// Durations not measured, counted apart (never averaged).
 	Bounded  int64 `json:"bounded,omitempty"`
 	Inferred int64 `json:"inferred,omitempty"`
@@ -68,6 +73,9 @@ type Agg struct {
 	BMax *float64 `json:"bmax,omitempty"`
 	// Ex are members of the population left out of the value, by reason.
 	Ex map[string]float64 `json:"ex,omitempty"`
+	// Cov counts the coverage population's counted members where it is not the denominator's
+	// (Def.CoverUnit).
+	Cov int64 `json:"cov,omitempty"`
 }
 
 // bases is the count field of a basis that is not measured (nil for any other).
@@ -84,6 +92,12 @@ func (a *Agg) bases(basis string) *int64 {
 }
 
 func (a *Agg) merge(b *Agg) {
+	// A merge (at read time) keeps every value while both sides hold all of theirs: no cap.
+	if a.complete() && b.complete() {
+		a.Vals = append(a.Vals, b.Vals...)
+	} else {
+		a.Vals = nil
+	}
 	if b.Count > 0 {
 		if a.Count == 0 || b.Min < a.Min {
 			a.Min = b.Min
@@ -101,6 +115,7 @@ func (a *Agg) merge(b *Agg) {
 			a.histAdd(b.HistLo+i, n)
 		}
 	}
+	a.Cov += b.Cov
 	a.Bounded += b.Bounded
 	a.Inferred += b.Inferred
 	a.Unknown += b.Unknown
@@ -298,6 +313,11 @@ func (t *Table) Count(id string, dims []Dim, day string, n float64) {
 	t.cell(id, dims, day).Num += n
 }
 
+// Covered counts n members of a metric's coverage population (Def.CoverUnit) as counted.
+func (t *Table) Covered(id string, dims []Dim, day string, n int64) {
+	t.cell(id, dims, day).Cov += n
+}
+
 // Exclude records n members of the population left out of the value, with the reason.
 func (t *Table) Exclude(id string, dims []Dim, day, reason string, n float64) {
 	t.cell(id, dims, day).exclude(reason, n)
@@ -317,6 +337,11 @@ func (a *Agg) exclude(reason string, n float64) {
 func (t *Table) Duration(id string, dims []Dim, day string, ms int64) {
 	v := float64(ms)
 	a := t.cell(id, dims, day)
+	if a.complete() && a.Count < ValueCap {
+		a.Vals = append(a.Vals, ms)
+	} else {
+		a.Vals = nil
+	}
 	if a.Count == 0 || v < a.Min {
 		a.Min = v
 	}
@@ -409,30 +434,6 @@ func lower(b int) float64 {
 		return 0
 	}
 	return upper(b - 1)
-}
-
-// quantile is the histogram bucket that holds the q-th member: its upper bound (clamped to the
-// observed minimum and maximum), and the bucket's bounds.
-func quantile(h []int64, count int64, q float64, lo, hi *float64) (*float64, [2]float64) {
-	if count == 0 || len(h) == 0 {
-		return nil, [2]float64{}
-	}
-	target := max(int64(math.Ceil(q*float64(count))), 1)
-	var seen int64
-	for i, n := range h {
-		seen += n
-		if seen >= target {
-			v := math.Round(upper(i))
-			if hi != nil && v > *hi {
-				v = *hi
-			}
-			if lo != nil && v < *lo {
-				v = *lo
-			}
-			return ptr(v), [2]float64{math.Round(lower(i)), math.Round(upper(i))}
-		}
-	}
-	return nil, [2]float64{}
 }
 
 // histAdd adds n to histogram bucket b, widening the kept range as needed.

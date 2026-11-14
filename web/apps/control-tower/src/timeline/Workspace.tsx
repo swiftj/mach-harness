@@ -398,6 +398,8 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   const hold: Hold = source !== "live" || dataFrom !== null ? null : connection === "connecting" || connection === "reconnecting" ? "wait" : "empty";
   const fetched = useWindowSpans(data, win, hold);
   const structure = useStructure(data);
+  /** The window's spans or the structure still arriving: rows may yet be added above a revealed one. */
+  const fetchedLoading = fetched.loading || !structure.settled;
   const windowSpans = fetched.page?.spans ?? NO_SPANS;
   // X4: the tree is built from the whole history's structural spans and the window's detailed ones,
   // so a track's identity and place do not depend on which window was loaded (a fresh `win=` deep link
@@ -669,9 +671,16 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
       store.setTimelineView({ expanded: [...current, ...missing] });
       return;
     }
-    // 2. Scrolled into view.
+    // 2. Scrolled into view. Not yet laid out or measured (the workspace just mounted, as when Analytics
+    //    opens an entity here): wait for the next layout rather than give the reveal up with the rows at the top.
     const row = layout.rowOf(trackId);
-    if (row && tracksH > 0 && (row.y < top || row.y + row.height > top + tracksH)) setScrollTop(Math.max(0, Math.min(maxScroll, row.y - tracksH / 3)));
+    if (!row || tracksH <= 0) return;
+    if (row.y < top || row.y + row.height > top + tracksH) {
+      const to = Math.max(0, Math.min(maxScroll, row.y - tracksH / 3));
+      setScrollTop(to);
+      // The scroll range may not have grown to the expanded rows yet: stay pending until the row fits.
+      if (row.y + row.height > to + tracksH) return;
+    }
     // 3. Its span in the window: panned to it keeping the zoom, or framed when it is wider than the
     //    window. Not after a lens's Frame: the window is the framed interval the person asked for.
     const ext = frameOnly.current === ref ? null : extentOfSpans(spansOfRef(tree, ref), store.getState().liveAt);
@@ -679,9 +688,11 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
       const next = panToInclude(win, ext);
       if (next !== win) store.setTimelineView({ window: clampWindow(next, whole) });
     }
+    // The window's spans still loading can add rows above this one and move it: stay pending until they are in.
+    if (fetchedLoading) return;
     pendingReveal.current = null;
     frameOnly.current = null;
-  }, [tree, layout, selection, focusNonce, revealTick, data, store, whole, win, top, tracksH, maxScroll]);
+  }, [tree, layout, selection, focusNonce, revealTick, data, store, whole, win, top, tracksH, maxScroll, fetchedLoading]);
 
   // ---- L1: following and a pinned window are never both claimed.
   // A pinned window the live edge has passed says so in the toolbar ("Window pinned · live edge is 3 min

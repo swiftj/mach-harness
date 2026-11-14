@@ -189,7 +189,7 @@ function fakeData(answer) {
     },
   };
 }
-const env = (cursor) => ({ source: "observer", cursor, projection: { format: 1, definitions: 2 }, generated_ms: 5 * D, window: { from_ms: null, to_ms: null, effective_from_ms: null, effective_to_ms: null, last_runs: null }, filters: {}, history: { complete: true, complete_window: true, from_ms: D, from_precision: null, partial: null, gaps: [] }, as_of: null, rules: [] });
+const env = (cursor) => ({ source: "observer", cursor, projection: { format: 1, definitions: 2 }, generated_ms: 5 * D, window: { from_ms: null, to_ms: null, effective_from_ms: null, effective_to_ms: null, last_runs: null }, filters: {}, history: { complete: true, complete_window: true, from_ms: D, from_precision: null, partial: null, gaps: [], sources: [] }, as_of: null, rules: [] });
 const input = (data, extra = {}) => ({ session: beginSnapshot(data), data, source: "live", plan: Q.planFor("flow", null), fromMs: null, toMs: null, filters: { risk: "High" }, model: null, contractFilters: { window: "all", risk: "high", app_type: null, model: null }, endMs: 6 * D, ...extra });
 
 test("one cursor per view: the totals pin it, every other query of the area reads at it, refused contributors are not asked", async () => {
@@ -369,4 +369,29 @@ test("an opportunity's drawer is named in the address by its id, so a link or Ba
   const f = { contributors: { metric: "R2", group: { rule: "x", risk: "High" }, order: "impact", limit: 100, path: "/api/v1/analytics/contributors?metric=R2&last_runs=20", relation: "exact", note: null }, window: { from_ms: null, to_ms: null, last_runs: null, comparison: null }, sample: null };
   assert.equal(I.insightRowsKey(f), "R2|rule=x|risk=High");
   assert.deepEqual(I.insightPopulation(f), { lastRuns: 20, fromMs: null, toMs: null });
+});
+
+// ------------------------------------------------------------------------------------ capture fixes
+
+const F = await import("../src/analytics/model/format.ts");
+
+test("a percentile read inside a histogram bucket is never printed as exact", () => {
+  assert.equal(F.p50Text({ p50_ms: 8_192_000, percentile_basis: "histogram" }), "about 2 h 17 min");
+  assert.equal(F.p50Text({ p50_ms: 8_192_000, percentile_basis: "exact" }), "2 h 17 min");
+  assert.equal(F.p90Text({ p50_ms: 1 }), "–");
+});
+
+test("under a playhead, finished tickets are cut at the metrics' midnight, so a count from the run list and from /metrics agree", async () => {
+  const mid = 10 * D;
+  const runs = [mid - 3_600_000, mid - 1, mid, mid + 3_600_000].map((t, i) => ({ ticket_id: `T${i}`, slice_id: null, record_version: 2, outcome: "merged", rounds: 1, first_pass: true, verify_failures: 0, review_rejections: 0, escalated: false, human_approval: false, deviations: 0, blockers: 0, tests_seen_failing_first: 0, tests_passing_on_first_run: 0, risk: null, app_type: null, merge_method: null, merge_commit: null, closed_at: { at_ms: t, precision: "ms" }, executions: [] }));
+  const { data } = fakeData((name) => {
+    const e = { ...env("c.2"), as_of: { ms: mid + 7_200_000, exact: false, effective_to_ms: mid, rule: "whole UTC days before the playhead" } };
+    if (name === "metrics") return { status: "ok", value: { ...e, metrics: [], definitions_version: 2, group_overflow: 0, suspect_days: [] } };
+    if (name === "runs") return { status: "ok", value: { ...e, of: "runs", items: runs, total: runs.length, offset: 0, more: false, excluded: [], after_as_of: 0 } };
+    return { status: "unsupported", reason: "-" };
+  });
+  const r = await L.loadArea(input(data, { session: beginSnapshot(data, { asOfMs: mid + 7_200_000 }), plan: Q.planFor("quality", null) }));
+  assert.equal(r.dayCut, mid);
+  assert.deepEqual(r.data.value.runs.map((x) => x.ticket_id), ["T0", "T1"], "closed before the midnight only");
+  assert.match(Q.asOfWords({ area: "replay", asOfMs: mid + 7_200_000, window: "all", metricsExact: false, widened: false, cut: false, dayCut: mid }, (t) => new Date(t).toISOString()), /^Through .*T00:00:00.000Z, the last whole UTC day before the playhead/);
 });

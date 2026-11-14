@@ -7,7 +7,7 @@
 import { useMemo } from "react";
 import { contributorKey, groupedKey, type Station } from "../../contract";
 import { bottleneckRanking, groupOf, histogramBins, transitionKind, type StationLoad } from "../../model/charts";
-import { count, durationCompact, durationText, pct, plural } from "../../model/format";
+import { count, durationCompact, durationText, p50Text, p90Text, pct, plural } from "../../model/format";
 import { durationShows } from "../../model/sample";
 import { DurationHistogram, LogNote, RangeRows, RankTable, StepPanels } from "../charts";
 import { FlowDiagram, STATION_WORDS, type FlowStationFacts } from "../charts/Flow";
@@ -118,8 +118,8 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
         <ChartFrame
           chart="flow-waits"
           title="Waits by kind"
-          summary={(["W1", "W2", "W2b", "W3"] as const).map((id) => `${t[id]?.name}: ${t[id]?.denominator_value ?? 0} measured, median ${durationText(t[id]?.p50_ms)}`).join("; ")}
-          table={{ columns: [{ label: "Wait" }, { label: "Measured", num: true }, { label: "Median", num: true }, { label: "Mean", num: true }, { label: "90th", num: true }, { label: "Longest", num: true }, { label: "Total", num: true }], rows: (["W1", "W2", "W2b", "W3"] as const).map((id) => [t[id]?.name ?? id, count(t[id]?.denominator_value ?? 0), durationText(t[id]?.p50_ms), durationText(t[id]?.value), durationShows(t[id]?.denominator_value).p90 ? durationText(t[id]?.p90_ms) : "–", durationText(t[id]?.max_ms), durationText(t[id]?.numerator_value)]) }}
+          summary={(["W1", "W2", "W2b", "W3"] as const).map((id) => `${t[id]?.name}: ${t[id]?.denominator_value ?? 0} measured, median ${p50Text(t[id])}`).join("; ")}
+          table={{ columns: [{ label: "Wait" }, { label: "Measured", num: true }, { label: "Median", num: true }, { label: "Mean", num: true }, { label: "90th", num: true }, { label: "Longest", num: true }, { label: "Total", num: true }], rows: (["W1", "W2", "W2b", "W3"] as const).map((id) => [t[id]?.name ?? id, count(t[id]?.denominator_value ?? 0), p50Text(t[id]), durationText(t[id]?.value), durationShows(t[id]?.denominator_value).p90 ? p90Text(t[id]) : "–", durationText(t[id]?.max_ms), durationText(t[id]?.numerator_value)]) }}
           foot={<>Not additive: a hold for execution capacity is part of the queue wait (the intake log cannot separate a cell-capacity wait from an engineer's), and the approval wait is counted per round. Capacity holds are reconstructed from the scheduler's decisions, in supervised mode only. <LogNote /></>}
         >
           <RangeRows
@@ -182,9 +182,9 @@ function StationDetail({ station }: { station: Station }) {
         {(
           [
             ["Measured visits", count(g.denominator)],
-            [shows.single ? "The one visit" : "Median", shows.single ? durationText(g.value) : durationText(g.p50_ms)],
+            [shows.single ? "The one visit" : "Median", shows.single ? durationText(g.value) : p50Text(g)],
             ["Mean", shows.mean ? durationText(g.value) : "–"],
-            ["90th percentile", shows.p90 ? durationText(g.p90_ms) : "too few"],
+            ["90th percentile", shows.p90 ? p90Text(g) : "too few"],
             ["Longest", durationText(g.max_ms)],
             ["Revise entries", count(revise)],
             ["Visits after the first", count(later)],
@@ -202,7 +202,7 @@ function StationDetail({ station }: { station: Station }) {
         chart="flow-visit-durations"
         title="Visit durations"
         question="Every measured visit, in buckets of a doubling of time."
-        summary={`${g.denominator} measured visits to ${station}; median ${durationText(g.p50_ms)}${shows.p90 ? `, 90th percentile ${durationText(g.p90_ms)}` : ""}, longest ${durationText(g.max_ms)}.`}
+        summary={`${g.denominator} measured visits to ${station}; median ${p50Text(g)}${shows.p90 ? `, 90th percentile ${p90Text(g)}` : ""}, longest ${durationText(g.max_ms)}.`}
         table={{ columns: [{ label: "From" }, { label: "To" }, { label: "Visits", num: true }], rows: bins.map((b) => [durationText(b.fromMs), durationText(b.toMs), count(b.count)]) }}
         foot={<>Percentiles are read from the observer's buckets, as the upper edge of the bucket they fall in. <LogNote /></>}
       >
@@ -221,7 +221,7 @@ function StationDetail({ station }: { station: Station }) {
       </div>
       {agents ? (
         <p className="text-body-sm text-ink-muted">
-          Agents labelled for {station}: <span className="an-num font-semibold text-ink">{count(agents.denominator)}</span>, median <span className="an-num font-semibold text-ink">{durationText(agents.p50_ms)}</span>
+          Agents labelled for {station}: <span className="an-num font-semibold text-ink">{count(agents.denominator)}</span>, median <span className="an-num font-semibold text-ink">{p50Text(agents)}</span>
           {tools?.value !== null && tools?.value !== undefined ? (
             <>
               , <span className="an-num font-semibold text-ink">{tools.value.toFixed(1)}</span> tool calls each on average (a count only)
@@ -248,7 +248,7 @@ function HumanDetail() {
         <DurationHistogram buckets={w3?.distribution?.histogram} p50={shows.median ? w3?.p50_ms : undefined} p90={shows.p90 ? w3?.p90_ms : undefined} name="waits" tone="var(--an-human)" />
       </ChartFrame>
       <p className="text-caption text-ink-subtle">
-        By risk: {(byRisk?.groups ?? []).map((g) => `${g.key} ${plural(g.denominator ?? 0, "wait")}, median ${durationText(g.p50_ms)}`).join("; ") || "none"}
+        By risk: {(byRisk?.groups ?? []).map((g) => `${g.key} ${plural(g.denominator ?? 0, "wait")}, median ${p50Text(g)}`).join("; ") || "none"}
       </p>
     </div>
   );

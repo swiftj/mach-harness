@@ -62,20 +62,23 @@ export function FlowDiagram({ transitions, facts, loads, selected, onSelect, hum
                 tipAt={{ x: e.lx, y: e.ly - 10 }}
                 card={{ title: words, rows: [["moves", String(e.count)]], foot: "Recorded moves between two stations, not one ticket's path." }}
                 onTip={setTip}
-                overlay={
-                  labels.get(`${e.from}>${e.to}`) ? (
-                    <g>
-                      {/* A count sits on a small patch of the ground, clear of the stroke it names. */}
-                      <rect x={labels.get(`${e.from}>${e.to}`)!.x} y={labels.get(`${e.from}>${e.to}`)!.y} width={labels.get(`${e.from}>${e.to}`)!.w} height={LABEL_H} rx={3} style={{ fill: "var(--mach-canvas)" }} />
-                      <text x={e.lx} y={labels.get(`${e.from}>${e.to}`)!.y + LABEL_H - 4} textAnchor="middle" style={{ ...MONO, fontSize: 11, fill: revise ? "var(--an-fail)" : "var(--an-muted)" }}>
-                        {e.count}
-                      </text>
-                    </g>
-                  ) : null
-                }
               >
                 <path d={e.d} style={{ fill: "none", stroke: tone, strokeWidth: e.weight, strokeDasharray: exit ? "4 3" : undefined, strokeLinecap: "round" }} markerEnd={`url(#${revise ? "an-arrow-revise" : "an-arrow"})`} />
               </Mark>
+            </g>
+          );
+        })}
+        {/* Every count after every stroke, so no later arc is drawn across an earlier count; each on its patch of ground. */}
+        {layout.edges.map((e) => {
+          const l = labels.get(`${e.from}>${e.to}`);
+          if (!l) return null;
+          const faded = selected !== null && e.from !== selected && e.to !== selected;
+          return (
+            <g key={`l-${e.from}>${e.to}`} style={{ opacity: faded ? 0.28 : 1, pointerEvents: "none" }} aria-hidden="true">
+              <rect x={l.x} y={l.y} width={l.w} height={LABEL_H} rx={3} style={{ fill: "var(--mach-canvas)" }} />
+              <text x={l.x + l.w / 2} y={l.y + LABEL_H - 4} textAnchor="middle" style={{ ...MONO, fontSize: 11, fill: e.kind === "revise" ? "var(--an-fail)" : "var(--an-muted)" }}>
+                {e.count}
+              </text>
             </g>
           );
         })}
@@ -185,7 +188,9 @@ function placeCounts(layout: FlowLayout): Map<string, { x: number; y: number; w:
       out.set(`${e.from}>${e.to}`, { x: box.x, y: box.y, w });
       continue;
     }
-    const box = { x: e.lx - w / 2, y: e.ly - LABEL_H + 3, w, h: LABEL_H };
+    // On its label point; where that would be cut at the top of the drawing (an arc's apex), just under the stroke instead.
+    const above = { x: e.lx - w / 2, y: e.ly - LABEL_H + 3, w, h: LABEL_H };
+    const box = above.y >= 0 ? above : { ...above, y: e.ly + Math.max(2, e.weight / 2 + 1) };
     if (meets(box)) continue;
     placed.push(box);
     out.set(`${e.from}>${e.to}`, { x: box.x, y: box.y, w });

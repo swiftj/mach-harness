@@ -186,6 +186,36 @@ N by `closed_at`, ties in record order, unreadable times the oldest); every othe
 records with an unusable ticket ID are refused and counted in coverage, so where observe keeps such a record the
 populations differ by it. The sort is to the millisecond, where Python sorts to the microsecond.
 
+**Percentiles.** Every route reads percentiles through one function (`metrics.Percentile`), so the metrics route,
+`flow` and the insights cannot disagree for the same population. A cell keeps its measured durations up to 512; while
+every cell read holds all of its values the percentile is exact (nearest rank: the value at ceil(q × n);
+`percentile_basis: "exact"`). Beyond that it is read from the log histogram, interpolated inside the bucket that holds
+the rank and clamped to the observed minimum and maximum, with `percentile_basis: "histogram"` and the bucket's
+bounds (`p50_bounds_ms`, `p90_bounds_ms`; `distribution.percentile_bounds`), so a screen says "between X and Y".
+
+**R2 and run-record blockers.** R2 counts blocker findings read from review vote files. Blockers a ticket's run record
+counts beyond the findings read for it are in R2's coverage as excluded ("blockers counted in the run record with no
+review finding in the lifecycle"), never added; with no finding at all the value is null with its reason. The same
+holds for any count metric whose members are known only from exclusions (T1 too).
+
+**Usage coverage (K2, K3).** The coverage counts completed executions (`coverage.unit`): counted are those with a usage
+record from the stream, excluded those without. K2's per-pair exclusion (a model's usage with no cost) is reported
+beside it in `coverage.other`, in its own unit, and is not part of eligible = counted + excluded.
+
+**A playhead (`as_of_ms`).** Metric cells are per UTC day and cannot be cut inside a day, so with `as_of_ms` every figure
+of the reply ends at the midnight at or before it and says so on the figure: `as_of {ms, exact: false,
+effective_to_ms, rule}`. `last_runs` with `as_of_ms` is cut at the same midnight. Open members are kept by start day and
+cannot be cut there: `basis_counts.open` is null under `as_of_ms`. A route that answers exactly at the playhead says
+`exact: true` in its envelope; a view must not put the two side by side unlabelled.
+
+**S2 on generated histories.** S2 counts executions whose state is unknown (D5): an execution whose process recorded how
+it stopped is interrupted whatever recovery follows; the supervisor records outcome-unknown only when there is no
+process result. The synthetic generator's "outcome unknown" executions also write a process result (`ended:
+interrupted`), so S2 is 0 there, correctly; the generator is to stop writing that result.
+
+**Whole recorded history.** With no `from_ms`/`to_ms` every day up to the last event is included; a client that wants
+the complete history sends no window (a `to_ms` is exclusive and widened to whole days).
+
 **Limitation: repeated lifecycle lines.** Lifecycle events are identified by line, so a repeated line counts again.
 Visit exits, agent finishes and execution ends are counted once per member. A repeated `gate.evaluated` or
 `build.task_completed` line still counts twice: there is no cheap content identity to deduplicate it.

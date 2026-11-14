@@ -479,7 +479,10 @@ func (g *gen) writeExecution(s *streamGen) error {
 	if x.workflow {
 		g.spans["workflow"]++
 	}
-	if !math.IsInf(x.end, 1) && g.in(x.end) {
+	// An execution whose outcome is unknown recorded no process result (realistic profile; the other
+	// profiles keep their bytes and write one, so the observer reads them as interrupted).
+	noResult := w.real() && x.seg.end == "unknown"
+	if !math.IsInf(x.end, 1) && g.in(x.end) && !noResult {
 		var code any = 0
 		if x.ended != "exited" {
 			code = nil

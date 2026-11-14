@@ -17,7 +17,12 @@ import type { EntityRef } from "../../sim/model";
 import type { AnalyticsHistory, ConcurrencyReply, FlowReply, FreshnessReply, ContributorsReply, Coverage, Figure, FlowTransition, HistorySource, MetricGroup, MetricRow, RunItem } from "./types";
 
 function coverage(c: Coverage): ContractCoverage {
-  return { covered: c.counted, of: c.eligible, share: c.share, ...(c.reason ? { reason: c.reason } : {}), eligible: c.eligible, counted: c.counted, excluded: c.excluded.map((e) => ({ reason: e.reason, count: e.count ?? 0 })) };
+  const ex = (e: Coverage["excluded"][number]) => ({ reason: e.reason, count: e.count ?? 0 });
+  return {
+    covered: c.counted, of: c.eligible, share: c.share, ...(c.reason ? { reason: c.reason } : {}), eligible: c.eligible, counted: c.counted, excluded: c.excluded.map(ex),
+    ...(c.unit ? { unit: c.unit } : {}),
+    ...(c.other.length ? { other: c.other.map((e) => ({ ...ex(e), unit: e.unit ?? "" })) } : {}),
+  };
 }
 
 function figure(f: Figure) {
@@ -37,9 +42,12 @@ function figure(f: Figure) {
       : null,
     coverage: coverage(f.coverage),
     ...(f.met !== null ? { met: f.met } : {}),
-    ...(f.distribution && f.distribution.percentile_basis === "histogram"
-      ? { distribution: { p10: f.distribution.p10, p25: f.distribution.p25, p50: f.distribution.p50, p75: f.distribution.p75, p90: f.distribution.p90, min: f.distribution.min, max: f.distribution.max, histogram: f.distribution.histogram, percentile_basis: "histogram" as const, over: f.distribution.over ?? "" } }
+    ...(f.distribution && f.distribution.percentile_basis !== "unknown"
+      ? { distribution: { p10: f.distribution.p10, p25: f.distribution.p25, p50: f.distribution.p50, p75: f.distribution.p75, p90: f.distribution.p90, min: f.distribution.min, max: f.distribution.max, histogram: f.distribution.histogram, percentile_basis: f.distribution.percentile_basis, over: f.distribution.over ?? "" } }
       : {}),
+    ...(f.percentile_basis ? { percentile_basis: f.percentile_basis } : {}),
+    ...(f.p50_bounds_ms ? { p50_bounds_ms: f.p50_bounds_ms } : {}),
+    ...(f.p90_bounds_ms ? { p90_bounds_ms: f.p90_bounds_ms } : {}),
   };
 }
 
@@ -53,7 +61,7 @@ function group(g: MetricGroup): ContractGroup | null {
 /**
  * A typed row as the contract's `MetricRow`. Notes: basis counts the reply did not give become 0 in
  * the contract (it has no null there; `basis_counts` itself stays null when absent); a distribution
- * whose percentiles are not from the histogram is left out (the contract only has that basis).
+ * with a percentile basis this client does not know is left out.
  */
 export function toContractRow(r: MetricRow): ContractRow | null {
   // A kind the contract does not know cannot be drawn by it: left out rather than guessed.
@@ -92,6 +100,7 @@ export function toContractRow(r: MetricRow): ContractRow | null {
     ...(dropped ? { groups_reason: `${dropped} group${dropped === 1 ? "" : "s"} named in free text not checked for names are listed apart` } : r.groups_reason ? { groups_reason: r.groups_reason } : {}),
     ...(r.buckets ? { buckets: r.buckets.map((b) => ({ ...figure(b), period: b.period, from_ms: b.from_ms, to_ms: b.to_ms, suspect: b.suspect })) } : {}),
     suspect: r.suspect,
+    as_of: r.as_of ? { effective_to_ms: r.as_of.effective_to_ms, exact: r.as_of.exact } : null,
   };
 }
 

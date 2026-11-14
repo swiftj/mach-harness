@@ -79,12 +79,17 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	if f := p.Filters(); len(f) > 0 {
 		mq.Filters = f
 	}
+	if p.AsOfMS != nil {
+		mq.AsOf = &metrics.AsOf{MS: *p.AsOfMS, EffectiveToMS: floorDay(*p.AsOfMS),
+			Rule: "metrics are kept per UTC day: every figure here ends at the midnight at or before as_of_ms (effective_to_ms); open members cannot be cut there and are not counted"}
+	}
 	s.analyticsAt(w, p, func(st *project.State) (int, Envelope) {
 		q := mq
 		if p.LastRuns > 0 {
 			runs := st
 			if p.AsOfMS != nil {
-				runs = project.CutAt(st, *p.AsOfMS) // only runs closed at or before as_of
+				// The same cut as every day-celled figure of the reply: runs closed before the as_of day.
+				runs = project.CutAt(st, floorDay(*p.AsOfMS)-1)
 			}
 			q.Runs, q.RunsSelected = project.LastRunsTable(runs, p.LastRuns)
 			q.LastRuns = p.LastRuns

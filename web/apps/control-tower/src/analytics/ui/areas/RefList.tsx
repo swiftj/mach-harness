@@ -60,6 +60,7 @@ export function RefList({ items, unit, showWhen = false, onOpen }: { items: read
               href={refHref(c.ref)}
               translate="no"
               data-ref={c.ref}
+              title={c.ref}
               onClick={(e) => {
                 if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
                 e.preventDefault();
@@ -74,7 +75,7 @@ export function RefList({ items, unit, showWhen = false, onOpen }: { items: read
                 {l.primary}
               </span>
             )}
-            <span className="min-w-0 flex-1 truncate text-caption text-ink-subtle">{[l.secondary, showWhen && c.at_ms !== null ? clockText(c.at_ms) : null, c.risk ? `${c.risk} risk` : null, openable ? null : "not in the simulated run"].filter(Boolean).join(", ")}</span>
+            <span className="min-w-0 flex-1 text-caption text-ink-subtle">{[l.secondary, showWhen && c.at_ms !== null ? clockText(c.at_ms) : null, c.risk ? `${c.risk} risk` : null, openable ? null : "not in the simulated run"].filter(Boolean).join(", ")}</span>
             <span className={`an-num shrink-0 text-[12.5px] ${c.value === null ? "text-ink-subtle" : "font-semibold text-ink"}`}>{unit === "count" && c.value !== null ? "" : contributedText(c, unit)}</span>
             {openable ? (
               <button type="button" className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-ink-subtle hover:bg-surface-sunken hover:text-ink" onClick={() => onOpen(c.ref, "floor")} aria-label={`Show ${l.primary} on the floor`} title="Show on the floor">
