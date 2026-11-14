@@ -234,7 +234,7 @@ tests, 30 pass, 0 fail, 1 skip.
 |---|---|---|---|---|
 | `analytics-proof.e2e.mjs` | proof | 10 | 0 | 0 |
 | `analytics-shell.e2e.mjs` | proof (Shell, Simulation) | 6 | 0 | 1 |
-| `analytics-live.e2e.mjs` | live | 14 | 0 | 0 |
+| `analytics-live.e2e.mjs` | live | 15 | 0 | 0 |
 
 - Skip (Shell): in the Simulation, rows from the simulated Analytics data are not entities of the
   simulated run and are shown without links (by design); live mode asserts the drill-down to the

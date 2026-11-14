@@ -209,7 +209,7 @@ On the final commit, run by the lead on a quiet machine unless stated:
 | Web lint, typecheck, build | pass |
 | Control Tower unit tests | 602 pass |
 | Observe parity, Tower guard | 15 pass, 1 skipped |
-| Analytics browser suite (run by an agent, before the last fix round) | 29 pass, 2 skipped, 0 failed, of 31; one skip was a test that did not recognise a reworded caption and passes after its update, the other is deliberate |
+| Analytics browser suite (run by an agent on the final commit) | 31 pass, 1 deliberate skip, 0 failed, of 32; the fresh-page Timeline landing test passes 10 of 10 |
 
 The scenario suite covers the twenty cases of the brief, six comparison cases and an invariance test (arrival
 order, duplicate delivery, a restart mid-ingest). It found seven engine defects, all fixed.
