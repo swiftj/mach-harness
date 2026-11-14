@@ -30,7 +30,7 @@ import {
 } from "@mach/ui";
 import { chamberGate } from "./consensus";
 import { FloorLettering } from "@mach/ui";
-import { PANELS, capacityWaitOf, capacityWaits, eventsInWindow, type CapacityWaitState, isKnown, ref, type Risk, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
+import { PANELS, capacityWaitOf, capacityWaits, eventsInWindow, sliceHoldOf, type CapacityWaitState, type SliceHold, isKnown, ref, type Risk, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
 import { AFTERGLOW, RATE, agentsElapsedKey, animating, anim, chamberOccupant, gateView, gateWord, latestGate, panelsSitting, placeAgents, q, ticketOfRef, type PlacedAgent } from "./derive";
@@ -153,7 +153,7 @@ export function IntakeWorks() {
         <AgentMarker agentRole="scheduler" tier="haiku" state={schedulerBusy ? "active" : "idle"} at={I.scheduler} lod={lod} showLabel={false} />
       </Hit>
       {L.bays.map((b) => (
-        <HoldingPad key={b.sliceId} bay={b} slice={scene.slices[b.sliceId]} cell={scene.cells[b.ticketId]} wait={scene.cells[b.ticketId] ? null : capacityWaitOf(scene, scene.slices[b.sliceId]?.ticketId ?? b.ticketId)} t={t} reduced={reduced} lod={lod} dense={L.bays.length > 6} dimmed={isDimmed(highlight, ref.slice(b.sliceId), ref.cell(b.ticketId))} />
+        <HoldingPad key={b.sliceId} bay={b} slice={scene.slices[b.sliceId]} cell={scene.cells[b.ticketId]} wait={scene.cells[b.ticketId] ? null : capacityWaitOf(scene, scene.slices[b.sliceId]?.ticketId ?? b.ticketId)} hold={sliceHoldOf(scene, scene.slices[b.sliceId])} t={t} reduced={reduced} lod={lod} dense={L.bays.length > 6} dimmed={isDimmed(highlight, ref.slice(b.sliceId), ref.cell(b.ticketId))} />
       ))}
       {/* Audit: the readiness gauge and the gate across intake's exit. */}
       <Hit entity={ref.station("audit")} label={`Audit: ${auditGate ? `${gateWord(auditGate)}, ${auditGate.detail}` : "not run yet"}`}>
@@ -186,17 +186,19 @@ function gateMark(gate: GateState | null): FactoryState {
   }
 }
 
-function HoldingPad({ bay, slice, cell, wait, t, reduced, lod, dense, dimmed }: { bay: BaySlot; slice: SliceState | undefined; cell: CellState | undefined; wait: CapacityWaitState | null; t: number; reduced: boolean; lod: Lod; dense: boolean; dimmed: boolean }) {
+function HoldingPad({ bay, slice, cell, wait, hold, t, reduced, lod, dense, dimmed }: { bay: BaySlot; slice: SliceState | undefined; cell: CellState | undefined; wait: CapacityWaitState | null; hold: SliceHold | null; t: number; reduced: boolean; lod: Lod; dense: boolean; dimmed: boolean }) {
   const p = bay.pad;
   const state = slice?.scheduler;
   // A recorded wait for an execution place (capacity.wait_changed) before the cell opens: the waiting mark, its own words.
-  const waiting = state === "waiting-on-dependency" || Boolean(wait);
+  // A supervisor's hold (M6.6 D2) is also a recorded wait, but of no recorded kind: the waiting mark, "HELD"; its words are in the inspector.
+  const held = !wait && Boolean(hold);
+  const waiting = state === "waiting-on-dependency" || Boolean(wait) || held;
   const gone = !wait && (state === "dispatched" || state === "integrated");
   const mark: FactoryState = !slice ? "idle" : waiting ? "waiting" : gone ? "succeeded" : "idle";
-  const word = !slice ? "" : wait ? `WAITS · EXECUTION PLACE${wait.limit !== null ? ` · MAX ${wait.limit}` : ""}` : waiting ? `WAITS · ${slice.dependsOn.map((d) => d.replace("SLICE-", "")).join(", ")}` : gone ? `→ ${cell?.ticketId ?? slice.ticketId}` : "ELIGIBLE";
+  const word = !slice ? "" : wait ? `WAITS · EXECUTION PLACE${wait.limit !== null ? ` · MAX ${wait.limit}` : ""}` : held ? "HELD · SUPERVISOR" : waiting ? `WAITS · ${slice.dependsOn.map((d) => d.replace("SLICE-", "")).join(", ")}` : gone ? `→ ${cell?.ticketId ?? slice.ticketId}` : "ELIGIBLE";
   const mat = slice ? slice.history[0] : undefined;
   const cardP = mat ? q(anim("artifactMaterialise", t - mat.at - 900 * RATE, reduced)) : 0;
-  const label = slice ? `Slice ${slice.id}, ${isKnown(slice.meta, "title") ? slice.title : "title not recorded"}: ${state}${wait ? `, waits for an execution place${wait.limit !== null ? ` (at most ${wait.limit} at once)` : ""}` : ""}${slice.reasons.length ? `. ${slice.reasons.join(" ")}` : ""}` : `Holding pad ${bay.index + 1}: empty`;
+  const label = slice ? `Slice ${slice.id}: ${state}${wait ? `, waits for an execution place${wait.limit !== null ? ` (at most ${wait.limit} at once)` : ""}` : ""}${held ? ", held by the line supervisor; its recorded reason is shown in the inspector" : ""}${slice.reasons.length ? `. ${slice.reasons.length} reason${slice.reasons.length === 1 ? "" : "s"} recorded, shown in the inspector` : ""}` : `Holding pad ${bay.index + 1}: empty`;
   const pin = project({ x: p.x + 16, y: p.y - 16, z: PLATE_Z + 2 });
   // A pad whose slice has left for the floor is only its outline at far zoom, and at mid zoom on a
   // dense plant (more than six bays; the element budgets): its slice is drawn in its bay.
@@ -390,7 +392,7 @@ function Findings({ occ, roundIndex, L, t, reduced, lod }: { occ: CellState; rou
         const appear = anim("artifactMaterialise", t - f.at, reduced);
         const foot = project(at);
         return (
-          <Hit key={f.id} entity={ref.finding(f.id)} label={`${blocker ? "Blocking finding" : "Note"}${f.rule ? ` citing ${f.rule}` : ""}, from the ${f.seat} seat: ${f.title}${f.outvoted ? ". Outvoted, reported" : ""}`}>
+          <Hit key={f.id} entity={ref.finding(f.id)} label={`${blocker ? "Blocking finding" : "Note"}${f.rule ? ` citing ${f.rule}` : ""}, from the ${f.seat} seat${f.outvoted ? ". Outvoted, reported" : ""}`}>
             <g style={{ opacity: Math.min(1, appear * 1.6) }}>
               <FindingsFlag at={at} severity={f.severity} rule={f.rule ?? undefined} lod={lod} />
               {/* An outvoted blocker keeps its flag, struck through: reported, not hidden. */}

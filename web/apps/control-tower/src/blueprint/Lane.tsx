@@ -25,6 +25,7 @@ import { clock } from "./time";
 import { laneNotices, type LaneNotice, type TreeNode } from "./tree";
 import { BandContext, Chevron, Item, SelectBar, ToggleTarget, useSelected, useTreeCtx } from "./treeitem";
 import { Gutter } from "./gutter";
+import { containedWords } from "../text/fields";
 import { LaneDimContext, LodContext } from "./context";
 import { artifactFile, gateState, grammarArtifact, stageState, stageWords, visitMark } from "./vocab";
 
@@ -121,7 +122,7 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   const dispatched = history.find((hh) => hh.state === "dispatched");
   const waited = history.find((hh) => hh.state === "waiting-on-dependency");
   const schedLine = [waited ? `waited from ${clock(waited.at)}` : null, eligible ? `eligible ${clock(eligible.at)}` : null, dispatched ? `dispatched ${clock(dispatched.at)}` : null].filter(Boolean).join(" · ");
-  const lines = wrap(slice.title, TITLE_CHARS).slice(0, 2);
+  const lines = wrap(containedWords("sliceTitle", slice.title), TITLE_CHARS).slice(0, 2);
   const idY = 22 + lines.length * 17;
   const stageY = idY + 14;
   const schedY = stageY + 13;
@@ -139,7 +140,7 @@ export const LaneView = memo(function LaneView({ lane, pos, size, rows, layout, 
   const headH = (lane.rows[0]?.y ?? lane.y + h) - lane.y;
   const overSize = Math.max(30, Math.min(44, headH / 6));
   // Characters per line at Source Sans 3 bold: about 0.5 em each (measured 0.48 on the fixture's titles).
-  const overLines = wrap(slice.title, Math.floor((SHEET.gutter - 66) / (overSize * 0.5))).slice(0, headH > 200 ? 4 : 3);
+  const overLines = wrap(containedWords("sliceTitle", slice.title), Math.floor((SHEET.gutter - 66) / (overSize * 0.5))).slice(0, headH > 200 ? 4 : 3);
   const story = storyOf(lane, activity, activityText);
   const group = (
     <LaneDimContext.Provider value={dimmed}>
@@ -338,7 +339,7 @@ const WaitingStrip = memo(function WaitingStrip({ template, ax, y, reason }: { t
         <StateMark state="waiting" r={big ? 16 : 6} />
       </g>
       <text x={x0 + 14} y={y - 8} className="bp-fine" style={{ fill: fc("wait"), fontSize: 9.5 }}>
-        {clip(reason, 90)}
+        {containedWords("waitReason", reason, 90)}
       </text>
     </g>
   );

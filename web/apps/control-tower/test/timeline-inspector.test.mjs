@@ -309,7 +309,7 @@ test("evidence references carry the catalog id, the producing event and the veri
   }
   const src = (await import("node:fs")).readFileSync(new URL("../src/timeline/inspector/InTimeSection.tsx", import.meta.url), "utf8");
   assert.match(src, /data-evidence-artifact=\{r\.artifactId\}/);
-  assert.match(src, /M6\.4 will make these references open the Evidence Theater/);
+  assert.match(src, /for the Evidence Theater \(M6\.4\) to open later/);
 });
 
 // ---------------------------------------------------------------- round 4: X2 (open is not at work), X3 (the picked span)

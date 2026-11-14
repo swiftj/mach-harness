@@ -315,7 +315,7 @@ describe("Timeline over a synthetic history (real observer)", () => {
     assert.equal(badI.length, 0, `inferred spans worded as measured: ${badI.slice(0, 3).map((r) => `${r.key}: ${cols(r).duration}`).join("; ")}`);
   });
 
-  test("(15) scrubbed back: no future outcome in the inspector, and the tracks say they are as of the live edge", async () => {
+  test("(15) scrubbed back: no future outcome in the inspector or the table, and the tracks say they are held at the playhead (M6.6 I-04)", async () => {
     const rows = await productRows();
     const cell = spanRows(rows, "cell").find((r) => /merged/i.test(cols(r).outcome));
     const t = ticketOf(cell);
@@ -327,14 +327,16 @@ describe("Timeline over a synthetic history (real observer)", () => {
     const text = await inspectorText(page);
     assert.ok(text.includes(t), `the inspector does not show ${t}`);
     assert.doesNotMatch(text, /\bmerged\b/i, `scrubbed to before ${t} merged, the inspector already says merged`);
-    const caption = await page.evaluate((ws) => document.querySelector(`${ws} [data-timeline-table]`)?.innerText.slice(0, 400) ?? "", WS);
-    check(/as of the live edge/i.test(caption), "T6", `the table does not say it is as of the live edge while the playhead is back:\n${caption.slice(0, 200)}`);
-    const tracks = await page.evaluate((ws) => document.querySelector(ws)?.innerText ?? "", WS);
-    check(/after the playhead/i.test(tracks), "T6", "nothing labels the region after the playhead");
+    const table = await page.evaluate((ws) => document.querySelector(`${ws} [data-timeline-table]`)?.innerText ?? "", WS);
+    check(/as of the playhead/i.test(table.slice(0, 400)), "I-04", `the table does not say it is as of the playhead while the playhead is back:\n${table.slice(0, 200)}`);
+    const row = table.split("\n").find((l) => l.includes(t) && /cell/i.test(l)) ?? "";
+    check(!/\bmerged\b/i.test(row), "I-04", `scrubbed to before ${t} merged, the table already says merged: ${row}`);
+    const reveal = await page.evaluate((ws) => document.querySelector(`${ws} [data-timeline-reveal-after]`)?.getAttribute("data-timeline-reveal-after") ?? null, WS);
+    check(reveal === "off", "I-04", `the reveal control is ${reveal}: it must be offered, and off by default`);
     await context.close();
   });
 
-  test("(M6.3 fix 2) back at the live edge (L), 'After the playhead' is gone from the tracks", async () => {
+  test("(M6.3 fix 2, M6.6 I-04) the stretch after the playhead is drawn and tinted only on request, and gone back at the live edge (L)", async () => {
     const rows = await productRows();
     const cell = spanRows(rows, "cell").find((r) => /merged/i.test(cols(r).outcome));
     const at = summary.start_ms + clockMs(cols(cell).started);
@@ -346,14 +348,19 @@ describe("Timeline over a synthetic history (real observer)", () => {
         const l = band?.firstElementChild;
         return { band: band ? getComputedStyle(band).visibility : null, label: l ? getComputedStyle(l).visibility : null };
       }, WS);
+    const held = await label();
+    assert.equal(held.band, "hidden", "scrubbed back, nothing after the playhead is drawn or tinted until asked for (M6.6 I-04)");
+    await page.locator(`${WS} [data-timeline-reveal-after]`).click();
+    await sleep(600);
     const behind = await label();
-    assert.equal(behind.band, "visible", "scrubbed back, the tracks do not tint the stretch after the playhead");
+    assert.equal(behind.band, "visible", "asked to show what happened after this moment, the tracks do not tint that stretch");
     await page.locator(`${WS} [role=application]`).focus();
     await page.keyboard.press("l");
     await sleep(1500);
     const back = await label();
     assert.equal(back.band, "hidden", "at the live edge the after-the-playhead band is still drawn");
     assert.equal(back.label, "hidden", "at the live edge the label 'After the playhead' is still on screen");
+    assert.equal(await page.locator(`${WS} [data-timeline-reveal-after]`).count(), 0, "at the live edge the reveal control is still offered");
     await context.close();
   });
 

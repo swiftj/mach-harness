@@ -7,7 +7,6 @@ import { Crosshair, X } from "lucide-react";
 import { type ReactNode } from "react";
 import { stations as stationLooks, type FactoryMarkShape, type FactoryState, type StationKind } from "@mach/ui";
 import {
-  describeEntry,
   executionStatusOf,
   finalScene,
   visitStatusOf,
@@ -33,6 +32,8 @@ import {
   type WaveState,
   type WorkflowEntity,
   executionEndedAt,
+  holdOf,
+  type SupervisorState,
 } from "../../sim";
 import { historyEndedAt, useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
@@ -60,10 +61,11 @@ import { identityOf, parseStation, pickedVisitOf, selectEntity } from "./entity"
 import { AuthorityBadge, Evidence, JumpButton, precisionWords, StationHistoryLink, useEntityEvents } from "./parts";
 import { analyticsStationOf } from "../../scene/analytics";
 import { Provenance } from "./Provenance";
-import { pickedThroughWords } from "./words";
+import { pickedThroughWords, stationAcrossWords } from "./words";
 import { RunNow } from "./RunNow";
+import { EventWords, FreeText, FreeTextLabel } from "./FreeText";
 import { gatePositionWords, InTimeSection, visitStateWords } from "../../timeline/inspector";
-import { cellTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
+import { cellTiming, stationAcrossTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
 
 interface Look extends Timing {
   glyph: ReactNode;
@@ -72,8 +74,13 @@ interface Look extends Timing {
   word: string;
 }
 
+/** The kinds named by free text (I-05): an agent by its label, a slice or cell by its title. */
+function proseName(kind: string): "agentLabel" | "sliceTitle" | null {
+  return kind === "agent" ? "agentLabel" : kind === "slice" || kind === "cell" ? "sliceTitle" : null;
+}
+
 /** Glyph, state and phase of an entity that exists at the playhead. */
-function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null): Look {
+function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null, holds: SupervisorState["holds"] = undefined): Look {
   const id = refId(entity);
   switch (kindOf(entity)) {
     case "actor": {
@@ -86,8 +93,10 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
     }
     case "slice": {
       const s = value as SliceState;
-      const l = schedulerLook(s.scheduler);
-      return { glyph: <SliceGlyph size={28} state={l.state} mark={l.mark} />, state: l.state, mark: l.mark, word: l.label, phase: s.scheduler === "integrated" ? "finished" : "running", since: s.since };
+      // M6.6 D2: held by the line supervisor (its words are in the Scheduler section), since that decision.
+      const hold = holdOf(holds, s);
+      const l = hold ? { label: "Eligible, held by the supervisor", state: "waiting" as const, mark: undefined } : schedulerLook(s.scheduler);
+      return { glyph: <SliceGlyph size={28} state={l.state} mark={l.mark} />, state: l.state, mark: l.mark, word: l.label, phase: s.scheduler === "integrated" ? "finished" : "running", since: hold ? hold.since : s.since };
     }
     case "cell": {
       const c = value as CellState;
@@ -95,7 +104,12 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
       return { glyph: <CellGlyph size={28} state={l.state} />, state: l.state, mark: l.mark, word: l.label, ...cellTiming(c) };
     }
     case "station": {
-      const { station } = parseStation(id);
+      const { station, ticketId } = parseStation(id);
+      if (!ticketId) {
+        // The station on its own: its visits across every cell (I-22), never "Not visited" when a cell has been there.
+        const across = stationAcrossWords(value as Readonly<Record<string, CellState>>, station);
+        return { glyph: <StationGlyph kind={station as StationKind} size={28} state={across.working ? "active" : "idle"} />, state: across.working ? "active" : "idle", word: across.word, ...stationAcrossTiming(across.working, across.last) };
+      }
       const cell = (value as CellState).visits ? (value as CellState) : null;
       const visits = cell ? cell.visits.filter((v) => v.station === station) : [];
       const last = visits[visits.length - 1];
@@ -253,7 +267,9 @@ function Why({ entity }: { entity: AnyRef }) {
   return (
     <div className="mx-5 mb-4 rounded-sm bg-surface-sunken px-3 py-2.5">
       <p className="text-caption text-ink-subtle">Why it looks like this</p>
-      <p className="mt-0.5 text-body-sm text-ink">{describeEntry(latest)}</p>
+      <p className="mt-0.5 text-body-sm text-ink">
+        <EventWords entry={latest} />
+      </p>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-mono text-[11px] text-ink-subtle tabular">
           {latest.event.type}, {timecode(latest.t)}
@@ -287,7 +303,8 @@ function Selected({ entity }: { entity: AnyRef }) {
   const identity = { name, kindWord, id: picked && detail ? refId(detail as AnyRef) : refId(entity) };
   const focusable = selectable(entity);
   const historyEnd = useSceneStore(historyEndedAt);
-  const look = value ? lookOf(subject, value, historyEnd) : null;
+  const holds = useScene((s) => s.supervisor.holds);
+  const look = value ? lookOf(subject, value, historyEnd, holds) : null;
   const { all } = useEntityEvents(entity);
   const unknown = all.length === 0 && !value;
   const through = Boolean(detail) && !picked;
@@ -298,7 +315,10 @@ function Selected({ entity }: { entity: AnyRef }) {
           <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-sm border border-line bg-factory-ground">{look?.glyph ?? <span className="size-4 rounded-full border border-dashed border-line-strong" />}</span>
           <div className="min-w-0 flex-1">
             <p className="text-caption text-ink-subtle">{identity.kindWord}</p>
-            <h2 tabIndex={-1} data-inspector-heading="" className="font-sans text-title-3 font-bold leading-snug text-ink outline-none [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--mach-focus)]">{identity.name}</h2>
+            <h2 tabIndex={-1} data-inspector-heading="" className="font-sans text-title-3 font-bold leading-snug text-ink outline-none [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--mach-focus)]">
+              {/* An agent is named by its label (agent.started data.label): prose, contained. */}
+              {!picked && proseName(kindOf(entity)) && !identity.name.endsWith(refId(entity)) ? <FreeText field={proseName(kindOf(entity))!} text={identity.name} /> : identity.name}
+            </h2>
             <p className="mt-0.5 truncate font-mono text-[12px] text-ink-muted" title={identity.id}>
               {identity.id}
             </p>
@@ -335,6 +355,10 @@ function Selected({ entity }: { entity: AnyRef }) {
       {through ? null : <InTimeSection entity={entity} detail={detail} />}
       {value || all.length ? <Provenance entity={entity} value={value} /> : null}
       <Evidence entity={entity} />
+      {/* One label for the panel (C3): titles and labels in its links are contained without a label each. */}
+      <p className="px-5 pb-4">
+        <FreeTextLabel what="Titles, labels and reasons from the record" />
+      </p>
     </div>
   );
 }

@@ -8,6 +8,7 @@
  */
 import type { Basis, MetricGroup, MetricRow } from "../contract";
 import { NO_VALUE, percentOf, recordedUsd, tokenWords } from "../data/format";
+import { duration, utcClock } from "../../shell/time";
 
 const S = 1000;
 const MIN = 60 * S;
@@ -19,20 +20,15 @@ export const SMALL_SAMPLE = 5;
 
 const group3 = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
-/** 48 s, 4 min 12 s, 26 min, 1 h 12 min, 2 d 3 h. */
+/**
+ * A duration in the Timeline's and the shell's words (`shell/time.ts duration`, I-09): 48 s, 4 min 12 s,
+ * 1 h 3 min, 1 d 15 h; under a second in ms; "–" when there is none. One formatter, so a visit reads the
+ * same in Analytics as in the Timeline's inspector.
+ */
 export function durationText(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return "–";
   if (ms < S) return `${Math.max(0, Math.round(ms))} ms`;
-  const s = Math.round(ms / S);
-  if (s < 60) return `${s} s`;
-  const m = Math.floor(s / 60);
-  if (m < 10) return s % 60 ? `${m} min ${s % 60} s` : `${m} min`;
-  if (m < 60) return `${Math.round(s / 60)} min`;
-  const totalMin = Math.round(s / 60);
-  const h = Math.floor(totalMin / 60);
-  if (h < 24) return totalMin % 60 ? `${h} h ${totalMin % 60} min` : `${h} h`;
-  const d = Math.floor(h / 24);
-  return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
+  return duration(ms);
 }
 
 
@@ -127,10 +123,11 @@ export function coverageText(c: MetricRow["coverage"]): string {
   return `${count(c.covered)} of ${count(c.of)} (${pct(c.share)})`;
 }
 
+/** How a value is known, in the Timeline's words (I-10): measured, bounded, inferred (placed by rule), open, unknown, not recorded. */
 export const BASIS_WORDS: Readonly<Record<Basis, string>> = {
   measured: "measured",
-  open: "still open",
-  inferred: "reconstructed",
+  open: "open",
+  inferred: "inferred (placed by rule)",
   bounded: "bounded",
   unknown: "unknown",
   "not-recorded": "not recorded",
@@ -145,9 +142,9 @@ export function dayText(t: number): string {
 export function windowText(from: number, to: number): string {
   return `${dayText(from)} – ${dayText(to - 1)}`;
 }
+/** A moment in the Timeline's words (I-09): "4 Nov, 09:29:43 UTC", the day as the ruler names it and the clock as the inspector does. */
 export function clockText(t: number): string {
-  const d = new Date(t);
-  return `${dayText(t)}, ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC`;
+  return `${dayText(t)}, ${utcClock(t)} UTC`;
 }
 
 /** The catalog's target in words: "> 0.85" → "above 85%", "< 1.3" → "below 1.3". */

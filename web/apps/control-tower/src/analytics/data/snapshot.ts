@@ -15,11 +15,13 @@
  * "As of" (a replay at the playhead): every query asks `as_of_ms` = the playhead, beside the view's
  * cursor. The observer answers flow, contributors and runs exactly (nothing recorded later), and
  * metrics and insights by whole UTC days before the playhead (`asOf.exact` false, `asOf.rule` its
- * words, which the UI shows). An observer without `as_of_ms` answers 400; the snapshot then falls
- * back to `to_ms` = the playhead (an earlier `to_ms` is kept). That observer widens the window to the
- * end of the playhead's day, so a figure may include later outcomes of that day: `asOf.widened` says
- * so and the UI must say it. Lists (runs, executions, contributors) are cut here at the playhead: items placed
- * after it, or with no recorded time, are dropped and counted (`after_as_of`), never shown.
+ * words, which the UI shows). An observer without `as_of_ms` answers 400. Counted figures (metrics,
+ * flow, insights) are then not available as of the playhead (M6.6, I-32): that observer could only cut
+ * the window at the end of the playhead's day, which may include later outcomes, so the snapshot
+ * answers `unsupported` with `AS_OF_UNSUPPORTED` rather than widening. Lists (runs, executions,
+ * contributors) fall back to `to_ms` = the playhead (an earlier `to_ms` is kept) and are cut here at
+ * the playhead: items placed after it, or with no recorded time, are dropped and counted
+ * (`after_as_of`), never shown.
  */
 import { parseCursor } from "../../live/observer";
 import type { AnalyticsData, AnalyticsQuery, AnalyticsResult, AnalyticsRoute, CallOptions, ContributorsQuery, MetricsQuery, RunsQuery } from "./provider";
@@ -33,6 +35,16 @@ export const SNAPSHOT_CACHE_MAX = 64;
 
 /** Said when the observer could not answer as of the playhead and the window's end was cut instead. */
 export const WIDENED_RULE = "counted to the end of the playhead's UTC day: outcomes later that day may be included";
+
+/**
+ * M6.6 (I-32): why counted figures are not shown as of the playhead by an observer without `as_of_ms`.
+ * Widening to the end of the playhead's day could count outcomes after the playhead, so nothing is shown.
+ */
+export const AS_OF_UNSUPPORTED =
+  "This observer cannot count figures as of the playhead: it is older than exact playhead cuts, and counting to the end of the playhead's UTC day could include outcomes after the playhead. Nothing is shown in their place. Return to live to read the whole recorded history, or open this history with an observer from this release.";
+
+/** The routes whose replies are counts, not lists of placed items: never widened past the playhead. */
+const COUNTED: ReadonlySet<AnalyticsRoute> = new Set<AnalyticsRoute>(["metrics", "flow", "insights"]);
 
 /** What a reply says about the "as of" time it was asked for. */
 export interface AsOf {
@@ -134,6 +146,13 @@ export function shouldRefresh(viewCursor: string | null, headCursor: string | nu
   return a.generation !== b.generation || b.pos > a.pos;
 }
 
+/** Whether a reply was read for this view's cut: "as of" the same playhead, or through the whole history when the view has none. */
+export function sameCut(r: SnapshotResult<unknown>, asOfMs: number | null): boolean {
+  if (r.status !== "ok") return true;
+  const at = (r.value as { readonly asOf?: AsOf | null }).asOf?.ms ?? null;
+  return at === asOfMs;
+}
+
 function abortError(): DOMException {
   return new DOMException("The analytics snapshot was abandoned.", "AbortError");
 }
@@ -158,13 +177,17 @@ export function beginSnapshot(data: AnalyticsData, options: SnapshotOptions = {}
       await pinning.catch(() => undefined);
       if (controller.signal.aborted) throw abortError();
     }
-    // Exact "as of" unless this observer refused as_of_ms: then the window's end is cut instead.
+    // Exact "as of" unless this observer refused as_of_ms: then a list's window end is cut instead, and a count is not shown (I-32).
     const widen = () => asOfMs !== null && asOfUnsupported.has(data);
+    if (widen() && COUNTED.has(route)) return { status: "unsupported", reason: AS_OF_UNSUPPORTED };
     const asked = (): Q => (widen() ? asOfQuery(query, asOfMs) : query);
-    const key = (c: string) => `${c}|${widen() ? "to" : "at"}|${queryKey(route, asked())}`;
+    // M6.6 (D1): the "as of" cut is part of a reply's identity. Two views at one cursor, one through the
+    // whole history and one held at a playhead, never share a cached reply: before, the held view took the
+    // whole-history totals the first view had cached ("nothing recorded later" over later outcomes).
+    const key = (c: string) => `${c}|${asOfMs ?? "-"}|${widen() ? "to" : "at"}|${queryKey(route, asked())}`;
     if (cursor) {
       const hit = cache.get(key(cursor)) as SnapshotResult<T> | undefined;
-      if (hit) return hit;
+      if (hit && sameCut(hit, asOfMs)) return hit;
     }
     const first = !cursor;
     let release: () => void = () => undefined;
@@ -174,6 +197,7 @@ export function beginSnapshot(data: AnalyticsData, options: SnapshotOptions = {}
       let result = await fetch(asked(), opts());
       if (asOfMs !== null && !widen() && result.status === "invalid" && /as_of_ms/.test(result.reason)) {
         asOfUnsupported.add(data);
+        if (COUNTED.has(route)) return { status: "unsupported", reason: AS_OF_UNSUPPORTED };
         result = await fetch(asked(), opts());
       }
       if (controller.signal.aborted) throw abortError();
@@ -198,6 +222,11 @@ export function beginSnapshot(data: AnalyticsData, options: SnapshotOptions = {}
         asOf = { ms: asOfMs, exact: false, rule: widened ? WIDENED_RULE : null, effectiveToMs: eff, widened };
       }
       const answer: SnapshotResult<T> = { status: "ok", value: { ...cut(value), asOf } };
+      // A reply that came back for another cut than this view's is never used (D1).
+      if (!sameCut(answer, asOfMs)) {
+        broken = true;
+        return { status: "cursor-gone", reason: "The reply describes another moment than this view's." };
+      }
       cache.set(key(value.cursor), answer);
       return answer;
     } finally {

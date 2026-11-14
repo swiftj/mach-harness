@@ -31,7 +31,7 @@ const PICK_WORDS: Readonly<Record<string, string>> = { target_kind: "Failed chec
 function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | null): void }) {
   const { snapshot: s, density, open } = useAnalytics();
   const t = s.totals;
-  if (density === "empty") return <NothingYet about="No ticket finished, and no verification or review was recorded, in this window. Quality is read from:" />;
+  if (density === "empty" && !s.no_whole_day) return <NothingYet about="No ticket finished, and no verification or review was recorded, in this window. Quality is read from:" />;
   const q4 = rankGroups(s.grouped[groupedKey("Q4", "target_kind")]);
   const r2 = rankGroups(s.grouped[groupedKey("R2", "rule")]);
   const active = pick && (pick.dim === "target_kind" || pick.dim === "rule") ? pick : null;

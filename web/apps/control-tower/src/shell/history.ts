@@ -22,6 +22,7 @@ import {
   type Moment,
   type SceneLog,
 } from "../sim";
+import { codesOnlyWords, eventQuotesFreeText } from "../text/fields";
 
 export interface Landmark {
   /** The event's id (simulation: the chapter's id). */
@@ -32,6 +33,8 @@ export interface Landmark {
   readonly kind: "chapter" | "wave" | "factory" | "execution" | "verdict" | "person";
   /** Simulation: the chapter's summary; real history: null. */
   readonly summary: string | null;
+  /** Real history, when its title quotes prose the observer has not checked for names: the event's kind; otherwise (and the simulation) null. */
+  readonly eventType: string | null;
 }
 
 export interface FactoryMark {
@@ -80,7 +83,11 @@ function factoryMarkOf(entry: LogEntry): FactoryMark | null {
   const event = entry.event as unknown as V3Like;
   if ((entry.event as { schema_version?: number }).schema_version !== 3) return null;
   const { ids } = event;
-  const text = (): string => describeEntry(entry);
+  // A mark is named in hover cards: an event that carries prose is said by its kind, never quoted (C1).
+  const text = (): string => {
+    const words = describeEntry(entry);
+    return (eventQuotesFreeText(event, undefined, words) ? codesOnlyWords(event.type, ids.ticket_id ?? ids.slice_id ?? ids.wave_id) : null) ?? words;
+  };
   switch (event.type) {
     case "factory.activated":
     case "factory.paused":
@@ -104,7 +111,9 @@ function factoryMarkOf(entry: LogEntry): FactoryMark | null {
 
 const landmarkFold = createLogFold<Landmark>((entry) => {
   const kind = LANDMARK_KINDS[entry.event.type];
-  return kind && entry.event.schema_version === 3 ? { id: entry.id, t: entry.t, title: describeEntry(entry), kind, summary: null } : null;
+  if (!kind || entry.event.schema_version !== 3) return null;
+  const title = describeEntry(entry);
+  return { id: entry.id, t: entry.t, title, kind, summary: null, eventType: eventQuotesFreeText(entry.event, undefined, title) ? entry.event.type : null };
 });
 const markFold = createLogFold<FactoryMark>(factoryMarkOf);
 
@@ -133,7 +142,7 @@ export function fixtureIndexOf(fixture: Fixture): HistoryIndex {
   index = {
     version: 0,
     moments: momentsOf(fixture, "major"),
-    landmarks: storyChapters(fixture).map((c) => ({ id: c.id, t: c.t, title: c.title, kind: "chapter" as const, summary: c.summary })),
+    landmarks: storyChapters(fixture).map((c) => ({ id: c.id, t: c.t, title: c.title, kind: "chapter" as const, summary: c.summary, eventType: null })),
     factoryMarks: [],
     storyboard: true,
   };
@@ -168,4 +177,13 @@ export function countAtOrBefore<T extends { t: number }>(list: readonly T[], t: 
     else hi = mid;
   }
   return lo;
+}
+
+/**
+ * A moment's kind when its sentence quotes free text (I-05), else null: the moment's event, looked up in
+ * the log, holds a value at one of the policy's prose paths. The simulation's storyboard never does.
+ */
+export function quotingKindOf(log: { entry(id: string): { readonly event: { readonly type: string } } | undefined }, moment: { readonly id: string; readonly kind: string; readonly text: string }): string | null {
+  const e = log.entry(moment.id);
+  return e && eventQuotesFreeText(e.event, undefined, moment.text) ? moment.kind : null;
 }

@@ -241,13 +241,21 @@ export function cameraFollows(state: Pick<SceneStoreState, "follow" | "following
   return state.follow && state.following;
 }
 
-/** The words for where the playhead is: "Simulation", "Live", "Live, reviewing an earlier moment", "Historical replay". */
+/** The connection states in the words the top bar's connection badge uses (shell/notices.ts `connectionLook`), lower case. */
+const CONNECTION_WORDS: Readonly<Record<string, string>> = { connecting: "connecting", stale: "stale", reconnecting: "reconnecting", disconnected: "disconnected", "no-session": "no session" };
+
+/**
+ * The words for where the playhead is, in the source names the top bar uses: "Simulation", "Live
+ * Factory", "Live Factory, reviewing an earlier moment", "Historical replay"; a live link that is not
+ * live says so in brackets ("Live Factory (stale)", "(no session)"). M6.6 (I-02): Analytics' header
+ * says this, so every workspace names the source and the link's state alike.
+ */
 export function playbackLabel(state: Pick<SceneStoreState, "source" | "following" | "connection">): string {
   if (state.source === "simulation") return "Simulation";
   if (state.source === "replay") return "Historical replay";
   const conn = state.connection;
-  const edge = conn && conn.state !== "live" ? ` (${conn.state})` : "";
-  return state.following ? `Live${edge}` : `Live, reviewing an earlier moment${edge}`;
+  const edge = conn && conn.state !== "live" ? ` (${CONNECTION_WORDS[conn.state] ?? conn.state})` : "";
+  return state.following ? `Live Factory${edge}` : `Live Factory, reviewing an earlier moment${edge}`;
 }
 
 export interface SceneStore {
@@ -644,7 +652,8 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       if (SPEEDS.includes(speed)) set({ speed });
     },
     followLive() {
-      set({ following: true, playhead: state.liveAt, follow: true, liveReturns: state.liveReturns + 1 });
+      // Back at the live edge, "Show what happened after this moment" (I-04) is off again: the next scrub back starts held at the playhead.
+      set({ following: true, playhead: state.liveAt, follow: true, liveReturns: state.liveReturns + 1, ...(state.timeline.revealAfter ? { timeline: { ...state.timeline, revealAfter: false } } : {}) });
       if (loopWanted()) startLoop();
     },
     select(entity, opts) {
@@ -790,6 +799,16 @@ export function showOnFloor(store: SceneStore, view?: ViewMode, options?: { read
   store.setWorkspace("floor");
   const selection = store.getState().selection;
   if (selection) store.focusOn(selection, "api");
+}
+
+/**
+ * "Show the floor at this moment" (I-14, journey 2): moves the one shared playhead to `t` (a failed
+ * verification's or a rejected review's decision), then shows the floor there with the selection
+ * framed. Live, that is reviewing an earlier moment; "Return to live" goes back.
+ */
+export function showOnFloorAt(store: SceneStore, t: number): void {
+  store.seek(t);
+  showOnFloor(store);
 }
 
 /** Where "Show in Analytics" lands. Omitted members: `filters` keeps the current filters, `focus` closes the rows panel, `pick` clears the cross-filter, `window` keeps the period. */

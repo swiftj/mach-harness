@@ -8,9 +8,9 @@ import { stations as stationLooks, type StationKind } from "@mach/ui";
 import {
   ACTOR_KINDS,
   activityOf,
+  holdOf,
   artifactCountsOf,
   costCompletenessOf,
-  describeEntry,
   cellGateList,
   executionStatusOf,
   isKnown,
@@ -58,11 +58,12 @@ import {
   timecode,
   toolFamily,
 } from "../vocab";
-import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RecurrenceLink, RefLink, RefList, Section, StationHistoryLink, useEntityEvents } from "./parts";
+import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RecurrenceLink, RefLink, RefList, Section, StationHistoryLink, useEntityEvents, VisitHistoryLink } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
 import { activityNote, agentsWords, interruptionWords, modelCostsOf, planWords, reviewerWords, runtimeWords, seatModelName, visitLeftWords } from "./words";
 import { useFreeTextLabel } from "./catalog";
+import { EventWords, FreeText, FreeTextLabel } from "./FreeText";
 import { gatePositionWords, outcomeStateWords, outcomeWordsOf, visitStateWords } from "../../timeline/inspector";
 import { historyEndedAt, useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
@@ -96,10 +97,17 @@ function AgentLink({ agent }: { agent: AgentState }) {
   const word = agent.role === "reviewer" && agent.seat ? `Reviewer, ${agent.seat}` : ROLE_WORDS[agent.role];
   return (
     <RefLink to={ref.agent(agent.id)} glyph={<AgentGlyph tier={tierOf(agent.model)} agentRole={roleOf(agent.role)} size={20} state={runState(agent.status)} />} detail={agent.status === "running" ? "working" : timecode(agent.startedAt, false)}>
-      {word} <span className="text-ink-subtle">{agent.label}</span>
+      {word} <FreeText field="agentLabel" text={agent.label} labelled expandable={false} className="text-ink-subtle" />
     </RefLink>
   );
 }
+
+/**
+ * What the inspector shows of an artifact (I-45): its recorded facts. Its content is not opened here;
+ * that waits for the Evidence Theater (M6.4), which will open it through the observer's guarded
+ * content route with its free-text label.
+ */
+export const ARTIFACT_CONTENT_NOTE = "These are the artifact's recorded facts. Its content is not opened here: opening it waits for the Evidence Theater, a later milestone.";
 
 /**
  * The persistent label on an evidence document served as free text the observer could not check for
@@ -137,13 +145,47 @@ function CellLink({ cell }: { cell: CellState }) {
   const look = stageLook(cell.stage);
   return (
     <RefLink to={ref.cell(cell.ticketId)} glyph={<CellGlyph size={18} state={look.state} />} detail={look.label}>
-      <span className="font-mono text-[12px]">{cell.ticketId}</span> {cell.title}
+      <span className="font-mono text-[12px]">{cell.ticketId}</span> <FreeText field="sliceTitle" text={cell.title} labelled expandable={false} />
     </RefLink>
+  );
+}
+
+/** Refused requests as the supervisor recorded them (`refused_tools[]`, free text): each contained, labelled once. */
+function RefusedTools({ tools }: { tools: readonly string[] }) {
+  return (
+    <span className="flex flex-col">
+      <span>
+        {tools.map((t, i) => (
+          <span key={i}>
+            {i ? ", " : null}
+            <FreeText field="refusedTool" text={t} labelled />
+          </span>
+        ))}
+      </span>
+      <FreeTextLabel className="text-caption text-ink-subtle" />
+    </span>
   );
 }
 
 function Empty({ children }: { children: ReactNode }) {
   return <p className="text-body-sm text-ink-muted">{children}</p>;
+}
+
+/** A workflow's declared phase titles (`workflow.phases_declared`, prose): each contained, the label once. */
+function DeclaredPhases({ phases }: { phases: readonly string[] }) {
+  return (
+    <span className="flex flex-col">
+      <span>
+        {phases.map((p, i) => (
+          <span key={`${i}-${p.length}`}>
+            {i ? ", " : null}
+            <FreeText field="declaredPhase" text={p} labelled />
+          </span>
+        ))}
+      </span>
+      <FreeTextLabel className="text-caption text-ink-subtle" />
+    </span>
+  );
 }
 
 // ---------------------------------------------------------------- wave
@@ -171,7 +213,7 @@ export function WaveAnatomy({ wave }: { wave: WaveState }) {
             const look = schedulerLook(slice.scheduler);
             return (
               <RefLink key={id} to={ref.slice(id)} glyph={<SliceGlyph size={18} state={look.state} mark={look.mark} />} detail={look.label}>
-                <span className="font-mono text-[12px]">{id}</span> {slice.title}
+                <span className="font-mono text-[12px]">{id}</span> <FreeText field="sliceTitle" text={slice.title} labelled expandable={false} />
               </RefLink>
             );
           })}
@@ -188,7 +230,9 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
   const cell = useScene((s) => s.cells[slice.ticketId] ?? null);
   const waitsFor = Object.values(deps).filter((d) => d.from === slice.id);
   const blocks = Object.values(deps).filter((d) => d.to === slice.id);
-  const look = schedulerLook(slice.scheduler);
+  // M6.6 D2: held by the line supervisor, in its recorded words only (no wait kind is claimed).
+  const hold = holdOf(useScene((s) => s.supervisor.holds), slice);
+  const look = hold ? { label: "Eligible, held by the supervisor", state: "waiting" as const, mark: undefined } : schedulerLook(slice.scheduler);
   return (
     <>
       <Section title="Scheduler">
@@ -196,19 +240,32 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
           facts={[
             ["State", <StateWord key="s" state={look.state} mark={look.mark} label={look.label} />],
             ["Since", at(slice.since)],
+            hold ? ["Held since", at(hold.since)] : null,
             ["Risk", isKnown(slice.meta, "risk") ? slice.risk : <NotRecorded key="r" />],
             ["Ticket", slice.ticketId ? <Mono key="t">{slice.ticketId}</Mono> : <NotRecorded key="t" />],
             slice.integratedCommit ? ["Integrated", <Mono key="c">{slice.integratedCommit.slice(0, 7)}</Mono>] : null,
           ]}
         />
+        {hold ? (
+          <div className="mt-3 rounded-sm border border-dashed border-factory-wait bg-factory-wait-soft px-3 py-2">
+            <p className="text-caption font-semibold text-ink">Why the supervisor holds it, in its words</p>
+            <p className="mt-1 text-body-sm text-ink-muted">
+              <FreeText field="heldWhy" text={hold.why} labelled />
+            </p>
+            <FreeTextLabel />
+          </div>
+        ) : null}
         {slice.reasons.length ? (
           <div className="mt-3 rounded-sm border border-dashed border-factory-wait bg-factory-wait-soft px-3 py-2">
             <p className="text-caption font-semibold text-ink">Why it waits, in the scheduler's words</p>
             <ul className="mt-1 list-disc pl-4 text-body-sm text-ink-muted">
               {slice.reasons.map((r) => (
-                <li key={r}>{r}</li>
+                <li key={r}>
+                  <FreeText field="waitReason" text={r} labelled />
+                </li>
               ))}
             </ul>
+            <FreeTextLabel />
           </div>
         ) : null}
         {slice.summary ? <p className="mt-3 text-body-sm text-ink-muted">{slice.summary}</p> : null}
@@ -267,6 +324,8 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
   const live = cell.meta.authority !== "simulated";
   const stale = useSceneStore((s) => isStale(s.connection));
   const now = useScene((s) => (live ? activityOf(s, ref.cell(cell.ticketId), { stale }).reason : null));
+  // A wait on a dependency or a person quotes the record's own words (its reasons, what it waits for): contained.
+  const nowQuotes = useScene((s) => (live ? ["waiting-dependency", "waiting-person"].includes(activityOf(s, ref.cell(cell.ticketId), { stale }).state) : false));
   return (
     <>
       <Section title="Facts">
@@ -275,7 +334,7 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
             ["Stage", <StateWord key="s" state={look.state} mark={look.mark} label={look.label} />],
             ["Round", `${cell.round} of ${MAX_ROUNDS}`],
             ["Slice", <Mono key="sl">{cell.sliceId}</Mono>],
-            now ? ["Now", now] : null,
+            now ? ["Now", nowQuotes ? <FreeText key="n" field="waitReason" text={now} /> : now] : null,
             ["Risk", isKnown(cell.meta, "risk") ? cell.risk : <NotRecorded key="r" />],
             ["App type", isKnown(cell.meta, "appType") ? cell.appType : cell.plan?.appType ? <Mono key="a">{cell.plan.appType}</Mono> : <NotRecorded key="a" />],
             live ? ["Plan", cell.plan ? planWords(cell.plan) : <NotRecorded key="p" />] : null,
@@ -343,7 +402,8 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
               <AgentLink key={a.id} agent={a} />
             ))}
           </RefList>
-        ) : (
+        ) : null}
+        {active.length ? <FreeTextLabel what="Agent labels" /> : (
           <Empty>No agent is working in this cell now. {cell.agentOrder.length} have worked here.</Empty>
         )}
       </Section>
@@ -439,6 +499,7 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
         ) : (
           <Empty>No agent has worked at this station yet.</Empty>
         )}
+        {agents.length ? <FreeTextLabel what="Agent labels" /> : null}
       </Section>
       {artifacts.length ? (
         <Section title="Written here" aside={<span className="text-caption text-ink-subtle">{artifacts.length}</span>}>
@@ -469,8 +530,8 @@ function CountOnlyAgent({ agent }: { agent: AgentState }) {
       <Section title="Facts">
         <Facts
           facts={[
-            ["Label", agent.label || <NotRecorded key="l" />],
-            ["Phase", known("phase") && agent.phase ? agent.phase : <NotRecorded key="p" />],
+            ["Label", agent.label ? <FreeText key="l" field="agentLabel" text={agent.label} /> : <NotRecorded key="l" />],
+            ["Phase", known("phase") && agent.phase ? <FreeText key="p" field="agentPhase" text={agent.phase} /> : <NotRecorded key="p" />],
             ["Model", known("model") ? `${modelName(agent.model)}${agent.modelName && agent.modelName !== agent.model ? ` (${agent.modelName})` : ""}` : agent.modelName ? <Mono key="m">{agent.modelName}</Mono> : <NotRecorded key="m" />],
             agent.agentType ? ["Agent type", <Mono key="t">{agent.agentType}</Mono>] : null,
             ["State", agent.lifecycle === "queued" ? "Queued in its workflow" : agent.lifecycle === "unknown" ? "Ended; how is not recorded" : agent.lifecycle === "running" ? "Running" : agent.lifecycle === "error" ? "Ended in an error" : "Finished"],
@@ -479,7 +540,7 @@ function CountOnlyAgent({ agent }: { agent: AgentState }) {
             ["Tokens", agent.tokens !== null ? agent.tokens.toLocaleString("en-GB") : <NotRecorded key="k" />],
             ["Tool calls", agent.toolCallCount !== null ? agent.toolCallCount.toLocaleString("en-GB") : <NotRecorded key="c" />],
             ["Last tool", agent.lastTool ? <Mono key="lt">{agent.lastTool}</Mono> : <NotRecorded key="lt" />],
-            agent.refused.length ? ["Refused tools", agent.refused.join(", ")] : null,
+            agent.refused.length ? ["Refused tools", <RefusedTools key="rt" tools={agent.refused} />] : null,
             note ? ["Read as", note] : null,
           ]}
         />
@@ -530,8 +591,8 @@ function PerCallAgent({ agent }: { agent: AgentState }) {
             ["Model", isKnown(agent.meta, "model") ? `${modelName(agent.model)} (${agent.tier} tier)` : agent.modelName ? <Mono key="m">{agent.modelName}</Mono> : <NotRecorded key="m" />],
             ["Effort", isKnown(agent.meta, "effort") ? agent.effort : <NotRecorded key="ef" />],
             agent.agentType ? ["Agent type", <Mono key="t">{agent.agentType}</Mono>] : null,
-            ["Working on", agent.label],
-            ["Belt phase", isKnown(agent.meta, "phase") ? agent.phase : <NotRecorded key="ph" />],
+            ["Working on", <FreeText key="w" field="agentLabel" text={agent.label} />],
+            ["Belt phase", isKnown(agent.meta, "phase") ? <FreeText key="ph" field="agentPhase" text={agent.phase} /> : <NotRecorded key="ph" />],
             agent.station ? ["Station", STATION_WORDS[agent.station as StationKind]] : null,
             ["Started", at(agent.startedAt)],
             ["Finished", agent.finishedAt === null ? "not yet" : at(agent.finishedAt)],
@@ -583,6 +644,7 @@ function PerCallAgent({ agent }: { agent: AgentState }) {
             <ArtifactLink key={a.id} artifact={a} />
           ))}
         </RefList>
+        {parent || children.length ? <FreeTextLabel what="Agent labels" /> : null}
       </Section>
     </>
   );
@@ -622,6 +684,7 @@ export function ToolAnatomy({ call }: { call: ToolCallState }) {
             <ArtifactLink key={a.id} artifact={a} />
           ))}
         </RefList>
+        {agent ? <FreeTextLabel what="Agent labels" /> : null}
       </Section>
     </>
   );
@@ -661,12 +724,15 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
             ["Written", at(artifact.writtenAt)],
             artifact.station ? ["At station", STATION_WORDS[artifact.station as StationKind]] : null,
             artifact.round ? ["Round", artifact.round] : null,
-            ["Written by", writer ? `${ROLE_WORDS[writer.role]} (${writer.label})` : artifact.writer.script ? <Mono key="w">{artifact.writer.script}</Mono> : <NotRecorded key="w" />],
+            ["Written by", writer ? <span key="w">{ROLE_WORDS[writer.role]} (<FreeText field="agentLabel" text={writer.label} />)</span> : artifact.writer.script ? <Mono key="w">{artifact.writer.script}</Mono> : <NotRecorded key="w" />],
             artifact.record ? ["Integrity", `${artifact.record.integrity}, ${artifact.record.nature}${artifact.record.bytes !== null ? `, ${artifact.record.bytes.toLocaleString("en-GB")} bytes` : ""}`] : null,
             freeText ? ["Content", <FreeTextNote key="ft" label={freeText} block />] : null,
           ]}
         />
         {artifact.summary && isKnown(artifact.meta, "summary") ? <p className="mt-3 text-body-sm text-ink-muted">{artifact.summary}</p> : null}
+        <p className="mt-3 text-caption text-ink-subtle" data-artifact-content-note="">
+          {ARTIFACT_CONTENT_NOTE}
+        </p>
       </Section>
       <Section title="Writer and readers">
         <RefList>
@@ -703,7 +769,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
   const state = gateState(gate.state);
   const verification = gate.gate === "verification" && cell ? cell.verifications.find((v) => v.round === gate.round) : undefined;
   const review = (gate.gate === "review" || gate.gate === "human-approval") && cell ? (gate.gate === "review" ? cell.reviews.find((r) => r.round === gate.round) : [...cell.reviews].reverse().find((r) => r.humanApprovalRequired)) : undefined;
-  const waitingFor = gate.state === "waiting" ? Math.max(0, gate.openedAt) : null;
+  const waitingSince = gate.state === "waiting" ? Math.max(0, gate.openedAt) : null;
   // A review rejection or a failed verification: how often it recurs is Analytics' Quality area.
   const recurs = gate.state === "failed" && (gate.gate === "review" || gate.gate === "verification") ? (gate.gate === "review" ? "review" : "verify") : null;
   return (
@@ -716,7 +782,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
             gate.round ? ["Round", `${gate.round} of ${MAX_ROUNDS}`] : null,
             ["Reached", at(gate.openedAt)],
             ["Decided", gate.decidedAt === null ? "not yet" : at(gate.decidedAt)],
-            waitingFor !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingFor} finishedAt={null} mode="wait" />] : null,
+            waitingSince !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingSince} finishedAt={null} mode="wait" />] : null,
           ]}
         />
         <p className="mt-3 text-body-sm text-ink-muted">{gate.detail}</p>
@@ -760,6 +826,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
                   <FindingLink key={f.id} finding={f} />
                 ))}
               </RefList>
+              <FreeTextLabel what="Finding titles" />
             </div>
           ) : null}
           {review.delta ? <p className="mt-2 text-caption text-ink-subtle">Delta review since {review.delta.sinceCommit.slice(0, 7)}: {review.delta.filesChanged.length} files changed.</p> : null}
@@ -779,7 +846,16 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
               </div>
             </div>
           ) : (
-            <Empty>{attention ? `Waiting for a person: ${attention.reason}.` : "Waiting for a person to approve this High-risk change."} Nothing moves until they do.</Empty>
+            <Empty>
+              {attention ? (
+                <>
+                  Waiting for a person: <FreeText field="personNeeded" text={attention.reason} />.
+                </>
+              ) : (
+                "Waiting for a person to approve this High-risk change."
+              )}{" "}
+              Nothing moves until they do.
+            </Empty>
           )}
           {review?.humanApprovalReasons.length ? (
             <ul className="mt-2 list-disc pl-4 text-body-sm text-ink-muted">
@@ -807,7 +883,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
 function FindingLink({ finding }: { finding: FindingState }) {
   return (
     <RefLink to={ref.finding(finding.id)} glyph={<ArtifactGlyph kind="findings" size={16} failed={finding.severity === "blocker"} />} detail={finding.severity === "blocker" ? (finding.outvoted ? "blocker, outvoted" : "blocker") : "note"}>
-      <span className="text-ink-muted">{finding.seat}:</span> {finding.title}
+      <span className="text-ink-muted">{finding.seat}:</span> <FreeText field="findingTitle" text={finding.title} labelled expandable={false} />
     </RefLink>
   );
 }
@@ -822,7 +898,9 @@ export function FindingAnatomy({ finding }: { finding: FindingState }) {
     <>
       <Section title="The finding">
         <figure className="mb-3 border-l-2 border-line-strong pl-3">
-          <blockquote className="text-body text-ink">{finding.title}</blockquote>
+          <blockquote className="text-body text-ink">
+            <FreeText field="findingTitle" text={finding.title} />
+          </blockquote>
           <figcaption className="mt-1 text-caption text-ink-subtle">The {finding.seat} reviewer, round {finding.round}</figcaption>
         </figure>
         <Facts
@@ -900,7 +978,7 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
           {[from, to].map((s) =>
             s ? (
               <RefLink key={s.id} to={ref.slice(s.id)} glyph={<SliceGlyph size={18} state={schedulerLook(s.scheduler).state} mark={schedulerLook(s.scheduler).mark} />} detail={schedulerLook(s.scheduler).label}>
-                <span className="font-mono text-[12px]">{s.id}</span> {s.title}
+                <span className="font-mono text-[12px]">{s.id}</span> <FreeText field="sliceTitle" text={s.title} labelled expandable={false} />
               </RefLink>
             ) : null,
           )}
@@ -968,8 +1046,8 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
             ["Asked to", isKnown(execution.meta, "next") ? execution.next : <NotRecorded key="n" />],
             execution.workflow ? ["Workflow", <Mono key="w">{execution.workflow}</Mono>] : null,
             execution.workflowStatus ? ["Workflow ended", execution.workflowStatus === "running" ? "Still running" : execution.workflowStatus] : null,
-            execution.phase ? ["Belt phase", execution.phase] : null,
-            execution.phases.length ? ["Declared phases", execution.phases.join(", ")] : null,
+            execution.phase ? ["Belt phase", <FreeText key="ph" field="agentPhase" text={execution.phase} />] : null,
+            execution.phases.length ? ["Declared phases", <DeclaredPhases key="dp" phases={execution.phases} />] : null,
             ["Claimed", isKnown(execution.meta, "claimedAt") ? at(execution.claimedAt) : <NotRecorded key="c" />],
             ["Started", at(execution.startedAt)],
             // The execution ended when its process ended (measured, from the process record); the
@@ -982,7 +1060,19 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
               ? ["Process", `${timecode(execution.processStartedAt, false)} to ${execution.processEndedAt !== null ? timecode(execution.processEndedAt, false) : historyEnd !== null ? `no end recorded (the history ends at ${timecode(historyEnd, false)})` : "now"}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
               : null,
             execution.recovery ? ["Recovery", execution.recovery] : null,
-            execution.outcome ? ["Outcome", `${execution.outcome.stage ?? "?"}, next ${execution.outcome.next}${execution.outcome.waitingFor ? `, waiting for ${execution.outcome.waitingFor}` : ""}`] : null,
+            execution.outcome
+              ? [
+                  "Outcome",
+                  <span key="o">
+                    {execution.outcome.stage ?? "?"}, next {execution.outcome.next}
+                    {execution.outcome.waitingFor ? (
+                      <>
+                        , waiting for <FreeText field="waitingFor" text={execution.outcome.waitingFor} />
+                      </>
+                    ) : null}
+                  </span>,
+                ]
+              : null,
             [
               "Cost",
               cost === null ? (
@@ -1005,7 +1095,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
                   </span>,
                 ]
               : null,
-            execution.refused.length ? ["Refused tools", execution.refused.map((r) => r.tool).join(", ")] : null,
+            execution.refused.length ? ["Refused tools", <RefusedTools key="rt" tools={execution.refused.map((r) => r.tool)} />] : null,
           ]}
         />
       </Section>
@@ -1068,15 +1158,20 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
             <p className="font-mono text-[11px] text-ink-subtle tabular">
               {decision.event.type}, {timecode(decision.t)}
             </p>
-            <p className="mt-0.5 text-body-sm text-ink">{describeEntry(decision)}</p>
+            <p className="mt-0.5 text-body-sm text-ink">
+              <EventWords entry={decision} labelled={held.length > 0} />
+            </p>
             {held.length ? (
-              <ul className="mt-1 list-disc pl-4 text-caption text-ink-muted">
-                {held.map((h) => (
-                  <li key={`${h.slice_id ?? h.ticket_id}`}>
-                    <span className="font-mono">{h.slice_id ?? h.ticket_id}</span>: {h.why}
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="mt-1 list-disc pl-4 text-caption text-ink-muted">
+                  {held.map((h) => (
+                    <li key={`${h.slice_id ?? h.ticket_id}`}>
+                      <span className="font-mono">{h.slice_id ?? h.ticket_id}</span>: <FreeText field="heldWhy" text={h.why} labelled />
+                    </li>
+                  ))}
+                </ul>
+                <FreeTextLabel what="Why each is held" />
+              </>
             ) : null}
             <div className="mt-1">
               <JumpButton eventId={decision.id} />
@@ -1109,7 +1204,15 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
   const recurs = (visit.station === "review" || visit.station === "verify") && status.state === "ended" && outcomeState(visit.outcome) === "failed" ? visit.station : null;
   return (
     <>
-      <Section title="Facts" aside={recurs ? <RecurrenceLink kind={recurs} /> : undefined}>
+      <Section
+        title="Facts"
+        aside={
+          <span className="flex flex-col items-end gap-1">
+            <VisitHistoryLink visit={visit} />
+            {recurs ? <RecurrenceLink kind={recurs} /> : null}
+          </span>
+        }
+      >
         <Facts
           facts={[
             ["Station", STATION_WORDS[kind] ?? visit.station],
@@ -1219,7 +1322,7 @@ export function WorkflowAnatomy({ workflow }: { workflow: WorkflowEntity }) {
             ["Status", workflow.status === null ? <NotRecorded key="s" /> : workflow.status === "running" ? "Running" : workflow.status],
             workflow.stopReason ? ["Stopped by", workflow.stopReason] : null,
             ["Ended", workflow.finishedAt === null ? "not yet" : at(workflow.finishedAt)],
-            ["Declared phases", workflow.phases.length ? workflow.phases.join(", ") : <NotRecorded key="p" />],
+            ["Declared phases", workflow.phases.length ? <DeclaredPhases key="p" phases={workflow.phases} /> : <NotRecorded key="p" />],
             ["Agents started", workflow.agentIds.length],
             workflow.queued ? ["Queued, not started", workflow.queued] : null,
           ]}

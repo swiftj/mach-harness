@@ -52,13 +52,20 @@ export function clockAt(t: number): string {
   return isoAt(Math.max(0, Math.floor(t / 1000) * 1000)).slice(11, 19);
 }
 
-/** A duration in plain words: 48 s, 4 min 12 s, 1 h 3 min. */
+/**
+ * A duration in plain words, the one vocabulary of the Control Tower (the floor, the Timeline and
+ * Analytics; the observer's insight wording matches it): 48 s, 4 min 12 s, 1 h 3 min, 1 h, 1 d 15 h,
+ * 2 d. Two units at most, the smaller left out when it is zero.
+ */
 export function duration(ms: number): string {
-  const s = Math.round(ms / 1000);
+  const s = Math.round(Math.max(0, ms) / 1000);
   if (s < 60) return `${s} s`;
   const m = Math.floor(s / 60);
   if (m < 60) return s % 60 ? `${m} min ${s % 60} s` : `${m} min`;
-  return `${Math.floor(m / 60)} h ${m % 60} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
 }
 
 /** Spoken form of a time code, for screen readers. */

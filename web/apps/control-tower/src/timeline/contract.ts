@@ -263,6 +263,11 @@ export interface TrackNode {
   readonly counts?: { readonly failed?: number; readonly rejected?: number; readonly interrupted?: number; readonly unknown?: number; readonly waitingPerson?: number; readonly open?: number };
   /** Something that applies to this row but is not recorded ("tool calls are not observable one by one"). */
   readonly note: string | null;
+  /**
+   * The label is a copy of a free-text field (an agent's label, M6.6 I-05): shown bounded on screen, never
+   * used for an accessible name, a `title` or a tooltip, which name the row by its kind (`codesOnlyName`).
+   */
+  readonly freeText?: true;
 }
 
 /**
@@ -351,6 +356,12 @@ export interface TimelineViewState {
   readonly table: boolean;
   /** The investigation lens in use (design section 4 of the brief: retries, concurrency, waits, review, recovery), or null. */
   readonly lens: LensId | null;
+  /**
+   * M6.6 (I-04): with the playhead held behind the live edge, the tracks, table and lenses show only what
+   * had happened by the playhead; true reveals what happened after it (tinted). Off by default, never in
+   * the address, and turned off again by "Return to live".
+   */
+  readonly revealAfter?: boolean;
 }
 
 export type LensId = "retries" | "concurrency" | "waits" | "review" | "recovery";
@@ -545,6 +556,8 @@ export interface InvestigationPanelProps {
   readonly spans: readonly TimelineSpan[];
   readonly viewport: TimelineViewport;
   readonly width: number;
+  /** The playhead the tracks are cut at (M6.6, I-04), or null when they show what is held up to the live edge: the lens's marks and series are cut there too. */
+  readonly heldAt?: number | null;
   onView(patch: Partial<TimelineViewState>): void;
   /** Select in the store and frame in the Timeline. */
   onReveal(ref: string, at?: number): void;

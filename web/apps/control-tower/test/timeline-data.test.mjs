@@ -998,3 +998,32 @@ test("r4-go's shapes: an unknown-outcome execution's bounded end and a cleanup-c
   assert.equal(k.buckets[0].active.execution.inferredMax, 1);
   assert.equal(k.buckets[0].active.visit.inferredMax, 1);
 });
+
+// ---------------------------------------------------------------- M6.6 security F1: a window millennia wide
+
+test("F1: tilesFor never cuts one window into more than 64 tiles, even 8,000 years wide; a normal window is unchanged", async () => {
+  const { MAX_TILES } = await import("../src/timeline/data/derive.ts");
+  assert.equal(MAX_TILES, 64);
+  const YEAR = 365.25 * 24 * 3_600_000;
+  const wide = { from: T0 - 8000 * YEAR, to: T0 };
+  const tiles = tilesFor(wide);
+  assert.ok(tiles.length <= 64 && tiles.length >= 1, `${tiles.length} tiles`);
+  assert.ok(tiles[0].from <= wide.from && tiles.at(-1).to >= wide.to, "the tiles still cover the window");
+  for (let i = 1; i < tiles.length; i++) assert.equal(tiles[i].from, tiles[i - 1].to, "contiguous");
+  assert.deepEqual(tilesFor({ from: -Infinity, to: Infinity }).length, 1, "an unbounded window is one request, never a loop");
+  // An ordinary hour keeps the tile sizes it had (panning reuses tiles).
+  assert.ok(tilesFor(W(0, 60 * MIN)).length <= 4);
+});
+
+test("F1: a window 8,000 years wide makes a bounded number of span requests, and asking again reads the cache", async () => {
+  const { provider, spanRequests, timers } = setup({ spans: [wire("cell", "cell:LOCAL-031", { start: 0, end: 10 * MIN })] });
+  const YEAR = 365.25 * 24 * 3_600_000;
+  const wide = { from: T0 - 8000 * YEAR, to: T0 + 60 * MIN };
+  await provider.spans({ window: wide });
+  await settle(timers);
+  const first = spanRequests().length;
+  assert.ok(first <= 64, `${first} requests`);
+  await provider.spans({ window: wide });
+  await settle(timers);
+  assert.equal(spanRequests().length, first, "no refetch loop: the tiles are held");
+});

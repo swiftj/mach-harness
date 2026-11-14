@@ -40,7 +40,7 @@ function TrackHeader({ track, expanded, onToggle, height, focused }: { track: Tr
           type="button"
           onClick={onToggle}
           aria-expanded={expanded}
-          aria-label={`${expanded ? "Collapse" : "Expand"} ${track.ticketId ?? track.title}: ${track.agents.length} agents`}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${track.ticketId ?? track.sliceId ?? track.id}: ${track.agents.length} agents`}
           className="mt-1.5 inline-flex size-5 shrink-0 items-center justify-center rounded-xs text-ink-subtle hover:bg-surface-sunken hover:text-ink"
         >
           <ChevronRight aria-hidden="true" className={cn("size-3.5 transition-transform duration-[var(--mach-duration-fast)]", expanded && "rotate-90")} />
@@ -60,7 +60,7 @@ function TrackHeader({ track, expanded, onToggle, height, focused }: { track: Tr
           <span className={cn("block truncate font-mono text-caption leading-tight", exists ? "text-ink" : "text-ink-muted")}>{track.kind === "factory" ? "Factory" : track.ticketId}</span>
           {track.kind === "slice" && height > 26 ? <span className="block truncate text-[11px] leading-tight text-ink-subtle">{track.sliceId}</span> : null}
           <span className="sr-only">
-            {track.kind === "factory" ? ": the wave and its people" : `, ${track.title}`}
+            {track.kind === "factory" ? ": the wave and its people" : `, ${track.sliceId ?? ""}`}
             {look ? `: ${look.label}` : ""}
           </span>
         </span>

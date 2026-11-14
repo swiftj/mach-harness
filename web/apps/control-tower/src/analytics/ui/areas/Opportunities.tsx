@@ -81,9 +81,13 @@ function OpportunitiesBody({ insights }: { insights: AreaData<InsightsReply> | u
           <ul className="flex flex-col gap-1 text-body-sm">
             {r.not_evaluated.map((n, i) => (
               <li key={`${n.rule}-${n.subject ?? ""}-${i}`} className="grid grid-cols-[minmax(0,16rem)_minmax(0,1fr)] gap-4">
-                <span className="an-mono text-[12.5px] text-ink-muted" translate="no">
-                  {n.rule}
-                  {n.subject ? `:${n.subject}` : ""}
+                {/* The rule in words (its condition from the reply's catalog); the id stays as quiet mono beside it (I-17). */}
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-ink">{ruleWords(r.insight_rules, n.rule)}</span>
+                  <span className="an-mono text-[11.5px] text-ink-subtle" translate="no">
+                    {n.rule}
+                    {n.subject ? `:${n.subject}` : ""}
+                  </span>
                 </span>
                 <span className="text-ink-muted">{n.reason}</span>
               </li>
@@ -93,6 +97,12 @@ function OpportunitiesBody({ insights }: { insights: AreaData<InsightsReply> | u
       ) : null}
     </>
   );
+}
+
+/** A rule named in words: its condition as the reply's catalog states it, capitalised; the id when the catalog does not hold it. */
+export function ruleWords(rules: readonly { readonly id: string; readonly condition: string | null }[], id: string): string {
+  const c = rules.find((x) => x.id === id)?.condition?.trim();
+  return c ? `${c.charAt(0).toUpperCase()}${c.slice(1)}` : id;
 }
 
 function InsightCard({ f, label }: { f: Insight; label: string | null }) {

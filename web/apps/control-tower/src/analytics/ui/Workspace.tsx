@@ -28,6 +28,7 @@ import { Quality } from "./areas/Quality";
 import { CanOpenRef, Rows } from "./areas/RefList";
 import { Reliability } from "./areas/Reliability";
 import type { AreaData, AreaSource, CompareChoice, Interval, OnOpen, Pick, RowsRequest, WindowChoice } from "./types";
+import { useRememberedScroll } from "./remember";
 import "./analytics.css";
 
 export const AREAS: readonly { id: AreaId; label: string; question: string }[] = [
@@ -75,6 +76,8 @@ export interface AnalyticsViewProps {
   readonly canOpen?: (ref: string) => boolean;
   /** A line about this view (not current, parts not read), shown at the top of the sheet. */
   readonly notice?: ReactNode;
+  /** M6.6 (I-13): while the figures are counted to an earlier moment, the way back to the live edge (the store's follow-live; keys L and End). */
+  readonly backToLive?: { readonly label: string; readonly run: () => void };
 }
 
 const WINDOWS: readonly { key: WindowKey; label: string }[] = [
@@ -86,7 +89,7 @@ const WINDOWS: readonly { key: WindowKey; label: string }[] = [
 
 const sameWindow = (a: WindowChoice, b: WindowChoice) => (typeof a === "string" || typeof b === "string" ? a === b : a.from === b.from && a.to === b.to);
 
-export function AnalyticsView({ data, insights, configs, source, asOf, sourceLabel, view, onView, onOpen, rowsFor, canOpen, notice }: AnalyticsViewProps) {
+export function AnalyticsView({ data, insights, configs, source, asOf, sourceLabel, view, onView, onOpen, rowsFor, canOpen, notice, backToLive }: AnalyticsViewProps) {
   const sheet = useRef<HTMLElement>(null);
   const [undo, setUndo] = useState<WindowChoice | null>(null);
   // The control that opened the Rows drawer gets focus back when it closes.
@@ -125,6 +128,8 @@ export function AnalyticsView({ data, insights, configs, source, asOf, sourceLab
     if (lastArea.current !== view.area) sheet.current?.scrollTo({ top: 0 });
     lastArea.current = view.area;
   }, [view.area]);
+  // I-15 (words): the sheet's offset per area comes back once the figures are drawn.
+  useRememberedScroll(sheet, view.area, data.state === "ready");
   const area = AREAS.find((a) => a.id === view.area) ?? AREAS[0]!;
   const active = [view.risk, view.appType].filter(Boolean).length;
   const common = { data, source, asOf, onOpen, onRows, onArea, onWindow } as const;
@@ -136,16 +141,17 @@ export function AnalyticsView({ data, insights, configs, source, asOf, sourceLab
     <CanOpenRef.Provider value={canOpen ?? null}>
     <div className="an-root flex h-full min-h-0 flex-col" data-area={view.area}>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line px-5 py-2.5">
-        <div className="flex min-w-0 items-baseline gap-3">
-          <span className="text-label text-ink">Factory Analytics</span>
+        {/* The source line takes what room is left and truncates (its title holds it), so a longer link state never wraps the filters onto a second row. */}
+        <div className="flex min-w-0 flex-1 basis-64 items-baseline gap-3">
+          <span className="whitespace-nowrap text-label text-ink">Factory Analytics</span>
           {source === "simulation" ? (
             <span className="an-simulated inline-flex h-6 items-center rounded-full border border-warning-line px-2.5 text-caption font-semibold text-warning-ink" data-simulated="">
               Simulated
             </span>
           ) : null}
-          <span className="an-num min-w-0 truncate text-caption text-ink-muted" title={`${sourceLabel}. ${asOf}`}>
+          <span className="an-num min-w-0 truncate text-caption text-ink-muted" title={`${sourceLabel}. ${asOf}`} data-analytics-source-label={sourceLabel}>
             {sourceLabel}. {snapshot ? `${windowText(snapshot.window.from_ms, snapshot.window.to_ms)}. ` : ""}
-            {asOf}
+            {backToLive ? null : asOf}
           </span>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-3" role="group" aria-label="Filters for every area">
@@ -188,6 +194,16 @@ export function AnalyticsView({ data, insights, configs, source, asOf, sourceLab
           ) : null}
         </div>
       </div>
+
+      {/* M6.6 (I-07, I-13): counted to an earlier moment, the whole as-of sentence on its own line (never cut off), with the way back. */}
+      {backToLive ? (
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-line bg-surface-sunken px-5 py-2 text-caption text-ink-muted" data-analytics-asof="">
+          <p className="an-num min-w-0 max-w-[110ch] flex-1">{asOf}.</p>
+          <button type="button" onClick={backToLive.run} aria-keyshortcuts="L End" data-analytics-back-to-live="" className="shrink-0 whitespace-nowrap font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2">
+            {backToLive.label}
+          </button>
+        </div>
+      ) : null}
 
       <div className="an-layout relative min-h-0" data-drill={view.rows ? "open" : "closed"}>
         <nav aria-label="Analytics areas" className="overflow-y-auto border-r border-line bg-surface-nav py-3">

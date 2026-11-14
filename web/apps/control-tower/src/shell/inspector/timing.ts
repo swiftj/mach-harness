@@ -45,3 +45,10 @@ export function reviewTally(round: Pick<ReviewRoundState, "approvals" | "approva
   if (round.approvals === null) return `${round.seats.length} seats, ${needed}`;
   return `${round.approvals} of ${round.seats.length} approved, ${needed}`;
 }
+
+/** A station on its own, across cells (I-22): when its latest visit began (one is in progress) or ended. */
+export function stationAcrossTiming(working: number, last: Pick<StationVisit, "enteredAt" | "leftAt"> | undefined): Timing {
+  if (!last) return { phase: "finished", since: null };
+  if (working || last.leftAt === null) return { phase: "running", since: last.enteredAt, sinceWord: "Latest visit began at" };
+  return { phase: "finished", since: last.leftAt, sinceWord: "Latest visit ended at" };
+}

@@ -20,6 +20,7 @@ import { EMPTY_PLAN, laneIndex, LOD, planRow, runAlpha, spanTimes, subtreeColumn
 import { toneInk, toneOf, type Palette, type Tone } from "./palette";
 import { scaleOf, xAt, type Scale } from "./scale";
 import { elapsedWords } from "../../shell/inspector/words";
+import { containedWords } from "../../text/fields";
 import { capacityWords, countsTone, countsWords, durationText, shownCounts, endedWithoutExit, personApproved } from "./words";
 
 export type Family = "lifetime" | "bracket" | "bar" | "task" | "rail" | "claim" | "workflow" | "agent" | "tool" | "wait" | "person";
@@ -151,7 +152,8 @@ export function shortLabel(span: TimelineSpan): string {
     case "workflow":
       return a.label ?? "Workflow";
     case "agent":
-      return a.label ?? a.agentType ?? "Agent";
+      // I-05: an agent's label is free text from its record: bounded by the session's display policy.
+      return containedWords("agentLabel", a.label) || a.agentType || "Agent";
     case "seat":
       return cap(a.label ?? span.ids.seat ?? "Seat");
     case "task":

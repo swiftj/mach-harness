@@ -40,7 +40,7 @@ export function Reliability(props: ReliabilityProps) {
 function ReliabilityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | null): void }) {
   const { snapshot: s, density, open } = useAnalytics();
   const t = s.totals;
-  if (density === "empty") return <NothingYet about="No execution was claimed and no ticket finished in this window. Reliability is read from:" />;
+  if (density === "empty" && !s.no_whole_day) return <NothingYet about="No execution was claimed and no ticket finished in this window. Reliability is read from:" />;
   const s1 = s.grouped[groupedKey("S1", "kind")];
   const s6 = s.grouped[groupedKey("S6", "stop_reason")];
   const claimed = t.X1?.denominator_value ?? null;

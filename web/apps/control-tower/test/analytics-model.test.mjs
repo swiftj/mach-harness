@@ -100,7 +100,7 @@ test("strip layout never overlaps dots", () => {
 test("formatting: durations, cost, tokens, shares; small samples as counts", () => {
   assert.equal(Fmt.durationText(48_000), "48 s");
   assert.equal(Fmt.durationText(4 * 60_000 + 12_000), "4 min 12 s");
-  assert.equal(Fmt.durationText(26 * 60_000 + 20_000), "26 min");
+  assert.equal(Fmt.durationText(26 * 60_000 + 20_000), "26 min 20 s");
   assert.equal(Fmt.durationText(72 * 60_000), "1 h 12 min");
   assert.equal(Fmt.durationText(51 * 3_600_000), "2 d 3 h");
   assert.equal(Fmt.durationText(null), "–");

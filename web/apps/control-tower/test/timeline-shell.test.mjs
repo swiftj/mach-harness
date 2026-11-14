@@ -869,7 +869,7 @@ const { STRUCTURAL_KINDS } = await import("../src/timeline/contract.ts");
 const { layoutRows } = await import("../src/timeline/tracks/index.ts");
 const timeMod = await import("../src/shell/time.ts");
 
-test("T6: the caption says the tracks speak as of the live edge only while the playhead is behind it", () => {
+test("T6 (M6.6 I-04): the caption says the tracks are held at the playhead only while it is behind the live edge", () => {
   timeMod.setTimeBase("wall");
   try {
     const at = Date.UTC(2026, 10, 12, 5, 42, 10);
@@ -881,8 +881,12 @@ test("T6: the caption says the tracks speak as of the live edge only while the p
     assert.equal(frame.asOfPlayhead({ following: false, playhead: at, liveAt: at + 400 }).behind, false);
     const back = frame.asOfPlayhead({ following: false, playhead: at, liveAt: at + 3_600_000 });
     assert.equal(back.behind, true);
-    assert.equal(frame.asOfCaption(back), "Tracks show what is held up to the live edge; the playhead is at 05:42:10 UTC");
-    assert.equal(frame.asOfShort(back), "As of the live edge; playhead at 05:42:10 UTC");
+    // M6.6 (I-04): held at the playhead unless what happened after it is revealed.
+    assert.equal(frame.asOfCaption(back), "Tracks show what had happened by the playhead at 05:42:10 UTC; nothing later is drawn");
+    assert.equal(frame.asOfShort(back), "As of the playhead at 05:42:10 UTC");
+    const shown = frame.asOfPlayhead({ following: false, playhead: at, liveAt: at + 3_600_000, timeline: { revealAfter: true } });
+    assert.equal(frame.asOfCaption(shown), "Showing what happened after the playhead at 05:42:10 UTC, tinted, up to the live edge");
+    assert.equal(frame.asOfShort(shown), "Including what happened after the playhead at 05:42:10 UTC");
   } finally {
     timeMod.setTimeBase("scenario");
   }

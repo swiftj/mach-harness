@@ -9,10 +9,13 @@ import { Popover, PopoverContent, PopoverTrigger, Spinner } from "@mach/ui";
 import { ChartColumn, Info, Rows3, Table2, X } from "lucide-react";
 import type { AnalyticsSnapshot, MetricRow } from "../contract";
 import type { AreaId } from "../model/findings";
-import { BASIS_WORDS, clockText, coverageText, durationText, p50Text, p90Text, sampleText, targetText, valueText, windowText } from "../model/format";
+import { BASIS_WORDS, coverageText, durationText, p50Text, p90Text, sampleText, targetText, valueText, windowText } from "../model/format";
 import { densityOf, durationShows, verdictAllowed, type Density } from "../model/sample";
 import { nextMark } from "../model/series";
 import { chartKey } from "./keys";
+import { useRemembered } from "./remember";
+import { dayCutTag, lastWholeDay } from "../wire/query";
+import { HISTORY_SUSPECT_WORDS, historyWords } from "../wire/history";
 import { spoken } from "./charts/a11y";
 import type { AreaData, AreaSource, Interval, OnOpen, RowsRequest } from "./types";
 
@@ -80,6 +83,12 @@ export function AreaFrame({ id, title, intro, props, children, aside }: { id: Ar
         </div>
         {aside}
       </header>
+      {snapshot?.history ? <HistoryLine history={snapshot.history} /> : null}
+      {snapshot?.no_whole_day ? (
+        <p className="max-w-[72ch] rounded-md border border-line bg-surface-sunken px-3 py-2 text-body-sm text-ink-muted" role="note" data-no-whole-day="">
+          <span className="font-semibold text-ink">No whole UTC day before the playhead.</span> Figures counted by whole UTC days have nothing to count yet; that is not the same as nothing recorded. The flow drawing and the rows behind a figure run to the playhead.
+        </p>
+      ) : null}
       {d.state === "ready" && d.stale ? (
         <p className="an-stale flex items-start gap-2 rounded-md border border-line px-3 py-2 text-body-sm text-ink-muted" role="status" data-state="stale">
           <span className="font-semibold text-ink">Not current.</span> {d.stale.reason} The figures below are as they were; {props.asOf.charAt(0).toLowerCase() + props.asOf.slice(1)}.
@@ -101,6 +110,27 @@ export function AreaFrame({ id, title, intro, props, children, aside }: { id: Ar
         <Ctx.Provider value={ctx}>{children()}</Ctx.Provider>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * M6.6 (I-03): incomplete history over the figures of this area, in the Timeline's words for a gap
+ * ("History is missing here"): the observer's partial reason, each gap's time and class, and the UTC
+ * days it marks suspect. Nothing when the history is complete.
+ */
+function HistoryLine({ history }: { history: NonNullable<AnalyticsSnapshot["history"]> }) {
+  const w = historyWords(history);
+  if (!w) return null;
+  return (
+    <div className="an-history flex max-w-[72ch] items-start gap-2 rounded-md border border-dashed border-line-strong px-3 py-2 text-body-sm text-ink-muted" data-history-incomplete="" role="note" aria-label="Incomplete history">
+      <svg aria-hidden="true" width="12" height="12" viewBox="0 0 10 10" className="mt-1 shrink-0">
+        <path d="M1 5H3.4M6.6 5H9" style={{ stroke: "currentColor", strokeWidth: 1.4 }} />
+        <path d="M4.2 2.5L5.8 7.5" style={{ stroke: "currentColor", strokeWidth: 1.2 }} />
+      </svg>
+      <p>
+        <span className="font-semibold text-ink">{w.title}</span> {w.body}
+      </p>
+    </div>
   );
 }
 
@@ -190,7 +220,7 @@ export function Definition({ row, children, label }: { row: MetricRow; children?
           {row.as_of && !row.as_of.exact && row.as_of.effective_to_ms !== null ? (
             <>
               <dt className="text-ink-muted">Counted to</dt>
-              <dd className="an-num">{clockText(row.as_of.effective_to_ms)}: whole UTC days before the playhead</dd>
+              <dd className="an-num">The end of {lastWholeDay(row.as_of.effective_to_ms)} (UTC): whole UTC days before the playhead; the playhead's own day is not in this figure</dd>
             </>
           ) : null}
           {row.status === "partial" ? (
@@ -283,6 +313,18 @@ export function Readout({ row, label, drill, size = "md", note }: { row: MetricR
         {isDuration && shows.p90 && row.p90_ms !== undefined ? <span className="an-num">90th {p90Text(row)}</span> : null}
         {row.coverage.share !== null && row.coverage.share < 1 ? <span className="an-num">coverage {coverageText(row.coverage)}</span> : null}
         {row.basis !== "measured" && h.text !== null && !missing ? <span>{BASIS_WORDS[row.basis]}</span> : null}
+        {/* M6.6 (I-08): counted by whole UTC days under a playhead: the figure says its last day itself, so it never reads as the playhead's moment. */}
+        {row.as_of && !row.as_of.exact && row.as_of.effective_to_ms !== null && h.text !== null && !missing ? (
+          <span className="an-num" data-day-cut="" title={`Counted through the end of ${lastWholeDay(row.as_of.effective_to_ms)} (UTC), the last whole day before the playhead; the playhead's own day is not in this figure.`}>
+            {dayCutTag(row.as_of.effective_to_ms)}
+          </span>
+        ) : null}
+        {/* M6.6 (I-03): history in this window is incomplete (a gap in the observer's record): said where the figure is. */}
+        {row.suspect && h.text !== null && !missing ? (
+          <span data-history-suspect="" title={HISTORY_SUSPECT_WORDS}>
+            history incomplete here
+          </span>
+        ) : null}
         {note}
         {drill && open && h.text !== null && !missing ? (
           <button type="button" className="an-link inline-flex items-center gap-1" onClick={() => open(drill)}>
@@ -325,7 +367,7 @@ export function rowMissing(row: MetricRow | undefined): { readonly title: string
  * replaces the chart with the reason when a row it draws has nothing to give.
  */
 export function ChartFrame({ chart, title, question, summary, table, actions, children, id, foot, requires, chips, size = "md", targetEquivalent }: { chart: string; title: string; question?: ReactNode; summary: string; table?: TableSpec; actions?: ReactNode; children: ReactNode; id?: string; foot?: ReactNode; requires?: readonly (MetricRow | undefined)[]; chips?: ReactNode; size?: "md" | "sm"; targetEquivalent?: string }) {
-  const [asTable, setAsTable] = useState(false);
+  const [asTable, setAsTable] = useRemembered(`table:${chart}`, false);
   const sid = useId();
   const missingRow = (requires ?? []).find((r) => rowMissing(r) !== null);
   const missing = missingRow !== undefined || (requires ?? []).some((r) => !r) ? rowMissing(missingRow) : null;

@@ -615,7 +615,7 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
     for (const w of track.waits) {
       if (t >= w.start && t <= (w.end ?? end)) return { ref: w.ref, trackId: track.id, title: w.kind === "dependency" ? "Waiting on a dependency" : "Eligible, not yet dispatched", detail: track.sliceId ?? "", start: w.start, end: known(w.end) };
     }
-    return { ref: track.ref, trackId: track.id, title: track.ticketId ?? track.title, detail: track.title, start: t, end: t };
+    return { ref: track.ref, trackId: track.id, title: track.ticketId ?? track.sliceId ?? track.id, detail: track.sliceId ?? "", start: t, end: t };
   }
 
   if (track.kind === "factory") {
@@ -630,13 +630,13 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
     for (const a of agents) {
       if (t < a.start - 4 * slack || t > (a.end ?? end) + slack) continue;
       const tool = a.tools.find((c) => t >= c.start - 2 * slack && t <= (c.end ?? end) + 2 * slack);
-      if (tool) return { ref: tool.ref, trackId: track.id, title: `${tool.tool} ${tool.target}`, detail: `${a.agent.label}`, start: tool.start, end: known(tool.end) };
+      if (tool) return { ref: tool.ref, trackId: track.id, title: `${tool.tool} ${tool.target}`, detail: `${a.agent.role} agent`, start: tool.start, end: known(tool.end) };
       if (a.agent.observation === "count-only") {
         const n = a.agent.toolCallCount;
-        return { ref: a.ref, trackId: track.id, title: a.agent.label, detail: `${n === null ? "Tool calls not reported yet" : `${n} tool call${n === 1 ? "" : "s"} (a count; each call is not observable)`}${a.agent.lastTool ? `, last ${a.agent.lastTool}` : ""}`, start: a.start, end: known(a.end) };
+        return { ref: a.ref, trackId: track.id, title: `${a.agent.role} agent`, detail: `${n === null ? "Tool calls not reported yet" : `${n} tool call${n === 1 ? "" : "s"} (a count; each call is not observable)`}${a.agent.lastTool ? `, last ${a.agent.lastTool}` : ""}`, start: a.start, end: known(a.end) };
       }
       const calls = a.tools.filter((c) => c.start <= liveAt).length;
-      return { ref: a.ref, trackId: track.id, title: a.agent.label, detail: `${calls} tool call${calls === 1 ? "" : "s"}, ${a.agent.model}`, start: a.start, end: known(a.end) };
+      return { ref: a.ref, trackId: track.id, title: `${a.agent.role} agent`, detail: `${calls} tool call${calls === 1 ? "" : "s"}, ${a.agent.model}`, start: a.start, end: known(a.end) };
     }
     return null;
   }
@@ -656,5 +656,5 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
   for (const w of track.waits) {
     if (t >= w.start && t <= (w.end ?? end)) return { ref: w.ref, trackId: track.id, title: w.kind === "dependency" ? "Waiting on a dependency" : "Eligible, not yet dispatched", detail: track.sliceId ?? "", start: w.start, end: known(w.end) };
   }
-  return { ref: track.ref, trackId: track.id, title: track.ticketId ?? track.title, detail: track.title, start: t, end: t };
+  return { ref: track.ref, trackId: track.id, title: track.ticketId ?? track.sliceId ?? track.id, detail: track.sliceId ?? "", start: t, end: t };
 }

@@ -36,7 +36,7 @@ function CompareBody({ configs, choice, onChoice }: { configs: CompareProps["con
   const by: CohortBy = choice?.by ?? "risk";
   const mid = (s.window.from_ms + s.window.to_ms) / 2;
   const options = useMemo(() => cohortOptions(by, s.runs, configs, mid), [by, s.runs, configs, mid]);
-  if (density === "empty") return <NothingYet about="No ticket finished in this window, so there is nothing to compare. Compare groups finished tickets, from:" />;
+  if (density === "empty" && !s.no_whole_day) return <NothingYet about="No ticket finished in this window, so there is nothing to compare. Compare groups finished tickets, from:" />;
   const [da, db] = defaultPair(options);
   const a = choice?.a && options.some((o) => o.key === choice.a) ? choice.a : da;
   const b = choice?.b && options.some((o) => o.key === choice.b) ? choice.b : db;

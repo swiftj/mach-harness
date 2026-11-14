@@ -19,6 +19,7 @@ import { memo, useEffect, useLayoutEffect, useRef, type KeyboardEvent, type Mous
 import { cn, StateMark, type MarkState } from "@mach/ui";
 import type { FlatRow, TrackKind, TrackLabelsProps, TrackNode } from "../contract";
 import { laneWords } from "../tracks/lanes";
+import { codesOnlyName } from "../a11y/describe";
 import { countsTone, countsWords, DETAIL_MIN_CHARS, executionTitle, fitLabel, nodeState, shortNote, showDetail, showsCounts, shownCounts } from "./words";
 import "./render.css";
 
@@ -114,7 +115,7 @@ const LabelRow = memo(function LabelRow({ row, width, title, liveAt, onToggle, o
     // says what it holds ("lane 2 · 4 agents"), never a blank band (round 6, defect 5).
     const words = laneWords(node, row.lane);
     return (
-      <div className="absolute inset-x-0" style={style} title={`${node.label}, ${words}: lanes hold what did not overlap in time`}>
+      <div className="absolute inset-x-0" style={style} title={`${codesOnlyName(node)}, ${words}: lanes hold what did not overlap in time`}>
         <Rails depth={node.depth + 1} />
         <span className="absolute inset-y-0 right-3 flex items-center truncate whitespace-nowrap text-[10.5px] leading-tight text-ink-subtle" style={{ left: indent + 16 + 4 + 12 + 2 }}>
           {words}
@@ -157,7 +158,8 @@ const LabelRow = memo(function LabelRow({ row, width, title, liveAt, onToggle, o
   // A label that had to drop its own details (a run, a start) keeps the room: the quieter detail goes first.
   const detailShown = quietShown && !label.truncated && !label.dropped ? showDetail(room + labelW, labelW, textWidth(quietShown, detailFont), textWidth(`${quietShown.slice(0, DETAIL_MIN_CHARS)}…`, detailFont)) : false;
   // For sighted readers: the full label, then its state and counts, then the spans; one line each.
-  const head = [node.label, quiet].filter(Boolean).join(" — ");
+  // I-05: a title holds codes and counts only: an agent row's free-text label is named by its kind.
+  const head = [codesOnlyName(node), quiet].filter(Boolean).join(" — ");
   const state = [own.words, ...counted].filter(Boolean).join("; ");
   const full = [title ?? head, state ? state[0]!.toUpperCase() + state.slice(1) : null, node.spanCount > 0 ? `${countText} span${node.spanCount === 1 ? "" : "s"} recorded here and below` : null].filter(Boolean).join("\n");
   // One target per row, the row's full width and height: a press on the disclosure triangle (or the

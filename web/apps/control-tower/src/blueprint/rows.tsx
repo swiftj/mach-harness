@@ -24,6 +24,7 @@ import { LodContext } from "./context";
 import { activityWords, agentStatusWords, callCount, execSpan, modelWords, perCall, placed, strokeOf, tokenWords, visitEnd } from "./facts";
 import { visitRound, type Flow } from "./flow";
 import { Gutter } from "./gutter";
+import { containedWords } from "../text/fields";
 import { SHEET, type Row } from "./layout";
 import { ActivityMark, DimLine } from "./marks";
 import { useEventProgress, useLate, useStaleSince } from "./motion";
@@ -142,7 +143,7 @@ const ExecItem = memo(function ExecItem({ row, pos, size, laneY, ax, width, flow
   const span = execSpan(x);
   const end = span.end;
   const endPlaced = end !== null && placed(span.endQuality);
-  const waiting = x.outcome?.waitingFor && x.outcome.waitingFor !== "nothing" ? `, waiting for ${x.outcome.waitingFor}` : "";
+  const waiting = x.outcome?.waitingFor && x.outcome.waitingFor !== "nothing" ? `, waiting for ${containedWords("waitingFor", x.outcome.waitingFor, 60)}` : "";
   const how = x.ended === "exited" ? (x.exitCode !== null && x.exitCode !== 0 ? ` · exit ${x.exitCode}` : "") : x.ended ? ` · ${x.ended.replace(/-/g, " ")}` : "";
   const status = activity === "unknown" ? (x.recovery === "outcome-unknown" ? "outcome unknown" : label ? label.toLowerCase() : "not recorded") : activity === "stale" ? `as last seen at ${clock(staleSince ?? span.start)}` : x.state === "completed" ? `completed${waiting || (x.outcome?.stage ? `, ${x.outcome.stage}` : "")}` : activityWords(activity);
   const queued = Object.keys(x.queued).length;
@@ -554,7 +555,7 @@ const AgentItem = memo(function AgentItem({ row, pos, size, laneY, ax, width, ax
         <text x={gx + 28} y={13} className="bp-fine" style={{ fill: "var(--mach-ink)", fontSize: 10, fontWeight: 600 }}>
           {words}
           <tspan style={{ fill: "var(--mach-ink-muted)", fontWeight: 400 }}> · {modelWords(a, modelWord(a.model))}</tspan>
-          {calls || a.label === words ? null : <tspan className="notranslate" style={{ fill: "var(--mach-ink-subtle)", fontWeight: 400, fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }}> · {a.label.length > 34 ? `${a.label.slice(0, 33)}…` : a.label}</tspan>}
+          {calls || a.label === words ? null : <tspan className="notranslate" style={{ fill: "var(--mach-ink-subtle)", fontWeight: 400, fontFamily: "var(--mach-font-mono)", fontSize: 8.5 }}> · {containedWords("agentLabel", a.label, 34)}</tspan>}
         </text>
         <text x={gx + 28} y={24} className="bp-fine tabular" style={{ fill: "var(--mach-ink-muted)", fontFamily: "var(--mach-font-mono)", fontSize: 8 }}>
           {calls

@@ -9,12 +9,13 @@ import { StateGlyph } from "./glyphs";
 import { AuthorityBadge, TelemetryBadge } from "./inspector/parts";
 import { SourceGlyph } from "./SourceBadge";
 
-const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view", "Atlas", "Blueprint", "Timeline", "Timeline workspace"];
+const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view", "Atlas", "Blueprint", "Timeline", "Timeline workspace", "Analytics"];
 /** What each group is, where it is not obvious. */
 const GROUP_NOTES: Partial<Record<KeyBinding["group"], string>> = {
-  Playback: "On the Factory floor and in the Timeline. Analytics (4) shows no transport, so these keys, and F, do nothing there.",
+  Playback: "On the Factory floor and in the Timeline. Analytics (4) shows no transport, so these keys, and F, do nothing there, except L and End to go back to live (below).",
   Timeline: "The timeline docked under the Factory floor.",
   "Timeline workspace": "While the Timeline (3) is up. Space, the arrows and the playback keys work there as everywhere; T does nothing.",
+  Analytics: "While Analytics (4) is up and its figures are counted to an earlier moment (the playhead held behind the live edge).",
 };
 
 function Keys({ keys }: { keys: string[] }) {

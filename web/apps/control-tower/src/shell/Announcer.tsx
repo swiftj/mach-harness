@@ -12,9 +12,10 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { ANALYTICS_AREA_WORDS, playbackFactorWords, useStore } from "../scene";
-import { countAtOrBefore, indexFor, lastAtOrBefore } from "./history";
+import { countAtOrBefore, indexFor, lastAtOrBefore, quotingKindOf } from "./history";
 import { connectionLook } from "./SourceBadge";
 import { spokenTime } from "./vocab";
+import { codesOnlyWords } from "../text/fields";
 
 const MIN_GAP_MS = 4000;
 
@@ -78,8 +79,8 @@ export function Announcer() {
         const newest = fresh[fresh.length - 1];
         if (newChapter || (newest && now - last.current.wall >= MIN_GAP_MS)) {
           const more = Math.max(0, last.current.pending + fresh.length - 1);
-          const heading = newChapter ? (index.storyboard ? `Chapter ${index.landmarks.indexOf(newChapter) + 1}: ${newChapter.title}. ` : newest?.id === newChapter.id ? "" : `${newChapter.title}. `) : "";
-          setMoment(`${heading}${newest?.text ?? ""}${more > 0 ? ` And ${more} more.` : ""}`);
+          const heading = newChapter ? (index.storyboard ? `Chapter ${index.landmarks.indexOf(newChapter) + 1}: ${newChapter.title}. ` : newest?.id === newChapter.id ? "" : `${(newChapter.eventType && codesOnlyWords(newChapter.eventType)) || newChapter.title} `) : "";
+          setMoment(`${heading}${newest ? ((index.storyboard ? null : codesOnlyWords(quotingKindOf(store.getState().log, newest) ?? "", newest.ticketId)) ?? newest.text) : ""}${more > 0 ? ` And ${more} more.` : ""}`);
           last.current.wall = now;
           last.current.pending = 0;
         } else {

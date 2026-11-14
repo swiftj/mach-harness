@@ -26,6 +26,8 @@ import type { SceneStore } from "../scene/store";
 import type { AnyRef, EntityRef } from "../sim/model";
 import { useAnalyticsAsOf } from "../shell/analyticsAsOf";
 import { useSource } from "../shell/source/context";
+import { addressMomentPending } from "../shell/source/hashSync";
+import { parseHash } from "../shell/source/hash";
 import type { AnalyticsSnapshot, ContributorPage } from "./contract";
 import { toContractContributors } from "./data/adapt";
 import { observerAnalytics } from "./data/observer";
@@ -35,14 +37,19 @@ import { shouldRefresh } from "./data/snapshot";
 import type { InsightsReply } from "./data/types";
 import { FIXTURE_END } from "./fixtures";
 import type { RunConfigs } from "./model/cohorts";
-import { clockText } from "./model/format";
 import { capitalFirst, insightPopulation, insightRowsKey } from "./model/insights";
 import type { AreaData, Interval, OpenWhere, RowsRequest } from "./ui/types";
 import { AnalyticsView, type AnalyticsUiView } from "./ui/Workspace";
 import { absenceState, failureState } from "./wire/load";
 import { loadView, SharedCursor, ViewSession } from "./wire/views";
-import { asOfWords, DAY_MS, listsGroupOf, listsRowsOf, filtersQuery, planFor, providerFor, sourceCheck, sourceWords, viewKey, windowQuery } from "./wire/query";
+import { asOfWords, DAY_MS, listsGroupOf, listsRowsOf, filtersQuery, momentWords, planFor, providerFor, sourceCheck, sourceWords, viewKey, windowQuery } from "./wire/query";
+import { StageNotice } from "../shell/SourceBadge";
 import { focusOfRowsKey, fromUiPatch, parseRowsKey, rowsOfFocus, toUiView, type RowsMemo } from "./wire/view";
+import { failedCostOf, type FailedCost } from "./model/costCoverage";
+import { FailedCostContext } from "./ui/failedCost";
+
+/** Executions read for the failed-cost line at most: more than this and the list is cut short, so no sum is given. */
+const FAILED_COST_LIMIT = 1000;
 
 /** One provider per store and client (a new store, a new source, gets a new one). */
 const providers = new WeakMap<SceneStore, { client: ObserverClient | null; data: AnalyticsData | null }>();
@@ -76,6 +83,7 @@ interface Loaded {
   readonly metricsExact: boolean | null;
   readonly widened: boolean;
   readonly dayCut: number | null;
+  readonly noWholeDay: boolean;
   readonly notes: readonly string[];
 }
 
@@ -116,6 +124,9 @@ export function AnalyticsWorkspace() {
     return h === null ? null : Math.floor(h / DAY_MS);
   });
   const headCursor = useSceneStore((s) => s.connection?.cursor ?? null);
+  // D1: the address names a moment the source cannot honour yet (live history still arriving): wait for
+  // it, rather than read the whole history first and the moment after.
+  const momentPending = useSceneStore(() => addressMomentPending(store) ?? (typeof window !== "undefined" && parseHash(window.location.hash).at !== null));
   const data = providerOf(store, client);
   const check = sourceCheck(sceneSource, data?.source ?? null);
   const area = check.ok ? check.area : "live";
@@ -155,6 +166,7 @@ export function AnalyticsWorkspace() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   useEffect(() => {
     if (!session || !data || !wq || !wq.ok || !check.ok) return;
+    if (momentPending && asOfMs === null) return;
     let live = true;
     loadView(session, memoOf(store).shared, {
       data,
@@ -174,11 +186,11 @@ export function AnalyticsWorkspace() {
           return;
         }
         if (r.lastEventMs != null && Math.floor(r.lastEventMs / DAY_MS) !== observedDay) setObservedDay(Math.floor(r.lastEventMs / DAY_MS));
-        setLoaded({ key: loadKey, data: r.data, insights: r.insights, configs: r.configs, cursor: r.cursor, metricsExact: r.asOf ? r.asOf.exact : null, widened: r.asOf?.widened ?? false, dayCut: r.dayCut ?? null, notes: r.notes });
+        setLoaded({ key: loadKey, data: r.data, insights: r.insights, configs: r.configs, cursor: r.cursor, metricsExact: r.asOf ? r.asOf.exact : null, widened: r.asOf?.widened ?? false, dayCut: r.dayCut ?? null, noWholeDay: r.noWholeDay ?? false, notes: r.notes });
       },
       (e: unknown) => {
         if (!live || (e instanceof DOMException && e.name === "AbortError")) return;
-        setLoaded({ key: loadKey, data: failureState(e), insights: undefined, configs: undefined, cursor: null, metricsExact: null, widened: false, dayCut: null, notes: [] });
+        setLoaded({ key: loadKey, data: failureState(e), insights: undefined, configs: undefined, cursor: null, metricsExact: null, widened: false, dayCut: null, noWholeDay: false, notes: [] });
       },
     );
     return () => {
@@ -186,7 +198,7 @@ export function AnalyticsWorkspace() {
     };
     // loadKey names everything the load reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadKey, session]);
+  }, [loadKey, session, momentPending]);
 
   const current = loaded && loaded.key === loadKey ? loaded : null;
   // Live at the edge: once the stream's cursor has moved past the view's, the view says it is not current.
@@ -223,6 +235,29 @@ export function AnalyticsWorkspace() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowsKey, popKey, loadKey, session]);
+  // D8: the cost failed executions recorded in their own results, from the view's executions list at its cursor (never a second one).
+  const [failedCost, setFailedCost] = useState<{ key: string; value: FailedCost } | null>(null);
+  const failedKey = `${loadKey}|${current?.dayCut ?? ""}`;
+  useEffect(() => {
+    if (state.area !== "economics" || !session || !wq?.ok || !current) return;
+    let live = true;
+    session
+      .get()
+      .then((x) => x.executions({ fromMs: wq.fromMs, toMs: wq.toMs, filters: filtersQuery(state.filters, false), limit: FAILED_COST_LIMIT }))
+      .then(
+        (r) => {
+          if (!live) return;
+          const v = r.status === "ok" ? failedCostOf(r.value.items, r.value.more || (r.value.total !== null && r.value.total > r.value.items.length + r.value.after_as_of), current.dayCut) : null;
+          setFailedCost({ key: failedKey, value: v });
+        },
+        () => live && setFailedCost({ key: failedKey, value: null }),
+      );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failedKey, session, state.area]);
+
   const rowsFor = useCallback(
     (req: RowsRequest): AreaData<ContributorPage> =>
       req.pending === "loading"
@@ -264,17 +299,23 @@ export function AnalyticsWorkspace() {
     );
   }
 
-  const caption = asOfWords({ area, asOfMs, window: state.window, metricsExact: current?.metricsExact ?? null, widened: current?.widened ?? false, dayCut: current?.dayCut ?? null, cut: wq?.ok ? wq.cut : false }, clockText);
+  const caption = asOfWords({ area, asOfMs, window: state.window, metricsExact: current?.metricsExact ?? null, widened: current?.widened ?? false, dayCut: current?.dayCut ?? null, noWholeDay: current?.noWholeDay ?? false, cut: wq?.ok ? wq.cut : false }, momentWords);
+  // I-02: the source in the store's words (with the link's state); Simulated stays the fixture's own label.
+  const sourceLabel = area === "simulation" ? sourceWords(area) : asOf.sourceLabel;
+  // I-13: counted to an earlier moment, the way back (the transport's follow-live; L and End here too).
+  const backToLive = asOfMs !== null ? { label: sceneSource === "replay" ? "Go to its last event" : "Back to live", run: () => store.followLive() } : undefined;
   return (
-    <div className="flex h-full min-h-0 flex-col" data-analytics-home="" tabIndex={-1} data-analytics-cursor={current?.cursor ?? undefined} data-analytics-pending={current ? undefined : ""}>
+    <div className="relative flex h-full min-h-0 flex-col" data-analytics-home="" tabIndex={-1} data-analytics-cursor={current?.cursor ?? undefined} data-analytics-pending={current ? undefined : ""}>
       <div className="min-h-0 flex-1">
+        <FailedCostContext.Provider value={failedCost && failedCost.key === failedKey ? failedCost.value : null}>
         <AnalyticsView
           data={areaData}
           {...(current?.insights ? { insights: current.insights } : {})}
           {...(current?.configs ? { configs: current.configs } : {})}
           source={area}
           asOf={caption}
-          sourceLabel={sourceWords(area)}
+          sourceLabel={sourceLabel}
+          {...(backToLive ? { backToLive } : {})}
           view={view}
           onView={onView}
           onOpen={onOpen}
@@ -309,7 +350,10 @@ export function AnalyticsWorkspace() {
             ) : undefined
           }
         />
+        </FailedCostContext.Provider>
       </div>
+      {/* I-02: the floor's notice for a stale, unreachable or session-less observer (and its empty states), in the same words and politeness; floating, so nothing moves when it appears. */}
+      <StageNotice at="bottom" />
     </div>
   );
 }

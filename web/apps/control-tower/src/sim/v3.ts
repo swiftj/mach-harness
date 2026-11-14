@@ -141,7 +141,7 @@ export interface V3DataMap {
   "wave.discovered": { slices: string[]; approval: { approved_at: string | null; by_role: ByRole } };
   "intake.validated": { digest: string };
   "intake.refused": { problems: string[] };
-  "slice.materialized": { digest: string; adopted: boolean; dependencies: string[]; reissued?: boolean | null };
+  "slice.materialized": { digest: string; adopted: boolean; dependencies: string[]; reissued?: boolean | null; /** M6.6: the intake ledger's title for this revision (free text), null when not recorded. */ title?: string | null };
   "slice.integrated": { commit: string };
   "dependency.resolved": { depends_on: string[] };
   "dependency.blocked": { reasons: string[] };
@@ -251,7 +251,7 @@ export interface V3DataMap {
 export interface ObserverSnapshotState {
   readonly factory?: { readonly enabled?: boolean; readonly paused?: boolean; readonly autonomy?: "observe" | "supervised" | null } | null;
   readonly waves?: ReadonlyArray<{ readonly wave_id: string; readonly slices?: readonly string[]; readonly revision?: number | null }>;
-  readonly slices?: ReadonlyArray<{ readonly slice_id: string; readonly ticket_id?: string | null; readonly state?: string | null; readonly dependencies?: readonly string[]; readonly revision?: number | null }>;
+  readonly slices?: ReadonlyArray<{ readonly slice_id: string; readonly ticket_id?: string | null; readonly state?: string | null; readonly dependencies?: readonly string[]; readonly revision?: number | null; readonly title?: string | null }>;
   readonly cells?: ReadonlyArray<{
     readonly ticket_id: string;
     readonly slice_id?: string | null;

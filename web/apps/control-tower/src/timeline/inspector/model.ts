@@ -780,3 +780,19 @@ function artifactsOf(scene: Scene, ref: string): readonly ArtifactState[] {
       return [];
   }
 }
+
+/** The stations' words for a judgement that went against the ticket: a failed verification, a rejected review. */
+const FAILED_JUDGEMENTS = new Set(["FAIL_WITH_EVIDENCE", "INCOMPLETE_EVIDENCE", "REJECTED", "ESCALATE", "REJECT", "failed", "rejected"]);
+
+/**
+ * When a failed verification or rejected review was decided (I-14, journey 2), as known at `asOf`: the
+ * recorded end of a verify or review visit, judging round or review seat whose outcome is a failure.
+ * Null for anything else, before the outcome is known, or when the end is not recorded to a moment.
+ */
+export function failedJudgementAt(span: TimelineSpan, asOf: number): number | null {
+  const judged = span.kind === "round" || span.kind === "seat" || (span.kind === "visit" && ["verify", "review"].includes(span.ids["station"] ?? ""));
+  if (!judged) return null;
+  const outcome = outcomeAsOf(span, asOf);
+  if (outcome === null || !FAILED_JUDGEMENTS.has(outcome)) return null;
+  return span.end?.at ?? null;
+}

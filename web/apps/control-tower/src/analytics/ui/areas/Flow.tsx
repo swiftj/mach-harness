@@ -15,6 +15,32 @@ import { Announce, AreaFrame, ChartFrame, Chip, NotRecorded, Readout, rowMissing
 import type { FlowProps } from "../types";
 import { NothingYet } from "./shared";
 import { RefList } from "./RefList";
+import { useSceneStore } from "../../../scene";
+import { analyticsStationOf } from "../../../scene/analytics";
+import { pickedVisitOf, selectEntity } from "../../../shell/inspector/entity";
+import { kindOf } from "../../../shell/vocab";
+import type { AnyRef, VisitEntity } from "../../../sim";
+import { visitPlace, visitPlaceWords } from "../../model/visitPlace";
+
+/**
+ * The station visit selected when Analytics was opened from the Timeline (I-12, journey 3): the one
+ * selection the store holds, read here, never a second one. "station|ms|ticket|round", a string so the
+ * selector is stable; ms is empty when the visit has no measured length. Null for anything else.
+ */
+function useCameFromVisit(): { station: Station; ms: number | null; ticketId: string; round: number } | null {
+  const key = useSceneStore((s) => {
+    if (s.source === "simulation" || !s.selection) return null;
+    const scene = s.log.sceneAt(s.playhead);
+    const picked = pickedVisitOf(scene, s.selection, s.selectionDetail);
+    const own = kindOf(s.selection as AnyRef) === "visit" ? (selectEntity(scene, s.selection as AnyRef) as VisitEntity | null) : null;
+    const v = picked ?? own;
+    const station = v ? analyticsStationOf(v.station) : null;
+    return v && station ? `${station}|${v.durationMs ?? ""}|${v.ticketId}|${v.round}` : null;
+  });
+  if (!key) return null;
+  const [station, ms, ticketId, round] = key.split("|");
+  return { station: station as Station, ms: ms ? Number(ms) : null, ticketId: ticketId ?? "", round: Number(round) };
+}
 
 export function Flow(props: FlowProps) {
   return (
@@ -30,8 +56,9 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
   const c1 = s.grouped[groupedKey("C1", "station")];
   const x2 = s.grouped[groupedKey("X2", "station")];
   const loads = useMemo(() => bottleneckRanking(c1), [c1]);
+  const cameFrom = useCameFromVisit();
   const missing = rowMissing(t.C1);
-  if (density === "empty") return <NothingYet about="No cell has entered a station in this window. Flow is read from each cell's lifecycle log:" />;
+  if (density === "empty" && !s.no_whole_day) return <NothingYet about="No cell has entered a station in this window. Flow is read from each cell's lifecycle log:" />;
   const facts: Partial<Record<Station, FlowStationFacts>> = {};
   for (const g of c1?.groups ?? []) {
     const st = g.key as Station;
@@ -44,6 +71,7 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
 
   return (
     <>
+      {cameFrom ? <CameFrom visit={cameFrom} group={groupOf(c1, cameFrom.station)} why={missing ? (t.C1?.null_reason ?? missing.why) : null} /> : null}
       <div className="an-readouts">
         <Readout row={t.C3} label="Dispatch to merge" drill={{ key: "C3", title: "Product tickets, dispatch to merge", unit: "ms" }} />
         <Readout row={t.C4} label="Eligible to integrated" drill={{ key: "C4", title: "Slices, eligible to integrated", unit: "ms" }} />
@@ -151,7 +179,7 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
             title="Active at once"
             summary={`${s.concurrency.lines.map((l) => `${l.kind}: at most ${peaks.get(l.kind)!.shown}${peaks.get(l.kind)!.upTo !== null ? ` (up to ${peaks.get(l.kind)!.upTo})` : ""}`).join("; ")}${execNote ? `. ${execNote}` : ""}`}
             table={{ columns: [{ label: "What ran" }, { label: "At most at once", num: true }, { label: "Recorded limit" }], rows: s.concurrency.lines.map((l) => [l.kind === "execution" ? "Executions running" : l.kind === "visit" ? "Cells in a station" : "Agents working", `${count(peaks.get(l.kind)!.shown)}${peaks.get(l.kind)!.upTo !== null ? ` (up to ${peaks.get(l.kind)!.upTo})` : ""}`, l.kind === "execution" && s.concurrency!.limits.length ? [...new Set(s.concurrency!.limits.map((x) => x.value))].join(" then ") : "not recorded"]) }}
-            foot={`The most active at once in each ${durationText(s.concurrency.bucket_ms)} bucket, counted from recorded spans. The dashed rule is the Factory's recorded max_parallel, which counts executions; it is not inferred from activity, and the number of events is not a workload.${execNote ? ` ${execNote}` : ""}`}
+            foot={`The most active at once in each ${durationText(s.concurrency.bucket_ms)} bucket, counted from recorded spans. The dashed rule is the Factory's recorded limit on executions running at once; it is not inferred from activity, and the number of events is not a workload.${execNote ? ` ${execNote}` : ""}`}
           >
             <StepPanels
               from={s.window.from_ms}
@@ -169,6 +197,30 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
   );
 }
 
+/**
+ * The station visit Analytics was opened from (I-12, journey 3): its measured length and where it sits
+ * among this view's measured visits of its station; when the view counts none (a playhead held on the
+ * history's first day), why, so the line never reads as a comparison it is not.
+ */
+function CameFrom({ visit, group, why }: { visit: { station: Station; ms: number | null; ticketId: string; round: number }; group: ReturnType<typeof groupOf>; why: string | null }) {
+  const bins = histogramBins(group?.distribution?.histogram);
+  const words =
+    visit.ms === null
+      ? "its length is not measured (it is open, or its end is bounded), so it is not among the measured visits."
+      : why || !group
+        ? `${durationText(visit.ms)}, measured. This view counts no measured ${STATION_WORDS[visit.station].toLowerCase()} visits to compare it with${why ? `: ${why.replace(/^(not recorded|not available|no value):\s*/i, "")}` : "."}`
+        : visitPlaceWords(visitPlace(bins, visit.ms), visit.ms, durationText);
+  return (
+    <p className="mb-6 max-w-[90ch] rounded-sm border-l-2 border-[var(--an-select)] bg-surface-sunken px-3 py-2 text-body-sm text-ink" data-flow-came-from="">
+      <span className="font-semibold">The {STATION_WORDS[visit.station].toLowerCase()} visit you opened this from</span>{" "}
+      <span className="font-mono text-[12px] text-ink-muted">
+        {visit.ticketId}, round {visit.round}
+      </span>
+      : {words}
+    </p>
+  );
+}
+
 function StationDetail({ station }: { station: Station }) {
   const { snapshot: s, rows, open } = useAnalytics();
   const g = groupOf(s.grouped[groupedKey("C1", "station")], station);
@@ -178,6 +230,8 @@ function StationDetail({ station }: { station: Station }) {
   const page = s.contributors[contributorKey("C1", "station", station)];
   const later = page?.items.filter((c) => /#([2-9]|\d\d)$/.test(c.ref)).length ?? 0;
   const revise = s.transitions.filter((x) => x.to === station && transitionKind(x) === "revise").reduce((n, x) => n + x.count, 0);
+  const cameFrom = useCameFromVisit();
+  const from = cameFrom && cameFrom.station === station ? cameFrom : null;
   if (!g) return <p className="text-body-sm text-ink-muted">No visits to {STATION_WORDS[station].toLowerCase()} in this window.</p>;
   const shows = durationShows(g.denominator);
   const bins = histogramBins(g.distribution?.histogram);
@@ -211,7 +265,7 @@ function StationDetail({ station }: { station: Station }) {
         table={{ columns: [{ label: "From" }, { label: "To" }, { label: "Visits", num: true }], rows: bins.map((b) => [durationText(b.fromMs), durationText(b.toMs), count(b.count)]) }}
         foot={<>Percentiles are read from the observer's buckets, as the upper edge of the bucket they fall in. <LogNote /></>}
       >
-        <DurationHistogram buckets={g.distribution?.histogram} p50={shows.median ? g.p50_ms : undefined} p90={shows.p90 ? g.p90_ms : undefined} name="visits" />
+        <DurationHistogram buckets={g.distribution?.histogram} p50={shows.median ? g.p50_ms : undefined} p90={shows.p90 ? g.p90_ms : undefined} mark={from && from.ms !== null ? { ms: from.ms, label: `this visit ${durationText(from.ms)}` } : undefined} name="visits" />
       </ChartFrame>
       <div>
         <div className="mb-1 flex items-baseline justify-between">

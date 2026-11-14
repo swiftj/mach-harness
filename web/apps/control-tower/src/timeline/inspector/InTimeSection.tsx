@@ -9,10 +9,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { timecode } from "../../shell/time";
 import { findArtifact, type ArtifactState, type EntityRef } from "../../sim";
-import { showInTimeline, showOnFloor, useScene, useSceneStore, useStore } from "../../scene";
+import { showInTimeline, showOnFloor, showOnFloorAt, useScene, useSceneStore, useStore } from "../../scene";
 import { ArtifactLink } from "../../shell/inspector/anatomies";
 import { AuthorityBadge, Elapsed, Facts, JumpButton, Mono, RefLink, RefList, Section, precisionWords, useEntityEvents, type Fact } from "../../shell/inspector/parts";
 import { RULE_WORDS } from "../../shell/inspector/Provenance";
+import { FreeText, FreeTextLabel } from "../../shell/inspector/FreeText";
 import { selectable } from "../../shell/vocab";
 import type { TimelineData, TimelineSpan } from "../contract";
 import { useTimelineData } from "../data";
@@ -24,6 +25,7 @@ import {
   dependencyWords,
   durationSentence,
   endedFact,
+  failedJudgementAt,
   evidenceRefsOf,
   exactSpanIds,
   hasTimeSection,
@@ -209,8 +211,8 @@ function PrimarySpan({ entity, context, primary, spans, truncated, asOf, depende
   const waitedOn = waitedOnOf(primary, asOf);
   const facts: Fact[] = [
     ["What", SPAN_KIND_WORDS[primary.kind]],
-    // A wait: what it waited on, in its record's own words (never inferred).
-    waitedOn ? ["Waiting on", waitedOn.length === 1 ? waitedOn[0] : <ul key="w" className="flex flex-col gap-0.5">{waitedOn.map((r) => <li key={r}>{r}</li>)}</ul>] : null,
+    // A wait: what it waited on, in its record's own words (never inferred), contained as free text.
+    waitedOn ? ["Waiting on", <WaitedOn key="w" reasons={waitedOn} />] : null,
     ["Began", <EndFactValue key="b" fact={began} />],
     primary.start && began.state !== "not-started" && primary.start.precision ? ["Start time", precisionWords(primary.start.precision)] : null,
     ["Ended", <EndFactValue key="e" fact={ended} />],
@@ -246,6 +248,7 @@ function PrimarySpan({ entity, context, primary, spans, truncated, asOf, depende
         </div>
       ) : null}
       <Facts facts={facts} />
+      <FloorAtMoment span={primary} asOf={asOf} />
       {note ? <p className="mt-2 text-caption text-ink-subtle">{note}</p> : null}
       {companions.length ? (
         <div className="mt-3">
@@ -284,6 +287,48 @@ function PrimarySpan({ entity, context, primary, spans, truncated, asOf, depende
       <EvidenceRefs entity={entity} />
       {truncated ? <p className="mt-3 text-caption text-ink-subtle">The source returned only part of this history: neighbours and children may be missing.</p> : null}
     </>
+  );
+}
+
+/**
+ * "Show the floor at this moment" (I-14, journey 2): beside "Show on the floor", for a failed
+ * verification or rejected review picked in the Timeline. It moves the one shared playhead to the
+ * decision, then shows the floor there with the selection kept.
+ */
+function FloorAtMoment({ span, asOf }: { span: TimelineSpan; asOf: number }) {
+  const store = useStore();
+  const workspace = useSceneStore((s) => s.workspace);
+  const at = failedJudgementAt(span, asOf);
+  if (workspace !== "timeline" || at === null) return null;
+  return (
+    <p className="mt-2">
+      <button
+        type="button"
+        onClick={() => showOnFloorAt(store, at)}
+        data-floor-at-moment={at}
+        className="text-caption font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2"
+      >
+        Show the floor at this moment
+      </button>
+      <span className="ml-2 text-caption text-ink-subtle">the decision, {timecode(at, false)}</span>
+    </p>
+  );
+}
+
+/** What a wait waited on: each reason contained (free text, not checked for names), the label once for several. */
+function WaitedOn({ reasons }: { reasons: readonly string[] }) {
+  if (reasons.length === 1) return <FreeText field="waitReason" text={reasons[0]} />;
+  return (
+    <span className="flex flex-col">
+      <ul className="flex flex-col gap-0.5">
+        {reasons.map((r, i) => (
+          <li key={i}>
+            <FreeText field="waitReason" text={r} labelled />
+          </li>
+        ))}
+      </ul>
+      <FreeTextLabel className="text-caption text-ink-subtle" />
+    </span>
   );
 }
 
@@ -326,7 +371,8 @@ function SpanLink({ to, span, asOf, prefix, detail }: { to: string; span: Timeli
 /**
  * Evidence references the anatomy already knows (`evidenceRefsOf`): per artifact, its catalog id, the
  * event that produced it and the events that verified it. Each carries `data-evidence-artifact` with
- * its catalog id: M6.4 will make these references open the Evidence Theater on that artifact.
+ * its catalog id, for the Evidence Theater (M6.4) to open later. Today they show recorded facts only and
+ * say so (I-45): no artifact content is read here.
  */
 function EvidenceRefs({ entity }: { entity: EntityRef }) {
   const scene = useScene();
@@ -351,6 +397,7 @@ function EvidenceRefs({ entity }: { entity: EntityRef }) {
   return (
     <div className="mt-3">
       <p className="text-caption font-semibold text-ink">Evidence references</p>
+      <p className="text-caption text-ink-subtle">Recorded facts only; opening an artifact's content waits for the Evidence Theater.</p>
       <RefList>
         {refs.map((r) => {
           const a = artifacts.get(r.artifactId);

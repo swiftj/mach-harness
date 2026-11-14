@@ -10,6 +10,7 @@
  */
 import { STATIONS, type Contributor, type HistBucket, type MetricGroup, type MetricRow, type RunRecord, type Station, type Transition } from "../contract";
 import { SMALL_SAMPLE } from "./format";
+import { DAY, tickLabel, ticksFor } from "../../timeline/render/scale";
 
 const S = 1000;
 const MIN = 60 * S;
@@ -516,4 +517,46 @@ export function peakWords(counts: readonly number[], recorded: readonly number[]
     return { shown: peak, upTo: null, note: `${peak} at once on recorded ends, above the recorded limit of ${limit}.` };
   }
   return { shown: peak, upTo: null, note: `${peak} at most, above the recorded limit of ${limit}: the count can include executions whose end was not recorded, counted to the latest time they can have ended.` };
+}
+
+/**
+ * The trend charts' time axis in the Timeline ruler's terms (I-11): the ruler's own tick choice
+ * (`ticksFor`) and words (`tickLabel`, "12 Nov") over the columns' periods, kept to UTC midnights
+ * because the columns are whole days or weeks. Each tick sits at its moment inside the column that
+ * holds it (columns may be unequal: a short first week), and a label is kept only where it clears the
+ * last one by `gap` px. Null when the columns carry no periods (the caller's own labels stand).
+ */
+export function rulerTicks(periods: readonly { readonly from?: number | undefined; readonly to?: number | undefined }[], plotW: number, gap = 56): Array<{ readonly x: number; readonly label: string }> | null {
+  if (periods.length < 2 || plotW <= 0 || !periods.every((p) => p.from !== undefined && p.to !== undefined && p.to > p.from)) return null;
+  const from = periods[0]!.from!;
+  const to = periods[periods.length - 1]!.to!;
+  const step = plotW / periods.length;
+  const { majors } = ticksFor({ from, to }, plotW);
+  const out: Array<{ x: number; label: string }> = [];
+  let last = -Infinity;
+  let i = 0;
+  for (const t of majors) {
+    if (t % DAY !== 0 || t >= to) continue;
+    while (i < periods.length - 1 && t >= periods[i]!.to!) i++;
+    const p = periods[i]!;
+    const x = (i + (t - p.from!) / (p.to! - p.from!)) * step;
+    if (x - last < gap) continue;
+    out.push({ x, label: tickLabel(t, DAY) });
+    last = x;
+  }
+  return out;
+}
+
+/**
+ * Which columns hold a day the observer marks suspect (`suspect_days`, "2026-11-04", I-03): a column
+ * whose period contains such a day; under a playhead (`asOfMs`) a later day is not named. Columns
+ * without a period are never marked.
+ */
+export function suspectColumns(periods: readonly { readonly from?: number | undefined; readonly to?: number | undefined }[], suspectDays: readonly string[], asOfMs: number | null = null): boolean[] {
+  const days = suspectDays
+    .map((d) => /^(\d{4})-(\d{2})-(\d{2})$/.exec(d))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+    .filter((d) => asOfMs === null || d <= asOfMs);
+  return periods.map((p) => p.from !== undefined && p.to !== undefined && days.some((d) => d + DAY > p.from! && d < p.to!));
 }

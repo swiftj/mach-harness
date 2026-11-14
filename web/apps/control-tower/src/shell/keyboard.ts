@@ -11,6 +11,10 @@
 import { useEffect } from "react";
 import { showInAnalytics, showInTimeline, showOnFloor, SPEEDS, useStore, type SceneStore, type Workspace } from "../scene";
 import { indexFor, lastAtOrBefore } from "./history";
+import { asOfPlayhead } from "../timeline/controls/frame";
+
+/** Whether the playhead is held behind the live edge (Analytics then counts to an earlier moment). */
+const behindLive = (s: { readonly following: boolean; readonly playhead: number; readonly liveAt: number }): boolean => asOfPlayhead(s).behind;
 
 export interface ShellCommands {
   toggleInspector(): void;
@@ -25,7 +29,7 @@ export interface ShellCommands {
 export interface KeyBinding {
   keys: string[];
   action: string;
-  group: "Playback" | "Views" | "Panels" | "In a view" | "Atlas" | "Blueprint" | "Timeline" | "Timeline workspace";
+  group: "Playback" | "Views" | "Panels" | "In a view" | "Atlas" | "Blueprint" | "Timeline" | "Timeline workspace" | "Analytics";
   /** Handled by the views, listed for discovery only. */
   view?: true;
   /** Active only in this workspace, or these workspaces (absent: in every one). */
@@ -112,6 +116,8 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["N", "P"], action: "Next / previous mark of the kind last jumped to (failure at first)", group: "Timeline workspace", workspace: "timeline" },
   { keys: ["Z"], action: "Zoom to the selection", group: "Timeline workspace", workspace: "timeline" },
   { keys: ["A"], action: "Show all of the history held", group: "Timeline workspace", workspace: "timeline" },
+  // M6.6 (I-13): the same keys as the transport's "Return to live", only while Analytics shows an earlier moment.
+  { keys: ["L", "End"], action: "Back to live, while the figures are counted to an earlier moment (live: the live edge; replay: its last event)", group: "Analytics", workspace: "analytics" },
 ];
 
 const TYPING = /^(INPUT|TEXTAREA|SELECT)$/;
@@ -206,8 +212,14 @@ export function shellKeyHandler(store: SceneStore, commands: ShellCommands): (e:
     }
     // Shift with , and . is < and > on most layouts; some report the unshifted key.
     const key = e.shiftKey && e.key === "," ? "<" : e.shiftKey && e.key === "." ? ">" : e.key;
-    // Analytics shows no transport: the playback keys and F are not its own (see WITH_PLAYHEAD).
-    if (!withPlayhead && PLAYHEAD_KEYS.has(key)) return;
+    // Analytics shows no transport: the playback keys and F are not its own (see WITH_PLAYHEAD), except
+    // L and End while it shows an earlier moment (I-13): its "Back to live" does what the transport's does.
+    if (!withPlayhead && PLAYHEAD_KEYS.has(key)) {
+      if (s.workspace !== "analytics" || !(key === "l" || key === "L" || (key === "End" && !ownsHomeEnd(target))) || !behindLive(s)) return;
+      e.preventDefault();
+      store.followLive();
+      return;
+    }
     let handled = true;
     switch (key) {
       case " ":

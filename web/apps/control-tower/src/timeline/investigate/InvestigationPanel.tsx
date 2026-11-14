@@ -12,6 +12,7 @@ import type { InvestigationPanelProps } from "../contract";
 import { useSceneStore, useStore } from "../../scene";
 import type { SelectGesture, TrackNode, TrackTree } from "../contract";
 import { useAsOf } from "../controls";
+import { marksAsOf, seriesAsOf } from "../data/derive";
 import type { BodyProps } from "./body";
 import { BandGesture, BandRoving, rovingKeys, rovingSync } from "./figures";
 import { lensGesture } from "./gesture";
@@ -45,7 +46,13 @@ export function InvestigationPanel(props: InvestigationPanelProps) {
   const lens = lensOf(props.lens);
   const [collapsed, setCollapsed] = useState(false);
   const selection = useSceneStore((s) => s.selection);
-  const lensData = useLensData(props.data, props.viewport.window, props.lens === "concurrency");
+  const fetchedLens = useLensData(props.data, props.viewport.window, props.lens === "concurrency");
+  // Held at the playhead (I-04): the lens's own marks and series are cut there, as the spans it is given are.
+  const heldAt = props.heldAt ?? null;
+  const lensData = useMemo(
+    () => (heldAt === null ? fetchedLens : { ...fetchedLens, marks: Object.assign(marksAsOf(fetchedLens.marks, heldAt), { complete: (fetchedLens.marks as { complete?: boolean }).complete, truncated: (fetchedLens.marks as { truncated?: boolean }).truncated }), series: fetchedLens.series && seriesAsOf(fetchedLens.series, heldAt) }),
+    [fetchedLens, heldAt],
+  );
   const asOf = useAsOf();
   const store = useStore();
   const rowOrder = useMemo(() => rowOrderOf(props.tree), [props.tree]);

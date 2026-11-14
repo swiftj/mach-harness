@@ -551,8 +551,7 @@ interface HitItem {
 function bayHits(bay: BaySlot, cell: CellState, agents: PlacedAgent[], gate: GateState | null, lod: Lod, st: Record<"intent" | "build" | "verify", MachineState>, activity?: string, notices = ""): HitItem[] {
   const { x, y } = bay.origin;
   const T = cell.ticketId;
-  const title = isKnown(cell.meta, "title") ? cell.title : "title not recorded";
-  const items: HitItem[] = [{ entity: ref.cell(T), label: `Cell ${T}, ${title}: ${cell.stage}${activity ? `, ${activity.toLowerCase()}` : ""}, round ${cell.round} of 3${notices ? `; ${notices}` : ""}`, box: { x, y, w: CELL_W, d: CELL_D, z: FLOOR_Z, h: 0 } }];
+  const items: HitItem[] = [{ entity: ref.cell(T), label: `Cell ${T}: ${cell.stage}${activity ? `, ${activity.toLowerCase()}` : ""}, round ${cell.round} of 3${notices ? `; ${notices}` : ""}`, box: { x, y, w: CELL_W, d: CELL_D, z: FLOOR_Z, h: 0 } }];
   const machine = (pad: "intent" | "build" | "verify", station: "plan" | "build" | "verify", name: string, h: number) => {
     const s = st[pad];
     items.push({ entity: ref.station(station, T), label: `${name} station, ${T}: ${s.state}${s.word ? ` (${s.word})` : ""}${s.round ? `, round ${s.round} of 3` : ""}`, box: boxAt(bay.pads[pad], 40, 40, h) });

@@ -40,6 +40,7 @@ import { THEATER_BOTTOM, THEATER_TOP, TheaterOverlay } from "./Theater";
 import { Timeline } from "./timeline/Timeline";
 import { IconButton } from "./timeline/Transport";
 import "./shell.css";
+import { FreeTextLabel } from "./inspector/FreeText";
 
 const TOP = 48;
 /**
@@ -107,9 +108,13 @@ function useHashSync(): { lost: { at: HashAt; why: LostReason } | null; dismiss:
 function LostMomentNotice({ at, why, onDismiss }: { at: HashAt; why: LostReason; onDismiss: () => void }) {
   const what = at.kind === "event" ? `the event ${at.id.length > 64 ? `${at.id.slice(0, 61)}…` : at.id}` : "that time";
   const text =
-    why === "not-found"
-      ? `The address names a moment (${what}) that could not be located in the history held. The playhead was left where it was.`
-      : `The moment the address names (${what}) was not applied: you moved first.`;
+    why === "after-end"
+      ? "The link's moment is after this history ends; showing its last event."
+      : why === "before-start"
+        ? "The link's moment is before this history begins; showing its first event."
+        : why === "not-found"
+          ? `The address names a moment (${what}) that could not be located in the history held. The playhead was left where it was.`
+          : `The moment the address names (${what}) was not applied: you moved first.`;
   return (
     <div role="status" className="absolute bottom-4 left-1/2 z-40 flex w-[min(560px,calc(100%-32px))] -translate-x-1/2 items-start gap-2 rounded-md border border-line bg-surface-raised px-3 py-2 text-body-sm text-ink shadow-2" data-lost-moment={why}>
       <span className="min-w-0 flex-1">{text}</span>
@@ -474,6 +479,12 @@ export function Shell() {
             </div>
           </SceneStoreProvider>
           {theater || !onFloor ? null : <StageNotice />}
+          {/* One label for the panel (I-05, C3): the floor draws agent labels, finding titles and recorded reasons bounded, never labelled one by one. */}
+          {theater || !onFloor || source === "simulation" ? null : (
+            <p className="pointer-events-none absolute left-3 top-2 z-20 whitespace-nowrap rounded-xs bg-surface/90 px-2 py-0.5 text-caption text-ink-muted" data-free-text-panel-note="">
+              <FreeTextLabel what="Titles, labels and reasons" className="inline" />
+            </p>
+          )}
           {theater && onFloor ? <TheaterOverlay /> : null}
         </div>
         {inTimeline ? (

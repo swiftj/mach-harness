@@ -57,6 +57,7 @@ import {
   lensMemos,
   panToInclude,
   pinnedBehind,
+  heldAtOf,
   quantizedLiveAt,
   resolveWindow,
   seekTargetOf,
@@ -72,7 +73,7 @@ import {
   type SpanSelection,
 } from "./controls";
 import { TimelineTable, useIdleSummary } from "./a11y";
-import { sharedRecordedExtent, useTimelineData } from "./data";
+import { marksAsOf, sharedRecordedExtent, spansAsOf, useTimelineData } from "./data";
 import { InvestigationPanel, LENSES } from "./investigate";
 import { TemporalOverview } from "./overview";
 import { LABEL_DEFAULT, LABEL_MAX, LABEL_MIN, TrackCanvas, TrackLabels, WindowRuler } from "./render";
@@ -372,6 +373,11 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   const selection = useSceneStore((s) => s.selection);
   const focusNonce = useSceneStore((s) => (s.focus && s.focus.target !== "overview" ? s.focus.nonce : 0));
   const liveAt = useSceneStore(quantizedLiveAt);
+  // M6.6 (I-04): scrubbed back, the tracks, their words, the table and the lenses are held at the
+  // playhead (rounded down), as the inspector is; null when they show what is held up to the live edge.
+  const heldAt = useSceneStore(heldAtOf);
+  /** The moment the tracks speak as of: the playhead when held there, else the live edge. */
+  const shownAt = heldAt ?? liveAt;
   const start = useSceneStore((s) => s.extent.start);
   const edge = useSceneStore((s) => (s.source === "simulation" ? s.extent.end : quantizedEdge(s.extent.start, s.liveAt)));
   const short = useMedia("(max-height: 759px)");
@@ -405,13 +411,16 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   // so a track's identity and place do not depend on which window was loaded (a fresh `win=` deep link
   // builds the same tree as navigating there).
   const structural = structure.page?.spans ?? NO_SPANS;
-  const spans = useMemo(() => unionSpans(structural, windowSpans), [structural, windowSpans]);
+  const allSpans = useMemo(() => unionSpans(structural, windowSpans), [structural, windowSpans]);
   // The loaded spans feed the default window (derived during render: the next render frames on them).
-  if (view.window === null && spans !== framedOn) setFramedOn(spans);
+  if (view.window === null && allSpans !== framedOn) setFramedOn(allSpans);
+  // What had happened by the playhead (I-04): nothing begun after it, nothing ended or decided after it.
+  const spans = useMemo(() => (heldAt === null ? allSpans : spansAsOf(allSpans, heldAt)), [allSpans, heldAt]);
+  const marks = useMemo(() => (heldAt === null ? fetched.marks : marksAsOf(fetched.marks, heldAt)), [fetched.marks, heldAt]);
 
   // The tree, rebuilt from the previous one so track identity (expansion, scroll, selection) survives.
   // Kept per data source, outside the component, so a workspace switch keeps it too.
-  const tree = useMemo(() => buildTrackTree(spans, view.grouping, view.filters, liveAt, previousTrees.get(data)), [data, spans, view.grouping, view.filters, liveAt]);
+  const tree = useMemo(() => buildTrackTree(spans, view.grouping, view.filters, shownAt, previousTrees.get(data)), [data, spans, view.grouping, view.filters, shownAt]);
   useEffect(() => {
     previousTrees.set(data, tree);
   }, [data, tree]);
@@ -449,7 +458,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [treeSize, tree.grouping, tracksH, store]);
 
-  const viewport = useMemo<TimelineViewport>(() => ({ window: win, width: timeWidth, liveAt }), [win, timeWidth, liveAt]);
+  const viewport = useMemo<TimelineViewport>(() => ({ window: win, width: timeWidth, liveAt: shownAt }), [win, timeWidth, shownAt]);
 
   // ---- the person's actions
   const pendingReveal = useRef<string | null>(null);
@@ -774,7 +783,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   // ---- states
   const spansUnserved = available.spans === "unavailable";
   const filtered = hasFilters(view.filters);
-  const empty = !fetched.loading && fetched.page !== null && fetched.page.total === 0 && spans.length === 0;
+  const empty = !fetched.loading && fetched.page !== null && fetched.page.total === 0 && allSpans.length === 0;
   // Spans are held, but the filters leave no track at all.
   const filteredOut = !fetched.loading && !empty && filtered && spans.length > 0 && tree.roots.length === 0;
   const nothingHere = !fetched.loading && !filteredOut && spans.length > 0 && !anyInWindow(tree, win);
@@ -785,7 +794,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   // ---- accessibility: the window in words (aria-describedby of the tracks), and Escape out of the band
   const summaryId = useId();
   // Worded when the browser is idle, keyed on the tree and the window, never per live-edge step (A5, R5).
-  const summary = useIdleSummary(tree, win, liveAt, false);
+  const summary = useIdleSummary(tree, win, shownAt, false);
   const tracksBox = useRef<HTMLDivElement>(null);
   useEffect(() => {
     // The canvas names its keys in aria-describedby; the window's summary is added beside them.
@@ -822,7 +831,8 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
       className="flex h-full min-h-0 flex-col bg-surface"
       data-timeline-workspace=""
       data-timeline-ready={ready ? "" : undefined}
-      data-timeline-spans={spans.length}
+      data-timeline-spans={allSpans.length}
+      data-timeline-held-at={heldAt ?? undefined}
       data-timeline-window={`${Math.round(win.from)}-${Math.round(win.to)}`}
       data-timeline-grouping={view.grouping}
     >
@@ -863,7 +873,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
       {view.lens ? (
         // eslint-disable-next-line jsx-a11y/no-static-element-interactions
         <div className="shrink-0" data-timeline-band={view.lens} onKeyDown={onBandKey}>
-          <InvestigationPanel lens={view.lens} data={data} tree={tree} spans={spans} viewport={viewport} width={fullWidth} onView={onBandView} onReveal={onReveal} onFrameRows={onFrameRows} />
+          <InvestigationPanel lens={view.lens} data={data} tree={tree} spans={spans} viewport={viewport} heldAt={heldAt} width={fullWidth} onView={onBandView} onReveal={onReveal} onFrameRows={onFrameRows} />
         </div>
       ) : null}
 
@@ -888,7 +898,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
                   tree={tree}
                   layout={layout}
                   viewport={viewport}
-                  marks={fetched.marks}
+                  marks={marks}
                   height={tracksH}
                   scrollTop={top}
                   truncated={fetched.page?.truncated ?? false}

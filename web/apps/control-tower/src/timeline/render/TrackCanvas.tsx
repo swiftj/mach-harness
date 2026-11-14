@@ -713,12 +713,13 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
         futureRef.current.style.left = `${Math.round(live) + 1}px`;
         futureRef.current.style.visibility = live >= width ? "hidden" : "visible";
       }
-      // Scrubbed back (T6): the tracks speak as of the live edge, so the stretch after the playhead is
-      // tinted, and labelled once, while the inspector speaks as of the playhead.
+      // Scrubbed back (M6.6 I-04): the tracks are cut at the playhead, so nothing is drawn after it. Only
+      // when the person asked to see what happened after this moment is that stretch drawn, tinted and
+      // labelled once, while the inspector still speaks as of the playhead.
       const after = afterRef.current;
       if (after) {
-        const behind = asOfPlayhead({ following: s.following, playhead: s.playhead, liveAt: Math.max(s.liveAt, liveAt) }).behind;
-        const band = afterPlayheadBand(behind, x, live, width);
+        const revealed = asOfPlayhead({ following: s.following, playhead: s.playhead, liveAt: Math.max(s.liveAt, liveAt), timeline: s.timeline }).revealed;
+        const band = afterPlayheadBand(revealed, x, live, width);
         const label = after.firstElementChild as HTMLElement | null;
         // The label inherits the band's visibility when shown (""), never "visible" of its own: that
         // would keep it on screen once the band is hidden.

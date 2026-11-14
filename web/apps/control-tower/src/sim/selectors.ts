@@ -937,6 +937,9 @@ function activityOfUncached(scene: Scene, entity: EntityRef, options: ActivityOp
       if (slice.scheduler === "waiting-on-dependency") return { state: "waiting-dependency", reason: slice.reasons.join(" ") || "Waiting for what it depends on.", since: slice.since, authority };
       const cell = slice.ticketId ? scene.cells[slice.ticketId] : undefined;
       if (slice.scheduler === "dispatched" && cell) return stale(cellActivity(scene, cell));
+      const hold = sliceHoldOf(scene, slice);
+      // Held: the supervisor recorded why in words only, shown in the inspector; no wait kind is claimed.
+      if (hold) return { state: "unknown", reason: "Eligible and held by the line supervisor; its recorded reason is shown in the inspector.", since: hold.since, authority, label: "Held by the supervisor" };
       if (slice.scheduler === "eligible") return { state: "unknown", reason: "Eligible and not dispatched; why it waits is not recorded.", since: slice.since, authority };
       return { state: "unknown", reason: "Taken in; not yet planned.", since: slice.since, authority };
     }
@@ -1185,6 +1188,30 @@ export function capacityWaits(scene: Scene): readonly CapacityWaitState[] {
 /** The recorded capacity wait of one ticket, whether or not its cell is in the scene. */
 export function capacityWaitOf(scene: Scene, ticketId: string): CapacityWaitState | null {
   return scene.capacityWaits[ticketId] ?? null;
+}
+
+/** A supervisor's hold on a slice not yet dispatched (M6.6 D2): its recorded words and since when. */
+export interface SliceHold {
+  /** The supervisor's words (`scheduling.decided` `held[].why`): free text, shown contained, never classified. */
+  readonly why: string;
+  readonly since: number;
+}
+
+/**
+ * Whether the last scheduling decision held this slice (by its id or its ticket's) while it waits to
+ * be dispatched. Only the words are recorded: nothing here says whether a person, a policy or a limit
+ * holds it, so no wait kind is drawn from it. Null for a slice dispatched, integrated or not held.
+ */
+export function sliceHoldOf(scene: Scene, slice: SliceState | undefined): SliceHold | null {
+  return holdOf(scene.supervisor.holds, slice);
+}
+
+/** `sliceHoldOf` over the supervisor's holds alone (for a view that subscribes to them only). */
+export function holdOf(holds: Scene["supervisor"]["holds"], slice: SliceState | undefined): SliceHold | null {
+  if (!slice || (slice.scheduler !== "eligible" && slice.scheduler !== "materialized")) return null;
+  if (!holds) return null;
+  const h = holds[slice.id] ?? (slice.ticketId ? holds[slice.ticketId] : undefined);
+  return h ? { why: h.why, since: h.since } : null;
 }
 
 export interface GateRefusal extends GateEvaluation {

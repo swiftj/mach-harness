@@ -6,5 +6,5 @@ export { ALL_AVAILABLE, type PartState } from "./availability";
 export { recordedExtent, sharedRecordedExtent, type RecordedExtent } from "./extent";
 export { spansOfScene, marksOfScene } from "./scene";
 export { readSpan, readMark, readConcurrency, SPAN_KINDS, MARK_KINDS, WIRE_MARK_KINDS } from "./parse";
-export { tilesFor, tileSizeFor, cutAt, concurrencyOf, densityOf, closeEndedVisits, closeEndedChildren, endInferred, type FilteredDensity, type ConcurrencyLimit, type ActiveCount, type MarksAnswer } from "./derive";
+export { tilesFor, tileSizeFor, cutAt, spansAsOf, marksAsOf, seriesAsOf, concurrencyOf, densityOf, closeEndedVisits, closeEndedChildren, endInferred, type FilteredDensity, type ConcurrencyLimit, type ActiveCount, type MarksAnswer } from "./derive";
 export { THROTTLE_MS } from "./watch";

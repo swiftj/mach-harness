@@ -27,6 +27,7 @@ import {
 } from "../contract";
 import { packLanes, startedBy } from "./lanes";
 import { filterOf, idOf, individual, relationsOf, sliceOf, stationOf, ticketOf, execOf, type AgentGroup, type Relations } from "./relations";
+import { containedWords } from "../../text/fields";
 
 type Attention = TrackNode["attention"];
 type Counts = NonNullable<TrackNode["counts"]>;
@@ -112,6 +113,8 @@ interface Draft {
   /** An execution's recorded supervisor attempt, if any. */
   attempt?: string | null;
   note: string | null;
+  /** The label copies a free-text field (an agent's label). */
+  freeText?: boolean;
   /** Children sort by order, then (when byTime) by their earliest instant, then by id. */
   readonly order: number;
   readonly byTime: boolean;
@@ -436,7 +439,9 @@ function executionPlacer(rel: Relations): Placer {
     return node;
   };
   const labelAgent = (node: Draft, span: TimelineSpan | undefined, x: string): void => {
-    node.label = local(agentLabel(span), x);
+    // An agent's label is free text (agent.started data.label): bounded here, and the row is marked so no name or title quotes it.
+    node.label = span?.attrs.label ? containedWords("agentLabel", local(span.attrs.label, x)) || "Agent" : local(agentLabel(span), x);
+    node.freeText = Boolean(span?.attrs.label);
     node.detail = span?.attrs.model ?? null;
     node.note = span?.attrs.toolsCountOnly ? countOnlyNote(span) : null;
   };
@@ -460,7 +465,7 @@ function executionPlacer(rel: Relations): Placer {
           return { draft: claim(x), section: 0 };
         case "workflow": {
           const node = workflow(span.entity, x);
-          if (span.attrs.label) node.label = local(span.attrs.label, x);
+          if (span.attrs.label) node.label = containedWords("agentLabel", local(span.attrs.label, x)) || node.label;
           return { draft: node, section: 0 };
         }
         case "agent":
@@ -490,7 +495,7 @@ function executionPlacer(rel: Relations): Placer {
       if (span.kind === "workflow" && span.attrs.label) {
         const draft = d.get(span.entity);
         const x = execOf(span);
-        if (draft) draft.label = x ? local(span.attrs.label, x) : span.attrs.label;
+        if (draft) draft.label = containedWords("agentLabel", x ? local(span.attrs.label, x) : span.attrs.label) || draft.label;
       } else if (span.kind === "agent" || span.kind === "agent-queue") {
         if (span.kind === "agent" || rel.agentSpan.get(span.entity)?.kind !== "agent") rel.agentSpan.set(span.entity, span);
         const draft = d.get(span.entity);
@@ -735,6 +740,7 @@ class Finisher {
       ref: draft.ref,
       label: draft.label,
       detail: draft.detail,
+      ...(draft.freeText ? { freeText: true as const } : {}),
       depth,
       parentId: draft.parentId,
       children,

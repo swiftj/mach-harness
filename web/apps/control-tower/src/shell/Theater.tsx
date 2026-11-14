@@ -8,11 +8,12 @@ import { ChevronsLeft, ChevronsRight, Minimize2, Pause, Play, StepBack, StepForw
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@mach/ui";
 import { useSceneStore, useStore } from "../scene";
-import { indexFor, lastAtOrBefore } from "./history";
+import { indexFor, lastAtOrBefore, quotingKindOf } from "./history";
 import { stepChapter, togglePlayback } from "./keyboard";
 import { ConnectionBadge, SourceStamp } from "./SourceBadge";
 import { FollowState, IconButton, LiveState, TimeCode } from "./timeline/Transport";
 import { usePlayheadEffect } from "./timeline/playhead";
+import { KindWords } from "./inspector/FreeText";
 
 /** Height of the strips Theater Mode keeps free of the views (the stage is inset by these). */
 export const THEATER_TOP = 48;
@@ -21,12 +22,21 @@ export const THEATER_BOTTOM = 64;
 function Caption() {
   const chapter = useSceneStore((s) => lastAtOrBefore(indexFor(s).landmarks, s.playhead));
   const moment = useSceneStore((s) => lastAtOrBefore(indexFor(s).moments, s.playhead));
+  const log = useSceneStore((s) => s.log);
   if (!chapter && !moment) return null;
   const recent = moment && (!chapter || moment.t >= chapter.t) && moment.text !== chapter?.title ? moment : null;
   return (
     <div className="min-w-0" data-theater-caption="">
-      {chapter ? <p className="truncate font-sans text-body-lg font-semibold leading-snug text-ink">{chapter.title}</p> : null}
-      {recent ? <p className={chapter ? "truncate text-body-sm text-ink-muted" : "truncate font-sans text-body-lg font-semibold leading-snug text-ink"}>{recent.text}</p> : null}
+      {chapter ? (
+        <p className="truncate font-sans text-body-lg font-semibold leading-snug text-ink">
+          <KindWords kind={chapter.eventType} text={chapter.title} />
+        </p>
+      ) : null}
+      {recent ? (
+        <p className={chapter ? "truncate text-body-sm text-ink-muted" : "truncate font-sans text-body-lg font-semibold leading-snug text-ink"}>
+          <KindWords kind={quotingKindOf(log, recent)} text={recent.text} />
+        </p>
+      ) : null}
     </div>
   );
 }

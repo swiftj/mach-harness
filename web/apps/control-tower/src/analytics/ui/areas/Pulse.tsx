@@ -31,7 +31,7 @@ export function Pulse(props: PulseProps) {
 
 function PulseBody({ insights }: { insights: AreaData<InsightsReply> | undefined }) {
   const { snapshot: s, density } = useAnalytics();
-  if (density === "empty")
+  if (density === "empty" && !s.no_whole_day)
     return <NothingYet about={`The ${windowWords(s)} holds no finished ticket, no execution, no merge and no station visit. Factory Pulse reads what MACH writes as the line runs:`} />;
   const fs = insights?.state === "ready" ? insights.value.insights.slice(0, 4) : [];
   return (
@@ -121,7 +121,7 @@ function Lead() {
   } else if (density === "few") {
     body = (
       <>
-        <span className="an-num font-semibold">{s.runs.length}</span> tickets have finished in this history, between {s.runs[0]?.closed_at ? dayText(s.runs[0].closed_at.ms) : "–"} and {dayText(s.window.to_ms - 1)}. That is too few for a rate, a target verdict or a direction: each figure below is a count of what was recorded (“{shareText(1, s.runs.length)}”), and no trend is drawn.
+        <span className="an-num font-semibold">{s.runs.length}</span> {s.runs.length === 1 ? "ticket has" : "tickets have"} finished in this history{s.runs[0]?.closed_at ? `, between ${dayText(s.runs[0].closed_at.ms)} and ${dayText(s.window.to_ms - 1)}` : ` up to ${dayText(s.window.to_ms - 1)}`}. That is too few for a rate, a target verdict or a direction: each figure below is a count of what was recorded (“{shareText(1, s.runs.length)}”), and no trend is drawn.
       </>
     );
   } else {
@@ -252,7 +252,7 @@ function Ladder() {
               {st.row ? <Definition row={st.row} label={st.label} /> : null}
             </div>
             {st.value === null ? (
-              <span className="text-body-sm text-ink-muted">{rowMissing(st.row)?.title ?? "No value"}</span>
+              <span className="text-body-sm text-ink-muted">{rowMissing(st.row)?.title ?? (st.row?.null_reason ? st.row.null_reason.replace(/^(not recorded|not available|no value):\s*/i, "") : "No value")}</span>
             ) : (
               <div className="flex items-baseline gap-1">
                 <span className="an-fig text-[21px] text-ink">{count(st.value)}</span>
@@ -395,7 +395,7 @@ function CostPanel() {
     <Panel
       title="Recorded cost"
       to="economics"
-      question={missing ? "What did executions record as spent?" : `${usd(t.K1?.numerator_value)} recorded, a lower bound.`}
+      question={missing ? "What did executions record as spent?" : t.K1?.numerator_value === null || t.K1?.numerator_value === undefined ? (t.K1?.null_reason ?? "No cost is counted for this view.") : `${usd(t.K1.numerator_value)} recorded, a lower bound.`}
       chart={
         <div ref={box} className="min-w-0">{missing ? (
           <NotRecorded compact title={missing.title} what={missing.why} why="Nothing is drawn in its place." />

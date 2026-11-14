@@ -257,7 +257,8 @@ export function ConnectionBadge() {
           className={cn("inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-caption font-semibold tabular", CONNECTION_TONE[look.state])}
         >
           <ConnectionGlyph state={look.state} />
-          <span className="max-[1099px]:sr-only">{look.label}</span>
+          {/* A longer label ("Stale since 18:50:00", "Disconnected, retrying") folds to its glyph below 1280 px, so the top bar never clips (M6.6); the name keeps it. */}
+          <span className={look.state === "live" || look.state === "connecting" ? "max-[1099px]:sr-only" : "max-[1279px]:sr-only"}>{look.label}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-96" aria-label="Connection">
@@ -271,10 +272,14 @@ export function ConnectionBadge() {
 
 // ---------------------------------------------------------------- completeness
 
-/** The head scene's completeness in words, as one string so the badge re-renders only when it changes. */
-function completenessKey(s: { log: { head(): { completeness: Completeness } }; source: SceneSource }): string {
+/**
+ * The completeness of the scene at the playhead in words, as one string so the badge re-renders only
+ * when it changes. M6.6 (I-38): at the playhead, as the Atlas's title reads it, so a replay held before
+ * a later gap does not already say "Partial since …" (following live, the playhead is the head).
+ */
+export function completenessKey(s: { log: { sceneAt(t: number): { completeness: Completeness } }; source: SceneSource; playhead: number }): string {
   if (s.source === "simulation") return "";
-  const c = s.log.head().completeness;
+  const c = s.log.sceneAt(s.playhead).completeness;
   const words = completenessWords(c);
   return words ? `${words.state}|${c.since ?? ""}|${words.why}` : "";
 }
@@ -333,13 +338,18 @@ export function useStageNotice(): Notice | null {
   return useNotices().stage;
 }
 
-export function StageNotice() {
+/**
+ * The notice over a workspace: over the top of the floor's stage, or (`at="bottom"`) floating over the
+ * foot of Analytics' sheet, clear of its header and filters (M6.6, I-02). Either way it floats, so
+ * nothing moves when it appears, and it is a polite status (role="status").
+ */
+export function StageNotice({ at = "top" }: { readonly at?: "top" | "bottom" } = {}) {
   const n = useStageNotice();
   if (!n) return null;
   const tone = n.tone === "danger" ? "border-danger-line bg-danger-soft" : n.tone === "warning" ? "border-warning-line bg-warning-soft" : "border-info-line bg-info-soft";
   const ink = n.tone === "danger" ? "text-danger-ink" : n.tone === "warning" ? "text-warning-ink" : "text-info-ink";
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-4">
+    <div className={cn("pointer-events-none absolute inset-x-0 z-20 flex justify-center px-4", at === "top" ? "top-3" : "bottom-4")}>
       <div key={n.key} role="status" data-stage-notice={n.key} className={cn("pointer-events-auto max-w-[560px] rounded-md border px-3.5 py-2.5 shadow-1", tone)}>
         <p className={cn("text-label", ink)}>{n.title}</p>
         <p className="mt-0.5 text-body-sm text-ink">{n.body}</p>

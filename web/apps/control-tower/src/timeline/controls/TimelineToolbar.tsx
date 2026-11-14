@@ -363,7 +363,7 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
     lens: view.lens,
     filters: filterCount(view.filters),
     jump: lastJump,
-    caption: caption !== null,
+    caption: caption === null ? false : asOf.revealed ? "revealed" : "held",
     table: view.table,
     pinnedAhead: pinned ? pinned.ahead : null,
     length: windowLengthWords(shown().to - shown().from),
@@ -658,7 +658,8 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
           <p role="status" className={said ? "truncate text-ink-subtle" : "sr-only"} title={said || undefined}>
             {said}
           </p>
-          {!said && caption ? (
+          {/* Behind the live edge the reveal control below says the moment's rule itself (its title holds the sentence). */}
+          {!said && caption && !asOf.behind ? (
             <p className="truncate text-ink-muted" title={caption} data-timeline-caption="">
               {/* The whole sentence where it fits; else its short form (the title keeps the sentence). */}
               <span className="@max-[1399px]:hidden">{caption}</span>
@@ -666,6 +667,31 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
             </p>
           ) : null}
         </div>
+        {asOf.behind ? (
+          // M6.6 (I-04): scrubbed back, nothing after the playhead is drawn unless asked for; on, it is tinted and the control says so.
+          <button
+            type="button"
+            aria-pressed={asOf.revealed}
+            onClick={() => onView({ revealAfter: !asOf.revealed })}
+            data-timeline-reveal-after={asOf.revealed ? "on" : "off"}
+            title={`${caption ?? ""}. ${asOf.revealed ? "Select to hide it again: show only what had happened by the playhead." : "Select to show what happened after this moment, tinted, up to the live edge."}`}
+            data-timeline-caption={caption ?? undefined}
+            className={cn(
+              "ml-auto inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 text-caption",
+              asOf.revealed ? "mach-tl-after border-line-strong font-semibold text-ink" : "border-dashed border-line-strong text-ink-muted hover:text-ink",
+            )}
+          >
+            {asOf.revealed ? (
+              <>
+                Showing what happened after<span className={cn("@max-[1099px]:hidden", squeeze >= 2 && "hidden")}> the playhead</span>
+              </>
+            ) : (
+              <>
+                <span className={cn("font-normal @max-[1099px]:hidden", squeeze >= 1 && "hidden")}>As of the playhead · </span>Show what happened after this moment
+              </>
+            )}
+          </button>
+        ) : null}
         <LabelledButton label={view.table ? "Show the tracks" : "Show the window as a table"} words="Table" onClick={() => onView({ table: !view.table })} pressed={view.table} collapseBelow="md" squeezed={squeeze >= 2}>
           <Table2 aria-hidden="true" />
         </LabelledButton>

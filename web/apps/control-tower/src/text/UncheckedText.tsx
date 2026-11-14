@@ -1,11 +1,12 @@
 /**
- * The one component that renders `UncheckedText` (M6_5_SECURITY.md 6 B): React text nodes only (C1),
- * truncated to the field's limit with the full words on explicit expansion only (C2), and labelled
- * (C3) unless the panel already carries the label once (`labelled`). It never builds a `title` or an
- * `aria-label` from the words (C1) and never puts them anywhere else (C4).
+ * The one component that renders `UncheckedText` (M6_5_SECURITY.md 6 B), in Analytics and in the
+ * floor and Timeline inspectors: React text nodes only (C1), truncated to the field's limit with the
+ * full words on explicit expansion only (C2), and labelled (C3) unless the panel already carries the
+ * label once (`labelled`). It never builds a `title` or an `aria-label` from the words (C1) and never
+ * puts them anywhere else (C4).
  */
 import { useState } from "react";
-import { UNCHECKED_NOTE, uncheckedView, type UncheckedText as Unchecked } from "./text";
+import { UNCHECKED_NOTE, uncheckedView, type UncheckedText as Unchecked } from "./unchecked";
 
 export interface UncheckedTextProps {
   readonly text: Unchecked | null;
@@ -15,17 +16,22 @@ export interface UncheckedTextProps {
   readonly labelled?: boolean;
   /** The observer's note (`display_policy.free_text.note`). */
   readonly note?: string | null;
+  /**
+   * Offer "Show all" when truncated (default). Off inside a link or button, where a second control is
+   * not allowed: the truncated words stand, and the full words are on the entity's own inspector.
+   */
+  readonly expandable?: boolean;
   readonly className?: string;
 }
 
-export function UncheckedText({ text, max, labelled = false, note = null, className }: UncheckedTextProps) {
+export function UncheckedText({ text, max, labelled = false, note = null, expandable = true, className }: UncheckedTextProps) {
   const [open, setOpen] = useState(false);
   if (!text) return null;
   const v = uncheckedView(text, { ...(max !== undefined ? { max } : {}), note });
   return (
     <span className={className} data-unchecked-text="">
       <span>{open ? v.full : v.shown}</span>
-      {v.truncated ? (
+      {v.truncated && expandable ? (
         <button type="button" className="ml-1 underline" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           {open ? "Show less" : "Show all"}
         </button>
@@ -37,5 +43,9 @@ export function UncheckedText({ text, max, labelled = false, note = null, classN
 
 /** The panel-level label (C3), shown once where several unchecked texts are listed. */
 export function UncheckedNote({ note = null, className }: { readonly note?: string | null; readonly className?: string }) {
-  return <span className={className}>{note || UNCHECKED_NOTE}</span>;
+  return (
+    <span className={className} data-unchecked-note="">
+      {note || UNCHECKED_NOTE}
+    </span>
+  );
 }

@@ -5,14 +5,17 @@
  * the mark, one Tab stop per chart with the arrows moving between marks, and a card with exact
  * values on hover or focus.
  */
-import { useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useContext, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useRemembered } from "../remember";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from "lucide-react";
 import type { HistBucket } from "../../contract";
-import { durationTicks, histogramBins, linear, logScale, niceTicks, stepPath, type HistBin } from "../../model/charts";
+import { durationTicks, histogramBins, linear, logScale, niceTicks, rulerTicks, stepPath, type HistBin } from "../../model/charts";
 import { dayText, durationText, durationTick, plural } from "../../model/format";
 import { brushIndices, brushWindow, pageOf, sortRows, type SortDir } from "../../model/series";
 import { chartKey } from "../keys";
-import { cardWords, Mark, useMarkNav, useTip, useWidth, type Card } from "../kit";
+import { cardWords, Ctx, Mark, useMarkNav, useTip, useWidth, type Card } from "../kit";
+import { HISTORY_SUSPECT_WORDS } from "../../wire/history";
+import { suspectColumns } from "../../model/charts";
 import type { Interval } from "../types";
 import { tickLabel, ticksFor } from "../../../timeline/render/scale";
 
@@ -42,6 +45,11 @@ export interface ColumnPoint {
  * not zero. With `onWindow`, dragging across the columns (or Shift and the arrows, then Enter) sets
  * the workspace window to those periods.
  */
+/** A column's card with the incomplete-history words (I-03) as its last line. */
+function withSuspect(card: Card): Card {
+  return { ...card, rows: [...(card.rows ?? []), ["history", "incomplete here"]], foot: HISTORY_SUSPECT_WORDS };
+}
+
 export function Columns({ points, height = 150, format, tone = "var(--an-bar)", stackTone = "var(--an-fail)", onActivate, selected, minTop, onWindow, label, focusable = true, ringed = false, series }: { points: readonly ColumnPoint[]; height?: number; format(v: number): string; tone?: string; stackTone?: string; onActivate?: ((key: string) => void) | undefined; selected?: string | null | undefined; minTop?: number; onWindow?: ((w: Interval) => void) | undefined; label: string; focusable?: boolean; ringed?: boolean; series?: string | undefined }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [, setTip, tipNode] = useTip(width);
@@ -68,6 +76,11 @@ export function Columns({ points, height = 150, format, tone = "var(--an-bar)", 
       }
     });
   }
+  // Columns that carry their periods take the Timeline ruler's ticks and words (I-11); others keep their own labels.
+  const ruler = rulerTicks(points, plotW);
+  // A column whose period holds a day the observer marks suspect (I-03): hatched, and its card says so.
+  const history = useContext(Ctx)?.snapshot.history;
+  const suspect = suspectColumns(points, history?.suspect_days ?? [], history?.as_of_ms ?? null);
   const brushable = !!onWindow && points.length > 1 && points.every((p) => p.from !== undefined && p.to !== undefined);
   const periods = brushable ? points.map((p) => ({ from: p.from!, to: p.to! })) : [];
 
@@ -167,6 +180,13 @@ export function Columns({ points, height = 150, format, tone = "var(--an-bar)", 
           }
         }}
       >
+        {ruler
+          ? ruler.map((r) => (
+              <text key={`r${r.x}`} x={Math.min(width - right, Math.max(left, left + r.x))} y={height - 6} textAnchor={left + r.x > width - right - 24 ? "end" : left + r.x < left + 20 ? "start" : "middle"} style={AXIS_TEXT} aria-hidden="true" data-ruler-tick="">
+                {r.label}
+              </text>
+            ))
+          : null}
         {/* Weekend days banded, as on the Timeline's ruler (day columns only). */}
         {points.map((p, i) => {
           if (p.from === undefined || p.to === undefined || p.to - p.from !== 86_400_000) return null;
@@ -192,13 +212,14 @@ export function Columns({ points, height = 150, format, tone = "var(--an-bar)", 
           const tickAnchor = cx > width - right - 24 ? "end" : cx < left + 20 ? "start" : "middle";
           return (
             <g key={p.key}>
+              {suspect[i] ? <rect x={left + i * step + 1} y={top - 4} width={Math.max(2, step - 2)} height={height - bottom - top + 4} style={{ fill: "var(--an-hatch-ink)", fillOpacity: 0.25, stroke: "var(--an-hatch-ink)", strokeDasharray: "2 2" }} aria-hidden="true" data-column-suspect="" /> : null}
               {p.flag ? <rect x={left + i * step + Math.max(1, step * 0.12)} y={y(0) + 3} width={Math.max(2, step - 2 * Math.max(1, step * 0.12))} height={3} rx={1} style={{ fill: "var(--an-wait)" }} aria-hidden="true" /> : null}
-              {p.tick && shownTicks.has(i) ? (
+              {!ruler && p.tick && shownTicks.has(i) ? (
                 <text x={tickAnchor === "end" ? width - right : tickAnchor === "start" ? left : cx} y={height - 6} textAnchor={tickAnchor} style={AXIS_TEXT} aria-hidden="true">
                   {p.tick}
                 </text>
               ) : null}
-              <Mark name={series ? `${series}, ${cardWords(p.card)}` : undefined} nav={focusable ? nav : undefined} index={i} x={x} y={Math.min(y(v) - sh, y(0) - 6)} w={bw} h={Math.max(6, h + sh)} tipAt={{ x: cx, y: Math.min(y(v) - sh, y(0) - 6) }} card={p.card} onTip={setTip} onActivate={onActivate ? () => onActivate(p.key) : undefined} pressed={onActivate ? selected === p.key : undefined} onKeyExtra={(e) => brushKey(i, e)}>
+              <Mark name={series ? `${series}, ${cardWords(suspect[i] ? withSuspect(p.card) : p.card)}` : undefined} nav={focusable ? nav : undefined} index={i} x={x} y={Math.min(y(v) - sh, y(0) - 6)} w={bw} h={Math.max(6, h + sh)} tipAt={{ x: cx, y: Math.min(y(v) - sh, y(0) - 6) }} card={suspect[i] ? withSuspect(p.card) : p.card} onTip={setTip} onActivate={onActivate ? () => onActivate(p.key) : undefined} pressed={onActivate ? selected === p.key : undefined} onKeyExtra={(e) => brushKey(i, e)}>
                 {p.value === null ? (
                   <circle cx={cx} cy={y(0) - 3} r={2.2} style={{ fill: "none", stroke: "var(--an-subtle)", strokeWidth: 1 }} />
                 ) : h > 0 ? (
@@ -340,7 +361,8 @@ export interface RankColumn<T> {
  * zero on the largest value of every row, not just the page, so pages compare.
  */
 export function RankTable<T>({ rows, columns, rowKey, rowName, initial, pageSize = 8, onActivate, selected, caption }: { rows: readonly T[]; columns: readonly RankColumn<T>[]; rowKey(r: T): string; rowName(r: T): string; initial: { readonly key: string; readonly dir: SortDir }; pageSize?: number; onActivate?: ((r: T) => void) | undefined; selected?: string | null | undefined; caption: string }) {
-  const [sort, setSort] = useState(initial);
+  // Remembered per ranking (its caption, a fixed interface string), so Back to Analytics finds it sorted as it was (I-15).
+  const [sort, setSort] = useRemembered(`sort:${caption}`, initial);
   const [page, setPage] = useState(0);
   const col = columns.find((c) => c.key === sort.key && c.sort) ?? columns.find((c) => c.sort);
   const sorted = useMemo(() => (col?.sort ? sortRows(rows, col.sort, sort.dir, rowKey) : [...rows]), [rows, col, sort.dir, rowKey]);
@@ -451,7 +473,7 @@ export function LogNote() {
  * on a log time axis (labelled as such), the median and, with enough members, the 90th percentile
  * as rules (each read as the observer reads it: the upper bound of its bucket).
  */
-export function DurationHistogram({ buckets, p50, p90, height = 124, name, tone = "var(--an-bar)" }: { buckets: readonly HistBucket[] | undefined; p50?: number | undefined; p90?: number | undefined; height?: number; name: string; tone?: string }) {
+export function DurationHistogram({ buckets, p50, p90, mark, height = 124, name, tone = "var(--an-bar)" }: { buckets: readonly HistBucket[] | undefined; p50?: number | undefined; p90?: number | undefined; /** One duration to mark (the visit opened from the Timeline), with its words. */ mark?: { readonly ms: number; readonly label: string } | undefined; height?: number; name: string; tone?: string }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [, setTip, tipNode] = useTip(width);
   const bins: HistBin[] = histogramBins(buckets);
@@ -500,6 +522,14 @@ export function DurationHistogram({ buckets, p50, p90, height = 124, name, tone 
         })}
         {p50x !== null ? <Rule x={p50x} top={top - 8} bottom={height - bottom} label={`median ${durationText(p50)}`} anchor="end" /> : null}
         {p90x !== null ? <Rule x={p90x} top={top - 8} bottom={height - bottom} label={`90th ${durationText(p90)}`} anchor="start" dashed labelX={crowded ? width - right : undefined} /> : null}
+        {mark ? (
+          <g aria-hidden="true" data-histogram-mark="">
+            <line x1={x(Math.min(hi, Math.max(lo, mark.ms)))} x2={x(Math.min(hi, Math.max(lo, mark.ms)))} y1={top - 8} y2={height - bottom} style={{ stroke: "var(--an-select)", strokeWidth: 2 }} />
+            <text x={x(Math.min(hi, Math.max(lo, mark.ms)))} y={height - bottom - 4} textAnchor={x(Math.min(hi, Math.max(lo, mark.ms))) > width / 2 ? "end" : "start"} dx={x(Math.min(hi, Math.max(lo, mark.ms))) > width / 2 ? -4 : 4} style={{ ...NUM, fontSize: 11, fill: "var(--an-select)", paintOrder: "stroke", stroke: "var(--mach-canvas)", strokeWidth: 3 }}>
+              {mark.label}
+            </text>
+          </g>
+        ) : null}
       </svg>
       {tipNode}
     </div>

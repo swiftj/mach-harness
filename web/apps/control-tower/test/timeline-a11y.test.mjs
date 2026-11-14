@@ -296,7 +296,7 @@ test("X2: an open cell's context is its last activity beneath it and the person 
   assert.equal(describe.openContext(tree, visit, live), null, "a visit is not a container");
   const words = await import("../src/timeline/render/words.ts");
   const said = words.describeSpan(cell, live, ctx);
-  assert.match(said, /open 8 h 0 min; last activity 23:27:00; waiting for a person since 23:26:00/);
+  assert.match(said, /open 8 h; last activity 23:27:00; waiting for a person since 23:26:00/);
   assert.match(said, /last activity/);
   assert.doesNotMatch(said, /running|at work/);
 });

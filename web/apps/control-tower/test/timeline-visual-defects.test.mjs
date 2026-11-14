@@ -42,11 +42,13 @@ test("1: the toolbar uses the full fit key, and a squeezed row shortens the pinn
   assert.match(t, /squeeze >= 2 && "hidden"\)\}> · live edge is/);
 });
 
-test("1: the shared transport drops its secondary words in a column narrower than 1100 px; the floor's is unchanged", () => {
+test("1: the shared transport drops its secondary words in a column narrower than 1160 px; the floor's is unchanged", () => {
   assert.equal(frame.transportCompact(0), false, "not measured yet: as before");
   assert.equal(frame.transportCompact(936), true, "1280 wide with the inspector column (344 px)");
   assert.equal(frame.transportCompact(1099), true);
-  assert.equal(frame.transportCompact(1100), false, "1100 wide with the inspector as a drawer");
+  assert.equal(frame.transportCompact(1100), true, "1100 wide with the inspector as a drawer: reviewing, the speeds were clipped (M6.6)");
+  assert.equal(frame.transportCompact(1159), true);
+  assert.equal(frame.transportCompact(1160), false);
   assert.equal(frame.transportCompact(1168), false, "1512 wide with the inspector column");
   assert.match(src("timeline/Workspace.tsx"), /<Transport collapsed=\{false\} idleSince=\{idleSince\} compact=\{transportCompact\(fullWidth\)\} \/>/);
   assert.match(src("shell/timeline/Timeline.tsx"), /<Transport (?![^>]*compact)/, "the docked timeline's transport passes no compact flag");

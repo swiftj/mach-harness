@@ -7,11 +7,16 @@
 import { CornerDownRight } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@mach/ui";
-import { describeEntry, entriesBehind, EVENT_CATALOG, eventsFor, isSceneLog, timingAt, type AnyRef, type AnySimEvent, type Authority, type LogEntry, type Telemetry } from "../../sim";
+import { entriesBehind, EVENT_CATALOG, eventsFor, isSceneLog, timingAt, type AnyRef, type AnySimEvent, type Authority, type LogEntry, type Telemetry } from "../../sim";
 import { analyticsStationOf, showInAnalytics, useSceneStore, useStore, type AnalyticsTarget } from "../../scene";
+import { visitAnalyticsWindow } from "../../scene/analytics";
 import { usePlayheadEffect } from "../timeline/playhead";
 import { duration as durationWords, selectable, TELEMETRY_WORDS, timecode } from "../vocab";
 import { elapsedWords } from "./words";
+import { EventWords } from "./FreeText";
+import { freeTextDataKeys } from "../../text/fields";
+import { useDisplayPolicy } from "../displayPolicy";
+import type { DisplayPolicy } from "../../text/unchecked";
 
 export function Section({ title, children, aside, id }: { title: string; children: ReactNode; aside?: ReactNode; id?: string }) {
   return (
@@ -195,13 +200,17 @@ export function precisionWords(precision: LogEntry["precision"] | "measured" | "
   }
 }
 
-/** A few key fields of an event's data, as short text. */
-function keyFields(event: { data?: unknown }): Array<[string, string]> {
+/**
+ * A few key fields of an event's data, as short text. A field the free-text policy names is never
+ * printed here raw: the event's sentence above carries it, contained (`EventWords`).
+ */
+export function keyFields(event: { type?: string; data?: unknown }, policy: DisplayPolicy | null = null): Array<[string, string]> {
   const data = (event.data ?? {}) as Record<string, unknown>;
+  const prose = freeTextDataKeys(policy, event.type ?? "");
   const out: Array<[string, string]> = [];
   for (const [k, v] of Object.entries(data)) {
     if (out.length >= 4) break;
-    if (v === null || v === undefined) continue;
+    if (v === null || v === undefined || prose.has(k)) continue;
     if (typeof v === "string") out.push([k, v.length > 48 ? `${v.slice(0, 46)}…` : v]);
     else if (typeof v === "number" || typeof v === "boolean") out.push([k, String(v)]);
     else if (Array.isArray(v)) out.push([k, `${v.length} item${v.length === 1 ? "" : "s"}`]);
@@ -213,7 +222,8 @@ const isSim = (entry: LogEntry) => entry.event.schema_version !== 3;
 
 export function EventRow({ entry, current }: { entry: LogEntry; current?: boolean }) {
   const event = entry.event;
-  const fields = keyFields(event as { data?: unknown });
+  const policy = useDisplayPolicy();
+  const fields = keyFields(event as { type?: string; data?: unknown }, policy);
   const sim = isSim(entry);
   return (
     <li className={cn("relative border-l-2 py-2 pl-3", current ? "border-factory-select" : "border-line")} data-event-id={entry.id}>
@@ -225,7 +235,9 @@ export function EventRow({ entry, current }: { entry: LogEntry; current?: boolea
           {sim ? ` · seq ${(event as AnySimEvent).seq}` : ""}
         </span>
       </div>
-      <p className="mt-1 text-body-sm text-ink-muted">{describeEntry(entry)}</p>
+      <p className="mt-1 text-body-sm text-ink-muted">
+        <EventWords entry={entry} />
+      </p>
       {sim ? null : (
         <p className="mt-0.5 text-caption text-ink-subtle">
           {precisionWords(entry.precision)}
@@ -390,6 +402,19 @@ export function AnalyticsLink({ target, children }: { target: AnalyticsTarget; c
 export function StationHistoryLink({ kind }: { kind: string }) {
   const station = analyticsStationOf(kind);
   return station ? <AnalyticsLink target={{ area: "flow", filters: { station } }}>Open its measured history</AnalyticsLink> : null;
+}
+
+/**
+ * "Open its measured history" for one station visit picked in the Timeline (I-12, journey 3): Flow for
+ * its station over the week the visit ended in, with the visit still selected, so Flow can say where it
+ * sits among that week's measured visits. The simulation's Analytics reads its own fixture, not the
+ * simulated run, so there the period is left as it is.
+ */
+export function VisitHistoryLink({ visit }: { visit: { readonly station: string; readonly enteredAt: number; readonly leftAt: number | null } }) {
+  const station = analyticsStationOf(visit.station);
+  const simulated = useSceneStore((s) => s.source === "simulation");
+  if (!station) return null;
+  return <AnalyticsLink target={{ area: "flow", filters: { station }, ...(simulated ? {} : { window: visitAnalyticsWindow(visit) }) }}>Open its measured history</AnalyticsLink>;
 }
 
 /**
