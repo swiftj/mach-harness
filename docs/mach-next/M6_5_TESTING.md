@@ -227,8 +227,8 @@ projection) and the table is after the fix. The cold `flow` call is the timeline
 ## Results
 
 Run on 2026-11-14 against the working tree mid-M6.5, after the live workspace landed and its last changes
-(headless Chromium, Apple silicon, shared machine). Final full run of `pnpm run test:e2e:analytics`: 31
-tests, 30 pass, 0 fail, 1 skip.
+(headless Chromium, Apple silicon). Final full run of `pnpm run test:e2e:analytics` on the realistic
+profile: 32 tests, 31 pass, 0 fail, 1 skip (the live file's fresh-page reveal test passed 10 of 10).
 
 | Suite | Mode | Pass | Fail | Skip |
 |---|---|---|---|---|
