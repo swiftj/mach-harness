@@ -139,13 +139,17 @@ record's own risk and app type, as observe.py does. Cells past the per-metric li
 **Definition notes.** C1 counts each visit by the visit span's own classification (the same function `flow` and
 `contributors` use): measured, bounded or unknown from its recorded entry and exit; inferred when no record ends
 it but a later record bounds it (its execution ended, the station was entered again, or only cleanup closed it);
-open otherwise. A visit known only by its exit is a visit (C2) of unknown length (C1). C4 and W2 measure
+open otherwise. A visit known only by its exit is a visit (C2) of unknown length (C1). A visit whose recorded exit
+came after something had already ended it (its execution ended, the station was entered again) was not continuous
+work (M6.6): it is bounded (at least to that earlier end, at most to the exit), counted apart, never measured. C4 and W2 measure
 eligibility from the first time the slice's current revision became eligible: a reissue of the same revision to
 another ticket does not restart it, a new revision does. W1 counts open dependency waits under `open`. S2 counts
 executions whose outcome is unknown by the state every view serves (an execution whose process recorded how it
 stopped is not unknown, whatever recoveries follow), once per execution. K1's population is every claimed
-execution: those without `execution.completed` are excluded as "no result recorded", those completed without a
-cost as such. T1 counts merges written in lifecycle logs; a ticket its run record says merged with no merge in its
+execution: those with `execution.failed` are excluded as "failed: the Factory's record of a failed execution
+carries no cost", those with neither as "no result yet, or outcome unknown", those completed without a cost as such
+(M6.6: two truthful reasons; the definition is unchanged). A failed execution's own stream result may carry a cost
+(served by `/api/v1/runs` and in K2); it is not part of K1 or K4. T1 counts merges written in lifecycle logs; a ticket its run record says merged with no merge in its
 log is in T1's coverage as excluded ("no merge in the lifecycle log"), never in the count. C2's denominator is the distinct tickets that recorded a visit in the window (grouped by
 station: the tickets that visited that station). K4's denominator is the distinct tickets with a recorded cost in
 the window, and its numerator only the cost recorded in the window. X3 by gate, S1 by kind and K3 by token kind
@@ -252,9 +256,45 @@ beside `floor` and `timeline`. Selection, focus and navigation stay the scene st
 interface state (`store.analytics`: area, window, filters, comparison) there. Areas: Pulse, Flow, Quality,
 Economics, Reliability, Compare, with Improvement Opportunities on Pulse and in its own list.
 
-Analytics states which history it describes: the complete recorded history, a selected window, or "through the
-playhead" when the source is a replay at a point in time (it then queries `to_ms` = the playhead and never shows
-a later outcome).
+Analytics states which history it describes: the complete recorded history, a selected window, or the history up
+to the playhead when it is held behind the live edge (every query asks `as_of_ms`; nothing later is shown).
+
+Changed in M6.6 (Phase 2):
+- **Day cut in words (I-07, I-08).** Metrics and insights count whole UTC days before the playhead. The caption names
+  the last whole day counted and the playhead apart ("Counted through the end of 3 Nov (UTC) … The playhead is at
+  4 Nov 14:20:05 UTC; the part of 4 Nov before it is not in these figures"), says the flow drawing and the rows run to
+  the playhead itself, and each such figure carries "to end of 3 Nov". No formula changed.
+- **No widening (I-32).** Against an observer without `as_of_ms`, counted figures (metrics, flow, insights) are not
+  available as of the playhead (`AS_OF_UNSUPPORTED`); lists are still cut at the playhead client-side.
+- **Source and link (I-02).** The header says the store's `playbackLabel` ("Live Factory (stale)", "Historical
+  replay"); a stale, unreachable or session-less observer shows the floor's own stage notice, floating at the foot.
+- **Incomplete history (I-03).** `history.partial`, `history.gaps` and `suspect_days` are one line over each area, in
+  the Timeline's words ("History is missing here: …"), and a suspect figure says "history incomplete here".
+- **Back to live (I-13).** While held at the playhead the header offers "Back to live" (replay: "Go to its last
+  event"), and L and End do the same in Analytics. The freshness read time (the observer's clock now) is not shown
+  under a playhead (I-39).
+- **One cut per view (real-run D1).** A reply's identity includes its "as of" cut (cache key and a check on every
+  reply, `sameCut`); a reply of another cut never fills a panel, and Analytics waits for a moment named in the address
+  instead of reading the whole history first.
+- **No whole day yet (real-run D4).** Held on the history's first UTC day, the window is the playhead's day up to the
+  playhead (never inverted) and the caption says "No whole UTC day is complete before the playhead; day-counted figures
+  are not available."
+- **One time vocabulary (I-09, I-10, I-11).** Durations everywhere use the shell's formatter (`shell/time.ts
+  duration`: "48 s", "4 min 12 s", "1 h 3 min", "1 h", "1 d 15 h"); Analytics no longer rounds to whole minutes past
+  10 min. Moments read "4 Nov, 09:29:43 UTC". Basis words are the Timeline's: measured, bounded, inferred (placed by
+  rule), open, unknown, not recorded. Trend columns take the Timeline ruler's ticks and day labels (`scale.ts`).
+  The observer's insight templates use the same duration and moment words, and say "choose a dated window" and "the
+  recorded limit on executions at once" instead of `from_ms`/`max_parallel`. Wording only: no threshold, formula or id
+  changed.
+- **Rules in words (I-17).** "Not evaluated" names each rule by its condition, with its id as quiet mono beside it.
+- **From the Timeline (I-12, I-14).** A selected station visit offers "Open its measured history": Flow for its
+  station over the seven UTC days ending with the visit's day; Flow reads the store's one selection and says where
+  the visit sits among that period's measured visits ("between A and B, as this one was"), marking it on the
+  histogram. A failed verification or rejected review offers "Show the floor at this moment": the shared playhead
+  moves to the decision, then the floor shows it with the selection kept.
+- **Back keeps the view (I-15).** Table/Chart toggles, ranking sorts and each area's scroll offset are remembered in
+  memory per scene store (codes only, never the address or browser storage), so Back restores them with what the
+  address carries.
 
 ## 5. Execution provenance
 

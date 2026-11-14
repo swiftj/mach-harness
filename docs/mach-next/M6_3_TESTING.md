@@ -83,7 +83,7 @@ relay.
 | (9) | 9 | the jump menu finds the deliberate gap and says so |
 | (11) | 11 | no open span "took" a duration; open waves, slices, cells and rounds say open, never running |
 | (12) | 12 | bounded ("between") and inferred ("≈", "about … placed by rule") times keep that wording in the duration |
-| (15) | 15 | with the playhead in the middle of a cell's run, the inspector does not say merged; the table and tracks say they are as of the live edge, after the playhead |
+| (15) | 15 | with the playhead in the middle of a cell's run, the inspector and the table do not say merged; the table says it is as of the playhead and the reveal control is offered, off (M6.6 I-04) |
 | API and console | | every `/api` request is GET to 127.0.0.1; no console errors |
 
 `e2e/live.e2e.mjs` (synthetic history changing under the page, observer on 4241)
