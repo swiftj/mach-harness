@@ -134,7 +134,7 @@ var Templates = map[string]Text{
 	},
 	RuleCostLater: {
 		Title:     "Recorded cost higher in the later window, with no more integrated slices",
-		Condition: "Recorded cost: {later_cost} over {later_den} executions in the later window, {earlier_cost} over {earlier_den} in the earlier window ({ratio} of it). Integrated slices recorded: {later_t2} later, {earlier_t2} earlier. Recorded cost covers {later_cov} and {earlier_cov} of completed executions. The rule's threshold is {threshold}.",
+		Condition: "Recorded cost: {later_cost} over {later_den} executions in the later window, {earlier_cost} over {earlier_den} in the earlier window ({ratio} of it). Integrated slices recorded: {later_t2} later, {earlier_t2} earlier. Recorded cost covers {later_cov} and {earlier_cov} of the executions expected to record one (failed executions record none and are not counted). The rule's threshold is {threshold}.",
 		Why: "Recorded cost only, as Claude reported it and MACH recorded it; nothing is estimated. The two figures are seen together; " +
 			"that does not show that one depends on the other, and integrated slices differ in size.",
 		Investigation: "Open the later window's executions by recorded cost and see which tickets and stages they ran.",

@@ -270,7 +270,7 @@ const exNoUsage = "completed with no usage record from the stream"
 // stream's result may still carry a cost, which is not part of K1).
 const (
 	exK1NoResult = "no result yet, or outcome unknown"
-	exK1Failed   = "failed: the Factory's record of a failed execution carries no cost"
+	exK1Failed   = metrics.ExK1Failed
 )
 
 // exR2NoFinding: blockers a run record counts with no review finding read for them.

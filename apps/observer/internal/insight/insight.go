@@ -108,7 +108,7 @@ var Rules = []RuleDef{
 	{RuleExecShare, Note, "recoveries, failed, interrupted or unknown-outcome executions above a share of executions (unknown outcome: attention)", "S1 >= 10%, S2 >= 5%, X1 >= 10%, interrupted >= 10%", "10 executions", []string{"S1", "S2", "X1", "executions (contributors)"}},
 	{RuleExecLater, Note, "the same execution measures are higher in the later of two consecutive equal windows", "later - earlier >= 5 points", "a bounded window; 10 executions in each window", []string{"S1", "S2", "X1", "executions (contributors)"}},
 	{RuleCostLater, Note, "recorded cost is higher in the later window while integrated slices are not higher", "later cost >= 1.25 x earlier cost and T2 later <= T2 earlier", "a bounded window; 10 executions with a recorded cost and 80% cost coverage in each window", []string{"K1", "T2"}},
-	{RuleUsageMissing, Note, "executions without recorded usage (data quality): subject cost, completed executions with no cost recorded by the supervisor; subject stream, executions with no usage record from the stream", "missing >= 10%", "10 executions", []string{"K1 coverage", "usage-missing (contributors)"}},
+	{RuleUsageMissing, Note, "executions without recorded usage (data quality): subject cost, executions expected to record a cost (not failed ones) with no cost recorded by the supervisor; subject stream, executions with no usage record from the stream", "missing >= 10%", "10 executions", []string{"K1 coverage", "usage-missing (contributors)"}},
 	{RuleLifecycleCoverage, Note, "tickets without a lifecycle log (data quality)", "share with a log < 80%", "5 tickets", []string{"flow coverage"}},
 }
 

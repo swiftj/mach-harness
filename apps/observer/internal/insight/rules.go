@@ -579,7 +579,9 @@ func costLater(e *eval) {
 		e.ne(id, "", fill(reasonPrevFew, map[string]string{"min": itoa(CostMinExecutions), "what": "executions with a recorded cost", "later": num(ld), "earlier": num(ed)}))
 		return
 	}
-	lc, ec := lk.Coverage.Share, ek.Coverage.Share
+	// Coverage over the executions K1 expects a cost from: a failed execution records none by
+	// definition and is not a gap in the record (M6.6; the threshold is unchanged).
+	lc, ec := costCoverage(lk), costCoverage(ek)
 	if lc == nil || ec == nil || *lc < CostMinCoverage || *ec < CostMinCoverage {
 		e.ne(id, "", fill(reasonCoverage, map[string]string{"min": pct(CostMinCoverage), "later": pctp(lc), "earlier": pctp(ec)}))
 		return
@@ -603,26 +605,27 @@ func costLater(e *eval) {
 		rowMeasure("T2", "integrated slices recorded", et, "earlier", f(et2), "slices"),
 	}
 	e.add(id, "", Note, "later cost >= "+pct(CostRatioMin)+" of earlier, and integrated slices later <= earlier", vars, ms,
-		Sample{Count: ld + ed, Unit: "executions with a recorded cost", CoverageShare: lc, Population: "completed executions in the later and earlier windows"},
+		Sample{Count: ld + ed, Unit: "executions with a recorded cost", CoverageShare: lc, Population: costPopulation + " in the later and earlier windows"},
 		e.link("K1", nil, "impact", "exact", "the later window's records; choose the earlier window's dates to list its records", e.in.Window), true)
 }
 
 func usageMissing(e *eval) {
 	const id = RuleUsageMissing
-	// Subject cost: completed executions with no cost recorded by the supervisor (K1's coverage,
-	// the population every recorded-cost figure stands on).
+	// Subject cost: executions K1 expects a cost from (every claimed execution but a failed one,
+	// whose record carries no cost by definition) with no cost recorded by the supervisor (M6.6:
+	// failed executions were counted as missing; the threshold and minimum are unchanged).
 	if row, ok, why := usable(e.in.Cur, "K1"); !ok {
 		e.ne(id, "cost", why)
-	} else if el := deref(row.Coverage.Eligible); el < UsageMinEligible {
-		e.ne(id, "cost", fill(reasonFewDen, map[string]string{"min": itoa(UsageMinEligible), "what": "completed executions", "n": num(el)}))
-	} else if without := el - deref(row.Coverage.Counted); without/el >= UsageMissingMin {
+	} else if counted, el, _ := costExpected(row); el < UsageMinEligible {
+		e.ne(id, "cost", fill(reasonFewDen, map[string]string{"min": itoa(UsageMinEligible), "what": costPopulation, "n": num(el)}))
+	} else if without := el - counted; without/el >= UsageMissingMin {
 		missing := without / el
-		vars := map[string]string{"missing": pct(missing), "without": num(without), "eligible": num(el), "record": "a cost recorded by the supervisor", "population": "completed executions"}
+		vars := map[string]string{"missing": pct(missing), "without": num(without), "eligible": num(el), "record": "a cost recorded by the supervisor", "population": costPopulation}
 		ms := []Measurement{
-			rowMeasure("K1", "completed executions with a recorded cost", row, "selection", row.Coverage.Counted, "executions"),
+			rowMeasure("K1", "executions with a recorded cost", row, "selection", row.Coverage.Counted, "executions"),
 			{Metric: "K1", Label: "share without a recorded cost", Value: f(missing), Unit: "ratio", Numerator: f(without), Denominator: f(el), Window: "selection"},
 		}
-		e.add(id, "cost", Note, "missing >= "+pct(UsageMissingMin), vars, ms, Sample{Count: el, Unit: "completed executions", CoverageShare: row.Coverage.Share, Population: "completed executions in the selection"},
+		e.add(id, "cost", Note, "missing >= "+pct(UsageMissingMin), vars, ms, Sample{Count: el, Unit: "executions", CoverageShare: costCoverage(row), Population: costPopulation + " in the selection"},
 			e.link("K1-missing", nil, "recent", "exact", "", e.in.Window), false)
 	}
 	// Subject stream: executions with no execution.usage record from the stream (the population of
@@ -672,6 +675,30 @@ func lifecycleCoverage(e *eval) {
 // ---- helpers ----
 
 // usable returns a row the rules can read, or why not.
+// costPopulation names the executions K1 expects a cost from: completed ones, and those with no
+// result yet or of unknown outcome. A failed execution is not one of them.
+const costPopulation = "executions expected to record a cost (completed, or no result yet; failed executions record none)"
+
+// costExpected reads K1's coverage: the executions counted (a cost recorded), those the definition
+// expects a cost from (every eligible one but the failed), and the failed (metrics.ExK1Failed).
+func costExpected(r metrics.Row) (counted, expected, failed float64) {
+	for _, x := range r.Coverage.Excluded {
+		if x.Reason == metrics.ExK1Failed {
+			failed += x.Count
+		}
+	}
+	return deref(r.Coverage.Counted), deref(r.Coverage.Eligible) - failed, failed
+}
+
+// costCoverage is the share of costExpected's executions with a recorded cost; nil when none is expected.
+func costCoverage(r metrics.Row) *float64 {
+	counted, expected, _ := costExpected(r)
+	if expected <= 0 {
+		return nil
+	}
+	return f(counted / expected)
+}
+
 func usable(rows map[string]metrics.Row, key string) (metrics.Row, bool, string) {
 	r, ok := rows[key]
 	if !ok {
