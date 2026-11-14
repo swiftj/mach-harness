@@ -193,6 +193,9 @@ func (w *world) simulate() float64 {
 		}
 		nowHeld := map[string]bool{}
 		var heldList []any
+		if !w.awake(t) {
+			candidates = nil // outside the working week no new work is claimed (realistic profile only)
+		}
 		for _, c := range candidates {
 			if running < w.maxPar() {
 				running++
@@ -354,6 +357,10 @@ func (w *world) startSegment(c *cell, t float64) {
 	switch seg.after {
 	case "human":
 		ta := x.end + w.between(3600, 5400)
+		if w.real() {
+			// A person approves in working hours: minutes to hours after they see it, with a long tail.
+			ta = w.nextAwake(x.end+w.lognormal(1500, 1.0)) + w.lognormal(1200, 0.9)
+		}
 		hv := w.nextVisit(c, "human-approval")
 		w.lrec(c, nil, ta, "human.approval_recorded", "human-approval", hv, c.round, map[string]any{"round": c.round, "decision": "approve", "note_given": true})
 		w.humanApproved(c, ta, hv)

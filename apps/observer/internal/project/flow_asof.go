@@ -401,7 +401,7 @@ func (ix *FlowIndex) AsOf(t int64) *FlowIndex {
 	a := BuildFlow(CutAt(ix.st, t), cutSpans(ix.spans, t))
 	a.Pos, a.Epoch, a.base = ix.Pos, ix.Epoch, ix
 	ix.mu.Lock()
-	if ix.asOf == nil || len(ix.asOf) >= 8 {
+	if ix.asOf == nil || len(ix.asOf) >= 4 {
 		ix.asOf = map[int64]*FlowIndex{}
 	}
 	ix.asOf[t] = a

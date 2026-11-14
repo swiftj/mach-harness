@@ -458,6 +458,14 @@ differ, this one describes what is built.
   and are read back and expanded when asked for, byte for byte what was served when new (98 MB of a 176 MB live heap
   became about 30 MB). Measured with `/usr/bin/time -l` on a clean copy: catch-up 16.5–18.7 s, peak RSS 260–281 MiB
   (before, same machine and method: 29.6–36.4 s, 300–331 MiB).
+  M6.5: the fixed 208 MB limit became a cliff once the analytics caches put a 250,000-event project's live heap at
+  190–226 MB: the collector ran continuously (idle at a quarter of a core, 6 ms of CPU per appended event, restart
+  12.5 s, against 3 %, 3 ms and 6.7 s before). The limit now adapts (`cmd/mach-observer/memlimit.go`): it starts at
+  320 MB and, after the first full catch-up and then at most once a minute, is set to max(320 MB, 1.6 × the live heap
+  after the last collection), capped at 2 GB, changed only when that moves it by more than 10 % and logged in one
+  line; `GOMEMLIMIT` still wins and turns the adaptation off. Measured with the e2e harness against `b37c036` on the
+  realistic large project (load average 2.3–5.4): idle 1.3 % against 1.2 %, 0.6 ms per appended event against
+  1.5 ms, restart 6.9 s against 6.9 s, cold rebuild 24.9 s against 28.8 s, idle RSS 278 MB against 180 MB.
 - **Index format 3 (section 7.2).** Segments hold each event in a compact form (the envelope without its nulls, empty
   lists and objects, `false` and zeros; `data`, `cause` and `provenance` exact), expanded to the full envelope when
   read: 213 MB of segments for that history instead of 281 MB. A format change rebuilds the index.

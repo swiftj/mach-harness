@@ -43,10 +43,19 @@ var compatGolden = []struct {
 	// The default history (mach-synth with no options but --out): the Timeline's 220,000 events.
 	{"the default history", synth.Options{Seed: 1},
 		"2d804da80ad74581214fc735f000de08fe2479fa59a60d9147533765f117eab2", "1ee3e9b9a8eeb5844cbbc200c50ebe61f36edc7763f4895aa8db5a04a032f644"},
+	// The analytics mode's default profile, recorded before --profile realistic was added: tiny,
+	// medium and a third shape, as mach-synth --analytics writes them.
+	{"analytics tiny", synth.Options{Analytics: true, Cells: 2, Waves: 1, Seed: 1},
+		"6bf9d2838e4e10e764d3b9c693f6fbde28b12d38ce020481415263226649d541", "56d4197e85741a17c9df1fad630613e26d895fd8038f0fe8104f0268bd70f8eb"},
+	{"analytics medium", synth.Options{Analytics: true, Cells: 60, Waves: 8, Seed: 1},
+		"bf1a44c61b1786dd5e29a5fa5fbf56ecbe774d22ecd942ffc473918f9c604826", "c40e1691449900dd8e6d59791d26f8e54974b730ddb1b4c74584f5bd1706116b"},
+	{"analytics thirty cells, seed 5", synth.Options{Analytics: true, Cells: 30, Waves: 4, Seed: 5},
+		"66bb0520b6e7f88465a5c355b522072171ae8d94a9b5a1f1c331fcfa75fd4eb3", "cc48c8d4425b0263169b79cd5aef1594a5708983ac833b5d4173b2908567f0f0"},
 }
 
 // TestCompatibleWithoutAnalytics: the same options and seed give byte-identical files and the same
-// summary as before the analytics mode existed.
+// summary as before the analytics mode existed, and the analytics mode's default profile as before
+// the realistic profile existed.
 func TestCompatibleWithoutAnalytics(t *testing.T) {
 	for _, c := range compatGolden {
 		if c.opts.Cells == 0 && (testing.Short() || testkit.Race) {

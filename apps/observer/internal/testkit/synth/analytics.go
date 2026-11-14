@@ -65,6 +65,8 @@ func (o Options) analyticsCheck() error {
 		return fmt.Errorf("agents per execution must be between 8 and 400")
 	case o.MaxParallel < 1 || o.MaxParallel > 32:
 		return fmt.Errorf("with --analytics, max parallel must be between 1 and 32")
+	case o.Profile != "" && o.Profile != ProfileRealistic:
+		return fmt.Errorf("--profile must be %q", ProfileRealistic)
 	}
 	return nil
 }
@@ -103,8 +105,9 @@ type cellFacts struct {
 	rejections    int // decisions REJECTED or ESCALATE
 	vetoes        int
 	decisions     map[string]int
-	redFail       int // test tasks seen failing first
-	redPass       int // test tasks passing on their first run (an override)
+	config        string // realistic profile: the execution configuration ("" when provenance was not recorded)
+	redFail       int    // test tasks seen failing first
+	redPass       int    // test tasks passing on their first run (an override)
 	deviations    []deviation
 	blockers      []blocker
 	notes         []blocker // a note: no rule
@@ -128,6 +131,11 @@ type execFacts struct {
 	mainModel string
 	noUsage   bool // the run ended without a result: no usage, no cost recorded
 	usage     []modelUse
+	// realistic profile: the configuration the execution ran under, its recorded config_id, and
+	// whether the supervisor failed to capture its provenance
+	config        string
+	configID      string
+	captureFailed bool
 }
 
 func (c *cell) appType() string {
@@ -238,13 +246,25 @@ func (w *world) setupAnalytics() {
 	// Waves arrive spread over the work the line can do: about 4,600 model seconds of execution
 	// per ticket, max_parallel at a time.
 	span := float64(n) * 4600 / float64(o.MaxParallel)
+	if w.real() {
+		w.realisticStart()
+		span = realisticSpan(n, o.MaxParallel)
+	}
 	for i := 0; i < o.Waves; i++ {
-		w.waves = append(w.waves, &wave{id: fmt.Sprintf("WAVE-%03d", i+1), at: 300 + span*0.85*float64(i)/float64(o.Waves)})
+		at := 300 + span*0.85*float64(i)/float64(o.Waves)
+		if w.real() {
+			at = w.nextAwake(at) // a product manager publishes in working hours
+		}
+		w.waves = append(w.waves, &wave{id: fmt.Sprintf("WAVE-%03d", i+1), at: at})
 	}
 	profiles := make([]profile, n)
 	for i := range profiles {
 		if n <= 2 {
 			profiles[i] = []profile{pClean, pVerifyFail}[i]
+			continue
+		}
+		if w.real() {
+			profiles[i] = w.pickProfileRealistic()
 			continue
 		}
 		profiles[i] = w.pickProfile()
@@ -263,6 +283,13 @@ func (w *world) setupAnalytics() {
 		c.an = &cellFacts{appType: w.pickAppType(), method: "local", title: "Synthetic slice " + fmt.Sprint(i+1), decisions: map[string]int{}}
 		if w.rng.IntN(100) < 35 {
 			c.an.method, c.an.pr = "pr", 100+i
+		}
+		if w.real() {
+			c.an.config = configFor(i, n, c.an.appType)
+			if n > 2 && i != n-2 && i != n-5 && i != n-8 {
+				prof = w.adjustForConfig(prof, c.an.config)
+				c.prof, c.risk = prof, prof.risk
+			}
 		}
 		s.cell = c
 		wv.slices = append(wv.slices, s)
@@ -375,7 +402,13 @@ func (w *world) usage(x *execution) {
 	total := 0.0
 	x.an.usage = nil
 	for _, m := range models {
-		u := modelUse{model: m, cost: math.Round(w.between(0.2, 3.5)*modelWeight[m]*1e4) / 1e4,
+		var cost float64
+		if w.real() {
+			cost = w.realisticCost(m, x)
+		} else {
+			cost = math.Round(w.between(0.2, 3.5)*modelWeight[m]*1e4) / 1e4
+		}
+		u := modelUse{model: m, cost: cost,
 			input: int64(w.between(400, 4000)), output: int64(w.between(5000, 60000)),
 			cacheRead: int64(w.between(1e5, 2e6)), cacheCreation: int64(w.between(1e4, 2e5))}
 		total += u.cost
@@ -556,6 +589,9 @@ func (w *world) humanApproved(c *cell, ta float64, visit int) {
 // abandon: a person gives the ticket up some time after its last execution.
 func (w *world) abandon(c *cell, x *execution) {
 	c.an.abandonAt = x.end + w.between(1800, 7200)
+	if w.real() {
+		c.an.abandonAt = w.nextAwake(x.end+w.lognormal(3600, 0.8)) + w.lognormal(1800, 0.8)
+	}
 	c.an.abandonReason = "a person stopped this slice: the approach needs a new design"
 	if c.stage == "blocked" {
 		c.an.abandonReason = "escalated after three judging rounds; a person decided to drop it"
@@ -812,6 +848,10 @@ type Expected struct {
 	Cost       map[string]any            `json:"cost"`
 	Scorecard  map[string]map[string]any `json:"observe_scorecard"`
 	Quirks     map[string]any            `json:"history_quirks"`
+	// Realistic profile only (realistic.go).
+	Durations   map[string]any `json:"durations_seconds,omitempty"`
+	Concurrency map[string]any `json:"concurrency,omitempty"`
+	Configs     map[string]any `json:"execution_configurations,omitempty"`
 }
 
 func ratio(num, den float64) any {
@@ -1118,6 +1158,10 @@ func (g *gen) writeExpected() error {
 	e.Quirks = map[string]any{"intake_duplicate_lines": w.an.dupIntake, "intake_missing_seq_lines": 2, "late_intake_lines": w.feature["late_intake_batch"],
 		"late_lifecycle_batch": w.feature["late_lifecycle_batch"], "partial_lifecycle_tickets": orNone(w.an.partial), "no_lifecycle_tickets": orNone(w.an.noLog),
 		"null_seq_records": nullSeq}
+	if w.real() {
+		e.Generator["profile"] = ProfileRealistic
+		g.realisticTruth(&e, done)
+	}
 	data, err := json.MarshalIndent(e, "", "  ")
 	if err != nil {
 		return err

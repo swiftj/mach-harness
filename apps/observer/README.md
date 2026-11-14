@@ -179,8 +179,16 @@ read, then expanded) when asked for, byte for byte what was served when they wer
 heap down to about 30 MB. Also bounded by: a tick reads at most 5,000 events (and the next follows at once while a
 backlog remains); projection checkpoints share every cell, slice, execution and wave that did not change (32 kept); the
 saved projection is written at most every 15 s; the segments hold each event in a compact form (the envelope without
-nulls, empties and zeros; `data` exact), expanded when read; the Go runtime has a soft memory limit of 208 MB
-(`GOMEMLIMIT` overrides).
+nulls, empties and zeros; `data` exact), expanded when read; the Go runtime has a soft memory limit
+(`GOMEMLIMIT` overrides it and turns the adaptation below off).
+
+The soft limit adapts to the history (M6.5). A fixed limit is a cliff: when the live heap nears it the collector runs
+continuously (at the former 208 MB a 250,000-event project with the analytics caches held 190–226 MB live and idled at
+a quarter of a core, 6 ms of CPU per appended event, restart 12.5 s). The limit starts at 320 MB; after the first full
+catch-up, and then at most once a minute, it becomes 1.6 × the live heap after the last collection, never below
+320 MB and never above 2 GB, and it is changed only when that differs by more than 10 %. Each change is logged in one
+line (`memory limit 320 MB -> 480 MB (live heap 300 MB)`). Before the catch-up it is only checked once a second
+whether the catch-up is done; after it, one timer a minute: nothing proportional to the history runs while idle.
 
 ### Timeline routes: costs measured so far
 

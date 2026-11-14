@@ -4,7 +4,7 @@
 //
 //	go run ./internal/testkit/cmd/mach-synth --out <dir> --cells 12 --events 220000 --seed 1 [--hours 30] [--end now]
 //	go run ./internal/testkit/cmd/mach-synth --out <dir> --append --rate 200 [--duration 60s]
-//	go run ./internal/testkit/cmd/mach-synth --out <dir> --analytics [--cells 300] [--waves 38] [--hours 504] [--events N] [--seed 1]
+//	go run ./internal/testkit/cmd/mach-synth --out <dir> --analytics [--cells 300] [--waves 38] [--hours 504] [--events N] [--seed 1] [--profile realistic]
 //
 // The first form writes <dir>/.factory/... (the intake log and ledger, cell lifecycle logs and
 // files, archives, execution records and Claude Code streams), <dir>/synth-summary.json and
@@ -49,6 +49,7 @@ func run(args []string) error {
 	analytics := fs.Bool("analytics", false, "generate an analytics-grade project (many finished tickets, run records, expected.json); unset options take the analytics defaults")
 	waves := fs.Int("waves", 0, "with --analytics: delivery waves (default: one per eight cells)")
 	maxPar := fs.Int("max-parallel", 0, "with --analytics: the supervisor's max_parallel (default 4)")
+	profile := fs.String("profile", "", "with --analytics: \"realistic\" for real-time durations, a working week and provenance configurations (the history is as long as the work; --hours is not used)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -75,9 +76,12 @@ func run(args []string) error {
 		return err
 	}
 	o := synth.Options{Out: abs, Cells: *cells, Events: *events, Seed: *seed, Hours: *hours, AgentsPerExecution: *agents}
+	if *profile != "" && !*analytics {
+		return fmt.Errorf("--profile applies only with --analytics")
+	}
 	if *analytics {
 		// Only what was asked for: the rest takes the analytics defaults (events: no progress fill).
-		o = synth.Options{Out: abs, Seed: *seed, Analytics: true, Waves: *waves, MaxParallel: *maxPar}
+		o = synth.Options{Out: abs, Seed: *seed, Analytics: true, Waves: *waves, MaxParallel: *maxPar, Profile: *profile}
 		if given["cells"] {
 			o.Cells = *cells
 		}

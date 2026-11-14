@@ -38,6 +38,10 @@ type Options struct {
 	Analytics   bool
 	Waves       int // analytics: delivery waves (default: one per eight cells)
 	MaxParallel int // analytics: the supervisor's max_parallel (default 4)
+	// Profile is the analytics profile: "" (the default, compact and stretched over Hours) or
+	// "realistic" (realistic.go: real-time durations, a working week, provenance configurations;
+	// the history is as long as the work, and Hours is not used).
+	Profile string
 }
 
 // DefaultEnd is the fixed end of a default history, so the default output is repeatable.
@@ -69,6 +73,9 @@ func (o *Options) Defaults() {
 func (o Options) check() error {
 	if o.Analytics {
 		return o.analyticsCheck()
+	}
+	if o.Profile != "" {
+		return fmt.Errorf("--profile applies only with --analytics")
 	}
 	switch {
 	case o.Out == "":

@@ -44,11 +44,24 @@ import (
 // garbage collector, not a cap: what the observer must hold is bounded by its own limits (the
 // tick budget, the store's memory window, shared checkpoints); this keeps the collector from
 // letting garbage pile up to twice that. GOMEMLIMIT, when set, wins.
-const MemoryLimit = 208 << 20
+//
+// It is the floor: after the first catch-up the limit adapts to the live heap (memlimit.go). It
+// must sit well above the live heap: when the live heap reaches the limit the collector runs
+// continuously. At 208 MB a 250,000-event project with the M6.5 analytics caches held 190 to 226 MB
+// live, and the observer spent a quarter of a core collecting while idle and 6 ms of CPU per
+// appended event (M6.5 performance). At 320 MB the same project idles at about 1.5% of a core and
+// 1 ms per appended event, with identical answers and about 310 MB resident. A history whose live
+// heap approaches this limit will collect continuously again: raise it (or set GOMEMLIMIT) then.
+const MemoryLimit = 320 << 20
+
+// memoryAdaptive is set by main when it set the soft limit itself (GOMEMLIMIT unset): run then
+// adapts the limit to the history (memlimit.go). Tests that call run leave it off.
+var memoryAdaptive bool
 
 func main() {
-	if os.Getenv("GOMEMLIMIT") == "" {
+	if adaptiveMemory() {
 		debug.SetMemoryLimit(MemoryLimit)
+		memoryAdaptive = true
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -166,6 +179,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	go proj.Run(done)
+	if memoryAdaptive {
+		go newMemAdapter(logger).run(done, func() bool {
+			s := proj.Status()
+			_, head := st.Bounds()
+			return !loop.Stats().CatchingUp && s.State == "current" && s.Pos >= head
+		})
+	}
 	go loop.Run(done)
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(listener) }()

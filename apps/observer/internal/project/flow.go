@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Flow (M6_5_DESIGN.md section 3.2): stations, the transitions the lifecycle records, the waits
@@ -234,6 +235,7 @@ type FlowIndex struct {
 	Epoch   string
 	Pos     uint64
 	Partial string
+	applied int64
 
 	stations    map[stationKey]*stationAgg
 	waits       map[waitKey]*durAgg
@@ -252,7 +254,7 @@ type FlowIndex struct {
 // BuildFlow builds the flow index of a state from its spans (allSpans(s) or a timeline's).
 func BuildFlow(s *State, spans []*Span) *FlowIndex {
 	ix := &FlowIndex{Epoch: s.Epoch, Pos: s.Pos, Partial: s.Partial, stations: map[stationKey]*stationAgg{}, waits: map[waitKey]*durAgg{},
-		transitions: map[transKey]*transAgg{}, cellsSeen: map[flowDims]map[string]bool{}, st: s, spans: spans}
+		transitions: map[transKey]*transAgg{}, cellsSeen: map[flowDims]map[string]bool{}, st: s, spans: spans, applied: s.Applied}
 	visitSpan := map[string]*Span{}
 	var waits []*Span
 	for _, sp := range spans {
@@ -766,13 +768,20 @@ func bottleneck(kind, key string, a *durAgg) Bottleneck {
 
 // ---- the cache ----
 
-// flowCache keeps, per projector, the latest index built from a head timeline and the latest built
-// at a cursor. (Kept beside the projector rather than in it, so the projector is unchanged.)
+// flowCache keeps, per projector, the latest index built at the head and the latest built at a
+// cursor. (Kept beside the projector rather than in it, so the projector is unchanged.)
+//
+// Memory: the head index is built from its own private copy of the projection, decoded
+// incrementally from the checkpoint encoding (entities that did not change are reused), and never
+// from the timeline: analytics requests do not build or keep a timeline. The index keeps that state
+// (for contributors and as-of cuts) and only the visit and wait spans; the other spans (agents,
+// tools, ...) are built for the derivation and let go.
 type flowCache struct {
-	mu   sync.Mutex
-	tl   *Timeline
-	head *FlowIndex
-	at   *FlowIndex
+	mu    sync.Mutex
+	dec   timelineCache // incremental decoding of the head's checkpoint (only its decode is used)
+	head  *FlowIndex
+	built time.Time
+	at    *FlowIndex
 }
 
 var flowCaches sync.Map // *Projector -> *flowCache
@@ -782,20 +791,58 @@ func (p *Projector) flowCache() *flowCache {
 	return c.(*flowCache)
 }
 
-// Flow returns the flow index at the projection's position: the timeline's (built once per
-// timeline; a timeline may be up to TimelineMaxAge behind the head, and the index says its Pos).
-func (p *Projector) Flow() (*FlowIndex, error) {
-	tl, err := p.Timeline()
-	if err != nil {
-		return nil, err
+// flowSpansOf builds a state's spans and keeps only the kinds the flow index reads (visits and
+// waits); the state does not keep the full set.
+func flowSpansOf(s *State) []*Span {
+	all := buildSpans(s)
+	out := make([]*Span, 0, len(all)/4)
+	for _, sp := range all {
+		switch sp.Kind {
+		case "visit", "slice-wait", "slice-eligible", "capacity-wait", "gate-wait", "person-wait":
+			out = append(out, sp)
+		}
 	}
+	return out
+}
+
+// Flow returns the flow index at the projection's position. Like the timeline, an index built at an
+// earlier position is served while it is younger than TimelineMaxAge (or while the writer holds the
+// projection's lock); the index says its Pos. One build at a time.
+func (p *Projector) Flow() (*FlowIndex, error) {
 	c := p.flowCache()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.tl != tl || c.head == nil {
-		c.tl, c.head = tl, BuildFlow(tl.st, tl.spans)
+	fresh := func() bool {
+		return c.head != nil && c.head.Epoch == p.opts.Log.Epoch() && p.opts.TimelineMaxAge > 0 && time.Since(c.built) < p.opts.TimelineMaxAge
 	}
-	return c.head, nil
+	if !p.mu.TryLock() {
+		if fresh() {
+			return c.head, nil
+		}
+		p.mu.Lock()
+	}
+	if !p.rebuilding && !p.running.Load() {
+		p.syncLocked()
+	}
+	if h := c.head; h != nil && h.Epoch == p.state.Epoch && (h.Pos == p.state.Pos && h.applied == p.state.Applied || fresh()) {
+		p.mu.Unlock()
+		return h, nil
+	}
+	cp, err := p.blobs.snapshot(p.state)
+	if err != nil {
+		p.blobs.valid = false
+	}
+	p.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	s, err := c.dec.decode(cp)
+	if err != nil {
+		return nil, err
+	}
+	ix := BuildFlow(s, flowSpansOf(s))
+	c.head, c.built = ix, time.Now()
+	return ix, nil
 }
 
 // FlowAt returns the flow index at a cursor: the head's when it is at that position, else built from
@@ -815,7 +862,7 @@ func (p *Projector) FlowAt(at uint64) (*FlowIndex, error) {
 	if err != nil {
 		return nil, err
 	}
-	ix := BuildFlow(s, allSpans(s))
+	ix := BuildFlow(s, flowSpansOf(s))
 	c.mu.Lock()
 	c.at = ix
 	c.mu.Unlock()

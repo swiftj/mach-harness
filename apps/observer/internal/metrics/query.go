@@ -299,10 +299,10 @@ func (t *Table) row(d Def, q Query) Row {
 	matched := 0
 	joined := q.joined
 	dimOf := func(f fact, key string) string {
-		if v := f.dims[key]; v != "" || q.Resolve == nil || !joinable[key] {
+		if v := f.get(key); v != "" || q.Resolve == nil || !joinable[key] {
 			return v
 		}
-		t := f.dims["ticket"]
+		t := f.get("ticket")
 		if t == "" {
 			return ""
 		}
@@ -345,7 +345,7 @@ func (t *Table) row(d Def, q Query) Row {
 		total.merge(a)
 		dv := ""
 		if d.Distinct != "" {
-			dv = f.dims[d.Distinct]
+			dv = f.get(d.Distinct)
 			if dv != "" {
 				distinct[dv] = true
 			}
@@ -575,10 +575,11 @@ func (t *Table) figure(d Def, a *Agg, distinct map[string]bool, extra map[string
 			}
 		} else {
 			g.Value = ptr(a.Sum / float64(a.Count))
-			g.P50, _ = quantile(a.Hist, a.Count, 0.5, a.Min, a.Max)
-			g.P90, _ = quantile(a.Hist, a.Count, 0.9, a.Min, a.Max)
+			h := a.full()
+			g.P50, _ = quantile(h, a.Count, 0.5, &a.Min, &a.Max)
+			g.P90, _ = quantile(h, a.Count, 0.9, &a.Min, &a.Max)
 			g.PercentileBasis = "histogram"
-			g.Min, g.Max = a.Min, a.Max
+			g.Min, g.Max = ptr(a.Min), ptr(a.Max)
 		}
 		counted = float64(a.Count)
 		if a.BMin != nil || a.BMax != nil {
@@ -593,20 +594,20 @@ func (t *Table) figure(d Def, a *Agg, distinct map[string]bool, extra map[string
 	} else {
 		g.BasisCounts.Measured = int64(counted)
 	}
-	g.BasisCounts.Bounded, g.BasisCounts.Inferred, g.BasisCounts.Unknown = a.Bases["bounded"], a.Bases["inferred"], a.Bases["unknown"]
+	g.BasisCounts.Bounded, g.BasisCounts.Inferred, g.BasisCounts.Unknown = a.Bounded, a.Inferred, a.Unknown
 	g.SampleCount = ptr(counted)
 
 	ex := map[string]float64{}
 	for k, n := range a.Ex {
 		ex[k] += n
 	}
-	if n := a.Bases["bounded"]; n > 0 {
+	if n := a.Bounded; n > 0 {
 		ex[exBounded] += float64(n)
 	}
-	if n := a.Bases["inferred"]; n > 0 {
+	if n := a.Inferred; n > 0 {
 		ex[exInferred] += float64(n)
 	}
-	if n := a.Bases["unknown"]; n > 0 {
+	if n := a.Unknown; n > 0 {
 		ex[exUnknown] += float64(n)
 	}
 	if open != nil && *open > 0 {
@@ -646,20 +647,24 @@ func distribution(d Def, a *Agg) *Distribution {
 	if d.Kind != "duration" {
 		return nil
 	}
-	out := &Distribution{Basis: "histogram", Bounds: map[string][2]float64{}, Histogram: []HistBucket{}, Min: a.Min, Max: a.Max,
+	hist := a.full()
+	out := &Distribution{Basis: "histogram", Bounds: map[string][2]float64{}, Histogram: []HistBucket{},
 		Over: "measured durations only"}
+	if a.Count > 0 {
+		out.Min, out.Max = ptr(a.Min), ptr(a.Max)
+	}
 	for _, p := range []struct {
 		name string
 		q    float64
 		dst  **float64
 	}{{"p10", 0.1, &out.P10}, {"p25", 0.25, &out.P25}, {"p50", 0.5, &out.P50}, {"p75", 0.75, &out.P75}, {"p90", 0.9, &out.P90}} {
-		v, b := quantile(a.Hist, a.Count, p.q, a.Min, a.Max)
+		v, b := quantile(hist, a.Count, p.q, &a.Min, &a.Max)
 		*p.dst = v
 		if v != nil {
 			out.Bounds[p.name] = b
 		}
 	}
-	for i, n := range a.Hist {
+	for i, n := range hist {
 		if n > 0 {
 			out.Histogram = append(out.Histogram, HistBucket{GeMS: math.Round(lower(i)), LeMS: math.Round(upper(i)), Count: n})
 		}
@@ -673,11 +678,7 @@ func weight(d Def, a *Agg) float64 {
 	case "count":
 		return a.Num
 	case "duration":
-		n := a.Count
-		for _, c := range a.Bases {
-			n += c
-		}
-		return float64(n)
+		return float64(a.Count + a.Bounded + a.Inferred + a.Unknown)
 	}
 	return a.Den
 }

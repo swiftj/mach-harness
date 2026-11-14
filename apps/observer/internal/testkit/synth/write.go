@@ -73,8 +73,13 @@ func Generate(o Options) (*Summary, error) {
 	w := newWorld(o)
 	settled := w.simulate()
 	w.endT = settled / 0.93
-	w.k = o.Hours * 3600 / w.endT
-	w.startMS = o.End.Add(-time.Duration(o.Hours * float64(time.Hour))).UnixMilli()
+	if w.real() {
+		// Model seconds are real seconds and the start was fixed before the simulation (realistic.go).
+		w.o.Hours = math.Round(w.endT/3600*100) / 100
+	} else {
+		w.k = o.Hours * 3600 / w.endT
+		w.startMS = o.End.Add(-time.Duration(o.Hours * float64(time.Hour))).UnixMilli()
+	}
 	g := &gen{w: w, root: o.Out, cnt: counter{byType: map[string]int{}, bySource: map[string]int{}}, recon: map[string]int{}}
 	if err := g.write(); err != nil {
 		return nil, err

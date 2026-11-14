@@ -28,7 +28,10 @@ import (
 // exclusions; K4 counted once; split and distinct denominators; risk, app type and wave on
 // cell-attached metrics; a run with no recorded outcome is neither merged nor abandoned; conflict
 // gaps mark days suspect; refused records counted.
-const DefinitionsVersion = 2
+//
+// 3: smaller cells (min and max without pointers, basis counts as fields), so a saved projection
+// of version 2 is rebuilt.
+const DefinitionsVersion = 3
 
 // Buckets is the histogram size: bucket 0 is under one second; bucket i (1..63) holds durations
 // in [2^((i-1)/3), 2^(i/3)) seconds, so bucket 63 reaches about 30 days.
@@ -42,19 +45,24 @@ const MaxGroups = 20000
 // overflowKey marks a day's overflow cell.
 const overflowKey = "~"
 
-// Agg is one aggregate cell. Every field merges by addition (min and max by comparison).
+// Agg is one aggregate cell. Every field merges by addition (min and max by comparison). It is
+// kept small: a long history holds tens of thousands (no pointers or maps on the common path).
 type Agg struct {
-	Num     float64  `json:"num,omitempty"`
-	Den     float64  `json:"den,omitempty"`
-	Count   int64    `json:"count,omitempty"`
-	Sum     float64  `json:"sum,omitempty"`
-	Min     *float64 `json:"min,omitempty"`
-	Max     *float64 `json:"max,omitempty"`
-	Hist    []int64  `json:"hist,omitempty"`
-	Covered float64  `json:"covered,omitempty"`
-	Of      float64  `json:"of,omitempty"`
-	// Durations not measured, counted apart (never averaged): basis -> members.
-	Bases map[string]int64 `json:"bases,omitempty"`
+	Num   float64 `json:"num,omitempty"`
+	Den   float64 `json:"den,omitempty"`
+	Count int64   `json:"count,omitempty"`
+	Sum   float64 `json:"sum,omitempty"`
+	// Min and Max are the measured durations' least and greatest; they hold only when Count > 0.
+	Min float64 `json:"min,omitempty"`
+	Max float64 `json:"max,omitempty"`
+	// Hist holds histogram buckets HistLo .. HistLo+len(Hist)-1 only (the ones in use), not all
+	// Buckets: most cells' durations span a few buckets.
+	Hist   []int64 `json:"hist,omitempty"`
+	HistLo int     `json:"hlo,omitempty"`
+	// Durations not measured, counted apart (never averaged).
+	Bounded  int64 `json:"bounded,omitempty"`
+	Inferred int64 `json:"inferred,omitempty"`
+	Unknown  int64 `json:"unknown,omitempty"`
 	// Bounds over the bounded members: the least lower bound and the greatest upper bound.
 	BMin *float64 `json:"bmin,omitempty"`
 	BMax *float64 `json:"bmax,omitempty"`
@@ -62,29 +70,40 @@ type Agg struct {
 	Ex map[string]float64 `json:"ex,omitempty"`
 }
 
+// bases is the count field of a basis that is not measured (nil for any other).
+func (a *Agg) bases(basis string) *int64 {
+	switch basis {
+	case "bounded":
+		return &a.Bounded
+	case "inferred":
+		return &a.Inferred
+	case "unknown":
+		return &a.Unknown
+	}
+	return nil
+}
+
 func (a *Agg) merge(b *Agg) {
+	if b.Count > 0 {
+		if a.Count == 0 || b.Min < a.Min {
+			a.Min = b.Min
+		}
+		if a.Count == 0 || b.Max > a.Max {
+			a.Max = b.Max
+		}
+	}
 	a.Num += b.Num
 	a.Den += b.Den
 	a.Count += b.Count
 	a.Sum += b.Sum
-	a.Min = minp(a.Min, b.Min)
-	a.Max = maxp(a.Max, b.Max)
-	if b.Hist != nil {
-		if a.Hist == nil {
-			a.Hist = make([]int64, Buckets)
-		}
-		for i, n := range b.Hist {
-			a.Hist[i] += n
+	for i, n := range b.Hist {
+		if n != 0 {
+			a.histAdd(b.HistLo+i, n)
 		}
 	}
-	a.Covered += b.Covered
-	a.Of += b.Of
-	for k, n := range b.Bases {
-		if a.Bases == nil {
-			a.Bases = map[string]int64{}
-		}
-		a.Bases[k] += n
-	}
+	a.Bounded += b.Bounded
+	a.Inferred += b.Inferred
+	a.Unknown += b.Unknown
 	a.BMin = minp(a.BMin, b.BMin)
 	a.BMax = maxp(a.BMax, b.BMax)
 	for k, n := range b.Ex {
@@ -126,9 +145,8 @@ type Table struct {
 	// pattern), by source stream and day.
 	Refused map[string]map[string]int64 `json:"refused,omitempty"`
 
-	parsed map[string]fact     // fact key -> its parts (a cache, never encoded)
-	dirty  map[string]struct{} // parts (metric, day) written since TakeDirty (for checkpoints)
-	order  map[string][]string // each metric's cell keys, sorted (a cache, never encoded)
+	dirty map[string]struct{} // parts (metric, day) written since TakeDirty (for checkpoints)
+	order map[string][]string // each metric's cell keys, sorted (a cache, never encoded)
 }
 
 // A part is one metric's cells of one day ("C1\x002026-11-12"): the unit a checkpoint encodes
@@ -160,11 +178,24 @@ func NewTable() *Table {
 	return &Table{Version: DefinitionsVersion, Cells: map[string]map[string]*Agg{}}
 }
 
-// fact is a parsed cell key.
+// fact is a cell key read in place: its day, and its dimensions looked up without copying.
 type fact struct {
 	day      string
 	overflow bool
-	dims     map[string]string
+	rest     string // key=value pairs joined by sep
+}
+
+// get is a dimension's value in the key ("" when absent).
+func (f fact) get(k string) string {
+	s := f.rest
+	for s != "" {
+		var p string
+		p, s, _ = strings.Cut(s, sep)
+		if len(p) > len(k) && p[len(k)] == '=' && p[:len(k)] == k {
+			return p[len(k)+1:]
+		}
+	}
+	return ""
 }
 
 const sep = "|"
@@ -182,27 +213,11 @@ func key(dims []Dim, day string) string {
 }
 
 func (t *Table) fact(k string) fact {
-	if f, ok := t.parsed[k]; ok {
-		return f
-	}
 	day, rest, _ := strings.Cut(k, sep)
-	f := fact{day: day, dims: map[string]string{}}
 	if rest == overflowKey {
-		f.overflow = true
-	} else if rest != "" {
-		for _, p := range strings.Split(rest, sep) {
-			if kk, v, ok := strings.Cut(p, "="); ok {
-				f.dims[kk] = v
-			}
-		}
+		return fact{day: day, overflow: true}
 	}
-	if t.parsed == nil {
-		t.parsed = map[string]fact{}
-	}
-	if len(t.parsed) < 4*MaxGroups*len(Catalog) {
-		t.parsed[k] = f
-	}
-	return f
+	return fact{day: day, rest: rest}
 }
 
 func (t *Table) cell(id string, dims []Dim, day string) *Agg {
@@ -283,18 +298,6 @@ func (t *Table) Count(id string, dims []Dim, day string, n float64) {
 	t.cell(id, dims, day).Num += n
 }
 
-// Cover records whether the source existed for one member of the population; a member without
-// it is also an exclusion with the reason given.
-func (t *Table) Cover(id string, dims []Dim, day string, covered bool, reason string) {
-	a := t.cell(id, dims, day)
-	a.Of++
-	if covered {
-		a.Covered++
-	} else {
-		a.exclude(reason, 1)
-	}
-}
-
 // Exclude records n members of the population left out of the value, with the reason.
 func (t *Table) Exclude(id string, dims []Dim, day, reason string, n float64) {
 	t.cell(id, dims, day).exclude(reason, n)
@@ -314,24 +317,24 @@ func (a *Agg) exclude(reason string, n float64) {
 func (t *Table) Duration(id string, dims []Dim, day string, ms int64) {
 	v := float64(ms)
 	a := t.cell(id, dims, day)
+	if a.Count == 0 || v < a.Min {
+		a.Min = v
+	}
+	if a.Count == 0 || v > a.Max {
+		a.Max = v
+	}
 	a.Count++
 	a.Sum += v
-	a.Min = minp(a.Min, &v)
-	a.Max = maxp(a.Max, &v)
-	if a.Hist == nil {
-		a.Hist = make([]int64, Buckets)
-	}
-	a.Hist[bucket(ms)]++
+	a.histAdd(bucket(ms), 1)
 }
 
 // Basis records one duration that is not measured (bounded, inferred, unknown): counted apart,
 // with its bounds when known, never added to the statistic.
 func (t *Table) Basis(id string, dims []Dim, day, basis string, minMS, maxMS *int64) {
 	a := t.cell(id, dims, day)
-	if a.Bases == nil {
-		a.Bases = map[string]int64{}
+	if n := a.bases(basis); n != nil {
+		*n++
 	}
-	a.Bases[basis]++
 	if minMS != nil {
 		a.BMin = minp(a.BMin, ptr(float64(*minMS)))
 	}
@@ -342,13 +345,8 @@ func (t *Table) Basis(id string, dims []Dim, day, basis string, minMS, maxMS *in
 
 // BasisAdd moves the count of members of a basis (an inferred visit later bounded otherwise).
 func (t *Table) BasisAdd(id string, dims []Dim, day, basis string, delta int64) {
-	a := t.cell(id, dims, day)
-	if a.Bases == nil {
-		a.Bases = map[string]int64{}
-	}
-	a.Bases[basis] += delta
-	if a.Bases[basis] == 0 {
-		delete(a.Bases, basis)
+	if n := t.cell(id, dims, day).bases(basis); n != nil {
+		*n += delta
 	}
 }
 
@@ -435,4 +433,30 @@ func quantile(h []int64, count int64, q float64, lo, hi *float64) (*float64, [2]
 		}
 	}
 	return nil, [2]float64{}
+}
+
+// histAdd adds n to histogram bucket b, widening the kept range as needed.
+func (a *Agg) histAdd(b int, n int64) {
+	switch {
+	case len(a.Hist) == 0:
+		a.Hist, a.HistLo = []int64{n}, b
+		return
+	case b < a.HistLo:
+		h := make([]int64, a.HistLo-b+len(a.Hist))
+		copy(h[a.HistLo-b:], a.Hist)
+		a.Hist, a.HistLo = h, b
+	case b >= a.HistLo+len(a.Hist):
+		a.Hist = append(a.Hist, make([]int64, b-a.HistLo-len(a.Hist)+1)...)
+	}
+	a.Hist[b-a.HistLo] += n
+}
+
+// full is the histogram over all Buckets.
+func (a *Agg) full() []int64 {
+	if len(a.Hist) == 0 {
+		return nil
+	}
+	h := make([]int64, Buckets)
+	copy(h[a.HistLo:], a.Hist)
+	return h
 }

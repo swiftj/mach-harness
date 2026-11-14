@@ -160,8 +160,9 @@ func (w *world) buildExecution(c *cell, seg segment, t0 float64) *execution {
 	c.execs = append(c.execs, x)
 	w.execFactsFor(x)
 	w.intakeAdd(t0, "work.claimed", "supervisor", c, nil, x, map[string]any{"stage": c.stage, "next": nextAction(seg.visits[0]), "attempt": x.attempt})
-	w.intakeAdd(t0+1, "execution.started", "supervisor", c, nil, x, map[string]any{"until": "merge", "workflow": "mach-belt",
+	started := w.intakeAdd(t0+1, "execution.started", "supervisor", c, nil, x, map[string]any{"until": "merge", "workflow": "mach-belt",
 		"limits": map[string]any{"minutes": 240, "budget_usd": 40}, "session_id": x.session})
+	w.provenance(c, x, started)
 	x.start = t0 + 2
 	t := x.start + 1.5
 	// The main loop looks before it starts the workflow: individually observable tool calls.
@@ -271,26 +272,26 @@ func (w *world) visit(c *cell, x *execution, vs vspec, t float64, fill int, last
 	var worker *agent
 	switch vs.station {
 	case "plan":
-		d := w.between(300, 600)
+		d := w.dur(300, 600, 0.35)
 		worker = w.newAgent(x, "contract engineer", 2, "mach-contract-engineer", "claude-opus-5-5", t, t+0.02, t+d)
 	case "audit":
-		d := w.between(60, 120)
+		d := w.dur(60, 120, 0.3)
 		worker = w.newAgent(x, "audit the repository", 1, "", "claude-sonnet-5-5", t, t+0.02, t+d)
 	case "build", "resume", "revise":
-		d := w.between(1200, 2400)
+		d := w.dur(1200, 2400, 0.65)
 		label := ticket + ": build"
 		if vs.station == "revise" {
-			d = w.between(600, 1500)
+			d = w.dur(600, 1500, 0.6)
 			label = ticket + ": revise"
 		}
 		if x.seg.end == "open" {
 			d = 1e7 // never ends inside the history
 		}
-		worker = w.newAgent(x, label, 3, "mach-builder", model, t, t+0.02, t+d)
+		worker = w.newAgent(x, label, 3, "mach-builder", c.buildModel(), t, t+0.02, t+d)
 	case "verify":
-		worker = w.newAgent(x, ticket+": verify", 4, "mach-verifier", model, t, t+0.02, t+w.between(500, 1000))
+		worker = w.newAgent(x, ticket+": verify", 4, "mach-verifier", model, t, t+0.02, t+w.dur(500, 1000, 0.4))
 	case "merge":
-		worker = w.newAgent(x, ticket+": merge", 6, "", "claude-haiku-5-5", t, t+0.02, t+w.between(90, 200))
+		worker = w.newAgent(x, ticket+": merge", 6, "", "claude-haiku-5-5", t, t+0.02, t+w.dur(90, 200, 0.3))
 	case "review":
 		return w.review(c, x, vs, t, fill)
 	}
@@ -364,7 +365,7 @@ func (w *world) review(c *cell, x *execution, vs vspec, t float64, fill int) (fl
 	var reviewers []*agent
 	free := []float64{}
 	for i, seat := range seats {
-		d := w.between(400, 900)
+		d := w.dur(400, 900, 0.4)
 		start := t + 0.02
 		if i >= workflowConcurrency {
 			start = free[0] + 0.05 // queued until a reviewer finishes
@@ -466,14 +467,14 @@ func (w *world) visitRecords(c *cell, x *execution, vs vspec, from, to float64) 
 			}
 			task := fmt.Sprintf("%sT%d", prefix, k+1)
 			if k%2 == 0 {
-				if w.rng.IntN(4) == 0 {
+				if w.oneIn(4, 30) {
 					rec(ft-20, "gate.evaluated", map[string]any{"gate": "build.red", "outcome": "refuse", "reason_code": "suite-green", "task": task})
 				}
 				c.head = w.commit()
 				fr := w.buildStep(c, rec, ft, task, true)
 				rec(ft, "build.task_completed", map[string]any{"task": task, "kind": "test", "step": "red", "first_run": fr, "suite": "red", "commit": c.head})
 			} else {
-				if w.rng.IntN(3) == 0 {
+				if w.oneIn(3, 25) {
 					g1 := rec(ft-40, "gate.evaluated", map[string]any{"gate": "build.green", "outcome": "refuse", "reason_code": "suite-failing", "task": task})
 					g2 := rec(ft-25, "gate.evaluated", map[string]any{"gate": "build.green", "outcome": "refuse", "reason_code": "suite-failing", "task": task})
 					if _, done := w.feature["late_lifecycle_batch"]; !done && x != nil && x.seg.end == "" {

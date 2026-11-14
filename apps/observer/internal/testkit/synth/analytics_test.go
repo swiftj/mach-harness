@@ -240,3 +240,149 @@ func TestAnalyticsObserverIndexesIt(t *testing.T) {
 		}
 	}
 }
+
+func realistic(t *testing.T, dir string, cells, waves int, seed uint64) map[string]any {
+	t.Helper()
+	if _, err := synth.Generate(synth.Options{Out: dir, Analytics: true, Profile: synth.ProfileRealistic, Cells: cells, Waves: waves, Seed: seed}); err != nil {
+		t.Fatal(err)
+	}
+	return readExpected(t, dir)
+}
+
+func TestRealisticDeterministic(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	realistic(t, a, 30, 4, 5)
+	realistic(t, b, 30, 4, 5)
+	if treeDigest(t, a) != treeDigest(t, b) {
+		t.Fatal("two realistic runs with the same seed differ")
+	}
+	if _, err := synth.Generate(synth.Options{Out: t.TempDir(), Profile: synth.ProfileRealistic}); err == nil {
+		t.Fatal("--profile without --analytics was accepted")
+	}
+}
+
+// TestRealisticIsPlausible: the realistic profile's ground truth is in the ranges an agentic
+// factory shows (the lead's brief for M6.5's captures).
+func TestRealisticIsPlausible(t *testing.T) {
+	e := realistic(t, t.TempDir(), 120, 15, 1)
+	d := e["durations_seconds"].(map[string]any)
+	p50 := func(k string) float64 { return num(d, k, "p50") }
+	if b := p50("visit:build"); b < 10*60 || b > 60*60 || num(d, "visit:build", "max") < 2*b {
+		t.Errorf("build visits: %v", d["visit:build"])
+	}
+	for _, st := range []string{"plan", "verify", "review", "merge", "audit"} {
+		if v := p50("visit:" + st); v <= 0 || v > p50("visit:build") {
+			t.Errorf("%s visits: %v", st, d["visit:"+st])
+		}
+	}
+	if m := p50("dispatch_to_merge"); m < 30*60 || m > 12*3600 {
+		t.Errorf("dispatch to merge: %v", d["dispatch_to_merge"])
+	}
+	if h := p50("human_approval_wait"); h < 10*60 || h > 24*3600 {
+		t.Errorf("human approval waits: %v", d["human_approval_wait"])
+	}
+	refused := num(e, "gates", "refused") / num(e, "gates", "evaluated")
+	if refused <= 0 || refused > 0.06 {
+		t.Errorf("gate refusals: %.3f", refused)
+	}
+	if fp := num(e, "tickets", "first_pass") / num(e, "tickets", "merged"); fp < 0.6 || fp > 0.85 {
+		t.Errorf("first pass: %.3f", fp)
+	}
+	c := e["concurrency"].(map[string]any)
+	byHour := c["mean_running_by_hour_utc"].(map[string]any)
+	if num(c, "share_of_minutes_at_limit") > 0.4 || byHour["weekday 03"].(float64) > byHour["weekday 10"].(float64) {
+		t.Errorf("concurrency: %v", c)
+	}
+	cfg := e["execution_configurations"].(map[string]any)
+	ids := map[string]bool{}
+	for k, v := range cfg {
+		id := v.(map[string]any)["config_id"].(string)
+		if k != "not-recorded" && (len(id) != 64 || ids[id]) {
+			t.Errorf("configuration %s: id %q", k, id)
+		}
+		ids[id] = true
+	}
+	if len(cfg) < 3 || cfg["not-recorded"] == nil {
+		t.Errorf("configurations: %v", cfg)
+	}
+	if per := num(e, "cost", "recorded_cost_usd") / num(e, "cost", "executions_with_recorded_cost"); per < 0.5 || per > 8 {
+		t.Errorf("cost per execution: %.2f", per)
+	}
+}
+
+// TestRealisticObserverIndexesIt: the observer's ingest reads a realistic project without rejects,
+// and every execution.started carries provenance, a capture failure, or nothing.
+func TestRealisticObserverIndexesIt(t *testing.T) {
+	dir := t.TempDir()
+	cells := 50
+	if testing.Short() || testkit.Race {
+		cells = 20
+	}
+	realistic(t, dir, cells, 6, 2)
+	st, err := store.Open(filepath.Join(t.TempDir(), "index"), store.DefaultMaxMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	clock := time.Now()
+	o := ingest.New(ingest.Options{Root: dir, Store: st, NoSettle: true, Now: func() time.Time { return clock }})
+	for idle := 0; idle < 3; {
+		clock = clock.Add(200 * time.Millisecond)
+		n, err := o.Tick()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			idle++
+		} else {
+			idle = 0
+		}
+	}
+	var gaps []string
+	reasons := map[string]int{}
+	var pos uint64
+	for {
+		batch, err := st.After(pos, 10000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, ev := range batch {
+			switch ev.Event.Type {
+			case "history.gap":
+				gaps = append(gaps, string(ev.Raw))
+			case "execution.started":
+				var d struct {
+					Data struct {
+						Provenance *struct {
+							ConfigID string `json:"config_id"`
+						} `json:"provenance"`
+						Reason *string `json:"provenance_reason"`
+					} `json:"data"`
+				}
+				json.Unmarshal(ev.Raw, &d)
+				switch {
+				case d.Data.Provenance != nil && len(d.Data.Provenance.ConfigID) == 64:
+					reasons["recorded"]++
+				case d.Data.Reason != nil:
+					reasons[*d.Data.Reason]++
+				default:
+					reasons["?"]++
+				}
+			}
+			pos = ev.Event.Pos
+		}
+	}
+	if len(gaps) != 1 || !strings.Contains(gaps[0], "missing-seq") {
+		t.Fatalf("gaps: %v", gaps)
+	}
+	if s := o.Stats(); len(s.Unrecognised) > 0 {
+		t.Fatalf("unrecognised: %v", s.Unrecognised)
+	}
+	if reasons["recorded"] == 0 || reasons["not-recorded"] == 0 || reasons["?"] > 0 || reasons["not-understood"] > 0 {
+		t.Errorf("provenance on execution.started: %v", reasons)
+	}
+	t.Logf("provenance: %v", reasons)
+}
