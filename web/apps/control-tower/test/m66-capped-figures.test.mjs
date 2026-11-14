@@ -84,7 +84,10 @@ test("labels the review found missing are on screen", () => {
 });
 
 test("integration is not acceptance: the standing note, and the Economics block is 'Cost beside integrated work'", () => {
-  assert.match(src("analytics/ui/areas/shared.tsx"), /ACCEPTANCE_NOTE = "MACH records integration, not business acceptance\."/);
+  const kit = src("analytics/ui/kit.tsx");
+  assert.match(kit, /ACCEPTANCE_NOTE = "MACH records integration, not business acceptance\."/);
+  // The definition popover says it too, wherever T2's catalog name is opened.
+  assert.match(kit, /row\.id === "T2" \? <p[^>]*>\{ACCEPTANCE_NOTE\}<\/p>/);
   assert.match(src("analytics/ui/areas/Pulse.tsx"), /“Accepted delivery” \(T2\); it counts commits on the integration branch\. \{ACCEPTANCE_NOTE\}/);
   const eco = src("analytics/ui/areas/Economics.tsx");
   assert.match(eco, /title="Cost beside integrated work"/);
