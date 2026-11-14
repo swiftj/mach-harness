@@ -243,3 +243,30 @@ test("N10: a run with no build or verify visit of its own (inside another run's 
   assert.equal(IM.ladderOf("LOCAL-001", spans, [], at(7)).unvisited.length, 0);
   assert.match(src("timeline/investigate/Retries.tsx"), /no visit of its own/);
 });
+
+test("I-04 overview words (M6.6 journey defect 2): held, the summary names neither the history's end nor its whole count", () => {
+  const whole = { from: 0, to: SCENARIO.duration };
+  const times = ALL.flatMap((s) => [startOf(s), endOf(s)]).filter((x) => x !== null).sort((a, b) => a - b);
+  const density = densityOf(times, whole, 120, true);
+  const o = { density, concurrency: null, marks: MARKS, loading: false };
+  const spoken = (t) => `T${Math.round(t)}`;
+  const t = SCENARIO.duration / 3;
+  const held = OV.overviewAsOf(o, t);
+  const heldTotal = OV.densityColumns(held.density, whole, 800).total;
+  const fullTotal = OV.densityColumns(density, whole, 800).total;
+  assert.ok(heldTotal < fullTotal, "the detector: the cut series counts fewer events");
+  const said = OV.historyWords(whole, heldTotal, t, spoken);
+  assert.ok(!said.includes(spoken(whole.to)), `names the history's end: ${said}`);
+  assert.ok(!said.includes(OV.countText(fullTotal)) || OV.countText(fullTotal) === OV.countText(heldTotal), `names the whole count: ${said}`);
+  assert.ok(said.includes(spoken(t)) && said.includes(OV.countText(heldTotal)) && said.endsWith(OV.AFTER_NOT_SHOWN), said);
+  // The reveal on (heldAt null): as before, the whole history.
+  assert.equal(OV.historyWords(whole, fullTotal, null, spoken), `Whole history from ${spoken(0)} to ${spoken(whole.to)}: ${OV.countText(fullTotal)} events recorded`);
+  // The keyboard's window words stop at the playhead.
+  assert.deepEqual(OV.windowAsOf(whole, t), { from: 0, to: t });
+  assert.deepEqual(OV.windowAsOf(whole, null), whole);
+  const w = OV.describeWindow(OV.windowAsOf(whole, t), held.density, null, held.marks);
+  assert.match(w, new RegExp(`^In this window: ${OV.countText(heldTotal).replace(/[,.]/g, "\\$&")} events recorded`));
+  const src3 = src("timeline/overview/TemporalOverview.tsx");
+  assert.match(src3, /historyWords\(extent, density \? density\.total : null, heldAt, spokenTime\)/);
+  assert.match(src3, /describeWindow\(windowAsOf\(c, heldAt\)/);
+});

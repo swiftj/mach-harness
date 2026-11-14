@@ -40,10 +40,11 @@ import {
   chooseTicks,
   concurrencySteps,
   concurrencyUnavailable,
-  countText,
   densityColumns,
   describeColumn,
   describeWindow,
+  historyWords,
+  windowAsOf,
   familyCounts,
   idleTail,
   isWhole,
@@ -503,7 +504,8 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   const len = windowWords(c.to - c.from);
   const sliderCommon = { "aria-valuemin": Math.round(extent.from / 1000), "aria-valuemax": Math.round(extent.to / 1000), "aria-describedby": descId };
   const peakText = density && density.peak > 0 && got.density ? peakWords(density.peak, got.density.bucketMs) : null;
-  const windowText = useMemo(() => describeWindow(c, got.density, noActivity ? null : got.concurrency, got.marks), [c, got.density, got.concurrency, noActivity, got.marks]);
+  // Held at the playhead, the window's words stop there too (M6.6).
+  const windowText = useMemo(() => describeWindow(windowAsOf(c, heldAt), got.density, noActivity ? null : got.concurrency, got.marks), [c, heldAt, got.density, got.concurrency, noActivity, got.marks]);
   const summary = useMemo(() => {
     const counts = new Map<MarkPoint["family"], number>();
     for (const p of marks.points) counts.set(p.family, (counts.get(p.family) ?? 0) + p.count);
@@ -616,7 +618,7 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
         ) : null}
         <TipLayer bind={bindTip} />
         <p className="sr-only">
-          Whole history from {spokenTime(extent.from)} to {spokenTime(extent.to)}: {density ? `${countText(density.total)} events recorded` : "events not yet read"}; {summary}.
+          {historyWords(extent, density ? density.total : null, heldAt, spokenTime)}; {summary}.
           {tail ? ` ${tail.words}.` : ""}
           {droppedText ? ` Recorded limit: ${droppedText}.` : ""}
           {got.marksIncomplete ? " Landmarks incomplete in this window: the source returned only part of them." : ""}

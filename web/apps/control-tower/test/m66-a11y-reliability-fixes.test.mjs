@@ -177,3 +177,23 @@ test("a failed bar's end carries the cross: knocked out of a thick bar, past the
   assert.ok(calls.filter(Array.isArray).every((c) => c[1] > 100), "past a thin bar's end");
   assert.match(src("timeline/render/draw.ts"), /if \(tone === "fail"\) failCross\(ctx, X1, cy, th, w, ink, p\.ground\);/);
 });
+
+// ---------------------------------------------------------------- second live run (M6.6 journey)
+
+test("a cell archived by cleanup is finished, not unavailable; a missing intake log and an unreadable live cell log still are", () => {
+  assert.equal(notices.unavailableSourceWords([{ key: "cell/LOCAL-001", state: "archived" }]), null);
+  assert.equal(notices.unavailableSourceWords([{ key: "cell/LOCAL-001", state: "archived" }, { key: "ledger", state: "gone" }]), "the intake log");
+  assert.equal(notices.unavailableSourceWords([{ key: "cell/LOCAL-002", state: "unreadable" }]), "a cell's lifecycle log");
+});
+
+test("a keydown at the document (no element, no key) is ignored, not thrown", async () => {
+  const { shellKeyHandler } = await import("../src/shell/keyboard.ts");
+  const { scene, sim } = await import("./_load.mjs");
+  const fakeStore = scene.createSceneStore({ fixture: sim.SCENARIO, clock: (await import("../src/scene/clock.ts")).manualClock() });
+  const commands = { toggleInspector() {}, toggleTimeline() {}, openHelp() {}, openSource() {}, modalOpen: () => false };
+  const doc = { nodeType: 9 }; // a document: no getAttribute, no tagName
+  for (const e of [{ key: "End", target: doc }, { target: doc }]) {
+    const ev = { shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, defaultPrevented: false, preventDefault() {}, ...e };
+    assert.doesNotThrow(() => shellKeyHandler(fakeStore, commands)(ev));
+  }
+});

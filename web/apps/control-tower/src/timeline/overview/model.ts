@@ -1022,3 +1022,20 @@ export function overviewAsOf<O extends { readonly density: DensitySeries | null;
   for (const m of o.marks) if (m.at <= at) marks.push(m.until !== null && m.until > at ? { ...m, until: null } : m);
   return { ...o, density, concurrency, marks };
 }
+
+/**
+ * M6.6 (journey defect 2): the whole history in one sentence for the overview's screen-reader summary.
+ * Held at the playhead (the reveal off) it names only the part up to the playhead, the events
+ * recorded by then (`total`, counted from the cut series), and that what follows is not shown; never
+ * the history's end or its whole count. Not held (live, or the reveal on): as before.
+ */
+export function historyWords(extent: TimeWindow, total: number | null, heldAt: number | null, spoken: (t: number) => string): string {
+  const counted = total === null ? "events not yet read" : `${countText(total)} events recorded`;
+  if (heldAt === null) return `Whole history from ${spoken(extent.from)} to ${spoken(extent.to)}: ${counted}`;
+  return `History from ${spoken(extent.from)} to the playhead, ${spoken(heldAt)}: ${total === null ? counted : `${counted} by then`}; ${AFTER_NOT_SHOWN}`;
+}
+
+/** The window the keyboard summary describes: held at the playhead, no later than it. */
+export function windowAsOf(win: TimeWindow, heldAt: number | null): TimeWindow {
+  return heldAt === null || win.to <= heldAt ? win : { from: Math.min(win.from, heldAt), to: heldAt };
+}

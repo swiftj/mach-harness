@@ -79,7 +79,7 @@ type IngestState struct {
 type SourceState struct {
 	Key        string    `json:"key"`
 	Path       string    `json:"path"`
-	State      string    `json:"state"` // live | idle | stale | ended | gone | blocked | unreadable | unknown
+	State      string    `json:"state"` // live | idle | stale | ended | archived | gone | blocked | unreadable | unknown
 	LastReadAt time.Time `json:"-"`
 	Offset     int64     `json:"offset"`
 	Size       *int64    `json:"size"`

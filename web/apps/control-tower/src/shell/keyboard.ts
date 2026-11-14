@@ -197,8 +197,10 @@ export function nudge(store: SceneStore, ms: number): void {
  */
 export function shellKeyHandler(store: SceneStore, commands: ShellCommands): (e: KeyboardEvent) => void {
   return (e: KeyboardEvent) => {
-    if (e.defaultPrevented || e.metaKey || e.ctrlKey) return;
-    const target = e.target as HTMLElement | null;
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || typeof e.key !== "string") return;
+    // M6.6: a keydown dispatched at the document (or any non-element) has no attributes to read.
+    const raw = e.target as HTMLElement | null;
+    const target = raw && typeof raw.getAttribute === "function" ? raw : null;
     if (target && (TYPING.test(target.tagName) || target.isContentEditable)) return;
     if (commands.modalOpen()) return;
     const s = store.getState();

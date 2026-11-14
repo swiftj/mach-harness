@@ -84,6 +84,9 @@ func (a ingestSource) Ingest() server.IngestState {
 		switch {
 		case src.Blocked:
 			state = "blocked"
+		case src.Archived:
+			// M6.6: a cell's log gone because cleanup archived the cell is finished, not lost.
+			state = "archived"
 		case src.Gone:
 			state = "gone"
 		case state == "":
