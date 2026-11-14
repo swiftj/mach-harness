@@ -63,7 +63,7 @@ export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpe
         title="Keyboard, legend and display" description="Every shortcut in the Control Tower prototype. The keys under In a view, Atlas, Blueprint and Timeline work while that part has focus; those under Timeline workspace while the Timeline is up.">
         {/* Scrolls on short windows, so it takes focus for keyboard scrolling. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-        <div tabIndex={0} role="region" aria-label="Shortcuts and legend" className="grid min-h-0 gap-x-8 gap-y-5 overflow-y-auto px-6 pb-6 pt-4 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus md:grid-cols-2">
+        <div tabIndex={0} role="region" aria-label="Shortcuts and legend" className="grid min-h-0 gap-x-8 gap-y-5 overflow-y-auto px-6 pb-6 pt-4 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus md:grid-cols-2">
           {GROUPS.map((group) => (
             <section key={group} aria-labelledby={`keys-${group.replace(/\s+/g, "-")}`}>
               <h3 id={`keys-${group.replace(/\s+/g, "-")}`} className="mb-2 text-label text-ink">

@@ -172,6 +172,8 @@ function FilterList({ title, values, chosen, words, onToggle }: { title: string;
 
 /** At most this many chips are drawn; the rest are counted. */
 const MAX_CHIPS = 3;
+/** The last squeeze step: the row wraps instead of clipping (M6.6). Exported for the tests. */
+export const TOOLBAR_WRAP = 4;
 
 export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole: wholeProp, lenses, pinned }: TimelineToolbarProps & ToolbarExtras) {
   const store = useStore();
@@ -341,8 +343,10 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
    * into the overflow menu by width; whatever still does not fit (long lens names, many chips, a long
    * caption at an odd width) is squeezed step by step, measured after each render: 1 hides the filter
    * chips (the Filters count stays), 2 turns every label into its icon, 3 moves the time controls into
-   * the overflow menu (and shortens the pinned control to "Window pinned — Follow"). Any change of
-   * what the row holds (`toolbarFitKey`) starts again from 0.
+   * the overflow menu (and shortens the pinned control to "Window pinned — Follow"), and 4 (M6.6,
+   * WCAG 1.4.10 and 1.4.12: at 320 CSS px, or with wider text spacing) lets the row wrap onto further
+   * lines instead of clipping a control. Any change of what the row holds (`toolbarFitKey`) starts
+   * again from 0.
    */
   const rowRef = useRef<HTMLDivElement>(null);
   const [squeeze, setSqueeze] = useState(0);
@@ -375,8 +379,8 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
   }
   useLayoutEffect(() => {
     const el = rowRef.current;
-    if (!el || squeeze >= 3) return;
-    if (el.scrollWidth > el.clientWidth + 1) setSqueeze((q) => Math.min(3, q + 1));
+    if (!el || squeeze >= TOOLBAR_WRAP) return;
+    if (el.scrollWidth > el.clientWidth + 1) setSqueeze((q) => Math.min(TOOLBAR_WRAP, q + 1));
   }, [squeeze, fitKey]);
 
   const last = jumpOf(lastJump);
@@ -388,7 +392,7 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
 
   return (
     <div className="@container shrink-0 border-b border-line bg-surface">
-      <div ref={rowRef} className="flex h-10 min-w-0 items-center gap-1 overflow-hidden px-2" role="toolbar" aria-label="Timeline controls" data-timeline-toolbar="" data-timeline-squeeze={squeeze || undefined}>
+      <div ref={rowRef} className={cn("flex min-w-0 items-center gap-1 overflow-hidden px-2", squeeze >= TOOLBAR_WRAP ? "min-h-10 flex-wrap py-1" : "h-10")} role="toolbar" aria-label="Timeline controls" data-timeline-toolbar="" data-timeline-squeeze={squeeze || undefined}>
         <GroupingSwitch value={view.grouping} onChange={(grouping) => onView({ grouping })} />
         <Sep />
 

@@ -71,7 +71,8 @@ test("12: the chip sits in the top bar, opens the whole notice, and the stage no
   assert.match(shell, /<CompletenessBadge \/>\s*<FactoryStateChip \/>/);
   const badge = src("shell/SourceBadge.tsx");
   assert.match(badge, /const n = useNotices\(\)\.chip;/);
-  assert.match(badge, /aria-label=\{`\$\{n\.title\}\. Details`\}/);
+  // M6.6 (label in name): the name starts with the chip's visible words when the title does not.
+  assert.match(badge, /aria-label=\{n\.title\.startsWith\(n\.chip\) \? `\$\{n\.title\}\. Details` : `\$\{n\.chip\}: \$\{n\.title\}\. Details`\}/);
   assert.match(badge, /aria-describedby=\{bodyId\}/, "a screen reader hears the whole notice from the chip");
   assert.match(badge, /return useNotices\(\)\.stage;/);
 });

@@ -74,6 +74,7 @@ import {
 } from "./controls";
 import { TimelineTable, useIdleSummary } from "./a11y";
 import { marksAsOf, sharedRecordedExtent, spansAsOf, useTimelineData } from "./data";
+import { factoryIntervals } from "./data/factoryIntervals";
 import { InvestigationPanel, LENSES } from "./investigate";
 import { TemporalOverview } from "./overview";
 import { LABEL_DEFAULT, LABEL_MAX, LABEL_MIN, TrackCanvas, TrackLabels, WindowRuler } from "./render";
@@ -378,6 +379,11 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   const heldAt = useSceneStore(heldAtOf);
   /** The moment the tracks speak as of: the playhead when held there, else the live edge. */
   const shownAt = heldAt ?? liveAt;
+  // M6.6 (reliability 3): the Factory's disabled and paused stretches, read once per log version and
+  // cut at the playhead like everything else here.
+  const logVersion = useSceneStore((s) => s.log.version());
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- logVersion stands for the log's contents
+  const factoryStretches = useMemo(() => factoryIntervals(store.getState().log.entries(), heldAt), [store, logVersion, heldAt]);
   const start = useSceneStore((s) => s.extent.start);
   const edge = useSceneStore((s) => (s.source === "simulation" ? s.extent.end : quantizedEdge(s.extent.start, s.liveAt)));
   const short = useMedia("(max-height: 759px)");
@@ -881,7 +887,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
         {/* The ruler row: the gutter, then the ruler for the window. Kept with the table too: same window. */}
         <div className="flex shrink-0 border-b border-line" style={{ height: RULER_HEIGHT }}>
           <div className="shrink-0 border-r border-line" style={{ width: gutter }} aria-hidden="true" />
-          <div className="min-w-0 flex-1">{timeWidth > 0 ? <WindowRuler viewport={viewport} onWindow={onWindow} /> : null}</div>
+          <div className="min-w-0 flex-1">{timeWidth > 0 ? <WindowRuler viewport={viewport} onWindow={onWindow} factory={factoryStretches} /> : null}</div>
         </div>
         {view.table ? (
           <div className="min-h-0 flex-1 overflow-auto" data-timeline-table="">

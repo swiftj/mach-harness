@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { ANALYTICS_AREA_WORDS, playbackFactorWords, useStore } from "../scene";
 import { countAtOrBefore, indexFor, lastAtOrBefore, quotingKindOf } from "./history";
 import { connectionLook } from "./SourceBadge";
+import { lookKey, unavailableSourceWords } from "./notices";
 import { spokenTime } from "./vocab";
 import { codesOnlyWords } from "../text/fields";
 
@@ -30,7 +31,7 @@ export function Announcer() {
     const first = indexFor(prev);
     last.current.index = countAtOrBefore(first.moments, prev.playhead);
     last.current.chapter = lastAtOrBefore(first.landmarks, prev.playhead)?.id ?? "";
-    last.current.connection = prev.connection ? connectionLook(prev.connection).state : "";
+    last.current.connection = prev.connection ? lookKey(connectionLook(prev.connection, unavailableSourceWords(prev.factoryStatus?.sources))) : "";
     return store.subscribe(() => {
       const s = store.getState();
       const index = indexFor(s);
@@ -55,10 +56,12 @@ export function Announcer() {
       }
       // One announcement per connection change, never for its counters.
       if (s.connection) {
-        const look = connectionLook(s.connection);
-        if (look.state !== last.current.connection) {
+        // M6.6: a source going unavailable, or returning, is a change of the connection's words too.
+        const look = connectionLook(s.connection, unavailableSourceWords(s.factoryStatus?.sources));
+        const key = lookKey(look);
+        if (key !== last.current.connection) {
           const quiet = last.current.connection === "" || (look.state === "connecting" && last.current.connection === "connecting");
-          last.current.connection = look.state;
+          last.current.connection = key;
           if (!quiet) setStatus(look.sentence);
         }
       }

@@ -60,6 +60,29 @@ const LARGE = "(min-width: 1680px)";
 const NARROW = "(max-width: 1100px)";
 /** Below this height (a 1080 p screen at 200% zoom is 540) the timeline starts collapsed to its transport. */
 const SHORT = "(max-height: 600px)";
+/**
+ * M6.6 (WCAG 1.4.10, 320 CSS px): below this width the transport wraps onto a second row (the docked
+ * timeline grows by that row) and the inspector opens as a full-width sheet under the header.
+ */
+const TINY = "(max-width: 639px)";
+/** The transport's second row when it wraps below TINY. */
+const TINY_TRANSPORT_EXTRA = 40;
+
+/** The header's height, live: one row of 48 px, more when its controls wrap (M6.6). */
+function useHeaderHeight(ref: { current: HTMLElement | null }): number {
+  const [h, setH] = useState(TOP);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const next = Math.max(TOP, Math.round(el.getBoundingClientRect().height));
+      setH((prev) => (prev === next ? prev : next));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return h;
+}
 
 function useMedia(query: string): boolean {
   const [match, setMatch] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
@@ -186,17 +209,22 @@ function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { 
   // Reflows down to 960 CSS px (a 1920 px screen at 200% zoom) without cutting anything off: the
   // brand's second word and the Theater word give way first; the run's title truncates; the
   // source badge, the panel buttons and the mode switch never shrink.
+  // M6.6 (WCAG 1.4.10): whatever still does not fit wraps onto a further row (the header's grid row
+  // grows with it) instead of being cut off: at 320 CSS px every control stays on screen, and at
+  // 1280 px a crowded floor header wraps its workspace switch rather than clipping it. The run's
+  // title has no width of its own in the line breaking (basis 0), so it never forces a wrap; below
+  // 640 px it takes a row of its own.
   return (
-    <div className="flex h-full min-w-0 items-center gap-3 border-b border-line bg-canvas px-3 min-[1100px]:gap-4 min-[1100px]:px-4">
+    <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-3 py-1 min-[1100px]:gap-x-4 min-[1100px]:px-4" data-top-bar="">
       <Brand />
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
         <SourceBadge open={sourceOpen} onOpenChange={onSource} />
         <ConnectionBadge />
         <CompletenessBadge />
         <FactoryStateChip />
       </div>
-      <span className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
-      <div className="min-w-0 flex-1 overflow-hidden">
+      <span className="h-5 w-px shrink-0 bg-line max-[639px]:hidden" aria-hidden="true" />
+      <div className="min-w-0 flex-1 basis-0 overflow-hidden max-[639px]:order-last max-[639px]:basis-full">
         <RunIdentity />
       </div>
       <div className="flex shrink-0 items-center gap-1">
@@ -223,8 +251,8 @@ function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { 
         </IconButton>
         <ThemeChoice />
       </div>
-      <span className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
-      <nav aria-label="Workspaces" className="flex shrink-0 items-center gap-1.5">
+      <span className="h-5 w-px shrink-0 bg-line max-[639px]:hidden" aria-hidden="true" />
+      <nav aria-label="Workspaces" className="flex shrink-0 flex-wrap items-center gap-1.5">
         <WorkspaceSwitch value={workspace} onChange={(w) => (w === "timeline" ? showInTimeline(store) : w === "analytics" ? showInAnalytics(store) : showOnFloor(store))} />
         {onFloor ? <ModeSwitch value={view} onChange={store.setView} /> : null}
       </nav>
@@ -290,6 +318,9 @@ export function Shell() {
   const large = useMedia(LARGE);
   const short = useMedia(SHORT);
   const narrow = useMedia(NARROW);
+  const tiny = useMedia(TINY);
+  const headerRef = useRef<HTMLElement>(null);
+  const topH = useHeaderHeight(headerRef);
   const viewportH = useViewportHeight();
   const [inspectorWanted, setInspectorWanted] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -374,9 +405,9 @@ export function Shell() {
   // The timeline never takes more than 62% of the window, whatever was dragged on a taller one.
   const maxH = Math.round(viewportH * 0.62);
   const clampH = useCallback((h: number) => Math.round(Math.max(SUMMARY_TIMELINE + 40, Math.min(window.innerHeight * 0.62, h))), []);
-  const tl = timelineCollapsed ? COLLAPSED_TIMELINE : tracksOpen ? Math.min(timelineH, maxH) : SUMMARY_TIMELINE;
+  const tl = (timelineCollapsed ? COLLAPSED_TIMELINE : tracksOpen ? Math.min(timelineH, maxH) : SUMMARY_TIMELINE) + (tiny ? TINY_TRANSPORT_EXTRA : 0);
   // The Timeline workspace takes the stage and the docked timeline's rows; Theater Mode is the floor's.
-  const rows = theater && onFloor ? `0px minmax(0,1fr) 0px` : `${TOP}px minmax(0,1fr) ${onFloor ? tl : 0}px`;
+  const rows = theater && onFloor ? `0px minmax(0,1fr) 0px` : `minmax(${TOP}px,auto) minmax(0,1fr) ${onFloor ? tl : 0}px`;
   const cols = `minmax(0,1fr) ${!theater && wide && inspectorOpen ? inspectorW : 0}px`;
 
   const setTracks = useCallback(
@@ -453,7 +484,7 @@ export function Shell() {
         </a>
       )}
 
-      <header className="min-w-0 overflow-hidden [grid-area:top]" inert={theater}>
+      <header ref={headerRef} className="min-w-0 overflow-hidden [grid-area:top]" inert={theater}>
         <TopBar sourceOpen={sourceOpen} onSource={setSourceOpen} inspectorOpen={inspectorOpen} onInspector={toggleInspector} onHelp={() => {
           helpOpener.current = document.activeElement;
           setHelp(true);
@@ -509,15 +540,16 @@ export function Shell() {
           wide
             ? "border-l"
             : cn(
-                // A drawer over the stage and the timeline, never wider than the window less a margin.
-                "fixed right-0 z-30 w-[min(392px,calc(100vw-32px))] border-l shadow-3 transition-transform duration-[var(--mach-duration-slow)] ease-enter",
+                // A drawer over the stage and the timeline, never wider than the window less a margin;
+                // below 640 px a full-width sheet (M6.6, WCAG 1.4.10).
+                "fixed right-0 z-30 w-[min(392px,calc(100vw-32px))] border-l shadow-3 max-[639px]:w-full max-[639px]:border-l-0 transition-transform duration-[var(--mach-duration-slow)] ease-enter",
                 inspectorOpen && !theater ? "translate-x-0" : "translate-x-full",
               ),
         )}
         // As a drawer it stops at the timeline, so the transport stays in reach while it is open; over
         // the Timeline workspace it starts under that workspace's transport and toolbar, for the same reason
         // (Analytics has no transport: it starts under the header).
-        style={wide ? undefined : { top: theater ? 0 : inTimeline ? TOP + TIMELINE_CHROME_HEIGHT : TOP, bottom: theater || !onFloor ? 0 : tl }}
+        style={wide ? undefined : { top: theater ? 0 : inTimeline && !tiny ? topH + TIMELINE_CHROME_HEIGHT : topH, bottom: theater || !onFloor || tiny ? 0 : tl }}
       >
         <div className="h-full" style={{ width: wide ? inspectorW : "100%" }}>
           <Inspector />

@@ -57,7 +57,8 @@ test("1: the shared transport drops its secondary words in a column narrower tha
 test("1: over the Timeline the inspector drawer starts under the transport and the toolbar, so Follow stays in reach", () => {
   assert.equal(frame.TIMELINE_CHROME_HEIGHT, 81);
   // M6.5: only the Timeline has the transport and toolbar; the floor and Analytics start under the header.
-  assert.match(src("shell/Shell.tsx"), /top: theater \? 0 : inTimeline \? TOP \+ TIMELINE_CHROME_HEIGHT : TOP/);
+  // M6.6: the header's measured height (it wraps at narrow widths); below 640 px the sheet starts under the header.
+  assert.match(src("shell/Shell.tsx"), /top: theater \? 0 : inTimeline && !tiny \? topH \+ TIMELINE_CHROME_HEIGHT : topH/);
 });
 
 // ---------------------------------------------------------------- 2. "After the playhead" only while behind

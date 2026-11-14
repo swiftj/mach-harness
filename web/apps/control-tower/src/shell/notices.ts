@@ -13,15 +13,58 @@ export interface ConnectionLook {
   label: string;
   /** For screen readers and the announcer. */
   sentence: string;
+  /** Live, but a source the observer follows is gone or unreadable (M6.6): its kind in words. */
+  unavailable?: string;
 }
 
-/** The words for a connection. Times are factory time (the stream's), never the browser's clock. */
-export function connectionLook(c: ConnectionStatus): ConnectionLook {
+/** A source's kind in words (M6.6): never its path. */
+function sourceKindWords(key: string): string {
+  if (key === "ledger") return "the intake log";
+  if (key === "runs") return "the run records";
+  if (key.startsWith("cell/")) return "a cell's lifecycle log";
+  if (key.startsWith("stream/")) return "an execution stream";
+  if (key.startsWith("exec/")) return "an execution record";
+  if (key.startsWith("archive/")) return "the archive";
+  return "a Factory file";
+}
+
+/** States in which the observer cannot read a source now. */
+const UNAVAILABLE_STATES = new Set(["gone", "unreadable", "missing", "error"]);
+/** Sources that are never legitimately finished: their "ended" means the file went away. */
+const NEVER_ENDS = new Set(["ledger", "runs"]);
+
+/**
+ * M6.6 (reliability defect 4): the sources the observer follows that are gone or unreadable, as
+ * words by kind ("the intake log", "a cell's lifecycle log"), or null when every source is readable.
+ * Read from the status the live source already polls (`/factory/status` and `/health`
+ * `freshness.sources`), so it clears on the next poll after the source returns.
+ */
+export function unavailableSourceWords(sources: readonly { readonly key: string; readonly state: string | null }[] | null | undefined): string | null {
+  if (!sources?.length) return null;
+  const kinds: string[] = [];
+  for (const s of sources) {
+    const out = (s.state !== null && UNAVAILABLE_STATES.has(s.state)) || (s.state === "ended" && NEVER_ENDS.has(s.key));
+    if (!out) continue;
+    const words = sourceKindWords(s.key);
+    if (!kinds.includes(words)) kinds.push(words);
+  }
+  return kinds.length ? kinds.join(", ") : null;
+}
+
+/** The words for a connection. Times are factory time (the stream's), never the browser's clock. `unavailable`: unavailableSourceWords. */
+export function connectionLook(c: ConnectionStatus, unavailable: string | null = null): ConnectionLook {
   const since = isMoment(c.staleSince) ? utcClock(c.staleSince) : null;
   switch (c.state) {
     case "connecting":
       return { state: "connecting", label: "Connecting", sentence: "Connecting to the observer." };
     case "live":
+      if (unavailable)
+        return {
+          state: "live",
+          label: `Live · a source is unavailable: ${unavailable}`,
+          sentence: `Connected, but a source is unavailable: ${unavailable}. What it records is not arriving; the history shown may be incomplete until it returns.`,
+          unavailable,
+        };
       return { state: "live", label: "Live", sentence: "Connected: receiving live." };
     case "stale":
       return { state: "stale", label: since ? `Stale since ${since}` : "Stale", sentence: `Nothing heard from the observer${since ? ` since ${since} UTC` : ""}. What is shown is as last seen.` };
@@ -84,3 +127,8 @@ export function noticesFor({ source, connection, empty, settled, notice, observe
   return { stage, chip };
 }
 
+
+/** What makes two looks the same announcement: the state, and (M6.6) which sources are unavailable. */
+export function lookKey(look: ConnectionLook): string {
+  return look.unavailable ? `${look.state}|${look.unavailable}` : look.state;
+}

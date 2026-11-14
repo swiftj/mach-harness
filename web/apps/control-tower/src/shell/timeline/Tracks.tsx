@@ -415,7 +415,7 @@ export const Tracks = memo(function Tracks({
               aria-describedby="mach-tracks-hint"
               onKeyDown={onKeyDown}
               onFocus={() => setFocusedTrack((f) => (f && layout.rows.some((r) => r.track.id === f) ? f : (layout.rows[summary ? 0 : 1]?.track.id ?? null)))}
-              className="relative outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
+              className="relative outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
             >
               <canvas
                 ref={bodyRef}

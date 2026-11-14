@@ -24,7 +24,7 @@ import { useSceneStore, type ConnectionStatus } from "../scene";
 import { refId, refKind, sourceRuntimeOf, streamObservationOf, type Completeness, type SceneSource } from "../sim";
 import { completenessWords, deliveryLagWords, receivedWords, runtimeStateWords, runtimeSummaryWords } from "./inspector/words";
 import { useSource } from "./source/context";
-import { connectionLook, noticesFor, type ConnectionLook, type Notice } from "./notices";
+import { connectionLook, noticesFor, unavailableSourceWords, type ConnectionLook, type Notice } from "./notices";
 
 export { connectionLook, noticesFor, type ConnectionLook, type Notice } from "./notices";
 import type { SourceChoice } from "./source/boot";
@@ -201,7 +201,8 @@ const ageWords = (seconds: number | null | undefined) => (seconds === null || se
 /** The facts behind the connection badge: also shown in the inspector's "the run now". */
 export function ConnectionFacts({ connection }: { connection: ConnectionStatus }) {
   const factory = useSceneStore((s) => s.factoryStatus);
-  const look = connectionLook(connection);
+  const unavailable = unavailableSourceWords(factory?.sources);
+  const look = connectionLook(connection, unavailable);
   const heartbeat = connection.supervisor?.heartbeatAgeSeconds ?? factory?.supervisor.heartbeatAgeSeconds ?? null;
   const leasePresent = connection.supervisor?.present || factory?.supervisor.leasePresent;
   const fresh = factory?.supervisor.heartbeatFresh ?? connection.supervisor?.live ?? null;
@@ -216,6 +217,7 @@ export function ConnectionFacts({ connection }: { connection: ConnectionStatus }
   const runtimes = factory?.runtime ? runtimeSummaryWords(factory.runtime) : null;
   const rows: Array<[string, ReactNode]> = [
     ["Connection", look.sentence],
+    ...(unavailable ? ([["Sources", `Unavailable: ${unavailable}`]] as Array<[string, ReactNode]>) : []),
     ["Last confirmed", isMoment(connection.confirmedAt) ? `${utcClock(connection.confirmedAt)} UTC` : "Nothing yet"],
     ["Settled history", connection.sourceLagMs !== null ? `trails now by ${connection.sourceLagMs < 1000 ? "under a second" : durationWords(connection.sourceLagMs)}` : "Not reported"],
     ["Delivery lag", deliveryLagWords(connection.deliveryLagMs ?? factory?.delivery?.lastHoldMs ?? null)],
@@ -245,20 +247,23 @@ export function ConnectionFacts({ connection }: { connection: ConnectionStatus }
 /** The connection badge (live only). */
 export function ConnectionBadge() {
   const connection = useSceneStore((s) => s.connection);
+  // M6.6 (reliability defect 4): a source gone or unreadable is said here, on every workspace.
+  const unavailable = useSceneStore((s) => unavailableSourceWords(s.factoryStatus?.sources));
   if (!connection) return null;
-  const look = connectionLook(connection);
+  const look = connectionLook(connection, unavailable);
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
           data-connection={look.state}
+          data-source-unavailable={look.unavailable ?? undefined}
           aria-label={`Connection: ${look.label}. Details`}
-          className={cn("inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-caption font-semibold tabular", CONNECTION_TONE[look.state])}
+          className={cn("inline-flex h-6 min-w-0 shrink items-center gap-1.5 rounded-full border px-2 text-caption font-semibold tabular", look.unavailable ? CONNECTION_TONE.stale : CONNECTION_TONE[look.state])}
         >
           <ConnectionGlyph state={look.state} />
           {/* A longer label ("Stale since 18:50:00", "Disconnected, retrying") folds to its glyph below 1280 px, so the top bar never clips (M6.6); the name keeps it. */}
-          <span className={look.state === "live" || look.state === "connecting" ? "max-[1099px]:sr-only" : "max-[1279px]:sr-only"}>{look.label}</span>
+          <span className={cn("truncate", look.unavailable ? "max-[1279px]:sr-only" : look.state === "live" || look.state === "connecting" ? "max-[1099px]:sr-only" : "max-[1279px]:sr-only")}>{look.label}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-96" aria-label="Connection">
@@ -373,7 +378,7 @@ export function FactoryStateChip() {
         <button
           type="button"
           data-factory-state={n.key}
-          aria-label={`${n.title}. Details`}
+          aria-label={n.title.startsWith(n.chip) ? `${n.title}. Details` : `${n.chip}: ${n.title}. Details`}
           aria-describedby={bodyId}
           title={n.title}
           className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-xs border border-info-line bg-info-soft px-2 text-caption font-semibold text-info-ink"
@@ -382,7 +387,7 @@ export function FactoryStateChip() {
             <circle cx="5" cy="5" r="4" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2 }} />
             <path d="M5 4.4V7.4M5 2.6V2.8" style={{ stroke: "currentColor", strokeWidth: 1.3, strokeLinecap: "round" }} />
           </svg>
-          <span className="max-[1279px]:sr-only">{n.chip}</span>
+          <span className="max-[1439px]:sr-only">{n.chip}</span>
           <span id={bodyId} className="sr-only">
             {n.body}
           </span>

@@ -12,10 +12,11 @@ import { memo, useEffect, useLayoutEffect, useRef, type PointerEvent } from "rea
 import { useTheme } from "@mach/ui";
 import { usePlayheadEffect } from "../../shell/timeline/playhead";
 import { RULER_HEIGHT, type TimeWindow, type WindowRulerProps } from "../contract";
+import { factoryIntervalWords } from "../data/factoryIntervals";
 import { readPalette } from "./palette";
 import { clampWindow, edgeLaterWords, EDGE_CHIP_ROOM, dateChanges, dayLabel, isWallTime, panBy, scaleOf, tAt, tickLabel, ticksFor, xAt, zoomAbout } from "./scale";
 
-export const WindowRuler = memo(function WindowRuler({ viewport, onWindow }: WindowRulerProps) {
+export const WindowRuler = memo(function WindowRuler({ viewport, onWindow, factory }: WindowRulerProps) {
   const { window: win, width, liveAt } = viewport;
   const { resolved: theme } = useTheme();
   const ref = useRef<HTMLCanvasElement>(null);
@@ -168,6 +169,30 @@ export const WindowRuler = memo(function WindowRuler({ viewport, onWindow }: Win
         onPointerUp={() => (drag.current = null)}
         onPointerCancel={() => (drag.current = null)}
       />
+      {/* M6.6: the Factory's disabled and paused stretches, a band along the ruler's top with its words.
+          An open stretch runs to the live edge (or the playhead, when held) with a dashed end. */}
+      {factory?.length ? (
+        <ul aria-label="Factory state on this machine" className="pointer-events-none absolute inset-x-0 top-0 h-[11px]" data-timeline-factory-bands="">
+          {factory.map((iv) => {
+            const scale = scaleOf(win, width);
+            const x0 = Math.max(0, xAt(scale, iv.from));
+            const x1 = Math.min(width, xAt(scale, iv.to ?? liveAt));
+            if (x1 <= 0 || x0 >= width || x1 - x0 < 1) return null;
+            const words = factoryIntervalWords(iv);
+            return (
+              <li
+                key={`${iv.kind}:${iv.from}`}
+                data-factory-band={iv.kind}
+                data-open={iv.to === null ? "" : undefined}
+                className={`absolute top-0 flex h-[11px] items-center overflow-hidden border-x border-warning-line bg-warning-soft px-1 text-[9.5px] font-semibold leading-none text-warning-ink`}
+                style={{ left: x0, width: x1 - x0, borderRightStyle: iv.to === null ? "dashed" : undefined }}
+              >
+                <span className="truncate">{words}</span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">
         <div ref={liveRef} className="absolute inset-y-0 left-0 w-0">
           <div className="absolute inset-y-0 left-0 border-l border-dashed" style={{ borderColor: "var(--mach-factory-plate-edge)" }} />

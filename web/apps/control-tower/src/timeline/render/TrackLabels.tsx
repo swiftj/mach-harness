@@ -310,7 +310,7 @@ export const TrackLabels = memo(function TrackLabels({ layout, height, scrollTop
         onPointerUp={() => (drag.current = null)}
         onPointerCancel={() => (drag.current = null)}
         onKeyDown={onKey}
-        className="group absolute inset-y-0 -right-3 z-[2] flex w-6 cursor-col-resize touch-none justify-center outline-hidden"
+        className="group absolute inset-y-0 -right-3 z-[2] flex w-6 cursor-col-resize touch-none justify-center outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
       >
         <span aria-hidden="true" className="h-full w-1 group-hover:bg-line-strong group-focus-visible:bg-focus" />
       </div>

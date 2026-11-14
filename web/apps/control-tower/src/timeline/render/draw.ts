@@ -360,6 +360,23 @@ function boundBracket(ctx: Ctx, x: number, cy: number, h: number, dir: 1 | -1, i
   ctx.stroke();
 }
 
+/** The failure cross at a bar's right end (M6.6): inside the bar in the ground ink, or past its end in the bar's ink. */
+export function failCross(ctx: CanvasRenderingContext2D, x1: number, cy: number, th: number, w: number, ink: string, ground: string): void {
+  const inside = th >= 5 && w >= 12;
+  const r = inside ? Math.min(2.5, th / 2 - 0.5) : 2.5;
+  const cx = inside ? x1 - 3 - r : x1 + 4 + r;
+  const prevWidth = ctx.lineWidth;
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = inside ? ground : ink;
+  ctx.beginPath();
+  ctx.moveTo(cx - r, cy - r);
+  ctx.lineTo(cx + r, cy + r);
+  ctx.moveTo(cx + r, cy - r);
+  ctx.lineTo(cx - r, cy + r);
+  ctx.stroke();
+  ctx.lineWidth = prevWidth;
+}
+
 /** An open arrowhead cap pointing outward (dir 1: right, -1: left), as the Blueprint's inferred DimLine. */
 function openArrow(ctx: Ctx, x: number, cy: number, dir: 1 | -1, ink: string) {
   ctx.strokeStyle = ink;
@@ -616,6 +633,10 @@ function paintSpan(c: Paint, item: PlacedSpan, g: RowGeom, next: PlacedSpan | un
       boundBracket(ctx, endBound[1], cy, capH, -1, ink);
     } else if (inferEnd) openArrow(ctx, X1, cy, 1, ink);
     else recordedCap(c, fam, X1, cy, th, ink, 1);
+    // M6.6 (WCAG 1.4.1): a failed or rejected end is not told by its ink alone: the grammar's cross
+    // (disc-cross), knocked out of the bar's right end where it is thick and long enough, else
+    // stroked just past the end. Four path points, no allocation.
+    if (tone === "fail") failCross(ctx, X1, cy, th, w, ink, p.ground);
   }
 
   if (fam === "person") {

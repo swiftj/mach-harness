@@ -506,6 +506,8 @@ export interface TrackLabelsProps {
 export interface WindowRulerProps {
   readonly viewport: TimelineViewport;
   onWindow(next: TimeWindow): void;
+  /** M6.6: the stretches the Factory was disabled or paused, held at the playhead (data/factoryIntervals.ts). */
+  readonly factory?: readonly { readonly kind: "disabled" | "paused"; readonly from: number; readonly to: number | null }[];
 }
 
 export interface TemporalOverviewProps {

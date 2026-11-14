@@ -224,7 +224,7 @@ export const Ruler = memo(function Ruler({ extent, window: win, zoomed, onWindow
           aria-valuemax={0}
           aria-valuenow={0}
           onKeyDown={onKeyDown}
-          className="absolute inset-x-0 bottom-0 h-[16px] outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
+          className="absolute inset-x-0 bottom-0 h-[16px] outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
         >
           <div className="absolute inset-x-0 bottom-[7px] h-px bg-line-strong" />
           {density ? (

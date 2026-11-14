@@ -273,7 +273,7 @@ export const Transport = memo(function Transport({ collapsed, onCollapse, idleSi
     // The bar lies over the timeline's 24 px resize handle: only its controls take the pointer, so the
     // bar's empty space is the handle.
     <div
-      className="pointer-events-none relative z-[1] flex h-10 shrink-0 items-center gap-1 border-b border-line px-2 [&_button]:pointer-events-auto [&_fieldset]:pointer-events-auto [&_[title]]:pointer-events-auto"
+      className="pointer-events-none relative z-[1] flex h-10 shrink-0 items-center gap-1 border-b border-line px-2 max-[639px]:h-auto max-[639px]:min-h-10 max-[639px]:flex-wrap max-[639px]:py-1 [&_button]:pointer-events-auto [&_fieldset]:pointer-events-auto [&_[title]]:pointer-events-auto"
       role="toolbar"
       aria-label="Transport"
     >

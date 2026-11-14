@@ -67,3 +67,19 @@ Run these with a person at the machine; record pass or fail for each.
    contrast on; and in Chrome, Windows high contrast if a Windows machine is at hand. Check that borders,
    focus rings, state marks (shapes) and the Timeline canvas bars stay distinguishable, and that the Timeline's
    pass and fail bars can be told apart without colour.
+
+## Corrected in M6.6
+
+Re-run after the corrections (checks 1, 2, 6 and 8, Chromium, the same runner and project copy, an observer built from the corrected tree; WebKit and checks 3, 4, 5, 7 not re-run):
+
+| # | Before | After |
+|---|---|---|
+| 1 axe | 22 `label-content-name-mismatch` nodes (one per state), 2 `scrollable-region-focusable` | 0 violations in all 22 states |
+| 2 stops with no computed ring | floor 4, Timeline 2, Analytics 2 | floor 2 (the Atlas region and the timeline resize handle: both change pixels on focus, as before), Timeline 0, Analytics 2 (chart marks drawn in SVG, as before); Analytics has one more stop (the sheet) |
+| 6 at 320 px | header controls off screen on every view (Theater 348, inspector 384, help 420; Timeline controls to 535) | no header or Timeline toolbar control off screen; what remains listed is the closed inspector sheet (translated off screen, inert) and, in four Analytics areas, buttons inside the scrolling sheet's charts and tables |
+| 6 at 1280 px | Workspaces nav 67 px past the edge on the Atlas and Blueprint | 0 elements past the edge on the floor and Timeline |
+| 8 | 0 overlaps, no document scroll | unchanged: 0 overlaps, no document scroll |
+
+What changed: the top bar wraps onto a further row instead of clipping (its grid row grows; the run's title takes its own row below 640 px), and the Factory-state chip's words fold to its glyph below 1440 px; the transport wraps below 640 px and the docked timeline makes room; the Timeline's controls row gains a last squeeze step that wraps (this also covers clipping under the 1.4.12 spacing values when the row is re-measured); below 640 px the inspector is a full-width sheet under the header. Focus: the playhead slider, docked tracks, Timeline tracks, label-column splitter, help sheet region and inspector heading now get the design system's ring (`outline-none` plus `focus-visible:outline-2` had no outline style under Tailwind 4); the Timeline's own `::after` ring is removed. Label in name: the chip's name starts with its visible words. The Analytics sheet is a focusable, named region. The Timeline canvas draws a cross at the end of a failed or rejected bar.
+
+Still open: the Pulse figure flagged in check 3 is named through `aria-labelledby` (its heading); the check counted only `aria-label` and `figcaption`, so no change was made. Text spacing: the controls row re-squeezes only when what it holds or its width changes, so a stylesheet injected after load is not re-measured; truncated names with a full-text route checked by code reading only: Timeline label rows (`title`, the table and the inspector), the Analytics period caption (`title`); the header project name (window title and the `h1` text) and the inspector's ticket rows were not confirmed. Analytics charts and tables still scroll sideways at 320 px. The Part 2 manual checks are still required.

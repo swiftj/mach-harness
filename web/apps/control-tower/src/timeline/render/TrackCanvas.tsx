@@ -749,7 +749,7 @@ export const TrackCanvas = memo(function TrackCanvas(props: TrackCanvasProps) {
       onKeyDown={onKeyDown}
       onFocus={onFocus}
       onBlur={onBlur}
-      className="mach-tl-tracks relative overflow-hidden outline-none"
+      className="mach-tl-tracks relative overflow-hidden outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
       style={{ width, height, background: "var(--mach-factory-ground)" }}
     >
       <p id={keysId} className="sr-only">

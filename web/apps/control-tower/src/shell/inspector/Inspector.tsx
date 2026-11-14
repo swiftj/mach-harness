@@ -315,7 +315,7 @@ function Selected({ entity }: { entity: AnyRef }) {
           <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-sm border border-line bg-factory-ground">{look?.glyph ?? <span className="size-4 rounded-full border border-dashed border-line-strong" />}</span>
           <div className="min-w-0 flex-1">
             <p className="text-caption text-ink-subtle">{identity.kindWord}</p>
-            <h2 tabIndex={-1} data-inspector-heading="" className="font-sans text-title-3 font-bold leading-snug text-ink outline-none [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--mach-focus)]">
+            <h2 tabIndex={-1} data-inspector-heading="" className="font-sans text-title-3 font-bold leading-snug text-ink outline-none [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-[var(--mach-focus)]">
               {/* An agent is named by its label (agent.started data.label): prose, contained. */}
               {!picked && proseName(kindOf(entity)) && !identity.name.endsWith(refId(entity)) ? <FreeText field={proseName(kindOf(entity))!} text={identity.name} /> : identity.name}
             </h2>

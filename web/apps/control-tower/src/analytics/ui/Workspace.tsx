@@ -223,7 +223,9 @@ export function AnalyticsView({ data, insights, configs, source, asOf, sourceLab
           </ul>
         </nav>
 
-        <main ref={sheet} className="an-sheet focus:outline-none" aria-label={area.label} tabIndex={-1}>
+        {/* A scrolling region must be reachable by keyboard when it holds nothing focusable (axe scrollable-region-focusable, M6.6). */}
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+        <main ref={sheet} className="an-sheet outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus" aria-label={area.label} tabIndex={0}>
           <div className="an-sheet-inner">
             {notice ?? null}
             {view.area === "pulse" ? <Pulse {...common} insights={insights} /> : null}
