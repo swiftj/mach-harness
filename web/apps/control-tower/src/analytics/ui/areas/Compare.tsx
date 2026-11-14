@@ -15,6 +15,7 @@ import { Columns, LogNote } from "../charts";
 import { Announce, AreaFrame, ChartFrame, Mark, SectionHead, useAnalytics, useMarkNav, useTip, useWidth } from "../kit";
 import type { CompareChoice, CompareProps } from "../types";
 import { NothingYet } from "./shared";
+import { LIST_CAP, pageCut } from "../../model/capped";
 
 const BASES: readonly { key: CohortBy; label: string }[] = [
   { key: "risk", label: "Risk tier" },
@@ -99,7 +100,10 @@ function CompareBody({ configs, choice, onChoice }: { configs: CompareProps["con
               <div>
                 <dt className="text-caption text-ink-muted">Rounds, median</dt>
                 <dd className="an-fig text-[22px] text-ink">{c.rounds.length >= 2 ? medianOf(c.rounds) : c.rounds.length === 1 ? c.rounds[0] : "–"}</dd>
-                <dd className="an-num text-caption text-ink-subtle">{c.rounds.length === 1 ? "the one merged" : `over ${c.rounds.length} merged`}</dd>
+                <dd className="an-num text-caption text-ink-subtle">
+                  {c.rounds.length === 1 ? "the one merged" : `over ${c.rounds.length} merged`}
+                  {c.merged > c.rounds.length ? `; ${c.merged - c.rounds.length} with no recorded rounds not counted` : ""}
+                </dd>
               </div>
             </dl>
             <div className="mt-4">
@@ -130,8 +134,8 @@ function CompareBody({ configs, choice, onChoice }: { configs: CompareProps["con
       <section className="an-section">
         <SectionHead title="Distributions on one axis" question="Every ticket in each cohort as a dot; the tick is the cohort's median." />
         <div className="an-grid-2">
-          <DotCompare chart="compare-c3" title="Dispatch to merge (C3)" cohorts={[ca, cb]} values={new Map((s.contributors.C3?.items ?? []).map((x) => [x.ticket ?? "", x.value]))} kind="ms" />
-          <DotCompare chart="compare-k4" title="Recorded cost per ticket (K4)" cohorts={[ca, cb]} values={new Map((s.contributors.K4?.items ?? []).map((x) => [x.ticket ?? "", x.value]))} kind="usd" />
+          <DotCompare chart="compare-c3" title="Dispatch to merge (C3)" cohorts={[ca, cb]} values={new Map((s.contributors.C3?.items ?? []).map((x) => [x.ticket ?? "", x.value]))} kind="ms" cut={pageCut(s.contributors.C3)} />
+          <DotCompare chart="compare-k4" title="Recorded cost per ticket (K4)" cohorts={[ca, cb]} values={new Map((s.contributors.K4?.items ?? []).map((x) => [x.ticket ?? "", x.value]))} kind="usd" cut={pageCut(s.contributors.K4)} />
         </div>
       </section>
     </>
@@ -149,7 +153,11 @@ function withEnds(ticks: readonly number[], lo: number, hi: number, x: (v: numbe
 }
 
 /** Two cohorts' values as dot strips on one shared axis (log for durations, labelled; linear from zero for cost). Missing values are counted, not placed. */
-function DotCompare({ chart, title, cohorts, values, kind }: { chart: string; title: string; cohorts: readonly Cohort[]; values: ReadonlyMap<string, number | null>; kind: "ms" | "usd" }) {
+/**
+ * `values` is a contributor list (C3 or K4), cut at its row cap; `cut` says it was. A ticket not in a
+ * cut list may have a value beyond the cap: it is then "not in the list", never "without a value".
+ */
+function DotCompare({ chart, title, cohorts, values, kind, cut = false }: { chart: string; title: string; cohorts: readonly Cohort[]; values: ReadonlyMap<string, number | null>; kind: "ms" | "usd"; cut?: boolean }) {
   const { open } = useAnalytics();
   const [ref, width] = useWidth<HTMLDivElement>();
   const [, setTip, tipNode] = useTip(width);
@@ -157,6 +165,7 @@ function DotCompare({ chart, title, cohorts, values, kind }: { chart: string; ti
     const vals = c.runs.map((r: RunRecord) => ({ id: r.ticket_id, v: values.get(r.ticket_id) ?? null }));
     return { c, known: vals.filter((x): x is { id: string; v: number } => x.v !== null), missing: vals.filter((x) => x.v === null).length };
   });
+  const missingWords = (n: number) => (cut ? `${n} not placed (without a value in the list; the list is cut at ${LIST_CAP} rows, so some may have one)` : `${n} without a recorded value`);
   const flat = rows.flatMap((r) => r.known);
   const nav = useMarkNav(flat.length);
   const all = flat.map((k) => k.v);
@@ -179,9 +188,9 @@ function DotCompare({ chart, title, cohorts, values, kind }: { chart: string; ti
     <ChartFrame
       chart={chart}
       title={title}
-      summary={rows.map((r) => `${r.c.label}: ${r.known.length} placed, median ${r.known.length >= SMALL_SAMPLE ? fmt(medianOf(r.known.map((k) => k.v))!) : "not drawn"}, ${r.missing} without a value`).join("; ")}
+      summary={rows.map((r) => `${r.c.label}: ${r.known.length} placed, median ${r.known.length >= SMALL_SAMPLE ? fmt(medianOf(r.known.map((k) => k.v))!) : "not drawn"}, ${missingWords(r.missing)}`).join("; ")}
       table={{ columns: [{ label: "Ticket" }, { label: "Cohort" }, { label: kind === "ms" ? "Dispatch to merge" : "Recorded cost", num: true }], rows: rows.flatMap((r) => r.known.map((k) => [<button key={k.id} type="button" className="an-link an-mono inline-flex min-h-6 items-center" onClick={() => open(`cell:${k.id}`, "timeline")}>{k.id}</button>, r.c.label, fmt(k.v)])) }}
-      foot={<>{rows.map((r) => `${r.c.label}: ${r.missing} without a recorded value`).join("; ")}. Cohorts smaller than {SMALL_SAMPLE} show their dots but no median. {kind === "ms" ? <LogNote /> : "The cost axis starts at zero."}</>}
+      foot={<>{rows.map((r) => `${r.c.label}: ${missingWords(r.missing)}`).join("; ")}. Cohorts smaller than {SMALL_SAMPLE} show their dots but no median. {kind === "ms" ? <LogNote /> : "The cost axis starts at zero."}</>}
     >
       <div ref={ref} className="relative" style={{ height }}>
         <svg width={width} height={height} role="group" aria-label={title} style={{ display: "block" }}>

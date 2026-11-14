@@ -11,6 +11,7 @@ import { rankGroups, valueBins } from "../../model/charts";
 import { count, coverageText, dayText, durationText, p50Text, pct, plural, tokens, usd } from "../../model/format";
 import { costExclusionWords, failedCostWords, failedResultCost, failedResultCostWords } from "../../model/costCoverage";
 import { useFailedCost } from "../failedCost";
+import { LIST_CAP, pageCut } from "../../model/capped";
 import { costSeries } from "../../model/pulse";
 import { grainFor } from "../../model/series";
 import { Columns, PartsBar, RankTable } from "../charts";
@@ -118,7 +119,7 @@ function EconomicsBody({ model, setModel }: { model: string | null; setModel(m: 
           <CostTrend />
         </section>
         <section className="an-section">
-          <SectionHead title="Cost beside verified delivery" question="Weekly, on separate scales: recorded cost, and tickets merged." />
+          <SectionHead title="Cost beside integrated work" question="Weekly, on separate scales: recorded cost, and tickets merged into the default branch (what MACH records; not a product decision)." />
           <CostVsDelivery />
         </section>
       </div>
@@ -131,7 +132,7 @@ function EconomicsBody({ model, setModel }: { model: string | null; setModel(m: 
           {rowMissing(k2) ? (
             <NotRecorded compact title={rowMissing(k2)!.title} what={rowMissing(k2)!.why} why="Nothing is drawn in its place." state="unavailable" />
           ) : (
-            <ChartFrame chart="economics-models" title="Executions using each model" question="Select a model to narrow every figure recorded per model. An execution that used three models is counted under each." summary={modelRows.map(({ m, g }) => `${m}: ${g?.denominator ?? 0} executions, ${usd(g?.value)} per execution`).join("; ")} table={{ columns: [{ label: "Model" }, { label: "Executions", num: true }, { label: "Per execution", num: true }, { label: "Tokens each", num: true }], rows: modelRows.map((r) => [r.m, r.g ? count(r.g.denominator) : "–", usd(r.g?.value), tokens(r.tk?.value)]) }}>
+            <ChartFrame chart="economics-models" foot={`Per-model usage from the execution stream (K2, K3)${t.K2 ? `; coverage ${coverageText(t.K2.coverage)}${t.K2.coverage.unit ? ` ${t.K2.coverage.unit}` : ""}` : ""}.`} title="Executions using each model" question="Select a model to narrow every figure recorded per model. An execution that used three models is counted under each." summary={modelRows.map(({ m, g }) => `${m}: ${g?.denominator ?? 0} executions, ${usd(g?.value)} per execution`).join("; ")} table={{ columns: [{ label: "Model" }, { label: "Executions", num: true }, { label: "Per execution", num: true }, { label: "Tokens each", num: true }], rows: modelRows.map((r) => [r.m, r.g ? count(r.g.denominator) : "–", usd(r.g?.value), tokens(r.tk?.value)]) }}>
               <RankTable<(typeof modelRows)[number]>
                 caption="Executions using each model"
                 rows={modelRows}
@@ -156,7 +157,7 @@ function EconomicsBody({ model, setModel }: { model: string | null; setModel(m: 
               title="Tokens by kind"
               summary={TOKEN_KINDS.map(([k, label]) => `${label}: ${tokens(k3k?.groups?.find((g) => g.key === k)?.numerator)}`).join("; ")}
               table={{ columns: [{ label: "Kind" }, { label: "Tokens", num: true }], rows: TOKEN_KINDS.map(([k, label]) => [label, tokens(k3k?.groups?.find((g) => g.key === k)?.numerator)]) }}
-              foot={`From per-model usage in the execution stream${model ? `, ${model} only` : ""}. The stream gives no token kinds per agent. One hue, light to dark; the parts are of one whole.`}
+              foot={`From per-model usage in the execution stream${model ? `, ${model} only` : ""}${t.K3 ? `; coverage ${coverageText(t.K3.coverage)}` : ""}. The stream gives no token kinds per agent. One hue, light to dark; the parts are of one whole.`}
             >
               <PartsBar
                 name="Tokens by kind"
@@ -176,7 +177,7 @@ function EconomicsBody({ model, setModel }: { model: string | null; setModel(m: 
           ) : known.length < 5 ? (
             <TooFew what="executions with a recorded cost" n={known.length} need={5} periods={1} />
           ) : (
-            <CostDistribution values={known} missing={noCost} />
+            <CostDistribution values={known} missing={noCost} withCost={k1?.coverage.covered ?? null} cut={pageCut(s.contributors.K1)} />
           )}
           <div className="mt-6 flex flex-col gap-3">
             <NotRecorded title="Cost per agent or per station: not available" what={sentence(t.K5?.null_reason ?? "the stream gives no per-agent cost.")} why="Splitting an execution's cost by agent time or by tokens would be an estimate; it is never shown." compact />
@@ -266,7 +267,7 @@ function CostVsDelivery() {
       title="Per week, two charts, two scales"
       summary={costW.map((w) => `week to ${dayText(w.to - 1)}: ${usd(w.cost)} recorded, ${mergedOf(w.from, w.to)} tickets merged`).join("; ")}
       table={{ columns: [{ label: "Week to" }, { label: "Recorded cost", num: true }, { label: "Tickets merged", num: true }], rows: costW.map((w) => [dayText(w.to - 1), usd(w.cost), count(mergedOf(w.from, w.to))]) }}
-      foot="Cost is recorded when an execution is claimed and a merge when it lands, often in a later week; the two are shown one above the other, not divided."
+      foot="A cost is counted on the day its execution completed and a merge on the day it landed, often in a later week; the two are shown one above the other, not divided."
     >
       <div className="text-caption text-ink-muted">Recorded cost</div>
       <Columns label="Recorded cost per week" height={92} format={(v) => usd(v).replace(".00", "")} points={costW.map((w) => ({ key: w.key, value: w.cost, flag: w.without > 0, card: { title: `Week to ${dayText(w.to - 1)}`, rows: [["recorded", usd(w.cost)], ["without a cost", count(w.without)]] } }))} />
@@ -276,16 +277,20 @@ function CostVsDelivery() {
   );
 }
 
-function CostDistribution({ values, missing }: { values: readonly number[]; missing: number }) {
+/**
+ * The dots are the K1 contributor list, cut at its row cap; "without one" is K1's coverage. When the list
+ * was cut, the bins hold only the listed executions and say so; the count with a cost is the reply's.
+ */
+function CostDistribution({ values, missing, withCost, cut }: { values: readonly number[]; missing: number; withCost: number | null; cut: boolean }) {
   const bins = valueBins(values, 1);
   const every = Math.max(1, Math.ceil(bins.length / 8));
   return (
     <ChartFrame
       chart="economics-cost-distribution"
       title="Executions by recorded cost"
-      summary={`${values.length} executions with a recorded cost, from ${usd(Math.min(...values))} to ${usd(Math.max(...values))}; ${missing} without one.`}
+      summary={`${cut ? `${values.length} listed of ${withCost ?? "an unknown number of"}` : values.length} executions with a recorded cost, from ${usd(Math.min(...values))} to ${usd(Math.max(...values))}${cut ? " among those listed" : ""}; ${missing} without one.`}
       table={{ columns: [{ label: "Cost" }, { label: "Executions", num: true }], rows: bins.map((b) => [`${usd(b.from)} to ${usd(b.to)}`, count(b.count)]) }}
-      foot={`${plural(missing, "execution")} with no recorded cost are not placed in any bin.`}
+      foot={`${plural(missing, "execution")} with no recorded cost are not placed in any bin.${cut ? ` The list behind these bins is cut at ${LIST_CAP} rows: ${values.length} of ${withCost ?? "more"} executions with a recorded cost are drawn, so the bins are lower bounds.` : ""}`}
     >
       <Columns label="Executions by recorded cost" height={140} format={count} points={bins.map((b, i) => ({ key: String(b.from), value: b.count, tick: i % every === 0 ? `$${b.from}` : undefined, card: { title: `${usd(b.from)} to ${usd(b.to)}`, rows: [["executions", count(b.count)]] } }))} />
     </ChartFrame>

@@ -19,6 +19,9 @@ import { HISTORY_SUSPECT_WORDS, historyWords } from "../wire/history";
 import { spoken } from "./charts/a11y";
 import type { AreaData, AreaSource, Interval, OnOpen, RowsRequest } from "./types";
 
+/** T2's catalog name is "Accepted delivery". MACH records no product acceptance, and every place that shows the name says so. */
+export const ACCEPTANCE_NOTE = "MACH records integration, not business acceptance.";
+
 /** Kept for the prototype's callers. */
 export type DrillRequest = RowsRequest;
 
@@ -164,6 +167,7 @@ export function Definition({ row, children, label }: { row: MetricRow; children?
             <span className="text-label">{row.name}</span>
           </div>
           {shownAs ? <p className="mt-0.5 text-caption text-ink-subtle">Shown here as “{shownAs}”; the catalog's name and meaning are unchanged.</p> : null}
+          {row.id === "T2" ? <p className="mt-0.5 text-caption text-ink-subtle">{ACCEPTANCE_NOTE}</p> : null}
         </div>
         <dl className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 px-4 py-3 text-body-sm">
           <dt className="text-ink-muted">Counts</dt>

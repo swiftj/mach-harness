@@ -42,8 +42,8 @@ Disposition key: **keep**; **keep, note** (keep, with the note stated to the rea
 | 13 | `reliability.capacity-held`: the scheduler recorded work held for a free place on several days | >= 3 day buckets (`:65`) and >= 3 waits (`:66`) | a recorded `max_parallel` limit | W2b; capacity-slice waits; factory limits | supervised mode only (W2b) | A Factory run at a deliberately low limit will hold work whenever more is ready; that is the configuration doing its job | Observe mode records no capacity waits; days are UTC buckets, so one long hold is one day | **keep, note** |
 | 14 | `reliability.execution-share`: recoveries, unknown outcomes, failures, interruptions above a share | S1 >= 0.10, S2 >= 0.05 (attention), X1 >= 0.10, interrupted >= 0.10 (`execShareMin`, `insight.go:81`) | 10 executions (`:67`) | S1, S2, X1, executions contributors | none | At 10 executions one failure is 10%; X1 counts a failure the supervisor then retried successfully | Executions with no end recorded are not interrupted; hand-driven work has no execution | **PO threshold**, with **needs data** for S2 |
 | 15 | `reliability.execution-later-window`: the same measures higher in the later window | later - earlier >= 0.05 (`:68`) | dated window; 10 executions per window (`:67`) | as 14 | no suspect window | At 10 executions a window, one execution is 10 points, so any single extra failure fires | Never evaluated in the default view (no comparison window) | **needs data** |
-| 16 | `economics.cost-later-window`: recorded cost higher in the later window while integrated slices are not | later cost >= 1.25 x earlier (`:71`) and T2 later <= T2 earlier | dated window; 10 executions with a recorded cost per window (`:69`) | K1, T2 | K1 coverage >= 0.80 in each window (`:70`) | Slices differ in size (the why says so) | Since the D8 change K1's coverage counts every claimed execution, and failed executions carry no cost by design, so a window with more than 20% failures is never evaluated. The template still says "covers ... of completed executions" | **keep, note**; the population wording needs the lead's decision (see "Wording defects") |
-| 17 | `data.usage-missing`: executions without recorded usage (cost subject: no cost recorded by the supervisor; stream subject: no usage record from the stream) | missing >= 0.10 each (`:72`, `:74`) | 10 executions each (`:73`) | K1 coverage, `K1-missing`; `usage-missing` and `executions` contributors | none | **Cost subject:** K1's eligible count now includes failed executions (`project/reduce.go:740`, `:863`), which never record a cost. Any failure rate of 10% or more fires a data-quality note that says the "completed executions" have no cost. That is a false positive and a wrong noun | Hand-driven work has no execution and is not counted | **keep, note**; fix the population (lead's decision: wording or which executions count) |
+| 16 | `economics.cost-later-window`: recorded cost higher in the later window while integrated slices are not | later cost >= 1.25 x earlier (`:71`) and T2 later <= T2 earlier | dated window; 10 executions with a recorded cost per window (`:69`) | K1, T2 | K1 coverage >= 0.80 in each window (`:70`) | Slices differ in size (the why says so) | K1's coverage counts every claimed execution (as in M6.5; D8 only split the reason), and failed executions carry no cost by definition, so a window with more than 20% failures was never evaluated. **Corrected (M6.6):** coverage is now read over the executions K1 expects a cost from (counted, no result yet, or outcome unknown; failed ones left out by `metrics.ExK1Failed`), and the condition says "of the executions expected to record one (failed executions record none and are not counted)" (`rules.go` `costCoverage`, `templates.go:137`). Not a threshold change: 1.25x, 10 executions per window and 80% coverage are as before; only the population the coverage is a share of is the one K1's definition implies. Test `insight/cost_population_test.go` | **keep, corrected** |
+| 17 | `data.usage-missing`: executions without recorded usage (cost subject: no cost recorded by the supervisor; stream subject: no usage record from the stream) | missing >= 0.10 each (`:72`, `:74`) | 10 executions each (`:73`) | K1 coverage, `K1-missing`; `usage-missing` and `executions` contributors | none | **Cost subject:** K1's eligible count includes failed executions (`project/reduce.go:740`, `:863`; as in M6.5), which never record a cost, so any failure rate of 10% or more fired a note that "completed executions" have no cost: a false positive and a wrong noun. **Corrected (M6.6):** missing is counted only among executions the definition expects a cost from (completed, no result yet, outcome unknown; failed ones excluded by `metrics.ExK1Failed`), and the title, condition, minimum-sample reason and sample name that population ("executions expected to record a cost (completed, or no result yet; failed executions record none)"). Not a threshold change: 10% and the minimum of 10 are unchanged, applied to the population the rule's own text describes. On the retry run: "needs ... 10 executions expected to record a cost ...; 1 recorded". Test `insight/cost_population_test.go` | Hand-driven work has no execution and is not counted | **keep, corrected** |
 | 18 | `data.lifecycle-coverage`: tickets without a lifecycle log | share with a log < 0.80 (`:75`) | 5 tickets (`:76`) | flow coverage | none | Filed tickets that were never dispatched count as tickets without a log (real run D10: LOCAL-002, "cell lifecycle 1 of 2"). A backlog of filed but undispatched tickets fires it | Tickets with no record at all are invisible to every source | **keep, note**; depends on the D10 fix |
 
 ## (a) Rules that cannot fire on a small Factory, and what a person sees
@@ -74,7 +74,7 @@ Do the reasons read correctly? Checked against the run's figures:
 | recurring rules "needs at least 5 tickets analyzed (the observe station's minimum); 3" | correct; ends on a bare number (every other reason says "N recorded") and does not say which tickets were analyzed (visited verification, visited review, or with a lifecycle log) |
 | capacity "no wait for a free place was recorded in this selection" | yes |
 | execution-share "needs a denominator of at least 10 claimed executions; 3 recorded" | yes |
-| usage-missing cost "needs a denominator of at least 10 completed executions; 3 recorded" | **wrong noun on the retry run**: 1 execution completed and 2 failed; the 3 are claimed executions (rule 17 above) |
+| usage-missing cost "needs a denominator of at least 10 completed executions; 3 recorded" | **wrong noun on the retry run**: 1 execution completed and 2 failed; the 3 are claimed executions (rule 17 above). **Corrected:** now "… 10 executions expected to record a cost (completed, or no result yet; failed executions record none); 1 recorded" |
 | lifecycle "needs a denominator of at least 5 tickets; 3 recorded" | yes, though the 3 included a ticket that was never dispatched (D10) |
 
 Also: `reasonLastRuns` and the comparison reason under `last_runs` (`templates.go:185`, `gather.go:36`) say
@@ -149,6 +149,38 @@ others are exact, over every measured visit." That matches `percentileText` (`mo
 Test: `web/apps/control-tower/test/m66-policy.test.mjs`. Every other item above is larger than one line, or is
 a judgement for the lead.
 
+**Corrected in M6.6** (wording and list handling only; no formula or ID changed; test
+`web/apps/control-tower/test/m66-capped-figures.test.mjs`):
+
+- **Capped lists.** `model/capped.ts`: a count read from a contributor list cut at 500 rows is said "at least N (the
+  list is cut at 500 rows)", and a figure the reply carries is used instead where it has one.
+  - Flow `Flow.tsx:240-258`: "Visits after the first" is a lower bound when cut. The diagram's, the waits' and the
+    human approval's open counts now come from the metric's own `basis_counts.open`; only without it are they read
+    from the list, then said as "at least".
+  - Economics `Economics.tsx:279-292`: when the K1 list is cut, the cost bins say they draw N of the reply's count
+    with a cost and are lower bounds.
+  - Compare `Compare.tsx:133-134`: with a cut C3 or K4 list, a ticket missing from it is "not placed", never "without
+    a recorded value".
+- **Basis, population, coverage, limitation.**
+  - Pulse `Pulse.tsx:342-369` and Quality `Quality.tsx:66-91`: "from the run records cleanup writes", with the merged
+    tickets that have no run record (against T1), and Quality's merged tickets with no recorded rounds.
+  - Pulse `Pulse.tsx:444-463`: the base is the executions claimed (X1's denominator), and open means no end recorded.
+  - Pulse `Pulse.tsx:239`: coverage under the step when below 100%.
+  - Pulse `Pulse.tsx:169-175`: "N executions claimed".
+  - Flow `Flow.tsx:240-258`: a limitation line under the station grid.
+  - Flow `Flow.tsx:310`: "measured waits; a wait still open is not counted".
+  - Flow `Flow.tsx:282-289`: the coverage of agents with a station label.
+  - Quality `Quality.tsx:138-157`: Q4 "a count only and partial"; R2 "reconstructed", rule codes only.
+  - Economics `Economics.tsx:134-169`: K2 and K3 coverage.
+  - Compare `Compare.tsx:88-104`: merged tickets with no recorded rounds not counted.
+- **Economics foot** `Economics.tsx:269`: a cost is counted on the day its execution completed (`reduce.go:820`,
+  `day(st)` of `execution.completed`), not the claim day.
+- **Words from (e).** The Economics block is "Cost beside integrated work" (it shows tickets merged into the default
+  branch, not a verified-only count). Where the catalog name "Accepted delivery" is shown in Pulse, the standing note
+  "MACH records integration, not business acceptance" follows; T2's catalog name is unchanged. The definition
+  popover (`kit.tsx:166`) still shows the name with "the catalog's name and meaning are unchanged" and not yet the
+  note: one line, in a file another agent owns.
+
 ## (e) Integrated is not accepted
 
 Searched the Analytics UI (`ui/`, `model/`, `data/`) and the insight templates for "accepted", "accept",
@@ -172,10 +204,10 @@ Searched the Analytics UI (`ui/`, `model/`, `data/`) and the insight templates f
 
 ## Wording defects for the lead (not changed: outside `areas/`, or larger than one line)
 
-1. `data.usage-missing:cost` and `economics.cost-later-window` say "completed executions". K1's coverage counts
-   every claimed execution since the D8 change (`project/reduce.go:740`, `:863`). This is a false positive on any
-   failure rate of 10% or more (rule 17). The cost-later rule is also not evaluated above a 20% failure rate.
-   Decide the population, then the words (`rules.go:612-627`, `:582-606`; `templates.go:137`).
+1. **Corrected (M6.6).** `data.usage-missing:cost` and `economics.cost-later-window` said "completed executions"
+   while counting every claimed execution, failed ones included (pre-existing M6.5 behaviour; the D8 change only
+   renamed the reasons). Both now read K1's coverage over the executions its definition expects a cost from
+   (failed ones left out) and name that population; thresholds and minimums are unchanged (rules 16 and 17).
 2. "denominator" in `reasonFewDen` (`templates.go:178`); "last_runs" in `reasonLastRuns` (`templates.go:185`) and
    `gather.go:36`; `reasonFewAnalyzed` ends on a bare number (`templates.go:184`).
 3. "Seventeen rules" in `M6_5_COMPLETION.md` section 10.

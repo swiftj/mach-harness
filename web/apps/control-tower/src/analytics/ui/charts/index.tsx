@@ -561,6 +561,8 @@ export interface RangeRow {
   readonly tone: string;
   readonly note?: string;
   readonly open?: number;
+  /** The open count was read from a list cut at its row cap: a lower bound. */
+  readonly openAtLeast?: boolean;
 }
 
 /**
@@ -597,7 +599,7 @@ export function RangeRows({ rows, onActivate, selected }: { rows: readonly Range
           const cy = ry + rowH / 2;
           const has = r.min !== undefined && r.p50 !== undefined;
           const card: Card = has
-            ? { title: r.label, rows: [["measured", String(r.n)], ["median", durationText(r.p50)], ...(r.n >= 10 ? ([["90th", durationText(r.p90)]] as [string, string][]) : []), ["shortest", durationText(r.min)], ["longest", durationText(r.max)], ["total recorded", r.total ? durationText(r.total) : "–"]], foot: r.open ? `${r.open} still open, not counted` : undefined }
+            ? { title: r.label, rows: [["measured", String(r.n)], ["median", durationText(r.p50)], ...(r.n >= 10 ? ([["90th", durationText(r.p90)]] as [string, string][]) : []), ["shortest", durationText(r.min)], ["longest", durationText(r.max)], ["total recorded", r.total ? durationText(r.total) : "–"]], foot: r.open ? `${r.openAtLeast ? "at least " : ""}${r.open} still open, not counted${r.openAtLeast ? " (the list is cut at 500 rows)" : ""}` : undefined }
             : { title: r.label, foot: r.note === "not recorded" ? "Not recorded in this history." : "None measured in this window." };
           return (
             <Mark key={r.key} nav={nav} index={i} x={0} y={ry + 2} w={width - 4} h={rowH - 4} tipAt={{ x: has ? x(r.p50!) : labelW + 40, y: cy - 8 }} card={card} onTip={setTip} onActivate={onActivate ? () => onActivate(r.key) : undefined} pressed={onActivate ? selected === r.key : undefined}
@@ -607,7 +609,7 @@ export function RangeRows({ rows, onActivate, selected }: { rows: readonly Range
                     {r.label}
                   </text>
                   <text x={0} y={cy + 12} style={{ ...SANS, fontSize: 11, fill: "var(--an-subtle)" }}>
-                    {r.note ?? `${r.n} measured${r.open ? `, ${r.open} still open` : ""}`}
+                    {r.note ?? `${r.n} measured${r.open ? `, ${r.openAtLeast ? "at least " : ""}${r.open} still open` : ""}`}
                   </text>
                   {has ? null : (
                     <text x={labelW} y={cy + 4} style={{ ...SANS, fontSize: 12, fill: "var(--an-subtle)" }}>

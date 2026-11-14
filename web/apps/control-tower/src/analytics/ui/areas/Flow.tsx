@@ -7,7 +7,7 @@
 import { useMemo } from "react";
 import { contributorKey, groupedKey, type Station } from "../../contract";
 import { bottleneckRanking, groupOf, histogramBins, peakWords, transitionKind, type StationLoad } from "../../model/charts";
-import { count, durationText, p50Text, p90Text, pct, plural } from "../../model/format";
+import { count, coverageText, durationText, p50Text, p90Text, pct, plural } from "../../model/format";
 import { durationShows } from "../../model/sample";
 import { DurationHistogram, LogNote, RangeRows, RankTable, StepPanels } from "../charts";
 import { FlowDiagram, STATION_WORDS, type FlowStationFacts } from "../charts/Flow";
@@ -21,6 +21,7 @@ import { pickedVisitOf, selectEntity } from "../../../shell/inspector/entity";
 import { kindOf } from "../../../shell/vocab";
 import type { AnyRef, VisitEntity } from "../../../sim";
 import { visitPlace, visitPlaceWords } from "../../model/visitPlace";
+import { cappedCount, cappedText, countOr } from "../../model/capped";
 
 /**
  * The station visit selected when Analytics was opened from the Timeline (I-12, journey 3): the one
@@ -63,9 +64,10 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
   for (const g of c1?.groups ?? []) {
     const st = g.key as Station;
     const page = s.contributors[contributorKey("C1", "station", st)];
-    facts[st] = { visits: g.denominator ?? 0, p50: g.p50_ms ?? null, totalMs: g.numerator ?? 0, refusals: groupOf(x2, st)?.numerator ?? 0, open: page?.items.filter((c) => c.value === null).length ?? 0 };
+    facts[st] = { visits: g.denominator ?? 0, p50: g.p50_ms ?? null, totalMs: g.numerator ?? 0, refusals: groupOf(x2, st)?.numerator ?? 0, open: countOr(g.basis_counts?.open, page, (c) => c.value === null).n };
   }
-  const w3Open = s.contributors.W3?.items.filter((c) => c.value === null).length ?? 0;
+  // Open waits: the metric's own basis count; read from the (capped) list only when the reply has none, then said as a lower bound.
+  const w3Open = countOr(t.W3?.basis_counts?.open, s.contributors.W3, (c) => c.value === null);
   const focus: Station = station ?? (loads[0]?.station as Station | undefined) ?? "build";
   const chip = station ? <Chip label="Station" value={STATION_WORDS[station]} onRemove={() => setStation(null)} /> : null;
 
@@ -98,7 +100,7 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
             table={{ columns: [{ label: "From" }, { label: "To" }, { label: "Moves", num: true }, { label: "Tickets", num: true }, { label: "Kind" }], rows: s.transitions.map((x) => [STATION_WORDS[x.from], STATION_WORDS[x.to], count(x.count), count(x.tickets), transitionKind(x)]) }}
             foot="Each station shows its median measured visit and how many visits were measured. Line width is the number of recorded moves between two stations, not the path of any one ticket. Where a count does not fit beside its line it is left out of the drawing; every count is in the hover card and the table. Red loops go back to build after a failed verification or a rejected review. The bar in each station is its share of measured station time; ⊘ counts gate refusals."
           >
-            <FlowDiagram transitions={s.transitions} facts={facts} loads={loads} selected={station} onSelect={setStation} humanFacts={{ waits: t.W3?.denominator_value ?? 0, p50: t.W3?.p50_ms ?? null, open: w3Open }} />
+            <FlowDiagram transitions={s.transitions} facts={facts} loads={loads} selected={station} onSelect={setStation} humanFacts={{ waits: t.W3?.denominator_value ?? 0, p50: t.W3?.p50_ms ?? null, open: w3Open.n, openAtLeast: w3Open.atLeast }} />
           </ChartFrame>
         )}
       </section>
@@ -160,8 +162,9 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
               ] as const
             ).map(([id, label, tone]) => {
               const r = t[id];
-              const open = s.contributors[id]?.items.filter((c) => c.value === null).length ?? 0;
-              return { key: id, label, n: r?.denominator_value ?? 0, min: r?.min_ms, p50: r?.p50_ms, p90: r?.p90_ms, max: r?.max_ms, total: r?.numerator_value, tone, open, ...(r?.basis === "not-recorded" ? { note: "not recorded" } : id === "W2b" && r?.value !== null ? { note: `${r?.denominator_value ?? 0} reconstructed` } : {}) };
+              const openC = countOr(r?.basis_counts?.open, s.contributors[id], (c) => c.value === null);
+              const open = openC.n;
+              return { key: id, label, n: r?.denominator_value ?? 0, min: r?.min_ms, p50: r?.p50_ms, p90: r?.p90_ms, max: r?.max_ms, total: r?.numerator_value, tone, open, openAtLeast: openC.atLeast, ...(r?.basis === "not-recorded" ? { note: "not recorded" } : id === "W2b" && r?.value !== null ? { note: `${r?.denominator_value ?? 0} reconstructed` } : {}) };
             })}
           />
         </ChartFrame>
@@ -228,7 +231,8 @@ function StationDetail({ station }: { station: Station }) {
   const agents = groupOf(s.grouped[groupedKey("K8", "station")], station);
   const tools = groupOf(s.grouped[groupedKey("K10", "station")], station);
   const page = s.contributors[contributorKey("C1", "station", station)];
-  const later = page?.items.filter((c) => /#([2-9]|\d\d)$/.test(c.ref)).length ?? 0;
+  // Read from the visit list: a lower bound when the list was cut at its row cap.
+  const later = cappedCount(page, (c) => /#([2-9]|\d\d)$/.test(c.ref));
   const revise = s.transitions.filter((x) => x.to === station && transitionKind(x) === "revise").reduce((n, x) => n + x.count, 0);
   const cameFrom = useCameFromVisit();
   const from = cameFrom && cameFrom.station === station ? cameFrom : null;
@@ -246,7 +250,7 @@ function StationDetail({ station }: { station: Station }) {
             ["90th percentile", shows.p90 ? p90Text(g) : "too few"],
             ["Longest", durationText(g.max_ms)],
             ["Revise entries", count(revise)],
-            ["Visits after the first", count(later)],
+            ["Visits after the first", cappedText(later, count)],
             ["Open, unknown", `${count(g.basis_counts?.open ?? 0)}, ${count(g.basis_counts?.unknown ?? 0)}`],
             ["Gate refusals", refusals ? `${count(refusals.numerator)} of ${count(refusals.denominator)}` : "none"],
           ] as const
@@ -257,6 +261,9 @@ function StationDetail({ station }: { station: Station }) {
           </div>
         ))}
       </dl>
+      <p className="-mt-2 text-caption text-ink-subtle" data-figure-limits="">
+        Measured visits only (C1, from the cell's lifecycle log): an open or unknown visit is counted apart, never averaged; revise entries are recorded moves back to this station, visits after the first are read from the visit list.
+      </p>
       <ChartFrame
         chart="flow-visit-durations"
         title="Visit durations"
@@ -286,7 +293,7 @@ function StationDetail({ station }: { station: Station }) {
               , <span className="an-num font-semibold text-ink">{tools.value.toFixed(1)}</span> tool calls each on average (a count only)
             </>
           ) : null}
-          . Station read from the agent's label.
+          . Station read from the agent's label{agents.coverage.share !== null && agents.coverage.share < 1 ? `; coverage ${coverageText(agents.coverage)}` : ""}.
         </p>
       ) : null}
     </div>
@@ -307,7 +314,7 @@ function HumanDetail() {
         <DurationHistogram buckets={w3?.distribution?.histogram} p50={shows.median ? w3?.p50_ms : undefined} p90={shows.p90 ? w3?.p90_ms : undefined} name="waits" tone="var(--an-human)" />
       </ChartFrame>
       <p className="text-caption text-ink-subtle">
-        By risk: {(byRisk?.groups ?? []).map((g) => `${g.key} ${plural(g.denominator ?? 0, "wait")}, median ${p50Text(g)}`).join("; ") || "none"}
+        By risk: {(byRisk?.groups ?? []).map((g) => `${g.key} ${plural(g.denominator ?? 0, "measured wait")}, median ${p50Text(g)}`).join("; ") || "none"}. Measured waits only: a wait still open is not counted.
       </p>
     </div>
   );

@@ -17,7 +17,8 @@ import type { Insight, InsightsReply } from "../../data/types";
 import { capitalFirst, insightPopulation, populationWords, repeatsTitle, sampleWords } from "../../model/insights";
 import type { AreaData, PulseProps } from "../types";
 import { areaOf, measurementText } from "./Opportunities";
-import { AreaLink, MiniFig, NothingYet, Num, RecordedTotal } from "./shared";
+import { ACCEPTANCE_NOTE, AreaLink, MiniFig, NothingYet, Num, RecordedTotal } from "./shared";
+import { runRecordFoot } from "../../model/capped";
 
 const D = 86_400_000;
 
@@ -171,7 +172,7 @@ function LeadNote() {
         <dt>Recorded</dt>
         <dd className="an-num">
           {plural(s.runs.length, "finished ticket")}
-          {executions !== null ? `, ${plural(executions, "execution")}` : ""}
+          {executions !== null ? `, ${plural(executions, "execution")} claimed` : ""}
         </dd>
         {thinnest ? (
           <>
@@ -259,6 +260,7 @@ function Ladder() {
                 <span className="text-caption text-ink-subtle">{st.value === 1 ? st.unit[0] : st.unit[1]}</span>
               </div>
             )}
+            {st.value !== null && st.row && st.row.coverage.share !== null && st.row.coverage.share < 1 ? <div className="an-num text-caption text-ink-subtle">coverage {coverageText(st.row.coverage)}</div> : null}
           </li>
         ))}
         <li className="an-hatch border-l border-line px-3 py-2" data-state="not-recorded">
@@ -267,7 +269,7 @@ function Ladder() {
           <div className="text-caption text-ink-subtle">No MACH record says a person accepted a delivered slice.</div>
         </li>
       </ol>
-      <p className="mt-1.5 text-caption text-ink-subtle">The catalog's name for slices integrated is “Accepted delivery” (T2); it counts commits on the integration branch, not a product decision.</p>
+      <p className="mt-1.5 text-caption text-ink-subtle">The catalog's name for slices integrated is “Accepted delivery” (T2); it counts commits on the integration branch. {ACCEPTANCE_NOTE}</p>
     </div>
   );
 }
@@ -354,7 +356,7 @@ function QualityPanel() {
         merged.length === 0 ? (
           <p className="text-body-sm text-ink-muted">No merged ticket in this window.</p>
         ) : (
-          <ChartFrame size="sm" chart="pulse-first-pass" title="Merged tickets, first pass or remediated" summary={`${fp} of ${merged.length} merged tickets passed first time and ${merged.length - fp} were remediated${judge ? "; the observe station's target is above 85%" : ""}.`} table={{ columns: [{ label: "How" }, { label: "Tickets", num: true }], rows: [["First pass", count(fp)], ["Remediated", count(merged.length - fp)]] }}>
+          <ChartFrame size="sm" chart="pulse-first-pass" foot={runRecordFoot(merged.length, t.T1?.numerator_value ?? null)} title="Merged tickets, first pass or remediated" summary={`${fp} of ${merged.length} merged tickets passed first time and ${merged.length - fp} were remediated${judge ? "; the observe station's target is above 85%" : ""}.`} table={{ columns: [{ label: "How" }, { label: "Tickets", num: true }], rows: [["First pass", count(fp)], ["Remediated", count(merged.length - fp)]] }}>
             <PartsBar
               name="Merged tickets by how they passed"
               height={22}
@@ -457,7 +459,7 @@ function ReliabilityPanel() {
         ) : !p.partition ? (
           <p className="text-body-sm text-ink-muted">These endings overlap in this window, so they are not drawn as parts of one whole; each is shown over its own base in Reliability.</p>
         ) : (
-          <ChartFrame size="sm" chart="pulse-outcomes" title={`How ${plural(p.claimed, "claimed execution")} ended`} summary={p.parts.map((x) => `${OUTCOME_WORDS[x.key]} ${x.count}`).join(", ")} table={{ columns: [{ label: "Ending" }, { label: "Executions", num: true }], rows: p.parts.map((x) => [area ? <button key={x.key} type="button" className="an-link inline-flex min-h-6 items-center" onClick={() => area("reliability", `outcome:${x.key}`)}>{OUTCOME_WORDS[x.key]}</button> : OUTCOME_WORDS[x.key], count(x.count)]) }}>
+          <ChartFrame size="sm" chart="pulse-outcomes" foot="Base: the executions claimed in this window (X1's denominator), each once by how it ended; open: no end recorded yet." title={`How ${plural(p.claimed, "claimed execution")} ended`} summary={p.parts.map((x) => `${OUTCOME_WORDS[x.key]} ${x.count}`).join(", ")} table={{ columns: [{ label: "Ending" }, { label: "Executions", num: true }], rows: p.parts.map((x) => [area ? <button key={x.key} type="button" className="an-link inline-flex min-h-6 items-center" onClick={() => area("reliability", `outcome:${x.key}`)}>{OUTCOME_WORDS[x.key]}</button> : OUTCOME_WORDS[x.key], count(x.count)]) }}>
             <PartsBar name={`How ${p.claimed} claimed executions ended`} height={22} parts={p.parts.map((x) => ({ key: x.key, label: OUTCOME_WORDS[x.key], value: x.count, text: count(x.count), tone: OUTCOME_TONES[x.key], hatch: x.key === "open" }))} onActivate={area ? (k) => area("reliability", `outcome:${k}`) : undefined} />
           </ChartFrame>
         )

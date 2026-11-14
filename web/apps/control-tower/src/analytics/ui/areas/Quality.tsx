@@ -17,6 +17,7 @@ import { unobserved } from "../../model/unobserved";
 import { AreaFrame, ChartFrame, Chip, Definition, Key, Mark, NotRecorded, Readout, rowMissing, SectionHead, TooFew, useAnalytics, useMarkNav, useTip, useWidth, verdictWords } from "../kit";
 import type { Pick, QualityProps } from "../types";
 import { NothingYet } from "./shared";
+import { runRecordFoot } from "../../model/capped";
 
 export function Quality(props: QualityProps) {
   return (
@@ -44,6 +45,7 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
   const merged = s.runs.filter((r) => r.outcome === "merged");
   const fp = merged.filter((r) => r.first_pass).length;
   const rounds = roundsDistribution(s.runs);
+  const noRounds = merged.filter((r) => r.rounds === null).length;
   const toggle = (dim: Pick["dim"], value: string) => setPick(active && active.dim === dim && active.value === value ? null : { dim, value });
 
   return (
@@ -66,7 +68,7 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
           {merged.length === 0 ? (
             <p className="text-body-sm text-ink-muted">No merged tickets in this window.</p>
           ) : (
-            <ChartFrame chart="quality-first-pass" title="Merged tickets by how they passed" summary={`${fp} of ${merged.length} merged tickets passed first time; ${merged.length - fp} were remediated.`} table={{ columns: [{ label: "How" }, { label: "Tickets", num: true }], rows: [["First pass", count(fp)], ["Remediated", count(merged.length - fp)]] }} foot={verdictAllowed(merged.length) ? "The upright mark is the observe station's target: above 85% first pass." : `Fewer than ${SMALL_SAMPLE} merged tickets: counts only, no target verdict.`}>
+            <ChartFrame chart="quality-first-pass" title="Merged tickets by how they passed" summary={`${fp} of ${merged.length} merged tickets passed first time; ${merged.length - fp} were remediated.`} table={{ columns: [{ label: "How" }, { label: "Tickets", num: true }], rows: [["First pass", count(fp)], ["Remediated", count(merged.length - fp)]] }} foot={`${runRecordFoot(merged.length, t.T1?.numerator_value ?? null)} ${verdictAllowed(merged.length) ? "The upright mark is the observe station's target: above 85% first pass." : `Fewer than ${SMALL_SAMPLE} merged tickets: counts only, no target verdict.`}`}>
               <PartsBar
                 name="Merged tickets by how they passed"
                 height={20}
@@ -85,7 +87,7 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
               title="Judging rounds per merged ticket"
               summary={rounds.map((r) => `${r.rounds} rounds: ${r.tickets}`).join(", ")}
               table={{ columns: [{ label: "Rounds", num: true }, { label: "Tickets", num: true }, { label: "Of them escalated", num: true }], rows: rounds.map((r) => [count(r.rounds), count(r.tickets), count(r.escalated)]) }}
-              foot="Three judging rounds is the limit; a third failure escalates to a person."
+              foot={`Three judging rounds is the limit; a third failure escalates to a person. ${runRecordFoot(merged.length, t.T1?.numerator_value ?? null, noRounds ? `; ${noRounds} merged ${noRounds === 1 ? "ticket has" : "tickets have"} no recorded rounds and ${noRounds === 1 ? "is" : "are"} not drawn` : "")}`}
             >
               <Columns label="Merged tickets by judging rounds" height={112} format={count} points={rounds.map((r) => ({ key: String(r.rounds), value: r.tickets, tick: `${r.rounds} ${r.rounds === 1 ? "round" : "rounds"}`, card: { title: `${r.rounds} ${r.rounds === 1 ? "round" : "rounds"}`, rows: [["merged tickets", count(r.tickets)], ["share", shareText(r.tickets, merged.length)], ...(r.escalated ? ([["after escalation", count(r.escalated)]] as [string, string][]) : [])] } }))} />
             </ChartFrame>
@@ -99,7 +101,7 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
           {(q4.length === 0 || t.Q4?.value === null) && unobserved(t.Q4) ? (
             <NotRecorded title="Failed checks not observed" what={unobserved(t.Q4)!} why="Missing is not zero: these figures are not counted as none." state="not-recorded" compact />
           ) : (
-            <CategoryTable groups={q4} chart="quality-failures" caption="Failed checks by kind" noun="failed check" selected={active?.dim === "target_kind" ? active.value : null} onPick={(k) => toggle("target_kind", k)} mono empty="No failed checks in this window." />
+            <CategoryTable groups={q4} chart="quality-failures" caption="Failed checks by kind" noun="failed check" selected={active?.dim === "target_kind" ? active.value : null} onPick={(k) => toggle("target_kind", k)} mono empty="No failed checks in this window." foot="Q4, a count only and partial: the failed checks the verifier recorded by kind, not tickets; a ticket can fail several." />
           )}
         </section>
         <section className="an-section" id="blockers">
@@ -107,7 +109,7 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
           {(r2.length === 0 || t.R2?.value === null) && unobserved(t.R2) ? (
             <NotRecorded title="Blocker findings not observed" what={unobserved(t.R2)!} why="Missing is not zero: the run records hold blockers this figure could not read, so it does not say none." state="not-recorded" compact />
           ) : (
-            <CategoryTable groups={r2} chart="quality-blockers" caption="Blocker findings by rule" noun="blocker" selected={active?.dim === "rule" ? active.value : null} onPick={(k) => toggle("rule", k)} empty="No blocker findings in this window." />
+            <CategoryTable groups={r2} chart="quality-blockers" caption="Blocker findings by rule" noun="blocker" selected={active?.dim === "rule" ? active.value : null} onPick={(k) => toggle("rule", k)} empty="No blocker findings in this window." foot="R2, reconstructed from the review records: blocker findings that cite a rule code; a blocker with no rule, or a rule in prose, is not a category." />
           )}
         </section>
       </div>
@@ -135,10 +137,10 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
   );
 }
 
-function CategoryTable({ groups, chart, caption, noun, selected, onPick, mono = false, empty }: { groups: readonly MetricGroup[]; chart: string; caption: string; noun: string; selected: string | null; onPick(k: string): void; mono?: boolean; empty: string }) {
+function CategoryTable({ groups, chart, caption, noun, selected, onPick, mono = false, empty, foot }: { groups: readonly MetricGroup[]; chart: string; caption: string; noun: string; selected: string | null; onPick(k: string): void; mono?: boolean; empty: string; foot?: string }) {
   if (groups.length === 0) return <p className="text-body-sm text-ink-muted">{empty}</p>;
   return (
-    <ChartFrame chart={chart} title={caption} question="Select a row to narrow the paths and the cost chart to the tickets it was recorded on." summary={groups.map((g) => `${g.key}: ${g.value === null ? "not counted" : g.value}`).join(", ")} table={{ columns: [{ label: mono ? "Check" : "Rule" }, { label: "Findings", num: true }], rows: groups.map((g) => [g.key, count(g.value)]) }}>
+    <ChartFrame chart={chart} {...(foot ? { foot } : {})} title={caption} question="Select a row to narrow the paths and the cost chart to the tickets it was recorded on." summary={groups.map((g) => `${g.key}: ${g.value === null ? "not counted" : g.value}`).join(", ")} table={{ columns: [{ label: mono ? "Check" : "Rule" }, { label: "Findings", num: true }], rows: groups.map((g) => [g.key, count(g.value)]) }}>
       <RankTable<MetricGroup>
         caption={caption}
         rows={groups}

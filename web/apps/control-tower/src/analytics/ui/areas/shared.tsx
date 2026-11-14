@@ -104,3 +104,6 @@ export function NothingYet({ about }: { about: string }) {
     </div>
   );
 }
+
+/** The standing note wherever the catalog's name "Accepted delivery" (T2) appears: what MACH records is integration. */
+export { ACCEPTANCE_NOTE } from "../kit";
