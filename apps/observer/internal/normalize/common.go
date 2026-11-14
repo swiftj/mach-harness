@@ -46,24 +46,57 @@ func stampMS(ms int64) string { return time.UnixMilli(ms).UTC().Format("2006-01-
 func Stamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
 
 // parseTime reads the time formats MACH writes: whole seconds with "Z" or "+00:00" (intake,
-// supervisor, executor, cleanup) and milliseconds (lifecycle).
+// supervisor, executor, cleanup) and milliseconds (lifecycle). An implausible time (see
+// plausibleMS) is no time: ok is false, as for a value that does not parse. The upper bound is
+// taken from the wall clock; a caller that knows when its line was read uses parseTimeRead.
 func parseTime(raw any) (int64, bool, bool) {
-	s, ok := raw.(string)
-	if !ok || len(s) > 40 {
-		return 0, false, false
+	ms, frac, ok, _ := parseTimeRead(raw, time.Time{})
+	return ms, frac, ok
+}
+
+// Plausible times (M6.6 F1): a time before MinPlausibleMS, or more than MaxAhead after the line
+// was read, is a wrong clock or a hand-edited line. Taken as written it would place the record,
+// and every later record of its source (order only moves forward), in another millennium, and
+// the Timeline would page through that span. Such a time is not the record's own time.
+const (
+	MinPlausibleMS = 946684800000 // 2000-01-01T00:00:00Z
+	MaxAhead       = 24 * time.Hour
+)
+
+// wallNow is the clock the upper bound falls back to when the read time is not known.
+var wallNow = time.Now
+
+// plausibleMS reports whether ms can be a record's own time, given when its line was read (zero:
+// the wall clock).
+func plausibleMS(ms int64, readAt time.Time) bool {
+	if readAt.IsZero() {
+		readAt = wallNow()
+	}
+	return ms >= MinPlausibleMS && ms <= readAt.Add(MaxAhead).UnixMilli()
+}
+
+// parseTimeRead is parseTime bounded by the moment the line was read. implausible is true when
+// the value parsed but is not a plausible own time (ok is then false).
+func parseTimeRead(raw any, readAt time.Time) (ms int64, frac, ok, implausible bool) {
+	s, isStr := raw.(string)
+	if !isStr || len(s) > 40 {
+		return 0, false, false, false
 	}
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
 		if t, err := time.Parse(layout, s); err == nil {
-			return t.UnixMilli(), t.Nanosecond() != 0, true
+			if !plausibleMS(t.UnixMilli(), readAt) {
+				return 0, false, false, true
+			}
+			return t.UnixMilli(), t.Nanosecond() != 0, true, false
 		}
 	}
-	return 0, false, false
+	return 0, false, false, false
 }
 
 // secondTime fills a whole-second record's time (contract 6.1): occurred at + 999 ms, bounds the second.
 func secondTime(ev *event.Event, raw any, r Read) {
 	ev.Time.ObservedAt = Stamp(r.At)
-	ms, frac, ok := parseTime(raw)
+	ms, frac, ok, _ := parseTimeRead(raw, r.At)
 	if !ok {
 		ev.Time.Precision = event.PrecisionUnknown
 		ev.AddUnknown("time.occurred_at")
@@ -157,6 +190,17 @@ func commitOrNil(v any) any {
 	}
 	if len(s) > 12 {
 		s = s[:12]
+	}
+	return s
+}
+
+// fullCommitOrNil is commitOrNil without the cut: the provenance snapshot's commits (and the
+// source commit on execution.started) are served as recorded, so the page can shorten them for
+// display and still offer the whole value (M6.6 N4).
+func fullCommitOrNil(v any) any {
+	s, ok := redact.Commit(v)
+	if !ok {
+		return nil
 	}
 	return s
 }

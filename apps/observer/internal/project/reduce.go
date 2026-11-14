@@ -79,10 +79,47 @@ func (s *State) sliceCapacity(st, prev *Stamp, held []Held) {
 			if sl := s.Slices[id]; sl != nil {
 				wave = sl.WaveID
 			}
-			w = &SliceCapacityWait{SliceID: id, WaveID: wave, Opened: bounded(st, lo)}
+			// It began after the previous decision, but never before the Factory was last activated or
+			// resumed (nothing decided while it was off) nor before the slice was eligible: when either
+			// is later than the previous decision, the wait starts at its first record (M6.6 D11).
+			opened := bounded(st, lo)
+			if sl := s.Slices[id]; lo == nil || s.Factory.Since != nil && s.Factory.Since.Pos > lo.Pos || sl != nil && sl.eligible() != nil && sl.eligible().Pos > lo.Pos {
+				opened = st
+			}
+			w = &SliceCapacityWait{SliceID: id, WaveID: wave, Opened: opened}
 			s.Pending.SliceCapacity[id] = w
 		}
 		w.Limit, w.Why, w.LastHeld = limits[id], now[id].Why, st
+	}
+}
+
+// sliceHolds keeps each reason the scheduler recorded for holding a slice that is not a wait for a
+// free place (those are capacity waits): the words as recorded, with the first decision that
+// recorded them (M6.6 D2). A hold named by ticket is the slice's when the slice is that ticket's.
+func (s *State) sliceHolds(st *Stamp, held []Held) {
+	for _, h := range held {
+		if h.Why == "" || capacitySentence.MatchString(h.Why) || freePlaceSentence.MatchString(h.Why) || ticketPlaceSentence.MatchString(h.Why) {
+			continue
+		}
+		sl := s.Slices[h.SliceID]
+		if sl == nil && h.TicketID != "" {
+			for _, id := range sortedKeys(s.Slices) {
+				if s.Slices[id].TicketID == h.TicketID {
+					sl = s.Slices[id]
+					break
+				}
+			}
+		}
+		if sl == nil || len(sl.Holds) >= maxSliceHolds {
+			continue
+		}
+		seen := false
+		for _, x := range sl.Holds {
+			seen = seen || x.Why == h.Why
+		}
+		if !seen {
+			sl.Holds = append(sl.Holds, SliceHold{Why: h.Why, At: st})
+		}
 	}
 }
 
@@ -227,9 +264,14 @@ func (s *State) waveOf(c *Cell) string {
 // exNoUsage: a completed execution with no execution.usage from the stream.
 const exNoUsage = "completed with no usage record from the stream"
 
-// exK1NoResult: a claimed execution with no execution.completed (failed, running, or of unknown
-// outcome) has no recorded cost.
-const exK1NoResult = "no result recorded: the execution failed, is still running, or its outcome is unknown"
+// exK1NoResult: a claimed execution with no execution.completed and no execution.failed (still
+// running, or of unknown outcome) has no recorded cost. exK1Failed: K1 reads execution.completed
+// only, and the Factory's execution.failed records no cost (M6.6 D8: two truthful reasons; the
+// stream's result may still carry a cost, which is not part of K1).
+const (
+	exK1NoResult = "no result yet, or outcome unknown"
+	exK1Failed   = "failed: the Factory's record of a failed execution carries no cost"
+)
 
 // exR2NoFinding: blockers a run record counts with no review finding read for them.
 const exR2NoFinding = "blockers counted in the run record with no review finding in the lifecycle (no vote file read)"
@@ -481,19 +523,23 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		var d struct {
 			Dependencies []string `json:"dependencies"`
+			Title        *string  `json:"title"` // M6.6: from the intake ledger, for this revision
 		}
 		e.DataAs(&d)
 		if sl.Materialized != nil && !sameRev(sl.Revision, e.IDs.Revision) {
 			sl.Revisions = append(sl.Revisions, SliceRevision{Revision: sl.Revision, TicketID: sl.TicketID, State: sl.State, At: sl.Materialized})
 			s.endSliceWait(sl, st) // a new revision replaced the slice while it waited
 			sl.Blocked, sl.Resolved, sl.Scheduled, sl.Integrated, sl.Superseded = nil, nil, nil, nil, nil
-			sl.Reasons, sl.DependsOn, sl.Commit = []string{}, []string{}, ""
+			sl.Reasons, sl.DependsOn, sl.Commit, sl.Title, sl.Holds = []string{}, []string{}, "", "", nil
 		}
 		if sl.FirstMaterialized == nil || sl.Materialized == nil || !sameRev(sl.Revision, e.IDs.Revision) {
 			sl.FirstMaterialized = st
 		}
 		sl.Revision, sl.Materialized = e.IDs.Revision, st
 		sl.TicketID = e.Ticket()
+		if d.Title != nil {
+			sl.Title = *d.Title
+		}
 		if d.Dependencies != nil {
 			sl.Dependencies = d.Dependencies
 		}
@@ -644,6 +690,15 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		s.Factory.State, s.Factory.Since, s.Factory.PausedReason = "paused", st, feed.Str(d.Reason)
 	case "factory.resumed":
 		s.Factory.State, s.Factory.Since, s.Factory.PausedReason = orUnknown(s.Factory.Autonomy), st, ""
+		// A person resuming the Factory with tickets to retry (data.retrying, recorded by ticket)
+		// answers those tickets' waits for a person now, not at the next claim (M6.6 D5).
+		var d struct {
+			Retrying []string `json:"retrying"`
+		}
+		e.DataAs(&d)
+		for _, t := range d.Retrying {
+			s.closeRequired(t, "", st, e.Type)
+		}
 	case "revision.discovered":
 		var d struct {
 			Commit string `json:"commit"`
@@ -659,6 +714,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		s.sliceCapacity(st, s.Factory.LastDecision, nonNil(d.Held))
+		s.sliceHolds(st, d.Held)
 		s.Factory.SchedulerState, s.Factory.LastDecision = d.State, st
 		s.Factory.Held, s.Factory.Dispatched, s.Factory.Started = nonNil(d.Held), nonNilS(d.Dispatched), nonNilS(d.Started)
 	case "work.claimed":
@@ -749,7 +805,11 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		x.Completed, x.StageAtEnd, x.Next, x.WaitingFor, x.How = st, d.Stage, d.Next, feed.Str(d.WaitingFor), feed.Str(d.How)
 		x.CostUSD, x.RefusedTools, x.RefusedFinal = d.CostUSD, nonNilS(d.RefusedTools), true
 		kd := s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID)
-		if first && x.Claimed != nil {
+		if first && x.MK1FailedDay != "" {
+			// Recorded as failed first: the completion moves it out of that reason.
+			m.Exclude("K1", kd, dayKey(x.MK1FailedDay), exK1Failed, -1)
+			x.MK1FailedDay = ""
+		} else if first && x.Claimed != nil {
 			// Every claimed execution is in K1's population from its claim; a result now moves it.
 			m.Exclude("K1", kd, day(x.Claimed), exK1NoResult, -1)
 		}
@@ -796,6 +856,13 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			Attempt     *int64  `json:"attempt"`
 		}
 		e.DataAs(&d)
+		if x.Completed == nil && x.Claimed != nil && x.MK1FailedDay == "" {
+			// K1's population: from "no result yet" to "failed", which records no cost (D8).
+			kd := s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID)
+			m.Exclude("K1", kd, day(x.Claimed), exK1NoResult, -1)
+			m.Exclude("K1", kd, day(st), exK1Failed, 1)
+			x.MK1FailedDay = orDefault(day(st), "-")
+		}
 		x.Failed, x.StageAtEnd, x.Next, x.How, x.ClaudeError = st, d.Stage, d.Next, feed.Str(d.How), feed.Str(d.ClaudeError)
 		if d.ExitCode != nil {
 			x.ExitCode = d.ExitCode
@@ -1114,6 +1181,7 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		c.Approvals = append(c.Approvals, &Approval{Round: round, ByRole: orDefault(d.ByRole, "person"), NoteGiven: d.NoteGiven, At: st})
+		var answered []*HumanGate
 		for _, g := range s.Gates {
 			if g.Kind == "approval" && g.Closed == nil && g.TicketID == c.TicketID && (round == nil || sameRev(g.Round, round)) {
 				g.Closed, g.ClosedBy = st, e.Type
@@ -1121,6 +1189,17 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 					m.OpenAdd("W3", day(g.Opened), -1)
 				}
 				s.span("W3", s.cdims(c.TicketID), day(st), g.Opened, st)
+				answered = append(answered, g)
+			}
+		}
+		// The supervisor's human.required for the same ticket, recorded while that approval was
+		// awaited, is the same wait seen from the scheduler: the recorded approval ends it, not
+		// the next scheduler pass that sees the work integrated (M6.6 D5).
+		for _, a := range answered {
+			for _, g := range s.Gates {
+				if g.Kind == "required" && g.Closed == nil && g.TicketID == c.TicketID && a.Opened != nil && g.Opened != nil && g.Opened.Pos > a.Opened.Pos {
+					g.Closed, g.ClosedBy = st, e.Type
+				}
 			}
 		}
 	case "merge.completed":

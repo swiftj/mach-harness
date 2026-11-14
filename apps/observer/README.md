@@ -73,7 +73,7 @@ means 3; any other value is 400 `invalid` with `supported: [3]`. Cursors are `<g
 
 | Route | Purpose | Limits and notes |
 |---|---|---|
-| `session` | versions (event schema 3, revision 2, the 54 kinds), generation, `display_policy {people: "role", free_text {checked_for_names: false, note, artifact_field, artifact_header, event_fields[{kind, path, max}], render}}`, capabilities (`execution: false`, snapshot, artifacts, analytics, `evidence_media`, `stream_observations {policy: "structural", state, proven_versions, versions[{version, state, executions, records_refused}], ok, claude_code_version, reason}`), every limit below, session count, where the next link is kept | `state`: `proven`, `compatible-unproven`, `incompatible` or `unknown`, the worst over every stream ([Stream records](#stream-records-by-shape)) |
+| `session` | versions (event schema 3, revision 2, the 54 kinds), generation, `display_policy {people: "role", free_text {checked_for_names: false, note, artifact_field, artifact_header, event_fields[{kind, path, max}], projection_fields[{route, path, from}], render}}`, capabilities (`execution: false`, snapshot, artifacts, analytics, `evidence_media`, `stream_observations {policy: "structural", state, proven_versions, versions[{version, state, executions, records_refused}], ok, claude_code_version, reason}`), every limit below, session count, where the next link is kept | `state`: `proven`, `compatible-unproven`, `incompatible` or `unknown`, the worst over every stream ([Stream records](#stream-records-by-shape)) |
 | `health` | `ok`/`degraded`, observer time, index head and floor, projection (position, lag, partial, `history` completeness by gap class), ingest (ticks, errors, `catching_up`, `late` and `backfill` counts, `runtime` (the streams' runtime summary), `delivery {settle_max_ms, adaptive, hold_ms_p50, hold_ms_p95, last_hold_ms, samples, released_by_bound}`), freshness (below), streams, sessions | degraded while the last tick erred, ingest has not ticked for 5 s, or the projection errs |
 | `factory/status` | the Factory's files and how fresh they are; the exact shape is [below](#factorystatus) | files read at most once a second |
 | `events` | v3 events after a cursor, in delivery order (`pos`) | `after`, `limit` 1–1000 (200), filters `ticket`, `execution`, `station`, `type` (prefix), `entity` (ref), `authority`; at most 10,000 events examined per request (`scanned`, then page on from `next`); 409 `cursor_reset`, 410 `cursor_expired`, 400 |
@@ -265,7 +265,9 @@ with no `.factory/` answers `factory_present: false` and the same keys.
 - **Guards:** every path is resolved under an `os.Root` at the project folder; no component may be a
   link; the file must be regular with one link (no hard links); opened `O_NOFOLLOW|O_NONBLOCK`; the
   path is re-checked after the open and must still name the opened file; the bytes served are the
-  bytes hashed, and must equal the catalog's sha256 (409 `changed` otherwise).
+  bytes hashed, and must equal the catalog's sha256 (409 `changed` otherwise). An archive that holds one
+  member name twice is listed with `content_access: "none"` and says so (409 `duplicate`); a file over 64 MiB is
+  listed, not hashed, and says it is too large (413 `too-large`).
 - **Types, by sniffing:** text (served by default as `text/plain; charset=utf-8`, cut to 256 KiB with
   `X-MACH-Truncated`), PNG, JPEG, GIF, WebP, WebM, MP4.
 - **MACH's JSON records are redacted by kind** (`redact.ScrubRecord`): `decision.json`, votes, `results.json`,
@@ -318,7 +320,10 @@ records, and the project's git identities (`[user]` in `.git/config`, the name a
 `.git/logs/HEAD` and of each worktree's reflog, read as files; git is never run). Role words MACH writes (`engineer`,
 `supervisor`, seat names, and role phrases such as "an agent, on the person's instruction in conversation") are never
 taken for names. Every name is replaced by `"a person"`, case-insensitively and as a whole word, in every event string
-before it is stored, in every served document, and, as the last filter, in every API reply body.
+before it is stored, in every served document, and, as the last filter, in every API reply body. Words the replies
+are made of (an e-mail's local part `data`, a git name `Stage`: JSON keys, the event allowlist's keys and the codes
+the observer writes) are never learned as names, and the last filter never rewrites a JSON key, so a learned name
+cannot change a reply's shape (M6.6; `server.TestLearnedNameNeverRewritesKeys`).
 
 What is guaranteed and what is not (a known limit, decided by the product owner: label, do not withhold):
 
@@ -332,8 +337,13 @@ What is guaranteed and what is not (a known limit, decided by the product owner:
   events, the stream, history, the snapshot and the projection routes (`cells`, `visits`, `runs`, analytics groups by
   `phase`). Every such artifact is labelled (`free_text`, `X-MACH-Free-Text`, [Artifact content](#artifact-content));
   every such event field is listed in `session.display_policy.free_text.event_fields`
-  (`redact.FreeTextFields`, held to the allowlist and to the normalisers' prose call sites by
-  `redact.TestFreeTextFieldsExistInTheAllowlist` and `TestEveryProseCallSiteIsDeclared`). Once a record names that
+  (`redact.FreeTextFields`, held to the allowlist and to the normalisers' prose call sites, `redact.Scrub` ones
+  included, by `redact.TestFreeTextFieldsExistInTheAllowlist` and `TestEveryProseCallSiteIsDeclared`), and every
+  place a reply serves a copy of one (a cell's findings and waiting reasons, a slice's title and reasons, the project
+  and factory holds and pause reason, a run's refused tools, agents' labels and phases, spans' labels and reasons,
+  analytics `phase` groups, the snapshot) in `display_policy.free_text.projection_fields` (`redact.ProjectionFields`;
+  `server.TestSessionDeclaresProjectionFreeText` fills every declared field with a marker and fails on prose at a path
+  not listed). Once a record names that
   person, later replies scrub it, but what was already served is not recalled, and the stored index may hold it until
   a rebuild.
 - **Also not covered:** a known name written another way (hyphenated or joined in a file name,
@@ -359,13 +369,23 @@ Each line is held by the tests named after it (`cmd/mach-observer` unless anothe
 
 | Never | Proved by |
 |---|---|
-| Writes outside `.factory/local/observer/`, or anything at all in a project that had no `.factory/` when it started | `TestReadOnlyOverAFactoryTree` (every path's type, mode, size, mtime and contents hashed before and after a full run, every endpoint, a stream and a restart), `TestNoFactoryMeansNoWrites`, `TestNoGitRepositoryAndAFactoryThatAppearsLater`, `TestKilledMidReadLeavesTheFactoryAlone`, and `TestSourceBoundary` (file-system writes only in `internal/store`, `internal/lock`, `internal/project/persist.go` and `main.go`; the files that open MACH's read read-only) |
+| Writes outside `.factory/local/observer/`, or anything at all in a project that had no `.factory/` when it started | `TestIndexFolderLinkIsRefused` and `store.TestOpenRefusesALinkedFolder` (an index folder that is a link is refused before anything is written, and the store's files are opened without following links), `TestReadOnlyOverAFactoryTree` (every path's type, mode, size, mtime and contents hashed before and after a full run, every endpoint, a stream and a restart), `TestNoFactoryMeansNoWrites`, `TestNoGitRepositoryAndAFactoryThatAppearsLater`, `TestKilledMidReadLeavesTheFactoryAlone`, and `TestSourceBoundary` (file-system writes only in `internal/store`, `internal/lock`, `internal/project/persist.go` and `main.go`; the files that open MACH's read read-only) |
 | Starts or signals a process | `TestSourceBoundary`: no `os/exec`, `plugin`, `unsafe`; no `os.StartProcess`, `os.FindProcess`, `syscall.Exec`/`ForkExec`; `syscall.Kill` only as `kill(pid, 0)` (a liveness check that delivers nothing) |
 | Connects out | `TestSourceBoundary`: no `net.Dial*`, `net.Dialer`, resolver lookups, `tls.Dial`, `http.Client`, `http.Get`/`Post`/`Head`, `http.NewRequest`, default client or transport; `security.TestListenRefusesEverythingButLoopback` (it listens on `127.0.0.1` only, refusing every other address including the machine's real interfaces) |
 | Takes or holds a lock on a MACH file, or holds one open between polls | `TestNoLockOnMACHFiles` (while it runs, every MACH file, `.factory/intake/lock` included, can be locked exclusively by someone else; its own lock file, the control, cannot), `TestNothingHeldOpenBetweenPolls` (its open files sampled every 20 ms: no MACH file stays open), `TestSourceBoundary` (`syscall.Flock` only in `internal/lock`) |
 | Has a route that changes anything | `server.TestEveryOtherMethodIsRefused` (every method but GET on every route: 405 `Allow: GET`), every route registered as `GET /api/v1/...`; `TestReadOnlyOverAFactoryTree` reads every route and finds nothing changed |
 | Offers a Factory capability | `server.TestSessionOffersNoFactoryCapability` (`read_only: true`, `capabilities.execution: false`, no capability that starts, stops, approves or changes work), plus the lines above: with no process, no write outside its folder and no non-GET route there is nothing to act with; `runner.json` and `supervisor.json` are read and summarised, never written (`TestReadOnlyOverAFactoryTree`) |
 | Forwards a secret of a recognised shape, a path outside the project, a tool's input or output, or a person's name that a record or git identity gives (a name only in free text is labelled, not withheld: [People](#people)) | `ingest.TestRedactionCoverage` (an adversarial corpus planted in every source and in served evidence: zero leaks in stored events, the index on disk and served content), `TestPeopleNeverReachTheBrowser` (14 names and e-mails planted in a decision's approval, findings, results, a vote, a build report, the intake log, `runner.json`, `.git/config`, a reflog and a run record: zero in events, history, snapshot, cells, runs, series, the artifact catalog and every served content, the stream, and the index on disk), `redact.TestScrubRecordByKind`, `ingest.Fuzz*` (any line: no panic, schema-valid output, no planted secret, the next line still read) |
+
+## Times and the access log
+
+- **Implausible times are no times** (M6.6): a source time before 2000, or more than a day after the poll that read
+  its line, is a wrong clock or a hand-edited line. A stream or intake record keeps no own time (it is placed as a
+  record without one, and `time.occurred_at` is listed in `unknown`); a lifecycle line, whose time every visit duration
+  depends on, becomes an `unparsable-line` gap. Nothing is ordered by such a value (`normalize.TestImplausibleTimestampsHaveNoOwnTime`).
+- **The access log** (stderr) writes one line per request: method, the escaped path Go-quoted and cut to 200 bytes,
+  status and time. Never the query (the start token travels there) and never a header; a path cannot forge a line or
+  send terminal control characters (`server.TestAccessLogQuotesThePath`).
 
 ## Tests
 

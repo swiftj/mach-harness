@@ -13,6 +13,28 @@ import (
 // inferred, so those visits are reclassified after every record of their ticket that can bound
 // them (syncVisits); measured, bounded and unknown are final.
 
+// notContinuous is a visit whose recorded exit came after something had already ended it (its
+// execution ended, the station was entered again): the records show it was not continuous work,
+// so its length is not a measured duration (M6.6 D9). It is bounded: at least until the earlier
+// end (lo; 0 when unknown), at most until the recorded exit (d's upper bound). Counted apart from
+// measured visits, never averaged with them; a continuous visit is unchanged.
+func notContinuous(entered, late *Stamp, d Duration) Duration {
+	out := Duration{Basis: "bounded", MaxMS: d.MaxMS}
+	if d.MaxMS == nil {
+		out.MaxMS = d.MS
+	}
+	lo := between(entered, late, false)
+	switch {
+	case lo.MinMS != nil:
+		out.MinMS = lo.MinMS
+	case lo.MS != nil:
+		out.MinMS = lo.MS
+	default:
+		out.MinMS = ptr(int64(0))
+	}
+	return out
+}
+
 // visitClass is how C1 counts visit i now, the day it is counted on, and its duration.
 func (s *State) visitClass(c *Cell, i int) (string, string, Duration) {
 	v := c.Visits[i]
@@ -21,6 +43,9 @@ func (s *State) visitClass(c *Cell, i int) (string, string, Duration) {
 	}
 	if v.Exited != nil {
 		d := between(v.Entered, v.Exited, false)
+		if late, _, _ := visitBound(s, c, i); late != nil && laterThan(v.Exited, late) {
+			d = notContinuous(v.Entered, late, d)
+		}
 		return d.Basis, day(v.Exited), d
 	}
 	return "open", day(v.Entered), Duration{}

@@ -292,6 +292,12 @@ func buildSpans(s *State) []*Span {
 			sp := b.add("slice-eligible", ref, ref, ref, ids, el, end, "", reason, false, "")
 			if sp != nil {
 				sp.Attrs.DependsOn = nonEmpty(sl.DependsOn)
+				// What the scheduler recorded while it held the slice (M6.6 D2), in its words.
+				var whys []string
+				for _, h := range sl.Holds {
+					whys = append(whys, h.Why)
+				}
+				sp.Attrs.Reasons = nonEmpty(whys)
 			}
 		}
 	}
@@ -463,7 +469,9 @@ func cellSpans(b *spanBuilder, s *State, c *Cell) {
 			reason = "superseded"
 		}
 	}
-	b.add("cell", cellRef, "", cellRef, with(), start, end, outcome, reason, false, "")
+	if cellOpened(c) {
+		b.add("cell", cellRef, "", cellRef, with(), start, end, outcome, reason, false, "")
+	}
 
 	// rounds: the visits of one judging round, ended by the verdict that ends it.
 	type roundInfo struct {
@@ -529,8 +537,10 @@ func cellSpans(b *spanBuilder, s *State, c *Cell) {
 				sp.closeInferred(v.Entered, bound, rule, why)
 			case v.Exited != nil:
 				if late, _, lateWhy := visitBound(s, c, i); late != nil && laterThan(v.Exited, late) {
-					// The recorded exit wins; say where the span had stopped before it arrived.
+					// The recorded exit wins; say where the span had stopped before it arrived. Its
+					// length is then not measured continuous work (D9): bounded, as C1 counts it.
 					sp.Attrs.InterruptedAt, sp.Attrs.InterruptedReason = ptr(stampMS(late)), lateWhy
+					sp.Duration = notContinuous(v.Entered, late, sp.Duration)
 				}
 			}
 		}

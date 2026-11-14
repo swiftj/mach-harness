@@ -48,7 +48,7 @@ func (w *world) setup() {
 	}
 	// A slice that never gets a cell: it waits on the escalated cell for the whole history.
 	extra := &slice{id: fmt.Sprintf("SLICE-%03d", n+1), n: n, wave: w.waves[2], ticket: fmt.Sprintf("SYN-%03d", n+1), rev: 1}
-	extra.phases = [][]*cell{{w.cells[5]}}
+	extra.phases = [][]*cell{{w.cells[min(5, n-1)]}} // the escalated cell; the last one in a world of fewer than 6 (M6.6)
 	w.waves[2].slices = append(w.waves[2].slices, extra)
 	w.slices = append(w.slices, extra)
 	w.feature["blocked_at_end_slice"] = extra.id
@@ -64,7 +64,9 @@ func (w *world) setup() {
 			w.slices[i].phases = append(w.slices[i].phases, list)
 		}
 	}
-	w.feature["blocked_several_times_slice"] = w.slices[7].id
+	if n > 7 { // slice 8 waits on three phases; a smaller world has none (M6.6: --cells 4 to 7 panicked here)
+		w.feature["blocked_several_times_slice"] = w.slices[7].id
+	}
 }
 
 func (w *world) depReasons(s *slice) []any {

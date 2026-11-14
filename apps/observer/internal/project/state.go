@@ -17,7 +17,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 5 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies
+const FormatVersion = 6 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -31,6 +31,7 @@ const (
 	maxCapacityWaits  = 500 // closed capacity waits kept (oldest dropped, counted)
 	maxRecoveries     = 1000
 	maxLimitHistory   = 200
+	maxSliceHolds     = 8 // distinct hold reasons kept per slice (the first ones)
 )
 
 // State is the projection at one position.
@@ -296,6 +297,20 @@ type Slice struct {
 	// an unresolved one has no end. WaitsDropped counts the oldest ones no longer kept.
 	Waits        []*DependencyWait `json:"waits"`
 	WaitsDropped int64             `json:"waits_dropped"`
+	// Title is the slice's title for its current revision, as the intake ledger records it
+	// (slice.materialized data.title, product prose: see redact.FreeTextFields); "" when not recorded.
+	Title string `json:"title,omitempty"`
+	// Holds are the scheduler's recorded reasons for holding the slice other than a free place
+	// (scheduling.decided held[].why, prose), each with the first decision that recorded it,
+	// oldest first, at most maxSliceHolds. A capacity hold is a SliceCapacityWait instead.
+	Holds []SliceHold `json:"holds,omitempty"`
+}
+
+// SliceHold is one recorded reason the scheduler held a slice (M6.6 D2). Only the words are
+// recorded, not a code: nothing classifies them (a person, a policy, a limit).
+type SliceHold struct {
+	Why string `json:"why"`
+	At  *Stamp `json:"at"`
 }
 
 // DependencyWait is one recorded dependency wait of a slice.
@@ -613,6 +628,9 @@ type Execution struct {
 	// MUsageDay is the day K2 and K3's coverage counts this completed execution as having no usage
 	// record ("" when it has one or has not completed).
 	MUsageDay string `json:"m_usage_day,omitempty"`
+	// MK1FailedDay is the day K1's coverage counts this execution as failed (exK1Failed), "" when it
+	// does not; a later execution.completed moves it out again.
+	MK1FailedDay string `json:"m_k1_failed_day,omitempty"`
 }
 
 // Usage is execution.usage: Claude-reported cost and tokens, per execution and per model.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"mach/observer/internal/event"
 	"mach/observer/internal/redact"
@@ -128,7 +129,17 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 	}
 	d, used := l.data(ev, typ, data)
 	if typ == "execution.started" {
-		d["source_commit"] = commitOrNil(in.SourceCommit) // revision 3: the source revision the execution started from
+		d["source_commit"] = fullCommitOrNil(in.SourceCommit) // revision 3: the source revision the execution started from
+	}
+	if typ == "slice.materialized" {
+		// The intake log records no title; the intake ledger does, for the slice's current revision
+		// (M6.6 D6). Product prose: scrubbed like every free-text field (redact.FreeTextFields).
+		d["title"] = nil
+		if l.Identity != nil && ids.Revision != nil {
+			if t, rev, ok := l.Identity.SliceTitle(ids.SliceID); ok && rev == *ids.Revision {
+				d["title"] = textOrNil(t, l.Root, SliceTitleMax)
+			}
+		}
 	}
 	ev.Data = d
 	for k := range data {
@@ -335,7 +346,7 @@ func (l *Ledger) data(ev *event.Event, typ string, in map[string]any) (map[strin
 				tools = append(tools, redact.Scrub(clip(s, 60), root))
 			}
 		}
-		d["refused_tools"] = tools
+		d["refused_tools"] = oneRefusalPerTool(tools)
 	case "execution.failed":
 		d["stage"] = stage(get("stage"))
 		d["next"] = action(get("next"))
@@ -403,5 +414,25 @@ func (l *Ledger) capacity(basis *event.Event, raw map[string]any, r Read) []*eve
 		out = append(out, ev)
 	}
 	l.waiting = now
+	return out
+}
+
+// oneRefusalPerTool drops a bare tool name ("Bash") when the same list also names that tool with
+// its detail ("Bash: git"). MACH reads a refusal twice, once from the stream's permission_denied
+// notice (no input, so the bare name) and once from the result's permission_denials (with the
+// command), and records the set of both; served as two refusals, one denial reads as two.
+func oneRefusalPerTool(tools []any) []any {
+	detailed := map[string]bool{}
+	for _, t := range tools {
+		if s, _ := t.(string); strings.Contains(s, ": ") {
+			detailed[s[:strings.Index(s, ": ")]] = true
+		}
+	}
+	out := []any{}
+	for _, t := range tools {
+		if s, _ := t.(string); !detailed[s] {
+			out = append(out, t)
+		}
+	}
 	return out
 }

@@ -78,15 +78,14 @@ func TestProvenancePassesThroughUnchanged(t *testing.T) {
 	want, _ := json.Marshal(provSnapshot())
 	var expect map[string]any
 	_ = json.Unmarshal(want, &expect)
-	// Commits are served at 12 characters, as everywhere else; everything else is as recorded.
-	expect["mach"].(map[string]any)["commit"] = "b37c036aa0b3"
-	expect["source"].(map[string]any)["commit"] = "0123456789ab"
+	// Everything is as recorded, commits included: the provenance record's commits are served in
+	// full (M6.6 N4), so the page can shorten them for display with the whole value available.
 	got, _ := json.Marshal(d["provenance"])
 	exp, _ := json.Marshal(expect)
 	if string(got) != string(exp) {
 		t.Fatalf("provenance changed in passing:\n got %s\nwant %s", got, exp)
 	}
-	if d["provenance_reason"] != nil || d["source_commit"] != "0123456789ab" {
+	if d["provenance_reason"] != nil || d["source_commit"] != "0123456789abcdef0123456789abcdef01234567" {
 		t.Fatalf("reason %v, source_commit %v", d["provenance_reason"], d["source_commit"])
 	}
 }

@@ -32,7 +32,7 @@ type Text struct {
 var Templates = map[string]Text{
 	RuleStationShare: {
 		Title:     "{station} holds {share} of the measured station time",
-		Condition: "{station} holds {share} of the measured station time in this selection ({station_time} of {total_time}), over {visits} visits, {measured} of them measured. The rule's threshold is {threshold}.",
+		Condition: "{station} holds {share} of the measured station time in this selection ({station_time} of {total_time}), over {visits} visits, {measured} of them measured; a visit the records show was not continuous (its execution ended before its exit) is bounded, not measured, and is in neither figure. The rule's threshold is {threshold}.",
 		Why: "Time at one station is spent again for every visit to it, so a station with a large share of the measured time " +
 			"is where the selection's measured time sits. Visits whose length was not measured are counted apart and are not in the share.",
 		Investigation: "Open the longest {station} visits and compare them with the station's median ({median}) and 90th percentile ({p90}); " +
@@ -114,7 +114,7 @@ var Templates = map[string]Text{
 	},
 	RuleCapacityHeld: {
 		Title:     "Work was recorded waiting for a free place on {days} days",
-		Condition: "The scheduler recorded work held for a free place (recorded limit max_parallel = {limit}) in {days} day buckets of this selection: {waits} waits of {items} tickets or slices. The rule's threshold is {threshold}.",
+		Condition: "The scheduler recorded work held for a free place (the Factory's recorded limit of {limit} executions at once) in {days} day buckets of this selection: {waits} waits of {items} tickets or slices. The rule's threshold is {threshold}.",
 		Why: "Each of these waits is the scheduler's own record that every place was in use while the item was ready. " +
 			"It is not read from how busy the Factory looked.",
 		Investigation: "Open the waits and the concurrency over the same days, and see which executions held the places." + gatesStay,
@@ -183,7 +183,7 @@ const (
 	reasonSuspect        = "a recorded history gap makes one of the windows suspect"
 	reasonFewAnalyzed    = "needs at least {min} tickets analyzed (the observe station's minimum); {n}"
 	reasonLastRuns       = "last_runs selects the observe station's run records; this rule does not read them"
-	reasonNoLimit        = "no Factory limit (max_parallel) is recorded, so no wait for a free place can be read"
+	reasonNoLimit        = "no Factory limit on executions at once is recorded, so no wait for a free place can be read"
 	reasonNoCapWaits     = "no wait for a free place was recorded in this selection"
 	reasonFilter         = "this rule cannot honour the {filter} filter"
 	reasonHistoryUnknown = "the start of the recorded history is not known, so the earlier window cannot be shown to lie inside it"

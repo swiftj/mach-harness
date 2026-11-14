@@ -27,8 +27,11 @@ import (
 // Version of the redaction and normalisation rules. 4: one text scrubber for events and served
 // artifact content; long hex runs inside text are redacted (a whole value that is a digest or a
 // commit is not). 5: people by role everywhere (the per-project deny-list, structured records),
-// stream records accepted by shape, gap classes, plan-exit facts.
-const Version = 5
+// stream records accepted by shape, gap classes, plan-exit facts. 6 (M6.6): an implausible time
+// (before 2000, or more than a day after its line was read) is no own time, so events stored
+// under 5 may carry a year-9999 time and order; words the replies are made of are never learned
+// as names.
+const Version = 6
 
 // pathRest is the rest of a path in text: up to white space, a quote, a backtick or a bracket.
 const pathRest = "[^\\s\"'`<>|;,()\\[\\]{}]*"
@@ -47,7 +50,11 @@ var (
 		regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*-----[\s\S]*?(-----END [A-Z0-9 ]*-----|$)`),
 		regexp.MustCompile(`(?i)\b(sk-ant-[a-z0-9_-]{8,}|sk-[a-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|xox[abprs]-[A-Za-z0-9-]{8,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,})`),
 		regexp.MustCompile(`(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}`),
-		regexp.MustCompile(`(?i)\b([A-Z0-9_]*(key|token|secret|passw(or)?d|pwd|credential|auth|cookie|session)[A-Z0-9_]*)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)`),
+		regexp.MustCompile(`(?i)\b([A-Z0-9_]*(key|token|secret|passw(or)?d|pwd|credential|cookie|session)[A-Z0-9_]*)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)`),
+		// An auth key (auth, Authorization, X_AUTH, HTTP_AUTHORIZATION, auth_header, authz) and its
+		// value. Unlike the rule above, letters may not follow "auth" freely, so ordinary prose such
+		// as "was not authorized: the audit is stale" is not taken for a key and its value.
+		regexp.MustCompile(`(?i)\b([A-Z0-9_]*auth(entication|orization|z)?(_[A-Z0-9_]*)?)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)`),
 		regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}`), // JWT
 		regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@`),                  // URL credentials
 	}

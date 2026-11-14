@@ -467,7 +467,8 @@ func ticketWait(s *State, ticket, slice string) *Wait {
 			if capacitySentence.MatchString(h.Why) {
 				return &Wait{Kind: "capacity", Basis: "recorded-sentence", Reasons: []string{h.Why}, Since: TV(s.Factory.LastDecision), Rule: "held-sentence"}
 			}
-			return &Wait{Kind: "unknown", Basis: "recorded", Reasons: []string{h.Why}, Since: TV(s.Factory.LastDecision)}
+			// Held for a reason the scheduler recorded only in words: shown, never classified (M6.6 D2).
+			return &Wait{Kind: "unknown", Basis: "recorded", Reasons: []string{h.Why}, Since: TV(s.Factory.LastDecision), Rule: "held"}
 		}
 	}
 	return nil
@@ -498,7 +499,7 @@ func ProjectView(s *State) map[string]any {
 	active := []string{}
 	for _, t := range sortedKeys(s.Cells) {
 		c := s.Cells[t]
-		if !c.Archived && c.Merge == nil && c.Stage != "merged" {
+		if !c.Archived && c.Merge == nil && c.Stage != "merged" && cellOpened(c) {
 			active = append(active, t)
 		}
 	}
@@ -522,6 +523,15 @@ func ProjectView(s *State) map[string]any {
 		"cells":             len(s.Cells),
 		"history":           HistoryFacts(s),
 	}
+}
+
+// cellOpened: something records the ticket's cell itself (a stage, a lifecycle log, a cell
+// instance, an execution or a station visit). A ticket the intake log filed is known before its
+// cell is opened at dispatch; until then it is not an active cell (M6.6 N6), has no cell span and
+// is not a cell in the flow's coverage (D10).
+func cellOpened(c *Cell) bool {
+	return c.Stage != "" || c.Lifecycle || c.CellInstance != "" || len(c.Executions) > 0 || len(c.Visits) > 0 ||
+		c.Archived || c.Merge != nil || c.Cleanup != nil
 }
 
 // FactoryView is the Factory's recorded mode (from the intake log: what MACH recorded, not a
@@ -570,7 +580,11 @@ func SliceView(s *State, sl *Slice) map[string]any {
 	if hist == nil {
 		hist = []StateChange{}
 	}
-	return map[string]any{"slice_id": sl.SliceID, "wave_id": sl.WaveID, "revision": sl.Revision, "ticket_id": sl.TicketID, "state": sl.State,
+	var title any
+	if sl.Title != "" {
+		title = sl.Title
+	}
+	return map[string]any{"slice_id": sl.SliceID, "title": title, "wave_id": sl.WaveID, "revision": sl.Revision, "ticket_id": sl.TicketID, "state": sl.State,
 		"dependencies": nonNilS(sl.Dependencies), "depends_on": nonNilS(sl.DependsOn), "last_reasons": nonNilS(sl.Reasons), "waiting": SliceWait(s, sl),
 		"commit": sl.Commit, "materialized_at": TV(sl.Materialized), "blocked_at": TV(sl.Blocked), "resolved_at": TV(sl.Resolved),
 		"dispatched_at": TV(sl.Scheduled), "integrated_at": TV(sl.Integrated), "superseded_at": TV(sl.Superseded),

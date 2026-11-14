@@ -387,7 +387,7 @@ func trend(e *eval, id, key, what string) {
 	e.add(id, "", Attention, "later - earlier >= "+points(TrendMinRise), vars,
 		[]Measurement{rowMeasure(key, cur.Name, cur, "later", cur.Value, "ratio"), rowMeasure(key, prev.Name, prev, "earlier", prev.Value, "ratio")},
 		Sample{Count: lden + eden, Unit: what, CoverageShare: lc, Population: what + " in the later and earlier windows"},
-		e.link(figure, nil, "recent", relation, "the later window's records; ask the earlier window with its from_ms and to_ms", e.in.Window), true)
+		e.link(figure, nil, "recent", relation, "the later window's records; choose the earlier window's dates to list its records", e.in.Window), true)
 }
 
 func recurring(e *eval, id string, r Recurring, figure, dim string, vars func(g RecurringGroup) map[string]string) {
@@ -547,7 +547,7 @@ func execLater(e *eval) {
 			{Metric: k, Label: execMeasures[k], Value: f(lv), Unit: "ratio", Numerator: f(ln), Denominator: f(ld), SampleCount: f(ld), Window: "later"},
 			{Metric: k, Label: execMeasures[k], Value: f(ev), Unit: "ratio", Numerator: f(en), Denominator: f(ed), SampleCount: f(ed), Window: "earlier"},
 		}
-		rel, note := "exact", "the later window's records; ask the earlier window with its from_ms and to_ms"
+		rel, note := "exact", "the later window's records; choose the earlier window's dates to list its records"
 		if k == "interrupted" {
 			rel = "related"
 		}
@@ -604,7 +604,7 @@ func costLater(e *eval) {
 	}
 	e.add(id, "", Note, "later cost >= "+pct(CostRatioMin)+" of earlier, and integrated slices later <= earlier", vars, ms,
 		Sample{Count: ld + ed, Unit: "executions with a recorded cost", CoverageShare: lc, Population: "completed executions in the later and earlier windows"},
-		e.link("K1", nil, "impact", "exact", "the later window's records; ask the earlier window with its from_ms and to_ms", e.in.Window), true)
+		e.link("K1", nil, "impact", "exact", "the later window's records; choose the earlier window's dates to list its records", e.in.Window), true)
 }
 
 func usageMissing(e *eval) {
@@ -819,26 +819,47 @@ func pctp(v *float64) string {
 
 func points(v float64) string { return strconv.FormatFloat(v*100, 'f', 0, 64) + " percentage points" }
 
+// dayText is a moment in the Control Tower's words (M6.6, I-09): "4 Nov, 09:29:43 UTC", the day as the
+// Timeline's ruler names it and the clock as its inspector does.
 func dayText(ms *int64) string {
 	if ms == nil {
 		return "unknown"
 	}
-	return time.UnixMilli(*ms).UTC().Format("2006-01-02 15:04 UTC")
+	t := time.UnixMilli(*ms).UTC()
+	return strconv.Itoa(t.Day()) + " " + t.Format("Jan, 15:04:05") + " UTC"
 }
 
 func usd(v float64) string { return "USD " + strconv.FormatFloat(v, 'f', 2, 64) }
 
+// dur is a duration in the Control Tower's words (M6.6, I-09; web shell/time.ts duration): "340 ms",
+// "48 s", "4 min 12 s", "1 h 3 min", "1 h", "1 d 15 h", "2 d". Two units at most, the smaller left out
+// when it is zero. Wording only: every threshold and figure is computed before it is worded.
 func dur(ms float64) string {
-	s := ms / 1000
-	switch {
-	case s < 60:
-		return strconv.FormatFloat(s, 'f', 0, 64) + " s"
-	case s < 3600:
-		return strconv.FormatFloat(s/60, 'f', 1, 64) + " min"
-	case s < 48*3600:
-		return strconv.FormatFloat(s/3600, 'f', 1, 64) + " h"
+	if ms < 1000 {
+		if ms < 0 {
+			ms = 0
+		}
+		return strconv.FormatFloat(math.Round(ms), 'f', 0, 64) + " ms"
 	}
-	return strconv.FormatFloat(s/86400, 'f', 1, 64) + " d"
+	s := int64(math.Round(ms / 1000))
+	if s < 60 {
+		return strconv.FormatInt(s, 10) + " s"
+	}
+	two := func(a int64, au string, b int64, bu string) string {
+		if b == 0 {
+			return strconv.FormatInt(a, 10) + " " + au
+		}
+		return strconv.FormatInt(a, 10) + " " + au + " " + strconv.FormatInt(b, 10) + " " + bu
+	}
+	m := s / 60
+	if m < 60 {
+		return two(m, "min", s%60, "s")
+	}
+	h := m / 60
+	if h < 24 {
+		return two(h, "h", m%60, "min")
+	}
+	return two(h/24, "d", h%24, "h")
 }
 
 func joinText(a, b string) string {

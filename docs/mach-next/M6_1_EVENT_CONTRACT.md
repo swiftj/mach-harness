@@ -324,7 +324,7 @@ In the observer's normaliser, per kind, by construction: each kind's output stru
 
 ### 10.1 intake-log (v2) to v3
 
-Field mapping: `seq` → `origin.seq` and the id; `at` → `time` (section 6.1); `type` → `type` unchanged; `project_id`, `wave_id`, `slice_id`, `revision`, `ticket_id`, `runner_id`, `execution_id` → `ids.*`; `source` → `origin.writer`; `cause` → `cause` (`basis: recorded`); `refs` → server-only, replaced by `entities`; `data` → the kind's allow-list. `source_commit` → server-only, except on `execution.started`, where revision 3 keeps it as `data.source_commit` (the product source the execution started from; 12 characters, like every commit). Kinds are not renamed.
+Field mapping: `seq` → `origin.seq` and the id; `at` → `time` (section 6.1); `type` → `type` unchanged; `project_id`, `wave_id`, `slice_id`, `revision`, `ticket_id`, `runner_id`, `execution_id` → `ids.*`; `source` → `origin.writer`; `cause` → `cause` (`basis: recorded`); `refs` → server-only, replaced by `entities`; `data` → the kind's allow-list. `source_commit` → server-only, except on `execution.started`, where revision 3 keeps it as `data.source_commit` (the product source the execution started from; served in full since M6.6, like the provenance snapshot's `mach.commit` and `source.commit`, so a page can shorten it for display with the whole value available; every other commit is 12 characters). Kinds are not renamed.
 
 #### 10.1.1 Execution provenance (revision 3, M6.5)
 
@@ -332,7 +332,7 @@ When the supervisor starts an execution it takes one snapshot of what the run wa
 
 - **Contents (snapshot `schema: 1`)**: digests, versions, identifiers, numbers and booleans only. `mach {version, install, commit}` (`commit` only when MACH is loaded from a Git checkout, and then the HEAD of a tree that may have uncommitted changes; neither install records one; the line digest, not the commit, records which files ran); `line {digest, count, files}`, one SHA-256 per skill folder, agent file, workflow file and the plugin manifest of the plugin the run loads, keyed `skill:<name>`, `agent:<name>`, `workflow:<name>`, `plugin:manifest`, never by path; `config {recorded, digest, models, review {max_loops, security_veto, tiers}, max_parallel}`: `digest` is the SHA-256 of the canonical JSON of the whole `.factory/config.json` as it was on disk at start (never its content); the other fields are the values a person reads, as the file sets them (a key the file does not set is null, never a default: an unset `security_veto` is null, although the review station treats it as on); a model name that is not a plain identifier, such as a cloud ARN, is `sha256:<digest>`; `policy {autonomy, max_risk, allow_merge, max_parallel, allowed_tools_digest, allowed_tools_count}` (the allowed-tool list itself is never recorded, and the Python interpreter's path in it is replaced by `<python>` before hashing, so the digest is the same on every machine); `ticket {risk, app_type}` from `cell.json` at start; `source {commit, slice_revision, slice_digest, spec_sha256}` from the ledger; `config_id`, the SHA-256 of the canonical JSON (sorted keys, whole numbers as integers) of `{line digest, config, policy}`, for "same configuration" comparisons without interpreting fields.
 - **Absent or failed**: `provenance: null` with `provenance_reason`: `not-recorded` (the start carries none: every execution before M6.5), `capture-failed` (the supervisor could not take it; the execution started exactly as it would have), `not-understood` (another snapshot schema, no `config_id`, or a null snapshot with a reason this observer does not know).
-- **Normalisation**: deny-by-default, field by field (`normalize/provenance.go`): a value that does not fit its filter is null, a key that is not named is dropped, commits are cut to 12 characters. The allow-list (`redact/allow.go`) and the scrubber apply as to every payload.
+- **Normalisation**: deny-by-default, field by field (`normalize/provenance.go`): a value that does not fit its filter is null, a key that is not named is dropped, commits are kept in full (M6.6; they were cut to 12 characters before). The allow-list (`redact/allow.go`) and the scrubber apply as to every payload.
 
 ### 10.2 cell-lifecycle (v1 raw) to v3
 
@@ -429,7 +429,7 @@ Snapshots restate every agent, so the normaliser **diffs** each snapshot against
 | `wave.discovered` | authoritative | `wave_id` | `slices`, `approval{approved_at, by_role}` | same |
 | `intake.validated` | authoritative | | `digest` | same |
 | `intake.refused` | authoritative | | `problems[]` | same |
-| `slice.materialized` | authoritative | `slice_id`, `ticket_id` | `digest`, `adopted`, `dependencies[]`, `reissued` | same |
+| `slice.materialized` | authoritative | `slice_id`, `ticket_id` | `digest`, `adopted`, `dependencies[]`, `reissued` | same; M6.6 adds `title` (string or null): the slice's title as `.factory/intake/ledger.json` records it, only when the ledger's revision is the event's (never another revision's title); product prose, a declared free-text field (`display_policy.free_text`, 200 characters) |
 | `slice.integrated` | authoritative | `slice_id` | `commit` | same |
 | `dependency.resolved` | authoritative | `slice_id` | `depends_on[]` | same |
 | `dependency.blocked` | authoritative | `slice_id` | `reasons[]` | same |

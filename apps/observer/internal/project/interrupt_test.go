@@ -62,7 +62,10 @@ func TestAVisitWhoseExecutionEndedIsClosedThere(t *testing.T) {
 	evs = append(evs, lc("station.exited", 12000, "T-4", "build#1", 1).Exec(xa).Data(map[string]any{"station": "build", "outcome": "built"}))
 	s = project(evs...)
 	sp = byID(Spans(s, SpanFilter{Kinds: map[string]bool{"visit": true}}))["visit:visit:T-4/build#1"]
-	if sp.End == nil || sp.End.Basis != "recorded" || feedStr(sp.Outcome) != "built" || sp.Duration.Basis != "measured" {
+	// Not continuous work (M6.6 D9): its length is bounded, from the bound to the recorded exit,
+	// and counted apart from measured visits.
+	if sp.End == nil || sp.End.Basis != "recorded" || feedStr(sp.Outcome) != "built" || sp.Duration.Basis != "bounded" || sp.Duration.MS != nil ||
+		sp.Duration.MaxMS == nil || sp.Duration.MinMS == nil || *sp.Duration.MinMS >= *sp.Duration.MaxMS {
 		t.Fatalf("recorded exit %+v %+v", sp.End, sp.Duration)
 	}
 	if sp.Attrs.InterruptedAt == nil || *sp.Attrs.InterruptedAt != feedtest.At(10999) || sp.Attrs.InterruptedReason != "interrupted" {

@@ -356,7 +356,7 @@ func BuildFlow(s *State, spans []*Span) *FlowIndex {
 		if first == math.MaxInt64 && c.FirstSeen != nil {
 			first = stampMS(c.FirstSeen)
 		}
-		if first != math.MaxInt64 {
+		if first != math.MaxInt64 && cellOpened(c) {
 			d := base
 			d.day = flowDay(first)
 			if ix.cellsSeen[d] == nil {

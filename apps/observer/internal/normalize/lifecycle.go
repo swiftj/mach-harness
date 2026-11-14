@@ -112,7 +112,9 @@ func (l *Lifecycle) Line(line []byte, r Read) []*event.Event {
 	if v, ok := redact.Int(in.V); err != nil || !ok || v != 1 {
 		return []*event.Event{l.gap("line-"+itoa(r.Line), "unparsable-line", r.Line, r.Line, 1, r)}
 	}
-	at, _, okAt := parseTime(in.At)
+	// An implausible time (M6.6 F1) is no time: the line becomes an unparsable-line gap, never an
+	// event placed and timed by the bad value.
+	at, _, okAt, _ := parseTimeRead(in.At, r.At)
 	if r.Line == 1 && l.Identity != nil {
 		l.Identity.LearnIncarnation(l.Ticket, l.Gen, at)
 	}

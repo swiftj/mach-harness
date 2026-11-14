@@ -347,12 +347,14 @@ func indexDirOrEmpty(dir, sub string) string {
 	return filepath.Join(dir, sub)
 }
 
-// prepareIndexDir makes .factory/local/observer (and .factory/local if missing) private to the
-// user, refuses either if it is a symbolic link, and writes a .gitignore of "*" inside, so the
+// prepareIndexDir makes .factory/local/observer (and .factory/local if missing, and its index
+// folder) private to the user, refuses any of them if it is a symbolic link, and writes a .gitignore of "*" inside, so the
 // index never shows in git status even in a project that does not ignore .factory/local/.
 func prepareIndexDir(root, dir string) error {
 	local := filepath.Join(root, ".factory", "local")
-	for _, d := range []string{local, dir} {
+	// The index folder too (M6.6 F2): the store writes, replaces and removes files by name there,
+	// so a link in its place would make it do that somewhere else.
+	for _, d := range []string{local, dir, filepath.Join(dir, "index")} {
 		if err := os.Mkdir(d, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("could not make %s: %w", d, err)
 		}

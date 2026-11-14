@@ -246,12 +246,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 	defer func() {
-		// Never the query (the start token travels there), never a header.
-		s.opts.Logger.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(started).Round(time.Millisecond))
+		// Never the query (the start token travels there), never a header. The path is quoted and
+		// cut (M6.6 F4): it is chosen by whoever sends the request, before any check, and a raw CR,
+		// LF or ESC would forge log lines or drive the terminal the observer runs in.
+		s.opts.Logger.Printf("%s %s %d %s", r.Method, logPath(r), rec.status, time.Since(started).Round(time.Millisecond))
 	}()
 	security.Headers(rec.Header())
 	isAPI := r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.EscapedPath(), "/api/")
 	if r.Method != http.MethodGet {
+		rec.Header().Set("Cache-Control", "no-store") // a refusal is never kept (M6.6 F7)
 		rec.Header().Set("Allow", "GET")
 		rec.Header().Set("Connection", "close")
 		if isAPI {
@@ -262,6 +265,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.opts.Guard.HostAllowed(r.Host) {
+		rec.Header().Set("Cache-Control", "no-store")
 		msg := "This address is not allowed. Open the Control Tower at 127.0.0.1 or localhost."
 		if isAPI {
 			writeJSON(rec, http.StatusForbidden, fail(KindUnauthorized, msg))
@@ -745,3 +749,16 @@ func (r *recorder) Write(b []byte) (int, error) {
 func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func projectFolder(root string) string { return filepath.Base(root) }
+
+// MaxLoggedPath is how much of a request's path the access log keeps.
+const MaxLoggedPath = 200
+
+// logPath is the request path as the access log writes it: the escaped form, cut to
+// MaxLoggedPath bytes, and Go-quoted, so it is always one printable line.
+func logPath(r *http.Request) string {
+	p := r.URL.EscapedPath()
+	if len(p) > MaxLoggedPath {
+		p = p[:MaxLoggedPath] + "..."
+	}
+	return strconv.Quote(p)
+}

@@ -52,8 +52,9 @@ func TestFreeTextFieldsExistInTheAllowlist(t *testing.T) {
 	}
 }
 
-// A tripwire: the normalisers keep prose only through redact.Text, textOrNil and textList. Each
-// call site is one declared free-text field; a new one must be added to FreeTextFields (and to
+// A tripwire: the normalisers keep prose only through redact.Text, textOrNil and textList, or
+// redact.Scrub (which keeps any text after scrubbing it; M6.6 F6). Each call site is one declared
+// free-text field; a new one must be added to FreeTextFields (and to
 // docs/mach-next/M6_5_SECURITY.md) before this count is raised.
 func TestEveryProseCallSiteIsDeclared(t *testing.T) {
 	files, err := filepath.Glob("../normalize/*.go")
@@ -61,7 +62,8 @@ func TestEveryProseCallSiteIsDeclared(t *testing.T) {
 		t.Fatalf("normalize sources not found: %v", err)
 	}
 	call := regexp.MustCompile(`\b(redact\.Text|textOrNil|textList)\(`)
-	n := 0
+	scrub := regexp.MustCompile(`\bredact\.Scrub\(`)
+	n, m := 0, 0
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -80,12 +82,14 @@ func TestEveryProseCallSiteIsDeclared(t *testing.T) {
 				continue
 			}
 			n += len(call.FindAllString(line, -1))
+			m += len(scrub.FindAllString(line, -1))
 		}
 	}
-	// 13 call sites; agent.queued and agent.started share the label and phase call sites, so the
-	// list declares 15 fields.
-	if n != 13 || len(FreeTextFields) != 15 {
-		t.Fatalf("prose call sites in internal/normalize: %d (want 13), declared fields: %d (want 15); declare the new field in redact.FreeTextFields", n, len(FreeTextFields))
+	// 14 Text call sites (M6.6 added slice.materialized data.title) and 1 Scrub call site
+	// (execution.completed data.refused_tools[]); agent.queued and agent.started share the label
+	// and phase call sites, so the list declares 17 fields.
+	if n != 14 || m != 1 || len(FreeTextFields) != 17 {
+		t.Fatalf("prose call sites in internal/normalize: %d Text (want 14), %d Scrub (want 1), declared fields: %d (want 17); declare the new field in redact.FreeTextFields", n, m, len(FreeTextFields))
 	}
 }
 
