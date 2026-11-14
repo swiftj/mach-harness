@@ -17,6 +17,10 @@ and not by whoever is driving it.
     run.py product dispatch <slice>...   open the cells for chosen ready slices (or --ready); starts nothing
     run.py product events [--since N]    the intake ledger's transitions, for a supervisor or a dashboard
     run.py product reconcile [--fetch]   intake and a recorded plan in one locked step; never dispatches
+    run.py release status                release-readiness snapshots so far, and what a new one would evaluate
+    run.py release qualify <WAVE>...     evaluate the integration branch at one commit; write .factory/release/<id>/readiness.json
+    run.py release show <release-id>     a readiness snapshot, its exceptions and when it was taken
+    run.py release except ...            a person's exception for one check at the snapshot's commit; only on their explicit word
     run.py factory status                what is in force on this machine and what the supervisor is doing; changes nothing
     run.py factory enable ...            preflight and a confirmation code; with --confirm, enable. Never a side effect
     run.py factory pause | resume | disable | stop
@@ -403,6 +407,27 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
     return 1 if args.action == "intake" and result.get("refused") and not result.get("created") and not result.get("unchanged") else 0
 
 
+def cmd_release(project: Project, args: argparse.Namespace) -> int:
+    """Release qualification (qualify.py). It reads and measures; it lands, publishes and starts nothing."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import qualify
+    _, line = factory(project)
+    try:
+        release = qualify.Release(project.root, project.config, line, sibling)
+        if args.action == "status":
+            result = release.status()
+        elif args.action == "qualify":
+            result = release.qualify(args.wave_ids, release_id=args.release, commit=args.commit)
+        elif args.action == "show":
+            result = release.show(args.release_id)
+        else:
+            result = release.record_exception(args.release, args.check, args.by, args.reason)
+    except qualify.QualifyError as exc:
+        raise RunError(str(exc))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
 def workflow_name() -> str:
     return "mach-belt" if PROJECT_INSTALL else "mach:belt"
 
@@ -500,6 +525,23 @@ def build_parser() -> argparse.ArgumentParser:
     p = product.add_parser("events", help="the intake ledger's transitions, in order")
     p.add_argument("--since", type=int, default=0, help="only events after this sequence number")
     p.set_defaults(func=cmd_product)
+
+    rel = sub.add_parser("release", help="release qualification: is the integrated capability ready, at one commit").add_subparsers(dest="action", required=True)
+    rel.add_parser("status", help="readiness snapshots so far; changes nothing").set_defaults(func=cmd_release)
+    p = rel.add_parser("qualify", help="evaluate approved waves at one commit of the integration branch")
+    p.add_argument("wave_ids", nargs="+", metavar="WAVE-ID")
+    p.add_argument("--release", help="the release ID (default: the waves and the commit)")
+    p.add_argument("--commit", help="a commit on the integration branch (default: its local head)")
+    p.set_defaults(func=cmd_release)
+    p = rel.add_parser("show", help="one readiness snapshot; changes nothing")
+    p.add_argument("release_id")
+    p.set_defaults(func=cmd_release)
+    p = rel.add_parser("except", help="record a person's exception for one check, at the snapshot's commit")
+    p.add_argument("--release", required=True)
+    p.add_argument("--check", required=True, help="the check ID, as the snapshot lists it")
+    p.add_argument("--by", required=True, help="the role of the person who decided, such as release-manager")
+    p.add_argument("--reason", required=True)
+    p.set_defaults(func=cmd_release)
 
     fac = sub.add_parser("factory", help="the Factory on this machine: status, enable, pause, resume, disable").add_subparsers(dest="action", required=True)
     fac.add_parser("status", help="what is in force here; changes nothing").set_defaults(func=cmd_factory)

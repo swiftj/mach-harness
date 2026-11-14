@@ -1,7 +1,7 @@
 ---
 name: run
 description: Drives MACH tickets along the factory's conveyor belt. For one ticket, works out the next station from the recorded state and runs it (audit, grooming, build, verify, review, cleanup), stopping wherever a person is needed; for several tickets, shows the board. Use when asked to run, continue, resume or ship a ticket through the factory or pipeline, to run the whole pipeline, to see what is next for a ticket, or for the factory's status board. Also takes approved product work from Product Studio into the factory: shows incoming delivery waves, the dependency-aware plan of what is ready or blocked and why, and dispatches chosen slices on the engineer's explicit word. Also the Factory's on/off switch for this machine: factory status, enable, pause, resume, disable and stop, for unattended (autopilot, supervisor, background) execution. Also opens the Control Tower, a read-only live view of the Factory in the browser, when asked to open the Control Tower or watch the factory.
-argument-hint: "[ticket ID | board | product [intake|plan|dispatch <slice>...] | factory [status|enable|pause|resume|disable|stop]] [--headless] [--until <station>]"
+argument-hint: "[ticket ID | board | product [intake|plan|dispatch <slice>...] | release [status|qualify <wave>...|show <id>] | factory [status|enable|pause|resume|disable|stop]] [--headless] [--until <station>]"
 compatibility: "python3 >= 3.8, git"
 ---
 
@@ -94,6 +94,21 @@ After a dispatch, on the engineer's yes: for one ticket, continue with **One tic
 A slice is `completed` only when its commit is on the integration branch. A ticket whose build finished, or even one that was approved, is still `active`, and what depends on it stays blocked. Say this plainly if the engineer asks why something is not ready.
 
 `needs_person` means exactly that: a definition changed under work in progress, product withdrew a slice being built, a ticket was abandoned, or a ticket claims a merge that is not on the branch. Give the reason and the choices; do not choose.
+
+### Release qualification
+
+When the input starts with `release`, an engineer wants to know whether the integrated work of one or more approved delivery waves is ready, at one exact commit of the integration branch. A script measures it and decides; you report.
+
+| Input | Run | Then |
+|-------|-----|------|
+| `release` or `release status` | `RUN release status` | List the snapshots so far (release, commit, outcome, product acceptance) and the approved waves a new run could evaluate. Changes nothing. |
+| `release qualify <WAVE-ID>...` | `RUN release qualify <WAVE-ID>... [--release <id>] [--commit <sha>]` | It reruns the project's test suite at that commit on a clean tree, which runs this repository's own code: say so before running it. Report `outcome`, then every `unresolved_blockers` and `incomplete` item with its `detail` from `RUN release show <id>`, word for word. |
+| `release show <id>` | `RUN release show <id>` | Show the checks as a table (id, status, detail, any exception), the scenarios and their evidence, and `product_acceptance`. |
+| `release except ...` | `RUN release except --release <id> --check <check-id> --by <role> --reason "<their words>"` | **Only on a person's explicit instruction in this conversation**, after they have seen that check's detail, like recording a human approval in review. `--by` is their role, never their name. Then run `qualify` again for the same release: an exception counts only at the commit it was recorded for. |
+
+- **The outcome is the script's.** `qualified`, `qualified_with_exceptions`, `blocked` or `incomplete`. A check that did not run is not a pass; never describe an `incomplete` release as ready, and never record an exception to get a release through.
+- **Product acceptance is product's.** `product_acceptance` is read from the merged product files. A qualified release is not an accepted one; say so if asked. Product records its decision in Product Studio.
+- **It ships nothing.** Qualifying never merges, tags, pushes or deploys, and starts no station. What to do with a qualified release is a person's decision.
 
 ### The Factory on this machine
 

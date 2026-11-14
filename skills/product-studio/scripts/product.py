@@ -25,6 +25,13 @@ WAVE_RE = re.compile(r"^WAVE-[0-9]{3,}$")
 HEX_RE = re.compile(r"^[a-f0-9]{64}$")
 # The same file-name rule as skills/intent/scripts/validate_slice.py (FILENAME_RE), which stays authoritative.
 SPEC_NAME_RE = re.compile(r"^(SLICE-[0-9]{3,})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+ROLE_RE = re.compile(r"^[a-z][a-z0-9-]{1,39}$")
+RELEASE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+# A product acceptance decision for one delivery wave at one release (M7). Recorded by a person in
+# Product Studio, published like any product file, and only ever read: nothing executes from it.
+ACCEPTANCE = ("schema_version", "wave_id", "project_id", "wave_revision", "wave_sha256", "release_id", "release_commit",
+              "readiness_sha256", "readiness_outcome", "decision", "by", "note", "recorded_at")
 TIMESTAMP_RE = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$")
 
 SHAPES = {
@@ -124,6 +131,47 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             _error(errors, location, "approval must be null or contain actor and approved_at strings")
         elif approval is not None and not _is_timestamp(approval["approved_at"]):
             _error(errors, location, "approval approved_at must be a date-time such as 2026-11-10T14:00:00Z")
+
+
+def _acceptance(data: Dict[str, Any], location: str, errors: List[str], waves: Dict[str, Dict[str, Any]], project_id: Any, stem: str) -> None:
+    """Shape and references only. Whether it applies to a release is the release check's decision."""
+    for key in sorted(set(ACCEPTANCE) - set(data)):
+        _error(errors, location, "missing field '{}'".format(key))
+    for key in sorted(set(data) - set(ACCEPTANCE)):
+        _error(errors, location, "unexpected field '{}'".format(key))
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
+        _error(errors, location, "schema_version must be integer 1")
+    wave_id = data.get("wave_id")
+    if not isinstance(wave_id, str) or not WAVE_RE.fullmatch(wave_id) or wave_id != stem:
+        _error(errors, location, "wave_id must be a wave ID matching the filename")
+    elif wave_id not in waves:
+        _error(errors, location, "unknown wave '{}'".format(wave_id))
+    elif waves[wave_id].get("status") != "approved_for_engineering":
+        _error(errors, location, "acceptance is only for an approved wave")
+    if data.get("project_id") != project_id:
+        _error(errors, location, "project_id does not match project.json")
+    if type(data.get("wave_revision")) is not int or data["wave_revision"] < 1:
+        _error(errors, location, "wave_revision must be a positive integer")
+    for key in ("wave_sha256", "readiness_sha256"):
+        value = data.get(key)
+        if not (value is None and key == "readiness_sha256") and (not isinstance(value, str) or not HEX_RE.fullmatch(value)):
+            _error(errors, location, "{} must be lowercase 64-character SHA-256".format(key))
+    if not isinstance(data.get("release_commit"), str) or not COMMIT_RE.fullmatch(data["release_commit"]):
+        _error(errors, location, "release_commit must be a full commit ID")
+    if not isinstance(data.get("release_id"), str) or not RELEASE_RE.fullmatch(data["release_id"]):
+        _error(errors, location, "invalid release_id")
+    if data.get("decision") not in ("accepted", "rejected"):
+        _error(errors, location, "decision must be accepted or rejected")
+    if data.get("readiness_outcome") not in (None, "qualified", "qualified_with_exceptions", "blocked", "incomplete"):
+        _error(errors, location, "invalid readiness_outcome")
+    if data.get("decision") == "accepted" and data.get("readiness_outcome") not in ("qualified", "qualified_with_exceptions"):
+        _error(errors, location, "accepted requires a qualified readiness snapshot")
+    if not isinstance(data.get("by"), str) or not ROLE_RE.fullmatch(data["by"]):
+        _error(errors, location, "by must be a role, such as product-owner")
+    if data.get("note") is not None and not isinstance(data.get("note"), str):
+        _error(errors, location, "note must be text or null")
+    if not _is_timestamp(data.get("recorded_at")):
+        _error(errors, location, "recorded_at must be a date-time such as 2026-11-10T14:00:00Z")
 
 
 def _safe_spec(root: Path, value: str, slice_id: str) -> Tuple[Optional[Path], Optional[str]]:
@@ -274,6 +322,14 @@ def validate_workspace(root: Path) -> Dict[str, Any]:
             _error(errors, loc, "wave baseline is newer than project revision")
         if entry.get("status") == "approved_for_engineering" and entry.get("approval") is None:
             _error(errors, loc, "approved wave requires recorded author approval")
+    folder = root / "product" / "acceptance"
+    if folder.is_symlink():
+        _error(errors, "product/acceptance", "symlinked artifact directory is not permitted")
+    for path in [] if folder.is_symlink() else _files(folder, "WAVE-*.json"):
+        location = str(path.relative_to(root))
+        data = _read_json(path, errors, root)
+        if data is not None:
+            _acceptance(data, location, errors, waves, project_id, path.stem)
     return {
         "valid": not errors,
         "validation_scope": "structural_only",

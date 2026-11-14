@@ -73,7 +73,7 @@ RELEASE_WORKFLOW = ".github/workflows/release.yml"
 GH_AUTH_REQUIRED = 4  # gh's exit status when it is not signed in
 GH_TIMEOUT = 120
 NO_GH = "GitHub CLI not available"
-# The same words as Product Studio's (skills/product-studio/scripts/studio.py GIT_MISSING).
+# The same words Product Studio uses when Git is missing.
 GIT_MISSING = ("MACH needs Git, and Git is not installed on this computer. On a Mac, open Terminal, run  xcode-select --install  "
                "and click Install in the window that appears (it installs Apple's command line tools, which include Git); "
                "on Linux, install the 'git' package. Then run this again.")

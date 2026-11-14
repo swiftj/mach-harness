@@ -1096,6 +1096,78 @@ def cmd_wave_approve(studio: Studio, args: argparse.Namespace) -> int:
                  "note": "Product approval only. The wave stays in your workspace until you send it to engineering."})
 
 
+# ---- product acceptance (M7) ----
+
+
+def acceptance_path(studio: Studio, wave_id: str) -> Path:
+    return studio.draft / "product" / "acceptance" / f"{wave_id}.json"
+
+
+def cmd_acceptance_record(studio: Studio, args: argparse.Namespace) -> int:
+    """A person's product decision on one approved wave at one release. Read by engineering; it starts nothing."""
+    wave_id = args.wave_id
+    if not product.WAVE_RE.fullmatch(wave_id):
+        raise StudioError(f"'{wave_id}' is not a wave ID.")
+    wave = studio.load("wave", wave_id)
+    if wave.get("status") != APPROVED:
+        raise StudioError(f"{wave_id} is {state(wave.get('status'))}. Only an approved wave can be accepted or rejected.", hint("approve_wave", wave_id))
+    if not product.ROLE_RE.fullmatch(args.by or ""):
+        raise StudioError(say("--by names a role, such as product-owner: lowercase letters, digits and '-', never a person's name or address.",
+                              "Give the role deciding, such as product-owner, not a person's name or address."))
+    if not product.COMMIT_RE.fullmatch(args.commit or ""):
+        raise StudioError(say("--commit must be the full commit ID the release was qualified at.", "Give the full commit ID the release was checked at."))
+    wave_bytes = (studio.draft / "product" / "delivery-waves" / f"{wave_id}.json").read_bytes()
+    readiness, readiness_sha = None, None
+    if args.readiness:
+        path = Path(args.readiness)
+        try:
+            raw = path.read_bytes()
+            readiness = json.loads(raw.decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            raise StudioError(f"Cannot read the readiness snapshot at {path}.")
+        readiness_sha = sha(raw)
+        release = readiness.get("release") if isinstance(readiness, dict) else None
+        if not isinstance(release, dict) or release.get("release_id") != args.release or release.get("commit") != args.commit:
+            raise StudioError(f"That readiness snapshot is not for release {args.release} at {args.commit[:12]}.")
+        qualified = {w.get("wave_id"): w.get("sha256") for w in readiness.get("waves") or [] if isinstance(w, dict)}
+        if wave_id not in qualified:
+            raise StudioError(f"{wave_id} is not part of release {args.release}.")
+        if qualified[wave_id] != sha(wave_bytes):
+            raise StudioError(f"The {wave_id} approved here is not the revision that was qualified. Refresh first.")
+    outcome = readiness.get("outcome") if isinstance(readiness, dict) else None
+    if args.decision == "accepted" and outcome not in ("qualified", "qualified_with_exceptions"):
+        got = f"; this one is {outcome}." if outcome else "; none was given."
+        raise StudioError(say(f"A wave can be accepted only for a release whose readiness snapshot (--readiness) is qualified or qualified with exceptions{got} Rejecting it is always possible.",
+                              f"A wave can be accepted only for a release whose readiness snapshot is qualified or qualified with exceptions{got} Rejecting it is always possible."))
+    data = {"schema_version": 1, "wave_id": wave_id, "project_id": wave.get("project_id"), "wave_revision": wave.get("revision"), "wave_sha256": sha(wave_bytes),
+            "release_id": args.release, "release_commit": args.commit, "readiness_sha256": readiness_sha, "readiness_outcome": outcome,
+            "decision": args.decision, "by": args.by, "note": " ".join(args.note.split()) if args.note else None, "recorded_at": now(args.at)}
+    path = acceptance_path(studio, wave_id)
+    previous = path.read_text(encoding="utf-8") if path.is_file() else None
+    write(path, canonical(data))
+    report = studio.structural()
+    if not report["valid"]:
+        if previous is None:
+            path.unlink()
+        else:
+            write(path, previous)
+        raise StudioError("The acceptance record did not validate:\n  " + "\n  ".join(report["errors"]))
+    return emit({"recorded": True, "acceptance": data, "factory_authorized": False,
+                 "note": "Product's decision only. It reaches engineering when you send the wave again; it starts, releases and deploys nothing."})
+
+
+def cmd_acceptance_show(studio: Studio, args: argparse.Namespace) -> int:
+    folder = studio.draft / "product" / "acceptance"
+    found = {}
+    for path in sorted(folder.glob("WAVE-*.json")) if folder.is_dir() else []:
+        if args.wave_id in (None, path.stem):
+            try:
+                found[path.stem] = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                found[path.stem] = None
+    return emit({"acceptance": found, "factory_authorized": False})
+
+
 # ---- collaboration ----
 
 
@@ -1300,6 +1372,8 @@ def closure(studio: Studio, wave: Dict[str, Any]) -> Tuple[Dict[str, bytes], Lis
 
     add(f"product/delivery-waves/{wave['wave_id']}.json")
     add("product/project.json")
+    if acceptance_path(studio, wave["wave_id"]).is_file():
+        add(f"product/acceptance/{wave['wave_id']}.json")
     slices = studio.all("slice")
     theirs = studio.theirs()
     for slice_id in wave.get("slices") or []:
@@ -1374,6 +1448,7 @@ def describe_file(relative: str, is_new: bool) -> str:
     what = ("the project" if relative.endswith("project.json") else f"epic {stem}" if "/epics/" in relative
             else f"the work order for {stem}" if "/slices/" in relative and relative.startswith("product/")
             else f"the why for {stem}" if "/intents/" in relative else f"delivery wave {stem}" if "/delivery-waves/" in relative
+            else f"product's acceptance decision for {stem}" if "/acceptance/" in relative
             else f"the spec {Path(relative).name}")
     return f"{what} ({'new' if is_new else 'changed'})"
 
@@ -1401,6 +1476,8 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
         raise StudioError(f"{wave_id} cannot be sent yet:\n  " + "\n  ".join(dict.fromkeys(problems)))
     theirs = studio.theirs()
     changed = {relative: data for relative, data in files.items() if theirs.get(relative) != data}
+    if changed and all(relative.startswith("product/acceptance/") for relative in changed):
+        wave_id = f"{wave_id}-acceptance"  # the wave itself was accepted earlier: the decision is its own request
     ledger = studio.ledger()
     entry = ledger["waves"].get(wave_id)
     branch = studio.shared.prefix + wave_id
@@ -1422,7 +1499,8 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
                      "refreshed": fetched, "note": "Nothing has been sent."})
     if not entry or entry.get("digest") != digest or not entry.get("commit"):
         count = len(wave.get("slices") or [])
-        message = f"product({wave_id}): {count} slice{'s' if count != 1 else ''} approved for engineering"
+        message = (f"product({wave_id}): product's acceptance decision" if wave_id.endswith("-acceptance")
+                   else f"product({wave_id}): {count} slice{'s' if count != 1 else ''} approved for engineering")
         try:
             commit = collab.build_commit(studio.project, studio.shared, studio.home / "publish" / wave_id,
                                          remote_branch if on_remote else str(studio.shared.ref), changed, message,
@@ -1444,6 +1522,8 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     request_problem = ""
     if not entry.get("pull_request"):
         title, body = request_text(studio, wave)
+        if wave_id.endswith("-acceptance"):
+            title, body = f"Product: acceptance decision for {wave['wave_id']}", "Product's recorded decision on a qualified release of this wave (`product/acceptance/`). It changes no code and starts no work.\n\nSent from MACH Product Studio."
         request, request_problem = collab.open_pull_request(studio.project, studio.shared, branch, title, body)
         if request:
             entry["pull_request"] = request
@@ -1590,6 +1670,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="slice")
 
+    acceptance = sub.add_parser("acceptance", help="product's decision on a qualified release of a wave").add_subparsers(dest="action", required=True)
+    p = acceptance.add_parser("record", help="record accepted or rejected for one wave at one release")
+    p.add_argument("wave_id")
+    p.add_argument("--release", required=True, help="the release ID engineering qualified")
+    p.add_argument("--commit", required=True, help="the full commit the release was qualified at")
+    p.add_argument("--decision", required=True, choices=("accepted", "rejected"))
+    p.add_argument("--by", required=True, help="the role deciding, such as product-owner")
+    p.add_argument("--readiness", help="the readiness snapshot engineering shared (required to accept)")
+    p.add_argument("--note")
+    p.add_argument("--at", help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_acceptance_record)
+    p = acceptance.add_parser("show", help="recorded decisions; changes nothing")
+    p.add_argument("wave_id", nargs="?")
+    p.set_defaults(func=cmd_acceptance_show)
     wave = sub.add_parser("wave", help="delivery waves").add_subparsers(dest="action", required=True)
     p = wave.add_parser("new")
     p.add_argument("--slice", action="append", default=[])
@@ -1608,6 +1702,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="wave")
     return parser
+
+
+# The same words as the installer's (bin/mach GIT_MISSING), for a person who is not an engineer.
+GIT_MISSING = ("MACH needs Git, and Git is not installed on this computer. On a Mac, open Terminal, run  xcode-select --install  "
+               "and click Install in the window that appears (it installs Apple's command line tools, which include Git); "
+               "on Linux, install the 'git' package. Then run this again.")
 
 
 def refuse(exc: Exception) -> int:
@@ -1633,6 +1733,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return args.func(Studio(project), args)
     except (StudioError, collab.CollabError) as exc:
         return refuse(exc)
+    except FileNotFoundError as exc:
+        if exc.filename == "git":  # Git is not installed: say so plainly, not as a traceback
+            return refuse(StudioError(GIT_MISSING))
+        raise
     except Exception as exc:  # CellError and friends from the intent skill
         if exc.__class__.__name__ == "CellError":
             return refuse(exc)

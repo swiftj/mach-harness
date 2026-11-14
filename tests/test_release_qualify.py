@@ -1,0 +1,284 @@
+"""Release qualification (run.py release ...) and product acceptance (Product Studio's acceptance record).
+
+Each test publishes a real delivery wave with Product Studio into a local bare repository, has an
+"engineer" take it in, dispatch it and merge the ticket's branch, and leaves the archive the cleanup
+station would leave. Verdicts are written as the verification and review stations record them:
+simulated station records, real Git, a real rerun of the project's suite.
+"""
+
+import io
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
+import run  # noqa: E402
+from test_mach_product_collab import Base as CollabBase  # noqa: E402
+from test_mach_product_intake import Base as IntakeBase, git  # noqa: E402
+
+QUALIFY = ROOT / "skills" / "run" / "scripts" / "qualify.py"
+CHECK = "import pathlib, sys\nsys.exit(0 if pathlib.Path('ok.txt').is_file() else 1)\n"
+
+
+class Base(IntakeBase):
+    def setUp(self):
+        super().setUp()
+        (self.eng / "check.py").write_text(CHECK)
+        (self.eng / "ok.txt").write_text("ok\n")
+        git(self.eng, "add", "check.py", "ok.txt")
+        git(self.eng, "commit", "-q", "-m", "a suite")
+        git(self.eng, "push", "-q", "origin", "main")
+        self.configure()
+
+    def configure(self, **release):
+        config = {"tickets": {"provider": "local"}, "factory": {"max_parallel": 3},
+                  "audit": {"commands": {"test": f"{sys.executable} check.py"}}, "release": release}
+        (self.eng / ".factory/config.json").write_text(json.dumps(config))
+
+    def run_release(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = run.main(["--project", str(self.eng), "release", *argv])
+        return code, out.getvalue(), err.getvalue()
+
+    def release(self, *argv):
+        code, out, err = self.run_release(*argv)
+        self.assertEqual(code, 0, err + out)
+        return json.loads(out)
+
+    def refused_release(self, *argv):
+        code, out, err = self.run_release(*argv)
+        self.assertEqual(code, 1, out)
+        return err
+
+    def readiness(self, release_id):
+        return json.loads((self.eng / ".factory/release" / release_id / "readiness.json").read_text())
+
+    def scan(self, commit, findings=()):
+        folder = self.eng / ".factory/release/scans"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "scanner.json").write_text(json.dumps({"tool": "scanner", "commit": commit, "findings": list(findings)}))
+
+    def head(self):
+        return git(self.eng, "rev-parse", "HEAD").strip()
+
+    def finish(self, ticket_id="LOCAL-001", verdict="PASS", outcome="APPROVED", blockers=()):
+        """The ticket goes through the line: merged into main, then archived as the cleanup station would."""
+        landed = self.integrate(ticket_id)
+        merge_commit = self.head()
+        cell_dir = self.eng / ".factory/worktrees" / ticket_id
+        evidence = {f"ac-{n}.log": f"AC-0{n} proven\n".encode() for n in (1, 2, 3)}
+        import hashlib
+        summary = {"status": verdict, "head": landed, "checks": {f"AC-0{n}": {"kind": "scenario", "result": "pass", "note": None, "evidence": [f"ac-{n}.log"]} for n in (1, 2, 3)},
+                   "evidence_files": [{"file": name, "sha256": hashlib.sha256(data).hexdigest()} for name, data in evidence.items()]}
+        decision = {"outcome": outcome, "head": landed, "round": 1, "risk": "Medium", "blockers": len(blockers), "human_approval_required": False, "human_approval": None}
+        archive = self.eng / ".factory/archive"
+        archive.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory() as folder:
+            staged = Path(folder) / ticket_id
+            (staged / "evidence").mkdir(parents=True)
+            (staged / "review").mkdir()
+            shutil.copy(cell_dir / "cell.json", staged / "cell.json")
+            (staged / "evidence/summary.json").write_text(json.dumps(summary))
+            for name, data in evidence.items():
+                (staged / "evidence" / name).write_bytes(data)
+            (staged / "review/decision.json").write_text(json.dumps(decision))
+            with tarfile.open(str(archive / f"{ticket_id}.tar.gz"), "w:gz") as tar:
+                tar.add(str(staged), arcname=ticket_id)
+        record = {"record_version": 2, "ticket_id": ticket_id, "outcome": "merged", "archive": f".factory/archive/{ticket_id}.tar.gz",
+                  "integration": {"approved_commit": landed, "landed_commit": landed, "merge_commit": merge_commit, "method": "local"},
+                  "blockers": [{"round": 1, **b} for b in blockers]}
+        with (archive / "runs.jsonl").open("a") as handle:
+            handle.write(json.dumps(record) + "\n")
+        git(self.eng, "worktree", "remove", "--force", str(cell_dir / "repo"))
+        git(self.eng, "branch", "-D", f"feature/{ticket_id}")
+        shutil.rmtree(cell_dir)
+        return merge_commit
+
+    def ready(self, **finish):
+        """WAVE-001 (SLICE-001) taken in, built, verified, reviewed and merged."""
+        self.first()
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        return self.finish(**finish)
+
+    def studio_refused(self, project, *argv):
+        code, out, err = self.run_studio(project, *argv)
+        self.assertEqual(code, 1, out)
+        return err
+
+    def checks(self, data):
+        return {c["id"]: c for c in data["checks"]}
+
+
+class OutcomeTest(Base):
+    def test_qualified_and_byte_identical(self):
+        commit = self.ready()
+        self.configure(integration_command=f"{sys.executable} check.py")
+        self.scan(commit)
+        first = self.release("qualify", "WAVE-001", "--release", "r1")
+        self.assertEqual((first["outcome"], first["commit"], first["released"]), ("qualified", commit, False))
+        path = self.eng / ".factory/release/r1/readiness.json"
+        before = path.read_bytes()
+        run_before = json.loads((path.parent / "run.json").read_text())
+        self.release("qualify", "WAVE-001", "--release", "r1")
+        self.assertEqual(path.read_bytes(), before)
+        self.assertIn("evaluated_at", run_before)
+        data = self.readiness("r1")
+        self.assertNotIn("evaluated_at", json.dumps(data))
+        self.assertEqual(data["schema_version"], 1)
+        row = data["slices"][0]
+        self.assertEqual((row["slice_id"], row["ticket_id"], row["integration"]["status"], row["verification"]["verdict"], row["review"]["decision"]),
+                         ("SLICE-001", "LOCAL-001", "integrated", "PASS", "APPROVED"))
+        self.assertIn("merge-base --is-ancestor", row["integration"]["established_by"])
+        self.assertEqual([(s["scenario_id"], s["status"]) for s in data["acceptance_scenarios"]], [("AC-01", "pass"), ("AC-02", "pass"), ("AC-03", "pass")])
+        self.assertEqual(data["commands"]["test_suite"]["status"], "pass")
+        self.assertEqual(data["not_assessed"], ["performance"])
+        # A merged, verified, passing release is still not accepted by product.
+        self.assertEqual(data["product_acceptance"]["decision"], "not_recorded")
+
+    def test_a_missing_check_is_incomplete_never_a_pass(self):
+        self.ready()
+        result = self.release("qualify", "WAVE-001")
+        self.assertEqual(result["outcome"], "incomplete")
+        data = self.readiness(result["release_id"])
+        checks = self.checks(data)
+        self.assertEqual(checks["integration_tests"]["status"], "not_configured")
+        self.assertEqual(checks["security.scan"]["status"], "not_run")
+        self.assertEqual(set(data["incomplete"]), {"integration_tests", "security.scan"})
+
+    def test_a_failing_suite_blocks(self):
+        self.ready()
+        (self.eng / "ok.txt").unlink()
+        git(self.eng, "commit", "-q", "-am", "break the suite")
+        self.configure(integration_command=f"{sys.executable} check.py")
+        self.scan(self.head())
+        result = self.release("qualify", "WAVE-001")
+        self.assertEqual(result["outcome"], "blocked")
+        self.assertIn("suite", result["unresolved_blockers"])
+        self.assertTrue((self.eng / ".factory/release" / result["release_id"] / "logs/test-suite.log").is_file())
+
+    def test_a_suite_that_cannot_run_is_not_run(self):
+        self.ready()
+        (self.eng / ".factory/config.json").write_text(json.dumps({"audit": {"commands": {"test": "no-such-runner-xyz"}}}))
+        result = self.release("qualify", "WAVE-001")
+        self.assertEqual(self.checks(self.readiness(result["release_id"]))["suite"]["status"], "not_run")
+        self.assertEqual(result["outcome"], "incomplete")
+
+    def test_failed_verification_and_open_blockers_block(self):
+        commit = self.ready(verdict="FAIL_WITH_EVIDENCE",
+                            blockers=[{"reviewer": "security", "rule": "INV-01", "title": "token logged", "file": "a.py"}])
+        self.configure(integration_command=f"{sys.executable} check.py")
+        self.scan(commit, [{"id": "X-1", "severity": "high", "title": "bad"}])
+        data = self.readiness(self.release("qualify", "WAVE-001", "--release", "r2")["release_id"])
+        self.assertEqual(data["outcome"], "blocked")
+        self.assertIn("slice.SLICE-001.verification", data["unresolved_blockers"])
+        self.assertIn("blocker.SLICE-001.r1.1", data["unresolved_blockers"])
+        self.assertIn("security.scan.scanner", data["unresolved_blockers"])
+        self.assertEqual(data["security"]["open_review_blockers"][0]["title"], "token logged")
+
+    def test_work_not_integrated_is_not_qualified(self):
+        self.first()
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        data = self.readiness(self.release("qualify", "WAVE-001", "--release", "r3")["release_id"])
+        self.assertEqual(self.checks(data)["slice.SLICE-001.integrated"]["status"], "fail")
+        self.assertEqual(self.checks(data)["slice.SLICE-001.verification"]["status"], "missing")
+        self.assertEqual(data["outcome"], "blocked")
+
+
+class ExceptionTest(Base):
+    def test_exceptions_apply_only_at_their_commit(self):
+        commit = self.ready()
+        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "incomplete")
+        for check in ("integration_tests", "security.scan"):
+            self.release("except", "--release", "r1", "--check", check, "--by", "release-manager", "--reason", "Accepted for this internal release only.")
+        again = self.release("qualify", "WAVE-001", "--release", "r1")
+        self.assertEqual(again["outcome"], "qualified_with_exceptions")
+        data = self.readiness("r1")
+        self.assertEqual(self.checks(data)["security.scan"]["exception"]["by"], "release-manager")
+        # The same exception written for another commit does not apply.
+        path = self.eng / ".factory/release/r1/exceptions.jsonl"
+        forged = [json.loads(line) for line in path.read_text().splitlines()]
+        path.write_text("".join(json.dumps({**item, "commit": "f" * 40}) + "\n" for item in forged))
+        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "incomplete")
+        self.assertEqual({i["not_applied_because"] for i in self.readiness("r1")["exceptions_not_applied"]}, {"recorded for another commit"})
+        self.assertEqual(commit, self.readiness("r1")["release"]["commit"])
+
+    def test_refusals(self):
+        self.ready()
+        self.assertIn("Not an approved delivery wave", self.refused_release("qualify", "WAVE-009"))
+        self.release("qualify", "WAVE-001", "--release", "r1")
+        self.assertIn("names a role", self.refused_release("except", "--release", "r1", "--check", "security.scan", "--by", "Ada Lovelace", "--reason", "because it is fine"))
+        self.assertIn("passes", self.refused_release("except", "--release", "r1", "--check", "suite", "--by", "release-manager", "--reason", "because it is fine"))
+        self.assertIn("no check", self.refused_release("except", "--release", "r1", "--check", "nope", "--by", "release-manager", "--reason", "because it is fine"))
+        self.assertIn("No readiness snapshot", self.refused_release("show", "r9"))
+        (self.eng / "ok.txt").write_text("changed\n")
+        git(self.eng, "commit", "-q", "-am", "move on")
+        self.assertIn("names one commit", self.refused_release("qualify", "WAVE-001", "--release", "r1"))
+
+
+class AcceptanceTest(Base):
+    def test_acceptance_is_recorded_published_and_read_never_inferred(self):
+        commit = self.ready()
+        self.configure(integration_command=f"{sys.executable} check.py")
+        self.scan(commit)
+        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "qualified")
+        readiness = str(self.eng / ".factory/release/r1/readiness.json")
+        base = ("acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner")
+        self.assertIn("readiness snapshot", self.studio_refused(self.a, *base, "--decision", "accepted"))
+        self.assertIn("names a role", self.studio_refused(self.a, "acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit,
+                                                    "--by", "Ada", "--decision", "rejected"))
+        self.assertIn("not for release", self.studio_refused(self.a, "acceptance", "record", "WAVE-001", "--release", "r2", "--commit", commit,
+                                                       "--by", "product-owner", "--decision", "accepted", "--readiness", readiness))
+        recorded = self.ok(self.a, *base, "--decision", "accepted", "--readiness", readiness)["acceptance"]
+        self.assertEqual((recorded["decision"], recorded["readiness_outcome"], recorded["release_commit"]), ("accepted", "qualified", commit))
+        self.assertTrue(self.ok(self.a, "validate")["valid"])
+        # Published like any product file, on its own request, and merged by engineering.
+        sent = self.ok(self.a, "send", "WAVE-001")
+        self.assertEqual(sent["branch"], "product/WAVE-001-acceptance")
+        self.land("product/WAVE-001-acceptance")
+        again = self.release("qualify", "WAVE-001", "--release", "r1", "--commit", commit)
+        self.assertEqual((again["outcome"], again["product_acceptance"]), ("qualified", "accepted"))
+
+    def test_an_unqualified_release_can_only_be_rejected(self):
+        commit = self.ready()
+        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "incomplete")
+        readiness = str(self.eng / ".factory/release/r1/readiness.json")
+        base = ("acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner", "--readiness", readiness)
+        self.assertIn("incomplete", self.studio_refused(self.a, *base, "--decision", "accepted"))
+        self.assertEqual(self.ok(self.a, *base, "--decision", "rejected")["acceptance"]["decision"], "rejected")
+
+
+class GuardTest(unittest.TestCase):
+    def test_it_lands_publishes_and_starts_nothing(self):
+        source = QUALIFY.read_text()
+        used = set(re.findall(r"_git(?:_bytes)?\(\"([a-z-]+)\"", source))
+        self.assertEqual(used, {"merge-base", "show", "rev-parse", "archive"})
+        self.assertEqual(len(re.findall(r"subprocess\.run\(", source)), 2)  # only the two read-only Git helpers
+        for word in ('"push"', '"tag"', '"merge"', '"checkout"', '"fetch"', '"worktree"', "deploy", "Popen", "os.system",
+                     "claude", "Workflow", "runner.json", "read_local_policy", "factory_started\": True"):
+            self.assertNotIn(word, source, word)
+
+    def test_no_station_agent_or_workflow_calls_it(self):
+        allowed = {ROOT / "skills/run/scripts/qualify.py", ROOT / "skills/run/scripts/run.py", ROOT / "skills/run/SKILL.md"}
+        found = []
+        for top in ("skills", "agents", "workflows", "templates", "bin"):
+            for path in sorted((ROOT / top).rglob("*")):
+                if path.is_file() and "__pycache__" not in path.parts and path not in allowed:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    found += [f"{path.relative_to(ROOT)}: {word}" for word in ("qualify", "readiness.json", "release except") if word in text]
+        self.assertEqual(found, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

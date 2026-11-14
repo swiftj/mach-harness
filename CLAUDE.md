@@ -215,7 +215,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Consensus Thresholds** (set in `.factory/config.json` under `review`):
   * **High Risk** (Auth, Billing, DB Schema, changes to existing contracts): **Unanimous 3/3 + 1 human approval**. Adding a new contract file does not make a ticket High risk.
   * **Factory tuning** (label `factory-tuning`, rule files only): **Unanimous 3/3 on the contracts tier, no human approval**.
-  * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden. A blocker from the security seat is never outvoted: it rejects the round whatever the count (`review.security_veto`, on unless a project switches it off).
+  * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden. A blocker from the security seat is never outvoted: it rejects the round whatever the count (`review.security_veto`, on unless a project switches it off). Since M7 any seat may mark a blocker `"class": "security"` with an `impact`; one of high or critical impact rejects the round at every tier, no setting switches that off, and a later round may raise it on any file. The supervisor refuses unattended work while tracked settings switch the veto off, take the security seat off Medium or High panels, or drop High-risk human approval; a person can still run that ticket by hand.
   * **Low Risk** (Docs, wording): **1/1**, one general reviewer.
   * A Silver readiness tier also requires a human approval, whatever the risk.
 * **Start gate**: only a cell with a passing verification for exactly the code under review.
@@ -338,6 +338,15 @@ A read-only view of the Factory in the browser. Code: `apps/observer` (Go, stand
 * **One product (M6.6)**: the three workspaces share one source state (Live Factory, Historical replay, Simulation, stale, disconnected, a source unavailable, history incomplete). Held at an earlier moment, nothing after the playhead is shown in any workspace unless the person turns on "Show what happened after this moment". Figures counted by whole UTC day say which day they stop at. Every field the observer declares as free text (`display_policy.free_text`) is shown plain, bounded and labelled as not checked for names, and never placed in a tooltip, an accessible name, the address or storage. Checked against real supervised runs. Acceptance: `docs/mach-next/M6_6_ACCEPTANCE.md`.
 * **Not finished**: no published release carries the observer yet.
 * **Never**: enables, starts, pauses, dispatches, approves or merges anything; writes outside `.factory/local/observer/`; listens on anything but `127.0.0.1`.
+
+### Experimental: release qualification (`/mach-run release`, MACH Next M7)
+
+`skills/run/scripts/qualify.py`, reached as `run.py release status|qualify|show|except`, evaluates approved delivery waves at one exact commit of the integration branch and writes a deterministic snapshot, `.factory/release/<release-id>/readiness.json` (schema `docs/mach-next/schemas/release-readiness.v1.schema.json`). Design: `docs/mach-next/M7_RELEASE_QUALIFICATION.md`.
+
+* **Evidence, not prose**: each slice's ticket, integration (checked in Git), verification verdict and review decision from the archived run record; every `AC-NN` mapped to its recorded evidence; the test suite rerun at that commit on a clean tree with the audit station's runner; contracts unchanged since review approved them; dependencies integrated; no newer approved revision left out; integration tests (`release.integration_command`) and performance if declared; open review blockers and scanner reports (`.factory/release/scans/`).
+* **Outcome**: `blocked` (a failing check or open blocker), else `incomplete` (a required check missing, not run or not configured: never a pass), else `qualified_with_exceptions` (each gap carries a person's exception for this exact commit, `release except`, only on their explicit word), else `qualified`.
+* **Product acceptance**: Product Studio's `acceptance record` writes `product/acceptance/WAVE-NNN.json`, bound to the wave's approved bytes, the release and its commit; accepting needs a qualified snapshot; it is published by `send`. The snapshot reports `accepted`, `rejected` or `not_recorded` from merged product files and never infers it.
+* **Never**: merges, pushes, tags, deploys, starts a station, or reads the machine-local Factory settings; no station, agent or workflow calls it.
 
 ### Merge station: `/mach-merge`
 

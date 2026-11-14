@@ -25,7 +25,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 TRACKED = ("product/project.json", "product/epics/EPIC-*.json", "product/slices/SLICE-*.json",
-           "product/intents/SLICE-*.md", "product/delivery-waves/WAVE-*.json", "specs/slices/SLICE-*.md")
+           "product/intents/SLICE-*.md", "product/delivery-waves/WAVE-*.json", "specs/slices/SLICE-*.md",
+           "product/acceptance/WAVE-*.json")
 REMOTE = "origin"
 UNREACHABLE = "The shared repository could not be reached."
 ID_IN_PATH_RE = re.compile(r"(EPIC|SLICE|WAVE)-(\d{3,})")

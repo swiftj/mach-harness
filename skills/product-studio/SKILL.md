@@ -166,6 +166,14 @@ Sending asks engineering to accept an approved wave into the shared project. It 
 
 Sending the same wave again after a change adds to the same request. A slice that another depends on must be in the same wave or already accepted.
 
+## Accepting a release
+
+Once engineering has built a wave and checked it as a release, they share a readiness snapshot file and its release ID and commit. Product's decision on it is recorded here, never inferred from a merge or passing tests.
+
+1. Read the snapshot with the PM: its `outcome`, and anything under `unresolved_blockers`, `incomplete` and `exceptions`. Do not judge it yourself.
+2. Only on the PM's explicit decision: `STUDIO acceptance record <WAVE-ID> --release <id> --commit <full commit> --decision accepted|rejected --by <their role> --readiness <path engineering gave> [--note "<their words>"]`. `--by` is a role such as `product-owner`, never a name. Accepting is refused unless the snapshot is for that release and commit, holds this exact wave, and is `qualified` or `qualified_with_exceptions`; rejecting is always possible.
+3. The decision reaches engineering by sending the wave again (**Sending to engineering**), on the PM's yes. It releases and deploys nothing. `STUDIO acceptance show` lists what was recorded.
+
 ## Review feedback
 
 `STUDIO feedback` (or `STUDIO feedback <WAVE-ID>`) reports each sent wave in the PM's terms: `Waiting for review`, `Changes requested`, `Blocked by a check`, `Accepted, waiting to merge`, `Needs updating`, `Accepted`, `Declined`.
