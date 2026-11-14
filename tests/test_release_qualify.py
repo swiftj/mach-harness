@@ -71,8 +71,15 @@ class Base(IntakeBase):
     def head(self):
         return git(self.eng, "rev-parse", "HEAD").strip()
 
-    def finish(self, ticket_id="LOCAL-001", verdict="PASS", outcome="APPROVED", blockers=()):
-        """The ticket goes through the line: merged into main, then archived as the cleanup station would."""
+    def finish(self, ticket_id="LOCAL-001", verdict="PASS", outcome="APPROVED", blockers=(), contract=None):
+        """The ticket goes through the line: merged into main, then archived as the cleanup station would.
+        With `contract` (path, text), the slice's plan names that contract and its build writes it."""
+        if contract:
+            path, text = contract
+            target = self.eng / ".factory/worktrees" / ticket_id / "repo" / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text)
+            self.set_cell(ticket_id, contracts=[path])
         landed = self.integrate(ticket_id)
         merge_commit = self.head()
         cell_dir = self.eng / ".factory/worktrees" / ticket_id
@@ -110,6 +117,11 @@ class Base(IntakeBase):
         self.product("intake")
         self.product("dispatch", "SLICE-001")
         return self.finish(**finish)
+
+    def share(self):
+        """Engineering's integration branch, with the release commit, reaches the product managers."""
+        git(self.eng, "push", "-q", "origin", "main")
+        self.ok(self.a, "refresh")
 
     def studio_refused(self, project, *argv):
         code, out, err = self.run_studio(project, *argv)
@@ -234,6 +246,7 @@ class AcceptanceTest(Base):
         self.scan(commit)
         self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "qualified")
         readiness = str(self.eng / ".factory/release/r1/readiness.json")
+        self.share()
         base = ("acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner")
         self.assertIn("readiness snapshot", self.studio_refused(self.a, *base, "--decision", "accepted"))
         self.assertIn("names a role", self.studio_refused(self.a, "acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit,
@@ -254,9 +267,83 @@ class AcceptanceTest(Base):
         commit = self.ready()
         self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "incomplete")
         readiness = str(self.eng / ".factory/release/r1/readiness.json")
+        self.share()
         base = ("acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner", "--readiness", readiness)
         self.assertIn("incomplete", self.studio_refused(self.a, *base, "--decision", "accepted"))
         self.assertEqual(self.ok(self.a, *base, "--decision", "rejected")["acceptance"]["decision"], "rejected")
+
+
+    def test_a_merged_wave_is_accepted_even_when_its_draft_moved_on(self):
+        """D4: the decision binds to the wave as merged at the release commit, not to the workspace's draft."""
+        commit = self.ready()
+        self.configure(integration_command=f"{sys.executable} check.py")
+        self.scan(commit)
+        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "qualified")
+        self.share()
+        draft = self.draft(self.a, "product/delivery-waves/WAVE-001.json")
+        data = json.loads(draft.read_text())
+        draft.write_text(json.dumps({**data, "status": "draft", "approval": None, "revision": data["revision"] + 1}, indent=2, sort_keys=True) + "\n")
+        readiness = str(self.eng / ".factory/release/r1/readiness.json")
+        recorded = self.ok(self.a, "acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner",
+                           "--decision", "accepted", "--readiness", readiness)["acceptance"]
+        self.assertEqual((recorded["wave_revision"], recorded["decision"]), (data["revision"], "accepted"))
+        self.assertEqual(self.ok(self.a, "send", "WAVE-001")["branch"], "product/WAVE-001-acceptance")
+        self.land("product/WAVE-001-acceptance")
+        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1", "--commit", commit)["product_acceptance"], "accepted")
+        # Refused only when the wave at that commit is not an approved wave.
+        self.assertIn("not in the shared project", self.studio_refused(self.a, "acceptance", "record", "WAVE-007", "--release", "r1", "--commit", commit,
+                                                                          "--by", "product-owner", "--decision", "rejected"))
+
+
+class ContractTest(Base):
+    """D2: a contract shared by slices is judged against the latest reviewed change to it."""
+
+    def two_slices(self):
+        self.ready(contract=("proto/api.yaml", "version: 1\n"))
+        second = self.slice(self.a, "Second")
+        self.publish(self.a, second)
+        self.product("intake")
+        self.product("dispatch", second)
+        self.finish("LOCAL-002", contract=("proto/api.yaml", "version: 2\n"))
+
+    def contract_checks(self, *waves):
+        data = self.readiness(self.release("qualify", *waves)["release_id"])
+        return data, {c["id"]: c for c in data["checks"] if c["id"].startswith("contract.")}
+
+    def test_a_later_reviewed_change_supersedes_an_earlier_one(self):
+        self.two_slices()
+        data, checks = self.contract_checks("WAVE-001", "WAVE-002")
+        first, second = checks["contract.SLICE-001.proto/api.yaml"], checks["contract.SLICE-002.proto/api.yaml"]
+        self.assertEqual((first["status"], second["status"]), ("pass", "pass"))
+        self.assertIn("Superseded by SLICE-002", first["detail"])
+        self.assertEqual(data["slices"][0]["contracts"][0]["superseded_by"], "SLICE-002")
+        self.assertNotIn("contract.SLICE-001.proto/api.yaml", data["unresolved_blockers"] + data["incomplete"])
+
+    def test_a_change_outside_review_fails(self):
+        self.two_slices()
+        (self.eng / "proto/api.yaml").write_text("version: 3\n")
+        git(self.eng, "commit", "-q", "-am", "edit the contract by hand")
+        data, checks = self.contract_checks("WAVE-001", "WAVE-002")
+        self.assertEqual({c["status"] for c in checks.values()}, {"fail"})
+        self.assertIn("changed outside review", checks["contract.SLICE-002.proto/api.yaml"]["detail"])
+        self.assertEqual(data["outcome"], "blocked")
+
+    def test_a_change_from_outside_the_release_is_incomplete(self):
+        self.two_slices()
+        data, checks = self.contract_checks("WAVE-001")
+        check = checks["contract.SLICE-001.proto/api.yaml"]
+        self.assertEqual(check["status"], "missing")
+        self.assertIn("SLICE-002 (LOCAL-002) outside this release", check["detail"])
+        self.assertIn("contract.SLICE-001.proto/api.yaml", data["incomplete"])
+
+    def test_a_missing_review_record_is_missing(self):
+        self.two_slices()
+        runs = self.eng / ".factory/archive/runs.jsonl"
+        lines = [json.loads(line) for line in runs.read_text().splitlines()]
+        lines[0]["integration"]["approved_commit"] = "0" * 40
+        runs.write_text("".join(json.dumps(line) + "\n" for line in lines))
+        _, checks = self.contract_checks("WAVE-001", "WAVE-002")
+        self.assertEqual(checks["contract.SLICE-001.proto/api.yaml"]["status"], "missing")
 
 
 class GuardTest(unittest.TestCase):

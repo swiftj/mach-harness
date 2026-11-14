@@ -469,6 +469,14 @@ def review_state(project: Path, branch: str, app: bool = False) -> Tuple[Optiona
     return (data, "") if isinstance(data, dict) else (None, "The review status could not be read.")
 
 
+def latest_request(project: Path, branch: str) -> Optional[Dict[str, Any]]:
+    """The latest pull request from this branch as {"state": "open"|"merged"|"closed", "number": ...};
+    None when there is none or it cannot be read (no gh, no network). The same read as review_state."""
+    view, _ = review_state(project, branch)
+    found = str((view or {}).get("state") or "").lower()
+    return {"state": found, "number": (view or {}).get("number")} if found in ("open", "merged", "closed") else None
+
+
 def in_words(view: Dict[str, Any], app: bool = False) -> Dict[str, Any]:
     """A pull request's state in a product manager's words. Reviewers' text is passed on as data.
     `state` is a fixed identifier for software; with `app`, the words leave out merge and pull requests."""

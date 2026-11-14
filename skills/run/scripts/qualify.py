@@ -288,6 +288,7 @@ class Release:
             in_scope += [s for s in snap.waves[wave_id].get("slices") or [] if s not in in_scope]
         integrated: Dict[str, bool] = {}
         slices_out, scenarios_out, approvals, open_blockers = [], [], [], []
+        shared: Dict[str, List[Dict[str, Any]]] = {}
 
         for wave_id in waves:
             wave = snap.waves[wave_id]
@@ -404,24 +405,15 @@ class Release:
                 scenarios_out.append({"slice_id": slice_id, "scenario_id": scenario_id, "status": status, "evidence": evidence})
                 check(f"scenario.{slice_id}.{scenario_id}", "scenario", status, detail)
 
-            # Contracts: each one the slice's plan named exists at the release, unchanged from what review approved.
-            contracts = []
+            # Contracts: gathered here, judged across the release below (a contract can be shared by slices).
+            row["contracts"] = []
             for name in cell.get("contracts") or [] if isinstance(cell.get("contracts"), list) else []:
-                now_bytes = self.file_at(commit, str(name))
-                then_bytes = self.file_at(approved, str(name)) if approved else None
-                item = {"path": name, "sha256_at_release": sha(now_bytes) if now_bytes is not None else None,
-                        "sha256_approved": sha(then_bytes) if then_bytes is not None else None}
-                contracts.append(item)
-                if now_bytes is None:
-                    check(f"contract.{slice_id}.{name}", "contract", "fail", "The contract file does not exist at the release commit.")
-                elif then_bytes is None:
-                    check(f"contract.{slice_id}.{name}", "contract", "missing", "The contract as review approved it cannot be read.")
-                elif item["sha256_at_release"] != item["sha256_approved"]:
-                    check(f"contract.{slice_id}.{name}", "contract", "fail", "The integrated file differs from the version review approved for this slice.")
-                else:
-                    check(f"contract.{slice_id}.{name}", "contract", "pass", "Present and identical to the approved version.")
-            row["contracts"] = contracts
+                shared.setdefault(str(name), []).append({"slice_id": slice_id, "ticket_id": ticket_id, "approved": approved,
+                                                         "landed": facts.get("commit") if integrated[slice_id] else None, "row": row})
             slices_out.append(row)
+
+        for name in sorted(shared):
+            self.judge_contract(name, shared[name], commit, records, {row["ticket_id"] for row in slices_out}, check)
 
         for row in slices_out:
             for dep in row["dependencies"]:
@@ -514,6 +506,72 @@ class Release:
         return {"release_id": release_id, "commit": commit, "outcome": outcome, "readiness": str(folder / "readiness.json"),
                 "unresolved_blockers": blocking, "incomplete": incomplete, "exceptions": excepted,
                 "product_acceptance": body["product_acceptance"]["decision"], "released": False}
+
+    def reviewed_change(self, name: str, approved: Optional[str], landed: Optional[str]) -> Tuple[Optional[bytes], bool]:
+        """The contract as a review approved it, and whether that slice changed it: it differs from the slice's base,
+        where its branch meets the integration branch as it was just before the slice landed."""
+        then = self.file_at(approved, name) if approved else None
+        if then is None or not landed:
+            return then, False
+        base = self._git("merge-base", approved, f"{landed}^1").stdout.strip()
+        return then, (self.file_at(base, name) if base else None) != then
+
+    def judge_contract(self, name: str, users: List[Dict[str, Any]], commit: str, records: Dict[str, Dict[str, Any]],
+                       in_scope_tickets: set, check: Callable[..., None]) -> None:
+        """A contract shared by slices must be, at the release, the version approved by the latest integrated
+        review that changed it. An earlier slice's version is then superseded, not failed. It fails when no
+        reviewed version matches (changed outside review); it is incomplete when the latest change came from a
+        slice outside this release, whose review this release does not include."""
+        now_bytes = self.file_at(commit, name)
+        for user in users:
+            user["then"], user["touched"] = self.reviewed_change(name, user["approved"], user["landed"])
+        touchers = [u for u in users if u["landed"] and u["then"] is not None and u["touched"]]
+        latest = None
+        for user in touchers:
+            if latest is None or self.contains(latest["landed"], user["landed"]):
+                latest = user
+        outside = self.outside_change(name, now_bytes, commit, records, in_scope_tickets) if now_bytes is not None and (latest is None or latest["then"] != now_bytes) else None
+        for user in users:
+            check_id = f"contract.{user['slice_id']}.{name}"
+            item = {"path": name, "sha256_at_release": sha(now_bytes) if now_bytes is not None else None,
+                    "sha256_approved": sha(user["then"]) if user["then"] is not None else None, "superseded_by": None}
+            user["row"]["contracts"].append(item)
+            if now_bytes is None:
+                check(check_id, "contract", "fail", "The contract file does not exist at the release commit.")
+            elif user["then"] is None:
+                check(check_id, "contract", "missing", "The contract as this slice's review approved it cannot be read.")
+            elif latest is not None and latest["then"] == now_bytes:
+                if user is latest or user["then"] == now_bytes:
+                    check(check_id, "contract", "pass", "Identical to the latest reviewed change to it in this release"
+                          + ("." if user is latest else f" ({latest['slice_id']})."))
+                else:
+                    item["superseded_by"] = latest["slice_id"]
+                    check(check_id, "contract", "pass", f"Superseded by {latest['slice_id']}'s reviewed change ({latest['ticket_id']}).")
+            elif latest is None and user["then"] == now_bytes:
+                check(check_id, "contract", "pass", "Unchanged since this slice's review approved it.")
+            elif outside:
+                check(check_id, "contract", "missing", f"The latest change to it came from {outside} outside this release, so the release would ship a contract "
+                      "not reviewed within it. Qualify with that slice's wave included.")
+            else:
+                check(check_id, "contract", "fail", "The integrated file matches no version a review in this release approved: it was changed outside review.")
+
+    def outside_change(self, name: str, now_bytes: bytes, commit: str, records: Dict[str, Dict[str, Any]], in_scope_tickets: set) -> Optional[str]:
+        """An integrated ticket outside the release whose reviewed change made the contract what it is now."""
+        for ticket_id, record in sorted(records.items()):
+            if ticket_id in in_scope_tickets or record.get("outcome") != "merged":
+                continue
+            files = self.archive(ticket_id)
+            cell = self.json_in(files, "cell.json")
+            if name not in (cell.get("contracts") or []):
+                continue
+            approved = (record.get("integration") or {}).get("approved_commit") or self.json_in(files, "review/decision.json").get("head")
+            facts = self.line.work(ticket_id, commit)
+            if facts.get("status") != "integrated":
+                continue
+            then, touched = self.reviewed_change(name, approved, facts.get("commit"))
+            if then == now_bytes and touched:
+                return f"{cell.get('slice_id') or record.get('slice_id') or 'a slice'} ({ticket_id})"
+        return None
 
     def dependency_integrated(self, slice_id: str, commit: str) -> bool:
         entry = self.line.ledger()["slices"].get(slice_id) or {}

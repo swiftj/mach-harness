@@ -827,3 +827,70 @@ class FailureWordingTest(Base):
         self.set_gh(fail=[])
         self.sends_once_later()
 
+
+
+class LaterRevisionTest(Base):
+    """M7 Factory D1 and PM D8: a revised wave whose earlier request was merged or closed gets a new
+    request; one that is still open is updated; nothing is force-pushed."""
+
+    def revise(self, project, note):
+        self.ok(project, "slice", "reopen", "SLICE-001")
+        self.write_slice(project, "SLICE-001", extra=f"\n{note}\n")
+        self.ok(project, "slice", "approve", "SLICE-001")
+        self.ok(project, "wave", "approve", "WAVE-001", "--at", AT)
+
+    def added_to(self, earlier):
+        """The branch now holds a later commit on top of the earlier one: never rewritten."""
+        later = git(self.origin, "rev-parse", "product/WAVE-001").strip()
+        self.assertNotEqual(later, earlier)
+        subprocess.run(["git", "merge-base", "--is-ancestor", earlier, later], cwd=str(self.origin), check=True)
+
+    def test_a_merged_request_gets_a_new_one_for_the_next_revision(self):
+        self.shared_start()
+        earlier = git(self.origin, "rev-parse", "product/WAVE-001").strip()
+        self.revise(self.a, "Revised after it was accepted.")
+        wave = next(row for row in self.ok(self.a, "status")["waves"] if row["wave_id"] == "WAVE-001")
+        shared_revision = wave["shared"]["revision"]
+        self.assertLess(shared_revision, wave["revision"])
+        self.assertEqual(wave["shared_note"], f"merged at revision {shared_revision}; your draft is revision {wave['revision']}, not sent")
+        self.assertEqual(self.ok(self.a, "send", "WAVE-001", "--dry-run")["request"], "opens a new request")
+        sent = self.ok(self.a, "send", "WAVE-001")
+        self.assertEqual((sent["status"], sent["pull_request"]), ("Waiting for review", "https://example.test/pull/2"))
+        self.assertEqual([pr["state"] for pr in self.gh()["prs"]], ["MERGED", "OPEN"])
+        self.added_to(earlier)
+        entry = json.loads((self.a / ".factory/studio/publications.json").read_text())["waves"]["WAVE-001"]
+        self.assertEqual([(r["number"], r["state"]) for r in entry["earlier_requests"]], [(1, "merged")])
+        self.assertEqual(self.ok(self.a, "feedback", "WAVE-001")["waves"][0]["pull_request"], "https://example.test/pull/2")
+        self.assertTrue(next(row for row in self.ok(self.a, "status")["waves"] if row["wave_id"] == "WAVE-001")["shared_note"].endswith(", sent"))
+        self.ok(self.a, "send", "WAVE-001")  # again: the open one is reused
+        self.assertEqual(len(self.gh()["prs"]), 2)
+
+    def test_another_pm_revising_a_merged_wave_is_not_told_it_is_in_review(self):
+        self.shared_start()
+        earlier = git(self.origin, "rev-parse", "product/WAVE-001").strip()
+        self.revise(self.b, "Ben's revision of an accepted wave.")
+        sent = self.ok(self.b, "send", "WAVE-001")
+        self.assertEqual(sent["pull_request"], "https://example.test/pull/2")
+        self.assertEqual(len([pr for pr in self.gh()["prs"] if pr["state"] == "OPEN"]), 1)
+        self.added_to(earlier)
+        self.assertEqual(self.ok(self.b, "feedback", "WAVE-001")["waves"][0]["status"], "Waiting for review")
+        # While Ben's request is open, Ada revising the same wave is told it is in review.
+        self.ok(self.a, "refresh")
+        self.revise(self.a, "Ada's competing revision.")
+        bens = git(self.origin, "rev-parse", "product/WAVE-001")
+        self.assertIn("has a later revision of WAVE-001 in review", self.refused(self.a, "send", "WAVE-001"))
+        self.assertEqual(len(self.gh()["prs"]), 2)
+        self.assertEqual(git(self.origin, "rev-parse", "product/WAVE-001"), bens)  # nothing pushed onto Ben's request
+
+    def test_a_closed_request_gets_a_new_one(self):
+        self.first_wave(self.a)
+        self.ok(self.a, "send", "WAVE-001")
+        earlier = git(self.origin, "rev-parse", "product/WAVE-001").strip()
+        self.set_pr(1, state="CLOSED")
+        self.assertEqual(self.ok(self.a, "feedback", "WAVE-001")["waves"][0]["status"], "Declined")
+        self.revise(self.a, "Revised after it was declined.")
+        sent = self.ok(self.a, "send", "WAVE-001")
+        self.assertEqual(sent["pull_request"], "https://example.test/pull/2")
+        self.assertEqual([pr["state"] for pr in self.gh()["prs"]], ["CLOSED", "OPEN"])
+        self.added_to(earlier)
+        self.assertEqual(self.ok(self.a, "feedback", "WAVE-001")["waves"][0]["status"], "Waiting for review")

@@ -142,7 +142,8 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
 
 
 def _acceptance(data: Dict[str, Any], location: str, errors: List[str], waves: Dict[str, Dict[str, Any]], project_id: Any, stem: str) -> None:
-    """Shape and references only. Whether it applies to a release is the release check's decision."""
+    """Shape and references only. It is bound to the wave as merged at the release (wave_sha256), so a draft of
+    the wave may have moved on. Whether it applies to a release is the release check's decision."""
     for key in sorted(set(ACCEPTANCE) - set(data)):
         _error(errors, location, "missing field '{}'".format(key))
     for key in sorted(set(data) - set(ACCEPTANCE)):
@@ -154,8 +155,6 @@ def _acceptance(data: Dict[str, Any], location: str, errors: List[str], waves: D
         _error(errors, location, "wave_id must be a wave ID matching the filename")
     elif wave_id not in waves:
         _error(errors, location, "unknown wave '{}'".format(wave_id))
-    elif waves[wave_id].get("status") != "approved_for_engineering":
-        _error(errors, location, "acceptance is only for an approved wave")
     if data.get("project_id") != project_id:
         _error(errors, location, "project_id does not match project.json")
     if type(data.get("wave_revision")) is not int or data["wave_revision"] < 1:

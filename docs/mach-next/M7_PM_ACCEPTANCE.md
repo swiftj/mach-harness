@@ -216,3 +216,15 @@ Fixed after the run above, in `skills/product-studio/scripts/collab.py`, `studio
 - **D7, untouched.** Getting a copy of the shared project is a one-time step outside Product Studio by design.
 - **D8, untouched.** The `status` suggestion for a wave someone else already sent, and the refusal naming
   WAVE-002, need a change to how status and wave approval treat published waves, not wording.
+- **Factory acceptance D1 and PM D8, corrected.** `send` now reads the real state of the latest pull request
+  from the wave's branch (`gh pr view`, already allowed; no new command). Open and this workspace's: it is
+  updated, never duplicated. Merged or closed: the recorded request is kept under `earlier_requests` in the
+  ledger and a new request is opened for the later revision; the new commit is built on top of the old branch
+  when it still exists (a fast-forward, never a force-push) or from the integration branch when it was
+  deleted. "Another product manager already has WAVE-NNN in review" is said only when an open request for the
+  wave is not this workspace's; for a wave already in the shared project the PM is told to wait for that
+  decision rather than to renumber. `feedback` reports the latest request. `status` now shows, for a wave
+  whose shared revision differs from the draft, `shared` (revision, status) and `shared_note`, for example
+  "merged at revision 4; your draft is revision 5, not sent". Tests: `LaterRevisionTest` (merged, merged by
+  another PM then a competing open one, closed), with the fake `gh`; the allowed-command test is unchanged
+  and passes. The next-step suggestion text for such a wave is unchanged.
