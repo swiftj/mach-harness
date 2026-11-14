@@ -58,6 +58,37 @@ class PolicyError(Exception):
     """A problem the caller can fix; run.py prints it as a refusal."""
 
 
+BY_HAND = "a person can still run that ticket by hand (/mach-run)"
+
+
+def security_review_problems(config: Dict[str, Any]) -> List[str]:
+    """Tracked review settings that take the security check away from unattended work. Each one refuses unattended
+    execution; none changes a threshold or the manual path. Reads only the project's review settings, never a product file."""
+    review = config.get("review") if isinstance(config.get("review"), dict) else {}
+    problems = []
+    if review.get("security_veto") is False:
+        problems.append(f"review.security_veto is false: a security blocker could be outvoted. Unattended execution is refused while that is so; {BY_HAND}.")
+    for tier in ("medium", "high"):
+        override = review.get(tier) if isinstance(review.get(tier), dict) else {}
+        seats = override.get("reviewers")
+        if isinstance(seats, int) and 0 < seats < 2:  # exactly the values review.py turns into a single general seat
+            problems.append(f"review.{tier}.reviewers is {seats}: {tier.capitalize()}-risk tickets would be reviewed without the security seat. "
+                            f"Unattended execution is refused while that is so; {BY_HAND}.")
+    high = review.get("high") if isinstance(review.get("high"), dict) else {}
+    if high.get("human_approval") is False:
+        problems.append(f"review.high.human_approval is false: High-risk tickets would merge without a person's approval. Unattended execution is refused while that is so; {BY_HAND}.")
+    return problems
+
+
+def tracked_config(root: Any, fallback: Dict[str, Any]) -> Dict[str, Any]:
+    """The project's tracked settings as they are on disk now, so a change made after enabling is seen on the next pass."""
+    try:
+        data = json.loads((Path(root) / ".factory" / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return fallback
+    return data if isinstance(data, dict) else fallback
+
+
 def now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -185,6 +216,9 @@ def effective(policy: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         result["max_risk"] = ceiling
         result["restricted_by_project"].append(f"factory.max_risk is {ceiling}")
     result["limits"] = limits
+    # Re-checked on every pass and before every dispatch, from the file on disk: a tracked change after enabling holds the line.
+    result["security_review_problems"] = security_review_problems(tracked_config(policy.get("project_root"), config) if policy.get("project_root") else config)
+    result["restricted_by_project"] += result["security_review_problems"]
     return result
 
 
@@ -200,6 +234,8 @@ def may_execute(policy: Dict[str, Any]) -> Tuple[bool, str]:
         return False, "the Factory is disabled" + (f" ({policy['restricted_by_project'][0]})" if policy.get("restricted_by_project") else "")
     if policy.get("paused"):
         return False, "the Factory is paused"
+    if policy.get("security_review_problems"):
+        return False, policy["security_review_problems"][0]
     if policy.get("autonomy") != "supervised":
         return False, "the Factory is in observe mode, which never starts work"
     return True, f"runner {policy.get('runner_id')}; supervised"
@@ -366,10 +402,10 @@ def preflight(root: Path, config: Dict[str, Any], request: Dict[str, Any], *, gi
         checks.append(check("audit", state in ("ok", "off"), {"ok": f"The readiness audit is current: {audit.get('tier')}.", "off": "This project has switched the audit gate off.",
                                                               "missing": "There is no readiness audit report. Run the audit first.", "stale": "The readiness audit is out of date. Run it again.",
                                                               "bronze": "The repository's readiness tier is Bronze; unattended building is not allowed."}.get(str(state), f"Audit state: {state}.")))
-        review = config.get("review") if isinstance(config.get("review"), dict) else {}
-        checks.append(check("security_review", review.get("security_veto") is not False,
-                            "A security reviewer's blocker cannot be outvoted." if review.get("security_veto") is not False
-                            else "review.security_veto is false: a security blocker could be outvoted. Unattended execution is refused while that is so."))
+        problems = security_review_problems(config)
+        checks.append(check("security_review", not problems,
+                            "A security reviewer's blocker cannot be outvoted, Medium and High panels keep the security seat, and High risk keeps a person's approval."
+                            if not problems else " ".join(problems)))
     free = shutil.disk_usage(str(root)).free // (1024 * 1024)
     wanted = (request.get("limits") or {}).get("max_parallel", LIMITS["max_parallel"][0])
     cpus = os.cpu_count() or 1

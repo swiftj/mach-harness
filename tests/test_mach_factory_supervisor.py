@@ -276,6 +276,10 @@ class ActivationTest(Base):
             (lambda: self.claude({"help": "old"}), "claude_ready", "lacks --restricted, --permission-prompts"),
             (lambda: self.claude({"probe_mcp": [{"name": "gmail", "status": "connected"}]}), "claude_ready", "MCP servers were loaded"),
             (lambda: self.config(review={"security_veto": False}), "security_review", "could be outvoted"),
+            # M7: tracked settings that take the security seat off a Medium or High panel, or the person off High risk.
+            (lambda: self.config(review={"medium": {"reviewers": 1}}), "security_review", "review.medium.reviewers is 1: Medium-risk tickets would be reviewed without the security seat"),
+            (lambda: self.config(review={"high": {"reviewers": 1}}), "security_review", "review.high.reviewers is 1"),
+            (lambda: self.config(review={"high": {"human_approval": False}}), "security_review", "a person can still run that ticket by hand"),
             (lambda: self.config(factory={"supervisor": False}), "project_allows", "not allowed here"),
             (lambda: self.local("supervisor.json").parent.mkdir(exist_ok=True) or self.local("supervisor.json").write_text(json.dumps(
                 {"instance": "other", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(), "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z"})),
@@ -650,6 +654,24 @@ class LimitsTest(Base):
         report = self.tick()
         self.assertEqual(report["state"], "disabled")
         self.assertIn("does not allow unattended execution", report["why"])
+
+    def test_review_settings_that_remove_the_security_check_hold_every_pass(self):
+        """M7: a tracked change made after enabling is seen on the next pass and before any dispatch, not only at resume."""
+        self.waves(1)
+        self.enable("--include-backlog")
+        for review in ({"security_veto": False}, {"medium": {"reviewers": 1}}, {"high": {"human_approval": False}}):
+            with self.subTest(review=review):
+                self.config(review=review)
+                report = self.tick()
+                self.assertEqual((report["state"], report["dispatched"], report["started"]), ("observe", [], []))
+                self.assertIn("Unattended execution is refused while that is so; a person can still run that ticket by hand", json.dumps(report["held"]))
+                self.assertIn(policy.security_review_problems({"review": review})[0], self.factory("status")["restricted_by_project"])
+                # A long-running supervisor holds the config it started with; the check reads the file on disk instead.
+                self.assertEqual(policy.effective(policy.read(self.eng), {})["security_review_problems"], policy.security_review_problems({"review": review}))
+        self.assertEqual(self.calls(), [])
+        self.config(review={"medium": {"reviewers": 3, "approvals": 3}})  # raising a threshold is never refused
+        self.assertEqual(len(self.tick()["started"]), 1)
+        self.wait()
 
     def test_runs_and_money_per_day_are_limited(self):
         self.waves(2)

@@ -56,7 +56,7 @@ When every reviewer has returned, run `REVIEW tally <ticket>`. Do not rely on wh
 | `REJECTED` | Too few approvals. | Post the findings on the ticket. Return the ticket to the build station only if you were asked to run the pipeline; otherwise report the command that does it. |
 | `ESCALATE` | Rejected in the third failed round. | Do not return it to the build station. Label the ticket `blocked-requires-sme`, set its state to `blocked`, and give the user the findings. |
 
-When the outcome is an approval with `overruled_blockers_from`, a reviewer found a blocker and was outvoted. Say so plainly, name the blocker, and include it in what you show the person approving.
+A blocker from the security seat, and a `high` or `critical` security-class blocker from any seat (`security_blockers` in `decision.json`), rejects the round whatever the count; no setting overrides the second, and only a fix and a new round clear it. When the outcome is an approval with `overruled_blockers_from`, a reviewer found a blocker and was outvoted. Say so plainly, name the blocker, and include it in what you show the person approving.
 
 ### 4. Report and record
 

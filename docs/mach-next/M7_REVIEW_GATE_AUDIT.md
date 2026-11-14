@@ -75,3 +75,59 @@ Real-run evidence: the 13 Nov recorded run (High risk) had a round rejected with
 (`M6_2_ACCEPTANCE.md` section 2.2, `M6_6_ACCEPTANCE.md` section 5). At High risk unanimity rejects anyway, so
 that run does not show the veto overriding a passing count; the veto's deciding case (Medium, 2 approvals) is
 shown only by `tests/test_review.py:428-438` (fixture). No run exercises G1–G5.
+
+## 5. Corrected in M7
+
+Uncommitted at the time of writing; the tests named were run on the M7 worktree. Line numbers above are for `106f4d3`.
+
+- **G1, G7: a security blocker from any seat is never outvoted.** A finding may carry `"class": "security"` and an
+  `"impact"` (`critical`, `high`, `medium`, `low`), checked by `review.py submit` (`check_findings`); the security
+  seat's findings are security-class without saying so. A security-class blocker of high or critical impact, from
+  any seat, rejects the round whatever the count, at every tier (Low and `factory-tuning` included), and
+  `review.security_veto: false` does not switch it off (`is_security_veto`, `cmd_tally`). A high or critical
+  security finding cannot be filed as a note. It still needs a `rule` and a `file`. `decision.json` gains
+  `security_blockers` (count) and `findings.md` marks each one. Findings without the new fields are stored and
+  counted exactly as before, so a non-security seat's unclassified blocker is still outvoted at Medium
+  (`tests/test_review.py`, `test_medium_majority_approves_and_names_the_overruled_seat`, unchanged).
+  Tests: `tests/test_review.py` `SecurityFindingTest` (six tests).
+- **G5: delta rounds cannot hide one.** In rounds 2 and 3 a high or critical security blocker may be raised on a
+  file that neither changed nor was blocked before; it is stored with `new_in_delta: true`, marked "Newly found in
+  this round", and the round counts toward the three-round limit as any failed round. Every other blocker keeps
+  the restriction, and the refusal now names the exception. Test:
+  `LaterRoundTest.test_a_later_round_can_raise_a_new_high_security_blocker_on_any_file`.
+- **G2 (unattended only), G3: tracked settings cannot quietly remove the security check from the supervisor.**
+  `policy.security_review_problems` refuses unattended execution while `review.security_veto` is false,
+  `review.medium.reviewers` or `review.high.reviewers` is 1 (the values `panel_for` turns into one `general`
+  seat), or `review.high.human_approval` is false; each message names the setting and says a person can still
+  run that ticket by hand. It is the preflight's `security_review` check (enable, confirm, resume), and
+  `policy.effective` re-reads `.factory/config.json` from disk on every pass and before every dispatch, so a
+  change after enabling holds the line (`may_execute` refuses; status lists it under `restricted_by_project`).
+  No threshold and no manual path changed; lowering `approvals` is not refused (the class veto covers security).
+  No product file is read. Tests: `tests/test_mach_factory_supervisor.py`
+  `test_preflight_failures_give_no_code` (three new cases),
+  `test_review_settings_that_remove_the_security_check_hold_every_pass`.
+- Docs: `agents/reviewer.md`, `skills/review/references/reviewer-brief.md`, `skills/review/SKILL.md`,
+  `templates/REVIEW.md` (also G9's first half: the template now states the veto), `CLAUDE.md` section 4.6.
+
+Not changed: G4 (below), G6's `overruled_blockers_from` in `decision.json`, G8, G9's `max_loops` sentence, G10, G11.
+Interactive `/mach-run` and the belt workflow still do not check the review settings: a person running a ticket by
+hand is the path the messages point to.
+
+## 6. Decisions for the product owner
+
+**A recorded security exception (G4): not built.** Until it exists, a high or critical security blocker can only
+be cleared by a fix and a new review round (or the ticket is escalated or abandoned); no command, setting or
+human approval clears it. The smallest design, if wanted:
+
+- `review.py except <ticket> --finding <round>/<seat>/<n> --by NAME --reason TEXT --expires DATE`, run only on a
+  person's explicit instruction in conversation, refused for any unattended caller (the supervisor's executions
+  and the belt never get the command in their tool list).
+- It writes `exceptions[]` into the round's `decision.json`: who, when (`recorded_at`), which finding (round,
+  seat, index, title, rule, file, impact), which revision (`head`, the exact commit reviewed), the reason, and an
+  expiry. It is valid only while the cell's branch is that commit and before the expiry; a new commit voids it as
+  a new commit voids an approval today.
+- The tally treats an excepted finding as not vetoing; every other gate (count, human approval, merge's
+  commit binding) still applies. Merge and cleanup copy the exception into the run record and the lifecycle log
+  (`review.exception_recorded`), so observe and the Control Tower can show it.
+- It is a new authority (a person overriding a security reviewer), so it needs the product owner's yes before it
+  is built, and a decision on who may grant one (any person, or a named security owner from `REVIEW.md`).
