@@ -149,7 +149,7 @@ class Cell:
         config = load_json(project / ".factory" / "config.json", {})
         self.config = config if isinstance(config, dict) else {}
         self.loop = int(self.build.get("review_loop") or 0)
-        self.folder = self.root / "review" / f"round-{self.loop + 1}"
+        self.folder = round_folders(self.root, self.loop + 1)[-1]
         self.packet: Dict[str, Any] = load_json(self.folder / "packet.json", {}) or {}
 
     @property
@@ -167,6 +167,19 @@ class Cell:
         self.info["updated_at"] = now()
         write_json(self.root / "cell.json", self.info)
 
+    def open_round(self) -> None:
+        """A decided round is never written into again. Reviewing again under the same judging round (after the merge
+        station voided an approval) opens round-N.1, round-N.2, ...; it does not use up one of the three rounds."""
+        if (self.folder / "decision.json").is_file():
+            self.folder = self.root / "review" / f"round-{self.loop + 1}.{len(round_folders(self.root, self.loop + 1))}"
+            self.packet = {}
+
+    def require_open(self) -> None:
+        decision = load_json(self.folder / "decision.json")
+        if isinstance(decision, dict):
+            raise ReviewError(f"This round was already decided: {decision.get('outcome')}. Its record is kept as it is; a new round follows a new build or a new verification.",
+                              code="already-tallied")
+
     def require_started(self) -> None:
         if not self.packet or self.packet.get("head") != self.head():
             raise ReviewError(f"Review has not started for this build of {self.ticket_id}. Run: review.py start {self.ticket_id}", code="not-started")
@@ -182,6 +195,16 @@ class Cell:
             if isinstance(vote, dict):
                 found[seat["role"]] = vote
         return found
+
+
+def round_folders(root: Path, number: int) -> List[Path]:
+    """round-N and its repeats round-N.1, round-N.2, ... in order; always at least round-N (which may not exist yet)."""
+    repeats = []
+    for path in (root / "review").glob(f"round-{number}.*"):
+        suffix = path.name[len(f"round-{number}."):]
+        if suffix.isdigit() and path.is_dir():
+            repeats.append((int(suffix), path))
+    return [root / "review" / f"round-{number}"] + [path for _, path in sorted(repeats)]
 
 
 def ticket_labels(cell: Cell) -> List[str]:
@@ -251,6 +274,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     main_branch = git(cell.project, "branch", "--show-current").stdout.strip()
     fork = git(cell.work, "merge-base", "HEAD", main_branch).stdout.strip() if main_branch and cell.info.get("isolation") == "worktree" else ""
     baseline = fork if fork and fork != head else cell.build.get("baseline")
+    cell.open_round()
     cell.folder.mkdir(parents=True, exist_ok=True)
     for stale in (cell.folder / "votes").glob("*.json") if (cell.folder / "votes").is_dir() else []:
         stale.unlink()
@@ -272,6 +296,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "round": cell.loop + 1, "max_rounds": cell.max_loops(),
         "risk": risk, "approvals_needed": rules["approvals"], "human_approval_required": human, "human_approval_reasons": reasons,
         "head": head, "baseline": baseline, "branch": cell.info.get("branch"), "started_at": now(),
+        "repeat_of": str(round_folders(cell.root, cell.loop + 1)[-2]) if cell.folder.name != f"round-{cell.loop + 1}" else None,
         "panel": rules["panel"], "delta": delta,
         "paths": {
             "workdir": str(cell.work), "diff": str(cell.folder / "diff.patch"), "review_rules": str(review_rules) if review_rules else None,
@@ -386,6 +411,7 @@ def findings_file(cell: Cell, reviewer: str, given: Optional[str]) -> Path:
 
 def cmd_submit(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
+    cell.require_open()
     seats = {seat["role"] for seat in cell.packet["panel"]}
     if args.reviewer not in seats:
         raise ReviewError(f"'{args.reviewer}' is not a seat on this panel. Seats: {', '.join(sorted(seats))}.", code="not-a-seat")
@@ -434,7 +460,7 @@ def findings_markdown(cell: Cell, votes: Dict[str, Dict[str, Any]], outcome: str
 def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     earlier = load_json(cell.folder / "decision.json")
-    if isinstance(earlier, dict) and earlier.get("head") == cell.packet["head"]:
+    if isinstance(earlier, dict):
         raise ReviewError(f"This round was already tallied: {earlier.get('outcome')}. A decision is not recounted; a new round follows a new build.", code="already-tallied")
     votes = cell.votes()
     absent = [seat["role"] for seat in cell.packet["panel"] if seat["role"] not in votes]

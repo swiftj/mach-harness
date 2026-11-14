@@ -665,6 +665,46 @@ class SecurityFindingTest(Base):
         self.assertEqual(self.decision()["security_blockers"], 1)
 
 
+class RepeatedRoundTest(Base):
+    """M7 D3: a re-review after the merge station voided an approval never overwrites the round it repeats."""
+
+    def test_a_voided_approval_is_kept_and_the_re_review_opens_a_new_folder(self):
+        sys.path.insert(0, str(ROOT / "skills" / "merge" / "scripts"))
+        import merge  # noqa: E402
+        self.verified()
+        self.edit_json("cell.json", risk="High")
+        self.r_ok("start", TICKET)
+        self.cast()
+        self.assertEqual(self.tally()[1]["outcome"], "AWAITING_HUMAN")
+        self.r_ok("approve-human", TICKET, "--by", "Release Owner")
+        first = json.loads((self.round / "decision.json").read_text())
+        approved = first["head"]
+        self.assertEqual(self.r_refused("tally", TICKET).count("already tallied"), 1)
+        self.assertIn("already decided", self.submit("security")[2], "nothing is written into a decided round")
+        self.commit_in_cell()  # as the merge station's revalidation does: the branch moves after approval
+        cell = merge.Cell(self.project, TICKET)
+        merge.void_approval(cell)
+        kept = json.loads((self.round / "decision.json").read_text())
+        self.assertEqual((kept["outcome"], kept["outcome_before_void"], kept["human_approval"]["by"], kept["head"]), ("VOID", "APPROVED", "Release Owner", approved))
+        self.assertEqual((kept["void"]["approved_commit"], kept["void"]["reason"]), (approved, "The branch changed after it was approved."))
+        self.run_verify("start", TICKET)
+        (self.evidence / "consumer-run.log").write_text("AC-01 ok\n")
+        for target in TARGETS:
+            self.run_verify("record", TICKET, target, "--result", "pass", "--evidence", "consumer-run.log", "--note", NOTE)
+        self.run_verify("finish", TICKET)
+        started = self.r_ok("start", TICKET)
+        repeat = self.cellroot / "review" / "round-1.1"
+        self.assertEqual((started["round"], started["packet"]), (1, str(repeat / "packet.json")), "the same judging round, in its own folder")
+        self.assertEqual(json.loads((repeat / "packet.json").read_text())["repeat_of"], str(self.round))
+        self.round = repeat
+        self.cast()
+        self.assertEqual(self.tally()[1]["outcome"], "AWAITING_HUMAN")
+        self.assertEqual(json.loads((self.cellroot / "review/round-1/decision.json").read_text()), kept, "the voided round is untouched")
+        self.assertEqual(sorted(p.name for p in (self.cellroot / "review/round-1/votes").glob("*.json")), sorted(f"{role}.json" for role in PANEL))
+        self.edit_json("cell.json", stage="verified")
+        self.assertEqual(self.r_ok("start", TICKET)["packet"], str(self.cellroot / "review/round-1.2/packet.json"), "a decided repeat is not reused either")
+
+
 class LaterRoundTest(Base):
     """After the first round, reviewers judge the fix: what changed, and whether earlier blockers are gone."""
 

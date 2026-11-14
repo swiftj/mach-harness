@@ -224,13 +224,14 @@ def next_archive(project: Path, ticket_id: str) -> Path:
 
 
 def numbered(paths: Sequence[Path]) -> List[Tuple[int, Path]]:
-    """Folders named like round-2 or previous-3, in numeric order."""
+    """Folders named like round-2 or previous-3, in numeric order. A repeat of a round (round-2.1, a re-review
+    after the merge station voided an approval) carries its round's number and sorts after it."""
     found = []
     for path in paths:
-        match = re.search(r"-(\d+)$", path.name)
+        match = re.search(r"-(\d+)(?:\.(\d+))?$", path.name)
         if match and path.is_dir():
-            found.append((int(match.group(1)), path))
-    return sorted(found)
+            found.append(((int(match.group(1)), int(match.group(2) or 0)), path))
+    return [(key[0], path) for key, path in sorted(found)]
 
 
 def text_or_none(value: Any) -> Optional[str]:

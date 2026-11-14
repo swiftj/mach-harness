@@ -135,6 +135,23 @@ class ApprovalTest(Base):
         self.assertEqual(json.loads((self.cellroot / "review/decision.json").read_text())["outcome"], "VOID")
         self.assertEqual(self.next()["action"], "verify", "it is verified and reviewed again")
 
+    def test_voiding_keeps_the_rounds_own_record_with_the_persons_approval(self):
+        """M7 D3, in the shape of the real records: round-2/decision.json and the latest copy, with a person's sign-off."""
+        head = self.approved(mode="auto")
+        decision = json.loads((self.cellroot / "review/decision.json").read_text())
+        decision.update(round=2, findings=str(self.cellroot / "review/round-2/findings.md"), human_approval_required=True,
+                        human_approval={"by": "Engineer", "note": None, "recorded_at": "2026-11-13T10:00:00Z", "recorded_by": "an agent"})
+        self.put(self.cellroot, {"review/decision.json": json.dumps(decision), "review/round-2/decision.json": json.dumps(decision),
+                                 "review/round-2/findings.md": "# findings\n"})
+        self.put(self.work, {"app/extra.py": "LATER = True\n"})
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "added after review")
+        self.assertIn("something was added after review", self.m_refused("run", "LOCAL-001"))
+        kept = json.loads((self.cellroot / "review/round-2/decision.json").read_text())
+        self.assertEqual((kept["outcome"], kept["outcome_before_void"], kept["human_approval"]["by"], kept["head"]), ("VOID", "APPROVED", "Engineer", head))
+        self.assertEqual((kept["void"]["approved_commit"], kept["void"]["branch_commit"]), (head, git(self.work, "rev-parse", "HEAD").stdout.strip()))
+        self.assertEqual(json.loads((self.cellroot / "review/decision.json").read_text())["void"], kept["void"])
+
 
 class RevalidationTest(Base):
     def test_main_moved_cleanly_the_branch_is_updated_retested_and_merged(self):
