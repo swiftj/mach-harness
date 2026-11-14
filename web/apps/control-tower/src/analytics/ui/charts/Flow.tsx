@@ -8,7 +8,7 @@
  */
 import { useMemo } from "react";
 import type { Station, Transition } from "../../contract";
-import { flowLayout, type FlowNode, type StationLoad } from "../../model/charts";
+import { flowLayout, type FlowLayout, type FlowNode, type StationLoad } from "../../model/charts";
 import { durationText } from "../../model/format";
 import { Mark, useMarkNav, useTip, useWidth } from "../kit";
 
@@ -32,6 +32,7 @@ export function FlowDiagram({ transitions, facts, loads, selected, onSelect, hum
   const stationNodes = layout.nodes.filter((n) => n.station !== "blocked" && n.station !== "abandoned");
   const nav = useMarkNav(stationNodes.length);
   const maxTotal = Math.max(1, ...loads.map((l) => l.totalMs));
+  const labels = useMemo(() => placeCounts(layout), [layout]);
   return (
     <div ref={ref} className="relative" style={{ height: layout.height + 6 }}>
       <svg width={width} height={layout.height + 6} role="group" aria-label="Factory Flow: stations and the recorded moves between them" style={{ display: "block" }}>
@@ -62,11 +63,15 @@ export function FlowDiagram({ transitions, facts, loads, selected, onSelect, hum
                 card={{ title: words, rows: [["moves", String(e.count)]], foot: "Recorded moves between two stations, not one ticket's path." }}
                 onTip={setTip}
                 overlay={
-                  exit ? null : (
-                    <text x={e.lx} y={e.ly} textAnchor="middle" style={{ ...MONO, fontSize: 11, fill: revise ? "var(--an-fail)" : "var(--an-muted)", paintOrder: "stroke", stroke: "var(--mach-canvas)", strokeWidth: 3 }}>
-                      {e.count}
-                    </text>
-                  )
+                  labels.get(`${e.from}>${e.to}`) ? (
+                    <g>
+                      {/* A count sits on a small patch of the ground, clear of the stroke it names. */}
+                      <rect x={labels.get(`${e.from}>${e.to}`)!.x} y={labels.get(`${e.from}>${e.to}`)!.y} width={labels.get(`${e.from}>${e.to}`)!.w} height={LABEL_H} rx={3} style={{ fill: "var(--mach-canvas)" }} />
+                      <text x={e.lx} y={labels.get(`${e.from}>${e.to}`)!.y + LABEL_H - 4} textAnchor="middle" style={{ ...MONO, fontSize: 11, fill: revise ? "var(--an-fail)" : "var(--an-muted)" }}>
+                        {e.count}
+                      </text>
+                    </g>
+                  ) : null
                 }
               >
                 <path d={e.d} style={{ fill: "none", stroke: tone, strokeWidth: e.weight, strokeDasharray: exit ? "4 3" : undefined, strokeLinecap: "round" }} markerEnd={`url(#${revise ? "an-arrow-revise" : "an-arrow"})`} />
@@ -146,4 +151,44 @@ export function FlowDiagram({ transitions, facts, loads, selected, onSelect, hum
       {tipNode}
     </div>
   );
+}
+
+const LABEL_H = 15;
+const DIGIT_W = 6.8;
+
+/**
+ * Where each move's count is written, or nothing when it does not fit. A forward move's count goes
+ * in the gap between its two stations only when the gap holds it; every other count sits on its own
+ * patch of the ground at its label point and is dropped where it would meet a station or a larger
+ * count already placed. Exits are named by their boxes. The full counts stay in the hover card and
+ * the table.
+ */
+function placeCounts(layout: FlowLayout): Map<string, { x: number; y: number; w: number }> {
+  const out = new Map<string, { x: number; y: number; w: number }>();
+  const boxes: { x: number; y: number; w: number; h: number }[] = layout.nodes.map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h }));
+  const placed: { x: number; y: number; w: number; h: number }[] = [];
+  const meets = (b: { x: number; y: number; w: number; h: number }) => [...boxes, ...placed].some((o) => b.x < o.x + o.w && b.x + b.w > o.x && b.y < o.y + o.h && b.y + b.h > o.y);
+  const byNode = new Map(layout.nodes.map((n) => [n.station, n] as const));
+  for (const e of [...layout.edges].sort((p, q) => q.count - p.count)) {
+    if (e.kind === "exit") continue;
+    const w = String(e.count).length * DIGIT_W + 6;
+    const a = byNode.get(e.from);
+    const b = byNode.get(e.to);
+    const adjacentForward = e.kind === "forward" && a && b && b.x > a.x && Math.abs(b.y - a.y) < 1 && b.x - (a.x + a.w) < 40;
+    if (adjacentForward) {
+      // In the gap when it holds the count; otherwise just above the two stations, over the gap,
+      // where nothing else is drawn, unless it would meet a count already placed there.
+      const gap = b.x - (a.x + a.w);
+      const box = w <= gap - 2 ? { x: e.lx - w / 2, y: e.ly - LABEL_H + 3, w, h: LABEL_H } : { x: e.lx - w / 2, y: a.y - LABEL_H - 3, w, h: LABEL_H };
+      if (w > gap - 2 && (w > gap + 0.5 * Math.min(a.w, b.w) || placed.some((o) => box.x < o.x + o.w + 2 && box.x + box.w + 2 > o.x && box.y < o.y + o.h && box.y + box.h > o.y))) continue;
+      placed.push(box);
+      out.set(`${e.from}>${e.to}`, { x: box.x, y: box.y, w });
+      continue;
+    }
+    const box = { x: e.lx - w / 2, y: e.ly - LABEL_H + 3, w, h: LABEL_H };
+    if (meets(box)) continue;
+    placed.push(box);
+    out.set(`${e.from}>${e.to}`, { x: box.x, y: box.y, w });
+  }
+  return out;
 }

@@ -136,6 +136,8 @@ const QUERIES = (end) => {
     "metrics grouped": "/api/v1/analytics/metrics?ids=C1,W3,K1&group_by=station,risk",
     "metrics distribution": "/api/v1/analytics/metrics?ids=C1,W3,T3&distribution=1&bucket=day",
     "metrics last_runs": "/api/v1/analytics/metrics?ids=Q2,Q1&last_runs=20",
+    // Through a playhead half a week before the end (the observer's as_of_ms: nothing recorded later counts).
+    "metrics as_of": `/api/v1/analytics/metrics?as_of_ms=${Math.round(end - 3.5 * 864e5)}`,
     flow: "/api/v1/analytics/flow",
     "flow windowed": `/api/v1/analytics/flow?${week}`,
     contributors: "/api/v1/analytics/contributors?metric=C1&group=station:build&limit=200",
@@ -481,6 +483,7 @@ try {
   stopOwn();
 }
 
+report.machine.loadAverageAtEnd = os.loadavg().map((x) => Math.round(x * 10) / 10);
 const file = join(out, `analytics-measure-${MODE}.json`);
 writeFileSync(file, JSON.stringify(report, null, 2));
 console.log(`\nAnalytics measurement, mode ${MODE}${report.workload ? `, ${report.workload.project} (${report.workload.events ?? "?"} events)` : ""}\n`);

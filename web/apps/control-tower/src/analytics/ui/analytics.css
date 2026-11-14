@@ -173,6 +173,44 @@
     gap: 32px 28px;
   }
 }
+/* The top of Pulse: the lead paragraph at a reading measure, and beside it what it stands on. */
+.an-lead-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px 48px;
+  align-items: start;
+}
+.an-lead {
+  max-width: 46rem;
+}
+.an-lead-note {
+  border-left: 1px solid var(--mach-line-strong);
+  padding-left: 16px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.an-lead-note dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+}
+.an-lead-note dt {
+  color: var(--mach-ink-muted);
+}
+.an-lead-note dd {
+  color: var(--mach-ink);
+}
+@container sheet (min-width: 960px) {
+  .an-lead-row {
+    /* The same columns as the delivery row below, so the note sits over "What stands out". */
+    grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
+    gap: 16px 32px;
+  }
+  .an-lead-note {
+    margin-top: 6px;
+  }
+}
+
 /* The ladder from work done to product accepted. */
 .an-ladder {
   display: grid;
@@ -302,7 +340,6 @@
   fill: var(--mach-surface);
   stroke: var(--mach-accent);
   stroke-width: 1.5;
-  cursor: ew-resize;
 }
 .an-brush-handle:focus-visible {
   outline: none;

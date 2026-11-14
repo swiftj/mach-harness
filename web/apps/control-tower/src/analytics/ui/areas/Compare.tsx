@@ -9,7 +9,7 @@ import { useMemo } from "react";
 import type { RunRecord } from "../../contract";
 import { cohortOptions, cohortRuns, defaultPair, type CohortBy } from "../../model/cohorts";
 import { cohortSummary, compareWords, durationTicks, linear, logScale, medianOf, niceTicks, stripLayout, type Cohort } from "../../model/charts";
-import { count, durationText, durationTick, usd } from "../../model/format";
+import { count, durationCompact, durationText, durationTick, usd } from "../../model/format";
 import { comparisonAllowed, SMALL_SAMPLE, shareText } from "../../model/sample";
 import { Columns, LogNote } from "../charts";
 import { Announce, AreaFrame, ChartFrame, Mark, SectionHead, useAnalytics, useMarkNav, useTip, useWidth } from "../kit";
@@ -138,6 +138,16 @@ function CompareBody({ configs, choice, onChoice }: { configs: CompareProps["con
   );
 }
 
+const DURATION_ROUND = new Set([1000, 10_000, 60_000, 300_000, 900_000, 1_800_000, 3_600_000, 7_200_000, 14_400_000, 28_800_000, 86_400_000, 172_800_000, 604_800_000, 2_592_000_000]);
+
+/** Round ticks plus the two ends of the axis, an end dropped only where a round tick already sits within 40 px of it. */
+function withEnds(ticks: readonly number[], lo: number, hi: number, x: (v: number) => number): number[] {
+  const out = [...ticks];
+  if (!out.some((t) => Math.abs(x(t) - x(lo)) < 40)) out.unshift(lo);
+  if (!out.some((t) => Math.abs(x(t) - x(hi)) < 40)) out.push(hi);
+  return out;
+}
+
 /** Two cohorts' values as dot strips on one shared axis (log for durations, labelled; linear from zero for cost). Missing values are counted, not placed. */
 function DotCompare({ chart, title, cohorts, values, kind }: { chart: string; title: string; cohorts: readonly Cohort[]; values: ReadonlyMap<string, number | null>; kind: "ms" | "usd" }) {
   const { open } = useAnalytics();
@@ -158,8 +168,10 @@ function DotCompare({ chart, title, cohorts, values, kind }: { chart: string; ti
   const height = rows.length * rowH + 24;
   const lo = kind === "ms" ? Math.max(60_000, Math.min(...all) * 0.8) : 0;
   const hi = Math.max(...all) * (kind === "ms" ? 1.2 : 1) || 1;
-  const ticks = kind === "ms" ? durationTicks(lo, hi, 5) : niceTicks(hi, Math.max(2, Math.min(4, Math.floor((width - left) / 80))));
-  const x = kind === "ms" ? logScale(lo, hi, left, width - right) : linear(0, ticks[ticks.length - 1]!, left, width - right);
+  const inner = kind === "ms" ? durationTicks(lo, hi, 5) : niceTicks(hi, Math.max(2, Math.min(4, Math.floor((width - left) / 80))));
+  const x = kind === "ms" ? logScale(lo, hi, left, width - right) : linear(0, inner[inner.length - 1]!, left, width - right);
+  // The axis always shows both ends, so a strip with one dot (or a narrow range) still has a scale.
+  const ticks = kind === "ms" ? withEnds(inner, lo, hi, x) : inner;
   const fmt = (v: number) => (kind === "ms" ? durationText(v) : usd(v));
   let idx = 0;
   return (
@@ -175,8 +187,8 @@ function DotCompare({ chart, title, cohorts, values, kind }: { chart: string; ti
           {ticks.map((t, i) => (
             <g key={t} aria-hidden="true">
               <line x1={x(t)} x2={x(t)} y1={0} y2={height - 18} style={{ stroke: t === 0 ? "var(--an-axis)" : "var(--an-grid)" }} />
-              <text x={x(t)} y={height - 4} textAnchor={i === ticks.length - 1 ? "end" : "middle"} style={{ fontFamily: "var(--mach-font-sans)", fontVariantNumeric: "tabular-nums", fontSize: 11, fill: "var(--an-subtle)" }}>
-                {kind === "ms" ? durationTick(t) : usd(t).replace(".00", "")}
+              <text x={x(t)} y={height - 4} textAnchor={i === ticks.length - 1 && ticks.length > 1 ? "end" : i === 0 && t === lo && kind === "ms" ? "start" : "middle"} style={{ fontFamily: "var(--mach-font-sans)", fontVariantNumeric: "tabular-nums", fontSize: 11, fill: "var(--an-subtle)" }}>
+                {kind === "ms" ? (DURATION_ROUND.has(t) ? durationTick(t) : durationCompact(t)) : usd(t).replace(".00", "")}
               </text>
             </g>
           ))}

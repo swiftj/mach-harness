@@ -12,9 +12,9 @@ import { durationShows, MIN_TREND_MEMBERS, MIN_TREND_PERIODS, SMALL_SAMPLE, shar
 import { grainFor, periodSeries } from "../../model/series";
 import { BeltStrip, Columns, PartsBar } from "../charts";
 import { STATION_WORDS } from "../charts/Flow";
-import { AreaFrame, ChartFrame, Definition, NotRecorded, rowMissing, SectionHead, TooFew, useAnalytics, type Card } from "../kit";
-import type { InsightsReply } from "../../data/types";
-import { capitalFirst, populationWords, repeatsTitle, sampleWords } from "../../model/insights";
+import { AreaFrame, ChartFrame, useWidth, Definition, NotRecorded, rowMissing, SectionHead, TooFew, useAnalytics, type Card } from "../kit";
+import type { Insight, InsightsReply } from "../../data/types";
+import { capitalFirst, insightPopulation, populationWords, repeatsTitle, sampleWords } from "../../model/insights";
 import type { AreaData, PulseProps } from "../types";
 import { areaOf, measurementText } from "./Opportunities";
 import { AreaLink, MiniFig, NothingYet, Num, RecordedTotal } from "./shared";
@@ -55,7 +55,7 @@ function PulseBody({ insights }: { insights: AreaData<InsightsReply> | undefined
                 <li key={f.id} className="border-l-2 border-line-strong pl-3" data-insight={f.rule}>
                   <div className="text-label text-ink">{capitalFirst(f.title)}</div>
                   <div className="an-num mt-0.5 text-body-sm text-ink-muted" data-insight-population="">
-                    {[populationWords(f), sampleWords(f)].filter(Boolean).join("; ")}
+                    {[ownPopulation(f, s.window) ? populationWords(f) : null, sampleWords(f)].filter(Boolean).join("; ")}
                   </div>
                   {(() => {
                     const more = f.measurements.filter((m) => !repeatsTitle(m, f.title)).slice(0, 2);
@@ -83,6 +83,15 @@ function PulseBody({ insights }: { insights: AreaData<InsightsReply> | undefined
       <Coverage />
     </>
   );
+}
+
+/** Whether an opportunity was measured over something other than the view's own window (the last N runs, another period): only then is its population said beside it. */
+function ownPopulation(f: Insight, w: { from_ms: number; to_ms: number }): boolean {
+  const p = insightPopulation(f);
+  if (p.lastRuns) return true;
+  if (p.fromMs === null || p.toMs === null) return !!f.window.comparison;
+  const D1 = 86_400_000;
+  return Math.abs(p.fromMs - w.from_ms) >= D1 || Math.abs(p.toMs - w.to_ms) >= D1 || !!f.window.comparison;
 }
 
 function windowWords(s: { window: { from_ms: number; to_ms: number } }): string {
@@ -127,7 +136,49 @@ function Lead() {
       </>
     );
   }
-  return <p className="an-lead max-w-[68ch] text-body-lg text-ink">{body}</p>;
+  return (
+    <div className="an-lead-row">
+      <p className="an-lead text-body-lg text-ink">{body}</p>
+      <LeadNote />
+    </div>
+  );
+}
+
+/**
+ * Beside the lead: what the paragraph stands on, said once and quietly (the window, the moment, how
+ * much was recorded, and the least complete source), so the reader knows its footing before the
+ * figures. Not a row of figures: one short line each.
+ */
+function LeadNote() {
+  const { snapshot: s, asOf } = useAnalytics();
+  const days = Math.max(1, Math.round((s.window.to_ms - s.window.from_ms) / D));
+  const executions = s.totals.X1?.denominator_value ?? null;
+  const thinnest = [...s.freshness].filter((f) => f.coverage.share !== null && f.coverage.share < 1).sort((a, b) => (a.coverage.share ?? 1) - (b.coverage.share ?? 1))[0];
+  return (
+    <aside className="an-lead-note" aria-label="What these figures stand on">
+      <dl>
+        <dt>Window</dt>
+        <dd className="an-num">
+          {windowText(s.window.from_ms, s.window.to_ms)}, {plural(days, "day")}
+        </dd>
+        <dt>Read</dt>
+        <dd>{asOf.replace(/^As of /, "as of ")}</dd>
+        <dt>Recorded</dt>
+        <dd className="an-num">
+          {plural(s.runs.length, "finished ticket")}
+          {executions !== null ? `, ${plural(executions, "execution")}` : ""}
+        </dd>
+        {thinnest ? (
+          <>
+            <dt>Least complete</dt>
+            <dd className="an-num">
+              {thinnest.source}, {thinnest.coverage.covered} of {thinnest.coverage.of}
+            </dd>
+          </>
+        ) : null}
+      </dl>
+    </aside>
+  );
 }
 
 // -------------------------------------------------------------------------------------- delivery
@@ -327,7 +378,11 @@ function CostPanel() {
   const t = s.totals;
   const from = s.window.from_ms;
   const to = s.window.to_ms;
-  const grain = grainFor(from, to);
+  // Days become weeks when the window is long, or when a day's column would be under 3 px wide here.
+  const [box, boxW] = useWidth<HTMLDivElement>(300, 40);
+  const dayCount = Math.ceil((to - Math.floor(from / D) * D) / D);
+  const narrow = ((boxW - 48) / Math.max(1, dayCount)) * 0.76 < 3;
+  const grain = grainFor(from, to) === "week" || narrow ? "week" : "day";
   const series = costSeries(s.grouped[groupedKey("K1", "day")], from, to, grain);
   const missing = rowMissing(t.K1);
   const flagged = series.filter((p) => p.without > 0).length;
@@ -337,7 +392,7 @@ function CostPanel() {
       to="economics"
       question={missing ? "What did executions record as spent?" : `${usd(t.K1?.numerator_value)} recorded, a lower bound.`}
       chart={
-        missing ? (
+        <div ref={box} className="min-w-0">{missing ? (
           <NotRecorded compact title={missing.title} what={missing.why} why="Nothing is drawn in its place." />
         ) : density !== "many" ? (
           <p className="text-body-sm text-ink-muted">Too few executions for cost over time: {plural(t.K1?.coverage.of ?? 0, "execution")} recorded.</p>
@@ -348,7 +403,7 @@ function CostPanel() {
             title={`Recorded cost per ${grain}`}
             summary={`Recorded cost per ${grain}; ${flagged} ${grain}s had executions that recorded no cost.`}
             table={{ columns: [{ label: grain === "day" ? "Day" : "Week to" }, { label: "Recorded", num: true }, { label: "With a cost", num: true }, { label: "Without", num: true }], rows: series.map((p) => [dayText(grain === "day" ? p.from : p.to - 1), usd(p.cost), count(p.withCost), count(p.without)]) }}
-            foot={flagged ? <>Marks under the axis: {grain}s in which some executions recorded no cost; those columns are lower bounds.</> : null}
+            foot={<>{grain === "week" && grainFor(from, to) === "day" ? "Days are added into weeks ending on the window's last day: one column a day would be too thin here. " : null}{flagged ? <>Marks under the axis: {grain}s in which some executions recorded no cost; those columns are lower bounds.</> : null}</>}
           >
             <Columns
               label={`Recorded cost per ${grain}`}
@@ -366,7 +421,7 @@ function CostPanel() {
               }))}
             />
           </ChartFrame>
-        )
+        )}</div>
       }
       figures={
         <>

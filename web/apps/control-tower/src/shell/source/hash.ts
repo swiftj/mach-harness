@@ -25,7 +25,8 @@
  *   `risk:<v>`, `app:<v>`, `model:<v>`, `station:<v>`, `win:<preset | from-to>`, `by:<risk|app_type|period|config>`,
  *   `key:<code>` (a Compare cohort no filter names: `by:config,key:<config_id>`). An unknown member is
  *   dropped alone; a `cmp` without exactly two cohorts is dropped.
- * - `focus`: the metric whose rows are open (`K1`), or one group of it (`C1,station:build`).
+ * - `focus`: the metric whose rows are open (`K1`), or one group of it (`C1,station:build`); with
+ *   `,insight:<id>` the rows of that Improvement Opportunity, over its own population.
  * - `pick`: a cross-filter picked inside an area, `<dim>:<value>` (`target_kind:browser`).
  * The address describes the whole view: a parameter left out is its default. `sel` and `at` are shared
  * with every route.
@@ -215,16 +216,21 @@ export function parseAnalyticsCompare(value: string | null | undefined): Analyti
 
 export function parseAnalyticsFocus(value: string | null | undefined): AnalyticsFocus | null {
   if (!value || value.length > MAX_ID) return null;
-  const comma = value.indexOf(",");
-  const metric = (comma < 0 ? value : value.slice(0, comma)).trim();
+  const parts = value.split(",");
+  const metric = (parts[0] ?? "").trim();
   let group: AnalyticsFocus["group"] = null;
-  if (comma >= 0) {
-    const rest = value.slice(comma + 1);
-    const colon = rest.indexOf(":");
-    if (colon < 0) return null;
-    group = { dim: rest.slice(0, colon), value: rest.slice(colon + 1) };
+  let insight: string | undefined;
+  for (const part of parts.slice(1)) {
+    // `insight:<id>`: the opportunity whose rows these are (its id may itself hold colons).
+    if (part.startsWith("insight:") && insight === undefined) {
+      insight = part.slice(8);
+      continue;
+    }
+    const colon = part.indexOf(":");
+    if (colon < 0 || group) return null;
+    group = { dim: part.slice(0, colon), value: part.slice(colon + 1) };
   }
-  const focus = { metric, group };
+  const focus = { metric, group, ...(insight !== undefined ? { insight } : {}) };
   return isAnalyticsFocus(focus) ? focus : null;
 }
 
@@ -237,7 +243,7 @@ export function parseAnalyticsPick(value: string | null | undefined): AnalyticsP
 }
 
 function formatAnalyticsFocus(f: AnalyticsFocus): string {
-  return f.group ? `${f.metric},${f.group.dim}:${f.group.value}` : f.metric;
+  return `${f.group ? `${f.metric},${f.group.dim}:${f.group.value}` : f.metric}${f.insight !== undefined ? `,insight:${f.insight}` : ""}`;
 }
 
 /** The Analytics view an address describes: every parameter left out (or malformed) is its default. */

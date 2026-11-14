@@ -23,13 +23,18 @@ address, the requests the page makes) and never compare pixels.
   server's `/api` proxy and a relay (the Timeline suite's arrangement). Nothing is copied from elsewhere:
   the projects are generated with the commands in the table below.
 
-| Project | Command (`mach-synth --out <dir> --analytics ...`) |
+| Project | Command (`mach-synth --out <dir> --analytics --profile realistic ...`) |
 |---|---|
 | empty | none: a folder with `.factory/config.json` = `{}` |
 | one run | `--cells 1 --waves 1 --seed 3` |
-| tiny | `--cells 2 --waves 1 --seed 1` |
-| medium | `--cells 60 --waves 8 --seed 1` |
-| large | `--cells 330 --waves 40 --events 240000 --seed 1` (240,000 events, three weeks) |
+| tiny | `--cells 2 --waves 1 --seed 1` (2 tickets, about 430 events) |
+| medium | `--cells 60 --waves 8 --seed 1` (57 finished, 129 executions, about 11,700 events) |
+| large | `--cells 330 --waves 40 --events 240000 --seed 1` (327 finished, 712 executions, 240,000 events, four weeks) |
+
+The realistic profile works weekday hours, uses real durations, starts on a Monday and ends when the
+work ends, and records three execution configurations plus a not-recorded cohort; each project has an
+`expected.json`. No test hard-codes a date: windows come from the generator's summary.
+`E2E_AN_PROFILE=uniform` generates the earlier evenly spread histories instead.
 
 ## Running them
 
@@ -69,6 +74,7 @@ Each file reuses a dev server already answering on 4430; a dev server started wi
 | Variable | Default | What |
 |---|---|---|
 | `E2E_AN_MODE` | `all` | `proof`, `live` or `all` |
+| `E2E_AN_PROFILE` | `realistic` | the `mach-synth` profile for generated projects (`uniform`: without `--profile`) |
 | `E2E_AN_SCRATCH` | `<os tmpdir>/mach-analytics-e2e` | binaries, generated projects, observer logs |
 | `E2E_AN_DEV_PORT`, `E2E_AN_RELAY_PORT` | 4430, 4439 | |
 | `E2E_HEADED` | unset | `1` shows the browser |
@@ -241,11 +247,20 @@ Accessibility audit (final):
 |---|---|---|
 | axe | pass, 0 in 67 states | pass, 0 in 40 states |
 | keyboard | pass | pass |
-| targets | pass (160 covered by an equivalent control) | fail: Quality "Recorded cost per merged ticket, by rounds" (46 dots) and a Compare chart (42 dots) are crowded, and their live table view holds no link or button |
+| targets | pass (160 covered by an equivalent control) | pass (143 covered by an equivalent control) |
 | contrast of marks and chart text | pass | pass |
 | colour independence | pass | pass |
 | reduced motion | pass | pass |
 | charts: name, summary, table | pass | pass |
+
+Shell mode (Simulation, 39 states), rerun last: every check passes, axe 0 violations (after the Rows
+drawer's list became a named, focusable region for simulated rows without links).
+
+The target check finds each chart again by its `data-chart` id, not its position: on a live page charts
+appear as their sections load, and an earlier version opened the wrong chart's table.
+
+The quiet-machine measurement against `b37c036` (three runs, realistic profile) is in
+`M6_5_PERFORMANCE.md`; the table below is the earlier single run on a loaded machine.
 
 Measurement on the large project (240,000 events), live:
 

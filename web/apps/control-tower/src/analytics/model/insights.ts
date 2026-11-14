@@ -79,6 +79,14 @@ export function populationWords(f: Pick<Insight, "window" | "sample" | "contribu
   return f.sample?.population ? `over ${f.sample.population}` : null;
 }
 
+/** The contributors key of an opportunity's rows (`R2|rule=x|risk=High`), or null when it names none. */
+export function insightRowsKey(f: Pick<Insight, "contributors">): string | null {
+  const c = f.contributors;
+  if (!c) return null;
+  const g = Object.entries(c.group);
+  return g.length ? `${c.metric}|${g.map(([k, v]) => `${k}=${v}`).join("|")}` : c.metric;
+}
+
 /** The sample beside the figure: "n 16 merged tickets, coverage 98%". */
 export function sampleWords(f: Pick<Insight, "sample">): string | null {
   const s = f.sample;

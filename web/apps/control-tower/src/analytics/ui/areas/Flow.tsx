@@ -68,7 +68,7 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
             question="Select a station to read its visits below; the arrows move between stations."
             summary={`Recorded moves between stations. ${s.transitions.filter((x) => transitionKind(x) === "revise").reduce((n, x) => n + x.count, 0)} moves went back to build to revise.${station ? ` ${STATION_WORDS[station]} is selected.` : ""}`}
             table={{ columns: [{ label: "From" }, { label: "To" }, { label: "Moves", num: true }, { label: "Tickets", num: true }, { label: "Kind" }], rows: s.transitions.map((x) => [STATION_WORDS[x.from], STATION_WORDS[x.to], count(x.count), count(x.tickets), transitionKind(x)]) }}
-            foot="Each station shows its median measured visit and how many visits were measured. Line width is the number of recorded moves between two stations, not the path of any one ticket. Red loops go back to build after a failed verification or a rejected review. The bar in each station is its share of measured station time; ⊘ counts gate refusals."
+            foot="Each station shows its median measured visit and how many visits were measured. Line width is the number of recorded moves between two stations, not the path of any one ticket. Where a count does not fit beside its line it is left out of the drawing; every count is in the hover card and the table. Red loops go back to build after a failed verification or a rejected review. The bar in each station is its share of measured station time; ⊘ counts gate refusals."
           >
             <FlowDiagram transitions={s.transitions} facts={facts} loads={loads} selected={station} onSelect={setStation} humanFacts={{ waits: t.W3?.denominator_value ?? 0, p50: t.W3?.p50_ms ?? null, open: w3Open }} />
           </ChartFrame>
@@ -90,7 +90,6 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
               question="Each station's visits added together, so one slow visit cannot outrank a station that held dozens. Sort by any column; select a row to read that station."
               summary={loads.map((l) => `${STATION_WORDS[l.station]} ${pct(l.share)}`).join(", ")}
               table={{ columns: [{ label: "Station" }, { label: "Share", num: true }, { label: "Total", num: true }, { label: "Visits", num: true }, { label: "Median", num: true }, { label: "Mean", num: true }], rows: loads.map((l) => [STATION_WORDS[l.station], pct(l.share), durationText(l.totalMs), count(l.visits), durationText(l.p50), durationText(l.visits ? l.totalMs / l.visits : null)]) }}
-              chips={chip}
               foot="Measured visits only: a visit cut by an interrupted execution or still open has no measured duration and is listed, not counted. The mean is the catalog's C1; the median leads because visit times are skewed."
             >
               <RankTable<StationLoad>

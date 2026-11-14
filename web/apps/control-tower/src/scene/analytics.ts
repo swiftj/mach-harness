@@ -81,6 +81,8 @@ export interface AnalyticsCompare {
 export interface AnalyticsFocus {
   readonly metric: string;
   readonly group: { readonly dim: string; readonly value: string } | null;
+  /** The Improvement Opportunity whose rows these are (its id): they are listed over its own population, not the view's window. */
+  readonly insight?: string;
 }
 
 /** A cross-filter picked inside an area (a Reliability outcome, a Q4 failure category, an R2 rule): one dimension and value. */
@@ -147,10 +149,14 @@ const DIM = /^[a-z][a-z_]{0,31}$/;
  */
 const VALUE = /^(?=.{1,128}$)[^\s\p{Cc},]+(?: [^\s\p{Cc},]+)*$/u;
 
+/** An Improvement Opportunity's id: the observer's rule and subject (`flow.wait-p90:capacity`), a code with at most single inner spaces. */
+const INSIGHT = /^(?=.{1,160}$)[A-Za-z0-9][^\s\p{Cc},]*(?: [^\s\p{Cc},]+)*$/u;
+
 export function isAnalyticsFocus(v: unknown): v is AnalyticsFocus {
   if (!v || typeof v !== "object") return false;
-  const { metric, group } = v as { metric?: unknown; group?: unknown };
+  const { metric, group, insight } = v as { metric?: unknown; group?: unknown; insight?: unknown };
   if (typeof metric !== "string" || !METRIC.test(metric)) return false;
+  if (insight !== undefined && (typeof insight !== "string" || !INSIGHT.test(insight))) return false;
   if (group === null || group === undefined) return true;
   if (typeof group !== "object") return false;
   const { dim, value } = group as { dim?: unknown; value?: unknown };
@@ -206,7 +212,7 @@ export function sameAnalyticsCohort(a: AnalyticsCohort, b: AnalyticsCohort): boo
 
 export function sameAnalyticsFocus(a: AnalyticsFocus | null, b: AnalyticsFocus | null): boolean {
   if (a === b) return true;
-  if (!a || !b || a.metric !== b.metric) return false;
+  if (!a || !b || a.metric !== b.metric || a.insight !== b.insight) return false;
   return a.group === b.group || (a.group !== null && b.group !== null && a.group.dim === b.group.dim && a.group.value === b.group.value);
 }
 
@@ -268,7 +274,7 @@ export function applyAnalyticsPatch(current: AnalyticsViewState, patch: Analytic
   }
   if (patch.focus !== undefined) {
     if (patch.focus === null) focus = null;
-    else if (isAnalyticsFocus(patch.focus) && !sameAnalyticsFocus(patch.focus, current.focus)) focus = { metric: patch.focus.metric, group: patch.focus.group ? { dim: patch.focus.group.dim, value: patch.focus.group.value } : null };
+    else if (isAnalyticsFocus(patch.focus) && !sameAnalyticsFocus(patch.focus, current.focus)) focus = { metric: patch.focus.metric, group: patch.focus.group ? { dim: patch.focus.group.dim, value: patch.focus.group.value } : null, ...(patch.focus.insight !== undefined ? { insight: patch.focus.insight } : {}) };
   }
   if (patch.pick !== undefined) {
     if (patch.pick === null) pick = null;

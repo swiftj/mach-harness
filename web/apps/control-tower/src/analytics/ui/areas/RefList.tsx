@@ -146,7 +146,9 @@ export function Rows({ req, data, onClose, onOpen }: { req: RowsRequest; data: A
           ))}
         </div>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+      {/* The list scrolls: it takes focus and has a name, so it can be scrolled by keyboard even when no row is a link (axe scrollable-region-focusable). */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+      <div className="an-table-region min-h-0 flex-1 overflow-y-auto px-4 py-2" role="region" aria-label={`The rows of ${req.title}`} tabIndex={0}>
         <RefList items={pg.items} unit={req.unit} showWhen onOpen={onOpen} />
       </div>
       <div className="flex items-center gap-2 border-t border-line px-4 py-2 text-caption text-ink-muted">

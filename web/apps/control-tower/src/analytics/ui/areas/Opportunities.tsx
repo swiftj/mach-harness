@@ -173,7 +173,7 @@ function InsightCard({ f, label }: { f: Insight; label: string | null }) {
       <div className="flex flex-wrap items-center gap-4">
         <AreaLink to={areaOf(f)}>Open the figures</AreaLink>
         {rows && contributorKey ? (
-          <button type="button" className="an-link text-body-sm" onClick={() => rows({ key: contributorKey, title: capitalFirst(f.title), unit: "count", population: insightPopulation(f) })}>
+          <button type="button" className="an-link text-body-sm" onClick={() => rows({ key: contributorKey, title: capitalFirst(f.title), unit: "count", population: insightPopulation(f), insight: f.id })}>
             {f.contributors?.relation === "related" ? "Related rows" : "Rows"}
           </button>
         ) : null}

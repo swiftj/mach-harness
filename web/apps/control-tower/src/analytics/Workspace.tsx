@@ -31,14 +31,16 @@ import { toContractContributors } from "./data/adapt";
 import { observerAnalytics } from "./data/observer";
 import type { AnalyticsData } from "./data/provider";
 import { simulatedAnalytics } from "./data/simulation";
-import { beginSnapshot, shouldRefresh, type AnalyticsSnapshotSession } from "./data/snapshot";
+import { shouldRefresh } from "./data/snapshot";
 import type { InsightsReply } from "./data/types";
 import { FIXTURE_END } from "./fixtures";
 import type { RunConfigs } from "./model/cohorts";
 import { clockText } from "./model/format";
+import { capitalFirst, insightPopulation, insightRowsKey } from "./model/insights";
 import type { AreaData, Interval, OpenWhere, RowsRequest } from "./ui/types";
 import { AnalyticsView, type AnalyticsUiView } from "./ui/Workspace";
-import { absenceState, failureState, loadArea } from "./wire/load";
+import { absenceState, failureState } from "./wire/load";
+import { loadView, SharedCursor, ViewSession } from "./wire/views";
 import { asOfWords, DAY_MS, listsGroupOf, listsRowsOf, filtersQuery, planFor, providerFor, sourceCheck, sourceWords, viewKey, windowQuery } from "./wire/query";
 import { focusOfRowsKey, fromUiPatch, parseRowsKey, rowsOfFocus, toUiView, type RowsMemo } from "./wire/view";
 
@@ -54,18 +56,15 @@ function providerOf(store: SceneStore, client: ObserverClient | null): Analytics
 }
 
 /** Per store: the drawers' words, and the cursor the views read at (kept across periods and filters). */
-const memos = new WeakMap<SceneStore, { rows: RowsMemo; cursor: string | null }>();
+const memos = new WeakMap<SceneStore, { rows: RowsMemo; shared: SharedCursor }>();
 function memoOf(store: SceneStore) {
   let m = memos.get(store);
-  if (!m) memos.set(store, (m = { rows: new Map(), cursor: null }));
+  if (!m) memos.set(store, (m = { rows: new Map(), shared: new SharedCursor() }));
   return m;
 }
-/** The next snapshot of this store reads the head (a refresh, a cursor no longer readable). */
+/** The next view of this store reads the head (a refresh). */
 function forgetCursor(store: SceneStore): void {
-  memoOf(store).cursor = null;
-}
-function rememberCursor(store: SceneStore, cursor: string): void {
-  memoOf(store).cursor = cursor;
+  memoOf(store).shared.forget();
 }
 
 interface Loaded {
@@ -80,20 +79,15 @@ interface Loaded {
 }
 
 /**
- * The snapshot of one view, begun when first read. Aborted when the view is left (or unmounted); read
- * again after that (React's development double mount), it begins again at the view's cursor.
+ * The drawer of an Improvement Opportunity named in the address: its own rows key, title and
+ * population once the opportunities are read; until then the drawer waits (never the view's window).
  */
-class ViewSession {
-  private current: AnalyticsSnapshotSession | null = null;
-  constructor(private readonly begin: () => AnalyticsSnapshotSession) {}
-  get(): AnalyticsSnapshotSession {
-    this.current ??= this.begin();
-    return this.current;
-  }
-  abort(): void {
-    this.current?.abort();
-    this.current = null;
-  }
+function insightRows(id: string, insights: AreaData<InsightsReply> | undefined, fallback: RowsRequest | null): RowsRequest {
+  const f = insights?.state === "ready" ? insights.value.insights.find((x) => x.id === id) : undefined;
+  const key = f ? insightRowsKey(f) : null;
+  if (f && key) return { key, title: capitalFirst(f.title), unit: "count", population: insightPopulation(f), insight: f.id };
+  const state: RowsRequest["pending"] = !insights || insights.state === "loading" ? "loading" : "gone";
+  return { key: fallback?.key ?? "", title: fallback?.title ?? "Rows of an improvement opportunity", unit: fallback?.unit ?? "count", insight: id, pending: state };
 }
 
 /** The population a drawer lists over: an opportunity's own (last N runs, or its window), else the view's window. */
@@ -136,22 +130,26 @@ export function AnalyticsWorkspace() {
     if (!data) return null;
     void key;
     void refresh; // a refresh forgot the cursor first (forgetCursor)
-    return new ViewSession(() => beginSnapshot(data, { asOfMs, at: memoOf(store).cursor }));
+    return new ViewSession(data, asOfMs, memoOf(store).shared);
     // A new period, filter, "as of" or refresh begins a new snapshot; nothing else does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, key, refresh]);
   useEffect(() => () => session?.abort(), [session]);
 
   // The area's figures at the view's cursor.
-  const plan = useMemo(() => planFor(state.area, state.pick && { dim: state.pick.dim as never, value: state.pick.value }), [state.area, state.pick]);
+  // An opportunity's rows open from the address need the opportunities read, whatever the area.
+  const insightId = state.focus?.insight ?? null;
+  const plan = useMemo(() => {
+    const p = planFor(state.area, state.pick && { dim: state.pick.dim as never, value: state.pick.value });
+    return insightId !== null && !p.insights ? { ...p, insights: true } : p;
+  }, [state.area, state.pick, insightId]);
   const model = state.area === "economics" ? state.filters.model : null;
-  const loadKey = `${key}|${newestDay ?? ""}|${refresh}|${state.area}|${state.pick ? `${state.pick.dim}:${state.pick.value}` : ""}|${model ?? ""}`;
+  const loadKey = `${key}|${newestDay ?? ""}|${refresh}|${state.area}|${state.pick ? `${state.pick.dim}:${state.pick.value}` : ""}|${model ?? ""}|${insightId !== null ? "i" : ""}`;
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   useEffect(() => {
     if (!session || !data || !wq || !wq.ok || !check.ok) return;
     let live = true;
-    loadArea({
-      session: session.get(),
+    loadView(session, memoOf(store).shared, {
       data,
       source: check.area,
       plan,
@@ -165,11 +163,9 @@ export function AnalyticsWorkspace() {
       (r) => {
         if (!live) return;
         if (r.restart) {
-          forgetCursor(store);
           setRefresh((n) => n + 1);
           return;
         }
-        if (r.cursor) rememberCursor(store, r.cursor);
         setLoaded({ key: loadKey, data: r.data, insights: r.insights, configs: r.configs, cursor: r.cursor, metricsExact: r.asOf ? r.asOf.exact : null, widened: r.asOf?.widened ?? false, notes: r.notes });
       },
       (e: unknown) => {
@@ -193,11 +189,11 @@ export function AnalyticsWorkspace() {
   const [override, setOverride] = useState<RowsRequest | null>(null);
   const snapshot = areaData.state === "ready" ? areaData.value : null;
   const focusRows = rowsOfFocus(state.focus, memoOf(store).rows, state.focus ? snapshot?.totals[state.focus.metric as keyof AnalyticsSnapshot["totals"]] : undefined);
-  const rows = focusRows ?? override;
+  const rows = insightId !== null ? insightRows(insightId, current?.insights, focusRows) : (focusRows ?? override);
   const view = useMemo(() => toUiView(state, rows), [state, rows]);
 
   const [rowsData, setRowsData] = useState<{ key: string; data: AreaData<ContributorPage> } | null>(null);
-  const rowsKey = rows?.key ?? null;
+  const rowsKey = rows && !rows.pending ? rows.key : null;
   // An opportunity's rows are listed over its own population (its last N runs, or its window), not the view's.
   const pop = rows?.population ?? null;
   const popKey = pop ? `${pop.lastRuns ?? ""}-${pop.fromMs ?? ""}-${pop.toMs ?? ""}` : "";
@@ -209,7 +205,7 @@ export function AnalyticsWorkspace() {
     let live = true;
     session
       .get()
-      .contributors({ ...rowsWindow(pop, wq), filters: filtersQuery(state.filters, false), metric: k.metric, ...(Object.keys(k.group).length ? { group: k.group } : {}), order: "impact", limit: 500 })
+      .then((x) => x.contributors({ ...rowsWindow(pop, wq), filters: filtersQuery(state.filters, false), metric: k.metric, ...(Object.keys(k.group).length ? { group: k.group } : {}), order: "impact", limit: 500 }))
       .then(
         (r) => live && setRowsData({ key: tag, data: r.status === "ok" ? { state: "ready", value: toContractContributors(r.value) } : absenceState(r) }),
         (e: unknown) => live && !(e instanceof DOMException && e.name === "AbortError") && setRowsData({ key: tag, data: failureState(e) }),
@@ -221,7 +217,11 @@ export function AnalyticsWorkspace() {
   }, [rowsKey, popKey, loadKey, session]);
   const rowsFor = useCallback(
     (req: RowsRequest): AreaData<ContributorPage> =>
-      !parseRowsKey(req.key)
+      req.pending === "loading"
+        ? { state: "loading" }
+        : req.pending === "gone"
+          ? { state: "unavailable", reason: "This improvement opportunity does not hold in the current view, so its rows are not listed. Open Improvement opportunities to see the ones that do." }
+          : !parseRowsKey(req.key)
         ? { state: "unavailable", reason: "These rows cannot be listed: the figure's key is not one the observer answers." }
         : !listsRowsOf(data?.source ?? "observer", parseRowsKey(req.key)!.metric)
           ? { state: "unavailable", reason: `This observer does not list the rows behind ${parseRowsKey(req.key)!.metric}; the figure itself is the recorded one.` }

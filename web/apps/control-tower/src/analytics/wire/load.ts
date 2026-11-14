@@ -42,6 +42,8 @@ export interface LoadInput {
   readonly contractFilters: ContractFilters;
   /** Where the history ends when the reply does not say (the newest record's day end, the playhead, the fixture's end). */
   readonly endMs: number | null;
+  /** Told the view's cursor as soon as the totals pinned it (before the other parts are read). */
+  readonly onCursor?: (cursor: string | null) => void;
 }
 
 export interface LoadResult {
@@ -122,6 +124,7 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
   }
   if (totals.status !== "ok") return fail(absenceState(totals), totals.status === "cursor-gone");
   const t = totals.value;
+  input.onCursor?.(session.cursor);
 
   const part = async <T>(what: string, run: () => Promise<SnapshotResult<T> | AnalyticsResult<T>>): Promise<T | null> => {
     try {

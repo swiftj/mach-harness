@@ -76,7 +76,8 @@ Escape pressed in a chart or a popover is theirs: it never also closes the drawe
   so a data refresh under the same selection says nothing. Loading, a stale result and an error each have one
   status or alert line. The focused mark is read through its own name, not a live region.
 - **Tables**: every table has a caption, `scope="col"` headers and a `scope="row"` header in its first cell
-  (a day, a station, a ticket). A table view that scrolls is a focusable, named region.
+  (a day, a station, a ticket). A table view that scrolls is a focusable, named region, and so is the Rows
+  drawer's list (in the Simulation its rows are not links, so the list itself must take focus to scroll).
 - **Ranking tables** (Economics by model, Quality by gate, Reliability): the row's first cell is a real
   button (one Tab stop for the table, Up/Down/Home/End between rows, `aria-pressed` for the selected row);
   rows themselves carry no ARIA state.
@@ -96,7 +97,9 @@ on the same page that meets the size and offers the same action:
 | Pulse, station time strip | 8–13 px segments | The Table view: each station is a button opening Flow on that station; also the panel's "Open flow" link |
 | Pulse, execution endings | 8–13 px segments | The Table view: each ending is a button opening Reliability filtered to it |
 
-The Table button is reachable by Tab and is 28 px tall. The audit verifies the equivalent by opening each
+The trend brush's two handles (`role="slider"`, 6 × 20 px) are keyboard-only: they take no pointer events; a
+pointer chooses periods by dragging across the plot, which is the whole chart. The Table button is
+reachable by Tab and is 28 px tall. The audit verifies the equivalent by opening each
 such chart's table and counting its controls, not by trusting a declaration.
 
 ## 4. Colour
@@ -151,8 +154,13 @@ light). Compared pixel by pixel, only Flow's station outlines changed (`compare-
 
 - Not tested with a screen reader or by a disabled user. axe and the audit find structural faults; they do
   not show that the reading order of a chart's names is pleasant, or that the summaries say enough.
-- Shell and live modes of the audit were not rerun for this pass (the Shell mounts the same areas; live
-  depends on the wiring in progress).
+- Live mode (a real observer on the generated medium project, 40 axe states) was run by the e2e agent after
+  this pass and passes every check: axe 0, targets 0 crowded with 143 covered by an equivalent. Its target
+  check first misattributed equivalents because it re-found charts by position on a page that was still
+  re-rendering; it now finds them by `data-chart` and waits for the area to be ready. Shell mode (built-in
+  Simulation) was rerun too: it passes after the Rows drawer's list became a focusable region (3
+  scrollable-region-focusable findings, one per drawer on Flow, Quality and Economics, before); the full Shell-mode rerun afterwards passes every check, axe
+  0 violations in 39 states.
 - Only Chromium was driven. Safari does not focus a button on click, so after a mouse click on Rows the
   drawer's focus return falls back to the sheet.
 - Marks that are `role="img"` with a roving `tabindex` are focusable images; this is the common pattern for

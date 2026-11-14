@@ -11,6 +11,7 @@ import type { HistBucket } from "../../contract";
 import { durationTicks, histogramBins, linear, logScale, niceTicks, stepPath, type HistBin } from "../../model/charts";
 import { dayText, durationText, durationTick, plural } from "../../model/format";
 import { brushIndices, brushWindow, pageOf, sortRows, type SortDir } from "../../model/series";
+import { chartKey } from "../keys";
 import { cardWords, Mark, useMarkNav, useTip, useWidth, type Card } from "../kit";
 import type { Interval } from "../types";
 
@@ -105,6 +106,7 @@ export function Columns({ points, height = 150, format, tone = "var(--an-bar)", 
     return false;
   };
   const handleKey = (which: "first" | "last") => (e: KeyboardEvent) => {
+    if (chartKey(e.key, true, { ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey }).stop) e.stopPropagation();
     if (!sel) return;
     const d = e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 0;
     if (d) {
@@ -222,7 +224,10 @@ export function Columns({ points, height = 150, format, tone = "var(--an-bar)", 
                   width={6}
                   height={20}
                   rx={2}
-                  style={{ opacity: sel ? 1 : 0 }}
+                  // Keyboard handles only: a pointer chooses periods by dragging across the plot, a
+                  // target as wide and tall as the chart (WCAG 2.5.8's equivalent).
+                  data-target-equivalent="dragging across the columns, the whole plot"
+                  style={{ opacity: sel ? 1 : 0, pointerEvents: "none" }}
                   onKeyDown={handleKey(which)}
                 />
               );
@@ -379,6 +384,8 @@ export function RankTable<T>({ rows, columns, rowKey, rowName, initial, pageSize
                           onActivate(r);
                         }}
                         onKeyDown={(e) => {
+                          // A row's keys stay in the table (Space would otherwise also reach the shell's play/pause).
+                          if (chartKey(e.key, true, { ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey }).stop) e.stopPropagation();
                           if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") nav.onKey(i, e);
                         }}
                       >

@@ -41,6 +41,10 @@ export interface RowsRequest {
   readonly about?: string;
   /** The population the rows are listed over when it is not the view's window (an Improvement Opportunity's last N runs or its own window). */
   readonly population?: { readonly lastRuns: number | null; readonly fromMs: number | null; readonly toMs: number | null };
+  /** The Improvement Opportunity these rows belong to (its id), kept in the address so a link or Back reopens the same rows. */
+  readonly insight?: string;
+  /** An opportunity's drawer whose opportunity is not resolved: still being read, or no longer holding in this view. */
+  readonly pending?: "loading" | "gone";
 }
 
 /** The window the workspace describes: a preset ending at the newest record, or a chosen interval. */

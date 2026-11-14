@@ -12,6 +12,7 @@ import type { AreaId } from "../model/findings";
 import { BASIS_WORDS, coverageText, durationText, sampleText, targetText, valueText, windowText } from "../model/format";
 import { densityOf, durationShows, verdictAllowed, type Density } from "../model/sample";
 import { nextMark } from "../model/series";
+import { chartKey } from "./keys";
 import { spoken } from "./charts/a11y";
 import type { AreaData, AreaSource, Interval, OnOpen, RowsRequest } from "./types";
 
@@ -500,6 +501,9 @@ export function Mark({ name, x, y, w, h, tipAt, card, onTip, onActivate, pressed
         aria-pressed={onActivate ? pressed : undefined}
         onClick={onActivate}
         onKeyDown={(e) => {
+          // The chart keeps its keys: Space or an arrow on a mark never reaches the shell's shortcuts.
+          const k = chartKey(e.key, !!onActivate, { ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey });
+          if (k.stop) e.stopPropagation();
           if (onKeyExtra?.(e)) return;
           if (nav?.onKey(index, e)) return;
           if (e.key === "Escape") {
@@ -514,10 +518,8 @@ export function Mark({ name, x, y, w, h, tipAt, card, onTip, onActivate, pressed
             }
             return;
           }
-          if (onActivate && (e.key === "Enter" || e.key === " ")) {
-            e.preventDefault();
-            onActivate();
-          }
+          if (k.prevent) e.preventDefault();
+          if (k.activate) onActivate?.();
         }}
       >
         <g aria-hidden="true">{children}</g>

@@ -303,3 +303,70 @@ test("an opportunity says its population beside its figure, shows each figure on
   assert.equal(I.repeatsTitle({ value: 90 }, "Execution-capacity waits have a 90th percentile of 4.7 d"), false);
   assert.equal(I.repeatsTitle({ value: 86 }, "build holds 42.8% of the measured station time"), false);
 });
+
+// ------------------------------------------------------------------------------------ views under churn
+
+const W = await import("../src/analytics/wire/views.ts");
+
+test("window and filter churn with a slow provider: every query of every view carries the views' cursor, and every view still standing settles", async () => {
+  for (let seed = 1; seed <= 25; seed++) {
+    const r = rng(seed);
+    const calls = [];
+    const delay = () => new Promise((ok) => setTimeout(ok, Math.floor(r() * 8)));
+    const reply = (name) => {
+      if (name === "metrics") return { status: "ok", value: { ...env("c.1"), metrics: [], definitions_version: 2, group_overflow: 0, suspect_days: [] } };
+      if (name === "runs") return { status: "ok", value: { ...env("c.1"), of: "runs", items: [], total: 0, offset: 0, more: false, excluded: [], after_as_of: 0 } };
+      if (name === "contributors") return { status: "ok", value: { ...env("c.1"), metric: "K4", figure: null, group: {}, items: [], total: 0, truncated: false, by_basis: {}, order: "impact", limit: 500, after_as_of: 0 } };
+      return { status: "unsupported", reason: "-" };
+    };
+    const route = (name) => async (query, options = {}) => {
+      calls.push({ name, at: options.at ?? null });
+      await delay();
+      if (options.signal?.aborted) throw new DOMException("gone", "AbortError");
+      return reply(name);
+    };
+    const data = { source: "observer", displayPolicy: async () => ({}), metrics: route("metrics"), flow: route("flow"), contributors: route("contributors"), runs: route("runs"), executions: route("executions"), insights: route("insights"), concurrency: route("concurrency"), freshness: route("freshness") };
+    const shared = new W.SharedCursor();
+    let prev = null;
+    const standing = [];
+    for (let i = 0; i < 12; i++) {
+      // A new period or filter: the previous view is left (React's cleanup), sometimes before its first query answered.
+      if (prev && r() < 0.8) prev.abort();
+      const v = new W.ViewSession(data, null, shared);
+      const p = W.loadView(v, shared, { data, source: "live", plan: Q.planFor(pick(r, ["quality", "pulse", "economics"]), null), fromMs: pick(r, [null, 7 * D]), toMs: null, filters: {}, model: null, contractFilters: { window: "all", risk: null, app_type: null, model: null }, endMs: 9 * D }).then(
+        (x) => x,
+        (e) => (e?.name === "AbortError" ? "aborted" : Promise.reject(e)),
+      );
+      standing.push({ v, p });
+      prev = v;
+      if (r() < 0.5) await delay();
+    }
+    const last = await standing.at(-1).p;
+    assert.equal(last.data.state, "ready", `seed ${seed}: the view on screen settles`);
+    await Promise.all(standing.map((s) => s.p));
+    const pinned = calls.filter((c) => !["concurrency", "freshness"].includes(c.name));
+    assert.equal(pinned.filter((c) => c.at === null).length, 1, `seed ${seed}: only the very first query asks the head (${pinned.filter((c) => c.at === null).length})`);
+    for (const c of pinned.slice(1)) assert.equal(c.at, "c.1", `seed ${seed}: ${c.name}`);
+  }
+});
+
+test("an opportunity's drawer is named in the address by its id, so a link or Back reopens the same rows over the same population", () => {
+  for (const id of ["scorecard.first-pass", "flow.wait-p90:capacity", "quality.recurring-failure-kind:matrix rule", "quality.recurring-gate-refusal:build.green"]) {
+    const memo = new Map();
+    const req = { key: "R2|rule=x|risk=High", title: "Rule x recurs", unit: "count", population: { lastRuns: 20, fromMs: null, toMs: null }, insight: id };
+    const state = A.applyAnalyticsPatch(A.INITIAL_ANALYTICS_VIEW, V.fromUiPatch({ area: "opportunities", rows: req }, memo));
+    assert.equal(state.focus.insight, id);
+    assert.deepEqual(state.focus.group, { dim: "rule", value: "x" }, "the first group stays as a hint");
+    const hash = formatHash({ route: "analytics", sel: null, at: null, win: null, group: "product", lens: null, table: false, analytics: state });
+    const back = parseHash(hash).analytics;
+    assert.ok(A.sameAnalyticsView(back, state), `${id}: ${hash}`);
+    assert.equal(back.focus.insight, id);
+  }
+  // A focus with no opportunity stays as it was; a malformed id is dropped with the focus.
+  assert.equal(parseHash("#analytics?focus=K1").analytics.focus.insight, undefined);
+  assert.equal(parseHash("#analytics?focus=K1,insight:%01bad").analytics.focus, null);
+  // The rows key and population come from the opportunity itself.
+  const f = { contributors: { metric: "R2", group: { rule: "x", risk: "High" }, order: "impact", limit: 100, path: "/api/v1/analytics/contributors?metric=R2&last_runs=20", relation: "exact", note: null }, window: { from_ms: null, to_ms: null, last_runs: null, comparison: null }, sample: null };
+  assert.equal(I.insightRowsKey(f), "R2|rule=x|risk=High");
+  assert.deepEqual(I.insightPopulation(f), { lastRuns: 20, fromMs: null, toMs: null });
+});

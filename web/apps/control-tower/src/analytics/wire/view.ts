@@ -159,7 +159,10 @@ export function fromUiPatch(p: Partial<AnalyticsUiView>, memo: RowsMemo | null):
     if (p.rows === null) focus = null;
     else {
       memo?.set(p.rows.key, p.rows);
-      focus = focusOfRowsKey(p.rows.key);
+      const k = parseRowsKey(p.rows.key);
+      const g = k ? Object.entries(k.group)[0] : undefined;
+      // An opportunity's rows: its id names them (and their population); the first group stays as a hint.
+      focus = p.rows.insight !== undefined && k ? { metric: k.metric, group: g ? { dim: g[0], value: g[1] } : null, insight: p.rows.insight } : focusOfRowsKey(p.rows.key);
     }
   }
   return {
