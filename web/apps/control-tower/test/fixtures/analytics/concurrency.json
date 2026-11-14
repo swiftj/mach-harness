@@ -1,0 +1,1749 @@
+{
+ "body": {
+  "data": {
+   "bucket_ms": 86400000,
+   "buckets": [
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 3.843
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.186
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.918
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 4.658
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.002
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.668
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.113
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 0.558
+      },
+      "slice-eligible": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 0
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 2.793
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 1.761
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.004
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.596
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.932
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.657
+      }
+     },
+     "from_ms": 1792648800000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 9,
+       "mean": 4.499
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 0.559
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 1.699
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 10,
+       "mean": 5.363
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.004
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.486
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.274
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 9,
+       "mean": 2.382
+      },
+      "slice-eligible": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 0.076
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 3
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.68
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.013
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 10,
+       "mean": 3.345
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.265
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.446
+      }
+     },
+     "from_ms": 1792735200000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 9,
+       "mean": 3.954
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.001
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 5.741
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 10,
+       "mean": 9.723
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.944
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.253
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.437
+      },
+      "slice-eligible": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.001
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.464
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.555
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.007
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 3.806
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 2
+      },
+      "workflow": {
+       "inferred_max": 1,
+       "max": 4,
+       "mean": 3.919
+      }
+     },
+     "from_ms": 1792821600000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 1,
+       "max": 12,
+       "mean": 4.977
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.59
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 13,
+       "mean": 9.112
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 17,
+       "mean": 13.24
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.004
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.941
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.627
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 2.426
+      },
+      "slice-eligible": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 0.058
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.472
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.134
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.01
+      },
+      "visit": {
+       "inferred_max": 1,
+       "max": 10,
+       "mean": 3.991
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 2.599
+      },
+      "workflow": {
+       "inferred_max": 1,
+       "max": 4,
+       "mean": 3.908
+      }
+     },
+     "from_ms": 1792908000000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 11,
+       "mean": 4.572
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.355
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 10,
+       "mean": 7.598
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 13,
+       "mean": 11.649
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.94
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.127
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.126
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.112
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 1.586
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.235
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.009
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.769
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 2.783
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.912
+      }
+     },
+     "from_ms": 1792994400000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 1,
+       "max": 10,
+       "mean": 4.655
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.402
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 12,
+       "mean": 9.975
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 17,
+       "mean": 14.989
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.951
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.925
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.947
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.398
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 1.984
+      },
+      "slice-eligible": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 0.029
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.011
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.477
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.008
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 11,
+       "mean": 3.75
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 2.933
+      },
+      "workflow": {
+       "inferred_max": 1,
+       "max": 4,
+       "mean": 3.924
+      }
+     },
+     "from_ms": 1793080800000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 13,
+       "mean": 4.605
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.35
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 14,
+       "mean": 8.416
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 19,
+       "mean": 13.277
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.942
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.819
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.818
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.25
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 1.35
+      },
+      "slice-eligible": {
+       "inferred_max": 0,
+       "max": 8,
+       "mean": 0.023
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.366
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.009
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 10,
+       "mean": 3.828
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 2.269
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.912
+      }
+     },
+     "from_ms": 1793167200000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 8,
+       "mean": 4.747
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.548
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 13,
+       "mean": 11.633
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 19,
+       "mean": 16.874
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.004
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.919
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.277
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.379
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.412
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 2.588
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.094
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 0.299
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.727
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 3
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.838
+      }
+     },
+     "from_ms": 1793253600000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 10,
+       "mean": 4.411
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.359
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 16,
+       "mean": 12.499
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 20,
+       "mean": 16.545
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.004
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.946
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.142
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.248
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 1.747
+      },
+      "slice-eligible": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 0.003
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.6
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.117
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 0.186
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 9,
+       "mean": 3.57
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 2.796
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.884
+      }
+     },
+     "from_ms": 1793340000000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 9,
+       "mean": 4.748
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.451
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 12,
+       "mean": 11.116
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 16,
+       "mean": 15.806
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.002
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.968
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.467
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.713
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 2.799
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 1.645
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 1.145
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.006
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.105
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 3
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.948
+      }
+     },
+     "from_ms": 1793426400000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 8,
+       "mean": 4.308
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.259
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 18,
+       "mean": 16.17
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 23,
+       "mean": 21.923
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.967
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.634
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.761
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 4.241
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.881
+      },
+      "slice-eligible": {
+       "inferred_max": 0,
+       "max": 8,
+       "mean": 0.094
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 1.304
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.008
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 12,
+       "mean": 3.874
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.769
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.941
+      }
+     },
+     "from_ms": 1793512800000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 11,
+       "mean": 4.684
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.436
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 20,
+       "mean": 16.56
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 27,
+       "mean": 22.002
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.949
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.17
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.783
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 1.921
+      },
+      "slice-eligible": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 0.055
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.458
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.347
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.008
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 11,
+       "mean": 3.799
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.267
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.92
+      }
+     },
+     "from_ms": 1793599200000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 9,
+       "mean": 4.569
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.497
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 21,
+       "mean": 19.117
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 27,
+       "mean": 26.291
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.932
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.21
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 4.308
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 2.027
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.248
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.007
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.766
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 4
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.904
+      }
+     },
+     "from_ms": 1793685600000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 10,
+       "mean": 4.755
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.646
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 17,
+       "mean": 15.578
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 25,
+       "mean": 21.947
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.004
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.941
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.093
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.589
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 8,
+       "mean": 2.516
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.149
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.01
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.766
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 4
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.908
+      }
+     },
+     "from_ms": 1793772000000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 10,
+       "mean": 4.714
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.48
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 13,
+       "mean": 12.348
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 20,
+       "mean": 18.846
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.002
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.948
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 2
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.691
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 2.046
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.415
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.006
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.799
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 4
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.924
+      }
+     },
+     "from_ms": 1793858400000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 9,
+       "mean": 4.579
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.466
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 11,
+       "mean": 9.011
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 16,
+       "mean": 14.982
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.954
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 2
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.305
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 2.03
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.074
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 0.009
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.784
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 4
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.926
+      }
+     },
+     "from_ms": 1793944800000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 10,
+       "mean": 4.344
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.217
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 4.864
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 13,
+       "mean": 11.748
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.95
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.877
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 2.877
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.542
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 1.114
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.493
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 6,
+       "mean": 0.301
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.804
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 4
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.876
+      }
+     },
+     "from_ms": 1794031200000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 4.682
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.511
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.296
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 11,
+       "mean": 10.012
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.003
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.952
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.309
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 2.402
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 4.243
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 2.152
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 1.033
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.009
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.791
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 4
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.923
+      }
+     },
+     "from_ms": 1794117600000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 4.103
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 0.495
+      },
+      "capacity-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.084
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 8,
+       "mean": 7.791
+      },
+      "claim": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.002
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.45
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.927
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.261
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.226
+      },
+      "seat": {
+       "inferred_max": 0,
+       "max": 7,
+       "mean": 2.176
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 3,
+       "mean": 0.888
+      },
+      "tool": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.007
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 3.308
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 4
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.424
+      }
+     },
+     "from_ms": 1794204000000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.026
+      },
+      "agent-queue": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 5
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 4
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      },
+      "task": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.53
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 2,
+       "mean": 1.002
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 4
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 1
+      }
+     },
+     "from_ms": 1794290400000
+    },
+    {
+     "active": {
+      "agent": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.866
+      },
+      "cell": {
+       "inferred_max": 0,
+       "max": 5,
+       "mean": 4.328
+      },
+      "execution": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.866
+      },
+      "gate-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.866
+      },
+      "person-wait": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.463
+      },
+      "round": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.866
+      },
+      "slice-wait": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.866
+      },
+      "visit": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.866
+      },
+      "wave": {
+       "inferred_max": 0,
+       "max": 4,
+       "mean": 3.463
+      },
+      "workflow": {
+       "inferred_max": 0,
+       "max": 1,
+       "mean": 0.866
+      }
+     },
+     "from_ms": 1794376800000
+    }
+   ],
+   "complete": false,
+   "cursor": "791fafe48b91c0cd.12684",
+   "from_ms": 1792648800000,
+   "limits": [
+    {
+     "applies_to": null,
+     "event_id": "i:f0334f45:1",
+     "from_ms": 1792648800999,
+     "name": "budget_usd",
+     "to_ms": null,
+     "value": 40
+    },
+    {
+     "applies_to": [
+      "execution",
+      "cell"
+     ],
+     "event_id": "i:f0334f45:1",
+     "from_ms": 1792648800999,
+     "name": "max_parallel",
+     "to_ms": null,
+     "value": 4
+    },
+    {
+     "applies_to": null,
+     "event_id": "i:f0334f45:1",
+     "from_ms": 1792648800999,
+     "name": "minutes",
+     "to_ms": null,
+     "value": 240
+    }
+   ],
+   "live_ms": 1794451591999,
+   "projection": "current",
+   "rules": "active over [start's earliest bound, end's latest bound); an open span until live_ms; mean is time-weighted over the bucket; inferred_max counts the spans whose end no record states (end basis inferred)",
+   "to_ms": 1794463200000
+  },
+  "ok": true
+ },
+ "path": "/concurrency?from_ms=1792648800000&to_ms=1794463200000&bucket_ms=86400000",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

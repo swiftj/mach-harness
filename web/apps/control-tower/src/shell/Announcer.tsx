@@ -11,7 +11,7 @@
  * The words come from the history (its own sentences per event), never invented here.
  */
 import { useEffect, useRef, useState } from "react";
-import { playbackFactorWords, useStore } from "../scene";
+import { ANALYTICS_AREA_WORDS, playbackFactorWords, useStore } from "../scene";
 import { countAtOrBefore, indexFor, lastAtOrBefore } from "./history";
 import { connectionLook } from "./SourceBadge";
 import { spokenTime } from "./vocab";
@@ -34,7 +34,15 @@ export function Announcer() {
       const s = store.getState();
       const index = indexFor(s);
       // A workspace switch is said once, with where it lands (the floor's view when returning to it).
-      if (s.workspace !== prev.workspace) setStatus(s.workspace === "timeline" ? "Execution Timeline" : `Factory floor: ${s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint"}`);
+      if (s.workspace !== prev.workspace)
+        setStatus(
+          s.workspace === "timeline"
+            ? "Execution Timeline"
+            : s.workspace === "analytics"
+              ? `Factory Analytics: ${ANALYTICS_AREA_WORDS[s.analytics.area]}`
+              : `Factory floor: ${s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint"}`,
+        );
+      else if (s.workspace === "analytics" && s.analytics.area !== prev.analytics.area) setStatus(`Factory Analytics: ${ANALYTICS_AREA_WORDS[s.analytics.area]}`);
       else if (s.view !== prev.view) setStatus(s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint");
       if (s.source === "simulation" && (s.playing !== prev.playing || s.speed !== prev.speed || s.following !== prev.following)) {
         const words = s.playing ? `Playing at ${playbackFactorWords(s.source, s.speed)}` : `Paused at ${spokenTime(s.playhead)}`;

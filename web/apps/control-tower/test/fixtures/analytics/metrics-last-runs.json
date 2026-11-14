@@ -1,0 +1,373 @@
+{
+ "body": {
+  "data": {
+   "cursor": "791fafe48b91c0cd.12684",
+   "definitions_version": 2,
+   "filters": {},
+   "generated_ms": 1794640504669,
+   "group_overflow": 0,
+   "history": {
+    "complete": false,
+    "complete_window": false,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793344003999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": ""
+   },
+   "metrics": [
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 16,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 16,
+      "covered": 16,
+      "eligible": 16,
+      "excluded": [],
+      "of": 16,
+      "share": 1
+     },
+     "denominator": "merged tickets",
+     "denominator_value": 16,
+     "description": "First-pass rate (observe): merged tickets with first_pass / merged tickets",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "Q",
+     "formula": "merged tickets with first_pass / merged tickets",
+     "groups": null,
+     "id": "Q2",
+     "kind": "rate",
+     "limitations": "",
+     "met": false,
+     "name": "First-pass rate (observe)",
+     "numerator": "merged tickets with first_pass",
+     "numerator_value": 9,
+     "parity_with": "observe.py scorecard first_pass_rate",
+     "population": "merged tickets among the last 20 finished runs by closed_at (observe.py's population; 20 held)",
+     "sample_count": 16,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "target": "> 0.85",
+     "target_check": {
+      "direction": "above",
+      "met": false,
+      "value": 0.85
+     },
+     "unit": "",
+     "value": 0.5625,
+     "value_rounded": 0.562
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 16,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 16,
+      "covered": 16,
+      "eligible": 16,
+      "excluded": [],
+      "of": 16,
+      "share": 1
+     },
+     "denominator": "merged tickets with recorded rounds",
+     "denominator_value": 16,
+     "description": "Average judging rounds (observe): sum of rounds / merged tickets with recorded rounds",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "Q",
+     "formula": "sum of rounds / merged tickets with recorded rounds",
+     "groups": null,
+     "id": "Q3",
+     "kind": "mean",
+     "limitations": "",
+     "met": false,
+     "name": "Average judging rounds (observe)",
+     "numerator": "sum of rounds",
+     "numerator_value": 23,
+     "parity_with": "observe.py scorecard average_rounds",
+     "population": "merged tickets with recorded rounds among the last 20 finished runs by closed_at (observe.py's population; 20 held)",
+     "sample_count": 16,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "target": "< 1.3",
+     "target_check": {
+      "direction": "below",
+      "met": false,
+      "value": 1.3
+     },
+     "unit": "rounds",
+     "value": 1.4375,
+     "value_rounded": 1.438
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 20,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 20,
+      "covered": 20,
+      "eligible": 20,
+      "excluded": [],
+      "of": 20,
+      "share": 1
+     },
+     "denominator": "finished tickets",
+     "denominator_value": 20,
+     "description": "Escalation rate (observe): tickets escalated / finished tickets",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "R",
+     "formula": "tickets escalated / finished tickets",
+     "groups": null,
+     "id": "R5",
+     "kind": "rate",
+     "limitations": "",
+     "met": false,
+     "name": "Escalation rate (observe)",
+     "numerator": "tickets escalated",
+     "numerator_value": 2,
+     "parity_with": "observe.py scorecard escalation_rate",
+     "population": "finished tickets among the last 20 finished runs by closed_at (observe.py's population; 20 held)",
+     "sample_count": 20,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "target": "< 0.05",
+     "target_check": {
+      "direction": "below",
+      "met": false,
+      "value": 0.05
+     },
+     "unit": "",
+     "value": 0.1,
+     "value_rounded": 0.1
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 20,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 20,
+      "covered": 20,
+      "eligible": 20,
+      "excluded": [],
+      "of": 20,
+      "share": 1
+     },
+     "denominator": "finished tickets",
+     "denominator_value": 20,
+     "description": "Abandonment rate (observe): outcome abandoned / finished tickets",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "R",
+     "formula": "outcome abandoned / finished tickets",
+     "groups": null,
+     "id": "R6",
+     "kind": "rate",
+     "limitations": "",
+     "name": "Abandonment rate (observe)",
+     "numerator": "outcome abandoned",
+     "numerator_value": 4,
+     "parity_with": "observe.py scorecard abandonment_rate",
+     "population": "finished tickets among the last 20 finished runs by closed_at (observe.py's population; 20 held)",
+     "sample_count": 20,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "",
+     "value": 0.2,
+     "value_rounded": 0.2
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 69,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 69,
+      "covered": 69,
+      "eligible": 69,
+      "excluded": [],
+      "of": 69,
+      "share": 1
+     },
+     "denominator": "tests_seen_failing_first plus tests_passing_on_first_run",
+     "denominator_value": 69,
+     "description": "Tests seen failing first (observe): tests_seen_failing_first / tests_seen_failing_first plus tests_passing_on_first_run",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "G",
+     "formula": "tests_seen_failing_first / tests_seen_failing_first plus tests_passing_on_first_run",
+     "groups": null,
+     "id": "G1",
+     "kind": "rate",
+     "limitations": "",
+     "met": true,
+     "name": "Tests seen failing first (observe)",
+     "numerator": "tests_seen_failing_first",
+     "numerator_value": 66,
+     "parity_with": "observe.py scorecard tests_failing_first_share",
+     "population": "tests_seen_failing_first plus tests_passing_on_first_run among the last 20 finished runs by closed_at (observe.py's population; 20 held)",
+     "sample_count": 69,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "target": "> 0.9",
+     "target_check": {
+      "direction": "above",
+      "met": true,
+      "value": 0.9
+     },
+     "unit": "",
+     "value": 0.9565217391304348,
+     "value_rounded": 0.957
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 20,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 20,
+      "covered": 20,
+      "eligible": 20,
+      "excluded": [],
+      "of": 20,
+      "share": 1
+     },
+     "denominator": "finished tickets",
+     "denominator_value": 20,
+     "description": "Deviations per ticket (observe): deviations / finished tickets",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "G",
+     "formula": "deviations / finished tickets",
+     "groups": null,
+     "id": "G2",
+     "kind": "mean",
+     "limitations": "not split by deviation type: the observer keeps a count per run",
+     "name": "Deviations per ticket (observe)",
+     "numerator": "deviations",
+     "numerator_value": 4,
+     "parity_with": "observe.py scorecard deviations_per_ticket",
+     "population": "finished tickets among the last 20 finished runs by closed_at (observe.py's population; 20 held)",
+     "sample_count": 20,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "deviations",
+     "value": 0.2,
+     "value_rounded": 0.2
+    }
+   ],
+   "partial": "",
+   "projection": {
+    "definitions": 2,
+    "format": 4
+   },
+   "rules": "recorded values only; an empty denominator is null with a reason; nothing is estimated or apportioned; durations are averaged over measured spans only, the others counted apart; value is unrounded, value_rounded is observe.py's round(value, 3)",
+   "suspect_days": [],
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": null,
+    "from_ms": null,
+    "last_runs": 20,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/metrics?ids=Q2,Q3,R5,G1,R6,G2&last_runs=20",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

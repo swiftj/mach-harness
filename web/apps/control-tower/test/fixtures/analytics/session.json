@@ -1,0 +1,189 @@
+{
+ "body": {
+  "data": {
+   "capabilities": {
+    "analytics": true,
+    "artifacts": true,
+    "evidence_media": false,
+    "evidence_media_setting": ".factory/config.json \"tower\": {\"evidence_media\": true}",
+    "execution": false,
+    "snapshot": true,
+    "stream_observations": {
+     "claude_code_version": "2.1.323",
+     "ok": true,
+     "policy": "structural",
+     "proven_versions": [
+      "2.1.322",
+      "2.1.323"
+     ],
+     "reason": "every stream was written by a Claude Code version the observer's fixtures come from",
+     "state": "proven",
+     "versions": [
+      {
+       "executions": 130,
+       "records_refused": 0,
+       "state": "proven",
+       "version": "2.1.323"
+      }
+     ]
+    }
+   },
+   "display_policy": {
+    "free_text": {
+     "artifact_field": "free_text",
+     "artifact_header": "X-MACH-Free-Text: unchecked-for-names",
+     "checked_for_names": false,
+     "event_fields": [
+      {
+       "kind": "review.finding",
+       "max": 200,
+       "path": "data.title"
+      },
+      {
+       "kind": "agent.queued",
+       "max": 120,
+       "path": "data.label"
+      },
+      {
+       "kind": "agent.started",
+       "max": 120,
+       "path": "data.label"
+      },
+      {
+       "kind": "agent.queued",
+       "max": 60,
+       "path": "data.phase"
+      },
+      {
+       "kind": "agent.started",
+       "max": 60,
+       "path": "data.phase"
+      },
+      {
+       "kind": "workflow.phases_declared",
+       "max": 60,
+       "path": "data.phases[].title"
+      },
+      {
+       "kind": "intake.refused",
+       "max": 280,
+       "path": "data.problems[]"
+      },
+      {
+       "kind": "dependency.blocked",
+       "max": 280,
+       "path": "data.reasons[]"
+      },
+      {
+       "kind": "human.required",
+       "max": 280,
+       "path": "data.reason"
+      },
+      {
+       "kind": "factory.paused",
+       "max": 280,
+       "path": "data.reason"
+      },
+      {
+       "kind": "scheduling.decided",
+       "max": 280,
+       "path": "data.held[].why"
+      },
+      {
+       "kind": "work.scheduled",
+       "max": 280,
+       "path": "data.authorization"
+      },
+      {
+       "kind": "revision.superseded",
+       "max": 280,
+       "path": "data.effect"
+      },
+      {
+       "kind": "execution.completed",
+       "max": 200,
+       "path": "data.waiting_for"
+      },
+      {
+       "kind": "workflow.finished",
+       "max": 200,
+       "path": "data.tickets[].waiting_for"
+      }
+     ],
+     "note": "free text, not checked for names",
+     "render": "text only; never markup"
+    },
+    "people": "role"
+   },
+   "generation": "791fafe48b91c0cd",
+   "versions": {
+    "api": 1,
+    "event": {
+     "kinds": [
+      "wave.discovered",
+      "intake.validated",
+      "intake.refused",
+      "slice.materialized",
+      "slice.integrated",
+      "dependency.resolved",
+      "dependency.blocked",
+      "work.scheduled",
+      "revision.superseded",
+      "human.required",
+      "factory.activated",
+      "factory.disabled",
+      "factory.paused",
+      "factory.resumed",
+      "revision.discovered",
+      "scheduling.decided",
+      "work.claimed",
+      "execution.started",
+      "station.observed",
+      "recovery.started",
+      "execution.completed",
+      "execution.failed",
+      "station.entered",
+      "station.exited",
+      "gate.evaluated",
+      "build.task_completed",
+      "verify.check_recorded",
+      "review.round_started",
+      "review.verdict_submitted",
+      "review.decided",
+      "human.approval_recorded",
+      "merge.completed",
+      "cleanup.completed",
+      "execution.process_started",
+      "execution.process_ended",
+      "run.recorded",
+      "session.initialized",
+      "workflow.started",
+      "workflow.phases_declared",
+      "workflow.finished",
+      "agent.queued",
+      "agent.started",
+      "agent.progressed",
+      "agent.finished",
+      "tool.called",
+      "tool.returned",
+      "tool.refused",
+      "execution.usage",
+      "review.finding",
+      "artifact.recorded",
+      "history.began",
+      "verify.targets_listed",
+      "capacity.wait_changed",
+      "history.gap"
+     ],
+     "revision": 3,
+     "schema": 3
+    },
+    "observer": "0.6.2-m6.1"
+   }
+  },
+  "ok": true
+ },
+ "path": "/session",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

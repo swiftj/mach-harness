@@ -123,10 +123,10 @@ function InTime({ entity, detail }: { entity: EntityRef; detail: string | null }
   const aside = target ? (
     <button
       type="button"
-      onClick={() => (workspace === "floor" ? showInTimeline(store, target) : showOnFloor(store))}
+      onClick={() => (workspace === "timeline" ? showOnFloor(store) : showInTimeline(store, target))}
       className="text-caption font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2"
     >
-      {workspace === "floor" ? "Show in Timeline" : "Show on the floor"}
+      {workspace === "timeline" ? "Show on the floor" : "Show in Timeline"}
     </button>
   ) : undefined;
   return (

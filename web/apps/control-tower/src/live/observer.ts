@@ -253,6 +253,71 @@ export interface ObserverClient {
   concurrency?(query: ObserverConcurrencyQuery): Promise<Readonly<Record<string, unknown>>>;
   /** `/api/v1/series` with a filter (ticket, execution, event kinds), each bucket's counts by kind kept. */
   seriesFor?(query: ObserverSeriesQuery): Promise<FilteredSeries>;
+  // ---- M6.5 (Factory Analytics). Optional like the M6.3 methods; each returns the reply's `data`
+  // unparsed (src/analytics/data validates it). A 404 (`not_found`) means an observer without
+  // analytics; a 400 (`invalid`) carries the observer's reason in its message.
+  /** `GET /api/v1/analytics/metrics`. */
+  analyticsMetrics?(query: ObserverAnalyticsMetricsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `GET /api/v1/analytics/flow`. */
+  analyticsFlow?(query: ObserverAnalyticsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `GET /api/v1/analytics/contributors`. */
+  analyticsContributors?(query: ObserverAnalyticsContributorsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `GET /api/v1/analytics/runs`. */
+  analyticsRuns?(query: ObserverAnalyticsRunsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `GET /api/v1/analytics/insights` (M6_5_DESIGN.md 3.5). */
+  analyticsInsights?(query: ObserverAnalyticsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `/session`'s `display_policy` unparsed (`free_text` says which fields hold prose); null when absent. */
+  displayPolicy?(): Promise<Readonly<Record<string, unknown>> | null>;
+}
+
+/** The filters every analytics route reads (M6_5_DESIGN.md 3); a route that cannot honour one answers 400. Values are identifiers or codes, never prose. */
+export const ANALYTICS_FILTERS = ["risk", "app_type", "model", "station", "wave", "outcome", "provenance"] as const;
+export type ObserverAnalyticsFilter = (typeof ANALYTICS_FILTERS)[number];
+
+/** The common analytics parameters: one cursor (`at`) for every query of a view, a window or the last N runs, filters. */
+export interface ObserverAnalyticsQuery {
+  readonly at?: string | null;
+  readonly fromMs?: number | null;
+  readonly toMs?: number | null;
+  readonly lastRuns?: number | null;
+  /** `as_of_ms` (a playhead): nothing recorded later is counted; combinable with `at`. An observer without it answers 400. */
+  readonly asOfMs?: number | null;
+  readonly filters?: Readonly<Partial<Record<ObserverAnalyticsFilter, string>>>;
+  readonly signal?: AbortSignal;
+}
+export interface ObserverAnalyticsMetricsQuery extends ObserverAnalyticsQuery {
+  readonly ids?: readonly string[];
+  /** At most two dimensions. */
+  readonly groupBy?: readonly string[];
+  readonly bucket?: "day" | "week" | null;
+  readonly distribution?: boolean;
+}
+export interface ObserverAnalyticsContributorsQuery extends ObserverAnalyticsQuery {
+  readonly metric: string;
+  /** dimension → code, every one must match (`group=station:verify,round:1`). */
+  readonly group?: Readonly<Record<string, string>>;
+  readonly order?: "impact" | "recent";
+  readonly limit?: number;
+}
+export interface ObserverAnalyticsRunsQuery extends ObserverAnalyticsQuery {
+  readonly of?: "runs" | "executions";
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+/** The query string of an analytics route's common parameters (exported for tests). Only identifiers and numbers. */
+export function analyticsParams(query: ObserverAnalyticsQuery): URLSearchParams {
+  const q = new URLSearchParams();
+  if (query.at) q.set("at", query.at);
+  if (typeof query.asOfMs === "number" && Number.isFinite(query.asOfMs)) q.set("as_of_ms", String(Math.max(0, Math.floor(query.asOfMs))));
+  if (typeof query.fromMs === "number" && Number.isFinite(query.fromMs)) q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+  if (typeof query.toMs === "number" && Number.isFinite(query.toMs)) q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+  if (typeof query.lastRuns === "number" && query.lastRuns > 0) q.set("last_runs", String(Math.floor(query.lastRuns)));
+  for (const name of ANALYTICS_FILTERS) {
+    const v = query.filters?.[name];
+    if (typeof v === "string" && v) q.set(name, v);
+  }
+  return q;
 }
 
 /** `/api/v1/spans` (M6.3): `from_ms`/`to_ms` overlap, `span` exact, `sort=start`. */
@@ -816,6 +881,43 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
         })
         .filter((b) => b.count > 0);
       return { fromMs: num(d.from_ms) ?? buckets[0]?.fromMs ?? 0, toMs: num(d.to_ms) ?? 0, bucketMs: num(d.bucket_ms) ?? 60_000, buckets, total: want && !echoed ? null : num(d.total), complete: bool(d.complete), kindsApplied: applied, cursor: str(d.head) ?? str(d.cursor) };
+    },
+    // ---- M6.5 analytics (raw `data`; src/analytics/data parses it).
+    async analyticsMetrics(query) {
+      const q = analyticsParams(query);
+      if (query.ids?.length) q.set("ids", query.ids.join(","));
+      if (query.groupBy?.length) q.set("group_by", query.groupBy.join(","));
+      if (query.bucket) q.set("bucket", query.bucket);
+      if (query.distribution) q.set("distribution", "1");
+      return get(`/analytics/metrics${q.size ? `?${q.toString()}` : ""}`, query.signal);
+    },
+    async analyticsFlow(query) {
+      const q = analyticsParams(query);
+      return get(`/analytics/flow${q.size ? `?${q.toString()}` : ""}`, query.signal);
+    },
+    async analyticsContributors(query) {
+      const q = analyticsParams(query);
+      q.set("metric", query.metric);
+      const group = Object.entries(query.group ?? {}).map(([k, v]) => `${k}:${v}`);
+      if (group.length) q.set("group", group.join(","));
+      if (query.order) q.set("order", query.order);
+      if (typeof query.limit === "number") q.set("limit", String(Math.floor(query.limit)));
+      return get(`/analytics/contributors?${q.toString()}`, query.signal);
+    },
+    async analyticsRuns(query) {
+      const q = analyticsParams(query);
+      if (query.of && query.of !== "runs") q.set("of", query.of);
+      if (typeof query.limit === "number") q.set("limit", String(Math.floor(query.limit)));
+      if (typeof query.offset === "number" && query.offset > 0) q.set("offset", String(Math.floor(query.offset)));
+      return get(`/analytics/runs${q.size ? `?${q.toString()}` : ""}`, query.signal);
+    },
+    async analyticsInsights(query) {
+      const q = analyticsParams(query);
+      return get(`/analytics/insights${q.size ? `?${q.toString()}` : ""}`, query.signal);
+    },
+    async displayPolicy() {
+      const d = await get("/session");
+      return d.display_policy && typeof d.display_policy === "object" ? obj(d.display_policy) : null;
     },
   };
 }

@@ -1,0 +1,163 @@
+{
+ "body": {
+  "data": {
+   "as_of": {
+    "effective_to_ms": 1794441600000,
+    "exact": false,
+    "ms": 1794456000000,
+    "rule": "whole UTC days before the playhead; the day of the playhead is not included"
+   },
+   "cursor": "fd49073ea6a55377.226523",
+   "definitions_version": 2,
+   "filters": {},
+   "generated_ms": 1794641607818,
+   "group_overflow": 0,
+   "history": {
+    "complete": false,
+    "complete_window": false,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793361844999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": ""
+   },
+   "metrics": [
+    {
+     "authority": "authoritative",
+     "availability": "lifecycle",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 274,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 274,
+      "covered": 274,
+      "eligible": 274,
+      "excluded": [],
+      "of": 274,
+      "share": 1
+     },
+     "denominator": "per period",
+     "denominator_value": null,
+     "description": "Tickets merged: merge.completed / per period",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "wave",
+      "writer"
+     ],
+     "family": "T",
+     "formula": "merge.completed / per period",
+     "groups": null,
+     "id": "T1",
+     "kind": "count",
+     "limitations": "merged is not accepted (T2)",
+     "name": "Tickets merged",
+     "numerator": "merge.completed",
+     "numerator_value": 274,
+     "population": "per period",
+     "sample_count": 274,
+     "source": "cell lifecycle",
+     "sources": [
+      "cell lifecycle"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "tickets",
+     "value": 274
+    },
+    {
+     "authority": "authoritative",
+     "availability": "lifecycle",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 2490,
+      "not_recorded": 0,
+      "open": 16,
+      "unknown": 27
+     },
+     "coverage": {
+      "counted": 2490,
+      "covered": 2490,
+      "eligible": 2533,
+      "excluded": [
+       {
+        "count": 16,
+        "reason": "open: started and not yet ended"
+       },
+       {
+        "count": 27,
+        "reason": "unknown: an end's time, or its start, was not recorded"
+       }
+      ],
+      "of": 2533,
+      "share": 0.983024082116068
+     },
+     "denominator": "visits with a measured duration",
+     "denominator_value": 2490,
+     "description": "Station cycle time: sum of measured visit durations / visits with a measured duration",
+     "dimensions": [
+      "station",
+      "round",
+      "risk",
+      "app_type"
+     ],
+     "family": "C",
+     "formula": "sum of measured visit durations / visits with a measured duration",
+     "groups": null,
+     "id": "C1",
+     "kind": "duration",
+     "limitations": "cells without a lifecycle log are excluded; bounded, unknown and open visits are counted apart, not averaged",
+     "max_ms": 9294887,
+     "min_ms": 15533,
+     "name": "Station cycle time",
+     "numerator": "sum of measured visit durations",
+     "numerator_value": 6283610526,
+     "p50_ms": 2580318,
+     "p90_ms": 6501995,
+     "percentile_basis": "histogram",
+     "population": "visits with a measured duration",
+     "sample_count": 2490,
+     "source": "cell lifecycle (station.entered to station.exited)",
+     "sources": [
+      "cell lifecycle (station.entered to station.exited)"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "ms",
+     "value": 2523538.3638554215
+    }
+   ],
+   "partial": "",
+   "projection": {
+    "definitions": 2,
+    "format": 4
+   },
+   "rules": "recorded values only; an empty denominator is null with a reason; nothing is estimated or apportioned; durations are averaged over measured spans only, the others counted apart; value is unrounded, value_rounded is observe.py's round(value, 3)",
+   "suspect_days": [],
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": null,
+    "from_ms": null,
+    "last_runs": null,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "(as_of_ms, recorded by agent flow)",
+ "recorded": "mach-observer with as_of_ms (agent flow's build) over a synthetic mach-synth project; synthetic data. The metrics reply's window predates a fix (effective_to_ms now shows the clip).",
+ "status": 200
+}

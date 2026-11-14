@@ -57,7 +57,8 @@ import {
   WorkflowAnatomy,
 } from "./anatomies";
 import { identityOf, parseStation, pickedVisitOf, selectEntity } from "./entity";
-import { AuthorityBadge, Evidence, JumpButton, precisionWords, useEntityEvents } from "./parts";
+import { AuthorityBadge, Evidence, JumpButton, precisionWords, StationHistoryLink, useEntityEvents } from "./parts";
+import { analyticsStationOf } from "../../scene/analytics";
 import { Provenance } from "./Provenance";
 import { pickedThroughWords } from "./words";
 import { RunNow } from "./RunNow";
@@ -207,6 +208,11 @@ function GlobalStation({ id }: { id: string }) {
       <p>
         <span className="font-mono text-[12px] text-ink">{stationLooks[kind]?.skill}</span>. {here.length ? `At work now for ${here.map((c) => c.ticketId).join(", ")}.` : "No cell is here now."}
       </p>
+      {analyticsStationOf(kind) ? (
+        <p className="mt-2">
+          <StationHistoryLink kind={kind} />
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -153,6 +153,7 @@ export function ModeSwitch({ value, onChange }: { value: ViewMode; onChange: (v:
 const WORKSPACE_CHOICES: Array<{ value: Workspace; label: string; keys: string; hint: string }> = [
   { value: "floor", label: "Factory floor", keys: "1, 2", hint: "Factory floor: the plant now, as the Atlas or the Blueprint" },
   { value: "timeline", label: "Timeline", keys: "3", hint: "Execution Timeline: what the Factory did, when, and how it is known" },
+  { value: "analytics", label: "Analytics", keys: "4", hint: "Factory Analytics: what the recorded history measures, with its sample, coverage and source" },
 ];
 
 function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
@@ -163,10 +164,15 @@ function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
           <path d="M1.5 4.5L8 1.5L14.5 4.5L8 7.5Z" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
           <path d="M1.5 8.5L8 11.5L14.5 8.5" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
         </>
-      ) : (
+      ) : workspace === "timeline" ? (
         <>
           <path d="M1.5 3.5H9M4 7H14.5M1.5 10.5H7.5" style={{ stroke: "currentColor", strokeWidth: 2, strokeLinecap: "butt" }} />
           <path d="M11 1V13" style={{ stroke: "currentColor", strokeWidth: 0.9 }} />
+        </>
+      ) : (
+        <>
+          <path d="M3.5 12V7.5M8 12V3M12.5 12V9" style={{ stroke: "currentColor", strokeWidth: 2, strokeLinecap: "butt" }} />
+          <path d="M1 12.5H15" style={{ stroke: "currentColor", strokeWidth: 0.9 }} />
         </>
       )}
     </svg>
@@ -175,8 +181,8 @@ function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
 
 /**
  * The primary navigation (M6.3 design section 3): the workspace. A radio group in the same language as
- * the Atlas/Blueprint switch, which is shown beside it on the floor only. Later experiences are not
- * drawn until they exist.
+ * the Atlas/Blueprint switch, which is shown beside it on the floor only. Later experiences (Evidence)
+ * are not drawn until they exist.
  */
 export function WorkspaceSwitch({ value, onChange }: { value: Workspace; onChange: (w: Workspace) => void }) {
   const name = useId();
@@ -193,7 +199,7 @@ export function WorkspaceSwitch({ value, onChange }: { value: Workspace; onChang
             value === w.value ? "bg-surface font-semibold text-ink shadow-1" : "hover:text-ink",
           )}
         >
-          <input type="radio" name={name} value={w.value} checked={value === w.value} onChange={() => onChange(w.value)} aria-keyshortcuts={w.value === "timeline" ? "3" : "1 2"} className="sr-only" />
+          <input type="radio" name={name} value={w.value} checked={value === w.value} onChange={() => onChange(w.value)} aria-keyshortcuts={w.keys.replace(/,\s*/g, " ")} className="sr-only" />
           <WorkspaceIcon workspace={w.value} />
           <span className="max-[1099px]:sr-only">{w.label}</span>
         </label>

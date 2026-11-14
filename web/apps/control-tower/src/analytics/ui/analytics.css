@@ -1,0 +1,371 @@
+/*
+ * Factory Analytics: chart roles and the workspace's layout. Colours are the design system's tokens
+ * and the factory grammar's (one family with the Atlas and the Timeline); the only new values are a
+ * single-hue blue ramp for token kinds, stepped per theme and kept monotonic in lightness.
+ */
+.an-root {
+  --an-ink: var(--mach-ink);
+  --an-muted: var(--mach-ink-muted);
+  --an-subtle: var(--mach-ink-subtle);
+  --an-grid: var(--mach-line);
+  --an-axis: var(--mach-line-strong);
+  --an-bar: var(--mach-factory-ink-soft);
+  --an-bar-quiet: var(--mach-factory-plate-shade);
+  --an-select: var(--mach-accent);
+  --an-live: var(--mach-factory-live);
+  --an-live-soft: var(--mach-factory-live-soft);
+  --an-pass: var(--mach-factory-pass);
+  --an-pass-soft: var(--mach-factory-pass-soft);
+  --an-fail: var(--mach-factory-fail);
+  --an-fail-soft: var(--mach-factory-fail-soft);
+  --an-wait: var(--mach-factory-wait);
+  --an-wait-soft: var(--mach-factory-wait-soft);
+  --an-human: var(--mach-factory-human);
+  --an-halt: var(--mach-factory-halt);
+  --an-hatch: var(--mach-factory-hatch);
+  --an-bar-alt: color-mix(in srgb, var(--an-bar) 72%, var(--mach-canvas));
+  --an-ink-soft: var(--mach-ink-muted);
+  --an-stale: var(--mach-factory-stale);
+  --an-hatch-ink: color-mix(in srgb, var(--mach-ink-subtle) 50%, transparent);
+  --an-sheet: var(--mach-surface);
+  /* An outline a box needs to be seen by (WCAG 1.4.11): 3.5:1 or more on canvas and surface, both themes. */
+  --an-outline: color-mix(in srgb, var(--mach-ink-subtle) 80%, var(--mach-canvas));
+  /* Token kinds: one hue, light to dark. */
+  --an-seq-1: #5a86b6;
+  --an-seq-2: #3f6c9e;
+  --an-seq-3: #2b5a8c;
+  --an-seq-4: #1d4370;
+  background: var(--mach-canvas);
+  color: var(--mach-ink);
+}
+:root[data-theme="dark"] .an-root {
+  --an-bar: #8f8b80;
+  --an-bar-quiet: #3a3934;
+  --an-seq-1: #3f6c9e;
+  --an-seq-2: #5a86b6;
+  --an-seq-3: #8fb7df;
+  --an-seq-4: #b8d3ee;
+}
+/* Dark by the system's preference, before or without a chosen theme: the same steps (each 3:1 or more
+   on the dark canvas and surface; test/analytics-a11y.test.mjs checks them numerically). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .an-root {
+    --an-bar: #8f8b80;
+    --an-bar-quiet: #3a3934;
+    --an-seq-1: #3f6c9e;
+    --an-seq-2: #5a86b6;
+    --an-seq-3: #8fb7df;
+    --an-seq-4: #b8d3ee;
+  }
+}
+
+.an-mono {
+  font-family: var(--mach-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.an-num {
+  font-variant-numeric: tabular-nums;
+}
+/* A figure: the interface face, tabular, semibold. Mono stays for identifiers. */
+.an-fig {
+  font-family: var(--mach-font-sans);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Layout: rail of areas, the sheet, the rows drawer. */
+.an-layout {
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+.an-layout[data-drill="open"] {
+  grid-template-columns: 212px minmax(0, 1fr) 400px;
+}
+@media (max-width: 1279px) {
+  .an-layout {
+    grid-template-columns: 184px minmax(0, 1fr);
+  }
+  .an-layout[data-drill="open"] {
+    grid-template-columns: 184px minmax(0, 1fr);
+  }
+  .an-drill {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: min(400px, 92%);
+    box-shadow: var(--mach-shadow-3);
+  }
+}
+.an-drill {
+  animation: an-drawer var(--mach-duration-base) var(--mach-ease-enter);
+}
+/* The drawer slides in without fading: its text keeps its full contrast from the first frame. */
+@keyframes an-drawer {
+  from {
+    transform: translateX(16px);
+  }
+}
+.an-sheet {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+}
+.an-sheet-inner {
+  container-type: inline-size;
+  container-name: sheet;
+  padding: 24px 28px 56px;
+  max-width: 1360px;
+}
+@media (max-width: 1279px) {
+  .an-sheet-inner {
+    padding: 18px 20px 44px;
+  }
+}
+/* A window or dimension change: the figures settle in once, quietly; never on a live update. */
+/* The loading message itself is not faded: it keeps full text contrast. */
+.an-area[data-analytics-state="loading"] > :not(header):not([role="status"]) {
+  opacity: 0.55;
+}
+.an-area > * {
+  transition: opacity var(--mach-duration-fast) linear;
+}
+
+/* A section on the sheet: a hairline and a heading, no box. */
+.an-section {
+  border-top: 1px solid var(--mach-line-strong);
+  padding-top: 14px;
+  min-width: 0;
+}
+.an-grid-2,
+.an-grid-3,
+.an-grid-4,
+.an-grid-lead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 32px 32px;
+}
+@container sheet (min-width: 800px) {
+  .an-grid-2 {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .an-grid-3,
+  .an-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container sheet (min-width: 960px) {
+  .an-grid-lead {
+    grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
+  }
+}
+@container sheet (min-width: 1040px) {
+  .an-grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@container sheet (min-width: 1160px) {
+  .an-grid-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 32px 28px;
+  }
+}
+/* The ladder from work done to product accepted. */
+.an-ladder {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@container sheet (min-width: 720px) {
+  .an-ladder {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.an-ladder > li:nth-child(3) {
+  border-left-width: 0;
+}
+@container sheet (min-width: 720px) {
+  .an-ladder > li:nth-child(3) {
+    border-left-width: 1px;
+  }
+}
+/* Readouts in a row: as many as fit, never squeezed under 180px. */
+.an-readouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 20px 28px;
+}
+
+/* Marks. */
+.an-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+.an-mark:focus-visible {
+  outline: none;
+}
+.an-mark:focus-visible .an-ring,
+.an-mark:hover .an-ring {
+  stroke: var(--mach-focus);
+  stroke-width: 2;
+  fill: none;
+}
+.an-mark .an-ring {
+  stroke: transparent;
+  fill: none;
+}
+.an-mark[aria-pressed="true"] .an-ring {
+  stroke: var(--an-select);
+  stroke-width: 2;
+}
+
+.an-tip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 20;
+  padding: 7px 10px;
+  border-radius: 5px;
+  background: var(--mach-surface-inverse);
+  color: var(--mach-ink-inverse);
+  font-size: 12.5px;
+  line-height: 17px;
+  box-shadow: var(--mach-shadow-2);
+}
+
+.an-link {
+  color: var(--mach-accent-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.an-link:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* A number in the lead paragraph: underlined dotted, opens its definition. */
+.an-figure-word {
+  font-family: var(--mach-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.92em;
+  border-bottom: 1px dotted var(--mach-ink-muted);
+  cursor: help;
+  white-space: nowrap;
+}
+
+.an-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.an-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--mach-ink-muted);
+  border-bottom: 1px solid var(--mach-line-strong);
+  padding: 4px 8px 4px 0;
+}
+.an-table td {
+  border-bottom: 1px solid var(--mach-line);
+  padding: 4px 8px 4px 0;
+  vertical-align: top;
+}
+/* A row's header cell (its first) looks like the other cells; it is a header for screen readers only. */
+.an-table tbody th {
+  font-weight: inherit;
+  color: inherit;
+  border-bottom: 1px solid var(--mach-line);
+  vertical-align: top;
+}
+.an-table td.num,
+.an-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.an-chip:hover {
+  background: var(--mach-accent-soft);
+}
+.an-chip:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 2px;
+}
+
+/* The brush over a trend: the chosen periods, and two handles once there is a choice. */
+.an-brush-sel {
+  fill: color-mix(in srgb, var(--mach-accent) 16%, transparent);
+  stroke: var(--mach-accent);
+  stroke-width: 1;
+}
+.an-brush-handle {
+  fill: var(--mach-surface);
+  stroke: var(--mach-accent);
+  stroke-width: 1.5;
+  cursor: ew-resize;
+}
+.an-brush-handle:focus-visible {
+  outline: none;
+  stroke: var(--mach-focus);
+  stroke-width: 2.5;
+}
+.an-plot-brushable {
+  cursor: crosshair;
+}
+
+/* Sortable ranking tables. */
+.an-rank th button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+}
+.an-rank th button:hover {
+  color: var(--mach-ink);
+}
+.an-rank tbody tr[data-selected] td {
+  background: var(--mach-accent-soft);
+}
+.an-rank tbody tr[data-activatable] {
+  cursor: pointer;
+}
+.an-rank .an-row-button {
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.an-rank .an-row-button:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.an-rank tbody tr:hover td {
+  background: var(--mach-surface-sunken);
+}
+.an-rank tbody tr[data-selected]:hover td {
+  background: var(--mach-accent-soft);
+}
+
+/* Hatching for what is not recorded. */
+.an-hatch {
+  background-image: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--mach-ink-subtle) 22%, transparent) 5px 6px);
+}
+/* The Simulated badge's hatching. */
+.an-simulated {
+  background-image: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--mach-warning-ink) 18%, transparent) 5px 6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .an-root * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* A table view that scrolls takes focus (so it can be scrolled by keyboard) and shows it. */
+.an-table-region:focus-visible {
+  outline: 2px solid var(--mach-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}

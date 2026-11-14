@@ -1,0 +1,287 @@
+{
+ "body": {
+  "data": {
+   "as_of": {
+    "effective_to_ms": 1793232000000,
+    "exact": true,
+    "ms": 1793232000000,
+    "rule": "nothing whose establishing record is later than ms is counted or listed; what was open then is open"
+   },
+   "bottlenecks": [
+    {
+     "count": 39,
+     "key": "capacity",
+     "kind": "wait",
+     "measured": 33,
+     "median_ms": 65984000,
+     "not_measured": 6,
+     "p90_ms": 189705000,
+     "rank": 1,
+     "tickets_delayed": 23,
+     "total_measured_ms": 2612273000
+    }
+   ],
+   "coverage": {
+    "tickets": 38,
+    "tickets_with_lifecycle": 37,
+    "visits": 191,
+    "visits_measured": 186,
+    "waits_dropped": {
+     "capacity": 0,
+     "capacity-slice": 0,
+     "dependency": 0
+    }
+   },
+   "cursor": "da82a353ed10170a.12684",
+   "filters": {},
+   "generated_ms": 1794645302866,
+   "history": {
+    "complete": false,
+    "complete_window": true,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [],
+    "partial": "",
+    "sources": [
+     {
+      "events": 499,
+      "last_event_ms": 1793231156999,
+      "last_read_ms": 1794645302449,
+      "precision": "hour",
+      "source": "intake"
+     },
+     {
+      "events": 1038,
+      "last_event_ms": 1793231795028,
+      "last_read_ms": 1794645302449,
+      "precision": "hour",
+      "source": "lifecycle"
+     },
+     {
+      "events": 2566,
+      "last_event_ms": 1793231117999,
+      "last_read_ms": 1794645302449,
+      "precision": "hour",
+      "source": "stream"
+     },
+     {
+      "events": 19,
+      "last_event_ms": 1793186009999,
+      "last_read_ms": 1794645302449,
+      "source": "runs"
+     }
+    ]
+   },
+   "projection": {
+    "definitions": 2,
+    "format": 5
+   },
+   "rules": [
+    "durations are kept apart by basis (measured, bounded, inferred, open, unknown); statistics are over measured durations only",
+    "percentiles are exact (nearest rank) over the measured durations selected",
+    "a visit, wait or transition belongs to the UTC day it began; a gate evaluation to the day it was recorded",
+    "a transition counts recorded consecutive visits of one cell; it is not a ticket's trajectory",
+    "a wait is placed before the station the ticket entered next; waits with no later visit are counted as next_station_unknown",
+    "risk, app type and wave are the cell's recorded values at the cursor; unknown means none was recorded",
+    "bottlenecks rank by total measured time, so volume counts; what was not measured is counted beside it",
+    "as_of_ms: a record later than it does not exist yet (compared by order time); what was open then is open; a cell's risk is its latest review's by then, unknown when it was reviewed only later"
+   ],
+   "stations": [
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 36,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 36,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 36,
+       "max_ms": 882952,
+       "mean_ms": 610041,
+       "median_ms": 612849,
+       "min_ms": 406931,
+       "p90_ms": 847763,
+       "percentile_basis": "exact",
+       "total_ms": 21961481
+      }
+     },
+     "gates": {
+      "evaluated": 36,
+      "overridden": 0,
+      "refused": 0,
+      "tickets": 0
+     },
+     "open_visits": 0,
+     "revise_entries": 0,
+     "station": "groom",
+     "tickets": 36,
+     "visits": 36,
+     "waits_before": [
+      {
+       "count": 7,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 7,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 7,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 7,
+         "max_ms": 180220000,
+         "mean_ms": 83220857,
+         "median_ms": 40739000,
+         "min_ms": 235000,
+         "p90_ms": 180220000,
+         "percentile_basis": "exact",
+         "total_ms": 582546000
+        }
+       },
+       "kind": "dependency",
+       "tickets": 7,
+       "without_ticket": 0
+      },
+      {
+       "count": 36,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 36,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 36,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 36,
+         "max_ms": 938000,
+         "mean_ms": 420500,
+         "median_ms": 275000,
+         "min_ms": 0,
+         "p90_ms": 938000,
+         "percentile_basis": "exact",
+         "total_ms": 15138000
+        }
+       },
+       "kind": "queue",
+       "tickets": 36,
+       "without_ticket": 0
+      }
+     ]
+    }
+   ],
+   "transitions": [
+    {
+     "count": 23,
+     "from": "groom",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 23,
+     "to": "plan"
+    }
+   ],
+   "unit": "ms",
+   "wait_kinds": [
+    "dependency",
+    "queue",
+    "capacity",
+    "capacity-slice",
+    "human-approval",
+    "person"
+   ],
+   "waits": [
+    {
+     "count": 7,
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 7,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 7,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 7,
+       "max_ms": 180220000,
+       "mean_ms": 83220857,
+       "median_ms": 40739000,
+       "min_ms": 235000,
+       "p90_ms": 180220000,
+       "percentile_basis": "exact",
+       "total_ms": 582546000
+      }
+     },
+     "kind": "dependency",
+     "next_station_unknown": 0,
+     "tickets": 7,
+     "without_ticket": 0
+    }
+   ],
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": null,
+    "from_ms": null,
+    "last_runs": null,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/flow?as_of_ms=1793232000000",
+ "recorded": "mach-observer (worktree build, with flow's source-class fix) over the synthetic medium project, settled at 12684; flow reply trimmed to one item per list; synthetic data",
+ "status": 200
+}

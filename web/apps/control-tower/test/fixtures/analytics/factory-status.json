@@ -1,0 +1,217 @@
+{
+ "body": {
+  "data": {
+   "factory_present": true,
+   "freshness": {
+    "floor": "791fafe48b91c0cd.0",
+    "head": "791fafe48b91c0cd.12684",
+    "ingest": {
+     "catching_up": false,
+     "last_tick_age_ms": 431,
+     "last_tick_at": "2026-11-14T07:15:04.298Z",
+     "stale": false,
+     "stale_after_ms": 5000,
+     "watermark_ms": 1794640504288
+    },
+    "observer_time": "2026-11-14T07:15:04.729675Z",
+    "projection": {
+     "cursor": "791fafe48b91c0cd.12684",
+     "lag_events": 0,
+     "partial": ""
+    },
+    "sources": [
+     {
+      "duplicates": 0,
+      "key": "cell/SYN-053",
+      "lag_bytes": 0,
+      "last_read_age_ms": 431,
+      "last_read_at": "2026-11-14T07:15:04.298Z",
+      "lines": 71,
+      "offset": 19943,
+      "oversized": 0,
+      "path": ".factory/worktrees/SYN-053/lifecycle.jsonl",
+      "refused": 0,
+      "resets": 0,
+      "size": 19943,
+      "state": "live"
+     },
+     {
+      "duplicates": 0,
+      "key": "cell/SYN-056",
+      "lag_bytes": 0,
+      "last_read_age_ms": 431,
+      "last_read_at": "2026-11-14T07:15:04.298Z",
+      "lines": 46,
+      "offset": 12762,
+      "oversized": 0,
+      "path": ".factory/worktrees/SYN-056/lifecycle.jsonl",
+      "refused": 0,
+      "resets": 0,
+      "size": 12762,
+      "state": "live"
+     },
+     {
+      "duplicates": 0,
+      "key": "cell/SYN-059",
+      "lag_bytes": 0,
+      "last_read_age_ms": 431,
+      "last_read_at": "2026-11-14T07:15:04.298Z",
+      "lines": 39,
+      "offset": 10819,
+      "oversized": 0,
+      "path": ".factory/worktrees/SYN-059/lifecycle.jsonl",
+      "refused": 0,
+      "resets": 0,
+      "size": 10819,
+      "state": "live"
+     },
+     {
+      "duplicates": 0,
+      "key": "ledger",
+      "lag_bytes": 0,
+      "last_read_age_ms": 431,
+      "last_read_at": "2026-11-14T07:15:04.298Z",
+      "lines": 1319,
+      "offset": 753896,
+      "oversized": 0,
+      "path": ".factory/intake/events.jsonl",
+      "refused": 0,
+      "resets": 0,
+      "size": 753896,
+      "state": "live"
+     },
+     {
+      "duplicates": 0,
+      "key": "runs",
+      "lag_bytes": 0,
+      "last_read_age_ms": 431,
+      "last_read_at": "2026-11-14T07:15:04.298Z",
+      "lines": 57,
+      "offset": 81308,
+      "oversized": 0,
+      "path": ".factory/archive/runs.jsonl",
+      "refused": 0,
+      "resets": 0,
+      "size": 81308,
+      "state": "live"
+     },
+     {
+      "duplicates": 0,
+      "key": "stream/x02f589fb4190",
+      "lag_bytes": 0,
+      "last_read_age_ms": 431,
+      "last_read_at": "2026-11-14T07:15:04.298Z",
+      "lines": 48,
+      "offset": 25378,
+      "oversized": 0,
+      "path": ".factory/local/executions/x02f589fb4190/stream.jsonl",
+      "refused": 0,
+      "resets": 0,
+      "runtime": {
+       "name": "claude-code",
+       "proven_versions": [
+        "2.1.322",
+        "2.1.323"
+       ],
+       "reason": "the stream's records were proven against fixtures from Claude Code 2.1.323",
+       "records_accepted": 48,
+       "records_refused": 0,
+       "refused_by_class": {},
+       "state": "proven",
+       "version": "2.1.323"
+      },
+      "size": 25378,
+      "state": "ended"
+     },
+     {
+      "duplicates": 0,
+      "key": "stream/x03d613fcda69",
+      "lag_bytes": 0,
+      "last_read_age_ms": 431,
+      "last_read_at": "2026-11-14T07:15:04.298Z",
+      "lines": 48,
+      "offset": 26798,
+      "oversized": 0,
+      "path": ".factory/local/executions/x03d613fcda69/stream.jsonl",
+      "refused": 0,
+      "resets": 0,
+      "runtime": {
+       "name": "claude-code",
+       "proven_versions": [
+        "2.1.322",
+        "2.1.323"
+       ],
+       "reason": "the stream's records were proven against fixtures from Claude Code 2.1.323",
+       "records_accepted": 48,
+       "records_refused": 0,
+       "refused_by_class": {},
+       "state": "proven",
+       "version": "2.1.323"
+      },
+      "size": 26798,
+      "state": "ended"
+     }
+    ]
+   },
+   "read_at": "2026-11-14T07:15:04.729675Z",
+   "recorded_mode": {
+    "allow_merge": true,
+    "autonomy": "supervised",
+    "dispatched": [],
+    "held": [
+     {
+      "slice_id": "SLICE-061",
+      "ticket_id": "SYN-061",
+      "why": "waiting for its dependencies to be integrated"
+     }
+    ],
+    "last_decision": {
+     "at": "2026-11-12T02:46:31.999Z",
+     "authority": "authoritative",
+     "event_id": "i:f0334f45:1315",
+     "not_after": "2026-11-12T02:46:31.999Z",
+     "not_before": "2026-11-12T02:46:31.000Z",
+     "pos": 5011,
+     "precision": "s"
+    },
+    "limits": {
+     "budget_usd": 40,
+     "max_parallel": 4,
+     "minutes": 240
+    },
+    "paused_reason": "",
+    "persistent": false,
+    "scheduler_state": "supervised",
+    "since": {
+     "at": "2026-10-22T06:00:00.999Z",
+     "authority": "authoritative",
+     "event_id": "i:f0334f45:1",
+     "not_after": "2026-10-22T06:00:00.999Z",
+     "not_before": "2026-10-22T06:00:00.000Z",
+     "pos": 1,
+     "precision": "s"
+    },
+    "started": [],
+    "state": "supervised"
+   },
+   "summary": {
+    "autonomy": "",
+    "enabled": false,
+    "mode": "disabled",
+    "note": "a reading of the machine-local policy; run.py decides whether execution is authorized",
+    "paused": false,
+    "policy_usable": false
+   },
+   "supervisor": {
+    "heartbeat_age_seconds": null,
+    "heartbeat_fresh": false,
+    "lease_expired": false,
+    "lease_present": false
+   }
+  },
+  "ok": true
+ },
+ "path": "/factory/status",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

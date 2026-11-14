@@ -1,0 +1,12 @@
+{
+ "body": {
+  "error": {
+   "kind": "invalid",
+   "message": "Unknown parameter \"as_of_ms\"."
+  },
+  "ok": false
+ },
+ "path": "/analytics/metrics?ids=T1&as_of_ms=1793232000000",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 400
+}

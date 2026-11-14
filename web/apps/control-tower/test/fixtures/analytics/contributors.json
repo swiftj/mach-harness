@@ -1,0 +1,179 @@
+{
+ "body": {
+  "data": {
+   "by_basis": {
+    "measured": 84
+   },
+   "cursor": "791fafe48b91c0cd.12684",
+   "figure": {
+    "catalog": true,
+    "dimensions": [
+     "station",
+     "round",
+     "action",
+     "basis"
+    ],
+    "entities": "station visits (every basis; C1 counts the measured ones)",
+    "id": "C1",
+    "unit": "ms"
+   },
+   "filters": {},
+   "generated_ms": 1794640504706,
+   "group": {
+    "station": "verify"
+   },
+   "history": {
+    "complete": false,
+    "complete_window": false,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793344003999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": ""
+   },
+   "items": [
+    {
+     "app_type": "api",
+     "at_ms": 1794040586295,
+     "basis": "measured",
+     "cell": "cell:SYN-052",
+     "execution": "x6db3daa8519b",
+     "from_ms": 1794040586295,
+     "group": {
+      "action": "verify",
+      "basis": "measured",
+      "round": "1",
+      "station": "verify"
+     },
+     "ref": "visit:SYN-052/verify#1",
+     "risk": "Low",
+     "span_id": "visit:visit:SYN-052/verify#1",
+     "ticket": "SYN-052",
+     "to_ms": 1794060103060,
+     "unit": "ms",
+     "value": 19516765,
+     "wave": "WAVE-007"
+    },
+    {
+     "app_type": "web",
+     "at_ms": 1794147239416,
+     "basis": "measured",
+     "cell": "cell:SYN-057",
+     "execution": "x8eed66d2ddcb",
+     "from_ms": 1794147239416,
+     "group": {
+      "action": "verify",
+      "basis": "measured",
+      "round": "1",
+      "station": "verify"
+     },
+     "ref": "visit:SYN-057/verify#1",
+     "risk": "Medium",
+     "span_id": "visit:visit:SYN-057/verify#1",
+     "ticket": "SYN-057",
+     "to_ms": 1794166668715,
+     "unit": "ms",
+     "value": 19429299,
+     "wave": "WAVE-008"
+    },
+    {
+     "app_type": "cli",
+     "at_ms": 1792893912249,
+     "basis": "measured",
+     "cell": "cell:SYN-012",
+     "execution": "x4674af543683",
+     "from_ms": 1792893912249,
+     "group": {
+      "action": "verify",
+      "basis": "measured",
+      "round": "1",
+      "station": "verify"
+     },
+     "ref": "visit:SYN-012/verify#1",
+     "risk": "Medium",
+     "span_id": "visit:visit:SYN-012/verify#1",
+     "ticket": "SYN-012",
+     "to_ms": 1792913320460,
+     "unit": "ms",
+     "value": 19408211,
+     "wave": "WAVE-002"
+    },
+    {
+     "app_type": "library",
+     "at_ms": 1793029145410,
+     "basis": "measured",
+     "cell": "cell:SYN-013",
+     "execution": "x7eb88b773931",
+     "from_ms": 1793029145410,
+     "group": {
+      "action": "verify",
+      "basis": "measured",
+      "round": "1",
+      "station": "verify"
+     },
+     "ref": "visit:SYN-013/verify#1",
+     "risk": "High",
+     "span_id": "visit:visit:SYN-013/verify#1",
+     "ticket": "SYN-013",
+     "to_ms": 1793048502462,
+     "unit": "ms",
+     "value": 19357052,
+     "wave": "WAVE-002"
+    },
+    {
+     "app_type": "web",
+     "at_ms": 1793424545405,
+     "basis": "measured",
+     "cell": "cell:SYN-029",
+     "execution": "xba7112c5b03e",
+     "from_ms": 1793424545405,
+     "group": {
+      "action": "verify",
+      "basis": "measured",
+      "round": "1",
+      "station": "verify"
+     },
+     "ref": "visit:SYN-029/verify#1",
+     "risk": "High",
+     "span_id": "visit:visit:SYN-029/verify#1",
+     "ticket": "SYN-029",
+     "to_ms": 1793443855130,
+     "unit": "ms",
+     "value": 19309725,
+     "wave": "WAVE-004"
+    }
+   ],
+   "limit": 5,
+   "metric": "C1",
+   "order": "impact",
+   "projection": {
+    "definitions": 2,
+    "format": 4
+   },
+   "rules": [
+    "identifiers, codes and numbers only: no title, reason or finding text",
+    "an item is placed in a window by at_ms (its start, or the record's time)",
+    "value is null when the duration was not measured (min_ms and max_ms say what is known) or not recorded",
+    "impact orders by value, then by the upper bound; recent by at_ms"
+   ],
+   "total": 84,
+   "truncated": true,
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": null,
+    "from_ms": null,
+    "last_runs": null,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/contributors?metric=C1&group=station:verify&limit=5",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

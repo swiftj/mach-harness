@@ -10,7 +10,8 @@
     "preview": "vite preview --port 4176 --strictPort",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test test/*.test.mjs",
-    "test:e2e:timeline": "node --test --test-concurrency=1 --test-timeout=1200000 --test-global-setup=e2e/global.mjs e2e/*.e2e.mjs",
+    "test:e2e:timeline": "node --test --test-concurrency=1 --test-timeout=1200000 --test-global-setup=e2e/global.mjs e2e/synthetic.e2e.mjs e2e/live.e2e.mjs e2e/live-follow.e2e.mjs e2e/real-run.e2e.mjs e2e/long-history.e2e.mjs",
+    "test:e2e:analytics": "node --test --test-concurrency=1 --test-timeout=1200000 --test-global-setup=e2e/analytics-global.mjs e2e/analytics-proof.e2e.mjs e2e/analytics-shell.e2e.mjs e2e/analytics-live.e2e.mjs",
     "capture": "node scripts/capture.mjs"
   },
   "dependencies": {

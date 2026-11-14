@@ -1,0 +1,206 @@
+{
+ "body": {
+  "data": {
+   "cursor": "791fafe48b91c0cd.12684",
+   "definitions_version": 2,
+   "filters": {},
+   "generated_ms": 1794640504668,
+   "group_overflow": 0,
+   "history": {
+    "complete": false,
+    "complete_window": false,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793344003999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": ""
+   },
+   "metrics": [
+    {
+     "authority": "authoritative",
+     "availability": "lifecycle",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 52,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 52,
+      "covered": 52,
+      "eligible": 52,
+      "excluded": [],
+      "of": 52,
+      "share": 1
+     },
+     "denominator": "per period",
+     "denominator_value": null,
+     "description": "Tickets merged: merge.completed / per period",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "wave",
+      "writer"
+     ],
+     "family": "T",
+     "formula": "merge.completed / per period",
+     "groups": null,
+     "id": "T1",
+     "kind": "count",
+     "limitations": "merged is not accepted (T2)",
+     "name": "Tickets merged",
+     "numerator": "merge.completed",
+     "numerator_value": 52,
+     "population": "per period",
+     "sample_count": 52,
+     "source": "cell lifecycle",
+     "sources": [
+      "cell lifecycle"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "tickets",
+     "value": 52
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 53,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 53,
+      "covered": 53,
+      "eligible": 53,
+      "excluded": [],
+      "of": 53,
+      "share": 1
+     },
+     "denominator": "merged tickets",
+     "denominator_value": 53,
+     "description": "First-pass rate (observe): merged tickets with first_pass / merged tickets",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "Q",
+     "formula": "merged tickets with first_pass / merged tickets",
+     "groups": null,
+     "id": "Q2",
+     "kind": "rate",
+     "limitations": "",
+     "met": false,
+     "name": "First-pass rate (observe)",
+     "numerator": "merged tickets with first_pass",
+     "numerator_value": 37,
+     "parity_with": "observe.py scorecard first_pass_rate",
+     "population": "merged tickets",
+     "sample_count": 53,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "target": "> 0.85",
+     "target_check": {
+      "direction": "above",
+      "met": false,
+      "value": 0.85
+     },
+     "unit": "",
+     "value": 0.6981132075471698,
+     "value_rounded": 0.698
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 119,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 119,
+      "covered": 119,
+      "eligible": 127,
+      "excluded": [
+       {
+        "count": 8,
+        "reason": "completed with no recorded cost"
+       }
+      ],
+      "of": 127,
+      "share": 0.937007874015748
+     },
+     "denominator": "executions with a recorded cost",
+     "denominator_value": 119,
+     "description": "Recorded cost per execution: execution.completed.cost_usd / executions with a recorded cost",
+     "dimensions": [
+      "stage",
+      "ticket",
+      "risk",
+      "app_type"
+     ],
+     "family": "K",
+     "formula": "execution.completed.cost_usd / executions with a recorded cost",
+     "groups": null,
+     "id": "K1",
+     "kind": "mean",
+     "limitations": "null when the run had no result; coverage says how many executions had one; execution.failed carries no cost",
+     "name": "Recorded cost per execution",
+     "numerator": "execution.completed.cost_usd",
+     "numerator_value": 609.5545,
+     "population": "executions with a recorded cost",
+     "sample_count": 119,
+     "source": "intake log (Claude-reported, recorded by MACH)",
+     "sources": [
+      "intake log (Claude-reported, recorded by MACH)"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "usd",
+     "value": 5.122306722689076,
+     "value_rounded": 5.122
+    }
+   ],
+   "partial": "",
+   "projection": {
+    "definitions": 2,
+    "format": 4
+   },
+   "rules": "recorded values only; an empty denominator is null with a reason; nothing is estimated or apportioned; durations are averaged over measured spans only, the others counted apart; value is unrounded, value_rounded is observe.py's round(value, 3)",
+   "suspect_days": [],
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": null,
+    "from_ms": null,
+    "last_runs": null,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/metrics?ids=T1,Q2,K1",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

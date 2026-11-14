@@ -1,0 +1,12 @@
+{
+ "body": {
+  "error": {
+   "kind": "invalid",
+   "message": "Unknown parameter \"bogus\"."
+  },
+  "ok": false
+ },
+ "path": "/analytics/metrics?bogus=1",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 400
+}

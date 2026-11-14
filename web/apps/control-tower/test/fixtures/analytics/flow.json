@@ -1,0 +1,1404 @@
+{
+ "body": {
+  "data": {
+   "bottlenecks": [
+    {
+     "count": 100,
+     "key": "capacity",
+     "kind": "wait",
+     "measured": 100,
+     "median_ms": 69520000,
+     "not_measured": 0,
+     "p90_ms": 410046000,
+     "rank": 1,
+     "tickets_delayed": 59,
+     "total_measured_ms": 15183503000
+    },
+    {
+     "count": 86,
+     "key": "build",
+     "kind": "station",
+     "measured": 84,
+     "median_ms": 31003390,
+     "not_measured": 2,
+     "p90_ms": 44396742,
+     "rank": 2,
+     "tickets_delayed": 59,
+     "total_measured_ms": 2577035610
+    },
+    {
+     "count": 66,
+     "key": "review",
+     "kind": "station",
+     "measured": 66,
+     "median_ms": 22071534,
+     "not_measured": 0,
+     "p90_ms": 28634722,
+     "rank": 3,
+     "tickets_delayed": 57,
+     "total_measured_ms": 1471142091
+    },
+    {
+     "count": 84,
+     "key": "verify",
+     "kind": "station",
+     "measured": 84,
+     "median_ms": 14813665,
+     "not_measured": 0,
+     "p90_ms": 18972863,
+     "rank": 4,
+     "tickets_delayed": 59,
+     "total_measured_ms": 1232943477
+    },
+    {
+     "count": 11,
+     "key": "dependency",
+     "kind": "wait",
+     "measured": 10,
+     "median_ms": 751000,
+     "not_measured": 1,
+     "p90_ms": 180220000,
+     "rank": 5,
+     "tickets_delayed": 10,
+     "total_measured_ms": 823699000
+    },
+    {
+     "count": 10,
+     "key": "person",
+     "kind": "wait",
+     "measured": 6,
+     "median_ms": 106035000,
+     "not_measured": 4,
+     "p90_ms": 122408000,
+     "rank": 6,
+     "tickets_delayed": 6,
+     "total_measured_ms": 633740000
+    },
+    {
+     "count": 58,
+     "key": "plan",
+     "kind": "station",
+     "measured": 58,
+     "median_ms": 8747930,
+     "not_measured": 0,
+     "p90_ms": 11198738,
+     "rank": 7,
+     "tickets_delayed": 58,
+     "total_measured_ms": 517653381
+    },
+    {
+     "count": 6,
+     "key": "human-approval",
+     "kind": "wait",
+     "measured": 5,
+     "median_ms": 95169471,
+     "not_measured": 1,
+     "p90_ms": 102513984,
+     "rank": 8,
+     "tickets_delayed": 5,
+     "total_measured_ms": 469766078
+    },
+    {
+     "count": 52,
+     "key": "merge",
+     "kind": "station",
+     "measured": 52,
+     "median_ms": 2670921,
+     "not_measured": 0,
+     "p90_ms": 3529426,
+     "rank": 9,
+     "tickets_delayed": 52,
+     "total_measured_ms": 140438983
+    },
+    {
+     "count": 29,
+     "key": "audit",
+     "kind": "station",
+     "measured": 29,
+     "median_ms": 1523079,
+     "not_measured": 0,
+     "p90_ms": 2130177,
+     "rank": 10,
+     "tickets_delayed": 29,
+     "total_measured_ms": 45731393
+    },
+    {
+     "count": 58,
+     "key": "groom",
+     "kind": "station",
+     "measured": 58,
+     "median_ms": 595867,
+     "not_measured": 0,
+     "p90_ms": 847763,
+     "rank": 11,
+     "tickets_delayed": 58,
+     "total_measured_ms": 35482862
+    },
+    {
+     "count": 60,
+     "key": "queue",
+     "kind": "wait",
+     "measured": 60,
+     "median_ms": 496000,
+     "not_measured": 0,
+     "p90_ms": 1011000,
+     "rank": 12,
+     "tickets_delayed": 60,
+     "total_measured_ms": 29288000
+    },
+    {
+     "count": 56,
+     "key": "cleanup",
+     "kind": "station",
+     "measured": 56,
+     "median_ms": 78553,
+     "not_measured": 0,
+     "p90_ms": 78553,
+     "rank": 13,
+     "tickets_delayed": 56,
+     "total_measured_ms": 4398968
+    },
+    {
+     "count": 5,
+     "key": "human-approval",
+     "kind": "station",
+     "measured": 0,
+     "median_ms": null,
+     "not_measured": 5,
+     "p90_ms": null,
+     "rank": null,
+     "tickets_delayed": 0,
+     "total_measured_ms": null
+    }
+   ],
+   "coverage": {
+    "tickets": 61,
+    "tickets_with_lifecycle": 59,
+    "visits": 494,
+    "visits_measured": 487,
+    "waits_dropped": {
+     "capacity": 0,
+     "capacity-slice": 0,
+     "dependency": 0
+    }
+   },
+   "cursor": "791fafe48b91c0cd.12684",
+   "filters": {},
+   "generated_ms": 1794640504703,
+   "history": {
+    "complete": false,
+    "complete_window": false,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793344003999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": ""
+   },
+   "projection": {
+    "definitions": 2,
+    "format": 4
+   },
+   "rules": [
+    "durations are kept apart by basis (measured, bounded, inferred, open, unknown); statistics are over measured durations only",
+    "percentiles are exact (nearest rank) over the measured durations selected",
+    "a visit, wait or transition belongs to the UTC day it began; a gate evaluation to the day it was recorded",
+    "a transition counts recorded consecutive visits of one cell; it is not a ticket's trajectory",
+    "a wait is placed before the station the ticket entered next; waits with no later visit are counted as next_station_unknown",
+    "risk, app type and wave are the cell's recorded values at the cursor; unknown means none was recorded",
+    "bottlenecks rank by total measured time, so volume counts; what was not measured is counted beside it"
+   ],
+   "stations": [
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 58,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 58,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 58,
+       "max_ms": 882952,
+       "mean_ms": 611773,
+       "median_ms": 595867,
+       "min_ms": 406931,
+       "p90_ms": 847763,
+       "percentile_basis": "exact",
+       "total_ms": 35482862
+      }
+     },
+     "gates": {
+      "evaluated": 58,
+      "overridden": 0,
+      "refused": 0,
+      "tickets": 0
+     },
+     "open_visits": 0,
+     "revise_entries": 0,
+     "station": "groom",
+     "tickets": 58,
+     "visits": 58,
+     "waits_before": [
+      {
+       "count": 10,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 10,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 10,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 10,
+         "max_ms": 240387000,
+         "mean_ms": 82369900,
+         "median_ms": 751000,
+         "min_ms": 15000,
+         "p90_ms": 180220000,
+         "percentile_basis": "exact",
+         "total_ms": 823699000
+        }
+       },
+       "kind": "dependency",
+       "tickets": 10,
+       "without_ticket": 0
+      },
+      {
+       "count": 58,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 58,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 58,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 58,
+         "max_ms": 1011000,
+         "mean_ms": 487862,
+         "median_ms": 496000,
+         "min_ms": 0,
+         "p90_ms": 1011000,
+         "percentile_basis": "exact",
+         "total_ms": 28296000
+        }
+       },
+       "kind": "queue",
+       "tickets": 58,
+       "without_ticket": 0
+      }
+     ]
+    },
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 58,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 58,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 58,
+       "max_ms": 11549000,
+       "mean_ms": 8925058,
+       "median_ms": 8747930,
+       "min_ms": 6119762,
+       "p90_ms": 11198738,
+       "percentile_basis": "exact",
+       "total_ms": 517653381
+      }
+     },
+     "gates": {
+      "evaluated": 58,
+      "overridden": 0,
+      "refused": 0,
+      "tickets": 0
+     },
+     "open_visits": 0,
+     "revise_entries": 0,
+     "station": "plan",
+     "tickets": 58,
+     "visits": 58,
+     "waits_before": [
+      {
+       "count": 53,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 53,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 53,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 53,
+         "max_ms": 546729000,
+         "mean_ms": 265849906,
+         "median_ms": 265117000,
+         "min_ms": 22387000,
+         "p90_ms": 443039000,
+         "percentile_basis": "exact",
+         "total_ms": 14090045000
+        }
+       },
+       "kind": "capacity",
+       "tickets": 53,
+       "without_ticket": 0
+      }
+     ]
+    },
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 29,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 29,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 29,
+       "max_ms": 2212972,
+       "mean_ms": 1576945,
+       "median_ms": 1523079,
+       "min_ms": 1093467,
+       "p90_ms": 2130177,
+       "percentile_basis": "exact",
+       "total_ms": 45731393
+      }
+     },
+     "gates": {
+      "evaluated": 29,
+      "overridden": 0,
+      "refused": 0,
+      "tickets": 0
+     },
+     "open_visits": 0,
+     "revise_entries": 0,
+     "station": "audit",
+     "tickets": 29,
+     "visits": 29,
+     "waits_before": []
+    },
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 1,
+       "measured": 84,
+       "open": 1,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 86,
+      "inferred": {
+       "count": 1,
+       "total_max_ms": 20738592,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 84,
+       "max_ms": 46914933,
+       "mean_ms": 30678995,
+       "median_ms": 31003390,
+       "min_ms": 12464314,
+       "p90_ms": 44396742,
+       "percentile_basis": "exact",
+       "total_ms": 2577035610
+      }
+     },
+     "gates": {
+      "evaluated": 350,
+      "overridden": 19,
+      "refused": 161,
+      "tickets": 48
+     },
+     "open_visits": 1,
+     "revise_entries": 26,
+     "station": "build",
+     "tickets": 59,
+     "visits": 86,
+     "waits_before": [
+      {
+       "count": 1,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 1,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 1,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 1,
+         "max_ms": 717000,
+         "mean_ms": 717000,
+         "median_ms": 717000,
+         "min_ms": 717000,
+         "p90_ms": 717000,
+         "percentile_basis": "exact",
+         "total_ms": 717000
+        }
+       },
+       "kind": "queue",
+       "tickets": 1,
+       "without_ticket": 0
+      },
+      {
+       "count": 2,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 2,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 2,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 2,
+         "max_ms": 209736000,
+         "mean_ms": 108992000,
+         "median_ms": 8248000,
+         "min_ms": 8248000,
+         "p90_ms": 209736000,
+         "percentile_basis": "exact",
+         "total_ms": 217984000
+        }
+       },
+       "kind": "capacity",
+       "tickets": 2,
+       "without_ticket": 0
+      }
+     ]
+    },
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 84,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 84,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 84,
+       "max_ms": 19516765,
+       "mean_ms": 14677899,
+       "median_ms": 14813665,
+       "min_ms": 9775707,
+       "p90_ms": 18972863,
+       "percentile_basis": "exact",
+       "total_ms": 1232943477
+      }
+     },
+     "gates": {
+      "evaluated": 168,
+      "overridden": 0,
+      "refused": 0,
+      "tickets": 0
+     },
+     "open_visits": 0,
+     "revise_entries": 0,
+     "station": "verify",
+     "tickets": 59,
+     "visits": 84,
+     "waits_before": [
+      {
+       "count": 13,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 13,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 13,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 13,
+         "max_ms": 53023000,
+         "mean_ms": 20484385,
+         "median_ms": 14140000,
+         "min_ms": 3535000,
+         "p90_ms": 50667000,
+         "percentile_basis": "exact",
+         "total_ms": 266297000
+        }
+       },
+       "kind": "capacity",
+       "tickets": 11,
+       "without_ticket": 0
+      }
+     ]
+    },
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 66,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 66,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 66,
+       "max_ms": 32541357,
+       "mean_ms": 22290032,
+       "median_ms": 22071534,
+       "min_ms": 10686626,
+       "p90_ms": 28634722,
+       "percentile_basis": "exact",
+       "total_ms": 1471142091
+      }
+     },
+     "gates": {
+      "evaluated": 0,
+      "overridden": 0,
+      "refused": 0,
+      "tickets": 0
+     },
+     "open_visits": 0,
+     "revise_entries": 0,
+     "station": "review",
+     "tickets": 57,
+     "visits": 66,
+     "waits_before": [
+      {
+       "count": 8,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 8,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 8,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 8,
+         "max_ms": 12961000,
+         "mean_ms": 4713000,
+         "median_ms": 3535000,
+         "min_ms": 2356000,
+         "p90_ms": 12961000,
+         "percentile_basis": "exact",
+         "total_ms": 37704000
+        }
+       },
+       "kind": "capacity",
+       "tickets": 5,
+       "without_ticket": 0
+      }
+     ]
+    },
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 0,
+       "open": 0,
+       "unknown": 5
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 5,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": null
+     },
+     "gates": {
+      "evaluated": 0,
+      "overridden": 0,
+      "refused": 0,
+      "tickets": 0
+     },
+     "open_visits": 0,
+     "revise_entries": 0,
+     "station": "human-approval",
+     "tickets": 5,
+     "visits": 5,
+     "waits_before": [
+      {
+       "count": 5,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 5,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 5,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 5,
+         "max_ms": 102513984,
+         "mean_ms": 93953216,
+         "median_ms": 95169471,
+         "min_ms": 79129813,
+         "p90_ms": 102513984,
+         "percentile_basis": "exact",
+         "total_ms": 469766078
+        }
+       },
+       "kind": "human-approval",
+       "tickets": 5,
+       "without_ticket": 0
+      },
+      {
+       "count": 5,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 5,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 5,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 5,
+         "max_ms": 121521000,
+         "mean_ms": 102266400,
+         "median_ms": 106035000,
+         "min_ms": 80556000,
+         "p90_ms": 121521000,
+         "percentile_basis": "exact",
+         "total_ms": 511332000
+        }
+       },
+       "kind": "person",
+       "tickets": 5,
+       "without_ticket": 0
+      }
+     ]
+    },
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 52,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 52,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 52,
+       "max_ms": 3760091,
+       "mean_ms": 2700750,
+       "median_ms": 2670921,
+       "min_ms": 1620207,
+       "p90_ms": 3529426,
+       "percentile_basis": "exact",
+       "total_ms": 140438983
+      }
+     },
+     "gates": {
+      "evaluated": 52,
+      "overridden": 0,
+      "refused": 0,
+      "tickets": 0
+     },
+     "open_visits": 0,
+     "revise_entries": 0,
+     "station": "merge",
+     "tickets": 52,
+     "visits": 52,
+     "waits_before": [
+      {
+       "count": 22,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 22,
+         "open": 0,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 22,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": {
+         "count": 22,
+         "max_ms": 70698000,
+         "mean_ms": 17406591,
+         "median_ms": 9426000,
+         "min_ms": 1178000,
+         "p90_ms": 40062000,
+         "percentile_basis": "exact",
+         "total_ms": 382945000
+        }
+       },
+       "kind": "capacity",
+       "tickets": 22,
+       "without_ticket": 0
+      }
+     ]
+    },
+    {
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 56,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 56,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 56,
+       "max_ms": 78553,
+       "mean_ms": 78553,
+       "median_ms": 78553,
+       "min_ms": 78553,
+       "p90_ms": 78553,
+       "percentile_basis": "exact",
+       "total_ms": 4398968
+      }
+     },
+     "gates": {
+      "evaluated": 56,
+      "overridden": 0,
+      "refused": 0,
+      "tickets": 0
+     },
+     "open_visits": 0,
+     "revise_entries": 0,
+     "station": "cleanup",
+     "tickets": 56,
+     "visits": 56,
+     "waits_before": [
+      {
+       "count": 2,
+       "duration": {
+        "basis": {
+         "bounded": 0,
+         "inferred": 0,
+         "measured": 0,
+         "open": 2,
+         "unknown": 0
+        },
+        "bounded": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "count": 2,
+        "inferred": {
+         "count": 0,
+         "total_max_ms": null,
+         "total_min_ms": null,
+         "upper_unknown": 0
+        },
+        "measured": null
+       },
+       "kind": "person",
+       "tickets": 2,
+       "without_ticket": 0
+      }
+     ]
+    }
+   ],
+   "transitions": [
+    {
+     "count": 58,
+     "from": "groom",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 58,
+     "to": "plan"
+    },
+    {
+     "count": 29,
+     "from": "plan",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 29,
+     "to": "audit"
+    },
+    {
+     "count": 29,
+     "from": "plan",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 29,
+     "to": "build"
+    },
+    {
+     "count": 29,
+     "from": "audit",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 29,
+     "to": "build"
+    },
+    {
+     "count": 1,
+     "from": "build",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 1,
+     "to": "build"
+    },
+    {
+     "count": 84,
+     "from": "build",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 59,
+     "to": "verify"
+    },
+    {
+     "count": 16,
+     "from": "verify",
+     "revise": 16,
+     "terminal": false,
+     "tickets": 14,
+     "to": "build"
+    },
+    {
+     "count": 66,
+     "from": "verify",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 57,
+     "to": "review"
+    },
+    {
+     "count": 2,
+     "from": "verify",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 2,
+     "to": "cleanup"
+    },
+    {
+     "count": 10,
+     "from": "review",
+     "revise": 10,
+     "terminal": false,
+     "tickets": 10,
+     "to": "build"
+    },
+    {
+     "count": 5,
+     "from": "review",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 5,
+     "to": "human-approval"
+    },
+    {
+     "count": 47,
+     "from": "review",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 47,
+     "to": "merge"
+    },
+    {
+     "count": 2,
+     "from": "review",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 2,
+     "to": "cleanup"
+    },
+    {
+     "count": 1,
+     "from": "review",
+     "revise": 0,
+     "terminal": true,
+     "tickets": 1,
+     "to": "blocked"
+    },
+    {
+     "count": 5,
+     "from": "human-approval",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 5,
+     "to": "merge"
+    },
+    {
+     "count": 52,
+     "from": "merge",
+     "revise": 0,
+     "terminal": false,
+     "tickets": 52,
+     "to": "cleanup"
+    },
+    {
+     "count": 4,
+     "from": "cleanup",
+     "revise": 0,
+     "terminal": true,
+     "tickets": 4,
+     "to": "abandoned"
+    },
+    {
+     "count": 52,
+     "from": "cleanup",
+     "revise": 0,
+     "terminal": true,
+     "tickets": 52,
+     "to": "merged"
+    }
+   ],
+   "unit": "ms",
+   "wait_kinds": [
+    "dependency",
+    "queue",
+    "capacity",
+    "capacity-slice",
+    "human-approval",
+    "person"
+   ],
+   "waits": [
+    {
+     "count": 11,
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 10,
+       "open": 1,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 11,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 10,
+       "max_ms": 240387000,
+       "mean_ms": 82369900,
+       "median_ms": 751000,
+       "min_ms": 15000,
+       "p90_ms": 180220000,
+       "percentile_basis": "exact",
+       "total_ms": 823699000
+      }
+     },
+     "kind": "dependency",
+     "next_station_unknown": 1,
+     "tickets": 11,
+     "without_ticket": 0
+    },
+    {
+     "count": 60,
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 60,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 60,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 60,
+       "max_ms": 1011000,
+       "mean_ms": 488133,
+       "median_ms": 496000,
+       "min_ms": 0,
+       "p90_ms": 1011000,
+       "percentile_basis": "exact",
+       "total_ms": 29288000
+      }
+     },
+     "kind": "queue",
+     "next_station_unknown": 1,
+     "tickets": 60,
+     "without_ticket": 0
+    },
+    {
+     "count": 100,
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 100,
+       "open": 0,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 100,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 100,
+       "max_ms": 546729000,
+       "mean_ms": 151835030,
+       "median_ms": 69520000,
+       "min_ms": 1178000,
+       "p90_ms": 410046000,
+       "percentile_basis": "exact",
+       "total_ms": 15183503000
+      }
+     },
+     "kind": "capacity",
+     "next_station_unknown": 2,
+     "tickets": 59,
+     "without_ticket": 0
+    },
+    {
+     "count": 6,
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 5,
+       "open": 1,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 6,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 5,
+       "max_ms": 102513984,
+       "mean_ms": 93953216,
+       "median_ms": 95169471,
+       "min_ms": 79129813,
+       "p90_ms": 102513984,
+       "percentile_basis": "exact",
+       "total_ms": 469766078
+      }
+     },
+     "kind": "human-approval",
+     "next_station_unknown": 1,
+     "tickets": 6,
+     "without_ticket": 0
+    },
+    {
+     "count": 10,
+     "duration": {
+      "basis": {
+       "bounded": 0,
+       "inferred": 0,
+       "measured": 6,
+       "open": 4,
+       "unknown": 0
+      },
+      "bounded": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "count": 10,
+      "inferred": {
+       "count": 0,
+       "total_max_ms": null,
+       "total_min_ms": null,
+       "upper_unknown": 0
+      },
+      "measured": {
+       "count": 6,
+       "max_ms": 122408000,
+       "mean_ms": 105623333,
+       "median_ms": 106035000,
+       "min_ms": 80556000,
+       "p90_ms": 122408000,
+       "percentile_basis": "exact",
+       "total_ms": 633740000
+      }
+     },
+     "kind": "person",
+     "next_station_unknown": 3,
+     "tickets": 10,
+     "without_ticket": 0
+    }
+   ],
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": null,
+    "from_ms": null,
+    "last_runs": null,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/flow",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

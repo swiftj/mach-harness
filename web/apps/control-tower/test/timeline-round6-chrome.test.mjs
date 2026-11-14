@@ -145,11 +145,12 @@ test("16: with nothing drawn yet it falls back to the stage", () => {
 
 test("16: the skip link is the page's second Tab stop while the Timeline is up, and only then", () => {
   const shell = src("shell/Shell.tsx");
-  const first = shell.indexOf('{onFloor ? "Skip to the factory view" : "Skip to the timeline"}');
+  // M6.5: a third workspace (Analytics) has its own words in the first skip link.
+  const first = shell.indexOf('{onFloor ? "Skip to the factory view" : inAnalytics ? "Skip to the analytics" : "Skip to the timeline"}');
   const second = shell.indexOf("Skip to the tracks");
   const header = shell.indexOf("<header");
   assert.ok(first > 0 && second > first && header > second, "both skip links come before the header");
-  assert.match(shell, /\{onFloor \? null : \(\s*<a\s+href="#stage"\s+data-skip-tracks=""/);
+  assert.match(shell, /\{!inTimeline \? null : \(\s*<a\s+href="#stage"\s+data-skip-tracks=""/);
   assert.match(shell, /focusTracks\(document, document\.getElementById\("stage"\)\)/);
 });
 

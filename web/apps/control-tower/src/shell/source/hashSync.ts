@@ -14,7 +14,11 @@
  * found, it is dropped and the person is told (`onLost`). An `at` is never dropped silently: dropped
  * because the person acted first, they are told that too.
  *
- * Writing (history.replaceState, never on every frame): the route and selection at once; `at` only
+ * Writing (never on every frame): a new history entry (`pushHash`) when the workspace changes, or the
+ * Analytics area does, so the browser's Back returns to the view left (an Analytics drill-down into the
+ * Timeline or the floor, Back, and the area, period, filters, pick and open drawer are as they were);
+ * otherwise the entry is replaced (filters, period, selection, playhead, Atlas and Blueprint). The
+ * route and selection are written at once; `at` only
  * while the playhead is held still (paused off the live edge) and has stayed put for SETTLE_MS; the
  * Timeline's `win` once the window has stayed put for SETTLE_MS. An `at` not yet honoured is kept in
  * the address until it is.
@@ -27,6 +31,8 @@ export const SETTLE_MS = 400;
 export interface HashHost {
   getHash(): string;
   replaceHash(hash: string): void;
+  /** A new history entry (a workspace or Analytics area change). Absent: replaced like any other write. */
+  pushHash?(hash: string): void;
   onHashChange(listener: () => void): () => void;
   /** The person's own first input (pointer down, key down, wheel). */
   onInteraction(listener: () => void): () => void;
@@ -34,7 +40,7 @@ export interface HashHost {
   clearTimeout(handle: unknown): void;
 }
 
-/** Apply everything in the hash that needs no history (route, selection, Theater Mode, Timeline window, grouping, lens and table). */
+/** Apply everything in the hash that needs no history (route, selection, Theater Mode, Timeline window, grouping, lens and table, Analytics' view). */
 export function applyHash(store: SceneStore, h: HashState): void {
   if (h.route === "atlas" || h.route === "blueprint") {
     // Back from the Timeline through the address: as the switch does (showOnFloor), the floor frames the selection.
@@ -42,6 +48,10 @@ export function applyHash(store: SceneStore, h: HashState): void {
     else store.setView(h.route);
   } else if (h.route === "timeline") {
     store.setWorkspace("timeline");
+  } else if (h.route === "analytics") {
+    // The address describes the whole view: every member is set (defaults included), so it lands exactly as written.
+    if (h.analytics) store.setAnalyticsView(h.analytics);
+    store.setWorkspace("analytics");
   }
   if (h.sel) store.select(h.sel);
   if (h.theater) store.setTheater(true);
@@ -130,21 +140,28 @@ export function createHashSync(store: SceneStore, host: HashHost, settleMs = SET
   let winTimer: unknown = null;
   let wantAt: HashAt | null = null;
   let wantWin = settledWin;
+  /** The workspace (and Analytics area) of the entry written last: a change pushes a new entry. */
+  const placeOf = (s: SceneStoreState) => (s.workspace === "analytics" ? `analytics|${s.analytics.area}` : s.workspace);
+  let place = placeOf(store.getState());
 
   const write = () => {
     const s = store.getState();
     const next = formatHash({
-      route: s.workspace === "timeline" ? "timeline" : s.view,
+      route: s.workspace === "floor" ? s.view : s.workspace,
       sel: s.selection,
       at: pending ?? settledAt,
       win: settledWin,
       group: s.timeline.grouping,
       lens: s.timeline.lens,
       table: s.timeline.table,
+      analytics: s.analytics,
     });
     if (next === last) return;
     last = next;
-    host.replaceHash(next);
+    const now = placeOf(s);
+    if (now !== place && host.pushHash) host.pushHash(next);
+    else host.replaceHash(next);
+    place = now;
   };
 
   const tryPending = () => {
@@ -235,6 +252,7 @@ export function createHashSync(store: SceneStore, host: HashHost, settleMs = SET
     const h = parseHash(host.getHash());
     last = host.getHash();
     applyHash(store, h);
+    place = placeOf(store.getState());
     pending = h.at;
     asked = null;
     settledWin = wantWin = store.getState().timeline.window;
@@ -270,6 +288,9 @@ export function browserHashHost(): HashHost {
     getHash: () => window.location.hash,
     replaceHash(hash) {
       if (window.location.hash !== hash) window.history.replaceState(null, "", hash);
+    },
+    pushHash(hash) {
+      if (window.location.hash !== hash) window.history.pushState(null, "", hash);
     },
     onHashChange(listener) {
       window.addEventListener("hashchange", listener);
