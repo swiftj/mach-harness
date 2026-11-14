@@ -431,6 +431,20 @@ class TowerTest(Base):
         self.assertNotIn(mach.TOWER_DEST, json.loads((self.project / mach.MANIFEST).read_text())["files"])
         self.assertTrue((self.project / SKILL).is_file())
 
+    def test_a_wrong_checksum_on_update_says_what_was_refused_and_keeps_the_installed_copy(self):
+        # M6.6 Phase 8: the note named the program as not installed, then said "nothing was installed",
+        # which reads as if MACH itself was not installed. It now says the download was refused.
+        data = self.publish()
+        self.mach("install")
+        self.publish(data=b"#!/bin/sh\necho tampered\n", listed="0" * 64)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.project / mach.TOWER_DEST).read_bytes(), data)
+        note = next(line for line in out.splitlines() if line.startswith("The Control Tower"))
+        self.assertIn("does not match the release's published checksum, so it was refused.", note)
+        self.assertIn("The copy already installed was kept.", note)
+        self.assertNotIn("nothing was installed", out)
+
     def test_a_release_from_before_the_observer_is_one_note_and_a_successful_install(self):
         self.publish(data=None)  # like v0.12.0: SHA256SUMS lists only mach-studio-*
         code, out = self.mach("install")

@@ -100,3 +100,31 @@ func TestScrubDocumentKeepsLinesAndKnownHashesOnly(t *testing.T) {
 		t.Fatalf("%d %d", len(out), n)
 	}
 }
+
+// The supervisor's held sentence is prose, not a key and its value: "authorized:" is a verb, so
+// nothing in it is removed (M6.6 D3, from a real run's scheduling.decided.held[].why). Real
+// authorization keys and their values still are.
+func TestAuthProseIsNotACredentialButAuthKeysAre(t *testing.T) {
+	prose := "Dispatch by 'supervisor' was not authorized: the readiness audit is stale. Nothing was dispatched."
+	for _, s := range []string{prose, "unauthorized: the runner is paused", "Authorizing: a person must re-run the audit"} {
+		if got := Scrub(s, ""); got != s {
+			t.Errorf("prose changed: %q -> %q", s, got)
+		}
+	}
+	for _, s := range []string{
+		"curl -H 'Authorization: Bearer MARKERtok' https://e",
+		"curl -H 'Authorization: MARKERsecretvalue' https://e",
+		"Proxy-Authorization: Basic MARKERdXNlcjpwYXNz",
+		"HTTP_AUTHORIZATION=MARKERxyz",
+		"auth: MARKERabc",
+		"X_AUTH=MARKERabc",
+		"auth_header: MARKERabc",
+		"authz=MARKERabc",
+		"authentication: \"MARKER quoted value\"",
+		"export AUTH_TOKEN=MARKERabc",
+	} {
+		if got := Scrub(s, ""); strings.Contains(got, "MARKER") || !strings.Contains(got, "[redacted]") {
+			t.Errorf("credential kept: %q -> %q", s, got)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"mach/observer/internal/event"
 	"mach/observer/internal/redact"
@@ -394,9 +395,33 @@ func (s *Stream) init(rec map[string]any, r Read) []*event.Event {
 	return []*event.Event{ev}
 }
 
-func timestamp(rec map[string]any) (int64, bool) {
-	ms, _, ok := parseTime(rec["timestamp"])
-	return ms, ok
+// timestamp is a stream record's own time, bounded by when its line was read; implausible says a
+// time was written but is not plausible (M6.6 F1), so the record is placed as if it had none.
+func timestamp(rec map[string]any, r Read) (ms int64, ok, implausible bool) {
+	ms, _, ok, implausible = parseTimeRead(rec["timestamp"], r.At)
+	return ms, ok, implausible
+}
+
+// placeTime gives ev its own time when it has a plausible one; otherwise it is placed as a record
+// without a time, and an implausible time is recorded as unknown, never used for order.
+func (s *Stream) placeTime(ev *event.Event, ms int64, ok, implausible bool, r Read) {
+	if ok {
+		s.ownTime(ev, ms)
+		return
+	}
+	s.noOwnTime(ev, r)
+	if implausible && !hasUnknown(ev, "time.occurred_at") {
+		ev.AddUnknown("time.occurred_at")
+	}
+}
+
+func hasUnknown(ev *event.Event, field string) bool {
+	for _, u := range ev.Unknown {
+		if u == field {
+			return true
+		}
+	}
+	return false
 }
 
 // agentOf is the agent a message belongs to: the main loop, or an Agent-tool sub-agent.
@@ -415,7 +440,7 @@ func (s *Stream) assistant(rec map[string]any, r Read) []*event.Event {
 	msg := obj(rec["message"])
 	var out []*event.Event
 	agent, parent := s.agentOf(rec)
-	ms, hasTime := timestamp(rec)
+	ms, hasTime, badTime := timestamp(rec, r)
 	for _, block := range arr(msg["content"]) {
 		b := obj(block)
 		if b["type"] != "tool_use" {
@@ -428,11 +453,7 @@ func (s *Stream) assistant(rec map[string]any, r Read) []*event.Event {
 		}
 		input := obj(b["input"])
 		ev := s.base("tool.called", r)
-		if hasTime {
-			s.ownTime(ev, ms)
-		} else {
-			s.noOwnTime(ev, r)
-		}
+		s.placeTime(ev, ms, hasTime, badTime, r)
 		ev.IDs.AgentID, ev.IDs.ParentAgentID = agent, parent
 		ev.IDs.ToolCallID = s.Execution + "/" + toolu
 		class, script, rel := classifyTool(name, input, s.Root)
@@ -460,7 +481,7 @@ func (s *Stream) assistant(rec map[string]any, r Read) []*event.Event {
 func (s *Stream) user(rec map[string]any, r Read) []*event.Event {
 	msg := obj(rec["message"])
 	var out []*event.Event
-	ms, hasTime := timestamp(rec)
+	ms, hasTime, badTime := timestamp(rec, r)
 	for _, block := range arr(msg["content"]) {
 		b := obj(block)
 		if b["type"] != "tool_result" {
@@ -476,11 +497,7 @@ func (s *Stream) user(rec map[string]any, r Read) []*event.Event {
 			agent, parent = c.agent, c.parentAgent
 		}
 		ev := s.base("tool.returned", r)
-		if hasTime {
-			s.ownTime(ev, ms)
-		} else {
-			s.noOwnTime(ev, r)
-		}
+		s.placeTime(ev, ms, hasTime, badTime, r)
 		ev.IDs.AgentID, ev.IDs.ParentAgentID = agent, parent
 		ev.IDs.ToolCallID = s.Execution + "/" + toolu
 		status := "ok"
@@ -657,9 +674,11 @@ func (s *Stream) agentEvent(typ string, wf *workflow, st *agentState, m map[stri
 	return ev
 }
 
+// msField reads a Unix-millisecond time a workflow record carries; an implausible one (M6.6 F1)
+// is treated as absent.
 func msField(m map[string]any, k string) (int64, bool) {
 	n, ok := redact.Int(m[k])
-	return n, ok && n > 0
+	return n, ok && n > 0 && plausibleMS(n, time.Time{})
 }
 
 func (s *Stream) agent(wf *workflow, m map[string]any, r Read) []*event.Event {

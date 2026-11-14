@@ -82,6 +82,20 @@ export function honourAt(store: SceneStore, at: HashAt): boolean {
   return true;
 }
 
+/**
+ * M6.6 (D7): an address moment outside the history, once the source holds it: after its end (a replay's
+ * last event, or a live link past the live edge) or before a replay's first event. The playhead goes to
+ * the nearest end, and the person is told; never left silently at the start.
+ */
+export function clampAt(s: Pick<SceneStoreState, "source" | "log" | "extent" | "liveAt" | "connection">, at: HashAt): { readonly t: number; readonly why: "after-end" | "before-start" } | null {
+  if (at.kind !== "ms" || !Number.isFinite(at.ms) || s.source === "simulation") return null;
+  if (s.log.headTime() === null) return null;
+  if (s.source === "live" && s.connection?.state !== "live") return null;
+  if (at.ms > s.liveAt) return { t: s.liveAt, why: "after-end" };
+  if (s.source === "replay" && at.ms < s.extent.start) return { t: s.extent.start, why: "before-start" };
+  return null;
+}
+
 /** Whether the playhead is held still in a way worth putting in the address. */
 export function playheadHeld(s: Pick<SceneStoreState, "source" | "playing" | "following" | "playhead">): boolean {
   if (s.playing) return false;
@@ -109,7 +123,7 @@ const sameAt = (a: HashAt | null, b: HashAt | null): boolean =>
 const winKey = (w: { from: number; to: number } | null): string => (w ? `${Math.round(w.from)}-${Math.round(w.to)}` : "");
 
 /** Why an `at` from the address was not applied. */
-export type LostReason = "not-found" | "interrupted";
+export type LostReason = "not-found" | "interrupted" | "after-end" | "before-start";
 
 export interface HashSyncOptions {
   /** The time of an event the history held does not reach, or null when nothing recorded names it. */
@@ -124,12 +138,27 @@ export interface HashSync {
   dispose(): void;
 }
 
+/** Per store: whether the address still names a moment not yet applied (M6.6, D1). */
+const pendingMoments = new WeakMap<SceneStore, () => boolean>();
+
+/**
+ * Whether the address named a moment (`at`) that is not applied yet. Analytics waits for it rather
+ * than first reading the whole history and then the moment (D1 of the real run: the whole-history read
+ * was the one a panel could take). Null while no sync has started for the store (a child's first
+ * effect runs before its parent's): the caller then reads the address itself.
+ */
+export function addressMomentPending(store: SceneStore): boolean | null {
+  const f = pendingMoments.get(store);
+  return f ? f() : null;
+}
+
 /**
  * Start syncing. The route, selection and the rest are assumed applied already (applyHash, before the
  * first render); this takes the hash's `at` as pending and keeps the address written.
  */
 export function createHashSync(store: SceneStore, host: HashHost, settleMs = SETTLE_MS, options: HashSyncOptions = {}): HashSync {
   let pending: HashAt | null = parseHash(host.getHash()).at;
+  pendingMoments.set(store, () => !disposed && pending !== null);
   /** The `at` already looked up (once each). */
   let asked: HashAt | null = null;
   let disposed = false;
@@ -170,6 +199,15 @@ export function createHashSync(store: SceneStore, host: HashHost, settleMs = SET
     // Cleared first: the seek notifies the store's listeners (this one among them) synchronously.
     pending = null;
     if (!honourAt(store, at)) {
+      // D7: outside the history held: to its nearest end, said.
+      const c = clampAt(store.getState(), at);
+      if (c) {
+        if (c.why === "after-end" && store.getState().source === "live") store.followLive();
+        else store.seek(c.t);
+        settledAt = wantAt = playheadHeld(store.getState()) ? atOf(store.getState()) : null;
+        options.onLost?.(at, c.why);
+        return;
+      }
       pending = at;
       if (at.kind === "event") locateLater(at);
       return;
@@ -273,6 +311,7 @@ export function createHashSync(store: SceneStore, host: HashHost, settleMs = SET
     pending: () => pending,
     dispose() {
       disposed = true;
+      pendingMoments.delete(store);
       offHash();
       offInteraction();
       offStore();

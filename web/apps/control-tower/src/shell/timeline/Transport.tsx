@@ -16,6 +16,7 @@ import { indexFor, lastAtOrBefore } from "../history";
 import { stepChapter, togglePlayback } from "../keyboard";
 import { duration as words, isMoment, timeCodeText, timecode, utcClock } from "../vocab";
 import { usePlayheadEffect } from "./playhead";
+import { codesOnlyWords } from "../../text/fields";
 
 export function IconButton({ label, shortcut, onClick, children, pressed, className, disabled }: { label: string; shortcut?: string; onClick: () => void; children: ReactNode; pressed?: boolean; className?: string; disabled?: boolean }) {
   return (
@@ -241,7 +242,7 @@ function ChapterName() {
   if (!chapter) return null;
   const n = index.landmarks.indexOf(chapter) + 1;
   return (
-    <span className="flex min-w-0 items-baseline gap-1.5 text-body-sm" title={chapter.title}>
+    <span className="flex min-w-0 items-baseline gap-1.5 text-body-sm" title={(chapter.eventType && codesOnlyWords(chapter.eventType)) || chapter.title}>
       {index.storyboard ? (
         <span className="shrink-0 text-caption text-ink-subtle tabular">
           {n} of {index.landmarks.length}
@@ -249,7 +250,7 @@ function ChapterName() {
       ) : (
         <span className="min-w-0 shrink truncate text-caption text-ink-subtle">Last landmark, {timecode(chapter.t, false)}</span>
       )}
-      <span className="truncate font-sans font-semibold text-ink">{chapter.title}</span>
+      <span className="truncate font-sans font-semibold text-ink">{(chapter.eventType && codesOnlyWords(chapter.eventType)) || chapter.title}</span>
     </span>
   );
 }
@@ -272,7 +273,7 @@ export const Transport = memo(function Transport({ collapsed, onCollapse, idleSi
     // The bar lies over the timeline's 24 px resize handle: only its controls take the pointer, so the
     // bar's empty space is the handle.
     <div
-      className="pointer-events-none relative z-[1] flex h-10 shrink-0 items-center gap-1 border-b border-line px-2 [&_button]:pointer-events-auto [&_fieldset]:pointer-events-auto [&_[title]]:pointer-events-auto"
+      className="pointer-events-none relative z-[1] flex h-10 shrink-0 items-center gap-1 border-b border-line px-2 max-[639px]:h-auto max-[639px]:min-h-10 max-[639px]:flex-wrap max-[639px]:py-1 [&_button]:pointer-events-auto [&_fieldset]:pointer-events-auto [&_[title]]:pointer-events-auto"
       role="toolbar"
       aria-label="Transport"
     >

@@ -367,7 +367,10 @@ test("analyticsAsOf: the whole history at the edge; through the playhead when it
   const edge = analyticsAsOf({ source: "live", following: true, playhead: 9e12, liveAt: 9e12, connection: { state: "live" } }, clock);
   assert.equal(edge.through, "edge");
   assert.equal(edge.toMs, null);
-  assert.equal(edge.sourceLabel, "Live");
+  assert.equal(edge.sourceLabel, "Live Factory");
+  // M6.6 (I-02): a link that is not live is said in the badge's words.
+  assert.equal(analyticsAsOf({ source: "live", following: true, playhead: 9e12, liveAt: 9e12, connection: { state: "no-session" } }, clock).sourceLabel, "Live Factory (no session)");
+  assert.equal(analyticsAsOf({ source: "live", following: false, playhead: 1, liveAt: 9e12, connection: { state: "stale" } }, clock).sourceLabel, "Live Factory, reviewing an earlier moment (stale)");
   const behind = analyticsAsOf({ source: "replay", following: false, playhead: 1_700_000_123_456, liveAt: 1_700_000_900_000, connection: null }, clock);
   assert.equal(behind.through, "playhead");
   assert.equal(behind.toMs, 1_700_000_123_000);

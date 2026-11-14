@@ -19,6 +19,22 @@ type Identity struct {
 	// incarnations per ticket: generation -> first `at` of its lifecycle file (contract 5.2: the
 	// k-th incarnation is cell:<ticket>~<k>, numbered by the file's first at).
 	incarnations map[string]map[string]int64
+	// titles per slice, with the revision the ledger recorded them for (raw: scrubbed when used).
+	titles map[string]sliceTitle
+}
+
+type sliceTitle struct {
+	title    string
+	revision int64
+}
+
+// SliceTitleMax is the most characters of a slice title kept (redact.FreeTextFields).
+const SliceTitleMax = 200
+
+// SliceTitle is the title the intake ledger records for a slice, and the revision it is for.
+func (id *Identity) SliceTitle(slice string) (string, int64, bool) {
+	t, ok := id.titles[slice]
+	return t.title, t.revision, ok
 }
 
 // Product is a cell's product identity.
@@ -30,7 +46,7 @@ type Product struct {
 
 // NewIdentity makes an empty identity map.
 func NewIdentity() *Identity {
-	return &Identity{execs: map[string]string{}, cells: map[string]Product{}, incarnations: map[string]map[string]int64{}}
+	return &Identity{execs: map[string]string{}, cells: map[string]Product{}, incarnations: map[string]map[string]int64{}, titles: map[string]sliceTitle{}}
 }
 
 // LearnExecution records that an execution served a ticket.
@@ -129,6 +145,11 @@ func (id *Identity) ReadLedger(data []byte) {
 	}
 	for sliceID, rec := range raw.Slices {
 		s, ok := redact.ID(sliceID)
+		if title, okTitle := rec["title"].(string); ok && okTitle && len(title) <= 4*SliceTitleMax {
+			if r, okR := redact.Int(rec["revision"]); okR {
+				id.titles[s] = sliceTitle{title: title, revision: r}
+			}
+		}
 		t, okT := Ticket(rec["ticket_id"])
 		if !ok || !okT {
 			continue

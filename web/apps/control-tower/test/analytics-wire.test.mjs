@@ -146,7 +146,7 @@ test("as-of caption in words: complete history, a selected window, through the p
   assert.equal(Q.asOfWords({ area: "live", asOfMs: null, window: "7d", metricsExact: null, widened: false, cut: false }, clock), "A selected window of the recorded history");
   const through = Q.asOfWords({ area: "replay", asOfMs: 1, window: "all", metricsExact: false, widened: false, cut: false }, clock);
   assert.match(through, /^Through the playhead at 31 Oct, 02:26 UTC/);
-  assert.match(through, /lists and flow are exact, metrics count whole UTC days before the playhead/);
+  assert.match(through, /the flow drawing and the rows behind a figure run to the playhead itself, while metrics count whole UTC days before it/);
   assert.match(Q.asOfWords({ area: "replay", asOfMs: 1, window: "all", metricsExact: false, widened: true, cut: true }, clock), /outcomes later that day may be included.*cut at the playhead/);
   assert.match(Q.asOfWords({ area: "simulation", asOfMs: null, window: "all", metricsExact: null, widened: false, cut: false }, clock), /simulated/);
 });
@@ -382,8 +382,8 @@ test("an opportunity's drawer is named in the address by its id, so a link or Ba
 const F = await import("../src/analytics/model/format.ts");
 
 test("a percentile read inside a histogram bucket is never printed as exact", () => {
-  assert.equal(F.p50Text({ p50_ms: 8_192_000, percentile_basis: "histogram" }), "about 2 h 17 min");
-  assert.equal(F.p50Text({ p50_ms: 8_192_000, percentile_basis: "exact" }), "2 h 17 min");
+  assert.equal(F.p50Text({ p50_ms: 8_192_000, percentile_basis: "histogram" }), "about 2 h 16 min");
+  assert.equal(F.p50Text({ p50_ms: 8_192_000, percentile_basis: "exact" }), "2 h 16 min");
   assert.equal(F.p90Text({ p50_ms: 1 }), "–");
 });
 
@@ -399,7 +399,14 @@ test("under a playhead, finished tickets are cut at the metrics' midnight, so a 
   const r = await L.loadArea(input(data, { session: beginSnapshot(data, { asOfMs: mid + 7_200_000 }), plan: Q.planFor("quality", null) }));
   assert.equal(r.dayCut, mid);
   assert.deepEqual(r.data.value.runs.map((x) => x.ticket_id), ["T0", "T1"], "closed before the midnight only");
-  assert.match(Q.asOfWords({ area: "replay", asOfMs: mid + 7_200_000, window: "all", metricsExact: false, widened: false, cut: false, dayCut: mid }, (t) => new Date(t).toISOString()), /^Through .*T00:00:00.000Z, the last whole UTC day before the playhead/);
+  // M6.6 (I-08): the last whole day counted is named (the day before the midnight), never the midnight itself;
+  // the playhead's own day is said to be left out, and the parts cut exactly at the playhead are named.
+  const words = Q.asOfWords({ area: "replay", asOfMs: mid + 7_200_000, window: "all", metricsExact: false, widened: false, cut: false, dayCut: mid }, Q.momentWords);
+  assert.equal(words, "Counted through the end of 10 Jan (UTC), the last whole day before the playhead. The playhead is at 11 Jan 02:00:00 UTC; the part of 11 Jan before it is not in these figures. The flow drawing and the rows behind a figure run to the playhead itself");
+  assert.doesNotMatch(words, /Jan,? 00:00/, "no midnight that reads as including the playhead's day");
+  assert.equal(Q.dayCutTag(mid), "to end of 10 Jan");
+  // A playhead at the midnight itself: nothing of its day to leave out.
+  assert.match(Q.asOfWords({ area: "replay", asOfMs: mid, window: "all", metricsExact: false, widened: false, cut: true, dayCut: mid }, Q.momentWords), /^Counted through the end of 10 Jan \(UTC\)[^]*The playhead is at 11 Jan 00:00:00 UTC\. The flow drawing[^]*The chosen period was cut at the playhead$/);
 });
 
 // ------------------------------------------------------------------------------------ last fix round
@@ -431,4 +438,25 @@ test("a per-model figure's sample is model–execution pairs, and durations have
   assert.equal(F.sampleText({ kind: "mean", unit: "tokens", denominator: "executions that used the model", numerator_value: 1, denominator_value: 1846 }), "1,846 model–execution pairs");
   assert.equal(F.durationText(411_000), "6 min 51 s");
   assert.equal(F.durationCompact, undefined);
+});
+
+test("D4 (M6.6, real run): held on the history's first day, the window is never inverted and the caption says no whole day is complete", async () => {
+  const today = 20 * D;
+  const playhead = today + 15 * 3_600_000 + 16 * 60_000;
+  const { data } = fakeData((name, q, o) => {
+    const e = { ...env("c.471"), history: { ...env("c.471").history, from_ms: today + 9 * 3_600_000 }, window: { from_ms: null, to_ms: null, effective_from_ms: today, effective_to_ms: today, last_runs: null }, as_of: { ms: o.asOfMs, exact: name !== "metrics", effective_to_ms: name === "metrics" ? today : o.asOfMs, rule: "whole UTC days before the playhead" } };
+    if (name === "metrics") return { status: "ok", value: { ...e, metrics: [], definitions_version: 2, group_overflow: 0, suspect_days: [] } };
+    if (name === "runs") return { status: "ok", value: { ...e, of: "runs", items: [], total: 0, offset: 0, more: false, excluded: [], after_as_of: 0 } };
+    return { status: "unsupported", reason: "-" };
+  });
+  const r = await L.loadArea(input(data, { session: beginSnapshot(data, { asOfMs: playhead }), plan: Q.planFor("quality", null), endMs: playhead }));
+  assert.equal(r.noWholeDay, true);
+  assert.equal(r.data.value.no_whole_day, true, "the areas can tell it from nothing recorded");
+  const w = r.data.value.window;
+  assert.ok(w.to_ms > w.from_ms, `inverted window ${w.from_ms}–${w.to_ms}`);
+  assert.equal(w.from_ms, today);
+  assert.equal(w.to_ms, playhead);
+  const words = Q.asOfWords({ area: "replay", asOfMs: playhead, window: "all", metricsExact: false, widened: false, cut: false, dayCut: today, noWholeDay: true }, Q.momentWords);
+  assert.equal(words, "No whole UTC day is complete before the playhead at 21 Jan 15:16:00 UTC; day-counted figures are not available. The flow drawing and the rows behind a figure run to the playhead");
+  assert.equal(L.NO_WHOLE_DAY_REASON, "no whole UTC day is complete before the playhead, so there is nothing to count by day");
 });

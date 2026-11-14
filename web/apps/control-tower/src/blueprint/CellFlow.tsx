@@ -41,6 +41,7 @@ import { LodContext, SimulatedContext } from "./context";
 import { placed, visitEnd } from "./facts";
 import { DimLine } from "./marks";
 import { PlacedCallout } from "./callout";
+import { containedWords } from "../text/fields";
 import { OverviewFlow } from "./overview";
 import { flowBoxes, placeCallouts, type CalloutWish, type Spot } from "./spots";
 import { artifactFile, agentState, grammarArtifact, grammarGate, grammarSeat, stationKind, tierOf, visitMark } from "./vocab";
@@ -130,7 +131,7 @@ function calloutSpots(cell: CellState, flow: Flow, seats: readonly number[], sim
       if (!round?.outcome) continue;
       SEAT_KEYS.forEach((k, i) => {
         const f = round.findings.find((x) => x.seat === k && x.severity === "blocker" && x.outvoted);
-        if (f) wishes.push({ key: `o:${round.round}:${i}`, cx: n.x, cy: n.y + (seats[i] ?? 0), pref: OUTVOTED_SPOT, text: `Blocker outvoted · ${f.seat} ${f.rule ?? ""}`, detail: clip(f.title, 60) });
+        if (f) wishes.push({ key: `o:${round.round}:${i}`, cx: n.x, cy: n.y + (seats[i] ?? 0), pref: OUTVOTED_SPOT, text: `Blocker outvoted · ${f.seat} ${f.rule ?? ""}`, detail: containedWords("findingTitle", f.title, 40) });
       });
     }
   }
@@ -600,7 +601,7 @@ function gateCallout(cell: CellState, g: GateState): { text: string; detail: str
   if (g.gate === "review" && g.state === "failed" && g.decidedAt !== null) {
     const r = cell.reviews.find((x) => x.round === g.round);
     const blocker = r?.findings.find((f) => f.severity === "blocker" && !f.outvoted);
-    return { text: `Rejected: ${blocker ? `${blocker.seat} blocker ${blocker.rule ?? ""}` : g.detail}`, detail: blocker ? clip(blocker.title, 64) : (g.reasonCode ?? ""), tone: "fail", at: g.decidedAt };
+    return { text: `Rejected: ${blocker ? `${blocker.seat} blocker ${blocker.rule ?? ""}` : g.detail}`, detail: blocker ? containedWords("findingTitle", blocker.title, 40) : (g.reasonCode ?? ""), tone: "fail", at: g.decidedAt };
   }
   if (g.gate === "human-approval") {
     const r = [...cell.reviews].reverse().find((x) => x.humanApproval);
@@ -628,7 +629,7 @@ function GateCallout({ node, gate, text, detail, tone, at }: { node: FlowNode; g
   const p = useEventProgress(at, "stateChange", 0, late);
   if (p <= 0) return null;
   return (
-    <g style={{ opacity: p }} role="note" aria-label={`${text}. ${detail}`}>
+    <g style={{ opacity: p }} role="note" aria-label={text}>
       <PlacedCallout cx={node.x} cy={node.y} ox={spot.ox} oy={spot.oy} dx={spot.dx} dy={spot.dy} text={text} detail={detail} tone={tone} />
     </g>
   );
@@ -710,8 +711,8 @@ function OutvotedCallout({ x, y, spotKey, rule, title, seat, at }: { x: number; 
   const p = useEventProgress(at, "stateChange");
   if (p <= 0) return null;
   return (
-    <g style={{ opacity: p }} role="note" aria-label={`Outvoted ${seat} blocker ${rule ?? ""}: ${title}`}>
-      <PlacedCallout cx={x} cy={y} ox={spot.ox} oy={spot.oy} dx={spot.dx} dy={spot.dy} text={`Blocker outvoted · ${seat} ${rule ?? ""}`} detail={clip(title, 60)} tone="fail" />
+    <g style={{ opacity: p }} role="note" aria-label={`Outvoted ${seat} blocker ${rule ?? ""}`}>
+      <PlacedCallout cx={x} cy={y} ox={spot.ox} oy={spot.oy} dx={spot.dx} dy={spot.dy} text={`Blocker outvoted · ${seat} ${rule ?? ""}`} detail={containedWords("findingTitle", title, 40)} tone="fail" />
     </g>
   );
 }

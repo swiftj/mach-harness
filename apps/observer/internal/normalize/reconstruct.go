@@ -277,7 +277,7 @@ func Began(ticket, reason string, info CellInfo, identity *Identity, r Read, fil
 	instance := event.Hash8([]byte(info.CreatedAt))
 	ev := observerEvent("history.began", event.ObserverID("began", event.Enc(ticket)+":"+instance), "cell-created-at", nil, files)
 	ev.Time.ObservedAt = Stamp(r.At)
-	if ms, _, ok := parseTime(info.CreatedAt); ok {
+	if ms, _, ok, _ := parseTimeRead(info.CreatedAt, r.At); ok {
 		ev.Time.OccurredAt, ev.Time.Precision = stampMS(ms+999), event.PrecisionSecond
 		ev.Time.NotBefore, ev.Time.NotAfter = stampMS(ms), stampMS(ms+999)
 	} else {

@@ -334,20 +334,26 @@ test("recorded as_of replies: flow exact, metrics by whole UTC days with the obs
   assert.ok(paths.filter((u) => u.includes("/analytics/")).every((u) => u.includes("as_of_ms=1794456000000")));
 });
 
-test("as of a playhead on an observer without as_of_ms: one 400, then to_ms is the playhead and a widened day is said", async () => {
+test("as of a playhead on an observer without as_of_ms (M6.6 I-32): one 400; counted figures are not available as of then, never widened to the day's end; lists are cut at the playhead", async () => {
   const p = countingProvider("g.10", "refused");
   const s = D.beginSnapshot(p.data, { asOfMs: 200, cache: D.createSnapshotCache() });
   const m = await s.metrics({ toMs: 5000 });
-  assert.equal(p.calls.length, 2);
+  assert.equal(p.calls.length, 1, "asked once with as_of_ms, never again without it");
   assert.equal(p.calls[0].asOfMs, 200);
-  assert.equal(p.calls[1].asOfMs, null);
-  assert.equal(p.calls[1].query.toMs, 200, "the earlier end wins");
-  assert.equal(m.value.asOf.exact, false);
-  assert.equal(m.value.asOf.widened, true, "the observer counted to the end of the day");
+  assert.equal(m.status, "unsupported");
+  assert.equal(m.reason, D.AS_OF_UNSUPPORTED);
+  assert.match(m.reason, /cannot count figures as of the playhead/);
+  for (const route of ["flow", "insights"]) assert.equal((await s[route]({})).status, "unsupported", route);
+  assert.equal(p.calls.length, 1, "remembered: no counted route is asked again");
+  // A list falls back to to_ms = the playhead (the earlier end wins) and is cut there.
+  const r = await s.runs({ toMs: 5000 });
+  assert.equal(r.status, "ok");
+  assert.equal(p.calls.at(-1).asOfMs, null);
+  assert.equal(p.calls.at(-1).query.toMs, 200, "the earlier end wins");
+  assert.deepEqual(r.value.items.map((i) => i.ticket_id), ["A"], "nothing after the playhead, nothing without a time");
   // The provider is remembered: a later view does not ask as_of_ms again.
   const s2 = D.beginSnapshot(p.data, { asOfMs: 200, cache: D.createSnapshotCache() });
-  await s2.metrics({});
-  assert.equal(p.calls[2].asOfMs, null);
+  assert.equal((await s2.metrics({})).status, "unsupported");
   assert.deepEqual(D.asOfQuery({ lastRuns: 20 }, 200), { lastRuns: 20 }, "last_runs keeps its population");
 });
 

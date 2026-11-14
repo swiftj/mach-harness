@@ -15,6 +15,8 @@ import type { AnalyticsArea, AnalyticsFilters, AnalyticsWindow } from "../../sce
 import type { SceneSource } from "../../sim/provenance";
 import type { AnalyticsSource } from "../data/types";
 import type { AreaSource, Pick } from "../ui/types";
+import { utcClock } from "../../shell/time";
+import { dayLabel } from "../../timeline/render/scale";
 
 export const DAY_MS = 86_400_000;
 const PRESET_DAYS = { "7d": 7, "14d": 14, "28d": 28 } as const;
@@ -120,28 +122,50 @@ export interface AsOfFacts {
   readonly cut: boolean;
   /** The UTC midnight the figures are counted to (metrics by whole days, finished tickets cut there too); null when not cut so. */
   readonly dayCut?: number | null;
+  /** D4: no whole UTC day of the history is complete before the playhead. */
+  readonly noWholeDay?: boolean;
 }
+
+/** A moment as the Timeline says it, to the second: "4 Nov 14:20:05 UTC" (its `dayLabel` and `utcClock`). */
+export const momentWords = (t: number): string => `${dayLabel(t)} ${utcClock(t)} UTC`;
+
+/** The last whole UTC day a day cut counts through: the day before the midnight `dayCut` ("3 Nov"). */
+export const lastWholeDay = (dayCut: number): string => dayLabel(dayCut - 1);
 
 /**
  * The caption: which history the figures describe, in words. The complete recorded history, a
- * selected window, or through the playhead (exact for lists; metrics by whole UTC days before it).
+ * selected window, or through the playhead. Under a day cut (M6.6, I-07/I-08) it names the last whole
+ * UTC day counted, never a midnight that reads as including the next day, says the playhead is later,
+ * and names the parts cut at the playhead itself (the flow drawing and the rows behind a figure).
  */
-export function asOfWords(f: AsOfFacts, clock: (t: number) => string): string {
-  if (f.area === "simulation") return f.window === "all" ? "The whole simulated history; the playhead does not apply to it" : "A selected window of the simulated history; the playhead does not apply to it";
+export function asOfWords(f: AsOfFacts, clock: (t: number) => string, day: (dayCut: number) => string = lastWholeDay): string {
+  if (f.area === "simulation") {
+    // I-31: the fixture has no moments the floor's playhead could cut it at; said so beside "Simulated".
+    return f.window === "all" ? "The whole simulated history; the playhead does not apply to it, so these figures may run past the moment the floor shows" : "A selected window of the simulated history; the playhead does not apply to it";
+  }
+  const cut = f.cut ? " The chosen period was cut at the playhead." : "";
+  if (f.asOfMs !== null && f.noWholeDay) {
+    return `No whole UTC day is complete before the playhead at ${clock(f.asOfMs)}; day-counted figures are not available. The flow drawing and the rows behind a figure run to the playhead.${cut}`.replace(/\.$/, "");
+  }
   if (f.asOfMs !== null && f.dayCut != null && !f.widened) {
-    return `Through ${clock(f.dayCut)}, the last whole UTC day before the playhead at ${clock(f.asOfMs)}: every figure is counted to then; the rows behind a figure are cut exactly at the playhead${f.cut ? ". The chosen period was cut at the playhead" : ""}`;
+    const playDay = dayLabel(f.asOfMs);
+    const today = f.asOfMs > f.dayCut ? ` The playhead is at ${clock(f.asOfMs)}; the part of ${playDay} before it is not in these figures.` : ` The playhead is at ${clock(f.asOfMs)}.`;
+    return `Counted through the end of ${day(f.dayCut)} (UTC), the last whole day before the playhead.${today} The flow drawing and the rows behind a figure run to the playhead itself.${cut}`.replace(/\.$/, "");
   }
   if (f.asOfMs !== null) {
     const head = `Through the playhead at ${clock(f.asOfMs)}: nothing recorded later is counted`;
     const metrics = f.widened
       ? "; an observer without exact playhead cuts counts the metrics to the end of the playhead's UTC day, so outcomes later that day may be included"
       : f.metricsExact === false
-        ? "; lists and flow are exact, metrics count whole UTC days before the playhead"
+        ? "; the flow drawing and the rows behind a figure run to the playhead itself, while metrics count whole UTC days before it"
         : "";
     return `${head}${metrics}${f.cut ? ". The chosen period was cut at the playhead" : ""}`;
   }
   return f.window === "all" ? "The complete recorded history" : "A selected window of the recorded history";
 }
+
+/** Each figure's own tag under a day cut (I-08, T-03): a readout seen alone never reads as the playhead's moment. */
+export const dayCutTag = (effectiveToMs: number): string => `to end of ${lastWholeDay(effectiveToMs)}`;
 
 // --------------------------------------------------------------------------------------- plan
 

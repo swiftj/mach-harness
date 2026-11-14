@@ -13,13 +13,14 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { cn } from "@mach/ui";
 import { useSceneStore, useStore } from "../../scene";
-import { lastAtOrBefore, type Landmark } from "../history";
+import { lastAtOrBefore, quotingKindOf, type Landmark } from "../history";
 import { stepChapter } from "../keyboard";
 import { useHistoryIndex } from "../source/context";
 import { spokenTime, timecode } from "../vocab";
 import { GUTTER, type TimeWindow } from "./Tracks";
 import { setScrubbing } from "../scrub";
 import { usePlayheadEffect } from "./playhead";
+import { codesOnlyWords } from "../../text/fields";
 
 interface Tip {
   x: number;
@@ -165,7 +166,8 @@ export const Ruler = memo(function Ruler({ extent, window: win, zoomed, onWindow
     };
     const mark: Landmark | null = storyboard ? null : near(chapters);
     const moment = mark ? null : near(index.moments);
-    const found = mark ? { t: mark.t, text: mark.title } : moment ? { t: moment.t, text: moment.text } : null;
+    // A tooltip says codes and counts only: an event that carries prose is named by its kind (C1).
+    const found = mark ? { t: mark.t, text: (mark.eventType && codesOnlyWords(mark.eventType)) || mark.title } : moment ? { t: moment.t, text: (storyboard ? null : codesOnlyWords(quotingKindOf(store.getState().log, moment) ?? "", moment.ticketId)) || moment.text } : null;
     setTip(found ? { x: ((found.t - v0) / span) * width, text: found.text, t: found.t } : null);
   };
   const stop = () => {
@@ -222,7 +224,7 @@ export const Ruler = memo(function Ruler({ extent, window: win, zoomed, onWindow
           aria-valuemax={0}
           aria-valuenow={0}
           onKeyDown={onKeyDown}
-          className="absolute inset-x-0 bottom-0 h-[16px] outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
+          className="absolute inset-x-0 bottom-0 h-[16px] outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
         >
           <div className="absolute inset-x-0 bottom-[7px] h-px bg-line-strong" />
           {density ? (
@@ -255,7 +257,7 @@ export const Ruler = memo(function Ruler({ extent, window: win, zoomed, onWindow
                 key={c.id}
                 type="button"
                 onClick={() => store.seekToChapter(c.id)}
-                title={known ? `${i + 1}. ${c.title} (${timecode(c.t, false)})` : `Chapter ${i + 1} (${timecode(c.t, false)}): not reached yet`}
+                title={known ? `${i + 1}. ${(c.eventType && codesOnlyWords(c.eventType)) || c.title} (${timecode(c.t, false)})` : `Chapter ${i + 1} (${timecode(c.t, false)}): not reached yet`}
                 aria-current={isCurrent ? "step" : undefined}
                 className={cn(
                   "absolute top-0 flex h-[24px] min-w-[24px] items-center gap-1 whitespace-nowrap rounded-xs pl-[3px] pr-1 text-[11px] leading-none",
@@ -269,7 +271,7 @@ export const Ruler = memo(function Ruler({ extent, window: win, zoomed, onWindow
                 {known ? (
                   <>
                     <span className="sr-only">: </span>
-                    <span className={cn("truncate", isCurrent && "font-semibold", !labels[i]?.title && "sr-only")}>{c.title}</span>
+                    <span className={cn("truncate", isCurrent && "font-semibold", !labels[i]?.title && "sr-only")}>{(c.eventType && codesOnlyWords(c.eventType)) || c.title}</span>
                   </>
                 ) : (
                   <span className="sr-only">, not reached yet</span>

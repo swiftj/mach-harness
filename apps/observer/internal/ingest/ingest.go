@@ -134,7 +134,7 @@ type Options struct {
 type SourceStat struct {
 	Key    string `json:"key"`
 	Path   string `json:"path"`
-	State  string `json:"state"` // live, idle, stale, ended, unreadable
+	State  string `json:"state"` // live, idle, stale, ended, archived, unreadable
 	Offset int64  `json:"offset"`
 	// Size is the file's size when it was last read (nil while it is missing or refused), so
 	// size - offset is how many bytes are still to be read.
@@ -149,6 +149,8 @@ type SourceStat struct {
 	Resets     int64  `json:"resets"`
 	Gone       bool   `json:"gone"`
 	Blocked    bool   `json:"blocked"`
+	// Archived: a cell's lifecycle log that is gone because cleanup archived the cell (M6.6).
+	Archived bool `json:"archived,omitempty"`
 	// For execution streams: the Claude Code version, whether its records are read (false only
 	// when some were refused for their shape), and the runtime's state.
 	ClaudeVersion string           `json:"claude_code_version,omitempty"`
@@ -285,6 +287,9 @@ type source struct {
 	// beforeLines, when set, runs once before a poll's lines are normalised.
 	beforeLines func()
 	gone        bool
+	// archived (cells, M6.6): the cell's folder went away and the cleanup station's archive of it
+	// (`.factory/archive/<ticket>.tar.gz`) exists: finished, not lost.
+	archived bool
 	// preexisting: found while catching up (it was there before the observer started); liveSeen:
 	// a line written since has been read. Events derived from a preexisting source before any
 	// live line (a stream's closings, a cell's history.began) are backfill too.
@@ -611,6 +616,16 @@ func insertCell(list []*source, src *source) []*source {
 }
 
 // realDir: the path exists and is a folder, not a link to one.
+// cellArchived: the cleanup station's archive of the cell is there (a regular file, not a link).
+// Stat only while a gone cell is not yet known archived.
+func cellArchived(archives, ticket string) bool {
+	if archives == "" || ticket == "" {
+		return false
+	}
+	info, err := os.Lstat(filepath.Join(archives, ticket+".tar.gz"))
+	return err == nil && info.Mode().IsRegular()
+}
+
 func realDir(p string) bool {
 	info, err := os.Lstat(p)
 	return err == nil && info.IsDir()
@@ -1544,9 +1559,17 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 		if size := src.tailer.Size; size >= 0 && !st.Gone && !st.Blocked {
 			r.size, r.hasSize = size, true
 		}
+		if src.kind == kindCell && st.Gone && !st.Blocked {
+			if !src.archived {
+				src.archived = cellArchived(o.archives, src.ticket)
+			}
+			st.Archived = src.archived
+		}
 		switch {
 		case cp.Blocked:
 			st.State = "unreadable"
+		case st.Archived:
+			st.State = "archived"
 		case src.gone || cp.Gone:
 			st.State = "ended"
 		case started.Sub(src.lastLine) < 10*time.Second:

@@ -14,6 +14,7 @@
  * Rules carried by the types: a value is `number | null`, never a defaulted 0; `null_reason` says
  * why it is null; `basis` keeps measured, inferred, bounded, unknown and not-recorded apart.
  */
+import type { SnapshotHistory } from "./wire/history";
 import type { EntityRef } from "../sim/model";
 
 /** The catalog, in its order. */
@@ -332,6 +333,10 @@ export interface AnalyticsSnapshot {
   readonly transitions: readonly Transition[];
   readonly concurrency: ConcurrencySeries | null;
   readonly freshness: readonly SourceFreshness[];
+  /** M6.6 (I-03): how complete the counted history is (the reply's `history.partial`, `history.gaps`, `suspect_days`); absent from the fixture. */
+  readonly history?: SnapshotHistory;
+  /** Real-run D4: held on the history's first UTC day, no whole day precedes the playhead: day-counted figures have nothing to count (not "nothing recorded"). */
+  readonly no_whole_day?: true;
 }
 
 export const groupedKey = (id: MetricId, dim: Dimension): string => `${id}|${dim}`;

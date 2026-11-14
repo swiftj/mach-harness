@@ -61,7 +61,7 @@ func provenance(raw any, present bool, reason any) (any, any) {
 
 	m := obj(snap["mach"])
 	out["mach"] = map[string]any{"version": provMatch(m["version"], provVersionRe), "install": provMatch(m["install"], provInstallRe),
-		"commit": commitOrNil(m["commit"])}
+		"commit": fullCommitOrNil(m["commit"])}
 
 	l := obj(snap["line"])
 	files := map[string]any{}
@@ -112,7 +112,7 @@ func provenance(raw any, present bool, reason any) (any, any) {
 	out["ticket"] = map[string]any{"risk": enum(t["risk"], risks...), "app_type": provMatch(t["app_type"], provTierRe)}
 
 	s := obj(snap["source"])
-	out["source"] = map[string]any{"commit": commitOrNil(s["commit"]), "slice_revision": intOrNil(s["slice_revision"]),
+	out["source"] = map[string]any{"commit": fullCommitOrNil(s["commit"]), "slice_revision": intOrNil(s["slice_revision"]),
 		"slice_digest": provMatch(s["slice_digest"], provDigestRe), "spec_sha256": provMatch(s["spec_sha256"], provDigestRe)}
 
 	id := provMatch(snap["config_id"], provDigestRe)

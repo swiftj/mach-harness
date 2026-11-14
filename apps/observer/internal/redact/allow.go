@@ -59,7 +59,7 @@ var Allow = map[string]*Shape{
 	"wave.discovered":     obj("slices", leafList, "approval", obj("approved_at", "by_role")),
 	"intake.validated":    obj("digest"),
 	"intake.refused":      obj("problems", leafList),
-	"slice.materialized":  obj("digest", "adopted", "dependencies", leafList, "reissued"),
+	"slice.materialized":  obj("digest", "adopted", "dependencies", leafList, "reissued", "title"),
 	"slice.integrated":    obj("commit"),
 	"dependency.resolved": obj("depends_on", leafList),
 	"dependency.blocked":  obj("reasons", leafList),

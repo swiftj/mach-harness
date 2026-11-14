@@ -387,7 +387,7 @@ func trend(e *eval, id, key, what string) {
 	e.add(id, "", Attention, "later - earlier >= "+points(TrendMinRise), vars,
 		[]Measurement{rowMeasure(key, cur.Name, cur, "later", cur.Value, "ratio"), rowMeasure(key, prev.Name, prev, "earlier", prev.Value, "ratio")},
 		Sample{Count: lden + eden, Unit: what, CoverageShare: lc, Population: what + " in the later and earlier windows"},
-		e.link(figure, nil, "recent", relation, "the later window's records; ask the earlier window with its from_ms and to_ms", e.in.Window), true)
+		e.link(figure, nil, "recent", relation, "the later window's records; choose the earlier window's dates to list its records", e.in.Window), true)
 }
 
 func recurring(e *eval, id string, r Recurring, figure, dim string, vars func(g RecurringGroup) map[string]string) {
@@ -547,7 +547,7 @@ func execLater(e *eval) {
 			{Metric: k, Label: execMeasures[k], Value: f(lv), Unit: "ratio", Numerator: f(ln), Denominator: f(ld), SampleCount: f(ld), Window: "later"},
 			{Metric: k, Label: execMeasures[k], Value: f(ev), Unit: "ratio", Numerator: f(en), Denominator: f(ed), SampleCount: f(ed), Window: "earlier"},
 		}
-		rel, note := "exact", "the later window's records; ask the earlier window with its from_ms and to_ms"
+		rel, note := "exact", "the later window's records; choose the earlier window's dates to list its records"
 		if k == "interrupted" {
 			rel = "related"
 		}
@@ -579,7 +579,9 @@ func costLater(e *eval) {
 		e.ne(id, "", fill(reasonPrevFew, map[string]string{"min": itoa(CostMinExecutions), "what": "executions with a recorded cost", "later": num(ld), "earlier": num(ed)}))
 		return
 	}
-	lc, ec := lk.Coverage.Share, ek.Coverage.Share
+	// Coverage over the executions K1 expects a cost from: a failed execution records none by
+	// definition and is not a gap in the record (M6.6; the threshold is unchanged).
+	lc, ec := costCoverage(lk), costCoverage(ek)
 	if lc == nil || ec == nil || *lc < CostMinCoverage || *ec < CostMinCoverage {
 		e.ne(id, "", fill(reasonCoverage, map[string]string{"min": pct(CostMinCoverage), "later": pctp(lc), "earlier": pctp(ec)}))
 		return
@@ -603,26 +605,27 @@ func costLater(e *eval) {
 		rowMeasure("T2", "integrated slices recorded", et, "earlier", f(et2), "slices"),
 	}
 	e.add(id, "", Note, "later cost >= "+pct(CostRatioMin)+" of earlier, and integrated slices later <= earlier", vars, ms,
-		Sample{Count: ld + ed, Unit: "executions with a recorded cost", CoverageShare: lc, Population: "completed executions in the later and earlier windows"},
-		e.link("K1", nil, "impact", "exact", "the later window's records; ask the earlier window with its from_ms and to_ms", e.in.Window), true)
+		Sample{Count: ld + ed, Unit: "executions with a recorded cost", CoverageShare: lc, Population: costPopulation + " in the later and earlier windows"},
+		e.link("K1", nil, "impact", "exact", "the later window's records; choose the earlier window's dates to list its records", e.in.Window), true)
 }
 
 func usageMissing(e *eval) {
 	const id = RuleUsageMissing
-	// Subject cost: completed executions with no cost recorded by the supervisor (K1's coverage,
-	// the population every recorded-cost figure stands on).
+	// Subject cost: executions K1 expects a cost from (every claimed execution but a failed one,
+	// whose record carries no cost by definition) with no cost recorded by the supervisor (M6.6:
+	// failed executions were counted as missing; the threshold and minimum are unchanged).
 	if row, ok, why := usable(e.in.Cur, "K1"); !ok {
 		e.ne(id, "cost", why)
-	} else if el := deref(row.Coverage.Eligible); el < UsageMinEligible {
-		e.ne(id, "cost", fill(reasonFewDen, map[string]string{"min": itoa(UsageMinEligible), "what": "completed executions", "n": num(el)}))
-	} else if without := el - deref(row.Coverage.Counted); without/el >= UsageMissingMin {
+	} else if counted, el, _ := costExpected(row); el < UsageMinEligible {
+		e.ne(id, "cost", fill(reasonFewDen, map[string]string{"min": itoa(UsageMinEligible), "what": costPopulation, "n": num(el)}))
+	} else if without := el - counted; without/el >= UsageMissingMin {
 		missing := without / el
-		vars := map[string]string{"missing": pct(missing), "without": num(without), "eligible": num(el), "record": "a cost recorded by the supervisor", "population": "completed executions"}
+		vars := map[string]string{"missing": pct(missing), "without": num(without), "eligible": num(el), "record": "a cost recorded by the supervisor", "population": costPopulation}
 		ms := []Measurement{
-			rowMeasure("K1", "completed executions with a recorded cost", row, "selection", row.Coverage.Counted, "executions"),
+			rowMeasure("K1", "executions with a recorded cost", row, "selection", row.Coverage.Counted, "executions"),
 			{Metric: "K1", Label: "share without a recorded cost", Value: f(missing), Unit: "ratio", Numerator: f(without), Denominator: f(el), Window: "selection"},
 		}
-		e.add(id, "cost", Note, "missing >= "+pct(UsageMissingMin), vars, ms, Sample{Count: el, Unit: "completed executions", CoverageShare: row.Coverage.Share, Population: "completed executions in the selection"},
+		e.add(id, "cost", Note, "missing >= "+pct(UsageMissingMin), vars, ms, Sample{Count: el, Unit: "executions", CoverageShare: costCoverage(row), Population: costPopulation + " in the selection"},
 			e.link("K1-missing", nil, "recent", "exact", "", e.in.Window), false)
 	}
 	// Subject stream: executions with no execution.usage record from the stream (the population of
@@ -672,6 +675,30 @@ func lifecycleCoverage(e *eval) {
 // ---- helpers ----
 
 // usable returns a row the rules can read, or why not.
+// costPopulation names the executions K1 expects a cost from: completed ones, and those with no
+// result yet or of unknown outcome. A failed execution is not one of them.
+const costPopulation = "executions expected to record a cost (completed, or no result yet; failed executions record none)"
+
+// costExpected reads K1's coverage: the executions counted (a cost recorded), those the definition
+// expects a cost from (every eligible one but the failed), and the failed (metrics.ExK1Failed).
+func costExpected(r metrics.Row) (counted, expected, failed float64) {
+	for _, x := range r.Coverage.Excluded {
+		if x.Reason == metrics.ExK1Failed {
+			failed += x.Count
+		}
+	}
+	return deref(r.Coverage.Counted), deref(r.Coverage.Eligible) - failed, failed
+}
+
+// costCoverage is the share of costExpected's executions with a recorded cost; nil when none is expected.
+func costCoverage(r metrics.Row) *float64 {
+	counted, expected, _ := costExpected(r)
+	if expected <= 0 {
+		return nil
+	}
+	return f(counted / expected)
+}
+
 func usable(rows map[string]metrics.Row, key string) (metrics.Row, bool, string) {
 	r, ok := rows[key]
 	if !ok {
@@ -819,26 +846,47 @@ func pctp(v *float64) string {
 
 func points(v float64) string { return strconv.FormatFloat(v*100, 'f', 0, 64) + " percentage points" }
 
+// dayText is a moment in the Control Tower's words (M6.6, I-09): "4 Nov, 09:29:43 UTC", the day as the
+// Timeline's ruler names it and the clock as its inspector does.
 func dayText(ms *int64) string {
 	if ms == nil {
 		return "unknown"
 	}
-	return time.UnixMilli(*ms).UTC().Format("2006-01-02 15:04 UTC")
+	t := time.UnixMilli(*ms).UTC()
+	return strconv.Itoa(t.Day()) + " " + t.Format("Jan, 15:04:05") + " UTC"
 }
 
 func usd(v float64) string { return "USD " + strconv.FormatFloat(v, 'f', 2, 64) }
 
+// dur is a duration in the Control Tower's words (M6.6, I-09; web shell/time.ts duration): "340 ms",
+// "48 s", "4 min 12 s", "1 h 3 min", "1 h", "1 d 15 h", "2 d". Two units at most, the smaller left out
+// when it is zero. Wording only: every threshold and figure is computed before it is worded.
 func dur(ms float64) string {
-	s := ms / 1000
-	switch {
-	case s < 60:
-		return strconv.FormatFloat(s, 'f', 0, 64) + " s"
-	case s < 3600:
-		return strconv.FormatFloat(s/60, 'f', 1, 64) + " min"
-	case s < 48*3600:
-		return strconv.FormatFloat(s/3600, 'f', 1, 64) + " h"
+	if ms < 1000 {
+		if ms < 0 {
+			ms = 0
+		}
+		return strconv.FormatFloat(math.Round(ms), 'f', 0, 64) + " ms"
 	}
-	return strconv.FormatFloat(s/86400, 'f', 1, 64) + " d"
+	s := int64(math.Round(ms / 1000))
+	if s < 60 {
+		return strconv.FormatInt(s, 10) + " s"
+	}
+	two := func(a int64, au string, b int64, bu string) string {
+		if b == 0 {
+			return strconv.FormatInt(a, 10) + " " + au
+		}
+		return strconv.FormatInt(a, 10) + " " + au + " " + strconv.FormatInt(b, 10) + " " + bu
+	}
+	m := s / 60
+	if m < 60 {
+		return two(m, "min", s%60, "s")
+	}
+	h := m / 60
+	if h < 24 {
+		return two(h, "h", m%60, "min")
+	}
+	return two(h/24, "d", h%24, "h")
 }
 
 func joinText(a, b string) string {

@@ -174,6 +174,11 @@ func OpenWith(dir string, opts Options) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("could not make the index folder: %w", err)
 	}
+	// The index writes, replaces and removes files by name in its folder: a folder that is a link
+	// would make it do so somewhere else (M6.6 F2). Its files are opened without following links.
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("%w: %s", ErrLinkedFolder, dir)
+	}
 	reason, err := s.load()
 	if err != nil {
 		return nil, err
@@ -321,7 +326,7 @@ func (s *Store) loadSegments() (string, error) {
 			if i != len(nums)-1 {
 				return "index log corrupt", nil
 			}
-			if err := os.Truncate(seg.path, offset); err != nil {
+			if err := truncateNoFollow(seg.path, offset); err != nil {
 				return "", fmt.Errorf("could not cut a torn line from the index log: %w", err)
 			}
 		}
@@ -414,7 +419,7 @@ func (s *Store) openCurrent() error {
 		s.segs = append(s.segs, &segment{n: 1, path: s.segmentPath(1), first: s.head + 1})
 	}
 	last := s.segs[len(s.segs)-1]
-	f, err := os.OpenFile(last.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(last.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|oNoFollow, 0o600)
 	if err != nil {
 		return fmt.Errorf("could not open the index log: %w", err)
 	}
@@ -730,7 +735,7 @@ func (s *Store) write(data []byte, fresh []Entry, sizes []int) error {
 		return err
 	}
 	next := &segment{n: seg.n + 1, path: s.segmentPath(seg.n + 1), first: seg.last + 1}
-	f, err := os.OpenFile(next.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.OpenFile(next.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_EXCL|oNoFollow, 0o600)
 	if err != nil {
 		return fmt.Errorf("could not start a new index segment: %w", err)
 	}
@@ -1163,4 +1168,17 @@ func writeAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+// ErrLinkedFolder refuses an index folder that is a link, or not a folder (M6.6 F2).
+var ErrLinkedFolder = errors.New("the index folder is a link or not a folder; the observer writes only inside its own folder")
+
+// truncateNoFollow cuts the file at path to size without following a link at path.
+func truncateNoFollow(path string, size int64) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|oNoFollow, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Truncate(size)
 }

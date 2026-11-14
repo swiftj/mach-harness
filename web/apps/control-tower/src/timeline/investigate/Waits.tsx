@@ -75,6 +75,11 @@ export function WaitsBody(p: BodyProps) {
   );
 }
 
+/** An accessible name says how many reasons a wait recorded, never their words (free text, I-05): they are in the inspector. */
+function reasonsCount(n: number): string {
+  return n ? `${n} reason${n === 1 ? "" : "s"} recorded, shown in the inspector as free text.` : "";
+}
+
 function WaitBand({ w, next, y, s, liveAt, onReveal }: { w: WaitItem; next: number | null; y: number; s: ReturnType<typeof scaleOf>; liveAt: number; onReveal(ref: string, at?: number): void }) {
   if (w.from > s.to || (w.to ?? liveAt) < s.from) return null;
   const a = s.cx(w.from);
@@ -85,8 +90,8 @@ function WaitBand({ w, next, y, s, liveAt, onReveal }: { w: WaitItem; next: numb
   const place = capacityWords(w.span);
   const what = capacity ? `${open ? "still " : ""}${place}` : `${open ? "still waiting" : "waited"} on ${deps || "a dependency not named"}`;
   const name = capacity
-    ? `${w.slice}${w.ticket ? ` (${w.ticket})` : ""} ${open ? "is" : "was"} ${place}, from ${when(w.from)}: ${durationWords(w.span, liveAt)}. ${w.reasons.length ? `Recorded: ${w.reasons.join("; ")}.` : ""}`.trim()
-    : `${w.slice} waited on ${deps || "a dependency not named"}, from ${when(w.from)}: ${durationWords(w.span, liveAt)}. ${w.reasons.length ? `Reasons recorded: ${w.reasons.join("; ")}. ` : ""}${RELEASE_NOT_RECORDED}`;
+    ? `${w.slice}${w.ticket ? ` (${w.ticket})` : ""} ${open ? "is" : "was"} ${place}, from ${when(w.from)}: ${durationWords(w.span, liveAt)}. ${reasonsCount(w.reasons.length)}`.trim()
+    : `${w.slice} waited on ${deps || "a dependency not named"}, from ${when(w.from)}: ${durationWords(w.span, liveAt)}. ${reasonsCount(w.reasons.length)}${w.reasons.length ? " " : ""}${RELEASE_NOT_RECORDED}`;
   const short = capacity ? "for a place" : deps;
   // An end known only within bounds is said as such ("ended by"), its stop bar dashed, as on the tracks.
   const exact = w.span.end?.at !== null && w.span.end?.at !== undefined;

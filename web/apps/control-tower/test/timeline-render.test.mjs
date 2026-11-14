@@ -275,11 +275,11 @@ test("inline labels in thin rows keep clear of marks: pushed past one at the sta
 test("a visit whose exit was recorded after its execution ended never shows a bare duration on its bar", () => {
   const late = visit("late", T0, T0 + 60 * M, { attrs: { action: "build", interruptedAt: T0 + 6 * M } });
   late.duration = { basis: "measured", ms: 60 * M, minMs: null, maxMs: null };
-  assert.equal(draw.shortDuration(late, T0, T0 + 60 * M, false), "open for 1 h 0 min, not continuous");
+  assert.equal(draw.shortDuration(late, T0, T0 + 60 * M, false), "open for 1 h, not continuous");
   assert.equal(draw.shortDuration(late, T0, T0 + 20 * M, true), "open for 20 min");
   const plain = visit("plain", T0, T0 + 60 * M);
   plain.duration = { basis: "measured", ms: 60 * M, minMs: null, maxMs: null };
-  assert.equal(draw.shortDuration(plain, T0, T0 + 60 * M, false), "1 h 0 min");
+  assert.equal(draw.shortDuration(plain, T0, T0 + 60 * M, false), "1 h");
 });
 
 test("the label column drops a detail that cannot show six characters; the label has priority", () => {
@@ -499,8 +499,8 @@ test("X2: only work is 'running'; an open container is 'open' with its last acti
   assert.equal(words.openWord(open("visit", { station: "human-approval" })), "waiting");
   assert.equal(words.openWord(open("person-wait")), "waiting");
   const cell = open("cell");
-  assert.equal(words.durationWords(cell, live), "open 8 h 0 min");
-  assert.equal(words.durationWords(cell, live, { lastActivity: T0 + 73 * M, personSince: T0 + 71 * M }), "open 8 h 0 min; last activity 00:31:00; waiting for a person since 00:29:00");
+  assert.equal(words.durationWords(cell, live), "open 8 h");
+  assert.equal(words.durationWords(cell, live, { lastActivity: T0 + 73 * M, personSince: T0 + 71 * M }), "open 8 h; last activity 00:31:00; waiting for a person since 00:29:00");
   assert.doesNotMatch(words.describeSpan(cell, live), /running|at work/);
 });
 

@@ -79,6 +79,11 @@ type Excluded struct {
 // ExPairNoCost: a model's usage within an execution that carries no cost (K2, per pair).
 const ExPairNoCost = "the model's usage carries no cost"
 
+// ExK1Failed is K1's coverage reason for a failed execution: K1 reads execution.completed's cost
+// and the Factory's execution.failed records none, so a failed execution is excluded by the
+// definition, not missing a cost. Rules that judge missing cost leave it out (M6.6).
+const ExK1Failed = "failed: the Factory's record of a failed execution carries no cost"
+
 // Coverage is how much of the population the value stands on. Covered, Of and Share are the
 // fields served before M6.5 (Covered = Counted, Of = Eligible); Eligible = Counted + the excluded.
 type Coverage struct {

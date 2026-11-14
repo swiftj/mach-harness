@@ -33,6 +33,7 @@ import {
 } from "../../sim";
 import type { HistoryIndex } from "../history";
 import { toolFamily } from "../vocab";
+import { containedWords } from "../../text/fields";
 
 export interface StationItem {
   ref: EntityRef;
@@ -199,7 +200,7 @@ export function timelineModel(): TimelineModel {
       id: trackId,
       ref: cell ? ref.cell(ticketId) : ref.slice(slice.id),
       kind: "slice",
-      title: slice.title,
+      title: containedWords("sliceTitle", slice.title),
       ticketId,
       sliceId: slice.id,
       stations: [],
@@ -375,7 +376,7 @@ export function liveTimelineModel(log: SceneLog, liveAt: number, index: HistoryI
       id: trackId,
       ref: ref.cell(ticketId),
       kind: "slice",
-      title: isKnown(cell.meta, "title") ? cell.title : ticketId,
+      title: isKnown(cell.meta, "title") ? containedWords("sliceTitle", cell.title) || ticketId : ticketId,
       ticketId,
       sliceId: cell.sliceId || null,
       stations: [],
@@ -426,7 +427,7 @@ export function liveTimelineModel(log: SceneLog, liveAt: number, index: HistoryI
   for (const slice of Object.values(scene.slices).sort((a, b) => a.id.localeCompare(b.id))) {
     if (withCell.has(slice.id)) continue;
     const trackId = `slice:${slice.id}`;
-    const track: Track = { id: trackId, ref: ref.slice(slice.id), kind: "slice", title: slice.title || slice.id, ticketId: null, sliceId: slice.id, ...EMPTY_TRACK, waits: [], marks: [] };
+    const track: Track = { id: trackId, ref: ref.slice(slice.id), kind: "slice", title: containedWords("sliceTitle", slice.title) || slice.id, ticketId: null, sliceId: slice.id, ...EMPTY_TRACK, waits: [], marks: [] };
     slice.history.forEach((h, i) => {
       const next = slice.history[i + 1];
       if (h.state === "waiting-on-dependency" || h.state === "eligible") track.waits.push({ ref: ref.slice(slice.id), start: h.at, end: next ? next.at : null, kind: h.state === "eligible" ? "eligible" : "dependency" });

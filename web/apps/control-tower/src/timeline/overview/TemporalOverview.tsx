@@ -40,10 +40,11 @@ import {
   chooseTicks,
   concurrencySteps,
   concurrencyUnavailable,
-  countText,
   densityColumns,
   describeColumn,
   describeWindow,
+  historyWords,
+  windowAsOf,
   familyCounts,
   idleTail,
   isWhole,
@@ -66,10 +67,12 @@ import {
   type Box,
   type BrushPart,
   type MarkPoint,
+  overviewAsOf,
+  AFTER_NOT_SHOWN,
 } from "./model";
 import { useOverviewData } from "./useOverviewData";
 import { sharedRecordedExtent } from "../data";
-import { asOfPlayhead } from "../controls/frame";
+import { asOfPlayhead, heldAtOf } from "../controls/frame";
 
 /** Room on the right so the end handle can be grabbed at the live edge. */
 const RIGHT_PAD = 12;
@@ -137,15 +140,24 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   const wall = getTimeBase() === "wall" || source !== "simulation";
   const clock = useCallback((t: number) => (wall ? utcClock(t) : timecode(t, false)), [wall]);
 
-  const got = useOverviewData(data, extent, pw, filters);
-  const recorded = useRecordedLast(data, got.density);
+  const fetched = useOverviewData(data, extent, pw, filters);
+  // M6.6 (I-04): held at the playhead (reveal off), nothing after it is drawn or said: the series are
+  // cut there and the stretch after it is plain extent the brush still moves over.
+  const heldAt = useSceneStore(heldAtOf);
+  const got = useMemo(() => (heldAt === null ? fetched : overviewAsOf(fetched, heldAt)), [fetched, heldAt]);
+  /** The moment marks and waits are drawn to: the playhead when held there, else the live edge. */
+  const shownAt = heldAt ?? liveAt;
+  const fetchedLast = useRecordedLast(data, fetched.density);
+  const recorded = heldAt === null ? fetchedLast : null;
 
   // ------------------------------------------------------------ the axis (X10: idle time compressed)
-  const gaps = useMemo(() => idleGaps(got.density, got.marks, extent), [got.density, got.marks, extent]);
+  // The axis is the whole history's, held or not, so the brush and the strip do not change shape while
+  // scrubbing; held at the playhead, a break after it is drawn without its words (nothing is said there).
+  const gaps = useMemo(() => idleGaps(fetched.density, fetched.marks, extent), [fetched.density, fetched.marks, extent]);
   const [compressPref, setCompressPref] = useState<boolean | null>(null);
   const compress = gaps.length > 0 && (compressPref ?? compressByDefault(gaps, extent));
   const axis: Axis = useMemo(() => (compress ? brokenAxis(extent, gaps, pw) : extent), [compress, extent, gaps, pw]);
-  const breakLayer = useMemo(() => (axis.breaks ?? []).map((b) => ({ x0: xOf(b.from, axis, pw), x1: xOf(b.to, axis, pw), label: lengthWords(b.to - b.from), from: b.from, to: b.to })), [axis, pw]);
+  const breakLayer = useMemo(() => (axis.breaks ?? []).map((b) => ({ x0: xOf(b.from, axis, pw), x1: xOf(b.to, axis, pw), label: heldAt !== null && b.to > heldAt ? "" : lengthWords(b.to - b.from), from: b.from, to: b.to })), [axis, pw, heldAt]);
   // The brush's edges, which a break's length or the idle tail's words must not run under (round 6,
   // defect 13). The canvas is redrawn when the window's edges move a whole pixel.
   const edge0 = Math.round(xOf(Math.max(extent.from, win.from), axis, pw));
@@ -155,14 +167,15 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   // ------------------------------------------------------------ derived drawing (pixel space)
   const density = useMemo(() => (got.density ? densityColumns(got.density, axis, pw) : null), [got.density, axis, pw]);
   const noActivity = concurrencyUnavailable(got.concurrency);
-  const marks = useMemo(() => aggregateMarks(got.marks, axis, pw, liveAt), [got.marks, axis, pw, liveAt]);
+  const marks = useMemo(() => aggregateMarks(got.marks, axis, pw, shownAt), [got.marks, axis, pw, shownAt]);
   const ticks = useMemo(() => chooseTicks(axis, pw, wall, L.compact ? 76 : 84).ticks, [axis, pw, wall, L.compact]);
 
   // The idle tail: from the last recorded event to the live edge, drawn quiet and named once. The last
   // record's time is exact when the data layer knows it; else only its bucket, said as "between" (X11).
   const last = useMemo(() => lastFromRecorded(recorded, liveAt) ?? lastRecorded(got.density, got.marks, liveAt), [recorded, got.density, got.marks, liveAt]);
   const tail = useMemo((): (TailLayer & { box: Box | null; words: string }) | null => {
-    const t = idleTail(last, liveAt, axis, pw);
+    // Held at the playhead, "nothing recorded since" would speak of what came after it: no tail.
+    const t = heldAt === null ? idleTail(last, liveAt, axis, pw) : null;
     if (!t || !last) return null;
     const minuteClock = (x: number) => (got.density && got.density.bucketMs >= 60_000 ? clock(x).slice(0, -3) : clock(x));
     const label = lastRecordedWords(last, wall ? minuteClock : clock);
@@ -173,7 +186,7 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
     const fits = !broken && lx + tw <= t.liveX - 6;
     const idle = broken ? "" : `nothing recorded for ${lengthWords(t.idleMs)}`;
     return { ...t, label, labelX: fits ? lx : null, idle, box: fits ? { x: lx - 2, y: L.plotBottom - 12, w: tw + 4, h: 11 } : null, words: `${lastRecordedWords(last, clock)}; nothing recorded for ${lengthWords(t.idleMs)} since` };
-  }, [last, liveAt, axis, pw, clock, wall, got.density, L.plotBottom]);
+  }, [last, liveAt, heldAt, axis, pw, clock, wall, got.density, L.plotBottom]);
 
   const activity = useMemo((): (ActivityLayer & { peaks: { executions: number; visits: number; agents: number }; inferred: number; dropped: Array<{ label: string; kind: string; values: number[] }> }) | null => {
     const c = got.concurrency;
@@ -228,10 +241,14 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   usePlayheadEffect(
     (s) => {
       const clampX = (t: number) => Math.max(0, Math.min(pw, xOf(t, axis, pw)));
-      // Scrubbed back (T6): a quiet tint from the playhead to the live edge, the same rule as the tracks' caption.
+      // Scrubbed back (T6, M6.6 I-04): held at the playhead the stretch after it is plain extent, labelled
+      // "after this moment, not shown"; with what happened after it revealed, a quiet tint, as on the tracks.
       const after = afterRef.current;
       if (after) {
-        const behind = asOfPlayhead(s).behind;
+        const a = asOfPlayhead(s);
+        const behind = a.behind;
+        after.style.backgroundColor = a.revealed ? "" : "transparent";
+        after.dataset.overviewAfter = a.revealed ? "revealed" : "held";
         const hx = clampX(s.playhead);
         const lx2 = clampX(s.liveAt);
         after.style.display = behind && lx2 - hx >= 2 ? "block" : "none";
@@ -245,6 +262,8 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
           // No free stretch on the landmark row: just below it, on its own ground, at the playhead.
           const room = lx2 - hx - (data.source === "live" ? NOW_CHIP_W : 0) > AFTER_LABEL_W + 8;
           label.style.display = room ? "block" : "none";
+          const words = a.revealed ? "after the playhead" : AFTER_NOT_SHOWN;
+          if (label.textContent !== words) label.textContent = words;
           label.style.left = `${Math.round(at ?? 6)}px`;
           label.style.top = at !== null ? "0px" : `${L.bandBase - L.bandTop + 2}px`;
         }
@@ -261,7 +280,7 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
         futureRef.current.style.width = `${Math.max(0, pw - lx)}px`;
       }
     },
-    [pw, axis, marks, data.source, L],
+    [pw, axis, marks, data.source, L, heldAt],
   );
 
   // ------------------------------------------------------------ the brush
@@ -485,17 +504,18 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
   const len = windowWords(c.to - c.from);
   const sliderCommon = { "aria-valuemin": Math.round(extent.from / 1000), "aria-valuemax": Math.round(extent.to / 1000), "aria-describedby": descId };
   const peakText = density && density.peak > 0 && got.density ? peakWords(density.peak, got.density.bucketMs) : null;
-  const windowText = useMemo(() => describeWindow(c, got.density, noActivity ? null : got.concurrency, got.marks), [c, got.density, got.concurrency, noActivity, got.marks]);
+  // Held at the playhead, the window's words stop there too (M6.6).
+  const windowText = useMemo(() => describeWindow(windowAsOf(c, heldAt), got.density, noActivity ? null : got.concurrency, got.marks), [c, heldAt, got.density, got.concurrency, noActivity, got.marks]);
   const summary = useMemo(() => {
     const counts = new Map<MarkPoint["family"], number>();
     for (const p of marks.points) counts.set(p.family, (counts.get(p.family) ?? 0) + p.count);
     for (const b of marks.bars) counts.set(b.family, (counts.get(b.family) ?? 0) + b.count);
     const parts = counts.size ? [familyCounts(counts)] : [];
     const waits = got.marks.filter((m) => m.kind === "human" && (m.until !== null || m.verdict === "required"));
-    const waitText = waits.slice(0, 5).map((m) => `${m.label}: ${waitWords(m, liveAt)}`);
+    const waitText = waits.slice(0, 5).map((m) => `${m.label}: ${waitWords(m, shownAt)}`);
     if (waits.length > 5) waitText.push(`and ${waits.length - 5} more person waits`);
     return [parts.length ? parts.join(", ") : "no failures, waits or gaps", ...waitText].join("; ");
-  }, [marks, got.marks, liveAt]);
+  }, [marks, got.marks, shownAt]);
   const droppedText = activity?.dropped.map((d) => `${d.label} ${d.values.join(", then ")}`).join("; ") ?? "";
   const droppedByKind = useMemo(() => {
     const by: Record<string, { text: string; title: string }> = {};
@@ -522,7 +542,7 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
           onShowAll={() => onWindow(null)}
           partialDensity={got.density?.complete === false}
           partialActivity={got.concurrency?.complete === false && !noActivity}
-          compress={gaps.length ? { on: compress, idle: lengthWords(gaps.reduce((n, g) => n + (g.to - g.from), 0)), toggle: () => setCompressPref(!compress) } : null}
+          compress={gaps.length ? { on: compress, idle: lengthWords(gaps.reduce((n, g) => n + Math.max(0, Math.min(g.to, heldAt ?? g.to) - g.from), 0)), toggle: () => setCompressPref(!compress) } : null}
         />
       ) : lead > 0 ? (
         <div aria-hidden="true" className="shrink-0" style={{ width: lead }} />
@@ -598,12 +618,13 @@ export function TemporalOverview({ data, extent, window: win, liveAt, width, hei
         ) : null}
         <TipLayer bind={bindTip} />
         <p className="sr-only">
-          Whole history from {spokenTime(extent.from)} to {spokenTime(extent.to)}: {density ? `${countText(density.total)} events recorded` : "events not yet read"}; {summary}.
+          {historyWords(extent, density ? density.total : null, heldAt, spokenTime)}; {summary}.
           {tail ? ` ${tail.words}.` : ""}
           {droppedText ? ` Recorded limit: ${droppedText}.` : ""}
           {got.marksIncomplete ? " Landmarks incomplete in this window: the source returned only part of them." : ""}
-          {breakLayer.length ? ` Idle time compressed: ${breakLayer.map((b) => `${b.label} from ${spokenTime(b.from)}`).join("; ")}.` : ""}
+          {breakLayer.some((b) => b.label) ? ` Idle time compressed: ${breakLayer.filter((b) => b.label).map((b) => `${b.label} from ${spokenTime(b.from)}`).join("; ")}.` : ""}
           {got.unfiltered ? " Event counts are for every ticket: the filter has more than one." : ""}
+          {heldAt !== null ? ` Held at the playhead, ${spokenTime(heldAt)}: ${AFTER_NOT_SHOWN}.` : ""}
         </p>
       </div>
     </div>

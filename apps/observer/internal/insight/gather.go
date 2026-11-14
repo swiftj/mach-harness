@@ -35,7 +35,7 @@ func GatherMetrics(mst *project.State, p Params) Input {
 	case p.LastRuns > 0:
 		in.PrevWhy = "last_runs selects run records, not a time window"
 	case p.FromMS == nil || p.ToMS == nil:
-		in.PrevWhy = "ask a bounded window (from_ms and to_ms) to compare it with the window of the same length just before it"
+		in.PrevWhy = "choose a dated window (a start and an end) to compare it with the window of the same length just before it"
 	default:
 		l := *p.ToMS - *p.FromMS
 		from, to := *p.FromMS-l, *p.FromMS

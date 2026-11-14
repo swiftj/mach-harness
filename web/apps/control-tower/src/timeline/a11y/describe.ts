@@ -208,9 +208,10 @@ export function countWords(s: TrackSummary): string {
 
 /** The words for a track's summary: "LOCAL-031, cell, 129 spans in this window, one failed; from 23:18:00 to still open". */
 export function summaryWords(node: TrackNode, s: TrackSummary): string {
-  const head = [node.label];
+  const name = codesOnlyName(node);
+  const head = [name];
   const kind = TRACK_KIND_WORDS[node.kind];
-  if (kind && !node.label.toLowerCase().includes(kind)) head.push(kind);
+  if (kind && !name.toLowerCase().includes(kind)) head.push(kind);
   if (s.count === 0) return `${head.join(", ")}, nothing in this window`;
   head.push(`${plural(s.count, "span", "spans")} in this window`);
   head.push(...conditionWords(s));
@@ -358,4 +359,14 @@ export function openContext(tree: TrackTree, span: TimelineSpan, liveAt: number)
   const a = walkActivity(node, liveAt, span, null);
   activityMemo.set(node, { liveAt, ...a });
   return { lastActivity: a.last, personSince: a.person };
+}
+
+/**
+ * A track's name for an accessible name, a `title` or a tooltip: its label, unless the label copies
+ * free text (an agent's label, I-05), then its kind and quieter detail (the model): codes only.
+ */
+export function codesOnlyName(node: Pick<TrackNode, "label" | "kind" | "detail" | "freeText">): string {
+  if (!node.freeText) return node.label;
+  const kind = TRACK_KIND_WORDS[node.kind] ?? "row";
+  return `${kind.charAt(0).toUpperCase()}${kind.slice(1)}${node.detail ? ` (${node.detail})` : ""}`;
 }

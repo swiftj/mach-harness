@@ -460,9 +460,11 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const prior = s.slices[id];
       const knownCell = ticket ? s.cells[ticket] : undefined;
       const cellRisk = knownCell && isKnownField(knownCell.meta, "risk") ? knownCell.risk : null;
+      // M6.6: the observer carries the intake ledger's title for this revision (free text, contained where shown).
+      const recordedTitle = typeof e.data.title === "string" && e.data.title.trim() ? e.data.title : null;
       const slice: SliceState = {
         id,
-        title: def?.title ?? id,
+        title: def?.title ?? recordedTitle ?? id,
         summary: def?.summary ?? "",
         waveId: e.ids.wave_id ?? "",
         revision: e.ids.revision,
@@ -474,7 +476,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         since: at,
         integratedCommit: null,
         history: [...(prior?.history ?? []), { state: "materialized", at, seq }],
-        meta: metaOf(e, { unknown: def ? [] : ["title", "summary", ...(cellRisk ? [] : ["risk"])] }),
+        meta: metaOf(e, { unknown: def ? [] : [...(recordedTitle ? [] : ["title"]), "summary", ...(cellRisk ? [] : ["risk"])] }),
       };
       let dependencies = s.dependencies;
       for (const to of dependsOn) {
@@ -524,12 +526,24 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     }
     case "scheduling.decided": {
       const d = e.data;
+      // M6.6 D2: what this decision holds, by slice and by ticket, with the first decision that held it
+      // for the same words (a hold that lapses and returns starts again). Only the recorded words.
+      const prior = s.supervisor.holds ?? {};
+      const holds: Record<string, { readonly why: string; readonly since: number; readonly seq: number }> = {};
+      for (const h of d.held) {
+        for (const id of [h.slice_id, h.ticket_id]) {
+          if (!id) continue;
+          const was = prior[id];
+          holds[id] = was && was.why === h.why ? was : { why: h.why, since: t, seq };
+        }
+      }
       return {
         ...s,
         supervisor: {
           ...s.supervisor,
           lastDecisionAt: t,
           lastDecision: { dispatched: d.dispatched, started: d.started, held: d.held.map((h) => ({ id: h.slice_id ?? h.ticket_id ?? "", why: h.why })) },
+          holds,
         },
       };
     }
@@ -1382,7 +1396,7 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
       ? { ...prior, scheduler: scheduler ?? prior.scheduler, meta: { ...prior.meta, authority: "reconstructed", eventId: e.id } }
       : {
           id: x.slice_id,
-          title: definitions.slices[x.slice_id]?.title ?? x.slice_id,
+          title: definitions.slices[x.slice_id]?.title ?? (typeof x.title === "string" && x.title.trim() ? x.title : x.slice_id),
           summary: "",
           waveId: "",
           revision: x.revision ?? null,
@@ -1394,7 +1408,7 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
           since: at,
           integratedCommit: null,
           history: [],
-          meta: meta(["title", "summary", "risk", "waveId", "since", ...(scheduler ? [] : ["scheduler"])]),
+          meta: meta([...(typeof x.title === "string" && x.title.trim() ? [] : ["title"]), "summary", "risk", "waveId", "since", ...(scheduler ? [] : ["scheduler"])]),
         };
     s = { ...s, slices: put(s.slices, slice.id, slice) };
   }

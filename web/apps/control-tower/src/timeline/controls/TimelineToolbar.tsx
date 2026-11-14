@@ -172,6 +172,8 @@ function FilterList({ title, values, chosen, words, onToggle }: { title: string;
 
 /** At most this many chips are drawn; the rest are counted. */
 const MAX_CHIPS = 3;
+/** The last squeeze step: the row wraps instead of clipping (M6.6). Exported for the tests. */
+export const TOOLBAR_WRAP = 4;
 
 export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole: wholeProp, lenses, pinned }: TimelineToolbarProps & ToolbarExtras) {
   const store = useStore();
@@ -341,8 +343,10 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
    * into the overflow menu by width; whatever still does not fit (long lens names, many chips, a long
    * caption at an odd width) is squeezed step by step, measured after each render: 1 hides the filter
    * chips (the Filters count stays), 2 turns every label into its icon, 3 moves the time controls into
-   * the overflow menu (and shortens the pinned control to "Window pinned — Follow"). Any change of
-   * what the row holds (`toolbarFitKey`) starts again from 0.
+   * the overflow menu (and shortens the pinned control to "Window pinned — Follow"), and 4 (M6.6,
+   * WCAG 1.4.10 and 1.4.12: at 320 CSS px, or with wider text spacing) lets the row wrap onto further
+   * lines instead of clipping a control. Any change of what the row holds (`toolbarFitKey`) starts
+   * again from 0.
    */
   const rowRef = useRef<HTMLDivElement>(null);
   const [squeeze, setSqueeze] = useState(0);
@@ -363,7 +367,7 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
     lens: view.lens,
     filters: filterCount(view.filters),
     jump: lastJump,
-    caption: caption !== null,
+    caption: caption === null ? false : asOf.revealed ? "revealed" : "held",
     table: view.table,
     pinnedAhead: pinned ? pinned.ahead : null,
     length: windowLengthWords(shown().to - shown().from),
@@ -375,8 +379,8 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
   }
   useLayoutEffect(() => {
     const el = rowRef.current;
-    if (!el || squeeze >= 3) return;
-    if (el.scrollWidth > el.clientWidth + 1) setSqueeze((q) => Math.min(3, q + 1));
+    if (!el || squeeze >= TOOLBAR_WRAP) return;
+    if (el.scrollWidth > el.clientWidth + 1) setSqueeze((q) => Math.min(TOOLBAR_WRAP, q + 1));
   }, [squeeze, fitKey]);
 
   const last = jumpOf(lastJump);
@@ -388,7 +392,7 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
 
   return (
     <div className="@container shrink-0 border-b border-line bg-surface">
-      <div ref={rowRef} className="flex h-10 min-w-0 items-center gap-1 overflow-hidden px-2" role="toolbar" aria-label="Timeline controls" data-timeline-toolbar="" data-timeline-squeeze={squeeze || undefined}>
+      <div ref={rowRef} className={cn("flex min-w-0 items-center gap-1 overflow-hidden px-2", squeeze >= TOOLBAR_WRAP ? "min-h-10 flex-wrap py-1" : "h-10")} role="toolbar" aria-label="Timeline controls" data-timeline-toolbar="" data-timeline-squeeze={squeeze || undefined}>
         <GroupingSwitch value={view.grouping} onChange={(grouping) => onView({ grouping })} />
         <Sep />
 
@@ -658,7 +662,8 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
           <p role="status" className={said ? "truncate text-ink-subtle" : "sr-only"} title={said || undefined}>
             {said}
           </p>
-          {!said && caption ? (
+          {/* Behind the live edge the reveal control below says the moment's rule itself (its title holds the sentence). */}
+          {!said && caption && !asOf.behind ? (
             <p className="truncate text-ink-muted" title={caption} data-timeline-caption="">
               {/* The whole sentence where it fits; else its short form (the title keeps the sentence). */}
               <span className="@max-[1399px]:hidden">{caption}</span>
@@ -666,6 +671,31 @@ export function TimelineToolbar({ data, tree, view, onView, spans, drawn, whole:
             </p>
           ) : null}
         </div>
+        {asOf.behind ? (
+          // M6.6 (I-04): scrubbed back, nothing after the playhead is drawn unless asked for; on, it is tinted and the control says so.
+          <button
+            type="button"
+            aria-pressed={asOf.revealed}
+            onClick={() => onView({ revealAfter: !asOf.revealed })}
+            data-timeline-reveal-after={asOf.revealed ? "on" : "off"}
+            title={`${caption ?? ""}. ${asOf.revealed ? "Select to hide it again: show only what had happened by the playhead." : "Select to show what happened after this moment, tinted, up to the live edge."}`}
+            data-timeline-caption={caption ?? undefined}
+            className={cn(
+              "ml-auto inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 text-caption",
+              asOf.revealed ? "mach-tl-after border-line-strong font-semibold text-ink" : "border-dashed border-line-strong text-ink-muted hover:text-ink",
+            )}
+          >
+            {asOf.revealed ? (
+              <>
+                Showing what happened after<span className={cn("@max-[1099px]:hidden", squeeze >= 2 && "hidden")}> the playhead</span>
+              </>
+            ) : (
+              <>
+                <span className={cn("font-normal @max-[1099px]:hidden", squeeze >= 1 && "hidden")}>As of the playhead · </span>Show what happened after this moment
+              </>
+            )}
+          </button>
+        ) : null}
         <LabelledButton label={view.table ? "Show the tracks" : "Show the window as a table"} words="Table" onClick={() => onView({ table: !view.table })} pressed={view.table} collapseBelow="md" squeezed={squeeze >= 2}>
           <Table2 aria-hidden="true" />
         </LabelledButton>

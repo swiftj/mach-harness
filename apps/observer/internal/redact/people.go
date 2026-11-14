@@ -118,11 +118,53 @@ func candidate(v string) string {
 	if n := utf8.RuneCountInString(v); n < 3 || n > 80 {
 		return ""
 	}
-	if strings.IndexFunc(v, unicode.IsLetter) < 0 || notAName[strings.ToLower(v)] {
+	if strings.IndexFunc(v, unicode.IsLetter) < 0 || notAName[strings.ToLower(v)] || apiWord(v) {
 		return ""
 	}
 	return v
 }
+
+// apiVocabulary are words the observer's replies are made of: JSON keys and the codes it writes as
+// values. A "name" that is one of them (an e-mail's local part "data", a git name "stage") would
+// make the reply filter rewrite the replies themselves (M6.6 F5), so it is never learned. It is
+// filled from the event allowlist's keys and the fixed words below.
+var apiVocabulary = func() map[string]bool {
+	words := map[string]bool{}
+	for _, w := range strings.Fields(`ok data error kind message reason reasons items events event cursor next head floor more
+		generation schema schema_version schema_revision id ids type types label labels title titles key keys value values
+		count counts total totals state status stage stages station stations visit visits round rounds seat seats
+		verdict vote votes outcome outcomes gate gates risk model models phase phases cell cells slice slices wave waves
+		ticket tickets run runs execution executions agent agents tool tools span spans marks series window limits
+		limit offset note notes rule rules basis authority origin time times order order_ms occurred_at observed_at
+		precision entity entities parent cause artifacts artifact unknown inferred provenance late withheld groups group
+		metric metrics figure figures coverage settings capabilities versions version project factory session sessions
+		health freshness sources source runtime findings finding checks check evidence waiting blocked held why effect
+		authorization problems problem approved rejected merged passed refused overridden completed failed running
+		pending started finished queued active ready superseded escalated abandoned awaiting live idle stale ended gone
+		unknown recorded reconstructed observed authoritative measured bounded inferred open none text media
+		insights insight flow contributors analytics snapshot stream history concurrency marks waits`) {
+		words[w] = true
+	}
+	for kind, shape := range Allow {
+		words[kind] = true
+		shapeKeys(shape, words, 0)
+	}
+	return words
+}()
+
+func shapeKeys(s *Shape, into map[string]bool, depth int) {
+	if s == nil || depth > 8 {
+		return
+	}
+	for k, child := range s.keys {
+		into[k] = true
+		shapeKeys(child, into, depth+1)
+	}
+	shapeKeys(s.elem, into, depth+1)
+}
+
+// apiWord reports a value that is one of the replies' own words (apiVocabulary), in any case.
+func apiWord(v string) bool { return apiVocabulary[strings.ToLower(strings.TrimSpace(v))] }
 
 // Learn adds names (and e-mail addresses, with their local part) to the list. It reports
 // whether the list changed.
@@ -300,7 +342,7 @@ func (p *People) ReplaceBytes(b []byte) ([]byte, int) {
 			}
 			at := i + j
 			end := at + len(v)
-			if wordEdge(b, at, true) && wordEdge(b, end, false) {
+			if wordEdge(b, at, true) && wordEdge(b, end, false) && !jsonKeyAt(b, at, end) {
 				out = append(out, b[last:at]...)
 				out = append(out, Role...)
 				last = end
@@ -315,6 +357,24 @@ func (p *People) ReplaceBytes(b []byte) ([]byte, int) {
 		}
 	}
 	return b, n
+}
+
+// jsonKeyAt reports a match that is a whole JSON object key: an unescaped quote before it, a quote
+// after it, and then a colon. A key is never rewritten (M6.6 F5): the reply would lose its shape.
+func jsonKeyAt(b []byte, at, end int) bool {
+	if at == 0 || b[at-1] != '"' || (at >= 2 && b[at-2] == '\\') || end >= len(b) || b[end] != '"' {
+		return false
+	}
+	for i := end + 1; i < len(b); i++ {
+		switch b[i] {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case ':':
+			return true
+		}
+		return false
+	}
+	return false
 }
 
 // wordEdge: position i of b is a word boundary on that side (no letter, digit or underscore

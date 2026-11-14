@@ -91,9 +91,17 @@ type Entry struct {
 	FreeTextNote *string    `json:"free_text_note"`
 	Provenance   Provenance `json:"provenance"`
 
-	member string // archive member name
-	free   bool   // the file's text holds prose (redact.HasFreeText), whatever its access
+	member    string // archive member name
+	free      bool   // the file's text holds prose (redact.HasFreeText), whatever its access
+	duplicate bool   // the archive holds this name more than once (M6.6 F7): which one is meant is unknown
 }
+
+// Refusal reasons that name what is wrong with the file itself (M6.6 F7), for access_reason and
+// the content route.
+const (
+	TooLargeReason  = "the file is larger than the observer reads (64 MB at most); it is listed, not hashed or served"
+	DuplicateReason = "the archive holds more than one file of this name; which one is meant is unknown, so neither is served"
+)
 
 // VisitLink links an artifact to a station visit.
 type VisitLink struct {
@@ -272,7 +280,12 @@ func sortedNames(names []string) []string {
 }
 
 func access(e *Entry, set Settings) (string, string) {
-	if e.Integrity == "missing" || e.SHA256 == "" {
+	switch {
+	case e.duplicate:
+		return "none", DuplicateReason
+	case e.Integrity == "unchecked" && e.SHA256 == "" && e.Bytes > 0:
+		return "none", TooLargeReason // fill could not hash it: larger than the observer reads
+	case e.Integrity == "missing" || e.SHA256 == "":
 		return "none", "the file is not there to read"
 	}
 	class, ok := Allowed(e.Path, e.MediaType)
@@ -558,6 +571,7 @@ type member struct {
 	size       int64
 	modMS      int64
 	tooLarge   bool
+	duplicate  bool   // the name occurs more than once in the archive
 	data       []byte // records only
 }
 
@@ -616,6 +630,11 @@ func (c *Catalog) scanArchive(root *os.Root, ticket string) []*Entry {
 		if !archived(name) {
 			return nil
 		}
+		if m, seen := members[name]; seen {
+			m.duplicate = true
+			members[name] = m
+			return nil
+		}
 		if hdr.Size > MaxVideo {
 			members[name] = member{size: hdr.Size, tooLarge: true, modMS: hdr.ModTime.UnixMilli()}
 			return nil
@@ -649,6 +668,7 @@ func (c *Catalog) scanArchive(root *os.Root, ticket string) []*Entry {
 	entries := c.fill(src, "archive", plan(src, ticket, evidenceFolders(uniq(folderNames)), roundFolders(uniq(roundNames)), redact.PeopleFor(c.root)))
 	for _, e := range entries {
 		e.member = ticket + "/" + e.Path
+		e.duplicate = members[e.Path].duplicate
 	}
 	c.arcs[rel] = archiveScan{id: id, entries: entries}
 	out := make([]*Entry, 0, len(entries))

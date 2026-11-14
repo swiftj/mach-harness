@@ -5,6 +5,7 @@
  */
 import type { AgentRole as GrammarRole, ArtifactKind as GrammarArtifact, FactoryState, MarkState, GateKind as GrammarGate, ModelTier as GrammarTier, ReviewerSeat, StationKind, ToolFamily } from "@mach/ui";
 import type { AgentState, ArtifactState, CellStage, GateState, ModelId, ReviewSeat, StationVisit, ToolCallState } from "../sim";
+import { containedWords } from "../text/fields";
 
 export function tierOf(model: ModelId): GrammarTier {
   return model;
@@ -47,9 +48,15 @@ export function agentWords(agent: Pick<AgentState, "role" | "seat" | "label">): 
   if (agent.role === "reviewer" && agent.seat) return `${seatWord(agent.seat)} reviewer`;
   if (agent.role === "clerk") {
     const task = agent.label.includes(": ") ? agent.label.slice(agent.label.indexOf(": ") + 2) : agent.label;
-    return `Clerk: ${task}`;
+    return `Clerk: ${containedWords("agentLabel", task)}`;
   }
   return ROLE_WORDS[agent.role];
+}
+
+/** An agent named by its role and seat only, for an accessible name (never its label, which is free text). */
+export function agentRoleWords(agent: Pick<AgentState, "role" | "seat">): string {
+  if (agent.role === "reviewer" && agent.seat) return `${seatWord(agent.seat)} reviewer`;
+  return agent.role === "clerk" ? "Clerk" : ROLE_WORDS[agent.role];
 }
 
 /** A tool call's family, from the tool and (for the shell) what it ran. */

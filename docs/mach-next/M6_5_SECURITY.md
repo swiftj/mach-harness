@@ -117,6 +117,27 @@ show the count of findings or reasons, not their text. If a drill-down cannot me
 text, environment values, `repo/`, `.factory/local/`. Any new observer field that keeps prose must be added to
 `redact.FreeTextFields` (the test fails otherwise) and to group B here.
 
+**M6.6 (I-05): the inspectors apply B.** The containment is shared: `src/text/` holds the one `UncheckedText`
+component and its module, `src/text/fields.ts` the observer's field list (`KNOWN_FREE_TEXT_FIELDS`, held equal to
+`redact.FreeTextFields` by a test), and `src/shell/displayPolicy.ts` reads `/session`'s policy for the floor and the
+Timeline (a declared policy may add fields or lower a limit, never lift containment; undeclared fails closed). The
+floor and Timeline inspectors print every B field through `shell/inspector/FreeText.tsx`: finding titles, agent
+labels (including the header naming an agent) and phases, declared phase titles, blocked reasons, a person-needed
+reason, a hold's `why`, `waiting_for`, a wait's reasons in "In time", and event sentences that quote any of these
+(evidence list, "Why it looks like this", the run at the playhead); the evidence list's raw key fields skip them.
+The same holds on the floor and the Timeline: Blueprint and Atlas draw those copies (finding titles, agent labels
+and phases, `waiting_for`, blocked reasons) as bounded plain text through `containedWords` (`text/fields.ts`, the
+same `uncheckedView`, limited by the session's policy, which the shell hands to drawing code once `/session`
+answers), with one "free text, not checked for names" label on the floor; the Theater caption is contained and
+labelled. Accessible names, `title`s, hover cards, Timeline track names and the announcer say codes and counts only
+(an event that carries prose is named by its kind, `codesOnlyWords`; a wait says how many reasons it recorded).
+`test/free-text-containment.test.mjs` scans `src/blueprint`, `src/atlas`, `src/shell` and `src/timeline` and fails
+if such a field is printed another way or used in a name. Left open at the time of writing: the Timeline canvas's
+own span labels and the track label column's `title` (`timeline/render`, owned by another agent). The UI decides
+which scene value copies which declared field (a table in `text/fields.ts`); the limits are the session's. The
+artifact section says it shows recorded facts and that opening content waits for the Evidence Theater (I-45); no
+content is read.
+
 ## 7. Decisions for the lead
 
 1. **R1 stays "label, do not withhold"?** S3 shows the prose is in events too, not only in documents. The
@@ -125,5 +146,64 @@ text, environment values, `repo/`, `.factory/local/`. Any new observer field tha
 2. **Credential-named files' content refused** (S2) also refuses an ordinary file whose name contains `token`,
    `secret`, `passw`, `apikey`, `private_key` or `credential`. Keep (fail closed), or narrow the pattern for content
    only.
-3. **The Control Tower should read `display_policy.free_text`** and apply section 6 B; that is in the web app, owned
-   by the analytics and Timeline agents, not done here.
+3. **The Control Tower should read `display_policy.free_text`** and apply section 6 B. Done in M6.6 for Analytics
+   the floor and the Timeline (section 6, "M6.6 (I-05)"); the Timeline canvas's span labels remain open.
+
+## 8. M6.6 review
+
+Scope: the whole local boundary of the observer and the Control Tower, by reading the code and by attacking a running
+observer (built with the app embedded) on synthetic projects with planted canaries and adversarial inputs: a 655-request
+probe of Host, Origin, fetch-site, methods, override headers and path tricks; every route's body and the event stream
+searched for canaries; 34,191 fuzzed query requests; a headless browser over 64 views; file listings before and after.
+Raw data stayed in scratch.
+
+**Attacked and held.** One-time link (reuse, guessed and missing cookies: 401 on every API route, the stream and
+content; cookie `HttpOnly`, `SameSite=Strict`); Host and DNS rebinding (403 on every route); cross-site `Origin` and
+`Sec-Fetch-Site` (403); every method but GET (405, override headers ignored, no CORS header anywhere); loopback-only
+bind (no flag or environment changes it); path traversal in every encoding (400/404); artifact names with `..`,
+absolute paths, backslashes, RTL, markup, newlines or credential shapes (never catalogued); symlinks, hard links, FIFOs,
+oversized files, HTML and SVG, and archive members with `..`, absolute names, links and devices (refused); content
+headers (`text/plain`, `nosniff`, sandbox CSP, `no-store`); the media opt-in; prompts, thinking, assistant text, tool
+inputs and results, environment, working directory, secrets and absolute paths planted in every source (none served,
+streamed, indexed or logged); malformed, huge, nested and invalid-UTF-8 lines (gaps, no crash, no 5xx); analytics reads
+no file; the app makes GET requests to its own origin only and puts no prose in the address, the title or storage; the
+observer wrote nothing outside its folder. Media in the page: no component shows evidence media yet, so the app's CSP
+keeps no `media-src` (add `media-src 'self'` with the first viewer).
+
+**Fixed (each with a test that fails before and passes after).**
+
+| # | Finding | Fix | Test |
+|---|---|---|---|
+| F1 | One stream record dated 9999 placed its source in year 9999; the Timeline then made 32,863 to 56,934 requests in 20 s and the tab crashed | A time before 2000 or more than a day after its line was read is no own time (stream and intake: placed without one, `unknown`; lifecycle: an `unparsable-line` gap). `redact.Version` 6, so an index holding such times is rebuilt. The Timeline loader's own cap is the web owner's | `normalize.TestImplausibleTimestampsHaveNoOwnTime` |
+| F2 | `.factory/local/observer/index` as a link made the observer replace `meta.json` and `checkpoints.json` and write its index elsewhere | The index folder is refused when it is a link; its files are opened with `O_NOFOLLOW` | `TestIndexFolderLinkIsRefused`, `store.TestOpenRefusesALinkedFolder` |
+| F4 | The access log wrote the request path raw: CR, LF and ESC from any sender forged lines and drove the terminal | The escaped path, cut to 200 bytes and quoted | `server.TestAccessLogQuotesThePath` |
+| F5 | An e-mail `data@…` was learned as the name `data`, and the reply filter renamed the `data` key of every reply | Words the replies are made of are never learned; a JSON key is never rewritten | `server.TestLearnedNameNeverRewritesKeys` |
+| F6 | Copies of declared prose in other replies were not declared; `execution.completed.refused_tools[]` (kept through `redact.Scrub`) was not declared | `display_policy.free_text.projection_fields` (42 places, found by filling every declared field with a marker); `refused_tools[]` declared; the call-site tripwire counts `redact.Scrub` | `server.TestSessionDeclaresProjectionFreeText`, `redact.TestEveryProseCallSiteIsDeclared` |
+| F7 | Refusals before routing were cacheable; a 70 MB file said "not there to read", a duplicated archive member "changed"; `mach-synth --cells 4` to `7` panicked | `no-store` on 403/405; `too-large` (413) and `duplicate` (409) reasons; small synthetic worlds generate | `server.TestRefusalsAreNotCached`, `artifact.TestOversizedAndDuplicateMembersSayWhy`, `synth.TestSmallWorldsGenerate` |
+
+F3 (prose shown without the "not checked for names" label, and copied whole into SVG tooltips and accessible names)
+is in the web app, section 6.
+
+**R1 residual risk.** What can still be served: a name or description of a person that appears only in prose, and in
+no MACH record or git identity, is served as written in the declared event fields and their projection copies, in
+artifact content (findings, verification notes, evidence text, archived copies), in artifact and tool file names, and
+in the project folder name. E-mail addresses, credentials of a known shape and absolute paths are replaced; a name a
+record or git identity gives becomes "a person". Redaction is not comprehensive, and this review does not claim it is.
+
+- *A single engineer on their own laptop:* low. Everything served is already in files the engineer can read; the
+  observer adds no reader (loopback, a `SameSite=Strict` `HttpOnly` cookie, Host and Origin checks). The index under
+  `.factory/local/observer/` (git-ignored, `0700`) holds the same prose.
+- *A shared or screen-shared environment:* moderate. A screen share, recording or screenshot shows prose that may name
+  or describe people, and until F3 lands there is no label saying it was not checked, while tooltips and screen readers
+  repeat it whole. Another process of the same account can read the link file and the index. Nothing is exported,
+  copied into a link or stored in the browser.
+
+Two remediation options (not implemented):
+
+1. *Contain fully, keep the decision.* Render every declared field and copy through one labelled component, keep prose
+   out of accessible names and tooltips, and add a "presenting" switch that shows counts and codes instead of prose.
+   Cost: web only, some 10 to 15 components and one test; names stay visible, but labelled and suppressible.
+2. *Withhold event prose by default.* The observer serves counts, rule ids and codes, and the prose only on an explicit
+   request (like artifact content) or a project setting. Cost: allowlist and projection changes, another
+   `redact.Version` (an index rebuild), inspector and Timeline text reworked around codes, the most useful explanatory
+   text gone from the default view, and the product owner reversing "label, do not withhold".

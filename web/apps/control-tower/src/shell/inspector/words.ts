@@ -217,3 +217,26 @@ export function seatModelName(model: string | null | undefined): string | null {
 export function reviewerWords(seat: string, model: string | null): string {
   return `The ${seat} seat's reviewer${model ? `, on ${model}` : ""}`;
 }
+
+/**
+ * A station on its own (`station:verify`, the Factory-level station, I-22): its visits across every
+ * cell, never "Not visited" when a cell has been there. `cells` is the scene's cells at the playhead.
+ */
+export function stationAcrossWords(
+  cells: Readonly<Record<string, { readonly station: string | null; readonly visits: readonly Pick<StationVisit, "station" | "enteredAt" | "leftAt">[] }>>,
+  station: string,
+): { word: string; visits: number; cells: number; working: number; last: Pick<StationVisit, "enteredAt" | "leftAt"> | undefined } {
+  let visits = 0;
+  let visited = 0;
+  let working = 0;
+  let last: Pick<StationVisit, "enteredAt" | "leftAt"> | undefined;
+  for (const cell of Object.values(cells)) {
+    const here = cell.visits.filter((v) => v.station === station);
+    if (here.length) visited += 1;
+    visits += here.length;
+    for (const v of here) if (!last || v.enteredAt >= last.enteredAt) last = v;
+    if (cell.station === station) working += 1;
+  }
+  const word = working ? `At work in ${plural(working, "cell")} now` : visits ? `Visited ${plural(visits, "time")} across ${plural(visited, "cell")}` : "Not visited";
+  return { word, visits, cells: visited, working, last };
+}

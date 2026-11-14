@@ -4,14 +4,15 @@
  * working now, who is waiting and why, and the counts so far, from received facts only.
  */
 import { useMemo } from "react";
-import { isKnown, ref, streamObservationOf, type CellStage } from "../../sim";
+import { holdOf, isKnown, ref, streamObservationOf, type CellStage } from "../../sim";
 import { useScene, useSceneStore } from "../../scene";
 import { ActorGlyph, CellGlyph, SliceGlyph } from "../glyphs";
-import { indexFor, lastAtOrBefore } from "../history";
+import { indexFor, lastAtOrBefore, quotingKindOf } from "../history";
 import { ConnectionFacts } from "../SourceBadge";
 import { ACTOR_WORDS, schedulerLook, stageLook, timecode } from "../vocab";
 import { mayBeUnderReported, recordedCost } from "./anatomies";
 import { Facts, JumpButton, NotRecorded, RefLink, RefList, Section } from "./parts";
+import { FreeText, FreeTextLabel, KindWords } from "./FreeText";
 import { sliceTitle } from "./words";
 
 export function RunNow() {
@@ -20,6 +21,7 @@ export function RunNow() {
   const connection = useSceneStore((s) => s.connection);
   const chapter = useSceneStore((s) => lastAtOrBefore(indexFor(s).landmarks, s.playhead));
   const moment = useSceneStore((s) => lastAtOrBefore(indexFor(s).moments, s.playhead));
+  const log = useSceneStore((s) => s.log);
   // A key per cell (stage and how many agents work): the list re-renders when one of those changes,
   // not on every tool call.
   const cellKey = useScene((s) =>
@@ -30,6 +32,8 @@ export function RunNow() {
   );
   const slices = useScene((s) => s.slices);
   const attention = useScene((s) => s.supervisor.attention);
+  // M6.6 D2: the supervisor's holds, by slice or ticket: a held slice says so, with its recorded words.
+  const holds = useScene((s) => s.supervisor.holds);
   const cellList = useMemo(() => (cellKey ? cellKey.split("|").map((k) => k.split(":") as [string, CellStage, string]) : []), [cellKey]);
   const waiting = Object.values(slices).filter((s) => s.scheduler === "waiting-on-dependency" || s.scheduler === "eligible");
   const n = chapter ? index.landmarks.indexOf(chapter) + 1 : 0;
@@ -42,13 +46,17 @@ export function RunNow() {
             <p className="mt-3 text-caption text-ink-subtle tabular">
               Chapter {n} of {index.landmarks.length}, from {timecode(chapter.t, false)}
             </p>
-            <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">{chapter.title}</h2>
+            <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">
+              <KindWords kind={chapter.eventType} text={chapter.title} />
+            </h2>
             {chapter.summary ? <p className="mt-1.5 text-body-sm text-ink-muted">{chapter.summary}</p> : null}
           </>
         ) : chapter ? (
           <>
             <p className="mt-3 text-caption text-ink-subtle tabular">Last landmark, {timecode(chapter.t, false)} UTC</p>
-            <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">{chapter.title}</h2>
+            <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">
+              <KindWords kind={chapter.eventType} text={chapter.title} />
+            </h2>
             <div className="mt-1">
               <JumpButton eventId={chapter.id} label="Go to event" />
             </div>
@@ -57,7 +65,9 @@ export function RunNow() {
         {moment && moment.id !== chapter?.id ? (
           <div className="mt-4 border-l-2 border-factory-select pl-3">
             <p className="font-mono text-[11px] text-ink-subtle tabular">Latest significant moment, {timecode(moment.t)}</p>
-            <p className="mt-0.5 text-body-sm text-ink">{moment.text}</p>
+            <p className="mt-0.5 text-body-sm text-ink">
+              <KindWords kind={source === "simulation" ? null : quotingKindOf(log, moment)} text={moment.text} />
+            </p>
             <div className="mt-1">
               <JumpButton eventId={moment.id} label={source === "simulation" ? "Go to this moment" : "Go to event"} />
             </div>
@@ -86,27 +96,40 @@ export function RunNow() {
           <RefList>
             {Object.entries(attention).map(([id, a]) => (
               <RefLink key={id} to={ref.gate(`${id}/human-approval`)} glyph={<CellGlyph size={18} state="human" />} detail="a person">
-                <span className="font-mono text-[12px]">{id}</span> {a.reason}
+                <span className="font-mono text-[12px]">{id}</span> <FreeText field="personNeeded" text={a.reason} labelled expandable={false} />
               </RefLink>
             ))}
             {waiting.map((s) => {
-              const look = schedulerLook(s.scheduler);
+              const hold = holdOf(holds, s);
+              const look = hold ? { label: "Held by the supervisor", state: "waiting" as const, mark: undefined } : schedulerLook(s.scheduler);
               return (
                 <div key={s.id}>
                   <RefLink to={ref.slice(s.id)} glyph={<SliceGlyph size={18} state={look.state} mark={look.mark} />} detail={look.label}>
                     {/* A slice with no title of its own is named by its id, once (never "SLICE-002 SLICE-002"). */}
                     <span className="font-mono text-[12px]">{s.id}</span>
-                    {sliceTitle(s) ? <span className="text-ink-muted"> {sliceTitle(s)}</span> : null}
+                    {sliceTitle(s) ? <span className="text-ink-muted"> <FreeText field="sliceTitle" text={sliceTitle(s)} labelled expandable={false} /></span> : null}
                   </RefLink>
-                  {s.reasons[0] ? <p className="mb-1 ml-8 text-caption text-ink-subtle">{s.reasons.join(" ")}</p> : null}
+                  {hold ? (
+                    <p className="mb-1 ml-8 text-caption text-ink-subtle">
+                      <FreeText field="heldWhy" text={hold.why} labelled />
+                    </p>
+                  ) : s.reasons[0] ? (
+                    <p className="mb-1 ml-8 text-caption text-ink-subtle">
+                      <FreeText field="waitReason" text={s.reasons.join(" ")} labelled />
+                    </p>
+                  ) : null}
                 </div>
               );
             })}
           </RefList>
+          <FreeTextLabel what="Reasons" />
         </Section>
       ) : null}
       <Actors />
       {source === "simulation" ? <RunCounts /> : <ReceivedCounts />}
+      <p className="px-5 pb-4">
+        <FreeTextLabel what="Titles and reasons from the record" />
+      </p>
     </div>
   );
 }
@@ -212,7 +235,7 @@ function CellRow({ ticketId, stage, working }: { ticketId: string; stage: CellSt
   });
   return (
     <RefLink to={ref.cell(ticketId)} glyph={<CellGlyph size={20} state={look.state} />} detail={working ? `${look.label}, ${working} working` : look.label}>
-      <span className="font-mono text-[12px]">{ticketId}</span> <span className="text-ink-muted">{title}</span>
+      <span className="font-mono text-[12px]">{ticketId}</span> <span className="text-ink-muted"><FreeText field="sliceTitle" text={title} labelled expandable={false} /></span>
     </RefLink>
   );
 }

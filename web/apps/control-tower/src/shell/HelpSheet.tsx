@@ -9,12 +9,13 @@ import { StateGlyph } from "./glyphs";
 import { AuthorityBadge, TelemetryBadge } from "./inspector/parts";
 import { SourceGlyph } from "./SourceBadge";
 
-const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view", "Atlas", "Blueprint", "Timeline", "Timeline workspace"];
+const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view", "Atlas", "Blueprint", "Timeline", "Timeline workspace", "Analytics"];
 /** What each group is, where it is not obvious. */
 const GROUP_NOTES: Partial<Record<KeyBinding["group"], string>> = {
-  Playback: "On the Factory floor and in the Timeline. Analytics (4) shows no transport, so these keys, and F, do nothing there.",
+  Playback: "On the Factory floor and in the Timeline. Analytics (4) shows no transport, so these keys, and F, do nothing there, except L and End to go back to live (below).",
   Timeline: "The timeline docked under the Factory floor.",
   "Timeline workspace": "While the Timeline (3) is up. Space, the arrows and the playback keys work there as everywhere; T does nothing.",
+  Analytics: "While Analytics (4) is up and its figures are counted to an earlier moment (the playhead held behind the live edge).",
 };
 
 function Keys({ keys }: { keys: string[] }) {
@@ -62,7 +63,7 @@ export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpe
         title="Keyboard, legend and display" description="Every shortcut in the Control Tower prototype. The keys under In a view, Atlas, Blueprint and Timeline work while that part has focus; those under Timeline workspace while the Timeline is up.">
         {/* Scrolls on short windows, so it takes focus for keyboard scrolling. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-        <div tabIndex={0} role="region" aria-label="Shortcuts and legend" className="grid min-h-0 gap-x-8 gap-y-5 overflow-y-auto px-6 pb-6 pt-4 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus md:grid-cols-2">
+        <div tabIndex={0} role="region" aria-label="Shortcuts and legend" className="grid min-h-0 gap-x-8 gap-y-5 overflow-y-auto px-6 pb-6 pt-4 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus md:grid-cols-2">
           {GROUPS.map((group) => (
             <section key={group} aria-labelledby={`keys-${group.replace(/\s+/g, "-")}`}>
               <h3 id={`keys-${group.replace(/\s+/g, "-")}`} className="mb-2 text-label text-ink">

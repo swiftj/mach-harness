@@ -10,17 +10,8 @@
   font-family: var(--mach-font-sans);
 }
 
-/* The tracks' focus ring: 1 px of the focus token at 0.7, inset (quiet: the cursor's bracket is the loud part). */
-.mach-tl-tracks:focus-visible::after {
-  content: "";
-  position: absolute;
-  inset: 1px;
-  z-index: 20;
-  pointer-events: none;
-  border-radius: 2px;
-  outline: 1px solid color-mix(in srgb, var(--mach-focus) 70%, transparent);
-  outline-offset: 0;
-}
+/* The tracks' focus ring is the design system's (M6.6: the element's own focus-visible outline, inset;
+   an `outline-none` without `outline-solid` left `focus-visible:outline-2` with no style, so no ring). */
 
 /* Scrubbed back: the stretch between the playhead and the live edge, which the tracks still show. */
 .mach-tl-after {

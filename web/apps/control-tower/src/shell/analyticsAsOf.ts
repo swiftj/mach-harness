@@ -14,7 +14,7 @@ import { asOfClock, asOfPlayhead } from "../timeline/controls/frame";
 
 export interface AnalyticsAsOf {
   readonly source: SceneSource;
-  /** "Simulation", "Live", "Live, reviewing an earlier moment", "Historical replay" (the store's words). */
+  /** "Simulation", "Live Factory", "Live Factory, reviewing an earlier moment", "Historical replay", with a link that is not live in brackets (the store's `playbackLabel`). */
   readonly sourceLabel: string;
   /** `edge`: everything recorded up to the live edge (a replay's last event); `playhead`: only what happened up to the playhead. */
   readonly through: "edge" | "playhead";

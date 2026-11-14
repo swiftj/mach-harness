@@ -25,13 +25,11 @@ export function countWords(n: number | null | undefined): string {
   return n.toFixed(2);
 }
 
-/** A duration in the shell's words (48 s, 4 min 12 s, 1 h 3 min); a day or longer as days and hours; under a second in ms. */
+/** A duration in the shell's words (`shell/time.ts duration`: 48 s, 4 min 12 s, 1 h 3 min, 1 d 15 h); under a second in ms. */
 export function durationWords(ms: number | null | undefined): string {
   if (!finite(ms)) return NO_VALUE;
   if (ms < 0) return NO_VALUE;
   if (ms < 1000) return `${Math.round(ms)} ms`;
-  const h = Math.floor(Math.round(ms / 60_000) / 60);
-  if (h >= 24) return h % 24 ? `${Math.floor(h / 24)} d ${h % 24} h` : `${h / 24} d`;
   return duration(ms);
 }
 

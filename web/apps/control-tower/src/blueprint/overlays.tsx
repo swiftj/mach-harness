@@ -256,7 +256,7 @@ export const Minimap = memo(function Minimap({ layout, template, centreOn, frame
             data-index={i}
             className="bp-minimap-lane"
             style={{ top: lane.y * sy, height: Math.max(3, lane.h * sy - 1) }}
-            aria-label={`${lane.slice.title}${lane.cell ? `, ${lane.cell.ticketId}` : ""}`}
+            aria-label={`${lane.slice.id}${lane.cell ? `, ${lane.cell.ticketId}` : ""}`}
           />
         ))}
       </div>

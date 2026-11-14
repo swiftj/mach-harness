@@ -292,3 +292,16 @@ export function analyticsStationOf(kind: string): AnalyticsStation | null {
   if (kind === "human-approval") return "human";
   return isAnalyticsStation(kind) ? kind : null;
 }
+
+const DAY = 86_400_000;
+
+/**
+ * The period "Open its measured history" opens for one station visit (I-12): the seven whole UTC days
+ * ending with the day the visit ended (or, still open, the day it began), so Flow reads the station's
+ * visits of that week and can say where this one sits among them. Whole days, because the metrics
+ * behind Flow are counted by UTC day.
+ */
+export function visitAnalyticsWindow(visit: { readonly enteredAt: number; readonly leftAt: number | null }): AnalyticsRange {
+  const day = Math.floor((visit.leftAt ?? visit.enteredAt) / DAY);
+  return { from: Math.max(0, (day - 6) * DAY), to: (day + 1) * DAY };
+}

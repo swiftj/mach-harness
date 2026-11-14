@@ -13,11 +13,12 @@
  */
 import { memo, type ReactNode } from "react";
 import { Callout, SelectionBrackets, fc, modelTiers, project, regions, round, screenBounds, type Lod, type PlanBox, type RegionKind } from "@mach/ui";
-import { isKnown, refId, refKind, type EntityRef, type Scene } from "../sim";
+import { isKnown, refId, refKind, sliceHoldOf, type EntityRef, type Scene } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { useAtlas, usePlayheadKeyed } from "./context";
 import { AFTERGLOW, agentsElapsedKey, animating, anim, fmtElapsed, fmtElapsedKnown, chamberOccupant, latestGate, ticketOfRef, placeAgents, q, uiTier, type ViewMode } from "./derive";
 import { agentName } from "./Bay";
+import { containedWords } from "../text/fields";
 import { PLATE_Z, FLOOR_Z, boxAt, type PlantLayout } from "./layout";
 import { locateScreen } from "./locate";
 import { placeUpright, type Box, type Slot, type Stage, type Upright } from "./place";
@@ -33,7 +34,7 @@ function shortName(scene: Scene, entity: EntityRef): string {
     case "cell":
       return `${id} · ${scene.cells[id]?.stage ?? ""}`;
     case "slice":
-      return `${id} · ${scene.slices[id]?.scheduler ?? ""}`;
+      return `${id} · ${sliceHoldOf(scene, scene.slices[id]) ? "held by the supervisor" : (scene.slices[id]?.scheduler ?? "")}`;
     case "gate":
       return id.replace("/", " · ");
     case "dependency":
@@ -45,7 +46,7 @@ function shortName(scene: Scene, entity: EntityRef): string {
     case "agent": {
       for (const c of Object.values(scene.cells)) {
         const a = c.agents[id];
-        if (a) return `${a.label} · ${isKnown(a.meta, "model") ? modelTiers[uiTier(a.model)].label : "model not recorded"}`;
+        if (a) return `${containedWords("agentLabel", a.label, 40)} · ${isKnown(a.meta, "model") ? modelTiers[uiTier(a.model)].label : "model not recorded"}`;
       }
       return id;
     }
@@ -220,7 +221,7 @@ function agentOffers(L: PlantLayout, scene: Scene, t: number, k: number, mode: V
     const shown = list.slice(0, 3);
     const more = list.length - shown.length;
     const rows = shown.map(({ base, a }) => {
-      const name = mode.live ? trim(a.agent.label || agentName(a), 30) : agentName(a);
+      const name = mode.live ? (a.agent.label ? containedWords("agentLabel", a.agent.label, 30) : agentName(a)) : agentName(a);
       const tierLabel = a.tierKnown ? modelTiers[uiTier(a.agent.model)].label : "model not recorded";
       const active = a.state === "active";
       if (!mode.live) {
@@ -230,7 +231,7 @@ function agentOffers(L: PlantLayout, scene: Scene, t: number, k: number, mode: V
       }
       // Live and replay: the label, the model, the phase and how long it has run (measured, placed
       // "≈", or not recorded); then what is known of its tools: a count and the last tool's name.
-      const phase = isKnown(a.agent.meta, "phase") && a.agent.phase ? ` · ${a.agent.phase}` : "";
+      const phase = isKnown(a.agent.meta, "phase") && a.agent.phase ? ` · ${containedWords("agentPhase", a.agent.phase, 24)}` : "";
       const when = active ? ` · ${fmtElapsedKnown(a.elapsed, a.elapsedKnown, a.elapsedInferred)}` : a.state === "stale" ? " · as last seen" : "";
       const tier = `${tierLabel}${phase}${when}`;
       const n = a.agent.toolCallCount;
@@ -428,13 +429,13 @@ function calloutOffers(L: PlantLayout, scene: Scene, t: number, reduced: boolean
     const op = q(anim("stateChange", t - r.decidedAt, reduced));
     if (r.outcome === "REJECTED") {
       const b = r.findings.find((f) => f.severity === "blocker");
-      put(`rej-${occ.cell.ticketId}`, { ...L.review.gate, z: PLATE_Z + 40 }, `Rejected · ${b?.seat ?? ""} blocker ${b?.rule ?? ""}`, b ? trim(b.title, 58) : undefined, "fail", op, 1);
+      put(`rej-${occ.cell.ticketId}`, { ...L.review.gate, z: PLATE_Z + 40 }, `Rejected · ${b?.seat ?? ""} blocker ${b?.rule ?? ""}`, b ? containedWords("findingTitle", b.title, 58) : undefined, "fail", op, 1);
     } else {
       put(`dec-${occ.cell.ticketId}`, { ...L.review.gate, z: PLATE_Z + 40 }, `${r.outcome === "AWAITING_HUMAN" ? "Passed panel · needs a person" : "Approved"} · ${r.approvals} of ${r.seats.length}`, `${occ.cell.ticketId}, round ${r.round}${r.delta ? ", delta review" : ""}`, r.outcome === "AWAITING_HUMAN" ? "human" : "ink", op);
     }
     for (const f of r.findings.filter((x) => x.outvoted)) {
       if (f.seat === "general") continue;
-      put(`out-${f.id}`, { ...L.review.seats[f.seat], z: PLATE_Z + 14 }, `Blocker outvoted · ${f.seat} seat ${f.rule ?? ""}`, `${trim(f.title, 50)} (reported, not hidden)`, "fail", op, 1);
+      put(`out-${f.id}`, { ...L.review.seats[f.seat], z: PLATE_Z + 14 }, `Blocker outvoted · ${f.seat} seat ${f.rule ?? ""}`, `${containedWords("findingTitle", f.title, 50)} (reported, not hidden)`, "fail", op, 1);
     }
   }
   // The person's gate: held (still, no pulsing), then released by name.
@@ -518,9 +519,5 @@ function countsKey(scene: Scene): string {
     }
   }
   return k;
-}
-
-function trim(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 

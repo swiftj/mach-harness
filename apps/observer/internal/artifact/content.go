@@ -20,6 +20,9 @@ var ErrCredentialName = errors.New("the file's name says it holds credentials; i
 
 const CredentialReason = "its name says it holds credentials; its content is never served"
 
+// ErrDuplicate refuses an archive member whose name the archive holds more than once (M6.6 F7).
+var ErrDuplicate = errors.New("the archive holds more than one file of this name")
+
 // HashKeys are the keys under which MACH's served JSON records (results.json, summary.json,
 // decision.json) hold a hash: evidence sha256 sums and the commits a verification or review was
 // made against. Their hex values are exempt from the scrubber's long-hex rule; nothing else is.
@@ -52,6 +55,9 @@ func CapFor(class string) int64 {
 func (c *Catalog) Read(e Entry) (*Content, error) {
 	if redact.CredentialPath(e.Path) || redact.SecretName(e.Path) {
 		return nil, ErrCredentialName // whatever the entry says: its name says it holds credentials
+	}
+	if e.duplicate {
+		return nil, ErrDuplicate
 	}
 	class, ok := Allowed(e.Path, e.MediaType)
 	if !ok || e.SHA256 == "" {

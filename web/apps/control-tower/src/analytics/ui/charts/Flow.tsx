@@ -25,7 +25,7 @@ export interface FlowStationFacts {
   readonly open: number;
 }
 
-export function FlowDiagram({ transitions, facts, loads, selected, onSelect, humanFacts }: { transitions: readonly Transition[]; facts: Readonly<Partial<Record<Station, FlowStationFacts>>>; loads: readonly StationLoad[]; selected: Station | null; onSelect(s: Station | null): void; humanFacts: { waits: number; p50: number | null; open: number } }) {
+export function FlowDiagram({ transitions, facts, loads, selected, onSelect, humanFacts }: { transitions: readonly Transition[]; facts: Readonly<Partial<Record<Station, FlowStationFacts>>>; loads: readonly StationLoad[]; selected: Station | null; onSelect(s: Station | null): void; humanFacts: { waits: number; p50: number | null; open: number; openAtLeast?: boolean } }) {
   const [ref, width] = useWidth<HTMLDivElement>(1000);
   const [, setTip, tipNode] = useTip(width);
   const layout = useMemo(() => flowLayout(transitions, width), [transitions, width]);
@@ -103,7 +103,7 @@ export function FlowDiagram({ transitions, facts, loads, selected, onSelect, hum
           const visits = human ? humanFacts.waits : (f?.visits ?? 0);
           const p50 = human ? humanFacts.p50 : (f?.p50 ?? null);
           const load = loads.find((l) => l.station === n.station);
-          const name = human ? `Human approval ${durationText(humanFacts.p50)} median, ${humanFacts.waits} waits: ${humanFacts.waits} measured waits, median ${durationText(humanFacts.p50)}${humanFacts.open ? `, ${humanFacts.open} still waiting` : ""}. A wait for a person, not a station visit.` : `${STATION_WORDS[st]} ${durationText(p50)} median, ${visits} visits: ${visits} measured visits, median ${durationText(p50)}${load ? `, ${Math.round(load.share * 100)}% of measured station time` : ""}${f?.refusals ? `, ${f.refusals} gate refusals` : ""}`;
+          const name = human ? `Human approval ${durationText(humanFacts.p50)} median, ${humanFacts.waits} waits: ${humanFacts.waits} measured waits, median ${durationText(humanFacts.p50)}${humanFacts.open ? `, ${humanFacts.openAtLeast ? "at least " : ""}${humanFacts.open} still waiting` : ""}. A wait for a person, not a station visit.` : `${STATION_WORDS[st]} ${durationText(p50)} median, ${visits} visits: ${visits} measured visits, median ${durationText(p50)}${load ? `, ${Math.round(load.share * 100)}% of measured station time` : ""}${f?.refusals ? `, ${f.refusals} gate refusals` : ""}`;
           return (
             <g key={n.station} style={{ opacity: faded ? 0.55 : 1 }}>
               <Mark
@@ -115,7 +115,7 @@ export function FlowDiagram({ transitions, facts, loads, selected, onSelect, hum
                 w={n.w}
                 h={n.h}
                 tipAt={{ x: n.x + n.w / 2, y: n.y }}
-                card={human ? { title: "Human approval", rows: [["measured waits", String(humanFacts.waits)], ["median", durationText(humanFacts.p50)], ...(humanFacts.open ? ([["still waiting", String(humanFacts.open)]] as [string, string][]) : [])], foot: "A wait for a person, not a station visit." } : { title: STATION_WORDS[st], rows: [["measured visits", String(visits)], ["median visit", durationText(p50)], ...(load ? ([["share of measured time", `${Math.round(load.share * 100)}%`]] as [string, string][]) : []), ...(f?.refusals ? ([["gate refusals", String(f.refusals)]] as [string, string][]) : [])], foot: isSel ? "Selected: Enter clears it." : "Enter selects it." }}
+                card={human ? { title: "Human approval", rows: [["measured waits", String(humanFacts.waits)], ["median", durationText(humanFacts.p50)], ...(humanFacts.open ? ([["still waiting", `${humanFacts.openAtLeast ? "at least " : ""}${humanFacts.open}`]] as [string, string][]) : [])], foot: "A wait for a person, not a station visit." } : { title: STATION_WORDS[st], rows: [["measured visits", String(visits)], ["median visit", durationText(p50)], ...(load ? ([["share of measured time", `${Math.round(load.share * 100)}%`]] as [string, string][]) : []), ...(f?.refusals ? ([["gate refusals", String(f.refusals)]] as [string, string][]) : [])], foot: isSel ? "Selected: Enter clears it." : "Enter selects it." }}
                 onTip={setTip}
                 onActivate={() => onSelect(isSel ? null : st)}
                 pressed={isSel}

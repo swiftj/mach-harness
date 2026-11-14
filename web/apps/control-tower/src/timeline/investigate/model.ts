@@ -200,6 +200,12 @@ export interface Ladder {
   readonly rounds: readonly SlotRun[];
   /** Execution attempts the visits were made in. A rail below the ladder. */
   readonly attempts: readonly SlotRun[];
+  /**
+   * M6.6 (N10): the ticket's executions no build or verify visit was recorded in (a run inside another
+   * run's visit, one that stopped before reaching a station): placed at the slot of the visit open when
+   * it started, so every run is labelled.
+   */
+  readonly unvisited: readonly SlotRun[];
   /** Visits whose round is not recorded / whose execution is not recorded. */
   readonly unroundedSlots: number;
   readonly unattemptedSlots: number;
@@ -340,7 +346,24 @@ export function ladderOf(ticket: string, spans: readonly TimelineSpan[], marks: 
     const words = run ? runWords(run) : "execution not held";
     return { label: `${words[0]!.toUpperCase()}${words.slice(1)}`, attempt: span ? attemptOf(span) : null, ref: k, from: span ? startAt(span) : null, to: span ? endBy(span, liveAt) : null, span, endReason: span && endBy(span, liveAt) !== null ? (span.end?.reason ?? null) : null };
   });
-  return { ticket, rungs, rounds: rounds.runs, attempts: attempts.runs, unroundedSlots: rounds.missing, unattemptedSlots: attempts.missing };
+  const seenRuns = new Set(attempts.runs.map((r) => r.ref));
+  const unvisited: SlotRun[] = [];
+  for (const span of [...execSpans].sort(byStart)) {
+    const t = startAt(span);
+    if (ticketOf(span) !== ticket || t === null || t > liveAt || seenRuns.has(span.entity)) continue;
+    seenRuns.add(span.entity);
+    let slot = -1;
+    slots.forEach((v, i) => {
+      const vt = v ? startAt(v) : null;
+      if (vt !== null && vt <= t) slot = i;
+    });
+    if (slot < 0) slot = slots.findIndex((v) => v !== null);
+    if (slot < 0) continue;
+    const run = runOf(span, execSpans, liveAt);
+    const words = run ? runWords(run) : "a run";
+    unvisited.push({ label: `${words[0]!.toUpperCase()}${words.slice(1)}`, attempt: attemptOf(span), ref: span.entity, fromSlot: slot, toSlot: slot, from: t, to: endBy(span, liveAt), span, endReason: endBy(span, liveAt) !== null ? (span.end?.reason ?? null) : null });
+  }
+  return { ticket, rungs, rounds: rounds.runs, attempts: attempts.runs, unvisited, unroundedSlots: rounds.missing, unattemptedSlots: attempts.missing };
 }
 
 /** Whether a ladder is worth showing unselected: more than one build or verify visit, or a failed verification. */

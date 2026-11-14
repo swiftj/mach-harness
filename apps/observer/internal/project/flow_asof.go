@@ -332,6 +332,12 @@ func cutSlice(sl *Slice, t int64) *Slice {
 		}
 		n.Waits = append(n.Waits, w)
 	}
+	n.Holds = nil
+	for _, h := range sl.Holds {
+		if !later(h.At, t) {
+			n.Holds = append(n.Holds, h)
+		}
+	}
 	n.History = nil
 	for _, h := range sl.History {
 		if h.At == nil || *h.At <= t {

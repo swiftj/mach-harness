@@ -1002,7 +1002,8 @@
                                                           "digest": {"type": "string"},
                                                           "adopted": {"type": "boolean"},
                                                           "dependencies": {"type": "array", "items": {"type": "string"}},
-                                                          "reissued": {"type": ["boolean", "null"]}
+                                                          "reissued": {"type": ["boolean", "null"]},
+                                                          "title": {"type": ["string", "null"], "description": "M6.6. The slice's title as the intake ledger records it for this revision; null when not recorded. Product prose: a free-text field (display_policy.free_text)."}
                                                         }
                                         },
              "data_slice_integrated": {
@@ -1202,7 +1203,7 @@
                                                                      "required": ["minutes", "budget_usd"],
                                                                      "properties": {"minutes": {"type": "number"}, "budget_usd": {"type": "number"}}
                                                                    },
-                                                         "source_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,12}$", "description": "Revision 3. The intake log's product source commit on this event."},
+                                                         "source_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "Revision 3. The intake log's product source commit on this event, as recorded (in full since M6.6)."},
                                                          "provenance_reason": {"enum": ["not-recorded", "capture-failed", "not-understood", null], "description": "Revision 3. Why provenance is null: not-recorded (none at start: every execution before M6.5), capture-failed (the supervisor could not take it; the execution ran as usual), not-understood (another snapshot schema, or a null snapshot with a reason this observer does not know). Null when provenance is present."},
                                                          "provenance": {
                                                                           "description": "Revision 3. The snapshot the supervisor took once, at start (skills/run/scripts/provenance.py). Digests, versions, identifiers, numbers and booleans only.",
@@ -1214,7 +1215,7 @@
                                                                                            "config_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                                                                                            "mach": {"type": "object", "additionalProperties": false, "required": ["version", "install", "commit"],
                                                                                                     "properties": {"version": {"type": ["string", "null"], "pattern": "^[0-9A-Za-z.+-]{1,40}$"}, "install": {"enum": ["plugin", "project", null]},
-                                                                                                                   "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,12}$"}}},
+                                                                                                                   "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"}}},
                                                                                            "line": {"type": "object", "additionalProperties": false, "required": ["digest", "count", "files"],
                                                                                                     "properties": {"digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}, "count": {"type": ["integer", "null"]},
                                                                                                                    "files": {"type": "object", "propertyNames": {"pattern": "^(skill|agent|workflow|plugin):[a-z0-9][a-z0-9_-]{0,39}$"}, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}},
@@ -1233,7 +1234,7 @@
                                                                                            "ticket": {"type": "object", "additionalProperties": false, "required": ["risk", "app_type"],
                                                                                                       "properties": {"risk": {"enum": ["Low", "Medium", "High", null]}, "app_type": {"type": ["string", "null"]}}},
                                                                                            "source": {"type": "object", "additionalProperties": false, "required": ["commit", "slice_revision", "slice_digest", "spec_sha256"],
-                                                                                                      "properties": {"commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,12}$"}, "slice_revision": {"type": ["integer", "null"]},
+                                                                                                      "properties": {"commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"}, "slice_revision": {"type": ["integer", "null"]},
                                                                                                                      "slice_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}, "spec_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}}}
                                                                                          }
                                                                         }

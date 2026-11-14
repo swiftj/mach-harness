@@ -121,6 +121,17 @@ zoom to brush, a filter bar (execution, cell, slice, station, kind of event) and
 failure, retry, gate decision, human intervention, gap). Live execution keeps arriving while the playhead is in
 the past, exactly as on the Factory Floor: `following` is the store's flag.
 
+**As of the playhead (T6, changed in M6.6, I-04).** M6.3 drew the tracks, their hover words, the table and the lenses
+as of the live edge and tinted the stretch after the playhead. Since M6.6, with the playhead held behind the live
+edge they are held at the playhead, as the inspector is: the span set is cut there (`spansAsOf`, `marksAsOf`,
+`seriesAsOf` in `data/derive.ts`, the simulation's own `cutAt`), so nothing begun later is drawn, a span still open
+at the playhead reads as open with no outcome, and the moment is rounded down (`heldAtOf`). The toolbar's "Show what
+happened after this moment" (`timeline.revealAfter`, off by default, not in the address, turned off by Return to
+live) draws the rest up to the live edge, tinted and labelled "After the playhead". Following live is unchanged.
+The overview keeps the whole history's axis for navigation, but held at the playhead it draws no density, activity
+or landmark after it (`overviewAsOf`); that stretch is plain extent labelled "after this moment, not shown". A
+link whose `at` lies after the history's end goes to its last event (before its start, to its first) and says so.
+
 ## 4. Tracks: two projections of one span set
 
 Both groupings are pure functions of the same spans. Neither nests rounds under executions or the reverse.
@@ -180,8 +191,8 @@ Further rules:
   the last recorded time is drawn to that time with the `ring-query` mark and said as "no end recorded; the
   history ends at 06:42:22", never as running. Client presentation only (`attrs.historyEndsAt`); nothing is
   closed and the observer is not asked to. A live, enabled Factory keeps "at work".
-- Outcome colour (pass, fail, halt) is applied only to spans whose end is at or before the live edge of what is
-  held, and an outcome established by a later event is drawn at that event, not at the span's end.
+- Outcome colour (pass, fail, halt) is applied only to spans whose end is at or before the moment the tracks are
+  held at (the live edge, or the playhead when it is behind; section 3D), and an outcome established by a later event is drawn at that event, not at the span's end.
 - Authority shows as the left cap: filled (authoritative), ring with dot (observed), open triangle
   (reconstructed), dashed ring (simulated). The same glyphs as `AuthorityBadge`.
 - Span families differ by shape, not only colour: station visits are 8 px bars; executions 4 px rails with

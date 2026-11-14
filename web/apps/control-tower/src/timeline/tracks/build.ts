@@ -27,6 +27,7 @@ import {
 } from "../contract";
 import { packLanes, startedBy } from "./lanes";
 import { filterOf, idOf, individual, relationsOf, sliceOf, stationOf, ticketOf, execOf, type AgentGroup, type Relations } from "./relations";
+import { containedWords } from "../../text/fields";
 
 type Attention = TrackNode["attention"];
 type Counts = NonNullable<TrackNode["counts"]>;
@@ -112,6 +113,8 @@ interface Draft {
   /** An execution's recorded supervisor attempt, if any. */
   attempt?: string | null;
   note: string | null;
+  /** The label copies a free-text field (an agent's label). */
+  freeText?: boolean;
   /** Children sort by order, then (when byTime) by their earliest instant, then by id. */
   readonly order: number;
   readonly byTime: boolean;
@@ -436,7 +439,9 @@ function executionPlacer(rel: Relations): Placer {
     return node;
   };
   const labelAgent = (node: Draft, span: TimelineSpan | undefined, x: string): void => {
-    node.label = local(agentLabel(span), x);
+    // An agent's label is free text (agent.started data.label): bounded here, and the row is marked so no name or title quotes it.
+    node.label = span?.attrs.label ? containedWords("agentLabel", local(span.attrs.label, x)) || "Agent" : local(agentLabel(span), x);
+    node.freeText = Boolean(span?.attrs.label);
     node.detail = span?.attrs.model ?? null;
     node.note = span?.attrs.toolsCountOnly ? countOnlyNote(span) : null;
   };
@@ -460,7 +465,7 @@ function executionPlacer(rel: Relations): Placer {
           return { draft: claim(x), section: 0 };
         case "workflow": {
           const node = workflow(span.entity, x);
-          if (span.attrs.label) node.label = local(span.attrs.label, x);
+          if (span.attrs.label) node.label = containedWords("agentLabel", local(span.attrs.label, x)) || node.label;
           return { draft: node, section: 0 };
         }
         case "agent":
@@ -490,7 +495,7 @@ function executionPlacer(rel: Relations): Placer {
       if (span.kind === "workflow" && span.attrs.label) {
         const draft = d.get(span.entity);
         const x = execOf(span);
-        if (draft) draft.label = x ? local(span.attrs.label, x) : span.attrs.label;
+        if (draft) draft.label = containedWords("agentLabel", x ? local(span.attrs.label, x) : span.attrs.label) || draft.label;
       } else if (span.kind === "agent" || span.kind === "agent-queue") {
         if (span.kind === "agent" || rel.agentSpan.get(span.entity)?.kind !== "agent") rel.agentSpan.set(span.entity, span);
         const draft = d.get(span.entity);
@@ -735,6 +740,7 @@ class Finisher {
       ref: draft.ref,
       label: draft.label,
       detail: draft.detail,
+      ...(draft.freeText ? { freeText: true as const } : {}),
       depth,
       parentId: draft.parentId,
       children,
@@ -900,17 +906,37 @@ function makeTree(grouping: Grouping, roots: readonly TrackNode[], byId: Readonl
  * name their slice's wave).
  */
 export function markTrackOf(tree: TrackTree, ref: string): string | null {
+  const index = markIndexOf(tree);
+  if (!index) return tree.tracksOf(ref)[0] ?? null;
+  return index.get(ref) ?? null;
+}
+
+/** Ref -> the track a mark about it is drawn on, built in one pass over the tree's nodes, once per tree. */
+const markIndex = new WeakMap<TrackTree, Map<string, string>>();
+/** Work counters for tests (assignment work counted, never timed): index builds and nodes scanned to build them. */
+export const markAssignment = { indexBuilds: 0, nodesScanned: 0 };
+
+function markIndexOf(tree: TrackTree): Map<string, string> | null {
+  const known = markIndex.get(tree);
+  if (known) return known;
   const rel = internals.get(tree)?.rel;
-  if (!rel) return tree.tracksOf(ref)[0] ?? null;
-  let best: { id: string; rank: number; depth: number } | null = null;
+  if (!rel) return null;
+  markAssignment.indexBuilds += 1;
+  const best = new Map<string, { id: string; rank: number; depth: number }>();
   for (const node of tree.byId.values()) {
-    const rank = refsOfNode(node, rel).get(ref);
-    // About it: the track is it (-1), a span is it (0), or a ribbon is it (4). A span's parent (2) or
-    // ids (3) only name it: a station row is not where its execution's recovery happened.
-    if (rank === undefined || (rank !== -1 && rank !== 0 && rank !== 4)) continue;
-    if (!best || rank < best.rank || (rank === best.rank && (node.depth > best.depth || (node.depth === best.depth && node.id < best.id)))) best = { id: node.id, rank, depth: node.depth };
+    markAssignment.nodesScanned += 1;
+    for (const [ref, rank] of refsOfNode(node, rel)) {
+      // About it: the track is it (-1), a span is it (0), or a ribbon is it (4). A span's parent (2) or
+      // ids (3) only name it: a station row is not where its execution's recovery happened.
+      if (rank !== -1 && rank !== 0 && rank !== 4) continue;
+      const b = best.get(ref);
+      if (!b || rank < b.rank || (rank === b.rank && (node.depth > b.depth || (node.depth === b.depth && node.id < b.id)))) best.set(ref, { id: node.id, rank, depth: node.depth });
+    }
   }
-  return best?.id ?? null;
+  const index = new Map<string, string>();
+  for (const [ref, b] of best) index.set(ref, b.id);
+  markIndex.set(tree, index);
+  return index;
 }
 
 function sameFilters(a: TimelineFilters, b: TimelineFilters): boolean {

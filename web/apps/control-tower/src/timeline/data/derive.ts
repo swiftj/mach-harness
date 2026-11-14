@@ -3,7 +3,7 @@
  * density by bucketing event times, cutting a span set at what is held, and the honesty rules every
  * answer passes through (no outcome without an end, no tool span under a count-only agent).
  */
-import { extentOf, overlaps } from "../contract";
+import { extentOf, outcomeKnownAt, overlaps } from "../contract";
 import type { ConcurrencySeries, DensitySeries, SpanAttrs, SpanEnd, SpanKind, SpanQuery, TimeWindow, TimelineMark, TimelineSpan } from "../contract";
 
 /**
@@ -34,9 +34,15 @@ export function tileSizeFor(window: TimeWindow): number {
   return TILE_STEPS[TILE_STEPS.length - 1] as number;
 }
 
-/** The tiles covering a window, quantised outward to tile boundaries. */
+/** The most tiles one window is cut into (M6.6, security F1): a window millennia wide (one bad timestamp) never asks thousands. */
+export const MAX_TILES = 64;
+
+/** The tiles covering a window, quantised outward to tile boundaries; past a year's tiles the size doubles until at most MAX_TILES cover it. */
 export function tilesFor(window: TimeWindow): readonly TimeWindow[] {
-  const size = tileSizeFor(window);
+  let size = tileSizeFor(window);
+  const count = (z: number) => Math.max(1, Math.ceil(window.to / z) - Math.floor(window.from / z));
+  while (count(size) > MAX_TILES && Number.isFinite(size * 2)) size *= 2;
+  if (count(size) > MAX_TILES || !Number.isFinite(window.from) || !Number.isFinite(window.to)) return [window];
   const first = Math.floor(window.from / size) * size;
   const last = Math.max(first + size, Math.ceil(window.to / size) * size);
   const out: TimeWindow[] = [];
@@ -115,6 +121,49 @@ export function cutAt(span: TimelineSpan, liveAt: number, headAt: number = Numbe
   if (endAt === null || endAt <= liveAt) return span;
   if (span.start === null) return null; // only its end was known, and that has not happened yet
   return { ...span, end: null, outcome: null, duration: { ms: null, minMs: null, maxMs: null, basis: "open" }, attrs: attrsAsOf(span.attrs, liveAt) };
+}
+
+/**
+ * A span set as it stood at the playhead `at` (M6.6, I-04): what the tracks, their hover words, the
+ * table and the lenses show while the playhead is held behind the live edge and nothing after it is
+ * revealed. The same cut the simulation applies (`cutAt`): a span not begun by `at` is left out; one
+ * ending after `at` is open, with no end, no outcome and none of the attributes known only at the
+ * head; an outcome is kept only when its end is recorded at or before `at` (`outcomeKnownAt`), and a
+ * "no end recorded" tag only when the history had ended by `at`. Unchanged spans keep their identity.
+ */
+export function spansAsOf(spans: readonly TimelineSpan[], at: number): TimelineSpan[] {
+  const out: TimelineSpan[] = [];
+  for (const s of spans) {
+    let c = cutAt(s, at);
+    if (c === null) continue;
+    if (c.outcome !== null && !outcomeKnownAt(c, at)) c = { ...c, outcome: null };
+    if (c.attrs.historyEndsAt !== undefined && c.attrs.historyEndsAt > at) {
+      const attrs: { -readonly [K in keyof SpanAttrs]: SpanAttrs[K] } = { ...c.attrs };
+      delete attrs.historyEndsAt;
+      c = { ...c, attrs };
+    }
+    out.push(c);
+  }
+  return out;
+}
+
+/**
+ * Marks as they stood at `at`: none placed after it; an interval still running at `at` (a person
+ * needed, not yet answered) has no end yet.
+ */
+export function marksAsOf(marks: readonly TimelineMark[], at: number): TimelineMark[] {
+  const out: TimelineMark[] = [];
+  for (const m of marks) {
+    if (m.at > at) continue;
+    out.push(m.until !== null && m.until > at ? { ...m, until: null } : m);
+  }
+  return out;
+}
+
+/** A concurrency series as it stood at `at`: only buckets that had ended by then (a bucket's counts cover its whole width). */
+export function seriesAsOf<T extends { readonly bucketMs: number; readonly buckets: readonly { readonly from: number }[] }>(series: T, at: number): T {
+  const buckets = series.buckets.filter((b) => b.from + series.bucketMs <= at);
+  return buckets.length === series.buckets.length ? series : { ...series, buckets };
 }
 
 /** The kinds that are work while open and so are said to have no end when the history ends without one. */

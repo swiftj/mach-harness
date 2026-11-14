@@ -19,7 +19,7 @@ import type { AgentState, ArtifactState, CellState, DependencyState, EntityRef, 
 import { activityOf, capacityWaitOf, executionEndedAt, cellHome, gateOverrides, gateRefusals, isKnown, ref, SIM_META } from "../sim";
 import { activityWords, agentStatusWords, callCount, execSpan, modelWords, perCall, placed, tokenWords, visitEnd } from "./facts";
 import { visitRound } from "./flow";
-import { agentWords, GATE_WORDS, gateWords, modelWord, stageWords, visitStateWords, visitWords } from "./vocab";
+import { agentRoleWords, GATE_WORDS, gateWords, modelWord, stageWords, visitStateWords, visitWords } from "./vocab";
 import { clock, duration } from "./time";
 
 export type TreeKind = "wave" | "slice" | "dependency" | "artifact" | "execution" | "relay" | "visit" | "gate" | "agent" | "tool" | "finding";
@@ -144,7 +144,7 @@ function makeAgentNode(agent: AgentState, cell: CellState, parent: string, level
       if (!seat) continue;
       for (const f of round.findings) {
         if (f.seat !== seat.seat) continue;
-        items.push({ t: f.at, node: leaf(`f:${f.id}`, ref.finding(f.id), "finding", level + 1, id, `${f.severity === "blocker" ? "Blocker" : "Note"}${f.rule ? ` ${f.rule}` : ""}: ${f.title}${f.outvoted ? ", outvoted" : ""}`, cell.ticketId, { kind: "finding", finding: f }) });
+        items.push({ t: f.at, node: leaf(`f:${f.id}`, ref.finding(f.id), "finding", level + 1, id, `${f.severity === "blocker" ? "Blocker" : "Note"}${f.rule ? ` ${f.rule}` : ""} from the ${f.seat} seat${f.outvoted ? ", outvoted" : ""}`, cell.ticketId, { kind: "finding", finding: f }) });
       }
     }
   }
@@ -160,10 +160,10 @@ function agentName(agent: AgentState): string {
   const approx = placed(agent.meta.start) || placed(agent.meta.end) ? "about " : "";
   const status = agent.lifecycle === "done" && took !== null ? `finished in ${approx}${duration(took)}` : agentStatusWords(agent, false);
   const model = modelWords(agent, modelWord(agent.model));
-  if (perCall(agent)) return `${agentWords(agent)}, ${model}, ${status}, ${plural(agent.toolCalls.length, "tool call")}`;
+  if (perCall(agent)) return `${agentRoleWords(agent)}, ${model}, ${status}, ${plural(agent.toolCalls.length, "tool call")}`;
   const n = callCount(agent);
   const tokens = tokenWords(agent.tokens);
-  return `${agentWords(agent)} (${agent.label}), phase ${agent.phase}, ${model}, ${status}, ${n === null ? "tool calls not reported yet" : `${plural(n, "tool call")} counted`}${agent.lastTool ? `, last tool ${agent.lastTool}` : ""}${tokens ? `, ${tokens}` : ""}. Individual calls are not observable for workflow agents.`;
+  return `${agentRoleWords(agent)}, ${model}, ${status}, ${n === null ? "tool calls not reported yet" : `${plural(n, "tool call")} counted`}${agent.lastTool ? `, last tool ${agent.lastTool}` : ""}${tokens ? `, ${tokens}` : ""}. Individual calls are not observable for workflow agents.`;
 }
 
 function buildCell(scene: Scene, slice: SliceState, cell: CellState, executions: readonly ExecutionState[], deps: readonly DependencyState[], gatesByExec: ReadonlyMap<string, readonly GateState[]>, level: number, parent: string): TreeNode {
@@ -222,16 +222,15 @@ function buildCell(scene: Scene, slice: SliceState, cell: CellState, executions:
     }
     for (const i of items) kids.push(i.node);
     const activity = activityOf(scene, ref.execution(x.id));
-    const state = `${activity.label ? activity.label.toLowerCase() : activityWords(activity.state)}${x.state === "completed" && x.outcome?.waitingFor ? `, waiting for ${x.outcome.waitingFor}` : ""}`;
+    const state = `${activity.label ? activity.label.toLowerCase() : activityWords(activity.state)}${x.state === "completed" && x.outcome?.waitingFor ? ", stopped to wait (what for is recorded as free text)" : ""}`;
     const span = execSpan(x);
     const name = `Execution ${xi + 1} of ${executions.length}, ${x.workflow ?? "workflow"}, ${state}, started ${clock(span.start)}${span.end !== null ? `, ended ${clock(span.end)}` : ""}`;
     children.push({ id: xid, ref: ref.execution(x.id), kind: "execution", level: xLevel, parent: laneId, children: kids, name, ticketId: cell.ticketId, data: { kind: "execution", execution: x, index: xi, count: executions.length } });
   });
   // A title or risk the history does not hold is said to be not recorded, never read from a placeholder.
-  const title = isKnown(slice.meta, "title") ? slice.title : "Title not recorded";
   const risk = isKnown(cell.meta, "risk") ? `${cell.risk} risk` : isKnown(slice.meta, "risk") ? `${slice.risk} risk` : "risk not recorded";
   const notices = laneNotices(scene, cell);
-  const name = `${title}, ${cell.ticketId}, ${slice.id}, ${risk}, ${stageWords(cell.stage)}${cell.round > 1 ? `, round ${cell.round} of 3` : ""}${notices.length ? `; ${notices.map((n) => n.words).join("; ")}` : ""}`;
+  const name = `${cell.ticketId}, ${slice.id}, ${risk}, ${stageWords(cell.stage)}${cell.round > 1 ? `, round ${cell.round} of 3` : ""}${notices.length ? `; ${notices.map((n) => n.words).join("; ")}` : ""}`;
   return { id: laneId, ref: ref.cell(cell.ticketId), kind: "slice", level, parent, children, name, ticketId: cell.ticketId, data: { kind: "slice", slice, cell } };
 }
 
@@ -277,7 +276,7 @@ function waitingLane(scene: Scene, slice: SliceState, deps: readonly DependencyS
   const laneId = `s:${slice.id}`;
   const kids = deps.map((dep) => leaf(`d:${dep.id}`, ref.dependency(dep.from, dep.to), "dependency", 3, laneId, `Waits for ${dep.to}: ${dep.state === "satisfied" ? `satisfied at ${clock(dep.satisfiedAt ?? 0)}` : "blocking"}`, slice.ticketId, { kind: "dependency", dep }));
   const wait = laneNotices(scene, null, slice.ticketId)[0];
-  return { id: laneId, ref: ref.slice(slice.id), kind: "slice", level: 2, parent: wid, children: kids, name: `${isKnown(slice.meta, "title") ? slice.title : "Title not recorded"}, ${slice.id}, ${isKnown(slice.meta, "risk") ? `${slice.risk} risk` : "risk not recorded"}, ${slice.scheduler.replace(/-/g, " ")}${slice.reasons[0] ? `: ${slice.reasons[0]}` : ""}${wait ? `; ${wait.words}` : ""}`, ticketId: slice.ticketId, data: { kind: "slice", slice, cell: null } };
+  return { id: laneId, ref: ref.slice(slice.id), kind: "slice", level: 2, parent: wid, children: kids, name: `${slice.id}, ${isKnown(slice.meta, "risk") ? `${slice.risk} risk` : "risk not recorded"}, ${slice.scheduler.replace(/-/g, " ")}${slice.reasons.length ? `, ${slice.reasons.length} reason${slice.reasons.length === 1 ? "" : "s"} recorded` : ""}${wait ? `; ${wait.words}` : ""}`, ticketId: slice.ticketId, data: { kind: "slice", slice, cell: null } };
 }
 
 /** The wave a lane stands under for slices and cells the history never placed in a wave. */

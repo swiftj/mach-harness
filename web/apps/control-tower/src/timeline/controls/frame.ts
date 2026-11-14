@@ -618,26 +618,48 @@ export function switchLens(
   return { patch: { ...left, ...preset }, memo: { base: { filters: start.filters, grouping: start.grouping, window: start.window }, applied } };
 }
 
-// ---------------------------------------------------------------- as of the live edge (T6)
+// ---------------------------------------------------------------- as of the playhead (T6, M6.6 I-04)
 
-/** What "as of" the tracks, the table and the lenses speak, beside the playhead the inspector follows. */
+/**
+ * What "as of" the tracks, the table and the lenses speak. M6.3 (T6) drew what is held up to the live
+ * edge whatever the playhead; M6.6 (I-04) holds them at the playhead, like the inspector: scrubbed back,
+ * nothing after the playhead is drawn or named unless the person asks for it ("Show what happened after
+ * this moment", `revealAfter`), and then it is tinted.
+ */
 export interface AsOf {
-  /** True when the playhead is behind the live edge: the tracks show more than the inspector does. */
+  /** True when the playhead is behind the live edge. */
   readonly behind: boolean;
   readonly playhead: number;
   readonly liveAt: number;
+  /** Behind, and what happened after the playhead is shown (on request): the tracks show more than the inspector does. */
+  readonly revealed: boolean;
 }
 
 /** Below this the playhead is "at" the live edge (a frame's worth of rounding). */
 const AS_OF_SLACK_MS = 1000;
 
 /**
- * The tracks, table and lenses show what is held up to the live edge; the inspector speaks as of the
- * playhead. They differ when the playhead is not following and lies behind the edge (scrubbed back,
- * a jump, a seek, a replay paused before its end).
+ * Whether the playhead is behind the live edge (not following, and behind it by more than the slack:
+ * scrubbed back, a jump, a seek, a replay paused before its end), and whether what happened after it
+ * is revealed.
  */
-export function asOfPlayhead(s: { readonly following: boolean; readonly playhead: number; readonly liveAt: number }): AsOf {
-  return { behind: !s.following && s.playhead < s.liveAt - AS_OF_SLACK_MS, playhead: s.playhead, liveAt: s.liveAt };
+export function asOfPlayhead(s: { readonly following: boolean; readonly playhead: number; readonly liveAt: number; readonly timeline?: { readonly revealAfter?: boolean } }): AsOf {
+  const behind = !s.following && s.playhead < s.liveAt - AS_OF_SLACK_MS;
+  return { behind, playhead: s.playhead, liveAt: s.liveAt, revealed: behind && s.timeline?.revealAfter === true };
+}
+
+/**
+ * The moment the tracks are cut at, or null when they show what is held up to the live edge (following,
+ * at the edge, or revealed). Paused, the playhead itself; while playing, rounded DOWN to the live edge's step (`quantizedLiveAt`'s), so the tracks are
+ * rebuilt a few times a second at most while a replay plays and never show a moment past the playhead.
+ */
+export function heldAtOf(s: { readonly following: boolean; readonly playhead: number; readonly liveAt: number; readonly playing?: boolean; readonly extent: { readonly start: number; readonly end: number }; readonly timeline?: { readonly revealAfter?: boolean } }): number | null {
+  const a = asOfPlayhead(s);
+  if (!a.behind || a.revealed) return null;
+  // Paused (a jump, a seek, a link): the playhead itself, so a mark jumped to is drawn at it.
+  if (!s.playing) return s.playhead;
+  const step = Math.max(250, Math.round((Math.max(s.extent.end, s.liveAt) - s.extent.start) / 1000));
+  return Math.floor(s.playhead / step) * step;
 }
 
 /** The time in the caption: the source's clock (simulated time for the simulation, UTC for real history). */
@@ -647,12 +669,16 @@ export function asOfClock(t: number): string {
 
 /** The toolbar's quiet line while the playhead is behind: null at the live edge. */
 export function asOfCaption(a: AsOf): string | null {
-  return a.behind ? `Tracks show what is held up to the live edge; the playhead is at ${asOfClock(a.playhead)}` : null;
+  if (!a.behind) return null;
+  return a.revealed
+    ? `Showing what happened after the playhead at ${asOfClock(a.playhead)}, tinted, up to the live edge`
+    : `Tracks show what had happened by the playhead at ${asOfClock(a.playhead)}; nothing later is drawn`;
 }
 
 /** The table's and each lens's caption while the playhead is behind: null at the live edge. */
 export function asOfShort(a: AsOf): string | null {
-  return a.behind ? `As of the live edge; playhead at ${asOfClock(a.playhead)}` : null;
+  if (!a.behind) return null;
+  return a.revealed ? `Including what happened after the playhead at ${asOfClock(a.playhead)}` : `As of the playhead at ${asOfClock(a.playhead)}`;
 }
 
 // ---------------------------------------------------------------- selecting and seeking (X3, X13)
@@ -802,21 +828,23 @@ export function toolbarFitKey(p: {
   readonly lens: string | null;
   readonly filters: number;
   readonly jump: string;
-  readonly caption: boolean;
+  /** Whether the as-of caption is shown, and with which reveal control (I-04): its words change the row's width. */
+  readonly caption: boolean | "held" | "revealed";
   readonly table: boolean;
   readonly pinnedAhead: number | null;
   readonly length: string;
 }): string {
   const pinned = p.pinnedAhead === null ? "" : windowLengthWords(p.pinnedAhead);
-  return [p.rowWidth, p.lens ?? "", p.filters, p.jump, p.caption ? 1 : 0, p.table ? 1 : 0, pinned, p.length].join("|");
+  return [p.rowWidth, p.lens ?? "", p.filters, p.jump, p.caption === true ? 1 : p.caption === false ? 0 : p.caption, p.table ? 1 : 0, pinned, p.length].join("|");
 }
 
 /**
  * Below this width of the Timeline's own column (not the window: an inspector column beside it takes
  * its share), the shared transport drops its secondary words (since when nothing runs, how far back),
- * so its speed control is never clipped.
+ * so its speed control is never clipped. M6.6: 1160, so a 1100 px window reviewing an earlier moment
+ * ("Reviewing … back", new events, Return to live, Follow at live) no longer clips the speeds.
  */
-export const TRANSPORT_FULL_WIDTH = 1100;
+export const TRANSPORT_FULL_WIDTH = 1160;
 
 export function transportCompact(columnWidth: number): boolean {
   return columnWidth > 0 && columnWidth < TRANSPORT_FULL_WIDTH;

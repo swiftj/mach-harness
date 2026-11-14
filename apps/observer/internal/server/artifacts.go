@@ -187,6 +187,15 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 			refuse(http.StatusForbidden, "credential-name", "The artifact's name says it holds credentials; its content is never served.")
 			return
 		}
+		// What is wrong with the file itself, said as such (M6.6 F7), not as a type.
+		switch e.AccessReason {
+		case artifact.TooLargeReason:
+			refuse(http.StatusRequestEntityTooLarge, "too-large", "The artifact is larger than the observer serves.")
+			return
+		case artifact.DuplicateReason:
+			refuse(http.StatusConflict, "duplicate", "The archive holds more than one file of this name; neither is served.")
+			return
+		}
 		refuse(http.StatusUnsupportedMediaType, "type", "The observer does not serve this artifact's content: "+e.AccessReason+".")
 		return
 	case "media-disabled":
@@ -211,6 +220,9 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, artifact.ErrChanged), errors.Is(err, artifact.ErrSwapped):
 		refuse(http.StatusConflict, "changed", "The artifact changed since it was catalogued; reload the catalog.")
+		return
+	case errors.Is(err, artifact.ErrDuplicate):
+		refuse(http.StatusConflict, "duplicate", "The archive holds more than one file of this name; neither is served.")
 		return
 	case errors.Is(err, artifact.ErrCredentialName):
 		refuse(http.StatusForbidden, "credential-name", "The artifact's name says it holds credentials; its content is never served.")
@@ -272,6 +284,7 @@ func freeTextPolicy() map[string]any {
 		"artifact_field":    "free_text",
 		"artifact_header":   redact.FreeTextHeader + ": " + redact.FreeTextValue,
 		"event_fields":      redact.FreeTextFields,
+		"projection_fields": redact.ProjectionFields, // M6.6: where the projection serves copies of them
 		"render":            "text only; never markup",
 	}
 }

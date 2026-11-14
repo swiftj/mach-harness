@@ -255,6 +255,12 @@ export interface FactoryState {
 export interface SupervisorState {
   readonly lastDecisionAt: number | null;
   readonly lastDecision: { readonly dispatched: readonly string[]; readonly started: readonly string[]; readonly held: readonly { readonly id: string; readonly why: string }[] } | null;
+  /**
+   * M6.6: what the last scheduling decision holds, by slice id and by ticket id: the supervisor's
+   * recorded words (free text, never classified) and when it first held it for them. Absent in
+   * scenes built before it; empty when nothing is held.
+   */
+  readonly holds?: Readonly<Record<string, { readonly why: string; readonly since: number; readonly seq: number }>>;
   /** Things a person must decide, by slice or ticket (human.required). */
   readonly attention: Readonly<Record<string, { readonly reason: string; readonly at: number; readonly seq: number }>>;
 }

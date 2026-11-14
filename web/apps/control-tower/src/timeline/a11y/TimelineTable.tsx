@@ -25,7 +25,7 @@ import { getTimeBase, spokenTime, timecode } from "../../shell/vocab";
 import { attentionOf, outcomeKnownAt, type SelectGesture, type SpanEnd, type TimelineSpan, type TimelineTableProps } from "../contract";
 import { countsWords, describeSpan, durationWords, nodeState, shownCounts } from "../render";
 import { useAsOf } from "../controls";
-import { attentionWords, countWords, heldEnd, momentWords, openContext, summaryWords, windowSummary, type Attention, type TrackSummary } from "./describe";
+import { attentionWords, codesOnlyName, countWords, heldEnd, momentWords, openContext, summaryWords, windowSummary, type Attention, type TrackSummary } from "./describe";
 import { useSceneStore } from "../../scene";
 import { buildGridRows, gridKey, indexWindow, scrollToShow, STACK_BELOW, STACKED, visibleRange, WIDE, type GridGeometry, type GridRow } from "./model";
 
@@ -252,7 +252,7 @@ const Row = memo(function Row({ row, index, active, liveAt, summary, selected, g
   const own = nodeState(node, liveAt);
   const counted = countsWords(shownCounts(node));
   const word = own.words ? own.words[0]!.toUpperCase() + own.words.slice(1) : "";
-  const what = s ? summaryWords(node, s) : node.label;
+  const what = s ? summaryWords(node, s) : codesOnlyName(node);
   return (
     <div {...common} aria-expanded={row.expandable ? row.expanded : undefined}>
       <Cell area="track">

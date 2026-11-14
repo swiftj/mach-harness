@@ -17,6 +17,7 @@ import type { ContributorsReply, InsightsReply, MetricRow, MetricsReply, RunItem
 import type { RunConfigs } from "../model/cohorts";
 import type { AreaData, AreaSource } from "../ui/types";
 import { concurrencyBucket, listsGroupOf, listsRowsOf, type AreaPlan, type QueryFilters } from "./query";
+import type { SnapshotHistory } from "./history";
 
 export const NO_ANALYTICS_REASON = "This observer does not serve Factory Analytics: it is older than the Analytics routes. Run an observer from this release to read these figures.";
 const NO_INSIGHTS_REASON = "This observer does not serve Improvement Opportunities.";
@@ -55,6 +56,8 @@ export interface LoadResult {
   readonly asOf: AsOf | null;
   /** Under a playhead: the UTC midnight every figure of the view is counted to (metrics by day, the run list cut there too). */
   readonly dayCut?: number | null;
+  /** D4: under a playhead, no whole UTC day of the history is complete before it: day-counted figures have nothing to count. */
+  readonly noWholeDay?: boolean;
   /** The newest event the observer applied (history.sources), when it said. */
   readonly lastEventMs?: number | null;
   /** Parts not read, in words. */
@@ -127,6 +130,8 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
     return fail(failureState(error));
   }
   if (totals.status !== "ok") return fail(absenceState(totals), totals.status === "cursor-gone");
+  // D1: the totals must be those of this view's cut (the snapshot keys and checks replies by it); defence in depth.
+  if ((totals.value.asOf?.ms ?? null) !== session.asOfMs) return fail({ state: "error", status: 409, reason: "The figures read describe another moment than this view's." }, true);
   const t = totals.value;
   input.onCursor?.(session.cursor);
 
@@ -193,14 +198,20 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
     const to = t.window.effective_to_ms ?? input.toMs ?? (input.source !== "simulation" && t.asOf === null && lastDay !== null ? Math.max(lastDay, input.endMs ?? 0) : null) ?? input.endMs ?? t.generated_ms ?? Date.now();
     // Nothing held yet (an empty history): the window is the last day, not an invented period.
     const from = t.window.effective_from_ms ?? input.fromMs ?? t.history.from_ms ?? Math.floor((to - 1) / D) * D;
-    const window = { from_ms: Math.min(from, to), to_ms: to };
+    const dayCutAt = t.asOf && !t.asOf.exact && t.asOf.effectiveToMs !== null ? t.asOf.effectiveToMs : null;
+    // D4: held at a playhead on the history's first day, the day cut lies at or before where the history
+    // begins: no whole day to count. The window is never inverted: it is the playhead's day up to the
+    // playhead, which the exactly-cut parts (flow, rows) cover.
+    const firstHeld = t.history.from_ms ?? from;
+    const noWholeDay = dayCutAt !== null && session.asOfMs !== null && dayCutAt <= Math.max(from, firstHeld);
+    const window = noWholeDay ? { from_ms: dayCutAt, to_ms: Math.max(dayCutAt + 1, session.asOfMs!) } : { from_ms: Math.min(from, to), to_ms: to };
 
     const [concurrency, freshness] = await Promise.all([
       plan.concurrency && window.to_ms > window.from_ms ? part("concurrency", () => input.data.concurrency({ fromMs: window.from_ms, toMs: window.to_ms, bucketMs: concurrencyBucket(window.from_ms, window.to_ms) })) : Promise.resolve(null),
       plan.freshness ? part("freshness", () => input.data.freshness()) : Promise.resolve(null),
     ]);
 
-    const dayCut = t.asOf && !t.asOf.exact && t.asOf.effectiveToMs !== null ? t.asOf.effectiveToMs : null;
+    const dayCut = dayCutAt;
     const groupedMetrics: MetricRow[] = groupedRows.flatMap((r) => r?.metrics ?? []).filter((m) => m.group_dims.length === 1);
     const contributors = [...fixedC, ...groupC].filter((c): c is { metric: string; dim: string | undefined; value: string | undefined; reply: ContributorsReply } => c !== null);
     const parts: SnapshotParts = {
@@ -224,12 +235,17 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
       historySources: t.history.sources,
     };
     if (plan.runs && runItems === null) notes.push("finished tickets were not listed: figures read from run records are not shown");
+    // I-03: how complete the counted history is, said where the figures are (wire/history.ts).
+    const history: SnapshotHistory = { partial: t.history.partial, gaps: t.history.gaps, suspect_days: t.suspect_days, as_of_ms: session.asOfMs };
+    const contract = toContractSnapshot(parts);
+    const snapshot: AnalyticsSnapshot = { ...(noWholeDay ? { ...withoutWholeDay(contract), no_whole_day: true as const } : contract), history };
     return {
       // Freshness from the status reply and the view's own history.sources (either alone is enough).
-      data: { state: "ready", value: plan.freshness ? { ...toContractSnapshot(parts), freshness: freshnessFor(freshness, t.history, flowReply?.coverage ?? null) } : toContractSnapshot(parts) },
+      data: { state: "ready", value: plan.freshness ? { ...snapshot, freshness: asOfFreshness(freshnessFor(freshness, t.history, flowReply?.coverage ?? null), session.asOfMs) } : snapshot },
       insights: insightsData,
       configs: runItems ? configsOf(runItems) : undefined,
       dayCut,
+      noWholeDay,
       lastEventMs: Number.isFinite(lastEvent) ? lastEvent : null,
       cursor: session.cursor,
       asOf: t.asOf,
@@ -243,6 +259,29 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
 }
 
 class CursorGone extends Error {}
+
+/** Said beside a figure counted by whole UTC days when none is complete before the playhead (D4). */
+export const NO_WHOLE_DAY_REASON = "no whole UTC day is complete before the playhead, so there is nothing to count by day";
+
+/** D4: day-counted figures with no value say why (wording only; values are left as the observer gave them). */
+function withoutWholeDay(s: AnalyticsSnapshot): AnalyticsSnapshot {
+  const say = (r: AnalyticsSnapshot["totals"][keyof AnalyticsSnapshot["totals"]]) => (r && r.value === null && r.as_of && !r.as_of.exact ? { ...r, null_reason: NO_WHOLE_DAY_REASON } : r);
+  const totals = Object.fromEntries(Object.entries(s.totals).map(([k, r]) => [k, say(r)]));
+  const grouped = Object.fromEntries(Object.entries(s.grouped).map(([k, r]) => [k, say(r)!]));
+  return { ...s, totals, grouped };
+}
+
+/** Said beside a source whose read time is not shown under a playhead. */
+export const READ_NOW_NOTE = "when the observer last read it is its time now, not the playhead's, so it is not shown";
+
+/**
+ * M6.6 (I-39): under a playhead, when the observer last read each source is its clock now, later than
+ * the moment the view describes: not shown (the column then goes), and the note says why.
+ */
+export function asOfFreshness<F extends { readonly last_read_ms?: number | null; readonly note?: string }>(rows: readonly F[], asOfMs: number | null): F[] {
+  if (asOfMs === null) return rows as F[];
+  return rows.map((f) => (f.last_read_ms == null ? f : { ...f, last_read_ms: null, note: f.note ? `${f.note}; ${READ_NOW_NOTE}` : READ_NOW_NOTE }));
+}
 
 type Part = <T>(what: string, run: () => Promise<SnapshotResult<T> | AnalyticsResult<T>>) => Promise<T | null>;
 

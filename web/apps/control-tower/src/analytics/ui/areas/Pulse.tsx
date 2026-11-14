@@ -17,7 +17,8 @@ import type { Insight, InsightsReply } from "../../data/types";
 import { capitalFirst, insightPopulation, populationWords, repeatsTitle, sampleWords } from "../../model/insights";
 import type { AreaData, PulseProps } from "../types";
 import { areaOf, measurementText } from "./Opportunities";
-import { AreaLink, MiniFig, NothingYet, Num, RecordedTotal } from "./shared";
+import { ACCEPTANCE_NOTE, AreaLink, MiniFig, NothingYet, Num, RecordedTotal } from "./shared";
+import { runRecordFoot } from "../../model/capped";
 
 const D = 86_400_000;
 
@@ -31,7 +32,7 @@ export function Pulse(props: PulseProps) {
 
 function PulseBody({ insights }: { insights: AreaData<InsightsReply> | undefined }) {
   const { snapshot: s, density } = useAnalytics();
-  if (density === "empty")
+  if (density === "empty" && !s.no_whole_day)
     return <NothingYet about={`The ${windowWords(s)} holds no finished ticket, no execution, no merge and no station visit. Factory Pulse reads what MACH writes as the line runs:`} />;
   const fs = insights?.state === "ready" ? insights.value.insights.slice(0, 4) : [];
   return (
@@ -121,7 +122,7 @@ function Lead() {
   } else if (density === "few") {
     body = (
       <>
-        <span className="an-num font-semibold">{s.runs.length}</span> tickets have finished in this history, between {s.runs[0]?.closed_at ? dayText(s.runs[0].closed_at.ms) : "–"} and {dayText(s.window.to_ms - 1)}. That is too few for a rate, a target verdict or a direction: each figure below is a count of what was recorded (“{shareText(1, s.runs.length)}”), and no trend is drawn.
+        <span className="an-num font-semibold">{s.runs.length}</span> {s.runs.length === 1 ? "ticket has" : "tickets have"} finished in this history{s.runs[0]?.closed_at ? `, between ${dayText(s.runs[0].closed_at.ms)} and ${dayText(s.window.to_ms - 1)}` : ` up to ${dayText(s.window.to_ms - 1)}`}. That is too few for a rate, a target verdict or a direction: each figure below is a count of what was recorded (“{shareText(1, s.runs.length)}”), and no trend is drawn.
       </>
     );
   } else {
@@ -171,7 +172,7 @@ function LeadNote() {
         <dt>Recorded</dt>
         <dd className="an-num">
           {plural(s.runs.length, "finished ticket")}
-          {executions !== null ? `, ${plural(executions, "execution")}` : ""}
+          {executions !== null ? `, ${plural(executions, "execution")} claimed` : ""}
         </dd>
         {thinnest ? (
           <>
@@ -252,13 +253,14 @@ function Ladder() {
               {st.row ? <Definition row={st.row} label={st.label} /> : null}
             </div>
             {st.value === null ? (
-              <span className="text-body-sm text-ink-muted">{rowMissing(st.row)?.title ?? "No value"}</span>
+              <span className="text-body-sm text-ink-muted">{rowMissing(st.row)?.title ?? (st.row?.null_reason ? st.row.null_reason.replace(/^(not recorded|not available|no value):\s*/i, "") : "No value")}</span>
             ) : (
               <div className="flex items-baseline gap-1">
                 <span className="an-fig text-[21px] text-ink">{count(st.value)}</span>
                 <span className="text-caption text-ink-subtle">{st.value === 1 ? st.unit[0] : st.unit[1]}</span>
               </div>
             )}
+            {st.value !== null && st.row && st.row.coverage.share !== null && st.row.coverage.share < 1 ? <div className="an-num text-caption text-ink-subtle">coverage {coverageText(st.row.coverage)}</div> : null}
           </li>
         ))}
         <li className="an-hatch border-l border-line px-3 py-2" data-state="not-recorded">
@@ -267,7 +269,7 @@ function Ladder() {
           <div className="text-caption text-ink-subtle">No MACH record says a person accepted a delivered slice.</div>
         </li>
       </ol>
-      <p className="mt-1.5 text-caption text-ink-subtle">The catalog's name for slices integrated is “Accepted delivery” (T2); it counts commits on the integration branch, not a product decision.</p>
+      <p className="mt-1.5 text-caption text-ink-subtle">The catalog's name for slices integrated is “Accepted delivery” (T2); it counts commits on the integration branch. {ACCEPTANCE_NOTE}</p>
     </div>
   );
 }
@@ -354,7 +356,7 @@ function QualityPanel() {
         merged.length === 0 ? (
           <p className="text-body-sm text-ink-muted">No merged ticket in this window.</p>
         ) : (
-          <ChartFrame size="sm" chart="pulse-first-pass" title="Merged tickets, first pass or remediated" summary={`${fp} of ${merged.length} merged tickets passed first time and ${merged.length - fp} were remediated${judge ? "; the observe station's target is above 85%" : ""}.`} table={{ columns: [{ label: "How" }, { label: "Tickets", num: true }], rows: [["First pass", count(fp)], ["Remediated", count(merged.length - fp)]] }}>
+          <ChartFrame size="sm" chart="pulse-first-pass" foot={runRecordFoot(merged.length, t.T1?.numerator_value ?? null)} title="Merged tickets, first pass or remediated" summary={`${fp} of ${merged.length} merged tickets passed first time and ${merged.length - fp} were remediated${judge ? "; the observe station's target is above 85%" : ""}.`} table={{ columns: [{ label: "How" }, { label: "Tickets", num: true }], rows: [["First pass", count(fp)], ["Remediated", count(merged.length - fp)]] }}>
             <PartsBar
               name="Merged tickets by how they passed"
               height={22}
@@ -395,7 +397,7 @@ function CostPanel() {
     <Panel
       title="Recorded cost"
       to="economics"
-      question={missing ? "What did executions record as spent?" : `${usd(t.K1?.numerator_value)} recorded, a lower bound.`}
+      question={missing ? "What did executions record as spent?" : t.K1?.numerator_value === null || t.K1?.numerator_value === undefined ? (t.K1?.null_reason ?? "No cost is counted for this view.") : `${usd(t.K1.numerator_value)} recorded, a lower bound.`}
       chart={
         <div ref={box} className="min-w-0">{missing ? (
           <NotRecorded compact title={missing.title} what={missing.why} why="Nothing is drawn in its place." />
@@ -457,7 +459,7 @@ function ReliabilityPanel() {
         ) : !p.partition ? (
           <p className="text-body-sm text-ink-muted">These endings overlap in this window, so they are not drawn as parts of one whole; each is shown over its own base in Reliability.</p>
         ) : (
-          <ChartFrame size="sm" chart="pulse-outcomes" title={`How ${plural(p.claimed, "claimed execution")} ended`} summary={p.parts.map((x) => `${OUTCOME_WORDS[x.key]} ${x.count}`).join(", ")} table={{ columns: [{ label: "Ending" }, { label: "Executions", num: true }], rows: p.parts.map((x) => [area ? <button key={x.key} type="button" className="an-link inline-flex min-h-6 items-center" onClick={() => area("reliability", `outcome:${x.key}`)}>{OUTCOME_WORDS[x.key]}</button> : OUTCOME_WORDS[x.key], count(x.count)]) }}>
+          <ChartFrame size="sm" chart="pulse-outcomes" foot="Base: the executions claimed in this window (X1's denominator), each once by how it ended; open: no end recorded yet." title={`How ${plural(p.claimed, "claimed execution")} ended`} summary={p.parts.map((x) => `${OUTCOME_WORDS[x.key]} ${x.count}`).join(", ")} table={{ columns: [{ label: "Ending" }, { label: "Executions", num: true }], rows: p.parts.map((x) => [area ? <button key={x.key} type="button" className="an-link inline-flex min-h-6 items-center" onClick={() => area("reliability", `outcome:${x.key}`)}>{OUTCOME_WORDS[x.key]}</button> : OUTCOME_WORDS[x.key], count(x.count)]) }}>
             <PartsBar name={`How ${p.claimed} claimed executions ended`} height={22} parts={p.parts.map((x) => ({ key: x.key, label: OUTCOME_WORDS[x.key], value: x.count, text: count(x.count), tone: OUTCOME_TONES[x.key], hatch: x.key === "open" }))} onActivate={area ? (k) => area("reliability", `outcome:${k}`) : undefined} />
           </ChartFrame>
         )

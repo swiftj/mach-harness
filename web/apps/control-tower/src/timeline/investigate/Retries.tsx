@@ -15,6 +15,8 @@ import { Caption, Diamond, Empty, Fig, Figures, FrameFig, Hit, Mark, MONO, MUTED
 import { compareRungs, endBy, frameAbout, frameOf, retryLadders, rungTimings, spanSource, startAt, verdictWords, type Ladder, type Rung, type RungVerdict } from "./model";
 
 const BLOCK = 112;
+/** The extra line under the rail for runs with no visit of their own (N10). */
+const UNVISITED_ROW = 14;
 const CHIP_Y = 40;
 const CHIP_H = 14;
 const RAIL_Y = 82;
@@ -138,7 +140,7 @@ function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal
   };
 
   return (
-    <svg width={drawW} height={BLOCK} role="presentation" style={{ display: "block" }}>
+    <svg width={drawW} height={BLOCK + (ladder.unvisited.length ? UNVISITED_ROW : 0)} role="presentation" style={{ display: "block" }}>
       <defs>
         <linearGradient id="mach-inv-open" x1="0" x2="1">
           <stop offset="0" stopColor="var(--mach-factory-ground)" stopOpacity={0} />
@@ -264,6 +266,21 @@ function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal
               {interrupted ? <tspan style={{ fontWeight: 400, fill: fc("halt") }}> · interrupted</tspan> : unknown ? <tspan style={{ fontWeight: 400, fill: SUBTLE }}> · outcome not known</tspan> : null}
             </text>
             <Ring x={a} y={RAIL_Y - 4} w={b - a} h={8} />
+          </Fig>
+        );
+      })}
+      {/* N10: a run no build or verify visit was recorded in, labelled at the pass it fell in, on its own line. */}
+      {ladder.unvisited.map((x) => {
+        const a = slotL(x.fromSlot) + 2;
+        const interrupted = x.endReason === "interrupted" || x.endReason === "superseded";
+        const failed = x.endReason === "failed";
+        return (
+          <Fig key={`u${x.ref}`} id={`attempt:${x.ref}`} name={`${x.label} for ${ladder.ticket}${x.from !== null ? `, started ${when(x.from)}` : ""}${x.to !== null ? `, ended ${when(x.to)}` : ""}${failed ? ", failed" : interrupted ? ", interrupted" : ""}; no build or verify visit was recorded in it`} sources={x.span ? [spanSource(x.span, "execution")] : []} onActivate={() => onReveal(x.ref, x.from ?? undefined)}>
+            <Hit x={a} y={RAIL_Y + 19} w={150} h={12} />
+            <text x={a + 1} y={RAIL_Y + 29} style={{ ...SANS, fontSize: 10.5, fill: MUTED, fontWeight: 600 }}>
+              {x.label}
+              <tspan style={{ fontWeight: 400, fill: SUBTLE }}>{failed ? " · failed" : interrupted ? " · interrupted" : ""} · no visit of its own</tspan>
+            </text>
           </Fig>
         );
       })}
