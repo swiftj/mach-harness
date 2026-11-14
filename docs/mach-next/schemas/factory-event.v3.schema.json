@@ -32,7 +32,7 @@
                   "schema_revision": {
                                        "type": "integer",
                                        "minimum": 0,
-                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events."
+                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events. Revision 3: execution.started gains source_commit, provenance (the snapshot the supervisor took at start, or null) and provenance_reason."
                                      },
                   "id": {
                           "type": "string",
@@ -1201,7 +1201,42 @@
                                                                      "additionalProperties": false,
                                                                      "required": ["minutes", "budget_usd"],
                                                                      "properties": {"minutes": {"type": "number"}, "budget_usd": {"type": "number"}}
-                                                                   }
+                                                                   },
+                                                         "source_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,12}$", "description": "Revision 3. The intake log's product source commit on this event."},
+                                                         "provenance_reason": {"enum": ["not-recorded", "capture-failed", "not-understood", null], "description": "Revision 3. Why provenance is null: not-recorded (none at start: every execution before M6.5), capture-failed (the supervisor could not take it; the execution ran as usual), not-understood (another snapshot schema, or a null snapshot with a reason this observer does not know). Null when provenance is present."},
+                                                         "provenance": {
+                                                                          "description": "Revision 3. The snapshot the supervisor took once, at start (skills/run/scripts/provenance.py). Digests, versions, identifiers, numbers and booleans only.",
+                                                                          "type": ["object", "null"],
+                                                                          "additionalProperties": false,
+                                                                          "required": ["schema", "mach", "line", "config", "policy", "ticket", "source", "config_id"],
+                                                                          "properties": {
+                                                                                           "schema": {"const": 1},
+                                                                                           "config_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                                                                                           "mach": {"type": "object", "additionalProperties": false, "required": ["version", "install", "commit"],
+                                                                                                    "properties": {"version": {"type": ["string", "null"], "pattern": "^[0-9A-Za-z.+-]{1,40}$"}, "install": {"enum": ["plugin", "project", null]},
+                                                                                                                   "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,12}$"}}},
+                                                                                           "line": {"type": "object", "additionalProperties": false, "required": ["digest", "count", "files"],
+                                                                                                    "properties": {"digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}, "count": {"type": ["integer", "null"]},
+                                                                                                                   "files": {"type": "object", "propertyNames": {"pattern": "^(skill|agent|workflow|plugin):[a-z0-9][a-z0-9_-]{0,39}$"}, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}},
+                                                                                           "config": {"type": "object", "additionalProperties": false, "required": ["recorded", "digest", "models", "review", "max_parallel"],
+                                                                                                      "properties": {"recorded": {"type": ["boolean", "null"]}, "digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}, "max_parallel": {"type": ["integer", "null"]},
+                                                                                                                     "models": {"type": ["object", "null"], "description": "A name that is not a plain identifier is sha256:<digest>.", "additionalProperties": {"type": "string"}},
+                                                                                                                     "review": {"type": ["object", "null"], "additionalProperties": false, "required": ["max_loops", "security_veto", "tiers"],
+                                                                                                                                "properties": {"max_loops": {"type": ["integer", "null"]}, "security_veto": {"type": ["boolean", "null"]},
+                                                                                                                                               "tiers": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": false,
+                                                                                                                                                                                                 "required": ["approvals", "reviewers", "human_approval"],
+                                                                                                                                                                                                 "properties": {"approvals": {"type": ["integer", "null"]}, "reviewers": {"type": ["integer", "null"]}, "human_approval": {"type": ["boolean", "null"]}}}}}}}},
+                                                                                           "policy": {"type": "object", "additionalProperties": false,
+                                                                                                      "required": ["autonomy", "max_risk", "allow_merge", "max_parallel", "allowed_tools_digest", "allowed_tools_count"],
+                                                                                                      "properties": {"autonomy": {"enum": ["observe", "supervised", null]}, "max_risk": {"enum": ["Low", "Medium", "High", null]},
+                                                                                                                     "allow_merge": {"type": ["boolean", "null"]}, "max_parallel": {"type": ["number", "null"]}, "allowed_tools_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}, "allowed_tools_count": {"type": ["integer", "null"]}}},
+                                                                                           "ticket": {"type": "object", "additionalProperties": false, "required": ["risk", "app_type"],
+                                                                                                      "properties": {"risk": {"enum": ["Low", "Medium", "High", null]}, "app_type": {"type": ["string", "null"]}}},
+                                                                                           "source": {"type": "object", "additionalProperties": false, "required": ["commit", "slice_revision", "slice_digest", "spec_sha256"],
+                                                                                                      "properties": {"commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,12}$"}, "slice_revision": {"type": ["integer", "null"]},
+                                                                                                                     "slice_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}, "spec_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}}}
+                                                                                         }
+                                                                        }
                                                        }
                                        },
              "data_station_observed": {
@@ -1670,7 +1705,7 @@
                                     "properties": {
                                                     "record_version": {"type": "integer"},
                                                     "outcome": {"enum": ["merged", "abandoned"]},
-                                                    "rounds": {"type": ["integer", "null"]},
+                                                    "rounds": {"type": ["number", "null"]},
                                                     "first_pass": {"type": "boolean"},
                                                     "verify_failures": {"type": "integer"},
                                                     "review_rejections": {"type": "integer"},
@@ -1678,11 +1713,11 @@
                                                     "human_approval": {"type": "boolean"},
                                                     "deviations": {"type": "integer"},
                                                     "blockers": {"type": "integer"},
-                                                    "tests_seen_failing_first": {"type": "integer"},
-                                                    "tests_passing_on_first_run": {"type": "integer"},
+                                                    "tests_seen_failing_first": {"type": "number"},
+                                                    "tests_passing_on_first_run": {"type": "number"},
                                                     "risk": {"enum": ["High", "Medium", "Low", null]},
                                                     "app_type": {"type": ["string", "null"]},
-                                                    "merge_method": {"enum": ["local", "pr", null]},
+                                                    "merge_method": {"enum": ["local", "pr", "squash-or-rebase", "manual", null]},
                                                     "merge_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"}
                                                   }
                                   },

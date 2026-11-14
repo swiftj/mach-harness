@@ -20,8 +20,9 @@ import (
 const SchemaVersion = 3
 
 // SchemaRevision is the additive revision within version 3 that this observer serves (1:
-// execution.usage.cost_complete and cost_incomplete_reasons).
-const SchemaRevision = 2
+// execution.usage.cost_complete and cost_incomplete_reasons; 2: history.gap class and history_lost,
+// origin.runtime_state; 3: execution.started source_commit, provenance and provenance_reason).
+const SchemaRevision = 3
 
 // Errors a Log read returns.
 var (

@@ -19,6 +19,10 @@ var depsFor = map[int][][]int{1: {{0}}, 4: {{2}}, 7: {{1}, {4}, {6}}, 8: {{3}}, 
 var archivedCells = map[int]bool{0: true, 1: true}
 
 func (w *world) setup() {
+	if w.o.Analytics {
+		w.setupAnalytics()
+		return
+	}
 	n := w.o.Cells
 	waveAt := []float64{300, 5400, 12600}
 	for i := 0; i < 3; i++ {
@@ -95,14 +99,14 @@ func (w *world) allIntegrated(list []*cell, t float64) bool {
 func (w *world) simulate() float64 {
 	w.setup()
 	w.intakeAdd(0, "factory.activated", "engineer", nil, nil, nil, map[string]any{"autonomy": "supervised",
-		"limits": map[string]any{"max_parallel": maxParallel, "minutes": 240, "budget_usd": 40}, "allow_merge": true, "persistent": false,
+		"limits": map[string]any{"max_parallel": w.maxPar(), "minutes": 240, "budget_usd": 40}, "allow_merge": true, "persistent": false,
 		"backlog": nil, "excluded_slices": []any{}})
 	held := map[string]bool{}
 	observed := map[string]string{}
 	var settled float64 // all closed work has ended by here
 	stopAt := math.Inf(1)
 	pass := 0
-	for t := passEvery; t <= stopAt && t < 2e6; t += passEvery {
+	for t := passEvery; t <= stopAt && t < w.loopCap(); t += passEvery {
 		pass++
 		// Waves arrive.
 		for _, wv := range w.waves {
@@ -130,10 +134,15 @@ func (w *world) simulate() float64 {
 			if c.merged > 0 && c.integrated == 0 && c.merged+90 <= t {
 				c.integrated = c.merged + 90
 				w.intakeAdd(c.integrated, "slice.integrated", "intake", nil, c.slice, nil, map[string]any{"commit": c.head}).ticket = c.ticket
-				if c.archived {
+				if w.an != nil {
+					w.cleanupA(c, c.integrated+500, "merged")
+				} else if c.archived {
 					w.cleanup(c, c.integrated+500)
 				}
 			}
+		}
+		if w.an != nil {
+			w.analyticsPass(t)
 		}
 		// Dependencies resolve; new revisions add more.
 		for _, s := range w.slices {
@@ -185,7 +194,7 @@ func (w *world) simulate() float64 {
 		nowHeld := map[string]bool{}
 		var heldList []any
 		for _, c := range candidates {
-			if running < maxParallel {
+			if running < w.maxPar() {
 				running++
 				w.startSegment(c, t+3)
 				started = append(started, c.ticket)
@@ -197,7 +206,7 @@ func (w *world) simulate() float64 {
 				c.heldSince = t
 				w.capacityWaits++
 			}
-			heldList = append(heldList, map[string]any{"slice_id": c.slice.id, "ticket_id": c.ticket, "why": fmt.Sprintf("all %d place(s) are in use", maxParallel)})
+			heldList = append(heldList, map[string]any{"slice_id": c.slice.id, "ticket_id": c.ticket, "why": fmt.Sprintf("all %d place(s) are in use", w.maxPar())})
 		}
 		for _, s := range w.slices {
 			if s.blocked {
@@ -243,6 +252,9 @@ func (w *world) simulate() float64 {
 					all = false
 				}
 			}
+			if w.an != nil && !w.analyticsSettled(t) {
+				all = false
+			}
 			if all {
 				settled = w.lastClosed()
 				stopAt = settled / 0.93
@@ -272,7 +284,8 @@ func (w *world) materialize(s *slice, t float64) {
 	for _, ph := range s.phases[:min(len(s.phases), s.phase+1)] {
 		deps = append(deps, depIDs(ph)...)
 	}
-	r := w.intakeAdd(t, "slice.materialized", "intake", nil, s, nil, map[string]any{"digest": w.hex(64), "adopted": false, "dependencies": deps, "reissued": s.rev > 1})
+	s.digest = w.hex(64)
+	r := w.intakeAdd(t, "slice.materialized", "intake", nil, s, nil, map[string]any{"digest": s.digest, "adopted": false, "dependencies": deps, "reissued": s.rev > 1})
 	r.ticket = s.ticket
 }
 
@@ -330,20 +343,28 @@ func (w *world) startSegment(c *cell, t float64) {
 			waiting = "a person: the ticket was escalated"
 		}
 		x.waiting = waiting
+		var cost any = x.cost
+		if x.an != nil && x.an.noUsage {
+			cost = nil
+		}
 		w.intakeAdd(x.end+2, "execution.completed", "supervisor", c, nil, x, map[string]any{"stage": c.stage, "next": next, "waiting_for": waiting,
-			"how": "exited", "seen_to_end": true, "cost_usd": x.cost, "refused_tools": []any{}})
+			"how": "exited", "seen_to_end": true, "cost_usd": cost, "refused_tools": []any{}})
 		c.readyAt = x.end + 30
 	}
 	switch seg.after {
 	case "human":
 		ta := x.end + w.between(3600, 5400)
-		w.lrec(c, nil, ta, "human.approval_recorded", "human-approval", w.nextVisit(c, "human-approval"), c.round, map[string]any{"round": c.round, "decision": "approve", "note_given": true})
+		hv := w.nextVisit(c, "human-approval")
+		w.lrec(c, nil, ta, "human.approval_recorded", "human-approval", hv, c.round, map[string]any{"round": c.round, "decision": "approve", "note_given": true})
+		w.humanApproved(c, ta, hv)
 		w.setStage(c, ta, "approved")
 		c.readyAt = ta + 30
 		w.feature["human_wait_closed"] = c.ticket
 	case "human-open":
 		c.waitOpen = true
 		w.feature["human_wait_open"] = c.ticket
+	case "abandon":
+		w.abandon(c, x)
 	}
 	if c.seg >= len(c.prof.segs) || c.stage == "blocked" || c.waitOpen {
 		c.done = true

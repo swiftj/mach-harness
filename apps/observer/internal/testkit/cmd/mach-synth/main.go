@@ -4,12 +4,14 @@
 //
 //	go run ./internal/testkit/cmd/mach-synth --out <dir> --cells 12 --events 220000 --seed 1 [--hours 30] [--end now]
 //	go run ./internal/testkit/cmd/mach-synth --out <dir> --append --rate 200 [--duration 60s]
+//	go run ./internal/testkit/cmd/mach-synth --out <dir> --analytics [--cells 300] [--waves 38] [--hours 504] [--events N] [--seed 1]
 //
 // The first form writes <dir>/.factory/... (the intake log and ledger, cell lifecycle logs and
 // files, archives, execution records and Claude Code streams), <dir>/synth-summary.json and
 // <dir>/synth-state.json, and prints the summary as JSON. The second continues the history's open
 // execution at about --rate events per second until --duration passes or it is interrupted, and
-// prints what it appended.
+// prints what it appended. The third writes an analytics-grade project (synth/analytics.go) with
+// <dir>/expected.json, the ground truth metric tests compare against.
 package main
 
 import (
@@ -44,9 +46,14 @@ func run(args []string) error {
 	appendMode := fs.Bool("append", false, "extend a generated project live instead of generating one")
 	rate := fs.Int("rate", 200, "with --append: events per second")
 	duration := fs.Duration("duration", 0, "with --append: how long to run (default: until interrupted)")
+	analytics := fs.Bool("analytics", false, "generate an analytics-grade project (many finished tickets, run records, expected.json); unset options take the analytics defaults")
+	waves := fs.Int("waves", 0, "with --analytics: delivery waves (default: one per eight cells)")
+	maxPar := fs.Int("max-parallel", 0, "with --analytics: the supervisor's max_parallel (default 4)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	if *out == "" {
 		return fmt.Errorf("--out is required")
 	}
@@ -68,6 +75,22 @@ func run(args []string) error {
 		return err
 	}
 	o := synth.Options{Out: abs, Cells: *cells, Events: *events, Seed: *seed, Hours: *hours, AgentsPerExecution: *agents}
+	if *analytics {
+		// Only what was asked for: the rest takes the analytics defaults (events: no progress fill).
+		o = synth.Options{Out: abs, Seed: *seed, Analytics: true, Waves: *waves, MaxParallel: *maxPar}
+		if given["cells"] {
+			o.Cells = *cells
+		}
+		if given["events"] {
+			o.Events = *events
+		}
+		if given["hours"] {
+			o.Hours = *hours
+		}
+		if given["agents"] {
+			o.AgentsPerExecution = *agents
+		}
+	}
 	switch *end {
 	case "":
 	case "now":

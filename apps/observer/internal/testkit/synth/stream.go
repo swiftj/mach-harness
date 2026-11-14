@@ -73,7 +73,7 @@ func (g *gen) newStream(x *execution) *streamGen {
 	session := x.session
 	if in(x.start + 1.5) {
 		s.add(ms(x.start+1.5), map[string]any{"type": "system", "subtype": "init", "session_id": session, "claude_code_version": claudeVersion,
-			"model": "claude-opus-5-5", "permissionMode": "dontAsk", "cwd": "<project>", "tools": []string{"Bash", "Read", "Edit", "Glob", "Grep", "Workflow", "Write"},
+			"model": x.mainModel(), "permissionMode": "dontAsk", "cwd": "<project>", "tools": []string{"Bash", "Read", "Edit", "Glob", "Grep", "Workflow", "Write"},
 			"agents": []string{"mach-builder", "mach-verifier", "mach-reviewer", "mach-contract-engineer"}, "synthetic": true})
 		s.count("session.initialized", 1)
 	}
@@ -94,7 +94,7 @@ func (g *gen) newStream(x *execution) *streamGen {
 		case "Workflow":
 			input = map[string]any{"name": "mach-belt", "args": map[string]any{"tickets": []string{x.cell.ticket}, "until": "merge"}}
 		}
-		rec := map[string]any{"type": "assistant", "message": map[string]any{"model": "claude-opus-5-5", "role": "assistant", "type": "message",
+		rec := map[string]any{"type": "assistant", "message": map[string]any{"model": x.mainModel(), "role": "assistant", "type": "message",
 			"content": []any{map[string]any{"type": "tool_use", "id": c.id, "name": c.tool, "input": input}}}, "parent_tool_use_id": nil, "session_id": session}
 		if !c.noTime {
 			rec["timestamp"] = isoMS(ms(c.called))
@@ -170,11 +170,17 @@ func (g *gen) newStream(x *execution) *streamGen {
 			s.count("workflow.finished", 1)
 		}
 	}
-	if s.closed && x.ended == "exited" {
+	if s.closed && x.ended == "exited" && (x.an == nil || !x.an.noUsage) {
 		usage := map[string]any{}
-		share := map[string]float64{"claude-sonnet-5-5": 0.7, "claude-opus-5-5": 0.2, "claude-haiku-5-5": 0.1}
-		for _, m := range []string{"claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"} {
-			usage[m] = map[string]any{"costUSD": math.Round(x.cost*share[m]*1e4) / 1e4, "inputTokens": 900, "outputTokens": 30000, "cacheReadInputTokens": 900000, "cacheCreationInputTokens": 90000}
+		if x.an != nil {
+			for _, u := range x.an.usage {
+				usage[u.model] = map[string]any{"costUSD": u.cost, "inputTokens": u.input, "outputTokens": u.output, "cacheReadInputTokens": u.cacheRead, "cacheCreationInputTokens": u.cacheCreation}
+			}
+		} else {
+			share := map[string]float64{"claude-sonnet-5-5": 0.7, "claude-opus-5-5": 0.2, "claude-haiku-5-5": 0.1}
+			for _, m := range []string{"claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"} {
+				usage[m] = map[string]any{"costUSD": math.Round(x.cost*share[m]*1e4) / 1e4, "inputTokens": 900, "outputTokens": 30000, "cacheReadInputTokens": 900000, "cacheCreationInputTokens": 90000}
+			}
 		}
 		end := ms(x.end)
 		results := []int{0}

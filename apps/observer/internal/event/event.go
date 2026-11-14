@@ -22,10 +22,11 @@ import (
 // Version is the schema version; Revision the additive revision within it.
 // Revision 1 added execution.usage's cost_complete and cost_incomplete_reasons. Revision 2 added
 // history.gap's class and history_lost (and the reasons unexpected-shape and evicted), and
-// origin.runtime_state on events read from an execution stream.
+// origin.runtime_state on events read from an execution stream. Revision 3 (M6.5) added
+// execution.started's source_commit, provenance and provenance_reason.
 const (
 	Version  = 3
-	Revision = 2
+	Revision = 3
 )
 
 // Gap classes (history.gap data.class, revision 2): what a gap means for the history a reader

@@ -277,6 +277,8 @@ func access(e *Entry, set Settings) (string, string) {
 	}
 	class, ok := Allowed(e.Path, e.MediaType)
 	switch {
+	case redact.CredentialPath(e.Path):
+		return "none", CredentialReason
 	case !ok:
 		return "none", "its contents are not a type the observer serves (" + e.MediaType + ")"
 	case class == ClassText:
@@ -400,7 +402,9 @@ func plan(src source, ticket string, folders []string, rounds []int, people *red
 			rec := res.Records[id]
 			for _, ev := range rec.Evidence {
 				rel := folder + "/" + ev.File
-				if !plainRel(ev.File) || !cleanRel(rel) || excluded[path.Base(ev.File)] || strings.HasPrefix(ev.File, "previous-") {
+				// A name that is itself a credential (or an e-mail) is never catalogued: it would be
+				// shown, and protected from the scrubber as a safe name (M6.5 S1).
+				if !plainRel(ev.File) || !cleanRel(rel) || excluded[path.Base(ev.File)] || strings.HasPrefix(ev.File, "previous-") || redact.SecretName(ev.File) {
 					continue
 				}
 				e := files[rel]

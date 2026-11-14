@@ -158,6 +158,7 @@ func (w *world) buildExecution(c *cell, seg segment, t0 float64) *execution {
 		wfEnd: math.Inf(1), end: math.Inf(1), session: fmt.Sprintf("00000000-0000-4000-8000-%012x", len(w.execs)+1)}
 	w.execs = append(w.execs, x)
 	c.execs = append(c.execs, x)
+	w.execFactsFor(x)
 	w.intakeAdd(t0, "work.claimed", "supervisor", c, nil, x, map[string]any{"stage": c.stage, "next": nextAction(seg.visits[0]), "attempt": x.attempt})
 	w.intakeAdd(t0+1, "execution.started", "supervisor", c, nil, x, map[string]any{"until": "merge", "workflow": "mach-belt",
 		"limits": map[string]any{"minutes": 240, "budget_usd": 40}, "session_id": x.session})
@@ -185,6 +186,7 @@ func (w *world) buildExecution(c *cell, seg segment, t0 float64) *execution {
 		x.end, x.ended = t+6, "exited"
 	}
 	x.cost = math.Round(w.between(1.5, 9)*100) / 100
+	w.usage(x)
 	return x
 }
 
@@ -339,6 +341,9 @@ func (w *world) fillers(x *execution, worker *agent, n int) {
 		if w.rng.IntN(3) == 0 {
 			queued = start - w.between(2, 40) // waited for a place in the workflow
 		}
+		if x.an != nil && queued < x.wfStart+0.05 {
+			queued = x.wfStart + 0.05 // never queued before the workflow started (analytics mode only, so older outputs keep their bytes)
+		}
 		end := math.Min(start+w.between(15, 140), worker.end-0.5)
 		if end <= start+1 {
 			continue
@@ -355,7 +360,7 @@ func (w *world) review(c *cell, x *execution, vs vspec, t float64, fill int) (fl
 	}
 	t = w.clerk(x, ticket+": seat the panel", 5, t)
 	entered := t - 2
-	seats := []string{"architecture", "security", "product"}
+	seats := w.reviewSeats(c)
 	var reviewers []*agent
 	free := []float64{}
 	for i, seat := range seats {
@@ -377,6 +382,10 @@ func (w *world) review(c *cell, x *execution, vs vspec, t float64, fill int) (fl
 	}
 	w.fillers(x, &agent{start: t, end: done, phase: 5}, fill)
 	tally := w.clerk(x, ticket+": tally", 5, done+0.05)
+	if c.an != nil {
+		w.reviewRecordsA(c, x, vs, entered, reviewers, seats, tally-1)
+		return tally, false
+	}
 	w.reviewRecords(c, x, vs, entered, reviewers, tally-1)
 	return tally, false
 }
@@ -428,7 +437,7 @@ func (w *world) visitRecords(c *cell, x *execution, vs vspec, from, to float64) 
 	case "plan":
 		rec(from, "station.entered", data)
 		rec(at(0.9), "gate.evaluated", map[string]any{"gate": "plan.check", "outcome": "pass", "reason_code": nil})
-		rec(to, "station.exited", map[string]any{"outcome": "planned", "stage": "planned", "app_type": "cli", "risk": c.risk, "contracts": 1, "tasks": 4})
+		rec(to, "station.exited", map[string]any{"outcome": "planned", "stage": "planned", "app_type": c.appType(), "risk": c.risk, "contracts": 1, "tasks": 4})
 		w.setStage(c, to, "planned")
 	case "audit":
 		rec(from, "station.entered", data)
@@ -461,7 +470,8 @@ func (w *world) visitRecords(c *cell, x *execution, vs vspec, from, to float64) 
 					rec(ft-20, "gate.evaluated", map[string]any{"gate": "build.red", "outcome": "refuse", "reason_code": "suite-green", "task": task})
 				}
 				c.head = w.commit()
-				rec(ft, "build.task_completed", map[string]any{"task": task, "kind": "test", "step": "red", "first_run": "fail", "suite": "red", "commit": c.head})
+				fr := w.buildStep(c, rec, ft, task, true)
+				rec(ft, "build.task_completed", map[string]any{"task": task, "kind": "test", "step": "red", "first_run": fr, "suite": "red", "commit": c.head})
 			} else {
 				if w.rng.IntN(3) == 0 {
 					g1 := rec(ft-40, "gate.evaluated", map[string]any{"gate": "build.green", "outcome": "refuse", "reason_code": "suite-failing", "task": task})
@@ -474,6 +484,7 @@ func (w *world) visitRecords(c *cell, x *execution, vs vspec, from, to float64) 
 				}
 				c.head = w.commit()
 				rec(ft, "build.task_completed", map[string]any{"task": task, "kind": "impl", "step": "green", "first_run": "pass", "suite": "green", "commit": c.head})
+				w.buildStep(c, rec, ft, task, false)
 			}
 		}
 		rec(late(0.97), "gate.evaluated", map[string]any{"gate": "build.finish", "outcome": "pass", "reason_code": nil})
@@ -497,10 +508,16 @@ func (w *world) visitRecords(c *cell, x *execution, vs vspec, from, to float64) 
 			body := []byte(fmt.Sprintf("synthetic evidence: %s %s round %d (%s)\n", c.ticket, item, round, result))
 			sum := sha256.Sum256(body)
 			c.files[file] = body
+			if result == "fail" {
+				w.verifyFact(c, item, kind, true)
+			}
 			rec(at(0.1+0.8*float64(k)/float64(len(items))), "verify.check_recorded", map[string]any{"item": item, "kind": kind, "result": result,
 				"evidence": []any{map[string]any{"path": file, "sha256": hex.EncodeToString(sum[:])}}})
 		}
 		verdict, stage := "PASS", "verified"
+		if !fail {
+			w.verifyFact(c, "", "", false)
+		}
 		if fail {
 			verdict, stage = "FAIL_WITH_EVIDENCE", "built"
 		}
@@ -508,10 +525,17 @@ func (w *world) visitRecords(c *cell, x *execution, vs vspec, from, to float64) 
 		rec(to, "station.exited", map[string]any{"outcome": verdict, "stage": stage})
 		w.setStage(c, to, stage)
 	case "merge":
-		rec(from, "station.entered", map[string]any{"stage": c.stage, "method": "local", "behind_main": false})
+		method, pr := "local", any(nil)
+		if c.an != nil && c.an.method == "pr" {
+			method, pr = "pr", c.an.pr
+		}
+		rec(from, "station.entered", map[string]any{"stage": c.stage, "method": method, "behind_main": false})
 		rec(at(0.3), "gate.evaluated", map[string]any{"gate": "merge.run", "outcome": "pass", "reason_code": nil})
 		mc := w.commit()
-		rec(at(0.8), "merge.completed", map[string]any{"method": "local", "approved_commit": c.head, "landed_commit": c.head, "merge_commit": mc, "revalidated": false, "pull_request": nil})
+		rec(at(0.8), "merge.completed", map[string]any{"method": method, "approved_commit": c.head, "landed_commit": c.head, "merge_commit": mc, "revalidated": false, "pull_request": pr})
+		if c.an != nil {
+			c.an.mergeCommit, c.an.mergedAt = mc, at(0.8)
+		}
 		rec(to, "station.exited", map[string]any{"outcome": "merged", "stage": "merged"})
 		w.setStage(c, to, "merged")
 		c.merged = to

@@ -2,6 +2,7 @@ package normalize
 
 import (
 	"encoding/json"
+	"strings"
 
 	"mach/observer/internal/event"
 	"mach/observer/internal/redact"
@@ -114,6 +115,11 @@ func (n *Runs) Line(line []byte, r Read) []*event.Event {
 		g.AnchorKey, g.AnchorSeq = n.key, r.Line
 		return []*event.Event{g}
 	}
+	// observe.py strips a ticket id and keeps any non-empty one; the observer strips it too, and an
+	// id still outside its pattern is refused (a gap, counted in the analytics coverage).
+	if t, isStr := raw["ticket_id"].(string); isStr {
+		raw["ticket_id"] = strings.TrimSpace(t)
+	}
 	ticket, ok := Ticket(raw["ticket_id"])
 	if !ok {
 		g := gapEvent(event.ObserverID("gap", n.key+":line-"+itoa(r.Line)), n.key, "unparsable-line", r.Line, r.Line, 1, nil, r)
@@ -142,7 +148,7 @@ func (n *Runs) Line(line []byte, r Read) []*event.Event {
 	}
 	integration := obj(raw["integration"])
 	d := map[string]any{
-		"rounds":         intOrNil(raw["rounds"]),
+		"rounds":         numOrNil(raw["rounds"]), // a number, as observe.py counts it
 		"first_pass":     boolOr(raw["first_pass"], false),
 		"escalated":      boolOr(raw["escalated"], false),
 		"human_approval": boolOr(raw["human_approval"], false),
@@ -150,13 +156,17 @@ func (n *Runs) Line(line []byte, r Read) []*event.Event {
 		"blockers":       int64(len(arr(raw["blockers"]))),
 		"risk":           enum(raw["risk"], risks...),
 		"app_type":       tokOrNil(raw["app_type"]),
-		"merge_method":   enum(integration["method"], "local", "pr"),
+		"merge_method":   enum(integration["method"], "local", "pr", "squash-or-rebase", "manual"),
 		"merge_commit":   commitOrNil(integration["merge_commit"]),
 	}
 	require(ev, d, "record_version", intOrNil(raw["record_version"]), int64(1))
 	require(ev, d, "outcome", enum(raw["outcome"], "merged", "abandoned"), "merged")
-	for _, k := range []string{"verify_failures", "review_rejections", "tests_seen_failing_first", "tests_passing_on_first_run"} {
+	for _, k := range []string{"verify_failures", "review_rejections"} {
 		require(ev, d, k, intOrNil(raw[k]), int64(0))
+	}
+	// observe.py sums these as numbers (number()): fractions count, anything else is 0.
+	for _, k := range []string{"tests_seen_failing_first", "tests_passing_on_first_run"} {
+		require(ev, d, k, numOrNil(raw[k]), float64(0))
 	}
 	ev.Data = d
 	used := map[string]bool{"record_version": true, "ticket_id": true, "slice_id": true, "product": true, "integration": true, "closed_at": true,

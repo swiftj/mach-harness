@@ -1,0 +1,313 @@
+{
+  "note": "Ground truth from the generator's own plan (its model of what happened), not from the files or the observer. 'visits' counts what happened; 'visits_in_logs' what the lifecycle logs carry (partial and absent logs lose some). Costs are recorded values only.",
+  "generator": {
+    "agents_per_execution": 12,
+    "cells": 60,
+    "end": "2026-11-12T06:00:00.000Z",
+    "events_target": 0,
+    "hours": 504,
+    "max_parallel": 4,
+    "seed": 1,
+    "start": "2026-10-22T06:00:00.000Z",
+    "waves": 8
+  },
+  "tickets": {
+    "abandoned": 4,
+    "by_profile": {
+      "abandoned-by-a-person": 2,
+      "clean": 19,
+      "clean-low-single-seat": 7,
+      "escalated-then-abandoned": 2,
+      "high-risk-human-approval": 6,
+      "human-approval-open-at-end": 1,
+      "interrupted-recovered-resumed": 1,
+      "merge-by-main-loop": 3,
+      "merge-outcome-unknown": 1,
+      "review-reject-then-approve": 2,
+      "revising-at-the-end": 1,
+      "security-veto-then-approved": 4,
+      "three-rounds-escalated": 1,
+      "verify-fail-then-revise": 8,
+      "verify-fails-twice-then-merged": 2
+    },
+    "dispatched": 60,
+    "escalated": 2,
+    "escalated_then_abandoned": 2,
+    "finished": 57,
+    "finished_by_app_type": {
+      "api": {
+        "merged": 11
+      },
+      "cli": {
+        "abandoned": 1,
+        "merged": 10
+      },
+      "desktop": {
+        "merged": 1
+      },
+      "grpc": {
+        "merged": 3
+      },
+      "library": {
+        "merged": 5
+      },
+      "mobile": {
+        "merged": 2
+      },
+      "web": {
+        "abandoned": 3,
+        "merged": 21
+      }
+    },
+    "finished_by_risk": {
+      "High": {
+        "merged": 6
+      },
+      "Low": {
+        "merged": 10
+      },
+      "Medium": {
+        "abandoned": 4,
+        "merged": 37
+      }
+    },
+    "first_pass": 37,
+    "merged": 53,
+    "total": 60,
+    "unfinished_by_stage_at_end": {
+      "awaiting-human": 1,
+      "blocked": 1,
+      "building": 1
+    }
+  },
+  "slices": {
+    "blocked_at_end_without_cell": [
+      "SLICE-061"
+    ],
+    "ever_dependency_blocked": 11,
+    "integrated": 53,
+    "never_dispatched": 1,
+    "revisions_superseded": 0,
+    "total": 61
+  },
+  "waves": {
+    "delivered": 4,
+    "total": 8
+  },
+  "visits": {
+    "audit": 29,
+    "build": 87,
+    "cleanup": 57,
+    "groom": 60,
+    "merge": 53,
+    "plan": 60,
+    "review": 67,
+    "verify": 85
+  },
+  "visits_in_logs": {
+    "audit": 29,
+    "build": 86,
+    "cleanup": 56,
+    "groom": 58,
+    "merge": 52,
+    "plan": 58,
+    "review": 66,
+    "verify": 84
+  },
+  "executions": {
+    "claimed": 130,
+    "completed": 127,
+    "completed_with_usage": 119,
+    "completed_without_usage": 8,
+    "failed": 1,
+    "main_loop_only": 3,
+    "max_attempts_per_ticket": 3,
+    "outcome_unknown": 1,
+    "running_at_end": 1,
+    "workflow": 127
+  },
+  "rounds": {
+    "judging_rounds_of_merged_tickets": 71,
+    "review_rounds_decided": {
+      "APPROVED": 47,
+      "AWAITING_HUMAN": 7,
+      "ESCALATE": 3,
+      "REJECTED": 10
+    },
+    "security_vetoes": 7,
+    "verifications_failed": 18,
+    "verifications_passed": 67
+  },
+  "gates": {
+    "build_tasks_completed": 381,
+    "evaluated": 781,
+    "overridden": 19,
+    "overridden_by_gate": {
+      "red-before-green": 13,
+      "scope": 6
+    },
+    "refused": 161,
+    "refused_by_gate": {
+      "build.green": 118,
+      "build.red": 43
+    }
+  },
+  "waits": {
+    "capacity_waits": 100,
+    "dependency_blocked": 11,
+    "dependency_resolved": 10,
+    "human_approvals_recorded": 6,
+    "human_required": 10,
+    "human_waits_open_at_end": 1
+  },
+  "recoveries": {
+    "ended-while-unwatched": 1,
+    "outcome-unknown": 1
+  },
+  "cost": {
+    "by_model": {
+      "claude-fable-5-2": {
+        "cache_creation": 2121615,
+        "cache_read": 18643342,
+        "cost_usd": 73.0199,
+        "executions": 19,
+        "input": 44405,
+        "output": 518830
+      },
+      "claude-haiku-5-5": {
+        "cache_creation": 11535970,
+        "cache_read": 135021857,
+        "cost_usd": 33.1188,
+        "executions": 116,
+        "input": 245870,
+        "output": 3786608
+      },
+      "claude-opus-5-5": {
+        "cache_creation": 10672692,
+        "cache_read": 112556702,
+        "cost_usd": 353.1391,
+        "executions": 111,
+        "input": 237132,
+        "output": 3746391
+      },
+      "claude-sonnet-5-5": {
+        "cache_creation": 8908546,
+        "cache_read": 88876982,
+        "cost_usd": 150.2767,
+        "executions": 86,
+        "input": 164225,
+        "output": 2794526
+      }
+    },
+    "executions_completed_without_cost": 8,
+    "executions_with_recorded_cost": 119,
+    "note": "recorded per execution and per model only; never per agent or station; nothing estimated",
+    "recorded_cost_usd": 609.5545,
+    "tickets_with_recorded_cost": 60
+  },
+  "observe_scorecard": {
+    "all_finished": {
+      "abandonment_rate": {
+        "basis": "abandoned over finished tickets",
+        "denominator": 57,
+        "numerator": 4,
+        "rounded": 0.07,
+        "value": 0.07017543859649122
+      },
+      "average_rounds": {
+        "basis": "sum of rounds over merged tickets",
+        "denominator": 53,
+        "numerator": 71,
+        "rounded": 1.34,
+        "value": 1.3396226415094339
+      },
+      "deviations_per_ticket": {
+        "basis": "deviations over finished tickets",
+        "denominator": 57,
+        "numerator": 18,
+        "rounded": 0.316,
+        "value": 0.3157894736842105
+      },
+      "escalation_rate": {
+        "basis": "escalated over finished tickets",
+        "denominator": 57,
+        "numerator": 2,
+        "rounded": 0.035,
+        "value": 0.03508771929824561
+      },
+      "first_pass_rate": {
+        "basis": "merged tickets with one round over merged tickets",
+        "denominator": 53,
+        "numerator": 37,
+        "rounded": 0.698,
+        "value": 0.6981132075471698
+      },
+      "tests_failing_first_share": {
+        "basis": "tests seen failing first over all recorded test tasks",
+        "denominator": 179,
+        "numerator": 167,
+        "rounded": 0.933,
+        "value": 0.9329608938547486
+      },
+      "tickets": 57
+    },
+    "observe_default_depth_20": {
+      "abandonment_rate": {
+        "basis": "abandoned over finished tickets",
+        "denominator": 20,
+        "numerator": 4,
+        "rounded": 0.2,
+        "value": 0.2
+      },
+      "average_rounds": {
+        "basis": "sum of rounds over merged tickets",
+        "denominator": 16,
+        "numerator": 23,
+        "rounded": 1.438,
+        "value": 1.4375
+      },
+      "deviations_per_ticket": {
+        "basis": "deviations over finished tickets",
+        "denominator": 20,
+        "numerator": 4,
+        "rounded": 0.2,
+        "value": 0.2
+      },
+      "escalation_rate": {
+        "basis": "escalated over finished tickets",
+        "denominator": 20,
+        "numerator": 2,
+        "rounded": 0.1,
+        "value": 0.1
+      },
+      "first_pass_rate": {
+        "basis": "merged tickets with one round over merged tickets",
+        "denominator": 16,
+        "numerator": 9,
+        "rounded": 0.563,
+        "value": 0.5625
+      },
+      "tests_failing_first_share": {
+        "basis": "tests seen failing first over all recorded test tasks",
+        "denominator": 69,
+        "numerator": 66,
+        "rounded": 0.957,
+        "value": 0.9565217391304348
+      },
+      "tickets": 20
+    }
+  },
+  "history_quirks": {
+    "intake_duplicate_lines": 6,
+    "intake_missing_seq_lines": 2,
+    "late_intake_lines": 3,
+    "late_lifecycle_batch": "SYN-001/build#2",
+    "no_lifecycle_tickets": [
+      "SYN-031"
+    ],
+    "null_seq_records": 2,
+    "partial_lifecycle_tickets": [
+      "SYN-021"
+    ]
+  }
+}

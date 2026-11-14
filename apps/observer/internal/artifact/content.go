@@ -4,12 +4,21 @@ import (
 	"archive/tar"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"mach/observer/internal/redact"
 )
+
+// ErrCredentialName refuses the content of a file whose name says it holds credentials
+// (redact.CredentialPath: credentials.txt, id_rsa, secrets.json, ...) or is itself
+// credential-shaped. Such a file is catalogued as metadata only (M6.5 S2).
+var ErrCredentialName = errors.New("the file's name says it holds credentials; its content is never served")
+
+const CredentialReason = "its name says it holds credentials; its content is never served"
 
 // HashKeys are the keys under which MACH's served JSON records (results.json, summary.json,
 // decision.json) hold a hash: evidence sha256 sums and the commits a verification or review was
@@ -41,6 +50,9 @@ func CapFor(class string) int64 {
 // what the catalog recorded and sniff to the type the catalog promised. What is returned is what
 // was hashed: there is no second read between the check and the reply.
 func (c *Catalog) Read(e Entry) (*Content, error) {
+	if redact.CredentialPath(e.Path) || redact.SecretName(e.Path) {
+		return nil, ErrCredentialName // whatever the entry says: its name says it holds credentials
+	}
 	class, ok := Allowed(e.Path, e.MediaType)
 	if !ok || e.SHA256 == "" {
 		return nil, ErrTypeMatch
@@ -78,7 +90,11 @@ func (c *Catalog) Read(e Entry) (*Content, error) {
 	if class == ClassText {
 		text, n := c.scrubText(e, data)
 		if len(text) > ServedText {
-			text, out.Truncated = text[:ServedText], true
+			cut := ServedText
+			for cut > 0 && !utf8.RuneStart(text[cut]) {
+				cut-- // never inside a UTF-8 sequence
+			}
+			text, out.Truncated = text[:cut], true
 		}
 		out.Data, out.Redacted = []byte(text), n
 		return out, nil

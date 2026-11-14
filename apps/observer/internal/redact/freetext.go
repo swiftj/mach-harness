@@ -19,6 +19,37 @@ const (
 	FreeTextNote   = "free text, not checked for names"
 )
 
+// FreeTextField is an event field whose value is prose kept after scrubbing (Text): secrets, paths
+// and e-mail addresses are replaced and known people are "a person", but a name that appears only
+// in the prose is served as written (R1). The same holds wherever the projection copies it.
+type FreeTextField struct {
+	Kind string `json:"kind"` // the event kind
+	Path string `json:"path"` // in the event: "data.title", "data.reasons[]", "data.held[].why"
+	Max  int    `json:"max"`  // characters kept at most
+}
+
+// FreeTextFields are every event field that keeps prose, the set M6.2 R1 extends to beyond
+// artifact content. The session reply lists them (display_policy.free_text.event_fields), so a
+// client shows each one as text, never as markup, and says it was not checked for names. A test
+// holds each path to the allowlist (Allow); a kind or field that keeps prose must be added here.
+var FreeTextFields = []FreeTextField{
+	{"review.finding", "data.title", 200},
+	{"agent.queued", "data.label", 120},
+	{"agent.started", "data.label", 120},
+	{"agent.queued", "data.phase", 60},
+	{"agent.started", "data.phase", 60},
+	{"workflow.phases_declared", "data.phases[].title", 60},
+	{"intake.refused", "data.problems[]", 280},
+	{"dependency.blocked", "data.reasons[]", 280},
+	{"human.required", "data.reason", 280},
+	{"factory.paused", "data.reason", 280},
+	{"scheduling.decided", "data.held[].why", 280},
+	{"work.scheduled", "data.authorization", 280},
+	{"revision.superseded", "data.effect", 280},
+	{"execution.completed", "data.waiting_for", 200},
+	{"workflow.finished", "data.tickets[].waiting_for", 200},
+}
+
 // structuralKeys hold MACH-written values that are several words but never prose about people:
 // a test command, and review.py's fixed reasons for a human approval.
 var structuralKeys = keys("command", "human_approval_reasons")

@@ -320,7 +320,7 @@ func TestMetricsMatchObserveFormulas(t *testing.T) {
 			if r.Value == nil {
 				t.Fatalf("%s is null: %s", r.ID, r.NullReason)
 			}
-			rows[r.ID] = *r.Value
+			rows[r.ID] = *r.ValueRounded // observe.py rounds to 3 places; value is unrounded
 		}
 		// observe.py scorecard over the same records:
 		want := map[string]float64{"Q2": 0.667, "Q3": 1.5, "R5": 0.5, "R6": 0.25, "G1": 0.571, "G2": 0.75}
@@ -351,7 +351,10 @@ func TestScenarioMetrics(t *testing.T) {
 			rows[r.ID] = r.Value
 		}
 		checks := map[string]float64{"T1": 1, "T2": 1, "C1": 2800, "Q1": 0, "K1": 4.5, "K2": 2.25, "K7": 150000, "K8": 6100, "K9": 500, "K10": 40,
-			"X2": 0.25, "S2": 0.5, "R3": 0, "W3": 14000}
+			"X2": 0.25, "S2": 0, "R3": 0, "W3": 14000}
+		// S2 counts executions of unknown outcome by the state every view serves: x2's process
+		// recorded how it stopped (interrupted), so its later outcome-unknown recovery does not make
+		// it unknown (M6.5: S2 counted recovery events before).
 		for id, want := range checks {
 			if rows[id] == nil || *rows[id] != want {
 				got := "null"

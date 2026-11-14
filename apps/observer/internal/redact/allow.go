@@ -43,6 +43,16 @@ func anyKeys(v *Shape) *Shape { return &Shape{kind: shapeMap, elem: v} }
 
 var leafList = list(scalar)
 
+// provenanceShape is execution.started's provenance snapshot (revision 3; normalize/provenance.go).
+var provenanceShape = obj("schema", "config_id",
+	"mach", obj("version", "install", "commit"),
+	"line", obj("digest", "count", "files", anyKeys(scalar)),
+	"config", obj("recorded", "digest", "max_parallel", "models", anyKeys(scalar),
+		"review", obj("max_loops", "security_veto", "tiers", anyKeys(obj("approvals", "reviewers", "human_approval")))),
+	"policy", obj("autonomy", "max_risk", "allow_merge", "max_parallel", "allowed_tools_digest", "allowed_tools_count"),
+	"ticket", obj("risk", "app_type"),
+	"source", obj("commit", "slice_revision", "slice_digest", "spec_sha256"))
+
 // Allow is the per-kind data allowlist: the schema's $defs (factory-event.v3.schema.json),
 // key for key. A kind not here is not served.
 var Allow = map[string]*Shape{
@@ -64,7 +74,8 @@ var Allow = map[string]*Shape{
 	"revision.discovered": obj("from_commit", "commit"),
 	"scheduling.decided":  obj("state", "dispatched", leafList, "started", leafList, "held", list(obj("slice_id", "ticket_id", "why"))),
 	"work.claimed":        obj("stage", "next", "attempt"),
-	"execution.started":   obj("until", "workflow", "limits", obj("minutes", "budget_usd")),
+	"execution.started": obj("until", "workflow", "limits", obj("minutes", "budget_usd"), "source_commit", "provenance_reason", // revision 3
+		"provenance", provenanceShape),
 	"station.observed":    obj("from_stage", "stage"),
 	"recovery.started":    obj("kind"),
 	"execution.completed": obj("stage", "next", "waiting_for", "how", "seen_to_end", "cost_usd", "refused_tools", leafList),

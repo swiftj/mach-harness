@@ -32,6 +32,12 @@ type Options struct {
 	End    time.Time // when it ends (the live edge of the generated history)
 	// AgentsPerExecution is the target number of workflow agents per belt execution.
 	AgentsPerExecution int
+	// Analytics generates an analytics-grade project instead (analytics.go): many finished tickets
+	// over many delivery waves, run records exactly as the cleanup station writes them, and a
+	// ground-truth expected.json. Without it every other option behaves exactly as before.
+	Analytics   bool
+	Waves       int // analytics: delivery waves (default: one per eight cells)
+	MaxParallel int // analytics: the supervisor's max_parallel (default 4)
 }
 
 // DefaultEnd is the fixed end of a default history, so the default output is repeatable.
@@ -39,6 +45,10 @@ var DefaultEnd = time.Date(2026, 11, 12, 6, 0, 0, 0, time.UTC)
 
 // Defaults fills unset options.
 func (o *Options) Defaults() {
+	if o.Analytics {
+		o.analyticsDefaults()
+		return
+	}
 	if o.Cells == 0 {
 		o.Cells = 12
 	}
@@ -57,6 +67,9 @@ func (o *Options) Defaults() {
 }
 
 func (o Options) check() error {
+	if o.Analytics {
+		return o.analyticsCheck()
+	}
 	switch {
 	case o.Out == "":
 		return fmt.Errorf("an output folder is required")
@@ -97,6 +110,7 @@ type slice struct {
 	ready      bool // dependencies resolved
 	dispatched bool
 	supersede  float64 // when the next revision is due, 0 if none
+	digest     string  // the current revision's digest
 }
 
 type lifeRec struct {
@@ -147,6 +161,7 @@ type cell struct {
 	attempts   int
 	heldSince  float64 // a capacity hold began, -1 if not held
 	files      map[string][]byte
+	an         *cellFacts // analytics mode only
 }
 
 type stageAt struct {
@@ -202,6 +217,7 @@ type execution struct {
 	cost      float64
 	session   string
 	nextIndex int
+	an        *execFacts // analytics mode only
 }
 
 type world struct {
@@ -219,10 +235,19 @@ type world struct {
 	toolSeq       int
 	feature       map[string]any
 	capacityWaits int
+	an            *analyticsWorld // analytics mode only
 }
 
 func newWorld(o Options) *world {
 	return &world{o: o, rng: rand.New(rand.NewPCG(o.Seed, 0x6d616368)), ids: map[string]bool{}, feature: map[string]any{}}
+}
+
+// maxPar is the supervisor's max_parallel.
+func (w *world) maxPar() int {
+	if w.o.Analytics {
+		return w.o.MaxParallel
+	}
+	return maxParallel
 }
 
 // between is a uniform draw in [lo, hi).
