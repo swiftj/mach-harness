@@ -73,6 +73,10 @@ func TestIntakeLogEveryKind(t *testing.T) {
 	}
 	for _, raw := range h.raws() {
 		for _, bad := range []string{"Ada Lovelace", "00000000-0000-4000-8000", "cell.json", "session_id", "abcdef1"} {
+			if bad == "abcdef1" && strings.Contains(string(raw), `"type":"execution.started"`) && strings.Count(string(raw), bad) == 1 &&
+				strings.Contains(string(raw), `"source_commit":"abcdef1"`) {
+				continue // revision 3: the envelope's source commit is kept on execution.started, and only there
+			}
 			if strings.Contains(string(raw), bad) {
 				t.Fatalf("%q reached an event: %s", bad, raw)
 			}

@@ -73,8 +73,13 @@ func Generate(o Options) (*Summary, error) {
 	w := newWorld(o)
 	settled := w.simulate()
 	w.endT = settled / 0.93
-	w.k = o.Hours * 3600 / w.endT
-	w.startMS = o.End.Add(-time.Duration(o.Hours * float64(time.Hour))).UnixMilli()
+	if w.real() {
+		// Model seconds are real seconds and the start was fixed before the simulation (realistic.go).
+		w.o.Hours = math.Round(w.endT/3600*100) / 100
+	} else {
+		w.k = o.Hours * 3600 / w.endT
+		w.startMS = o.End.Add(-time.Duration(o.Hours * float64(time.Hour))).UnixMilli()
+	}
 	g := &gen{w: w, root: o.Out, cnt: counter{byType: map[string]int{}, bySource: map[string]int{}}, recon: map[string]int{}}
 	if err := g.write(); err != nil {
 		return nil, err
@@ -136,7 +141,7 @@ func (g *gen) write() error {
 			return err
 		}
 	}
-	cfg, _ := json.MarshalIndent(map[string]any{"synthetic": true, "factory": map[string]any{"max_parallel": maxParallel},
+	cfg, _ := json.MarshalIndent(map[string]any{"synthetic": true, "factory": map[string]any{"max_parallel": w.maxPar()},
 		"tickets": map[string]any{"provider": "local"}}, "", "  ")
 	if err := g.put(g.path(".factory", "config.json"), append(cfg, '\n')); err != nil {
 		return err
@@ -149,6 +154,11 @@ func (g *gen) write() error {
 	}
 	for _, c := range w.cells {
 		if err := g.writeCell(c); err != nil {
+			return err
+		}
+	}
+	if w.an != nil {
+		if err := g.writeRuns(); err != nil {
 			return err
 		}
 	}
@@ -169,7 +179,13 @@ func (g *gen) write() error {
 			return err
 		}
 	}
-	return g.writeState()
+	if err := g.writeState(); err != nil {
+		return err
+	}
+	if w.an != nil {
+		return g.writeExpected()
+	}
+	return nil
 }
 
 // ---- intake log and ledger ----
@@ -224,6 +240,13 @@ func (g *gen) writeIntake() error {
 			"execution_id": x, "source": r.source, "cause": nil, "refs": nil, "data": g.resolve(r.data)})
 		buf.Write(line)
 		buf.WriteByte('\n')
+		if g.dupIntake(i, len(recs)) {
+			// The same line written again, identically (a rewrite with the same history): the
+			// observer drops it by its seq. Not counted as an event.
+			buf.Write(line)
+			buf.WriteByte('\n')
+			w.an.dupIntake++
+		}
 		g.cnt.add("intake-log", r.typ, 1)
 		switch r.typ {
 		case "dependency.blocked":
@@ -274,17 +297,22 @@ func (g *gen) writeCell(c *cell) error {
 	if c.created == 0 || !g.in(c.created) {
 		return nil
 	}
-	var recs []*lifeRec
-	for _, r := range c.life {
-		if g.in(r.t) && g.in(r.wt) {
-			recs = append(recs, r)
+	recs := g.lifeInHistory(c)
+	archived := c.archived && (c.an == nil || g.in(c.an.closedAt))
+	if c.an != nil && !archived {
+		kept := recs[:0:0]
+		for _, r := range recs {
+			if !r.archive {
+				kept = append(kept, r)
+			}
 		}
+		recs = kept
 	}
-	sort.SliceStable(recs, func(i, j int) bool { return recs[i].wt < recs[j].wt })
+	recs, seqs := g.shapeLog(c, recs)
 	var live, full bytes.Buffer
 	rounds := map[int]bool{}
 	for i, r := range recs {
-		line := testkit.Record{Seq: i + 1, At: isoMS(w.ms(r.t)), Ticket: c.ticket, Type: r.typ, Station: r.station, Visit: r.visit,
+		line := testkit.Record{Seq: seqs[i], At: isoMS(w.ms(r.t)), Ticket: c.ticket, Type: r.typ, Station: r.station, Visit: r.visit,
 			Round: r.round, Execution: r.exec, Data: g.resolve(r.data).(map[string]any)}.Line()
 		full.Write(line)
 		if !r.archive {
@@ -326,12 +354,15 @@ func (g *gen) writeCell(c *cell) error {
 		"mode": "headless", "risk_tier": c.risk, "app_type": "cli", "slice_id": c.slice.id,
 		"product": map[string]any{"slice_id": c.slice.id, "wave_id": c.slice.wave.id, "revision": c.slice.rev}, "synthetic": true}, "", "  ")
 	files := map[string][]byte{"cell.json": append(cellJSON, '\n')}
+	if c.an != nil {
+		files["cell.json"] = g.cellJSONA(c, stage)
+	}
 	for name, body := range c.files {
 		if name[0] != '#' {
 			files[name] = body
 		}
 	}
-	if !c.archived {
+	if !archived {
 		dir := g.path(".factory", "worktrees", c.ticket)
 		for name, body := range files {
 			if err := g.put(filepath.Join(dir, filepath.FromSlash(name)), body); err != nil {
@@ -341,10 +372,28 @@ func (g *gen) writeCell(c *cell) error {
 		return g.put(filepath.Join(dir, "lifecycle.jsonl"), live.Bytes())
 	}
 	files["lifecycle.jsonl"] = full.Bytes()
+	if c.an != nil && c.an.noLog {
+		delete(files, "lifecycle.jsonl") // a cell from before the lifecycle log existed
+	}
 	if err := g.writeArchive(c.ticket, files); err != nil {
 		return err
 	}
+	if c.an != nil {
+		return nil // runs.jsonl is written in the order cleanup ran (writeRuns)
+	}
 	return g.appendRun(c)
+}
+
+// lifeInHistory is a cell's records inside the history, in the order they were written.
+func (g *gen) lifeInHistory(c *cell) []*lifeRec {
+	var recs []*lifeRec
+	for _, r := range c.life {
+		if g.in(r.t) && g.in(r.wt) {
+			recs = append(recs, r)
+		}
+	}
+	sort.SliceStable(recs, func(i, j int) bool { return recs[i].wt < recs[j].wt })
+	return recs
 }
 
 func (g *gen) writeArchive(ticket string, files map[string][]byte) error {
@@ -430,7 +479,10 @@ func (g *gen) writeExecution(s *streamGen) error {
 	if x.workflow {
 		g.spans["workflow"]++
 	}
-	if !math.IsInf(x.end, 1) && g.in(x.end) {
+	// An execution whose outcome is unknown recorded no process result (realistic profile; the other
+	// profiles keep their bytes and write one, so the observer reads them as interrupted).
+	noResult := w.real() && x.seg.end == "unknown"
+	if !math.IsInf(x.end, 1) && g.in(x.end) && !noResult {
 		var code any = 0
 		if x.ended != "exited" {
 			code = nil
@@ -469,7 +521,7 @@ func (g *gen) summary() *Summary {
 		tickets = append(tickets, c.ticket)
 	}
 	return &Summary{Seed: w.o.Seed, Cells: len(w.cells), Slices: len(w.slices), Waves: len(w.waves), Hours: w.o.Hours,
-		Start: isoMS(w.startMS), End: isoMS(w.ms(w.endT)), StartMS: w.startMS, EndMS: w.ms(w.endT), Scale: math.Round(w.k*1000) / 1000, MaxPar: maxParallel,
+		Start: isoMS(w.startMS), End: isoMS(w.ms(w.endT)), StartMS: w.startMS, EndMS: w.ms(w.endT), Scale: math.Round(w.k*1000) / 1000, MaxPar: w.maxPar(),
 		Target: w.o.Events, Events: total, ByType: g.cnt.byType, BySource: g.cnt.bySource, Reconstruct: g.recon, Spans: g.spans,
 		Executions: len(w.execs), Agents: g.agents, Files: g.files, Bytes: g.bytes,
 		GapsExpected: []string{"intake-log missing-seq (2 lines), deliberate"}, Features: w.feature, Tickets: tickets}

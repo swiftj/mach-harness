@@ -4,10 +4,13 @@
  * connection and completeness badges, the workspace switch, the stage, the contextual inspector, the
  * synchronized timeline, Theater Mode, the keyboard map and its help sheet, and the screen-reader announcer.
  *
- * Two workspaces (the store's `workspace`): the Factory Floor (the stage with its two views, and the
- * docked timeline under it) and the Execution Timeline, which takes the place of both. The header and
- * the inspector stay. The floor's stage stays mounted while the Timeline is up: hidden, inert, and
- * reading a held view of the store (heldStore), so it does no work and returns exactly as it was.
+ * Three workspaces (the store's `workspace`): the Factory Floor (the stage with its two views, and the
+ * docked timeline under it), the Execution Timeline and Factory Analytics, each of which takes the
+ * place of both. The header (source badge, connection, theme, workspace switch) and the inspector
+ * stay. The floor's stage stays mounted while another workspace is up: hidden, inert, and reading a
+ * held view of the store (heldStore), so it does no work and returns exactly as it was. The Timeline
+ * and Analytics are mounted only while shown. Analytics has no transport: it reads the playhead
+ * through useAnalyticsAsOf (./analyticsAsOf.ts) and says which history it describes.
  *
  * Owned here: panel sizes, open and closed panels, the help sheet. Everything about the factory and
  * the playback (playhead, selection, focus, mode, workspace, Theater Mode) is the store's.
@@ -16,7 +19,8 @@ import { CircleHelp, Monitor, Moon, PanelRight, PanelRightClose, Sun, TvMinimalP
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { cn, useTheme, type ThemePreference } from "@mach/ui";
 import { refKind } from "../sim";
-import { heldStore, SceneStoreProvider, showInTimeline, showOnFloor, useSceneStore, useStore, type SceneStore } from "../scene";
+import { heldStore, SceneStoreProvider, showInAnalytics, showInTimeline, showOnFloor, useSceneStore, useStore, type SceneStore } from "../scene";
+import { AnalyticsWorkspace } from "../analytics/Workspace";
 import { timelineDataFor } from "../timeline/data";
 import { TIMELINE_CHROME_HEIGHT } from "../timeline/controls/frame";
 import { TimelineWorkspace } from "../timeline/Workspace";
@@ -216,7 +220,7 @@ function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { 
       </div>
       <span className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
       <nav aria-label="Workspaces" className="flex shrink-0 items-center gap-1.5">
-        <WorkspaceSwitch value={workspace} onChange={(w) => (w === "timeline" ? showInTimeline(store) : showOnFloor(store))} />
+        <WorkspaceSwitch value={workspace} onChange={(w) => (w === "timeline" ? showInTimeline(store) : w === "analytics" ? showInAnalytics(store) : showOnFloor(store))} />
         {onFloor ? <ModeSwitch value={view} onChange={store.setView} /> : null}
       </nav>
     </div>
@@ -259,11 +263,15 @@ export function Shell() {
   const workspace = useSceneStore((s) => s.workspace);
   const reduced = useSceneStore((s) => s.reducedMotion);
   const onFloor = workspace === "floor";
+  const inTimeline = workspace === "timeline";
+  const inAnalytics = workspace === "analytics";
   const floorStore = useFloorStore(store);
   const floorRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
+  const analyticsRef = useRef<HTMLDivElement>(null);
   useArrival(floorRef, onFloor, reduced);
-  useArrival(timelineRef, !onFloor, reduced);
+  useArrival(timelineRef, inTimeline, reduced);
+  useArrival(analyticsRef, inAnalytics, reduced);
   const selection = useSceneStore((s) => s.selection);
   // For browser tests: the scene's first state is applied (the simulation at once; live once history
   // holds something or the connection has left "connecting"), and the shell has mounted with it.
@@ -280,6 +288,9 @@ export function Shell() {
   const viewportH = useViewportHeight();
   const [inspectorWanted, setInspectorWanted] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  // Analytics takes the whole width: the inspector there starts closed and opens only when asked
+  // (I, the inspector button) or when a selection is made while Analytics is on screen.
+  const [analyticsInspector, setAnalyticsInspector] = useState(false);
   // null: not chosen by the person, so it follows the window (collapsed on a short one).
   const [collapsedChoice, setCollapsedChoice] = useState<boolean | null>(null);
   const timelineCollapsed = collapsedChoice ?? short;
@@ -303,6 +314,7 @@ export function Shell() {
   if (seenSelection !== selection) {
     setSeenSelection(selection);
     setOverlayOpen(Boolean(selection) && !compactTimeline);
+    if (inAnalytics && selection) setAnalyticsInspector(true);
   }
   const [seenCompact, setSeenCompact] = useState(compactTimeline);
   if (seenCompact !== compactTimeline) {
@@ -321,9 +333,9 @@ export function Shell() {
     if (s.selection) store.focusOn(s.selection, "api");
   }, [view, store]);
 
-  const inspectorOpen = wide ? inspectorWanted : overlayOpen;
+  const inspectorOpen = inAnalytics ? analyticsInspector : wide ? inspectorWanted : overlayOpen;
   const inspectorW = wide ? (large ? INSPECTOR_W.large : INSPECTOR_W.regular) : INSPECTOR_W.overlay;
-  const toggleInspector = useCallback(() => (wide ? setInspectorWanted((v) => !v) : setOverlayOpen((v) => !v)), [wide]);
+  const toggleInspector = useCallback(() => (inAnalytics ? setAnalyticsInspector((v) => !v) : wide ? setInspectorWanted((v) => !v) : setOverlayOpen((v) => !v)), [wide, inAnalytics]);
   const toggleTimeline = useCallback(() => setCollapsedChoice(!timelineCollapsed), [timelineCollapsed]);
   const commands = useMemo(
     () => ({
@@ -406,7 +418,7 @@ export function Shell() {
     e.stopPropagation();
   };
 
-  const stageLabel = !onFloor ? "Execution Timeline" : view === "atlas" ? "Factory Atlas" : "Execution Blueprint";
+  const stageLabel = inTimeline ? "Execution Timeline" : inAnalytics ? "Factory Analytics" : view === "atlas" ? "Factory Atlas" : "Execution Blueprint";
   const selectionWord = selection ? refKind(selection) : null;
 
   return (
@@ -419,10 +431,10 @@ export function Shell() {
         }}
         className="sr-only z-[70] rounded-sm bg-surface-raised px-3 py-2 text-label text-ink shadow-2 focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
       >
-        {onFloor ? "Skip to the factory view" : "Skip to the timeline"}
+        {onFloor ? "Skip to the factory view" : inAnalytics ? "Skip to the analytics" : "Skip to the timeline"}
       </a>
       {/* The Timeline's tracks are past its transport and toolbar: the page's second Tab stop goes straight to them. */}
-      {onFloor ? null : (
+      {!inTimeline ? null : (
         <a
           href="#stage"
           data-skip-tracks=""
@@ -464,11 +476,16 @@ export function Shell() {
           {theater || !onFloor ? null : <StageNotice />}
           {theater && onFloor ? <TheaterOverlay /> : null}
         </div>
-        {onFloor ? null : (
+        {inTimeline ? (
           <div ref={timelineRef} className="absolute inset-0 isolate z-10 bg-surface" data-workspace="timeline">
             <TimelineWorkspace />
           </div>
-        )}
+        ) : null}
+        {inAnalytics ? (
+          <div ref={analyticsRef} className="absolute inset-0 isolate z-10 overflow-hidden bg-surface" data-workspace="analytics" data-analytics-workspace="" data-analytics-source={source}>
+            <AnalyticsWorkspace />
+          </div>
+        ) : null}
         {lostMoment.lost ? <LostMomentNotice at={lostMoment.lost.at} why={lostMoment.lost.why} onDismiss={lostMoment.dismiss} /> : null}
       </main>
 
@@ -487,8 +504,9 @@ export function Shell() {
               ),
         )}
         // As a drawer it stops at the timeline, so the transport stays in reach while it is open; over
-        // the Timeline workspace it starts under that workspace's transport and toolbar, for the same reason.
-        style={wide ? undefined : { top: theater ? 0 : onFloor ? TOP : TOP + TIMELINE_CHROME_HEIGHT, bottom: theater || !onFloor ? 0 : tl }}
+        // the Timeline workspace it starts under that workspace's transport and toolbar, for the same reason
+        // (Analytics has no transport: it starts under the header).
+        style={wide ? undefined : { top: theater ? 0 : inTimeline ? TOP + TIMELINE_CHROME_HEIGHT : TOP, bottom: theater || !onFloor ? 0 : tl }}
       >
         <div className="h-full" style={{ width: wide ? inspectorW : "100%" }}>
           <Inspector />

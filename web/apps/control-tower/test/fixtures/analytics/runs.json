@@ -1,0 +1,342 @@
+{
+ "body": {
+  "data": {
+   "cursor": "791fafe48b91c0cd.12684",
+   "excluded": [],
+   "filters": {},
+   "generated_ms": 1794640504707,
+   "history": {
+    "complete": false,
+    "complete_window": false,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793344003999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": ""
+   },
+   "items": [
+    {
+     "app_type": "web",
+     "blockers": 0,
+     "closed_at": {
+      "at_ms": 1792769820999,
+      "authority": "authoritative",
+      "event_id": "r:064221cc:1",
+      "not_after_ms": 1792769820999,
+      "not_before_ms": 1792769820000,
+      "order_ms": 1792769820999,
+      "pos": 5526,
+      "precision": "s"
+     },
+     "deviations": 0,
+     "escalated": false,
+     "event_id": "r:064221cc:1",
+     "executions": [
+      {
+       "app_type": "web",
+       "attempt": 1,
+       "execution_id": "x30389b100ee9",
+       "provenance": null,
+       "provenance_reason": "not-recorded",
+       "provenance_recorded": false,
+       "risk": "Medium",
+       "source_commit": null,
+       "started_ms": 1792655928999,
+       "state": "finished",
+       "ticket_id": "SYN-006",
+       "usage": {
+        "complete": true,
+        "cost_source": "execution.usage",
+        "cost_usd": 4.7979,
+        "incomplete_reasons": [],
+        "models": [
+         "claude-haiku-5-5",
+         "claude-opus-5-5",
+         "claude-sonnet-5-5"
+        ],
+        "recorded": true,
+        "sources": [
+         "execution.usage",
+         "execution.completed"
+        ],
+        "supervisor_cost_usd": 4.7979,
+        "tokens_total": 3522336
+       },
+       "wave": "WAVE-001"
+      },
+      {
+       "app_type": "web",
+       "attempt": 2,
+       "execution_id": "x634fedb00513",
+       "provenance": null,
+       "provenance_reason": "not-recorded",
+       "provenance_recorded": false,
+       "risk": "Medium",
+       "source_commit": null,
+       "started_ms": 1792753727999,
+       "state": "finished",
+       "ticket_id": "SYN-006",
+       "usage": {
+        "complete": true,
+        "cost_source": "execution.usage",
+        "cost_usd": 4.3694,
+        "incomplete_reasons": [],
+        "models": [
+         "claude-haiku-5-5",
+         "claude-opus-5-5"
+        ],
+        "recorded": true,
+        "sources": [
+         "execution.usage",
+         "execution.completed"
+        ],
+        "supervisor_cost_usd": 4.3694,
+        "tokens_total": 2789634
+       },
+       "wave": "WAVE-001"
+      }
+     ],
+     "first_pass": true,
+     "human_approval": false,
+     "merge_commit": "fff0f6f",
+     "merge_method": "local",
+     "outcome": "merged",
+     "record_version": 2,
+     "review_rejections": 0,
+     "risk": "Medium",
+     "rounds": 1,
+     "slice_id": "SLICE-006",
+     "tests_passing_on_first_run": 0,
+     "tests_seen_failing_first": 3,
+     "ticket_id": "SYN-006",
+     "verify_failures": 0,
+     "wave": "WAVE-001"
+    },
+    {
+     "app_type": "cli",
+     "blockers": 0,
+     "closed_at": {
+      "at_ms": 1792775721999,
+      "authority": "authoritative",
+      "event_id": "r:064221cc:2",
+      "not_after_ms": 1792775721999,
+      "not_before_ms": 1792775721000,
+      "order_ms": 1792775721999,
+      "pos": 5541,
+      "precision": "s"
+     },
+     "deviations": 1,
+     "escalated": false,
+     "event_id": "r:064221cc:2",
+     "executions": [
+      {
+       "app_type": "cli",
+       "attempt": 1,
+       "execution_id": "x92a9b66ad013",
+       "provenance": null,
+       "provenance_reason": "not-recorded",
+       "provenance_recorded": false,
+       "risk": "Medium",
+       "source_commit": null,
+       "started_ms": 1792655928999,
+       "state": "finished",
+       "ticket_id": "SYN-007",
+       "usage": {
+        "complete": true,
+        "cost_source": "execution.usage",
+        "cost_usd": 6.9462,
+        "incomplete_reasons": [],
+        "models": [
+         "claude-haiku-5-5",
+         "claude-opus-5-5",
+         "claude-sonnet-5-5"
+        ],
+        "recorded": true,
+        "sources": [
+         "execution.usage",
+         "execution.completed"
+        ],
+        "supervisor_cost_usd": 6.9462,
+        "tokens_total": 4269954
+       },
+       "wave": "WAVE-001"
+      },
+      {
+       "app_type": "cli",
+       "attempt": 2,
+       "execution_id": "xbe2af122f8e1",
+       "provenance": null,
+       "provenance_reason": "not-recorded",
+       "provenance_recorded": false,
+       "risk": "Medium",
+       "source_commit": null,
+       "started_ms": 1792759618999,
+       "state": "finished",
+       "ticket_id": "SYN-007",
+       "usage": {
+        "complete": true,
+        "cost_source": "execution.usage",
+        "cost_usd": 5.0046,
+        "incomplete_reasons": [],
+        "models": [
+         "claude-haiku-5-5",
+         "claude-opus-5-5"
+        ],
+        "recorded": true,
+        "sources": [
+         "execution.usage",
+         "execution.completed"
+        ],
+        "supervisor_cost_usd": 5.0046,
+        "tokens_total": 3223492
+       },
+       "wave": "WAVE-001"
+      }
+     ],
+     "first_pass": true,
+     "human_approval": false,
+     "merge_commit": "8a04a50",
+     "merge_method": "local",
+     "outcome": "merged",
+     "record_version": 2,
+     "review_rejections": 0,
+     "risk": "Medium",
+     "rounds": 1,
+     "slice_id": "SLICE-007",
+     "tests_passing_on_first_run": 1,
+     "tests_seen_failing_first": 2,
+     "ticket_id": "SYN-007",
+     "verify_failures": 0,
+     "wave": "WAVE-001"
+    },
+    {
+     "app_type": "api",
+     "blockers": 0,
+     "closed_at": {
+      "at_ms": 1792834230999,
+      "authority": "authoritative",
+      "event_id": "r:064221cc:3",
+      "not_after_ms": 1792834230999,
+      "not_before_ms": 1792834230000,
+      "order_ms": 1792834230999,
+      "pos": 5833,
+      "precision": "s"
+     },
+     "deviations": 0,
+     "escalated": false,
+     "event_id": "r:064221cc:3",
+     "executions": [
+      {
+       "app_type": "api",
+       "attempt": 2,
+       "execution_id": "x39545641e6c1",
+       "provenance": null,
+       "provenance_reason": "not-recorded",
+       "provenance_recorded": false,
+       "risk": "Medium",
+       "source_commit": null,
+       "started_ms": 1792819711999,
+       "state": "finished",
+       "ticket_id": "SYN-008",
+       "usage": {
+        "complete": true,
+        "cost_source": "execution.usage",
+        "cost_usd": 5.2834,
+        "incomplete_reasons": [],
+        "models": [
+         "claude-fable-5-2",
+         "claude-haiku-5-5"
+        ],
+        "recorded": true,
+        "sources": [
+         "execution.usage",
+         "execution.completed"
+        ],
+        "supervisor_cost_usd": 5.2834,
+        "tokens_total": 3017206
+       },
+       "wave": "WAVE-001"
+      },
+      {
+       "app_type": "api",
+       "attempt": 1,
+       "execution_id": "xa1344fba40ad",
+       "provenance": null,
+       "provenance_reason": "not-recorded",
+       "provenance_recorded": false,
+       "risk": "Medium",
+       "source_commit": null,
+       "started_ms": 1792736052999,
+       "state": "finished",
+       "ticket_id": "SYN-008",
+       "usage": {
+        "complete": true,
+        "cost_source": "execution.usage",
+        "cost_usd": 5.6876,
+        "incomplete_reasons": [],
+        "models": [
+         "claude-haiku-5-5",
+         "claude-opus-5-5",
+         "claude-sonnet-5-5"
+        ],
+        "recorded": true,
+        "sources": [
+         "execution.usage",
+         "execution.completed"
+        ],
+        "supervisor_cost_usd": 5.6876,
+        "tokens_total": 4562721
+       },
+       "wave": "WAVE-001"
+      }
+     ],
+     "first_pass": true,
+     "human_approval": false,
+     "merge_commit": "3ed4741",
+     "merge_method": "pr",
+     "outcome": "merged",
+     "record_version": 2,
+     "review_rejections": 0,
+     "risk": "Medium",
+     "rounds": 1,
+     "slice_id": "SLICE-008",
+     "tests_passing_on_first_run": 0,
+     "tests_seen_failing_first": 3,
+     "ticket_id": "SYN-008",
+     "verify_failures": 0,
+     "wave": "WAVE-001"
+    }
+   ],
+   "more": true,
+   "of": "runs",
+   "offset": 0,
+   "projection": {
+    "definitions": 2,
+    "format": 4
+   },
+   "rules": [
+    "recorded cost only: nothing is estimated, apportioned or priced",
+    "usage.complete is null when nothing was recorded; false when the record may be lower than what was spent",
+    "provenance is null and provenance_recorded false (with provenance_reason) when no snapshot was recorded at the start; it is never inferred",
+    "provenance=<config_id> keeps executions recorded with that configuration (of=runs: run records with at least one such execution, every execution listed); provenance=not-recorded keeps those without one"
+   ],
+   "total": 57,
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": null,
+    "from_ms": null,
+    "last_runs": null,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/runs?limit=3",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

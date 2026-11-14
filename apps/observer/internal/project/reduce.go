@@ -97,6 +97,7 @@ func (s *State) releaseSliceCapacity(id string, st *Stamp) {
 	w.Released = bounded(st, w.LastHeld)
 	s.SliceCapacityWaits = append(s.SliceCapacityWaits, w)
 	if n := len(s.SliceCapacityWaits); n > maxCapacityWaits {
+		s.dropSliceCapacity(s.SliceCapacityWaits[:n-maxCapacityWaits])
 		s.SliceCapacityWaitsDropped += int64(n - maxCapacityWaits)
 		s.SliceCapacityWaits = append([]*SliceCapacityWait(nil), s.SliceCapacityWaits[n-maxCapacityWaits:]...)
 	}
@@ -116,6 +117,8 @@ func (s *State) Apply(e *feed.Event) {
 	if st.OrderMS > s.LastMS {
 		s.LastMS = st.OrderMS
 	}
+	defer s.syncVisits(e)
+	s.noteSource(e, st)
 	switch e.Origin.Stream {
 	case "intake-log":
 		s.applyIntake(e, st)
@@ -169,13 +172,109 @@ func itoa(p *int64) string {
 	return strconv.FormatInt(*p, 10)
 }
 
-// measured returns the measured milliseconds between two stamps, if both are point times.
-func measured(a, b *Stamp) (int64, bool) {
-	d := between(a, b, false)
-	if d.Basis == "measured" && d.MS != nil {
-		return *d.MS, true
+// span folds one closed duration into a metric by how it is known: a measured duration into the
+// statistic; a bounded or unknown one counted apart, with its bounds (M6_5_DESIGN.md rule 3).
+func (s *State) span(id string, d []metrics.Dim, dd string, start, end *Stamp) {
+	du := between(start, end, false)
+	if du.Basis == "measured" && du.MS != nil {
+		s.Metrics.Duration(id, d, dd, *du.MS)
+		return
 	}
-	return 0, false
+	s.Metrics.Basis(id, d, dd, du.Basis, du.MinMS, du.MaxMS)
+}
+
+// cdims are a metric's dimensions plus the ticket the member belongs to. The ticket's risk, app
+// type and wave are not written into the cell: a read joins them from the projection at its
+// cursor (TicketDims), so a ticket's figures do not split by when its classification became known
+// and do not depend on the order events arrived in (M6.5 D8).
+func (s *State) cdims(ticket string, kv ...string) []metrics.Dim {
+	d := dims(kv...)
+	for _, x := range d {
+		if x.Key == "ticket" {
+			return d
+		}
+	}
+	return append(d, metrics.Dim{Key: "ticket", Value: ticket})
+}
+
+// TicketDims is a ticket's risk, app type and wave as the projection knows them now: what a
+// metric read joins to the ticket-keyed cells.
+func TicketDims(s *State, ticket string) map[string]string {
+	c := s.Cells[ticket]
+	if c == nil {
+		return nil
+	}
+	return map[string]string{"risk": c.Risk, "app_type": c.AppType, "wave": s.waveOf(c)}
+}
+
+// MetricQuery evaluates metrics with the ticket dimensions joined from this state.
+func (s *State) MetricQuery(q metrics.Query) []metrics.Row {
+	q.Resolve = func(t string) map[string]string { return TicketDims(s, t) }
+	return s.Metrics.Query(q)
+}
+
+// waveOf is a cell's wave, from the cell or its slice.
+func (s *State) waveOf(c *Cell) string {
+	if c.WaveID != "" {
+		return c.WaveID
+	}
+	if sl := s.Slices[c.SliceID]; sl != nil {
+		return sl.WaveID
+	}
+	return ""
+}
+
+// exNoUsage: a completed execution with no execution.usage from the stream.
+const exNoUsage = "completed with no usage record from the stream"
+
+// exK1NoResult: a claimed execution with no execution.completed (failed, running, or of unknown
+// outcome) has no recorded cost.
+const exK1NoResult = "no result recorded: the execution failed, is still running, or its outcome is unknown"
+
+// exR2NoFinding: blockers a run record counts with no review finding read for them.
+const exR2NoFinding = "blockers counted in the run record with no review finding in the lifecycle (no vote file read)"
+
+// syncR2 discloses in R2's coverage the blockers a ticket's run record counts beyond the blocker
+// findings read for it: R2 counts findings only, so those are excluded with a reason, never added.
+func (s *State) syncR2(c *Cell, dd string) {
+	var found int64
+	for _, f := range c.Findings {
+		if f.Severity == "blocker" {
+			found++
+		}
+	}
+	want := max(0, c.MRunBlockers-found)
+	if want == c.MR2Ex {
+		return
+	}
+	if c.MR2Ex != 0 {
+		s.Metrics.Exclude("R2", s.cdims(c.TicketID), dayKey(c.MR2Day), exR2NoFinding, -float64(c.MR2Ex))
+	}
+	c.MR2Ex, c.MR2Day = want, orDefault(dd, "-")
+	if want != 0 {
+		s.Metrics.Exclude("R2", s.cdims(c.TicketID), dayKey(c.MR2Day), exR2NoFinding, float64(want))
+	}
+	s.touch(entCell, c.TicketID)
+}
+
+// exT1NoMerge: a ticket merged by its run record whose lifecycle log has no merge.
+const exT1NoMerge = "no merge in the lifecycle log"
+
+// streamOf names the source stream of a partition key, for refused records.
+func streamOf(key string) string {
+	switch {
+	case strings.HasPrefix(key, "r:"):
+		return "run"
+	case strings.HasPrefix(key, "c:"):
+		return "lifecycle"
+	case strings.HasPrefix(key, "i:"):
+		return "intake"
+	case strings.HasPrefix(key, "x:"):
+		return "record"
+	case strings.HasPrefix(key, "s:"):
+		return "stream"
+	}
+	return "observer"
 }
 
 func (s *State) cell(e *feed.Event, st *Stamp) *Cell {
@@ -291,6 +390,18 @@ func (sl *Slice) openWait() *DependencyWait {
 	return nil
 }
 
+// endSliceWait closes a slice's open dependency wait because the slice was replaced: no longer
+// open for W1, and counted as left out (it never resolved).
+func (s *State) endSliceWait(sl *Slice, st *Stamp) {
+	if w := sl.openWait(); w != nil {
+		if w.Blocked != nil {
+			s.Metrics.OpenAdd("W1", day(w.Blocked), -1)
+		}
+		s.Metrics.Exclude("W1", s.cdims(sl.TicketID, "wave", sl.WaveID), day(st), "the wait ended because the slice was replaced, not resolved", 1)
+	}
+	sl.endWait(st)
+}
+
 // endWait closes an open dependency wait because the slice it belonged to was replaced.
 func (sl *Slice) endWait(st *Stamp) {
 	if w := sl.openWait(); w != nil {
@@ -313,6 +424,9 @@ func (sl *Slice) eligible() *Stamp {
 		return sl.Resolved
 	}
 	if len(sl.Dependencies) == 0 {
+		if sl.FirstMaterialized != nil {
+			return sl.FirstMaterialized
+		}
 		return sl.Materialized
 	}
 	return nil
@@ -371,9 +485,12 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		if sl.Materialized != nil && !sameRev(sl.Revision, e.IDs.Revision) {
 			sl.Revisions = append(sl.Revisions, SliceRevision{Revision: sl.Revision, TicketID: sl.TicketID, State: sl.State, At: sl.Materialized})
-			sl.endWait(st) // a new revision replaced the slice while it waited
+			s.endSliceWait(sl, st) // a new revision replaced the slice while it waited
 			sl.Blocked, sl.Resolved, sl.Scheduled, sl.Integrated, sl.Superseded = nil, nil, nil, nil, nil
 			sl.Reasons, sl.DependsOn, sl.Commit = []string{}, []string{}, ""
+		}
+		if sl.FirstMaterialized == nil || sl.Materialized == nil || !sameRev(sl.Revision, e.IDs.Revision) {
+			sl.FirstMaterialized = st
 		}
 		sl.Revision, sl.Materialized = e.IDs.Revision, st
 		sl.TicketID = e.Ticket()
@@ -393,10 +510,8 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		sl.Integrated, sl.Commit = st, d.Commit
 		sl.recompute(st)
-		m.Count("T2", dims("wave", sl.WaveID), day(st), 1)
-		if ms, ok := measured(sl.eligible(), st); ok {
-			m.Duration("C4", dims("wave", sl.WaveID), day(st), ms)
-		}
+		m.Count("T2", s.cdims(sl.TicketID, "wave", sl.WaveID), day(st), 1)
+		s.span("C4", s.cdims(sl.TicketID, "wave", sl.WaveID), day(st), sl.eligible(), st)
 		s.closeRequired(sl.TicketID, sl.SliceID, st, e.Type)
 	case "dependency.resolved":
 		sl := s.slice(e)
@@ -408,12 +523,13 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		if sl.Blocked != nil && (sl.Resolved == nil || sl.Resolved.Pos < sl.Blocked.Pos) {
-			if ms, ok := measured(sl.Blocked, st); ok {
-				m.Duration("W1", dims("wave", sl.WaveID), day(st), ms)
-			}
+			s.span("W1", s.cdims(sl.TicketID, "wave", sl.WaveID), day(st), sl.Blocked, st)
 		}
 		if w := sl.openWait(); w != nil {
 			w.Resolved, w.DependsOn = st, nonNilS(d.DependsOn)
+			if w.Blocked != nil {
+				m.OpenAdd("W1", day(w.Blocked), -1)
+			}
 		}
 		sl.Resolved = st
 		if d.DependsOn != nil {
@@ -443,7 +559,9 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			}
 		} else {
 			sl.Waits = append(sl.Waits, &DependencyWait{Revision: sl.Revision, Blocked: st, Reasons: nonNilS(d.Reasons)})
+			m.OpenAdd("W1", day(st), 1)
 			if len(sl.Waits) > maxWaitsPerSlice {
+				s.dropDependency(sl, sl.Waits[:len(sl.Waits)-maxWaitsPerSlice])
 				sl.WaitsDropped += int64(len(sl.Waits) - maxWaitsPerSlice)
 				sl.Waits = append([]*DependencyWait(nil), sl.Waits[len(sl.Waits)-maxWaitsPerSlice:]...)
 			}
@@ -457,8 +575,12 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		if sl != nil {
-			if ms, ok := measured(sl.eligible(), st); ok && sl.Scheduled == nil {
-				m.Duration("W2", dims("wave", sl.WaveID), day(st), ms)
+			if sl.Scheduled == nil {
+				t := sl.TicketID
+				if t == "" {
+					t = e.Ticket()
+				}
+				s.span("W2", s.cdims(t, "wave", sl.WaveID), day(st), sl.eligible(), st)
 			}
 			sl.Scheduled = st
 			s.releaseSliceCapacity(sl.SliceID, st)
@@ -479,7 +601,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 	case "revision.superseded":
 		if sl := s.slice(e); sl != nil {
 			sl.Superseded = st
-			sl.endWait(st)
+			s.endSliceWait(sl, st)
 			sl.recompute(st)
 		}
 	case "human.required":
@@ -489,7 +611,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		key := "required:" + e.ID
 		s.Gates[key] = &HumanGate{Key: key, Kind: "required", TicketID: e.Ticket(), SliceID: feed.Str(e.IDs.SliceID), Reason: d.Reason, Opened: st}
-		m.Count("S4", nil, day(st), 1)
+		m.Count("S4", s.cdims(e.Ticket()), day(st), 1)
 	case "factory.activated":
 		var d struct {
 			Autonomy   string             `json:"autonomy"`
@@ -550,12 +672,19 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			Attempt *int64 `json:"attempt"`
 		}
 		e.DataAs(&d)
+		first := x.Claimed == nil
+		if x.Claimed == nil && x.ProcessStarted == nil {
+			m.OpenAdd("W4", day(st), 1)
+		}
 		x.Claimed, x.StageAtStart, x.Next = st, d.Stage, d.Next
 		x.Attempt = firstNonNil(d.Attempt, e.IDs.Attempt)
 		s.cell(e, st)
-		m.Rate("X1", dims("stage", d.Stage), day(st), 0, 1)
-		m.Rate("S1", nil, day(st), 0, 1)
-		m.Rate("S2", nil, day(st), 0, 1)
+		m.Rate("X1", s.cdims(e.Ticket(), "stage", d.Stage, "ticket", e.Ticket()), day(st), 0, 1)
+		if first {
+			m.Exclude("K1", s.cdims(x.TicketID, "stage", d.Stage, "ticket", x.TicketID), day(st), exK1NoResult, 1)
+		}
+		m.Rate("S1", s.cdims(e.Ticket()), day(st), 0, 1)
+		m.Rate("S2", s.cdims(e.Ticket()), day(st), 0, 1)
 		s.closeRequired(e.Ticket(), "", st, e.Type)
 	case "execution.started":
 		x := s.execution(e)
@@ -563,12 +692,16 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			return
 		}
 		var d struct {
-			Until    *string            `json:"until"`
-			Workflow string             `json:"workflow"`
-			Limits   map[string]float64 `json:"limits"`
+			Until            *string            `json:"until"`
+			Workflow         string             `json:"workflow"`
+			Limits           map[string]float64 `json:"limits"`
+			Provenance       map[string]any     `json:"provenance"`        // revision 3
+			ProvenanceReason *string            `json:"provenance_reason"` // revision 3
+			SourceCommit     *string            `json:"source_commit"`     // revision 3
 		}
 		e.DataAs(&d)
 		x.Started, x.Workflow, x.Until, x.Limits = st, d.Workflow, feed.Str(d.Until), d.Limits
+		x.Provenance, x.ProvenanceReason, x.SourceCommit = d.Provenance, feed.Str(d.ProvenanceReason), feed.Str(d.SourceCommit)
 		s.cell(e, st)
 	case "station.observed":
 		var d struct {
@@ -596,10 +729,8 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			s.RecoveriesDropped += int64(n - maxRecoveries)
 			s.Recoveries = append([]Recovery(nil), s.Recoveries[n-maxRecoveries:]...)
 		}
-		m.Rate("S1", dims("kind", d.Kind), day(st), 1, 0)
-		if d.Kind == "outcome-unknown" {
-			m.Rate("S2", nil, day(st), 1, 0)
-		}
+		m.Rate("S1", s.cdims(e.Ticket(), "kind", d.Kind), day(st), 1, 0)
+		// S2 counts executions, not recovery events: syncExecutions.
 	case "execution.completed":
 		x := s.execution(e)
 		if x == nil {
@@ -614,24 +745,42 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			RefusedTools []string `json:"refused_tools"`
 		}
 		e.DataAs(&d)
+		first := x.Completed == nil
 		x.Completed, x.StageAtEnd, x.Next, x.WaitingFor, x.How = st, d.Stage, d.Next, feed.Str(d.WaitingFor), feed.Str(d.How)
 		x.CostUSD, x.RefusedTools, x.RefusedFinal = d.CostUSD, nonNilS(d.RefusedTools), true
-		m.Cover("K1", nil, day(st), d.CostUSD != nil)
+		kd := s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID)
+		if first && x.Claimed != nil {
+			// Every claimed execution is in K1's population from its claim; a result now moves it.
+			m.Exclude("K1", kd, day(x.Claimed), exK1NoResult, -1)
+		}
+		if d.CostUSD == nil {
+			m.Exclude("K1", kd, day(st), "completed with no recorded cost", 1)
+		}
 		if d.CostUSD != nil {
-			m.Rate("K1", dims("stage", x.StageAtStart), day(st), *d.CostUSD, 1)
+			m.Rate("K1", kd, day(st), *d.CostUSD, 1)
 			if x.TicketID != "" {
-				den := 0.0
-				if !s.Pending.CostTickets[x.TicketID] {
-					s.Pending.CostTickets[x.TicketID] = true
-					den = 1
-				}
-				m.Rate("K4", nil, "", *d.CostUSD, den)
-				m.Rate("K4", dims("ticket", x.TicketID), "", *d.CostUSD, den)
+				// The denominator is the distinct tickets among the cells read (Def.Distinct).
+				m.Rate("K4", s.cdims(x.TicketID, "ticket", x.TicketID), day(st), *d.CostUSD, 1)
+			} else {
+				m.Exclude("K4", nil, day(st), "a recorded cost with no ticket", 1)
 			}
 		}
-		m.Rate("S3", dims("stage", x.StageAtStart), day(st), 1, 1)
-		if ms, ok := measured(x.ProcessEnded, st); ok {
-			m.Duration("W5", nil, day(st), ms)
+		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), 1, 1)
+		if first {
+			// K2 and K3's coverage: completed executions, with a usage record from the stream or not.
+			for _, id := range []string{"K2", "K3"} {
+				if x.Usage != nil {
+					m.Covered(id, s.cdims(x.TicketID), day(st), 1)
+				} else {
+					m.Exclude(id, s.cdims(x.TicketID), day(st), exNoUsage, 1)
+				}
+			}
+			if x.Usage == nil {
+				x.MUsageDay = orDefault(day(st), "-")
+			}
+		}
+		if x.ProcessEnded != nil && first {
+			s.span("W5", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), x.ProcessEnded, st)
 		}
 	case "execution.failed":
 		x := s.execution(e)
@@ -654,8 +803,8 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		if d.Attempt != nil {
 			x.Attempt = d.Attempt
 		}
-		m.Rate("S3", dims("stage", x.StageAtStart), day(st), 0, 1)
-		m.Rate("X1", dims("stage", x.StageAtStart), day(st), 1, 0)
+		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), 0, 1)
+		m.Rate("X1", s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID), day(st), 1, 0)
 	}
 }
 
@@ -717,10 +866,6 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 	m := s.Metrics
 	if !c.Lifecycle {
 		c.Lifecycle = true
-		if !s.Pending.LifecycleTickets[c.TicketID] {
-			s.Pending.LifecycleTickets[c.TicketID] = true
-			m.Rate("C2", nil, "", 0, 1)
-		}
 	}
 	visitID := feed.Str(e.IDs.VisitID)
 	station := feed.Str(e.IDs.Station)
@@ -746,7 +891,8 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		} else if len(c.Visits) < maxListPerCell {
 			c.Visits = append(c.Visits, &Visit{VisitID: visitID, Station: station, Round: round, Entered: st, StageIn: d.Stage,
 				Action: d.Action, Resumed: d.Resumed, Head: d.Head, ExecutionID: e.Execution()})
-			m.Rate("C2", nil, "", 1, 0)
+			m.Rate("C2", s.cdims(c.TicketID, "station", station, "ticket", c.TicketID), day(st), 1, 0)
+			s.syncVisit(c, len(c.Visits)-1)
 		} else {
 			c.Dropped++
 		}
@@ -793,17 +939,21 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		}
 		v := c.visit(visitID)
 		if v == nil && len(c.Visits) < maxListPerCell {
-			// The exit arrived without its entry (history began part-way): keep the exit.
+			// The exit arrived without its entry (history began part-way): keep the exit. It is a
+			// recorded visit (C2), of unknown length (C1).
 			v = &Visit{VisitID: visitID, Station: station, Round: round}
 			c.Visits = append(c.Visits, v)
+			m.Rate("C2", s.cdims(c.TicketID, "station", station, "ticket", c.TicketID), day(st), 1, 0)
 		}
 		if v != nil {
 			v.Exited, v.Outcome, v.StageOut, v.DurationMS, v.ClosedBy = st, d.Outcome, d.Stage, d.DurationMS, d.ClosedBy
 			if d.Head != "" {
 				v.Head = d.Head
 			}
-			if ms, ok := measured(v.Entered, v.Exited); ok {
-				m.Duration("C1", dims("station", v.Station, "round", itoa(v.Round), "risk", c.Risk), day(st), ms)
+			for i := range c.Visits {
+				if c.Visits[i] == v {
+					s.syncVisit(c, i)
+				}
 			}
 		}
 		if c.CurrentVisit == visitID {
@@ -828,12 +978,17 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		} else {
 			c.GatesDropped++
 		}
-		m.Rate("X2", dims("gate", d.Gate, "station", station, "reason_code", feed.Str(d.ReasonCode)), day(st), b2f(d.Verdict == "refused"), 1)
+		m.Rate("X2", s.cdims(c.TicketID, "gate", d.Gate, "station", station, "reason_code", feed.Str(d.ReasonCode)), day(st), b2f(d.Verdict == "refused"), 1)
 		if d.Verdict == "overridden" {
-			m.Rate("X3", dims("gate", d.Gate), day(st), 1, 0)
+			// A numerator cell carries the gate; the denominator (build tasks) does not (Def.Split).
+			m.Rate("X3", s.cdims(c.TicketID, "gate", d.Gate, "reason_code", feed.Str(d.ReasonCode)), day(st), 1, 0)
 		}
-		if d.Gate == "verify.verdict" && round != nil && *round == 1 && d.Status != nil {
-			m.Rate("Q1", dims("risk", c.Risk), day(st), b2f(*d.Status == "PASS"), 1)
+		if d.Gate == "verify.verdict" && round != nil && *round == 1 {
+			if d.Status != nil {
+				m.Rate("Q1", s.cdims(c.TicketID), day(st), b2f(*d.Status == "PASS"), 1)
+			} else {
+				m.Exclude("Q1", s.cdims(c.TicketID), day(st), "a round-1 verification verdict with no status recorded", 1)
+			}
 		}
 	case "build.task_completed":
 		var d struct {
@@ -851,7 +1006,7 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		} else {
 			c.Dropped++
 		}
-		m.Rate("X3", nil, day(st), 0, 1)
+		m.Rate("X3", s.cdims(c.TicketID), day(st), 0, 1)
 	case "verify.check_recorded":
 		var d struct {
 			TargetID   string     `json:"target_id"`
@@ -871,7 +1026,7 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			c.Dropped++
 		}
 		if d.Result == "fail" {
-			m.Count("Q4", dims("target_kind", d.TargetKind), day(st), 1)
+			m.Count("Q4", s.cdims(c.TicketID, "target_kind", d.TargetKind), day(st), 1)
 		}
 	case "review.round_started":
 		var d struct {
@@ -934,7 +1089,7 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			c.Reviews = append(c.Reviews, r)
 		}
 		r.Outcome, r.Approvals, r.Votes, r.Blockers, r.SecurityVeto, r.Decided = d.Outcome, d.Approvals, d.Votes, d.Blockers, d.SecurityVeto, st
-		m.Rate("R1", dims("risk", c.Risk, "round", itoa(round)), day(st), b2f(d.Outcome == "REJECTED" || d.Outcome == "ESCALATE"), 1)
+		m.Rate("R1", s.cdims(c.TicketID, "round", itoa(round)), day(st), b2f(d.Outcome == "REJECTED" || d.Outcome == "ESCALATE"), 1)
 		hasSecurity := false
 		for _, seat := range r.Panel {
 			hasSecurity = hasSecurity || seat.Seat == "security"
@@ -943,12 +1098,13 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			hasSecurity = true
 		}
 		if hasSecurity {
-			m.Rate("R3", dims("risk", c.Risk), day(st), b2f(d.SecurityVeto), 1)
+			m.Rate("R3", s.cdims(c.TicketID), day(st), b2f(d.SecurityVeto), 1)
 		}
 		if d.Outcome == "AWAITING_HUMAN" {
 			key := "approval:" + c.TicketID + "#" + itoa(round)
 			if g := s.Gates[key]; g == nil || g.Closed != nil {
 				s.Gates[key] = &HumanGate{Key: key, Kind: "approval", TicketID: c.TicketID, SliceID: c.SliceID, Round: round, Opened: st}
+				m.OpenAdd("W3", day(st), 1)
 			}
 		}
 	case "human.approval_recorded":
@@ -961,9 +1117,10 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		for _, g := range s.Gates {
 			if g.Kind == "approval" && g.Closed == nil && g.TicketID == c.TicketID && (round == nil || sameRev(g.Round, round)) {
 				g.Closed, g.ClosedBy = st, e.Type
-				if ms, ok := measured(g.Opened, st); ok {
-					m.Duration("W3", dims("risk", c.Risk), day(st), ms)
+				if g.Opened != nil {
+					m.OpenAdd("W3", day(g.Opened), -1)
 				}
+				s.span("W3", s.cdims(c.TicketID), day(st), g.Opened, st)
 			}
 		}
 	case "merge.completed":
@@ -982,11 +1139,13 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		if len(c.Executions) > 0 || e.Execution() != "" {
 			writer = "supervisor"
 		}
-		m.Count("T1", dims("risk", c.Risk, "app_type", c.AppType, "writer", writer), day(st), 1)
+		m.Count("T1", s.cdims(c.TicketID, "writer", writer), day(st), 1)
+		if c.MT1Day != "" {
+			m.Exclude("T1", s.cdims(c.TicketID), dayKey(c.MT1Day), exT1NoMerge, -1)
+			c.MT1Day = ""
+		}
 		if sl := s.Slices[c.SliceID]; sl != nil && sl.Scheduled != nil && sl.TicketID == c.TicketID {
-			if ms, ok := measured(sl.Scheduled, st); ok {
-				m.Duration("C3", dims("risk", c.Risk), day(st), ms)
-			}
+			s.span("C3", s.cdims(c.TicketID), day(st), sl.Scheduled, st)
 		}
 	case "cleanup.completed":
 		var d struct {
@@ -1016,10 +1175,13 @@ func (s *State) applyRecord(e *feed.Event, st *Stamp) {
 	}
 	switch e.Type {
 	case "execution.process_started":
-		x.ProcessStarted = st
-		if ms, ok := measured(x.Claimed, st); ok {
-			s.Metrics.Duration("W4", nil, day(st), ms)
+		if x.ProcessStarted == nil {
+			if x.Claimed != nil {
+				s.Metrics.OpenAdd("W4", day(x.Claimed), -1)
+			}
+			s.span("W4", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), x.Claimed, st)
 		}
+		x.ProcessStarted = st
 	case "execution.process_ended":
 		var d struct {
 			Ended    string `json:"ended"`
@@ -1027,11 +1189,10 @@ func (s *State) applyRecord(e *feed.Event, st *Stamp) {
 			Seconds  *int64 `json:"seconds"`
 		}
 		e.DataAs(&d)
+		first := x.ProcessEnded == nil
 		x.ProcessEnded, x.Ended, x.ExitCode, x.Seconds = st, d.Ended, d.ExitCode, d.Seconds
-		if x.Completed != nil {
-			if ms, ok := measured(st, x.Completed); ok {
-				s.Metrics.Duration("W5", nil, day(st), ms)
-			}
+		if x.Completed != nil && first {
+			s.span("W5", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), st, x.Completed)
 		}
 	}
 }
@@ -1041,24 +1202,29 @@ func (s *State) applyRun(e *feed.Event, st *Stamp) {
 		return
 	}
 	var d struct {
-		RecordVersion          *int64 `json:"record_version"`
-		Outcome                string `json:"outcome"`
-		Rounds                 *int64 `json:"rounds"`
-		FirstPass              bool   `json:"first_pass"`
-		VerifyFailures         int64  `json:"verify_failures"`
-		ReviewRejections       int64  `json:"review_rejections"`
-		Escalated              bool   `json:"escalated"`
-		HumanApproval          bool   `json:"human_approval"`
-		Deviations             int64  `json:"deviations"`
-		Blockers               int64  `json:"blockers"`
-		TestsSeenFailingFirst  int64  `json:"tests_seen_failing_first"`
-		TestsPassingOnFirstRun int64  `json:"tests_passing_on_first_run"`
-		Risk                   string `json:"risk"`
-		AppType                string `json:"app_type"`
-		MergeMethod            string `json:"merge_method"`
-		MergeCommit            string `json:"merge_commit"`
+		RecordVersion          *int64   `json:"record_version"`
+		Outcome                string   `json:"outcome"`
+		Rounds                 *float64 `json:"rounds"`
+		FirstPass              bool     `json:"first_pass"`
+		VerifyFailures         int64    `json:"verify_failures"`
+		ReviewRejections       int64    `json:"review_rejections"`
+		Escalated              bool     `json:"escalated"`
+		HumanApproval          bool     `json:"human_approval"`
+		Deviations             int64    `json:"deviations"`
+		Blockers               int64    `json:"blockers"`
+		TestsSeenFailingFirst  float64  `json:"tests_seen_failing_first"`
+		TestsPassingOnFirstRun float64  `json:"tests_passing_on_first_run"`
+		Risk                   string   `json:"risk"`
+		AppType                string   `json:"app_type"`
+		MergeMethod            string   `json:"merge_method"`
+		MergeCommit            string   `json:"merge_commit"`
 	}
 	e.DataAs(&d)
+	// The normaliser fills a missing or unknown outcome with "merged" and lists it as unknown; the
+	// observe station counts such a run as neither merged nor abandoned, and so does the observer.
+	if contains(e.Unknown, "data.outcome") {
+		d.Outcome = "unknown"
+	}
 	r := &RunRecord{TicketID: e.Ticket(), SliceID: feed.Str(e.IDs.SliceID), RecordVersion: d.RecordVersion, Outcome: d.Outcome, Rounds: d.Rounds,
 		FirstPass: d.FirstPass, VerifyFailures: d.VerifyFailures, ReviewRejections: d.ReviewRejections, Escalated: d.Escalated,
 		HumanApproval: d.HumanApproval, Deviations: d.Deviations, Blockers: d.Blockers, TestsSeenFailingFirst: d.TestsSeenFailingFirst,
@@ -1075,18 +1241,17 @@ func (s *State) applyRun(e *feed.Event, st *Stamp) {
 		}
 	}
 	// The observe station's scorecard, record by record (observe.py scorecard).
-	m, dd := s.Metrics, day(st)
-	ra := dims("risk", d.Risk, "app_type", d.AppType)
-	if d.Outcome == "merged" {
-		m.Rate("Q2", ra, dd, b2f(d.FirstPass), 1)
-		if d.Rounds != nil {
-			m.Rate("Q3", ra, dd, float64(*d.Rounds), 1)
-		}
+	s.Metrics.FoldRun(RunFactsOf(r), day(st))
+	if c := s.Cells[r.TicketID]; c != nil {
+		c.MRunBlockers = max(c.MRunBlockers, d.Blockers)
+		s.syncR2(c, day(st))
 	}
-	m.Rate("R5", dims("risk", d.Risk), dd, b2f(d.Escalated), 1)
-	m.Rate("R6", nil, dd, b2f(d.Outcome == "abandoned"), 1)
-	m.Rate("G1", dims("risk", d.Risk), dd, float64(d.TestsSeenFailingFirst), float64(d.TestsSeenFailingFirst+d.TestsPassingOnFirstRun))
-	m.Rate("G2", nil, dd, float64(d.Deviations), 1)
+	// T1 counts merges written in lifecycle logs; a ticket the run record says merged with no merge
+	// in its log is disclosed in T1's coverage, never added to the count.
+	if c := s.Cells[r.TicketID]; c != nil && d.Outcome == "merged" && c.Merge == nil && c.MT1Day == "" {
+		c.MT1Day = orDefault(day(st), "-")
+		s.Metrics.Exclude("T1", s.cdims(c.TicketID), dayKey(c.MT1Day), exT1NoMerge, 1)
+	}
 }
 
 // ---- the execution stream ----
@@ -1180,7 +1345,7 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 		}
 		w.Finished, w.Status, w.TotalTokens, w.ToolUses, w.DurationMS = st, orDefault(d.Status, "unknown"), d.TotalTokens, d.ToolUses, d.DurationMS
 		w.StopReason, w.WorkflowJSON = feed.Str(d.StopReason), d.WorkflowJSON
-		m.Rate("S6", dims("stop_reason", w.StopReason), day(st), b2f(w.Status == "killed"), 1)
+		m.Rate("S6", s.cdims(x.TicketID, "stop_reason", w.StopReason), day(st), b2f(w.Status == "killed"), 1)
 	case "agent.queued":
 		var d struct {
 			Index      *int64  `json:"index"`
@@ -1192,6 +1357,9 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		key := refOf(e, "workflow") + "#" + itoa(d.Index)
 		if len(x.Queued) < maxAgentsPerExec {
+			if x.Queued[key] == nil {
+				m.OpenAdd("K9", day(st), 1)
+			}
 			x.Queued[key] = &Agent{Workflow: refOf(e, "workflow"), Index: d.Index, Label: d.Label, Phase: feed.Str(d.Phase), PhaseIndex: d.PhaseIndex,
 				Model: feed.Str(d.Model), Queued: st, Status: "queued"}
 		}
@@ -1212,9 +1380,17 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 		}
 		wf := refOf(e, "workflow")
 		key := wf + "#" + itoa(d.Index)
+		queued := false
 		if q := x.Queued[key]; q != nil {
 			a.Queued = q.Queued
 			delete(x.Queued, key)
+			queued = true
+			if q.Queued != nil {
+				m.OpenAdd("K9", day(q.Queued), -1)
+			}
+		}
+		if a.Started == nil {
+			m.OpenAdd("K8", day(st), 1)
 		}
 		a.Workflow, a.Index, a.Label, a.Phase, a.PhaseIndex = wf, d.Index, d.Label, feed.Str(d.Phase), d.PhaseIndex
 		a.AgentType, a.Model, a.AgentTry, a.Started, a.Status = feed.Str(d.AgentType), feed.Str(d.Model), d.AgentTry, st, "running"
@@ -1222,8 +1398,8 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 		if len(e.Inferred) > 0 {
 			a.Inferred = e.Inferred
 		}
-		if ms, ok := measured(a.Queued, st); ok {
-			m.Duration("K9", dims("phase", a.Phase), day(st), ms)
+		if queued {
+			s.span("K9", s.cdims(x.TicketID, "phase", a.Phase), day(st), a.Queued, st)
 		}
 	case "agent.progressed":
 		var d struct {
@@ -1256,6 +1432,10 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 		if a == nil {
 			return
 		}
+		first := a.Finished == nil
+		if first && a.Started != nil {
+			m.OpenAdd("K8", day(a.Started), -1)
+		}
 		a.Finished, a.Status, a.DurationMS = st, orDefault(d.Status, "unknown"), d.DurationMS
 		if d.Tokens != nil {
 			a.Tokens = d.Tokens
@@ -1263,15 +1443,25 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 		if d.ToolCalls != nil {
 			a.ToolCalls = d.ToolCalls
 		}
-		ad := dims("station", a.Station, "seat", a.Seat, "model", a.Model, "phase", a.Phase)
-		if a.Tokens != nil {
-			m.Rate("K7", ad, day(st), float64(*a.Tokens), 1)
+		if !first {
+			return // an agent finished twice is counted once
 		}
+		t := orDefault(a.TicketID, x.TicketID)
+		if a.Tokens != nil {
+			m.Rate("K7", s.cdims(t, "station", a.Station, "seat", a.Seat, "model", a.Model, "phase", a.Phase), day(st), float64(*a.Tokens), 1)
+		} else {
+			m.Exclude("K7", s.cdims(t, "station", a.Station, "seat", a.Seat, "model", a.Model, "phase", a.Phase), day(st), "finished with no token total", 1)
+		}
+		kd := s.cdims(t, "station", a.Station, "seat", a.Seat, "model", a.Model)
 		if a.DurationMS != nil {
-			m.Duration("K8", dims("station", a.Station, "seat", a.Seat, "model", a.Model), day(st), *a.DurationMS)
+			m.Duration("K8", kd, day(st), *a.DurationMS)
+		} else {
+			m.Basis("K8", kd, day(st), "unknown", nil, nil)
 		}
 		if a.ToolCalls != nil {
-			m.Rate("K10", dims("station", a.Station, "model", a.Model), day(st), float64(*a.ToolCalls), 1)
+			m.Rate("K10", s.cdims(t, "station", a.Station, "model", a.Model), day(st), float64(*a.ToolCalls), 1)
+		} else {
+			m.Exclude("K10", s.cdims(t, "station", a.Station, "model", a.Model), day(st), "finished with no tool-call count", 1)
 		}
 	case "tool.called":
 		id := feed.Str(e.IDs.ToolCallID)
@@ -1313,7 +1503,7 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 		if a := x.Agents[agent]; a != nil {
 			a.Refused++
 		}
-		m.Count("S5", dims("tool", d.Tool), day(st), 1)
+		m.Count("S5", s.cdims(x.TicketID, "tool", d.Tool), day(st), 1)
 	case "execution.usage":
 		var d struct {
 			TotalCostUSD    *float64               `json:"total_cost_usd"`
@@ -1329,6 +1519,14 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 		if d.Models == nil {
 			d.Models = map[string]*ModelUsage{}
 		}
+		if x.Usage == nil && x.MUsageDay != "" {
+			// The usage arrived after the completion: the execution moves to counted.
+			for _, id := range []string{"K2", "K3"} {
+				m.Exclude(id, s.cdims(x.TicketID), dayKey(x.MUsageDay), exNoUsage, -1)
+				m.Covered(id, s.cdims(x.TicketID), dayKey(x.MUsageDay), 1)
+			}
+			x.MUsageDay = ""
+		}
 		x.Usage = &Usage{TotalCostUSD: d.TotalCostUSD, Subtype: feed.Str(d.Subtype), IsError: d.IsError, TerminalReason: feed.Str(d.TerminalReason),
 			BudgetExhausted: d.BudgetExhausted, Models: d.Models, CostComplete: d.CostComplete, CostIncompleteReasons: d.Reasons, At: st}
 		models := make([]string, 0, len(d.Models))
@@ -1342,17 +1540,20 @@ func (s *State) applyStream(e *feed.Event, st *Stamp) {
 				continue
 			}
 			if u.CostUSD != nil {
-				m.Rate("K2", dims("model", model), day(st), *u.CostUSD, 1)
+				m.Rate("K2", s.cdims(x.TicketID, "model", model), day(st), *u.CostUSD, 1)
+			} else {
+				m.Exclude("K2", s.cdims(x.TicketID, "model", model), day(st), metrics.ExPairNoCost, 1)
 			}
 			for _, k := range []struct {
 				kind string
 				n    *int64
 			}{{"input", u.InputTokens}, {"output", u.OutputTokens}, {"cache_read", u.CacheReadTokens}, {"cache_creation", u.CacheCreationTokens}} {
 				if k.n != nil {
-					m.Rate("K3", dims("model", model, "token_kind", k.kind), day(st), float64(*k.n), 0)
+					// Numerator cells carry the token kind; the denominator does not (Def.Split).
+					m.Rate("K3", s.cdims(x.TicketID, "model", model, "token_kind", k.kind), day(st), float64(*k.n), 0)
 				}
 			}
-			m.Rate("K3", dims("model", model), day(st), 0, 1)
+			m.Rate("K3", s.cdims(x.TicketID, "model", model), day(st), 0, 1)
 		}
 	}
 }
@@ -1379,6 +1580,12 @@ func (s *State) applyClosing(e *feed.Event, st *Stamp) {
 			ToolCalls *int64 `json:"tool_calls"`
 		}
 		e.DataAs(&d)
+		if a.Started != nil {
+			s.Metrics.OpenAdd("K8", day(a.Started), -1)
+		}
+		// The agent ended no later than its process: a bounded duration, counted apart.
+		s.span("K8", s.cdims(orDefault(a.TicketID, x.TicketID), "station", a.Station, "seat", a.Seat, "model", a.Model), day(st), a.Started, &Stamp{
+			EventID: st.EventID, Pos: st.Pos, Precision: "bounded", NotAfter: st.At, OrderMS: st.OrderMS, Authority: st.Authority})
 		a.Finished, a.Status, a.DurationMS = st, "unknown", nil
 		if d.Tokens != nil {
 			a.Tokens = d.Tokens
@@ -1411,6 +1618,16 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		class, lost := feed.GapClass(d.Reason)
+		switch d.Reason {
+		case "conflict":
+			m.MarkSuspect(day(st))
+		case "unparsable-line":
+			n := int64(1)
+			if d.Count != nil && *d.Count > 0 {
+				n = *d.Count
+			}
+			m.Refuse(streamOf(d.SourceKey), day(st), n)
+		}
 		s.GapCounts[d.Reason]++
 		s.GapClasses[class]++
 		s.Gaps = append(s.Gaps, Gap{SourceKey: d.SourceKey, FromSeq: d.FromSeq, ToSeq: d.ToSeq, Reason: d.Reason, Class: class, Lost: lost,
@@ -1455,7 +1672,10 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 				FileRel: feed.Str(d.FileRel), Title: d.Title, Nature: "prose"})
 		}
 		if d.Severity == "blocker" {
-			m.Count("R2", dims("rule", feed.Str(d.Rule), "seat", d.Seat), day(st), 1)
+			m.Count("R2", s.cdims(e.Ticket(), "rule", feed.Str(d.Rule), "seat", d.Seat), day(st), 1)
+			if c := s.Cells[e.Ticket()]; c != nil {
+				s.syncR2(c, day(st))
+			}
 		}
 	case "artifact.recorded":
 		var d struct {
@@ -1478,7 +1698,7 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 			}
 		}
 		if d.Nature == "evidence" {
-			m.Rate("G3", nil, day(st), b2f(d.Integrity == "match"), 1)
+			m.Rate("G3", s.cdims(e.Ticket()), day(st), b2f(d.Integrity == "match"), 1)
 		}
 	case "capacity.wait_changed":
 		var d struct {
@@ -1493,15 +1713,16 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 		case "waiting":
 			if s.Pending.Capacity[t] == nil {
 				s.Pending.Capacity[t] = st
+				m.OpenAdd("W2b", day(st), 1)
 			}
 		case "released":
 			if open := s.Pending.Capacity[t]; open != nil {
-				if ms, ok := measured(open, st); ok {
-					m.Duration("W2b", nil, day(st), ms)
-				}
+				m.OpenAdd("W2b", day(open), -1)
+				s.span("W2b", s.cdims(t), day(st), open, st)
 				delete(s.Pending.Capacity, t)
 				s.CapacityWaits = append(s.CapacityWaits, CapacityWait{TicketID: t, Opened: open, Released: st})
 				if n := len(s.CapacityWaits); n > maxCapacityWaits {
+					s.dropCapacity(s.CapacityWaits[:n-maxCapacityWaits])
 					s.CapacityWaitsDropped += int64(n - maxCapacityWaits)
 					s.CapacityWaits = append([]CapacityWait(nil), s.CapacityWaits[n-maxCapacityWaits:]...)
 				}

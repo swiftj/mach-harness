@@ -12,6 +12,7 @@ import { SourceGlyph } from "./SourceBadge";
 const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view", "Atlas", "Blueprint", "Timeline", "Timeline workspace"];
 /** What each group is, where it is not obvious. */
 const GROUP_NOTES: Partial<Record<KeyBinding["group"], string>> = {
+  Playback: "On the Factory floor and in the Timeline. Analytics (4) shows no transport, so these keys, and F, do nothing there.",
   Timeline: "The timeline docked under the Factory floor.",
   "Timeline workspace": "While the Timeline (3) is up. Space, the arrows and the playback keys work there as everywhere; T does nothing.",
 };

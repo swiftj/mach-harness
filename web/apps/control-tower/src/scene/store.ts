@@ -30,7 +30,8 @@ import type { SceneSource } from "../sim/provenance";
 import type { Clock, SwitchableClock } from "./clock";
 import type { ConnectionStatus, FactoryStatus } from "./connection";
 import { INITIAL_CONNECTION } from "./connection";
-import { INITIAL_TIMELINE_VIEW, type TimelineViewState } from "../timeline/contract";
+import { INITIAL_TIMELINE_VIEW, type TimelineViewState, type TimeWindow } from "../timeline/contract";
+import { applyAnalyticsPatch, INITIAL_ANALYTICS_VIEW, NO_ANALYTICS_FILTERS, type AnalyticsArea, type AnalyticsFilters, type AnalyticsFocus, type AnalyticsPick, type AnalyticsViewPatch, type AnalyticsViewState, type AnalyticsWindow } from "./analytics";
 import { storeView } from "./view";
 
 /** Factory milliseconds per wall millisecond at 1x: the 55-minute run plays in about 5.5 minutes. Simulation and replay playback only; live time runs at 1. */
@@ -39,12 +40,13 @@ export const SPEEDS = [0.5, 1, 2, 4, 8, 16] as const;
 export type PlaybackSpeed = (typeof SPEEDS)[number];
 export type ViewMode = "atlas" | "blueprint";
 /**
- * The experience on screen (M6.3 design section 7): the Factory Floor (whose view is `view`) or the
- * Execution Timeline. A separate field, so `ViewMode` and everything that assumes two views stay as
- * they are, and the floor's view is remembered while the Timeline is up.
+ * The experience on screen (M6.3 design section 7, M6.5 design section 4): the Factory Floor (whose
+ * view is `view`), the Execution Timeline, or Factory Analytics. A separate field, so `ViewMode` and
+ * everything that assumes two views stay as they are, and the floor's view is remembered while
+ * another workspace is up.
  */
-export type Workspace = "floor" | "timeline";
-export const WORKSPACES: readonly Workspace[] = ["floor", "timeline"];
+export type Workspace = "floor" | "timeline" | "analytics";
+export const WORKSPACES: readonly Workspace[] = ["floor", "timeline", "analytics"];
 /** How far the live edge may run ahead of the last thing the stream confirmed (a heartbeat comes every 15 s). */
 export const LIVE_EXTRAPOLATION_MS = 20_000;
 /**
@@ -171,14 +173,19 @@ export interface SceneStoreState {
    */
   readonly interval: HighlightInterval | null;
   readonly view: ViewMode;
-  /** Factory Floor or Timeline. The floor's `view` is kept while the Timeline is up. */
+  /** Factory Floor, Timeline or Analytics. The floor's `view` is kept while another workspace is up. */
   readonly workspace: Workspace;
   /**
    * The Timeline's interface state (window, grouping, expansion, filters, table), kept here so it
    * survives a workspace switch. Interface state only: nothing in it changes what another view shows.
    */
   readonly timeline: TimelineViewState;
-  /** Theater Mode: the Factory Floor only; always off while the Timeline is up. */
+  /**
+   * Factory Analytics' interface state (area, period, shared filters, comparison, the metric whose rows
+   * are open), kept here so it survives a workspace switch. Interface state only, like `timeline`.
+   */
+  readonly analytics: AnalyticsViewState;
+  /** Theater Mode: the Factory Floor only; always off while another workspace is up. */
   readonly theater: boolean;
   readonly reducedMotion: boolean;
   /**
@@ -273,7 +280,9 @@ export interface SceneStore {
   setWorkspace(workspace: Workspace): void;
   /** Merge a change into the Timeline's interface state. No change, no new state. */
   setTimelineView(patch: Partial<TimelineViewState>): void;
-  /** Theater Mode on or off. Asking for it while the Timeline is up does nothing: it belongs to the floor. */
+  /** Merge a change into Analytics' interface state (analytics.ts `applyAnalyticsPatch`: invalid members ignored). No change, no new state. */
+  setAnalyticsView(patch: AnalyticsViewPatch): void;
+  /** Theater Mode on or off. Asking for it while another workspace is up does nothing: it belongs to the floor. */
   setTheater(on: boolean): void;
   setReducedMotion(on: boolean): void;
   /** Camera follow on or off. A view calls setFollow(false) when the person pans or zooms. */
@@ -395,6 +404,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     view: options.view ?? "atlas",
     workspace: options.workspace ?? "floor",
     timeline: INITIAL_TIMELINE_VIEW,
+    analytics: INITIAL_ANALYTICS_VIEW,
     theater: false,
     reducedMotion: options.reducedMotion ?? false,
     follow: true,
@@ -676,6 +686,10 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       for (const [k, v] of Object.entries(patch)) if (v !== undefined) next[k] = v;
       set({ timeline: next as unknown as TimelineViewState });
     },
+    setAnalyticsView(patch) {
+      const next = applyAnalyticsPatch(state.analytics, patch);
+      if (next !== state.analytics) set({ analytics: next });
+    },
     setTheater(on) {
       if (on && state.workspace !== "floor") return;
       if (on !== state.theater) set({ theater: on });
@@ -748,24 +762,64 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
 
 /**
  * "Show in Timeline" (M6.3 design section 7), for the inspector's anatomies, the Atlas, the
- * Blueprint and key `3`: select `ref` when one is given (without moving the floor's camera), leave
- * Theater Mode, switch to the Timeline, and ask for the selection to be framed (the Timeline reveals
- * the store's focus request: it expands the selection's tracks, scrolls to them and pans to its span).
- * The playhead, playback and the floor's view are untouched.
+ * Blueprint, Analytics' rows and key `3`: select `ref` when one is given (without moving the floor's
+ * camera), leave Theater Mode, switch to the Timeline, and ask for the selection to be framed (the
+ * Timeline reveals the store's focus request: it expands the selection's tracks, scrolls to them and
+ * pans to its span only when the span lies outside the window). With `window`, the Timeline's window
+ * is set to that interval first (an Analytics row opening the interval it measured). The playhead,
+ * playback and the floor's view are untouched.
  */
-export function showInTimeline(store: SceneStore, ref?: EntityRef | null): void {
+export function showInTimeline(store: SceneStore, ref?: EntityRef | null, options?: { readonly window?: TimeWindow | null }): void {
   if (ref && ref !== store.getState().selection) store.select(ref, { focus: false });
+  const w = options?.window;
+  if (w && Number.isFinite(w.from) && Number.isFinite(w.to) && w.to > w.from) store.setTimelineView({ window: { from: w.from, to: w.to } });
   store.setWorkspace("timeline");
   const selection = store.getState().selection;
   if (selection) store.focusOn(selection, "api");
 }
 
-/** "Show on the floor": back to the Factory Floor (keeping its view), framing the selection through the existing focusOn. */
-export function showOnFloor(store: SceneStore, view?: ViewMode): void {
+/**
+ * "Show on the floor": back to the Factory Floor (keeping its view, or `view`), framing the selection
+ * through the existing focusOn. With `ref`, that entity is selected first (an Analytics row opening
+ * its entity on the floor).
+ */
+export function showOnFloor(store: SceneStore, view?: ViewMode, options?: { readonly ref?: EntityRef | null }): void {
+  const ref = options?.ref;
+  if (ref && ref !== store.getState().selection) store.select(ref, { focus: false });
   if (view) store.setView(view);
   store.setWorkspace("floor");
   const selection = store.getState().selection;
   if (selection) store.focusOn(selection, "api");
+}
+
+/** Where "Show in Analytics" lands. Omitted members: `filters` keeps the current filters, `focus` closes the rows panel, `pick` clears the cross-filter, `window` keeps the period. */
+export interface AnalyticsTarget {
+  readonly area: AnalyticsArea;
+  /** Replaces every shared filter: members left out are cleared, so the area shows exactly what the link said. */
+  readonly filters?: Partial<AnalyticsFilters>;
+  readonly focus?: AnalyticsFocus | null;
+  /** A cross-filter inside the area; left out: none. */
+  readonly pick?: AnalyticsPick | null;
+  readonly window?: AnalyticsWindow;
+}
+
+/**
+ * "Show in Analytics" (M6.5 design section 4), for key `4`, the workspace switch and the inspector's
+ * links ("Open its measured history", "See how often this recurs"): set Analytics' interface state
+ * when a target is given, leave Theater Mode, and switch to Analytics. Selection, hover, the camera's
+ * focus, the playhead and playback are untouched: Analytics reads the selection, it never moves it.
+ */
+export function showInAnalytics(store: SceneStore, target?: AnalyticsTarget | null): void {
+  if (target) {
+    store.setAnalyticsView({
+      area: target.area,
+      ...(target.filters ? { filters: { ...NO_ANALYTICS_FILTERS, ...target.filters } } : {}),
+      focus: target.focus ?? null,
+      pick: target.pick ?? null,
+      ...(target.window !== undefined ? { window: target.window } : {}),
+    });
+  }
+  store.setWorkspace("analytics");
 }
 
 /** A view of the store that can be held still: what a hidden workspace reads. */
@@ -778,7 +832,7 @@ export interface HeldStore extends SceneStore {
 /**
  * The store as the Factory Floor sees it (a StoreView, view.ts). While held, a subtree reading it
  * renders nothing new and runs no effect a change would start (no camera framing, no drawing, no
- * catching up), so a hidden floor costs nothing while the Timeline is up, and is exactly where it was
+ * catching up), so a hidden floor costs nothing while the Timeline or Analytics is up, and is exactly where it was
  * when it returns.
  *
  * It holds itself (A3) in its own change handler whenever the store's workspace is not "floor", before

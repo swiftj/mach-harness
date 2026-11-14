@@ -182,6 +182,13 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 	}
 	switch e.ContentAccess {
 	case "text", "media":
+	case "none":
+		if e.AccessReason == artifact.CredentialReason {
+			refuse(http.StatusForbidden, "credential-name", "The artifact's name says it holds credentials; its content is never served.")
+			return
+		}
+		refuse(http.StatusUnsupportedMediaType, "type", "The observer does not serve this artifact's content: "+e.AccessReason+".")
+		return
 	case "media-disabled":
 		refuse(http.StatusForbidden, "media-disabled", "Screenshots and recordings are served only when the project opts in: "+artifact.SettingKey+".")
 		return
@@ -204,6 +211,9 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, artifact.ErrChanged), errors.Is(err, artifact.ErrSwapped):
 		refuse(http.StatusConflict, "changed", "The artifact changed since it was catalogued; reload the catalog.")
+		return
+	case errors.Is(err, artifact.ErrCredentialName):
+		refuse(http.StatusForbidden, "credential-name", "The artifact's name says it holds credentials; its content is never served.")
 		return
 	case errors.Is(err, artifact.ErrTypeMatch):
 		refuse(http.StatusUnsupportedMediaType, "type", "The artifact's contents are not a type the observer serves.")
@@ -249,6 +259,21 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Set("Content-Type", got.MediaType)
 	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(got.Data)) // range requests for video
+}
+
+// freeTextPolicy is the session's statement of where prose not checked for names can appear (R1,
+// extended in M6.5 beyond artifact content): artifact content carries free_text and the header;
+// these event fields, and the projection fields copied from them, are always such prose. A client
+// shows each as text, never as markup, and does not present it as checked for names.
+func freeTextPolicy() map[string]any {
+	return map[string]any{
+		"checked_for_names": false,
+		"note":              redact.FreeTextNote,
+		"artifact_field":    "free_text",
+		"artifact_header":   redact.FreeTextHeader + ": " + redact.FreeTextValue,
+		"event_fields":      redact.FreeTextFields,
+		"render":            "text only; never markup",
+	}
 }
 
 func safeName(name string) string {

@@ -1,0 +1,2169 @@
+{
+ "body": {
+  "data": {
+   "cursor": "791fafe48b91c0cd.12684",
+   "definitions_version": 2,
+   "filters": {},
+   "generated_ms": 1794640504662,
+   "group_overflow": 0,
+   "history": {
+    "complete": false,
+    "complete_window": false,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793344003999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": ""
+   },
+   "metrics": [
+    {
+     "authority": "authoritative",
+     "availability": "lifecycle",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 52,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "buckets": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 7,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 7,
+        "covered": 7,
+        "eligible": 7,
+        "excluded": [],
+        "of": 7,
+        "share": 1
+       },
+       "denominator": null,
+       "from_ms": 1792368000000,
+       "numerator": 7,
+       "period": "2026-10-19",
+       "sample_count": 7,
+       "suspect": false,
+       "to_ms": 1792972800000,
+       "value": 7
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 23,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 23,
+        "covered": 23,
+        "eligible": 23,
+        "excluded": [],
+        "of": 23,
+        "share": 1
+       },
+       "denominator": null,
+       "from_ms": 1792972800000,
+       "numerator": 23,
+       "period": "2026-10-26",
+       "sample_count": 23,
+       "suspect": false,
+       "to_ms": 1793577600000,
+       "value": 23
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 19,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 19,
+        "covered": 19,
+        "eligible": 19,
+        "excluded": [],
+        "of": 19,
+        "share": 1
+       },
+       "denominator": null,
+       "from_ms": 1793577600000,
+       "numerator": 19,
+       "period": "2026-11-02",
+       "sample_count": 19,
+       "suspect": false,
+       "to_ms": 1794182400000,
+       "value": 19
+      }
+     ],
+     "coverage": {
+      "counted": 52,
+      "covered": 52,
+      "eligible": 52,
+      "excluded": [],
+      "of": 52,
+      "share": 1
+     },
+     "denominator": "per period",
+     "denominator_value": null,
+     "description": "Tickets merged: merge.completed / per period",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "wave",
+      "writer"
+     ],
+     "family": "T",
+     "formula": "merge.completed / per period",
+     "group_by": "risk",
+     "group_dims": [
+      "risk"
+     ],
+     "groups": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 5,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 5,
+        "covered": 5,
+        "eligible": 5,
+        "excluded": [],
+        "of": 5,
+        "share": 1
+       },
+       "denominator": null,
+       "key": "High",
+       "keys": {
+        "risk": "High"
+       },
+       "numerator": 5,
+       "sample_count": 5,
+       "value": 5
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 10,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 10,
+        "covered": 10,
+        "eligible": 10,
+        "excluded": [],
+        "of": 10,
+        "share": 1
+       },
+       "denominator": null,
+       "key": "Low",
+       "keys": {
+        "risk": "Low"
+       },
+       "numerator": 10,
+       "sample_count": 10,
+       "value": 10
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 37,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 37,
+        "covered": 37,
+        "eligible": 37,
+        "excluded": [],
+        "of": 37,
+        "share": 1
+       },
+       "denominator": null,
+       "key": "Medium",
+       "keys": {
+        "risk": "Medium"
+       },
+       "numerator": 37,
+       "sample_count": 37,
+       "value": 37
+      }
+     ],
+     "id": "T1",
+     "kind": "count",
+     "limitations": "merged is not accepted (T2)",
+     "name": "Tickets merged",
+     "numerator": "merge.completed",
+     "numerator_value": 52,
+     "population": "per period",
+     "sample_count": 52,
+     "source": "cell lifecycle",
+     "sources": [
+      "cell lifecycle"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "tickets",
+     "value": 52
+    },
+    {
+     "authority": "authoritative",
+     "availability": "lifecycle",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 487,
+      "not_recorded": 0,
+      "open": 2,
+      "unknown": 5
+     },
+     "buckets": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 94,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 94,
+        "covered": 94,
+        "eligible": 94,
+        "excluded": [],
+        "of": 94,
+        "share": 1
+       },
+       "denominator": 94,
+       "distribution": {
+        "histogram": [
+         {
+          "count": 5,
+          "ge_ms": 64000,
+          "le_ms": 80635
+         },
+         {
+          "count": 9,
+          "ge_ms": 406375,
+          "le_ms": 512000
+         },
+         {
+          "count": 6,
+          "ge_ms": 512000,
+          "le_ms": 645080
+         },
+         {
+          "count": 4,
+          "ge_ms": 645080,
+          "le_ms": 812749
+         },
+         {
+          "count": 2,
+          "ge_ms": 812749,
+          "le_ms": 1024000
+         },
+         {
+          "count": 1,
+          "ge_ms": 1024000,
+          "le_ms": 1290159
+         },
+         {
+          "count": 4,
+          "ge_ms": 1290159,
+          "le_ms": 1625499
+         },
+         {
+          "count": 2,
+          "ge_ms": 1625499,
+          "le_ms": 2048000
+         },
+         {
+          "count": 3,
+          "ge_ms": 2048000,
+          "le_ms": 2580318
+         },
+         {
+          "count": 3,
+          "ge_ms": 2580318,
+          "le_ms": 3250997
+         },
+         {
+          "count": 2,
+          "ge_ms": 3250997,
+          "le_ms": 4096000
+         },
+         {
+          "count": 5,
+          "ge_ms": 6501995,
+          "le_ms": 8192000
+         },
+         {
+          "count": 5,
+          "ge_ms": 8192000,
+          "le_ms": 10321273
+         },
+         {
+          "count": 7,
+          "ge_ms": 10321273,
+          "le_ms": 13003989
+         },
+         {
+          "count": 7,
+          "ge_ms": 13003989,
+          "le_ms": 16384000
+         },
+         {
+          "count": 8,
+          "ge_ms": 16384000,
+          "le_ms": 20642546
+         },
+         {
+          "count": 4,
+          "ge_ms": 20642546,
+          "le_ms": 26007979
+         },
+         {
+          "count": 10,
+          "ge_ms": 26007979,
+          "le_ms": 32768000
+         },
+         {
+          "count": 2,
+          "ge_ms": 32768000,
+          "le_ms": 41285093
+         },
+         {
+          "count": 5,
+          "ge_ms": 41285093,
+          "le_ms": 52015958
+         }
+        ],
+        "max": 46522931,
+        "min": 78553,
+        "over": "measured durations only",
+        "p10": 512000,
+        "p25": 812749,
+        "p50": 10321273,
+        "p75": 20642546,
+        "p90": 32768000,
+        "percentile_basis": "histogram",
+        "percentile_bounds": {
+         "p10": [
+          406375,
+          512000
+         ],
+         "p25": [
+          645080,
+          812749
+         ],
+         "p50": [
+          8192000,
+          10321273
+         ],
+         "p75": [
+          16384000,
+          20642546
+         ],
+         "p90": [
+          26007979,
+          32768000
+         ]
+        }
+       },
+       "from_ms": 1792368000000,
+       "max_ms": 46522931,
+       "min_ms": 78553,
+       "numerator": 1128969425,
+       "p50_ms": 10321273,
+       "p90_ms": 32768000,
+       "period": "2026-10-19",
+       "sample_count": 94,
+       "suspect": false,
+       "to_ms": 1792972800000,
+       "value": 12010313.031914894
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 190,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 4
+       },
+       "coverage": {
+        "counted": 190,
+        "covered": 190,
+        "eligible": 194,
+        "excluded": [
+         {
+          "count": 4,
+          "reason": "unknown: an end's time, or its start, was not recorded"
+         }
+        ],
+        "of": 194,
+        "share": 0.979381443298969
+       },
+       "denominator": 190,
+       "distribution": {
+        "histogram": [
+         {
+          "count": 24,
+          "ge_ms": 64000,
+          "le_ms": 80635
+         },
+         {
+          "count": 9,
+          "ge_ms": 406375,
+          "le_ms": 512000
+         },
+         {
+          "count": 5,
+          "ge_ms": 512000,
+          "le_ms": 645080
+         },
+         {
+          "count": 11,
+          "ge_ms": 645080,
+          "le_ms": 812749
+         },
+         {
+          "count": 4,
+          "ge_ms": 812749,
+          "le_ms": 1024000
+         },
+         {
+          "count": 4,
+          "ge_ms": 1024000,
+          "le_ms": 1290159
+         },
+         {
+          "count": 3,
+          "ge_ms": 1290159,
+          "le_ms": 1625499
+         },
+         {
+          "count": 10,
+          "ge_ms": 1625499,
+          "le_ms": 2048000
+         },
+         {
+          "count": 2,
+          "ge_ms": 2048000,
+          "le_ms": 2580318
+         },
+         {
+          "count": 7,
+          "ge_ms": 2580318,
+          "le_ms": 3250997
+         },
+         {
+          "count": 7,
+          "ge_ms": 3250997,
+          "le_ms": 4096000
+         },
+         {
+          "count": 2,
+          "ge_ms": 5160637,
+          "le_ms": 6501995
+         },
+         {
+          "count": 7,
+          "ge_ms": 6501995,
+          "le_ms": 8192000
+         },
+         {
+          "count": 9,
+          "ge_ms": 8192000,
+          "le_ms": 10321273
+         },
+         {
+          "count": 17,
+          "ge_ms": 10321273,
+          "le_ms": 13003989
+         },
+         {
+          "count": 13,
+          "ge_ms": 13003989,
+          "le_ms": 16384000
+         },
+         {
+          "count": 17,
+          "ge_ms": 16384000,
+          "le_ms": 20642546
+         },
+         {
+          "count": 11,
+          "ge_ms": 20642546,
+          "le_ms": 26007979
+         },
+         {
+          "count": 9,
+          "ge_ms": 26007979,
+          "le_ms": 32768000
+         },
+         {
+          "count": 14,
+          "ge_ms": 32768000,
+          "le_ms": 41285093
+         },
+         {
+          "count": 5,
+          "ge_ms": 41285093,
+          "le_ms": 52015958
+         }
+        ],
+        "max": 46914933,
+        "min": 78553,
+        "over": "measured durations only",
+        "p10": 80635,
+        "p25": 812749,
+        "p50": 8192000,
+        "p75": 20642546,
+        "p90": 32768000,
+        "percentile_basis": "histogram",
+        "percentile_bounds": {
+         "p10": [
+          64000,
+          80635
+         ],
+         "p25": [
+          645080,
+          812749
+         ],
+         "p50": [
+          6501995,
+          8192000
+         ],
+         "p75": [
+          16384000,
+          20642546
+         ],
+         "p90": [
+          26007979,
+          32768000
+         ]
+        }
+       },
+       "from_ms": 1792972800000,
+       "max_ms": 46914933,
+       "min_ms": 78553,
+       "numerator": 2204697239,
+       "p50_ms": 8192000,
+       "p90_ms": 32768000,
+       "period": "2026-10-26",
+       "sample_count": 190,
+       "suspect": false,
+       "to_ms": 1793577600000,
+       "value": 11603669.678947369
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 173,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 1
+       },
+       "coverage": {
+        "counted": 173,
+        "covered": 173,
+        "eligible": 174,
+        "excluded": [
+         {
+          "count": 1,
+          "reason": "unknown: an end's time, or its start, was not recorded"
+         }
+        ],
+        "of": 174,
+        "share": 0.9942528735632183
+       },
+       "denominator": 173,
+       "distribution": {
+        "histogram": [
+         {
+          "count": 22,
+          "ge_ms": 64000,
+          "le_ms": 80635
+         },
+         {
+          "count": 2,
+          "ge_ms": 406375,
+          "le_ms": 512000
+         },
+         {
+          "count": 3,
+          "ge_ms": 512000,
+          "le_ms": 645080
+         },
+         {
+          "count": 2,
+          "ge_ms": 645080,
+          "le_ms": 812749
+         },
+         {
+          "count": 1,
+          "ge_ms": 812749,
+          "le_ms": 1024000
+         },
+         {
+          "count": 5,
+          "ge_ms": 1290159,
+          "le_ms": 1625499
+         },
+         {
+          "count": 10,
+          "ge_ms": 1625499,
+          "le_ms": 2048000
+         },
+         {
+          "count": 4,
+          "ge_ms": 2048000,
+          "le_ms": 2580318
+         },
+         {
+          "count": 3,
+          "ge_ms": 2580318,
+          "le_ms": 3250997
+         },
+         {
+          "count": 7,
+          "ge_ms": 3250997,
+          "le_ms": 4096000
+         },
+         {
+          "count": 2,
+          "ge_ms": 5160637,
+          "le_ms": 6501995
+         },
+         {
+          "count": 7,
+          "ge_ms": 6501995,
+          "le_ms": 8192000
+         },
+         {
+          "count": 9,
+          "ge_ms": 8192000,
+          "le_ms": 10321273
+         },
+         {
+          "count": 20,
+          "ge_ms": 10321273,
+          "le_ms": 13003989
+         },
+         {
+          "count": 12,
+          "ge_ms": 13003989,
+          "le_ms": 16384000
+         },
+         {
+          "count": 19,
+          "ge_ms": 16384000,
+          "le_ms": 20642546
+         },
+         {
+          "count": 19,
+          "ge_ms": 20642546,
+          "le_ms": 26007979
+         },
+         {
+          "count": 12,
+          "ge_ms": 26007979,
+          "le_ms": 32768000
+         },
+         {
+          "count": 10,
+          "ge_ms": 32768000,
+          "le_ms": 41285093
+         },
+         {
+          "count": 4,
+          "ge_ms": 41285093,
+          "le_ms": 52015958
+         }
+        ],
+        "max": 45735881,
+        "min": 78553,
+        "over": "measured durations only",
+        "p10": 80635,
+        "p25": 2048000,
+        "p50": 13003989,
+        "p75": 26007979,
+        "p90": 32768000,
+        "percentile_basis": "histogram",
+        "percentile_bounds": {
+         "p10": [
+          64000,
+          80635
+         ],
+         "p25": [
+          1625499,
+          2048000
+         ],
+         "p50": [
+          10321273,
+          13003989
+         ],
+         "p75": [
+          20642546,
+          26007979
+         ],
+         "p90": [
+          26007979,
+          32768000
+         ]
+        }
+       },
+       "from_ms": 1793577600000,
+       "max_ms": 45735881,
+       "min_ms": 78553,
+       "numerator": 2301787884,
+       "p50_ms": 13003989,
+       "p90_ms": 32768000,
+       "period": "2026-11-02",
+       "sample_count": 173,
+       "suspect": false,
+       "to_ms": 1794182400000,
+       "value": 13305132.277456647
+      }
+     ],
+     "coverage": {
+      "counted": 487,
+      "covered": 487,
+      "eligible": 494,
+      "excluded": [
+       {
+        "count": 2,
+        "reason": "open: started and not yet ended"
+       },
+       {
+        "count": 5,
+        "reason": "unknown: an end's time, or its start, was not recorded"
+       }
+      ],
+      "of": 494,
+      "share": 0.9858299595141701
+     },
+     "denominator": "visits with a measured duration",
+     "denominator_value": 487,
+     "description": "Station cycle time: sum of measured visit durations / visits with a measured duration",
+     "dimensions": [
+      "station",
+      "round",
+      "risk",
+      "app_type"
+     ],
+     "distribution": {
+      "histogram": [
+       {
+        "count": 56,
+        "ge_ms": 64000,
+        "le_ms": 80635
+       },
+       {
+        "count": 20,
+        "ge_ms": 406375,
+        "le_ms": 512000
+       },
+       {
+        "count": 14,
+        "ge_ms": 512000,
+        "le_ms": 645080
+       },
+       {
+        "count": 17,
+        "ge_ms": 645080,
+        "le_ms": 812749
+       },
+       {
+        "count": 7,
+        "ge_ms": 812749,
+        "le_ms": 1024000
+       },
+       {
+        "count": 6,
+        "ge_ms": 1024000,
+        "le_ms": 1290159
+       },
+       {
+        "count": 12,
+        "ge_ms": 1290159,
+        "le_ms": 1625499
+       },
+       {
+        "count": 22,
+        "ge_ms": 1625499,
+        "le_ms": 2048000
+       },
+       {
+        "count": 10,
+        "ge_ms": 2048000,
+        "le_ms": 2580318
+       },
+       {
+        "count": 14,
+        "ge_ms": 2580318,
+        "le_ms": 3250997
+       },
+       {
+        "count": 17,
+        "ge_ms": 3250997,
+        "le_ms": 4096000
+       },
+       {
+        "count": 5,
+        "ge_ms": 5160637,
+        "le_ms": 6501995
+       },
+       {
+        "count": 20,
+        "ge_ms": 6501995,
+        "le_ms": 8192000
+       },
+       {
+        "count": 24,
+        "ge_ms": 8192000,
+        "le_ms": 10321273
+       },
+       {
+        "count": 45,
+        "ge_ms": 10321273,
+        "le_ms": 13003989
+       },
+       {
+        "count": 37,
+        "ge_ms": 13003989,
+        "le_ms": 16384000
+       },
+       {
+        "count": 49,
+        "ge_ms": 16384000,
+        "le_ms": 20642546
+       },
+       {
+        "count": 39,
+        "ge_ms": 20642546,
+        "le_ms": 26007979
+       },
+       {
+        "count": 33,
+        "ge_ms": 26007979,
+        "le_ms": 32768000
+       },
+       {
+        "count": 26,
+        "ge_ms": 32768000,
+        "le_ms": 41285093
+       },
+       {
+        "count": 14,
+        "ge_ms": 41285093,
+        "le_ms": 52015958
+       }
+      ],
+      "max": 46914933,
+      "min": 78553,
+      "over": "measured durations only",
+      "p10": 80635,
+      "p25": 1625499,
+      "p50": 10321273,
+      "p75": 20642546,
+      "p90": 32768000,
+      "percentile_basis": "histogram",
+      "percentile_bounds": {
+       "p10": [
+        64000,
+        80635
+       ],
+       "p25": [
+        1290159,
+        1625499
+       ],
+       "p50": [
+        8192000,
+        10321273
+       ],
+       "p75": [
+        16384000,
+        20642546
+       ],
+       "p90": [
+        26007979,
+        32768000
+       ]
+      }
+     },
+     "family": "C",
+     "formula": "sum of measured visit durations / visits with a measured duration",
+     "group_by": "risk",
+     "group_dims": [
+      "risk"
+     ],
+     "groups": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 40,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 5
+       },
+       "coverage": {
+        "counted": 40,
+        "covered": 40,
+        "eligible": 45,
+        "excluded": [
+         {
+          "count": 5,
+          "reason": "unknown: an end's time, or its start, was not recorded"
+         }
+        ],
+        "of": 45,
+        "share": 0.8888888888888888
+       },
+       "denominator": 40,
+       "distribution": {
+        "histogram": [
+         {
+          "count": 5,
+          "ge_ms": 64000,
+          "le_ms": 80635
+         },
+         {
+          "count": 3,
+          "ge_ms": 406375,
+          "le_ms": 512000
+         },
+         {
+          "count": 1,
+          "ge_ms": 512000,
+          "le_ms": 645080
+         },
+         {
+          "count": 1,
+          "ge_ms": 812749,
+          "le_ms": 1024000
+         },
+         {
+          "count": 4,
+          "ge_ms": 1625499,
+          "le_ms": 2048000
+         },
+         {
+          "count": 1,
+          "ge_ms": 3250997,
+          "le_ms": 4096000
+         },
+         {
+          "count": 1,
+          "ge_ms": 6501995,
+          "le_ms": 8192000
+         },
+         {
+          "count": 1,
+          "ge_ms": 8192000,
+          "le_ms": 10321273
+         },
+         {
+          "count": 6,
+          "ge_ms": 10321273,
+          "le_ms": 13003989
+         },
+         {
+          "count": 5,
+          "ge_ms": 16384000,
+          "le_ms": 20642546
+         },
+         {
+          "count": 3,
+          "ge_ms": 20642546,
+          "le_ms": 26007979
+         },
+         {
+          "count": 4,
+          "ge_ms": 26007979,
+          "le_ms": 32768000
+         },
+         {
+          "count": 2,
+          "ge_ms": 32768000,
+          "le_ms": 41285093
+         },
+         {
+          "count": 3,
+          "ge_ms": 41285093,
+          "le_ms": 52015958
+         }
+        ],
+        "max": 46914933,
+        "min": 78553,
+        "over": "measured durations only",
+        "p10": 80635,
+        "p25": 1024000,
+        "p50": 13003989,
+        "p75": 26007979,
+        "p90": 41285093,
+        "percentile_basis": "histogram",
+        "percentile_bounds": {
+         "p10": [
+          64000,
+          80635
+         ],
+         "p25": [
+          812749,
+          1024000
+         ],
+         "p50": [
+          10321273,
+          13003989
+         ],
+         "p75": [
+          20642546,
+          26007979
+         ],
+         "p90": [
+          32768000,
+          41285093
+         ]
+        }
+       },
+       "key": "High",
+       "keys": {
+        "risk": "High"
+       },
+       "max_ms": 46914933,
+       "min_ms": 78553,
+       "numerator": 576562205,
+       "p50_ms": 13003989,
+       "p90_ms": 41285093,
+       "sample_count": 40,
+       "value": 14414055.125
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 80,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 80,
+        "covered": 80,
+        "eligible": 80,
+        "excluded": [],
+        "of": 80,
+        "share": 1
+       },
+       "denominator": 80,
+       "distribution": {
+        "histogram": [
+         {
+          "count": 10,
+          "ge_ms": 64000,
+          "le_ms": 80635
+         },
+         {
+          "count": 4,
+          "ge_ms": 406375,
+          "le_ms": 512000
+         },
+         {
+          "count": 2,
+          "ge_ms": 512000,
+          "le_ms": 645080
+         },
+         {
+          "count": 2,
+          "ge_ms": 645080,
+          "le_ms": 812749
+         },
+         {
+          "count": 2,
+          "ge_ms": 812749,
+          "le_ms": 1024000
+         },
+         {
+          "count": 2,
+          "ge_ms": 1024000,
+          "le_ms": 1290159
+         },
+         {
+          "count": 3,
+          "ge_ms": 1290159,
+          "le_ms": 1625499
+         },
+         {
+          "count": 6,
+          "ge_ms": 1625499,
+          "le_ms": 2048000
+         },
+         {
+          "count": 3,
+          "ge_ms": 2048000,
+          "le_ms": 2580318
+         },
+         {
+          "count": 2,
+          "ge_ms": 2580318,
+          "le_ms": 3250997
+         },
+         {
+          "count": 4,
+          "ge_ms": 3250997,
+          "le_ms": 4096000
+         },
+         {
+          "count": 3,
+          "ge_ms": 6501995,
+          "le_ms": 8192000
+         },
+         {
+          "count": 2,
+          "ge_ms": 8192000,
+          "le_ms": 10321273
+         },
+         {
+          "count": 10,
+          "ge_ms": 10321273,
+          "le_ms": 13003989
+         },
+         {
+          "count": 10,
+          "ge_ms": 13003989,
+          "le_ms": 16384000
+         },
+         {
+          "count": 5,
+          "ge_ms": 16384000,
+          "le_ms": 20642546
+         },
+         {
+          "count": 1,
+          "ge_ms": 20642546,
+          "le_ms": 26007979
+         },
+         {
+          "count": 3,
+          "ge_ms": 26007979,
+          "le_ms": 32768000
+         },
+         {
+          "count": 5,
+          "ge_ms": 32768000,
+          "le_ms": 41285093
+         },
+         {
+          "count": 1,
+          "ge_ms": 41285093,
+          "le_ms": 52015958
+         }
+        ],
+        "max": 44348576,
+        "min": 78553,
+        "over": "measured durations only",
+        "p10": 80635,
+        "p25": 1024000,
+        "p50": 4096000,
+        "p75": 16384000,
+        "p90": 32768000,
+        "percentile_basis": "histogram",
+        "percentile_bounds": {
+         "p10": [
+          64000,
+          80635
+         ],
+         "p25": [
+          812749,
+          1024000
+         ],
+         "p50": [
+          3250997,
+          4096000
+         ],
+         "p75": [
+          13003989,
+          16384000
+         ],
+         "p90": [
+          26007979,
+          32768000
+         ]
+        }
+       },
+       "key": "Low",
+       "keys": {
+        "risk": "Low"
+       },
+       "max_ms": 44348576,
+       "min_ms": 78553,
+       "numerator": 766847576,
+       "p50_ms": 4096000,
+       "p90_ms": 32768000,
+       "sample_count": 80,
+       "value": 9585594.7
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 367,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 367,
+        "covered": 367,
+        "eligible": 367,
+        "excluded": [],
+        "of": 367,
+        "share": 1
+       },
+       "denominator": 367,
+       "distribution": {
+        "histogram": [
+         {
+          "count": 41,
+          "ge_ms": 64000,
+          "le_ms": 80635
+         },
+         {
+          "count": 13,
+          "ge_ms": 406375,
+          "le_ms": 512000
+         },
+         {
+          "count": 11,
+          "ge_ms": 512000,
+          "le_ms": 645080
+         },
+         {
+          "count": 15,
+          "ge_ms": 645080,
+          "le_ms": 812749
+         },
+         {
+          "count": 4,
+          "ge_ms": 812749,
+          "le_ms": 1024000
+         },
+         {
+          "count": 4,
+          "ge_ms": 1024000,
+          "le_ms": 1290159
+         },
+         {
+          "count": 9,
+          "ge_ms": 1290159,
+          "le_ms": 1625499
+         },
+         {
+          "count": 12,
+          "ge_ms": 1625499,
+          "le_ms": 2048000
+         },
+         {
+          "count": 7,
+          "ge_ms": 2048000,
+          "le_ms": 2580318
+         },
+         {
+          "count": 12,
+          "ge_ms": 2580318,
+          "le_ms": 3250997
+         },
+         {
+          "count": 12,
+          "ge_ms": 3250997,
+          "le_ms": 4096000
+         },
+         {
+          "count": 5,
+          "ge_ms": 5160637,
+          "le_ms": 6501995
+         },
+         {
+          "count": 16,
+          "ge_ms": 6501995,
+          "le_ms": 8192000
+         },
+         {
+          "count": 21,
+          "ge_ms": 8192000,
+          "le_ms": 10321273
+         },
+         {
+          "count": 29,
+          "ge_ms": 10321273,
+          "le_ms": 13003989
+         },
+         {
+          "count": 27,
+          "ge_ms": 13003989,
+          "le_ms": 16384000
+         },
+         {
+          "count": 39,
+          "ge_ms": 16384000,
+          "le_ms": 20642546
+         },
+         {
+          "count": 35,
+          "ge_ms": 20642546,
+          "le_ms": 26007979
+         },
+         {
+          "count": 26,
+          "ge_ms": 26007979,
+          "le_ms": 32768000
+         },
+         {
+          "count": 19,
+          "ge_ms": 32768000,
+          "le_ms": 41285093
+         },
+         {
+          "count": 10,
+          "ge_ms": 41285093,
+          "le_ms": 52015958
+         }
+        ],
+        "max": 46522931,
+        "min": 78553,
+        "over": "measured durations only",
+        "p10": 80635,
+        "p25": 1625499,
+        "p50": 13003989,
+        "p75": 20642546,
+        "p90": 32768000,
+        "percentile_basis": "histogram",
+        "percentile_bounds": {
+         "p10": [
+          64000,
+          80635
+         ],
+         "p25": [
+          1290159,
+          1625499
+         ],
+         "p50": [
+          10321273,
+          13003989
+         ],
+         "p75": [
+          16384000,
+          20642546
+         ],
+         "p90": [
+          26007979,
+          32768000
+         ]
+        }
+       },
+       "key": "Medium",
+       "keys": {
+        "risk": "Medium"
+       },
+       "max_ms": 46522931,
+       "min_ms": 78553,
+       "numerator": 4681416984,
+       "p50_ms": 13003989,
+       "p90_ms": 32768000,
+       "sample_count": 367,
+       "value": 12755904.588555858
+      }
+     ],
+     "id": "C1",
+     "kind": "duration",
+     "limitations": "cells without a lifecycle log are excluded; bounded, unknown and open visits are counted apart, not averaged",
+     "max_ms": 46914933,
+     "min_ms": 78553,
+     "name": "Station cycle time",
+     "numerator": "sum of measured visit durations",
+     "numerator_value": 6024826765,
+     "p50_ms": 10321273,
+     "p90_ms": 32768000,
+     "population": "visits with a measured duration",
+     "sample_count": 487,
+     "source": "cell lifecycle (station.entered to station.exited)",
+     "sources": [
+      "cell lifecycle (station.entered to station.exited)"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "ms",
+     "value": 12371307.52566735
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 53,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "buckets": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 5,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 5,
+        "covered": 5,
+        "eligible": 5,
+        "excluded": [],
+        "of": 5,
+        "share": 1
+       },
+       "denominator": 5,
+       "from_ms": 1792368000000,
+       "met": false,
+       "numerator": 3,
+       "period": "2026-10-19",
+       "sample_count": 5,
+       "suspect": false,
+       "to_ms": 1792972800000,
+       "value": 0.6,
+       "value_rounded": 0.6
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 24,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 24,
+        "covered": 24,
+        "eligible": 24,
+        "excluded": [],
+        "of": 24,
+        "share": 1
+       },
+       "denominator": 24,
+       "from_ms": 1792972800000,
+       "met": false,
+       "numerator": 20,
+       "period": "2026-10-26",
+       "sample_count": 24,
+       "suspect": false,
+       "to_ms": 1793577600000,
+       "value": 0.8333333333333334,
+       "value_rounded": 0.833
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 20,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 20,
+        "covered": 20,
+        "eligible": 20,
+        "excluded": [],
+        "of": 20,
+        "share": 1
+       },
+       "denominator": 20,
+       "from_ms": 1793577600000,
+       "met": false,
+       "numerator": 13,
+       "period": "2026-11-02",
+       "sample_count": 20,
+       "suspect": false,
+       "to_ms": 1794182400000,
+       "value": 0.65,
+       "value_rounded": 0.65
+      }
+     ],
+     "coverage": {
+      "counted": 53,
+      "covered": 53,
+      "eligible": 53,
+      "excluded": [],
+      "of": 53,
+      "share": 1
+     },
+     "denominator": "merged tickets",
+     "denominator_value": 53,
+     "description": "First-pass rate (observe): merged tickets with first_pass / merged tickets",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "Q",
+     "formula": "merged tickets with first_pass / merged tickets",
+     "group_by": "risk",
+     "group_dims": [
+      "risk"
+     ],
+     "groups": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 6,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 6,
+        "covered": 6,
+        "eligible": 6,
+        "excluded": [],
+        "of": 6,
+        "share": 1
+       },
+       "denominator": 6,
+       "key": "High",
+       "keys": {
+        "risk": "High"
+       },
+       "met": true,
+       "numerator": 6,
+       "sample_count": 6,
+       "value": 1,
+       "value_rounded": 1
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 10,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 10,
+        "covered": 10,
+        "eligible": 10,
+        "excluded": [],
+        "of": 10,
+        "share": 1
+       },
+       "denominator": 10,
+       "key": "Low",
+       "keys": {
+        "risk": "Low"
+       },
+       "met": true,
+       "numerator": 10,
+       "sample_count": 10,
+       "value": 1,
+       "value_rounded": 1
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 37,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 37,
+        "covered": 37,
+        "eligible": 37,
+        "excluded": [],
+        "of": 37,
+        "share": 1
+       },
+       "denominator": 37,
+       "key": "Medium",
+       "keys": {
+        "risk": "Medium"
+       },
+       "met": false,
+       "numerator": 21,
+       "sample_count": 37,
+       "value": 0.5675675675675675,
+       "value_rounded": 0.568
+      }
+     ],
+     "id": "Q2",
+     "kind": "rate",
+     "limitations": "",
+     "met": false,
+     "name": "First-pass rate (observe)",
+     "numerator": "merged tickets with first_pass",
+     "numerator_value": 37,
+     "parity_with": "observe.py scorecard first_pass_rate",
+     "population": "merged tickets",
+     "sample_count": 53,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "target": "> 0.85",
+     "target_check": {
+      "direction": "above",
+      "met": false,
+      "value": 0.85
+     },
+     "unit": "",
+     "value": 0.6981132075471698,
+     "value_rounded": 0.698
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 53,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "buckets": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 5,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 5,
+        "covered": 5,
+        "eligible": 5,
+        "excluded": [],
+        "of": 5,
+        "share": 1
+       },
+       "denominator": 5,
+       "from_ms": 1792368000000,
+       "met": false,
+       "numerator": 9,
+       "period": "2026-10-19",
+       "sample_count": 5,
+       "suspect": false,
+       "to_ms": 1792972800000,
+       "value": 1.8,
+       "value_rounded": 1.8
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 24,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 24,
+        "covered": 24,
+        "eligible": 24,
+        "excluded": [],
+        "of": 24,
+        "share": 1
+       },
+       "denominator": 24,
+       "from_ms": 1792972800000,
+       "met": true,
+       "numerator": 28,
+       "period": "2026-10-26",
+       "sample_count": 24,
+       "suspect": false,
+       "to_ms": 1793577600000,
+       "value": 1.1666666666666667,
+       "value_rounded": 1.167
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 20,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 20,
+        "covered": 20,
+        "eligible": 20,
+        "excluded": [],
+        "of": 20,
+        "share": 1
+       },
+       "denominator": 20,
+       "from_ms": 1793577600000,
+       "met": false,
+       "numerator": 27,
+       "period": "2026-11-02",
+       "sample_count": 20,
+       "suspect": false,
+       "to_ms": 1794182400000,
+       "value": 1.35,
+       "value_rounded": 1.35
+      }
+     ],
+     "coverage": {
+      "counted": 53,
+      "covered": 53,
+      "eligible": 53,
+      "excluded": [],
+      "of": 53,
+      "share": 1
+     },
+     "denominator": "merged tickets with recorded rounds",
+     "denominator_value": 53,
+     "description": "Average judging rounds (observe): sum of rounds / merged tickets with recorded rounds",
+     "dimensions": [
+      "risk",
+      "app_type",
+      "outcome"
+     ],
+     "family": "Q",
+     "formula": "sum of rounds / merged tickets with recorded rounds",
+     "group_by": "risk",
+     "group_dims": [
+      "risk"
+     ],
+     "groups": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 6,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 6,
+        "covered": 6,
+        "eligible": 6,
+        "excluded": [],
+        "of": 6,
+        "share": 1
+       },
+       "denominator": 6,
+       "key": "High",
+       "keys": {
+        "risk": "High"
+       },
+       "met": true,
+       "numerator": 6,
+       "sample_count": 6,
+       "value": 1,
+       "value_rounded": 1
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 10,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 10,
+        "covered": 10,
+        "eligible": 10,
+        "excluded": [],
+        "of": 10,
+        "share": 1
+       },
+       "denominator": 10,
+       "key": "Low",
+       "keys": {
+        "risk": "Low"
+       },
+       "met": true,
+       "numerator": 10,
+       "sample_count": 10,
+       "value": 1,
+       "value_rounded": 1
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 37,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 37,
+        "covered": 37,
+        "eligible": 37,
+        "excluded": [],
+        "of": 37,
+        "share": 1
+       },
+       "denominator": 37,
+       "key": "Medium",
+       "keys": {
+        "risk": "Medium"
+       },
+       "met": false,
+       "numerator": 55,
+       "sample_count": 37,
+       "value": 1.4864864864864864,
+       "value_rounded": 1.486
+      }
+     ],
+     "id": "Q3",
+     "kind": "mean",
+     "limitations": "",
+     "met": false,
+     "name": "Average judging rounds (observe)",
+     "numerator": "sum of rounds",
+     "numerator_value": 71,
+     "parity_with": "observe.py scorecard average_rounds",
+     "population": "merged tickets with recorded rounds",
+     "sample_count": 53,
+     "source": "run.recorded",
+     "sources": [
+      "run.recorded"
+     ],
+     "status": "available",
+     "suspect": false,
+     "target": "< 1.3",
+     "target_check": {
+      "direction": "below",
+      "met": false,
+      "value": 1.3
+     },
+     "unit": "rounds",
+     "value": 1.3396226415094339,
+     "value_rounded": 1.34
+    },
+    {
+     "authority": "authoritative",
+     "availability": "yes",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 119,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "buckets": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 15,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 15,
+        "covered": 15,
+        "eligible": 18,
+        "excluded": [
+         {
+          "count": 3,
+          "reason": "completed with no recorded cost"
+         }
+        ],
+        "of": 18,
+        "share": 0.8333333333333334
+       },
+       "denominator": 15,
+       "from_ms": 1792368000000,
+       "numerator": 78.3979,
+       "period": "2026-10-19",
+       "sample_count": 15,
+       "suspect": false,
+       "to_ms": 1792972800000,
+       "value": 5.226526666666667,
+       "value_rounded": 5.227
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 47,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 47,
+        "covered": 47,
+        "eligible": 50,
+        "excluded": [
+         {
+          "count": 3,
+          "reason": "completed with no recorded cost"
+         }
+        ],
+        "of": 50,
+        "share": 0.94
+       },
+       "denominator": 47,
+       "from_ms": 1792972800000,
+       "numerator": 235.98319999999993,
+       "period": "2026-10-26",
+       "sample_count": 47,
+       "suspect": false,
+       "to_ms": 1793577600000,
+       "value": 5.020919148936168,
+       "value_rounded": 5.021
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 48,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 48,
+        "covered": 48,
+        "eligible": 50,
+        "excluded": [
+         {
+          "count": 2,
+          "reason": "completed with no recorded cost"
+         }
+        ],
+        "of": 50,
+        "share": 0.96
+       },
+       "denominator": 48,
+       "from_ms": 1793577600000,
+       "numerator": 251.17859999999996,
+       "period": "2026-11-02",
+       "sample_count": 48,
+       "suspect": false,
+       "to_ms": 1794182400000,
+       "value": 5.2328874999999995,
+       "value_rounded": 5.233
+      }
+     ],
+     "coverage": {
+      "counted": 119,
+      "covered": 119,
+      "eligible": 127,
+      "excluded": [
+       {
+        "count": 8,
+        "reason": "completed with no recorded cost"
+       }
+      ],
+      "of": 127,
+      "share": 0.937007874015748
+     },
+     "denominator": "executions with a recorded cost",
+     "denominator_value": 119,
+     "description": "Recorded cost per execution: execution.completed.cost_usd / executions with a recorded cost",
+     "dimensions": [
+      "stage",
+      "ticket",
+      "risk",
+      "app_type"
+     ],
+     "family": "K",
+     "formula": "execution.completed.cost_usd / executions with a recorded cost",
+     "group_by": "risk",
+     "group_dims": [
+      "risk"
+     ],
+     "groups": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 13,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 13,
+        "covered": 13,
+        "eligible": 14,
+        "excluded": [
+         {
+          "count": 1,
+          "reason": "completed with no recorded cost"
+         }
+        ],
+        "of": 14,
+        "share": 0.9285714285714286
+       },
+       "denominator": 13,
+       "key": "High",
+       "keys": {
+        "risk": "High"
+       },
+       "numerator": 87.0432,
+       "sample_count": 13,
+       "value": 6.695630769230769,
+       "value_rounded": 6.696
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 17,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 17,
+        "covered": 17,
+        "eligible": 20,
+        "excluded": [
+         {
+          "count": 3,
+          "reason": "completed with no recorded cost"
+         }
+        ],
+        "of": 20,
+        "share": 0.85
+       },
+       "denominator": 17,
+       "key": "Low",
+       "keys": {
+        "risk": "Low"
+       },
+       "numerator": 67.2525,
+       "sample_count": 17,
+       "value": 3.956029411764706,
+       "value_rounded": 3.956
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 89,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 89,
+        "covered": 89,
+        "eligible": 93,
+        "excluded": [
+         {
+          "count": 4,
+          "reason": "completed with no recorded cost"
+         }
+        ],
+        "of": 93,
+        "share": 0.956989247311828
+       },
+       "denominator": 89,
+       "key": "Medium",
+       "keys": {
+        "risk": "Medium"
+       },
+       "numerator": 455.2587999999999,
+       "sample_count": 89,
+       "value": 5.115267415730336,
+       "value_rounded": 5.115
+      }
+     ],
+     "id": "K1",
+     "kind": "mean",
+     "limitations": "null when the run had no result; coverage says how many executions had one; execution.failed carries no cost",
+     "name": "Recorded cost per execution",
+     "numerator": "execution.completed.cost_usd",
+     "numerator_value": 609.5545000000001,
+     "population": "executions with a recorded cost",
+     "sample_count": 119,
+     "source": "intake log (Claude-reported, recorded by MACH)",
+     "sources": [
+      "intake log (Claude-reported, recorded by MACH)"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "usd",
+     "value": 5.122306722689077,
+     "value_rounded": 5.122
+    }
+   ],
+   "partial": "",
+   "projection": {
+    "definitions": 2,
+    "format": 4
+   },
+   "rules": "recorded values only; an empty denominator is null with a reason; nothing is estimated or apportioned; durations are averaged over measured spans only, the others counted apart; value is unrounded, value_rounded is observe.py's round(value, 3)",
+   "suspect_days": [],
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": null,
+    "from_ms": null,
+    "last_runs": null,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/metrics?ids=T1,Q2,Q3,C1,K1&group_by=risk&bucket=week&distribution=1",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

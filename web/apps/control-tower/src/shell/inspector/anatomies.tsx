@@ -58,7 +58,7 @@ import {
   timecode,
   toolFamily,
 } from "../vocab";
-import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RefLink, RefList, Section, useEntityEvents } from "./parts";
+import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RecurrenceLink, RefLink, RefList, Section, StationHistoryLink, useEntityEvents } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
 import { activityNote, agentsWords, interruptionWords, modelCostsOf, planWords, reviewerWords, runtimeWords, seatModelName, visitLeftWords } from "./words";
@@ -382,7 +382,7 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
   const related = Object.values(gates).filter((g) => g.ticketId === cell.ticketId && (gateKinds[station] ?? []).includes(g.gate));
   return (
     <>
-      <Section title="Facts">
+      <Section title="Facts" aside={<StationHistoryLink kind={station} />}>
         <Facts
           facts={[
             ["Station", STATION_WORDS[kind]],
@@ -704,9 +704,11 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
   const verification = gate.gate === "verification" && cell ? cell.verifications.find((v) => v.round === gate.round) : undefined;
   const review = (gate.gate === "review" || gate.gate === "human-approval") && cell ? (gate.gate === "review" ? cell.reviews.find((r) => r.round === gate.round) : [...cell.reviews].reverse().find((r) => r.humanApprovalRequired)) : undefined;
   const waitingFor = gate.state === "waiting" ? Math.max(0, gate.openedAt) : null;
+  // A review rejection or a failed verification: how often it recurs is Analytics' Quality area.
+  const recurs = gate.state === "failed" && (gate.gate === "review" || gate.gate === "verification") ? (gate.gate === "review" ? "review" : "verify") : null;
   return (
     <>
-      <Section title="Decision">
+      <Section title="Decision" aside={recurs ? <RecurrenceLink kind={recurs} /> : undefined}>
         <Facts
           facts={[
             ["Gate", gateName(gate)],
@@ -1104,9 +1106,10 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
 export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
   const kind = visit.station as StationKind;
   const status = visitStatusOf(visit);
+  const recurs = (visit.station === "review" || visit.station === "verify") && status.state === "ended" && outcomeState(visit.outcome) === "failed" ? visit.station : null;
   return (
     <>
-      <Section title="Facts">
+      <Section title="Facts" aside={recurs ? <RecurrenceLink kind={recurs} /> : undefined}>
         <Facts
           facts={[
             ["Station", STATION_WORDS[kind] ?? visit.station],

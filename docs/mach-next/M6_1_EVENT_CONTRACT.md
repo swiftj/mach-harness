@@ -66,7 +66,7 @@ Every event the observer serves has exactly these fields. `null` means *not appl
 | Field | Type | Meaning |
 |---|---|---|
 | `schema_version` | `3` | |
-| `schema_revision` | integer | Additive revision within 3 (started at 0). Revision 1 adds `execution.usage.cost_complete` and `cost_incomplete_reasons`. Revision 2 (M6.2 fixes) adds `history.gap.class` and `history_lost` (and the reasons `unexpected-shape`, `evicted`), `origin.runtime_state` on stream events, and `station.exited.app_type` and `risk` on the plan's exit. The observer serves revision 2 and reports it in `GET /api/v1/session` (`versions.event.revision`). |
+| `schema_revision` | integer | Additive revision within 3 (started at 0). Revision 1 adds `execution.usage.cost_complete` and `cost_incomplete_reasons`. Revision 2 (M6.2 fixes) adds `history.gap.class` and `history_lost` (and the reasons `unexpected-shape`, `evicted`), `origin.runtime_state` on stream events, and `station.exited.app_type` and `risk` on the plan's exit. Revision 3 (M6.5) adds `execution.started.source_commit`, `provenance` and `provenance_reason` (section 10.1.1). The observer serves revision 3 and reports it in `GET /api/v1/session` (`versions.event.revision`). |
 | `id` | string | Deterministic event id (section 5.1). |
 | `type` | string | The kind (section 11). Kept as `type`, as in v2 and M6.0. |
 | `pos` | integer | Delivery position in this index epoch. The cursor. |
@@ -324,7 +324,15 @@ In the observer's normaliser, per kind, by construction: each kind's output stru
 
 ### 10.1 intake-log (v2) to v3
 
-Field mapping: `seq` → `origin.seq` and the id; `at` → `time` (section 6.1); `type` → `type` unchanged; `project_id`, `wave_id`, `slice_id`, `revision`, `ticket_id`, `runner_id`, `execution_id` → `ids.*`; `source` → `origin.writer`; `cause` → `cause` (`basis: recorded`); `refs` → server-only, replaced by `entities`; `data` → the kind's allow-list. `source_commit` → server-only (kept on the index; exposed only through `revision.discovered`). Kinds are not renamed.
+Field mapping: `seq` → `origin.seq` and the id; `at` → `time` (section 6.1); `type` → `type` unchanged; `project_id`, `wave_id`, `slice_id`, `revision`, `ticket_id`, `runner_id`, `execution_id` → `ids.*`; `source` → `origin.writer`; `cause` → `cause` (`basis: recorded`); `refs` → server-only, replaced by `entities`; `data` → the kind's allow-list. `source_commit` → server-only, except on `execution.started`, where revision 3 keeps it as `data.source_commit` (the product source the execution started from; 12 characters, like every commit). Kinds are not renamed.
+
+#### 10.1.1 Execution provenance (revision 3, M6.5)
+
+When the supervisor starts an execution it takes one snapshot of what the run was started with (`skills/run/scripts/provenance.py`), after authorization has passed and before the process is launched, and writes the same object on the ledger's execution record and in `execution.started.data.provenance`. It is never recomputed, and nothing is attributed to an execution after the fact. The producer's event stays `schema_version: 2`: v2 `data` is open, and a v2 reader ignores keys it does not know.
+
+- **Contents (snapshot `schema: 1`)**: digests, versions, identifiers, numbers and booleans only. `mach {version, install, commit}` (`commit` only when MACH is loaded from a Git checkout, and then the HEAD of a tree that may have uncommitted changes; neither install records one; the line digest, not the commit, records which files ran); `line {digest, count, files}`, one SHA-256 per skill folder, agent file, workflow file and the plugin manifest of the plugin the run loads, keyed `skill:<name>`, `agent:<name>`, `workflow:<name>`, `plugin:manifest`, never by path; `config {recorded, digest, models, review {max_loops, security_veto, tiers}, max_parallel}`: `digest` is the SHA-256 of the canonical JSON of the whole `.factory/config.json` as it was on disk at start (never its content); the other fields are the values a person reads, as the file sets them (a key the file does not set is null, never a default: an unset `security_veto` is null, although the review station treats it as on); a model name that is not a plain identifier, such as a cloud ARN, is `sha256:<digest>`; `policy {autonomy, max_risk, allow_merge, max_parallel, allowed_tools_digest, allowed_tools_count}` (the allowed-tool list itself is never recorded, and the Python interpreter's path in it is replaced by `<python>` before hashing, so the digest is the same on every machine); `ticket {risk, app_type}` from `cell.json` at start; `source {commit, slice_revision, slice_digest, spec_sha256}` from the ledger; `config_id`, the SHA-256 of the canonical JSON (sorted keys, whole numbers as integers) of `{line digest, config, policy}`, for "same configuration" comparisons without interpreting fields.
+- **Absent or failed**: `provenance: null` with `provenance_reason`: `not-recorded` (the start carries none: every execution before M6.5), `capture-failed` (the supervisor could not take it; the execution started exactly as it would have), `not-understood` (another snapshot schema, no `config_id`, or a null snapshot with a reason this observer does not know).
+- **Normalisation**: deny-by-default, field by field (`normalize/provenance.go`): a value that does not fit its filter is null, a key that is not named is dropped, commits are cut to 12 characters. The allow-list (`redact/allow.go`) and the scrubber apply as to every payload.
 
 ### 10.2 cell-lifecycle (v1 raw) to v3
 
@@ -433,7 +441,7 @@ Snapshots restate every agent, so the normaliser **diffs** each snapshot against
 | `revision.discovered` | authoritative | | `from_commit`, `commit` | same |
 | `scheduling.decided` | authoritative | | `state`, `dispatched[]`, `started[]`, `held[{slice_id, ticket_id, why}]` | same |
 | `work.claimed` | authoritative | `ticket_id`, `execution_id` | `stage`, `next`, `attempt` | same |
-| `execution.started` | authoritative | `ticket_id`, `execution_id` | `until`, `workflow`, `limits{minutes, budget_usd}` | same |
+| `execution.started` | authoritative | `ticket_id`, `execution_id` | `until`, `workflow`, `limits{minutes, budget_usd}`; revision 3: `provenance`, `provenance_reason` (section 10.1.1) | same; revision 3: `source_commit` (from the envelope), `provenance` (the snapshot, or null) and `provenance_reason` |
 | `station.observed` | **observed** (sampled) | `ticket_id` | `from_stage`, `stage` | same; for display, superseded by `station.*` where a lifecycle log exists |
 | `recovery.started` | authoritative | | `kind` | same |
 | `execution.completed` | authoritative | `ticket_id`, `execution_id` | `stage`, `next`, `waiting_for`, `how`, `seen_to_end`, `cost_usd`, `refused_tools[]` | same |

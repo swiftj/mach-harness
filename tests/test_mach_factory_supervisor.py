@@ -69,6 +69,10 @@ for ticket in args["tickets"]:
         print(json.dumps({"type": "system", "subtype": "permission_denied", "tool_name": denied["tool_name"], "tool_input": denied.get("tool_input")}), flush=True)
     if plan.get("hang"):
         time.sleep(600)
+    if plan.get("hold"):  # run until the test says it may end, however slow the machine is
+        deadline = time.time() + 300
+        while not os.path.exists(plan["hold"]) and time.time() < deadline:
+            time.sleep(0.05)
     time.sleep(plan.get("sleep", 0))
     if plan.get("stage"):
         path = os.path.join(".factory", "worktrees", ticket, "cell.json")
@@ -505,7 +509,8 @@ class SupervisedTest(Base):
 
     def test_repeated_passes_and_notifications_never_duplicate_work(self):
         self.supervised("--hooks")
-        self.claude({"default": {"sleep": 2, "stage": "approved"}})
+        release = self.root / "release-the-run"
+        self.claude({"default": {"hold": str(release), "stage": "approved"}})
         for _ in range(5):
             self.assertEqual(self.run_factory("wake", "--event", "post-merge")[0], 0)
         first = self.tick()
@@ -513,7 +518,8 @@ class SupervisedTest(Base):
             again = self.tick()
             self.assertEqual((again["dispatched"], again["started"], again["running"]), ([], [], ["LOCAL-001"]))
             self.factory("status")
-        self.wait()
+        release.touch()
+        self.wait(120)
         for _ in range(2):
             self.tick()
         self.assertEqual((self.tickets(), len(self.executions()), len(self.calls())), (["LOCAL-001"], 1, 1))
@@ -612,14 +618,16 @@ class LimitsTest(Base):
 
     def test_places_are_limited(self):
         self.waves(3)
-        self.claude({"default": {"sleep": 2, "stage": "approved"}})
+        release = self.root / "release-the-run"
+        self.claude({"default": {"hold": str(release), "stage": "approved"}})
         self.enable("--include-backlog", "--max-parallel", "1")
         report = self.tick()
         self.assertEqual(([item["slice_id"] for item in report["dispatched"]], [item["ticket_id"] for item in report["started"]]), (["SLICE-001"], ["LOCAL-001"]))
         again = self.tick()
         self.assertEqual((again["dispatched"], again["started"], again["running"]), ([], [], ["LOCAL-001"]))
         self.assertEqual(sorted(p.name for p in (self.eng / ".factory/worktrees").iterdir()), ["LOCAL-001"])  # the others were not even dispatched
-        self.wait()
+        release.touch()
+        self.wait(120)
         self.assertEqual(len(self.calls()), 1)
 
     def test_the_project_can_restrict_but_never_widen(self):

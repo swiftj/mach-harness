@@ -73,7 +73,7 @@ means 3; any other value is 400 `invalid` with `supported: [3]`. Cursors are `<g
 
 | Route | Purpose | Limits and notes |
 |---|---|---|
-| `session` | versions (event schema 3, revision 2, the 54 kinds), generation, `display_policy {people: "role"}`, capabilities (`execution: false`, snapshot, artifacts, analytics, `evidence_media`, `stream_observations {policy: "structural", state, proven_versions, versions[{version, state, executions, records_refused}], ok, claude_code_version, reason}`), every limit below, session count, where the next link is kept | `state`: `proven`, `compatible-unproven`, `incompatible` or `unknown`, the worst over every stream ([Stream records](#stream-records-by-shape)) |
+| `session` | versions (event schema 3, revision 2, the 54 kinds), generation, `display_policy {people: "role", free_text {checked_for_names: false, note, artifact_field, artifact_header, event_fields[{kind, path, max}], render}}`, capabilities (`execution: false`, snapshot, artifacts, analytics, `evidence_media`, `stream_observations {policy: "structural", state, proven_versions, versions[{version, state, executions, records_refused}], ok, claude_code_version, reason}`), every limit below, session count, where the next link is kept | `state`: `proven`, `compatible-unproven`, `incompatible` or `unknown`, the worst over every stream ([Stream records](#stream-records-by-shape)) |
 | `health` | `ok`/`degraded`, observer time, index head and floor, projection (position, lag, partial, `history` completeness by gap class), ingest (ticks, errors, `catching_up`, `late` and `backfill` counts, `runtime` (the streams' runtime summary), `delivery {settle_max_ms, adaptive, hold_ms_p50, hold_ms_p95, last_hold_ms, samples, released_by_bound}`), freshness (below), streams, sessions | degraded while the last tick erred, ingest has not ticked for 5 s, or the projection errs |
 | `factory/status` | the Factory's files and how fresh they are; the exact shape is [below](#factorystatus) | files read at most once a second |
 | `events` | v3 events after a cursor, in delivery order (`pos`) | `after`, `limit` 1–1000 (200), filters `ticket`, `execution`, `station`, `type` (prefix), `entity` (ref), `authority`; at most 10,000 events examined per request (`scanned`, then page on from `next`); 409 `cursor_reset`, 410 `cursor_expired`, 400 |
@@ -95,7 +95,7 @@ means 3; any other value is 400 `invalid` with `supported: [3]`. Cursors are `<g
 | `marks` | instants worth jumping to: `failure`, `retry` (a revise visit), `attempt` (a cell's execution after its first, the cell's executions taken in start order; the recorded attempt number can repeat), `gate`, `review`, `human`, `recovery`, `interruption` (an execution interrupted, timed out or of unknown outcome; and, `reconstructed`, a visit closed without an exit record, at its bound, or closed only by cleanup), `gap`, `wave`, `merge`; `{items[{id, kind, at_ms, at, until_ms, until, event_id, entity, label, verdict, authority}], total, truncated, order, offset, more, next_offset, kinds, cursor, live_ms, projection}`; the order is stable (time, then id), `total` counts every match, `truncated` is true whenever this reply does not hold all of them, and `offset=next_offset` pages to the end (`more: false`). Example: `/api/v1/marks?after_ms=1794454140000&kinds=failure,interruption&limit=1` | `from_ms`/`to_ms` (ascending), or `after_ms` (ascending) or `before_ms` (descending), nearest first; `kinds`; `limit` 1–1000 (200); `offset` |
 | `artifacts`, `artifacts/{id}` | the evidence catalog, metadata only: id, ref, path, kind, nature (`evidence`, `record`, `prose`), media type (sniffed), bytes, sha256, recorded sha256, integrity, `verified_evidence`, targets, round (and `round_basis`), commit, `visit_id` and `visit {visit_id, basis, rule}`, provenance, `content_access` | `ticket`, `kind`, `nature`, `limit`, `offset`; refreshed at most every 2 s. `visit.basis`: `recorded` when a verification check names the file with its hash (`rule: check-hash`); `reconstructed` when joined by its verification folder (`folder`), by round and file time (`round-and-time`) or by round only (`round`) |
 | `artifacts/{id}/content` | the bytes, by catalog id only | see below |
-| `analytics/metrics` | every metric of the shared catalog: value, numerator, denominator, coverage, basis, source, authority, limitations, availability, target and `met` for the observe station's metrics; unavailable values null with a reason | `ids`, `group_by` (`day`, `risk`, `app_type`, `station`, `round`, `seat`, `model`, `phase`, `wave`, `stage`, `gate`, `reason_code`, `kind`, `tool`, `rule`, `target_kind`, `stop_reason`, `writer`, `ticket`, `token_kind`); 2,000 groups per metric |
+| `analytics/metrics` | every metric of the shared catalog (M6.5 section 3.1): the common analytics envelope (`cursor`, `projection`, `generated_ms`, `window`, `filters`, `history`) and per metric value (unrounded) and `value_rounded` (observe.py's `round(v, 3)`), numerator and denominator, `sample_count`, `population`, `status` (available, partial, deferred, not-recorded, unavailable) with its reason, `basis_counts` (measured, bounded, inferred, open, unknown, not_recorded: durations are averaged over measured only), `bounds`, `coverage {eligible, counted, excluded[{reason, count}]}` (refused source records included), `target_check` decided on the unrounded value, `groups` (`keys` per dimension; a missing value is the group `unknown`), `buckets` (each `suspect` when it holds a `history.gap` conflict), `distribution` (p10–p90 from the log histogram, with the bucket bounds). Reads merge per-day cells; no event is rescanned | `ids`; `group_by` (up to two of `day`, `week`, `risk`, `app_type`, `station`, `round`, `seat`, `model`, `phase`, `wave`, `stage`, `gate`, `reason_code`, `kind`, `tool`, `rule`, `target_kind`, `stop_reason`, `writer`, `ticket`, `token_kind`, `outcome`); `bucket` (`day`, `week`); `distribution=1`; `from_ms`/`to_ms` (widened to whole UTC days); `last_runs` (the observe station's population, scorecard metrics only); `at` (a cursor); filters `risk`, `app_type`, `model`, `station`, `wave`, `outcome` (a metric that cannot honour one is `unavailable`); any other parameter is a 400. 2,000 groups per metric, 20,000 cells per metric (beyond: an `overflow` cell, totals stay exact) |
 | `analytics/runs` | `run.recorded` rows (the observe station's input) | `limit`, `offset` |
 
 ### History completeness (`snapshot` `state.history`, `project` `history`, `health` `projection.history`)
@@ -179,8 +179,16 @@ read, then expanded) when asked for, byte for byte what was served when they wer
 heap down to about 30 MB. Also bounded by: a tick reads at most 5,000 events (and the next follows at once while a
 backlog remains); projection checkpoints share every cell, slice, execution and wave that did not change (32 kept); the
 saved projection is written at most every 15 s; the segments hold each event in a compact form (the envelope without
-nulls, empties and zeros; `data` exact), expanded when read; the Go runtime has a soft memory limit of 208 MB
-(`GOMEMLIMIT` overrides).
+nulls, empties and zeros; `data` exact), expanded when read; the Go runtime has a soft memory limit
+(`GOMEMLIMIT` overrides it and turns the adaptation below off).
+
+The soft limit adapts to the history (M6.5). A fixed limit is a cliff: when the live heap nears it the collector runs
+continuously (at the former 208 MB a 250,000-event project with the analytics caches held 190–226 MB live and idled at
+a quarter of a core, 6 ms of CPU per appended event, restart 12.5 s). The limit starts at 320 MB; after the first full
+catch-up, and then at most once a minute, it becomes 1.6 × the live heap after the last collection, never below
+320 MB and never above 2 GB, and it is changed only when that differs by more than 10 %. Each change is logged in one
+line (`memory limit 320 MB -> 480 MB (live heap 300 MB)`). Before the catch-up it is only checked once a second
+whether the catch-up is done; after it, one timer a minute: nothing proportional to the history runs while idle.
 
 ### Timeline routes: costs measured so far
 
@@ -246,7 +254,9 @@ with no `.factory/` answers `factory_present: false` and the same keys.
 ### Artifact content
 
 - **Roots:** a cell's `evidence/` (and `evidence/previous-N/`): `results.json`, `summary.json`,
-  `findings.md`, and the evidence files `results.json` names; `review/round-N/findings.md` and
+  `findings.md`, and the evidence files `results.json` names (never one whose name is itself credential-shaped,
+  such as `sk-ant-....txt`, or holds an e-mail address: it is not catalogued, so it appears in no reply and is
+  scrubbed inside a served `results.json`); `review/round-N/findings.md` and
   `decision.json`; the same members of `.factory/archive/<ticket>.tar.gz` once the cell folder is
   gone. Never `repo/`, `.factory/local/`, an execution stream, `packet.json`, `diff.patch`,
   `test-suite.log` or `contract-check.log`.
@@ -286,6 +296,11 @@ with no `.factory/` answers `factory_present: false` and the same keys.
   a MACH record of a known kind (`findings.md`, transcripts, logs, unknown JSON), and a record any of whose values is
   a string of more than one word outside its person fields and `command` (a verifier's `note`, a finding's `title` and
   `detail`, an approval note). A record of identifiers, numbers, times, hashes and paths only is not labelled.
+- **Files named for credentials are metadata only:** a catalogued file whose name says it holds credentials
+  (`credentials.txt`, `secrets.json`, `id_rsa`, a name with `token`, `secret`, `passw`, `apikey`, `private_key`,
+  `.env...`) is listed with `content_access: "none"` and its content is refused (403 `credential-name`), whatever the
+  scrubber would make of it. An ordinary file whose name merely contains such a word (`AC-03-token-refresh.txt`) is
+  refused too; open it on disk.
 - **Images and video only when the project opts in:** `.factory/config.json`
   `{"tower": {"evidence_media": true}}` (tracked; read only; off by default, 403 `media-disabled`).
 - **Headers:** `Content-Security-Policy: default-src 'none'; img-src 'self'; media-src 'self';
@@ -295,8 +310,9 @@ with no `.factory/` answers `factory_present: false` and the same keys.
 
 ## People
 
-People's names are never sent to the browser in this milestone. Besides the per-field rules above, the observer keeps
-a per-project deny-list of the names and e-mail addresses MACH's own files give for people: approvals in review
+People are shown by role. A record's person fields are served as a role, and a name the observer knows is replaced
+wherever it appears; a name it does not know, written only in free text, is served as written (below). Besides the
+per-field rules above, the observer keeps a per-project deny-list of the names and e-mail addresses MACH's own files give for people: approvals in review
 decisions, the intake log's `by` and `approval.actor`, `runner.json`'s `enabled_by`, the person fields of a cell's
 records, and the project's git identities (`[user]` in `.git/config`, the name and e-mail of each entry of
 `.git/logs/HEAD` and of each worktree's reflog, read as files; git is never run). Role words MACH writes (`engineer`,
@@ -309,11 +325,24 @@ What is guaranteed and what is not (a known limit, decided by the product owner:
 - **Guaranteed:** a name or e-mail address that MACH's records or the project's git identities give is never served,
   in any event, document or reply, once the observer has read that record (the deny-list only grows; it is read before
   a cell's new lines are normalised). E-mail addresses are scrubbed wherever they appear, known or not.
-- **Not guaranteed:** a name that appears **only in free text** (a reviewer's finding, a verifier's note, a transcript)
-  and in no record or identity is not recognised and is served as written. Every artifact whose text can hold such
-  prose is labelled (`free_text`, `X-MACH-Free-Text`, [Artifact content](#artifact-content)), so the Control Tower can
-  say so. Once a record names that person, later replies scrub it, but what was already served is not recalled, and the
-  stored index may hold it until a rebuild.
+- **Not guaranteed:** a name that appears **only in free text** and in no record or identity is not recognised and is
+  served as written. Free text is not only artifact content: a review finding's title, a workflow agent's label and
+  phase, a workflow's phase titles, a refused intake's problems, a blocked dependency's reasons, a human-required or
+  pause reason, a scheduler's hold, an authorization or supersede note, and a run's `waiting_for` are prose too, in
+  events, the stream, history, the snapshot and the projection routes (`cells`, `visits`, `runs`, analytics groups by
+  `phase`). Every such artifact is labelled (`free_text`, `X-MACH-Free-Text`, [Artifact content](#artifact-content));
+  every such event field is listed in `session.display_policy.free_text.event_fields`
+  (`redact.FreeTextFields`, held to the allowlist and to the normalisers' prose call sites by
+  `redact.TestFreeTextFieldsExistInTheAllowlist` and `TestEveryProseCallSiteIsDeclared`). Once a record names that
+  person, later replies scrub it, but what was already served is not recalled, and the stored index may hold it until
+  a rebuild.
+- **Also not covered:** a known name written another way (hyphenated or joined in a file name,
+  `zelda-quinnfarrow-login.txt`; initials; a nickname; a misspelling; a name split across two lines of a document); a
+  person's handle or user name in prose (`@zq`) unless a record gives it; a person described without a name (a role,
+  a team, a time zone); anything shown in a screenshot or recording (media is never examined; it is off by default);
+  names in the project's own source, which the observer never serves. Redaction of secrets is pattern-based: a secret
+  that does not look like one (a short password in prose, "password hunter2") is not recognised in served text. The
+  observer makes no claim that free text is free of personal names or sensitive prose; it labels it.
 
 ## Stream records by shape
 
@@ -336,7 +365,7 @@ Each line is held by the tests named after it (`cmd/mach-observer` unless anothe
 | Takes or holds a lock on a MACH file, or holds one open between polls | `TestNoLockOnMACHFiles` (while it runs, every MACH file, `.factory/intake/lock` included, can be locked exclusively by someone else; its own lock file, the control, cannot), `TestNothingHeldOpenBetweenPolls` (its open files sampled every 20 ms: no MACH file stays open), `TestSourceBoundary` (`syscall.Flock` only in `internal/lock`) |
 | Has a route that changes anything | `server.TestEveryOtherMethodIsRefused` (every method but GET on every route: 405 `Allow: GET`), every route registered as `GET /api/v1/...`; `TestReadOnlyOverAFactoryTree` reads every route and finds nothing changed |
 | Offers a Factory capability | `server.TestSessionOffersNoFactoryCapability` (`read_only: true`, `capabilities.execution: false`, no capability that starts, stops, approves or changes work), plus the lines above: with no process, no write outside its folder and no non-GET route there is nothing to act with; `runner.json` and `supervisor.json` are read and summarised, never written (`TestReadOnlyOverAFactoryTree`) |
-| Forwards a secret, a path outside the project, a tool's input or output, or a person's name | `ingest.TestRedactionCoverage` (an adversarial corpus planted in every source and in served evidence: zero leaks in stored events, the index on disk and served content), `TestPeopleNeverReachTheBrowser` (14 names and e-mails planted in a decision's approval, findings, results, a vote, a build report, the intake log, `runner.json`, `.git/config`, a reflog and a run record: zero in events, history, snapshot, cells, runs, series, the artifact catalog and every served content, the stream, and the index on disk), `redact.TestScrubRecordByKind`, `ingest.Fuzz*` (any line: no panic, schema-valid output, no planted secret, the next line still read) |
+| Forwards a secret of a recognised shape, a path outside the project, a tool's input or output, or a person's name that a record or git identity gives (a name only in free text is labelled, not withheld: [People](#people)) | `ingest.TestRedactionCoverage` (an adversarial corpus planted in every source and in served evidence: zero leaks in stored events, the index on disk and served content), `TestPeopleNeverReachTheBrowser` (14 names and e-mails planted in a decision's approval, findings, results, a vote, a build report, the intake log, `runner.json`, `.git/config`, a reflog and a run record: zero in events, history, snapshot, cells, runs, series, the artifact catalog and every served content, the stream, and the index on disk), `redact.TestScrubRecordByKind`, `ingest.Fuzz*` (any line: no panic, schema-valid output, no planted secret, the next line still read) |
 
 ## Tests
 

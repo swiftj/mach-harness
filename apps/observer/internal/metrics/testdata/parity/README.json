@@ -1,0 +1,3 @@
+{
+  "README": "observe.py scorecard (skills/observe/scripts/observe.py, function scorecard) over every record of each <name>-runs.jsonl, depth = all. Regenerated and checked by tests/test_mach_analytics_parity.py. medium-runs.jsonl and medium-expected.json come from mach-synth --analytics --cells 60 --waves 8 --seed 1 (synthetic)."
+}

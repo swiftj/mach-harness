@@ -1,0 +1,1156 @@
+{
+ "body": {
+  "data": {
+   "cursor": "791fafe48b91c0cd.12684",
+   "filters": {},
+   "generated_ms": 1794640504724,
+   "history": {
+    "complete": false,
+    "complete_window": false,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793344003999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": ""
+   },
+   "insights": [
+    {
+     "condition": "21 of 34 merged tickets passed on the first round (Q2 = 61.8%); the observe station's target is above 85.0%. Population: finished runs closed in the selected window (the observe station reads the last 20 instead).",
+     "contributors": {
+      "group": {},
+      "limit": 100,
+      "metric": "verification_failures",
+      "note": "run records are not listed by the contributors route; this lists the verifications that did not pass",
+      "order": "recent",
+      "path": "/api/v1/analytics/contributors?metric=verification_failures&from_ms=1793232000000&limit=100&order=recent&to_ms=1794528000000",
+      "relation": "related"
+     },
+     "filters": {},
+     "id": "scorecard.first-pass",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Read the verification failures and review rejections of the tickets that needed more than one round, grouped by kind. Any change to the Factory's rules goes through the observe station's factory-tuning ticket and its review."
+     },
+     "measurements": [
+      {
+       "coverage": {
+        "counted": 34,
+        "eligible": 34,
+        "share": 1
+       },
+       "denominator": 34,
+       "label": "First-pass rate (observe)",
+       "metric": "Q2",
+       "numerator": 21,
+       "sample_count": 34,
+       "unit": "ratio",
+       "value": 0.6176470588235294,
+       "window": "selection"
+      }
+     ],
+     "rule": "scorecard.first-pass",
+     "sample": {
+      "count": 34,
+      "coverage_share": 1,
+      "population": "finished runs closed in the selected window (the observe station reads the last 20 instead)",
+      "unit": "merged tickets"
+     },
+     "severity": "attention",
+     "subject": null,
+     "threshold": "target above 85% (observe.py)",
+     "title": "First-pass rate 61.8%, below the observe station's target",
+     "why": "The observe station tracks this target for every finished ticket; a ticket that does not pass first goes through build, verification and review again.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "Merged tickets took 47 judging rounds over 34 tickets (Q3 = 1.382); the observe station's target is below 1.3. Population: finished runs closed in the selected window (the observe station reads the last 20 instead).",
+     "contributors": {
+      "group": {},
+      "limit": 100,
+      "metric": "R1",
+      "note": "run records are not listed by the contributors route; this lists the review rounds rejected or escalated",
+      "order": "recent",
+      "path": "/api/v1/analytics/contributors?metric=R1&from_ms=1793232000000&limit=100&order=recent&to_ms=1794528000000",
+      "relation": "related"
+     },
+     "filters": {},
+     "id": "scorecard.rounds",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the review rounds that were rejected and the verifications that failed, and look for kinds that repeat. Any change to the Factory's rules goes through the observe station's factory-tuning ticket and its review."
+     },
+     "measurements": [
+      {
+       "coverage": {
+        "counted": 34,
+        "eligible": 34,
+        "share": 1
+       },
+       "denominator": 34,
+       "label": "Average judging rounds (observe)",
+       "metric": "Q3",
+       "numerator": 47,
+       "sample_count": 34,
+       "unit": "rounds",
+       "value": 1.3823529411764706,
+       "window": "selection"
+      }
+     ],
+     "rule": "scorecard.rounds",
+     "sample": {
+      "count": 34,
+      "coverage_share": 1,
+      "population": "finished runs closed in the selected window (the observe station reads the last 20 instead)",
+      "unit": "merged tickets"
+     },
+     "severity": "attention",
+     "subject": null,
+     "threshold": "target below 1.3 (observe.py)",
+     "title": "Average judging rounds 1.382, above the observe station's target",
+     "why": "The observe station tracks this target; each round past the first repeats build, verification and review for the same slice.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "2 of 38 finished tickets were escalated to a person (R5 = 5.3%); the observe station's target is below 5.0%. Population: finished runs closed in the selected window (the observe station reads the last 20 instead).",
+     "contributors": {
+      "group": {},
+      "limit": 100,
+      "metric": "R5",
+      "order": "recent",
+      "path": "/api/v1/analytics/contributors?metric=R5&from_ms=1793232000000&limit=100&order=recent&to_ms=1794528000000",
+      "relation": "exact"
+     },
+     "filters": {},
+     "id": "scorecard.escalation",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the escalated tickets and read the last round's findings for each. Verification, security review and a person's approval stay as they are whatever this shows."
+     },
+     "measurements": [
+      {
+       "coverage": {
+        "counted": 38,
+        "eligible": 38,
+        "share": 1
+       },
+       "denominator": 38,
+       "label": "Escalation rate (observe)",
+       "metric": "R5",
+       "numerator": 2,
+       "sample_count": 38,
+       "unit": "ratio",
+       "value": 0.05263157894736842,
+       "window": "selection"
+      }
+     ],
+     "rule": "scorecard.escalation",
+     "sample": {
+      "count": 38,
+      "coverage_share": 1,
+      "population": "finished runs closed in the selected window (the observe station reads the last 20 instead)",
+      "unit": "finished tickets"
+     },
+     "severity": "attention",
+     "subject": null,
+     "threshold": "target below 5% (observe.py)",
+     "title": "Escalation rate 5.3%, above the observe station's target",
+     "why": "An escalated ticket reached the three-round limit or a question only a person can answer. Escalation is the line working as designed; the rate says how often it was needed.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "Review rounds rejected or escalated: 28.9% of decided rounds in the later window (13 of 45), 0.0% in the earlier window (0 of 21). The rule's threshold is later - earlier >= 10 percentage points.",
+     "contributors": {
+      "group": {},
+      "limit": 100,
+      "metric": "R1",
+      "note": "the later window's records; ask the earlier window with its from_ms and to_ms",
+      "order": "recent",
+      "path": "/api/v1/analytics/contributors?metric=R1&from_ms=1793232000000&limit=100&order=recent&to_ms=1794528000000",
+      "relation": "exact"
+     },
+     "filters": {},
+     "id": "trend.review-rejections",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the rejected rounds of the later window and compare their findings with the earlier window's. Verification, security review and a person's approval stay as they are whatever this shows."
+     },
+     "measurements": [
+      {
+       "coverage": {
+        "counted": 45,
+        "eligible": 45,
+        "share": 1
+       },
+       "denominator": 45,
+       "label": "Review rejection rate",
+       "metric": "R1",
+       "numerator": 13,
+       "sample_count": 45,
+       "unit": "ratio",
+       "value": 0.28888888888888886,
+       "window": "later"
+      },
+      {
+       "coverage": {
+        "counted": 21,
+        "eligible": 21,
+        "share": 1
+       },
+       "denominator": 21,
+       "label": "Review rejection rate",
+       "metric": "R1",
+       "numerator": 0,
+       "sample_count": 21,
+       "unit": "ratio",
+       "value": 0,
+       "window": "earlier"
+      }
+     ],
+     "rule": "trend.review-rejections",
+     "sample": {
+      "count": 66,
+      "coverage_share": 1,
+      "population": "decided rounds in the later and earlier windows",
+      "unit": "decided rounds"
+     },
+     "severity": "attention",
+     "subject": null,
+     "threshold": "later - earlier >= 10 percentage points",
+     "title": "Review rejection rate higher in the later window",
+     "why": "Two windows are two observations, not a trend. The difference is recorded; whether it continues is not known from them.",
+     "window": {
+      "comparison": {
+       "from_ms": 1791936000000,
+       "to_ms": 1793232000000
+      },
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "build holds 41.2% of the measured station time in this selection (18.3 d of 44.5 d), over 56 visits, 55 of them measured. The rule's threshold is share >= 35.0%.",
+     "contributors": {
+      "group": {
+       "station": "build"
+      },
+      "limit": 100,
+      "metric": "C1",
+      "order": "impact",
+      "path": "/api/v1/analytics/contributors?metric=C1&from_ms=1793232000000&group=station%3Abuild&limit=100&order=impact&to_ms=1794528000000",
+      "relation": "exact"
+     },
+     "filters": {},
+     "id": "flow.station-time-share:build",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the longest build visits and compare them with the station's median (7.7 h) and 90th percentile (11.9 h); check whether a few tickets or many hold the time. Verification, security review and a person's approval stay as they are whatever this shows."
+     },
+     "measurements": [
+      {
+       "coverage": {
+        "counted": 55,
+        "eligible": 56,
+        "share": 0.9821428571428571
+       },
+       "denominator": null,
+       "label": "measured visit time at the station",
+       "metric": "C1",
+       "numerator": null,
+       "sample_count": 55,
+       "unit": "ms",
+       "value": 1582941894,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": 3842770517,
+       "label": "share of measured station time",
+       "metric": "C1",
+       "numerator": 1582941894,
+       "sample_count": 298,
+       "unit": "ratio",
+       "value": 0.41192725066387303,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "visits at the station (every basis)",
+       "metric": "C1",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "visits",
+       "value": 56,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "unique tickets at the station",
+       "metric": "C1",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "tickets",
+       "value": 36,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "median measured visit",
+       "metric": "C1",
+       "numerator": null,
+       "sample_count": 55,
+       "unit": "ms",
+       "value": 27749764,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "90th percentile measured visit",
+       "metric": "C1",
+       "numerator": null,
+       "sample_count": 55,
+       "unit": "ms",
+       "value": 42788295,
+       "window": "selection"
+      }
+     ],
+     "rule": "flow.station-time-share",
+     "sample": {
+      "count": 55,
+      "coverage_share": 0.9821428571428571,
+      "population": "visits at build in the selection; not-measured visits counted apart",
+      "unit": "measured visits"
+     },
+     "severity": "note",
+     "subject": "build",
+     "threshold": "share >= 35.0%",
+     "title": "build holds 41.2% of the measured station time",
+     "why": "Time at one station is spent again for every visit to it, so a station with a large share of the measured time is where the selection's measured time sits. Visits whose length was not measured are counted apart and are not in the share.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "The 90th percentile of measured execution-capacity waits is 5.0 d (median 14.1 h), over 61 measured of 61 recorded waits. The rule's threshold is p90 >= 8.0 h.",
+     "contributors": {
+      "group": {
+       "kind": "capacity"
+      },
+      "limit": 100,
+      "metric": "waits",
+      "order": "impact",
+      "path": "/api/v1/analytics/contributors?metric=waits&from_ms=1793232000000&group=kind%3Acapacity&limit=100&order=impact&to_ms=1794528000000",
+      "relation": "exact"
+     },
+     "filters": {},
+     "id": "flow.wait-p90:capacity",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the longest execution-capacity waits and read when each began and ended, and what the item waited on. Verification, security review and a person's approval stay as they are whatever this shows."
+     },
+     "measurements": [
+      {
+       "coverage": {
+        "counted": 61,
+        "eligible": 61,
+        "share": 1
+       },
+       "denominator": null,
+       "label": "90th percentile of measured waits",
+       "metric": "W2b",
+       "numerator": null,
+       "sample_count": 61,
+       "unit": "ms",
+       "value": 435969000,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "median of measured waits",
+       "metric": "W2b",
+       "numerator": null,
+       "sample_count": 61,
+       "unit": "ms",
+       "value": 50667000,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "waits recorded (every basis)",
+       "metric": "W2b",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "waits",
+       "value": 61,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "unique tickets that waited",
+       "metric": "W2b",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "tickets",
+       "value": 36,
+       "window": "selection"
+      }
+     ],
+     "rule": "flow.wait-p90",
+     "sample": {
+      "count": 61,
+      "coverage_share": 1,
+      "population": "waits of this kind in the selection",
+      "unit": "measured waits"
+     },
+     "severity": "note",
+     "subject": "capacity",
+     "threshold": "p90 >= 8.0 h",
+     "title": "execution-capacity waits have a 90th percentile of 5.0 d",
+     "why": "A long upper tail means some tickets or slices spent much longer waiting than the typical one. A wait is recorded time in which no station was working on the item.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "Measured execution-capacity waits total 129.8 d over 61 waits; the measured dispatch-to-merge time (C3) of the same selection totals 165.1 d over 33 merged tickets. That is 78.6%; the rule's threshold is share >= 25.0%.",
+     "contributors": {
+      "group": {
+       "kind": "capacity"
+      },
+      "limit": 100,
+      "metric": "waits",
+      "order": "impact",
+      "path": "/api/v1/analytics/contributors?metric=waits&from_ms=1793232000000&group=kind%3Acapacity&limit=100&order=impact&to_ms=1794528000000",
+      "relation": "exact"
+     },
+     "filters": {},
+     "id": "flow.wait-share:capacity",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the execution-capacity waits by length and see which tickets they belong to and which station each ticket entered next. Verification, security review and a person's approval stay as they are whatever this shows."
+     },
+     "measurements": [
+      {
+       "coverage": {
+        "counted": 61,
+        "eligible": 61,
+        "share": 1
+       },
+       "denominator": null,
+       "label": "total measured wait time",
+       "metric": "W2b",
+       "numerator": null,
+       "sample_count": 61,
+       "unit": "ms",
+       "value": 11217372000,
+       "window": "selection"
+      },
+      {
+       "coverage": {
+        "counted": 33,
+        "eligible": 33,
+        "share": 1
+       },
+       "denominator": 33,
+       "label": "total measured dispatch-to-merge time",
+       "metric": "C3",
+       "numerator": 14264141505,
+       "sample_count": 33,
+       "unit": "ms",
+       "value": 14264141505,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": 14264141505,
+       "label": "wait total over dispatch-to-merge total",
+       "metric": "W2b/C3",
+       "numerator": 11217372000,
+       "sample_count": null,
+       "unit": "ratio",
+       "value": 0.7864035838447048,
+       "window": "selection"
+      }
+     ],
+     "rule": "flow.wait-share",
+     "sample": {
+      "count": 61,
+      "coverage_share": 1,
+      "population": "waits of this kind, and merged product tickets (C3), in the selection",
+      "unit": "measured waits"
+     },
+     "severity": "note",
+     "subject": "capacity",
+     "threshold": "share >= 25.0%",
+     "title": "Measured execution-capacity waits add up to 78.6% of the measured dispatch-to-merge time",
+     "why": "Both totals are recorded in the same selection, but they are not the same set of tickets: some waits belong to tickets not merged in it. The ratio places the waits beside the delivery time; it does not measure how much shorter delivery would have been.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "Station visits in round 2 or later total 13.0 d of 40.5 d measured station time (32.0%), over 60 of 160 measured visits with a recorded round. The rule's threshold is share >= 25.0%.",
+     "contributors": {
+      "group": {
+       "round": "2"
+      },
+      "limit": 100,
+      "metric": "C1",
+      "note": "lists round-2 visits; later rounds are listed with group=round:3 and so on",
+      "order": "impact",
+      "path": "/api/v1/analytics/contributors?metric=C1&from_ms=1793232000000&group=round%3A2&limit=100&order=impact&to_ms=1794528000000",
+      "relation": "related"
+     },
+     "filters": {},
+     "id": "quality.remediation-share",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the round-2 visits by length and read the verification failures and review decisions that came before them. Verification, security review and a person's approval stay as they are whatever this shows."
+     },
+     "measurements": [
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "measured visit time in round 2 or later",
+       "metric": "C1",
+       "numerator": null,
+       "sample_count": 60,
+       "unit": "ms",
+       "value": 1121855385,
+       "window": "selection"
+      },
+      {
+       "coverage": {
+        "counted": 301,
+        "eligible": 306,
+        "share": 0.9836601307189542
+       },
+       "denominator": null,
+       "label": "measured visit time with a recorded round",
+       "metric": "C1",
+       "numerator": null,
+       "sample_count": 160,
+       "unit": "ms",
+       "value": 3502923327,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": 3502923327,
+       "label": "share in round 2 or later",
+       "metric": "C1",
+       "numerator": 1121855385,
+       "sample_count": null,
+       "unit": "ratio",
+       "value": 0.3202626150429584,
+       "window": "selection"
+      }
+     ],
+     "rule": "quality.remediation-share",
+     "sample": {
+      "count": 160,
+      "coverage_share": 0.9836601307189542,
+      "population": "station visits with a recorded round in the selection",
+      "unit": "measured visits"
+     },
+     "severity": "note",
+     "subject": null,
+     "threshold": "share >= 25.0%",
+     "title": "Visits after the first judging round hold 32.0% of the measured station time",
+     "why": "A round after the first is a revision after a failed verification or a rejected review, so this share is the measured time the selection spent on revisions. Visits with no recorded round are counted apart.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "Failed verification checks of kind matrix rule were recorded on 9 tickets (9 checks), 23.7% of the 38 tickets that visited verification. The rule (the observe station's pattern rule) needs at least 2 tickets and 15.0%.",
+     "contributors": {
+      "group": {
+       "target_kind": "matrix rule"
+      },
+      "limit": 100,
+      "metric": "Q4",
+      "order": "recent",
+      "path": "/api/v1/analytics/contributors?metric=Q4&from_ms=1793232000000&group=target_kind%3Amatrix+rule&limit=100&order=recent&to_ms=1794528000000",
+      "relation": "exact"
+     },
+     "filters": {},
+     "id": "quality.recurring-failure-kind:matrix rule",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Read the failed matrix rule checks ticket by ticket and look for what they share. Any change to the Factory's rules goes through the observe station's factory-tuning ticket and its review."
+     },
+     "measurements": [
+      {
+       "coverage": null,
+       "denominator": 38,
+       "label": "tickets with this category",
+       "metric": "Q4",
+       "numerator": 9,
+       "sample_count": null,
+       "unit": "tickets",
+       "value": 9,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": 38,
+       "label": "share of tickets analyzed",
+       "metric": "Q4",
+       "numerator": 9,
+       "sample_count": 38,
+       "unit": "ratio",
+       "value": 0.23684210526315788,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "records with this category",
+       "metric": "Q4",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "records",
+       "value": 9,
+       "window": "selection"
+      }
+     ],
+     "rule": "quality.recurring-failure-kind",
+     "sample": {
+      "count": 38,
+      "coverage_share": null,
+      "population": "unique tickets that visited verification in the selection",
+      "unit": "tickets analyzed"
+     },
+     "severity": "note",
+     "subject": "matrix rule",
+     "threshold": ">= 2 tickets and >= 15.0% of tickets analyzed",
+     "title": "Failed matrix rule checks recur across 9 tickets",
+     "why": "The observe station treats a problem seen on several tickets as a pattern worth a rule proposal; this is the same test over the recorded check kinds.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "The build.green gate refused on 25 tickets (82 refusals), 113.6% of the 22 tickets with a lifecycle log. The rule (the observe station's pattern rule) needs at least 2 tickets and 15.0%.",
+     "contributors": {
+      "group": {
+       "gate": "build.green"
+      },
+      "limit": 100,
+      "metric": "X2",
+      "order": "recent",
+      "path": "/api/v1/analytics/contributors?metric=X2&from_ms=1793232000000&group=gate%3Abuild.green&limit=100&order=recent&to_ms=1794528000000",
+      "relation": "exact"
+     },
+     "filters": {},
+     "id": "quality.recurring-gate-refusal:build.green",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the refusals of the build.green gate and read their reason codes ticket by ticket. Verification, security review and a person's approval stay as they are whatever this shows."
+     },
+     "measurements": [
+      {
+       "coverage": null,
+       "denominator": 22,
+       "label": "tickets with this category",
+       "metric": "X2",
+       "numerator": 25,
+       "sample_count": null,
+       "unit": "tickets",
+       "value": 25,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": 22,
+       "label": "share of tickets analyzed",
+       "metric": "X2",
+       "numerator": 25,
+       "sample_count": 22,
+       "unit": "ratio",
+       "value": 1.1363636363636365,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "records with this category",
+       "metric": "X2",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "records",
+       "value": 82,
+       "window": "selection"
+      }
+     ],
+     "rule": "quality.recurring-gate-refusal",
+     "sample": {
+      "count": 22,
+      "coverage_share": null,
+      "population": "tickets with a lifecycle log in the selection (by the day of their first recorded fact)",
+      "unit": "tickets analyzed"
+     },
+     "severity": "note",
+     "subject": "build.green",
+     "threshold": ">= 2 tickets and >= 15.0% of tickets analyzed",
+     "title": "Refusals of the build.green gate recur across 25 tickets",
+     "why": "A gate that refuses on several tickets is a recurring condition the line met; the refusal itself is the gate doing its work.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "The build.red gate refused on 22 tickets (29 refusals), 100.0% of the 22 tickets with a lifecycle log. The rule (the observe station's pattern rule) needs at least 2 tickets and 15.0%.",
+     "contributors": {
+      "group": {
+       "gate": "build.red"
+      },
+      "limit": 100,
+      "metric": "X2",
+      "order": "recent",
+      "path": "/api/v1/analytics/contributors?metric=X2&from_ms=1793232000000&group=gate%3Abuild.red&limit=100&order=recent&to_ms=1794528000000",
+      "relation": "exact"
+     },
+     "filters": {},
+     "id": "quality.recurring-gate-refusal:build.red",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the refusals of the build.red gate and read their reason codes ticket by ticket. Verification, security review and a person's approval stay as they are whatever this shows."
+     },
+     "measurements": [
+      {
+       "coverage": null,
+       "denominator": 22,
+       "label": "tickets with this category",
+       "metric": "X2",
+       "numerator": 22,
+       "sample_count": null,
+       "unit": "tickets",
+       "value": 22,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": 22,
+       "label": "share of tickets analyzed",
+       "metric": "X2",
+       "numerator": 22,
+       "sample_count": 22,
+       "unit": "ratio",
+       "value": 1,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "records with this category",
+       "metric": "X2",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "records",
+       "value": 29,
+       "window": "selection"
+      }
+     ],
+     "rule": "quality.recurring-gate-refusal",
+     "sample": {
+      "count": 22,
+      "coverage_share": null,
+      "population": "tickets with a lifecycle log in the selection (by the day of their first recorded fact)",
+      "unit": "tickets analyzed"
+     },
+     "severity": "note",
+     "subject": "build.red",
+     "threshold": ">= 2 tickets and >= 15.0% of tickets analyzed",
+     "title": "Refusals of the build.red gate recur across 22 tickets",
+     "why": "A gate that refuses on several tickets is a recurring condition the line met; the refusal itself is the gate doing its work.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    },
+    {
+     "condition": "The scheduler recorded work held for a free place (recorded limit max_parallel = 4) in 10 day buckets of this selection: 61 waits of 36 tickets or slices. The rule's threshold is >= 3 day buckets and >= 3 waits.",
+     "contributors": {
+      "group": {
+       "kind": "capacity"
+      },
+      "limit": 100,
+      "metric": "waits",
+      "note": "lists the wait kind with more waits; the other is listed with group=kind:capacity or kind:capacity-slice",
+      "order": "recent",
+      "path": "/api/v1/analytics/contributors?metric=waits&from_ms=1793232000000&group=kind%3Acapacity&limit=100&order=recent&to_ms=1794528000000",
+      "relation": "exact"
+     },
+     "filters": {},
+     "id": "reliability.capacity-held",
+     "investigation": {
+      "label": "Possible investigation (a suggestion to look further, not a conclusion)",
+      "text": "Open the waits and the concurrency over the same days, and see which executions held the places. Verification, security review and a person's approval stay as they are whatever this shows."
+     },
+     "measurements": [
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "day buckets in which a recorded capacity wait began",
+       "metric": "W2b",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "days",
+       "value": 10,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "capacity waits recorded (tickets and slices)",
+       "metric": "W2b",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "waits",
+       "value": 61,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "distinct tickets or slices held",
+       "metric": "W2b",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "items",
+       "value": 36,
+       "window": "selection"
+      },
+      {
+       "coverage": null,
+       "denominator": null,
+       "label": "recorded limit (latest)",
+       "metric": "max_parallel",
+       "numerator": null,
+       "sample_count": null,
+       "unit": "places",
+       "value": 4,
+       "window": "selection"
+      }
+     ],
+     "rule": "reliability.capacity-held",
+     "sample": {
+      "count": 61,
+      "coverage_share": null,
+      "population": "waits for a free place the scheduler recorded in the selection",
+      "unit": "capacity waits"
+     },
+     "severity": "note",
+     "subject": null,
+     "threshold": ">= 3 day buckets and >= 3 waits",
+     "title": "Work was recorded waiting for a free place on 10 days",
+     "why": "Each of these waits is the scheduler's own record that every place was in use while the item was ready. It is not read from how busy the Factory looked.",
+     "window": {
+      "comparison": null,
+      "from_ms": 1793232000000,
+      "last_runs": null,
+      "to_ms": 1794528000000
+     }
+    }
+   ],
+   "investigation_label": "Possible investigation (a suggestion to look further, not a conclusion)",
+   "not_evaluated": [
+    {
+     "reason": "needs at least 5 measured waits of this kind; 3 recorded",
+     "rule": "flow.wait-p90",
+     "subject": "dependency"
+    },
+    {
+     "reason": "needs at least 5 measured waits of this kind; 2 recorded",
+     "rule": "flow.wait-p90",
+     "subject": "human-approval"
+    },
+    {
+     "reason": "needs at least 5 measured waits of this kind; 3 recorded",
+     "rule": "flow.wait-p90",
+     "subject": "person"
+    },
+    {
+     "reason": "needs at least 5 measured waits of this kind; 2 recorded",
+     "rule": "flow.wait-share",
+     "subject": "human-approval"
+    },
+    {
+     "reason": "needs at least 5 measured waits of this kind; 3 recorded",
+     "rule": "flow.wait-share",
+     "subject": "person"
+    },
+    {
+     "reason": "not computable from the observer's figures: blocker findings by rule (R2) carry no ticket, and run records keep only a count of blockers",
+     "rule": "quality.recurring-blocker-rule",
+     "subject": null
+    }
+   ],
+   "notice": "Improvement Opportunities are deterministic rules over recorded figures. They are advisory and read-only: they describe what was recorded and where to look, they do not establish why it happened, and none of them is a reason to change verification, security review or a person's approval.",
+   "projection": {
+    "definitions": 2,
+    "format": 4
+   },
+   "rules": [
+    {
+     "condition": "one station holds a large share of the total measured station visit time (volume-weighted: total, not mean)",
+     "id": "flow.station-time-share",
+     "metrics": [
+      "C1 (flow stations)"
+     ],
+     "minimum": "20 measured visits over all stations, 2 stations measured, 5 measured visits at the station",
+     "severity": "note",
+     "threshold": "share >= 35%"
+    },
+    {
+     "condition": "a wait kind's 90th percentile of measured waits is long",
+     "id": "flow.wait-p90",
+     "metrics": [
+      "W1",
+      "W2",
+      "W2b",
+      "W3",
+      "S4 (flow waits)"
+     ],
+     "minimum": "5 measured waits of the kind",
+     "severity": "note",
+     "threshold": "p90 >= 8 h"
+    },
+    {
+     "condition": "a wait kind inside dispatch-to-merge (execution capacity, human approval, parked for a person) totals a large share of measured dispatch-to-merge time",
+     "id": "flow.wait-share",
+     "metrics": [
+      "W2b",
+      "W3",
+      "S4",
+      "C3"
+     ],
+     "minimum": "5 measured waits of the kind and 5 measured C3",
+     "severity": "note",
+     "threshold": "wait total / C3 total >= 25%"
+    },
+    {
+     "condition": "station visits in judging round 2 or later hold a large share of measured station time",
+     "id": "quality.remediation-share",
+     "metrics": [
+      "C1 by round"
+     ],
+     "minimum": "20 measured visits with a recorded round, 5 of them in round 2 or later",
+     "severity": "note",
+     "threshold": "share >= 25%"
+    },
+    {
+     "condition": "first-pass rate is below the observe station's target",
+     "id": "scorecard.first-pass",
+     "metrics": [
+      "Q2"
+     ],
+     "minimum": "5 merged tickets in the population",
+     "severity": "attention",
+     "threshold": "Q2 not above 0.85 (target_check.met false, unrounded)"
+    },
+    {
+     "condition": "average judging rounds is above the observe station's target",
+     "id": "scorecard.rounds",
+     "metrics": [
+      "Q3"
+     ],
+     "minimum": "5 merged tickets with recorded rounds",
+     "severity": "attention",
+     "threshold": "Q3 not below 1.3 (met false)"
+    },
+    {
+     "condition": "escalation rate is above the observe station's target",
+     "id": "scorecard.escalation",
+     "metrics": [
+      "R5"
+     ],
+     "minimum": "5 finished tickets",
+     "severity": "attention",
+     "threshold": "R5 not below 0.05 (met false)"
+    },
+    {
+     "condition": "review rejection rate is higher in the later of two consecutive equal windows",
+     "id": "trend.review-rejections",
+     "metrics": [
+      "R1"
+     ],
+     "minimum": "a bounded window; 10 decided rounds and 90% coverage in each window; no suspect window",
+     "severity": "attention",
+     "threshold": "later - earlier >= 10 points"
+    },
+    {
+     "condition": "failed verification rate (refusals of the verify.verdict gate) is higher in the later of two consecutive equal windows",
+     "id": "trend.verification-failures",
+     "metrics": [
+      "X2 (gate verify.verdict)"
+     ],
+     "minimum": "a bounded window; 10 verdicts and 90% coverage in each window; no suspect window",
+     "severity": "attention",
+     "threshold": "later - earlier >= 10 points"
+    },
+    {
+     "condition": "failed verification checks of one kind recur across tickets (observe.py pattern rule)",
+     "id": "quality.recurring-failure-kind",
+     "metrics": [
+      "Q4 (contributors)",
+      "verify visits (flow)"
+     ],
+     "minimum": "5 tickets analyzed",
+     "severity": "note",
+     "threshold": ">= 2 tickets and >= 15% of tickets that visited verification"
+    },
+    {
+     "condition": "refusals of one gate recur across tickets (observe.py pattern rule)",
+     "id": "quality.recurring-gate-refusal",
+     "metrics": [
+      "X2 (contributors)",
+      "flow coverage"
+     ],
+     "minimum": "5 tickets analyzed",
+     "severity": "note",
+     "threshold": ">= 2 tickets and >= 15% of tickets with a lifecycle log"
+    },
+    {
+     "condition": "review blockers citing one rule recur across tickets (observe.py pattern rule)",
+     "id": "quality.recurring-blocker-rule",
+     "metrics": [
+      "R2"
+     ],
+     "minimum": "not computable: see not_evaluated",
+     "severity": "note",
+     "threshold": ">= 2 tickets and >= 15%"
+    },
+    {
+     "condition": "the scheduler recorded work held for a free place (its recorded max_parallel in use) on several days",
+     "id": "reliability.capacity-held",
+     "metrics": [
+      "W2b",
+      "capacity-slice waits",
+      "factory limits"
+     ],
+     "minimum": "a recorded max_parallel",
+     "severity": "note",
+     "threshold": ">= 3 day buckets with a recorded capacity wait beginning, >= 3 waits"
+    },
+    {
+     "condition": "recoveries, failed, interrupted or unknown-outcome executions above a share of executions (unknown outcome: attention)",
+     "id": "reliability.execution-share",
+     "metrics": [
+      "S1",
+      "S2",
+      "X1",
+      "executions (contributors)"
+     ],
+     "minimum": "10 executions",
+     "severity": "note",
+     "threshold": "S1 >= 10%, S2 >= 5%, X1 >= 10%, interrupted >= 10%"
+    },
+    {
+     "condition": "the same execution measures are higher in the later of two consecutive equal windows",
+     "id": "reliability.execution-later-window",
+     "metrics": [
+      "S1",
+      "S2",
+      "X1",
+      "executions (contributors)"
+     ],
+     "minimum": "a bounded window; 10 executions in each window",
+     "severity": "note",
+     "threshold": "later - earlier >= 5 points"
+    },
+    {
+     "condition": "recorded cost is higher in the later window while integrated slices are not higher",
+     "id": "economics.cost-later-window",
+     "metrics": [
+      "K1",
+      "T2"
+     ],
+     "minimum": "a bounded window; 10 executions with a recorded cost and 80% cost coverage in each window",
+     "severity": "note",
+     "threshold": "later cost >= 1.25 x earlier cost and T2 later <= T2 earlier"
+    },
+    {
+     "condition": "completed executions without a recorded cost (data quality)",
+     "id": "data.usage-missing",
+     "metrics": [
+      "K1 coverage"
+     ],
+     "minimum": "10 completed executions",
+     "severity": "note",
+     "threshold": "missing >= 10%"
+    },
+    {
+     "condition": "tickets without a lifecycle log (data quality)",
+     "id": "data.lifecycle-coverage",
+     "metrics": [
+      "flow coverage"
+     ],
+     "minimum": "5 tickets",
+     "severity": "note",
+     "threshold": "share with a log < 80%"
+    }
+   ],
+   "window": {
+    "effective_from_ms": 1793232000000,
+    "effective_to_ms": 1794528000000,
+    "from_ms": 1793232000000,
+    "last_runs": null,
+    "to_ms": 1794528000000
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/insights?from_ms=1793232000000&to_ms=1794528000000",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

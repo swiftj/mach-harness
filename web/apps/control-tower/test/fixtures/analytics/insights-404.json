@@ -1,0 +1,12 @@
+{
+ "body": {
+  "error": {
+   "kind": "not_found",
+   "message": "There is no such route."
+  },
+  "ok": false
+ },
+ "path": "/analytics/insights",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics); synthetic data",
+ "status": 404
+}

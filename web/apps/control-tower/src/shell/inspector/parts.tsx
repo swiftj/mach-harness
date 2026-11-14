@@ -8,7 +8,7 @@ import { CornerDownRight } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@mach/ui";
 import { describeEntry, entriesBehind, EVENT_CATALOG, eventsFor, isSceneLog, timingAt, type AnyRef, type AnySimEvent, type Authority, type LogEntry, type Telemetry } from "../../sim";
-import { useSceneStore, useStore } from "../../scene";
+import { analyticsStationOf, showInAnalytics, useSceneStore, useStore, type AnalyticsTarget } from "../../scene";
 import { usePlayheadEffect } from "../timeline/playhead";
 import { duration as durationWords, selectable, TELEMETRY_WORDS, timecode } from "../vocab";
 import { elapsedWords } from "./words";
@@ -366,4 +366,40 @@ export function Elapsed({ startedAt, finishedAt, mode = "work" }: { startedAt: n
     [startedAt, finishedAt, mode],
   );
   return <span ref={ref} data-frame="" className="tabular" />;
+}
+
+/**
+ * A link from the inspector into Factory Analytics (M6.5 design section 4), in the style of "Show in
+ * Timeline": the selection and the playhead stay; Analytics opens on `target`.
+ */
+export function AnalyticsLink({ target, children }: { target: AnalyticsTarget; children: ReactNode }) {
+  const store = useStore();
+  return (
+    <button
+      type="button"
+      onClick={() => showInAnalytics(store, target)}
+      data-analytics-link={target.area}
+      className="text-caption font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2"
+    >
+      {children}
+    </button>
+  );
+}
+
+/** "Open its measured history": Analytics' Flow area for one station kind; nothing for a station Analytics does not measure. */
+export function StationHistoryLink({ kind }: { kind: string }) {
+  const station = analyticsStationOf(kind);
+  return station ? <AnalyticsLink target={{ area: "flow", filters: { station } }}>Open its measured history</AnalyticsLink> : null;
+}
+
+/**
+ * "See how often this recurs": Analytics' Quality area, filtered to the station, with the rows of the
+ * metric that counts this kind of outcome open (R1 review rejection rate; Q4 verification failures).
+ */
+export function RecurrenceLink({ kind }: { kind: "review" | "verify" }) {
+  return (
+    <AnalyticsLink target={{ area: "quality", filters: { station: kind }, focus: { metric: kind === "review" ? "R1" : "Q4", group: null } }}>
+      See how often this recurs
+    </AnalyticsLink>
+  );
 }

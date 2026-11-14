@@ -180,6 +180,19 @@ var credentialNameRe = regexp.MustCompile(`(?i)(^|/)(\.env[^/]*|[^/]*(secret|cre
 // CredentialPath reports a path whose name suggests credentials.
 func CredentialPath(p string) bool { return credentialNameRe.MatchString(p) }
 
+// SecretName reports a file name or path that itself holds a credential-shaped value (an API key,
+// a token, a JWT, a PEM marker, URL credentials) or an e-mail address. Such a name is never shown
+// and never protected from the scrubber: the name is the secret. Unlike Sensitive it does not
+// apply the long-opaque-run rule, which a long, ordinary relative path trips.
+func SecretName(p string) bool {
+	for _, re := range secretPatterns {
+		if re.MatchString(p) {
+			return true
+		}
+	}
+	return emailRe.MatchString(p)
+}
+
 // RelPath accepts a plain project- or cell-relative path: no leading slash, no "..", no "~", and
 // not a credential-like name.
 func RelPath(v any) (string, bool) {

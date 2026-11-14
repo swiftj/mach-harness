@@ -125,6 +125,12 @@ type RunView struct {
 	Recovery      []string               `json:"recovery"`
 	Agents        int                    `json:"agents"`
 	Visits        []string               `json:"visits"`
+	// Provenance: the snapshot taken at start, or null with a reason (not-recorded for every
+	// execution before M6.5, capture-failed, not-understood). Never inferred after the fact.
+	Provenance         map[string]any `json:"provenance"`
+	ProvenanceRecorded bool           `json:"provenance_recorded"`
+	ProvenanceReason   string         `json:"provenance_reason,omitempty"`
+	SourceCommit       *string        `json:"source_commit"`
 }
 
 // Cost is a recorded cost with its source; null with a reason when nothing recorded it.
@@ -167,6 +173,13 @@ func Run(s *State, x *Execution) RunView {
 		Recovery: nonNilS(x.Recovery), Agents: len(x.Agents) + len(x.Queued), Visits: nonNilS(x.Visits),
 		Models: map[string]*ModelUsage{}, UnderReasons: []string{}}
 	v.RefusedTools, v.RefusedFrom = refusedTools(x)
+	v.Provenance, v.ProvenanceRecorded, v.ProvenanceReason = x.Provenance, x.Provenance != nil, x.ProvenanceReason
+	if x.Provenance == nil && v.ProvenanceReason == "" {
+		v.ProvenanceReason = "not-recorded"
+	}
+	if x.SourceCommit != "" {
+		v.SourceCommit = &x.SourceCommit
+	}
 	start, end := x.ProcessStarted, x.ProcessEnded
 	v.TimeBasis = "process"
 	if start == nil {

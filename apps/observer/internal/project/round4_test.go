@@ -94,7 +94,9 @@ func TestConcurrencySaysHowManyEndsAreInferred(t *testing.T) {
 	)
 	b := Concurrency(s, feedtest.At(0), feedtest.At(40000), 10000, map[string]bool{"visit": true})
 	// The bound (a whole-second stamp) is active to the end of its second.
-	want := []Active{{2, 1.5, 1}, {2, 2, 1}, {1, 1, 1}, {1, 0.1, 1}}
+	// RecordedMax counts only spans whose end is recorded (T-5's visit): the inferred one is an
+	// upper bound up to its latest possible end.
+	want := []Active{{2, 1.5, 1, 1}, {2, 2, 1, 1}, {1, 1, 1, 0}, {1, 0.1, 1, 0}}
 	for i, w := range want {
 		if got := b[i].Active["visit"]; got != w {
 			t.Errorf("bucket %d: got %+v want %+v", i, got, w)

@@ -1,0 +1,183 @@
+{
+ "body": {
+  "data": {
+   "cursor": "791fafe48b91c0cd.12684",
+   "definitions_version": 2,
+   "filters": {},
+   "generated_ms": 1794640504670,
+   "group_overflow": 0,
+   "history": {
+    "complete": false,
+    "complete_window": false,
+    "from_ms": 1792648800000,
+    "from_precision": "minute",
+    "gaps": [
+     {
+      "at_ms": 1793344003999,
+      "class": "not-received",
+      "count": 2
+     }
+    ],
+    "partial": ""
+   },
+   "metrics": [
+    {
+     "authority": "observed",
+     "availability": "stream",
+     "basis": "measured",
+     "basis_counts": {
+      "bounded": 0,
+      "inferred": 0,
+      "measured": 1747,
+      "not_recorded": 0,
+      "open": null,
+      "unknown": 0
+     },
+     "coverage": {
+      "counted": 1747,
+      "covered": 1747,
+      "eligible": 1747,
+      "excluded": [],
+      "of": 1747,
+      "share": 1
+     },
+     "denominator": "finished agents with a token total",
+     "denominator_value": 1747,
+     "description": "Tokens per agent: agent.finished.tokens / finished agents with a token total",
+     "dimensions": [
+      "station",
+      "seat",
+      "model",
+      "phase",
+      "risk",
+      "app_type"
+     ],
+     "family": "K",
+     "formula": "agent.finished.tokens / finished agents with a token total",
+     "group_by": "phase",
+     "group_dims": [
+      "phase"
+     ],
+     "groups": [
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 99,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 99,
+        "covered": 99,
+        "eligible": 99,
+        "excluded": [],
+        "of": 99,
+        "share": 1
+       },
+       "denominator": 99,
+       "key": "Build",
+       "keys": {
+        "phase": "Build"
+       },
+       "numerator": 81732910,
+       "sample_count": 99,
+       "value": 825584.9494949495,
+       "value_rounded": 825584.949
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 70,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 70,
+        "covered": 70,
+        "eligible": 70,
+        "excluded": [],
+        "of": 70,
+        "share": 1
+       },
+       "denominator": 70,
+       "key": "Groom",
+       "keys": {
+        "phase": "Groom"
+       },
+       "numerator": 17977612,
+       "sample_count": 70,
+       "value": 256823.0285714286,
+       "value_rounded": 256823.029
+      },
+      {
+       "basis_counts": {
+        "bounded": 0,
+        "inferred": 0,
+        "measured": 912,
+        "not_recorded": 0,
+        "open": null,
+        "unknown": 0
+       },
+       "coverage": {
+        "counted": 912,
+        "covered": 912,
+        "eligible": 912,
+        "excluded": [],
+        "of": 912,
+        "share": 1
+       },
+       "denominator": 912,
+       "key": "Preflight",
+       "keys": {
+        "phase": "Preflight"
+       },
+       "numerator": 13859969,
+       "sample_count": 912,
+       "value": 15197.334429824561,
+       "value_rounded": 15197.334
+      }
+     ],
+     "id": "K7",
+     "kind": "mean",
+     "limitations": "one total per agent: no input, output or cache split; station and seat are read from the agent's label",
+     "name": "Tokens per agent",
+     "numerator": "agent.finished.tokens",
+     "numerator_value": 240290525,
+     "population": "finished agents with a token total",
+     "sample_count": 1747,
+     "source": "execution stream",
+     "sources": [
+      "execution stream"
+     ],
+     "status": "available",
+     "suspect": false,
+     "unit": "tokens",
+     "value": 137544.6622781912,
+     "value_rounded": 137544.662
+    }
+   ],
+   "partial": "",
+   "projection": {
+    "definitions": 2,
+    "format": 4
+   },
+   "rules": "recorded values only; an empty denominator is null with a reason; nothing is estimated or apportioned; durations are averaged over measured spans only, the others counted apart; value is unrounded, value_rounded is observe.py's round(value, 3)",
+   "suspect_days": [],
+   "window": {
+    "effective_from_ms": null,
+    "effective_to_ms": null,
+    "from_ms": null,
+    "last_runs": null,
+    "to_ms": null
+   }
+  },
+  "ok": true
+ },
+ "path": "/analytics/metrics?ids=K7&group_by=phase",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "status": 200
+}

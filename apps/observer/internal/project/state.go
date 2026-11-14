@@ -17,7 +17,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 4 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits
+const FormatVersion = 5 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -71,6 +71,10 @@ type State struct {
 	RecoveriesDropped int64      `json:"recoveries_dropped"`
 	// LastMS is the latest order time of any event applied: what the projection holds up to.
 	LastMS int64 `json:"last_ms"`
+	// DroppedWaits are the waits no longer kept one by one, folded into flow cells as they were
+	// dropped (flow_dropped.go); Sources tallies applied events per source class (flow_sources.go).
+	DroppedWaits map[string]*WaitCell    `json:"dropped_waits"`
+	Sources      map[string]*SourceTally `json:"sources"`
 
 	// Derived lists cached for the position they were built at (never encoded).
 	spanCache *spanSet
@@ -268,23 +272,26 @@ type Wave struct {
 
 // Slice is a product slice and its current revision's scheduler facts.
 type Slice struct {
-	SliceID      string          `json:"slice_id"`
-	WaveID       string          `json:"wave_id,omitempty"`
-	Revision     *int64          `json:"revision"`
-	TicketID     string          `json:"ticket_id,omitempty"`
-	State        string          `json:"state"` // completed | active | ready | blocked | superseded | unknown
-	Dependencies []string        `json:"dependencies"`
-	DependsOn    []string        `json:"depends_on"`
-	Reasons      []string        `json:"last_reasons"`
-	Commit       string          `json:"commit,omitempty"`
-	Materialized *Stamp          `json:"materialized"`
-	Blocked      *Stamp          `json:"blocked"`
-	Resolved     *Stamp          `json:"resolved"`
-	Scheduled    *Stamp          `json:"scheduled"`
-	Integrated   *Stamp          `json:"integrated"`
-	Superseded   *Stamp          `json:"superseded"`
-	Revisions    []SliceRevision `json:"revisions"`
-	History      []StateChange   `json:"history"`
+	SliceID      string   `json:"slice_id"`
+	WaveID       string   `json:"wave_id,omitempty"`
+	Revision     *int64   `json:"revision"`
+	TicketID     string   `json:"ticket_id,omitempty"`
+	State        string   `json:"state"` // completed | active | ready | blocked | superseded | unknown
+	Dependencies []string `json:"dependencies"`
+	DependsOn    []string `json:"depends_on"`
+	Reasons      []string `json:"last_reasons"`
+	Commit       string   `json:"commit,omitempty"`
+	Materialized *Stamp   `json:"materialized"`
+	// FirstMaterialized is when the current revision was first materialized: a reissue of the same
+	// revision to another ticket does not make the slice newly eligible (M6.5); a new revision does.
+	FirstMaterialized *Stamp          `json:"first_materialized,omitempty"`
+	Blocked           *Stamp          `json:"blocked"`
+	Resolved          *Stamp          `json:"resolved"`
+	Scheduled         *Stamp          `json:"scheduled"`
+	Integrated        *Stamp          `json:"integrated"`
+	Superseded        *Stamp          `json:"superseded"`
+	Revisions         []SliceRevision `json:"revisions"`
+	History           []StateChange   `json:"history"`
 	// Waits is every dependency wait (dependency.blocked to dependency.resolved), oldest first;
 	// an unresolved one has no end. WaitsDropped counts the oldest ones no longer kept.
 	Waits        []*DependencyWait `json:"waits"`
@@ -357,6 +364,17 @@ type Cell struct {
 	Began         *Began         `json:"history_began"`
 	Artifacts     ArtifactCounts `json:"artifacts"`
 	Dropped       int64          `json:"dropped"`
+	// MOpen are the indexes of visits C1 counts as open or inferred: the ones a later record can
+	// still reclassify (metric_visits.go).
+	MOpen []int `json:"m_open,omitempty"`
+	// MT1Day is the day T1's coverage counts this ticket as merged by its run record with no merge in
+	// its lifecycle log ("" when not; "-" for no day).
+	MT1Day string `json:"m_t1_day,omitempty"`
+	// MRunBlockers is the blockers the ticket's run record counts; MR2Day and MR2Ex are how many of
+	// them R2's coverage shows as excluded (no review finding for them) and on which day.
+	MRunBlockers int64  `json:"m_run_blockers,omitempty"`
+	MR2Day       string `json:"m_r2_day,omitempty"`
+	MR2Ex        int64  `json:"m_r2_ex,omitempty"`
 }
 
 // ArtifactCounts counts artifact.recorded events by nature and integrity.
@@ -385,6 +403,11 @@ type Visit struct {
 	DurationMS  *int64 `json:"recorded_duration_ms"`
 	ExecutionID string `json:"execution_id,omitempty"`
 	Restarts    int64  `json:"restarts"`
+	// MBasis and MDay are how C1 counts this visit now (open, inferred, measured, bounded,
+	// unknown) and on which day: the visit span's own classification (visitEnd), so the metric and
+	// its contributors agree by construction (metric_visits.go).
+	MBasis string `json:"m_basis,omitempty"`
+	MDay   string `json:"m_day,omitempty"`
 }
 
 // Gate is one gate evaluation.
@@ -578,6 +601,18 @@ type Execution struct {
 	ToolsDropped int64                `json:"tools_dropped"`
 	Refused      []Refusal            `json:"refused"`
 	Visits       []string             `json:"visits"`
+	// Provenance is the snapshot the supervisor took once, when it started this execution (event
+	// revision 3: execution.started.provenance), or nil; ProvenanceReason says why it is nil. It is
+	// never filled in afterwards. SourceCommit is the intake log's product source commit on that start.
+	Provenance       map[string]any `json:"provenance"`
+	ProvenanceReason string         `json:"provenance_reason,omitempty"`
+	SourceCommit     string         `json:"source_commit,omitempty"`
+	// MUnknownDay is the day S2 counts this execution as of unknown outcome (ExecStateIn), or ""
+	// while it does not (metric_visits.go syncExecutions).
+	MUnknownDay string `json:"m_unknown_day,omitempty"`
+	// MUsageDay is the day K2 and K3's coverage counts this completed execution as having no usage
+	// record ("" when it has one or has not completed).
+	MUsageDay string `json:"m_usage_day,omitempty"`
 }
 
 // Usage is execution.usage: Claude-reported cost and tokens, per execution and per model.
@@ -685,26 +720,26 @@ type Refusal struct {
 
 // RunRecord is run.recorded: one finished ticket, as cleanup wrote it.
 type RunRecord struct {
-	TicketID               string `json:"ticket_id"`
-	SliceID                string `json:"slice_id,omitempty"`
-	RecordVersion          *int64 `json:"record_version"`
-	Outcome                string `json:"outcome"`
-	Rounds                 *int64 `json:"rounds"`
-	FirstPass              bool   `json:"first_pass"`
-	VerifyFailures         int64  `json:"verify_failures"`
-	ReviewRejections       int64  `json:"review_rejections"`
-	Escalated              bool   `json:"escalated"`
-	HumanApproval          bool   `json:"human_approval"`
-	Deviations             int64  `json:"deviations"`
-	Blockers               int64  `json:"blockers"`
-	TestsSeenFailingFirst  int64  `json:"tests_seen_failing_first"`
-	TestsPassingOnFirstRun int64  `json:"tests_passing_on_first_run"`
-	Risk                   string `json:"risk,omitempty"`
-	AppType                string `json:"app_type,omitempty"`
-	MergeMethod            string `json:"merge_method,omitempty"`
-	MergeCommit            string `json:"merge_commit,omitempty"`
-	ClosedAt               *Stamp `json:"closed_at"`
-	EventID                string `json:"event_id"`
+	TicketID               string   `json:"ticket_id"`
+	SliceID                string   `json:"slice_id,omitempty"`
+	RecordVersion          *int64   `json:"record_version"`
+	Outcome                string   `json:"outcome"`
+	Rounds                 *float64 `json:"rounds"` // a number: observe.py counts fractions too
+	FirstPass              bool     `json:"first_pass"`
+	VerifyFailures         int64    `json:"verify_failures"`
+	ReviewRejections       int64    `json:"review_rejections"`
+	Escalated              bool     `json:"escalated"`
+	HumanApproval          bool     `json:"human_approval"`
+	Deviations             int64    `json:"deviations"`
+	Blockers               int64    `json:"blockers"`
+	TestsSeenFailingFirst  float64  `json:"tests_seen_failing_first"`   // a number: observe.py sums fractions too
+	TestsPassingOnFirstRun float64  `json:"tests_passing_on_first_run"` // as above
+	Risk                   string   `json:"risk,omitempty"`
+	AppType                string   `json:"app_type,omitempty"`
+	MergeMethod            string   `json:"merge_method,omitempty"`
+	MergeCommit            string   `json:"merge_commit,omitempty"`
+	ClosedAt               *Stamp   `json:"closed_at"`
+	EventID                string   `json:"event_id"`
 }
 
 // Gap is a recorded history gap.

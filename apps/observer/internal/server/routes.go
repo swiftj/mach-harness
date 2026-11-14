@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"mach/observer/internal/feed"
-	"mach/observer/internal/metrics"
 	"mach/observer/internal/project"
 )
 
@@ -100,7 +99,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		"versions":       map[string]any{"observer": Version, "api": APIVersion, "event": map[string]any{"schema": feed.SchemaVersion, "revision": feed.SchemaRevision, "kinds": Kinds}},
 		"generation":     s.opts.Log.Epoch(),
 		"read_only":      true,
-		"display_policy": map[string]any{"people": "role"},
+		"display_policy": map[string]any{"people": "role", "free_text": freeTextPolicy()},
 		"capabilities": map[string]any{"execution": false, "snapshot": true, "artifacts": true, "analytics": true,
 			"evidence_media": set.EvidenceMedia, "evidence_media_setting": `.factory/config.json "tower": {"evidence_media": true}`,
 			"stream_observations": streamObs},
@@ -568,53 +567,7 @@ func kindQuote(s string) string {
 
 // ---- analytics ----
 
-var groupDims = map[string]bool{"day": true, "risk": true, "app_type": true, "station": true, "round": true, "seat": true, "model": true, "phase": true,
-	"wave": true, "stage": true, "gate": true, "reason_code": true, "kind": true, "tool": true, "rule": true, "target_kind": true, "stop_reason": true,
-	"writer": true, "ticket": true, "token_kind": true}
-
-func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	var ids []string
-	if v := q.Get("ids"); v != "" {
-		for _, id := range strings.Split(v, ",") {
-			if _, known := metrics.Lookup(id); !known {
-				writeJSON(w, http.StatusBadRequest, fail(KindInvalid, "unknown metric "+kindQuote(id)+"."))
-				return
-			}
-			ids = append(ids, id)
-		}
-	}
-	group := q.Get("group_by")
-	if group != "" && !groupDims[group] {
-		writeJSON(w, http.StatusBadRequest, fail(KindInvalid, "group_by is not a known dimension."))
-		return
-	}
-	s.view(w, func(st *project.State) (int, Envelope) {
-		return http.StatusOK, ok(map[string]any{"metrics": st.Metrics.Rows(ids, group), "definitions_version": metrics.DefinitionsVersion,
-			"cursor": s.cursor(st.Pos), "group_overflow": st.Metrics.Overflow, "partial": st.Partial,
-			"rules": "recorded values only; an empty denominator is null with a reason; nothing is estimated or apportioned"})
-	})
-}
-
-func (s *Server) analyticsRuns(w http.ResponseWriter, r *http.Request) {
-	limit, bad := pageLimit(r, DefaultPage)
-	if bad != nil {
-		writeJSON(w, http.StatusBadRequest, *bad)
-		return
-	}
-	off, bad := offset(r)
-	if bad != nil {
-		writeJSON(w, http.StatusBadRequest, *bad)
-		return
-	}
-	s.view(w, func(st *project.State) (int, Envelope) {
-		runs := st.Runs
-		if runs == nil {
-			runs = []*project.RunRecord{}
-		}
-		return http.StatusOK, ok(pageOf(runs, off, limit, s.cursor(st.Pos)))
-	})
-}
+// The metrics route is in analytics_metrics.go.
 
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))

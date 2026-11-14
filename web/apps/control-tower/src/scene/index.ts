@@ -2,5 +2,6 @@
 export * from "./clock";
 export * from "./store";
 export * from "./view";
+export * from "./analytics";
 export * from "./connection";
 export * from "./react";

@@ -55,6 +55,7 @@ type ledgerLine struct {
 	ExecutionID   any            `json:"execution_id"`
 	Source        any            `json:"source"`
 	Cause         any            `json:"cause"`
+	SourceCommit  any            `json:"source_commit"` // the product source commit; kept on execution.started (revision 3)
 	Data          map[string]any `json:"data"`
 }
 
@@ -126,6 +127,9 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 		data = map[string]any{}
 	}
 	d, used := l.data(ev, typ, data)
+	if typ == "execution.started" {
+		d["source_commit"] = commitOrNil(in.SourceCommit) // revision 3: the source revision the execution started from
+	}
 	ev.Data = d
 	for k := range data {
 		if !used[k] {
@@ -308,6 +312,8 @@ func (l *Ledger) data(ev *event.Event, typ string, in map[string]any) (map[strin
 		}
 		d["limits"] = map[string]any{"minutes": minutes, "budget_usd": budget}
 		get("session_id")
+		_, present := in["provenance"] // revision 3: the snapshot taken at start; absent before M6.5
+		d["provenance"], d["provenance_reason"] = provenance(get("provenance"), present, get("provenance_reason"))
 		if claim, ok := l.claims[ev.IDs.ExecutionID]; ok {
 			ev.Cause = &event.Cause{EventID: claim, Basis: "identity"}
 		}

@@ -550,8 +550,11 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     }
     case "execution.started": {
       s = ensureExecution(s, e);
-      const wasRunning = s.executions[e.ids.execution_id ?? ""]?.state === "running";
-      s = withExecution(s, e.ids.execution_id, (x) => ({ ...x, state: "running", startedAt: at, workflow: e.data.workflow, meta: touch(x.meta, e, { unknown: without(x.meta.unknown, "startedAt") }) }));
+      const prior = s.executions[e.ids.execution_id ?? ""];
+      // A start delivered after the execution's own end, or after the supervisor moved on from it, does not make it running again.
+      const over = prior !== undefined && (prior.endedAt != null || prior.movedOnAt != null);
+      const wasRunning = prior?.state === "running" || over;
+      s = withExecution(s, e.ids.execution_id, (x) => ({ ...x, state: over ? x.state : "running", startedAt: at, workflow: e.data.workflow, meta: touch(x.meta, e, { unknown: without(x.meta.unknown, "startedAt") }) }));
       s = withCell(s, ticket, (cell) => ({ ...cell, executionId: e.ids.execution_id }));
       return wasRunning ? s : { ...s, counters: bump(s.counters, { executionsRunning: 1 }) };
     }
@@ -573,7 +576,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       }));
       s = withCost(s, before, id);
       s = closeVisitsOf(s, id, at, e);
-      return before?.state === "running" ? { ...s, counters: bump(s.counters, { executionsRunning: -1 }) } : s;
+      // An execution the supervisor had moved on from was already counted out (movedOnFrom): not again.
+      return before?.state === "running" && before.movedOnAt == null ? { ...s, counters: bump(s.counters, { executionsRunning: -1 }) } : s;
     }
     case "station.observed": {
       s = ensureCell(s, e, definitions);

@@ -205,6 +205,24 @@ test("M6.3 polish: an execution the supervisor moved on from (a later claim of t
   assert.ok(head.cells[TICKET].visits.every((v) => v.executionId !== a || v.leftAt !== null), "its open visit closes at the later claim");
 });
 
+test("M6.5: an execution moved on from and then reporting its own end is counted out of 'running' once; a late start never counts it in", () => {
+  const f = factory();
+  const [a, b] = ["x13e7bccffc11", "x13e7bccffc12"];
+  const claim = (x, t, attempt) => f.intake("work.claimed", t, { stage: "planned", next: "build", attempt }, { ticket_id: TICKET, execution_id: x, attempt }, [`execution:${x}`, `cell:${TICKET}`]);
+  const start = (x, t) => f.intake("execution.started", t, { until: "merge", workflow: "mach:belt", limits: {} }, { ticket_id: TICKET, execution_id: x }, [`execution:${x}`]);
+  const done = (x, t) => f.intake("execution.completed", t, { stage: "built", next: "verify", waiting_for: null, how: "exited", seen_to_end: true, cost_usd: 1, refused_tools: [] }, { ticket_id: TICKET, execution_id: x }, [`execution:${x}`]);
+  claim(a, T0, 1);
+  start(a, T0 + 1_000);
+  claim(b, T0 + 600_000, 2); // the supervisor moved on from a
+  start(b, T0 + 601_000);
+  done(a, T0 + 700_000); // a's own end, delivered late
+  start(a, T0 + 700_500); // and a duplicate start after it
+  const head = logOf(finalize(f.out)).head();
+  assert.equal(head.counters.executionsRunning, 1, "only b is running; never negative");
+  done(b, T0 + 900_000);
+  assert.equal(logOf(finalize(f.out)).head().counters.executionsRunning, 0);
+});
+
 test("M6.3 polish: an interrupted process outranks an outcome-unknown recovery in every Floor reading, as in the observer", () => {
   const f = factory();
   const x = "x13e7bccffc03";

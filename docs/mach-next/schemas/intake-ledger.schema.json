@@ -173,6 +173,13 @@
               "action_at_start"
             ],
             "properties": {
+              "provenance": {
+                "type": ["object", "null"],
+                "description": "M6.5. What the execution was started with, captured once after authorization and before launch (skills/run/scripts/provenance.py): digests, versions, identifiers, numbers and booleans only. The same object is on its execution.started event. Null, with provenance_reason capture-failed, when it could not be taken; absent on executions from before M6.5. Never recomputed."
+              },
+              "provenance_reason": {
+                "enum": ["capture-failed"]
+              },
               "state": {
                 "enum": [
                   "claimed",
