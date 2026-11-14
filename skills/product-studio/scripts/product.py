@@ -48,6 +48,9 @@ ENUMS = {
 }
 
 
+MAX_JSON_BYTES = 1024 * 1024  # a product JSON file larger than this is refused as invalid, never parsed
+
+
 def _error(errors: List[str], location: str, message: str) -> None:
     errors.append("{}: {}".format(location, message))
 
@@ -57,8 +60,13 @@ def _read_json(path: Path, errors: List[str], root: Path) -> Optional[Dict[str, 
     try:
         if path.is_symlink():
             raise ValueError("symlink not permitted")
+        if path.stat().st_size > MAX_JSON_BYTES:
+            raise ValueError("larger than {} bytes; not read".format(MAX_JSON_BYTES))
         raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except RecursionError:
+            raise ValueError("nested too deeply to be a product file") from None
         if not isinstance(data, dict):
             raise ValueError("expected JSON object")
         return data

@@ -374,6 +374,56 @@ class ActivationTest(Base):
             self.assertNotIn(word, studio_sources)
 
 
+class RunnerFileOriginTest(Base):
+    """M7 T1: no repository artifact can enable local execution. A runner.json Git knows about, a link, another
+    user's file or a writable one reads as disabled; the preflight names it, and confirming never writes over a tracked one."""
+
+    def test_a_runner_file_git_knows_about_is_refused_and_never_written_over(self):
+        self.supervised()
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
+        git(self.eng, "add", "-f", ".factory/local/runner.json")  # in the index only: not yet committed
+        read = policy.read(self.eng)
+        self.assertEqual((read["enabled"], read["source"]), (False, "invalid-file"))
+        self.assertIn("tracked by Git", read["problems"][0])
+        self.assertEqual(self.tick()["state"], "disabled")
+        with self.assertRaises(policy.PolicyError) as refused:
+            policy.save(self.eng, {**read, "enabled": True})
+        self.assertIn("git rm --cached .factory/local/runner.json", str(refused.exception))
+        before = self.local("runner.json").read_text()
+        code, out, _ = self.run_factory("enable", "--autonomy", "observe")
+        asked = json.loads(out)
+        self.assertEqual((code, asked["ready"]), (1, False))
+        self.assertIn("local_policy_file", [item["check"] for item in asked["failed"]])
+        self.assertIn("tracked by Git", json.dumps(asked["failed"]))
+        self.assertEqual(self.local("runner.json").read_text(), before, "nothing was written over the tracked file")
+        git(self.eng, "rm", "-q", "--cached", ".factory/local/runner.json")
+        self.assertEqual(policy.read(self.eng)["source"], "local-file", "removed from Git, the person's own grant reads again")
+
+    def test_a_link_or_a_writable_file_is_refused_and_the_preflight_says_which(self):
+        self.supervised()
+        good = self.local("runner.json").read_text()
+        os.chmod(str(self.local("runner.json")), 0o620)
+        self.assertIn("other users", policy.read(self.eng)["problems"][0])
+        self.assertIn("other users", json.dumps(json.loads(self.run_factory("enable", "--autonomy", "observe")[1])["failed"]))
+        self.local("runner.json").unlink()
+        elsewhere = self.root / "runner-elsewhere.json"
+        elsewhere.write_text(good)
+        os.chmod(str(elsewhere), 0o600)
+        self.local("runner.json").symlink_to(elsewhere)
+        self.assertIn("symbolic link", policy.read(self.eng)["problems"][0])
+        self.assertIn("symbolic link", json.dumps(json.loads(self.run_factory("enable", "--autonomy", "observe")[1])["failed"]))
+
+    def test_another_users_file_is_refused(self):
+        self.supervised()
+        real = os.getuid
+        try:
+            policy.os.getuid = lambda: real() + 1  # simulated: the test cannot create a file owned by someone else
+            self.assertIn("not owned by the current user", policy.read(self.eng)["problems"][0])
+        finally:
+            policy.os.getuid = real
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
+
+
 class CapacityReportTest(Base):
     """The limit on cells at once that the factory commands report is the one in force here, and a ready slice
     left waiting for a place is said to be held, with that reason. Neither changes what is dispatched."""

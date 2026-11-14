@@ -84,7 +84,6 @@ class TicketTextIsDataTest(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ticket.TicketError):
                 ticket.check_id(bad)
 
-    @unittest.expectedFailure
     def test_a_value_is_not_reinterpreted_as_a_template_field(self):
         # DEFECT T4 (Minor): ticket.fill() replaces {id}, {title}, {body}... one after another in the same string,
         # so a title containing "{body}" becomes the body text (and an id-free field can pick up another field's

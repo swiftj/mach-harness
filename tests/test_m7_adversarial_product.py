@@ -106,7 +106,6 @@ class HostileProductTest(Base):
         self.assertNotIn("Traceback", err)
         self.assertNotIn("SLICE-777", " ".join(self.tickets()))
 
-    @unittest.expectedFailure
     def test_a_json_bomb_in_a_product_file_is_refused_not_a_crash(self):
         # DEFECT T3 (Minor): a deeply nested JSON value in any tracked product file (merged to the integration
         # branch) makes json.loads raise RecursionError, which is not a ValueError. intake.Snapshot._json

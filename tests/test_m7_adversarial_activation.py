@@ -128,7 +128,6 @@ class RunnerFileTest(Project):
         self.assertEqual(read["source"], "default-disabled")
         self.assertFalse(policy.may_execute(policy.effective(read, json.loads((self.root / ".factory" / "config.json").read_text())))[0])
 
-    @unittest.expectedFailure
     def test_a_runner_file_that_arrives_through_git_is_refused(self):
         # DEFECT T1 (Major): policy.read() never asks Git whether runner.json is tracked. A runner.json committed
         # (git add -f) with this machine's host name and this clone's path, then pulled, is read as a valid local

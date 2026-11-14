@@ -68,6 +68,7 @@ EVENT_TYPES = (
 )
 APPROVED = "approved_for_engineering"
 DEFAULT_MAX_PARALLEL = 3
+MAX_PRODUCT_FILE_BYTES = 1024 * 1024  # a product file larger than this is refused as invalid, never parsed
 RISK_FLOOR = "Medium"  # product-sourced work is never reviewed below this tier
 LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process that is gone, is taken over
 ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
@@ -114,9 +115,12 @@ class Snapshot:
         self.waves = self._all("product/delivery-waves/")
 
     def _json(self, relative: str) -> Optional[Dict[str, Any]]:
+        raw = self.files.get(relative)
+        if raw is None or len(raw) > MAX_PRODUCT_FILE_BYTES:  # an oversized file is invalid, never parsed
+            return None
         try:
-            value = json.loads(self.files[relative].decode("utf-8"))
-        except (KeyError, ValueError, UnicodeDecodeError):
+            value = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, RecursionError):  # RecursionError: nesting too deep to be a product file
             return None
         return value if isinstance(value, dict) else None
 

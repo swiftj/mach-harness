@@ -133,6 +133,39 @@ def default_tools() -> List[str]:
     return [*BASE_TOOLS, f"Bash({interpreter()} *)"]
 
 
+def tracked_by_git(root: Path, path: Path) -> bool:
+    """Whether a file is in Git's index or in HEAD's tree. A grant that arrived through Git is no grant."""
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        return False
+    for argv in (["git", "ls-files", "--error-unmatch", "--", relative], ["git", "cat-file", "-e", f"HEAD:{relative}"]):
+        try:
+            if subprocess.run(argv, cwd=str(root), capture_output=True, timeout=30).returncode == 0:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return False
+
+
+def untrusted(root: Path) -> Optional[str]:
+    """Why the policy file on disk cannot be a local grant, whatever it says; None when nothing is wrong with where it came from."""
+    path = policy_path(root)
+    if path.is_symlink() or local_dir(root).is_symlink() or (root / ".factory").is_symlink():
+        return "The policy file or its folder is a symbolic link."
+    if not path.is_file():
+        return None
+    if tracked_by_git(root, path):
+        return ("The policy file is tracked by Git, so it came from the repository, not from a person on this machine. "
+                "Remove it from Git (git rm --cached .factory/local/runner.json), then enable the Factory here.")
+    info = path.stat()
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        return "The policy file is not owned by the current user."
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return "The policy file can be changed by other users of this machine."
+    return None
+
+
 def read(root: Path) -> Dict[str, Any]:
     """The policy in force on this machine for this project folder. Disabled unless everything checks out."""
     path = policy_path(root)
@@ -142,13 +175,11 @@ def read(root: Path) -> Dict[str, Any]:
         return {**disabled, "source": "invalid-file", "problems": [problem]}
 
     try:
-        if path.is_symlink() or local_dir(root).is_symlink() or (root / ".factory").is_symlink():
-            return refuse("The policy file or its folder is a symbolic link.")
+        problem = untrusted(root)
+        if problem:
+            return refuse(problem)
         if not path.is_file():
             return disabled
-        mode = path.stat().st_mode
-        if mode & (stat.S_IWGRP | stat.S_IWOTH):
-            return refuse("The policy file can be changed by other users of this machine.")
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError) as exc:
         return refuse(f"The policy file cannot be read: {exc}")
@@ -262,6 +293,9 @@ def build(root: Path, request: Dict[str, Any], enabled_by: str, claude: str, sou
 
 
 def save(root: Path, policy: Dict[str, Any]) -> None:
+    if tracked_by_git(root, policy_path(root)):
+        raise PolicyError("The policy file .factory/local/runner.json is tracked by Git; nothing was written over it. "
+                          "Remove it from Git (git rm --cached .factory/local/runner.json) and enable the Factory again.")
     data = {key: value for key, value in policy.items() if key not in ("source", "problems", "restricted_by_project")}
     write_private(policy_path(root), json.dumps(data, indent=2, sort_keys=True) + "\n")
 
@@ -374,6 +408,8 @@ def preflight(root: Path, config: Dict[str, Any], request: Dict[str, Any], *, gi
     on_branch = bool(integration.get("branch")) and head_branch == integration.get("branch")
     checks.append(check("checkout", on_branch, f"The main checkout is on '{head_branch or 'no branch'}'" + ("." if on_branch else f"; cells are opened from '{integration.get('branch')}', so switch to it."),
                         required=supervised))
+    problem = untrusted(root)
+    checks.append(check("local_policy_file", problem is None, problem or "No policy file, or one written on this machine by this user."))
     checks.append(check("local_state_private", ignored, "Machine-local state (.factory/local/) is ignored by Git." if ignored
                         else ".factory/local/ is not ignored by Git, so authorization could be committed. Add it to .gitignore."))
     checks.append(check("toolchain", sys.version_info >= (3, 8) and shutil.which("git") is not None, f"Python {platform.python_version()} and git are available."))
