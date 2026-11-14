@@ -10,7 +10,7 @@
  * "not served" for it, never draw it as zero.
  */
 import type { AnalyticsFilters as ContractFilters, AnalyticsSnapshot, Dimension, MetricId, WindowKey } from "../contract";
-import { configsOf, toContractSnapshot, type SnapshotParts } from "../data/adapt";
+import { configsOf, freshnessFor, toContractSnapshot, type SnapshotParts } from "../data/adapt";
 import type { AnalyticsData, AnalyticsResult, ContributorsQuery } from "../data/provider";
 import type { AnalyticsSnapshotSession, AsOf, SnapshotResult } from "../data/snapshot";
 import type { ContributorsReply, InsightsReply, MetricRow, MetricsReply, RunItem } from "../data/types";
@@ -55,6 +55,8 @@ export interface LoadResult {
   readonly asOf: AsOf | null;
   /** Under a playhead: the UTC midnight every figure of the view is counted to (metrics by day, the run list cut there too). */
   readonly dayCut?: number | null;
+  /** The newest event the observer applied (history.sources), when it said. */
+  readonly lastEventMs?: number | null;
   /** Parts not read, in words. */
   readonly notes: readonly string[];
   /** The view's cursor can no longer be read: begin a new snapshot at the head. */
@@ -223,10 +225,12 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
     };
     if (plan.runs && runItems === null) notes.push("finished tickets were not listed: figures read from run records are not shown");
     return {
-      data: { state: "ready", value: toContractSnapshot(parts) },
+      // Freshness from the status reply and the view's own history.sources (either alone is enough).
+      data: { state: "ready", value: plan.freshness ? { ...toContractSnapshot(parts), freshness: freshnessFor(freshness, t.history, flowReply?.coverage ?? null) } : toContractSnapshot(parts) },
       insights: insightsData,
       configs: runItems ? configsOf(runItems) : undefined,
       dayCut,
+      lastEventMs: Number.isFinite(lastEvent) ? lastEvent : null,
       cursor: session.cursor,
       asOf: t.asOf,
       notes,

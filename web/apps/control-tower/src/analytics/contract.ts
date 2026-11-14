@@ -296,7 +296,8 @@ export interface Transition {
 export interface ConcurrencySeries {
   readonly bucket_ms: number;
   readonly from_ms: number;
-  readonly lines: readonly { readonly kind: "execution" | "visit" | "agent"; readonly counts: readonly number[] }[];
+  /** `recorded`: each bucket's peak counting only spans with a recorded end (an inferred end counted to its latest possible time is left out). */
+  readonly lines: readonly { readonly kind: "execution" | "visit" | "agent"; readonly counts: readonly number[]; readonly recorded?: readonly number[] }[];
   /** The recorded `max_parallel`, where recorded; absent means not recorded, never inferred. */
   readonly limits: readonly { readonly from_ms: number; readonly to_ms: number; readonly value: number }[];
 }

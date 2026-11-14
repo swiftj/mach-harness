@@ -118,7 +118,8 @@ test("formatting: durations, cost, tokens, shares; small samples as counts", () 
   assert.equal(Fmt.valueText({ kind: "rate", unit: "", value: 0.5, numerator_value: 1, denominator_value: 2 }), "1 of 2");
   assert.equal(Fmt.valueText({ kind: "rate", unit: "", value: 0.6, numerator_value: 6, denominator_value: 10 }), "60%");
   assert.equal(Fmt.valueText({ kind: "rate", unit: "", value: null, numerator_value: 0, denominator_value: 0 }), null);
-  assert.equal(Fmt.durationCompact(128_000), "2.1 min");
+  // One duration format in Analytics: the compact "2.1 min" style is gone.
+  assert.equal(Fmt.durationCompact, undefined);
 });
 
 test("findings are fixed rules: deterministic, sourced, and never advise weakening a gate", () => {

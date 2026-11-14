@@ -8,7 +8,7 @@
  */
 import { contributorKey, groupedKey, MODELS, type MetricGroup } from "../../contract";
 import { rankGroups, valueBins } from "../../model/charts";
-import { count, dayText, durationCompact, p50Text, pct, plural, tokens, usd } from "../../model/format";
+import { count, dayText, durationText, p50Text, pct, plural, tokens, usd } from "../../model/format";
 import { costSeries } from "../../model/pulse";
 import { grainFor } from "../../model/series";
 import { Columns, PartsBar, RankTable } from "../charts";
@@ -289,7 +289,7 @@ function Agents() {
         title="Agents by station"
         question="Time from agent.started to agent.finished, tool calls (a count; which tools and how long each took are not recorded), and one token total per agent (no kinds). Sort by any column; select a row for its agents."
         summary={data.map((d) => `${d.g.key}: ${d.g.denominator} agents, median ${p50Text(d.g)}, ${d.tools?.value?.toFixed(1) ?? "–"} tool calls each, ${tokens(d.tokens?.value)} tokens each`).join("; ")}
-        table={{ columns: [{ label: "Station" }, { label: "Agents", num: true }, { label: "Median time", num: true }, { label: "Mean", num: true }, { label: "Tool calls each", num: true }, { label: "Tokens each", num: true }], rows: data.map((d) => [d.g.key, count(d.g.denominator), p50Text(d.g), durationCompact(d.g.value), d.tools?.value === null || d.tools?.value === undefined ? "–" : d.tools.value.toFixed(1), tokens(d.tokens?.value)]) }}
+        table={{ columns: [{ label: "Station" }, { label: "Agents", num: true }, { label: "Median time", num: true }, { label: "Mean", num: true }, { label: "Tool calls each", num: true }, { label: "Tokens each", num: true }], rows: data.map((d) => [d.g.key, count(d.g.denominator), p50Text(d.g), durationText(d.g.value), d.tools?.value === null || d.tools?.value === undefined ? "–" : d.tools.value.toFixed(1), tokens(d.tokens?.value)]) }}
         foot={<>{rowMissing(k9) ? "Queue time is not recorded per model." : (k9?.groups ?? []).length ? `Queue median: ${(k9?.groups ?? []).map((g) => `${g.key} ${p50Text(g)}`).join(", ")}.` : `Queue time by phase is not listed${k9?.groups_reason ? `: ${k9.groups_reason}` : ""}.`} Clerks that relay “what next?” carry no station{s.totals.K8?.coverage.share !== null && s.totals.K8 ? `; ${pct(s.totals.K8.coverage.share)} of agents covered` : ""}. Tool-call counts are not tool-call spans.</>}
       >
         <RankTable<(typeof data)[number]>
@@ -303,7 +303,7 @@ function Agents() {
             { key: "station", label: "Station", sort: (d) => d.g.key, cell: (d) => d.g.key, width: "14%" },
             { key: "n", label: "Agents", num: true, sort: (d) => d.g.denominator, cell: (d) => count(d.g.denominator) },
             { key: "time", label: "Median time", sort: (d) => d.g.p50_ms ?? null, cell: (d) => p50Text(d.g), bar: { value: (d) => d.g.p50_ms ?? null } },
-            { key: "mean", label: "Mean", num: true, sort: (d) => d.g.value, cell: (d) => durationCompact(d.g.value) },
+            { key: "mean", label: "Mean", num: true, sort: (d) => d.g.value, cell: (d) => durationText(d.g.value) },
             { key: "tools", label: "Tool calls each", num: true, sort: (d) => d.tools?.value ?? null, cell: (d) => (d.tools?.value === null || d.tools?.value === undefined ? "–" : d.tools.value.toFixed(1)) },
             { key: "tokens", label: "Tokens each", num: true, sort: (d) => d.tokens?.value ?? null, cell: (d) => tokens(d.tokens?.value) },
           ]}

@@ -9,7 +9,7 @@ import { useMemo } from "react";
 import type { RunRecord } from "../../contract";
 import { cohortOptions, cohortRuns, defaultPair, type CohortBy } from "../../model/cohorts";
 import { cohortSummary, compareWords, durationTicks, linear, logScale, medianOf, niceTicks, stripLayout, type Cohort } from "../../model/charts";
-import { count, durationCompact, durationText, durationTick, usd } from "../../model/format";
+import { count, durationText, durationTick, usd } from "../../model/format";
 import { comparisonAllowed, SMALL_SAMPLE, shareText } from "../../model/sample";
 import { Columns, LogNote } from "../charts";
 import { Announce, AreaFrame, ChartFrame, Mark, SectionHead, useAnalytics, useMarkNav, useTip, useWidth } from "../kit";
@@ -189,7 +189,7 @@ function DotCompare({ chart, title, cohorts, values, kind }: { chart: string; ti
             <g key={t} aria-hidden="true">
               <line x1={x(t)} x2={x(t)} y1={0} y2={height - 18} style={{ stroke: t === 0 ? "var(--an-axis)" : "var(--an-grid)" }} />
               <text x={x(t)} y={height - 4} textAnchor={i === ticks.length - 1 && ticks.length > 1 ? "end" : i === 0 && t === lo && kind === "ms" ? "start" : "middle"} style={{ fontFamily: "var(--mach-font-sans)", fontVariantNumeric: "tabular-nums", fontSize: 11, fill: "var(--an-subtle)" }}>
-                {kind === "ms" ? (DURATION_ROUND.has(t) ? durationTick(t) : durationCompact(t)) : usd(t).replace(".00", "")}
+                {kind === "ms" ? (DURATION_ROUND.has(t) ? durationTick(t) : durationText(t)) : usd(t).replace(".00", "")}
               </text>
             </g>
           ))}

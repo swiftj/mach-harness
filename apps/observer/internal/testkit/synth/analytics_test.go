@@ -290,6 +290,11 @@ func TestRealisticIsPlausible(t *testing.T) {
 	}
 	c := e["concurrency"].(map[string]any)
 	byHour := c["mean_running_by_hour_utc"].(map[string]any)
+	// The recorded execution limit is never exceeded: concurrency in expected.json is the recorded view
+	// (an execution with no recorded end counts until its outcome-unknown recovery).
+	if num(c, "peak") > num(c, "max_parallel") {
+		t.Errorf("recorded concurrency %v exceeds max_parallel %v", c["peak"], c["max_parallel"])
+	}
 	if num(c, "share_of_minutes_at_limit") > 0.4 || byHour["weekday 03"].(float64) > byHour["weekday 10"].(float64) {
 		t.Errorf("concurrency: %v", c)
 	}

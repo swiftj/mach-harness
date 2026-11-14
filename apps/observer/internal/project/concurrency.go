@@ -17,6 +17,10 @@ type Active struct {
 	// InferredMax is the most spans active at once in the bucket whose end no record states (end
 	// basis inferred: closed at an execution's end, a re-entry, cleanup or an unknown outcome).
 	InferredMax int `json:"inferred_max"`
+	// RecordedMax is the most spans active at once counting only those whose end is recorded (or
+	// that are still open): Max counts a span with an inferred end up to the latest time it can have
+	// ended, an upper bound; RecordedMax is what the records alone show.
+	RecordedMax int `json:"recorded_max"`
 }
 
 // ConcurrencyBucket is one bucket.
@@ -105,27 +109,27 @@ func concurrencyOf(spans []*Span, live, from, to, bucket int64, kinds map[string
 		for i := range out {
 			bs := out[i].FromMS
 			be := min(bs+bucket, to)
-			peak, peakInf, area, t := 0, 0, int64(0), bs
+			peak, peakInf, peakRec, area, t := 0, 0, 0, int64(0), bs
 			for k < len(edges) && edges[k].t < be {
 				ev := edges[k]
 				if ev.t > t {
-					peak, peakInf = max(peak, cur), max(peakInf, inf) // active over [t, ev.t)
+					peak, peakInf, peakRec = max(peak, cur), max(peakInf, inf), max(peakRec, cur-inf) // active over [t, ev.t)
 					area += int64(cur) * (ev.t - t)
 					t = ev.t
 				}
 				step(ev)
 				if ev.ord == 1 {
 					// a start counts at its instant, even for a span of no length
-					peak, peakInf = max(peak, cur), max(peakInf, inf)
+					peak, peakInf, peakRec = max(peak, cur), max(peakInf, inf), max(peakRec, cur-inf)
 				}
 				k++
 			}
 			if be > t {
-				peak, peakInf = max(peak, cur), max(peakInf, inf)
+				peak, peakInf, peakRec = max(peak, cur), max(peakInf, inf), max(peakRec, cur-inf)
 				area += int64(cur) * (be - t)
 			}
 			if peak > 0 {
-				out[i].Active[kind] = Active{Max: peak, Mean: math.Round(float64(area)/float64(be-bs)*1000) / 1000, InferredMax: min(peakInf, peak)}
+				out[i].Active[kind] = Active{Max: peak, Mean: math.Round(float64(area)/float64(be-bs)*1000) / 1000, InferredMax: min(peakInf, peak), RecordedMax: peakRec}
 			}
 		}
 	}

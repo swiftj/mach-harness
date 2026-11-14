@@ -17,6 +17,8 @@ type Release = (cursor: string | null) => void;
 /** The cursor of the workspace's views (per store), and whether a view is pinning it now. */
 export class SharedCursor {
   cursor: string | null = null;
+  /** The newest event the observer applied, from a reply's history.sources: the day a preset period ends with. */
+  lastEventMs: number | null = null;
   private pinning: Promise<void> | null = null;
 
   /** Resolves when no view is pinning the cursor. */
@@ -113,6 +115,7 @@ export async function loadView(view: ViewSession, shared: SharedCursor, input: O
     const r = await loadArea({ ...input, session, onCursor: done });
     if (r.restart) shared.forget();
     else if (r.cursor) shared.cursor = r.cursor;
+    if (r.lastEventMs != null) shared.lastEventMs = r.lastEventMs;
     return r;
   } finally {
     done(session.cursor);

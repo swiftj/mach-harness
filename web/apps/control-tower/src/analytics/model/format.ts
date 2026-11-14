@@ -35,15 +35,6 @@ export function durationText(ms: number | null | undefined): string {
   return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
 }
 
-/** Compact, for table columns: 51 s, 2.1 min, 27 min, 4.3 h, 2.1 d. */
-export function durationCompact(ms: number | null | undefined): string {
-  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "–";
-  if (ms < 60_000) return `${Math.round(ms / 1000)} s`;
-  if (ms < 600_000) return `${(ms / 60_000).toFixed(1)} min`;
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)} min`;
-  if (ms < 86_400_000) return `${(ms / 3_600_000).toFixed(1)} h`;
-  return `${(ms / 86_400_000).toFixed(1)} d`;
-}
 
 /** Short form for axes: 30 s, 5 min, 2 h, 3 d. */
 export function durationTick(ms: number): string {
@@ -114,6 +105,8 @@ export function sampleText(r: Pick<MetricRow, "kind" | "unit" | "denominator" | 
   }
   const n = r.denominator_value;
   if (n === null) return "no sample";
+  // A per-model figure's denominator counts each model an execution used: pairs, not executions.
+  if (/\bused the model\b/.test(r.denominator)) return `${count(n)} model–execution ${n === 1 ? "pair" : "pairs"}`;
   const noun = r.denominator.replace(/^(tickets|visits|executions|rounds|slices|agents|waves)\b/, "$1");
   return `${count(n)} ${shortNoun(noun, n)}`;
 }

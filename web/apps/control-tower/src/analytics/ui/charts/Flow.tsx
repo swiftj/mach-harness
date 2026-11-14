@@ -172,6 +172,7 @@ function placeCounts(layout: FlowLayout): Map<string, { x: number; y: number; w:
   const placed: { x: number; y: number; w: number; h: number }[] = [];
   const meets = (b: { x: number; y: number; w: number; h: number }) => [...boxes, ...placed].some((o) => b.x < o.x + o.w && b.x + b.w > o.x && b.y < o.y + o.h && b.y + b.h > o.y);
   const byNode = new Map(layout.nodes.map((n) => [n.station, n] as const));
+  const topOfStations = Math.min(...layout.nodes.map((n) => n.y));
   for (const e of [...layout.edges].sort((p, q) => q.count - p.count)) {
     if (e.kind === "exit") continue;
     const w = String(e.count).length * DIGIT_W + 6;
@@ -188,10 +189,11 @@ function placeCounts(layout: FlowLayout): Map<string, { x: number; y: number; w:
       out.set(`${e.from}>${e.to}`, { x: box.x, y: box.y, w });
       continue;
     }
-    // On its label point; where that would be cut at the top of the drawing (an arc's apex), just under the stroke instead.
-    const above = { x: e.lx - w / 2, y: e.ly - LABEL_H + 3, w, h: LABEL_H };
-    const box = above.y >= 0 ? above : { ...above, y: e.ly + Math.max(2, e.weight / 2 + 1) };
-    if (meets(box)) continue;
+    // A move drawn as an arc over the stations has no clear ground for its count (it would sit on its own
+    // stroke or on the arcs beside it): the count is left out of the drawing; the hover card and the table keep it.
+    if (e.ly < topOfStations) continue;
+    const box = { x: e.lx - w / 2, y: e.ly - LABEL_H + 3, w, h: LABEL_H };
+    if (box.y < 0 || meets(box)) continue;
     placed.push(box);
     out.set(`${e.from}>${e.to}`, { x: box.x, y: box.y, w });
   }

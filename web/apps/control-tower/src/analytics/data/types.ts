@@ -519,7 +519,8 @@ export interface ConcurrencyReply {
   readonly to_ms: number;
   readonly bucket_ms: number;
   /** Per span kind, the most active in each bucket from `from_ms` (null where the reply has no bucket). */
-  readonly lines: readonly { readonly kind: string; readonly max: readonly (number | null)[] }[];
+  /** `recorded_max`: each bucket's peak counting only spans whose end is recorded (or still open); absent from an older observer. */
+  readonly lines: readonly { readonly kind: string; readonly max: readonly (number | null)[]; readonly recorded_max?: readonly (number | null)[] }[];
   /** Recorded limits, each with the span kinds it bounds (null: none of them). */
   readonly limits: readonly { readonly name: string; readonly value: number; readonly from_ms: number; readonly to_ms: number | null; readonly applies_to: readonly string[] | null }[];
   readonly complete: boolean | null;

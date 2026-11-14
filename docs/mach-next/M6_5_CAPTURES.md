@@ -363,3 +363,57 @@ Each defect names the capture that shows it. Letters refer to the table above.
   tie to the playhead beyond a caption. Time-based charts (delivery per day, active at once) use a lighter axis
   style than the Timeline's ruler and have no day or weekend banding. Analytics is a careful, honest report beside
   the two instruments. It does not yet feel like a third view of the same object.
+
+## Confirmation round on 8cfddaa
+
+Made on 2026-11-14 at 11:24–11:35 UTC by `capture65`. Observer and `mach-synth` were rebuilt with plain `go build` at
+`8cfddaa`; the web app was served by Vite from the same commit (clean tree). Projects were regenerated from that
+build with the same commands. A further project, "huge" (`--cells 1500 --waves 150 --max-parallel 32 --seed 2`:
+3,214 executions, 279,623 events, 19 Oct – 4 Nov), was generated to try to reach the histogram fallback. There are 36
+new frames, all `confirm-…` (Live Factory, except `confirm-medium-replay-…`, which are Historical replay), plus
+`recordings/analytics/final/confirm-R1-investigation-medium.mp4` (1:21; the earlier R1 is kept). Every process was
+stopped afterwards. The contact sheets were not rebuilt: none of their frames changed.
+
+### Must-fix
+
+| # | Item | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Percentiles | **Fixed** for every population seen. **The fallback could not be shown.** | Medium: C3 median 2 h 12 min (API p50 7,902,558 ms, `exact`) and C4 2 h 13 min (7,982,000), no longer identical (`confirm-medium-pct-flow`). Large: Pulse "Approval wait median 1 h 10 min" and What stands out "median of measured waits 1 h 10 min" are the same; the API's W3 p50 and the insight's median are both 4,188,993 ms (`confirm-large-pct-pulse-full`). Large C3 2 h 51 min = 10,239,367 ms. Medium approval wait 35 min = 2,070,657 ms. The popover says "Percentiles exact: nearest rank over every measured value" (`confirm-{medium,large}-pct-definition`). No project reached the histogram fallback: C1 on "huge" (12,185 visits) is still `exact`, because a cell is one UTC day and no day held 512 measured members. The "about …"/bounds wording was therefore **not seen** |
+| 2 | Review blockers | **Not fixed as asked** | Large Quality no longer says "No blocker findings", but it now shows a single row "unknown" with findings "–" and no coverage text. The chart's accessible text reads "unknown: null". The API's coverage says "blockers counted in the run record with no review finding in the lifecycle (no vote file read)": 124 on large, 21 on medium. The screen does not show this reason (`confirm-large-blockers`) |
+| 3 | Usage counts | **Fixed** | Medium notice "9 executions of 129 carry no recorded cost … 7 executions of 127 completed executions carry no per-model usage"; "9 executions with no recorded cost are not placed in any bin". API: K1 excluded 7 + 2 of 129; K2 coverage unit "completed executions", 120 of 127, 7 excluded. Large: 41 of 712 and 26 of 697 on screen; API K1 26 + 15 excluded, K2 671 of 697 (`confirm-{medium,large}-usage[-distribution]`) |
+| 4 | Timeline landing | **Not fixed for the first landing** | Three visits opened from Flow. The **first** one opened in a page never shows its row: SYN-042 build #1 (`confirm-medium-landing-1-build`, tracks at SLICE-008/003). In a second run, SYN-039 review #2 opened first also missed its row (`confirm-medium-landing-order2-3-review`). Every later landing in the same page shows the row with the visit highlighted: SYN-054 verify #3, SYN-039 review #2, SYN-042 build #1 (`confirm-medium-landing-2-verify`, `-3-review`, `-order2-1-build`). Back restored `#analytics?area=flow&station=…` each time (`confirm-medium-landing-back`). The new R1 shows the failing first landing at about 0:36–0:46 |
+| 5 | Replay consistency | **Fixed** | Caption: "Through 4 Nov, 00:00 UTC, the last whole UTC day before the playhead at 4 Nov, 09:29 UTC: every figure is counted to then; the rows behind a figure are cut exactly at the playhead". Pulse prose 79% of 24 merged; Quality "19 of 24 merged tickets passed first time … 79%"; "Recorded 25 finished tickets" = R5 n 25. Against the API at `as_of_ms`=1793784543000 (effective_to 4 Nov 00:00): T1 24 = 24; K1 $101.48 = 101.4785, 54 of 58; R5 4% = 1/25; C2 7.57 = 227/30; W3 median 35 min = 2,070,657 ms (n 3) (`confirm-medium-replay-pulse[-full]`, `confirm-medium-replay-quality-full`) |
+
+Item 6, whole history: **fixed**. Large reads "5 Oct – 1 Nov, 28 days"; the records end 1 Nov 10:09 UTC (stream last
+event 1 Nov 10:08, intake 1 Nov 10:00) (`confirm-large-whole-history`).
+
+### Should-fix (numbering as above)
+
+| # | Verdict | Evidence |
+|---|---|---|
+| 6 | Fixed | see item 6 |
+| 7 | Not fixed (not in this change) | Pulse prose 78% against What stands out 83.3% still sit side by side (confirm-R1 opening frames) |
+| 8 | Fixed | Sentence now "Recorded cost per execution: this metric is not recorded by model, so the model filter cannot be honoured."; the unstyled "Not read for this view" line is gone; "1 week" is singular (`confirm-spot-{1512,1100}-economics-model`, `confirm-medium-usage`) |
+| 9 | Not fixed | "n 331 executions that used the model" (medium), "n 1,846 executions …" (large): still model-execution pairs called executions (`confirm-large-usage`) |
+| 10 | Not fixed | "Tools refused –" with no reason; the freshness table's coverage "–" (`confirm-spot-1512-reliability-rows`, `confirm-large-whole-history`) |
+| 11 | Fixed | Parked rows read "SYN-004 gate, 2 Nov, 09:00 UTC, High risk", not cut at 1512 or 1100 (`confirm-spot-*-reliability-rows`) |
+| 12 | Could not be checked | Opportunities not captured in this round |
+| 13 | Fixed | "Counting only high-risk tickets. In the 9 days to 1 Nov …" (`confirm-spot-*-pulse-filtered`) |
+| 14 | Could not be checked | the opportunity Rows drawer was not opened in this round |
+| 15 | Fixed in Compare; **the same clipping remains in Quality** | Compare dots stay in their rows (`confirm-spot-*-compare-dots`). Quality's "Recorded cost per merged ticket, by rounds" swarm is still cut at the top of its plot (`confirm-large-blockers`) |
+| 16 | Partly fixed | On large, the top arcs' counts ("10", "7") still sit on the arc strokes (`confirm-spot-1100-flow-diagram`, `confirm-large-flow-full`) |
+| 17 | Not fixed | Ranking "6.9 min / 2.2 min" against the diagram "6 min 51 s / 2 min 13 s" (`confirm-large-flow-full`) |
+| 18 | Not checked | |
+| 19 | Not fixed (by design) | Model filter still blanks most of Economics (`confirm-spot-1512-economics-model`) |
+| 21 | Fixed | Work in parallel has weekend bands and a tick per day, also on Pulse's delivery chart (`confirm-spot-*-parallel`, `confirm-spot-*-pulse-filtered`) |
+
+### New in this round
+
+- **The 7-day preset shows 9 days**: on large, "7 days" reads "24 Oct – 1 Nov, 9 days" in the bar, the side panel and
+  the headline (`confirm-spot-1512-pulse-filtered`). Must fix: the preset's name and its window disagree.
+- **"Executions running 5 at most, limit 4"** on large: the panel's maximum is above the recorded `max_parallel`
+  (`confirm-spot-1512-parallel`). Either the 6-hour bucket counts executions that only touch at their edges, or
+  the data has 5. Engine should check; it reads as a breach of the limit.
+- **A literal "null"** in the blockers chart's accessible text ("unknown: null"), from item 2.
+- "Average judging rounds 1.30 — misses below 1.3" (large): correct on the unrounded 1.3035, but it reads as a
+  contradiction. Nice to have: show one more digit when the rounded value equals the target.

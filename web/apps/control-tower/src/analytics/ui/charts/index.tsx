@@ -620,6 +620,8 @@ export interface StepLine {
   readonly label: string;
   readonly counts: readonly number[];
   readonly limit: readonly { readonly from: number; readonly to: number; readonly value: number }[];
+  /** The peak to print and, when the drawn line rises above it (an inferred end), the upper bound beside it. */
+  readonly peak?: { readonly shown: number; readonly upTo: number | null };
 }
 
 /**
@@ -658,6 +660,7 @@ export function StepPanels({ lines, from, to, bucketMs }: { lines: readonly Step
         {lines.map((l, i) => {
           const top = i * (panelH + gap) + 4;
           const peak = Math.max(0, ...l.counts);
+          const shown = l.peak?.shown ?? peak;
           const scaleMax = Math.max(peak, ...l.limit.map((v) => v.value), 1);
           const yOf = (c: number) => top + panelH - (c / scaleMax) * panelH;
           const tone = l.kind === "execution" ? "var(--an-live)" : "var(--an-bar)";
@@ -668,7 +671,8 @@ export function StepPanels({ lines, from, to, bucketMs }: { lines: readonly Step
                 {l.label}
               </text>
               <text x={0} y={top + 28} style={{ ...SANS, fontSize: 11, fill: "var(--an-muted)" }}>
-                <tspan style={{ ...NUM, fill: "var(--an-ink)", fontWeight: 600 }}>{peak}</tspan> at most
+                <tspan style={{ ...NUM, fill: "var(--an-ink)", fontWeight: 600 }}>{shown}</tspan> at most
+                {l.peak?.upTo != null ? ` (up to ${l.peak.upTo})` : ""}
                 {l.limit.length ? (
                   <>
                     {", limit "}

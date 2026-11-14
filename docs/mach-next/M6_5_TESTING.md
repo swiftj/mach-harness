@@ -141,6 +141,7 @@ Without the `-ready` hook, readiness is the sheet on screen plus a short settle.
 | brush | the brushed window is read at one cursor and written to the address |
 | filters | Risk = high reaches every request; a chip clears it |
 | Rows | the row's entity opens in the Timeline selected, its interval (from `contributors`) inside `data-timeline-window`; `1` keeps it on the floor; Back restores Analytics |
+| fresh-page reveal | 10 fresh browser contexts: on Flow at build, the 1st, 2nd or 3rd visit link opens the Timeline and, within 10 s, the cell's ticket label is inside the tracks' viewport (below the ruler, above the bottom) |
 | deep links, keys | as in the Shell file, over the live source |
 | through the playhead | with the playhead held mid-history, every metrics request carries `to_ms`, and each readout equals the API at that `to_ms` (not the head) |
 | sideways, requests | as above |

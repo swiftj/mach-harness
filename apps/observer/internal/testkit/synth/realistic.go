@@ -248,6 +248,17 @@ func (c *cell) buildModel() string {
 	return "claude-sonnet-5-5"
 }
 
+// heldUntil is when an execution's place is free as the records show it. An execution whose
+// outcome is unknown writes no process result in the realistic profile; the first record that
+// closes it is the supervisor's outcome-unknown recovery (startSegment: x.end+40), so its place is
+// held until then. Every other execution frees its place when its process ends.
+func (w *world) heldUntil(x *execution) float64 {
+	if w.real() && x.seg.end == "unknown" && !math.IsInf(x.end, 1) {
+		return x.end + 40
+	}
+	return x.end
+}
+
 // realisticCost: a model's recorded cost for an execution, by the model and how long it ran.
 func (w *world) realisticCost(model string, x *execution) float64 {
 	hours := 0.0
@@ -321,7 +332,7 @@ func (g *gen) realisticTruth(e *Expected, done []*cell) {
 		if !in(x.claim) {
 			continue
 		}
-		end := x.end
+		end := w.heldUntil(x)
 		if math.IsInf(end, 1) || end > w.endT {
 			end = w.endT
 		}

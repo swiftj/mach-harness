@@ -545,6 +545,7 @@ export function readConcurrencyReply(data: unknown, source: AnalyticsSource, ask
   if (!(bucket > 0) || !(to > from)) throw new AnalyticsProtocolError("The concurrency reply has no usable range.");
   const n = Math.ceil((to - from) / bucket);
   const lines = new Map<string, (number | null)[]>();
+  const recorded = new Map<string, (number | null)[]>();
   const held = new Set<number>();
   for (const raw of arr(d.buckets)) {
     const b = obj(raw);
@@ -558,6 +559,11 @@ export function readConcurrencyReply(data: unknown, source: AnalyticsSource, ask
       if (max === null) continue;
       if (!lines.has(kind)) lines.set(kind, new Array<number | null>(n).fill(null));
       lines.get(kind)![i] = max;
+      const rec = num(obj(v).recorded_max);
+      if (rec !== null) {
+        if (!recorded.has(kind)) recorded.set(kind, new Array<number | null>(n).fill(null));
+        recorded.get(kind)![i] = rec;
+      }
     }
   }
   // Within a bucket the reply holds, a kind it does not list had none active: 0 is recorded there, not assumed elsewhere.
@@ -571,7 +577,11 @@ export function readConcurrencyReply(data: unknown, source: AnalyticsSource, ask
     if (!name || value === null || lf === null) continue;
     limits.push({ name, value, from_ms: lf, to_ms: num(l.to_ms), applies_to: Array.isArray(l.applies_to) ? strings(l.applies_to) : null });
   }
-  return { source, cursor: str(d.cursor), from_ms: from, to_ms: to, bucket_ms: bucket, lines: [...lines].map(([kind, max]) => ({ kind, max })), limits, complete: bool(d.complete) };
+  return { source, cursor: str(d.cursor), from_ms: from, to_ms: to, bucket_ms: bucket, lines: [...lines].map(([kind, max]) => {
+      const rec = recorded.get(kind);
+      // Where the bucket's peak is given, a recorded peak not given there is the same peak (no inferred end in it).
+      return rec ? { kind, max, recorded_max: max.map((m, i) => rec[i] ?? m) } : { kind, max };
+    }), limits, complete: bool(d.complete) };
 }
 
 const SOURCE_OF: readonly (readonly [RegExp, FreshnessSource])[] = [

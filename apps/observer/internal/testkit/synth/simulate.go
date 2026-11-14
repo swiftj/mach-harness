@@ -178,7 +178,7 @@ func (w *world) simulate() float64 {
 		// Claims against max_parallel.
 		running := 0
 		for _, x := range w.execs {
-			if x.claim <= t && t < x.end {
+			if x.claim <= t && t < w.heldUntil(x) {
 				running++
 			}
 		}

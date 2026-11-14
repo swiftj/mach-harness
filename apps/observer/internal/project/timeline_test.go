@@ -220,7 +220,7 @@ func TestConcurrencyAgainstAHandComputedCase(t *testing.T) {
 		lc("gate.evaluated", 30000, "T-6", "verify#1", 1).Data(map[string]any{"gate": "verify.start", "verdict": "passed"}),
 	)
 	b := Concurrency(s, feedtest.At(0), feedtest.At(40000), 10000, map[string]bool{"visit": true})
-	want := []Active{{2, 1.5, 0}, {2, 0.5, 0}, {1, 0.5, 0}, {}}
+	want := []Active{{2, 1.5, 0, 2}, {2, 0.5, 0, 2}, {1, 0.5, 0, 1}, {}}
 	if len(b) != 4 {
 		t.Fatalf("buckets %d", len(b))
 	}

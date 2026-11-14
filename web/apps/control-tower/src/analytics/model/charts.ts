@@ -495,3 +495,25 @@ export function compareWords(a: CohortSummary, b: CohortSummary): string {
   if (diff < 10) return `First-pass rates are within ${Math.max(diff, 1)} ${Math.max(diff, 1) === 1 ? "point" : "points"} of each other; with these sample sizes that is no recorded difference.`;
   return `${ra > rb ? a.label : b.label} passed first time more often in this window (${diff} points). This is an observed difference between groups of tickets, not a cause: the work in each group differed.`;
 }
+
+/**
+ * The peak of a "work at once" line against its recorded limit, in words. A peak above the limit is
+ * never shown alone: where the observer gives the peak on recorded ends, that is the figure and the
+ * higher one is said as an upper bound (an execution whose end was not recorded, counted to the latest
+ * it can have ended); without it, the excess is said to include inferred ends.
+ */
+export function peakWords(counts: readonly number[], recorded: readonly number[] | undefined, limit: number | null): { readonly shown: number; readonly upTo: number | null; readonly note: string | null } {
+  const peak = Math.max(0, ...counts);
+  if (limit === null || peak <= limit) return { shown: peak, upTo: null, note: null };
+  if (recorded && recorded.length) {
+    const rec = Math.max(0, ...recorded);
+    if (rec < peak)
+      return {
+        shown: rec,
+        upTo: peak,
+        note: `${rec} at most on recorded ends (limit ${limit}); up to ${peak} if an execution whose end was not recorded ran until its outcome was marked unknown.`,
+      };
+    return { shown: peak, upTo: null, note: `${peak} at once on recorded ends, above the recorded limit of ${limit}.` };
+  }
+  return { shown: peak, upTo: null, note: `${peak} at most, above the recorded limit of ${limit}: the count can include executions whose end was not recorded, counted to the latest time they can have ended.` };
+}

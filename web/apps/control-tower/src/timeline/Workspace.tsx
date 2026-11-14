@@ -458,6 +458,12 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   /** A reveal asked for by a lens's Frame: its rows are brought into view, the framed window is not panned. */
   const frameOnly = useRef<string | null>(null);
   const ownSelection = useRef<string | null>(null);
+  /**
+   * The row a reveal brought into view, kept in view for a few seconds while the first mount still
+   * changes the rows above it (the default expansion, rows that arrive late): until the person scrolls,
+   * opens or closes a row, or another reveal begins.
+   */
+  const anchor = useRef<{ trackId: string; until: number } | null>(null);
   const [revealTick, setRevealTick] = useState(0);
 
   const drawnRef = useRef(win);
@@ -480,6 +486,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   const onScroll = useCallback(
     (y: number) => {
       pendingReveal.current = null;
+      anchor.current = null;
       setScrollTop(Math.max(0, Math.min(maxScroll, y)));
     },
     [maxScroll],
@@ -487,6 +494,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   const onToggle = useCallback(
     (id: string) => {
       touchedFor(store).add(store.getState().timeline.grouping);
+      anchor.current = null;
       const current = store.getState().timeline.expanded;
       store.setTimelineView({ expanded: current.includes(id) ? current.filter((x) => x !== id) : [...current, id] });
     },
@@ -641,7 +649,19 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
   }, [focusNonce, store]);
   useEffect(() => {
     const ref = pendingReveal.current;
-    if (!ref) return;
+    if (!ref) {
+      // A row revealed moments ago: kept in view while rows above it are still being added.
+      const a = anchor.current;
+      if (!a) return;
+      if (Date.now() > a.until) {
+        anchor.current = null;
+        return;
+      }
+      const row = layout.rowOf(a.trackId);
+      if (row && tracksH > 0 && (row.y < top || row.y + row.height > top + tracksH)) setScrollTop(Math.max(0, Math.min(maxScroll, row.y - tracksH / 3)));
+      return;
+    }
+    anchor.current = null;
     const tracks = tree.tracksOf(ref);
     const trackId = tracks[0];
     if (!trackId) {
@@ -690,6 +710,7 @@ export function TimelineWorkspace({ data: given }: { readonly data?: TimelineDat
     }
     // The window's spans still loading can add rows above this one and move it: stay pending until they are in.
     if (fetchedLoading) return;
+    anchor.current = { trackId, until: Date.now() + 5000 };
     pendingReveal.current = null;
     frameOnly.current = null;
   }, [tree, layout, selection, focusNonce, revealTick, data, store, whole, win, top, tracksH, maxScroll, fetchedLoading]);

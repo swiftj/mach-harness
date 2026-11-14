@@ -6,8 +6,8 @@
  */
 import { useMemo } from "react";
 import { contributorKey, groupedKey, type Station } from "../../contract";
-import { bottleneckRanking, groupOf, histogramBins, transitionKind, type StationLoad } from "../../model/charts";
-import { count, durationCompact, durationText, p50Text, p90Text, pct, plural } from "../../model/format";
+import { bottleneckRanking, groupOf, histogramBins, peakWords, transitionKind, type StationLoad } from "../../model/charts";
+import { count, durationText, p50Text, p90Text, pct, plural } from "../../model/format";
 import { durationShows } from "../../model/sample";
 import { DurationHistogram, LogNote, RangeRows, RankTable, StepPanels } from "../charts";
 import { FlowDiagram, STATION_WORDS, type FlowStationFacts } from "../charts/Flow";
@@ -104,8 +104,8 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
                   { key: "station", label: "Station", sort: (l) => l.station, cell: (l) => STATION_WORDS[l.station], width: "22%" },
                   { key: "total", label: "Total", sort: (l) => l.totalMs, cell: (l) => durationText(l.totalMs), bar: { value: (l) => l.totalMs } },
                   { key: "visits", label: "Visits", num: true, sort: (l) => l.visits, cell: (l) => count(l.visits) },
-                  { key: "p50", label: "Median", num: true, sort: (l) => l.p50, cell: (l) => durationCompact(l.p50) },
-                  { key: "mean", label: "Mean", num: true, sort: (l) => (l.visits ? l.totalMs / l.visits : null), cell: (l) => durationCompact(l.visits ? l.totalMs / l.visits : null) },
+                  { key: "p50", label: "Median", num: true, sort: (l) => l.p50, cell: (l) => p50Text(groupOf(c1, l.station)) },
+                  { key: "mean", label: "Mean", num: true, sort: (l) => (l.visits ? l.totalMs / l.visits : null), cell: (l) => durationText(l.visits ? l.totalMs / l.visits : null) },
                 ]}
               />
             </ChartFrame>
@@ -141,22 +141,27 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
 
       <section className="an-section">
         <SectionHead title="Work in parallel" question="How much ran at once, each on its own scale, against the recorded limit." />
-        {s.concurrency ? (
+        {s.concurrency ? (() => {
+          const limitV = s.concurrency.limits.length ? Math.min(...s.concurrency.limits.map((x) => x.value)) : null;
+          const peaks = new Map(s.concurrency.lines.map((l) => [l.kind, l.kind === "execution" ? peakWords(l.counts, l.recorded, limitV) : peakWords(l.counts, undefined, null)] as const));
+          const execNote = peaks.get("execution")?.note ?? null;
+          return (
           <ChartFrame
             chart="flow-parallel"
             title="Active at once"
-            summary={s.concurrency.lines.map((l) => `${l.kind}: at most ${Math.max(0, ...l.counts)}`).join("; ")}
-            table={{ columns: [{ label: "What ran" }, { label: "At most at once", num: true }, { label: "Recorded limit" }], rows: s.concurrency.lines.map((l) => [l.kind === "execution" ? "Executions running" : l.kind === "visit" ? "Cells in a station" : "Agents working", count(Math.max(0, ...l.counts)), l.kind === "execution" && s.concurrency!.limits.length ? [...new Set(s.concurrency!.limits.map((x) => x.value))].join(" then ") : "not recorded"]) }}
-            foot={`The most active at once in each ${durationText(s.concurrency.bucket_ms)} bucket, counted from recorded spans. The dashed rule is the Factory's recorded max_parallel, which counts executions; it is not inferred from activity, and the number of events is not a workload.`}
+            summary={`${s.concurrency.lines.map((l) => `${l.kind}: at most ${peaks.get(l.kind)!.shown}${peaks.get(l.kind)!.upTo !== null ? ` (up to ${peaks.get(l.kind)!.upTo})` : ""}`).join("; ")}${execNote ? `. ${execNote}` : ""}`}
+            table={{ columns: [{ label: "What ran" }, { label: "At most at once", num: true }, { label: "Recorded limit" }], rows: s.concurrency.lines.map((l) => [l.kind === "execution" ? "Executions running" : l.kind === "visit" ? "Cells in a station" : "Agents working", `${count(peaks.get(l.kind)!.shown)}${peaks.get(l.kind)!.upTo !== null ? ` (up to ${peaks.get(l.kind)!.upTo})` : ""}`, l.kind === "execution" && s.concurrency!.limits.length ? [...new Set(s.concurrency!.limits.map((x) => x.value))].join(" then ") : "not recorded"]) }}
+            foot={`The most active at once in each ${durationText(s.concurrency.bucket_ms)} bucket, counted from recorded spans. The dashed rule is the Factory's recorded max_parallel, which counts executions; it is not inferred from activity, and the number of events is not a workload.${execNote ? ` ${execNote}` : ""}`}
           >
             <StepPanels
               from={s.window.from_ms}
               to={s.window.to_ms}
               bucketMs={s.concurrency.bucket_ms}
-              lines={s.concurrency.lines.map((l) => ({ kind: l.kind, label: l.kind === "execution" ? "Executions running" : l.kind === "visit" ? "Cells in a station" : "Agents working", counts: l.counts, limit: l.kind === "execution" ? s.concurrency!.limits.map((x) => ({ from: x.from_ms, to: x.to_ms, value: x.value })) : [] }))}
+              lines={s.concurrency.lines.map((l) => ({ kind: l.kind, label: l.kind === "execution" ? "Executions running" : l.kind === "visit" ? "Cells in a station" : "Agents working", counts: l.counts, limit: l.kind === "execution" ? s.concurrency!.limits.map((x) => ({ from: x.from_ms, to: x.to_ms, value: x.value })) : [], peak: peaks.get(l.kind)! }))}
             />
           </ChartFrame>
-        ) : (
+          );
+        })() : (
           <NotRecorded title="Concurrency not served" what="This source does not serve counts of work active at once." why="Counts come from the observer's concurrency reply." state="unavailable" />
         )}
       </section>

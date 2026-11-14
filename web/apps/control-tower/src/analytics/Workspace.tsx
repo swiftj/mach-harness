@@ -121,7 +121,13 @@ export function AnalyticsWorkspace() {
   const area = check.ok ? check.area : "live";
 
   const asOfMs = area === "simulation" ? null : asOf.toMs;
-  const newestMs = newestDay === null ? null : newestDay * DAY_MS;
+  // The newest event the observer applied (from its replies) decides where a preset ends; until a reply says, the scene log's newest.
+  const [observedDay, setObservedDay] = useState<number | null>(() => {
+    const t = memoOf(store).shared.lastEventMs;
+    return t === null ? null : Math.floor(t / DAY_MS);
+  });
+  const newestDayUsed = observedDay ?? newestDay;
+  const newestMs = newestDayUsed === null ? null : newestDayUsed * DAY_MS;
   const wq = data ? windowQuery(state.window, { provider: data.source, asOfMs, newestMs, fixtureEnd: FIXTURE_END }) : null;
   const key = data && wq ? viewKey(data.source, wq, state.filters, asOfMs) : "none";
 
@@ -145,7 +151,7 @@ export function AnalyticsWorkspace() {
     return insightId !== null && !p.insights ? { ...p, insights: true } : p;
   }, [state.area, state.pick, insightId]);
   const model = state.area === "economics" ? state.filters.model : null;
-  const loadKey = `${key}|${newestDay ?? ""}|${refresh}|${state.area}|${state.pick ? `${state.pick.dim}:${state.pick.value}` : ""}|${model ?? ""}|${insightId !== null ? "i" : ""}`;
+  const loadKey = `${key}|${newestDayUsed ?? ""}|${refresh}|${state.area}|${state.pick ? `${state.pick.dim}:${state.pick.value}` : ""}|${model ?? ""}|${insightId !== null ? "i" : ""}`;
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   useEffect(() => {
     if (!session || !data || !wq || !wq.ok || !check.ok) return;
@@ -167,6 +173,7 @@ export function AnalyticsWorkspace() {
           setRefresh((n) => n + 1);
           return;
         }
+        if (r.lastEventMs != null && Math.floor(r.lastEventMs / DAY_MS) !== observedDay) setObservedDay(Math.floor(r.lastEventMs / DAY_MS));
         setLoaded({ key: loadKey, data: r.data, insights: r.insights, configs: r.configs, cursor: r.cursor, metricsExact: r.asOf ? r.asOf.exact : null, widened: r.asOf?.widened ?? false, dayCut: r.dayCut ?? null, notes: r.notes });
       },
       (e: unknown) => {

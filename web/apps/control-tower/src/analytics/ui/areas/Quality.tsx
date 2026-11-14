@@ -13,6 +13,7 @@ import { count, dayText, pct, plural, SMALL_SAMPLE, targetText, usd, valueText }
 import { MIN_TREND_MEMBERS, MIN_TREND_PERIODS, shareText, verdictAllowed } from "../../model/sample";
 import { periodSeries } from "../../model/series";
 import { Bullet, Columns, PartsBar, RankTable } from "../charts";
+import { unobserved } from "../../model/unobserved";
 import { AreaFrame, ChartFrame, Chip, Definition, Key, Mark, NotRecorded, Readout, rowMissing, SectionHead, TooFew, useAnalytics, useMarkNav, useTip, useWidth, verdictWords } from "../kit";
 import type { Pick, QualityProps } from "../types";
 import { NothingYet } from "./shared";
@@ -23,19 +24,6 @@ export function Quality(props: QualityProps) {
       {() => <QualityBody pick={props.pick} setPick={props.onPick} />}
     </AreaFrame>
   );
-}
-
-/**
- * Why a count figure observed no member although members are known by exclusion (the observer's
- * coverage says so): its value is null, or members were excluded with a reason. Null when "none" is true.
- */
-function unobserved(row: MetricRow | undefined): string | null {
-  if (!row) return null;
-  const excluded = (row.coverage.excluded ?? []).filter((e) => e.count > 0);
-  if (row.value !== null && !excluded.length) return null;
-  if (row.value !== null && (row.numerator_value ?? 0) > 0) return null;
-  const parts = excluded.map((e) => `${e.count} ${e.reason}`);
-  return parts.length ? `Not counted here: ${parts.join("; ")}.` : row.null_reason ? `${row.null_reason.charAt(0).toUpperCase()}${row.null_reason.slice(1)}.` : null;
 }
 
 const PICK_WORDS: Readonly<Record<string, string>> = { target_kind: "Failed check", rule: "Blocker rule" };
@@ -108,7 +96,7 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
       <div className="an-grid-2">
         <section className="an-section" id="failures">
           <SectionHead title="Verification failures by kind" question="Failed checks (Q4), grouped as the observe station groups them." />
-          {q4.length === 0 && unobserved(t.Q4) ? (
+          {(q4.length === 0 || t.Q4?.value === null) && unobserved(t.Q4) ? (
             <NotRecorded title="Failed checks not observed" what={unobserved(t.Q4)!} why="Missing is not zero: these figures are not counted as none." state="not-recorded" compact />
           ) : (
             <CategoryTable groups={q4} chart="quality-failures" caption="Failed checks by kind" noun="failed check" selected={active?.dim === "target_kind" ? active.value : null} onPick={(k) => toggle("target_kind", k)} mono empty="No failed checks in this window." />
@@ -116,7 +104,7 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
         </section>
         <section className="an-section" id="blockers">
           <SectionHead title="Review blockers by rule" question="Blocker findings (R2), reconstructed from review rounds." />
-          {r2.length === 0 && unobserved(t.R2) ? (
+          {(r2.length === 0 || t.R2?.value === null) && unobserved(t.R2) ? (
             <NotRecorded title="Blocker findings not observed" what={unobserved(t.R2)!} why="Missing is not zero: the run records hold blockers this figure could not read, so it does not say none." state="not-recorded" compact />
           ) : (
             <CategoryTable groups={r2} chart="quality-blockers" caption="Blocker findings by rule" noun="blocker" selected={active?.dim === "rule" ? active.value : null} onPick={(k) => toggle("rule", k)} empty="No blocker findings in this window." />
@@ -150,7 +138,7 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
 function CategoryTable({ groups, chart, caption, noun, selected, onPick, mono = false, empty }: { groups: readonly MetricGroup[]; chart: string; caption: string; noun: string; selected: string | null; onPick(k: string): void; mono?: boolean; empty: string }) {
   if (groups.length === 0) return <p className="text-body-sm text-ink-muted">{empty}</p>;
   return (
-    <ChartFrame chart={chart} title={caption} question="Select a row to narrow the paths and the cost chart to the tickets it was recorded on." summary={groups.map((g) => `${g.key}: ${g.value}`).join(", ")} table={{ columns: [{ label: mono ? "Check" : "Rule" }, { label: "Findings", num: true }], rows: groups.map((g) => [g.key, count(g.value)]) }}>
+    <ChartFrame chart={chart} title={caption} question="Select a row to narrow the paths and the cost chart to the tickets it was recorded on." summary={groups.map((g) => `${g.key}: ${g.value === null ? "not counted" : g.value}`).join(", ")} table={{ columns: [{ label: mono ? "Check" : "Rule" }, { label: "Findings", num: true }], rows: groups.map((g) => [g.key, count(g.value)]) }}>
       <RankTable<MetricGroup>
         caption={caption}
         rows={groups}
@@ -320,7 +308,8 @@ function QualityCost({ runs: all }: { runs: readonly RunRecord[] }) {
   if (known.length < SMALL_SAMPLE) return <TooFew what="merged tickets with a recorded cost" n={known.length} need={SMALL_SAMPLE} periods={1} />;
   const left = 74;
   const right = 14;
-  const rowH = 56;
+  // Tall enough for the strip's three rows of dots each way plus a dot's radius: no dot is cut or spills into the next row.
+  const rowH = Math.ceil(2 * (3 * (3.4 * 2 + 1) + 3.4)) + 8;
   const rows = [1, 2, 3];
   const ticks = niceTicks(Math.max(...known.map((k) => k.cost)), Math.max(2, Math.min(4, Math.floor((width - left) / 90))));
   const x = linear(0, ticks[ticks.length - 1]!, left, width - right);

@@ -121,7 +121,7 @@ function EndingRows({ chart, title, rows, compact = false, selected, onPick }: {
       chart={chart}
       title={title}
       summary={rows.map((r) => `${r.label}: ${r.num ?? "not recorded"} of ${r.den ?? "–"} ${r.over}`).join("; ")}
-      table={{ columns: [{ label: "Ending" }, { label: "Count", num: true }, { label: "Of", num: true }, { label: "Base" }, { label: "Share", num: true }, { label: "Recorded as" }], rows: rows.map((r) => [r.label, count(r.num), count(r.den), r.over, r.num !== null && r.den ? shareText(r.num, r.den) : "–", r.what]) }}
+      table={{ columns: [{ label: "Ending" }, { label: "Count", num: true }, { label: "Of", num: true }, { label: "Base" }, { label: "Share", num: true }, { label: "Recorded as" }], rows: rows.map((r) => [r.label, r.num === null ? "not recorded" : count(r.num), count(r.den), r.over, r.num !== null && r.den ? shareText(r.num, r.den) : "not computed", r.what]) }}
       foot="Each bar is a share of its own base, from 0 to 100%; the bases differ, so the bars are not parts of one total."
     >
       <BarRows
@@ -137,8 +137,8 @@ function EndingRows({ chart, title, rows, compact = false, selected, onPick }: {
             key: r.key,
             label: r.label,
             value: share,
-            valueText: share === null ? "–" : shareText(r.num!, r.den!).includes(" of ") ? shareText(r.num!, r.den!) : `${shareText(r.num!, r.den!)} (${count(r.num)} of ${count(r.den)})`,
-            card: { title: r.label, rows: [["count", count(r.num)], ["of", `${count(r.den)} ${r.over}`], ["share of its base", r.num !== null && r.den ? shareText(r.num, r.den) : "–"]], foot: `Recorded as ${r.what}.` },
+            valueText: share === null ? (r.num === null ? "not recorded" : "no base to share over") : shareText(r.num!, r.den!).includes(" of ") ? shareText(r.num!, r.den!) : `${shareText(r.num!, r.den!)} (${count(r.num)} of ${count(r.den)})`,
+            card: { title: r.label, rows: [["count", r.num === null ? "not recorded" : count(r.num)], ["of", `${count(r.den)} ${r.over}`], ["share of its base", r.num !== null && r.den ? shareText(r.num, r.den) : "not computed"]], foot: r.num === null ? `Not recorded: ${(r.row?.status_reason ?? r.row?.null_reason ?? "this source records no such event").replace(/^not (recorded|available):\s*/, "")}.` : `Recorded as ${r.what}.` },
             tone: r.tone,
           };
         })}

@@ -193,10 +193,10 @@ const CONTRACT_LINES = ["execution", "visit", "agent"] as const;
  * limits are those bounding executions (`max_parallel`), an open end drawn to the reply's end.
  */
 export function toContractConcurrency(c: ConcurrencyReply): ConcurrencySeries {
-  const lines: { kind: (typeof CONTRACT_LINES)[number]; counts: number[] }[] = [];
+  const lines: { kind: (typeof CONTRACT_LINES)[number]; counts: number[]; recorded?: number[] }[] = [];
   for (const kind of CONTRACT_LINES) {
     const line = c.lines.find((l) => l.kind === kind);
-    if (line && line.max.every((x) => x !== null)) lines.push({ kind, counts: line.max as number[] });
+    if (line && line.max.every((x) => x !== null)) lines.push({ kind, counts: line.max as number[], ...(line.recorded_max && line.recorded_max.every((x) => x !== null) ? { recorded: line.recorded_max as number[] } : {}) });
   }
   const limits = c.limits.filter((l) => l.applies_to?.includes("execution")).map((l) => ({ from_ms: l.from_ms, to_ms: l.to_ms ?? c.to_ms, value: l.value }));
   return { bucket_ms: c.bucket_ms, from_ms: c.from_ms, lines, limits };

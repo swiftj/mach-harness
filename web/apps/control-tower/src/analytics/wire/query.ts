@@ -76,9 +76,12 @@ export function windowQuery(w: AnalyticsWindow, input: WindowInput): WindowQuery
   }
   if (w === "all") return { ok: true, fromMs: null, toMs: null, cut: false };
   if (typeof w === "string") {
+    // The last N whole UTC days ending with the day of the newest recorded event (or of the playhead),
+    // asked with both ends so the period the label states is the period the observer counts.
     const end = input.asOfMs ?? input.newestMs;
     if (end === null) return { ok: true, fromMs: null, toMs: null, cut: false };
-    return { ok: true, fromMs: startOfDay(end) + DAY_MS - PRESET_DAYS[w] * DAY_MS, toMs: null, cut: false };
+    const last = startOfDay(end) + DAY_MS;
+    return { ok: true, fromMs: last - PRESET_DAYS[w] * DAY_MS, toMs: input.asOfMs !== null ? null : last, cut: false };
   }
   if (input.asOfMs !== null && w.from >= input.asOfMs) return { ok: false, reason: "The chosen period begins after the playhead: nothing in it had happened yet. Choose an earlier period, or move the playhead." };
   if (input.asOfMs !== null && w.to > input.asOfMs) return { ok: true, fromMs: w.from, toMs: input.asOfMs, cut: true };

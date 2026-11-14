@@ -127,7 +127,7 @@ function Lead() {
   } else {
     body = (
       <>
-        In the {days} days to {dayText(s.window.to_ms - 1)} {rowMissing(t.T1) ? <>no merges are recorded (no cell kept a lifecycle log), but</> : <>the Factory merged <Num row={t.T1} label="Tickets merged">{count(merged)}</Num> tickets, and</>} <Num row={t.T2} label="Slices integrated">{count(integrated)}</Num> product slices were integrated. {t.Q2 && t.Q2.value !== null ? <><Num row={t.Q2}>{valueText(t.Q2) ?? "–"}</Num> of merged tickets passed verification and review first time{verdictAllowed(t.Q2.denominator_value) ? ", against the observe station's target of above 85%" : ""}. </> : null}
+        In the {days} days to {dayText(s.window.to_ms - 1)} {rowMissing(t.T1) ? <>no merges are recorded (no cell kept a lifecycle log), but</> : <>the Factory merged <Num row={t.T1} label="Tickets merged">{count(merged)}</Num> tickets, and</>} <Num row={t.T2} label="Slices integrated">{count(integrated)}</Num> product slices were integrated. {t.Q2 && t.Q2.value !== null ? <><Num row={t.Q2}>{valueText(t.Q2) ?? "–"}</Num> of the {count(t.Q2.denominator_value)} merged tickets with a run record in these {days} days passed verification and review first time{verdictAllowed(t.Q2.denominator_value) ? ", against the observe station's target of above 85%" : ""}. </> : null}
         {t.K1 && !rowMissing(t.K1) ? (
           <>
             Executions recorded <Num row={t.K1} label="Recorded total">{usd(t.K1.numerator_value)}</Num> of cost{noCost > 0 ? <>; {count(noCost)} of {count(t.K1.coverage.of ?? 0)} carried none, so that total is a lower bound</> : null}.
@@ -505,7 +505,7 @@ function Coverage() {
                 {events ? <td className="an-num">{f.last_event_ms === null ? <span className="text-ink-subtle">none</span> : clockText(f.last_event_ms)}</td> : null}
                 {reads ? <td className="an-num">{f.last_read_ms == null ? <span className="text-ink-subtle">not read</span> : clockText(f.last_read_ms)}</td> : null}
                 <td className="num">
-                  <CoverageBar share={f.coverage.share} text={f.coverage.share === null ? "–" : `${f.coverage.covered} of ${f.coverage.of}`} />
+                  <CoverageBar share={f.coverage.share} text={f.coverage.share === null ? "not tracked" : `${f.coverage.covered} of ${f.coverage.of}`} title={f.coverage.share === null ? (f.coverage.reason ?? "coverage is not tracked for this source") : undefined} />
                 </td>
                 <td className="text-caption text-ink-subtle">{f.note ?? ""}</td>
               </tr>
@@ -517,7 +517,9 @@ function Coverage() {
   );
 }
 
-function CoverageBar({ share, text }: { share: number | null; text: string }) {
+function CoverageBar({ share, text, title }: { share: number | null; text: string; title?: string | undefined }) {
+  // No share: the words say why, and no empty track is drawn that could read as 0%.
+  if (share === null) return <span className="text-caption text-ink-subtle" title={title}>{text}</span>;
   return (
     <span className="inline-flex items-center justify-end gap-2">
       <span className="an-num text-caption">{text}</span>

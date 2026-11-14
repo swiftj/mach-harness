@@ -117,7 +117,13 @@ test("the loader labels a snapshot by its source", async () => {
 test("periods: presets end with the newest record's day (or the playhead's); intervals are cut at the playhead", () => {
   const newest = Date.UTC(2026, 10, 12, 6);
   const base = { provider: "observer", asOfMs: null, newestMs: newest, fixtureEnd: FIXTURE_END };
-  assert.deepEqual(Q.windowQuery("7d", base), { ok: true, fromMs: Date.UTC(2026, 10, 6), toMs: null, cut: false });
+  // The last 7 whole UTC days ending with the newest event's day (6..12 Nov), asked with both ends.
+  assert.deepEqual(Q.windowQuery("7d", base), { ok: true, fromMs: Date.UTC(2026, 10, 6), toMs: Date.UTC(2026, 10, 13), cut: false });
+  for (const [w, n] of [["7d", 7], ["14d", 14], ["28d", 28]]) {
+    const q = Q.windowQuery(w, base);
+    assert.equal((q.toMs - q.fromMs) / D, n, `${w} spans ${n} whole days`);
+    assert.equal(q.toMs, Date.UTC(2026, 10, 13), `${w} ends with the newest event's day`);
+  }
   assert.deepEqual(Q.windowQuery("all", base), { ok: true, fromMs: null, toMs: null, cut: false });
   assert.deepEqual(Q.windowQuery("7d", { ...base, newestMs: null }), { ok: true, fromMs: null, toMs: null, cut: false });
   const playhead = Date.UTC(2026, 9, 31, 2, 26, 40);
@@ -394,4 +400,35 @@ test("under a playhead, finished tickets are cut at the metrics' midnight, so a 
   assert.equal(r.dayCut, mid);
   assert.deepEqual(r.data.value.runs.map((x) => x.ticket_id), ["T0", "T1"], "closed before the midnight only");
   assert.match(Q.asOfWords({ area: "replay", asOfMs: mid + 7_200_000, window: "all", metricsExact: false, widened: false, cut: false, dayCut: mid }, (t) => new Date(t).toISOString()), /^Through .*T00:00:00.000Z, the last whole UTC day before the playhead/);
+});
+
+// ------------------------------------------------------------------------------------ last fix round
+
+const U = await import("../src/analytics/model/unobserved.ts");
+const C = await import("../src/analytics/model/charts.ts");
+
+test("review blockers the run records hold but no review finding names: not observed, in words, never null or none", () => {
+  const r2 = { value: null, numerator_value: 0, null_reason: "none of the known members is counted by this metric's source; the coverage says why", coverage: { covered: 0, of: 148, share: 0, excluded: [{ reason: "blockers counted in the run record with no review finding in the lifecycle (no vote file read)", count: 148 }] } };
+  const text = U.unobserved(r2);
+  assert.equal(text, "148 blockers are counted in run records, with no review finding in the lifecycle to say which rule (no vote file was read).");
+  assert.doesNotMatch(text, /null|none/i);
+  // A real zero (counted, nothing excluded) stays a zero.
+  assert.equal(U.unobserved({ value: 0, numerator_value: 0, null_reason: null, coverage: { covered: 10, of: 10, share: 1, excluded: [] } }), null);
+});
+
+test("work at once above its recorded limit is never shown alone", () => {
+  // The observer's recorded peak is 4 (limit 4); the drawn line reaches 5 through an inferred end.
+  const p = C.peakWords([2, 5, 3], [2, 4, 3], 4);
+  assert.equal(p.shown, 4);
+  assert.equal(p.upTo, 5);
+  assert.match(p.note, /^4 at most on recorded ends \(limit 4\); up to 5 if an execution whose end was not recorded/);
+  // Without recorded peaks, the excess is said, not hidden.
+  assert.match(C.peakWords([5], undefined, 4).note, /above the recorded limit of 4/);
+  assert.deepEqual(C.peakWords([3, 4], [3, 4], 4), { shown: 4, upTo: null, note: null });
+});
+
+test("a per-model figure's sample is model–execution pairs, and durations have one format", () => {
+  assert.equal(F.sampleText({ kind: "mean", unit: "tokens", denominator: "executions that used the model", numerator_value: 1, denominator_value: 1846 }), "1,846 model–execution pairs");
+  assert.equal(F.durationText(411_000), "6 min 51 s");
+  assert.equal(F.durationCompact, undefined);
 });
