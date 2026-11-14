@@ -5,6 +5,7 @@
 #   3. check the build can run under the observer's Content-Security-Policy,
 #   4. copy it (without source maps) over internal/webui/dist and build the binary,
 #   5. put the committed placeholder back, so the working tree is unchanged.
+# VERSION=<release> is stamped into the binary (its --version); without it the binary says "dev".
 # Output: bin/mach-observer (override with OUT=...). Without this script (`make host`), the binary
 # serves a placeholder page that says it was built without the app; the API is the same.
 set -eu
@@ -57,5 +58,5 @@ cp -R "$APP_DIST" "$DIST"
 find "$DIST" -name '*.map' -type f -exec rm -f {} +
 cd "$HERE"
 mkdir -p "$(dirname "$OUT")"
-go build -trimpath -o "$OUT" ./cmd/mach-observer
+go build -trimpath -ldflags "-X main.version=${VERSION:-dev}" -o "$OUT" ./cmd/mach-observer
 echo "built $OUT ($(du -k "$OUT" | cut -f1) KiB) with the Control Tower from $APP_DIST, no source maps"

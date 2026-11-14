@@ -18,7 +18,9 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -60,6 +62,21 @@ STUDIO_MAX_BYTES = 200 * 1024 * 1024
 TOWER_DEST = ".factory/bin/mach-observer"
 TOWER_LOCAL_BUILD = "apps/observer/bin/mach-observer"
 SKIP_WORDS = ("skip", "off", "0", "no")
+# The oldest Python the scripts are written for (the skills' "compatibility: python3 >= 3.8").
+MIN_PYTHON = (3, 8)
+# After the checksum, a program from the project's GitHub release is checked for build provenance
+# with the GitHub CLI, when it is installed and signed in. MACH_REQUIRE_PROVENANCE=1 refuses a program
+# whose provenance cannot be verified. A release fetched from MACH_STUDIO_URL / MACH_TOWER_URL (a
+# mirror or a local folder) carries no attestation, so it is checked against its checksum only.
+REQUIRE_PROVENANCE_ENV = "MACH_REQUIRE_PROVENANCE"
+RELEASE_WORKFLOW = ".github/workflows/release.yml"
+GH_AUTH_REQUIRED = 4  # gh's exit status when it is not signed in
+GH_TIMEOUT = 120
+NO_GH = "GitHub CLI not available"
+# The same words as Product Studio's (skills/product-studio/scripts/studio.py GIT_MISSING).
+GIT_MISSING = ("MACH needs Git, and Git is not installed on this computer. On a Mac, open Terminal, run  xcode-select --install  "
+               "and click Install in the window that appears (it installs Apple's command line tools, which include Git); "
+               "on Linux, install the 'git' package. Then run this again.")
 
 
 class Program(NamedTuple):
@@ -156,15 +173,24 @@ def program_asset(program: Program) -> Optional[str]:
     return f"{program.name}-{system}-{machine}" if f"{system}-{machine}" in STUDIO_BUILDS else None
 
 
+def program_override(program: Program) -> Optional[str]:
+    """The environment variable that points this program's release somewhere else, if one is set."""
+    return next((name for name in (program.url_env, STUDIO.url_env) if os.environ.get(name)), None)
+
+
+def release_repo() -> str:
+    """The GitHub repository whose release the programs come from (MACH_REPO, as install.sh uses it)."""
+    return os.environ.get("MACH_REPO") or STUDIO_REPO
+
+
 def program_base(program: Program, version: str) -> str:
     """Where a version's release files are. MACH_STUDIO_URL (or MACH_TOWER_URL for the Control Tower)
     replaces it: a mirror, or a folder as file://... The Control Tower falls back to MACH_STUDIO_URL,
     since both programs are files of the same release."""
-    override = os.environ.get(program.url_env) or os.environ.get(STUDIO.url_env)
+    override = program_override(program)
     if override:
-        return override.rstrip("/")
-    repo = os.environ.get("MACH_REPO") or STUDIO_REPO
-    return f"https://github.com/{repo}/releases/download/v{version}"
+        return os.environ[override].rstrip("/")
+    return f"https://github.com/{release_repo()}/releases/download/v{version}"
 
 
 def studio_asset() -> Optional[str]:
@@ -198,36 +224,95 @@ def fetch(url: str) -> bytes:
     return data
 
 
-def download_program(program: Program, version: str) -> bytes:
-    """This machine's build of a program for this version, checked against the release's published SHA-256."""
+def missing_file(exc: Exception) -> bool:
+    """A file:// release folder without the file (urllib raises the OS error, sometimes wrapped)."""
+    reason = getattr(exc, "reason", exc)
+    return isinstance(reason, FileNotFoundError) or isinstance(exc, FileNotFoundError)
+
+
+def fetch_release_file(base: str, name: str, version: str) -> bytes:
+    """One file of the release, with a plain one-line reason when it cannot be had."""
+    absent = (f"release v{version} was not found, or it has no checksum file ({name})" if name == STUDIO_SUMS
+              else f"release v{version} does not have the file {name}")
+    try:
+        return fetch(f"{base}/{name}")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise Fail(absent)
+        raise Fail(f"the release's server refused the download of {name} (HTTP {exc.code})")
+    except (urllib.error.URLError, OSError) as exc:
+        if missing_file(exc):
+            raise Fail(absent)
+        raise Fail(f"{name} could not be downloaded; check the internet connection")
+
+
+def check_provenance(program: Program, asset: str, data: bytes) -> str:
+    """After the checksum passed: verify the program's build provenance, or say plainly why it was not.
+
+    Returns the words for what was checked. Raises Fail when the verification ran and failed, or when
+    MACH_REQUIRE_PROVENANCE=1 and it could not run."""
+    required = os.environ.get(REQUIRE_PROVENANCE_ENV, "").strip().lower() in ("1", "yes", "true", "on")
+    override = program_override(program)
+    if override:
+        reason = f"{override} points at a local or mirrored release, which carries no attestation"
+    else:
+        reason = verify_attestation(asset, data)
+        if reason is None:
+            return (f"checked against the release's checksum and its build provenance was verified with the GitHub CLI "
+                    f"(gh attestation verify, {release_repo()})")
+    if required:
+        raise Fail(f"its build provenance could not be verified ({reason}) and {REQUIRE_PROVENANCE_ENV}=1 requires it, so it was refused")
+    return f"checked against the release's checksum; its build provenance was not verified ({reason})"
+
+
+def verify_attestation(asset: str, data: bytes) -> Optional[str]:
+    """None when `gh attestation verify` passed; the reason it could not run otherwise. Raises Fail when it ran and failed."""
+    gh = shutil.which("gh")
+    if gh is None:
+        return NO_GH
+    repo = release_repo()
+    with tempfile.TemporaryDirectory(prefix="mach-provenance-") as folder:
+        path = Path(folder) / asset
+        path.write_bytes(data)
+        command = [gh, "attestation", "verify", str(path), "--repo", repo, "--signer-workflow", f"{repo}/{RELEASE_WORKFLOW}"]
+        try:
+            done = subprocess.run(command, capture_output=True, text=True, timeout=GH_TIMEOUT, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return NO_GH
+    if done.returncode == 0:
+        return None
+    if done.returncode == GH_AUTH_REQUIRED:
+        return NO_GH
+    raise Fail(f"{asset} matched the release's checksum, but its build provenance did not verify "
+               f"(gh attestation verify, {repo}), so it was refused and removed")
+
+
+def download_program(program: Program, version: str) -> Tuple[bytes, str]:
+    """This machine's build of a program for this version, checked against the release's published
+    SHA-256 and then, when it can be, its build provenance. Returns the program and what was checked."""
     asset = program_asset(program)
     if asset is None:
         raise Fail(f"no build is published for {platform.system()} {platform.machine()}")
     base = program_base(program, version)
-    try:
-        sums = fetch(f"{base}/{STUDIO_SUMS}").decode("utf-8", "replace")
-        expected = {parts[1].lstrip("*"): parts[0].lower() for parts in (line.split() for line in sums.splitlines()) if len(parts) == 2}
-        if asset not in expected:
-            if program.optional and not any(name.startswith(f"{program.name}-") for name in expected):
-                raise NotPublished(f"MACH {version}'s release does not include it; it is published from a later release")
-            raise Fail(f"release v{version} does not list {asset}")
-        data = fetch(f"{base}/{asset}")
-    except urllib.error.HTTPError as exc:
-        raise Fail(f"release v{version} has no {program.name} to download yet (HTTP {exc.code})"
-                   if program.optional else f"release v{version} has no visual app to download yet (HTTP {exc.code})")
-    except (urllib.error.URLError, OSError) as exc:
-        raise Fail(f"the download did not complete ({getattr(exc, 'reason', exc)})")
+    sums = fetch_release_file(base, STUDIO_SUMS, version).decode("utf-8", "replace")
+    expected = {parts[1].lstrip("*"): parts[0].lower() for parts in (line.split() for line in sums.splitlines()) if len(parts) == 2}
+    if asset not in expected:
+        if program.optional and not any(name.startswith(f"{program.name}-") for name in expected):
+            raise NotPublished(f"MACH {version}'s release does not include it; it is published from a later release")
+        raise Fail(f"release v{version} does not list {asset}")
+    data = fetch_release_file(base, asset, version)
     if sha(data) != expected[asset]:
         raise Fail(f"{asset} does not match the release's published checksum, so it was refused")
-    return data
+    return data, check_provenance(program, asset, data)
 
 
 def download_studio(version: str) -> bytes:
-    return download_program(STUDIO, version)
+    return download_program(STUDIO, version)[0]
 
 
-def program_item(program: Program, root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[Optional[Item], str]:
-    """A prebuilt program for this project, and a note saying what happened.
+def program_item(program: Program, root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[Optional[Item], str, Optional[Dict[str, str]]]:
+    """A prebuilt program for this project, a note saying what happened, and what the manifest records
+    about it (None: keep what it already records).
 
     A copy built in this MACH checkout is used as it is. Otherwise the release's build for this
     machine is downloaded and checked. A failure never fails the install: the rest of MACH does not
@@ -237,36 +322,44 @@ def program_item(program: Program, root: Path, project: Path, version: str, args
     kept = Item(program.dest, current.read_bytes(), "managed", True) if current.is_file() else None
     lower = program.title[0].lower() + program.title[1:]
     if getattr(args, program.flag, False) or os.environ.get(program.env, "").lower() in SKIP_WORDS:
-        return kept, f"{program.title} was not installed (skipped)."
+        return kept, f"{program.title} was not installed (skipped).", None
     local = root / globals()[program.local]
     if local.is_file():
-        return Item(program.dest, local.read_bytes(), "managed", True), f"{program.title} was installed from this MACH checkout's own build."
+        return (Item(program.dest, local.read_bytes(), "managed", True), f"{program.title} was installed from this MACH checkout's own build.",
+                {"version": version, "source": "this MACH checkout's own build", "checked": "not checked (built here)"})
     if args.dry_run:
-        return kept, f"Would download {lower} ({program_asset(program) or 'no build for this machine'}) from {program_base(program, version)}."
+        return kept, f"Would download {lower} ({program_asset(program) or 'no build for this machine'}) from {program_base(program, version)}.", None
     try:
-        data = download_program(program, version)
+        data, checked = download_program(program, version)
     except NotPublished as exc:
         tail = " The copy already installed was kept." if kept else ""
-        return kept, f"{program.title} was not installed: {exc}.{tail} {program.without}"
+        return kept, f"{program.title} was not installed: {exc}.{tail} {program.without}", None
     except Fail as exc:
         tail = " The copy already installed was kept." if kept else ""
-        return kept, f"{program.title} was not installed: {exc}.{tail}\n{program.without} Run the installer again to retry."
-    return Item(program.dest, data, "managed", True), f"{program.title} was downloaded and checked ({program_asset(program)}, MACH {version})."
+        return kept, f"{program.title} was not installed: {exc}.{tail}\n{program.without} Run the installer again to retry.", None
+    override = program_override(program)
+    source = f"{override} (a mirror or local folder)" if override else f"github.com/{release_repo()} release v{version}"
+    record = {"version": version, "asset": program_asset(program) or "", "source": source, "checked": checked}
+    return Item(program.dest, data, "managed", True), f"{program.title} was downloaded and {checked} ({program_asset(program)}, MACH {version}).", record
 
 
 def studio_item(root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[Optional[Item], str]:
-    return program_item(STUDIO, root, project, version, args)
+    return program_item(STUDIO, root, project, version, args)[:2]
 
 
-def program_items(root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[List[Item], str]:
-    """Every prebuilt program (the visual Product Studio app, the Control Tower), and their notes."""
+def program_items(root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[List[Item], str, Dict[str, Dict[str, str]]]:
+    """Every prebuilt program (the visual Product Studio app, the Control Tower), their notes, and
+    what the manifest records about each one installed now (which release, from where, what was checked)."""
     items: List[Item] = []
     notes: List[str] = []
+    records: Dict[str, Dict[str, str]] = {}
     for program in PROGRAMS:
-        item, note = program_item(program, root, project, version, args)
+        item, note, record = program_item(program, root, project, version, args)
         items += [item] if item else []
         notes.append(note)
-    return items, "\n".join(notes)
+        if record:
+            records[program.dest] = record
+    return items, "\n".join(notes), records
 
 
 def scaffold_items(root: Path, project: Path) -> List[Item]:
@@ -323,7 +416,8 @@ def write(project: Path, item: Item) -> None:
     path.chmod(0o755 if item.executable else 0o644)
 
 
-def apply(project: Path, items: Sequence[Item], components: Sequence[str], version: str, args: argparse.Namespace) -> int:
+def apply(project: Path, items: Sequence[Item], components: Sequence[str], version: str, args: argparse.Namespace,
+          programs: Optional[Dict[str, Dict[str, str]]] = None) -> int:
     manifest = load_manifest(project)
     recorded: Dict[str, str] = dict(manifest.get("files", {}))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -392,6 +486,7 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
                 if not args.dry_run:
                     (project / folder).mkdir(parents=True)
 
+    earlier_programs = manifest.get("programs", {})
     manifest = {
         "version": version,
         "installed_at": manifest.get("installed_at") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -400,6 +495,10 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
         "files": dict(sorted(recorded.items())),
         "blocks": blocks,
     }
+    # Which release each prebuilt program came from: a copy kept from an earlier install keeps its record.
+    installed = {dest: info for dest, info in {**earlier_programs, **(programs or {})}.items() if dest in recorded}
+    if installed:
+        manifest["programs"] = dict(sorted(installed.items()))
     if not args.dry_run:
         (project / MANIFEST).parent.mkdir(parents=True, exist_ok=True)
         (project / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -418,9 +517,21 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
     return 1 if conflicts else 0
 
 
+def require_git() -> None:
+    """MACH's scripts run Git for everything they keep; say so before installing rather than fail later.
+    On a Mac without Apple's command line tools /usr/bin/git exists but does not run, so it is run, not just found."""
+    try:
+        done = subprocess.run(["git", "--version"], capture_output=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        raise Fail(GIT_MISSING)
+    if done.returncode != 0:
+        raise Fail(GIT_MISSING)
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     root = source_root()
     version = require_source(root)
+    require_git()
     project = args.project.resolve()
     if not project.is_dir():
         raise Fail(f"{project} is not a folder.")
@@ -429,12 +540,13 @@ def cmd_install(args: argparse.Namespace) -> int:
     items = skill_items(root)
     components = ["skills"]
     note = ""
+    records: Dict[str, Dict[str, str]] = {}
     if not args.no_scaffold:
         items += scaffold_items(root, project)
         components.append("scaffold")
-        programs, note = program_items(root, project, version, args)
+        programs, note, records = program_items(root, project, version, args)
         items += programs
-    code = apply(project, items, components, version, args)
+    code = apply(project, items, components, version, args, records)
     print(f"\n{note}" if note else "", end="\n" if note else "")
     return code
 
@@ -442,21 +554,37 @@ def cmd_install(args: argparse.Namespace) -> int:
 def cmd_scaffold(args: argparse.Namespace) -> int:
     root = source_root()
     version = require_source(root)
+    require_git()
     project = args.project.resolve()
     if not project.is_dir():
         raise Fail(f"{project} is not a folder.")
-    programs, note = program_items(root, project, version, args)
-    code = apply(project, scaffold_items(root, project) + programs, ["scaffold"], version, args)
+    programs, note, records = program_items(root, project, version, args)
+    code = apply(project, scaffold_items(root, project) + programs, ["scaffold"], version, args, records)
     print(f"\n{note}")
     return code
+
+
+def remove_caches(project: Path, scripts: Sequence[Path], dry: bool) -> List[str]:
+    """Python's compiled copies of the scripts uninstall removed (__pycache__/<name>.*.pyc), which
+    running them leaves beside them. Nothing else in a __pycache__ folder is touched."""
+    log: List[str] = []
+    for cache in sorted({script.parent / "__pycache__" for script in scripts}):
+        stems = {script.stem for script in scripts if script.parent / "__pycache__" == cache}
+        compiled = [path for path in sorted(cache.glob("*.pyc")) if path.name.split(".", 1)[0] in stems] if cache.is_dir() else []
+        if not compiled:
+            continue
+        log.append(f"  remove   {cache.relative_to(project).as_posix()}/ ({len(compiled)} compiled cop{'y' if len(compiled) == 1 else 'ies'} of the scripts above)")
+        if not dry:
+            for path in compiled:
+                path.unlink()
+            if not any(cache.iterdir()):
+                cache.rmdir()
+    return log
 
 
 def prune(project: Path, folders: Sequence[Path], dry: bool) -> None:
     for folder in sorted(set(folders), key=lambda p: len(p.parts), reverse=True):
         while folder != project and project in folder.parents:
-            cache = folder / "__pycache__"
-            if cache.is_dir() and not dry:
-                shutil.rmtree(cache)
             if not folder.is_dir() or any(folder.iterdir()):
                 break
             if not dry:
@@ -475,6 +603,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     kept: List[str] = []
     remaining: Dict[str, str] = {}
     parents: List[Path] = []
+    scripts: List[Path] = []
     own = ".factory/bin/mach"
     files = dict(manifest.get("files", {}))
     for dest in sorted(files, key=lambda d: d == own):  # remove this script last
@@ -491,8 +620,11 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         else:
             log.append(f"  remove   {dest}")
         parents.append(path.parent)
+        if path.suffix == ".py":
+            scripts.append(path)
         if not args.dry_run:
             path.unlink()
+    log += remove_caches(project, scripts, args.dry_run)
 
     for name, info in manifest.get("blocks", {}).items():
         path = project / name
@@ -602,6 +734,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.set_defaults(func=cmd_status)
 
     args = parser.parse_args(argv)
+    if sys.version_info < MIN_PYTHON:
+        print(f"error: MACH needs Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or later; this is Python {platform.python_version()}. "
+              "Install a newer Python 3 and run this again.", file=sys.stderr)
+        return 2
     try:
         return args.func(args)
     except Fail as exc:

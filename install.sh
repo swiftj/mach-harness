@@ -8,6 +8,7 @@
 # MACH_REPO=owner/name and MACH_REF=branch choose where to download from.
 # MACH_SOURCE=/path/to/mach-harness uses a local copy instead of downloading.
 # MACH_STUDIO=skip and MACH_TOWER=skip (or --no-studio, --no-tower) skip the prebuilt programs.
+# MACH_REQUIRE_PROVENANCE=1 refuses a prebuilt program whose build provenance cannot be verified with gh.
 set -euo pipefail
 
 REPO="${MACH_REPO:-swiftj/mach-harness}"
@@ -15,8 +16,13 @@ REF="${MACH_REF:-main}"
 COMMAND="${1:-install}"
 [ "$#" -gt 0 ] && shift
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "MACH needs python3 (3.8 or later). Install it and run this again." >&2
+# On a Mac, python3 and git come with Apple's command line tools; /usr/bin/python3 exists without
+# them but does not run, so it is run here, not just looked up. bin/mach checks Git the same way.
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+  echo "MACH needs Python 3.8 or later, and it is not installed on this computer (or is older)." >&2
+  echo "On a Mac, open Terminal, run  xcode-select --install  and click Install in the window that appears" >&2
+  echo "(it installs Apple's command line tools, which include Python 3 and Git); on Linux, install the" >&2
+  echo "'python3' package. Then run this again." >&2
   exit 1
 fi
 

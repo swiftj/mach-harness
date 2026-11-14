@@ -4,10 +4,12 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
@@ -513,6 +515,248 @@ class TowerTest(Base):
         self.assertEqual(list(self.project.iterdir()), [], out)
 
 
+class ProvenanceTest(Base):
+    """M7: after the checksum, a program from the project's GitHub release is checked for build
+    provenance with `gh attestation verify`. The release is served by a stand-in for fetch (no network)
+    and `gh` is a fake on PATH (simulated: no real attestation is verified here)."""
+
+    def setUp(self):
+        super().setUp()
+        for name in ("MACH_STUDIO", "MACH_STUDIO_URL", "MACH_TOWER_URL", "MACH_REPO", mach.REQUIRE_PROVENANCE_ENV):
+            self.setenv(name, None)
+        self.release = Path(self.tmp.name).resolve() / "release"
+        self.release.mkdir()
+        self.local = mach.STUDIO_LOCAL_BUILD
+        mach.STUDIO_LOCAL_BUILD = "apps/studio/bin/no-such-build"
+        self.addCleanup(lambda: setattr(mach, "STUDIO_LOCAL_BUILD", self.local))
+        self.fetched = []
+        real_fetch = mach.fetch
+
+        def fetch(url):
+            self.fetched.append(url)
+            if url.startswith("file://"):
+                return real_fetch(url)
+            path = self.release / url.rsplit("/", 1)[1]
+            if not path.is_file():
+                raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+            return path.read_bytes()
+
+        mach.fetch = fetch
+        self.addCleanup(lambda: setattr(mach, "fetch", real_fetch))
+        # PATH holds Git (the installer needs it) and, when a test asks, a fake gh; never the real gh.
+        self.bin = Path(self.tmp.name).resolve() / "bin"
+        self.bin.mkdir()
+        (self.bin / "git").symlink_to(shutil.which("git"))
+        self.setenv("PATH", str(self.bin))
+        self.log = Path(self.tmp.name).resolve() / "gh-args"
+        self.setenv("FAKE_GH_LOG", str(self.log))
+        self.data = b"#!/bin/sh\necho studio\n"
+        (self.release / mach.studio_asset()).write_bytes(self.data)
+        (self.release / mach.STUDIO_SUMS).write_text(f"{mach.sha(self.data)}  {mach.studio_asset()}\n", encoding="utf-8")
+
+    def fake_gh(self, exit_code):
+        gh = self.bin / "gh"
+        gh.write_text('#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "$FAKE_GH_LOG"\n'
+                      f'[ -f "$3" ] && echo present >> "$FAKE_GH_LOG"\nexit {exit_code}\n', encoding="utf-8")
+        gh.chmod(0o755)
+
+    def note(self, out):
+        return next(line for line in out.splitlines() if line.startswith("The visual Product Studio app"))
+
+    def test_the_download_comes_from_the_projects_github_release(self):
+        self.mach("install")
+        version = mach.source_version(ROOT)
+        self.assertEqual(self.fetched[0], f"https://github.com/swiftj/mach-harness/releases/download/v{version}/{mach.STUDIO_SUMS}")
+
+    def test_verified_provenance_is_named(self):
+        self.fake_gh(0)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.project / mach.STUDIO_DEST).read_bytes(), self.data)
+        self.assertIn("checked against the release's checksum and its build provenance was verified with the GitHub CLI "
+                      "(gh attestation verify, swiftj/mach-harness)", self.note(out))
+        args = self.log.read_text().split("\n")
+        self.assertEqual(args[:2], ["attestation", "verify"])
+        self.assertEqual(Path(args[2]).name, mach.studio_asset())
+        self.assertEqual(args[3:7], ["--repo", "swiftj/mach-harness", "--signer-workflow", "swiftj/mach-harness/.github/workflows/release.yml"])
+        self.assertIn("present", args)  # gh was given the downloaded file itself
+        self.assertFalse(Path(args[2]).exists(), "the copy handed to gh is removed afterwards")
+        record = json.loads((self.project / mach.MANIFEST).read_text())["programs"][mach.STUDIO_DEST]
+        self.assertEqual(record["version"], mach.source_version(ROOT))
+        self.assertEqual(record["asset"], mach.studio_asset())
+        self.assertIn("build provenance was verified", record["checked"])
+
+    def test_the_repository_comes_from_where_the_release_url_does(self):
+        self.fake_gh(0)
+        self.setenv("MACH_REPO", "someone/fork")
+        self.mach("install")
+        self.assertTrue(self.fetched[0].startswith("https://github.com/someone/fork/releases/download/"))
+        self.assertIn("--repo\nsomeone/fork\n", self.log.read_text())
+
+    def test_without_gh_the_checksum_alone_is_said_plainly(self):
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.project / mach.STUDIO_DEST).is_file())
+        note = self.note(out)
+        self.assertIn("checked against the release's checksum; its build provenance was not verified (GitHub CLI not available)", note)
+        self.assertNotIn("was verified", note)
+
+    def test_gh_not_signed_in_is_the_same_as_no_gh(self):
+        self.fake_gh(mach.GH_AUTH_REQUIRED)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.project / mach.STUDIO_DEST).is_file())
+        self.assertIn("its build provenance was not verified (GitHub CLI not available)", self.note(out))
+
+    def test_failed_provenance_refuses_the_program_and_the_rest_installs(self):
+        self.fake_gh(1)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.project / mach.STUDIO_DEST).exists())
+        self.assertNotIn(mach.STUDIO_DEST, json.loads((self.project / mach.MANIFEST).read_text())["files"])
+        self.assertIn("matched the release's checksum, but its build provenance did not verify (gh attestation verify, swiftj/mach-harness), "
+                      "so it was refused and removed", self.note(out))
+        self.assertFalse(Path(self.log.read_text().split("\n")[2]).exists())
+        self.assertTrue((self.project / SKILL).is_file())
+
+    def test_failed_provenance_on_update_keeps_the_installed_copy(self):
+        self.fake_gh(0)
+        self.mach("install")
+        tampered = b"#!/bin/sh\necho tampered\n"
+        (self.release / mach.studio_asset()).write_bytes(tampered)
+        (self.release / mach.STUDIO_SUMS).write_text(f"{mach.sha(tampered)}  {mach.studio_asset()}\n", encoding="utf-8")
+        self.fake_gh(1)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.project / mach.STUDIO_DEST).read_bytes(), self.data)
+        self.assertIn("The copy already installed was kept.", self.note(out))
+
+    def test_require_provenance_refuses_when_it_cannot_be_verified(self):
+        self.setenv(mach.REQUIRE_PROVENANCE_ENV, "1")
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.project / mach.STUDIO_DEST).exists())
+        self.assertIn("its build provenance could not be verified (GitHub CLI not available) and MACH_REQUIRE_PROVENANCE=1 requires it, "
+                      "so it was refused", self.note(out))
+        self.fake_gh(0)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.project / mach.STUDIO_DEST).is_file())
+
+    def test_a_mirror_or_local_folder_is_checksum_only_and_says_why(self):
+        self.fake_gh(1)  # would refuse, but must not be asked: a mirror carries no attestation
+        self.setenv("MACH_STUDIO_URL", self.release.as_uri())
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.project / mach.STUDIO_DEST).is_file())
+        self.assertFalse(self.log.exists())
+        self.assertIn("checked against the release's checksum; its build provenance was not verified "
+                      "(MACH_STUDIO_URL points at a local or mirrored release, which carries no attestation)", self.note(out))
+        record = json.loads((self.project / mach.MANIFEST).read_text())["programs"][mach.STUDIO_DEST]
+        self.assertEqual(record["source"], "MACH_STUDIO_URL (a mirror or local folder)")
+        self.assertNotIn(str(self.release), json.dumps(record))  # no local path in the manifest
+        other = self.project.parent / "other"
+        other.mkdir()
+        self.setenv(mach.REQUIRE_PROVENANCE_ENV, "1")
+        code, out = run("install", "--project", str(other))
+        self.assertFalse((other / mach.STUDIO_DEST).exists())
+        self.assertIn("MACH_REQUIRE_PROVENANCE=1 requires it, so it was refused", self.note(out))
+
+    def test_no_message_says_checked_without_naming_the_check(self):
+        for exit_code in (None, 0):
+            if exit_code is not None:
+                self.fake_gh(exit_code)
+            _, out = run("install", "--project", str(self.project))
+            for line in out.splitlines():
+                if "checked" in line and line.startswith("The visual"):
+                    self.assertIn("checked against the release's checksum", line)
+
+    def test_a_missing_asset_or_release_is_one_plain_line(self):
+        (self.release / mach.studio_asset()).unlink()
+        _, out = self.mach("install")
+        self.assertIn(f"was not installed: release v{mach.source_version(ROOT)} does not have the file {mach.studio_asset()}.", self.note(out))
+        self.assertNotIn("Errno", self.note(out))
+        self.assertNotIn("HTTP", self.note(out))
+        (self.release / mach.STUDIO_SUMS).unlink()
+        _, out = self.mach("install")
+        self.assertIn(f"release v{mach.source_version(ROOT)} was not found, or it has no checksum file (SHA256SUMS)", self.note(out))
+
+
+class PrerequisiteTest(Base):
+    """M7: a missing Git (or too old a Python) is said in words a person can act on, not a traceback."""
+
+    def setUp(self):
+        super().setUp()
+        self.bin = Path(self.tmp.name).resolve() / "bin"
+        self.bin.mkdir()
+
+    def test_install_without_git_says_how_to_get_it_and_writes_nothing(self):
+        self.setenv("PATH", str(self.bin))
+        code, out = self.mach("install")
+        self.assertEqual(code, 2, out)
+        self.assertIn(mach.GIT_MISSING, out)
+        self.assertIn("xcode-select --install", out)
+        self.assertEqual(list(self.project.iterdir()), [])
+        code, out = self.mach("scaffold")
+        self.assertEqual(code, 2, out)
+        self.assertIn("MACH needs Git", out)
+
+    def test_a_git_that_does_not_run_counts_as_missing(self):
+        # A Mac without Apple's command line tools has /usr/bin/git, which only offers to install them.
+        git = self.bin / "git"
+        git.write_text("#!/bin/sh\necho 'xcrun: error: invalid active developer path' >&2\nexit 1\n", encoding="utf-8")
+        git.chmod(0o755)
+        self.setenv("PATH", str(self.bin))
+        code, out = self.mach("install")
+        self.assertEqual(code, 2, out)
+        self.assertIn(mach.GIT_MISSING, out)
+
+    def test_too_old_a_python_is_refused_plainly(self):
+        minimum = mach.MIN_PYTHON
+        mach.MIN_PYTHON = (99, 0)
+        self.addCleanup(lambda: setattr(mach, "MIN_PYTHON", minimum))
+        code, out = self.mach("install")
+        self.assertEqual(code, 2, out)
+        self.assertIn("MACH needs Python 99.0 or later", out)
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_the_minimum_python_is_the_one_the_skills_declare(self):
+        self.assertEqual(mach.MIN_PYTHON, (3, 8))
+        for skill in ("intent", "build", "run"):
+            self.assertIn('"python3 >= 3.8', (ROOT / "skills" / skill / "SKILL.md").read_text())
+
+    def test_product_studio_without_git_gives_the_same_plain_message(self):
+        self.mach("install")
+        script = self.project / ".claude/skills/mach-product-studio/scripts/studio.py"
+        done = subprocess.run([sys.executable, str(script), "--project", str(self.project), "status"], capture_output=True, text=True,
+                              env={**os.environ, "PATH": str(self.bin)})
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertIn(mach.GIT_MISSING, done.stderr)
+
+
+class UninstallCacheTest(Base):
+    """M7: uninstall removes the compiled copies (__pycache__) of the scripts it removes, says so, and
+    leaves any other file in a __pycache__ folder alone."""
+
+    def test_compiled_copies_of_installed_scripts_are_listed_and_removed_others_kept(self):
+        self.mach("install")
+        cache = self.project / ".claude/skills/mach-intent/scripts/__pycache__"
+        cache.mkdir(exist_ok=True)
+        (cache / "cell.cpython-39.pyc").write_bytes(b"compiled")
+        (cache / "mine.cpython-39.pyc").write_bytes(b"not MACH's")
+        code, out = self.mach("uninstall", "--dry-run")
+        self.assertIn("remove   .claude/skills/mach-intent/scripts/__pycache__/", out)
+        self.assertTrue((cache / "cell.cpython-39.pyc").is_file())
+        code, out = self.mach("uninstall")
+        self.assertEqual(code, 0, out)
+        self.assertIn("remove   .claude/skills/mach-intent/scripts/__pycache__/", out)
+        self.assertFalse((cache / "cell.cpython-39.pyc").exists())
+        self.assertEqual(sorted(p.name for p in cache.iterdir()), ["mine.cpython-39.pyc"])
+        left = {p.relative_to(self.project).as_posix() for p in self.project.rglob("*") if p.is_file()}
+        self.assertEqual(left, {".claude/skills/mach-intent/scripts/__pycache__/mine.cpython-39.pyc"})
+
+
 class BlockTest(unittest.TestCase):
     def test_block_round_trip(self):
         for original in ("", "# Title\n", "# Title\n\ntext\n", "no newline at end"):
@@ -556,6 +800,25 @@ class PackagingTest(unittest.TestCase):
         self.assertEqual(smoked, {f"mach-observer-{build}" for build in mach.STUDIO_BUILDS})
         self.assertRegex(workflow, r"subject-path: \|\n\s+dist/mach-studio-\*\n\s+dist/mach-observer-\*")
         self.assertNotIn("windows", workflow.lower())
+
+    def test_the_release_workflow_pins_its_tools_stamps_versions_and_publishes_sboms(self):
+        # M7: third-party actions by full commit SHA (a tag can be moved), Go by patch release, syft by version.
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        uses = re.findall(r"uses: (\S+)(.*)", workflow)
+        self.assertTrue(uses)
+        for action, comment in uses:
+            self.assertRegex(action, r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$", action)
+            self.assertRegex(comment, r"^ # v\d+\.\d+\.\d+$", action)
+        self.assertRegex(workflow, r'go-version: "\d+\.\d+\.\d+"')
+        self.assertNotIn("go-version-file", workflow)
+        self.assertRegex(workflow, r"syft-version: v\d+\.\d+\.\d+")
+        self.assertIn('-o "spdx-json=$file.spdx.json"', workflow)
+        self.assertRegex(workflow, r"subject-path: \|\n\s+dist/mach-studio-\*\n\s+dist/mach-observer-\*\n\s+dist/SHA256SUMS")
+        self.assertLess(workflow.index("attest-build-provenance"), workflow.index("download-syft"))  # SBOMs are not attested subjects
+        self.assertIn("export VERSION", workflow)
+        for app in ("studio", "observer"):
+            self.assertIn('-ldflags "-X main.version=${VERSION:-dev}"', (ROOT / "apps" / app / "build.sh").read_text(encoding="utf-8"))
+            self.assertIn(f'"dist/${{{{ matrix.{"file" if app == "studio" else "observer"} }}}}" --version', workflow)
 
     def test_plugin_manifests_agree(self):
         plugin = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())

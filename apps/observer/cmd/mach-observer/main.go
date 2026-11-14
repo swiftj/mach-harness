@@ -58,6 +58,10 @@ const MemoryLimit = 320 << 20
 // adapts the limit to the history (memlimit.go). Tests that call run leave it off.
 var memoryAdaptive bool
 
+// version is the MACH release this program was built for, stamped by the release workflow with
+// -ldflags "-X main.version=<version>" (build.sh passes VERSION). A local build says "dev".
+var version = "dev"
+
 func main() {
 	if adaptiveMemory() {
 		debug.SetMemoryLimit(MemoryLimit)
@@ -86,8 +90,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	projectFlag := flags.String("project", "", "the project folder, used exactly as given (default: the nearest folder at or above the current one that holds .factory or .git)")
 	port := flags.Int("port", 0, "the loopback port to listen on (default: a free one)")
 	memory := flags.Int("memory-events", store.DefaultMaxMemory, "how many recent events to hold in memory and serve by cursor")
+	showVersion := flags.Bool("version", false, "print the MACH release this program was built for, and exit")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *showVersion {
+		fmt.Fprintln(stdout, "mach-observer", version)
+		return nil
 	}
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
