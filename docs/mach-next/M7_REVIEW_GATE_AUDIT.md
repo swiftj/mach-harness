@@ -57,6 +57,8 @@ person; Low 1 seat (`general`) / 1. Tuning (`factory-tuning` label): 3 seats on 
 
 ## 4. Gaps and the smallest fix for each (nothing changed)
 
+(corrected: this table is the gap list at `106f4d3` and is kept as written. Its state now, from section 5 and the code at `1d58d02`: **G1 fixed, G5 fixed, G7 fixed in the part that matters** (`f6097ee`); **G2 fixed for unattended execution only, G3 fixed** (`f6097ee`; interactive `/mach-run` and the belt still do not check); **G9 half fixed** (the template states the veto, the `max_loops` sentence is not changed); **G4 not built** (product owner's decision, section 6); **G6, G8, G10, G11 not changed**. Separately, `0fcbb1b` fixed a defect the live run found: a re-review after merge revalidation voided an approval no longer overwrites the decided round, it opens `round-N.k`, and the voided approval stays on record, marked void.)
+
 | # | Gap | Severity (RC) | Smallest fix |
 |---|---|---|---|
 | G1 | A security defect raised as a blocker by a non-security seat is outvoted at Medium (row A). The brief's Phase 4 names exactly this. | **Blocker** (bypasses a required gate as the brief defines it) | Add an optional `category: "security"` on a blocker (`check_findings`); veto when any seat's blocker has it, not only the `security` seat's. One field, one condition at `review.py:410`, two tests. |
@@ -78,7 +80,7 @@ shown only by `tests/test_review.py:428-438` (fixture). No run exercises G1–G5
 
 ## 5. Corrected in M7
 
-Uncommitted at the time of writing; the tests named were run on the M7 worktree. Line numbers above are for `106f4d3`.
+Committed as `f6097ee` (and `0fcbb1b` for the re-review folder, see section 4); the tests named were run on the M7 worktree by their author, not again for this note. Line numbers above are for `106f4d3`.
 
 - **G1, G7: a security blocker from any seat is never outvoted.** A finding may carry `"class": "security"` and an
   `"impact"` (`critical`, `high`, `medium`, `low`), checked by `review.py submit` (`check_findings`); the security
@@ -108,6 +110,8 @@ Uncommitted at the time of writing; the tests named were run on the M7 worktree.
   `test_review_settings_that_remove_the_security_check_hold_every_pass`.
 - Docs: `agents/reviewer.md`, `skills/review/references/reviewer-brief.md`, `skills/review/SKILL.md`,
   `templates/REVIEW.md` (also G9's first half: the template now states the veto), `CLAUDE.md` section 4.6.
+
+(corrected: the list below was complete when written; `0fcbb1b` added the `round-N.k` folder, which the Control Tower's observer does not list, see `M7_FACTORY_ACCEPTANCE.md`.)
 
 Not changed: G4 (below), G6's `overruled_blockers_from` in `decision.json`, G8, G9's `max_loops` sentence, G10, G11.
 Interactive `/mach-run` and the belt workflow still do not check the review settings: a person running a ticket by

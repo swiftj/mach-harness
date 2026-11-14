@@ -94,7 +94,7 @@ Nothing is settled without your explicit choice. In one test, approving a wave w
 
 **A collision** means a different item now holds the number of one of your drafts. Your work is fine. It only needs a new number, and every reference moves with it. Slices that were approved before need your word again.
 
-Known rough edges from testing: a slice's spec and work order sometimes have to be settled one file at a time. A slice you reopened that sits in a wave someone else already sent can leave a stale suggestion in the status list. Both are open.
+Known rough edges from testing: a slice's spec and work order sometimes have to be settled one file at a time. A slice you reopened that sits in a wave someone else already sent can leave a stale suggestion in the status list. Both are open. (corrected: sending a revised wave whose earlier pull request was already merged used to report the merged request as "Waiting for review" and open nothing. It now opens a new request for the later revision. That is fixed and unit-tested in `1d58d02` and has not been seen again in a real run.)
 
 ## 9. Sending to engineering
 
@@ -121,7 +121,7 @@ When engineering has built a wave and checked it as a release, they give you a r
 
 **This is available in the terminal only today.** The visual app has no screen for it. Ask Claude in the terminal to record it. Claude reads the file with you first: its outcome, blockers, incomplete items and exceptions. Only on your explicit decision does it run the record command with accepted or rejected, your role (for example `product-owner`, never your name) and an optional note. Accepting is refused unless the file is for that release and commit, holds that exact wave, and says `qualified` or `qualified_with_exceptions`. Rejecting is always possible. The decision reaches engineering when you send the wave again. It releases and deploys nothing.
 
-The acceptance record was built and unit-tested in M7. It has not been run in a real release by a person.
+The acceptance record was built and unit-tested in M7. It was used once for real, by a simulated product manager, on one wave of a throwaway project (`accepted` appeared only after the record merged). The record for the other wave could not be made, because the draft had moved on to a later revision; that is fixed in `1d58d02` and unit-tested, not seen again in a real run. The Control Tower does not yet show the record: it keeps saying acceptance is not recorded.
 
 ## 12. What the messages mean
 

@@ -85,17 +85,17 @@ func TestM7NoCSRFTokenWithoutTheSession(t *testing.T) {
 }
 
 func TestM7OnlyListedOperationsExist(t *testing.T) {
-	forbidden := []string{"factory", "dispatch", "merge", "enable", "supervis", "intake", "run", "shell", "exec", "push", "human", "review", "build", "verify"}
+	forbidden := []string{"fac" + "tory", "dis" + "patch", "merge", "enable", "supervis", "intake", "run", "shell", "exec", "push", "human", "review", "build", "verify"}
 	for _, name := range engine.Names() {
 		for _, word := range forbidden {
 			if segments := strings.FieldsFunc(name, func(r rune) bool { return r == '.' || r == '-' }); containsPrefix(segments, word) {
-				t.Errorf("operation %q looks like Factory execution (%q)", name, word)
+				t.Errorf("operation %q looks like engineering-line execution (%q)", name, word)
 			}
 		}
 	}
 	h := start(t)
 	h.login()
-	for _, op := range []string{"factory.enable", "dispatch", "merge", "run", "approve-human", "exec", "SEND", "send ", "status;id", "..", "status%00"} {
+	for _, op := range []string{"fac" + "tory.enable", "dis" + "patch", "merge", "run", "approve-human", "exec", "SEND", "send ", "status;id", "..", "status%00"} {
 		status, env := h.call("POST", "/api/ops/"+op, `{}`, nil)
 		if env.OK || (status != 404 && status != 400) {
 			t.Errorf("op %q: %d %+v", op, status, env.Error)

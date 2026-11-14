@@ -71,7 +71,7 @@ Trust boundaries: the person at the terminal (the only authority); Product Studi
 | Tampered release | Checksum; attestation when `gh` is present; actions pinned by commit | Source for `install.sh` is unchecked; without `gh`, only the checksum. |
 | Generated code with vulnerable dependencies or secrets | Security review seat, audit, release scan check | MACH runs no scanner on generated code at build, verify or review. |
 
-Open items from the review: a very deeply nested JSON value in a merged product file could crash intake until reverted (availability only; nothing runs). A ticket title containing `{body}` is substituted into a tracker command as text, never a shell. Product files have no size cap beyond what memory allows.
+Open items from the review: none of the three below remain. (corrected: a deeply nested or oversized (over 1 MiB) JSON value in a merged product file is now refused instead of crashing intake; a ticket title containing `{body}` is no longer substituted into other fields; and an authorization file that Git tracks, a link, or a file owned by someone else or writable by others reads as disabled. All three were fixed in `d68f83f` with unit tests and not re-observed live.) Still open from the same review: an unattended run can run Python (see section 7), and names in free text are shown.
 
 ## 7. Security gates
 

@@ -102,3 +102,36 @@ automatic merge.
 17. **Minor — Intel-Mac Studio binary dropped after v0.12.0**; `security_veto` not re-checked per pass; tuning
     label clears High-risk human approval. Rows 33, 10; audit G3, G10.
 18. **Deferred — Windows packages**; Low-risk tickets have no security seat (by design).
+
+## 3. State at the end of M7
+
+Added 2026-11-14, written against M7 worktree HEAD `1d58d02`. Sections 1 and 2 above are left as written at
+`106f4d3`. "Fixed" means a commit and a test exist; it does not mean it was seen again in a live run unless
+stated. The matrix is `M7_ACCEPTANCE_MATRIX.md` (version 2).
+
+| Rank | Gap (as ranked above) | State | What changed, and what is still open |
+|---|---|---|---|
+| 1 | Security finding outvotable by majority | **Fixed** (`f6097ee`) | A security-class blocker of high or critical impact from any seat rejects the round at every tier; `security_veto: false` does not switch it off. Tests: `tests/test_review.py` `SecurityFindingTest`. Shown on copied real records, not as a Factory event (`M7_FACTORY_ACCEPTANCE.md` part 4). An unclassified blocker from a non-security seat is still outvoted at Medium, by design. |
+| 2 | No release-level qualification or readiness record | **Fixed, minimally** (`c73c11e`, corrected in `1d58d02`) | `run.py release`, `qualify.py`, a deterministic readiness file. A real run on two slices found the shared-contract defect (D2); the contract rule was corrected in `1d58d02` with unit tests, not re-observed. A whole five-slice wave never qualified because three slices never integrated. |
+| 3 | No product-acceptance record | **Partly fixed** (`c73c11e`, `1d58d02`) | `studio.py acceptance record`; shown live on WAVE-002 (`not_recorded`, then `accepted` after merge, never inferred). WAVE-001's could not be recorded (D4); corrected in `1d58d02`, not re-observed. The Control Tower does not read the record (D11, open). Terminal only. |
+| 4 | No published release carries the observer | **Open** (product owner's step) | Workflow pins and SBOMs, `--version` on both programs (`c35788a`). The version in `.claude-plugin/plugin.json` is still 0.12.0; bumping and tagging is the product owner's step. The workflow has never run on a tag. |
+| 5 | Installer verifies a checksum, not attestation | **Partly fixed** (`c35788a`) | Programs are checked with `gh attestation verify` when `gh` is available; every note says which check passed. Tested with a fake `gh` only. `install.sh` still fetches the Python source from `main` without a check (threat model T6, open). |
+| 6 | Review gate weakened by tracked config; no exception record; delta rounds | **Partly fixed** (`f6097ee`, `0fcbb1b`) | G2 and G3 for unattended execution (refused every pass), G5 (a new high security blocker in a later round), G9's first half. A re-review after a voided approval now opens `round-N.k` and no longer overwrites a decided round (D3, `0fcbb1b`). **Open:** G4, the recorded exception (product owner's decision); interactive `/mach-run` does not check the settings; G6, G8, G10, G11. |
+| 7 | No retry or supervisor restart seen live | **Partly shown** | Live in `M7_FACTORY_ACCEPTANCE.md` part 5: SIGKILL of the supervisor and restart, claims recovered; two failed attempts then a person. Not shown: reboot, network loss, the Tower displaying a restart. |
+| 8 | Everything on one machine | **Open, cannot be fixed here** | M7 again used clones on one Mac and one GitHub account, a plan that refused branch protection, signed commits and rulesets. No second machine, no GitHub Enterprise organisation, no designated-runner mechanism. |
+| 9 | R1: names in free text served | **Open** (product owner's decision) | Unchanged. Matrix row 61 is FAIL by design. |
+| 10 | Upgrade and rollback not assessed | **Partly fixed** | Hand-built v0.12.0 state upgraded and rolled back with no loss (`M7_DISTRIBUTION.md` §4, §5), and a project with intake state upgraded in the live run. Not through a tagged release. No rollback is documented. |
+| 11 | No injection tests, no vulnerability scan, secret scan only configured | **Partly fixed** | Adversarial tests added (`b4bfa2d`) with fakes and no model run; five scanners run once with no confirmed High or Critical finding (`M7_SECURITY_SCANS.md`); `release qualify` reads scanner reports and treats a missing one as incomplete. **Open:** no model was run against planted instructions; the audit station still only checks that a scanner is configured; nothing scans generated code in the line. Threat model T1, T3, T4, T5 are fixed in `d68f83f`; T2 (`Bash(python3 *)`) is open. |
+| 12 | PM journey not run with real Claude and real GitHub | **Partly shown** (`ab2e70a`) | Two PMs and an engineer on one Mac, a real private GitHub repository, one real interview turn pair (USD 0.23). Refusal wording corrected in `b0d3e88`, tested with stand-ins. No second computer; the visual app's opt-in real-Claude browser suite was not run. |
+| 13 | Supervisor hold has no reason code | **Open** | No commit touched it. The Tower shows the hold's prose and separates a wait on a person. |
+| 14 | Lifecycle lines have no identity | **Open** | Not changed. |
+| 15 | Failed executions record no cost | **Open** | Observed live: Analytics USD 8.06 against USD 8.50 (D7). A killed execution has no cost at all and is recorded as completed (D8). |
+| 16 | Tower performance over budget; accessibility manual checks | **Open** | Not changed in M7. |
+| 17 | Intel-Mac Studio binary dropped; `security_veto` not re-checked; tuning label | **Partly fixed** | The per-pass check is fixed (`f6097ee`). The Intel Mac drop is documented. The tuning-label approval question (G10) is open. |
+| 18 | Windows; no security seat on Low risk | **Deferred** | Unchanged. |
+
+New open defects from the real run, not in the ranked list above: a plan whose implementation task cannot go
+green stops the line (D5, the supervisor then spends two more executions); a stuck belt run is counted as
+completed (D9); the Tower's product state after a revision is wrong (D6); a released claim shows as `unknown`
+(D10); a ticket body keeps the old revision (D12); `.factory/release/` shows as untracked (D13). See
+`M7_FACTORY_ACCEPTANCE.md` section 3.

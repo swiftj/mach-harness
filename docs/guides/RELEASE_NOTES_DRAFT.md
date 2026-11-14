@@ -61,10 +61,15 @@ Based on a hand-built upgrade from v0.12.0 state, run once (`M7_DISTRIBUTION.md`
 11. **No exception record for a security blocker.** An unmarked blocker from a non-security seat can still be outvoted at Medium. Low-risk tickets have no security seat.
 12. **No real, person-driven run of the Product Studio journey** with a real interview, a second computer and a real enterprise remote. One real interview ran through the app's interface for about USD 0.23.
 13. **The `pr` merge method was never run against GitHub**, and `merge.mode: auto` and the merge queue were never run live.
-14. **The Control Tower is in no published release yet.** Some figures are known gaps: cost leaves out failed executions, repeated lifecycle lines are counted again, a supervisor hold has no reason code, and a 240,000-event history switches views slower than its budget.
-15. **Threat model T1 (a `runner.json` that arrives through Git) is listed as open in `M7_THREAT_MODEL.md`. The code at this commit refuses a tracked file.** Confirm before publishing.
+14. **The Control Tower is in no published release yet.** Some figures are known gaps: cost leaves out failed executions (a recorded USD 8.06 against 8.50 spent in the real run), repeated lifecycle lines are counted again, a supervisor hold has no reason code, and a 240,000-event history switches views slower than its budget.
+15. **A plan whose implementation task cannot go green stops the line.** `check-plan` accepts it, the build then refuses and a person is asked only after further executions (USD 1.55 over three in the real run). It was one of five slices in the real run; two slices integrated, and the three behind it (borrow, return, overdue report) did not.
+16. **The Control Tower does not read the product acceptance record**, keeps saying acceptance is not recorded, shows a wrong product state after a revision, and does not list a repeated review folder (`round-N.k`).
+17. **A killed execution is recorded as completed, with no cost and no exit code**, and a belt run that reports "stuck" counts as completed if the ticket moved at all.
+18. **Fixed after the real run, with unit tests, not seen again in a live run:** a re-review after a voided approval no longer overwrites the round it repeats; release qualification accepts a shared contract changed by a later reviewed slice; the acceptance record binds to the wave as merged; sending a revised wave whose first request merged opens a new request.
 
-Smaller open items: a deeply nested JSON value in a merged product file can crash intake until reverted; the first-run wording for a conflict across a slice's two files; a stale status suggestion for a wave another manager already sent; accessibility checks with a screen reader and Safari were not done.
+Smaller open items: reconciling a conflict across a slice's two files is still one file at a time; a stale status suggestion for a wave another manager already sent; a released claim shows as `unknown` in the Control Tower; a ticket body keeps the old revision after a product revision; `.factory/release/` shows as untracked; accessibility checks with a screen reader and Safari were not done.
+
+(corrected: this list used to include threat model T1, a `runner.json` that arrives through Git, and a deeply nested JSON value that crashed intake. Both are fixed, with an oversized product file and a ticket title that pulled in other fields, in `d68f83f`. Unit-tested, not re-observed live. `M7_THREAT_MODEL.md` now says so. The open ones there are T2, T6 and T7.)
 
 ## Explicitly deferred
 
@@ -90,10 +95,11 @@ Smaller open items: a deeply nested JSON value in a merged product file can cras
 | Upgrade from v0.12.0 and uninstall | **Real** installer on a hand-built state. |
 | Supervised runs: intake, dependency hold, two cells at once, build, verify, review rejection with a security blocker, revise, human gate, by-person merge, cleanup, daily run limit, disable | **Real** Claude, throwaway projects, one Mac, local bare origin, supervised mode, no automatic merge. |
 | Recorded High-risk run with two rejected rounds and two failed executions | **Real** records, **replayed**, not live. |
-| Adversarial tests (activation file, injection text as data, hostile product files, host spoofing) | **Automated tests** with fakes, no model run. Some listed defects are marked as known failures. |
+| Adversarial tests (activation file, injection text as data, hostile product files, host spoofing) | **Automated tests** with fakes, no model run. Three confirmed defects were fixed afterwards (`d68f83f`) and their known-failure markers removed. |
 | Security scanners (gitleaks, Semgrep, OSV, Trivy, Syft) | **Real** tools, one run, on a code snapshot. |
-| Release qualification and acceptance record | **Unit and integration tests** only. Not run on a real release. |
-| Release pipeline on a tag, per-platform smoke tests, attestations | **Not tested.** |
+| Release qualification and acceptance record | **Unit and integration tests**, and one **real run** on a throwaway project's two integrated slices: the first result was `blocked` on a shared contract (corrected afterwards, not re-observed), then `qualified_with_exceptions` after a person's recorded exception, and `qualified` for a one-slice wave. Not run on a real release. |
+| One supervised run of a five-slice wave on a real GitHub repository | **Real** Claude Code, throwaway project, one Mac, simulated people, supervised, no automatic merge, USD 8.50 recorded. Two slices built, reviewed (each rejected once and revised), and integrated by a person, including a real merge conflict; the third stopped on a plan defect and the last two never started. |
+| Release pipeline on a tag, per-platform smoke tests, attestations | **Not tested.** The workflow's actions are pinned by commit and Go to 1.27.3, but it has never run. |
 | Accessibility with a screen reader; Real GitHub Enterprise; second physical machine | **Not tested.** |
 
 ## Security disclosures
@@ -108,4 +114,4 @@ Suitable for publication as they stand:
 - MACH relies on the repository host's rules (branch protection, reviews, signed commits, single sign-on). It does not replace them, and they were not tested against a real organisation.
 - Generated code is reviewed by agents. MACH does not scan it for vulnerable dependencies or secrets. Do not read a passing review as a security guarantee.
 - The scans run on one snapshot found no confirmed High or Critical finding and no real secret. One Moderate advisory in lint tooling, not shipped, awaits a decision.
-- Report a vulnerability through the repository's own channel for private reports. No such channel is documented in the sources read for this draft.
+- Report a vulnerability through the repository's own channel for private reports. **There is no private vulnerability-reporting address yet. The product owner must supply one before publication.** Until then, do not publish this section as it stands.

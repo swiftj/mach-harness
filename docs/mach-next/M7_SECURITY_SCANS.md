@@ -86,7 +86,7 @@ by path (`_test.go`, `tests/`) so the scan is quiet and a new hit elsewhere stan
 None. There is therefore no file:line to fix. Suggested clean-ups (not defects): a gitleaks allowlist for test fixtures; a short written note accepting the non-`Secure` loopback cookie; decide on the minimatch dev dependency.
 
 ## 5. Coverage gaps (what no tool looked at)
-- GitHub Actions workflows (`release.yml`): Trivy found nothing to check; actions are pinned by major tag (`@v7`, `@v8`), which is mutable; no tool reported it. Not assessed by a tool (zizmor or actionlint would cover it; not installed here).
+- GitHub Actions workflows (`release.yml`): Trivy found nothing to check; actions are pinned by major tag (`@v7`, `@v8`), which is mutable; no tool reported it. (corrected: `c35788a` pinned every action to a full commit SHA with its release in a comment, and Go to 1.27.3 in `release.yml`; the workflow still has no scanner covering it and has not been run.) Not assessed by a tool (zizmor or actionlint would cover it; not installed here).
 - Skill, agent and workflow prompts (Markdown instructions to agents): no scanner understands prompt injection or permission escalation; that is the threat-model's job.
 - The Python code has only generic rules; MACH-specific logic (gates, lease, authorization) is not covered.
 - Syntax-error partial parse of one TypeScript file; `node_modules` excluded and `.semgrepignore` skipped 175 files (tests and similar).
@@ -130,6 +130,8 @@ build, test and lint commands are the only things the audit really executes.
    exception is recorded and traceable, never silent.
 4. Required set: gitleaks, semgrep, osv-scanner. Advisory: trivy (adds nothing over OSV here but gives a second opinion), syft (SBOM, required for a release candidate). No hosted service; all runs local.
 5. The release workflow attaches the SPDX and CycloneDX SBOMs of each built binary to the release.
+
+(corrected, section 8: steps 1 and 2 exist since `c73c11e`. `run.py release qualify` reads `.factory/release/scans/*.json` for the exact commit and reports a missing report as `not_run`, so the outcome is `incomplete`. Not built: the `<tool>.meta.json` files, a data-age limit, the tracked allowlist with expiry (a person's `run.py release except` is recorded per check and commit instead), and a gitleaks allowlist. Step 5, the SBOMs, is in `release.yml` (`c35788a`, a pinned `syft`) and has not been run on a tag. In the live run (`M7_FACTORY_ACCEPTANCE.md` part 6) gitleaks found nothing and osv-scanner found no package sources, so that "pass" scanned no dependencies.)
 
 ## 9. Grim Prompter evaluation
 

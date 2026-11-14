@@ -241,3 +241,30 @@ multi-clone test, not a test on separate machines.
 - Control Tower coverage counts were seen but not checked against the records. Timeline and Analytics were checked
   through the API and by DOM text at one moment, not exhaustively.
 - Only one run. Nothing was repeated to check stability.
+
+## 6. Corrected after the run
+
+Added after the run, against M7 worktree HEAD `1d58d02`. The run above used `c73c11e`. Sections 1 to 5 are left as
+they were observed. Each fix below has unit tests and **has not been re-observed in a live run**: no Factory,
+supervisor or `claude -p` was started after these commits. "Fixed" here means "the code and its tests say so".
+
+| Defect | Fix | Tests |
+|---|---|---|
+| D1 sending a revised, already-merged wave | `1d58d02`: `send` reads the latest pull request's real state. Merged or closed: the old request is kept under `earlier_requests` and a new one is opened for the later revision, on top of the old branch if it still exists, else from the integration branch. "Another product manager already has WAVE-NNN in review" is said only for an open request that is not this workspace's. `status` shows the shared revision of a wave next to the draft's. | `tests/test_mach_product_collab.py` `LaterRevisionTest` (fake `gh`) |
+| D2 release qualification blocks any wave whose slices share a contract | `1d58d02`: the integrated file must equal the version approved by the latest integrated in-scope review that changed it; earlier slices pass as "superseded by"; a file changed outside review fails; a file matching a reviewed change by a slice outside the release is `missing`. See `M7_RELEASE_QUALIFICATION.md`, "The contract rule". | `tests/test_release_qualify.py` |
+| D3 a re-review overwrites the round it repeats | `0fcbb1b`: a re-review after a voided approval opens `round-N.k` and never overwrites a decided round; the voided approval stays on record, marked void with its reason. It does not use up one of the three rounds. Merge and cleanup follow the new folders. | `tests/test_review.py`, `tests/test_merge.py`, `tests/test_cleanup.py` |
+| D4 WAVE-001's acceptance cannot be recorded | `1d58d02`: the acceptance record binds to the wave as merged at the release commit (read from Git), not to the workspace's draft, so a later draft revision no longer blocks it. | `tests/test_release_qualify.py` |
+
+Still open after the run, none fixed in M7:
+
+- **D5, the stuck plan.** A plan whose implementation task cannot go green is accepted by `cell.py check-plan`;
+  the line then spends executions (USD 1.55 here) before a person is asked.
+- **D6** the Control Tower's product state after a revision; **D7** Analytics cost leaves out failed executions
+  (USD 8.06 against 8.50), and a killed execution has no recorded cost; **D8** a killed execution is recorded as
+  completed; **D9** a "stuck" belt run counts as completed if the ticket moved at all; **D10** a released claim
+  shows as `unknown`; **D11** the Control Tower does not read the acceptance record; **D12** a ticket body keeps the
+  old revision; **D13** `.factory/release/` is not in the installer's ignored block.
+- **The observer does not list a repeated review folder `round-N.k`** (new with `0fcbb1b`; the observer's review
+  reader, `apps/observer/internal/ingest/people.go`, reads `review/round-N`). Not checked further.
+- Whether D5 should be caught by `check-plan`, and whether D8 and D9 should change how attempts are counted, are
+  decisions for the lead.

@@ -98,6 +98,8 @@ Three workspaces: the **Factory floor** (Atlas and Blueprint, keys 1 and 2), the
 
 Known limits: a supervisor hold is prose with no reason code, so the Tower cannot show it as a wait on a person. Repeated lifecycle lines are counted again. Analytics cost leaves out failed executions. A 240,000-event history switches between workspaces in 598 to 874 ms against a 300 ms budget. Names in free text are served, labelled (see the operator guide).
 
+Found in the one real supervised run of M7 and still open: a plan whose implementation task cannot go green is accepted by `check-plan`, and the line then spends further executions before it asks a person (the "stuck plan"). Analytics cost leaves out failed executions and a killed execution has no recorded cost and is recorded as completed. The Control Tower does not read the product acceptance record, shows a wrong product state after a revision, and does not list a repeated review folder `round-N.k`. Fixed after that run and not re-observed live: a re-review no longer overwrites the round it repeats (`0fcbb1b`), release qualification accepts a shared contract changed by a later reviewed slice, and sending a revised wave after its first request merged opens a new request (`1d58d02`). All have unit tests.
+
 ## 6. Recovering an interrupted run
 
 Every execution is written as `claimed` before any process exists. A restarted supervisor tells these apart:
