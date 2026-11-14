@@ -218,7 +218,7 @@ def download_program(program: Program, version: str) -> bytes:
     except (urllib.error.URLError, OSError) as exc:
         raise Fail(f"the download did not complete ({getattr(exc, 'reason', exc)})")
     if sha(data) != expected[asset]:
-        raise Fail(f"{asset} does not match the release's published checksum; nothing was installed")
+        raise Fail(f"{asset} does not match the release's published checksum, so it was refused")
     return data
 
 

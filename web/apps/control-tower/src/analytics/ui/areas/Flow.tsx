@@ -263,7 +263,7 @@ function StationDetail({ station }: { station: Station }) {
         question="Every measured visit, in buckets of a doubling of time."
         summary={`${g.denominator} measured visits to ${station}; median ${p50Text(g)}${shows.p90 ? `, 90th percentile ${p90Text(g)}` : ""}, longest ${durationText(g.max_ms)}.`}
         table={{ columns: [{ label: "From" }, { label: "To" }, { label: "Visits", num: true }], rows: bins.map((b) => [durationText(b.fromMs), durationText(b.toMs), count(b.count)]) }}
-        foot={<>Percentiles are read from the observer's buckets, as the upper edge of the bucket they fall in. <LogNote /></>}
+        foot={<>Percentiles marked “about” are read inside the observer's buckets; the others are exact, over every measured visit. <LogNote /></>}
       >
         <DurationHistogram buckets={g.distribution?.histogram} p50={shows.median ? g.p50_ms : undefined} p90={shows.p90 ? g.p90_ms : undefined} mark={from && from.ms !== null ? { ms: from.ms, label: `this visit ${durationText(from.ms)}` } : undefined} name="visits" />
       </ChartFrame>
