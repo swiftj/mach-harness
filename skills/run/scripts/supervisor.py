@@ -43,6 +43,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import executor
 import policy as policy_module
 
+try:  # recorded only: without it every execution starts exactly as before, with provenance null
+    import provenance
+except ImportError:
+    provenance = None
+
 RISKS = ("Low", "Medium", "High")
 LIVE = ("claimed", "started")
 NEVER_RETRIED = ("merge", "cleanup")  # stations whose effects reach beyond the cell: an unknown outcome goes to a person
@@ -497,6 +502,8 @@ class Supervisor:
             record.update({"state": "released", "ended_at": stamp(), "how": "not-started"})
             self.line.save(ledger)
             return {"ticket_id": ticket, "slice_id": slice_id, "why": f"MACH could not be prepared as the run's plugin: {exc}"}
+        context = provenance.capture(self.root, boundary, pol, ticket, slice_id, ledger) if provenance else {"provenance": None, "provenance_reason": "capture-failed"}  # recorded only, never raises, decides nothing
+        record.update(context)
         argv = executor.command(pol["claude"], boundary["workflow"], [ticket], until, pol["allowed_tools"], budget_usd, record["session_id"],
                                 boundary["plugin_dir"], boundary["add_dirs"], boundary["denied"])
         executor.prepare(self.root, execution_id, argv, pol["limits"]["max_execution_minutes"])
@@ -504,7 +511,7 @@ class Supervisor:
         record.update({"state": "started", "started_at": stamp()})
         self.line.emit(ledger, "execution.started", session_id=record["session_id"], until=until, workflow=boundary["workflow"],
                        limits={"minutes": pol["limits"]["max_execution_minutes"], "budget_usd": budget_usd},
-                       refs={"execution": f".factory/local/executions/{execution_id}/", "cell": f".factory/worktrees/{ticket}/cell.json"}, **common)
+                       refs={"execution": f".factory/local/executions/{execution_id}/", "cell": f".factory/worktrees/{ticket}/cell.json"}, **context, **common)
         self.line.save(ledger)
         return {"started": True, "ticket_id": ticket, "slice_id": slice_id, "execution_id": execution_id, "session_id": record["session_id"]}
 
