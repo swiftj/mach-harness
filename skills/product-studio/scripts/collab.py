@@ -29,6 +29,12 @@ TRACKED = ("product/project.json", "product/epics/EPIC-*.json", "product/slices/
            "product/acceptance/WAVE-*.json")
 REMOTE = "origin"
 UNREACHABLE = "The shared repository could not be reached."
+FETCH_PROBLEM = {  # refresh's one-sentence problem, by why the fetch failed; the remote's words go in problem_detail
+    "auth": "GitHub did not accept your sign-in on this computer, so the shared project could not be read. Sign in to GitHub again.",
+    "sso": "Your organisation requires your GitHub sign-in to be authorised for single sign-on before the shared project can be read.",
+    "rule": "The shared project's rules did not let this computer read it. An engineer or the repository's owner can help.",
+    "other": "The shared repository did not answer as expected. An engineer can help if this keeps happening.",
+}
 ID_IN_PATH_RE = re.compile(r"(EPIC|SLICE|WAVE)-(\d{3,})")
 SPEC_LISTS = (("invariants", "invariant"), ("functional_requirements", "requirement"), ("scenarios", "scenario"))
 
@@ -61,7 +67,90 @@ def gh(cwd: Path, *args: str) -> subprocess.CompletedProcess:
 
 def last_line(done: subprocess.CompletedProcess) -> str:
     lines = [line.strip() for line in (done.stderr or done.stdout or "").splitlines() if line.strip()]
-    return lines[-1] if lines else "no message"
+    return bounded(lines[-1]) if lines else "no message"
+
+
+# ---- why a push or a GitHub call failed ----
+
+REASON_LIMIT = 300
+CREDENTIALS_IN_URL_RE = re.compile(r"(https?://)[^/@\s]+@")
+SSO_LINK_RE = re.compile(r"https://[^\s'\"<>]*(?:sso|single-sign-on)[^\s'\"<>]*", re.IGNORECASE)
+# Checked in this order; the first that matches decides. Lower-case substrings of Git's or gh's output.
+FAILURE_KINDS = (
+    ("sso", ("saml", "single sign-on", "single-sign-on", "/sso", "sso authorization", "sso enforcement")),
+    ("auth", ("authentication failed", "invalid username or password", "bad credentials", "http 401", "401 unauthorized",
+              "could not read username", "could not read password", "terminal prompts disabled", "gh auth login",
+              "not logged in", "authentication required", "token is expired", "token has expired", "permission denied (publickey)")),
+    ("rule", ("[remote rejected]", "gh006", "gh013", "protected branch", "hook declined", "push declined", "rule violation",
+              "permission to ", "http 403", "403 forbidden", "returned error: 403", "resource not accessible", "must have push access",
+              "not permitted", "pre-receive")),
+    ("network", ("could not resolve", "failed to connect", "connection refused", "connection timed out", "timed out", "network is unreachable",
+                 "no route to host", "connection reset", "deadline exceeded", "dial tcp", "no such host", "error connecting to",
+                 "proxy connect", "unable to access", "does not appear to be a git repository", "could not read from remote repository",
+                 "ssl certificate", "ssl connect")),
+)
+
+
+def bounded(text: str, limit: int = REASON_LIMIT) -> str:
+    """Remote or reviewer text made safe to show as data: one line, no control characters, no
+    credentials inside a URL, at most `limit` characters."""
+    text = CREDENTIALS_IN_URL_RE.sub(r"\1", text)
+    text = " ".join("".join(ch if ch.isprintable() else " " for ch in text).split())
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def classify(done: subprocess.CompletedProcess) -> Dict[str, str]:
+    """Why a push, fetch or gh call failed, from its exit status and output.
+
+    `kind` is one of network, auth, rule, sso, other. `reason` is the remote's own words (its
+    "remote:" lines when it sent any), bounded, to be shown as quoted data and never interpreted.
+    `link` is the address GitHub printed for single sign-on, if any, also data."""
+    raw = "\n".join(part for part in (done.stderr, done.stdout if done.returncode != 0 and not done.stderr else "") if part)
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    said = [line[len("remote:"):].strip() for line in lines if line.lower().startswith("remote:")]
+    said = [line for line in said if line]
+    rest = [line for line in lines if not line.lower().startswith(("remote:", "to ", "hint:"))]
+    if said:
+        rejected = [line for line in rest if "[remote rejected]" in line or "[rejected]" in line]
+        chosen = said + rejected
+    else:
+        chosen = [line for line in rest if not line.lower().startswith("error: failed to push some refs")] or rest
+    text = raw.lower()
+    kind = next((name for name, marks in FAILURE_KINDS if any(mark in text for mark in marks)), "other")
+    if done.returncode == 0:
+        kind = "other"
+    link = SSO_LINK_RE.search(raw) if kind == "sso" else None
+    return {"kind": kind, "reason": bounded(" ".join(chosen)) or "no reason given",
+            "link": bounded(link.group(0).rstrip(".,)"), 200) if link else ""}
+
+
+def explain(failure: Dict[str, str], outcome: str, again: str = "send again") -> Tuple[str, str]:
+    """A failure in a product manager's words: (for the terminal, for the web app). `outcome` says
+    what did and did not happen ("Nothing was sent."). Never a Git command; never "try again" for
+    something a retry cannot fix. The remote's words are quoted as data."""
+    kind, reason, link = failure["kind"], failure["reason"], failure.get("link")
+    quoted = f'GitHub said: "{reason}"'
+    if kind == "network":
+        both = (f"The shared repository could not be reached. {outcome} Try again when you are connected.",
+                f"The shared project could not be reached. {outcome} Try again when you are connected.")
+    elif kind == "auth":
+        both = (f"GitHub did not accept your sign-in on this computer: it is missing, expired or no longer valid. {outcome} "
+                f"Sign in to GitHub again (ask Claude here to help you sign in, or ask an engineer), then {again}.",
+                f"GitHub did not accept your sign-in on this computer: it is missing, expired or no longer valid. {outcome} "
+                f"Sign in to GitHub again, then {again}. An engineer can show you how.")
+    elif kind == "sso":
+        where = f' GitHub gave this address for it (shown as data): "{link}".' if link else ""
+        text = (f"Your organisation requires your GitHub sign-in to be authorised for single sign-on before this can be shared. {outcome}"
+                f"{where} Once it is authorised, {again}. An engineer or the repository's owner can help. {quoted}")
+        both = (text, text)
+    elif kind == "rule":
+        text = (f"The shared project's rules refused this. {outcome} {quoted}. Sending again will not change that: "
+                f"an engineer or the repository's owner can help.")
+        both = (text, text)
+    else:
+        text = f"The shared repository did not accept this. {outcome} {quoted}. If it happens again, an engineer can help."
+        both = (text, text)
+    return both
 
 
 # ---- the shared project ----
@@ -116,6 +205,7 @@ class Shared:
                     break
         self.ref = f"refs/remotes/{REMOTE}/{self.into}" if self.into else None
         self.fetch_detail = ""
+        self.fetch_failure: Dict[str, str] = {}
 
     def fetch(self) -> Tuple[bool, str]:
         """Fetch the shared remote. On failure the message is a plain sentence for a person;
@@ -125,7 +215,8 @@ class Shared:
         done = git(self.project, "fetch", "--prune", REMOTE)
         if done.returncode != 0:
             self.fetch_detail = last_line(done)
-            return False, UNREACHABLE
+            self.fetch_failure = classify(done)
+            return False, FETCH_PROBLEM.get(self.fetch_failure["kind"], UNREACHABLE)
         if not self.into:
             self.__init__(self.project, self._config())  # the first fetch may have brought the branch
         return True, ""
@@ -344,7 +435,7 @@ def find_pull_request(project: Path, branch: str) -> Optional[Dict[str, Any]]:
     return found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else None
 
 
-def open_pull_request(project: Path, shared: Shared, branch: str, title: str, body: str) -> Tuple[Optional[Dict[str, Any]], str]:
+def open_pull_request(project: Path, shared: Shared, branch: str, title: str, body: str, app: bool = False) -> Tuple[Optional[Dict[str, Any]], str]:
     """Find the open pull request for the branch, or open one. Never opens a second."""
     if shutil.which("gh") is None:
         return None, "The GitHub tool (gh) is not installed on this machine."
@@ -356,7 +447,7 @@ def open_pull_request(project: Path, shared: Shared, branch: str, title: str, bo
         args.append("--draft")
     created = gh(project, *args)
     if created.returncode != 0:
-        return None, last_line(created)
+        return None, explain(classify(created), "The work was sent, but the request for review was not opened; nothing will be sent twice.")[app]
     url = next((line.strip() for line in reversed(created.stdout.splitlines()) if line.strip().startswith("http")), "")
     number = url.rstrip("/").rsplit("/", 1)[-1]
     return {"url": url, "number": int(number) if number.isdigit() else None}, ""
@@ -365,12 +456,12 @@ def open_pull_request(project: Path, shared: Shared, branch: str, title: str, bo
 VIEW_FIELDS = "number,url,state,isDraft,reviewDecision,mergeable,statusCheckRollup,reviews,comments"
 
 
-def review_state(project: Path, branch: str) -> Tuple[Optional[Dict[str, Any]], str]:
+def review_state(project: Path, branch: str, app: bool = False) -> Tuple[Optional[Dict[str, Any]], str]:
     if shutil.which("gh") is None:
         return None, "The GitHub tool (gh) is not installed on this machine."
     done = gh(project, "pr", "view", branch, "--json", VIEW_FIELDS)
     if done.returncode != 0:
-        return None, last_line(done)
+        return None, explain(classify(done), "The review status could not be read.", "ask again")[app]
     try:
         data = json.loads(done.stdout)
     except ValueError:

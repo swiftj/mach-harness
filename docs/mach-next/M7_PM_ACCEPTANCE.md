@@ -183,3 +183,36 @@ HOME".
   The PM commands are the same `studio.py` commands with `--project <clone>`; see `p1_pms.py` for the exact
   calls.
 - **Processes:** every host started here was stopped. No Factory, supervisor, station or `claude -p` ran.
+
+## Corrected in M7
+
+Fixed after the run above, in `skills/product-studio/scripts/collab.py`, `studio.py` (messages only) and
+`SKILL.md`. Tested in `tests/test_mach_product_collab.py` with a local bare repository and stand-ins for
+`git` and `gh` (no network, no real credentials). The live run was not repeated against GitHub.
+
+- **D1, corrected.** `collab.classify` reads a failed push, fetch or `gh` call's exit status and output and
+  names one of: no network, sign-in not accepted, single sign-on required, refused by the shared project's
+  rules (protected branch, ruleset, permission, a pre-receive hook), or other. `collab.explain` words each
+  for the PM. A refusal by the rules says so, quotes the remote's own reason (its `remote:` lines) as data,
+  says sending again will not change it and that an engineer or the repository's owner can help. Single
+  sign-on quotes the address GitHub printed, as data. Any other reason is passed on, bounded to 300
+  characters, with control characters and credentials inside URLs removed. No message names a Git command.
+  Tests: `FailureWordingTest` (protected branch with GH006, SSO, other).
+- **D2, corrected.** An invalid or expired sign-in, at fetch or at push, now reads "GitHub did not accept your
+  sign-in on this computer ... Sign in to GitHub again". `refresh` gives the same news in `problem`.
+  The terminal adds the one step (`gh auth login`); the web app says an engineer can show how. A real
+  network failure keeps the earlier wording. Tests: `test_an_invalid_sign_in_*`, `test_no_network_at_push_*`.
+- The ledger is unchanged: each new test asserts that the failed send leaves the approved wave and the
+  prepared commit as they were, and that a later send lands one branch at the same commit and one request.
+  The list of Git and `gh` commands Product Studio may run is unchanged.
+- **D3, wording corrected.** Reconciling by a slice ID that has several files waiting now says each file is
+  decided on its own and lists the paths to use. Behaviour unchanged (each file is still reconciled
+  separately, and taking theirs on the work order still withdraws the approval). Not covered by a new test.
+- **D4, wording corrected.** `epic|slice|wave renumber <path>` is still refused, but the refusal now names the
+  ID to use. Test: one assertion in `test_a_number_taken_by_someone_else`.
+- **D5, untouched.** A design question for the lead (who may dispatch or enable), not a wording change.
+- **D6, untouched.** The sign-in check is in the Studio host (`apps/studio`), outside this change; the
+  message is accurate for the environment it saw.
+- **D7, untouched.** Getting a copy of the shared project is a one-time step outside Product Studio by design.
+- **D8, untouched.** The `status` suggestion for a wave someone else already sent, and the refusal naming
+  WAVE-002, need a change to how status and wave approval treat published waves, not wording.

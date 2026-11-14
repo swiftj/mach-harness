@@ -1204,7 +1204,7 @@ def resolve_artifact(given: str, candidates: Sequence[str]) -> str:
         return matches[0]
     if not matches:
         raise StudioError(f"Nothing called '{given}' needs reconciling. Waiting: " + (", ".join(candidates) or "nothing") + ".")
-    raise StudioError(f"'{given}' matches more than one item. Name one of: " + ", ".join(matches) + ".")
+    raise StudioError(f"'{given}' has more than one file waiting ({len(matches)}); each is decided on its own. Reconcile each by its path: " + ", ".join(matches) + ".")
 
 
 def withdraw_slice(studio: Studio, slice_id: str) -> List[str]:
@@ -1272,7 +1272,8 @@ def cmd_renumber(studio: Studio, args: argparse.Namespace) -> int:
     kind, old = args.kind, args.identifier
     folder, prefix, rule, key = KINDS[kind]
     if not rule.fullmatch(old):
-        raise StudioError(f"'{old}' is not a usable {kind} ID, such as {prefix}-001.")
+        named = re.search(rf"\b{prefix}-\d{{3,}}", old)
+        raise StudioError(f"'{old}' is not a usable {kind} ID, such as {prefix}-001." + (f" Renumbering takes the ID, not the file: use {named.group(0)}." if named else ""))
     relative = f"product/{folder}/{old}.json"
     path = studio.draft / relative
     mine = path.is_file() and not studio.is_published(relative)
@@ -1456,10 +1457,13 @@ def describe_file(relative: str, is_new: bool) -> str:
 def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     need_shared(studio)
     fetched, _ = studio.shared.fetch()
+    failure = studio.shared.fetch_failure
     studio.shared = collab.Shared(studio.project, studio.cell.load_config(studio.project))
     studio._theirs = None
     if not fetched and not args.dry_run:
-        raise StudioError("Could not reach the shared repository, so nothing was sent. Try again when you are connected.")
+        if not failure or failure["kind"] == "network":
+            raise StudioError("Could not reach the shared repository, so nothing was sent. Try again when you are connected.")
+        raise StudioError(say(*collab.explain(failure, "Nothing was sent, and your drafts are unchanged.")))
     if not studio.shared.ref:
         raise StudioError(say("The shared repository has no main branch yet, so there is nothing to send this to. An engineer needs to set that up.",
                               "The shared project has nothing in it yet, so there is nothing to send this to. An engineer needs to set that up."))
@@ -1515,8 +1519,11 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     if not entry.get("pushed"):
         pushed = collab.git(studio.project, "push", collab.REMOTE, f"{entry['commit']}:refs/heads/{branch}")
         if pushed.returncode != 0:
-            raise StudioError(say(f"{wave_id} is prepared but could not be sent: {collab.last_line(pushed)}. Run send again; nothing will be sent twice.",
-                                  f"{wave_id} is prepared but could not be sent. Send it again; nothing will be sent twice."))
+            failure = collab.classify(pushed)
+            outcome = f"{wave_id} is prepared but could not be sent, and your drafts are unchanged."
+            if failure["kind"] in ("network", "auth", "sso", "other"):
+                outcome += " Nothing will be sent twice."
+            raise StudioError(say(*collab.explain(failure, outcome)))
         entry.update({"pushed": True, "sent_at": now(None)})
         studio.save_ledger(ledger)
     request_problem = ""
@@ -1524,7 +1531,7 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
         title, body = request_text(studio, wave)
         if wave_id.endswith("-acceptance"):
             title, body = f"Product: acceptance decision for {wave['wave_id']}", "Product's recorded decision on a qualified release of this wave (`product/acceptance/`). It changes no code and starts no work.\n\nSent from MACH Product Studio."
-        request, request_problem = collab.open_pull_request(studio.project, studio.shared, branch, title, body)
+        request, request_problem = collab.open_pull_request(studio.project, studio.shared, branch, title, body, APP)
         if request:
             entry["pull_request"] = request
             studio.save_ledger(ledger)
@@ -1566,10 +1573,10 @@ def cmd_feedback(studio: Studio, args: argparse.Namespace) -> int:
                        meaning=say("The work reached the shared repository but the request for review could not be opened. Send it again, or give an engineer the branch name.",
                                    "The work reached the shared project but the request for review could not be opened. Send it again, or ask an engineer to open it."))
         else:
-            view, problem = collab.review_state(studio.project, str(entry.get("branch")))
+            view, problem = collab.review_state(studio.project, str(entry.get("branch")), APP)
             if view is None:
                 row.update(status="Sent", state="sent", pull_request=entry["pull_request"].get("url"),
-                           meaning=say(f"The review status could not be read just now ({problem}).", "The review status could not be read just now."))
+                           meaning=problem)
             else:
                 row.update(collab.in_words(view, APP))
             if wave.get("status") != APPROVED and row.get("status") not in ("Accepted", "Declined"):
