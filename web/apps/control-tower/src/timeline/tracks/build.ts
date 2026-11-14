@@ -906,17 +906,37 @@ function makeTree(grouping: Grouping, roots: readonly TrackNode[], byId: Readonl
  * name their slice's wave).
  */
 export function markTrackOf(tree: TrackTree, ref: string): string | null {
+  const index = markIndexOf(tree);
+  if (!index) return tree.tracksOf(ref)[0] ?? null;
+  return index.get(ref) ?? null;
+}
+
+/** Ref -> the track a mark about it is drawn on, built in one pass over the tree's nodes, once per tree. */
+const markIndex = new WeakMap<TrackTree, Map<string, string>>();
+/** Work counters for tests (assignment work counted, never timed): index builds and nodes scanned to build them. */
+export const markAssignment = { indexBuilds: 0, nodesScanned: 0 };
+
+function markIndexOf(tree: TrackTree): Map<string, string> | null {
+  const known = markIndex.get(tree);
+  if (known) return known;
   const rel = internals.get(tree)?.rel;
-  if (!rel) return tree.tracksOf(ref)[0] ?? null;
-  let best: { id: string; rank: number; depth: number } | null = null;
+  if (!rel) return null;
+  markAssignment.indexBuilds += 1;
+  const best = new Map<string, { id: string; rank: number; depth: number }>();
   for (const node of tree.byId.values()) {
-    const rank = refsOfNode(node, rel).get(ref);
-    // About it: the track is it (-1), a span is it (0), or a ribbon is it (4). A span's parent (2) or
-    // ids (3) only name it: a station row is not where its execution's recovery happened.
-    if (rank === undefined || (rank !== -1 && rank !== 0 && rank !== 4)) continue;
-    if (!best || rank < best.rank || (rank === best.rank && (node.depth > best.depth || (node.depth === best.depth && node.id < best.id)))) best = { id: node.id, rank, depth: node.depth };
+    markAssignment.nodesScanned += 1;
+    for (const [ref, rank] of refsOfNode(node, rel)) {
+      // About it: the track is it (-1), a span is it (0), or a ribbon is it (4). A span's parent (2) or
+      // ids (3) only name it: a station row is not where its execution's recovery happened.
+      if (rank !== -1 && rank !== 0 && rank !== 4) continue;
+      const b = best.get(ref);
+      if (!b || rank < b.rank || (rank === b.rank && (node.depth > b.depth || (node.depth === b.depth && node.id < b.id)))) best.set(ref, { id: node.id, rank, depth: node.depth });
+    }
   }
-  return best?.id ?? null;
+  const index = new Map<string, string>();
+  for (const [ref, b] of best) index.set(ref, b.id);
+  markIndex.set(tree, index);
+  return index;
 }
 
 function sameFilters(a: TimelineFilters, b: TimelineFilters): boolean {

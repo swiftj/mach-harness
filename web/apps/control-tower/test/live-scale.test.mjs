@@ -89,18 +89,28 @@ test("a 200,000-event history: throughput, late-event cost, random access, heap 
   const lateMs = performance.now() - t1;
   assert.deepStrictEqual(log2.head(), log.head());
 
-  // Random access over the whole history (scrubbing).
+  // Ingest is linear: each event, appended in order, is reduced exactly once (work counted, not timed,
+  // so a loaded machine cannot fail it; the times stay as diagnostics).
+  const ingestReductions = log.stats().reductions;
+
+  // Random access over the whole history (scrubbing): each scene is at most 8 checkpoint intervals of
+  // reductions away from a checkpoint (src/sim/log.ts), whatever the history's length.
   const span = log.headTime() - log.floorTime();
   const t2 = performance.now();
   let checksum = 0;
-  for (let i = 0; i < 2000; i++) checksum += log.sceneAt(log.floorTime() + ((i * 7919) % 2000) * (span / 2000)).cursor;
+  let worstStep = 0;
+  for (let i = 0; i < 2000; i++) {
+    const r0 = log.stats().reductions;
+    checksum += log.sceneAt(log.floorTime() + ((i * 7919) % 2000) * (span / 2000)).cursor;
+    worstStep = Math.max(worstStep, log.stats().reductions - r0);
+  }
   const accessUs = ((performance.now() - t2) / 2000) * 1000;
 
   const cells = Object.keys(log.head().cells).length;
-  t.diagnostic(`200,000 events, ${cells} cells: ingest ${ingestMs.toFixed(0)} ms (${Math.round(throughput).toLocaleString("en")} events/s); heap +${(after - before).toFixed(0)} MB (${log.stats().checkpoints} checkpoints); late event 300 back: ${r.rederived} reductions in ${lateMs.toFixed(1)} ms; random sceneAt ${accessUs.toFixed(0)} µs (checksum ${checksum})`);
-  assert.ok(throughput > 20_000, `throughput ${throughput}`);
+  t.diagnostic(`200,000 events, ${cells} cells: ingest ${ingestMs.toFixed(0)} ms (${Math.round(throughput).toLocaleString("en")} events/s, ${ingestReductions} reductions); heap +${(after - before).toFixed(0)} MB (${log.stats().checkpoints} checkpoints); late event 300 back: ${r.rederived} reductions in ${lateMs.toFixed(1)} ms; random sceneAt ${accessUs.toFixed(0)} µs, at most ${worstStep} reductions (checksum ${checksum})`);
+  assert.equal(ingestReductions, history.length, "each event reduced once on ingest");
   assert.ok(r.rederived <= 300 + 128, `re-derived ${r.rederived}`);
-  assert.ok(accessUs < 5_000, `random access ${accessUs} µs`);
+  assert.ok(worstStep <= 8 * 128, `a random sceneAt took ${worstStep} reductions`);
 
   // Bounded: keep the newest 50,000.
   const before2 = heapMb();
