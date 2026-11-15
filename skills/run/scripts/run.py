@@ -77,6 +77,20 @@ def sibling(name: str) -> Path:
     raise RunError(f"The MACH {name} skill is not installed next to this one ({SKILL_DIR.parent}).")
 
 
+_CLEANUP: List[Any] = []
+
+
+def cleanup_station() -> Any:
+    """The cleanup station's script, loaded once, whichever way MACH is installed."""
+    if not _CLEANUP:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_cleanup_station", sibling("cleanup") / "scripts" / "cleanup.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _CLEANUP.append(module)
+    return _CLEANUP[0]
+
+
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
 
@@ -147,14 +161,13 @@ class Project:
                 return "This ticket is closed."
         return None
 
+    def observe_status(self) -> Dict[str, Any]:
+        """Whether an observe pass is due, as the cleanup station decides it: the one source for cleanup, the board and the supervisor."""
+        return cleanup_station().observe_due(self.root)
+
     def observe_due(self) -> bool:
         """Whether enough tickets have finished since the last observe pass for another one."""
-        every = self.section("observe").get("every")
-        every = every if isinstance(every, int) and every > 0 else 5
-        log = self.root / ".factory" / "archive" / "runs.jsonl"
-        total = sum(1 for line in log.read_text(encoding="utf-8").splitlines() if line.strip()) if log.is_file() else 0
-        seen = (load_json(self.root / ".factory" / "observations" / "last-pass.json", {}) or {}).get("runs_total")
-        return total - (seen if isinstance(seen, int) else 0) >= every
+        return bool(self.observe_status().get("due"))
 
     def audit(self) -> Dict[str, Any]:
         """Whether the readiness audit lets building start: ok, or why not."""
@@ -515,7 +528,7 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
     if line is None and args.action != "status":
         raise RunError(problem or "Product intake is not available.")
     sup = supervisor_module.Supervisor(project.root, project.config, line, next_step=lambda ticket_id: next_step(project, ticket_id, True),
-                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name(), observe_due=project.observe_due)
+                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name(), observe_due=project.observe_status)
     ctx = activation.Context(project.root, project.config, line, sup, git, project.audit, here, workflow_installed(project), problem)
     try:
         if args.action == "status":

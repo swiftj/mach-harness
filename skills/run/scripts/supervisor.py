@@ -166,7 +166,7 @@ class Lease:
 class Supervisor:
     def __init__(self, root: Path, config: Dict[str, Any], line: Any, *, next_step: Callable[[str], Dict[str, Any]],
                  audit: Callable[[], Dict[str, Any]], git: Callable[..., subprocess.CompletedProcess], run_script: Path, workflow: str,
-                 observe_due: Optional[Callable[[], bool]] = None):
+                 observe_due: Optional[Callable[[], Dict[str, Any]]] = None):
         self.root = root
         self.observe_due = observe_due
         self.config = config
@@ -373,20 +373,21 @@ class Supervisor:
     def learning_due(self, ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
         """An observe pass that is due is separate work, never part of a ticket's execution (run.py hides it from one).
         No setting authorizes the supervisor to run an observe pass or the factory-tuning ticket it may file, so a
-        due pass is left for a person: said once for each count of finished tickets, and reported on every pass."""
-        if self.observe_due is None or not self.observe_due():
+        due pass is left for a person: said once for each count since the last pass, and reported on every pass.
+        Whether one is due, and how many tickets count, is the cleanup station's own answer, so the two never differ."""
+        if self.observe_due is None:
             return
-        log = self.root / ".factory" / "archive" / "runs.jsonl"
-        try:
-            finished = sum(1 for line in log.read_text(encoding="utf-8").splitlines() if line.strip())
-        except OSError:
-            finished = 0
+        status = self.observe_due()
+        if not isinstance(status, dict) or not status.get("due"):
+            return
+        since, every = status.get("finished_since_last_pass"), status.get("every")
         report["observe_due"] = True
         supervisor = ledger["supervisor"]
-        if supervisor.get("observe_reported") != finished:
-            supervisor["observe_reported"] = finished
-            self.line.emit(ledger, "human.required", reason=f"An observe pass is due ({finished} finished tickets recorded). The supervisor does not run it or any "
-                                                            "factory-tuning ticket it files: a person runs the observe skill and decides whether its ticket goes through the line.")
+        if supervisor.get("observe_reported") != since:
+            supervisor["observe_reported"] = since
+            self.line.emit(ledger, "human.required", reason=f"An observe pass is due: {since} tickets have finished since the last one (a pass every {every}). "
+                                                            "The supervisor does not run it or any factory-tuning ticket it files: a person runs the observe skill "
+                                                            "and decides whether its ticket goes through the line.")
 
     def build_refusal(self, ticket: str, execution_id: str) -> Optional[Dict[str, Any]]:
         """Where the build stands, from the cell's own records: the next task in build.json, and the last

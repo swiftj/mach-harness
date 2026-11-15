@@ -1035,6 +1035,23 @@ class ExecutionScopeTest(Base):
         self.assertTrue(all("observe" not in " ".join(call["argv"]) for call in self.calls()), "no execution runs the observe skill")
         self.assertEqual({r["ticket_id"] for r in self.executions().values()}, {"LOCAL-001"})
 
+    def test_the_supervisor_counts_a_due_pass_as_cleanup_does(self):
+        # M7 P5: ten finished tickets, five of them before the last pass. Cleanup says five have finished since; so does the supervisor.
+        self.supervised()
+        self.finished_tickets(10)
+        last = self.eng / ".factory/observations/last-pass.json"
+        last.parent.mkdir(parents=True, exist_ok=True)
+        last.write_text(json.dumps({"runs_total": 5}))
+        self.tick()
+        self.wait()
+        said = [e["data"]["reason"] for e in self.events() if e["type"] == "human.required" and "observe pass is due" in e["data"]["reason"]]
+        sys.path.insert(0, str(ROOT / "skills" / "cleanup" / "scripts"))
+        import cleanup  # noqa: E402
+        status = cleanup.observe_due(self.eng)
+        self.assertEqual((status["due"], status["finished_since_last_pass"]), (True, 5))
+        self.assertEqual(len(said), 1)
+        self.assertIn("5 tickets have finished since the last one (a pass every 5)", said[0])
+
 
 class LifecycleTest(Base):
     def test_pause_and_resume(self):

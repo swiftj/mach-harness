@@ -28,11 +28,42 @@ if (!tickets.length) {
 const MAX_STEPS = 16 // three judging rounds need at most 11 steps; this is a backstop
 const PHASE = { audit: 'Preflight', groom: 'Groom', plan: 'Groom', build: 'Build', revise: 'Build', verify: 'Verify', review: 'Review', merge: 'Wrap up', cleanup: 'Wrap up' }
 const text = { type: 'string' }
+// The fixed set of steps run.py names and of workers the factory ships, under both install forms (plugin, project).
+const ACTIONS = ['audit', 'groom', 'plan', 'build', 'revise', 'verify', 'review', 'merge', 'cleanup', 'stop', 'ERROR']
+const AGENT_TYPES = ['builder', 'contract-engineer', 'verifier', 'reviewer'].flatMap(name => [`mach:${name}`, `mach-${name}`])
 const STEP = {
   type: 'object',
-  properties: { action: text, stop: { type: 'boolean' }, reason: text, stage: text, needs: text, agent_type: text, model: text, prompt: text },
-  required: ['action', 'stop', 'reason'],
+  properties: {
+    action: { type: 'string', enum: ACTIONS }, stop: { type: 'boolean' }, reason: text, stage: text, needs: text,
+    agent_type: { type: 'string', enum: ['', ...AGENT_TYPES], description: 'the "agent_type" field exactly, or an empty string when it is null or absent' },
+    model: text, prompt: text,
+  },
+  required: ['action', 'stop', 'reason', 'agent_type'],
 }
+
+// BEGIN cleanStep: a pure function, evaluated on its own by tests/test_run.py.
+// A relay copies run.py's step, and a model's copy is not trusted: a blank, whitespace-only or quote-only value is
+// absent, an agent type outside AGENT_TYPES falls back to the default worker with a note, and a step that names no
+// known action, or work with no prompt, is refused so that no agent is started with empty fields.
+function cleanStep(step, agentTypes) {
+  const clean = value => (typeof value === 'string' ? value.trim().replace(/^["'`\s]+|["'`\s]+$/g, '') : '')
+  if (!step || typeof step !== 'object') return { error: 'run.py next returned nothing usable' }
+  const action = clean(step.action)
+  if (!action || action === 'ERROR') return { error: clean(step.reason) || 'run.py next failed' }
+  if (!['audit', 'groom', 'plan', 'build', 'revise', 'verify', 'review', 'merge', 'cleanup', 'stop'].includes(action)) {
+    return { error: `run.py next named an unknown step '${action.slice(0, 40)}'` }
+  }
+  const out = { action, stop: step.stop === true || action === 'stop', reason: clean(step.reason), stage: clean(step.stage), needs: clean(step.needs),
+    agent_type: clean(step.agent_type), model: clean(step.model), prompt: typeof step.prompt === 'string' ? step.prompt.trim() : '' }
+  let note = ''
+  if (out.agent_type && !agentTypes.includes(out.agent_type)) {
+    note = `unknown agent type '${out.agent_type.slice(0, 40)}' ignored; the default worker runs this step`
+    out.agent_type = ''
+  }
+  if (!out.stop && out.action !== 'review' && !out.prompt) return { error: `run.py next gave the ${action} step no prompt` }
+  return { step: out, note }
+}
+// END cleanStep
 const BOARD = {
   type: 'object',
   properties: {
@@ -113,10 +144,12 @@ async function runTicket(ticket) {
   let last = ''
   let repeats = 0
   for (let i = 0; i < MAX_STEPS; i++) {
-    const step = await clerk(`next ${ticket} --headless`, STEP, `${ticket}: what next?`, 'Preflight')
-    if (!step || step.action === 'ERROR' || !step.action) {
-      return { ticket, outcome: 'error', reason: (step && step.reason) || 'the next step could not be read', stations: done }
+    const read = cleanStep(await clerk(`next ${ticket} --headless`, STEP, `${ticket}: what next?`, 'Preflight'), AGENT_TYPES)
+    if (read.error) {
+      return { ticket, outcome: 'error', reason: `the next step could not be read: ${read.error}`, stations: done }
     }
+    if (read.note) log(`${ticket}: ${read.note}`)
+    const step = read.step
     if (step.stop || step.action === 'stop') {
       return { ticket, outcome: 'stopped', stage: step.stage || '', waiting_for: step.needs || '', reason: step.reason, stations: done }
     }
