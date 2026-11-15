@@ -63,10 +63,10 @@ class Base(IntakeBase):
     def readiness(self, release_id):
         return json.loads((self.eng / ".factory/release" / release_id / "readiness.json").read_text())
 
-    def scan(self, commit, findings=()):
+    def scan(self, commit, findings=(), **extra):
         folder = self.eng / ".factory/release/scans"
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "scanner.json").write_text(json.dumps({"tool": "scanner", "commit": commit, "findings": list(findings)}))
+        (folder / "scanner.json").write_text(json.dumps({"tool": "scanner", "commit": commit, "findings": list(findings), **extra}))
 
     def head(self):
         return git(self.eng, "rev-parse", "HEAD").strip()
@@ -155,6 +155,8 @@ class OutcomeTest(Base):
         self.assertEqual([(s["scenario_id"], s["status"]) for s in data["acceptance_scenarios"]], [("AC-01", "pass"), ("AC-02", "pass"), ("AC-03", "pass")])
         self.assertEqual(data["commands"]["test_suite"]["status"], "pass")
         self.assertEqual(data["not_assessed"], ["performance"])
+        self.assertEqual(data["outcome_summary"], "qualified; not assessed: performance (not configured)")
+        self.assertEqual(first["outcome_summary"], data["outcome_summary"])
         # A merged, verified, passing release is still not accepted by product.
         self.assertEqual(data["product_acceptance"]["decision"], "not_recorded")
 
@@ -167,6 +169,20 @@ class OutcomeTest(Base):
         self.assertEqual(checks["integration_tests"]["status"], "not_configured")
         self.assertEqual(checks["security.scan"]["status"], "not_run")
         self.assertEqual(set(data["incomplete"]), {"integration_tests", "security.scan"})
+
+    def test_a_scanner_that_failed_or_scanned_nothing_is_not_run(self):
+        commit = self.ready()
+        self.configure(integration_command=f"{sys.executable} check.py")
+        for extra, reason in (({"exit_code": 128}, "exited with code 128"), ({"scanned": 0}, "scanned no sources"),
+                              ({"error": "no package sources found"}, "reported an error")):
+            self.scan(commit, **extra)
+            result = self.release("qualify", "WAVE-001", "--release", "r1")
+            check = self.checks(self.readiness("r1"))["security.scan.scanner"]
+            self.assertEqual((result["outcome"], check["status"]), ("incomplete", "not_run"), extra)
+            self.assertIn(reason, check["detail"])
+            self.assertIn("security.scan.scanner", result["incomplete"])
+        self.scan(commit, exit_code=1, scanned=12)  # findings-found exit code, sources scanned: a real result
+        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "qualified")
 
     def test_a_failing_suite_blocks(self):
         self.ready()
@@ -293,6 +309,33 @@ class AcceptanceTest(Base):
         # Refused only when the wave at that commit is not an approved wave.
         self.assertIn("not in the shared project", self.studio_refused(self.a, "acceptance", "record", "WAVE-007", "--release", "r1", "--commit", commit,
                                                                           "--by", "product-owner", "--decision", "rejected"))
+
+
+    def test_an_acceptance_publication_holds_only_the_decision(self):
+        """N4: with a later draft of the wave's slice pending, the acceptance is sent alone, on its own branch."""
+        commit = self.ready()
+        self.configure(integration_command=f"{sys.executable} check.py")
+        self.scan(commit)
+        self.release("qualify", "WAVE-001", "--release", "r1")
+        self.share()
+        self.ok(self.a, "acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner",
+                "--decision", "accepted", "--readiness", str(self.eng / ".factory/release/r1/readiness.json"))
+        self.ok(self.a, "slice", "reopen", "SLICE-001")
+        self.write_slice(self.a, "SLICE-001", extra="\nRevised by product.\n")
+        self.ok(self.a, "slice", "approve", "SLICE-001")
+        self.ok(self.a, "wave", "approve", "WAVE-001", "--at", "2026-11-11T10:00:00Z")
+        sent = self.ok(self.a, "send", "WAVE-001", "--acceptance")
+        self.assertEqual((sent["published"], sent["branch"], sent["still_unsent"]), ("acceptance", "product/WAVE-001-acceptance", ["the wave's definition"]))
+        git(self.eng, "fetch", "-q", "origin")
+        changed = git(self.eng, "diff", "--name-only", "origin/main...origin/product/WAVE-001-acceptance").split()
+        self.assertEqual(changed, ["product/acceptance/WAVE-001.json"])
+        request = [pr for pr in self.gh()["prs"] if pr["head"] == "product/WAVE-001-acceptance"][0]
+        self.assertEqual(request["title"], f"Product acceptance for WAVE-001 at {commit[:12]}")
+        # The definition is its own publication, without the decision.
+        definition = self.ok(self.a, "send", "WAVE-001")
+        self.assertEqual((definition["published"], definition["branch"]), ("definition", "product/WAVE-001"))
+        git(self.eng, "fetch", "-q", "origin")
+        self.assertNotIn("product/acceptance/WAVE-001.json", git(self.eng, "diff", "--name-only", "origin/main...origin/product/WAVE-001").split())
 
 
 class ContractTest(Base):

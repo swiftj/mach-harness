@@ -5,7 +5,7 @@
   "description": "Written by run.py release qualify (skills/run/scripts/qualify.py). Deterministic: identical inputs give identical bytes (keys sorted, no wall-clock; the run's time is in run.json beside it).",
   "type": "object",
   "required": ["schema", "schema_version", "release", "product", "waves", "slices", "acceptance_scenarios", "commands", "security",
-               "unresolved_blockers", "incomplete", "not_assessed", "checks", "exceptions", "exceptions_not_applied", "human_approvals",
+               "unresolved_blockers", "incomplete", "not_assessed", "outcome_summary", "checks", "exceptions", "exceptions_not_applied", "human_approvals",
                "product_acceptance", "outcome"],
   "additionalProperties": false,
   "$defs": {
@@ -59,6 +59,7 @@
     "human_approvals": {"type": "array", "items": {"type": "object", "required": ["kind", "subject", "by", "at", "source"]}},
     "product_acceptance": {"type": "object", "required": ["decision", "waves"],
                            "properties": {"decision": {"enum": ["accepted", "rejected", "not_recorded"]}}},
+    "outcome_summary": {"type": "string", "description": "the outcome and, when any optional check was not assessed, which and why, such as 'qualified; not assessed: performance (not configured)'"},
     "outcome": {"enum": ["qualified", "qualified_with_exceptions", "blocked", "incomplete"]}
   }
 }

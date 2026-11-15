@@ -1393,8 +1393,6 @@ def closure(studio: Studio, wave: Dict[str, Any]) -> Tuple[Dict[str, bytes], Lis
 
     add(f"product/delivery-waves/{wave['wave_id']}.json")
     add("product/project.json")
-    if acceptance_path(studio, wave["wave_id"]).is_file():
-        add(f"product/acceptance/{wave['wave_id']}.json")
     slices = studio.all("slice")
     theirs = studio.theirs()
     for slice_id in wave.get("slices") or []:
@@ -1490,23 +1488,34 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     sync = studio.sync()
     wave_id = args.wave_id
     wave = studio.load("wave", wave_id)
+    # The wave's definition and product's acceptance of a release are two publications, never one.
     decided = acceptance_path(studio, wave_id)
-    decision_only = wave.get("status") != APPROVED and decided.is_file() and studio.theirs().get(studio.relative(decided)) != decided.read_bytes()
-    if wave.get("status") != APPROVED and not decision_only:
+    decided_relative = f"product/acceptance/{wave_id}.json"
+    decision_pending = decided.is_file() and studio.theirs().get(decided_relative) != decided.read_bytes()
+    definition, definition_problems = closure(studio, wave) if wave.get("status") == APPROVED else ({}, [])
+    definition_pending = any(studio.theirs().get(relative) != data for relative, data in definition.items())
+    if args.acceptance and not decision_pending:
+        raise StudioError(f"There is no unsent acceptance decision for {wave_id}.")
+    publishing = "acceptance" if args.acceptance or (decision_pending and not definition_pending) else "definition"
+    if publishing == "definition" and wave.get("status") != APPROVED:
         raise StudioError(say(f"{wave_id} is {state(wave.get('status'))}. Only an approved wave can be sent (studio.py wave approve {wave_id}).",
                               f"{wave_id} is {state(wave.get('status'))}. Only an approved wave can be sent."), hint("approve_wave", wave_id))
-    if decision_only:  # product's decision on the wave as merged; the draft here has moved on and is not sent
-        files, problems = {studio.relative(decided): decided.read_bytes()}, []
+    if publishing == "acceptance":  # only the decision file; the wave as merged is what it was recorded against
+        files, problems = {decided_relative: decided.read_bytes()}, []
     else:
-        files, problems = closure(studio, wave)
-        problems += wave_problems(studio, sync, wave)
+        files, problems = definition, definition_problems + wave_problems(studio, sync, wave)
+    unsent = (["the wave's definition"] if publishing == "acceptance" and definition_pending else []) + \
+             ([say(f"the acceptance decision (send {wave_id} --acceptance)", "the acceptance decision")] if publishing == "definition" and decision_pending else [])
     problems += [f"{relative} needs reconciling with the shared project first" for relative in files if relative in sync["conflicts"] or relative in sync["collisions"]]
     if problems:
         raise StudioError(f"{wave_id} cannot be sent yet:\n  " + "\n  ".join(dict.fromkeys(problems)))
     theirs = studio.theirs()
     changed = {relative: data for relative, data in files.items() if theirs.get(relative) != data}
-    if changed and all(relative.startswith("product/acceptance/") for relative in changed):
-        wave_id = f"{wave_id}-acceptance"  # the wave itself was accepted earlier: the decision is its own request
+    if publishing == "acceptance":
+        if set(changed) != {decided_relative}:  # closure check: an acceptance publication holds exactly one file
+            raise StudioError(f"An acceptance publication must contain only {decided_relative}. Nothing was sent.")
+        release_commit = str((collab.parse(changed[decided_relative]) or {}).get("release_commit") or "")
+        wave_id = f"{wave_id}-acceptance"  # its own branch, request and ledger entry
     ledger = studio.ledger()
     entry = ledger["waves"].get(wave_id)
     branch = studio.shared.prefix + wave_id
@@ -1537,7 +1546,7 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     finished = request_state in ("merged", "closed")
     digest = collab.digest_of(changed, sha)
     if args.dry_run:
-        return emit({"dry_run": True, "wave_id": wave_id, "would_share": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
+        return emit({"dry_run": True, "would_publish": publishing, "still_unsent": unsent, "wave_id": wave_id, "would_share": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
                      "to": say(f"a request for engineering to add this to the {studio.shared.into} branch", "a request for engineering to add this to the shared project"),
                      "request": "updates the request already open" if entry and entry.get("pull_request") and not finished else "opens a new request",
                      "refreshed": fetched, "note": "Nothing has been sent."})
@@ -1548,14 +1557,18 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
         studio.save_ledger(ledger)
     if not entry or entry.get("digest") != digest or not entry.get("commit"):
         count = len(wave.get("slices") or [])
-        message = (f"product({wave_id}): product's acceptance decision" if wave_id.endswith("-acceptance")
+        message = (f"product({wave_id}): product acceptance at {release_commit[:12]}" if publishing == "acceptance"
                    else f"product({wave_id}): {count} slice{'s' if count != 1 else ''} approved for engineering")
+        base_ref = remote_branch if on_remote else str(studio.shared.ref)
+        judge = (lambda tree: list(product.validate_workspace(tree)["errors"])) if publishing == "acceptance" else (lambda tree: validate_tree(studio, tree, wave))
         try:
-            commit = collab.build_commit(studio.project, studio.shared, studio.home / "publish" / wave_id,
-                                         remote_branch if on_remote else str(studio.shared.ref), changed, message,
-                                         lambda tree: validate_tree(studio, tree, wave))
+            commit = collab.build_commit(studio.project, studio.shared, studio.home / "publish" / wave_id, base_ref, changed, message, judge)
         except collab.CollabError as exc:
             raise StudioError(say(str(exc), exc.app or str(exc)))
+        if publishing == "acceptance":
+            touched = collab.git(studio.project, "diff", "--name-only", base_ref, commit).stdout.split()
+            if touched != [decided_relative]:
+                raise StudioError(f"An acceptance publication must change only {decided_relative}; it would change {', '.join(touched) or 'nothing'}. Nothing was sent.")
         collab.git(studio.project, "update-ref", f"refs/mach/studio/{wave_id}", commit)  # keeps the commit until it is pushed
         entry = {"branch": branch, "digest": digest, "commit": commit, "pushed": False, "sent_at": None,
                  "pull_request": (entry or {}).get("pull_request"), "files": sorted(changed),
@@ -1575,14 +1588,14 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     request_problem = ""
     if not entry.get("pull_request"):
         title, body = request_text(studio, wave)
-        if wave_id.endswith("-acceptance"):
-            title, body = f"Product: acceptance decision for {wave['wave_id']}", "Product's recorded decision on a qualified release of this wave (`product/acceptance/`). It changes no code and starts no work.\n\nSent from MACH Product Studio."
+        if publishing == "acceptance":
+            title, body = f"Product acceptance for {wave['wave_id']} at {release_commit[:12]}", "Product's recorded decision on a qualified release of this wave (`product/acceptance/`). It changes no code and starts no work.\n\nSent from MACH Product Studio."
         request, request_problem = collab.open_pull_request(studio.project, studio.shared, branch, title, body, APP)
         if request:
             entry["pull_request"] = request
             studio.save_ledger(ledger)
     request = entry.get("pull_request") or {}
-    return emit({"sent": True, "wave_id": wave_id, "shared": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
+    return emit({"sent": True, "published": publishing, "still_unsent": unsent, "wave_id": wave_id, "shared": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
                  "status": "Waiting for review" if request else say("Sent, pull request not opened", "Sent, review request not opened"),
                  "state": "waiting_for_review" if request else "sent_request_not_opened",
                  "pull_request": request.get("url"), "branch": branch,
@@ -1649,6 +1662,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("send", help="ask engineering to accept an approved delivery wave")
     p.add_argument("wave_id")
     p.add_argument("--dry-run", action="store_true", help="show what would be shared; send nothing")
+    p.add_argument("--acceptance", action="store_true", help="send only the recorded acceptance decision, as its own request")
     p.set_defaults(func=cmd_send)
     p = sub.add_parser("feedback", help="how review of sent waves is going")
     p.add_argument("wave_id", nargs="?")

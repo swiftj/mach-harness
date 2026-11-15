@@ -194,7 +194,13 @@ class Release:
             if data.get("commit") != commit:
                 ignored.append(f"{path.name}: for commit {str(data.get('commit'))[:12]}, not this one")
                 continue
-            reports.append({"file": path.name, "sha256": sha(path.read_bytes()), "tool": data["tool"],
+            # A scanner that failed or scanned nothing has not shown anything: that is not a clean result.
+            code, scanned, error = data.get("exit_code"), data.get("scanned"), data.get("error")
+            reason = (f"the scanner reported an error: {' '.join(str(error).split())[:200]}" if error
+                      else f"the scanner exited with code {code}" if type(code) is int and code not in (0, 1)
+                      else "the scanner scanned no sources" if type(scanned) is int and scanned <= 0 else None)
+            reports.append({"file": path.name, "sha256": sha(path.read_bytes()), "tool": data["tool"], "not_run": reason,
+                            "exit_code": code if type(code) is int else None, "scanned": scanned if type(scanned) is int else None,
                             "findings": [{"id": str(f.get("id") or ""), "severity": str(f.get("severity") or "").lower(), "title": str(f.get("title") or "")}
                                          for f in data["findings"] if isinstance(f, dict)]})
         return reports, ignored
@@ -452,6 +458,9 @@ class Release:
         if not reports:
             check("security.scan", "security", "not_run", "No scanner report for this commit under .factory/release/scans/.")
         for report in reports:
+            if report["not_run"]:
+                check(f"security.scan.{report['tool']}", "security", "not_run", f"Not a scan result: {report['not_run']}.")
+                continue
             severe = [f for f in report["findings"] if f["severity"] in SEVERE]
             check(f"security.scan.{report['tool']}", "security", "fail" if severe else "pass",
                   f"{len(severe)} critical or high finding(s)." if severe else f"No critical or high findings ({len(report['findings'])} lower).")
@@ -477,6 +486,9 @@ class Release:
         incomplete = sorted(c["id"] for c in checks.values() if c["required"] and c["status"] in INCOMPLETE and not c.get("exception"))
         excepted = sorted(c["id"] for c in checks.values() if c.get("exception"))
         outcome = "blocked" if blocking else "incomplete" if incomplete else "qualified_with_exceptions" if excepted else "qualified"
+        unassessed = sorted(c["id"] for c in checks.values() if not c["required"] and c["status"] != "pass")
+        words = {"not_configured": "not configured", "not_run": "not run", "missing": "missing", "fail": "failed"}
+        summary_line = outcome + ("; not assessed: " + ", ".join(f"{key} ({words.get(checks[key]['status'], checks[key]['status'])})" for key in unassessed) if unassessed else "")
 
         project = snap.project
         body = {
@@ -491,7 +503,8 @@ class Release:
             "security": {"open_review_blockers": [b for b in open_blockers if b["security"]], "scanner_reports": reports, "scanner_reports_ignored": ignored},
             "unresolved_blockers": blocking,
             "incomplete": incomplete,
-            "not_assessed": sorted(c["id"] for c in checks.values() if not c["required"] and c["status"] != "pass"),
+            "not_assessed": unassessed,
+            "outcome_summary": summary_line,
             "checks": [checks[key] for key in sorted(checks)],
             "exceptions": applied, "exceptions_not_applied": not_applied,
             "human_approvals": approvals,
@@ -503,7 +516,7 @@ class Release:
         write_atomic(folder / "run.json", canonical({"release_id": release_id, "commit": commit, "evaluated_at": now(), "readiness_sha256": sha(text.encode("utf-8")),
                                                      "seconds": {key: value.get("seconds") for key, value in commands.items()},
                                                      "logs": sorted(p.relative_to(folder).as_posix() for p in logs.glob("*.log"))}))
-        return {"release_id": release_id, "commit": commit, "outcome": outcome, "readiness": str(folder / "readiness.json"),
+        return {"release_id": release_id, "commit": commit, "outcome": outcome, "outcome_summary": summary_line, "not_assessed": unassessed, "readiness": str(folder / "readiness.json"),
                 "unresolved_blockers": blocking, "incomplete": incomplete, "exceptions": excepted,
                 "product_acceptance": body["product_acceptance"]["decision"], "released": False}
 
