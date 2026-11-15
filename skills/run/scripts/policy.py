@@ -16,6 +16,7 @@ Standard library only. Imported by run.py and supervisor.py; not a command of it
 """
 
 import contextlib
+import hashlib
 import json
 import os
 import platform
@@ -217,6 +218,14 @@ def read(root: Path) -> Dict[str, Any]:
         return refuse(f"The policy was written on another machine ('{data['machine']}'). Authorization does not travel: enable the Factory here.")
     if Path(data["project_root"]) != root:
         return refuse("The policy was written for a different folder. Authorization does not follow a copied or moved project: enable the Factory here.")
+    if data["autonomy"] != "observe":
+        accepted = data.get("execution_risk_accepted")
+        if not isinstance(accepted, dict) or accepted.get("accepted") is not True or not isinstance(accepted.get("at"), str):
+            return refuse("Supervised execution needs a person to accept the execution risk (no operating-system sandbox), and this authorization records no "
+                          "acceptance. Enable the Factory again and confirm with --accept-execution-risk.")
+        if accepted.get("tools_digest") != tools_digest(data["allowed_tools"]):
+            return refuse("The allowed tool list changed since a person accepted the execution risk for it, so the acceptance needs renewing. "
+                          "Enable the Factory again and confirm with --accept-execution-risk.")
     return {**data, "source": "local-file", "problems": []}
 
 
@@ -272,6 +281,39 @@ def may_execute(policy: Dict[str, Any]) -> Tuple[bool, str]:
     return True, f"runner {policy.get('runner_id')}; supervised"
 
 
+# ---- the residual risk a person accepts for modes that start agents ----
+
+# A Bash pattern that runs one of these with any arguments runs any program: an interpreter, a shell, or a launcher.
+UNRESTRICTED_RE = re.compile(r"^Bash\((?:\S*/)?(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|ruby|perl|php|lua|sh|bash|zsh|dash|ksh|fish|env|xargs|exec|"
+                             r"npx|npm|pnpm|yarn|uv|uvx|pip[0-9.]*|make|osascript|open|sudo|su|ssh|docker|podman) \*\)$")
+
+
+def tools_digest(tools: Sequence[str]) -> str:
+    """The SHA-256 of the exact allowed-tool list a person accepted (order kept)."""
+    return hashlib.sha256(json.dumps(list(tools), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def execution_risk(tools: Sequence[str]) -> Dict[str, Any]:
+    """What one execution can do on this machine, worked out from the allowed tools at this moment."""
+    unrestricted = [tool for tool in tools if UNRESTRICTED_RE.match(tool.strip())]
+    lines = []
+    if unrestricted:
+        lines.append(f"With {', '.join(unrestricted)} allowed, an execution can run any program as this user, read and change this user's files "
+                     "(not only this project's), and use the network.")
+    else:
+        shells = [tool for tool in tools if tool.startswith("Bash(")]
+        lines.append("An execution can run these commands as this user: " + ", ".join(shells) + "." if shells else "An execution can run no shell command.")
+    lines.append("MACH's gates (tests, verification, review, merge) check what is merged, not what an execution does outside the repository while it runs.")
+    lines.append("There is no operating-system sandbox: nothing but the tool list stands between an execution and this machine.")
+    return {"unrestricted_tools": unrestricted, "statement": lines, "tools_digest": tools_digest(tools),
+            "to_accept": "Confirm with --confirm <code> --accept-execution-risk, only after the person has read this and said yes."}
+
+
+def accept_execution_risk(policy: Dict[str, Any], by: str) -> Dict[str, Any]:
+    policy["execution_risk_accepted"] = {"accepted": True, "by": by, "at": stamp(), "tools_digest": tools_digest(policy["allowed_tools"])}
+    return policy
+
+
 def build(root: Path, request: Dict[str, Any], enabled_by: str, claude: str, source_branch: str, excluded: Sequence[str]) -> Dict[str, Any]:
     limits = {name: default for name, (default, _, _) in LIMITS.items()}
     for name, value in (request.get("limits") or {}).items():
@@ -289,6 +331,7 @@ def build(root: Path, request: Dict[str, Any], enabled_by: str, claude: str, sou
         "excluded_slices": sorted(set(excluded)), "source_branch": source_branch, "claude": claude,
         "runner_id": str(uuid.uuid4()), "machine": platform.node(), "project_root": str(root),
         "enabled_by": enabled_by, "enabled_at": stamp(),
+        "execution_risk_accepted": None,  # set at confirmation, for a mode that starts agents, only on a person's explicit acceptance
     }
 
 
@@ -312,6 +355,18 @@ def propose(root: Path, request: Dict[str, Any], summary: Dict[str, Any]) -> Dic
     pending = {"code": secrets.token_hex(3), "expires_at": stamp(now() + timedelta(minutes=CONFIRM_MINUTES)), "request": request, "summary": summary}
     write_private(pending_path(root), json.dumps(pending, indent=2, sort_keys=True) + "\n")
     return pending
+
+
+def load_pending(root: Path) -> Dict[str, Any]:
+    """The pending activation, read without using it up; empty when there is none or it cannot be read."""
+    path = pending_path(root)
+    try:
+        if path.is_symlink():
+            return {}
+        pending = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return pending if isinstance(pending, dict) else {}
 
 
 def take_pending(root: Path, code: str) -> Dict[str, Any]:

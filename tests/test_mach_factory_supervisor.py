@@ -171,7 +171,7 @@ class Base(IntakeBase):
         code, out, err = self.run_factory("enable", "--autonomy", autonomy, *flags)
         asked = json.loads(out)
         self.assertTrue(asked.get("ready"), out + err)
-        return self.factory("enable", "--confirm", asked["confirm_with"])
+        return self.factory("enable", "--confirm", asked["confirm_with"], *(["--accept-execution-risk"] if autonomy != "observe" else []))
 
     def tick(self):
         return self.factory("tick")
@@ -259,7 +259,22 @@ class ActivationTest(Base):
         self.assertTrue(all(item["ok"] for item in asked["checks"] if item["required"]))
         self.assertIn("not the confirmation code", self.refused_factory("enable", "--confirm", "000000"))
         self.assertFalse(self.local("runner.json").exists())
-        done = self.factory("enable", "--confirm", asked["confirm_with"])
+        # M7: the central residual risk, worked out from the tool list, and accepted explicitly.
+        risk = would["execution_risk"]
+        self.assertEqual(risk["unrestricted_tools"], ["Bash(python3 *)", f"Bash({sys.executable} *)"])
+        self.assertIn("can run any program as this user, read and change this user's files (not only this project's), and use the network", risk["statement"][0])
+        self.assertIn("check what is merged, not what an execution does outside the repository", risk["statement"][1])
+        self.assertIn("no operating-system sandbox", risk["statement"][2])
+        self.assertEqual(risk["tools_digest"], policy.tools_digest(would["tools_each_execution_may_use"]))
+        self.assertIn("--accept-execution-risk", asked["next"])
+        refusal = self.refused_factory("enable", "--confirm", asked["confirm_with"])
+        self.assertIn("add --accept-execution-risk, only if the person has read the execution risk and accepts it", refusal)
+        self.assertEqual(len(refusal.strip().splitlines()), 1)
+        self.assertFalse(self.local("runner.json").exists())
+        done = self.factory("enable", "--confirm", asked["confirm_with"], "--accept-execution-risk")  # the code was not used up by the refusal
+        accepted = done["policy"]["execution_risk_accepted"]
+        self.assertEqual((accepted["accepted"], accepted["by"], accepted["tools_digest"]), (True, "Erin Engineer", risk["tools_digest"]))
+        self.assertTrue(accepted["at"])
         self.assertEqual((done["enabled"], done["factory"], done["policy"]["limits"]["max_parallel"], done["policy"]["allow_merge"]), (True, "supervised", 1, False))
         self.assertEqual(done["policy"]["enabled_by"], "Erin Engineer")
         self.assertEqual(stat.S_IMODE(self.local("runner.json").stat().st_mode), 0o600)
@@ -382,6 +397,53 @@ class ActivationTest(Base):
         studio_sources = "".join((ROOT / "skills/product-studio/scripts" / name).read_text() for name in ("studio.py", "collab.py"))
         for word in ("policy.py", "import policy", "activation", "factory enable", ".factory/local"):
             self.assertNotIn(word, studio_sources)
+
+
+class ExecutionRiskTest(Base):
+    """M7 T2: a mode that starts agents needs a person to accept the execution risk, for one exact tool list."""
+
+    def rewrite(self, change):
+        data = json.loads(self.local("runner.json").read_text())
+        change(data)
+        self.local("runner.json").write_text(json.dumps(data))
+        os.chmod(str(self.local("runner.json")), 0o600)
+
+    def test_a_changed_tool_list_or_a_missing_acceptance_reads_as_needing_acceptance(self):
+        self.supervised()
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
+        self.rewrite(lambda d: d["allowed_tools"].append("Bash(curl *)"))
+        read = policy.read(self.eng)
+        self.assertEqual((read["enabled"], read["source"]), (False, "invalid-file"))
+        self.assertIn("allowed tool list changed since a person accepted the execution risk", read["problems"][0])
+        self.assertEqual(self.tick()["state"], "disabled")
+        self.rewrite(lambda d: (d["allowed_tools"].remove("Bash(curl *)"), d.pop("execution_risk_accepted")))
+        read = policy.read(self.eng)  # an authorization written before M7: supervised mode needs acceptance first
+        self.assertIn("records no acceptance", read["problems"][0])
+        self.assertIn("--accept-execution-risk", read["problems"][0])
+        self.assertEqual(self.factory("status")["factory"], "disabled")
+
+    def test_resume_keeps_the_acceptance(self):
+        self.supervised()
+        before = json.loads(self.local("runner.json").read_text())["execution_risk_accepted"]
+        self.factory("pause")
+        self.assertTrue(self.factory("resume")["resumed"])
+        self.assertEqual(json.loads(self.local("runner.json").read_text())["execution_risk_accepted"], before)
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
+
+    def test_observe_needs_no_acceptance(self):
+        self.first()
+        asked = json.loads(self.run_factory("enable", "--autonomy", "observe")[1])
+        self.assertIsNone(asked["would_enable"]["execution_risk"])
+        self.assertNotIn("--accept-execution-risk", asked["next"])
+        done = self.factory("enable", "--confirm", asked["confirm_with"])
+        self.assertEqual((done["factory"], done["policy"]["execution_risk_accepted"]), ("observe", None))
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
+
+    def test_the_statement_follows_the_tool_list(self):
+        self.assertEqual(policy.execution_risk(["Read", "Bash(git status *)"])["unrestricted_tools"], [])
+        self.assertIn("run these commands as this user: Bash(git status *)", policy.execution_risk(["Read", "Bash(git status *)"])["statement"][0])
+        for tool in ("Bash(python3 *)", "Bash(/usr/bin/env *)", "Bash(node *)", "Bash(bash *)"):
+            self.assertEqual(policy.execution_risk(["Read", tool])["unrestricted_tools"], [tool], tool)
 
 
 class RunnerFileOriginTest(Base):

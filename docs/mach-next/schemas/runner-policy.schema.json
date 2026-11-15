@@ -23,7 +23,8 @@
     "machine",
     "project_root",
     "enabled_by",
-    "enabled_at"
+    "enabled_at",
+    "execution_risk_accepted"
   ],
   "properties": {
     "schema_version": {
@@ -156,6 +157,23 @@
     "enabled_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "execution_risk_accepted": {
+      "description": "A person's acceptance of the execution risk (no operating-system sandbox) for this exact allowed-tool list. Null for observe; required for a mode that starts agents, or the authorization reads as disabled.",
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["accepted", "by", "at", "tools_digest"],
+          "properties": {
+            "accepted": {"const": true},
+            "by": {"type": "string"},
+            "at": {"type": "string", "format": "date-time"},
+            "tools_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      ]
     }
   }
 }

@@ -548,6 +548,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = fac.add_parser("enable", help="preflight and a confirmation code; with --confirm, enable")
     p.add_argument("--autonomy", choices=("observe", "supervised"), default="observe")
     p.add_argument("--confirm", metavar="CODE", help="the code the first enable printed, after a person has agreed")
+    p.add_argument("--accept-execution-risk", action="store_true",
+                   help="with --confirm, for a mode that starts agents: the person has read the execution risk (no sandbox) and accepts it")
     p.add_argument("--max-parallel", type=int)
     p.add_argument("--max-minutes", type=int, help="stop one execution after this many minutes")
     p.add_argument("--max-runs-per-day", type=int)

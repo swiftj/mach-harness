@@ -38,7 +38,7 @@ class Project(unittest.TestCase):
 
     def grant(self, root=None, **changes):
         root = root or self.root
-        data = policy.build(root, {"autonomy": "supervised"}, "engineer", "/usr/bin/false", "main", [])
+        data = policy.accept_execution_risk(policy.build(root, {"autonomy": "supervised"}, "engineer", "/usr/bin/false", "main", []), "engineer")
         data.update(changes)
         policy.save(root, data)
         return data
