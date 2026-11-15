@@ -444,8 +444,8 @@ Snapshots restate every agent, so the normaliser **diffs** each snapshot against
 | `execution.started` | authoritative | `ticket_id`, `execution_id` | `until`, `workflow`, `limits{minutes, budget_usd}`; revision 3: `provenance`, `provenance_reason` (section 10.1.1) | same; revision 3: `source_commit` (from the envelope), `provenance` (the snapshot, or null) and `provenance_reason` |
 | `station.observed` | **observed** (sampled) | `ticket_id` | `from_stage`, `stage` | same; for display, superseded by `station.*` where a lifecycle log exists |
 | `recovery.started` | authoritative | | `kind` | same |
-| `execution.completed` | authoritative | `ticket_id`, `execution_id` | `stage`, `next`, `waiting_for`, `how`, `seen_to_end`, `cost_usd`, `refused_tools[]` | same |
-| `execution.failed` | authoritative | `ticket_id`, `execution_id` | `stage`, `next`, `how`, `claude_error`, `exit_code`, `attempt` | same |
+| `execution.completed` | authoritative | `ticket_id`, `execution_id` | `stage`, `next`, `waiting_for`, `how`, `seen_to_end`, `cost_usd`, `refused_tools[]`; since M7 `exit_code` (null when unknown) and `how: killed` for a Claude Code ended by a signal (negative `exit_code`); only `how: exited` with `exit_code` 0 clears the attempt count | same |
+| `execution.failed` | authoritative | `ticket_id`, `execution_id` | `stage`, `next`, `how`, `claude_error`, `exit_code`, `attempt`; since M7, when the run shows the ticket cannot progress, `not_progressing` (`workflow-stuck`: the belt's result says stuck; `same-refusal`: the build stopped on the same task and gate refusal as the previous execution), followed by `human.required` | same |
 
 ### 11.2 From cell lifecycle logs (11 kinds, being implemented now)
 

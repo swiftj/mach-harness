@@ -1,12 +1,17 @@
 # Publishes a MACH release when a version tag is pushed: two prebuilt programs for each supported
-# machine, plus SHA256SUMS covering both:
+# machine, the installer's source archive, and SHA256SUMS covering all of them, each attested:
 #   mach-studio-<os>-<arch>    the visual Product Studio's host, with the Product Studio web app embedded
 #   mach-observer-<os>-<arch>  the Control Tower's read-only observer, with the Control Tower embedded
+#   mach-<version>-source.tar.gz  the repository at the tag (git archive), which install.sh installs
 # The installer (bin/mach) downloads the files for the person's machine from this release and checks
 # them against SHA256SUMS, so the file names here and in bin/mach must stay the same. Releases made
 # before the observer shipped have no mach-observer-* file; the installer treats that as normal.
 #
 # Run by hand (workflow_dispatch) it builds and smoke-tests everything and publishes nothing.
+#
+# Third-party actions are pinned to a full commit SHA (the release they were at is in the comment);
+# Go is pinned to a patch release; syft, which writes each program's SBOM, is pinned to a version.
+# To update one, look the tag up read-only (gh api repos/<owner>/<action>/commits/<tag> --jq .sha).
 name: release
 
 on:
@@ -21,7 +26,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: The tag must match the plugin's version
         if: github.ref_type == 'tag'
@@ -32,18 +37,19 @@ jobs:
             exit 1
           fi
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: web/package.json
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      # Both modules declare the same Go version; the studio's go.mod picks it.
-      - uses: actions/setup-go@v7
+      # Both modules declare go 1.27 and no toolchain line; the patch release is pinned here so a
+      # rebuilt release uses the same compiler.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: apps/studio/go.mod
+          go-version: "1.27.3"
           cache-dependency-path: |
             apps/studio/go.mod
             apps/observer/go.mod
@@ -58,19 +64,38 @@ jobs:
           python3 -m unittest tests.test_lifecycle tests.test_mach_tower
           cd apps/observer && go vet ./... && go test -race -count=1 ./...
 
+      # Each program's --version says which release it is: the plugin's version on a tag, that
+      # version plus the commit on a run by hand.
       - name: Build both programs for every supported machine
         run: |
           mkdir -p dist
           (cd web && pnpm install --frozen-lockfile)
+          VERSION=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then VERSION="$VERSION-dev+${GITHUB_SHA::12}"; fi
+          export VERSION
           for target in darwin/arm64 linux/arm64 linux/amd64; do
             SKIP_INSTALL=1 CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} \
               OUT="$PWD/dist/mach-studio-${target%/*}-${target#*/}" sh apps/studio/build.sh
             SKIP_INSTALL=1 CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} \
               OUT="$PWD/dist/mach-observer-${target%/*}-${target#*/}" sh apps/observer/build.sh
           done
-          (cd dist && sha256sum mach-studio-* mach-observer-* > SHA256SUMS && cat SHA256SUMS)
 
-      - uses: actions/upload-artifact@v7
+      # What install.sh installs: the repository at this commit as one archive. git archive writes the
+      # tree in sorted order and stamps every entry with the commit's time; gzip -n adds no name or
+      # time; so the same commit gives the same bytes (with the same gzip). install.sh checks it
+      # against SHA256SUMS and its attestation before running any of it, so it is smoke-tested here.
+      - name: Package the installer's source and list every file in SHA256SUMS
+        run: |
+          PLUGIN_VERSION=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          git archive --format=tar --prefix="mach-$PLUGIN_VERSION/" HEAD | gzip -9n > "dist/mach-$PLUGIN_VERSION-source.tar.gz"
+          work=$(mktemp -d)
+          mkdir "$work/src" "$work/project"
+          tar -xzf "dist/mach-$PLUGIN_VERSION-source.tar.gz" -C "$work/src" --strip-components=1
+          MACH_STUDIO=skip MACH_TOWER=skip python3 "$work/src/bin/mach" install --project "$work/project"
+          test -f "$work/project/.claude/skills/mach-intent/SKILL.md"
+          (cd dist && sha256sum mach-studio-* mach-observer-* mach-*-source.tar.gz > SHA256SUMS && cat SHA256SUMS)
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hosts
           path: dist/
@@ -88,18 +113,20 @@ jobs:
           - { runner: macos-latest, file: mach-studio-darwin-arm64, observer: mach-observer-darwin-arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: hosts
           path: dist
       - name: Start it, open the link, ask the engine for status
         run: |
           chmod +x "dist/${{ matrix.file }}"
+          "dist/${{ matrix.file }}" --version
           sh apps/studio/smoke.sh "dist/${{ matrix.file }}"
       - name: Start the observer, open the link, read the API, stop it cleanly
         run: |
           chmod +x "dist/${{ matrix.observer }}"
+          "dist/${{ matrix.observer }}" --version
           sh apps/observer/smoke.sh "dist/${{ matrix.observer }}"
       - name: The observer embeds the Control Tower, not the placeholder page
         run: |
@@ -117,17 +144,36 @@ jobs:
       id-token: write        # sign the build provenance
       attestations: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: hosts
           path: dist
-      - uses: actions/attest-build-provenance@v4
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/mach-studio-*
             dist/mach-observer-*
+            dist/mach-*-source.tar.gz
+            dist/SHA256SUMS
+      # One SPDX SBOM per program, attached beside SHA256SUMS. Made after the attestation so the
+      # attested subjects stay the programs and the sums file.
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        id: syft
+        with:
+          syft-version: v1.55.0
+      - name: Write an SBOM for each program
+        run: |
+          for file in dist/mach-studio-* dist/mach-observer-*; do
+            "${{ steps.syft.outputs.cmd }}" scan "file:$file" -o "spdx-json=$file.spdx.json"
+          done
+          ls -l dist
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "MACH ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag
+        run: |
+          # A tag with a hyphen (v0.13.0-rc.1) is a release candidate: published as a pre-release, so it is
+          # never the "latest release" the installer resolves by default.
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --title "MACH ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag $pre

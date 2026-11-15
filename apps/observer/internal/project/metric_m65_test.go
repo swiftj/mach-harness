@@ -265,3 +265,25 @@ func TestUsageCoverageCountsExecutions(t *testing.T) {
 		}
 	}
 }
+
+// Status is encoded after the projector's lock is released (the health route) while the
+// projector goes on counting gaps: what it returns must be a copy, never the state's own map
+// (a data race the race detector found on Linux).
+func TestStatusHistoryIsACopy(t *testing.T) {
+	gap := func(ms int64) map[string]any {
+		return feedtest.New("observer", "history.gap", ms).Data(map[string]any{"source_key": "r:0badc0de", "reason": "unparsable-line", "from_seq": 2, "to_seq": 2, "count": 1}).Build()
+	}
+	m := feedtest.NewMem("", 0)
+	m.Append(gap(1000))
+	p := New(Options{Log: m})
+	p.Sync()
+	before := p.Status().History["gaps"].(map[string]int64)
+	m.Append(gap(2000))
+	p.Sync()
+	if before["unparsable-line"] != 1 {
+		t.Fatalf("an earlier Status changed with the projection: %v", before)
+	}
+	if now := p.Status().History["gaps"].(map[string]int64); now["unparsable-line"] != 2 {
+		t.Fatalf("gaps %v", now)
+	}
+}

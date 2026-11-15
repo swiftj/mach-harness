@@ -347,12 +347,21 @@ func (l *Ledger) data(ev *event.Event, typ string, in map[string]any) (map[strin
 			}
 		}
 		d["refused_tools"] = oneRefusalPerTool(tools)
+		if _, ok := in["exit_code"]; ok {
+			// M7: the supervisor records the process's exit code (and how "killed" for a signal exit);
+			// earlier records carry neither, and their events keep their shape.
+			d["exit_code"] = intOrNil(get("exit_code"))
+		}
 	case "execution.failed":
 		d["stage"] = stage(get("stage"))
 		d["next"] = action(get("next"))
 		d["how"] = tokOrNil(get("how"))
 		d["claude_error"] = tokOrNil(get("claude_error"))
 		d["exit_code"] = intOrNil(get("exit_code"))
+		if _, ok := in["not_progressing"]; ok {
+			// M7: why the supervisor parked the ticket at once (a code; human.required follows).
+			d["not_progressing"] = enum(get("not_progressing"), "workflow-stuck", "same-refusal")
+		}
 		a := intOrNil(get("attempt"))
 		require(ev, d, "attempt", a, int64(0))
 		if n, ok := a.(int64); ok && n >= 1 {

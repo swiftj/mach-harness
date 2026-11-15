@@ -14,7 +14,7 @@ import type { EntityRef } from "../sim";
 export type DurationBasis = "measured" | "bounded" | "inferred" | "open" | "unknown";
 export type SpanAuthority = "authoritative" | "observed" | "reconstructed" | "simulated";
 export type SpanPrecision = "ms" | "s" | "arrival" | "bounded" | "unknown" | "simulated";
-export type SpanEndReason = "completed" | "failed" | "refused" | "interrupted" | "superseded" | "unknown";
+export type SpanEndReason = "completed" | "failed" | "refused" | "interrupted" | "superseded" | "released" | "unknown";
 
 /** The observer's span kinds, plus the M6.3 `capacity-wait`. */
 export type SpanKind =
@@ -65,6 +65,8 @@ export interface SpanAttrs {
   readonly attempt?: number;
   readonly state?: string;
   readonly costUsd?: number;
+  /** M7 N6: a killed execution's exit code (a code; negative for a signal). */
+  readonly exitCode?: number;
   readonly vote?: string;
   readonly reasons?: readonly string[];
   readonly dependsOn?: readonly string[];

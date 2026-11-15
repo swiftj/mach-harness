@@ -26,6 +26,10 @@ import (
 	"mach/studio/internal/webui"
 )
 
+// version is the MACH release this program was built for, stamped by the release workflow with
+// -ldflags "-X main.version=<version>" (build.sh passes VERSION). A local build says "dev".
+var version = "dev"
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "mach-studio:", err)
@@ -45,8 +49,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	model := flags.String("model", "", "the model for interviews (default: the person's Claude Code default)")
 	budget := flags.Float64("budget-per-turn", 2, "the spending cap in US dollars for each interview turn")
 	turnTimeout := flags.Duration("turn-timeout", 600*time.Second, "the time limit for each interview turn")
+	showVersion := flags.Bool("version", false, "print the MACH release this program was built for, and exit")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *showVersion {
+		fmt.Fprintln(stdout, "mach-studio", version)
+		return nil
 	}
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))

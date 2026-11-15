@@ -86,13 +86,30 @@ for ticket in args["tickets"]:
             import subprocess
             subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True)
             subprocess.run(["git", "-c", "user.name=line", "-c", "user.email=line@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "build"], cwd=repo, capture_output=True)
+    if plan.get("refuse"):  # the build station refused a task: build.json and the cell's lifecycle log say so, as build.py writes them
+        cell_dir = os.path.join(".factory", "worktrees", ticket)
+        json.dump({"tasks": [{"id": "T01", "kind": "test", "status": "done"}, {"id": plan["refuse"], "kind": "impl", "status": "pending"}]},
+                  open(os.path.join(cell_dir, "build.json"), "w"))
+        with open(os.path.join(cell_dir, "lifecycle.jsonl"), "a") as log:
+            log.write(json.dumps({"v": 1, "type": "gate.evaluated", "station": "build", "ticket_id": ticket, "execution_id": os.environ.get("MACH_EXECUTION_ID"),
+                                  "data": {"gate": "build.green", "outcome": "refuse", "reason_code": "suite-red", "task": plan["refuse"]}}) + "\n")
+    if plan.get("ask"):  # a relay inside the run asks the belt script about tickets, with the run's own environment
+        import subprocess
+        answers = {}
+        for name, command in plan["ask"].items():
+            done = subprocess.run([sys.executable, plan["run_py"], "--project", ".", *command], capture_output=True, text=True)
+            answers[name] = {"code": done.returncode, "out": done.stdout, "err": done.stderr}
+        json.dump(answers, open(plan["answers"], "w"))
     if plan.get("vanish"):
         os._exit(7)
-    tickets.append({"ticket": ticket, "outcome": "stopped", "stage": plan.get("stage", ""), "waiting_for": "merge"})
+    tickets.append({"ticket": ticket, "outcome": plan.get("outcome", "stopped"), "stage": plan.get("stage", ""), "waiting_for": "merge"})
 result = {"type": "result", "subtype": "success" if not plan.get("is_error") else "error_during_execution", "is_error": bool(plan.get("is_error")),
           "session_id": session, "total_cost_usd": plan.get("cost", 0.5), "permission_denials": [],
           "result": json.dumps({"tickets": tickets, "waiting_on_a_person": [], "finished": [], "problems": []})}
 print(json.dumps(result), flush=True)
+if plan.get("kill"):  # ended by a signal, as when a person or the OS kills Claude Code
+    import signal
+    os.kill(os.getpid(), signal.SIGKILL)
 sys.exit(plan.get("exit", 0))
 '''
 OS_ADDED_ENV = {"__CF_USER_TEXT_ENCODING"}  # macOS adds this to every process itself; it is not passed by the wrapper
@@ -161,7 +178,7 @@ class Base(IntakeBase):
         code, out, err = self.run_factory("enable", "--autonomy", autonomy, *flags)
         asked = json.loads(out)
         self.assertTrue(asked.get("ready"), out + err)
-        return self.factory("enable", "--confirm", asked["confirm_with"])
+        return self.factory("enable", "--confirm", asked["confirm_with"], *(["--accept-execution-risk"] if autonomy != "observe" else []))
 
     def tick(self):
         return self.factory("tick")
@@ -249,7 +266,22 @@ class ActivationTest(Base):
         self.assertTrue(all(item["ok"] for item in asked["checks"] if item["required"]))
         self.assertIn("not the confirmation code", self.refused_factory("enable", "--confirm", "000000"))
         self.assertFalse(self.local("runner.json").exists())
-        done = self.factory("enable", "--confirm", asked["confirm_with"])
+        # M7: the central residual risk, worked out from the tool list, and accepted explicitly.
+        risk = would["execution_risk"]
+        self.assertEqual(risk["unrestricted_tools"], ["Bash(python3 *)", f"Bash({sys.executable} *)"])
+        self.assertIn("can run any program as this user, read and change this user's files (not only this project's), and use the network", risk["statement"][0])
+        self.assertIn("check what is merged, not what an execution does outside the repository", risk["statement"][1])
+        self.assertIn("no operating-system sandbox", risk["statement"][2])
+        self.assertEqual(risk["tools_digest"], policy.tools_digest(would["tools_each_execution_may_use"]))
+        self.assertIn("--accept-execution-risk", asked["next"])
+        refusal = self.refused_factory("enable", "--confirm", asked["confirm_with"])
+        self.assertIn("add --accept-execution-risk, only if the person has read the execution risk and accepts it", refusal)
+        self.assertEqual(len(refusal.strip().splitlines()), 1)
+        self.assertFalse(self.local("runner.json").exists())
+        done = self.factory("enable", "--confirm", asked["confirm_with"], "--accept-execution-risk")  # the code was not used up by the refusal
+        accepted = done["policy"]["execution_risk_accepted"]
+        self.assertEqual((accepted["accepted"], accepted["by"], accepted["tools_digest"]), (True, "Erin Engineer", risk["tools_digest"]))
+        self.assertTrue(accepted["at"])
         self.assertEqual((done["enabled"], done["factory"], done["policy"]["limits"]["max_parallel"], done["policy"]["allow_merge"]), (True, "supervised", 1, False))
         self.assertEqual(done["policy"]["enabled_by"], "Erin Engineer")
         self.assertEqual(stat.S_IMODE(self.local("runner.json").stat().st_mode), 0o600)
@@ -276,6 +308,10 @@ class ActivationTest(Base):
             (lambda: self.claude({"help": "old"}), "claude_ready", "lacks --restricted, --permission-prompts"),
             (lambda: self.claude({"probe_mcp": [{"name": "gmail", "status": "connected"}]}), "claude_ready", "MCP servers were loaded"),
             (lambda: self.config(review={"security_veto": False}), "security_review", "could be outvoted"),
+            # M7: tracked settings that take the security seat off a Medium or High panel, or the person off High risk.
+            (lambda: self.config(review={"medium": {"reviewers": 1}}), "security_review", "review.medium.reviewers is 1: Medium-risk tickets would be reviewed without the security seat"),
+            (lambda: self.config(review={"high": {"reviewers": 1}}), "security_review", "review.high.reviewers is 1"),
+            (lambda: self.config(review={"high": {"human_approval": False}}), "security_review", "a person can still run that ticket by hand"),
             (lambda: self.config(factory={"supervisor": False}), "project_allows", "not allowed here"),
             (lambda: self.local("supervisor.json").parent.mkdir(exist_ok=True) or self.local("supervisor.json").write_text(json.dumps(
                 {"instance": "other", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(), "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z"})),
@@ -368,6 +404,103 @@ class ActivationTest(Base):
         studio_sources = "".join((ROOT / "skills/product-studio/scripts" / name).read_text() for name in ("studio.py", "collab.py"))
         for word in ("policy.py", "import policy", "activation", "factory enable", ".factory/local"):
             self.assertNotIn(word, studio_sources)
+
+
+class ExecutionRiskTest(Base):
+    """M7 T2: a mode that starts agents needs a person to accept the execution risk, for one exact tool list."""
+
+    def rewrite(self, change):
+        data = json.loads(self.local("runner.json").read_text())
+        change(data)
+        self.local("runner.json").write_text(json.dumps(data))
+        os.chmod(str(self.local("runner.json")), 0o600)
+
+    def test_a_changed_tool_list_or_a_missing_acceptance_reads_as_needing_acceptance(self):
+        self.supervised()
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
+        self.rewrite(lambda d: d["allowed_tools"].append("Bash(curl *)"))
+        read = policy.read(self.eng)
+        self.assertEqual((read["enabled"], read["source"]), (False, "invalid-file"))
+        self.assertIn("allowed tool list changed since a person accepted the execution risk", read["problems"][0])
+        self.assertEqual(self.tick()["state"], "disabled")
+        self.rewrite(lambda d: (d["allowed_tools"].remove("Bash(curl *)"), d.pop("execution_risk_accepted")))
+        read = policy.read(self.eng)  # an authorization written before M7: supervised mode needs acceptance first
+        self.assertIn("records no acceptance", read["problems"][0])
+        self.assertIn("--accept-execution-risk", read["problems"][0])
+        self.assertEqual(self.factory("status")["factory"], "disabled")
+
+    def test_resume_keeps_the_acceptance(self):
+        self.supervised()
+        before = json.loads(self.local("runner.json").read_text())["execution_risk_accepted"]
+        self.factory("pause")
+        self.assertTrue(self.factory("resume")["resumed"])
+        self.assertEqual(json.loads(self.local("runner.json").read_text())["execution_risk_accepted"], before)
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
+
+    def test_observe_needs_no_acceptance(self):
+        self.first()
+        asked = json.loads(self.run_factory("enable", "--autonomy", "observe")[1])
+        self.assertIsNone(asked["would_enable"]["execution_risk"])
+        self.assertNotIn("--accept-execution-risk", asked["next"])
+        done = self.factory("enable", "--confirm", asked["confirm_with"])
+        self.assertEqual((done["factory"], done["policy"]["execution_risk_accepted"]), ("observe", None))
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
+
+    def test_the_statement_follows_the_tool_list(self):
+        self.assertEqual(policy.execution_risk(["Read", "Bash(git status *)"])["unrestricted_tools"], [])
+        self.assertIn("run these commands as this user: Bash(git status *)", policy.execution_risk(["Read", "Bash(git status *)"])["statement"][0])
+        for tool in ("Bash(python3 *)", "Bash(/usr/bin/env *)", "Bash(node *)", "Bash(bash *)"):
+            self.assertEqual(policy.execution_risk(["Read", tool])["unrestricted_tools"], [tool], tool)
+
+
+class RunnerFileOriginTest(Base):
+    """M7 T1: no repository artifact can enable local execution. A runner.json Git knows about, a link, another
+    user's file or a writable one reads as disabled; the preflight names it, and confirming never writes over a tracked one."""
+
+    def test_a_runner_file_git_knows_about_is_refused_and_never_written_over(self):
+        self.supervised()
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
+        git(self.eng, "add", "-f", ".factory/local/runner.json")  # in the index only: not yet committed
+        read = policy.read(self.eng)
+        self.assertEqual((read["enabled"], read["source"]), (False, "invalid-file"))
+        self.assertIn("tracked by Git", read["problems"][0])
+        self.assertEqual(self.tick()["state"], "disabled")
+        with self.assertRaises(policy.PolicyError) as refused:
+            policy.save(self.eng, {**read, "enabled": True})
+        self.assertIn("git rm --cached .factory/local/runner.json", str(refused.exception))
+        before = self.local("runner.json").read_text()
+        code, out, _ = self.run_factory("enable", "--autonomy", "observe")
+        asked = json.loads(out)
+        self.assertEqual((code, asked["ready"]), (1, False))
+        self.assertIn("local_policy_file", [item["check"] for item in asked["failed"]])
+        self.assertIn("tracked by Git", json.dumps(asked["failed"]))
+        self.assertEqual(self.local("runner.json").read_text(), before, "nothing was written over the tracked file")
+        git(self.eng, "rm", "-q", "--cached", ".factory/local/runner.json")
+        self.assertEqual(policy.read(self.eng)["source"], "local-file", "removed from Git, the person's own grant reads again")
+
+    def test_a_link_or_a_writable_file_is_refused_and_the_preflight_says_which(self):
+        self.supervised()
+        good = self.local("runner.json").read_text()
+        os.chmod(str(self.local("runner.json")), 0o620)
+        self.assertIn("other users", policy.read(self.eng)["problems"][0])
+        self.assertIn("other users", json.dumps(json.loads(self.run_factory("enable", "--autonomy", "observe")[1])["failed"]))
+        self.local("runner.json").unlink()
+        elsewhere = self.root / "runner-elsewhere.json"
+        elsewhere.write_text(good)
+        os.chmod(str(elsewhere), 0o600)
+        self.local("runner.json").symlink_to(elsewhere)
+        self.assertIn("symbolic link", policy.read(self.eng)["problems"][0])
+        self.assertIn("symbolic link", json.dumps(json.loads(self.run_factory("enable", "--autonomy", "observe")[1])["failed"]))
+
+    def test_another_users_file_is_refused(self):
+        self.supervised()
+        real = os.getuid
+        try:
+            policy.os.getuid = lambda: real() + 1  # simulated: the test cannot create a file owned by someone else
+            self.assertIn("not owned by the current user", policy.read(self.eng)["problems"][0])
+        finally:
+            policy.os.getuid = real
+        self.assertEqual(policy.read(self.eng)["source"], "local-file")
 
 
 class CapacityReportTest(Base):
@@ -651,6 +784,24 @@ class LimitsTest(Base):
         self.assertEqual(report["state"], "disabled")
         self.assertIn("does not allow unattended execution", report["why"])
 
+    def test_review_settings_that_remove_the_security_check_hold_every_pass(self):
+        """M7: a tracked change made after enabling is seen on the next pass and before any dispatch, not only at resume."""
+        self.waves(1)
+        self.enable("--include-backlog")
+        for review in ({"security_veto": False}, {"medium": {"reviewers": 1}}, {"high": {"human_approval": False}}):
+            with self.subTest(review=review):
+                self.config(review=review)
+                report = self.tick()
+                self.assertEqual((report["state"], report["dispatched"], report["started"]), ("observe", [], []))
+                self.assertIn("Unattended execution is refused while that is so; a person can still run that ticket by hand", json.dumps(report["held"]))
+                self.assertIn(policy.security_review_problems({"review": review})[0], self.factory("status")["restricted_by_project"])
+                # A long-running supervisor holds the config it started with; the check reads the file on disk instead.
+                self.assertEqual(policy.effective(policy.read(self.eng), {})["security_review_problems"], policy.security_review_problems({"review": review}))
+        self.assertEqual(self.calls(), [])
+        self.config(review={"medium": {"reviewers": 3, "approvals": 3}})  # raising a threshold is never refused
+        self.assertEqual(len(self.tick()["started"]), 1)
+        self.wait()
+
     def test_runs_and_money_per_day_are_limited(self):
         self.waves(2)
         self.enable("--include-backlog", "--max-runs-per-day", "1")
@@ -764,6 +915,142 @@ class LimitsTest(Base):
         for _ in range(2):
             self.assertEqual(self.tick()["started"], [])
         self.assertEqual(len(self.calls()), 2)
+
+
+class NotProgressingTest(Base):
+    """M7 D8 and D9: how an execution ended, and when retrying it is pointless, from recorded facts only."""
+
+    def test_a_belt_run_that_reports_stuck_parks_the_ticket_at_once(self):
+        self.supervised()
+        self.claude({"default": {"stage": "building", "outcome": "stuck"}})  # it moved, then the belt gave up
+        self.tick()
+        self.wait()
+        report = self.tick()
+        self.assertEqual(report["started"], [])
+        self.assertIn("The belt workflow reported it stuck at 'building'", report["parked"]["LOCAL-001"]["reason"])
+        failed = [e for e in self.events() if e["type"] == "execution.failed"]
+        self.assertEqual([(e["data"]["not_progressing"], e["data"]["attempt"]) for e in failed], [("workflow-stuck", 1)])
+        self.assertNotIn("execution.completed", self.kinds())
+        self.assertEqual(len(self.calls()), 1, "no attempt is spent on a run that would stop in the same place")
+
+    def test_the_same_build_refusal_twice_parks_without_spending_the_remaining_attempts(self):
+        self.supervised()  # max_attempts 2: before M7 a third execution was spent
+        self.claude({"default": {"stage": "building", "refuse": "T05"}})
+        self.tick()
+        self.wait()
+        self.tick()  # the first moved it to building: completed, and the next execution starts
+        self.wait()
+        report = self.tick()
+        self.assertEqual(report["started"], [])
+        self.assertEqual(report["parked"]["LOCAL-001"]["reason"], "Two executions in a row stopped at build task T05, refused by build.green (suite-red). "
+                                                                  "Retrying would repeat it; the plan or the code needs a person.")
+        failed = [e for e in self.events() if e["type"] == "execution.failed"]
+        self.assertEqual([(e["data"]["not_progressing"], e["data"]["attempt"]) for e in failed], [("same-refusal", 1)])
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_a_killed_execution_that_moved_is_completed_with_its_exit_code_and_keeps_the_attempt_count(self):
+        self.supervised()
+        self.claude({"default": {"is_error": True, "exit": 1}})  # attempt 1: no progress
+        self.tick()
+        self.wait()
+        self.claude({"default": {"stage": "building", "kill": True}})
+        self.tick()
+        self.wait()
+        self.tick()
+        completed = [e for e in self.events() if e["type"] == "execution.completed"]
+        self.assertEqual([(e["data"]["how"], e["data"]["exit_code"]) for e in completed], [("killed", -9)])
+        self.assertEqual(self.ledger()["supervisor"]["attempts"]["LOCAL-001"]["count"], 1, "only a clean exit clears the count")
+        facts = executor.outcome(self.eng, completed[0]["execution_id"])
+        self.assertEqual((facts["how"], facts["exit_code"]), ("killed", -9))
+
+    def test_a_clean_exit_that_moved_clears_the_attempt_count(self):
+        self.supervised()
+        self.claude({"default": {"is_error": True, "exit": 1}})
+        self.tick()
+        self.wait()
+        self.claude({"default": {"stage": "building"}})
+        self.tick()
+        self.wait()
+        self.tick()
+        completed = [e for e in self.events() if e["type"] == "execution.completed"]
+        self.assertEqual([(e["data"]["how"], e["data"]["exit_code"]) for e in completed], [("exited", 0)])
+        self.assertNotIn("LOCAL-001", self.ledger()["supervisor"]["attempts"])
+
+
+class ExecutionScopeTest(Base):
+    """M7 N3: an execution started for one ticket works on that ticket only, and an observe pass is never run inside it."""
+
+    def finished_tickets(self, count):
+        log = self.eng / ".factory/archive/runs.jsonl"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("".join(json.dumps({"ticket_id": f"OLD-{n}", "outcome": "merged"}) + "\n" for n in range(count)))
+
+    def test_an_execution_for_one_ticket_is_refused_any_other_and_sees_no_observe_pass(self):
+        self.supervised()
+        self.finished_tickets(5)  # an observe pass is due
+        answers = self.root / "answers.json"
+        self.claude({"default": {"stage": "building", "run_py": str(SCRIPTS / "run.py"), "answers": str(answers),
+                                 "ask": {"other": ["next", "LOCAL-002", "--headless"], "own": ["next", "LOCAL-001", "--headless"],
+                                         "review": ["review-start", "LOCAL-002"], "board": ["board", "--headless"]}}})
+        self.tick()
+        self.wait()
+        got = json.loads(answers.read_text())
+        self.assertEqual(got["other"]["code"], 1)
+        refusal = json.loads(got["other"]["out"])
+        self.assertEqual((refusal["action"], refusal["stop"]), ("stop", True))
+        self.assertIn("started for LOCAL-001 only", refusal["reason"])
+        self.assertEqual(got["own"]["code"], 0, got["own"]["err"])
+        self.assertEqual(json.loads(got["own"]["out"])["ticket_id"], "LOCAL-001")
+        self.assertEqual(got["review"]["code"], 1)
+        self.assertIn("started for LOCAL-001 only", got["review"]["err"])
+        board = json.loads(got["board"]["out"])
+        self.assertEqual((board["observe_due"], board["factory_tuning_ready"], board["scoped_to"]), (False, [], "LOCAL-001"))
+        self.assertEqual([row["ticket_id"] for row in board["tickets"]], ["LOCAL-001"])
+        # Outside an execution, a person still sees the due pass.
+        code, out, _ = self.run_board()
+        self.assertEqual((code, json.loads(out)["observe_due"]), (0, True))
+
+    def run_board(self):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = run.main(["--project", str(self.eng), "board", "--headless"])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_an_unknown_execution_may_work_on_nothing(self):
+        with mock.patch.dict(os.environ, {"MACH_EXECUTION_ID": "x0000000000ff"}):
+            code, _, err = self.run_board()
+        self.assertEqual(code, 1)
+        self.assertIn("which the intake ledger does not record", err)
+
+    def test_a_due_observe_pass_is_left_for_a_person_by_the_supervisor_once(self):
+        self.supervised()
+        self.finished_tickets(5)
+        first = self.tick()
+        self.wait()
+        self.assertTrue(first["observe_due"])
+        self.tick()
+        said = [e for e in self.events() if e["type"] == "human.required" and "observe pass is due" in e["data"]["reason"]]
+        self.assertEqual(len(said), 1)
+        self.assertIsNone(said[0]["ticket_id"])
+        self.assertTrue(all("observe" not in " ".join(call["argv"]) for call in self.calls()), "no execution runs the observe skill")
+        self.assertEqual({r["ticket_id"] for r in self.executions().values()}, {"LOCAL-001"})
+
+    def test_the_supervisor_counts_a_due_pass_as_cleanup_does(self):
+        # M7 P5: ten finished tickets, five of them before the last pass. Cleanup says five have finished since; so does the supervisor.
+        self.supervised()
+        self.finished_tickets(10)
+        last = self.eng / ".factory/observations/last-pass.json"
+        last.parent.mkdir(parents=True, exist_ok=True)
+        last.write_text(json.dumps({"runs_total": 5}))
+        self.tick()
+        self.wait()
+        said = [e["data"]["reason"] for e in self.events() if e["type"] == "human.required" and "observe pass is due" in e["data"]["reason"]]
+        sys.path.insert(0, str(ROOT / "skills" / "cleanup" / "scripts"))
+        import cleanup  # noqa: E402
+        status = cleanup.observe_due(self.eng)
+        self.assertEqual((status["due"], status["finished_since_last_pass"]), (True, 5))
+        self.assertEqual(len(said), 1)
+        self.assertIn("5 tickets have finished since the last one (a pass every 5)", said[0])
 
 
 class LifecycleTest(Base):

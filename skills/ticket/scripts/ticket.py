@@ -175,9 +175,11 @@ class Context:
 
 
 def fill(part: str, values: Dict[str, str]) -> str:
-    for key, value in values.items():
-        part = part.replace("{" + key + "}", value)
-    return part
+    """Fill {field} placeholders in one pass, so a value that contains "{body}" is never filled again."""
+    if not values:
+        return part
+    pattern = re.compile("|".join(re.escape("{" + key + "}") for key in values))
+    return pattern.sub(lambda match: values[match.group(0)[1:-1]], part)
 
 
 def run(argv: Sequence[str], cwd: Path) -> str:

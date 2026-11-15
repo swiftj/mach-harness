@@ -15,6 +15,11 @@ which model, what a valid finding looks like, each reviewer's vote, and the outc
 A reviewer never states a vote. A submission with at least one blocker is a REJECT; one with
 none is an APPROVE. A blocker must name the rule or spec ID it breaks and the file that shows it.
 
+A finding may also carry "class": "security" and an "impact" (critical, high, medium or low); the security
+seat's findings are security-class without saying so. A security-class blocker of high or critical impact,
+from any seat, rejects the round whatever the count, at every risk tier, and in a later round it may be
+raised on any file. A blocker from the security seat rejects the round as before (review.security_veto).
+
     High risk    3 reviewers, 3 approvals, and a person must approve
     Medium risk  3 reviewers, 2 approvals
     Low risk     1 reviewer,  1 approval
@@ -48,6 +53,9 @@ PANELS = {
     "Low": {"reviewers": 1, "approvals": 1, "human_approval": False},
 }
 SEVERITIES = ("blocker", "note")
+FINDING_CLASSES = ("security",)
+IMPACTS = ("critical", "high", "medium", "low")
+VETO_IMPACTS = ("critical", "high")
 MAX_LOOPS = 3
 TUNING_LABEL = "factory-tuning"
 # What a ticket that tunes the factory's own rules may change without a person: the rule files, and its own spec and tests.
@@ -141,7 +149,7 @@ class Cell:
         config = load_json(project / ".factory" / "config.json", {})
         self.config = config if isinstance(config, dict) else {}
         self.loop = int(self.build.get("review_loop") or 0)
-        self.folder = self.root / "review" / f"round-{self.loop + 1}"
+        self.folder = round_folders(self.root, self.loop + 1)[-1]
         self.packet: Dict[str, Any] = load_json(self.folder / "packet.json", {}) or {}
 
     @property
@@ -159,6 +167,19 @@ class Cell:
         self.info["updated_at"] = now()
         write_json(self.root / "cell.json", self.info)
 
+    def open_round(self) -> None:
+        """A decided round is never written into again. Reviewing again under the same judging round (after the merge
+        station voided an approval) opens round-N.1, round-N.2, ...; it does not use up one of the three rounds."""
+        if (self.folder / "decision.json").is_file():
+            self.folder = self.root / "review" / f"round-{self.loop + 1}.{len(round_folders(self.root, self.loop + 1))}"
+            self.packet = {}
+
+    def require_open(self) -> None:
+        decision = load_json(self.folder / "decision.json")
+        if isinstance(decision, dict):
+            raise ReviewError(f"This round was already decided: {decision.get('outcome')}. Its record is kept as it is; a new round follows a new build or a new verification.",
+                              code="already-tallied")
+
     def require_started(self) -> None:
         if not self.packet or self.packet.get("head") != self.head():
             raise ReviewError(f"Review has not started for this build of {self.ticket_id}. Run: review.py start {self.ticket_id}", code="not-started")
@@ -174,6 +195,16 @@ class Cell:
             if isinstance(vote, dict):
                 found[seat["role"]] = vote
         return found
+
+
+def round_folders(root: Path, number: int) -> List[Path]:
+    """round-N and its repeats round-N.1, round-N.2, ... in order; always at least round-N (which may not exist yet)."""
+    repeats = []
+    for path in (root / "review").glob(f"round-{number}.*"):
+        suffix = path.name[len(f"round-{number}."):]
+        if suffix.isdigit() and path.is_dir():
+            repeats.append((int(suffix), path))
+    return [root / "review" / f"round-{number}"] + [path for _, path in sorted(repeats)]
 
 
 def ticket_labels(cell: Cell) -> List[str]:
@@ -243,6 +274,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     main_branch = git(cell.project, "branch", "--show-current").stdout.strip()
     fork = git(cell.work, "merge-base", "HEAD", main_branch).stdout.strip() if main_branch and cell.info.get("isolation") == "worktree" else ""
     baseline = fork if fork and fork != head else cell.build.get("baseline")
+    cell.open_round()
     cell.folder.mkdir(parents=True, exist_ok=True)
     for stale in (cell.folder / "votes").glob("*.json") if (cell.folder / "votes").is_dir() else []:
         stale.unlink()
@@ -264,6 +296,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "round": cell.loop + 1, "max_rounds": cell.max_loops(),
         "risk": risk, "approvals_needed": rules["approvals"], "human_approval_required": human, "human_approval_reasons": reasons,
         "head": head, "baseline": baseline, "branch": cell.info.get("branch"), "started_at": now(),
+        "repeat_of": str(round_folders(cell.root, cell.loop + 1)[-2]) if cell.folder.name != f"round-{cell.loop + 1}" else None,
         "panel": rules["panel"], "delta": delta,
         "paths": {
             "workdir": str(cell.work), "diff": str(cell.folder / "diff.patch"), "review_rules": str(review_rules) if review_rules else None,
@@ -294,7 +327,12 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     return 0
 
 
-def check_findings(cell: Cell, data: Any) -> List[Dict[str, Any]]:
+def is_security_veto(finding: Dict[str, Any]) -> bool:
+    """A security-class blocker of high or critical impact: never outvoted, never switched off, never confined to the delta."""
+    return finding.get("severity") == "blocker" and finding.get("class") == "security" and finding.get("impact") in VETO_IMPACTS
+
+
+def check_findings(cell: Cell, data: Any, reviewer: Optional[str] = None) -> List[Dict[str, Any]]:
     if not isinstance(data, dict) or not isinstance(data.get("findings"), list) or not isinstance(data.get("summary"), str) or len(data["summary"].split()) < 8:
         raise ReviewError('The findings file must be a JSON object: {"summary": "<two or three sentences on what you reviewed and concluded>", "findings": [...]}.')
     clean: List[Dict[str, Any]] = []
@@ -309,6 +347,19 @@ def check_findings(cell: Cell, data: Any) -> List[Dict[str, Any]]:
         if not isinstance(title, str) or not title.strip() or not isinstance(detail, str) or len(detail.split()) < 6:
             raise ReviewError(f"{label}: needs a 'title' and a 'detail' that says what is wrong and what would fix it.")
         name, line, rule = finding.get("file"), finding.get("line"), finding.get("rule")
+        kind, impact = finding.get("class"), finding.get("impact")
+        if kind is not None and kind not in FINDING_CLASSES:
+            raise ReviewError(f"{label}: 'class' may only be 'security' (a security defect, from any seat); leave it out otherwise.")
+        if impact is not None and impact not in IMPACTS:
+            raise ReviewError(f"{label}: 'impact' must be one of {', '.join(IMPACTS)}.")
+        if impact is not None and kind is None:
+            if reviewer != "security":
+                raise ReviewError(f"{label}: 'impact' rates a security finding; add \"class\": \"security\" or leave 'impact' out.")
+            kind = "security"  # the security seat's findings are security-class
+        if kind == "security" and impact in VETO_IMPACTS and severity != "blocker":
+            raise ReviewError(f"{label}: a {impact}-impact security finding must be a blocker. It cannot be recorded as a note.")
+        vetoing = severity == "blocker" and kind == "security" and impact in VETO_IMPACTS
+        new_in_delta = False
         if severity == "blocker":
             if not isinstance(rule, str) or not rule.strip():
                 raise ReviewError(f"{label}: a blocker must name the 'rule' it breaks: a spec ID such as FR-04, or the REVIEW.md or CLAUDE.md rule, quoted or named.")
@@ -318,9 +369,12 @@ def check_findings(cell: Cell, data: Any) -> List[Dict[str, Any]]:
             path = cell.root / name if name.startswith(("evidence/", "review/")) or name in ("plan.md", "intent.md", "spec.json", "build-report.json") else cell.work / name
             in_checkout = path == cell.work / name
             delta = cell.packet.get("delta")
-            if severity == "blocker" and in_checkout and delta and name not in delta["files_changed"] and name not in delta["earlier_blocker_files"]:
+            outside_delta = bool(severity == "blocker" and in_checkout and delta and name not in delta["files_changed"] and name not in delta["earlier_blocker_files"])
+            if outside_delta and not vetoing:
                 raise ReviewError(f"{label}: this is round {cell.packet['round']}, and '{name}' did not change since the last round and had no blocker then. "
-                                  "A later round judges the fix: whether earlier blockers are resolved, and problems in what changed. Record this as a note.")
+                                  "A later round judges the fix: whether earlier blockers are resolved, and problems in what changed. Record this as a note "
+                                  "(a high or critical security defect is the exception: mark it \"class\": \"security\" with its \"impact\" and it may block on any file).")
+            new_in_delta = outside_delta  # a high or critical security defect is never held back for being found late
             resolved = path.resolve()
             inside = any(base.resolve() == resolved or base.resolve() in resolved.parents for base in (cell.work, cell.root))
             if not inside or not path.is_file():
@@ -331,8 +385,15 @@ def check_findings(cell: Cell, data: Any) -> List[Dict[str, Any]]:
                     raise ReviewError(f"{label}: line {line} is not a line of {name} (it has {count}).")
         elif line is not None:
             raise ReviewError(f"{label}: 'line' needs a 'file'.")
-        clean.append({"severity": severity, "title": " ".join(title.split()), "detail": detail.strip(), "file": name or None,
-                      "line": line if isinstance(line, int) else None, "rule": rule.strip() if isinstance(rule, str) and rule.strip() else None})
+        item = {"severity": severity, "title": " ".join(title.split()), "detail": detail.strip(), "file": name or None,
+                "line": line if isinstance(line, int) else None, "rule": rule.strip() if isinstance(rule, str) and rule.strip() else None}
+        if kind is not None:  # only when given, so findings without the new fields are stored exactly as before
+            item["class"] = kind
+        if impact is not None:
+            item["impact"] = impact
+        if new_in_delta:
+            item["new_in_delta"] = True
+        clean.append(item)
     return clean
 
 
@@ -350,6 +411,7 @@ def findings_file(cell: Cell, reviewer: str, given: Optional[str]) -> Path:
 
 def cmd_submit(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
+    cell.require_open()
     seats = {seat["role"] for seat in cell.packet["panel"]}
     if args.reviewer not in seats:
         raise ReviewError(f"'{args.reviewer}' is not a seat on this panel. Seats: {', '.join(sorted(seats))}.", code="not-a-seat")
@@ -361,7 +423,7 @@ def cmd_submit(cell: Cell, args: argparse.Namespace) -> int:
     if data is None:
         raise ReviewError(f"{source} is missing or is not valid JSON. Write your findings there with your file tools, then submit again.", code="findings-unreadable")
     try:
-        findings = check_findings(cell, data)
+        findings = check_findings(cell, data, args.reviewer)
     except ReviewError as exc:
         if exc.code == "refused":
             exc.code = "findings-invalid"  # the lifecycle log tells a malformed file apart from a gate (D22)
@@ -388,6 +450,8 @@ def findings_markdown(cell: Cell, votes: Dict[str, Dict[str, Any]], outcome: str
         for number, (role, finding) in enumerate(items, start=1):
             where = f"`{finding['file']}" + (f":{finding['line']}`" if finding.get("line") else "`") if finding.get("file") else "no file"
             rule = f" Breaks: {finding['rule']}." if finding.get("rule") else ""
+            if is_security_veto(finding):
+                rule += f" Security, {finding['impact']} impact: rejects the round whatever the count." + (" Newly found in this round." if finding.get("new_in_delta") else "")
             lines.append(f"{number}. **{finding['title']}** ({role}; {where}).{rule} {finding['detail']}")
         lines.append("")
     return "\n".join(lines)
@@ -396,7 +460,7 @@ def findings_markdown(cell: Cell, votes: Dict[str, Dict[str, Any]], outcome: str
 def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     earlier = load_json(cell.folder / "decision.json")
-    if isinstance(earlier, dict) and earlier.get("head") == cell.packet["head"]:
+    if isinstance(earlier, dict):
         raise ReviewError(f"This round was already tallied: {earlier.get('outcome')}. A decision is not recounted; a new round follows a new build.", code="already-tallied")
     votes = cell.votes()
     absent = [seat["role"] for seat in cell.packet["panel"] if seat["role"] not in votes]
@@ -407,8 +471,12 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     blockers = sum(1 for vote in votes.values() for finding in vote["findings"] if finding["severity"] == "blocker")
     # A blocker from the security seat is not a matter of opinion to be outvoted: it stands until the
     # build answers it. A project may switch this off (review.security_veto: false); unattended runs refuse to start if it has.
-    vetoed = cell.section("review").get("security_veto") is not False and any(
+    seat_veto = cell.section("review").get("security_veto") is not False and any(
         finding["severity"] == "blocker" for finding in (votes.get("security") or {}).get("findings", []))
+    # A high or critical security blocker from any seat stands the same way, and no project setting switches that off.
+    # Until a recorded, person-authorised exception exists (not built), only a fix and a new round clear it.
+    security_blockers = sum(1 for vote in votes.values() for finding in vote["findings"] if is_security_veto(finding))
+    vetoed = seat_veto or security_blockers > 0
     if approvals >= needed and not vetoed:
         outcome = "AWAITING_HUMAN" if cell.packet["human_approval_required"] else "APPROVED"
     else:
@@ -418,7 +486,7 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     decision = {
         "ticket_id": cell.ticket_id, "round": cell.packet["round"], "risk": cell.packet["risk"], "outcome": outcome,
         "approvals": approvals, "approvals_needed": needed, "votes": {role: vote["vote"] for role, vote in votes.items()},
-        "blockers": blockers, "security_veto": bool(vetoed and approvals >= needed), "human_approval_required": cell.packet["human_approval_required"],
+        "blockers": blockers, "security_veto": bool(vetoed and approvals >= needed), "security_blockers": security_blockers, "human_approval_required": cell.packet["human_approval_required"],
         "human_approval_reasons": cell.packet.get("human_approval_reasons", []), "human_approval": None,
         "head": cell.packet["head"], "findings": str(findings_path), "decided_at": now(),
     }

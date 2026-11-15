@@ -5,6 +5,7 @@
 #   3. check the build can run under the host's Content-Security-Policy,
 #   4. copy it over internal/webui/dist and build the binary,
 #   5. put the committed placeholder back, so the working tree is unchanged.
+# VERSION=<release> is stamped into the binary (its --version); without it the binary says "dev".
 # Output: bin/mach-studio (override with OUT=...).
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -49,5 +50,5 @@ rm -rf "$DIST"
 cp -R "$APP_DIST" "$DIST"
 cd "$HERE"
 mkdir -p "$(dirname "$OUT")"
-go build -trimpath -o "$OUT" ./cmd/mach-studio
+go build -trimpath -ldflags "-X main.version=${VERSION:-dev}" -o "$OUT" ./cmd/mach-studio
 echo "built $OUT with the web app from $APP_DIST"

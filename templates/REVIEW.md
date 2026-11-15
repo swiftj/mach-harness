@@ -22,7 +22,7 @@ A ticket is rejected without review, and returned to the build station, unless i
 
 ## The reviewers
 
-Every reviewer starts with a fresh context: the diff, the cell's artifacts and this file, and nothing from the builder's session. Each submits findings marked `blocker` or `note`; a seat with any blocker is a reject. A blocker must name the rule or requirement it breaks and the file that shows it.
+Every reviewer starts with a fresh context: the diff, the cell's artifacts and this file, and nothing from the builder's session. Each submits findings marked `blocker` or `note`; a seat with any blocker is a reject. A blocker must name the rule or requirement it breaks and the file that shows it. Any seat may mark a blocker as a security defect with its impact; a blocker from the security seat, or a security blocker of high or critical impact from any seat, is never outvoted, and the high or critical kind may be raised in any round, on any file. Until MACH records an authorised exception, only a fix and a new round clear it.
 
 ### 1. Architecture
 

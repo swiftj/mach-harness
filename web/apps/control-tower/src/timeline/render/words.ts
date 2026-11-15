@@ -86,8 +86,8 @@ function isInterrupted(span: TimelineSpan): boolean {
 }
 
 /** How an execution stopped when it did not run to its end: from the observer's `attrs.state`, else its end's reason. */
-export type StoppedState = "interrupted" | "timed-out" | "could-not-start" | "unknown";
-const STOPPED: ReadonlySet<string> = new Set(["interrupted", "timed-out", "could-not-start", "unknown"]);
+export type StoppedState = "interrupted" | "timed-out" | "could-not-start" | "killed" | "released" | "unknown";
+const STOPPED: ReadonlySet<string> = new Set(["interrupted", "timed-out", "could-not-start", "killed", "released", "unknown"]);
 
 /**
  * An execution's stopped state (design 5): "interrupted", "timed-out", "could-not-start" (all with end
@@ -99,6 +99,7 @@ export function stoppedState(span: TimelineSpan): StoppedState | null {
   const st = span.attrs.state;
   if (st && STOPPED.has(st)) return st as StoppedState;
   const r = span.end?.reason;
+  if (r === "released") return "released";
   if (r === "interrupted" || r === "unknown") return r;
   return null;
 }
@@ -107,6 +108,10 @@ const STOPPED_WORDS: Readonly<Record<Exclude<StoppedState, "unknown">, string>> 
   interrupted: "interrupted",
   "timed-out": "timed out",
   "could-not-start": "could not start; stopped",
+  // M7: a signal ended the process after it moved the ticket (never "completed"), and a claim the
+  // supervisor released in the pass that made it, before anything started.
+  killed: "killed",
+  released: "released before starting",
 };
 
 /**
@@ -124,7 +129,8 @@ export function stoppedWords(span: TimelineSpan, state: StoppedState): string {
     if (last !== null) return by !== null && by > last + 999 ? `outcome not known; last record at ${clockWords(last)}, ended by ${clockWords(by)}` : `outcome not known; last record at ${clockWords(last)}`;
     return by !== null ? `outcome not known; ended by ${clockWords(by)} at the latest` : "outcome not known; when it ended is not known";
   }
-  const word = STOPPED_WORDS[state];
+  if (state === "released") return "released before starting; nothing ran, not counted as an execution";
+  const word = state === "killed" && span.attrs.exitCode !== undefined ? `killed (exit ${span.attrs.exitCode})` : STOPPED_WORDS[state];
   const endAt = e ? (e.notAfter ?? e.at) : null;
   const most = span.duration.maxMs ?? span.duration.ms ?? (endAt !== null && t0 !== null ? endAt - t0 : null);
   if (e === null) return `${word}; when is not recorded`;

@@ -113,6 +113,11 @@ func (t *Tailer) ReadToEnd() bool { return t.readToEnd }
 // FileID is the file's device and inode (0, 0 where the platform has none).
 func FileID(info fs.FileInfo) (dev, ino uint64) { return fileID(info) }
 
+// identity is how Poll reads a file's device and inode: fileID, replaced in tests to simulate a
+// filesystem that reuses an inode for a file created right after another was removed (common on
+// Linux).
+var identity = fileID
+
 // Poll reads what is new. It never blocks on the file and never holds it open between calls.
 func (t *Tailer) Poll() ([]Line, []Note, error) {
 	var notes []Note
@@ -138,11 +143,14 @@ func (t *Tailer) Poll() ([]Line, []Note, error) {
 		}
 		return nil, notes, nil
 	}
+	prevMod := t.ModNS
 	t.ModNS = info.ModTime().UnixNano()
-	// Nothing new: the same file, the same size as read up to. One stat per idle poll, no open
-	// (a project with a thousand cells is polled several times a second for low latency).
-	if dev, ino := fileID(info); t.started && !t.CP.Blocked && !t.CP.Gone && t.CP.Ino != 0 && dev == t.CP.Dev && ino == t.CP.Ino &&
-		info.Size() == t.CP.Offset && !t.CP.Skipping {
+	// Nothing new: the same file, the same size as read up to, not written since the last poll.
+	// One stat per idle poll, no open (a project with a thousand cells is polled several times a
+	// second for low latency). A write that left the size unchanged (a file recreated on a reused
+	// inode with as many bytes) goes on to the first-line check below.
+	if dev, ino := identity(info); t.started && !t.CP.Blocked && !t.CP.Gone && t.CP.Ino != 0 && dev == t.CP.Dev && ino == t.CP.Ino &&
+		info.Size() == t.CP.Offset && !t.CP.Skipping && t.ModNS == prevMod {
 		t.Size = info.Size()
 		t.readToEnd = true
 		return nil, nil, nil
@@ -174,6 +182,7 @@ func (t *Tailer) Poll() ([]Line, []Note, error) {
 		return nil, notes, nil
 	}
 	t.CP.Blocked = false
+	wasGone := t.CP.Gone
 	t.CP.Gone = false
 	size := st.Size()
 	t.Size = size
@@ -184,11 +193,23 @@ func (t *Tailer) Poll() ([]Line, []Note, error) {
 			t.startSize = 0
 		}
 	}
-	dev, ino := fileID(st)
-	replaced := t.CP.Ino != 0 && (dev != t.CP.Dev || ino != t.CP.Ino)
+	dev, ino := identity(st)
+	// Another file: another inode, or a file that was seen to disappear and is back. The inode
+	// alone cannot tell: a filesystem may give a file created right after a removal the removed
+	// file's inode (ext4 often does), and some platforms have no inode at all. So a file that has
+	// already given its first line is also checked by that line: different first line, different
+	// file, whatever its inode and size.
+	replaced := (t.CP.Ino != 0 && (dev != t.CP.Dev || ino != t.CP.Ino)) || (wasGone && t.CP.Offset > 0)
 	truncated := size < t.CP.Offset
+	newEpoch, checked := "", false
+	if !replaced && !truncated && t.CP.Epoch != "" && t.CP.Offset > 0 {
+		newEpoch, checked = t.firstLineEpoch(f), true
+		replaced = newEpoch != t.CP.Epoch
+	}
 	if replaced || truncated {
-		newEpoch := t.firstLineEpoch(f)
+		if !checked {
+			newEpoch = t.firstLineEpoch(f)
+		}
 		switch {
 		case !truncated && t.CP.Epoch != "" && newEpoch == t.CP.Epoch:
 			notes = append(notes, Note{Kind: NoteReplaced, OldEpoch: t.CP.Epoch})
@@ -263,15 +284,20 @@ func (t *Tailer) Poll() ([]Line, []Note, error) {
 	return lines, notes, nil
 }
 
-// firstLineEpoch hashes the file's first complete line, or "" when there is none yet.
+// firstLineEpoch hashes the file's first complete line, or "" when there is none yet. It reads a
+// small block first (it runs on every poll that finds new bytes) and more only for a long line.
 func (t *Tailer) firstLineEpoch(f *os.File) string {
-	buf := make([]byte, min(t.MaxLine+1, 1<<20))
-	n, _ := f.ReadAt(buf, 0)
-	idx := bytes.IndexByte(buf[:n], '\n')
-	if idx < 0 {
-		return ""
+	limit := min(t.MaxLine+1, 1<<20)
+	for size := min(int64(4096), limit); ; size = min(size*16, limit) {
+		buf := make([]byte, size)
+		n, _ := f.ReadAt(buf, 0)
+		if idx := bytes.IndexByte(buf[:n], '\n'); idx >= 0 {
+			return epochOf(bytes.TrimRight(buf[:idx], "\r"))
+		}
+		if int64(n) < size || size == limit {
+			return ""
+		}
 	}
-	return epochOf(bytes.TrimRight(buf[:idx], "\r"))
 }
 
 // epochOf is the file's generation: the first 8 hex of SHA-256 of its first line

@@ -53,10 +53,17 @@ export function runOf(exec: TimelineSpan, spans: readonly TimelineSpan[], liveAt
   if (!ticket || at === null || at > liveAt) return null;
   const seen = new Set<string>();
   const list = spans
-    .filter((s) => s.kind === "execution" && ticketOf(s) === ticket && (startAt(s) ?? Infinity) <= liveAt && !seen.has(s.entity) && seen.add(s.entity))
+    // A claim released before starting (attrs.state "released", M7 D10) is not a run: nothing ran.
+    .filter((s) => s.kind === "execution" && s.attrs.state !== "released" && ticketOf(s) === ticket && (startAt(s) ?? Infinity) <= liveAt && !seen.has(s.entity) && seen.add(s.entity))
     .sort((a, b) => startAt(a)! - startAt(b)! || (a.entity < b.entity ? -1 : 1));
   const i = list.findIndex((s) => s.entity === exec.entity);
   return i < 0 ? null : { index: i + 1, of: list.length };
+}
+
+/** How a run that did not run to its end stopped, for the retries lens: "killed (exit -9)" for a killed execution (M7 N6), else "interrupted". */
+export function stopWord(span: TimelineSpan | null | undefined): string {
+  if (span?.attrs.state === "killed") return span.attrs.exitCode !== undefined ? `killed (exit ${span.attrs.exitCode})` : "killed";
+  return "interrupted";
 }
 
 /** "run 2 of 3", or "the only run". */
@@ -339,7 +346,7 @@ export function ladderOf(ticket: string, spans: readonly TimelineSpan[], marks: 
       return { label: `Round ${k}`, ref: span?.entity ?? `gate:${ticket}/round#${k}`, from: span ? startAt(span) : null, to: span ? endBy(span, liveAt) : null, span, endReason: span && endBy(span, liveAt) !== null ? (span.end?.reason ?? null) : null };
     },
   );
-  const execSpans = spans.filter((s) => s.kind === "execution");
+  const execSpans = spans.filter((s) => s.kind === "execution" && s.attrs.state !== "released");
   const attempts = runs(executionOfVisit, (k) => {
     const span = execSpans.find((s) => s.entity === k) ?? null;
     const run = span ? runOf(span, execSpans, liveAt) : null;

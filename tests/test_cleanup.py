@@ -594,5 +594,18 @@ class ListingTest(Base):
         self.assertTrue({c["ticket_id"]: c for c in self.c_ok("status")["cells"]}["LOCAL-001"]["merged"])
 
 
+class RoundRepeatListingTest(unittest.TestCase):
+    """M7 D3: a re-review after a voided approval lives in round-N.1; the run record and archive must not miss it."""
+
+    def test_repeats_are_listed_with_their_round_in_order(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="mach-cleanup-rounds-") as folder:
+            review = Path(folder)
+            for name in ("round-2.1", "round-1", "round-2", "round-10", "round-2.x", "previous-3"):
+                (review / name).mkdir()
+            listed = cleanup.numbered(list(review.glob("round-*")))
+            self.assertEqual([(number, path.name) for number, path in listed], [(1, "round-1"), (2, "round-2"), (2, "round-2.1"), (10, "round-10")])
+
+
 if __name__ == "__main__":
     unittest.main()

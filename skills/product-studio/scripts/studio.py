@@ -106,6 +106,12 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def stray_revision_only(mine: bytes, theirs: bytes) -> bool:
+    """True when the draft differs from the shared record only by a "revision" field the shared one lacks."""
+    m, t = collab.parse(mine), collab.parse(theirs)
+    return bool(m and t is not None and "revision" in m and "revision" not in t and {k: v for k, v in m.items() if k != "revision"} == t)
+
+
 def canonical(data: Dict[str, Any]) -> str:
     """One byte form for every artifact, so the terminal and any other client write identical files."""
     return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
@@ -238,7 +244,8 @@ class Studio:
         session = self.session()
         legacy: Dict[str, str] = session.get("baseline") or {}
         resolutions: Dict[str, Dict[str, str]] = session["resolutions"]
-        report: Dict[str, Any] = {"conflicts": [], "collisions": [], "details": {}, "arrived": [], "updated": [], "merged": [], "approvals_withdrawn": []}
+        report: Dict[str, Any] = {"conflicts": [], "collisions": [], "details": {}, "arrived": [], "updated": [], "merged": [], "approvals_withdrawn": [],
+                                  "repaired": []}
         touched: List[str] = []
         for relative, data in sorted(self.theirs().items()):
             target = self.draft / relative
@@ -247,6 +254,17 @@ class Studio:
             base = base_path.read_bytes() if base_path.is_file() else None
             if base is None and mine is not None and relative in legacy:  # a workspace from before bases were kept
                 base = mine if sha(mine) == legacy[relative] else data if sha(data) == legacy[relative] else None
+            if mine is not None and mine != data and relative.startswith("product/acceptance/") and stray_revision_only(mine, data):
+                target.write_bytes(data)  # repair: an earlier reconcile added a revision this record never has
+                self.set_base(relative, data)
+                report["repaired"].append({"path": relative, "removed_field": "revision",
+                                           "note": "This acceptance record had a 'revision' field it never has, added by an earlier reconcile. It was removed; the record now matches the shared one."})
+                continue
+            if mine is not None and mine != data and base != data:
+                sent = self.sent_version(relative, data)
+                if sent is not None:
+                    base = sent  # this workspace's own publication: the draft is a later revision of it, not a different artifact
+                    self.set_base(relative, sent)
             if mine is None:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
@@ -296,6 +314,23 @@ class Studio:
             self.save_session(session)
         self.settle(touched, report)
         return report
+
+    def sent_version(self, relative: str, data: bytes) -> Optional[bytes]:
+        """What this workspace itself published of `relative`, when that publication is the shared
+        version's lineage: the shared file is exactly what was sent, or the sent commit is merged."""
+        found: Optional[bytes] = None
+        for entry in self.ledger()["waves"].values():
+            commit = entry.get("commit") if isinstance(entry, dict) else None
+            if not commit or relative not in (entry.get("files") or []):
+                continue
+            sent = collab.git_bytes(self.project, "show", f"{commit}:{relative}")
+            if sent is None:
+                continue
+            if sent == data:
+                return sent
+            if self.shared.ref and collab.git(self.project, "merge-base", "--is-ancestor", commit, self.shared.ref).returncode == 0:
+                found = sent
+        return found
 
     def settle(self, touched: Sequence[str], report: Dict[str, Any]) -> None:
         """Withdraw a local approval that a change from the shared project has made untrue.
@@ -426,19 +461,21 @@ class Studio:
     def commit_or_restore(self, changes: Sequence[Tuple[str, Dict[str, Any]]], what: str) -> None:
         """Apply several artifact changes, then check the whole workspace. If the result is not
         structurally valid, put every file back and refuse."""
+        before = set(self.structural()["errors"])
         saved = []
         for kind, data in changes:
             path = self.path(kind, None if kind == "project" else data[KINDS[kind][3]])
             saved.append((path, path.read_text(encoding="utf-8") if path.is_file() else None))
             self.save(kind, data)
         report = self.structural()
-        if not report["valid"]:
+        introduced = [error for error in report["errors"] if error not in before]  # a problem elsewhere never blocks an unrelated change
+        if introduced:
             for path, text in saved:
                 if text is None:
                     path.unlink()
                 else:
                     write(path, text)
-            raise StudioError(f"{what} would leave the product artifacts inconsistent, so nothing was changed:\n  " + "\n  ".join(report["errors"]))
+            raise StudioError(f"{what} would leave the product artifacts inconsistent, so nothing was changed:\n  " + "\n  ".join(introduced))
 
     # ---- slice checks ----
 
@@ -604,6 +641,7 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
         "project": project and {**{key: project.get(key) for key in ("project_id", "name", "status", "revision", "vision", "outcomes")},
                                 "source": source("product/project.json")},
         "approvals_withdrawn": withdrawn,
+        **({"repaired": sync["repaired"]} if sync.get("repaired") else {}),
         "epics": [{"epic_id": key, "title": data.get("title"), "status": data.get("status"), "revision": data.get("revision"),
                    "acceptance_criteria": list(data.get("acceptance_criteria") or []),
                    "source": source(f"product/epics/{key}.json")} for key, data in epics.items()],
@@ -611,7 +649,8 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
         "waves": [{"wave_id": key, "status": data.get("status"), "revision": data.get("revision"), "slices": data.get("slices"),
                    "approval": data.get("approval"), "source": source(f"product/delivery-waves/{key}.json"),
                    "sent": bool((ledger.get(key) or {}).get("pushed")),
-                   "pull_request": ((ledger.get(key) or {}).get("pull_request") or {}).get("url")} for key, data in waves.items()],
+                   "pull_request": ((ledger.get(key) or {}).get("pull_request") or {}).get("url"),
+                   **shared_wave(studio, key, data, theirs, ledger, source)} for key, data in waves.items()],
         "current_slice": session.get("current_slice"),
         "needs_reconciling": reconciling(sync),
         "shared_project": shared_project_words(studio),
@@ -622,6 +661,21 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
         "suggested_next": [action["sentence"] for action in actions],
         "next_actions": [{key: action[key] for key in ("kind", "target", "title", "reason", "related")} for action in actions],
     }
+
+
+def shared_wave(studio: Studio, wave_id: str, data: Dict[str, Any], theirs: Dict[str, bytes], ledger: Dict[str, Any], source: Any) -> Dict[str, Any]:
+    """A wave the shared project already has at an earlier revision than this workspace's draft:
+    both facts, so the accepted one is never hidden by the later draft."""
+    relative = f"product/delivery-waves/{wave_id}.json"
+    shared = collab.parse(theirs.get(relative))
+    if not shared or source(relative) == "published":
+        return {}
+    entry = ledger.get(wave_id) or {}
+    mine = (studio.draft / relative).read_bytes()
+    sent = bool(entry.get("pushed") and entry.get("commit") and collab.git_bytes(studio.project, "show", f"{entry['commit']}:{relative}") == mine)
+    where = say("merged", "in the shared project")
+    return {"shared": {"revision": shared.get("revision"), "status": shared.get("status")},
+            "shared_note": f"{where} at revision {shared.get('revision')}; your draft is revision {data.get('revision')}, {'sent' if sent else 'not sent'}"}
 
 
 # The vocabulary of next_actions[].kind. A client maps each to its own button or screen.
@@ -1096,6 +1150,82 @@ def cmd_wave_approve(studio: Studio, args: argparse.Namespace) -> int:
                  "note": "Product approval only. The wave stays in your workspace until you send it to engineering."})
 
 
+# ---- product acceptance (M7) ----
+
+
+def acceptance_path(studio: Studio, wave_id: str) -> Path:
+    return studio.draft / "product" / "acceptance" / f"{wave_id}.json"
+
+
+def cmd_acceptance_record(studio: Studio, args: argparse.Namespace) -> int:
+    """A person's product decision on one approved wave at one release. Read by engineering; it starts nothing."""
+    wave_id = args.wave_id
+    if not product.WAVE_RE.fullmatch(wave_id):
+        raise StudioError(f"'{wave_id}' is not a wave ID.")
+    if not product.ROLE_RE.fullmatch(args.by or ""):
+        raise StudioError(say("--by names a role, such as product-owner: lowercase letters, digits and '-', never a person's name or address.",
+                              "Give the role deciding, such as product-owner, not a person's name or address."))
+    if not product.COMMIT_RE.fullmatch(args.commit or ""):
+        raise StudioError(say("--commit must be the full commit ID the release was qualified at.", "Give the full commit ID the release was checked at."))
+    # The decision is on the wave as it was merged at the release commit, whatever revision a draft here has moved on to.
+    wave_bytes = collab.files_at(studio.project, args.commit).get(f"product/delivery-waves/{wave_id}.json")
+    if wave_bytes is None:
+        raise StudioError(say(f"{wave_id} is not in the shared project at {args.commit[:12]}, or that commit has not reached this copy yet (studio.py refresh).",
+                              f"{wave_id} is not in the shared project at that release, or the release has not reached this computer yet. Refresh first."))
+    wave = collab.parse(wave_bytes) or {}
+    if wave.get("status") != APPROVED:
+        raise StudioError(f"{wave_id} as merged at {args.commit[:12]} is {state(wave.get('status'))}. Only an approved wave can be accepted or rejected.")
+    readiness, readiness_sha = None, None
+    if args.readiness:
+        path = Path(args.readiness)
+        try:
+            raw = path.read_bytes()
+            readiness = json.loads(raw.decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            raise StudioError(f"Cannot read the readiness snapshot at {path}.")
+        readiness_sha = sha(raw)
+        release = readiness.get("release") if isinstance(readiness, dict) else None
+        if not isinstance(release, dict) or release.get("release_id") != args.release or release.get("commit") != args.commit:
+            raise StudioError(f"That readiness snapshot is not for release {args.release} at {args.commit[:12]}.")
+        qualified = {w.get("wave_id"): w.get("sha256") for w in readiness.get("waves") or [] if isinstance(w, dict)}
+        if wave_id not in qualified:
+            raise StudioError(f"{wave_id} is not part of release {args.release}.")
+        if qualified[wave_id] != sha(wave_bytes):
+            raise StudioError(f"{wave_id} as merged at {args.commit[:12]} is not the revision that was qualified.")
+    outcome = readiness.get("outcome") if isinstance(readiness, dict) else None
+    if args.decision == "accepted" and outcome not in ("qualified", "qualified_with_exceptions"):
+        got = f"; this one is {outcome}." if outcome else "; none was given."
+        raise StudioError(say(f"A wave can be accepted only for a release whose readiness snapshot (--readiness) is qualified or qualified with exceptions{got} Rejecting it is always possible.",
+                              f"A wave can be accepted only for a release whose readiness snapshot is qualified or qualified with exceptions{got} Rejecting it is always possible."))
+    data = {"schema_version": 1, "wave_id": wave_id, "project_id": wave.get("project_id"), "wave_revision": wave.get("revision"), "wave_sha256": sha(wave_bytes),
+            "release_id": args.release, "release_commit": args.commit, "readiness_sha256": readiness_sha, "readiness_outcome": outcome,
+            "decision": args.decision, "by": args.by, "note": " ".join(args.note.split()) if args.note else None, "recorded_at": now(args.at)}
+    path = acceptance_path(studio, wave_id)
+    previous = path.read_text(encoding="utf-8") if path.is_file() else None
+    write(path, canonical(data))
+    report = studio.structural()
+    if not report["valid"]:
+        if previous is None:
+            path.unlink()
+        else:
+            write(path, previous)
+        raise StudioError("The acceptance record did not validate:\n  " + "\n  ".join(report["errors"]))
+    return emit({"recorded": True, "acceptance": data, "factory_authorized": False,
+                 "note": "Product's decision only. It reaches engineering when you send the wave again; it starts, releases and deploys nothing."})
+
+
+def cmd_acceptance_show(studio: Studio, args: argparse.Namespace) -> int:
+    folder = studio.draft / "product" / "acceptance"
+    found = {}
+    for path in sorted(folder.glob("WAVE-*.json")) if folder.is_dir() else []:
+        if args.wave_id in (None, path.stem):
+            try:
+                found[path.stem] = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                found[path.stem] = None
+    return emit({"acceptance": found, "factory_authorized": False})
+
+
 # ---- collaboration ----
 
 
@@ -1121,6 +1251,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         "arrived": sync["arrived"], "updated": sync["updated"], "merged": sync["merged"],
         "approvals_withdrawn": sync["approvals_withdrawn"],
         "needs_reconciling": reconciling(sync),
+        **({"repaired": sync["repaired"]} if sync.get("repaired") else {}),
     })
 
 
@@ -1132,7 +1263,7 @@ def resolve_artifact(given: str, candidates: Sequence[str]) -> str:
         return matches[0]
     if not matches:
         raise StudioError(f"Nothing called '{given}' needs reconciling. Waiting: " + (", ".join(candidates) or "nothing") + ".")
-    raise StudioError(f"'{given}' matches more than one item. Name one of: " + ", ".join(matches) + ".")
+    raise StudioError(f"'{given}' has more than one file waiting ({len(matches)}); each is decided on its own. Reconcile each by its path: " + ", ".join(matches) + ".")
 
 
 def withdraw_slice(studio: Studio, slice_id: str) -> List[str]:
@@ -1200,7 +1331,8 @@ def cmd_renumber(studio: Studio, args: argparse.Namespace) -> int:
     kind, old = args.kind, args.identifier
     folder, prefix, rule, key = KINDS[kind]
     if not rule.fullmatch(old):
-        raise StudioError(f"'{old}' is not a usable {kind} ID, such as {prefix}-001.")
+        named = re.search(rf"\b{prefix}-\d{{3,}}", old)
+        raise StudioError(f"'{old}' is not a usable {kind} ID, such as {prefix}-001." + (f" Renumbering takes the ID, not the file: use {named.group(0)}." if named else ""))
     relative = f"product/{folder}/{old}.json"
     path = studio.draft / relative
     mine = path.is_file() and not studio.is_published(relative)
@@ -1374,6 +1506,7 @@ def describe_file(relative: str, is_new: bool) -> str:
     what = ("the project" if relative.endswith("project.json") else f"epic {stem}" if "/epics/" in relative
             else f"the work order for {stem}" if "/slices/" in relative and relative.startswith("product/")
             else f"the why for {stem}" if "/intents/" in relative else f"delivery wave {stem}" if "/delivery-waves/" in relative
+            else f"product's acceptance decision for {stem}" if "/acceptance/" in relative
             else f"the spec {Path(relative).name}")
     return f"{what} ({'new' if is_new else 'changed'})"
 
@@ -1381,26 +1514,47 @@ def describe_file(relative: str, is_new: bool) -> str:
 def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
     need_shared(studio)
     fetched, _ = studio.shared.fetch()
+    failure = studio.shared.fetch_failure
     studio.shared = collab.Shared(studio.project, studio.cell.load_config(studio.project))
     studio._theirs = None
     if not fetched and not args.dry_run:
-        raise StudioError("Could not reach the shared repository, so nothing was sent. Try again when you are connected.")
+        if not failure or failure["kind"] == "network":
+            raise StudioError("Could not reach the shared repository, so nothing was sent. Try again when you are connected.")
+        raise StudioError(say(*collab.explain(failure, "Nothing was sent, and your drafts are unchanged.")))
     if not studio.shared.ref:
         raise StudioError(say("The shared repository has no main branch yet, so there is nothing to send this to. An engineer needs to set that up.",
                               "The shared project has nothing in it yet, so there is nothing to send this to. An engineer needs to set that up."))
     sync = studio.sync()
     wave_id = args.wave_id
     wave = studio.load("wave", wave_id)
-    if wave.get("status") != APPROVED:
+    # The wave's definition and product's acceptance of a release are two publications, never one.
+    decided = acceptance_path(studio, wave_id)
+    decided_relative = f"product/acceptance/{wave_id}.json"
+    decision_pending = decided.is_file() and studio.theirs().get(decided_relative) != decided.read_bytes()
+    definition, definition_problems = closure(studio, wave) if wave.get("status") == APPROVED else ({}, [])
+    definition_pending = any(studio.theirs().get(relative) != data for relative, data in definition.items())
+    if args.acceptance and not decision_pending:
+        raise StudioError(f"There is no unsent acceptance decision for {wave_id}.")
+    publishing = "acceptance" if args.acceptance or (decision_pending and not definition_pending) else "definition"
+    if publishing == "definition" and wave.get("status") != APPROVED:
         raise StudioError(say(f"{wave_id} is {state(wave.get('status'))}. Only an approved wave can be sent (studio.py wave approve {wave_id}).",
                               f"{wave_id} is {state(wave.get('status'))}. Only an approved wave can be sent."), hint("approve_wave", wave_id))
-    files, problems = closure(studio, wave)
+    if publishing == "acceptance":  # only the decision file; the wave as merged is what it was recorded against
+        files, problems = {decided_relative: decided.read_bytes()}, []
+    else:
+        files, problems = definition, definition_problems + wave_problems(studio, sync, wave)
+    unsent = (["the wave's definition"] if publishing == "acceptance" and definition_pending else []) + \
+             ([say(f"the acceptance decision (send {wave_id} --acceptance)", "the acceptance decision")] if publishing == "definition" and decision_pending else [])
     problems += [f"{relative} needs reconciling with the shared project first" for relative in files if relative in sync["conflicts"] or relative in sync["collisions"]]
-    problems += wave_problems(studio, sync, wave)
     if problems:
         raise StudioError(f"{wave_id} cannot be sent yet:\n  " + "\n  ".join(dict.fromkeys(problems)))
     theirs = studio.theirs()
     changed = {relative: data for relative, data in files.items() if theirs.get(relative) != data}
+    if publishing == "acceptance":
+        if set(changed) != {decided_relative}:  # closure check: an acceptance publication holds exactly one file
+            raise StudioError(f"An acceptance publication must contain only {decided_relative}. Nothing was sent.")
+        release_commit = str((collab.parse(changed[decided_relative]) or {}).get("release_commit") or "")
+        wave_id = f"{wave_id}-acceptance"  # its own branch, request and ledger entry
     ledger = studio.ledger()
     entry = ledger["waves"].get(wave_id)
     branch = studio.shared.prefix + wave_id
@@ -1411,45 +1565,76 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
             return emit({"sent": False, "already_accepted": True, "wave_id": wave_id, "status": "Accepted",
                          "note": "The shared project already has all of this. Nothing was sent."})
         raise StudioError(f"Nothing to send: the shared project already has everything in {wave_id}.")
-    if on_remote and not entry:
+    # The real state of the latest request from this branch: open means update it; merged or closed
+    # means this is a later revision of the wave, published afresh with a new request.
+    latest = collab.latest_request(studio.project, branch) if on_remote or (entry or {}).get("pull_request") else None
+    request_state = (latest or {}).get("state")
+    remote_head = collab.git(studio.project, "rev-parse", "--verify", "-q", remote_branch).stdout.strip() if on_remote else ""
+    ours = bool(entry and latest and (((entry.get("pull_request") or {}).get("number") == latest.get("number"))
+                                     or (entry.get("commit") and entry.get("commit") == remote_head)))
+    if request_state == "open" and not ours and f"product/delivery-waves/{wave['wave_id']}.json" in theirs:
+        raise StudioError(f"Another product manager has a later revision of {wave_id} in review. Nothing was sent. When engineering has decided it, refresh, settle any differences and send again.")
+    if request_state == "open" and not ours:
         raise StudioError(say(f"Another product manager already has a {wave_id} in review, so this wave needs a new number: studio.py wave renumber {wave_id}",
-                              f"Another product manager already has a {wave_id} in review, so this wave needs a new number."), hint("renumber_wave", wave_id))
+                                  f"Another product manager already has a {wave_id} in review, so this wave needs a new number."), hint("renumber_wave", wave_id))
+    if on_remote and not entry and request_state is None:
+        accepted = collab.git(studio.project, "merge-base", "--is-ancestor", remote_branch, str(studio.shared.ref)).returncode == 0
+        if not accepted:
+            raise StudioError(say(f"Someone else's {wave_id} is on the shared repository and has not been accepted, and its review state could not be read, so this wave needs a new number: studio.py wave renumber {wave_id}",
+                                  f"Someone else's {wave_id} is in the shared project's queue and has not been accepted, so this wave needs a new number."), hint("renumber_wave", wave_id))
+    finished = request_state in ("merged", "closed")
     digest = collab.digest_of(changed, sha)
     if args.dry_run:
-        return emit({"dry_run": True, "wave_id": wave_id, "would_share": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
+        return emit({"dry_run": True, "would_publish": publishing, "still_unsent": unsent, "wave_id": wave_id, "would_share": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
                      "to": say(f"a request for engineering to add this to the {studio.shared.into} branch", "a request for engineering to add this to the shared project"),
-                     "request": "updates the request already open" if entry and entry.get("pull_request") else "opens a new request",
+                     "request": "updates the request already open" if entry and entry.get("pull_request") and not finished else "opens a new request",
                      "refreshed": fetched, "note": "Nothing has been sent."})
+    if entry and entry.get("pull_request") and finished:
+        # The recorded request was merged or closed: keep it as history and open a new one for this revision.
+        entry["earlier_requests"] = [*(entry.get("earlier_requests") or []), {**entry["pull_request"], "state": request_state}]
+        entry["pull_request"] = None
+        studio.save_ledger(ledger)
     if not entry or entry.get("digest") != digest or not entry.get("commit"):
         count = len(wave.get("slices") or [])
-        message = f"product({wave_id}): {count} slice{'s' if count != 1 else ''} approved for engineering"
+        message = (f"product({wave_id}): product acceptance at {release_commit[:12]}" if publishing == "acceptance"
+                   else f"product({wave_id}): {count} slice{'s' if count != 1 else ''} approved for engineering")
+        base_ref = remote_branch if on_remote else str(studio.shared.ref)
+        judge = (lambda tree: list(product.validate_workspace(tree)["errors"])) if publishing == "acceptance" else (lambda tree: validate_tree(studio, tree, wave))
         try:
-            commit = collab.build_commit(studio.project, studio.shared, studio.home / "publish" / wave_id,
-                                         remote_branch if on_remote else str(studio.shared.ref), changed, message,
-                                         lambda tree: validate_tree(studio, tree, wave))
+            commit = collab.build_commit(studio.project, studio.shared, studio.home / "publish" / wave_id, base_ref, changed, message, judge)
         except collab.CollabError as exc:
             raise StudioError(say(str(exc), exc.app or str(exc)))
+        if publishing == "acceptance":
+            touched = collab.git(studio.project, "diff", "--name-only", base_ref, commit).stdout.split()
+            if touched != [decided_relative]:
+                raise StudioError(f"An acceptance publication must change only {decided_relative}; it would change {', '.join(touched) or 'nothing'}. Nothing was sent.")
         collab.git(studio.project, "update-ref", f"refs/mach/studio/{wave_id}", commit)  # keeps the commit until it is pushed
         entry = {"branch": branch, "digest": digest, "commit": commit, "pushed": False, "sent_at": None,
-                 "pull_request": (entry or {}).get("pull_request"), "files": sorted(changed)}
+                 "pull_request": (entry or {}).get("pull_request"), "files": sorted(changed),
+                 "earlier_requests": (entry or {}).get("earlier_requests") or []}
         ledger["waves"][wave_id] = entry
         studio.save_ledger(ledger)
     if not entry.get("pushed"):
         pushed = collab.git(studio.project, "push", collab.REMOTE, f"{entry['commit']}:refs/heads/{branch}")
         if pushed.returncode != 0:
-            raise StudioError(say(f"{wave_id} is prepared but could not be sent: {collab.last_line(pushed)}. Run send again; nothing will be sent twice.",
-                                  f"{wave_id} is prepared but could not be sent. Send it again; nothing will be sent twice."))
+            failure = collab.classify(pushed)
+            outcome = f"{wave_id} is prepared but could not be sent, and your drafts are unchanged."
+            if failure["kind"] in ("network", "auth", "sso", "other"):
+                outcome += " Nothing will be sent twice."
+            raise StudioError(say(*collab.explain(failure, outcome)))
         entry.update({"pushed": True, "sent_at": now(None)})
         studio.save_ledger(ledger)
     request_problem = ""
     if not entry.get("pull_request"):
         title, body = request_text(studio, wave)
-        request, request_problem = collab.open_pull_request(studio.project, studio.shared, branch, title, body)
+        if publishing == "acceptance":
+            title, body = f"Product acceptance for {wave['wave_id']} at {release_commit[:12]}", "Product's recorded decision on a qualified release of this wave (`product/acceptance/`). It changes no code and starts no work.\n\nSent from MACH Product Studio."
+        request, request_problem = collab.open_pull_request(studio.project, studio.shared, branch, title, body, APP)
         if request:
             entry["pull_request"] = request
             studio.save_ledger(ledger)
     request = entry.get("pull_request") or {}
-    return emit({"sent": True, "wave_id": wave_id, "shared": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
+    return emit({"sent": True, "published": publishing, "still_unsent": unsent, "wave_id": wave_id, "shared": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
                  "status": "Waiting for review" if request else say("Sent, pull request not opened", "Sent, review request not opened"),
                  "state": "waiting_for_review" if request else "sent_request_not_opened",
                  "pull_request": request.get("url"), "branch": branch,
@@ -1486,12 +1671,12 @@ def cmd_feedback(studio: Studio, args: argparse.Namespace) -> int:
                        meaning=say("The work reached the shared repository but the request for review could not be opened. Send it again, or give an engineer the branch name.",
                                    "The work reached the shared project but the request for review could not be opened. Send it again, or ask an engineer to open it."))
         else:
-            view, problem = collab.review_state(studio.project, str(entry.get("branch")))
+            view, problem = collab.review_state(studio.project, str(entry.get("branch")), APP)
             if view is None:
                 row.update(status="Sent", state="sent", pull_request=entry["pull_request"].get("url"),
-                           meaning=say(f"The review status could not be read just now ({problem}).", "The review status could not be read just now."))
+                           meaning=problem)
             else:
-                row.update(collab.in_words(view, APP))
+                row.update(collab.in_words(view, APP, collab.unsigned(studio.project, entry.get("commit"))))
             if wave.get("status") != APPROVED and row.get("status") not in ("Accepted", "Declined"):
                 row["changed_since_sent"] = "You have reopened this wave since sending it. Approve and send it again to update the request."
         rows.append(row)
@@ -1516,6 +1701,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("send", help="ask engineering to accept an approved delivery wave")
     p.add_argument("wave_id")
     p.add_argument("--dry-run", action="store_true", help="show what would be shared; send nothing")
+    p.add_argument("--acceptance", action="store_true", help="send only the recorded acceptance decision, as its own request")
     p.set_defaults(func=cmd_send)
     p = sub.add_parser("feedback", help="how review of sent waves is going")
     p.add_argument("wave_id", nargs="?")
@@ -1590,6 +1776,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="slice")
 
+    acceptance = sub.add_parser("acceptance", help="product's decision on a qualified release of a wave").add_subparsers(dest="action", required=True)
+    p = acceptance.add_parser("record", help="record accepted or rejected for one wave at one release")
+    p.add_argument("wave_id")
+    p.add_argument("--release", required=True, help="the release ID engineering qualified")
+    p.add_argument("--commit", required=True, help="the full commit the release was qualified at")
+    p.add_argument("--decision", required=True, choices=("accepted", "rejected"))
+    p.add_argument("--by", required=True, help="the role deciding, such as product-owner")
+    p.add_argument("--readiness", help="the readiness snapshot engineering shared (required to accept)")
+    p.add_argument("--note")
+    p.add_argument("--at", help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_acceptance_record)
+    p = acceptance.add_parser("show", help="recorded decisions; changes nothing")
+    p.add_argument("wave_id", nargs="?")
+    p.set_defaults(func=cmd_acceptance_show)
     wave = sub.add_parser("wave", help="delivery waves").add_subparsers(dest="action", required=True)
     p = wave.add_parser("new")
     p.add_argument("--slice", action="append", default=[])
@@ -1608,6 +1808,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="wave")
     return parser
+
+
+# The same words as the installer's (bin/mach GIT_MISSING), for a person who is not an engineer.
+GIT_MISSING = ("MACH needs Git, and Git is not installed on this computer. On a Mac, open Terminal, run  xcode-select --install  "
+               "and click Install in the window that appears (it installs Apple's command line tools, which include Git); "
+               "on Linux, install the 'git' package. Then run this again.")
 
 
 def refuse(exc: Exception) -> int:
@@ -1633,6 +1839,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return args.func(Studio(project), args)
     except (StudioError, collab.CollabError) as exc:
         return refuse(exc)
+    except FileNotFoundError as exc:
+        if exc.filename == "git":  # Git is not installed: say so plainly, not as a traceback
+            return refuse(StudioError(GIT_MISSING))
+        raise
     except Exception as exc:  # CellError and friends from the intent skill
         if exc.__class__.__name__ == "CellError":
             return refuse(exc)

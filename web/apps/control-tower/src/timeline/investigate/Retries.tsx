@@ -12,7 +12,7 @@ import type { TimelineSpan, TimeWindow } from "../contract";
 import { describeSpan, durationWords } from "../render";
 import type { BodyProps } from "./body";
 import { Caption, Diamond, Empty, Fig, Figures, FrameFig, Hit, Mark, MONO, MUTED, Ring, SANS, scaleOf, SUBTLE, INK, when } from "./figures";
-import { compareRungs, endBy, frameAbout, frameOf, retryLadders, rungTimings, spanSource, startAt, verdictWords, type Ladder, type Rung, type RungVerdict } from "./model";
+import { compareRungs, endBy, frameAbout, frameOf, retryLadders, rungTimings, spanSource, startAt, stopWord, verdictWords, type Ladder, type Rung, type RungVerdict } from "./model";
 
 const BLOCK = 112;
 /** The extra line under the rail for runs with no visit of their own (N10). */
@@ -256,14 +256,14 @@ function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal
         const interrupted = x.endReason === "interrupted" || x.endReason === "superseded";
         const unknown = x.endReason === "unknown";
         return (
-          <Fig key={`x${x.fromSlot}`} id={`attempt:${x.ref}`} name={`${x.label} for ${ladder.ticket}${x.from !== null ? `, started ${when(x.from)}` : ""}${x.to !== null ? `, ended ${when(x.to)}` : x.span?.attrs.historyEndsAt !== undefined ? `, no end recorded; the history ends at ${when(x.span.attrs.historyEndsAt)}` : ", not ended by the live edge"}${interrupted ? ", interrupted" : unknown ? ", outcome not known" : ""}${x.attempt ? `; the supervisor recorded it as attempt ${x.attempt}` : x.span ? "; no supervisor attempt number recorded" : ""}`} sources={x.span ? [spanSource(x.span, "execution")] : [{ what: "the visits' recorded execution", ref: x.ref, eventId: null }]} onActivate={() => onReveal(x.ref, x.from ?? undefined)}>
+          <Fig key={`x${x.fromSlot}`} id={`attempt:${x.ref}`} name={`${x.label} for ${ladder.ticket}${x.from !== null ? `, started ${when(x.from)}` : ""}${x.to !== null ? `, ended ${when(x.to)}` : x.span?.attrs.historyEndsAt !== undefined ? `, no end recorded; the history ends at ${when(x.span.attrs.historyEndsAt)}` : ", not ended by the live edge"}${interrupted ? `, ${stopWord(x.span)}` : unknown ? ", outcome not known" : ""}${x.attempt ? `; the supervisor recorded it as attempt ${x.attempt}` : x.span ? "; no supervisor attempt number recorded" : ""}`} sources={x.span ? [spanSource(x.span, "execution")] : [{ what: "the visits' recorded execution", ref: x.ref, eventId: null }]} onActivate={() => onReveal(x.ref, x.from ?? undefined)}>
             <Hit x={a} y={RAIL_Y - 4} w={b - a} h={8} />
             <rect className="mach-inv-hover" x={a} y={RAIL_Y - 2} width={b - a} height={4} style={{ fill: fc("ink-soft"), stroke: "none" }} />
             <path d={`M${a} ${RAIL_Y - 5}V${RAIL_Y + 5}`} style={{ stroke: fc("ink-soft"), strokeWidth: 1.4 }} />
             {interrupted || unknown ? <Mark x={b} y={RAIL_Y} state={unknown ? "unknown" : "interrupted"} r={5} /> : <path d={`M${b} ${RAIL_Y - 5}V${RAIL_Y + 5}`} style={{ stroke: fc("ink-soft"), strokeWidth: 1.4 }} />}
             <text x={a + 1} y={RAIL_Y + 17} style={{ ...SANS, fontSize: 10.5, fill: MUTED, fontWeight: 600 }}>
               {x.label}
-              {interrupted ? <tspan style={{ fontWeight: 400, fill: fc("halt") }}> · interrupted</tspan> : unknown ? <tspan style={{ fontWeight: 400, fill: SUBTLE }}> · outcome not known</tspan> : null}
+              {interrupted ? <tspan style={{ fontWeight: 400, fill: fc("halt") }}> · {stopWord(x.span)}</tspan> : unknown ? <tspan style={{ fontWeight: 400, fill: SUBTLE }}> · outcome not known</tspan> : null}
             </text>
             <Ring x={a} y={RAIL_Y - 4} w={b - a} h={8} />
           </Fig>
@@ -275,11 +275,11 @@ function LadderDrawing({ ladder, width, gutter, liveAt, chosen, onPick, onReveal
         const interrupted = x.endReason === "interrupted" || x.endReason === "superseded";
         const failed = x.endReason === "failed";
         return (
-          <Fig key={`u${x.ref}`} id={`attempt:${x.ref}`} name={`${x.label} for ${ladder.ticket}${x.from !== null ? `, started ${when(x.from)}` : ""}${x.to !== null ? `, ended ${when(x.to)}` : ""}${failed ? ", failed" : interrupted ? ", interrupted" : ""}; no build or verify visit was recorded in it`} sources={x.span ? [spanSource(x.span, "execution")] : []} onActivate={() => onReveal(x.ref, x.from ?? undefined)}>
+          <Fig key={`u${x.ref}`} id={`attempt:${x.ref}`} name={`${x.label} for ${ladder.ticket}${x.from !== null ? `, started ${when(x.from)}` : ""}${x.to !== null ? `, ended ${when(x.to)}` : ""}${failed ? ", failed" : interrupted ? `, ${stopWord(x.span)}` : ""}; no build or verify visit was recorded in it`} sources={x.span ? [spanSource(x.span, "execution")] : []} onActivate={() => onReveal(x.ref, x.from ?? undefined)}>
             <Hit x={a} y={RAIL_Y + 19} w={150} h={12} />
             <text x={a + 1} y={RAIL_Y + 29} style={{ ...SANS, fontSize: 10.5, fill: MUTED, fontWeight: 600 }}>
               {x.label}
-              <tspan style={{ fontWeight: 400, fill: SUBTLE }}>{failed ? " · failed" : interrupted ? " · interrupted" : ""} · no visit of its own</tspan>
+              <tspan style={{ fontWeight: 400, fill: SUBTLE }}>{failed ? " · failed" : interrupted ? ` · ${stopWord(x.span)}` : ""} · no visit of its own</tspan>
             </text>
           </Fig>
         );

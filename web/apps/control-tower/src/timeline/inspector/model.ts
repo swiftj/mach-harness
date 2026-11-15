@@ -14,7 +14,7 @@ import { noEndRecorded, outcomeKnownAt, type SpanKind, type SpanQuery, type Time
 import { noEndWords, stoppedState, stoppedWords, type StoppedState } from "../render/words";
 
 /** A stopped execution's state in the headline's words. */
-const STOPPED_HEADLINE: Readonly<Record<StoppedState, string>> = { interrupted: "interrupted", "timed-out": "timed out", "could-not-start": "could not start", unknown: "outcome not known" };
+const STOPPED_HEADLINE: Readonly<Record<StoppedState, string>> = { interrupted: "interrupted", "timed-out": "timed out", "could-not-start": "could not start", killed: "killed", released: "released before starting", unknown: "outcome not known" };
 
 // ---------------------------------------------------------------- which spans a ref has
 

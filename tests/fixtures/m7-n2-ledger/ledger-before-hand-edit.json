@@ -1,0 +1,121 @@
+{
+  "intakes": {},
+  "next_seq": 153,
+  "pending_events": [],
+  "project_id": "PROJECT-FIXTURE",
+  "schema_version": 1,
+  "slices": {
+    "SLICE-001": {
+      "dependencies": [],
+      "digest": "620fe96be30a9af4ea0727570b2be4adfaa13bc190a40377dacf62174a5ea290",
+      "dispatched_at": "2026-11-14T22:34:29Z",
+      "history": [],
+      "integrated": null,
+      "last_state": "completed",
+      "owner": "supervisor",
+      "pending_ticket": false,
+      "revision": 4,
+      "slice_id": "SLICE-001",
+      "state": "materialized",
+      "ticket_id": "LOCAL-001",
+      "wave_id": "WAVE-001"
+    },
+    "SLICE-002": {
+      "dependencies": [],
+      "digest": "36455956e1c7a2eeec19510f631c0189daa2f6885d5d8f7d90116692686b6390",
+      "dispatched_at": "2026-11-14T22:34:29Z",
+      "history": [],
+      "integrated": null,
+      "last_state": "completed",
+      "owner": "supervisor",
+      "pending_ticket": false,
+      "revision": 4,
+      "slice_id": "SLICE-002",
+      "state": "materialized",
+      "ticket_id": "LOCAL-002",
+      "wave_id": "WAVE-001"
+    },
+    "SLICE-003": {
+      "dependencies": [
+        "SLICE-005"
+      ],
+      "digest": "47ae446febce56b1b1938c56ee53dde031c30abaecf3cf4bf2e62331cc48b1f8",
+      "dispatched_at": null,
+      "history": [],
+      "integrated": null,
+      "last_state": "blocked",
+      "pending_ticket": false,
+      "revision": 6,
+      "slice_id": "SLICE-003",
+      "state": "materialized",
+      "ticket_id": "LOCAL-005",
+      "wave_id": "WAVE-003"
+    },
+    "SLICE-005": {
+      "dependencies": [
+        "SLICE-001",
+        "SLICE-002"
+      ],
+      "digest": "89fad65bd065108fea91e047390a73fc71ff7c7473c6ec2184f6f4bc9d31f1ec",
+      "dispatched_at": "2026-11-15T02:27:45Z",
+      "history": [
+        {
+          "digest": "89fad65bd065108fea91e047390a73fc71ff7c7473c6ec2184f6f4bc9d31f1ec",
+          "outcome": "abandoned",
+          "revision": 4,
+          "ticket_id": "LOCAL-003"
+        }
+      ],
+      "integrated": null,
+      "last_state": "blocked",
+      "owner": "supervisor",
+      "pending_ticket": false,
+      "product_pending": {
+        "digest": "aeada9866500670ac2cf81a902d01ebde074e657f84ee89cbd0fc65657506baa",
+        "revision": 6
+      },
+      "revision": 4,
+      "revision_issue": 2,
+      "slice_id": "SLICE-005",
+      "state": "materialized",
+      "ticket_id": "LOCAL-006",
+      "wave_id": "WAVE-003"
+    },
+    "SLICE-006": {
+      "dependencies": [
+        "SLICE-005"
+      ],
+      "digest": "0f12d17a1ac35a091f4394be64dfa852aea688fac26376cff6c5d159c7cde244",
+      "dispatched_at": null,
+      "history": [],
+      "integrated": null,
+      "last_state": "blocked",
+      "pending_ticket": false,
+      "revision": 6,
+      "slice_id": "SLICE-006",
+      "state": "materialized",
+      "ticket_id": "LOCAL-004",
+      "wave_id": "WAVE-003"
+    }
+  },
+  "source": {
+    "branch": "main",
+    "commit": null
+  },
+  "supervisor": {
+    "attempts": {},
+    "executions": {},
+    "observed": {},
+    "parked": {
+      "LOCAL-003": {
+        "at": "2026-11-14T23:08:03Z",
+        "reason": "2 execution(s) ended without moving it past 'building'."
+      },
+      "LOCAL-006": {
+        "at": "2026-11-15T02:30:47Z",
+        "reason": "The belt workflow reported it stuck at 'spec-ready': the same station ran without moving it on. Retrying would repeat it."
+      }
+    }
+  },
+  "waves": {}
+}

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 /**
  * Factory Pulse, the landing area: an editorial reading of the window, not a wall of tiles. A lead
  * paragraph whose every number opens its definition; delivery over time with the steps from an
@@ -7,7 +8,7 @@
  */
 import { groupedKey, type MetricRow } from "../../contract";
 import { clockText, count, coverageText, dayText, durationText, pct, plural, usd, valueText, windowText } from "../../model/format";
-import { beltShares, costSeries, outcomePartition, type OutcomeKey } from "../../model/pulse";
+import { beltShares, costSeries, outcomePartition, readinessLine, type OutcomeKey } from "../../model/pulse";
 import { durationShows, MIN_TREND_MEMBERS, MIN_TREND_PERIODS, SMALL_SAMPLE, shareText, verdictAllowed } from "../../model/sample";
 import { grainFor, periodSeries } from "../../model/series";
 import { BeltStrip, Columns, PartsBar } from "../charts";
@@ -21,6 +22,27 @@ import { ACCEPTANCE_NOTE, AreaLink, MiniFig, NothingYet, Num, RecordedTotal } fr
 import { runRecordFoot } from "../../model/capped";
 
 const D = 86_400_000;
+
+/** M7 D11: product acceptance is recorded in the product files and the release readiness snapshot, which the observer does not follow. */
+/** M7 D11: the newest release readiness snapshot, read once from the observer (GET only); null when there is none or no observer. */
+function useReadiness(): string | null {
+  const [line, setLine] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/v1/release/readiness", { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: unknown) => {
+        if (live) setLine(readinessLine(j));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+  return line;
+}
+
+const PRODUCT_ACCEPTANCE_NOTE = "MACH's intake records do not carry product acceptance; see the release readiness snapshot.";
 
 export function Pulse(props: PulseProps) {
   return (
@@ -235,6 +257,7 @@ function DeliveryTrend() {
  */
 function Ladder() {
   const { snapshot: s } = useAnalytics();
+  const readiness = useReadiness();
   const t = s.totals;
   const steps: { label: string; row: MetricRow | undefined; value: number | null; unit: [string, string] }[] = [
     { label: "Executions completed", row: t.S3, value: t.S3?.numerator_value ?? null, unit: ["execution", "executions"] },
@@ -265,8 +288,8 @@ function Ladder() {
         ))}
         <li className="an-hatch border-l border-line px-3 py-2" data-state="not-recorded">
           <div className="text-caption text-ink-muted">Accepted by product</div>
-          <div className="text-body-sm font-semibold text-ink">Not recorded</div>
-          <div className="text-caption text-ink-subtle">No MACH record says a person accepted a delivered slice.</div>
+          <div className="text-body-sm font-semibold text-ink">{readiness ? "From the release readiness snapshot" : "Not recorded"}</div>
+          <div className="text-caption text-ink-subtle">{readiness ?? PRODUCT_ACCEPTANCE_NOTE}</div>
         </li>
       </ol>
       <p className="mt-1.5 text-caption text-ink-subtle">The catalog's name for slices integrated is “Accepted delivery” (T2); it counts commits on the integration branch. {ACCEPTANCE_NOTE}</p>
@@ -440,7 +463,9 @@ function CostPanel() {
   );
 }
 
-const OUTCOME_WORDS: Readonly<Record<OutcomeKey, string>> = { completed: "Completed", failed: "Failed", interrupted: "Interrupted", unknown: "Outcome unknown", open: "No end recorded" };
+/** M7 N6: killed executions are not counted apart; X1 counts them with failures. */
+const KILLED_NOTE = "A killed execution (ended by a signal) is counted with the failures: X1 does not count it apart.";
+const OUTCOME_WORDS: Readonly<Record<OutcomeKey, string>> = { completed: "Completed", failed: "Failed or killed", interrupted: "Interrupted", unknown: "Outcome unknown", open: "No end recorded" };
 const OUTCOME_TONES: Readonly<Record<OutcomeKey, string>> = { completed: "var(--an-pass)", failed: "var(--an-fail)", interrupted: "var(--an-halt)", unknown: "var(--an-stale)", open: "var(--an-subtle)" };
 
 function ReliabilityPanel() {
@@ -459,7 +484,7 @@ function ReliabilityPanel() {
         ) : !p.partition ? (
           <p className="text-body-sm text-ink-muted">These endings overlap in this window, so they are not drawn as parts of one whole; each is shown over its own base in Reliability.</p>
         ) : (
-          <ChartFrame size="sm" chart="pulse-outcomes" foot="Base: the executions claimed in this window (X1's denominator), each once by how it ended; open: no end recorded yet." title={`How ${plural(p.claimed, "claimed execution")} ended`} summary={p.parts.map((x) => `${OUTCOME_WORDS[x.key]} ${x.count}`).join(", ")} table={{ columns: [{ label: "Ending" }, { label: "Executions", num: true }], rows: p.parts.map((x) => [area ? <button key={x.key} type="button" className="an-link inline-flex min-h-6 items-center" onClick={() => area("reliability", `outcome:${x.key}`)}>{OUTCOME_WORDS[x.key]}</button> : OUTCOME_WORDS[x.key], count(x.count)]) }}>
+          <ChartFrame size="sm" chart="pulse-outcomes" foot={`Base: the executions claimed in this window (X1's denominator), each once by how it ended; open: no end recorded yet. ${KILLED_NOTE}`} title={`How ${plural(p.claimed, "claimed execution")} ended`} summary={p.parts.map((x) => `${OUTCOME_WORDS[x.key]} ${x.count}`).join(", ")} table={{ columns: [{ label: "Ending" }, { label: "Executions", num: true }], rows: p.parts.map((x) => [area ? <button key={x.key} type="button" className="an-link inline-flex min-h-6 items-center" onClick={() => area("reliability", `outcome:${x.key}`)}>{OUTCOME_WORDS[x.key]}</button> : OUTCOME_WORDS[x.key], count(x.count)]) }}>
             <PartsBar name={`How ${p.claimed} claimed executions ended`} height={22} parts={p.parts.map((x) => ({ key: x.key, label: OUTCOME_WORDS[x.key], value: x.count, text: count(x.count), tone: OUTCOME_TONES[x.key], hatch: x.key === "open" }))} onActivate={area ? (k) => area("reliability", `outcome:${k}`) : undefined} />
           </ChartFrame>
         )

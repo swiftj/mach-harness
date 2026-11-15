@@ -23,7 +23,9 @@ Paths are relative to the cell's working folder ("workdir").
 <!-- An ordered checklist. Each task has an ID, a kind in brackets ([test], [impl], [contract],
      [refactor] or [docs]), the files it touches, and the spec IDs it satisfies. Tests come first:
      every [impl] task is preceded by the [test] task that fails without it. Every FR, INV and AC in
-     the spec appears in at least one task. -->
+     the spec appears in at least one task. The suite must pass after each [impl] task with only the
+     files of the [impl] tasks so far: put every file one behaviour needs in one [impl] task, and name
+     on it only the FR and AC IDs it makes pass. -->
 - [ ] T01 [test] <What the failing test proves> — `<test file>` (<FR-NN, INV-NN, AC-NN>)
 - [ ] T02 [impl] <The smallest change that makes T01 pass> — `<file>` (<FR-NN>)
 

@@ -53,7 +53,7 @@ export const WIRE_MARK_KINDS: readonly string[] = [...MARK_KINDS, "attempt"];
 const BASES: readonly DurationBasis[] = ["measured", "bounded", "inferred", "open", "unknown"];
 const AUTHORITIES: readonly SpanAuthority[] = ["authoritative", "observed", "reconstructed", "simulated"];
 const PRECISIONS: readonly SpanPrecision[] = ["ms", "s", "arrival", "bounded", "unknown", "simulated"];
-const REASONS: readonly SpanEndReason[] = ["completed", "failed", "refused", "interrupted", "superseded", "unknown"];
+const REASONS: readonly SpanEndReason[] = ["completed", "failed", "refused", "interrupted", "superseded", "released", "unknown"];
 
 const obj = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
 const str = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
@@ -106,6 +106,7 @@ export function readAttrs(value: unknown): SpanAttrs {
   if (n("attempt") !== undefined) out.attempt = n("attempt");
   if (s("state") !== undefined) out.state = s("state");
   if (n("cost_usd") !== undefined) out.costUsd = n("cost_usd");
+  if (n("exit_code") !== undefined) out.exitCode = n("exit_code");
   if (s("vote") !== undefined) out.vote = s("vote");
   const reasons = strings(a.reasons);
   if (reasons) out.reasons = reasons;

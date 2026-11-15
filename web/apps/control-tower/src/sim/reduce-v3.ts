@@ -458,6 +458,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const def = definitions.slices[id];
       const dependsOn = e.data.dependencies;
       const prior = s.slices[id];
+      // M7 N7: reissued to another ticket: the earlier ticket waits on nobody.
+      if (prior && prior.ticketId && ticket && prior.ticketId !== ticket && s.supervisor.attention[prior.ticketId]) s = { ...s, supervisor: { ...s.supervisor, attention: without_(s.supervisor.attention, prior.ticketId) } };
       const knownCell = ticket ? s.cells[ticket] : undefined;
       const cellRisk = knownCell && isKnownField(knownCell.meta, "risk") ? knownCell.risk : null;
       // M6.6: the observer carries the intake ledger's title for this revision (free text, contained where shown).
@@ -522,7 +524,10 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     case "human.required": {
       const key = ticket ?? e.ids.slice_id ?? "factory";
       s = movedOnFrom(s, ticket, "", at, e);
-      return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, key, { reason: e.data.reason, at: t, seq }) } };
+      // M7: parked at once after an execution that was not progressing: the code, for the page's words.
+      const code = s.executions[e.ids.execution_id ?? ""]?.notProgressing ?? null;
+      if (ticket && closedTicket(s, ticket)) return s; // M7 N7: asked about an abandoned or reissued ticket: nobody waits on it
+      return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, key, { reason: e.data.reason, at: t, seq, code }) } };
     }
     case "scheduling.decided": {
       const d = e.data;
@@ -535,6 +540,15 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
           if (!id) continue;
           const was = prior[id];
           holds[id] = was && was.why === h.why ? was : { why: h.why, since: t, seq };
+        }
+      }
+      // M7 D10: a claim made since the previous decision, never started, whose ticket this decision
+      // holds was released before starting (the supervisor claims first, then reports it held).
+      const heldTickets = new Set(d.held.map((h) => h.ticket_id).filter((id): id is string => !!id));
+      const since = s.supervisor.lastDecisionAt ?? -Infinity;
+      for (const x of Object.values(s.executions)) {
+        if (x.state === "claimed" && heldTickets.has(x.ticketId) && x.claimedAt >= since && x.startedAt === null && x.processStartedAt === null && x.releasedAt === null && x.meta.authority !== "simulated") {
+          s = withExecution(s, x.id, (y) => ({ ...y, releasedAt: at }));
         }
       }
       return {
@@ -586,6 +600,9 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         endedAt: at,
         workflowRunning: false,
         outcome: { stage: stageOf(d.stage), next: d.next ?? "stop", waitingFor: e.type === "execution.completed" ? e.data.waiting_for : null, costUsd: cost ?? 0 },
+        how: d.how ?? x.how,
+        exitCode: d.exit_code ?? x.exitCode,
+        notProgressing: e.type === "execution.failed" ? (e.data.not_progressing ?? null) : x.notProgressing,
         meta: touch(x.meta, e, { end: timeQualityOf(e.time.precision), unknown: cost === null && !failed ? withAll(x.meta.unknown, "costUsd") : x.meta.unknown }),
       }));
       s = withCost(s, before, id);
@@ -743,6 +760,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     }
     case "run.recorded":
       s = ensureCell(s, e, definitions);
+      // M7 N7: an abandoned ticket waits on nobody.
+      if (ticket && e.data.outcome === "abandoned" && s.supervisor.attention[ticket]) s = { ...s, supervisor: { ...s.supervisor, attention: without_(s.supervisor.attention, ticket) } };
       return withCell(s, ticket, (cell) => ({ ...cell, runRecord: { outcome: e.data.outcome, rounds: e.data.rounds, firstPass: e.data.first_pass, at }, meta: touch(cell.meta, e) }));
 
     // ------------------------------------------------ the execution stream (observed)
@@ -1438,4 +1457,19 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
     s = setGate(s, g.ticket_id, kind, g.round ?? null, state, "From the observer's snapshot.", at, 0, meta());
   }
   return { ...s, completeness: { ...s.completeness, state: "reconstructed", since: at, observer: st.history ?? s.completeness.observer } };
+}
+
+function without_<T>(m: Readonly<Record<string, T>>, key: string): Record<string, T> {
+  const out = { ...m };
+  delete out[key];
+  return out;
+}
+
+/** The reducer's copy of selectors' ticketClosed (M7 N7), kept here so the reducer imports no selector. */
+function closedTicket(s: Scene, ticket: string): boolean {
+  const cell = s.cells[ticket];
+  if (!cell) return false;
+  if (cell.runRecord?.outcome === "abandoned") return true;
+  const now = cell.sliceId ? s.slices[cell.sliceId]?.ticketId : undefined;
+  return !!now && now !== ticket && !cell.merged;
 }

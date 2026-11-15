@@ -579,6 +579,132 @@ class TuningTicketTest(Base):
         self.assertEqual((result[0], result[1]["outcome"] if isinstance(result[1], dict) else json.loads(result[1])["outcome"]), (0, "APPROVED"))
 
 
+class SecurityFindingTest(Base):
+    """M7: a high or critical security blocker, from any seat, is never outvoted, switched off or held back by a later round."""
+
+    def begin(self, risk=None, config=None):
+        self.verified()
+        if config is not None:
+            self.config(config)
+        if risk:
+            self.edit_json("cell.json", risk=risk)
+        return self.r_ok("start", TICKET)
+
+    def tally(self):
+        code, out, err = self.run_review("tally", TICKET)
+        self.assertTrue(out, err)
+        return code, json.loads(out)
+
+    def decision(self):
+        return json.loads((self.cellroot / "review/decision.json").read_text())
+
+    def security(self, impact="high", **changes):
+        return self.blocker(**{"class": "security", "impact": impact, "rule": "REVIEW.md: no injection", **changes})
+
+    def test_the_new_fields_are_checked(self):
+        self.begin()
+        self.assertIn("'class' may only be 'security'", self.bad(self.blocker(**{"class": "style"})))
+        self.assertIn("'impact' must be one of critical, high, medium, low", self.bad(self.security(impact="severe")))
+        self.assertIn("'impact' rates a security finding; add \"class\": \"security\"", self.bad(self.blocker(impact="high")))
+        self.assertIn("a critical-impact security finding must be a blocker", self.bad(self.note(**{"class": "security", "impact": "critical"})))
+        self.assertIn("a blocker must name the 'rule'", self.bad(self.security(rule=None)), "a security blocker names its rule and file like any other")
+        self.assertIn("a blocker must name the 'file'", self.bad(self.security(file=None, line=None)))
+        self.vote("security", self.blocker(impact="critical"), self.note(impact="low"))
+        stored = json.loads((self.round / "votes/security.json").read_text())["findings"]
+        self.assertEqual([(f.get("class"), f.get("impact")) for f in stored], [("security", "critical"), ("security", "low")],
+                         "the security seat's findings are security-class without saying so")
+        self.vote("product", self.blocker())
+        self.assertNotIn("class", json.loads((self.round / "votes/product.json").read_text())["findings"][0], "a finding without the new fields is stored as before")
+
+    def test_a_high_security_blocker_from_another_seat_is_not_outvoted(self):
+        self.begin()
+        self.vote("architecture")
+        self.vote("security")
+        self.vote("product", self.security())
+        code, done = self.tally()
+        self.assertEqual((code, done["outcome"], done["approvals"], done["approvals_needed"]), (1, "REJECTED", 2, 2))
+        self.assertEqual(done["overruled_blockers_from"], [])
+        decision = self.decision()
+        self.assertEqual((decision["security_veto"], decision["security_blockers"]), (True, 1))
+        self.assertEqual(self.cell_json()["stage"], "built")
+        self.assertIn("Security, high impact: rejects the round whatever the count.", (self.round / "findings.md").read_text())
+
+    def test_a_medium_or_low_security_blocker_from_another_seat_is_outvoted_as_before(self):
+        self.begin()
+        self.vote("architecture")
+        self.vote("security")
+        self.vote("product", self.security(impact="medium"))
+        self.assertEqual(self.tally()[1]["outcome"], "APPROVED")
+        self.assertEqual(self.decision()["security_blockers"], 0)
+
+    def test_no_setting_switches_it_off(self):
+        """security_veto: false and a lowered approvals threshold still leave a critical security blocker standing."""
+        self.begin(config={"review": {"security_veto": False, "medium": {"approvals": 1}}})
+        self.vote("architecture")
+        self.vote("security")
+        self.vote("product", self.security(impact="critical"))
+        code, done = self.tally()
+        self.assertEqual((code, done["outcome"], done["approvals"], done["approvals_needed"]), (1, "REJECTED", 2, 1))
+        self.assertTrue(self.decision()["security_veto"])
+
+    def test_it_applies_on_a_single_seat_panel(self):
+        self.begin(config={"review": {"low": {"approvals": 1}}}, risk="Low")
+        self.vote("general", self.security())
+        code, done = self.tally()
+        self.assertEqual((code, done["outcome"]), (1, "REJECTED"))
+        self.assertEqual(self.decision()["security_blockers"], 1)
+
+    def test_it_applies_to_a_factory_tuning_ticket(self):
+        self.verified()
+        self.put(self.project, {".factory/tickets/LOCAL-001.md": '---\nid: LOCAL-001\ntitle: "Tune"\nstate: open\nlabels: ["factory-tuning"]\n---\n'})
+        self.assertTrue(self.r_ok("start", TICKET)["tuning"])
+        self.vote("architecture", self.security())
+        self.vote("security")
+        self.vote("product")
+        self.assertEqual(self.tally()[1]["outcome"], "REJECTED")
+        self.assertEqual(self.decision()["security_blockers"], 1)
+
+
+class RepeatedRoundTest(Base):
+    """M7 D3: a re-review after the merge station voided an approval never overwrites the round it repeats."""
+
+    def test_a_voided_approval_is_kept_and_the_re_review_opens_a_new_folder(self):
+        sys.path.insert(0, str(ROOT / "skills" / "merge" / "scripts"))
+        import merge  # noqa: E402
+        self.verified()
+        self.edit_json("cell.json", risk="High")
+        self.r_ok("start", TICKET)
+        self.cast()
+        self.assertEqual(self.tally()[1]["outcome"], "AWAITING_HUMAN")
+        self.r_ok("approve-human", TICKET, "--by", "Release Owner")
+        first = json.loads((self.round / "decision.json").read_text())
+        approved = first["head"]
+        self.assertEqual(self.r_refused("tally", TICKET).count("already tallied"), 1)
+        self.assertIn("already decided", self.submit("security")[2], "nothing is written into a decided round")
+        self.commit_in_cell()  # as the merge station's revalidation does: the branch moves after approval
+        cell = merge.Cell(self.project, TICKET)
+        merge.void_approval(cell)
+        kept = json.loads((self.round / "decision.json").read_text())
+        self.assertEqual((kept["outcome"], kept["outcome_before_void"], kept["human_approval"]["by"], kept["head"]), ("VOID", "APPROVED", "Release Owner", approved))
+        self.assertEqual((kept["void"]["approved_commit"], kept["void"]["reason"]), (approved, "The branch changed after it was approved."))
+        self.run_verify("start", TICKET)
+        (self.evidence / "consumer-run.log").write_text("AC-01 ok\n")
+        for target in TARGETS:
+            self.run_verify("record", TICKET, target, "--result", "pass", "--evidence", "consumer-run.log", "--note", NOTE)
+        self.run_verify("finish", TICKET)
+        started = self.r_ok("start", TICKET)
+        repeat = self.cellroot / "review" / "round-1.1"
+        self.assertEqual((started["round"], started["packet"]), (1, str(repeat / "packet.json")), "the same judging round, in its own folder")
+        self.assertEqual(json.loads((repeat / "packet.json").read_text())["repeat_of"], str(self.round))
+        self.round = repeat
+        self.cast()
+        self.assertEqual(self.tally()[1]["outcome"], "AWAITING_HUMAN")
+        self.assertEqual(json.loads((self.cellroot / "review/round-1/decision.json").read_text()), kept, "the voided round is untouched")
+        self.assertEqual(sorted(p.name for p in (self.cellroot / "review/round-1/votes").glob("*.json")), sorted(f"{role}.json" for role in PANEL))
+        self.edit_json("cell.json", stage="verified")
+        self.assertEqual(self.r_ok("start", TICKET)["packet"], str(self.cellroot / "review/round-1.2/packet.json"), "a decided repeat is not reused either")
+
+
 class LaterRoundTest(Base):
     """After the first round, reviewers judge the fix: what changed, and whether earlier blockers are gone."""
 
@@ -616,6 +742,20 @@ class LaterRoundTest(Base):
         self.assertEqual(self.vote("security", self.blocker())["vote"], "REJECT", "an earlier blocker that is still not fixed may be raised again")
         self.assertEqual(self.vote("product", self.note(file="tests/test_invite.py", line=1), self.blocker(file="evidence/consumer-run.log", line=1, rule="AC-01"))["vote"], "REJECT",
                          "notes are unrestricted, and evidence can always be cited")
+
+    def test_a_later_round_can_raise_a_new_high_security_blocker_on_any_file(self):
+        self.second_round()
+        security = self.blocker(file="tests/test_invite.py", line=1, rule="REVIEW.md: no secrets", **{"class": "security", "impact": "high"})
+        self.assertIn("a high or critical security defect is the exception", self.bad(self.blocker(file="tests/test_invite.py", line=1)))
+        self.assertIn("did not change since the last round", self.bad(dict(security, impact="medium")), "only high or critical impact is exempt")
+        self.assertEqual(self.vote("architecture", security)["vote"], "REJECT")
+        stored = json.loads((self.round / "votes/architecture.json").read_text())["findings"][0]
+        self.assertEqual((stored["file"], stored["impact"], stored["new_in_delta"]), ("tests/test_invite.py", "high", True))
+        self.vote("security")
+        self.vote("product")
+        code, done = self.tally()
+        self.assertEqual((code, done["outcome"], done["round"]), (1, "REJECTED", 2), "it counts as a failed round toward the limit of three")
+        self.assertIn("Newly found in this round.", (self.round / "findings.md").read_text())
 
     def test_first_round_has_no_delta(self):
         self.verified()

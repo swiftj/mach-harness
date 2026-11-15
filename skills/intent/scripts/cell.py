@@ -42,6 +42,7 @@ PRODUCT_SLICE_RE = re.compile(r"^SLICE-(\d{3,})\.json$")
 STUDIO_DRAFT = (".factory", "studio", "draft")
 FIELD_RE = re.compile(r"^[-*+]\s+\*\*([A-Za-z ]+):\*\*\s*(.*)$")
 REQ_RE = re.compile(r"\b(?:FR|INV|AC)-\d{2,}\b")
+PLAN_TASK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+((?:R\d+-)?T\d+)\s+\[(test|impl|contract|refactor|docs)\]\s+(.*)$")
 INTENT_SECTIONS = ("Why", "Goal ancestry", "Constraints", "Risk", "Deferred work")
 INTENT_FIELDS = ("Ticket", "Slice", "Mode", "Status")
 PLAN_FIELDS = ("App type", "Risk tier", "Contracts")
@@ -478,9 +479,50 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
     telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-ready", "stage": "spec-ready", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts})
     report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): {cell['title']} [{cell['ticket_id']}]", args.no_commit))
+    if cell.get("isolation") == "worktree":
+        # The branch as it stands at spec-ready: where a re-plan returns it to (cell.py replan).
+        cell["spec_commit"] = git(["rev-parse", "HEAD"], workdir(project, cell)).stdout.strip() or None
+        write_cell(project, cell)
     print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts}, indent=2))
     print(f"READY: wrote {root / 'spec.md'} and {spec_json}.")
     return 0
+
+
+def unreachable_green(task_lines: Sequence[str]) -> List[str]:
+    """[impl] tasks that the build station could never complete, read from the plan's own data.
+
+    The build station accepts an [impl] task only when the whole suite passes after it. So once an
+    [impl] task I is complete, every test written before I passes. A later [impl] task J that names a
+    requirement or scenario (FR, AC) whose tests all come before I therefore claims work those tests
+    still need: either I can never go green, or J's claim is false. Both are plan defects. Invariants
+    are not counted: an [impl] task names an invariant it keeps, not only one it establishes."""
+    tasks = []
+    for line in task_lines:
+        match = PLAN_TASK_RE.match(line)
+        if match:
+            tasks.append((match.group(1), match.group(2), set(REQ_RE.findall(match.group(3)))))
+    problems = []
+    for j, (task_id, kind, ids) in enumerate(tasks):
+        if kind != "impl":
+            continue
+        stranded: Dict[str, List[str]] = {}  # the earlier [impl] task that cannot go green -> the IDs it strands
+        last_test: Dict[str, str] = {}
+        for identifier in sorted(i for i in ids if not i.startswith("INV-")):
+            tested = [k for k in range(j) if tasks[k][1] == "test" and identifier in tasks[k][2]]
+            if not tested:
+                continue
+            between = [tasks[k][0] for k in range(tested[-1] + 1, j) if tasks[k][1] == "impl"]
+            if between:
+                stranded.setdefault(between[0], []).append(identifier)
+                last_test[between[0]] = tasks[tested[-1]][0]
+        for earlier, identifiers in stranded.items():
+            problems.append(
+                f"{task_id} [impl] implements {', '.join(identifiers)}, but every [test] task for them (the last is {last_test[earlier]}) comes "
+                f"before {earlier} [impl]. The build station completes {earlier} only when the whole suite passes, and those tests cannot pass "
+                f"while they still need {task_id}'s files. Merge {earlier} and {task_id} into one [impl] task, or move the tests that need "
+                f"{task_id} after {earlier}; if {task_id} only keeps them working, do not name them on it"
+            )
+    return problems
 
 
 def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
@@ -551,6 +593,7 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
         problems.append("'## Tasks' needs at least one checklist item, such as '- [ ] T01 [test] ...'")
     elif not re.search(r"\[test\]", task_lines[0]):
         problems.append("the first task must be a [test] task: tests are written before implementation")
+    problems.extend(unreachable_green(task_lines))
 
     if problems:
         for problem in problems:
@@ -570,6 +613,98 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
                                                        "contracts": len(contracts), "tasks": len(task_lines)})
     report(commit(project, cell, contracts, f"contract({cell.get('slice_id')}): boundary contracts [{cell['ticket_id']}]", args.no_commit))
     print(json.dumps({"status": "PLANNED", "app_type": app_type, "risk": risk, "contracts": contracts, "tasks": len(task_lines)}, indent=2))
+    return 0
+
+
+REPLAN_STAGES = ("planned", "building")
+
+
+def replan_commits(project: Path, cell: Dict[str, Any], state: Dict[str, Any], work: Path) -> Tuple[str, str]:
+    """The commit the branch had at spec-ready and its tip now; refuses when resetting would discard work that must be kept."""
+    spec_commit = cell.get("spec_commit")
+    if not spec_commit:  # a cell finalized before spec_commit was recorded: its last spec commit
+        found = git(["log", "-1", "--format=%H", "--fixed-strings", f"--grep=spec({cell.get('slice_id')}): ", "HEAD"], work).stdout.strip()
+        spec_commit = found or None
+    if not spec_commit or git(["merge-base", "--is-ancestor", spec_commit, "HEAD"], work).returncode != 0:
+        raise CellError("The commit this cell had at spec-ready cannot be found on its branch, so it cannot be returned there. Abandon the ticket instead.")
+    tip = git(["rev-parse", "HEAD"], work).stdout.strip()
+    main_head = git(["rev-parse", "HEAD"], project).stdout.strip()
+    tasks = {task.get("commit"): task.get("id") for task in state.get("tasks") or [] if isinstance(task, dict) and task.get("commit")}
+
+    def on_main(sha: str) -> bool:
+        return bool(main_head) and git(["merge-base", "--is-ancestor", sha, main_head], work).returncode == 0
+
+    keep, merged = [], []
+    for sha in git(["rev-list", f"{spec_commit}..{tip}"], work).stdout.split():
+        message = git(["log", "-1", "--format=%s", sha], work).stdout.strip()
+        parents = git(["log", "-1", "--format=%P", sha], work).stdout.split()
+        task = next((task_id for commit_sha, task_id in tasks.items() if sha.startswith(commit_sha) or commit_sha.startswith(sha)), None)
+        if task:
+            if on_main(sha):
+                merged.append(task)
+        elif on_main(sha):
+            continue  # main's own history, brought in by the build station's sync
+        elif len(parents) > 1 and all(on_main(parent) for parent in parents[1:]):
+            continue  # the build station's merge of main into the branch
+        elif message.startswith(f"contract({cell.get('slice_id')}): "):
+            continue  # the plan's own contracts, which the next plan writes again
+        else:
+            keep.append(f"{sha[:12]} {message[:60]}")
+    if merged:
+        raise CellError(f"Work of this ticket is already on the main branch ({', '.join(merged)}), so it cannot be re-planned. Finish it, or abandon it.")
+    if keep:
+        raise CellError("The branch has commits that are not this plan's tasks or contracts, and a re-plan never discards them: "
+                        + "; ".join(keep) + ". Abandon the ticket instead (cleanup --abandon keeps the branch in a bundle).")
+    return spec_commit, tip
+
+
+def cmd_replan(project: Path, args: argparse.Namespace) -> int:
+    """Return a planned or building cell to spec-ready so it is planned again. Only on a person's explicit instruction."""
+    reason = (args.reason or "").strip()
+    if not reason:
+        raise CellError("--reason is required: say why the plan is wrong.")
+    cell = read_cell(project, args.ticket_id)
+    root = cell_dir(project, args.ticket_id)
+    stage = cell.get("stage")
+    if stage not in REPLAN_STAGES:
+        raise CellError(f"Only a planned or building cell can be re-planned; {args.ticket_id} is '{stage}'.")
+    build_json = root / "build.json"
+    state = json.loads(build_json.read_text(encoding="utf-8")) if build_json.is_file() else {}
+    if int(state.get("loop") or 0) > 0 or (root / "review").exists() or (root / "evidence" / "summary.json").exists():
+        raise CellError("This ticket has been through a judging round. Its rounds must stand, so it cannot be re-planned; abandon it, or let it escalate.")
+    spec_commit = tip = None
+    work = workdir(project, cell)
+    if cell.get("isolation") == "worktree":
+        dirty = [line for line in git(["status", "--porcelain"], work).stdout.splitlines() if line.strip()]
+        if dirty:
+            raise CellError(f"The cell has uncommitted changes ({len(dirty)} path(s)). A re-plan never discards work: commit or remove them, or abandon the ticket.")
+        spec_commit, tip = replan_commits(project, cell, state, work)
+    history = root / "plan-history"
+    number = 1 + max([int(path.name) for path in history.glob("*") if path.name.isdigit()] or [0])
+    keep = history / str(number)
+    ref = f"refs/mach/replan/{args.ticket_id}/{number}"
+    telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.replan", "outcome": "pass", "reason_code": "replanned", "overridden_by_reason": False,
+                                                       "from_stage": stage, "replan": number, "reset": bool(tip and tip != spec_commit)})
+    if stage == "building":
+        telemetry(root, "station.exited", "build", lambda: {"outcome": "replanned", "stage": "spec-ready"})
+    keep.mkdir(parents=True)
+    moved = []
+    for name in ("plan.md", "build.json", "build-report.json"):
+        if (root / name).is_file():
+            (root / name).replace(keep / name)
+            moved.append(name)
+    reset = None
+    if tip and tip != spec_commit:
+        if git(["update-ref", ref, tip], work).returncode != 0 or git(["reset", "-q", "--hard", spec_commit], work).returncode != 0:
+            raise CellError(f"Could not save the old tip as {ref} and reset the branch; the old plan is kept in {keep}. Nothing else changed.")
+        reset = {"from": tip, "to": spec_commit, "saved_as": ref}
+    (keep / "replan.json").write_text(json.dumps({"replan": number, "at": now(), "reason": reason, "from_stage": stage, "kept": moved, "reset": reset},
+                                                 indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    cell["stage"] = "spec-ready"
+    cell["replans"] = number
+    write_cell(project, cell)
+    print(json.dumps({"status": "REPLANNED", "ticket_id": args.ticket_id, "stage": "spec-ready", "kept_in": str(keep), "reset": reset,
+                      "next": "plan: the contract engineer writes a new plan.md and 'cell.py check-plan' checks it"}, indent=2))
     return 0
 
 
@@ -699,6 +834,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-commit", action="store_true", help="do not commit the spec on the cell's branch")
     p.set_defaults(func=cmd_finalize)
 
+    p = sub.add_parser("replan", help="return a planned or building cell to spec-ready to plan it again; only on a person's instruction")
+    p.add_argument("ticket_id")
+    p.add_argument("--reason", required=True, help="why the plan is wrong")
+    p.set_defaults(func=cmd_replan)
     p = sub.add_parser("check-plan", help="gate stage 2: check plan.md and contracts against spec.json")
     p.add_argument("ticket_id")
     p.add_argument("--no-commit", action="store_true", help="do not commit the contracts on the cell's branch")
@@ -731,7 +870,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return args.func(project, args)
     except CellError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        station, gate = {"finalize": ("groom", "groom.finalize"), "check-plan": ("plan", "plan.check")}.get(args.command, (None, None))
+        station, gate = {"finalize": ("groom", "groom.finalize"), "check-plan": ("plan", "plan.check"), "replan": ("plan", "plan.replan")}.get(args.command, (None, None))
         if station:
             telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", station, lambda: {
                 "gate": gate, "outcome": "refuse", "reason_code": "refused", "overridden_by_reason": False})

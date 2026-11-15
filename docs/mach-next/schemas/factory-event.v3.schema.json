@@ -1301,6 +1301,7 @@
                                            "additionalProperties": false,
                                            "required": ["stage", "next", "waiting_for", "how", "seen_to_end", "cost_usd", "refused_tools"],
                                            "properties": {
+                                                           "exit_code": {"type": ["integer", "null"], "description": "M7: the process exit code; present only in records that carry it (a signal exit is negative, how \"killed\")"},
                                                            "stage": {
                                                                       "enum": [
                                                                                 "interview",
@@ -1334,7 +1335,7 @@
                                                                              ]
                                                                    },
                                                            "waiting_for": {"type": ["string", "null"]},
-                                                           "how": {"type": ["string", "null"]},
+                                                           "how": {"type": ["string", "null"], "description": "exited | timed-out | interrupted | could-not-start; since M7 killed (a signal exit, negative exit_code)"},
                                                            "seen_to_end": {"type": "boolean"},
                                                            "cost_usd": {"type": ["number", "null"]},
                                                            "refused_tools": {"type": "array", "items": {"type": "string"}}
@@ -1345,6 +1346,7 @@
                                         "additionalProperties": false,
                                         "required": ["stage", "next", "how", "claude_error", "exit_code", "attempt"],
                                         "properties": {
+                                                           "not_progressing": {"enum": ["workflow-stuck", "same-refusal", null], "description": "M7: why the supervisor parked the ticket at once; present only in records that carry it"},
                                                         "stage": {
                                                                    "enum": [
                                                                              "interview",

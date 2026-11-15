@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { FactoryScene, StateMark, factoryTokens, lodForZoom, screenBounds, type Lod, type RegionKind } from "@mach/ui";
 import { cameraFollows, isStale, timeScaleOf, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
-import { bayOrder, refKind, type EntityRef, type Scene } from "../sim";
+import { bayOrder, distinctSliceCount, refKind, type EntityRef, type Scene } from "../sim";
 import { AtlasContext, useHighlight, type AtlasContextValue } from "./context";
 import { createCamera, frame, visibleRect, zoomAt, type Camera, type ScreenRect } from "./camera";
 import { PLATE_Z, plantLayout, type PlantLayout } from "./layout";
@@ -46,7 +46,7 @@ function captionsOf(scene: Scene, stale: boolean): { captions: Partial<Record<Re
   const waiting = Object.values(scene.slices).filter((s) => s.scheduler === "waiting-on-dependency").length;
   const waves = Object.values(scene.waves).sort((a, b) => a.discoveredAt - b.discoveredAt);
   const wave = waves[waves.length - 1];
-  const sliceCount = waves.reduce((n, w) => n + w.sliceIds.length, 0);
+  const sliceCount = distinctSliceCount(scene);
   const merged = cells.filter((c) => c.merged).length;
   const archived = cells.filter((c) => c.archived).length;
   const reviewing = cells.find((c) => c.station === "review");

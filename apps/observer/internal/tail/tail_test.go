@@ -1,10 +1,12 @@
 package tail
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, path, s string, flag int) {
@@ -258,5 +260,82 @@ func TestFileCreatedAfterTheFirstPollIsLive(t *testing.T) {
 	lines, _, err := tl.Poll()
 	if err != nil || len(lines) != 2 || !lines[0].Live || !lines[1].Live {
 		t.Fatalf("%+v %v", lines, err)
+	}
+}
+
+// reuseInodes makes every file look like the same device and inode, as a filesystem that hands a
+// removed file's inode to the next file created (ext4 often does) would show it.
+func reuseInodes(t *testing.T) {
+	t.Helper()
+	identity = func(fs.FileInfo) (uint64, uint64) { return 1, 1 }
+	t.Cleanup(func() { identity = fileID })
+}
+
+func TestGoneAndBackOnAReusedInode(t *testing.T) {
+	reuseInodes(t)
+	path := filepath.Join(t.TempDir(), "log.jsonl")
+	appendTo(t, path, "a\n")
+	tl := New(path, Checkpoint{})
+	poll(t, tl)
+	os.Remove(path)
+	if _, notes := poll(t, tl); len(notes) != 1 || notes[0].Kind != NoteGone {
+		t.Fatalf("notes %v", notes)
+	}
+	appendTo(t, path, "b\n")
+	got, notes := poll(t, tl)
+	if len(got) != 1 || got[0] != "b" || len(notes) != 1 || notes[0].Kind != NoteReset {
+		t.Fatalf("recreated file: %v %v", got, notes)
+	}
+}
+
+func TestRecreatedBetweenPollsOnAReusedInode(t *testing.T) {
+	reuseInodes(t)
+	path := filepath.Join(t.TempDir(), "log.jsonl")
+	appendTo(t, path, "a\n")
+	tl := New(path, Checkpoint{})
+	poll(t, tl)
+	os.Remove(path)
+	appendTo(t, path, "b\nc\n") // longer: the old offset would land inside the new file
+	got, notes := poll(t, tl)
+	if len(notes) != 1 || notes[0].Kind != NoteReset || len(got) != 2 || got[0] != "b" || got[1] != "c" {
+		t.Fatalf("recreated file: %v %v", got, notes)
+	}
+	if got, notes := poll(t, tl); len(got) != 0 || len(notes) != 0 {
+		t.Fatalf("an unchanged file is not read again: %v %v", got, notes)
+	}
+	appendTo(t, path, "d\n")
+	if got, notes := poll(t, tl); len(got) != 1 || got[0] != "d" || len(notes) != 0 {
+		t.Fatalf("growth after a reset: %v %v", got, notes)
+	}
+}
+
+func TestRecreatedWithTheSameSizeOnAReusedInode(t *testing.T) {
+	reuseInodes(t)
+	path := filepath.Join(t.TempDir(), "log.jsonl")
+	appendTo(t, path, "a\n")
+	tl := New(path, Checkpoint{})
+	poll(t, tl)
+	os.Remove(path)
+	appendTo(t, path, "b\n")
+	// Set the time explicitly: a coarse filesystem clock could give both files the same one.
+	later := time.Unix(0, tl.ModNS).Add(time.Second)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+	got, notes := poll(t, tl)
+	if len(got) != 1 || got[0] != "b" || len(notes) != 1 || notes[0].Kind != NoteReset {
+		t.Fatalf("recreated file of the same size: %v %v", got, notes)
+	}
+}
+
+func TestSameFileGrowingIsNotReset(t *testing.T) {
+	reuseInodes(t)
+	path := filepath.Join(t.TempDir(), "log.jsonl")
+	appendTo(t, path, "a\n")
+	tl := New(path, Checkpoint{})
+	poll(t, tl)
+	appendTo(t, path, "b\n")
+	if got, notes := poll(t, tl); len(got) != 1 || got[0] != "b" || len(notes) != 0 || tl.CP.Resets != 0 {
+		t.Fatalf("growth: %v %v", got, notes)
 	}
 }

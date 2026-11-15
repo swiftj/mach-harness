@@ -78,8 +78,8 @@ var Allow = map[string]*Shape{
 		"provenance", provenanceShape),
 	"station.observed":    obj("from_stage", "stage"),
 	"recovery.started":    obj("kind"),
-	"execution.completed": obj("stage", "next", "waiting_for", "how", "seen_to_end", "cost_usd", "refused_tools", leafList),
-	"execution.failed":    obj("stage", "next", "how", "claude_error", "exit_code", "attempt"),
+	"execution.completed": obj("stage", "next", "waiting_for", "how", "seen_to_end", "cost_usd", "exit_code", "refused_tools", leafList),
+	"execution.failed":    obj("stage", "next", "how", "claude_error", "exit_code", "attempt", "not_progressing"),
 
 	"station.entered":          obj("station", "stage", "action", "resumed", "unclosed_visit", "head", "counts", anyKeys(scalar)),
 	"station.exited":           obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar), "app_type", "risk"), // revision 2: app_type, risk (plan exit)

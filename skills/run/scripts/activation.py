@@ -81,7 +81,8 @@ def backlog(ctx: Context) -> List[Dict[str, Any]]:
 
 def describe(pol: Dict[str, Any]) -> Dict[str, Any]:
     return {key: pol.get(key) for key in ("enabled", "paused", "autonomy", "auto_sync", "allow_merge", "persistent", "max_risk", "limits", "allowed_tools",
-                                          "excluded_slices", "source_branch", "runner_id", "machine", "enabled_by", "enabled_at")}
+                                          "excluded_slices", "source_branch", "runner_id", "machine", "enabled_by", "enabled_at",
+                                          "execution_risk_accepted")}
 
 
 def status(ctx: Context) -> Dict[str, Any]:
@@ -96,6 +97,9 @@ def status(ctx: Context) -> Dict[str, Any]:
     limit = ctx.sup.cap(pol) if ctx.line is not None else None  # the plan below shows the limit in force here, not only the project's
     plan = ctx.line.plan() if ctx.line is not None else None
     mode = "disabled" if not in_force else "paused" if pol.get("paused") else pol.get("autonomy")
+    # A parked ticket that was since abandoned and closed is waiting for nobody (recorded facts: the
+    # run record and the tracker), so it is listed apart, with the ticket that replaced it if any.
+    settled = ctx.line.settled(ledger, sorted(state["parked"])) if ctx.line is not None else {}
     return {
         "factory": mode,
         "enabled_here": in_force,
@@ -110,7 +114,10 @@ def status(ctx: Context) -> Dict[str, Any]:
                        "last_heartbeat": (lease or {}).get("heartbeat_at") if alive else None, "last_pass": state.get("last_tick")},
         "executions": [{key: record.get(key) for key in ("execution_id", "ticket_id", "slice_id", "state", "started_at", "session_id", "attempt")}
                        for _, record in sorted(state["executions"].items()) if record["state"] in LIVE],
-        "waiting_for_a_person": state["parked"],
+        "waiting_for_a_person": {ticket: record for ticket, record in state["parked"].items() if ticket not in settled},
+        "no_longer_waiting": [{**settled[ticket], "parked_reason": state["parked"][ticket].get("reason"),
+                               "in_words": f"{ticket} was abandoned and closed" + (f"; reissued as {settled[ticket]['reissued_as']}" if settled[ticket].get("reissued_as") else "") + "."}
+                              for ticket in sorted(settled)],
         "plan": {**{key: plan[key] for key in ("counts", "dispatchable", "waiting_for_a_place", "runnable", "needs_person", "intake_is_current", "limits")},
                  "max_parallel_from": limit} if plan else None,
         "git_hooks": service.hooks_status(ctx.root),
@@ -133,7 +140,7 @@ def failed(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def enable(ctx: Context, args: Any) -> Dict[str, Any]:
     if args.confirm:
-        return confirm(ctx, args.confirm)
+        return confirm(ctx, args.confirm, bool(getattr(args, "accept_execution_risk", False)))
     if policy_module.running(policy_module.read(ctx.root)):
         raise ActivationError("The Factory is already enabled on this machine. To change how it runs, disable it and enable it again.")
     limits = {name: value for name, value in (("max_parallel", args.max_parallel), ("max_execution_minutes", args.max_minutes), ("max_runs_per_day", args.max_runs_per_day),
@@ -167,6 +174,9 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
         "git_hooks": "Adds wake-up notes to post-merge, post-checkout and post-rewrite." if request["hooks"] else "No Git hooks.",
         "persistent": "Installs a per-user service that keeps the supervisor running without a Claude session." if request["persistent"] else "Runs only while you start it; no service is installed.",
         "work_already_here": waiting, "work_already_here_decision": request["backlog"],
+        # The central residual risk, stated from the tool list itself; a person accepts it explicitly for any mode that starts agents.
+        "execution_risk": policy_module.execution_risk(list(dict.fromkeys([*policy_module.default_tools(), *request["extra_tools"]])))
+        if request["autonomy"] != "observe" else None,
     }
     if failed(results):
         return {"ready": False, "enabled": False, "why": "The preflight did not pass.", "failed": failed(results), "checks": results, "would_enable": summary}
@@ -175,10 +185,15 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
                 "why": "Work was already here before the Factory was enabled. Say whether automatic execution should include it (--include-backlog) or leave it to you (--exclude-backlog)."}
     pending = policy_module.propose(ctx.root, request, summary)
     return {"ready": True, "enabled": False, "checks": results, "would_enable": summary, "confirm_with": pending["code"], "expires_at": pending["expires_at"],
-            "next": "Nothing is enabled yet. Show the person exactly what would be enabled. Only on their explicit yes, run enable again with --confirm and this code."}
+            "next": "Nothing is enabled yet. Show the person exactly what would be enabled. Only on their explicit yes, run enable again with --confirm and this code"
+                    + (", and, only if they also accept the execution risk stated under would_enable.execution_risk, --accept-execution-risk." if request["autonomy"] != "observe" else ".")}
 
 
-def confirm(ctx: Context, code: str) -> Dict[str, Any]:
+def confirm(ctx: Context, code: str, accept_execution_risk: bool = False) -> Dict[str, Any]:
+    peek = policy_module.load_pending(ctx.root)
+    if not accept_execution_risk and str(peek.get("code")) == str(code).strip() and (peek.get("request") or {}).get("autonomy") not in (None, "observe"):
+        # Checked before the code is used up, so the person can read the statement and confirm again.
+        raise ActivationError("Supervised mode starts agents with no operating-system sandbox: add --accept-execution-risk, only if the person has read the execution risk and accepts it.")
     try:
         pending = policy_module.take_pending(ctx.root, code)
     except policy_module.PolicyError as exc:
@@ -192,6 +207,8 @@ def confirm(ctx: Context, code: str) -> Dict[str, Any]:
     name = ctx.git(ctx.root, "config", "user.name").stdout.strip() or getpass.getuser()
     pol = policy_module.build(ctx.root, request, name, shutil.which("claude") or "claude", str(integration.get("branch") or "main"),
                               waiting if request.get("backlog") == "exclude" else [])
+    if pol["autonomy"] != "observe":
+        policy_module.accept_execution_risk(pol, name)
     policy_module.save(ctx.root, pol)
     hooks = service.install_hooks(ctx.root, ctx.run_script) if request.get("hooks") else {"installed": [], "skipped": None}
     agent = None

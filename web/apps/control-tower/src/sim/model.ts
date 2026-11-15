@@ -262,7 +262,7 @@ export interface SupervisorState {
    */
   readonly holds?: Readonly<Record<string, { readonly why: string; readonly since: number; readonly seq: number }>>;
   /** Things a person must decide, by slice or ticket (human.required). */
-  readonly attention: Readonly<Record<string, { readonly reason: string; readonly at: number; readonly seq: number }>>;
+  readonly attention: Readonly<Record<string, { readonly reason: string; readonly at: number; readonly seq: number; readonly code?: NotProgressing | null }>>;
 }
 
 export interface WaveState {
@@ -630,6 +630,9 @@ export interface QueuedAgentState {
   readonly eventId: string;
 }
 
+/** Why the supervisor parked a ticket at once (execution.failed `not_progressing`, M7). */
+export type NotProgressing = "workflow-stuck" | "same-refusal";
+
 export interface ExecutionState {
   readonly id: string;
   readonly ticketId: string;
@@ -661,6 +664,12 @@ export interface ExecutionState {
    * Its outcome is then not known; it is never "running" after this.
    */
   readonly movedOnAt: number | null;
+  /** M7: execution.completed's `how` ("killed": a signal exit; never shown as completed). */
+  readonly how: string | null;
+  /** M7 D10: the scheduling decision that held this ticket in the pass that claimed it, nothing started: released before starting. */
+  readonly releasedAt: number | null;
+  /** M7: execution.failed's `not_progressing` code: the supervisor parked the ticket at once. */
+  readonly notProgressing: NotProgressing | null;
   /** The Dynamic Workflow it ran: its `workflow:` ref id and recorded status (`completed` only from task_updated, D14). */
   readonly workflowId: string | null;
   readonly workflowStatus: "running" | "completed" | "killed" | "unknown" | null;

@@ -514,6 +514,12 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 	case "intake.validated":
 		s.Project.LastValidated = st
+		// A wave's later approved revision is validated by intake (M7 D6: wave.discovered is
+		// recorded once, at the first revision); the wave then carries the newer revision.
+		if w := s.Waves[feed.Str(e.IDs.WaveID)]; w != nil && e.IDs.Revision != nil && (w.Revision == nil || *e.IDs.Revision > *w.Revision) {
+			w.Revision = e.IDs.Revision
+			s.touch(entWave, w.WaveID)
+		}
 	case "intake.refused":
 		s.Project.IntakeRefused++
 	case "slice.materialized":
@@ -524,13 +530,23 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		var d struct {
 			Dependencies []string `json:"dependencies"`
 			Title        *string  `json:"title"` // M6.6: from the intake ledger, for this revision
+			Reissued     *bool    `json:"reissued"`
 		}
 		e.DataAs(&d)
+		followUp := sl.Integrated != nil && (d.Reissued == nil || !*d.Reissued) // integrated work's follow-up ticket is not a reissue
 		if sl.Materialized != nil && !sameRev(sl.Revision, e.IDs.Revision) {
 			sl.Revisions = append(sl.Revisions, SliceRevision{Revision: sl.Revision, TicketID: sl.TicketID, State: sl.State, At: sl.Materialized})
 			s.endSliceWait(sl, st) // a new revision replaced the slice while it waited
 			sl.Blocked, sl.Resolved, sl.Scheduled, sl.Integrated, sl.Superseded = nil, nil, nil, nil, nil
 			sl.Reasons, sl.DependsOn, sl.Commit, sl.Title, sl.Holds = []string{}, []string{}, "", "", nil
+		}
+		if old := sl.TicketID; old != "" && e.Ticket() != "" && old != e.Ticket() && !followUp {
+			// Reissued (M7 N7): the slice's earlier ticket is closed and its work goes on as this one.
+			if c := s.Cells[old]; c != nil && c.ReissuedAs == "" {
+				c.ReissuedAs = e.Ticket()
+				s.touch(entCell, old)
+			}
+			s.closeAbandoned(old, st)
 		}
 		if sl.FirstMaterialized == nil || sl.Materialized == nil || !sameRev(sl.Revision, e.IDs.Revision) {
 			sl.FirstMaterialized = st
@@ -645,18 +661,50 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		s.closeRequired(e.Ticket(), "", st, e.Type)
 	case "revision.superseded":
-		if sl := s.slice(e); sl != nil {
-			sl.Superseded = st
-			s.endSliceWait(sl, st)
-			sl.recompute(st)
+		sl := s.slice(e)
+		if sl == nil {
+			return
 		}
+		var d struct {
+			FromRevision *int64 `json:"from_revision"`
+		}
+		e.DataAs(&d)
+		// intake.py emits this kind for four things (M7 D6). With from_revision and a newer
+		// revision, the definition changed: a waiting ticket takes the new revision and the slice
+		// stays the same slice (its wait for the old revision ends; a dependency.blocked at the new
+		// revision follows); work in the line keeps building the old revision with the new one
+		// pending; integrated work gets a follow-up (slice.materialized follows and resets it).
+		// Without from_revision, product withdrew the slice: superseded.
+		if d.FromRevision != nil && e.IDs.Revision != nil && !sameRev(sl.Revision, e.IDs.Revision) && sl.Integrated == nil {
+			if sl.Scheduled != nil {
+				sl.PendingRevision = e.IDs.Revision
+				return
+			}
+			sl.Revisions = append(sl.Revisions, SliceRevision{Revision: sl.Revision, TicketID: sl.TicketID, State: sl.State, At: sl.Materialized})
+			s.endSliceWait(sl, st)
+			sl.Blocked, sl.Resolved, sl.Reasons = nil, nil, []string{}
+			sl.Revision, sl.FirstMaterialized, sl.PendingRevision = e.IDs.Revision, st, nil
+			if t := e.Ticket(); t != "" {
+				sl.TicketID = t
+			}
+			sl.recompute(st)
+			return
+		}
+		sl.Superseded = st
+		s.endSliceWait(sl, st)
+		sl.recompute(st)
 	case "human.required":
 		var d struct {
 			Reason string `json:"reason"`
 		}
 		e.DataAs(&d)
 		key := "required:" + e.ID
-		s.Gates[key] = &HumanGate{Key: key, Kind: "required", TicketID: e.Ticket(), SliceID: feed.Str(e.IDs.SliceID), Reason: d.Reason, Opened: st}
+		s.Gates[key] = &HumanGate{Key: key, Kind: "required", TicketID: e.Ticket(), SliceID: feed.Str(e.IDs.SliceID), Reason: d.Reason, Opened: st,
+			Code: s.parkedFor(e.Ticket(), e.Execution(), st)}
+		if c := s.Cells[e.Ticket()]; c != nil && (c.Abandoned != nil || c.ReissuedAs != "") {
+			// Asked about a ticket already abandoned or reissued (M7 N7): nobody waits on it.
+			s.closeAbandoned(c.TicketID, st)
+		}
 		m.Count("S4", s.cdims(e.Ticket()), day(st), 1)
 	case "factory.activated":
 		var d struct {
@@ -713,6 +761,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			Held       []Held   `json:"held"`
 		}
 		e.DataAs(&d)
+		s.releaseUnstarted(st, s.Factory.LastDecision, d.Held)
 		s.sliceCapacity(st, s.Factory.LastDecision, nonNil(d.Held))
 		s.sliceHolds(st, d.Held)
 		s.Factory.SchedulerState, s.Factory.LastDecision = d.State, st
@@ -799,9 +848,13 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			How          *string  `json:"how"`
 			CostUSD      *float64 `json:"cost_usd"`
 			RefusedTools []string `json:"refused_tools"`
+			ExitCode     *int64   `json:"exit_code"`
 		}
 		e.DataAs(&d)
 		first := x.Completed == nil
+		if d.ExitCode != nil {
+			x.ExitCode = d.ExitCode
+		}
 		x.Completed, x.StageAtEnd, x.Next, x.WaitingFor, x.How = st, d.Stage, d.Next, feed.Str(d.WaitingFor), feed.Str(d.How)
 		x.CostUSD, x.RefusedTools, x.RefusedFinal = d.CostUSD, nonNilS(d.RefusedTools), true
 		kd := s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID)
@@ -825,7 +878,14 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 				m.Exclude("K4", nil, day(st), "a recorded cost with no ticket", 1)
 			}
 		}
-		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), 1, 1)
+		// A killed execution (M7: how "killed", a signal exit) is recorded as completed when it
+		// moved the ticket, but it did not run to its end: S3 counts it as not completed and X1 as
+		// an execution that did not finish, as for execution.failed. K1/K4 are unchanged (D7).
+		killed := feed.Str(d.How) == "killed"
+		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), b2f(!killed), 1)
+		if first && killed {
+			m.Rate("X1", s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID), day(st), 1, 0)
+		}
 		if first {
 			// K2 and K3's coverage: completed executions, with a usage record from the stream or not.
 			for _, id := range []string{"K2", "K3"} {
@@ -854,6 +914,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			ClaudeError *string `json:"claude_error"`
 			ExitCode    *int64  `json:"exit_code"`
 			Attempt     *int64  `json:"attempt"`
+			Stuck       *string `json:"not_progressing"`
 		}
 		e.DataAs(&d)
 		if x.Completed == nil && x.Claimed != nil && x.MK1FailedDay == "" {
@@ -864,6 +925,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			x.MK1FailedDay = orDefault(day(st), "-")
 		}
 		x.Failed, x.StageAtEnd, x.Next, x.How, x.ClaudeError = st, d.Stage, d.Next, feed.Str(d.How), feed.Str(d.ClaudeError)
+		x.NotProgressing = feed.Str(d.Stuck)
 		if d.ExitCode != nil {
 			x.ExitCode = d.ExitCode
 		}
@@ -872,6 +934,81 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), 0, 1)
 		m.Rate("X1", s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID), day(st), 1, 0)
+	}
+}
+
+// closeAbandoned ends every open person gate of a ticket that was abandoned or reissued: nobody
+// waits on a closed ticket (M7 N7).
+func (s *State) closeAbandoned(ticket string, st *Stamp) {
+	for _, g := range s.Gates {
+		if g.TicketID == ticket && g.Kind == "required" && g.Closed == nil {
+			g.Closed, g.ClosedBy = st, "abandoned"
+		}
+	}
+}
+
+// parkedFor is the not_progressing code of the execution the supervisor parked a ticket after: the
+// one human.required names, else the ticket's latest failed execution, if it recorded one and no
+// other gate for the ticket opened since. "" when none.
+func (s *State) parkedFor(ticket, execution string, st *Stamp) string {
+	if x := s.Executions[execution]; x != nil {
+		return x.NotProgressing
+	}
+	var last *Execution
+	for _, x := range s.Executions {
+		if x.TicketID == ticket && ticket != "" && x.Failed != nil && x.Failed.Pos <= st.Pos && (last == nil || x.Failed.Pos > last.Failed.Pos) {
+			last = x
+		}
+	}
+	if last == nil || last.NotProgressing == "" {
+		return ""
+	}
+	for _, g := range s.Gates {
+		if g.TicketID == ticket && g.Opened != nil && g.Opened.Pos > last.Failed.Pos {
+			return ""
+		}
+	}
+	return last.NotProgressing
+}
+
+const exReleased = "a claim released without starting (not an execution)"
+
+// releaseUnstarted marks, for each ticket a scheduling decision holds, the execution claimed for it
+// since the previous decision that never started: the supervisor claims durably before it decides
+// whether to start, and a claim it may not start is released and the ticket reported held in that
+// same pass (supervisor.py; ledger state "released", how "not-started"). Such a claim is not an
+// execution: it leaves the populations that count executions (X1, S1, S2, K1) with a coverage
+// note, and W4's open count.
+func (s *State) releaseUnstarted(st, prev *Stamp, held []Held) {
+	if len(held) == 0 {
+		return
+	}
+	tickets := map[string]bool{}
+	for _, h := range held {
+		if h.TicketID != "" {
+			tickets[h.TicketID] = true
+		}
+	}
+	m := s.Metrics
+	for _, id := range sortedKeys(s.Executions) {
+		x := s.Executions[id]
+		if !tickets[x.TicketID] || x.Claimed == nil || x.Released != nil || x.Started != nil || x.ProcessStarted != nil ||
+			x.ProcessEnded != nil || x.Completed != nil || x.Failed != nil || len(x.Recovery) > 0 || x.Claimed.Pos > st.Pos ||
+			prev != nil && x.Claimed.Pos < prev.Pos {
+			continue
+		}
+		x.Released = st
+		s.touch(entExecution, id)
+		kd := s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID)
+		cd := day(x.Claimed)
+		m.Rate("X1", kd, cd, 0, -1)
+		m.Rate("S1", s.cdims(x.TicketID), cd, 0, -1)
+		m.Rate("S2", s.cdims(x.TicketID), cd, 0, -1)
+		m.Exclude("K1", kd, cd, exK1NoResult, -1)
+		for _, mid := range []string{"X1", "S1", "S2", "K1"} {
+			m.Exclude(mid, kd, cd, exReleased, 1)
+		}
+		m.OpenAdd("W4", cd, -1)
 	}
 }
 
@@ -1155,6 +1292,12 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			r = &ReviewRound{Round: round, Verdicts: []Verdict{}, Panel: []Seat{}}
 			c.Reviews = append(c.Reviews, r)
 		}
+		if r.Decided != nil && r.Restarted > 0 {
+			// A repeat of this judging round after a voided approval (review/round-N.k, M7): the
+			// round is judged once; its standing decision replaces the voided one in R1.
+			m.Rate("R1", s.cdims(c.TicketID, "round", itoa(round)), day(r.Decided), -b2f(r.Outcome == "REJECTED" || r.Outcome == "ESCALATE"), -1)
+			r.Repeats++
+		}
 		r.Outcome, r.Approvals, r.Votes, r.Blockers, r.SecurityVeto, r.Decided = d.Outcome, d.Approvals, d.Votes, d.Blockers, d.SecurityVeto, st
 		m.Rate("R1", s.cdims(c.TicketID, "round", itoa(round)), day(st), b2f(d.Outcome == "REJECTED" || d.Outcome == "ESCALATE"), 1)
 		hasSecurity := false
@@ -1312,6 +1455,10 @@ func (s *State) applyRun(e *feed.Event, st *Stamp) {
 	s.Runs = append(s.Runs, r)
 	if c := s.cell(e, st); c != nil {
 		c.Archived = true
+		if d.Outcome == "abandoned" && c.Abandoned == nil {
+			c.Abandoned = st
+			s.closeAbandoned(c.TicketID, st)
+		}
 		if d.AppType != "" {
 			c.AppType = d.AppType
 		}

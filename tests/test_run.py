@@ -283,6 +283,47 @@ class WorkflowScriptTest(unittest.TestCase):
         done = subprocess.run(["node", "--check", "-"], input=wrapped, capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)
 
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_relayed_step_is_cleaned_before_any_agent_starts(self):
+        # M7 P3: a relay returned '""' or blank lines as the agent type; the belt passed it on and the step failed.
+        source = self.SCRIPT[self.SCRIPT.index("// BEGIN cleanStep"):self.SCRIPT.index("// END cleanStep")]
+        types = re.search(r"const AGENT_TYPES = (.*)\n", self.SCRIPT).group(1)
+        cases = {
+            "quotes": {"action": "plan", "stop": False, "reason": "r", "agent_type": '""', "model": "opus", "prompt": "Plan it."},
+            "blank_lines": {"action": "plan", "stop": False, "reason": "r", "agent_type": "\n\n", "model": "", "prompt": "Plan it."},
+            "known": {"action": "build", "stop": False, "reason": "r", "agent_type": " mach-builder ", "prompt": "Build it."},
+            "unknown": {"action": "build", "stop": False, "reason": "r", "agent_type": "general-purpose", "prompt": "Build it."},
+            "error": {"action": "ERROR", "stop": False, "reason": "refused: no such ticket"},
+            "nothing": None,
+            "no_prompt": {"action": "verify", "stop": False, "reason": "r", "agent_type": "mach:verifier", "prompt": "  "},
+            "made_up": {"action": "deploy", "stop": False, "reason": "r", "prompt": "x"},
+            "stop": {"action": "stop", "stop": True, "reason": "waiting", "needs": "human-approval", "agent_type": "''"},
+        }
+        program = (f"const AGENT_TYPES = {types}\n{source}\nconst cases = {json.dumps(cases)}\n"
+                   "const out = {}; for (const [k, v] of Object.entries(cases)) out[k] = cleanStep(v, AGENT_TYPES)\n"
+                   "process.stdout.write(JSON.stringify(out))\n")
+        done = subprocess.run(["node", "-e", program], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        got = json.loads(done.stdout)
+        self.assertEqual((got["quotes"]["step"]["agent_type"], got["quotes"]["step"]["model"], got["quotes"]["note"]), ("", "opus", ""))
+        self.assertEqual(got["blank_lines"]["step"]["agent_type"], "")
+        self.assertEqual(got["known"]["step"]["agent_type"], "mach-builder")
+        self.assertEqual(got["unknown"]["step"]["agent_type"], "")
+        self.assertIn("unknown agent type 'general-purpose' ignored", got["unknown"]["note"])
+        self.assertEqual(got["error"], {"error": "refused: no such ticket"})
+        self.assertEqual(got["nothing"], {"error": "run.py next returned nothing usable"})
+        self.assertIn("no prompt", got["no_prompt"]["error"])
+        self.assertIn("unknown step 'deploy'", got["made_up"]["error"])
+        self.assertEqual((got["stop"]["step"]["stop"], got["stop"]["step"]["agent_type"]), (True, ""))
+
+    def test_the_belt_uses_only_cleaned_steps_and_a_strict_schema(self):
+        self.assertIn("const read = cleanStep(await clerk(`next ${ticket} --headless`, STEP", self.SCRIPT)
+        self.assertIn("enum: ['', ...AGENT_TYPES]", self.SCRIPT)
+        for name in ("builder", "contract-engineer", "verifier", "reviewer"):
+            self.assertTrue((ROOT / "agents" / f"{name}.md").is_file(), name)
+        shipped = {path.stem for path in (ROOT / "agents").glob("*.md")}
+        self.assertEqual(shipped, {"builder", "contract-engineer", "verifier", "reviewer"}, "AGENT_TYPES in belt.js lists every shipped agent")
+
 
 if __name__ == "__main__":
     unittest.main()

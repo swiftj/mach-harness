@@ -42,6 +42,7 @@ Write your findings as a JSON file in the packet's `review_dir`, named `findings
 ```
 
 - **`blocker`**: the change must not merge until this is fixed. Use it only when the change breaks something you can name: a requirement, message or side effect in the spec; a rule in REVIEW.md or CLAUDE.md; a contract; or it introduces a defect that will cause wrong behavior, data loss or a security hole. A blocker needs `rule` (the spec ID, or the rule's name or text) and `file` (a path in the checkout, or `evidence/<file>`). Give `line` when one line shows it.
+- **Security defects, from any seat**: add `"class": "security"` and an `"impact"` of `critical`, `high`, `medium` or `low` (the security seat's findings are security-class without saying so; it adds only `impact`). A security blocker of `high` or `critical` impact rejects the round whatever the other seats vote, so rate impact honestly and say in `detail` how it could be exploited; a `high` or `critical` one must be a blocker, never a note.
 - **`note`**: worth knowing and does not block: a risk, a weak test, an improvement, a builder deviation you accept with reservations.
 - Preferences are not findings. If the project's rules do not require it and nothing breaks, leave it out or make it a note.
 - One finding per class of problem. If the same defect appears in several places, such as an input that is not validated on four routes, write one finding that names the class and lists every place in its detail, so one fix round can clear it. Do not report the places one at a time, and do not pad.
@@ -56,7 +57,7 @@ If the packet has a `delta`, this is not the first round: the ticket was sent ba
 
 - Read `earlier_findings` and check each earlier blocker against `delta.diff`. Is it actually fixed, everywhere it occurred, and not merely hidden?
 - Review what changed since last round (`delta.diff`) for new problems.
-- Do not re-review the rest. The script refuses a blocker on a file that did not change and had no blocker last round; such a finding can only be a note. Nothing settled in an earlier round is reopened.
+- Do not re-review the rest. The script refuses a blocker on a file that did not change and had no blocker last round; such a finding can only be a note. Nothing settled in an earlier round is reopened. The one exception is a security defect of `high` or `critical` impact: it may be raised as a blocker on any file, and is recorded as newly found in this round.
 
 ## Tuning tickets
 

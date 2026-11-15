@@ -287,6 +287,37 @@ class CheckPlanTest(Base):
                 self.assertEqual(code, 1)
                 self.assertIn(expected, out)
 
+    def test_impl_task_that_can_never_go_green_is_refused(self):
+        # M7 D5: the tests come first, then two [impl] tasks for the same requirements. The build station
+        # completes the first only on a green suite, which needs the second's files: the line stops.
+        stuck = PLAN.replace(
+            "- [ ] T02 [impl] Invitation service — `src/invite.ts` (FR-01, FR-02)\n"
+            "- [ ] T03 [test] Scenarios — `tests/invite.scenarios.test.ts` (AC-01, AC-02, AC-03, FR-06, FR-08, FR-09, INV-03)\n"
+            "- [ ] T04 [impl] Expiry and failure handling — `src/invite.ts` (FR-06, FR-08)\n",
+            "- [ ] T02 [test] Scenarios — `tests/invite.scenarios.test.ts` (AC-01, AC-02, AC-03, FR-06, FR-08, FR-09, INV-03)\n"
+            "- [ ] T03 [impl] Invitation service — `src/invite.ts` (FR-01, FR-02, FR-06, INV-01)\n"
+            "- [ ] T04 [impl] Route and handler — `src/routes.ts` (FR-01, FR-08, INV-01)\n",
+        )
+        self.assertNotEqual(stuck, PLAN)
+        self.ready(plan=stuck)
+        code, out, _ = self.check()
+        self.assertEqual(code, 1, out)
+        self.assertIn("T04 [impl] implements FR-01, FR-08, but every [test] task for them (the last is T02) comes before T03 [impl]", out)
+        self.assertIn("Merge T03 and T04 into one [impl] task, or move the tests that need T04 after T03", out)
+        self.assertNotIn("INV-01, ", out.split("T04 [impl] implements")[1].split("but")[0], "an invariant an [impl] task keeps is not counted")
+        self.assertEqual(json.loads((self.project / ".factory/worktrees/LOCAL-001/cell.json").read_text())["stage"], "spec-ready")
+
+    def test_later_impl_task_may_keep_an_invariant_or_follow_its_own_new_test(self):
+        # A later [impl] task may name an invariant tested earlier (it keeps it), and a requirement
+        # whose newest test comes after the previous [impl] task (that test is its own).
+        fine = PLAN.replace("(FR-06, FR-08)\n", "(FR-06, FR-08, INV-01)\n").replace(
+            "`tests/invite.scenarios.test.ts` (AC-01,", "`tests/invite.scenarios.test.ts` (FR-02, AC-01,"
+        ).replace("Expiry and failure handling — `src/invite.ts` (FR-06", "Expiry and failure handling — `src/invite.ts` (FR-02, FR-06")
+        self.assertIn("(FR-02, FR-06, FR-08, INV-01)", fine)
+        self.ready(plan=fine)
+        code, out, _ = self.check()
+        self.assertEqual(code, 0, out)
+
     def test_new_contract_is_ordinary_risk_but_changing_an_existing_one_is_high(self):
         medium = PLAN.replace("**Risk tier:** High", "**Risk tier:** Medium")
         self.ready(plan=medium)
@@ -354,6 +385,122 @@ class StatusTest(Base):
         run("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", project=self.project)
         _, out, _ = run("status", project=self.project)
         self.assertEqual([(c["ticket_id"], c["slice_id"], c["stage"]) for c in json.loads(out)], [("LOCAL-001", "SLICE-001", "spec-ready")])
+
+
+class ReplanTest(Base):
+    """M7 N1: a person can send a planned or building cell back to spec-ready to plan it again, without losing anything."""
+
+    ready = CheckPlanTest.ready
+    check = CheckPlanTest.check
+
+    def planned(self):
+        info = self.ready()
+        code, out, _ = self.check()
+        self.assertEqual(code, 0, out)
+        self.work = Path(info["workdir"])
+        self.cell = Path(info["cell_dir"])
+        return info
+
+    def task_commit(self, name="tests/invite.test.ts", task="T01"):
+        """A task commit as the build station makes it, recorded in build.json; the cell is then building."""
+        path = self.work / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test\n")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", f"test(SLICE-001): {task} [LOCAL-001]")
+        sha = git(self.work, "rev-parse", "HEAD").stdout.strip()
+        (self.cell / "build.json").write_text(json.dumps({"loop": 0, "tasks": [{"id": task, "kind": "test", "status": "done", "commit": sha}]}))
+        (self.cell / "build-report.json").write_text("{}")
+        state = json.loads((self.cell / "cell.json").read_text())
+        state["stage"] = "building"
+        (self.cell / "cell.json").write_text(json.dumps(state))
+        return sha
+
+    def replan(self, reason="T05 cannot go green without T06's files"):
+        return run("replan", "LOCAL-001", "--reason", reason, project=self.project)
+
+    def test_a_building_cell_returns_to_spec_ready_with_its_history_kept(self):
+        self.planned()
+        spec_commit = json.loads((self.cell / "cell.json").read_text())["spec_commit"]
+        tip = self.task_commit()
+        code, out, err = self.replan()
+        self.assertEqual(code, 0, err)
+        result = json.loads(out)
+        self.assertEqual(result["reset"], {"from": tip, "to": spec_commit, "saved_as": "refs/mach/replan/LOCAL-001/1"})
+        self.assertEqual(git(self.work, "rev-parse", "HEAD").stdout.strip(), spec_commit)
+        self.assertEqual(git(self.work, "rev-parse", "refs/mach/replan/LOCAL-001/1").stdout.strip(), tip, "the old tip is kept as a ref")
+        kept = self.cell / "plan-history" / "1"
+        self.assertEqual(sorted(path.name for path in kept.iterdir()), ["build-report.json", "build.json", "plan.md", "replan.json"])
+        self.assertEqual(json.loads((kept / "replan.json").read_text())["reason"], "T05 cannot go green without T06's files")
+        self.assertFalse((self.cell / "build.json").exists())
+        state = json.loads((self.cell / "cell.json").read_text())
+        self.assertEqual((state["stage"], state["replans"]), ("spec-ready", 1))
+        log = [json.loads(line) for line in (self.cell / "lifecycle.jsonl").read_text().splitlines()]
+        self.assertIn(("gate.evaluated", "plan.replan", "pass"), [(e["type"], e["data"].get("gate"), e["data"].get("outcome")) for e in log])
+        self.assertIn(("station.exited", "build", "replanned"), [(e["type"], e["station"], e["data"].get("outcome")) for e in log])
+        sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
+        import run as belt  # noqa: E402
+        out_ = io.StringIO()
+        with redirect_stdout(out_), redirect_stderr(io.StringIO()):
+            self.assertEqual(belt.main(["--project", str(self.project), "next", "LOCAL-001", "--headless"]), 0)
+        self.assertEqual(json.loads(out_.getvalue())["action"], "plan")
+        # Planned again: the plan check runs as before, and a second re-plan is numbered 2.
+        Path(self.cell / "plan.md").write_text(PLAN)
+        (self.work / "proto/openapi").mkdir(parents=True, exist_ok=True)
+        (self.work / "proto/openapi/members.yaml").write_text("openapi: 3.1.0\n")  # the reset took the old plan's contract with it
+        self.assertEqual(self.check()[0], 0)
+        self.assertEqual(self.replan()[0], 0)
+        self.assertTrue((self.cell / "plan-history" / "2" / "plan.md").exists())
+
+    def test_a_planned_cell_with_only_its_contract_commit_is_replanned(self):
+        self.planned()
+        code, out, err = self.replan()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["reset"]["saved_as"], "refs/mach/replan/LOCAL-001/1")
+
+    def test_refusals(self):
+        def refused(expected, setup=None, reason="the plan is wrong"):
+            with self.subTest(expected=expected):
+                self.planned() if not hasattr(self, "work") else None
+                if setup:
+                    setup()
+                before = git(self.work, "rev-parse", "HEAD").stdout.strip()
+                code, _, err = self.replan(reason)
+                self.assertEqual(code, 2)
+                self.assertIn(expected, err)
+                self.assertEqual(git(self.work, "rev-parse", "HEAD").stdout.strip(), before, "a refused re-plan changes nothing")
+                self.assertFalse((self.cell / "plan-history").exists())
+
+        self.planned()
+        refused("--reason is required", reason="  ")
+
+        def judged():
+            self.task_commit()
+            (self.cell / "build.json").write_text(json.dumps({"loop": 1, "tasks": []}))
+        refused("has been through a judging round", judged)
+
+        def stray():
+            self.task_commit()
+            (self.work / "notes.txt").write_text("by hand\n")
+            git(self.work, "add", "-A")
+            git(self.work, "commit", "-q", "-m", "a person's own commit")
+        refused("not this plan's tasks or contracts", stray)
+
+        def dirty():
+            git(self.work, "reset", "-q", "--hard", "HEAD~1")
+            (self.work / "wip.txt").write_text("unsaved\n")
+        refused("uncommitted changes", dirty)
+
+        def merged():
+            (self.work / "wip.txt").unlink()
+            git(self.project, "merge", "-q", "--no-edit", "feature/LOCAL-001")
+        refused("already on the main branch", merged)
+
+        def wrong_stage():
+            state = json.loads((self.cell / "cell.json").read_text())
+            state["stage"] = "verified"
+            (self.cell / "cell.json").write_text(json.dumps(state))
+        refused("Only a planned or building cell can be re-planned", wrong_stage)
 
 
 if __name__ == "__main__":

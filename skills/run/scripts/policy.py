@@ -16,6 +16,7 @@ Standard library only. Imported by run.py and supervisor.py; not a command of it
 """
 
 import contextlib
+import hashlib
 import json
 import os
 import platform
@@ -56,6 +57,37 @@ DISABLED = {"enabled": False, "paused": False, "autonomy": "observe", "auto_sync
 
 class PolicyError(Exception):
     """A problem the caller can fix; run.py prints it as a refusal."""
+
+
+BY_HAND = "a person can still run that ticket by hand (/mach-run)"
+
+
+def security_review_problems(config: Dict[str, Any]) -> List[str]:
+    """Tracked review settings that take the security check away from unattended work. Each one refuses unattended
+    execution; none changes a threshold or the manual path. Reads only the project's review settings, never a product file."""
+    review = config.get("review") if isinstance(config.get("review"), dict) else {}
+    problems = []
+    if review.get("security_veto") is False:
+        problems.append(f"review.security_veto is false: a security blocker could be outvoted. Unattended execution is refused while that is so; {BY_HAND}.")
+    for tier in ("medium", "high"):
+        override = review.get(tier) if isinstance(review.get(tier), dict) else {}
+        seats = override.get("reviewers")
+        if isinstance(seats, int) and 0 < seats < 2:  # exactly the values review.py turns into a single general seat
+            problems.append(f"review.{tier}.reviewers is {seats}: {tier.capitalize()}-risk tickets would be reviewed without the security seat. "
+                            f"Unattended execution is refused while that is so; {BY_HAND}.")
+    high = review.get("high") if isinstance(review.get("high"), dict) else {}
+    if high.get("human_approval") is False:
+        problems.append(f"review.high.human_approval is false: High-risk tickets would merge without a person's approval. Unattended execution is refused while that is so; {BY_HAND}.")
+    return problems
+
+
+def tracked_config(root: Any, fallback: Dict[str, Any]) -> Dict[str, Any]:
+    """The project's tracked settings as they are on disk now, so a change made after enabling is seen on the next pass."""
+    try:
+        data = json.loads((Path(root) / ".factory" / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return fallback
+    return data if isinstance(data, dict) else fallback
 
 
 def now() -> datetime:
@@ -102,6 +134,39 @@ def default_tools() -> List[str]:
     return [*BASE_TOOLS, f"Bash({interpreter()} *)"]
 
 
+def tracked_by_git(root: Path, path: Path) -> bool:
+    """Whether a file is in Git's index or in HEAD's tree. A grant that arrived through Git is no grant."""
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        return False
+    for argv in (["git", "ls-files", "--error-unmatch", "--", relative], ["git", "cat-file", "-e", f"HEAD:{relative}"]):
+        try:
+            if subprocess.run(argv, cwd=str(root), capture_output=True, timeout=30).returncode == 0:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return False
+
+
+def untrusted(root: Path) -> Optional[str]:
+    """Why the policy file on disk cannot be a local grant, whatever it says; None when nothing is wrong with where it came from."""
+    path = policy_path(root)
+    if path.is_symlink() or local_dir(root).is_symlink() or (root / ".factory").is_symlink():
+        return "The policy file or its folder is a symbolic link."
+    if not path.is_file():
+        return None
+    if tracked_by_git(root, path):
+        return ("The policy file is tracked by Git, so it came from the repository, not from a person on this machine. "
+                "Remove it from Git (git rm --cached .factory/local/runner.json), then enable the Factory here.")
+    info = path.stat()
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        return "The policy file is not owned by the current user."
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return "The policy file can be changed by other users of this machine."
+    return None
+
+
 def read(root: Path) -> Dict[str, Any]:
     """The policy in force on this machine for this project folder. Disabled unless everything checks out."""
     path = policy_path(root)
@@ -111,13 +176,11 @@ def read(root: Path) -> Dict[str, Any]:
         return {**disabled, "source": "invalid-file", "problems": [problem]}
 
     try:
-        if path.is_symlink() or local_dir(root).is_symlink() or (root / ".factory").is_symlink():
-            return refuse("The policy file or its folder is a symbolic link.")
+        problem = untrusted(root)
+        if problem:
+            return refuse(problem)
         if not path.is_file():
             return disabled
-        mode = path.stat().st_mode
-        if mode & (stat.S_IWGRP | stat.S_IWOTH):
-            return refuse("The policy file can be changed by other users of this machine.")
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError) as exc:
         return refuse(f"The policy file cannot be read: {exc}")
@@ -155,6 +218,14 @@ def read(root: Path) -> Dict[str, Any]:
         return refuse(f"The policy was written on another machine ('{data['machine']}'). Authorization does not travel: enable the Factory here.")
     if Path(data["project_root"]) != root:
         return refuse("The policy was written for a different folder. Authorization does not follow a copied or moved project: enable the Factory here.")
+    if data["autonomy"] != "observe":
+        accepted = data.get("execution_risk_accepted")
+        if not isinstance(accepted, dict) or accepted.get("accepted") is not True or not isinstance(accepted.get("at"), str):
+            return refuse("Supervised execution needs a person to accept the execution risk (no operating-system sandbox), and this authorization records no "
+                          "acceptance. Enable the Factory again and confirm with --accept-execution-risk.")
+        if accepted.get("tools_digest") != tools_digest(data["allowed_tools"]):
+            return refuse("The allowed tool list changed since a person accepted the execution risk for it, so the acceptance needs renewing. "
+                          "Enable the Factory again and confirm with --accept-execution-risk.")
     return {**data, "source": "local-file", "problems": []}
 
 
@@ -185,6 +256,9 @@ def effective(policy: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         result["max_risk"] = ceiling
         result["restricted_by_project"].append(f"factory.max_risk is {ceiling}")
     result["limits"] = limits
+    # Re-checked on every pass and before every dispatch, from the file on disk: a tracked change after enabling holds the line.
+    result["security_review_problems"] = security_review_problems(tracked_config(policy.get("project_root"), config) if policy.get("project_root") else config)
+    result["restricted_by_project"] += result["security_review_problems"]
     return result
 
 
@@ -200,9 +274,44 @@ def may_execute(policy: Dict[str, Any]) -> Tuple[bool, str]:
         return False, "the Factory is disabled" + (f" ({policy['restricted_by_project'][0]})" if policy.get("restricted_by_project") else "")
     if policy.get("paused"):
         return False, "the Factory is paused"
+    if policy.get("security_review_problems"):
+        return False, policy["security_review_problems"][0]
     if policy.get("autonomy") != "supervised":
         return False, "the Factory is in observe mode, which never starts work"
     return True, f"runner {policy.get('runner_id')}; supervised"
+
+
+# ---- the residual risk a person accepts for modes that start agents ----
+
+# A Bash pattern that runs one of these with any arguments runs any program: an interpreter, a shell, or a launcher.
+UNRESTRICTED_RE = re.compile(r"^Bash\((?:\S*/)?(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|ruby|perl|php|lua|sh|bash|zsh|dash|ksh|fish|env|xargs|exec|"
+                             r"npx|npm|pnpm|yarn|uv|uvx|pip[0-9.]*|make|osascript|open|sudo|su|ssh|docker|podman) \*\)$")
+
+
+def tools_digest(tools: Sequence[str]) -> str:
+    """The SHA-256 of the exact allowed-tool list a person accepted (order kept)."""
+    return hashlib.sha256(json.dumps(list(tools), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def execution_risk(tools: Sequence[str]) -> Dict[str, Any]:
+    """What one execution can do on this machine, worked out from the allowed tools at this moment."""
+    unrestricted = [tool for tool in tools if UNRESTRICTED_RE.match(tool.strip())]
+    lines = []
+    if unrestricted:
+        lines.append(f"With {', '.join(unrestricted)} allowed, an execution can run any program as this user, read and change this user's files "
+                     "(not only this project's), and use the network.")
+    else:
+        shells = [tool for tool in tools if tool.startswith("Bash(")]
+        lines.append("An execution can run these commands as this user: " + ", ".join(shells) + "." if shells else "An execution can run no shell command.")
+    lines.append("MACH's gates (tests, verification, review, merge) check what is merged, not what an execution does outside the repository while it runs.")
+    lines.append("There is no operating-system sandbox: nothing but the tool list stands between an execution and this machine.")
+    return {"unrestricted_tools": unrestricted, "statement": lines, "tools_digest": tools_digest(tools),
+            "to_accept": "Confirm with --confirm <code> --accept-execution-risk, only after the person has read this and said yes."}
+
+
+def accept_execution_risk(policy: Dict[str, Any], by: str) -> Dict[str, Any]:
+    policy["execution_risk_accepted"] = {"accepted": True, "by": by, "at": stamp(), "tools_digest": tools_digest(policy["allowed_tools"])}
+    return policy
 
 
 def build(root: Path, request: Dict[str, Any], enabled_by: str, claude: str, source_branch: str, excluded: Sequence[str]) -> Dict[str, Any]:
@@ -222,10 +331,14 @@ def build(root: Path, request: Dict[str, Any], enabled_by: str, claude: str, sou
         "excluded_slices": sorted(set(excluded)), "source_branch": source_branch, "claude": claude,
         "runner_id": str(uuid.uuid4()), "machine": platform.node(), "project_root": str(root),
         "enabled_by": enabled_by, "enabled_at": stamp(),
+        "execution_risk_accepted": None,  # set at confirmation, for a mode that starts agents, only on a person's explicit acceptance
     }
 
 
 def save(root: Path, policy: Dict[str, Any]) -> None:
+    if tracked_by_git(root, policy_path(root)):
+        raise PolicyError("The policy file .factory/local/runner.json is tracked by Git; nothing was written over it. "
+                          "Remove it from Git (git rm --cached .factory/local/runner.json) and enable the Factory again.")
     data = {key: value for key, value in policy.items() if key not in ("source", "problems", "restricted_by_project")}
     write_private(policy_path(root), json.dumps(data, indent=2, sort_keys=True) + "\n")
 
@@ -242,6 +355,18 @@ def propose(root: Path, request: Dict[str, Any], summary: Dict[str, Any]) -> Dic
     pending = {"code": secrets.token_hex(3), "expires_at": stamp(now() + timedelta(minutes=CONFIRM_MINUTES)), "request": request, "summary": summary}
     write_private(pending_path(root), json.dumps(pending, indent=2, sort_keys=True) + "\n")
     return pending
+
+
+def load_pending(root: Path) -> Dict[str, Any]:
+    """The pending activation, read without using it up; empty when there is none or it cannot be read."""
+    path = pending_path(root)
+    try:
+        if path.is_symlink():
+            return {}
+        pending = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return pending if isinstance(pending, dict) else {}
 
 
 def take_pending(root: Path, code: str) -> Dict[str, Any]:
@@ -338,6 +463,8 @@ def preflight(root: Path, config: Dict[str, Any], request: Dict[str, Any], *, gi
     on_branch = bool(integration.get("branch")) and head_branch == integration.get("branch")
     checks.append(check("checkout", on_branch, f"The main checkout is on '{head_branch or 'no branch'}'" + ("." if on_branch else f"; cells are opened from '{integration.get('branch')}', so switch to it."),
                         required=supervised))
+    problem = untrusted(root)
+    checks.append(check("local_policy_file", problem is None, problem or "No policy file, or one written on this machine by this user."))
     checks.append(check("local_state_private", ignored, "Machine-local state (.factory/local/) is ignored by Git." if ignored
                         else ".factory/local/ is not ignored by Git, so authorization could be committed. Add it to .gitignore."))
     checks.append(check("toolchain", sys.version_info >= (3, 8) and shutil.which("git") is not None, f"Python {platform.python_version()} and git are available."))
@@ -366,10 +493,10 @@ def preflight(root: Path, config: Dict[str, Any], request: Dict[str, Any], *, gi
         checks.append(check("audit", state in ("ok", "off"), {"ok": f"The readiness audit is current: {audit.get('tier')}.", "off": "This project has switched the audit gate off.",
                                                               "missing": "There is no readiness audit report. Run the audit first.", "stale": "The readiness audit is out of date. Run it again.",
                                                               "bronze": "The repository's readiness tier is Bronze; unattended building is not allowed."}.get(str(state), f"Audit state: {state}.")))
-        review = config.get("review") if isinstance(config.get("review"), dict) else {}
-        checks.append(check("security_review", review.get("security_veto") is not False,
-                            "A security reviewer's blocker cannot be outvoted." if review.get("security_veto") is not False
-                            else "review.security_veto is false: a security blocker could be outvoted. Unattended execution is refused while that is so."))
+        problems = security_review_problems(config)
+        checks.append(check("security_review", not problems,
+                            "A security reviewer's blocker cannot be outvoted, Medium and High panels keep the security seat, and High risk keeps a person's approval."
+                            if not problems else " ".join(problems)))
     free = shutil.disk_usage(str(root)).free // (1024 * 1024)
     wanted = (request.get("limits") or {}).get("max_parallel", LIMITS["max_parallel"][0])
     cpus = os.cpu_count() or 1

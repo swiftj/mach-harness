@@ -231,9 +231,17 @@ def void_approval(cell: Cell) -> None:
     write_json(cell.root / "build-report.json", cell.build)
     stale = cell.root / "review" / "decision.json"
     if stale.is_file():
-        cell.decision["outcome"] = "VOID"
-        cell.decision["void_reason"] = "The branch changed after it was approved."
+        void = {"reason": "The branch changed after it was approved.", "voided_at": now(), "approved_commit": cell.decision.get("head"),
+                "branch_commit": cell.build["head"], "by": "merge station"}
+        cell.decision.update({"outcome": "VOID", "void_reason": void["reason"], "void": void})
         write_json(stale, cell.decision)
+        # The round's own record keeps who approved, when and which commit, marked voided; the re-review opens a new folder.
+        findings = Path(str(cell.decision.get("findings") or ""))
+        folder = findings.parent if findings.name == "findings.md" and (cell.root / "review") in findings.parents else cell.root / "review" / f"round-{cell.decision.get('round')}"
+        kept = load_json(folder / "decision.json") if (folder / "decision.json").is_file() else None
+        if isinstance(kept, dict) and kept.get("head") == void["approved_commit"]:
+            kept.update({"void": void, "outcome_before_void": kept.get("outcome"), "outcome": "VOID"})
+            write_json(folder / "decision.json", kept)
     cell.save_info()
 
 
