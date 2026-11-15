@@ -196,10 +196,17 @@ class Release:
                 continue
             # A scanner that failed or scanned nothing has not shown anything: that is not a clean result.
             code, scanned, error = data.get("exit_code"), data.get("scanned"), data.get("error")
-            reason = (f"the scanner reported an error: {' '.join(str(error).split())[:200]}" if error
-                      else f"the scanner exited with code {code}" if type(code) is int and code not in (0, 1)
-                      else "the scanner scanned no sources" if type(scanned) is int and scanned <= 0 else None)
+            # A report MACH cannot check is not evidence: it must say what ran, how it ended, what it read and when.
+            lacking = [field for field, ok in (("version", isinstance(data.get("version"), str) and data["version"].strip()),
+                                               ("exit_code", type(code) is int), ("scanned", type(scanned) is int),
+                                               ("scanned_at", isinstance(data.get("scanned_at"), str) and data["scanned_at"].strip())) if not ok]
+            reason = (f"report lacks {', '.join(lacking)}" if lacking
+                      else f"the scanner reported an error: {' '.join(str(error).split())[:200]}" if error
+                      else f"the scanner exited with code {code}" if code not in (0, 1)
+                      else "the scanner scanned no sources" if scanned <= 0 else None)
             reports.append({"file": path.name, "sha256": sha(path.read_bytes()), "tool": data["tool"], "not_run": reason,
+                            "version": data.get("version") if isinstance(data.get("version"), str) else None,
+                            "scanned_at": data.get("scanned_at") if isinstance(data.get("scanned_at"), str) else None,
                             "exit_code": code if type(code) is int else None, "scanned": scanned if type(scanned) is int else None,
                             "findings": [{"id": str(f.get("id") or ""), "severity": str(f.get("severity") or "").lower(), "title": str(f.get("title") or "")}
                                          for f in data["findings"] if isinstance(f, dict)]})
@@ -456,10 +463,10 @@ class Release:
 
         reports, ignored = self.scans(commit)
         if not reports:
-            check("security.scan", "security", "not_run", "No scanner report for this commit under .factory/release/scans/.")
+            check("security.scan", "security", "not_run", "No scanner report for this commit under .factory/release/scans/.", reason="no scanner report for this commit")
         for report in reports:
             if report["not_run"]:
-                check(f"security.scan.{report['tool']}", "security", "not_run", f"Not a scan result: {report['not_run']}.")
+                check(f"security.scan.{report['tool']}", "security", "not_run", f"Not a scan result: {report['not_run']}.", reason=report["not_run"])
                 continue
             severe = [f for f in report["findings"] if f["severity"] in SEVERE]
             check(f"security.scan.{report['tool']}", "security", "fail" if severe else "pass",
@@ -487,8 +494,15 @@ class Release:
         excepted = sorted(c["id"] for c in checks.values() if c.get("exception"))
         outcome = "blocked" if blocking else "incomplete" if incomplete else "qualified_with_exceptions" if excepted else "qualified"
         unassessed = sorted(c["id"] for c in checks.values() if not c["required"] and c["status"] != "pass")
-        words = {"not_configured": "not configured", "not_run": "not run", "missing": "missing", "fail": "failed"}
-        summary_line = outcome + ("; not assessed: " + ", ".join(f"{key} ({words.get(checks[key]['status'], checks[key]['status'])})" for key in unassessed) if unassessed else "")
+        # Every check that was not shown, required or not, excepted or not, is named on the outcome line with its reason.
+        words = {"not_configured": "not configured", "not_run": "not run", "missing": "missing"}
+
+        def gap(item: Dict[str, Any]) -> str:
+            why = item.get("reason") or ("" if item["status"] == "not_configured" else item["detail"].rstrip("."))
+            return f"{item['id']} ({words[item['status']]}{': ' + why if why else ''})"
+
+        gaps = [checks[key] for key in sorted(checks) if checks[key]["status"] in INCOMPLETE]
+        summary_line = outcome + ("; not assessed: " + ", ".join(gap(item) for item in gaps) if gaps else "")
 
         project = snap.project
         body = {

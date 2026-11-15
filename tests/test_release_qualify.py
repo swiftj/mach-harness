@@ -63,10 +63,13 @@ class Base(IntakeBase):
     def readiness(self, release_id):
         return json.loads((self.eng / ".factory/release" / release_id / "readiness.json").read_text())
 
-    def scan(self, commit, findings=(), **extra):
+    def scan(self, commit, findings=(), drop=(), **extra):
+        """A scanner report with the facts MACH requires; `drop` leaves fields out, `extra` changes them."""
         folder = self.eng / ".factory/release/scans"
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "scanner.json").write_text(json.dumps({"tool": "scanner", "commit": commit, "findings": list(findings), **extra}))
+        report = {"tool": "scanner", "version": "8.18.0", "commit": commit, "exit_code": 0, "scanned": 12, "scanned_at": "2026-11-14T10:00:00Z",
+                  "findings": list(findings), **extra}
+        (folder / "scanner.json").write_text(json.dumps({k: v for k, v in report.items() if k not in drop}))
 
     def head(self):
         return git(self.eng, "rev-parse", "HEAD").strip()
@@ -183,6 +186,23 @@ class OutcomeTest(Base):
             self.assertIn("security.scan.scanner", result["incomplete"])
         self.scan(commit, exit_code=1, scanned=12)  # findings-found exit code, sources scanned: a real result
         self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "qualified")
+
+    def test_a_report_without_the_facts_is_not_evidence(self):
+        commit = self.ready()
+        self.configure(integration_command=f"{sys.executable} check.py")
+        for field in ("version", "exit_code", "scanned", "scanned_at"):
+            self.scan(commit, drop=(field,))
+            result = self.release("qualify", "WAVE-001", "--release", "r1")
+            check = self.checks(self.readiness("r1"))["security.scan.scanner"]
+            self.assertEqual((result["outcome"], check["status"]), ("incomplete", "not_run"), field)
+            self.assertIn(f"report lacks {field}", check["detail"])
+            self.assertIn(f"security.scan.scanner (not run: report lacks {field})", result["outcome_summary"])
+
+    def test_the_outcome_line_names_every_check_not_shown(self):
+        self.ready()
+        result = self.release("qualify", "WAVE-001")
+        self.assertEqual(result["outcome_summary"], "incomplete; not assessed: integration_tests (not configured), performance (not configured), "
+                                                    "security.scan (not run: no scanner report for this commit)")
 
     def test_a_failing_suite_blocks(self):
         self.ready()
