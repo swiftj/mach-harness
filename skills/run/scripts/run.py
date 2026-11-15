@@ -16,6 +16,8 @@ and not by whoever is driving it.
     run.py product plan                  the dependency-aware plan: what is ready, blocked, active or done, and why
     run.py product dispatch <slice>...   open the cells for chosen ready slices (or --ready); starts nothing
     run.py product events [--since N]    the intake ledger's transitions, for a supervisor or a dashboard
+    run.py product resolve <slice> --supersede-in-work "<why>"
+                                         a person's decision: the revision in work is superseded, the new one gets a ticket
     run.py product reconcile [--fetch]   intake and a recorded plan in one locked step; never dispatches
     run.py release status                release-readiness snapshots so far, and what a new one would evaluate
     run.py release qualify <WAVE>...     evaluate the integration branch at one commit; write .factory/release/<id>/readiness.json
@@ -39,6 +41,7 @@ stations' own scripts. Nothing here starts an agent, and nothing runs in the bac
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -287,8 +290,47 @@ def cmd_where(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
+EXECUTION_ENV = "MACH_EXECUTION_ID"  # set by the Factory's executor on every supervised run, inherited by its shell commands
+EXECUTION_ID_RE = re.compile(r"^x[0-9a-f]{12}$")
+
+
+def execution_scope(project: Project) -> Optional[str]:
+    """Inside a supervised Factory execution, the one ticket it was started for; None when a person drives.
+
+    The ticket is read from the intake ledger, where the supervisor recorded the execution when it claimed
+    the work under the machine's authorization. An execution the ledger does not know may work on nothing."""
+    value = os.environ.get(EXECUTION_ENV)
+    if not value:
+        return None
+    record = None
+    if EXECUTION_ID_RE.match(value):
+        ledger = load_json(project.root / ".factory" / "intake" / "ledger.json", {}) or {}
+        record = (((ledger.get("supervisor") or {}).get("executions") or {}).get(value) or {}) if isinstance(ledger, dict) else {}
+    ticket = record.get("ticket_id") if isinstance(record, dict) else None
+    if not isinstance(ticket, str) or not TICKET_ID_RE.match(ticket):
+        raise RunError(f"This runs inside Factory execution '{value}', which the intake ledger does not record, so it may work on no ticket.")
+    return ticket
+
+
+def out_of_scope(project: Project, ticket_id: str) -> Optional[Dict[str, Any]]:
+    """The refusal for a ticket outside the supervised execution's own, or None."""
+    scope = execution_scope(project)
+    if scope is None or scope == ticket_id:
+        return None
+    return {"ticket_id": ticket_id, "stage": None, "action": "stop", "stop": True, "needs": "person",
+            "reason": f"This Factory execution was started for {scope} only. {ticket_id} needs its own dispatch; nothing was done to it."}
+
+
 def cmd_next(project: Project, args: argparse.Namespace) -> int:
-    print(json.dumps(next_step(project, args.ticket_id, args.headless), indent=2, ensure_ascii=False))
+    refused = out_of_scope(project, args.ticket_id)
+    if refused:
+        print(json.dumps(refused, indent=2, ensure_ascii=False))
+        return 1
+    found = next_step(project, args.ticket_id, args.headless)
+    if found.get("action") == "cleanup" and execution_scope(project):
+        found["prompt"] = (str(found.get("prompt") or "") + "\nThis is a supervised Factory execution for this ticket only: do not run the observe skill, "
+                           "even if cleanup says an observe pass is due. The supervisor reports a due pass to a person.")
+    print(json.dumps(found, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -303,12 +345,19 @@ def cmd_board(project: Project, args: argparse.Namespace) -> int:
         state = re.search(r"^state:\s*(\S+)", front.group(1), re.MULTILINE) if front else None
         if path.stem not in ids and TICKET_ID_RE.match(path.stem) and (not state or state.group(1) != "closed"):
             ids.append(path.stem)
+    scope = execution_scope(project)
+    if scope is not None:
+        ids = [ticket_id for ticket_id in ids if ticket_id == scope]  # a supervised execution sees only its own ticket
     rows = []
     for ticket_id in ids:
         info = next_step(project, ticket_id, args.headless)
         rows.append({key: info[key] for key in ("ticket_id", "stage", "action", "needs", "reason")})
     tuning = [row["ticket_id"] for row in rows if row["action"] != "stop" and "factory-tuning" in project.ticket_labels(row["ticket_id"])]
-    print(json.dumps({"audit": project.audit(), "observe_due": project.observe_due(), "factory_tuning_ready": tuning, "tickets": rows,
+    due = project.observe_due()
+    if scope is not None:
+        # The observe pass and any tuning ticket it files are separate work: the supervisor, which alone dispatches, reports them.
+        tuning, due = [], False
+    print(json.dumps({"audit": project.audit(), "observe_due": due, "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
                       "ready_to_run": [row["ticket_id"] for row in rows if row["action"] != "stop"],
                       "waiting_on_a_person": [row["ticket_id"] for row in rows if row["action"] == "stop"]}, indent=2, ensure_ascii=False))
     return 0
@@ -320,6 +369,9 @@ def review_script(project: Project, *argv: str) -> subprocess.CompletedProcess:
 
 
 def cmd_review_start(project: Project, args: argparse.Namespace) -> int:
+    refused = out_of_scope(project, args.ticket_id)
+    if refused:
+        raise RunError(refused["reason"])
     done = review_script(project, "start", args.ticket_id)
     if done.returncode != 0:
         raise RunError(done.stderr.strip().replace("refused: ", "", 1) or "The review station refused to start.")
@@ -345,6 +397,9 @@ def cmd_review_start(project: Project, args: argparse.Namespace) -> int:
 
 
 def cmd_review_tally(project: Project, args: argparse.Namespace) -> int:
+    refused = out_of_scope(project, args.ticket_id)
+    if refused:
+        raise RunError(refused["reason"])
     done = review_script(project, "tally", args.ticket_id)
     if not done.stdout.strip():
         raise RunError(done.stderr.strip().replace("refused: ", "", 1) or "The review station could not tally.")
@@ -391,6 +446,8 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
             result = line.intake(dry_run=args.dry_run, adopt=adopt, reissue=args.reissue or [])
         elif args.action == "plan":
             result = line.plan()
+        elif args.action == "resolve":
+            result = line.resolve(args.slice_id, args.supersede_in_work)
         elif args.action == "reconcile":
             if args.fetch:
                 fetch(project)
@@ -458,7 +515,7 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
     if line is None and args.action != "status":
         raise RunError(problem or "Product intake is not available.")
     sup = supervisor_module.Supervisor(project.root, project.config, line, next_step=lambda ticket_id: next_step(project, ticket_id, True),
-                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name())
+                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name(), observe_due=project.observe_due)
     ctx = activation.Context(project.root, project.config, line, sup, git, project.audit, here, workflow_installed(project), problem)
     try:
         if args.action == "status":
@@ -514,6 +571,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="file a fresh ticket for a slice whose ticket was abandoned")
     p.set_defaults(func=cmd_product)
     product.add_parser("plan", help="the dependency-aware execution plan; reads only").set_defaults(func=cmd_product)
+    p = product.add_parser("resolve", help="settle a slice whose newer revision waits behind work in progress; only on a person's explicit instruction")
+    p.add_argument("slice_id")
+    p.add_argument("--supersede-in-work", required=True, metavar="WHY", help="supersede the revision in work, recording why; its cell and ticket are left untouched")
+    p.set_defaults(func=cmd_product)
     p = product.add_parser("reconcile", help="intake and a recorded plan in one locked step; never dispatches")
     p.add_argument("--fetch", action="store_true", help="fetch from the shared repository first (never changes the checkout)")
     p.set_defaults(func=cmd_product)

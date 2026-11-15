@@ -127,7 +127,7 @@
           },
           "history": {
             "type": "array",
-            "description": "Earlier revisions and tickets of this slice."
+            "description": "Earlier revisions and tickets of this slice. Since M7 each item may carry outcome (abandoned, superseded-in-work), why, by (a role), at and replaced_by_revision."
           },
           "owner": {
             "enum": [

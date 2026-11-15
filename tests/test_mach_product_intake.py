@@ -574,7 +574,8 @@ class RevisionTest(Base):
         self.revise()
         taken = self.product("intake")
         self.assertEqual(taken["needs_person"], [{"slice_id": "SLICE-001", "from_revision": 2, "to_revision": 4, "ticket_id": "LOCAL-001",
-                                                  "why": "the definition changed while work was in progress"}])
+                                                  "why": "the definition changed while work was in progress",
+                                                  "resolve": "product resolve SLICE-001 --supersede-in-work \"<why>\", only on a person's explicit instruction"}])
         self.assertEqual((taken["created"], taken["updated"]), ([], []))
         # Work in flight is never changed underneath the line.
         self.assertEqual((self.eng / ".factory/worktrees/LOCAL-001/cell.json").read_text(), cell_before)
@@ -912,6 +913,207 @@ class EventsTest(Base):
         self.assertEqual(sorted(set(self.ledger()) - {"last_refusal"}), sorted(ledger["required"]))
         entry = self.ledger()["slices"]["SLICE-001"]
         self.assertTrue(set(ledger["properties"]["slices"]["additionalProperties"]["required"]) <= set(entry))
+
+
+
+class AbandonedRevisionTest(Base):
+    """M7 N2 and N7: a revised slice whose earlier ticket was abandoned, and one still in work."""
+
+    def close(self, ticket_id):
+        done = subprocess.run([sys.executable, str(ROOT / "skills/ticket/scripts/ticket.py"), "--project", str(self.eng), "update", ticket_id,
+                               "--state", "closed", "--label", "abandoned"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def revised_under_work(self):
+        """The live run's sequence up to the defect: dispatched, then product revises the slice."""
+        self.first()
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.revise()
+        taken = self.product("intake")
+        self.assertEqual([item["ticket_id"] for item in taken["needs_person"]], ["LOCAL-001"])
+        self.assertIn("product resolve SLICE-001 --supersede-in-work", taken["needs_person"][0]["resolve"])
+
+    def test_the_n2_sequence_resolves_without_a_hand_edit(self):
+        self.revised_under_work()
+        self.clean_up("LOCAL-001", outcome="abandoned")
+        # Abandoned by cleanup but still open in the tracker: a person closes it, with a command that exists.
+        waiting = self.product("intake")
+        self.assertIn("is in_progress in the tracker; close it", waiting["needs_person"][0]["why"])
+        self.assertEqual(self.tickets(), ["LOCAL-001"])
+        self.close("LOCAL-001")
+        taken = self.product("intake")
+        self.assertEqual(taken["needs_person"], [])
+        self.assertEqual(taken["created"], [{"slice_id": "SLICE-001", "revision": 4, "ticket_id": "LOCAL-002", "adopted": False}])
+        self.assertEqual((taken["updated"][0]["follows"], taken["updated"][0]["ticket_id"]), ("LOCAL-001", "LOCAL-002"))
+        entry = self.ledger()["slices"]["SLICE-001"]
+        self.assertEqual((entry["ticket_id"], entry["revision"], entry["follows"]["ticket_id"], entry["follows"]["outcome"]), ("LOCAL-002", 4, "LOCAL-001", "abandoned"))
+        self.assertEqual([(h["ticket_id"], h["revision"], h["outcome"]) for h in entry["history"]], [("LOCAL-001", 2, "abandoned")])
+        self.assertIn('"slice-SLICE-001-r4"', self.ticket_text("LOCAL-002"))
+        superseded = [e for e in self.events() if e["type"] == "revision.superseded" and e["data"].get("outcome") == "abandoned"]
+        self.assertEqual([(e["ticket_id"], e["revision"], e["data"]["from_revision"]) for e in superseded], [("LOCAL-001", 4, 2)])
+        materialized = [e for e in self.events() if e["type"] == "slice.materialized"]
+        self.assertEqual(materialized[-1]["data"]["follows"]["ticket_id"], "LOCAL-001")
+        # Repeat intake files nothing; the slice is ready and dispatches the new revision.
+        events = self.events()
+        for _ in range(2):
+            again = self.product("intake")
+            self.assertEqual((again["created"], again["updated"], again["needs_person"]), ([], [], []))
+        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])
+        self.assertEqual([e["type"] for e in self.events(len(events))], [])
+        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "ready")
+        sent = self.product("dispatch", "SLICE-001")
+        self.assertEqual(sent["tickets"], ["LOCAL-002"])
+        self.assertEqual(self.cell("LOCAL-002")["product"]["revision"], 4)
+
+    def test_interrupted_between_intention_and_effect_files_nothing_twice(self):
+        self.revised_under_work()
+        self.clean_up("LOCAL-001", outcome="abandoned")
+        self.close("LOCAL-001")
+        real = intake.Factory.ticket
+
+        def crash_after_create(factory, *argv, stdin=None):
+            done = real(factory, *argv, stdin=stdin)
+            if argv[0] == "create":
+                raise RuntimeError("power cut")
+            return done
+
+        with mock.patch.object(intake.Factory, "ticket", crash_after_create):
+            with self.assertRaises(RuntimeError):
+                self.run_product("intake")
+        entry = self.ledger()["slices"]["SLICE-001"]
+        self.assertEqual((entry["ticket_id"], entry["pending_ticket"], entry["follows"]["ticket_id"]), (None, True, "LOCAL-001"))  # the intention was on record first
+        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])  # filed, not yet recorded
+        resumed = self.product("intake")
+        self.assertEqual(resumed["created"], [{"slice_id": "SLICE-001", "revision": 4, "ticket_id": "LOCAL-002", "adopted": True}])
+        self.assertEqual(self.product("intake")["created"], [])
+        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])
+        self.assertEqual([e["ticket_id"] for e in self.events() if e["type"] == "slice.materialized"], ["LOCAL-001", "LOCAL-002"])
+
+    def test_an_interrupted_reissue_never_adopts_the_abandoned_ticket(self):
+        self.chain()
+        self.product("dispatch", "SLICE-001")
+        self.clean_up("LOCAL-001", outcome="abandoned")
+        with mock.patch.object(intake.Factory, "materialize", side_effect=RuntimeError("power cut")):
+            with self.assertRaises(RuntimeError):
+                self.run_product("intake", "--reissue", "SLICE-001")
+        self.assertEqual(self.ledger()["slices"]["SLICE-001"]["marker"], "slice-SLICE-001-r2-issue2")
+        resumed = self.product("intake")
+        self.assertEqual(resumed["created"], [{"slice_id": "SLICE-001", "revision": 2, "ticket_id": "LOCAL-004", "reissued": True}])
+        self.assertEqual(self.product("intake")["created"], [])
+        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002", "LOCAL-003", "LOCAL-004"])
+
+    def test_work_still_in_progress_needs_a_person_and_resolve_settles_it(self):
+        self.revised_under_work()
+        cell_before = (self.eng / ".factory/worktrees/LOCAL-001/cell.json").read_text()
+        ticket_before = self.ticket_text("LOCAL-001")
+        for _ in range(2):  # still flagged on every pass, never resolved by intake on its own
+            self.assertEqual([item["ticket_id"] for item in self.product("intake")["needs_person"]], ["LOCAL-001"])
+        self.assertIn("Say why", self.refused("resolve", "SLICE-001", "--supersede-in-work", " "))
+        self.assertIn("not approved product work", self.refused("resolve", "SLICE-999", "--supersede-in-work", "x"))
+        settled = self.product("resolve", "SLICE-001", "--supersede-in-work", "product changed the rules; restart on revision 4")
+        self.assertEqual(settled["created"], [{"slice_id": "SLICE-001", "revision": 4, "ticket_id": "LOCAL-002", "adopted": False}])
+        self.assertEqual((settled["superseded_in_work"]["ticket_id"], settled["superseded_in_work"]["by"]), ("LOCAL-001", "engineer"))
+        # The in-work cell and its ticket are untouched, for the engineer to finish or abandon.
+        self.assertEqual((self.eng / ".factory/worktrees/LOCAL-001/cell.json").read_text(), cell_before)
+        self.assertEqual(self.ticket_text("LOCAL-001"), ticket_before)
+        history = self.ledger()["slices"]["SLICE-001"]["history"]
+        self.assertEqual([(h["ticket_id"], h["revision"], h["outcome"], h["by"], h["why"]) for h in history],
+                         [("LOCAL-001", 2, "superseded-in-work", "engineer", "product changed the rules; restart on revision 4")])
+        kinds = [(e["type"], e["ticket_id"], e["data"].get("outcome")) for e in self.events()]
+        self.assertIn(("revision.superseded", "LOCAL-001", "superseded-in-work"), kinds)
+        # The superseded revision is never dispatched: the scheduler lists it as superseded, with the reason.
+        plan, rows = self.plan()
+        self.assertEqual([(r["ticket_id"], r["state"], r["dispatchable"], r["cell_open"]) for r in plan["superseded_revisions"]], [("LOCAL-001", "superseded", False, True)])
+        self.assertIn("Superseded while in work by engineer", plan["superseded_revisions"][0]["reasons"][0])
+        self.assertEqual((rows["SLICE-001"]["ticket_id"], rows["SLICE-001"]["state"]), ("LOCAL-002", "ready"))
+        self.assertNotIn("LOCAL-001", [item["ticket_id"] for item in plan["runnable"]])
+        self.assertEqual(plan["limits"]["active"], 1)  # its open cell still takes a place
+        self.assertEqual((self.product("intake")["created"], self.product("intake")["needs_person"]), ([], []))
+        self.assertIn("Nothing to resolve", self.refused("resolve", "SLICE-001", "--supersede-in-work", "again"))
+        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])
+        sent = self.product("dispatch", "SLICE-001")  # only the new revision's ticket can enter the line
+        self.assertEqual((sent["tickets"], self.cell("LOCAL-002")["product"]["revision"]), (["LOCAL-002"], 4))
+        self.assertEqual((self.eng / ".factory/worktrees/LOCAL-001/cell.json").read_text(), cell_before)
+
+    def test_resolve_refuses_abandoned_work_and_points_at_intake(self):
+        self.revised_under_work()
+        self.clean_up("LOCAL-001", outcome="abandoned")
+        self.assertIn("Close it in the tracker and run intake", self.refused("resolve", "SLICE-001", "--supersede-in-work", "x"))
+
+    def test_abandoned_and_closed_tickets_are_not_waiting_for_a_person(self):
+        self.chain()
+        self.product("dispatch", "SLICE-001")
+        self.clean_up("LOCAL-001", outcome="abandoned")
+        _, line = run.factory(run.Project(self.eng))
+        self.assertEqual(line.settled(line.ledger(), ["LOCAL-001"]), {})  # abandoned but still open: someone has to close it
+        self.close("LOCAL-001")
+        self.assertEqual(line.settled(line.ledger(), ["LOCAL-001"])["LOCAL-001"]["reissued_as"], None)
+        self.product("intake", "--reissue", "SLICE-001")
+        self.assertEqual(line.settled(line.ledger(), ["LOCAL-001", "LOCAL-002"]),
+                         {"LOCAL-001": {"ticket_id": "LOCAL-001", "outcome": "abandoned", "ticket_state": "closed", "reissued_as": "LOCAL-004"}})
+
+
+class RealRecordsTest(unittest.TestCase):
+    """The ledger, event log, run records and ticket states of the M7 second live run at the moment of
+    its hand edit (tests/fixtures/m7-n2-ledger, stripped to IDs and states). Discovery is simulated:
+    the product snapshot is replaced by the one fact the run had, SLICE-005 at revision 6."""
+
+    FIXTURE = ROOT / "tests/fixtures/m7-n2-ledger"
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.root = Path(tempfile.mkdtemp(prefix="mach-n2-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        factory = self.root / ".factory"
+        (factory / "intake").mkdir(parents=True)
+        (factory / "archive").mkdir()
+        (factory / "tickets").mkdir()
+        (factory / "config.json").write_text(json.dumps({"tickets": {"provider": "local"}}))
+        shutil.copy(self.FIXTURE / "ledger-before-hand-edit.json", factory / "intake/ledger.json")
+        shutil.copy(self.FIXTURE / "events-SLICE-005.jsonl", factory / "intake/events.jsonl")
+        shutil.copy(self.FIXTURE / "runs-before-hand-edit.jsonl", factory / "archive/runs.jsonl")
+        states = json.loads((self.FIXTURE / "ticket-states-before-hand-edit.json").read_text())
+        for number in range(1, 7):
+            ticket_id = f"LOCAL-{number:03d}"
+            (factory / "tickets" / f"{ticket_id}.md").write_text(
+                f'---\nid: {ticket_id}\ntitle: "{ticket_id}"\nstate: {states.get(ticket_id, "closed")}\nlabels: []\n---\n\n# {ticket_id}\n')
+        self.line = intake.Factory(self.root, {"tickets": {"provider": "local"}}, sibling=run.sibling, git=run.git, next_step=lambda ticket_id: {})
+        self.r6 = self.line.ledger()["slices"]["SLICE-005"]["product_pending"]["digest"]
+
+    def discover(self, ledger=None):
+        ledger = ledger if ledger is not None else self.line.ledger()
+        entry = ledger["slices"]["SLICE-005"]
+        row = {"slice_id": "SLICE-005", "title": "Borrow an item", "wave_id": "WAVE-003", "revision": 6, "digest": self.r6, "dependencies": ["SLICE-001", "SLICE-002"],
+               "epic_id": "EPIC-002", "spec_path": "specs/slices/SLICE-005-borrow-an-item.md", "spec_sha256": "0" * 64, "ticket_id": entry.get("ticket_id")}
+        if entry.get("digest") == self.r6:
+            row["status"] = "known"
+        else:
+            row.update(status="modified", was_revision=entry.get("revision"), work=self.line.work(entry.get("ticket_id"), None)["status"])
+        return {"source": {"branch": "main", "commit": "f" * 40, "has_remote": True}, "notes": [], "refused": [], "waves": [], "has_product": True,
+                "project_id": "PROJECT-FIXTURE", "slices": [row], "_snapshot": intake.Snapshot("f" * 40, {})}
+
+    def test_the_recorded_state_takes_revision_6_in_without_a_hand_edit(self):
+        with mock.patch.object(intake.Factory, "discover", lambda factory, ledger=None: self.discover(ledger)), \
+                mock.patch.object(intake.Factory, "plan", lambda factory, ledger=None, record=False: {}):
+            taken = self.line.intake()
+            self.assertEqual(taken["needs_person"], [])
+            self.assertEqual(taken["created"], [{"slice_id": "SLICE-005", "revision": 6, "ticket_id": "LOCAL-007", "adopted": False}])  # what the hand edit produced
+            again = self.line.intake()
+        self.assertEqual((again["created"], again["updated"], again["needs_person"]), ([], [], []))
+        ledger = self.line.ledger()
+        entry = ledger["slices"]["SLICE-005"]
+        self.assertEqual([(h["ticket_id"], h["outcome"]) for h in entry["history"]], [("LOCAL-003", "abandoned"), ("LOCAL-006", "abandoned")])
+        self.assertEqual((entry["ticket_id"], entry["revision"], entry["follows"]["ticket_id"]), ("LOCAL-007", 6, "LOCAL-006"))
+        self.assertNotIn("product_pending", entry)
+        self.assertEqual(sorted(p.stem for p in (self.root / ".factory/tickets").glob("*.md"))[-1], "LOCAL-007")
+        events = self.line.events()
+        self.assertEqual([e["seq"] for e in events][-2:], [ledger["next_seq"] - 2, ledger["next_seq"] - 1])
+        self.assertEqual([e["type"] for e in events][-2:], ["revision.superseded", "slice.materialized"])
+        # N7: neither abandoned ticket is waiting for a person any more, and the ledger says what replaced each.
+        settled = self.line.settled(ledger, sorted(ledger["supervisor"]["parked"]))
+        self.assertEqual({key: value["reissued_as"] for key, value in settled.items()}, {"LOCAL-003": "LOCAL-006", "LOCAL-006": "LOCAL-007"})
 
 
 if __name__ == "__main__":

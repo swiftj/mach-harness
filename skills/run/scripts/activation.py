@@ -97,6 +97,9 @@ def status(ctx: Context) -> Dict[str, Any]:
     limit = ctx.sup.cap(pol) if ctx.line is not None else None  # the plan below shows the limit in force here, not only the project's
     plan = ctx.line.plan() if ctx.line is not None else None
     mode = "disabled" if not in_force else "paused" if pol.get("paused") else pol.get("autonomy")
+    # A parked ticket that was since abandoned and closed is waiting for nobody (recorded facts: the
+    # run record and the tracker), so it is listed apart, with the ticket that replaced it if any.
+    settled = ctx.line.settled(ledger, sorted(state["parked"])) if ctx.line is not None else {}
     return {
         "factory": mode,
         "enabled_here": in_force,
@@ -111,7 +114,10 @@ def status(ctx: Context) -> Dict[str, Any]:
                        "last_heartbeat": (lease or {}).get("heartbeat_at") if alive else None, "last_pass": state.get("last_tick")},
         "executions": [{key: record.get(key) for key in ("execution_id", "ticket_id", "slice_id", "state", "started_at", "session_id", "attempt")}
                        for _, record in sorted(state["executions"].items()) if record["state"] in LIVE],
-        "waiting_for_a_person": state["parked"],
+        "waiting_for_a_person": {ticket: record for ticket, record in state["parked"].items() if ticket not in settled},
+        "no_longer_waiting": [{**settled[ticket], "parked_reason": state["parked"][ticket].get("reason"),
+                               "in_words": f"{ticket} was abandoned and closed" + (f"; reissued as {settled[ticket]['reissued_as']}" if settled[ticket].get("reissued_as") else "") + "."}
+                              for ticket in sorted(settled)],
         "plan": {**{key: plan[key] for key in ("counts", "dispatchable", "waiting_for_a_place", "runnable", "needs_person", "intake_is_current", "limits")},
                  "max_parallel_from": limit} if plan else None,
         "git_hooks": service.hooks_status(ctx.root),

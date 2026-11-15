@@ -167,6 +167,8 @@ for (const result of report) {
 
 // Learn: when enough tickets have finished, the observe station measures them and files one tuning ticket,
 // and that ticket runs through the same line. Rule changes are never written directly.
+// Inside a supervised Factory execution, run.py's board reports no pass due and no tuning ticket, and refuses every
+// ticket but the execution's own: the pass is separate work that the supervisor leaves for a person.
 phase('Learn')
 let learned = 'no observe pass was due'
 const after = await clerk('board --headless', BOARD, 'is an observe pass due?', 'Learn')

@@ -93,6 +93,13 @@ for ticket in args["tickets"]:
         with open(os.path.join(cell_dir, "lifecycle.jsonl"), "a") as log:
             log.write(json.dumps({"v": 1, "type": "gate.evaluated", "station": "build", "ticket_id": ticket, "execution_id": os.environ.get("MACH_EXECUTION_ID"),
                                   "data": {"gate": "build.green", "outcome": "refuse", "reason_code": "suite-red", "task": plan["refuse"]}}) + "\n")
+    if plan.get("ask"):  # a relay inside the run asks the belt script about tickets, with the run's own environment
+        import subprocess
+        answers = {}
+        for name, command in plan["ask"].items():
+            done = subprocess.run([sys.executable, plan["run_py"], "--project", ".", *command], capture_output=True, text=True)
+            answers[name] = {"code": done.returncode, "out": done.stdout, "err": done.stderr}
+        json.dump(answers, open(plan["answers"], "w"))
     if plan.get("vanish"):
         os._exit(7)
     tickets.append({"ticket": ticket, "outcome": plan.get("outcome", "stopped"), "stage": plan.get("stage", ""), "waiting_for": "merge"})
@@ -968,6 +975,65 @@ class NotProgressingTest(Base):
         completed = [e for e in self.events() if e["type"] == "execution.completed"]
         self.assertEqual([(e["data"]["how"], e["data"]["exit_code"]) for e in completed], [("exited", 0)])
         self.assertNotIn("LOCAL-001", self.ledger()["supervisor"]["attempts"])
+
+
+class ExecutionScopeTest(Base):
+    """M7 N3: an execution started for one ticket works on that ticket only, and an observe pass is never run inside it."""
+
+    def finished_tickets(self, count):
+        log = self.eng / ".factory/archive/runs.jsonl"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("".join(json.dumps({"ticket_id": f"OLD-{n}", "outcome": "merged"}) + "\n" for n in range(count)))
+
+    def test_an_execution_for_one_ticket_is_refused_any_other_and_sees_no_observe_pass(self):
+        self.supervised()
+        self.finished_tickets(5)  # an observe pass is due
+        answers = self.root / "answers.json"
+        self.claude({"default": {"stage": "building", "run_py": str(SCRIPTS / "run.py"), "answers": str(answers),
+                                 "ask": {"other": ["next", "LOCAL-002", "--headless"], "own": ["next", "LOCAL-001", "--headless"],
+                                         "review": ["review-start", "LOCAL-002"], "board": ["board", "--headless"]}}})
+        self.tick()
+        self.wait()
+        got = json.loads(answers.read_text())
+        self.assertEqual(got["other"]["code"], 1)
+        refusal = json.loads(got["other"]["out"])
+        self.assertEqual((refusal["action"], refusal["stop"]), ("stop", True))
+        self.assertIn("started for LOCAL-001 only", refusal["reason"])
+        self.assertEqual(got["own"]["code"], 0, got["own"]["err"])
+        self.assertEqual(json.loads(got["own"]["out"])["ticket_id"], "LOCAL-001")
+        self.assertEqual(got["review"]["code"], 1)
+        self.assertIn("started for LOCAL-001 only", got["review"]["err"])
+        board = json.loads(got["board"]["out"])
+        self.assertEqual((board["observe_due"], board["factory_tuning_ready"], board["scoped_to"]), (False, [], "LOCAL-001"))
+        self.assertEqual([row["ticket_id"] for row in board["tickets"]], ["LOCAL-001"])
+        # Outside an execution, a person still sees the due pass.
+        code, out, _ = self.run_board()
+        self.assertEqual((code, json.loads(out)["observe_due"]), (0, True))
+
+    def run_board(self):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = run.main(["--project", str(self.eng), "board", "--headless"])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_an_unknown_execution_may_work_on_nothing(self):
+        with mock.patch.dict(os.environ, {"MACH_EXECUTION_ID": "x0000000000ff"}):
+            code, _, err = self.run_board()
+        self.assertEqual(code, 1)
+        self.assertIn("which the intake ledger does not record", err)
+
+    def test_a_due_observe_pass_is_left_for_a_person_by_the_supervisor_once(self):
+        self.supervised()
+        self.finished_tickets(5)
+        first = self.tick()
+        self.wait()
+        self.assertTrue(first["observe_due"])
+        self.tick()
+        said = [e for e in self.events() if e["type"] == "human.required" and "observe pass is due" in e["data"]["reason"]]
+        self.assertEqual(len(said), 1)
+        self.assertIsNone(said[0]["ticket_id"])
+        self.assertTrue(all("observe" not in " ".join(call["argv"]) for call in self.calls()), "no execution runs the observe skill")
+        self.assertEqual({r["ticket_id"] for r in self.executions().values()}, {"LOCAL-001"})
 
 
 class LifecycleTest(Base):

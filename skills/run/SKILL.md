@@ -45,7 +45,7 @@ If the input is exactly `where`, an automated workflow is asking where this skil
 | `verify` | Start the sub-agent named by `agent_type` with the prompt. |
 | `review` | Run `RUN review-start <ticket>`. Start every seat it lists at once, each as the sub-agent in its `agent_type`, on its `model`, with exactly its `prompt`. When all have returned, run `RUN review-tally <ticket>`. You chair; you do not review, and you never ask a reviewer to reconsider. |
 | `merge` | Run the merge skill yourself, as the prompt says. It lands the exact approved commit, or refuses. If it reports a pull request left open, stop and report it: do not retry. |
-| `cleanup` | Run the cleanup skill yourself, as the prompt says. If its result says `observe_due` is true, run the observe skill with `--auto` straight afterwards: it measures the finished tickets and files one `factory-tuning` ticket if it has anything to propose. Tell the user the ticket's ID; run it through the line only if you were asked to run the pipeline. |
+| `cleanup` | Run the cleanup skill yourself, as the prompt says. If its result says `observe_due` is true, run the observe skill with `--auto` straight afterwards: it measures the finished tickets and files one `factory-tuning` ticket if it has anything to propose. Tell the user the ticket's ID; run it through the line only if you were asked to run the pipeline. Inside a supervised Factory execution (`MACH_EXECUTION_ID` is set) never run the observe skill: `RUN next` and `RUN board` work only on the execution's own ticket and report no pass due, and the supervisor tells a person when one is. |
 | `stop` | Go to step 4. |
 
    If a named sub-agent type is not available, use a general sub-agent, tell it to load the matching MACH skill for the ticket, and keep the model the step names.
@@ -88,12 +88,15 @@ When the input starts with `product`, an engineer is working with delivery waves
 | `product dispatch <SLICE-ID>...` or `product dispatch --ready` | `RUN product dispatch ...` | Report what was dispatched and what was refused, with reasons. Dispatch prepares each cell and starts nothing. Then ask whether to run the dispatched tickets now. |
 | `product events` | `RUN product events` | Summarize the recent transitions. |
 | `product reconcile` | `RUN product reconcile` | Intake and a recorded plan in one step, for catching up after time away. Report it as you would an intake followed by a plan. It never dispatches. |
+| `product resolve <SLICE-ID> --supersede-in-work "<why>"` | `RUN product resolve <SLICE-ID> --supersede-in-work "<why>"`, **only on a person's explicit instruction**, like `approve-human`: never because intake listed it under `needs_person`, and never with a reason you wrote yourself | Use it only when a newer approved revision waits behind work still in progress and the person decides that work is superseded. Report `superseded_in_work` (ticket, revision, who and why) and the new ticket under `created`. Say that the earlier ticket and its cell were not changed: the engineer finishes or abandons it, and it is no longer the slice's work. |
 
 After a dispatch, on the engineer's yes: for one ticket, continue with **One ticket** above for that ticket ID. For several, the engineer runs the belt workflow named in `workflow` with the `tickets` list. Either way every station and every gate applies exactly as for any other ticket; the first step is the contracts and plan stage, because the spec is already approved.
 
 A slice is `completed` only when its commit is on the integration branch. A ticket whose build finished, or even one that was approved, is still `active`, and what depends on it stays blocked. Say this plainly if the engineer asks why something is not ready.
 
 `needs_person` means exactly that: a definition changed under work in progress, product withdrew a slice being built, a ticket was abandoned, or a ticket claims a merge that is not on the branch. Give the reason and the choices; do not choose.
+
+When a definition changes while its earlier ticket is in work, there are two ways on, and the person chooses. If the earlier ticket is abandoned (the cleanup station's `--abandon`) and closed in the tracker, the next intake takes the new revision in as a new ticket by itself and records that it follows the abandoned one; nothing else is needed, and the ledger is never edited by hand. If the work is to stay in the line but no longer count, the person says so and you run `product resolve` as above. The plan lists such a revision under `superseded_revisions` (state `superseded`, with the reason); it is never dispatched again.
 
 ### Release qualification
 
@@ -124,7 +127,7 @@ When the input starts with `factory`, the engineer is deciding whether MACH may 
 
 | Input | Run | Then |
 |-------|-----|------|
-| `factory` or `factory status` | `RUN factory status` | Say whether the Factory is disabled, in observe, supervised or paused (`in_words`), whether a supervisor is running, what is executing, and each ticket `waiting_for_a_person` with its reason. Mention `problems` and `restricted_by_project` if any. |
+| `factory` or `factory status` | `RUN factory status` | Say whether the Factory is disabled, in observe, supervised or paused (`in_words`), whether a supervisor is running, what is executing, and each ticket `waiting_for_a_person` with its reason. Tickets under `no_longer_waiting` were abandoned and closed: give their `in_words` ("reissued as ..." when the ledger knows the ticket that replaced it) and do not present them as waiting. Mention `problems` and `restricted_by_project` if any. |
 | `factory enable` | `RUN factory enable --autonomy observe\|supervised` with what the engineer asked for (`--max-parallel`, `--max-risk`, `--allow-merge`, `--auto-sync`, `--hooks`, `--persistent`, limits) | If `ready` is false, report `failed` or the `why` and stop: for work already here, ask whether automatic execution should include it, then run again with `--include-backlog` or `--exclude-backlog`. If `ready` is true, follow the first rule above. |
 | `factory pause` | `RUN factory pause` | Nothing new is dispatched or started. Say what is still running; it finishes its run. |
 | `factory resume` | `RUN factory resume`, with `--retry <ticket>` only for tickets the engineer names | Readiness is checked again first. Report `failed` if it did not pass, and who is still waiting for a person. |

@@ -723,6 +723,24 @@ class Factory:
                         self.ticket("update", entry["ticket_id"], "--label", self.marker(slice_id, row["revision"]), "--remove-label", old_marker,
                                     "--comment", f"The approved definition changed: now revision {row['revision']} (taken in from {snap.commit[:12]}).")
                     report["updated"].append({**change, "effect": "ticket updated"})
+                elif row["work"] == "abandoned":
+                    # The earlier ticket left the line without integrating. Established from recorded
+                    # facts only: no live cell, cleanup's run record says abandoned, the tracker says closed.
+                    left = self.left_the_line(entry.get("ticket_id"))
+                    if left["finished"]:
+                        why = f"its ticket {entry.get('ticket_id')} was abandoned (cleanup's run record) and is closed"
+                        fresh = self.follow_on(ledger, entry, row, snap, adopt, report, outcome="abandoned", why=why, by=None)
+                        report["updated"].append({**change, "effect": "new ticket; the earlier ticket was abandoned", "ticket_id": fresh.get("ticket_id"),
+                                                  "follows": entry.get("ticket_id")})
+                    else:
+                        pending = {"revision": row["revision"], "digest": row["digest"], "ticket_state": left.get("ticket_state")}
+                        why = (f"its ticket {entry.get('ticket_id')} was abandoned by cleanup but is {left.get('ticket_state') or 'unknown'} in the tracker; "
+                               "close it and the new revision is taken in on the next intake")
+                        if entry.get("product_pending") != pending:
+                            entry["product_pending"] = pending
+                            self.emit(ledger, "human.required", slice_id=slice_id, ticket_id=entry.get("ticket_id"), revision=row["revision"], reason=why)
+                            self.save(ledger)
+                        report["needs_person"].append({**change, "why": why})
                 elif row["work"] == "integrated":
                     entry.setdefault("history", []).append({key: entry.get(key) for key in ("revision", "digest", "ticket_id", "integrated", "built_against")})
                     self.emit(ledger, "revision.superseded", slice_id=slice_id, wave_id=row["wave_id"], revision=row["revision"], ticket_id=entry.get("ticket_id"),
@@ -741,7 +759,8 @@ class Factory:
                         self.emit(ledger, "human.required", slice_id=slice_id, ticket_id=entry.get("ticket_id"), revision=row["revision"],
                                   reason="The approved definition changed while this slice was being built. A person decides whether to finish or restart it.")
                         self.save(ledger)
-                    report["needs_person"].append({**change, "why": "the definition changed while work was in progress"})
+                    report["needs_person"].append({**change, "why": "the definition changed while work was in progress",
+                                                   "resolve": f"product resolve {slice_id} --supersede-in-work \"<why>\", only on a person's explicit instruction"})
             elif status == "superseded":
                 if dry_run:
                     report["superseded"].append({"slice_id": slice_id, "why": row["why"], "work": row["work"]})
@@ -784,7 +803,7 @@ class Factory:
         filing it and recording it, the ticket is found again by its marker label, not filed twice.
         """
         slice_id = entry["slice_id"]
-        marker = self.marker(slice_id, entry.get("revision"))
+        marker = entry.get("marker") or self.marker(slice_id, entry.get("revision"))
         ticket_id = adopt.get(slice_id)
         if not ticket_id:
             ticket_id, could_ask = self.find_ticket(marker)
@@ -810,34 +829,150 @@ class Factory:
                                   + " Nothing is lost: run intake again.")
         entry.update({"ticket_id": ticket_id, "pending_ticket": False, "materialized_at": now()})
         entry.pop("ticket_attempted", None)
+        extra = {"reissued": True} if entry.get("revision_issue") else {}
+        if entry.get("follows"):
+            extra["follows"] = entry["follows"]  # the earlier ticket this one replaces, and why
         self.emit(ledger, "slice.materialized", slice_id=slice_id, wave_id=entry.get("wave_id"), revision=entry.get("revision"), ticket_id=ticket_id,
-                  digest=entry.get("digest"), adopted=adopted, dependencies=entry.get("dependencies"))
+                  digest=entry.get("digest"), adopted=adopted, dependencies=entry.get("dependencies"), **extra)
         self.save(ledger)
-        report["created"].append({"slice_id": slice_id, "revision": entry.get("revision"), "ticket_id": ticket_id, "adopted": adopted})
+        if entry.get("revision_issue"):
+            report["created"].append({"slice_id": slice_id, "revision": entry.get("revision"), "ticket_id": ticket_id, "reissued": True})
+        else:
+            report["created"].append({"slice_id": slice_id, "revision": entry.get("revision"), "ticket_id": ticket_id, "adopted": adopted})
 
     def reissue(self, ledger: Dict[str, Any], entry: Dict[str, Any], row: Dict[str, Any], snap: Snapshot, adopt: Dict[str, str],
                 report: Dict[str, Any], source: Dict[str, Any]) -> None:
-        """A fresh ticket for the same revision, only when its previous ticket was abandoned."""
+        """A fresh ticket for the same revision, only when its previous ticket was abandoned.
+
+        Like every new ticket it goes through materialize: the intention is recorded with its own
+        marker first, so an interrupted reissue is finished by the next intake, never filed twice
+        and never mistaken for the abandoned ticket."""
         state = self.work(entry.get("ticket_id"), f"refs/heads/{source['branch']}")["status"]
         if state != "abandoned":
             raise IntakeError(f"{entry['slice_id']} cannot be reissued: its ticket {entry.get('ticket_id')} is {state}, not abandoned.")
-        entry.setdefault("history", []).append({"revision": entry.get("revision"), "digest": entry.get("digest"), "ticket_id": entry.get("ticket_id"), "outcome": "abandoned"})
-        fresh = self.new_entry(row, snap, entry["history"])
-        fresh["revision_issue"] = len(entry["history"]) + 1
+        history = list(entry.get("history") or []) + [{"revision": entry.get("revision"), "digest": entry.get("digest"), "ticket_id": entry.get("ticket_id"),
+                                                       "outcome": "abandoned", "why": "reissued by an engineer", "at": now()}]
+        fresh = self.new_entry(row, snap, history)
+        fresh["marker"], issue = self.issue_marker(entry["slice_id"], entry.get("revision"), history)
+        fresh["revision_issue"] = issue
+        fresh["follows"] = {"ticket_id": entry.get("ticket_id"), "revision": entry.get("revision"), "outcome": "abandoned", "why": "reissued by an engineer"}
         ledger["slices"][entry["slice_id"]] = fresh
         self.save(ledger)
-        title, body = self.ticket_text(row, snap)
-        done = self.ticket("create", "--title", title, "--body", "-", "--label", "product-studio",
-                           "--label", f"{self.marker(entry['slice_id'], entry.get('revision'))}-issue{fresh['revision_issue']}", "--label", f"wave-{entry.get('wave_id')}", stdin=body)
+        self.materialize(ledger, fresh, row, snap, adopt, report)
+
+    def issue_marker(self, slice_id: str, revision: Any, history: List[Dict[str, Any]]) -> Tuple[str, Optional[int]]:
+        """The marker label for a new ticket. A revision that already had a ticket gets an issue
+        number, so the search that keeps intake from filing twice never finds the earlier ticket."""
+        earlier = sum(1 for item in history if item.get("revision") == revision)
+        base = self.marker(slice_id, revision)
+        return (f"{base}-issue{earlier + 1}", earlier + 1) if earlier else (base, None)
+
+    def follow_on(self, ledger: Dict[str, Any], entry: Dict[str, Any], row: Dict[str, Any], snap: Snapshot, adopt: Dict[str, str],
+                  report: Dict[str, Any], *, outcome: str, why: str, by: Optional[str]) -> Dict[str, Any]:
+        """Replace a slice's earlier ticket with a new ticket for the approved revision.
+
+        The intention goes on record first (the earlier revision in history, the new entry with its
+        ticket still to file), then the ticket is filed through materialize, which finds it again by
+        its marker if an earlier run stopped in between. The earlier ticket and any cell it has are
+        never touched here.
+        """
+        record = {"revision": entry.get("revision"), "digest": entry.get("digest"), "ticket_id": entry.get("ticket_id"), "outcome": outcome,
+                  "why": why, "at": now(), "replaced_by_revision": row["revision"]}
+        if by:
+            record["by"] = by
+        history = list(entry.get("history") or []) + [record]
+        fresh = self.new_entry(row, snap, history)
+        fresh["marker"], issue = self.issue_marker(entry["slice_id"], row["revision"], history)
+        if issue:
+            fresh["revision_issue"] = issue
+        fresh["follows"] = {"ticket_id": entry.get("ticket_id"), "revision": entry.get("revision"), "outcome": outcome, "why": why, **({"by": by} if by else {})}
+        ledger["slices"][entry["slice_id"]] = fresh
+        self.emit(ledger, "revision.superseded", slice_id=entry["slice_id"], wave_id=row["wave_id"], revision=row["revision"], ticket_id=entry.get("ticket_id"),
+                  from_revision=entry.get("revision"), outcome=outcome, why=why, by=by,
+                  effect=("The earlier ticket left the line without integrating; the new revision gets a new ticket." if outcome == "abandoned" else
+                          "A person superseded the revision in work; its cell and ticket are left for the engineer. The new revision gets a new ticket."))
+        self.save(ledger)  # the intention is on record before anything is filed
+        self.materialize(ledger, fresh, row, snap, adopt, report)
+        return fresh
+
+    def ticket_state(self, ticket_id: str) -> Optional[str]:
+        done = self.ticket("view", ticket_id)
+        if done.returncode != 0:
+            return None
         try:
-            ticket_id = str(json.loads(done.stdout)["ticket_id"])
-        except (ValueError, KeyError, TypeError):
-            raise IntakeError(f"The ticket station could not file a ticket for {entry['slice_id']}: {done.stderr.strip() or done.stdout.strip()}")
-        fresh.update({"ticket_id": ticket_id, "pending_ticket": False, "materialized_at": now()})
-        self.emit(ledger, "slice.materialized", slice_id=entry["slice_id"], wave_id=fresh.get("wave_id"), revision=fresh.get("revision"), ticket_id=ticket_id,
-                  digest=fresh.get("digest"), adopted=False, reissued=True, dependencies=fresh.get("dependencies"))
-        self.save(ledger)
-        report["created"].append({"slice_id": entry["slice_id"], "revision": fresh.get("revision"), "ticket_id": ticket_id, "reissued": True})
+            state = json.loads(done.stdout).get("state")
+        except (ValueError, AttributeError):
+            return None
+        return str(state) if state else None
+
+    def left_the_line(self, ticket_id: Optional[str]) -> Dict[str, Any]:
+        """Whether a ticket finished without integrating, from recorded facts only: it has no live
+        cell, cleanup's run record for it says abandoned, and the tracker says it is closed."""
+        if not ticket_id:
+            return {"finished": False, "work": "unticketed"}
+        facts = self.work(ticket_id, None)
+        if facts["status"] != "abandoned" or facts.get("outcome") != "abandoned":
+            return {"finished": False, "work": facts["status"]}
+        state = self.ticket_state(ticket_id)
+        return {"finished": state == "closed", "work": "abandoned", "ticket_state": state}
+
+    def replaced_by(self, ledger: Dict[str, Any], ticket_id: str) -> Optional[str]:
+        """The ticket that took over from this one for the same slice, as the ledger records it."""
+        for entry in ledger["slices"].values():
+            chain = [item.get("ticket_id") for item in entry.get("history") or []] + [None if entry.get("pending_ticket") else entry.get("ticket_id")]
+            if ticket_id in chain:
+                later = [other for other in chain[chain.index(ticket_id) + 1:] if other and other != ticket_id]
+                return later[0] if later else None
+        return None
+
+    def settled(self, ledger: Dict[str, Any], tickets: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        """Of these tickets, the ones nobody is waiting for any more: abandoned and closed."""
+        found = {}
+        for ticket_id in tickets:
+            left = self.left_the_line(ticket_id)
+            if left["finished"]:
+                found[ticket_id] = {"ticket_id": ticket_id, "outcome": "abandoned", "ticket_state": "closed",
+                                    "reissued_as": self.replaced_by(ledger, ticket_id)}
+        return found
+
+    def resolve(self, slice_id: str, supersede_in_work: str, by: str = ENGINEER) -> Dict[str, Any]:
+        """A person's recorded decision: the revision in work is superseded by the newer approved one.
+
+        Only on a person's explicit instruction. The in-work ticket's revision moves to history as
+        superseded, with who and why; its cell and ticket are left untouched for the engineer to
+        abandon or finish; the newer revision is taken in as a new ticket. Run again after an
+        interruption, it finishes what it began and files nothing twice.
+        """
+        why = " ".join(str(supersede_in_work or "").split())
+        if not why:
+            raise IntakeError("Say why the work in progress is superseded: --supersede-in-work \"<why>\".")
+        with self.lock("resolve"):
+            ledger = self.ledger()
+            found = self.discover(ledger)
+            snap: Optional[Snapshot] = found.pop("_snapshot", None)
+            row = next((item for item in found["slices"] if item["slice_id"] == slice_id), None)
+            entry = ledger["slices"].get(slice_id)
+            if snap is None or row is None or entry is None:
+                raise IntakeError(f"{slice_id} is not approved product work this Factory has taken in. Run intake first.")
+            report: Dict[str, Any] = {"slice_id": slice_id, "created": [], "needs_person": [], "superseded_in_work": None, "factory_started": False}
+            follows = entry.get("follows") or {}
+            if row["status"] == "known" and entry.get("pending_ticket") and follows.get("outcome") == "superseded-in-work":
+                self.materialize(ledger, entry, row, snap, {}, report)  # an earlier resolve stopped before the ticket was filed
+                report["superseded_in_work"] = follows
+            elif row["status"] != "modified":
+                raise IntakeError(f"{slice_id} has no newer approved revision waiting behind work in progress (it is {row['status']}). Nothing to resolve.")
+            elif row["work"] == "abandoned":
+                raise IntakeError(f"{slice_id}'s ticket {entry.get('ticket_id')} is no longer in work: it was abandoned. Close it in the tracker and run intake; "
+                                  "the new revision is then taken in without this command.")
+            elif row["work"] != "active":
+                raise IntakeError(f"{slice_id}'s ticket {entry.get('ticket_id')} is {row['work']}, not in work. Run intake; this command only settles work in progress.")
+            else:
+                fresh = self.follow_on(ledger, entry, row, snap, {}, report, outcome="superseded-in-work", why=why, by=by)
+                report["superseded_in_work"] = fresh["follows"]
+            self.plan(ledger=ledger, record=True)
+        report["note"] = (f"The earlier ticket {report['superseded_in_work']['ticket_id']} and its cell were not changed. "
+                          "The engineer finishes or abandons it; it is no longer this slice's work.")
+        return report
 
     # ---- the scheduler ----
 
@@ -927,8 +1062,23 @@ class Factory:
                     row["reasons"].append("Everything it depends on is integrated." if row["depends_on"] else "It depends on nothing.")
             rows[key] = row
 
+        # Revisions a person superseded while they were in work: never dispatched again, and while
+        # their cell is still open it takes a place in the line until the engineer finishes it.
+        superseded_revisions: List[Dict[str, Any]] = []
+        for key in sorted(entries, key=number):
+            for item in entries[key].get("history") or []:
+                if item.get("outcome") != "superseded-in-work" or not item.get("ticket_id"):
+                    continue
+                still = self.work(item["ticket_id"], ref)
+                superseded_revisions.append({
+                    "slice_id": key, "revision": item.get("revision"), "ticket_id": item["ticket_id"], "state": "superseded", "dispatchable": False,
+                    "cell_open": still["status"] == "active", "stage": still.get("stage"),
+                    "reasons": [f"Superseded while in work by {item.get('by') or 'a person'}: {item.get('why')}. "
+                                f"Revision {item.get('replaced_by_revision')} is the slice's work now"
+                                + (f" (ticket {entries[key].get('ticket_id')})." if entries[key].get("ticket_id") else ".")
+                                + (" Its cell is left for the engineer to finish or abandon." if still["status"] == "active" else "")]})
         depth = levels({key: [dep for dep in graph.get(key, []) if dep in live] for key in live}, set(in_cycle))
-        active = [key for key, row in rows.items() if row["state"] == "active"]
+        active = [key for key, row in rows.items() if row["state"] == "active"] + [f"{item['slice_id']}@{item['ticket_id']}" for item in superseded_revisions if item["cell_open"]]
         free = max(0, self.max_parallel - len(active))
         ready = sorted((key for key, row in rows.items() if row["state"] == "ready"), key=lambda key: (depth.get(key, 0), number(key)))
         for position, key in enumerate(ready):
@@ -959,6 +1109,7 @@ class Factory:
                          if row["state"] == "active" and work[key].get("next") not in (None, "stop")],
             "parallel_groups": [sorted(groups[level], key=number) for level in sorted(groups)],
             "slices": [rows[key] for key in sorted(rows, key=number)],
+            "superseded_revisions": superseded_revisions,
             "factory_started": False,
         }
 
