@@ -79,6 +79,13 @@ type Entry struct {
 	// the review folder's number).
 	Visit      *VisitLink `json:"visit"`
 	RoundBasis string     `json:"round_basis,omitempty"`
+	// Repeat is k for a review folder round-N.k: the k-th repeat of judging round N, opened after the
+	// merge station voided that round's approval (review.py, M7). A repeat is not another judging
+	// round: Round stays N. Absent for round-N itself and for every other file.
+	Repeat *int64 `json:"repeat,omitempty"`
+	// Voided is set on a review decision the merge station voided: it is on record and is not the
+	// standing approval. Codes and commits only; the reason's words stay in the decision itself.
+	Voided *Voided `json:"voided,omitempty"`
 	// ModifiedMS is the file's modification time (Unix ms), for the join; never served.
 	ModifiedMS    int64  `json:"-"`
 	ContentAccess string `json:"content_access"` // text | media | media-disabled | none
@@ -102,6 +109,51 @@ const (
 	TooLargeReason  = "the file is larger than the observer reads (64 MB at most); it is listed, not hashed or served"
 	DuplicateReason = "the archive holds more than one file of this name; which one is meant is unknown, so neither is served"
 )
+
+// Voided says how a review decision was voided (merge.py's void record): a reason code
+// ("branch-changed-after-approval" for the sentence merge.py writes, else "recorded"), the outcome
+// it had, and the commit approved and the one the branch then held.
+type Voided struct {
+	ReasonCode     string `json:"reason_code"`
+	OutcomeBefore  string `json:"outcome_before,omitempty"`
+	ApprovedCommit string `json:"approved_commit,omitempty"`
+	BranchCommit   string `json:"branch_commit,omitempty"`
+}
+
+// voidOf reads a decision.json's void record; nil when the decision stands.
+func voidOf(data []byte) *Voided {
+	var d struct {
+		Outcome       string `json:"outcome"`
+		OutcomeBefore string `json:"outcome_before_void"`
+		VoidReason    string `json:"void_reason"`
+		Void          *struct {
+			Reason         string `json:"reason"`
+			ApprovedCommit string `json:"approved_commit"`
+			BranchCommit   string `json:"branch_commit"`
+		} `json:"void"`
+	}
+	if json.Unmarshal(data, &d) != nil || d.Outcome != "VOID" && d.Void == nil {
+		return nil
+	}
+	v := &Voided{ReasonCode: "recorded"}
+	reason := d.VoidReason
+	if d.Void != nil {
+		reason = d.Void.Reason
+		if commitRe.MatchString(d.Void.ApprovedCommit) {
+			v.ApprovedCommit = d.Void.ApprovedCommit
+		}
+		if commitRe.MatchString(d.Void.BranchCommit) {
+			v.BranchCommit = d.Void.BranchCommit
+		}
+	}
+	if reason == "The branch changed after it was approved." {
+		v.ReasonCode = "branch-changed-after-approval"
+	}
+	if d.OutcomeBefore == "APPROVED" || d.OutcomeBefore == "AWAITING_HUMAN" {
+		v.OutcomeBefore = d.OutcomeBefore
+	}
+	return v
+}
 
 // VisitLink links an artifact to a station visit.
 type VisitLink struct {
@@ -357,16 +409,49 @@ func evidenceFolders(names []string) []string {
 	return out
 }
 
-func roundFolders(names []string) []int {
-	var out []int
+// roundFolder is a review folder: round-N (Repeat 0) or its k-th repeat round-N.k.
+type roundFolder struct {
+	N, Repeat int
+}
+
+func (r roundFolder) name() string {
+	if r.Repeat > 0 {
+		return fmt.Sprintf("round-%d.%d", r.N, r.Repeat)
+	}
+	return fmt.Sprintf("round-%d", r.N)
+}
+
+// num reads a canonical positive number no larger than limit.
+func num(s string, limit int) (int, bool) {
+	v, err := strconv.Atoi(s)
+	return v, err == nil && v > 0 && v <= limit && strconv.Itoa(v) == s
+}
+
+// roundFolders reads review/round-N and, since M7, review/round-N.k (a repeat of judging round N
+// after a voided approval), in order: by round, then repeat.
+func roundFolders(names []string) []roundFolder {
+	var out []roundFolder
 	for _, n := range names {
-		if k, ok := strings.CutPrefix(n, "round-"); ok {
-			if v, err := strconv.Atoi(k); err == nil && v > 0 && v <= maxRounds && strconv.Itoa(v) == k {
-				out = append(out, v)
+		k, ok := strings.CutPrefix(n, "round-")
+		if !ok {
+			continue
+		}
+		head, rep, dotted := strings.Cut(k, ".")
+		v, ok := num(head, maxRounds)
+		if !ok {
+			continue
+		}
+		f := roundFolder{N: v}
+		if dotted {
+			if f.Repeat, ok = num(rep, maxRounds); !ok {
+				continue
 			}
 		}
+		out = append(out, f)
 	}
-	sort.Ints(out)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].N < out[j].N || out[i].N == out[j].N && out[i].Repeat < out[j].Repeat
+	})
 	return out
 }
 
@@ -377,7 +462,7 @@ type source interface {
 }
 
 // plan lists what a cell's records name, as entries without hashes; fill completes them.
-func plan(src source, ticket string, folders []string, rounds []int, people *redact.People) []*Entry {
+func plan(src source, ticket string, folders []string, rounds []roundFolder, people *redact.People) []*Entry {
 	var out []*Entry
 	for _, folder := range folders {
 		var res results
@@ -435,18 +520,26 @@ func plan(src source, ticket string, folders []string, rounds []int, people *red
 		}
 	}
 	for _, r := range rounds {
+		dir := "review/" + r.name()
 		// The people a review records (an approver, whoever recorded the approval) are learned
 		// before anything of the cell is served, so their names are scrubbed from every text.
-		if data, err := src.read(fmt.Sprintf("review/round-%d/decision.json", r), maxRecord); err == nil {
+		var voided *Voided
+		if data, err := src.read(dir+"/decision.json", maxRecord); err == nil {
 			people.LearnJSON(data)
+			voided = voidOf(data)
+		}
+		var repeat *int64
+		if r.Repeat > 0 {
+			repeat = ptr(int64(r.Repeat))
 		}
 		for _, name := range []string{"findings.md", "decision.json"} {
 			kind, nature := "review-findings", "prose"
+			var v *Voided
 			if name == "decision.json" {
-				kind, nature = "review-decision", "record"
+				kind, nature, v = "review-decision", "record", voided
 			}
-			out = append(out, &Entry{Path: fmt.Sprintf("review/round-%d/%s", r, name), Kind: kind, Nature: nature, Round: ptr(int64(r)),
-				Provenance: Provenance{NamedBy: fmt.Sprintf("review/round-%d/%s", r, name), Writer: "review.py"}})
+			out = append(out, &Entry{Path: dir + "/" + name, Kind: kind, Nature: nature, Round: ptr(int64(r.N)), Repeat: repeat, Voided: v,
+				Provenance: Provenance{NamedBy: dir + "/" + name, Writer: "review.py"}})
 		}
 	}
 	for _, e := range out {

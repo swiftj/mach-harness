@@ -1554,3 +1554,12 @@ export function notInterpretedCount(scene: Scene): number {
   for (const v of Object.values(scene.completeness.notInterpreted)) n += v;
   return n;
 }
+
+/**
+ * How many distinct slices the received waves name. A slice that belongs to two waves (a revised
+ * wave that carries it again) is one slice, not two wave memberships (M7 D6: the floor said
+ * "6 slices" for 5).
+ */
+export function distinctSliceCount(scene: Pick<Scene, "waves">): number {
+  return new Set(Object.values(scene.waves).flatMap((w) => w.sliceIds)).size;
+}

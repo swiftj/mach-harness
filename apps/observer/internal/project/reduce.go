@@ -514,6 +514,12 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 	case "intake.validated":
 		s.Project.LastValidated = st
+		// A wave's later approved revision is validated by intake (M7 D6: wave.discovered is
+		// recorded once, at the first revision); the wave then carries the newer revision.
+		if w := s.Waves[feed.Str(e.IDs.WaveID)]; w != nil && e.IDs.Revision != nil && (w.Revision == nil || *e.IDs.Revision > *w.Revision) {
+			w.Revision = e.IDs.Revision
+			s.touch(entWave, w.WaveID)
+		}
 	case "intake.refused":
 		s.Project.IntakeRefused++
 	case "slice.materialized":
@@ -645,11 +651,38 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		s.closeRequired(e.Ticket(), "", st, e.Type)
 	case "revision.superseded":
-		if sl := s.slice(e); sl != nil {
-			sl.Superseded = st
-			s.endSliceWait(sl, st)
-			sl.recompute(st)
+		sl := s.slice(e)
+		if sl == nil {
+			return
 		}
+		var d struct {
+			FromRevision *int64 `json:"from_revision"`
+		}
+		e.DataAs(&d)
+		// intake.py emits this kind for four things (M7 D6). With from_revision and a newer
+		// revision, the definition changed: a waiting ticket takes the new revision and the slice
+		// stays the same slice (its wait for the old revision ends; a dependency.blocked at the new
+		// revision follows); work in the line keeps building the old revision with the new one
+		// pending; integrated work gets a follow-up (slice.materialized follows and resets it).
+		// Without from_revision, product withdrew the slice: superseded.
+		if d.FromRevision != nil && e.IDs.Revision != nil && !sameRev(sl.Revision, e.IDs.Revision) && sl.Integrated == nil {
+			if sl.Scheduled != nil {
+				sl.PendingRevision = e.IDs.Revision
+				return
+			}
+			sl.Revisions = append(sl.Revisions, SliceRevision{Revision: sl.Revision, TicketID: sl.TicketID, State: sl.State, At: sl.Materialized})
+			s.endSliceWait(sl, st)
+			sl.Blocked, sl.Resolved, sl.Reasons = nil, nil, []string{}
+			sl.Revision, sl.FirstMaterialized, sl.PendingRevision = e.IDs.Revision, st, nil
+			if t := e.Ticket(); t != "" {
+				sl.TicketID = t
+			}
+			sl.recompute(st)
+			return
+		}
+		sl.Superseded = st
+		s.endSliceWait(sl, st)
+		sl.recompute(st)
 	case "human.required":
 		var d struct {
 			Reason string `json:"reason"`
@@ -713,6 +746,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			Held       []Held   `json:"held"`
 		}
 		e.DataAs(&d)
+		s.releaseUnstarted(st, s.Factory.LastDecision, d.Held)
 		s.sliceCapacity(st, s.Factory.LastDecision, nonNil(d.Held))
 		s.sliceHolds(st, d.Held)
 		s.Factory.SchedulerState, s.Factory.LastDecision = d.State, st
@@ -799,9 +833,13 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			How          *string  `json:"how"`
 			CostUSD      *float64 `json:"cost_usd"`
 			RefusedTools []string `json:"refused_tools"`
+			ExitCode     *int64   `json:"exit_code"`
 		}
 		e.DataAs(&d)
 		first := x.Completed == nil
+		if d.ExitCode != nil {
+			x.ExitCode = d.ExitCode
+		}
 		x.Completed, x.StageAtEnd, x.Next, x.WaitingFor, x.How = st, d.Stage, d.Next, feed.Str(d.WaitingFor), feed.Str(d.How)
 		x.CostUSD, x.RefusedTools, x.RefusedFinal = d.CostUSD, nonNilS(d.RefusedTools), true
 		kd := s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID)
@@ -825,7 +863,14 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 				m.Exclude("K4", nil, day(st), "a recorded cost with no ticket", 1)
 			}
 		}
-		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), 1, 1)
+		// A killed execution (M7: how "killed", a signal exit) is recorded as completed when it
+		// moved the ticket, but it did not run to its end: S3 counts it as not completed and X1 as
+		// an execution that did not finish, as for execution.failed. K1/K4 are unchanged (D7).
+		killed := feed.Str(d.How) == "killed"
+		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), b2f(!killed), 1)
+		if first && killed {
+			m.Rate("X1", s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID), day(st), 1, 0)
+		}
 		if first {
 			// K2 and K3's coverage: completed executions, with a usage record from the stream or not.
 			for _, id := range []string{"K2", "K3"} {
@@ -872,6 +917,47 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), 0, 1)
 		m.Rate("X1", s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID), day(st), 1, 0)
+	}
+}
+
+const exReleased = "a claim released without starting (not an execution)"
+
+// releaseUnstarted marks, for each ticket a scheduling decision holds, the execution claimed for it
+// since the previous decision that never started: the supervisor claims durably before it decides
+// whether to start, and a claim it may not start is released and the ticket reported held in that
+// same pass (supervisor.py; ledger state "released", how "not-started"). Such a claim is not an
+// execution: it leaves the populations that count executions (X1, S1, S2, K1) with a coverage
+// note, and W4's open count.
+func (s *State) releaseUnstarted(st, prev *Stamp, held []Held) {
+	if len(held) == 0 {
+		return
+	}
+	tickets := map[string]bool{}
+	for _, h := range held {
+		if h.TicketID != "" {
+			tickets[h.TicketID] = true
+		}
+	}
+	m := s.Metrics
+	for _, id := range sortedKeys(s.Executions) {
+		x := s.Executions[id]
+		if !tickets[x.TicketID] || x.Claimed == nil || x.Released != nil || x.Started != nil || x.ProcessStarted != nil ||
+			x.ProcessEnded != nil || x.Completed != nil || x.Failed != nil || len(x.Recovery) > 0 || x.Claimed.Pos > st.Pos ||
+			prev != nil && x.Claimed.Pos < prev.Pos {
+			continue
+		}
+		x.Released = st
+		s.touch(entExecution, id)
+		kd := s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID)
+		cd := day(x.Claimed)
+		m.Rate("X1", kd, cd, 0, -1)
+		m.Rate("S1", s.cdims(x.TicketID), cd, 0, -1)
+		m.Rate("S2", s.cdims(x.TicketID), cd, 0, -1)
+		m.Exclude("K1", kd, cd, exK1NoResult, -1)
+		for _, mid := range []string{"X1", "S1", "S2", "K1"} {
+			m.Exclude(mid, kd, cd, exReleased, 1)
+		}
+		m.OpenAdd("W4", cd, -1)
 	}
 }
 
@@ -1154,6 +1240,12 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		if r == nil {
 			r = &ReviewRound{Round: round, Verdicts: []Verdict{}, Panel: []Seat{}}
 			c.Reviews = append(c.Reviews, r)
+		}
+		if r.Decided != nil && r.Restarted > 0 {
+			// A repeat of this judging round after a voided approval (review/round-N.k, M7): the
+			// round is judged once; its standing decision replaces the voided one in R1.
+			m.Rate("R1", s.cdims(c.TicketID, "round", itoa(round)), day(r.Decided), -b2f(r.Outcome == "REJECTED" || r.Outcome == "ESCALATE"), -1)
+			r.Repeats++
 		}
 		r.Outcome, r.Approvals, r.Votes, r.Blockers, r.SecurityVeto, r.Decided = d.Outcome, d.Approvals, d.Votes, d.Blockers, d.SecurityVeto, st
 		m.Rate("R1", s.cdims(c.TicketID, "round", itoa(round)), day(st), b2f(d.Outcome == "REJECTED" || d.Outcome == "ESCALATE"), 1)

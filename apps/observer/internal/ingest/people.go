@@ -100,12 +100,26 @@ func (p *peopleScan) cell(ticket string, files normalize.Files, size int64) {
 		}
 	}
 	// Rounds are numbered from 1 without holes (review.py); the first missing one ends the scan.
+	// A round's repeats after a voided approval (round-N.1, round-N.2, ...; M7) are numbered the
+	// same way and read with it.
 	for n := 1; n <= 99; n++ {
-		dir := "review/round-" + itoa(int64(n))
+		base := "review/round-" + itoa(int64(n))
+		if !p.reviewFolder(files, base) {
+			break
+		}
+		for k := 1; k <= 99 && p.reviewFolder(files, base+"."+itoa(int64(k))); k++ {
+		}
+	}
+}
+
+// reviewFolder learns the people of one review folder's decision and votes; false when the folder
+// holds none of them.
+func (p *peopleScan) reviewFolder(files normalize.Files, dir string) bool {
+	{
 		decision, okDecision := files.Read(dir+"/decision.json", maxIdentityFile)
 		votes := files.List(dir + "/votes")
 		if !okDecision && len(votes) == 0 && len(files.List(dir)) == 0 {
-			break
+			return false
 		}
 		if okDecision {
 			p.list.LearnJSON(decision)
@@ -118,6 +132,7 @@ func (p *peopleScan) cell(ticket string, files normalize.Files, size int64) {
 			}
 		}
 	}
+	return true
 }
 
 var reflogRe = regexp.MustCompile(`^[0-9a-f]{7,64} [0-9a-f]{7,64} ([^<\n]{1,80}) <([^>\n]{0,120})> [0-9]+ [+-][0-9]{4}`)

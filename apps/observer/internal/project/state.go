@@ -17,7 +17,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 6 // 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
+const FormatVersion = 7 // 7: M7 released claims, slice revision changes and pending revisions, wave revisions from intake, killed executions; 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -292,7 +292,10 @@ type Slice struct {
 	Integrated        *Stamp          `json:"integrated"`
 	Superseded        *Stamp          `json:"superseded"`
 	Revisions         []SliceRevision `json:"revisions"`
-	History           []StateChange   `json:"history"`
+	// PendingRevision is a newer approved revision that waits while work in the line builds the
+	// current one (intake never changes work in progress; a person decides). nil when none.
+	PendingRevision *int64        `json:"pending_revision,omitempty"`
+	History         []StateChange `json:"history"`
 	// Waits is every dependency wait (dependency.blocked to dependency.resolved), oldest first;
 	// an unresolved one has no end. WaitsDropped counts the oldest ones no longer kept.
 	Waits        []*DependencyWait `json:"waits"`
@@ -478,24 +481,28 @@ type Target struct {
 
 // ReviewRound is one judging round's review.
 type ReviewRound struct {
-	Round                 *int64            `json:"round"`
-	VisitID               string            `json:"visit_id,omitempty"`
-	Risk                  string            `json:"risk,omitempty"`
-	MaxRounds             *int64            `json:"max_rounds"`
-	ApprovalsNeeded       *int64            `json:"approvals_needed"`
-	HumanApprovalRequired bool              `json:"human_approval_required"`
-	Tuning                bool              `json:"tuning"`
-	Delta                 bool              `json:"delta"`
-	Restarted             int64             `json:"restarted"`
-	Panel                 []Seat            `json:"panel"`
-	Started               *Stamp            `json:"started"`
-	Verdicts              []Verdict         `json:"verdicts"`
-	Outcome               string            `json:"outcome,omitempty"`
-	Approvals             *int64            `json:"approvals"`
-	Votes                 map[string]string `json:"votes,omitempty"`
-	Blockers              *int64            `json:"blockers"`
-	SecurityVeto          bool              `json:"security_veto"`
-	Decided               *Stamp            `json:"decided"`
+	Round                 *int64 `json:"round"`
+	VisitID               string `json:"visit_id,omitempty"`
+	Risk                  string `json:"risk,omitempty"`
+	MaxRounds             *int64 `json:"max_rounds"`
+	ApprovalsNeeded       *int64 `json:"approvals_needed"`
+	HumanApprovalRequired bool   `json:"human_approval_required"`
+	Tuning                bool   `json:"tuning"`
+	Delta                 bool   `json:"delta"`
+	Restarted             int64  `json:"restarted"`
+	// Repeats counts decisions this judging round took again after an earlier one (a repeat in
+	// review/round-N.k after the merge station voided an approval, M7); the round is still one
+	// judging round, and its standing decision is the last.
+	Repeats      int64             `json:"repeats,omitempty"`
+	Panel        []Seat            `json:"panel"`
+	Started      *Stamp            `json:"started"`
+	Verdicts     []Verdict         `json:"verdicts"`
+	Outcome      string            `json:"outcome,omitempty"`
+	Approvals    *int64            `json:"approvals"`
+	Votes        map[string]string `json:"votes,omitempty"`
+	Blockers     *int64            `json:"blockers"`
+	SecurityVeto bool              `json:"security_veto"`
+	Decided      *Stamp            `json:"decided"`
 }
 
 // Seat is a panel seat.
@@ -606,7 +613,12 @@ type Execution struct {
 	Recovery       []string           `json:"recovery"`
 	// UnknownAt is the first outcome-unknown recovery for this execution: an execution with no
 	// recorded end ended no later than it.
-	UnknownAt    *Stamp               `json:"unknown_at,omitempty"`
+	UnknownAt *Stamp `json:"unknown_at,omitempty"`
+	// Released is the scheduling decision that held this execution's ticket in the same pass that
+	// claimed it, with nothing started: the supervisor released the claim without starting it
+	// (ledger state "released", how "not-started"; M7 D10). Reconstructed from the pass, never
+	// set once anything of the execution started or ended.
+	Released     *Stamp               `json:"released,omitempty"`
 	Usage        *Usage               `json:"usage"`
 	Session      *Session             `json:"session"`
 	Workflows    map[string]*Workflow `json:"workflows"`

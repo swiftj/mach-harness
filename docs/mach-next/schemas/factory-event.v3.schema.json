@@ -1301,6 +1301,7 @@
                                            "additionalProperties": false,
                                            "required": ["stage", "next", "waiting_for", "how", "seen_to_end", "cost_usd", "refused_tools"],
                                            "properties": {
+                                                           "exit_code": {"type": ["integer", "null"], "description": "M7: the process exit code; present only in records that carry it (a signal exit is negative, how \"killed\")"},
                                                            "stage": {
                                                                       "enum": [
                                                                                 "interview",

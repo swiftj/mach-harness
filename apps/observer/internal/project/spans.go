@@ -749,6 +749,9 @@ func execEnd(s *State, x *Execution) (end *Stamp, inferred bool) {
 			return st, false
 		}
 	}
+	if x.Released != nil {
+		return x.Released, true // the decision that released the claim; nothing ran
+	}
 	if u := unknownEnd(s, x); u != nil {
 		return u, true
 	}
@@ -768,7 +771,7 @@ func ExecStateIn(s *State, x *Execution) string {
 
 // execReason is an execution span's end reason for its state.
 func execReason(state string) string {
-	return orDefault(map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "interrupted", "unknown": "unknown"}[state], "completed")
+	return orDefault(map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "interrupted", "killed": "interrupted", "released": "refused", "unknown": "unknown"}[state], "completed")
 }
 
 // laterThan reports whether a happened after b by their recorded times (a's earliest bound after

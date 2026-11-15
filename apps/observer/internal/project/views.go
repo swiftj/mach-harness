@@ -35,7 +35,7 @@ func TV(st *Stamp) *TimeView {
 
 // ---- executions ----
 
-var terminalExec = map[string]bool{"finished": true, "failed": true, "interrupted": true, "timed-out": true, "could-not-start": true}
+var terminalExec = map[string]bool{"finished": true, "failed": true, "released": true, "killed": true, "interrupted": true, "timed-out": true, "could-not-start": true}
 
 // stoppedHow is how an execution's process was stopped before it could run to its end
 // (interrupted, timed-out, could-not-start), from its own record (result.json `ended`) or, when
@@ -69,6 +69,10 @@ func ExecState(x *Execution) string {
 		return stoppedHow(x)
 	case unknown && x.Completed == nil && x.Failed == nil:
 		return "unknown"
+	case x.Completed != nil && x.How == "killed":
+		return "killed"
+	case x.Released != nil && x.Completed == nil && x.Failed == nil && x.ProcessEnded == nil:
+		return "released"
 	case x.Failed != nil:
 		return "failed"
 	case x.Completed != nil:

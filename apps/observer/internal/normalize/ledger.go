@@ -347,6 +347,11 @@ func (l *Ledger) data(ev *event.Event, typ string, in map[string]any) (map[strin
 			}
 		}
 		d["refused_tools"] = oneRefusalPerTool(tools)
+		if _, ok := in["exit_code"]; ok {
+			// M7: the supervisor records the process's exit code (and how "killed" for a signal exit);
+			// earlier records carry neither, and their events keep their shape.
+			d["exit_code"] = intOrNil(get("exit_code"))
+		}
 	case "execution.failed":
 		d["stage"] = stage(get("stage"))
 		d["next"] = action(get("next"))

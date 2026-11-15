@@ -72,7 +72,9 @@ func keys(list ...string) map[string]bool {
 var rules = map[RecordKind]recordRules{
 	KindDecision: {known: keys("ticket_id", "round", "risk", "outcome", "approvals", "approvals_needed", "votes", "blockers", "security_veto",
 		"human_approval_required", "human_approval_reasons", "human_approval", "note", "recorded_at", "head", "findings", "decided_at",
-		"since_commit", "delta", "seats", "models", "notes"),
+		"since_commit", "delta", "seats", "models", "notes",
+		// M7: a decision the merge station voided keeps its record, marked void (merge.py).
+		"void", "void_reason", "outcome_before_void", "reason", "voided_at", "approved_commit", "branch_commit", "by"),
 		idMap: keys("votes", "models")},
 	KindVote: {known: keys("at", "head", "seat", "reviewer", "model", "summary", "vote", "findings", "severity", "rule", "file", "title",
 		"detail", "line", "round", "notes", "note", "since_commit")},

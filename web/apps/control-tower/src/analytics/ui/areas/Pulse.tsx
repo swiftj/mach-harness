@@ -22,6 +22,9 @@ import { runRecordFoot } from "../../model/capped";
 
 const D = 86_400_000;
 
+/** M7 D11: product acceptance is recorded in the product files and the release readiness snapshot, which the observer does not follow. */
+const PRODUCT_ACCEPTANCE_NOTE = "MACH's intake records do not carry product acceptance; see the release readiness snapshot.";
+
 export function Pulse(props: PulseProps) {
   return (
     <AreaFrame id="pulse" title="Factory Pulse" intro={null} props={props}>
@@ -266,7 +269,7 @@ function Ladder() {
         <li className="an-hatch border-l border-line px-3 py-2" data-state="not-recorded">
           <div className="text-caption text-ink-muted">Accepted by product</div>
           <div className="text-body-sm font-semibold text-ink">Not recorded</div>
-          <div className="text-caption text-ink-subtle">No MACH record says a person accepted a delivered slice.</div>
+          <div className="text-caption text-ink-subtle">{PRODUCT_ACCEPTANCE_NOTE}</div>
         </li>
       </ol>
       <p className="mt-1.5 text-caption text-ink-subtle">The catalog's name for slices integrated is “Accepted delivery” (T2); it counts commits on the integration branch. {ACCEPTANCE_NOTE}</p>

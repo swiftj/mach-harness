@@ -268,3 +268,19 @@ Still open after the run, none fixed in M7:
   reader, `apps/observer/internal/ingest/people.go`, reads `review/round-N`). Not checked further.
 - Whether D5 should be caught by `check-plan`, and whether D8 and D9 should change how attempts are counted, are
   decisions for the lead.
+
+### Corrected after the run: the Control Tower
+
+Against M7 worktree HEAD `4dc67bd`, uncommitted. Unit and Go tests only; the observer was also run once against a
+copy of the finished engineer clone (history only, no MACH script). Not re-observed in a live run or a browser.
+The projection format is now 7 (`apps/observer/internal/project/state.go`): an existing index rebuilds its
+projection from the stored events on first start. The redaction format is unchanged.
+
+| Defect | Fix | Tests |
+|---|---|---|
+| Repeated review folders (`round-N.k`, after `0fcbb1b`) | The artifact catalogue and the people scan read `review/round-N.k` as a repeat of judging round N (`round` N, `repeat` k); a decision the merge station voided is listed with `voided` (`reason_code` `branch-changed-after-approval`, the outcome it had, the approved and branch commits) and its record is served with the void record. In the projection a second `review.decided` in the same round replaces the first in R1 (`repeats` counts it); it is not another judging round. The Timeline and inspector do not yet word the repeat or the void: the fields are served, the page does not show them | `internal/artifact/m7_rounds_test.go` |
+| D11 product acceptance | Wording only. Pulse's "Accepted by product: Not recorded" now says "MACH's intake records do not carry product acceptance; see the release readiness snapshot." Showing `.factory/release/<id>/readiness.json`'s `product_acceptance` with its commit is **not done** | none (wording) |
+| D6 product state after a revision | `revision.superseded` with `from_revision` is read as intake wrote it: a waiting ticket takes the new revision (the slice stays, blocked at the new revision; the old revision is kept under `revisions`), work in the line keeps its revision with the newer one as `pending_revision`, a withdrawal still supersedes. A wave takes the revision `intake.validated` last records. The floor counts distinct slices. Against the run's copy: SLICE-003 `blocked` r6 LOCAL-005, WAVE-003 r4 | `internal/project/m7_run_test.go`, `test/m7-tower-fixes.test.mjs` |
+| D10 released claim | A claim held by the scheduling decision of its own pass with nothing started is `released` (reconstructed from the pass; the ledger's `released, not-started` is not read). It leaves X1, S1, S2 and K1's populations with the coverage note "a claim released without starting (not an execution)", and W4's open count; its span ends at that decision. Against the run's copy: xa1b6c30c0e44 `released` | `internal/project/m7_run_test.go` |
+| Killed executions (new fields) | `execution.completed` keeps `exit_code` when the record carries it (schema v3 gains an optional `exit_code`); `how: killed` is state `killed` in runs and spans (span reason `interrupted`). Metric populations that change: S3 counts it as not completed (numerator 0, denominator 1), X1 counts it in the numerator like `execution.failed`; K1/K4 are unchanged (D7) | `internal/project/m7_run_test.go` |
+| D7 | Unchanged: a product-owner decision | — |
