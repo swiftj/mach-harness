@@ -171,4 +171,9 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "MACH ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag
+        run: |
+          # A tag with a hyphen (v0.13.0-rc.1) is a release candidate: published as a pre-release, so it is
+          # never the "latest release" the installer resolves by default.
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --title "MACH ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag $pre

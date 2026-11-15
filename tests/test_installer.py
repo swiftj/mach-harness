@@ -1069,7 +1069,7 @@ class PackagingTest(unittest.TestCase):
         plugin = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
         market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text())
         self.assertEqual(plugin["name"], "mach")
-        self.assertRegex(plugin["version"], r"^\d+\.\d+\.\d+$")
+        self.assertRegex(plugin["version"], r"^\d+\.\d+\.\d+(-rc\.\d+)?$")  # a release candidate carries -rc.N
         self.assertEqual([(p["name"], p["source"]) for p in market["plugins"]], [("mach", "./")])
 
     def test_every_skill_has_front_matter_and_its_files(self):

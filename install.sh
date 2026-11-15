@@ -123,7 +123,7 @@ else
   fi
   [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || refuse "'$VERSION' is not a MACH release version (x.y.z)"
 
-  if python3 -I -c 'import sys; v, last = (tuple(map(int, a.split("."))) for a in sys.argv[1:]); sys.exit(0 if v <= last else 1)' \
+  if python3 -I -c 'import sys; v, last = (tuple(map(int, a.split("-")[0].split("."))) for a in sys.argv[1:]); sys.exit(0 if v <= last else 1)' \
        "$VERSION" "$LAST_WITHOUT_ARCHIVE"; then
     # Made before source archives were published: install it as before, and say it was not verified.
     FROM="github.com/$REPO tag v$VERSION"
