@@ -69,7 +69,9 @@ func ExecState(x *Execution) string {
 		return stoppedHow(x)
 	case unknown && x.Completed == nil && x.Failed == nil:
 		return "unknown"
-	case x.Completed != nil && x.How == "killed":
+	case (x.Completed != nil || x.Failed != nil) && x.How == "killed":
+		// M7 N6: a signal ended the process; the supervisor writes execution.completed when it moved
+		// the ticket and execution.failed when it did not, both with how "killed" and the exit code.
 		return "killed"
 	case x.Released != nil && x.Completed == nil && x.Failed == nil && x.ProcessEnded == nil:
 		return "released"
@@ -635,7 +637,8 @@ func CellSummary(c *Cell) map[string]any {
 		"plan": map[string]any{"app_type": orNil(c.AppType), "risk": orNil(c.Risk), "contracts": c.Contracts, "tasks": c.TasksPlanned,
 			"recorded_by": orNil(c.AppTypeSource)}, "created_at": TV(c.FirstSeen), "updated_at": TV(c.Updated),
 		"current_visit": c.CurrentVisit, "round": c.Round, "visits": len(c.Visits), "last_outcome": last, "lifecycle": c.Lifecycle,
-		"archived": c.Archived, "merged": c.Merge != nil, "executions": nonNilS(c.Executions)}
+		"archived": c.Archived, "merged": c.Merge != nil, "executions": nonNilS(c.Executions),
+		"abandoned": c.Abandoned != nil, "reissued_as": orNil(c.ReissuedAs)}
 }
 
 // Cells lists cells by ticket, optionally filtered by stage or station of the current visit.

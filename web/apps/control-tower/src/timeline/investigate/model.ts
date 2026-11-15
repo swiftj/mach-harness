@@ -60,6 +60,12 @@ export function runOf(exec: TimelineSpan, spans: readonly TimelineSpan[], liveAt
   return i < 0 ? null : { index: i + 1, of: list.length };
 }
 
+/** How a run that did not run to its end stopped, for the retries lens: "killed (exit -9)" for a killed execution (M7 N6), else "interrupted". */
+export function stopWord(span: TimelineSpan | null | undefined): string {
+  if (span?.attrs.state === "killed") return span.attrs.exitCode !== undefined ? `killed (exit ${span.attrs.exitCode})` : "killed";
+  return "interrupted";
+}
+
 /** "run 2 of 3", or "the only run". */
 export const runWords = (r: { index: number; of: number }): string => (r.of > 1 ? `run ${r.index} of ${r.of}` : "the only run");
 

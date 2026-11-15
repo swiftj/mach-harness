@@ -99,6 +99,7 @@ export function stoppedState(span: TimelineSpan): StoppedState | null {
   const st = span.attrs.state;
   if (st && STOPPED.has(st)) return st as StoppedState;
   const r = span.end?.reason;
+  if (r === "released") return "released";
   if (r === "interrupted" || r === "unknown") return r;
   return null;
 }
@@ -129,7 +130,7 @@ export function stoppedWords(span: TimelineSpan, state: StoppedState): string {
     return by !== null ? `outcome not known; ended by ${clockWords(by)} at the latest` : "outcome not known; when it ended is not known";
   }
   if (state === "released") return "released before starting; nothing ran, not counted as an execution";
-  const word = STOPPED_WORDS[state];
+  const word = state === "killed" && span.attrs.exitCode !== undefined ? `killed (exit ${span.attrs.exitCode})` : STOPPED_WORDS[state];
   const endAt = e ? (e.notAfter ?? e.at) : null;
   const most = span.duration.maxMs ?? span.duration.ms ?? (endAt !== null && t0 !== null ? endAt - t0 : null);
   if (e === null) return `${word}; when is not recorded`;

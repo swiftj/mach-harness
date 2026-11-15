@@ -379,9 +379,14 @@ type Cell struct {
 	Cleanup       *Cleanup       `json:"cleanup"`
 	Executions    []string       `json:"executions"`
 	Archived      bool           `json:"archived"`
-	Began         *Began         `json:"history_began"`
-	Artifacts     ArtifactCounts `json:"artifacts"`
-	Dropped       int64          `json:"dropped"`
+	// Abandoned is cleanup's abandon run record (run.recorded outcome "abandoned"; M7 N7): the
+	// ticket is closed, not waiting on anyone. ReissuedAs is the ticket intake reissued its slice
+	// to afterwards (slice.materialized for the same slice with another ticket), else "".
+	Abandoned  *Stamp         `json:"abandoned,omitempty"`
+	ReissuedAs string         `json:"reissued_as,omitempty"`
+	Began      *Began         `json:"history_began"`
+	Artifacts  ArtifactCounts `json:"artifacts"`
+	Dropped    int64          `json:"dropped"`
 	// MOpen are the indexes of visits C1 counts as open or inferred: the ones a later record can
 	// still reclassify (metric_visits.go).
 	MOpen []int `json:"m_open,omitempty"`

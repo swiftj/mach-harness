@@ -458,6 +458,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const def = definitions.slices[id];
       const dependsOn = e.data.dependencies;
       const prior = s.slices[id];
+      // M7 N7: reissued to another ticket: the earlier ticket waits on nobody.
+      if (prior && prior.ticketId && ticket && prior.ticketId !== ticket && s.supervisor.attention[prior.ticketId]) s = { ...s, supervisor: { ...s.supervisor, attention: without_(s.supervisor.attention, prior.ticketId) } };
       const knownCell = ticket ? s.cells[ticket] : undefined;
       const cellRisk = knownCell && isKnownField(knownCell.meta, "risk") ? knownCell.risk : null;
       // M6.6: the observer carries the intake ledger's title for this revision (free text, contained where shown).
@@ -524,6 +526,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       s = movedOnFrom(s, ticket, "", at, e);
       // M7: parked at once after an execution that was not progressing: the code, for the page's words.
       const code = s.executions[e.ids.execution_id ?? ""]?.notProgressing ?? null;
+      if (ticket && closedTicket(s, ticket)) return s; // M7 N7: asked about an abandoned or reissued ticket: nobody waits on it
       return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, key, { reason: e.data.reason, at: t, seq, code }) } };
     }
     case "scheduling.decided": {
@@ -757,6 +760,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     }
     case "run.recorded":
       s = ensureCell(s, e, definitions);
+      // M7 N7: an abandoned ticket waits on nobody.
+      if (ticket && e.data.outcome === "abandoned" && s.supervisor.attention[ticket]) s = { ...s, supervisor: { ...s.supervisor, attention: without_(s.supervisor.attention, ticket) } };
       return withCell(s, ticket, (cell) => ({ ...cell, runRecord: { outcome: e.data.outcome, rounds: e.data.rounds, firstPass: e.data.first_pass, at }, meta: touch(cell.meta, e) }));
 
     // ------------------------------------------------ the execution stream (observed)
@@ -1452,4 +1457,19 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
     s = setGate(s, g.ticket_id, kind, g.round ?? null, state, "From the observer's snapshot.", at, 0, meta());
   }
   return { ...s, completeness: { ...s.completeness, state: "reconstructed", since: at, observer: st.history ?? s.completeness.observer } };
+}
+
+function without_<T>(m: Readonly<Record<string, T>>, key: string): Record<string, T> {
+  const out = { ...m };
+  delete out[key];
+  return out;
+}
+
+/** The reducer's copy of selectors' ticketClosed (M7 N7), kept here so the reducer imports no selector. */
+function closedTicket(s: Scene, ticket: string): boolean {
+  const cell = s.cells[ticket];
+  if (!cell) return false;
+  if (cell.runRecord?.outcome === "abandoned") return true;
+  const now = cell.sliceId ? s.slices[cell.sliceId]?.ticketId : undefined;
+  return !!now && now !== ticket && !cell.merged;
 }

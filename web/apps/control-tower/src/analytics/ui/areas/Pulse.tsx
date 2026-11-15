@@ -463,6 +463,8 @@ function CostPanel() {
   );
 }
 
+/** M7 N6: killed executions are not counted apart; X1 counts them with failures. */
+const KILLED_NOTE = "A killed execution (ended by a signal) is counted with the failures: X1 does not count it apart.";
 const OUTCOME_WORDS: Readonly<Record<OutcomeKey, string>> = { completed: "Completed", failed: "Failed or killed", interrupted: "Interrupted", unknown: "Outcome unknown", open: "No end recorded" };
 const OUTCOME_TONES: Readonly<Record<OutcomeKey, string>> = { completed: "var(--an-pass)", failed: "var(--an-fail)", interrupted: "var(--an-halt)", unknown: "var(--an-stale)", open: "var(--an-subtle)" };
 
@@ -482,7 +484,7 @@ function ReliabilityPanel() {
         ) : !p.partition ? (
           <p className="text-body-sm text-ink-muted">These endings overlap in this window, so they are not drawn as parts of one whole; each is shown over its own base in Reliability.</p>
         ) : (
-          <ChartFrame size="sm" chart="pulse-outcomes" foot="Base: the executions claimed in this window (X1's denominator), each once by how it ended; open: no end recorded yet." title={`How ${plural(p.claimed, "claimed execution")} ended`} summary={p.parts.map((x) => `${OUTCOME_WORDS[x.key]} ${x.count}`).join(", ")} table={{ columns: [{ label: "Ending" }, { label: "Executions", num: true }], rows: p.parts.map((x) => [area ? <button key={x.key} type="button" className="an-link inline-flex min-h-6 items-center" onClick={() => area("reliability", `outcome:${x.key}`)}>{OUTCOME_WORDS[x.key]}</button> : OUTCOME_WORDS[x.key], count(x.count)]) }}>
+          <ChartFrame size="sm" chart="pulse-outcomes" foot={`Base: the executions claimed in this window (X1's denominator), each once by how it ended; open: no end recorded yet. ${KILLED_NOTE}`} title={`How ${plural(p.claimed, "claimed execution")} ended`} summary={p.parts.map((x) => `${OUTCOME_WORDS[x.key]} ${x.count}`).join(", ")} table={{ columns: [{ label: "Ending" }, { label: "Executions", num: true }], rows: p.parts.map((x) => [area ? <button key={x.key} type="button" className="an-link inline-flex min-h-6 items-center" onClick={() => area("reliability", `outcome:${x.key}`)}>{OUTCOME_WORDS[x.key]}</button> : OUTCOME_WORDS[x.key], count(x.count)]) }}>
             <PartsBar name={`How ${p.claimed} claimed executions ended`} height={22} parts={p.parts.map((x) => ({ key: x.key, label: OUTCOME_WORDS[x.key], value: x.count, text: count(x.count), tone: OUTCOME_TONES[x.key], hatch: x.key === "open" }))} onActivate={area ? (k) => area("reliability", `outcome:${k}`) : undefined} />
           </ChartFrame>
         )

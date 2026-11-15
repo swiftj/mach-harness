@@ -974,13 +974,13 @@ function activityOfUncached(scene: Scene, entity: EntityRef, options: ActivityOp
  * An execution's state in words, from what is recorded (R6): its process may have ended before the
  * supervisor recorded the outcome; it is then "Ended, outcome not recorded yet", never "running".
  */
-export function executionStatusOf(x: Pick<ExecutionState, "state" | "processEndedAt" | "ended"> & Partial<Pick<ExecutionState, "recovery" | "movedOnAt" | "how" | "releasedAt">>, historyEndedAt: number | null = null): { readonly word: string; readonly running: boolean } {
+export function executionStatusOf(x: Pick<ExecutionState, "state" | "processEndedAt" | "ended"> & Partial<Pick<ExecutionState, "recovery" | "movedOnAt" | "how" | "releasedAt" | "exitCode">>, historyEndedAt: number | null = null): { readonly word: string; readonly running: boolean } {
   // One order with executionActivity and the observer's ExecStateIn (shared contracts 2.3): how the
   // process was stopped, then an outcome-unknown recovery, then the supervisor's failure or completion.
   if (x.ended === "interrupted") return { word: "Interrupted", running: false };
   if (x.ended === "timed-out") return { word: "Timed out", running: false };
   if (x.ended === "could-not-start") return { word: "Could not start", running: false };
-  if (x.state === "completed" && x.how === "killed") return { word: "Killed", running: false };
+  if ((x.state === "completed" || x.state === "failed") && x.how === "killed") return { word: x.exitCode != null ? `Killed (exit ${x.exitCode})` : "Killed", running: false };
   if (x.releasedAt != null && x.state === "claimed") return { word: "Released before starting", running: false };
   if (x.recovery === "outcome-unknown" && x.state !== "completed" && x.state !== "failed") return { word: "Outcome not known", running: false };
   if (x.state === "completed") return { word: "Completed", running: false };
@@ -995,7 +995,8 @@ export function executionStatusOf(x: Pick<ExecutionState, "state" | "processEnde
 function executionActivity(x: ExecutionState): Activity {
   const authority = x.meta.authority;
   if (x.ended === "interrupted" || x.ended === "timed-out") return { state: "interrupted", reason: x.ended === "timed-out" ? "Its process timed out." : "Its process was interrupted.", since: x.processEndedAt, authority };
-  if (x.state === "completed" && x.how === "killed") return { state: "interrupted", reason: "Killed: its process ended on a signal after it moved the ticket; not a completed execution.", since: executionEndedAt(x), authority, label: "Killed" };
+  if ((x.state === "completed" || x.state === "failed") && x.how === "killed")
+    return { state: "interrupted", reason: `Killed: its process ended on a signal${x.exitCode != null ? ` (exit ${x.exitCode})` : ""}${x.state === "completed" ? " after it moved the ticket" : ""}; not a completed execution.`, since: executionEndedAt(x), authority, label: "Killed" };
   if (x.releasedAt !== null && x.state === "claimed") return { state: "interrupted", reason: "Released before starting: the supervisor held the ticket in the pass that claimed it; nothing ran.", since: x.releasedAt, authority: "reconstructed", label: "Released before starting" };
   if (x.recovery === "outcome-unknown" && x.state !== "completed" && x.state !== "failed") return { state: "unknown", reason: "The supervisor could not learn how it ended.", since: executionEndedAt(x), authority };
   if (x.state === "failed") return { state: "failed", reason: "The supervisor recorded a failure.", since: executionEndedAt(x), authority };
@@ -1009,7 +1010,10 @@ function executionActivity(x: ExecutionState): Activity {
 function cellActivity(scene: Scene, cell: CellState): Activity {
   const authority = cell.meta.authority;
   if (cell.merged || cell.runRecord?.outcome === "merged") return { state: "completed", reason: "Merged.", since: cell.merged?.at ?? cell.runRecord?.at ?? null, authority };
-  if (cell.runRecord?.outcome === "abandoned") return { state: "failed", reason: "Abandoned.", since: cell.runRecord.at, authority };
+  if (cell.runRecord?.outcome === "abandoned") {
+    const again = reissuedAs(scene, cell);
+    return { state: "failed", reason: again ? `Abandoned; reissued as ${again}.` : "Abandoned.", since: cell.runRecord.at, authority, label: again ? `Abandoned, reissued as ${again}` : "Abandoned" };
+  }
   if (cell.stage === "awaiting-human" || cell.stage === "spec-open") return { state: "waiting-person", reason: cell.stage === "spec-open" ? "The spec has open questions." : "A person must approve.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
   if (cell.stage === "blocked") return { state: "waiting-person", reason: "Escalated to a person.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
   // The human gate's id is the ticket's (one per ticket): looked up, never a scan of every gate per cell.
@@ -1590,4 +1594,23 @@ export function voidedDecisionWords(voided: { readonly reason_code: string; read
   if (!voided) return null;
   const was = voided.outcome_before === "APPROVED" ? "Approved" : voided.outcome_before === "AWAITING_HUMAN" ? "Awaiting a person" : "Decided";
   return `${was}, then voided: ${VOID_REASON_WORDS[voided.reason_code] ?? "the reason is not recorded"}. Not the standing decision.`;
+}
+
+/**
+ * M7 N7: the ticket a cell's slice went on as after this cell's ticket was abandoned (intake reissued
+ * the slice to another ticket). Null when the slice is still this ticket's, or not known.
+ */
+export function reissuedAs(scene: Pick<Scene, "slices">, cell: Pick<CellState, "ticketId" | "sliceId" | "runRecord">): string | null {
+  if (cell.runRecord?.outcome !== "abandoned" || !cell.sliceId) return null;
+  const now = scene.slices[cell.sliceId]?.ticketId;
+  return now && now !== cell.ticketId ? now : null;
+}
+
+/** M7 N7: a ticket nobody waits on: abandoned (cleanup's run record) or its slice reissued to another ticket. */
+export function ticketClosed(scene: Pick<Scene, "cells" | "slices">, ticket: string): boolean {
+  const cell = scene.cells[ticket];
+  if (!cell) return false;
+  if (cell.runRecord?.outcome === "abandoned") return true;
+  const now = cell.sliceId ? scene.slices[cell.sliceId]?.ticketId : undefined;
+  return !!now && now !== ticket && !cell.merged;
 }

@@ -50,7 +50,7 @@ test("the live reducer: a released claim, a killed run and a parked ticket from 
   log.ingest(finalize(events));
   const s = log.head();
   assert.equal(sim.executionStatusOf(s.executions["xa1b6c30c0e44"]).word, "Released before starting");
-  assert.equal(sim.executionStatusOf(s.executions["xf4a33789d169"]).word, "Killed");
+  assert.equal(sim.executionStatusOf(s.executions["xf4a33789d169"]).word, "Killed (exit -9)");
   assert.equal(s.executions["xf4a33789d169"].exitCode, -9);
   assert.equal(sim.parkedWords(s.supervisor.attention["LOCAL-003"].code), "Parked: the build stopped on the same task with the same refusal twice");
 });

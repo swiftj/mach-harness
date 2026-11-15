@@ -530,13 +530,23 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		var d struct {
 			Dependencies []string `json:"dependencies"`
 			Title        *string  `json:"title"` // M6.6: from the intake ledger, for this revision
+			Reissued     *bool    `json:"reissued"`
 		}
 		e.DataAs(&d)
+		followUp := sl.Integrated != nil && (d.Reissued == nil || !*d.Reissued) // integrated work's follow-up ticket is not a reissue
 		if sl.Materialized != nil && !sameRev(sl.Revision, e.IDs.Revision) {
 			sl.Revisions = append(sl.Revisions, SliceRevision{Revision: sl.Revision, TicketID: sl.TicketID, State: sl.State, At: sl.Materialized})
 			s.endSliceWait(sl, st) // a new revision replaced the slice while it waited
 			sl.Blocked, sl.Resolved, sl.Scheduled, sl.Integrated, sl.Superseded = nil, nil, nil, nil, nil
 			sl.Reasons, sl.DependsOn, sl.Commit, sl.Title, sl.Holds = []string{}, []string{}, "", "", nil
+		}
+		if old := sl.TicketID; old != "" && e.Ticket() != "" && old != e.Ticket() && !followUp {
+			// Reissued (M7 N7): the slice's earlier ticket is closed and its work goes on as this one.
+			if c := s.Cells[old]; c != nil && c.ReissuedAs == "" {
+				c.ReissuedAs = e.Ticket()
+				s.touch(entCell, old)
+			}
+			s.closeAbandoned(old, st)
 		}
 		if sl.FirstMaterialized == nil || sl.Materialized == nil || !sameRev(sl.Revision, e.IDs.Revision) {
 			sl.FirstMaterialized = st
@@ -691,6 +701,10 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		key := "required:" + e.ID
 		s.Gates[key] = &HumanGate{Key: key, Kind: "required", TicketID: e.Ticket(), SliceID: feed.Str(e.IDs.SliceID), Reason: d.Reason, Opened: st,
 			Code: s.parkedFor(e.Ticket(), e.Execution(), st)}
+		if c := s.Cells[e.Ticket()]; c != nil && (c.Abandoned != nil || c.ReissuedAs != "") {
+			// Asked about a ticket already abandoned or reissued (M7 N7): nobody waits on it.
+			s.closeAbandoned(c.TicketID, st)
+		}
 		m.Count("S4", s.cdims(e.Ticket()), day(st), 1)
 	case "factory.activated":
 		var d struct {
@@ -920,6 +934,16 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), 0, 1)
 		m.Rate("X1", s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID), day(st), 1, 0)
+	}
+}
+
+// closeAbandoned ends every open person gate of a ticket that was abandoned or reissued: nobody
+// waits on a closed ticket (M7 N7).
+func (s *State) closeAbandoned(ticket string, st *Stamp) {
+	for _, g := range s.Gates {
+		if g.TicketID == ticket && g.Kind == "required" && g.Closed == nil {
+			g.Closed, g.ClosedBy = st, "abandoned"
+		}
 	}
 }
 
@@ -1431,6 +1455,10 @@ func (s *State) applyRun(e *feed.Event, st *Stamp) {
 	s.Runs = append(s.Runs, r)
 	if c := s.cell(e, st); c != nil {
 		c.Archived = true
+		if d.Outcome == "abandoned" && c.Abandoned == nil {
+			c.Abandoned = st
+			s.closeAbandoned(c.TicketID, st)
+		}
 		if d.AppType != "" {
 			c.AppType = d.AppType
 		}

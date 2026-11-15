@@ -20,7 +20,7 @@ type SpanEnd struct {
 	NotAfter  *string `json:"not_after,omitempty"`
 	Basis     string  `json:"basis"` // recorded | inferred
 	Rule      string  `json:"rule,omitempty"`
-	Reason    string  `json:"reason,omitempty"` // end only: completed | failed | refused | interrupted | superseded | unknown
+	Reason    string  `json:"reason,omitempty"` // end only: completed | failed | refused | interrupted | superseded | released | unknown
 }
 
 // Span is one span.
@@ -48,21 +48,23 @@ type Span struct {
 // SpanAttrs are facts about a span that other routes already serve. A key is left out when
 // nothing recorded it; a recorded zero is sent.
 type SpanAttrs struct {
-	Label          string   `json:"label,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	AgentType      string   `json:"agent_type,omitempty"`
-	ToolCalls      *int64   `json:"tool_calls,omitempty"`
-	ToolsCountOnly bool     `json:"tools_count_only,omitempty"` // a workflow agent: only a count of its tool calls is observable
-	LastTool       string   `json:"last_tool,omitempty"`
-	Tokens         *int64   `json:"tokens,omitempty"`
-	Action         string   `json:"action,omitempty"`
-	Round          *int64   `json:"round,omitempty"`
-	Attempt        *int64   `json:"attempt,omitempty"`
-	State          string   `json:"state,omitempty"`
-	CostUSD        *float64 `json:"cost_usd,omitempty"`
-	Vote           string   `json:"vote,omitempty"`
-	Reasons        []string `json:"reasons,omitempty"`
-	DependsOn      []string `json:"depends_on,omitempty"`
+	Label          string `json:"label,omitempty"`
+	Model          string `json:"model,omitempty"`
+	AgentType      string `json:"agent_type,omitempty"`
+	ToolCalls      *int64 `json:"tool_calls,omitempty"`
+	ToolsCountOnly bool   `json:"tools_count_only,omitempty"` // a workflow agent: only a count of its tool calls is observable
+	LastTool       string `json:"last_tool,omitempty"`
+	Tokens         *int64 `json:"tokens,omitempty"`
+	Action         string `json:"action,omitempty"`
+	Round          *int64 `json:"round,omitempty"`
+	Attempt        *int64 `json:"attempt,omitempty"`
+	State          string `json:"state,omitempty"`
+	// ExitCode is a killed execution's exit code (M7 N6), a code; absent otherwise.
+	ExitCode  *int64   `json:"exit_code,omitempty"`
+	CostUSD   *float64 `json:"cost_usd,omitempty"`
+	Vote      string   `json:"vote,omitempty"`
+	Reasons   []string `json:"reasons,omitempty"`
+	DependsOn []string `json:"depends_on,omitempty"`
 	// Limit is the recorded number of places a capacity wait waited on (max_parallel).
 	Limit *int64 `json:"limit,omitempty"`
 	// A visit whose exit was recorded only after its execution ended (or after its station was
@@ -771,7 +773,7 @@ func ExecStateIn(s *State, x *Execution) string {
 
 // execReason is an execution span's end reason for its state.
 func execReason(state string) string {
-	return orDefault(map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "interrupted", "killed": "interrupted", "released": "refused", "unknown": "unknown"}[state], "completed")
+	return orDefault(map[string]string{"failed": "failed", "interrupted": "interrupted", "timed-out": "interrupted", "could-not-start": "interrupted", "killed": "interrupted", "released": "released", "unknown": "unknown"}[state], "completed")
 }
 
 // laterThan reports whether a happened after b by their recorded times (a's earliest bound after
@@ -800,6 +802,9 @@ func execSpans(b *spanBuilder, s *State, x *Execution) {
 	// The state always goes out (attrs.state), so a view never has to guess "running".
 	state := ExecStateIn(s, x)
 	execAttrs := SpanAttrs{Attempt: x.Attempt, State: state, CostUSD: costOf(x).USD}
+	if state == "killed" {
+		execAttrs.ExitCode = x.ExitCode // a code: the signal's negative exit code
+	}
 	reason := execReason(state)
 	// An execution ends at its recorded end; with none, an execution whose outcome is unknown ends
 	// no later than the recovery that found it so, or the first later record showing the supervisor
@@ -829,8 +834,11 @@ func execSpans(b *spanBuilder, s *State, x *Execution) {
 	// closed only by the observer's own reconstruction at the process end (contract 8:
 	// open-at-process-end, status unknown) reads the same way: no record stated that end.
 	childReason := "interrupted"
-	if reason == "unknown" {
+	switch reason {
+	case "unknown":
 		childReason = "unknown"
+	case "released":
+		childReason = "released" // a claim released before it started: nothing was interrupted
 	}
 	closeOpen := func(sp *Span, from, own *Stamp) {
 		if sp == nil || from == nil {
