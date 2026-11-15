@@ -935,3 +935,95 @@ class BlockedRequestTest(Base):
         self.assertNotIn("waiting_for", row)
         self.assertNotIn("waiting_for", self.feedback(mergeStateStatus="CLEAN"))
 
+
+
+class StuckWorkspaceTest(Base):
+    """M7 Factory acceptance 3, P1 and P2: the two PM workspaces the live run left unusable, rebuilt in
+    the records' own shape (roles only), and made usable again through Product Studio's commands."""
+
+    def revise_without_refresh(self, project, note):
+        self.ok(project, "slice", "reopen", "SLICE-001")
+        self.write_slice(project, "SLICE-001", extra=f"\n{note}\n")
+        self.ok(project, "slice", "approve", "SLICE-001")
+        self.ok(project, "wave", "approve", "WAVE-001", "--at", AT)
+
+    def test_p1_revising_my_own_merged_slice_before_refreshing_is_not_a_collision(self):
+        # The run's sequence: send, the request merges, then reopen, edit, approve, approve, send, with no refresh between.
+        self.first_wave(self.a)
+        self.ok(self.a, "send", "WAVE-001")
+        self.land("product/WAVE-001")
+        self.revise_without_refresh(self.a, "Revised after the merge, before refreshing.")
+        status = self.ok(self.a, "status")
+        self.assertEqual(status["needs_reconciling"]["collisions"], [])
+        self.assertEqual(status["needs_reconciling"]["conflicts"], [])
+        self.assertNotIn("renumber", " ".join(status["suggested_next"]))
+        self.assertEqual(self.ok(self.a, "refresh")["needs_reconciling"]["collisions"], [])
+        sent = self.ok(self.a, "send", "WAVE-001")
+        self.assertEqual(sent["pull_request"], "https://example.test/pull/2")
+        self.assertIn("Revised after the merge", git(self.origin, "show", "product/WAVE-001:specs/slices/SLICE-001-invite-teammate.md"))
+        self.assertEqual(len(self.gh()["prs"]), 2)
+
+    def test_p1_a_later_shared_revision_is_a_conflict_to_settle_not_a_collision(self):
+        # pma's state: its own merged slice was revised by someone else and merged, while pma holds its own later draft.
+        self.first_wave(self.a)
+        self.ok(self.a, "send", "WAVE-001")
+        self.land("product/WAVE-001")
+        self.ok(self.b, "refresh")
+        self.revise_without_refresh(self.b, "Ben's revision.")
+        self.ok(self.b, "send", "WAVE-001")
+        self.land("product/WAVE-001")
+        self.revise_without_refresh(self.a, "Ada's stale revision.")
+        status = self.ok(self.a, "refresh")
+        self.assertEqual(status["needs_reconciling"]["collisions"], [])
+        self.assertIn("specs/slices/SLICE-001-invite-teammate.md", status["needs_reconciling"]["conflicts"])
+        for relative in list(status["needs_reconciling"]["conflicts"]):
+            self.ok(self.a, "reconcile", relative, "--take", "theirs")
+        self.assertEqual(self.ok(self.a, "status")["needs_reconciling"], {"conflicts": [], "collisions": [], "details": {}})
+
+    def acceptance(self, recorded_at, **extra):
+        wave = self.draft(self.a, "product/delivery-waves/WAVE-001.json").read_bytes()
+        return {"by": "product-owner", "decision": "accepted", "note": None, "project_id": "team-space", "readiness_outcome": "qualified",
+                "readiness_sha256": "7" * 64, "recorded_at": recorded_at, "release_commit": "e" * 40, "release_id": "WAVE-001-eeeeeeeeeeee",
+                "schema_version": 1, "wave_id": "WAVE-001", "wave_revision": 1, "wave_sha256": studio.sha(wave), **extra}
+
+    def shared_acceptance(self, data):
+        git(self.eng, "fetch", "-q", "origin")
+        git(self.eng, "merge", "-q", "--ff-only", "origin/main")
+        path = self.eng / "product/acceptance/WAVE-001.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(studio.canonical(data))
+        git(self.eng, "add", "-A")
+        git(self.eng, "commit", "-q", "-m", "acceptance")
+        git(self.eng, "push", "-q", "origin", "main")
+
+    def test_p2_taking_theirs_on_an_acceptance_record_adds_no_revision(self):
+        self.shared_start()
+        self.shared_acceptance(self.acceptance("2026-11-15T03:00:00Z"))
+        self.ok(self.a, "refresh")
+        record = self.draft(self.a, "product/acceptance/WAVE-001.json")
+        record.write_text(studio.canonical(self.acceptance("2026-11-15T03:01:00Z")))
+        self.shared_acceptance(self.acceptance("2026-11-15T03:05:29Z"))
+        self.assertIn("product/acceptance/WAVE-001.json", self.ok(self.a, "refresh")["needs_reconciling"]["conflicts"])
+        self.ok(self.a, "reconcile", "product/acceptance/WAVE-001.json", "--take", "theirs")
+        self.assertNotIn("revision", json.loads(record.read_text()))
+        self.assertEqual(record.read_bytes(), (self.eng / "product/acceptance/WAVE-001.json").read_bytes())
+        self.assertEqual(self.ok(self.a, "status")["structural_errors"], [])
+        self.ok(self.a, "slice", "reopen", "SLICE-001")
+
+    def test_p2_a_workspace_already_stuck_is_repaired_and_unrelated_changes_are_not_blocked(self):
+        self.shared_start()
+        self.shared_acceptance(self.acceptance("2026-11-15T03:05:29Z"))
+        self.ok(self.a, "refresh")
+        record = self.draft(self.a, "product/acceptance/WAVE-001.json")
+        # pmb's file: the shared record plus "revision": 0, which the earlier reconcile wrote.
+        record.write_text(studio.canonical(self.acceptance("2026-11-15T03:05:29Z", revision=0)))
+        status = self.ok(self.a, "status")
+        self.assertEqual([(r["path"], r["removed_field"]) for r in status["repaired"]], [("product/acceptance/WAVE-001.json", "revision")])
+        self.assertEqual(status["structural_errors"], [])
+        self.assertNotIn("repaired", self.ok(self.a, "status"))  # said once
+        # A stray field that is not only that (the record also differs) is reported by file and field,
+        # and does not block an unrelated change.
+        record.write_text(studio.canonical(self.acceptance("2026-11-15T03:09:00Z", revision=0)))
+        self.assertIn("product/acceptance/WAVE-001.json: unexpected field 'revision'", self.ok(self.a, "status")["structural_errors"])
+        self.ok(self.a, "slice", "reopen", "SLICE-001")
+        self.assertIs(self.ok(self.a, "refresh")["refreshed"], True)

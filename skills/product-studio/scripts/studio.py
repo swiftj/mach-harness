@@ -106,6 +106,12 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def stray_revision_only(mine: bytes, theirs: bytes) -> bool:
+    """True when the draft differs from the shared record only by a "revision" field the shared one lacks."""
+    m, t = collab.parse(mine), collab.parse(theirs)
+    return bool(m and t is not None and "revision" in m and "revision" not in t and {k: v for k, v in m.items() if k != "revision"} == t)
+
+
 def canonical(data: Dict[str, Any]) -> str:
     """One byte form for every artifact, so the terminal and any other client write identical files."""
     return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
@@ -238,7 +244,8 @@ class Studio:
         session = self.session()
         legacy: Dict[str, str] = session.get("baseline") or {}
         resolutions: Dict[str, Dict[str, str]] = session["resolutions"]
-        report: Dict[str, Any] = {"conflicts": [], "collisions": [], "details": {}, "arrived": [], "updated": [], "merged": [], "approvals_withdrawn": []}
+        report: Dict[str, Any] = {"conflicts": [], "collisions": [], "details": {}, "arrived": [], "updated": [], "merged": [], "approvals_withdrawn": [],
+                                  "repaired": []}
         touched: List[str] = []
         for relative, data in sorted(self.theirs().items()):
             target = self.draft / relative
@@ -247,6 +254,17 @@ class Studio:
             base = base_path.read_bytes() if base_path.is_file() else None
             if base is None and mine is not None and relative in legacy:  # a workspace from before bases were kept
                 base = mine if sha(mine) == legacy[relative] else data if sha(data) == legacy[relative] else None
+            if mine is not None and mine != data and relative.startswith("product/acceptance/") and stray_revision_only(mine, data):
+                target.write_bytes(data)  # repair: an earlier reconcile added a revision this record never has
+                self.set_base(relative, data)
+                report["repaired"].append({"path": relative, "removed_field": "revision",
+                                           "note": "This acceptance record had a 'revision' field it never has, added by an earlier reconcile. It was removed; the record now matches the shared one."})
+                continue
+            if mine is not None and mine != data and base != data:
+                sent = self.sent_version(relative, data)
+                if sent is not None:
+                    base = sent  # this workspace's own publication: the draft is a later revision of it, not a different artifact
+                    self.set_base(relative, sent)
             if mine is None:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
@@ -296,6 +314,23 @@ class Studio:
             self.save_session(session)
         self.settle(touched, report)
         return report
+
+    def sent_version(self, relative: str, data: bytes) -> Optional[bytes]:
+        """What this workspace itself published of `relative`, when that publication is the shared
+        version's lineage: the shared file is exactly what was sent, or the sent commit is merged."""
+        found: Optional[bytes] = None
+        for entry in self.ledger()["waves"].values():
+            commit = entry.get("commit") if isinstance(entry, dict) else None
+            if not commit or relative not in (entry.get("files") or []):
+                continue
+            sent = collab.git_bytes(self.project, "show", f"{commit}:{relative}")
+            if sent is None:
+                continue
+            if sent == data:
+                return sent
+            if self.shared.ref and collab.git(self.project, "merge-base", "--is-ancestor", commit, self.shared.ref).returncode == 0:
+                found = sent
+        return found
 
     def settle(self, touched: Sequence[str], report: Dict[str, Any]) -> None:
         """Withdraw a local approval that a change from the shared project has made untrue.
@@ -426,19 +461,21 @@ class Studio:
     def commit_or_restore(self, changes: Sequence[Tuple[str, Dict[str, Any]]], what: str) -> None:
         """Apply several artifact changes, then check the whole workspace. If the result is not
         structurally valid, put every file back and refuse."""
+        before = set(self.structural()["errors"])
         saved = []
         for kind, data in changes:
             path = self.path(kind, None if kind == "project" else data[KINDS[kind][3]])
             saved.append((path, path.read_text(encoding="utf-8") if path.is_file() else None))
             self.save(kind, data)
         report = self.structural()
-        if not report["valid"]:
+        introduced = [error for error in report["errors"] if error not in before]  # a problem elsewhere never blocks an unrelated change
+        if introduced:
             for path, text in saved:
                 if text is None:
                     path.unlink()
                 else:
                     write(path, text)
-            raise StudioError(f"{what} would leave the product artifacts inconsistent, so nothing was changed:\n  " + "\n  ".join(report["errors"]))
+            raise StudioError(f"{what} would leave the product artifacts inconsistent, so nothing was changed:\n  " + "\n  ".join(introduced))
 
     # ---- slice checks ----
 
@@ -604,6 +641,7 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
         "project": project and {**{key: project.get(key) for key in ("project_id", "name", "status", "revision", "vision", "outcomes")},
                                 "source": source("product/project.json")},
         "approvals_withdrawn": withdrawn,
+        **({"repaired": sync["repaired"]} if sync.get("repaired") else {}),
         "epics": [{"epic_id": key, "title": data.get("title"), "status": data.get("status"), "revision": data.get("revision"),
                    "acceptance_criteria": list(data.get("acceptance_criteria") or []),
                    "source": source(f"product/epics/{key}.json")} for key, data in epics.items()],
@@ -1213,6 +1251,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         "arrived": sync["arrived"], "updated": sync["updated"], "merged": sync["merged"],
         "approvals_withdrawn": sync["approvals_withdrawn"],
         "needs_reconciling": reconciling(sync),
+        **({"repaired": sync["repaired"]} if sync.get("repaired") else {}),
     })
 
 

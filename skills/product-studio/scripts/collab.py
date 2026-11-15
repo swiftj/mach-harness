@@ -297,6 +297,8 @@ def merge_fields(base: Dict[str, Any], mine: Dict[str, Any], theirs: Dict[str, A
             value = m
         if value is not missing:
             merged[key] = value
+    if "revision" not in theirs and "revision" not in mine:
+        return merged, conflicts  # an artifact without revisions (an acceptance record): never add one
     their_revision = theirs.get("revision") if type(theirs.get("revision")) is int else 0
     same = {k: v for k, v in theirs.items() if k != "revision"} == merged
     merged["revision"] = their_revision if same else their_revision + 1
