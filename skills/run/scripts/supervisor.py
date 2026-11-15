@@ -330,16 +330,29 @@ class Supervisor:
         ticket = record["ticket_id"]
         step = self.next_step(ticket)
         moved = (step.get("stage"), step.get("action")) != (record.get("stage_at_start"), record.get("action_at_start"))
+        build_at_end = self.build_refusal(ticket, record["execution_id"]) if step.get("stage") == "building" else None
         record.update({"state": "finished" if known else "unknown", "ended_at": facts.get("ended_at") or stamp(), "how": facts.get("how") if known else "unknown",
                        "exit_code": facts.get("exit_code"), "session_id": facts.get("session_id") or record.get("session_id"), "cost_usd": facts.get("cost_usd"),
-                       "refused_tools": facts.get("refused_tools") or [], "stage_at_end": step.get("stage"), "next_at_end": step.get("action"), "moved": moved})
+                       "refused_tools": facts.get("refused_tools") or [], "stage_at_end": step.get("stage"), "next_at_end": step.get("action"), "moved": moved,
+                       "build_at_end": build_at_end})
         common = {"ticket_id": ticket, "slice_id": record.get("slice_id"), "execution_id": record["execution_id"],
                   "refs": {"cell": f".factory/worktrees/{ticket}/cell.json", "execution": f".factory/local/executions/{record['execution_id']}/"}}
+        stuck = self.not_progressing(supervisor, record, facts, known)
+        if stuck:
+            # A deterministic stop: running the same work again would stop in the same place. A person decides.
+            count = int((supervisor["attempts"].get(ticket) or {}).get("count") or 0) + 1
+            supervisor["attempts"][ticket] = {"count": count, "at": f"{step.get('stage')}@{step.get('action')}"}
+            self.line.emit(ledger, "execution.failed", stage=step.get("stage"), next=step.get("action"), how=record["how"],
+                           claude_error=facts.get("subtype") if facts.get("is_error") else None, exit_code=record["exit_code"], attempt=count,
+                           session_id=record["session_id"], not_progressing=stuck[0], **common)
+            self.park(ledger, ticket, stuck[1], common)
+            return
         if moved or (known and step.get("action") == "stop"):
             # Refusals that the workers got past are reported with the result. Nothing was granted.
-            supervisor["attempts"].pop(ticket, None)
+            if known and record["how"] == "exited" and record["exit_code"] == 0:
+                supervisor["attempts"].pop(ticket, None)  # only a clean exit clears the count; a killed run that moved does not
             self.line.emit(ledger, "execution.completed", stage=step.get("stage"), next=step.get("action"), waiting_for=step.get("needs"),
-                           how=record["how"], seen_to_end=known, cost_usd=record["cost_usd"], session_id=record["session_id"],
+                           how=record["how"], exit_code=record["exit_code"], seen_to_end=known, cost_usd=record["cost_usd"], session_id=record["session_id"],
                            refused_tools=record["refused_tools"], **common)
             return
         if record["refused_tools"]:
@@ -353,6 +366,58 @@ class Supervisor:
             self.park(ledger, ticket, f"The {record.get('action_at_start')} station was running when its execution was lost, and what it did is not known. It is never retried automatically.", common)
         elif count >= int(pol["limits"]["max_attempts"]):
             self.park(ledger, ticket, f"{count} execution(s) ended without moving it past '{step.get('stage')}'.", common)
+
+    def build_refusal(self, ticket: str, execution_id: str) -> Optional[Dict[str, Any]]:
+        """Where the build stands, from the cell's own records: the next task in build.json, and the last
+        build gate that refused during this execution (from lifecycle.jsonl, which names the execution)."""
+        cell = self.root / ".factory" / "worktrees" / ticket
+        try:
+            tasks = json.loads((cell / "build.json").read_text(encoding="utf-8")).get("tasks") or []
+        except (OSError, ValueError, AttributeError):
+            return None
+        pending = next((task.get("id") for task in tasks if isinstance(task, dict) and task.get("status") != "done"), None)
+        refusal = None
+        try:
+            with (cell / "lifecycle.jsonl").open("r", encoding="utf-8", errors="replace") as lines:
+                for line in lines:
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    data = entry.get("data") if isinstance(entry, dict) else None
+                    if (isinstance(data, dict) and entry.get("type") == "gate.evaluated" and entry.get("station") == "build"
+                            and entry.get("execution_id") == execution_id and data.get("outcome") == "refuse"):
+                        refusal = {"gate": data.get("gate"), "reason_code": data.get("reason_code"), "task": data.get("task")}
+        except OSError:
+            pass
+        return {"task": pending, "refusal": refusal}
+
+    def not_progressing(self, supervisor: Dict[str, Any], record: Dict[str, Any], facts: Dict[str, Any], known: bool) -> Optional[Tuple[str, str]]:
+        """Why this execution shows the ticket cannot progress without a person, from recorded facts only; or None.
+
+        Two facts count: the belt workflow's own result says the ticket is stuck; or the build stands on the
+        same task, refused by the same gate for the same reason, as at the end of this ticket's previous
+        execution, and this execution recorded that refusal itself."""
+        if not known:
+            return None
+        ticket = record["ticket_id"]
+        for item in (facts.get("workflow") or {}).get("tickets") or []:
+            if item.get("ticket") == ticket and item.get("outcome") == "stuck":
+                where = item.get("stage") or record.get("stage_at_end") or "its current stage"
+                return "workflow-stuck", f"The belt workflow reported it stuck at '{where}': the same station ran without moving it on. Retrying would repeat it."
+        here = record.get("build_at_end")
+        if not here or not here.get("refusal"):
+            return None
+        earlier = [other for other in supervisor["executions"].values() if other.get("ticket_id") == ticket and other is not record
+                   and other.get("state") in ("finished", "unknown") and (other.get("ended_at") or "") <= (record.get("ended_at") or "")]
+        if not earlier:
+            return None
+        previous = max(earlier, key=lambda other: other.get("ended_at") or "").get("build_at_end") or {}
+        if previous.get("task") == here.get("task") and previous.get("refusal") == here["refusal"]:
+            refusal = here["refusal"]
+            return "same-refusal", (f"Two executions in a row stopped at build task {here.get('task')}, refused by {refusal.get('gate')} "
+                                    f"({refusal.get('reason_code')}). Retrying would repeat it; the plan or the code needs a person.")
+        return None
 
     def park(self, ledger: Dict[str, Any], ticket: str, reason: str, common: Dict[str, Any]) -> None:
         """Take a ticket out of automatic execution until a person says to carry on."""

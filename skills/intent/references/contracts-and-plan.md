@@ -71,6 +71,7 @@ Read the plan template and write `plan.md` to `plan_path`. The builder follows i
 - **One test per scenario.** Each `AC-NN` gets its own `[test]` task. Outside services named under `external_dependencies` are simulated, including the failure each scenario describes; time is controlled, not waited for.
 - **Every ID is assigned.** Each `FR-NN`, `INV-NN` and `AC-NN` in the spec appears in at least one task. A requirement you cannot assign to a test is a spec defect.
 - **Small, ordered, concrete.** Each task names the files it touches and is small enough to review on its own. Order tasks so the suite is green after every `[impl]` task.
+- **Each `[impl]` task can go green on its own.** The build station completes an `[impl]` task only when the whole suite passes, so every test written before it must pass with the files of the `[impl]` tasks up to and including it. One behaviour that needs several files (a domain change and the route that exposes it) is one `[impl]` task listing all of them, not two in a row. Name on an `[impl]` task only the FR and AC IDs it makes pass; a later `[impl]` task that names an FR or AC whose tests all come before an earlier `[impl]` task is refused by `CELL check-plan`. Invariants an `[impl]` task keeps may be named.
 - **File touch map.** List every file the plan creates or changes exactly once. Other cells read this to avoid collisions.
 - **Nothing extra.** No task for behavior the spec does not require, no speculative abstractions, no new dependency without a line under Engineering decisions saying why the project's existing ones do not suffice.
 - **Follow the project.** Reuse its service layers, test helpers, and, for user interfaces, its existing components and design tokens. If the project has a feature-flag system, put the new behavior behind a flag and say so under Engineering decisions.
@@ -78,7 +79,7 @@ Read the plan template and write `plan.md` to `plan_path`. The builder follows i
 
 ## Gate
 
-Run `CELL check-plan <ticket-id>`. It checks the plan header, that each listed contract exists, that the plan is test-first, and that every requirement and scenario is assigned. Fix what it reports and rerun, at most 5 times. On `PLANNED` it records the app type, risk tier and contracts on the cell and commits the contract files on the cell's branch.
+Run `CELL check-plan <ticket-id>`. It checks the plan header, that each listed contract exists, that the plan is test-first, that every requirement and scenario is assigned, and that no `[impl]` task waits on a later one to go green. Fix what it reports and rerun, at most 5 times. On `PLANNED` it records the app type, risk tier and contracts on the cell and commits the contract files on the cell's branch.
 
 ## Report
 

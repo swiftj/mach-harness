@@ -86,13 +86,23 @@ for ticket in args["tickets"]:
             import subprocess
             subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True)
             subprocess.run(["git", "-c", "user.name=line", "-c", "user.email=line@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "build"], cwd=repo, capture_output=True)
+    if plan.get("refuse"):  # the build station refused a task: build.json and the cell's lifecycle log say so, as build.py writes them
+        cell_dir = os.path.join(".factory", "worktrees", ticket)
+        json.dump({"tasks": [{"id": "T01", "kind": "test", "status": "done"}, {"id": plan["refuse"], "kind": "impl", "status": "pending"}]},
+                  open(os.path.join(cell_dir, "build.json"), "w"))
+        with open(os.path.join(cell_dir, "lifecycle.jsonl"), "a") as log:
+            log.write(json.dumps({"v": 1, "type": "gate.evaluated", "station": "build", "ticket_id": ticket, "execution_id": os.environ.get("MACH_EXECUTION_ID"),
+                                  "data": {"gate": "build.green", "outcome": "refuse", "reason_code": "suite-red", "task": plan["refuse"]}}) + "\n")
     if plan.get("vanish"):
         os._exit(7)
-    tickets.append({"ticket": ticket, "outcome": "stopped", "stage": plan.get("stage", ""), "waiting_for": "merge"})
+    tickets.append({"ticket": ticket, "outcome": plan.get("outcome", "stopped"), "stage": plan.get("stage", ""), "waiting_for": "merge"})
 result = {"type": "result", "subtype": "success" if not plan.get("is_error") else "error_during_execution", "is_error": bool(plan.get("is_error")),
           "session_id": session, "total_cost_usd": plan.get("cost", 0.5), "permission_denials": [],
           "result": json.dumps({"tickets": tickets, "waiting_on_a_person": [], "finished": [], "problems": []})}
 print(json.dumps(result), flush=True)
+if plan.get("kill"):  # ended by a signal, as when a person or the OS kills Claude Code
+    import signal
+    os.kill(os.getpid(), signal.SIGKILL)
 sys.exit(plan.get("exit", 0))
 '''
 OS_ADDED_ENV = {"__CF_USER_TEXT_ENCODING"}  # macOS adds this to every process itself; it is not passed by the wrapper
@@ -836,6 +846,66 @@ class LimitsTest(Base):
         for _ in range(2):
             self.assertEqual(self.tick()["started"], [])
         self.assertEqual(len(self.calls()), 2)
+
+
+class NotProgressingTest(Base):
+    """M7 D8 and D9: how an execution ended, and when retrying it is pointless, from recorded facts only."""
+
+    def test_a_belt_run_that_reports_stuck_parks_the_ticket_at_once(self):
+        self.supervised()
+        self.claude({"default": {"stage": "building", "outcome": "stuck"}})  # it moved, then the belt gave up
+        self.tick()
+        self.wait()
+        report = self.tick()
+        self.assertEqual(report["started"], [])
+        self.assertIn("The belt workflow reported it stuck at 'building'", report["parked"]["LOCAL-001"]["reason"])
+        failed = [e for e in self.events() if e["type"] == "execution.failed"]
+        self.assertEqual([(e["data"]["not_progressing"], e["data"]["attempt"]) for e in failed], [("workflow-stuck", 1)])
+        self.assertNotIn("execution.completed", self.kinds())
+        self.assertEqual(len(self.calls()), 1, "no attempt is spent on a run that would stop in the same place")
+
+    def test_the_same_build_refusal_twice_parks_without_spending_the_remaining_attempts(self):
+        self.supervised()  # max_attempts 2: before M7 a third execution was spent
+        self.claude({"default": {"stage": "building", "refuse": "T05"}})
+        self.tick()
+        self.wait()
+        self.tick()  # the first moved it to building: completed, and the next execution starts
+        self.wait()
+        report = self.tick()
+        self.assertEqual(report["started"], [])
+        self.assertEqual(report["parked"]["LOCAL-001"]["reason"], "Two executions in a row stopped at build task T05, refused by build.green (suite-red). "
+                                                                  "Retrying would repeat it; the plan or the code needs a person.")
+        failed = [e for e in self.events() if e["type"] == "execution.failed"]
+        self.assertEqual([(e["data"]["not_progressing"], e["data"]["attempt"]) for e in failed], [("same-refusal", 1)])
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_a_killed_execution_that_moved_is_completed_with_its_exit_code_and_keeps_the_attempt_count(self):
+        self.supervised()
+        self.claude({"default": {"is_error": True, "exit": 1}})  # attempt 1: no progress
+        self.tick()
+        self.wait()
+        self.claude({"default": {"stage": "building", "kill": True}})
+        self.tick()
+        self.wait()
+        self.tick()
+        completed = [e for e in self.events() if e["type"] == "execution.completed"]
+        self.assertEqual([(e["data"]["how"], e["data"]["exit_code"]) for e in completed], [("killed", -9)])
+        self.assertEqual(self.ledger()["supervisor"]["attempts"]["LOCAL-001"]["count"], 1, "only a clean exit clears the count")
+        facts = executor.outcome(self.eng, completed[0]["execution_id"])
+        self.assertEqual((facts["how"], facts["exit_code"]), ("killed", -9))
+
+    def test_a_clean_exit_that_moved_clears_the_attempt_count(self):
+        self.supervised()
+        self.claude({"default": {"is_error": True, "exit": 1}})
+        self.tick()
+        self.wait()
+        self.claude({"default": {"stage": "building"}})
+        self.tick()
+        self.wait()
+        self.tick()
+        completed = [e for e in self.events() if e["type"] == "execution.completed"]
+        self.assertEqual([(e["data"]["how"], e["data"]["exit_code"]) for e in completed], [("exited", 0)])
+        self.assertNotIn("LOCAL-001", self.ledger()["supervisor"]["attempts"])
 
 
 class LifecycleTest(Base):

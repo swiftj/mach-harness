@@ -287,6 +287,37 @@ class CheckPlanTest(Base):
                 self.assertEqual(code, 1)
                 self.assertIn(expected, out)
 
+    def test_impl_task_that_can_never_go_green_is_refused(self):
+        # M7 D5: the tests come first, then two [impl] tasks for the same requirements. The build station
+        # completes the first only on a green suite, which needs the second's files: the line stops.
+        stuck = PLAN.replace(
+            "- [ ] T02 [impl] Invitation service — `src/invite.ts` (FR-01, FR-02)\n"
+            "- [ ] T03 [test] Scenarios — `tests/invite.scenarios.test.ts` (AC-01, AC-02, AC-03, FR-06, FR-08, FR-09, INV-03)\n"
+            "- [ ] T04 [impl] Expiry and failure handling — `src/invite.ts` (FR-06, FR-08)\n",
+            "- [ ] T02 [test] Scenarios — `tests/invite.scenarios.test.ts` (AC-01, AC-02, AC-03, FR-06, FR-08, FR-09, INV-03)\n"
+            "- [ ] T03 [impl] Invitation service — `src/invite.ts` (FR-01, FR-02, FR-06, INV-01)\n"
+            "- [ ] T04 [impl] Route and handler — `src/routes.ts` (FR-01, FR-08, INV-01)\n",
+        )
+        self.assertNotEqual(stuck, PLAN)
+        self.ready(plan=stuck)
+        code, out, _ = self.check()
+        self.assertEqual(code, 1, out)
+        self.assertIn("T04 [impl] implements FR-01, FR-08, but every [test] task for them (the last is T02) comes before T03 [impl]", out)
+        self.assertIn("Merge T03 and T04 into one [impl] task, or move the tests that need T04 after T03", out)
+        self.assertNotIn("INV-01, ", out.split("T04 [impl] implements")[1].split("but")[0], "an invariant an [impl] task keeps is not counted")
+        self.assertEqual(json.loads((self.project / ".factory/worktrees/LOCAL-001/cell.json").read_text())["stage"], "spec-ready")
+
+    def test_later_impl_task_may_keep_an_invariant_or_follow_its_own_new_test(self):
+        # A later [impl] task may name an invariant tested earlier (it keeps it), and a requirement
+        # whose newest test comes after the previous [impl] task (that test is its own).
+        fine = PLAN.replace("(FR-06, FR-08)\n", "(FR-06, FR-08, INV-01)\n").replace(
+            "`tests/invite.scenarios.test.ts` (AC-01,", "`tests/invite.scenarios.test.ts` (FR-02, AC-01,"
+        ).replace("Expiry and failure handling — `src/invite.ts` (FR-06", "Expiry and failure handling — `src/invite.ts` (FR-02, FR-06")
+        self.assertIn("(FR-02, FR-06, FR-08, INV-01)", fine)
+        self.ready(plan=fine)
+        code, out, _ = self.check()
+        self.assertEqual(code, 0, out)
+
     def test_new_contract_is_ordinary_risk_but_changing_an_existing_one_is_high(self):
         medium = PLAN.replace("**Risk tier:** High", "**Risk tier:** Medium")
         self.ready(plan=medium)

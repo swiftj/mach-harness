@@ -42,6 +42,7 @@ PRODUCT_SLICE_RE = re.compile(r"^SLICE-(\d{3,})\.json$")
 STUDIO_DRAFT = (".factory", "studio", "draft")
 FIELD_RE = re.compile(r"^[-*+]\s+\*\*([A-Za-z ]+):\*\*\s*(.*)$")
 REQ_RE = re.compile(r"\b(?:FR|INV|AC)-\d{2,}\b")
+PLAN_TASK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+((?:R\d+-)?T\d+)\s+\[(test|impl|contract|refactor|docs)\]\s+(.*)$")
 INTENT_SECTIONS = ("Why", "Goal ancestry", "Constraints", "Risk", "Deferred work")
 INTENT_FIELDS = ("Ticket", "Slice", "Mode", "Status")
 PLAN_FIELDS = ("App type", "Risk tier", "Contracts")
@@ -483,6 +484,43 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def unreachable_green(task_lines: Sequence[str]) -> List[str]:
+    """[impl] tasks that the build station could never complete, read from the plan's own data.
+
+    The build station accepts an [impl] task only when the whole suite passes after it. So once an
+    [impl] task I is complete, every test written before I passes. A later [impl] task J that names a
+    requirement or scenario (FR, AC) whose tests all come before I therefore claims work those tests
+    still need: either I can never go green, or J's claim is false. Both are plan defects. Invariants
+    are not counted: an [impl] task names an invariant it keeps, not only one it establishes."""
+    tasks = []
+    for line in task_lines:
+        match = PLAN_TASK_RE.match(line)
+        if match:
+            tasks.append((match.group(1), match.group(2), set(REQ_RE.findall(match.group(3)))))
+    problems = []
+    for j, (task_id, kind, ids) in enumerate(tasks):
+        if kind != "impl":
+            continue
+        stranded: Dict[str, List[str]] = {}  # the earlier [impl] task that cannot go green -> the IDs it strands
+        last_test: Dict[str, str] = {}
+        for identifier in sorted(i for i in ids if not i.startswith("INV-")):
+            tested = [k for k in range(j) if tasks[k][1] == "test" and identifier in tasks[k][2]]
+            if not tested:
+                continue
+            between = [tasks[k][0] for k in range(tested[-1] + 1, j) if tasks[k][1] == "impl"]
+            if between:
+                stranded.setdefault(between[0], []).append(identifier)
+                last_test[between[0]] = tasks[tested[-1]][0]
+        for earlier, identifiers in stranded.items():
+            problems.append(
+                f"{task_id} [impl] implements {', '.join(identifiers)}, but every [test] task for them (the last is {last_test[earlier]}) comes "
+                f"before {earlier} [impl]. The build station completes {earlier} only when the whole suite passes, and those tests cannot pass "
+                f"while they still need {task_id}'s files. Merge {earlier} and {task_id} into one [impl] task, or move the tests that need "
+                f"{task_id} after {earlier}; if {task_id} only keeps them working, do not name them on it"
+            )
+    return problems
+
+
 def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
@@ -551,6 +589,7 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
         problems.append("'## Tasks' needs at least one checklist item, such as '- [ ] T01 [test] ...'")
     elif not re.search(r"\[test\]", task_lines[0]):
         problems.append("the first task must be a [test] task: tests are written before implementation")
+    problems.extend(unreachable_green(task_lines))
 
     if problems:
         for problem in problems:

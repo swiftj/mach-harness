@@ -414,6 +414,9 @@ def outcome(root: Path, execution_id: str) -> Dict[str, Any]:
                               "wrapper_pid": (started or {}).get("wrapper_pid"), "started_at": (started or {}).get("started_at"),
                               "how": (result or {}).get("ended"), "exit_code": (result or {}).get("exit_code"), "ended_at": (result or {}).get("ended_at"),
                               "session_id": None, "is_error": None, "subtype": None, "cost_usd": None, "refused_tools": [], "workflow": None}
+    if report["how"] == "exited" and isinstance(report["exit_code"], int) and report["exit_code"] < 0:
+        # The wrapper was not asked to stop, but Claude Code ended on a signal (exit code -N): something killed it.
+        report["how"] = "killed"
     stream = home / "stream.jsonl"
     if not stream.is_file():
         return report
