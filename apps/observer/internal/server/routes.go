@@ -101,7 +101,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		"read_only":      true,
 		"display_policy": map[string]any{"people": "role", "free_text": freeTextPolicy()},
 		"capabilities": map[string]any{"execution": false, "snapshot": true, "artifacts": true, "analytics": true,
-			"evidence_media": set.EvidenceMedia, "evidence_media_setting": `.factory/config.json "tower": {"evidence_media": true}`,
+			"evidence_media": set.EvidenceMedia, "evidence_media_setting": `.factory/config.json "floor": {"evidence_media": true}`,
 			"stream_observations": streamObs},
 		"limits": map[string]any{"page_default": DefaultPage, "page_max": MaxPage, "scan_cap": ScanCap, "spans_max": MaxSpans, "history_max": MaxHistory,
 			"marks_default": DefaultMarks, "marks_max": MaxMarks, "concurrency_buckets_default": DefaultSeriesBuckets, "concurrency_buckets_max": MaxSeriesBuckets,

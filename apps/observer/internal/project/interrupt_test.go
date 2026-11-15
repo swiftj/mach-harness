@@ -7,8 +7,8 @@ import (
 )
 
 // Visits that never recorded an exit (lead's finding 4 of M6.3 wave 2): closed in the span
-// projection at their execution's end or at the next entry of the same station, as the Control
-// Tower's scene does (reduce-v3.ts closeVisits), never left running.
+// projection at their execution's end or at the next entry of the same station, as the Factory
+// Floor's scene does (reduce-v3.ts closeVisits), never left running.
 
 const xa = "x0123456789ab"
 

@@ -175,15 +175,16 @@ type Provenance struct {
 	Writer  string `json:"writer"`   // the MACH script that wrote that record
 }
 
-// Settings are the project's tracked Control Tower settings (.factory/config.json "tower"),
-// read only. EvidenceMedia (default false) lets screenshots and recordings be served.
+// Settings are the project's tracked Factory Floor settings (.factory/config.json "floor", or
+// "tower", the earlier name, which still works), read only. EvidenceMedia (default false) lets
+// screenshots and recordings be served.
 type Settings struct {
 	EvidenceMedia bool   `json:"evidence_media"`
 	Source        string `json:"source"`
 }
 
 // SettingKey is where the opt-in lives, for messages.
-const SettingKey = `.factory/config.json: {"tower": {"evidence_media": true}}`
+const SettingKey = `.factory/config.json: {"floor": {"evidence_media": true}}`
 
 // Catalog builds and caches the catalog for one project.
 type Catalog struct {
@@ -359,18 +360,27 @@ func readSettings(root *os.Root) Settings {
 	if err != nil {
 		return Settings{Source: "default (no readable .factory/config.json)"}
 	}
+	type section struct {
+		EvidenceMedia *bool `json:"evidence_media"`
+	}
+	// "floor" is the setting's name; "tower" is its earlier name and is still read.
 	var cfg struct {
-		Tower struct {
-			EvidenceMedia *bool `json:"evidence_media"`
-		} `json:"tower"`
+		Floor section `json:"floor"`
+		Tower section `json:"tower"`
 	}
 	if json.Unmarshal(data, &cfg) != nil {
 		return Settings{Source: "default (.factory/config.json is not valid JSON)"}
 	}
-	if cfg.Tower.EvidenceMedia == nil {
-		return Settings{Source: "default (tower.evidence_media not set)"}
+	floor, tower := cfg.Floor.EvidenceMedia, cfg.Tower.EvidenceMedia
+	switch {
+	case floor != nil && tower != nil && *floor != *tower:
+		return Settings{EvidenceMedia: *floor, Source: ".factory/config.json floor.evidence_media (tower.evidence_media, the earlier name, disagrees and is ignored)"}
+	case floor != nil:
+		return Settings{EvidenceMedia: *floor, Source: ".factory/config.json floor.evidence_media"}
+	case tower != nil:
+		return Settings{EvidenceMedia: *tower, Source: ".factory/config.json tower.evidence_media (the earlier name of floor.evidence_media)"}
 	}
-	return Settings{EvidenceMedia: *cfg.Tower.EvidenceMedia, Source: ".factory/config.json tower.evidence_media"}
+	return Settings{Source: "default (floor.evidence_media not set)"}
 }
 
 // ---- reading what verify.py and review.py wrote ----

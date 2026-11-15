@@ -19,7 +19,7 @@ In Claude Code:
 
 Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:run`, `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:merge`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`. `/mach:product-studio` is experimental (see [`docs/mach-next/`](docs/mach-next/README.md)).
+Commands are namespaced: `/mach:run`, `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:merge`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`. `/mach:product-studio` is the product manager's workspace (design notes in [`docs/mach-next/`](docs/mach-next/README.md)).
 
 ### With one command (one project)
 
@@ -39,23 +39,25 @@ python3 /path/to/mach-harness/bin/mach install
 
 Add `--dry-run` to see what would change first. Running install again updates MACH in place.
 
-### The visual Product Studio app (experimental)
+### The visual Product Studio app
 
-Product Studio also has a visual app that runs on your own machine. Its host is one small program, built for Apple silicon Macs and for Linux (arm64 and amd64) and attached to each [MACH release](https://github.com/swiftj/mach-harness/releases). There is no build for Intel Macs or Windows. Both installs fetch it for you: the one-command installer and `/mach:init` download the file for your machine from the release that matches the installed MACH version, check it (see [What the installer verifies](#what-the-installer-verifies)), and put it at `.factory/bin/mach-studio` (git-ignored). Nothing else is downloaded, and nothing runs until you ask Product Studio to "open the app".
+Product Studio also has a visual app that runs on your own machine. Its host is one small program, built for Apple silicon Macs and for Linux (arm64 and amd64) and attached to each [MACH release](https://github.com/swiftj/mach-harness/releases). There is no build for Intel Macs or Windows. The macOS programs are not notarised, so macOS refuses a copy downloaded in a browser; install them through the installer. Both installs fetch it for you: the one-command installer and `/mach:init` download the file for your machine from the release that matches the installed MACH version, check it (see [What the installer verifies](#what-the-installer-verifies)), and put it at `.factory/bin/mach-studio` (git-ignored). Nothing else is downloaded, and nothing runs until you ask Product Studio to "open the app".
 
 If the download is not possible (offline, no build for your machine, or a version with no release yet), the install still succeeds and says so; everything else works without the app. Pass `--no-studio` to skip it.
 
-### The Control Tower (experimental)
+### The Factory Floor
 
-The Control Tower is a read-only view of the Factory in your browser: delivery waves, cells moving through the stations, review rounds, executions and their evidence. Its Timeline (key `3`) lays the whole history out in time, with how each start and end is known, and answers questions such as "Why did it retry?". Its program, `mach-observer`, is published beside the Product Studio host, for the same machines, and the installers fetch and check it the same way and put it at `.factory/bin/mach-observer` (git-ignored). Releases made before it shipped have no such file; the install then says so in one line and succeeds. Pass `--no-tower` (or set `MACH_TOWER=skip`) to skip it; `MACH_TOWER_URL` fetches it from another place, as `MACH_STUDIO_URL` does for the studio. `bin/mach status` says whether each program is installed, and `mach-studio --version` / `mach-observer --version` which release it was built for (the install manifest records the same).
+The Factory Floor is a read-only view of the Factory in your browser: delivery waves, cells moving through the stations, review rounds, executions and their evidence. It has three workspaces: the Atlas (the Factory Atlas and the Execution Blueprint, keys `1` and `2`), the Timeline and Analytics. Its Timeline (key `3`) lays the whole history out in time, with how each start and end is known, and answers questions such as "Why did it retry?". Its program, `mach-observer`, is published beside the Product Studio host, for the same machines, and the installers fetch and check it the same way and put it at `.factory/bin/mach-observer` (git-ignored). Releases made before it shipped have no such file; the install then says so in one line and succeeds. Pass `--no-floor` (or set `MACH_FLOOR=skip`) to skip it; `MACH_FLOOR_URL` fetches it from another place, as `MACH_STUDIO_URL` does for the studio. Evidence screenshots and recordings are shown only when `.factory/config.json` sets `"floor": {"evidence_media": true}`.
+
+The Factory Floor was called the Control Tower before 0.13. The old names still work: `--no-tower`, `MACH_TOWER`, `MACH_TOWER_URL` and the `tower.evidence_media` setting. When an old and a new name are both set and disagree, the new one wins and a one-line note says so. `bin/mach status` says whether each program is installed, and `mach-studio --version` / `mach-observer --version` which release it was built for (the install manifest records the same).
 
 ### What the installer verifies
 
 **MACH itself.** Each release (after v0.12.0) carries `mach-<version>-source.tar.gz`, the repository at the release tag, listed in `SHA256SUMS` and attested by the release workflow like the programs. `install.sh` downloads that archive and `SHA256SUMS`, compares the archive's SHA-256 with `sha256sum` or `shasum`, and, when the GitHub CLI (`gh`) is installed and signed in, runs `gh attestation verify` on it with the same rule as for the programs below. All of this happens before any downloaded code runs. A failed check refuses the install: nothing is installed, the downloads are removed, and nothing unchecked is tried instead. A release newer than v0.12.0 without its archive is refused. Without `gh` the line says the build provenance was not verified; `MACH_REQUIRE_PROVENANCE=1` refuses instead. Releases up to v0.12.0 have no archive: their tag is downloaded and the line says the source was not verified (refused under `MACH_REQUIRE_PROVENANCE=1`, as are `MACH_REF` and `MACH_SOURCE`). The install manifest (`.factory/.mach-manifest.json`, `source`) records where the source came from and how it was checked. Not verified: `install.sh` itself, which comes from the `main` branch; to avoid trusting that, read it before running it.
 
-**The programs.** Each downloaded program is compared with the SHA-256 listed in the release's `SHA256SUMS`. That file comes from the same place as the program, so on its own it catches a broken or incomplete download, not a replaced one. When the program comes from the project's GitHub release and the GitHub CLI (`gh`) is installed and signed in, the installer also runs `gh attestation verify` on it, which checks that the release workflow built it; if that check fails the program is refused (the rest of MACH still installs). Without `gh` the note says the build provenance was not verified; set `MACH_REQUIRE_PROVENANCE=1` to refuse the program instead. A release fetched from `MACH_STUDIO_URL` or `MACH_TOWER_URL` (a mirror or a local folder) is checked against its checksum only, and the note says so. Each release also carries an SPDX SBOM per program (`<program>.spdx.json`).
+**The programs.** Each downloaded program is compared with the SHA-256 listed in the release's `SHA256SUMS`. That file comes from the same place as the program, so on its own it catches a broken or incomplete download, not a replaced one. When the program comes from the project's GitHub release and the GitHub CLI (`gh`) is installed and signed in, the installer also runs `gh attestation verify` on it, which checks that the release workflow built it; if that check fails the program is refused (the rest of MACH still installs). Without `gh` the note says the build provenance was not verified; set `MACH_REQUIRE_PROVENANCE=1` to refuse the program instead. A release fetched from `MACH_STUDIO_URL` or `MACH_FLOOR_URL` (a mirror or a local folder) is checked against its checksum only, and the note says so. Each release also carries an SPDX SBOM per program (`<program>.spdx.json`).
 
-Ask the run skill to "open the Control Tower" (or "watch the factory"). It starts the observer for the session, which prints a one-time link to `127.0.0.1`; the link for a second browser is kept in `.factory/local/observer/link`. There is no new command. The observer only reads the Factory's files: it cannot enable, start, pause, approve or merge anything, holds no MACH lock, and stopping it never affects the line. With no Factory state on the machine, it shows a clearly labelled Simulation instead of Live Factory.
+Ask the run skill to "open the Factory Floor" (or "watch the factory"). It starts the observer for the session, which prints a one-time link to `127.0.0.1`; the link for a second browser is kept in `.factory/local/observer/link`. There is no new command. The observer only reads the Factory's files: it cannot enable, start, pause, approve or merge anything, holds no MACH lock, and stopping it never affects the line. With no Factory state on the machine, it shows a clearly labelled Simulation instead of Live Factory.
 
 ## Quick start
 
@@ -123,7 +125,7 @@ This moves one ticket from wherever it is to the next point where a person is ne
 - the merge, if your project keeps it for a person (`merge.mode` or `merge.auto` in `.factory/config.json`);
 - a person to take over a ticket that failed three rounds.
 
-`/mach-run board` shows every open ticket, its stage and its next step, without starting anything. To watch the line in a browser instead, ask the run skill to open the Control Tower (experimental, read-only; see Install).
+`/mach-run board` shows every open ticket, its stage and its next step, without starting anything. To watch the line in a browser instead, ask the run skill to open the Factory Floor (read-only; see Install).
 
 To move several tickets at once, unattended and in parallel, run the MACH Dynamic Workflow with their IDs, for example by asking Claude Code to "run the mach-belt workflow for LOCAL-002 and LOCAL-003". The workflow is named `mach-belt` in a project install and `mach:belt` with the plugin. Each ticket is built, verified and reviewed in its own cell; the run ends with a list of what each ticket is waiting for.
 
@@ -327,7 +329,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `agents/builder.md` | The build station, pinned to the `sonnet` tier. |
 | `agents/verifier.md` | The verify station, pinned to the `sonnet` tier, always a fresh context. |
 | `agents/reviewer.md` | One seat on the review panel; the review script sets its model per seat. |
-| `apps/studio/`, `apps/observer/` | Experimental. The Product Studio host and the Control Tower's read-only observer (Go), each with `build.sh` (embeds its web app) and `smoke.sh`. |
+| `apps/studio/`, `apps/observer/` | The Product Studio host and the Factory Floor's read-only observer (Go), each with `build.sh` (embeds its web app) and `smoke.sh`. |
 | `bin/mach`, `install.sh` | The installer. |
 | `templates/` | What gets scaffolded into a project. |
 | `docs/` | The original design notes for each station, and the prd-slice skill the interview is adapted from. |
@@ -336,7 +338,7 @@ When you change the validator, change its references, the fixture in `tests/fixt
 
 ### Releasing
 
-Set the new version in `.claude-plugin/plugin.json`, merge to `main`, then push a tag `v<version>`. The `release` workflow tests, builds the Product Studio host and the Control Tower's observer for each machine with their web apps embedded, packages the repository at the tag as `mach-<version>-source.tar.gz` (what `install.sh` installs) and installs it into an empty project as a smoke test, writes `SHA256SUMS` for all of them, attests the build provenance of the programs, the source archive and `SHA256SUMS`, writes an SBOM for each program, and publishes the GitHub release the installer downloads from. The tag must match the plugin's version or the workflow stops.
+Set the new version in `.claude-plugin/plugin.json`, merge to `main`, then push a tag `v<version>`. The `release` workflow tests, builds the Product Studio host and the Factory Floor's observer for each machine with their web apps embedded, packages the repository at the tag as `mach-<version>-source.tar.gz` (what `install.sh` installs) and installs it into an empty project as a smoke test, writes `SHA256SUMS` for all of them, attests the build provenance of the programs, the source archive and `SHA256SUMS`, writes an SBOM for each program, and publishes the GitHub release the installer downloads from. The tag must match the plugin's version or the workflow stops.
 
 Before publishing, each program is started on a runner of its own kind (`apps/studio/smoke.sh`: open the one-time link, load the app, ask the engine for status; `apps/observer/smoke.sh`: open the link, read the API, check that only GET is answered, stop cleanly). Running the workflow by hand from the Actions tab builds and smoke-tests everything and publishes nothing.
 

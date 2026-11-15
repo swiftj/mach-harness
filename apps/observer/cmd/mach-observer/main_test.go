@@ -40,7 +40,7 @@ func fixture(t *testing.T) string {
 	testkit.Append(t, filepath.Join(root, ".factory/worktrees/T-1/evidence/results.json"),
 		[]byte(`{"head":"abcdef1","review_loop":0,"records":{"AC-01":{"kind":"scenario","result":"pass","evidence":[{"file":"AC-01.txt","sha256":"x"}]}}}`))
 	testkit.Append(t, filepath.Join(root, ".factory/worktrees/T-1/review/round-1/findings.md"), []byte("# none\n"))
-	testkit.Append(t, filepath.Join(root, ".factory/config.json"), []byte(`{"tower":{"evidence_media":false}}`))
+	testkit.Append(t, filepath.Join(root, ".factory/config.json"), []byte(`{"floor":{"evidence_media":false}}`))
 	testkit.Append(t, filepath.Join(root, ".factory/local/executions/x0123456789ab/stream.jsonl"), []byte(`{"type":"system","subtype":"init"}`+"\n"))
 	testkit.Append(t, filepath.Join(root, ".factory/archive/runs.jsonl"), []byte(`{"record_version":2}`+"\n"))
 	testkit.Append(t, filepath.Join(root, ".factory/archive/T-0.tar.gz"), []byte("not really a tarball"))

@@ -1,7 +1,7 @@
 #!/bin/sh
-# Build mach-observer with the Control Tower web app embedded, reproducibly (as apps/studio does):
+# Build mach-observer with the Factory Floor web app embedded, reproducibly (as apps/studio does):
 #   1. install the web workspace's locked dependencies (skip with SKIP_INSTALL=1),
-#   2. build web/apps/control-tower,
+#   2. build web/apps/factory-floor,
 #   3. check the build can run under the observer's Content-Security-Policy,
 #   4. copy it (without source maps) over internal/webui/dist and build the binary,
 #   5. put the committed placeholder back, so the working tree is unchanged.
@@ -12,7 +12,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 WEB="$ROOT/web"
-APP_DIST="$WEB/apps/control-tower/dist"
+APP_DIST="$WEB/apps/factory-floor/dist"
 DIST="$HERE/internal/webui/dist"
 OUT=${OUT:-"$HERE/bin/mach-observer"}
 
@@ -29,7 +29,7 @@ cd "$WEB"
 if [ "${SKIP_INSTALL:-0}" != "1" ]; then
     pnpm install --frozen-lockfile
 fi
-pnpm --filter @mach/control-tower build
+pnpm --filter @mach/factory-floor build
 
 # The observer serves with script-src 'self', style-src 'self' and font-src 'self': no inline
 # script or style attribute in the HTML, and no font or script inlined as a data: URI.
@@ -59,4 +59,4 @@ find "$DIST" -name '*.map' -type f -exec rm -f {} +
 cd "$HERE"
 mkdir -p "$(dirname "$OUT")"
 go build -trimpath -ldflags "-X main.version=${VERSION:-dev}" -o "$OUT" ./cmd/mach-observer
-echo "built $OUT ($(du -k "$OUT" | cut -f1) KiB) with the Control Tower from $APP_DIST, no source maps"
+echo "built $OUT ($(du -k "$OUT" | cut -f1) KiB) with the Factory Floor from $APP_DIST, no source maps"

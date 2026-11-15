@@ -1,4 +1,4 @@
-"""MACH Next M0 structural and fail-closed guardrail tests (stdlib only)."""
+"""Product contracts: structural and fail-closed guardrail tests (stdlib only)."""
 
 import hashlib
 import json

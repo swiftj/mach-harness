@@ -39,7 +39,7 @@ function systemTheme(): ThemeName {
 
 export interface ThemeProviderProps {
   children: ReactNode;
-  /** Which product's flavour of the family. Control Tower defaults to dark. */
+  /** Which product's flavour of the family. Factory Floor defaults to dark. */
   product?: ProductName;
   /** Used when nothing is stored. */
   defaultPreference?: ThemePreference;
@@ -56,7 +56,7 @@ export function ThemeProvider({
   defaultPreference,
   persist = true,
 }: ThemeProviderProps) {
-  const fallback: ThemePreference = defaultPreference ?? (product === "control-tower" ? "dark" : "system");
+  const fallback: ThemePreference = defaultPreference ?? (product === "factory-floor" ? "dark" : "system");
   const [preference, setPreferenceState] = useState<ThemePreference>(() => (persist ? readStored() : null) ?? fallback);
   const [system, setSystem] = useState<ThemeName>(systemTheme);
 

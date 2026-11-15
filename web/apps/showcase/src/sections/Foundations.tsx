@@ -13,7 +13,7 @@ function ratio(a: string, b: string): number {
 }
 
 const brand: Array<{ name: keyof typeof palette; role: string }> = [
-  { name: "charcoal", role: "Ink; the Control Tower canvas" },
+  { name: "charcoal", role: "Ink; the Factory Floor canvas" },
   { name: "cream", role: "The Product Studio canvas" },
   { name: "terracotta", role: "Brand accent: the primary action and where you are" },
   { name: "blue", role: "Information, in-progress, focus" },
@@ -41,7 +41,7 @@ export function Foundations() {
     <Section
       id="foundations"
       title="Foundations"
-      intro="Warm paper for Product Studio, charcoal night for Control Tower: one set of roles, two themes. Components use roles, never raw colours."
+      intro="Warm paper for Product Studio, charcoal night for Factory Floor: one set of roles, two themes. Components use roles, never raw colours."
     >
       <Specimen title="Brand colours" note="The starting palette. Terracotta is used sparingly: one primary action per region, and the current place in navigation.">
         <ul className="grid grid-cols-7 gap-3">

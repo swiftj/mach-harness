@@ -42,7 +42,7 @@ func status(t *testing.T, base string, c *http.Cookie, path string) int {
 	return resp.StatusCode
 }
 
-// A Control Tower page left open across a restart of the observer keeps working: the observer
+// A Factory Floor page left open across a restart of the observer keeps working: the observer
 // binds the same port, the browser's cookie is still a session, and its event stream resumes from
 // its cursor with nothing repeated and nothing missed. No write endpoint is involved.
 func TestRestartKeepsTheBrowserSessionAndStream(t *testing.T) {

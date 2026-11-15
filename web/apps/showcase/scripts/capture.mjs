@@ -127,14 +127,14 @@ try {
     }
   }
 
-  // Control Tower flavour, dark.
+  // Factory Floor flavour, dark.
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
   const page = await context.newPage();
-  await page.goto(`${base}?theme=dark&product=control-tower#graph`, { waitUntil: "networkidle" });
+  await page.goto(`${base}?theme=dark&product=factory-floor#graph`, { waitUntil: "networkidle" });
   await page.waitForSelector(".react-flow__node");
   await page.locator("#graph").evaluate((node) => node.scrollIntoView());
   await page.waitForTimeout(700);
-  await page.screenshot({ path: join(out, "control-tower-dark-1440.png") });
+  await page.screenshot({ path: join(out, "factory-floor-dark-1440.png") });
   await context.close();
 
   // Reduced motion: the page must still render everything.

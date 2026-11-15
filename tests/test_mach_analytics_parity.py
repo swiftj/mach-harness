@@ -1,4 +1,4 @@
-"""Factory Analytics (MACH Next M6.5): the observe station's scorecard and the observer's copy of it.
+"""Factory Analytics: the observe station's scorecard and the observer's copy of it.
 
 The observe station computes six scorecard metrics from .factory/archive/runs.jsonl (observe.py
 `scorecard`). The observer recomputes them from the same records as catalog metrics Q3, Q2, R5,

@@ -41,7 +41,7 @@ let violations = 0;
 try {
   await waitForServer(base);
   const browser = await chromium.launch();
-  for (const product of ["control-tower", "product-studio"]) {
+  for (const product of ["factory-floor", "product-studio"]) {
     for (const theme of ["dark", "light"]) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
       const page = await context.newPage();
@@ -51,9 +51,9 @@ try {
       await page.goto(`${base}?theme=${theme}&product=${product}#factory`, { waitUntil: "networkidle" });
       await page.evaluate(() => document.fonts.ready);
       await page.waitForTimeout(300);
-      const tag = `${product === "control-tower" ? "ct" : "ps"}-${theme}`;
+      const tag = `${product === "factory-floor" ? "ct" : "ps"}-${theme}`;
       await page.screenshot({ path: join(out, `factory-${tag}-top.png`) });
-      if (product === "control-tower") {
+      if (product === "factory-floor") {
         const style = await page.addStyleTag({ content: unclip });
         await page.waitForTimeout(150);
         for (const id of sections) {

@@ -1,4 +1,4 @@
-"""MACH Next M0 must not change the existing line: nothing dispatches from product artifacts or the local policy."""
+"""Product work must not change the existing line: nothing dispatches from product artifacts or the local policy."""
 
 import ast
 import hashlib

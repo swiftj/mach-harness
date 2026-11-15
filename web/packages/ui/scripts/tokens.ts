@@ -108,8 +108,8 @@ ${roleBlock(themes.dark, "  ")}
 ${shadowBlock("dark", "  ")}
 }
 
-/* Control Tower: same roles and faces, denser controls. */
-:root[data-product="control-tower"] {
+/* Factory Floor: same roles and faces, denser controls. */
+:root[data-product="factory-floor"] {
   --mach-density: 0.875;
 }
 

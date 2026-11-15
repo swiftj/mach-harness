@@ -1,5 +1,6 @@
 """Tests for bin/mach and install.sh: install, update, scaffold and uninstall."""
 
+import contextlib
 import io
 import json
 import os
@@ -40,10 +41,12 @@ class Base(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.project = Path(self.tmp.name).resolve() / "project"
         self.project.mkdir()
-        # The visual app's host and the Control Tower are downloads; these tests never touch the network.
-        # StudioTest and TowerTest cover them.
-        for name in ("MACH_STUDIO", "MACH_TOWER"):
+        # The visual app's host and the Factory Floor are downloads; these tests never touch the network.
+        # StudioTest and FloorTest cover them.
+        for name in ("MACH_STUDIO", "MACH_FLOOR"):
             self.setenv(name, "skip")
+        for name in ("MACH_TOWER", "MACH_TOWER_URL"):  # the Factory Floor's earlier names, still read
+            self.setenv(name, None)
 
     def setenv(self, name, value):
         previous = os.environ.get(name)
@@ -369,20 +372,20 @@ class StudioTest(Base):
         self.assertFalse((self.project / mach.STUDIO_DEST).exists())
 
 
-class TowerTest(Base):
-    """The Control Tower's observer: downloaded for this machine, checked, never required, and absent
+class FloorTest(Base):
+    """The Factory Floor's observer: downloaded for this machine, checked, never required, and absent
     from releases made before it shipped (v0.12.0 has none) without that being an error."""
 
     def setUp(self):
         super().setUp()
-        self.setenv("MACH_TOWER", None)
+        self.setenv("MACH_FLOOR", None)
         self.release = Path(self.tmp.name).resolve() / "release"
         self.release.mkdir()
-        self.setenv("MACH_TOWER_URL", self.release.as_uri())
+        self.setenv("MACH_FLOOR_URL", self.release.as_uri())
         self.setenv("MACH_STUDIO_URL", None)
-        self.local = mach.TOWER_LOCAL_BUILD
-        mach.TOWER_LOCAL_BUILD = "apps/observer/bin/no-such-build"
-        self.addCleanup(lambda: setattr(mach, "TOWER_LOCAL_BUILD", self.local))
+        self.local = mach.FLOOR_LOCAL_BUILD
+        mach.FLOOR_LOCAL_BUILD = "apps/observer/bin/no-such-build"
+        self.addCleanup(lambda: setattr(mach, "FLOOR_LOCAL_BUILD", self.local))
 
     def publish(self, data=b"#!/bin/sh\necho observer\n", listed=None, studio=True):
         """A release folder like the workflow makes: SHA256SUMS lists the studio and, if data, the observer."""
@@ -392,26 +395,26 @@ class TowerTest(Base):
             (self.release / mach.studio_asset()).write_bytes(body)
             lines.append(f"{mach.sha(body)}  {mach.studio_asset()}")
         if data is not None:
-            (self.release / mach.tower_asset()).write_bytes(data)
-            lines.append(f"{listed or mach.sha(data)}  {mach.tower_asset()}")
+            (self.release / mach.floor_asset()).write_bytes(data)
+            lines.append(f"{listed or mach.sha(data)}  {mach.floor_asset()}")
         (self.release / mach.STUDIO_SUMS).write_text("\n".join(lines) + "\n", encoding="utf-8")
         return data
 
     def test_the_observer_is_published_for_the_same_machines_as_the_studio(self):
-        self.assertEqual(mach.tower_asset(), (mach.studio_asset() or "").replace("mach-studio-", "mach-observer-") or None)
-        self.assertEqual(mach.TOWER_DEST, ".factory/bin/mach-observer")
+        self.assertEqual(mach.floor_asset(), (mach.studio_asset() or "").replace("mach-studio-", "mach-observer-") or None)
+        self.assertEqual(mach.FLOOR_DEST, ".factory/bin/mach-observer")
 
     def test_install_downloads_checks_records_and_ignores_it(self):
         data = self.publish()
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
-        path = self.project / mach.TOWER_DEST
+        path = self.project / mach.FLOOR_DEST
         self.assertEqual(path.read_bytes(), data)
         self.assertTrue(os.access(path, os.X_OK))
-        self.assertIn("The Control Tower was downloaded and checked", out)
+        self.assertIn("The Factory Floor was downloaded and checked", out)
         manifest = json.loads((self.project / mach.MANIFEST).read_text())
-        self.assertEqual(manifest["files"][mach.TOWER_DEST], mach.sha(data))
-        self.assertIn(mach.TOWER_DEST, (self.project / ".gitignore").read_text())
+        self.assertEqual(manifest["files"][mach.FLOOR_DEST], mach.sha(data))
+        self.assertIn(mach.FLOOR_DEST, (self.project / ".gitignore").read_text())
         self.assertFalse((self.project / mach.STUDIO_DEST).exists())  # MACH_STUDIO=skip still holds
         code, out = self.mach("status")
         self.assertEqual(code, 0, out)
@@ -422,15 +425,15 @@ class TowerTest(Base):
         self.publish()
         code, out = self.mach("scaffold")
         self.assertEqual(code, 0, out)
-        self.assertTrue((self.project / mach.TOWER_DEST).is_file())
+        self.assertTrue((self.project / mach.FLOOR_DEST).is_file())
 
     def test_a_wrong_checksum_is_refused_and_the_rest_still_installs(self):
         self.publish(listed="0" * 64)
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
-        self.assertFalse((self.project / mach.TOWER_DEST).exists())
+        self.assertFalse((self.project / mach.FLOOR_DEST).exists())
         self.assertIn("does not match the release's published checksum", out)
-        self.assertNotIn(mach.TOWER_DEST, json.loads((self.project / mach.MANIFEST).read_text())["files"])
+        self.assertNotIn(mach.FLOOR_DEST, json.loads((self.project / mach.MANIFEST).read_text())["files"])
         self.assertTrue((self.project / SKILL).is_file())
 
     def test_a_wrong_checksum_on_update_says_what_was_refused_and_keeps_the_installed_copy(self):
@@ -441,8 +444,8 @@ class TowerTest(Base):
         self.publish(data=b"#!/bin/sh\necho tampered\n", listed="0" * 64)
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
-        self.assertEqual((self.project / mach.TOWER_DEST).read_bytes(), data)
-        note = next(line for line in out.splitlines() if line.startswith("The Control Tower"))
+        self.assertEqual((self.project / mach.FLOOR_DEST).read_bytes(), data)
+        note = next(line for line in out.splitlines() if line.startswith("The Factory Floor"))
         self.assertIn("does not match the release's published checksum, so it was refused.", note)
         self.assertIn("The copy already installed was kept.", note)
         self.assertNotIn("nothing was installed", out)
@@ -451,8 +454,8 @@ class TowerTest(Base):
         self.publish(data=None)  # like v0.12.0: SHA256SUMS lists only mach-studio-*
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
-        self.assertFalse((self.project / mach.TOWER_DEST).exists())
-        notes = [line for line in out.splitlines() if "Control Tower" in line]
+        self.assertFalse((self.project / mach.FLOOR_DEST).exists())
+        notes = [line for line in out.splitlines() if "Factory Floor" in line]
         self.assertEqual(len(notes), 1, out)
         self.assertIn("does not include it; it is published from a later release", notes[0])
         self.assertNotIn("error", out.lower())
@@ -462,12 +465,12 @@ class TowerTest(Base):
 
     def test_studio_url_alone_also_serves_the_observer(self):
         data = self.publish()
-        self.setenv("MACH_TOWER_URL", None)
+        self.setenv("MACH_FLOOR_URL", None)
         self.setenv("MACH_STUDIO_URL", self.release.as_uri())
-        self.assertEqual(mach.tower_base("9.9.9"), self.release.as_uri())
+        self.assertEqual(mach.floor_base("9.9.9"), self.release.as_uri())
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
-        self.assertEqual((self.project / mach.TOWER_DEST).read_bytes(), data)
+        self.assertEqual((self.project / mach.FLOOR_DEST).read_bytes(), data)
 
     def test_a_failed_update_keeps_the_copy_already_installed(self):
         data = self.publish()
@@ -475,35 +478,73 @@ class TowerTest(Base):
         self.publish(data=None)
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
-        self.assertEqual((self.project / mach.TOWER_DEST).read_bytes(), data)
+        self.assertEqual((self.project / mach.FLOOR_DEST).read_bytes(), data)
         self.assertIn("The copy already installed was kept", out)
 
-    def test_no_tower_flag_and_environment_skip_it(self):
+    def test_no_floor_flag_and_environment_skip_it(self):
         self.publish()
-        code, out = self.mach("install", "--no-tower")
+        code, out = self.mach("install", "--no-floor")
         self.assertEqual(code, 0, out)
-        self.assertFalse((self.project / mach.TOWER_DEST).exists())
-        self.assertIn("The Control Tower was not installed (skipped).", out)
-        code, out = self.mach("scaffold", "--no-tower")
+        self.assertFalse((self.project / mach.FLOOR_DEST).exists())
+        self.assertIn("The Factory Floor was not installed (skipped).", out)
+        code, out = self.mach("scaffold", "--no-floor")
         self.assertEqual(code, 0, out)
-        self.assertFalse((self.project / mach.TOWER_DEST).exists())
+        self.assertFalse((self.project / mach.FLOOR_DEST).exists())
+        self.setenv("MACH_FLOOR", "skip")
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.project / mach.FLOOR_DEST).exists())
+
+    def test_the_earlier_names_still_work(self):
+        """The Factory Floor was the Control Tower: --no-tower, MACH_TOWER and MACH_TOWER_URL still work."""
+        self.publish()
+        for command in ("install", "scaffold"):
+            code, out = self.mach(command, "--no-tower")
+            self.assertEqual(code, 0, out)
+            self.assertFalse((self.project / mach.FLOOR_DEST).exists())
+            self.assertIn("The Factory Floor was not installed (skipped).", out)
         self.setenv("MACH_TOWER", "skip")
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
-        self.assertFalse((self.project / mach.TOWER_DEST).exists())
+        self.assertFalse((self.project / mach.FLOOR_DEST).exists())
+        self.assertIn("The Factory Floor was not installed (skipped).", out)
+        self.setenv("MACH_TOWER", None)
+        data = self.publish()
+        self.setenv("MACH_FLOOR_URL", None)
+        self.setenv("MACH_TOWER_URL", self.release.as_uri())
+        self.assertEqual(mach.floor_base("9.9.9"), self.release.as_uri())
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.project / mach.FLOOR_DEST).read_bytes(), data)
+
+    def test_when_the_new_and_earlier_names_disagree_the_new_one_wins_with_a_note(self):
+        data = self.publish()
+        self.setenv("MACH_FLOOR", "yes")
+        self.setenv("MACH_TOWER", "skip")
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.project / mach.FLOOR_DEST).read_bytes(), data)
+        self.assertEqual([line for line in out.splitlines() if "MACH_TOWER" in line],
+                         ["Note: MACH_FLOOR and MACH_TOWER (its earlier name) disagree; using MACH_FLOOR."])
+        elsewhere = Path(self.tmp.name).resolve() / "elsewhere"
+        self.setenv("MACH_TOWER_URL", elsewhere.as_uri())
+        mach._NOTED.clear()
+        with contextlib.redirect_stdout(io.StringIO()) as note:
+            self.assertEqual(mach.floor_base("9.9.9"), self.release.as_uri())
+        self.assertEqual(note.getvalue(), "Note: MACH_FLOOR_URL and MACH_TOWER_URL (its earlier name) disagree; using MACH_FLOOR_URL.\n")
 
     def test_dry_run_downloads_nothing(self):
         self.publish()
         code, out = self.mach("install", "--dry-run")
         self.assertEqual(code, 0, out)
-        self.assertIn(f"Would download the Control Tower ({mach.tower_asset()})", out)
+        self.assertIn(f"Would download the Factory Floor ({mach.floor_asset()})", out)
         self.assertEqual(snapshot(self.project), {})
 
     def test_a_build_in_this_checkout_is_used_without_downloading(self):
-        mach.TOWER_LOCAL_BUILD = "bin/mach"  # any real file in the checkout stands in for a built observer
+        mach.FLOOR_LOCAL_BUILD = "bin/mach"  # any real file in the checkout stands in for a built observer
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
-        self.assertEqual((self.project / mach.TOWER_DEST).read_bytes(), (ROOT / "bin/mach").read_bytes())
+        self.assertEqual((self.project / mach.FLOOR_DEST).read_bytes(), (ROOT / "bin/mach").read_bytes())
         self.assertIn("this MACH checkout's own build", out)
 
     def test_uninstall_removes_it_and_leaves_an_empty_project(self):
@@ -511,7 +552,7 @@ class TowerTest(Base):
         self.mach("install")
         code, out = self.mach("uninstall")
         self.assertEqual(code, 0, out)
-        self.assertIn(f"remove   {mach.TOWER_DEST}", out)
+        self.assertIn(f"remove   {mach.FLOOR_DEST}", out)
         self.assertEqual(list(self.project.iterdir()), [], out)
 
 
@@ -522,7 +563,7 @@ class ProvenanceTest(Base):
 
     def setUp(self):
         super().setUp()
-        for name in ("MACH_STUDIO", "MACH_STUDIO_URL", "MACH_TOWER_URL", "MACH_REPO", mach.REQUIRE_PROVENANCE_ENV):
+        for name in ("MACH_STUDIO", "MACH_STUDIO_URL", "MACH_FLOOR_URL", "MACH_REPO", mach.REQUIRE_PROVENANCE_ENV):
             self.setenv(name, None)
         self.release = Path(self.tmp.name).resolve() / "release"
         self.release.mkdir()
@@ -869,7 +910,7 @@ class SourceArchiveTest(Base):
         gh.chmod(0o755)
 
     def sh(self, *args, **env):
-        base = {key: value for key, value in os.environ.items() if not key.startswith("MACH_") or key in ("MACH_STUDIO", "MACH_TOWER")}
+        base = {key: value for key, value in os.environ.items() if not key.startswith("MACH_") or key in ("MACH_STUDIO", "MACH_FLOOR")}
         base.update(PATH=str(self.bin), FAKE_WEB=str(self.web), TMPDIR=str(self.temp))
         return subprocess.run([shutil.which("bash"), str(ROOT / "install.sh"), *args], cwd=self.project, capture_output=True, text=True,
                               env={**base, **env})
@@ -1003,10 +1044,10 @@ class SourceArchiveTest(Base):
         self.assert_refused(self.sh(MACH_REF="main", MACH_VERSION=NEW), "set only one of MACH_SOURCE, MACH_REF and MACH_VERSION")
 
     def test_flags_and_upgrade_still_work(self):
-        done = self.sh("install", "--no-studio", "--no-tower", MACH_STUDIO="", MACH_TOWER="")
+        done = self.sh("install", "--no-studio", "--no-floor", MACH_STUDIO="", MACH_FLOOR="")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("The visual Product Studio app was not installed (skipped).", done.stdout)
-        self.assertIn("The Control Tower was not installed (skipped).", done.stdout)
+        self.assertIn("The Factory Floor was not installed (skipped).", done.stdout)
         self.write(f"codeload.github.com/{REPO}/tar.gz/refs/tags/v{OLD}", self.old)
         shutil.rmtree(self.project)
         self.project.mkdir()

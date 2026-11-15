@@ -1,15 +1,15 @@
 # mach-observer
 
-The read-only local observer behind the MACH Control Tower (MACH Next M6.1/M6.2, experimental). It
+The read-only local observer behind the MACH Factory Floor. It
 follows the Factory's own files, keeps a redacted index under `.factory/local/observer/`, projects
 it into the Factory's state, and serves a versioned GET-only API, a server-sent event stream and the
-embedded Control Tower on `127.0.0.1`. Design: `docs/mach-next/M6_1_OBSERVER_DESIGN.md`; events:
+embedded Factory Floor on `127.0.0.1`. Design: `docs/mach-next/M6_1_OBSERVER_DESIGN.md`; events:
 `docs/mach-next/M6_1_EVENT_CONTRACT.md`; Timeline, Evidence and Analytics data:
 `docs/mach-next/M6_1_SHARED_CONTRACTS.md`.
 
     make test        # go vet + go test -race (about 1.5 min; `go test ./...` without -race about 20 s)
     make host        # bin/mach-observer with a placeholder page
-    make build       # bin/mach-observer with the Control Tower embedded (build.sh)
+    make build       # bin/mach-observer with the Factory Floor embedded (build.sh)
     make smoke       # start it on a throwaway project and check it (smoke.sh)
     bin/mach-observer --project <path>   # prints a one-time link; started by a skill, not a MACH command
 
@@ -30,7 +30,7 @@ command, starts no process and connects to nothing: see [What it never does](#wh
 
 ## Restarts: the same page keeps working
 
-An open Control Tower page survives a restart of the observer (`kill`, a crash, a new session)
+An open Factory Floor page survives a restart of the observer (`kill`, a crash, a new session)
 without any write endpoint:
 
 - **Same origin.** The observer remembers the port it bound in `.factory/local/observer/port` and
@@ -304,7 +304,8 @@ with no `.factory/` answers `factory_present: false` and the same keys.
   scrubber would make of it. An ordinary file whose name merely contains such a word (`AC-03-token-refresh.txt`) is
   refused too; open it on disk.
 - **Images and video only when the project opts in:** `.factory/config.json`
-  `{"tower": {"evidence_media": true}}` (tracked; read only; off by default, 403 `media-disabled`).
+  `{"floor": {"evidence_media": true}}` (tracked; read only; off by default, 403 `media-disabled`;
+  `"tower"`, the earlier name, still works, and `"floor"` wins when both are set).
 - **Headers:** `Content-Security-Policy: default-src 'none'; img-src 'self'; media-src 'self';
   sandbox`, `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`,
   `Content-Disposition: inline` (`?download=1` for `attachment`), `X-MACH-Evidence-Match: match`,

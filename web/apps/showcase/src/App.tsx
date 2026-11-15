@@ -33,7 +33,7 @@ function useHash(): string {
 
 export function App({ product }: { product: ProductName }) {
   const hash = useHash() || "foundations";
-  const other: ProductName = product === "control-tower" ? "product-studio" : "control-tower";
+  const other: ProductName = product === "factory-floor" ? "product-studio" : "factory-floor";
   const status = fx.statusPublished;
   // The factory grammar (M6) is its own page, so the design-system page above stays exactly as it was.
   const factory = hash === "factory" || hash.startsWith("factory-");
@@ -46,7 +46,7 @@ export function App({ product }: { product: ProductName }) {
               <NavItem key={s.id} href={`#${s.id}`} icon={s.icon} label={s.label} current={hash === s.id} />
             ))}
           </NavSection>
-          <NavSection title="Control Tower">
+          <NavSection title="Factory Floor">
             <NavItem href="#factory" icon={<Factory />} label="Factory grammar" current={factory} />
           </NavSection>
         </NavRail>
@@ -57,7 +57,7 @@ export function App({ product }: { product: ProductName }) {
             <>
               <Boxes aria-hidden="true" className="size-4 text-ink-subtle" />
               <span className="text-label text-ink">@mach/ui</span>
-              <span className="text-body-sm text-ink-muted">showing {product === "control-tower" ? "Control Tower" : "Product Studio"}</span>
+              <span className="text-body-sm text-ink-muted">showing {product === "factory-floor" ? "Factory Floor" : "Product Studio"}</span>
             </>
           }
           status={
@@ -71,7 +71,7 @@ export function App({ product }: { product: ProductName }) {
               className="inline-flex h-control-sm items-center rounded-sm border border-line-control bg-surface px-2.5 text-body-sm font-semibold text-ink hover:bg-surface-sunken"
               href={`?product=${other}${window.location.hash}`}
             >
-              View as {other === "control-tower" ? "Control Tower" : "Product Studio"}
+              View as {other === "factory-floor" ? "Factory Floor" : "Product Studio"}
             </a>
           }
         />
@@ -88,7 +88,7 @@ export function App({ product }: { product: ProductName }) {
             The MACH design system
           </Heading>
           <Text size="body-lg" editorial tone="muted">
-            Tokens, components and patterns shared by Product Studio and Control Tower. Every example on this page is drawn from the
+            Tokens, components and patterns shared by Product Studio and Factory Floor. Every example on this page is drawn from the
             product engine's real output in <span className="font-mono text-mono">web/fixtures</span>.
           </Text>
         </header>

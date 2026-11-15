@@ -2,7 +2,7 @@ import type { Edge, Node } from "@xyflow/react";
 import type { Tone } from "../components/tone";
 import type { GlyphShape } from "../lifecycle/glyph";
 
-/** What a node stands for. Control Tower will add its own kinds (station, cell, agent). */
+/** What a node stands for. Factory Floor will add its own kinds (station, cell, agent). */
 export type GraphNodeKind = "product" | "epic" | "slice";
 
 /**

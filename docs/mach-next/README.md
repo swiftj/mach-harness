@@ -1,3 +1,5 @@
+> **Names in these documents.** The milestone documents here (M0 to M7) use the earlier name "Control Tower" for what is now the **Factory Floor**, and the folder `web/apps/control-tower` for what is now `web/apps/factory-floor` (likewise `tests/test_mach_tower.py`, now `tests/test_mach_floor.py`). Its first workspace, then called "Factory Floor", is now the **Atlas**. "MACH Next" and "experimental" describe how the work was staged while it was built; they are not its status now.
+
 # MACH Next — Branch Foundation
 
 Status: **experimental design + additive, non-dispatching contract prototype**

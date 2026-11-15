@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | bash -s -- uninstall
 #
-# Arguments are passed to 'mach' (install, uninstall, status, scaffold; --dry-run, --force, --no-studio, --no-tower).
+# Arguments are passed to 'mach' (install, uninstall, status, scaffold; --dry-run, --force, --no-studio, --no-floor; --no-tower, its earlier name, still works).
 #
 # What it installs: the newest MACH release, or MACH_VERSION=<x.y.z>. It downloads that release's
 # source archive (mach-<version>-source.tar.gz) and SHA256SUMS, checks the archive against the
@@ -18,7 +18,7 @@
 # Unverified sources, only by explicit choice: MACH_REF=<branch> (e.g. main) downloads a branch;
 # MACH_SOURCE=/path/to/mach-harness uses a local copy. The note then says the source was not verified.
 # MACH_REQUIRE_PROVENANCE=1 refuses any source (and any prebuilt program) whose provenance cannot be verified.
-# MACH_REPO=owner/name chooses the repository. MACH_STUDIO=skip and MACH_TOWER=skip skip the prebuilt programs.
+# MACH_REPO=owner/name chooses the repository. MACH_STUDIO=skip and MACH_FLOOR=skip skip the prebuilt programs (MACH_TOWER, the earlier name, still works).
 set -euo pipefail
 
 REPO="${MACH_REPO:-swiftj/mach-harness}"

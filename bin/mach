@@ -57,16 +57,16 @@ STUDIO_MACHINES = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64", "amd
 # What each release publishes. Intel Macs and Windows have no build.
 STUDIO_BUILDS = ("darwin-arm64", "linux-arm64", "linux-amd64")
 STUDIO_MAX_BYTES = 200 * 1024 * 1024
-# The Control Tower's read-only observer (MACH Next M6.1): published beside mach-studio, for the same
-# machines, in the same SHA256SUMS. Releases before it have no such file; that is never an error.
-TOWER_DEST = ".factory/bin/mach-observer"
-TOWER_LOCAL_BUILD = "apps/observer/bin/mach-observer"
+# The Factory Floor's read-only observer: published beside mach-studio, for the same machines, in
+# the same SHA256SUMS. Releases before it have no such file; that is never an error.
+FLOOR_DEST = ".factory/bin/mach-observer"
+FLOOR_LOCAL_BUILD = "apps/observer/bin/mach-observer"
 SKIP_WORDS = ("skip", "off", "0", "no")
 # The oldest Python the scripts are written for (the skills' "compatibility: python3 >= 3.8").
 MIN_PYTHON = (3, 8)
 # After the checksum, a program from the project's GitHub release is checked for build provenance
 # with the GitHub CLI, when it is installed and signed in. MACH_REQUIRE_PROVENANCE=1 refuses a program
-# whose provenance cannot be verified. A release fetched from MACH_STUDIO_URL / MACH_TOWER_URL (a
+# whose provenance cannot be verified. A release fetched from MACH_STUDIO_URL / MACH_FLOOR_URL (a
 # mirror or a local folder) carries no attestation, so it is checked against its checksum only.
 REQUIRE_PROVENANCE_ENV = "MACH_REQUIRE_PROVENANCE"
 RELEASE_WORKFLOW = ".github/workflows/release.yml"
@@ -90,13 +90,29 @@ class Program(NamedTuple):
     url_env: str       # environment variable naming another place to fetch the release's files
     without: str       # what still works without it
     optional: bool     # a release that does not list it is normal, not a failure (it came later)
+    old_env: str = ""      # the earlier name of `env`, still read (the new name wins)
+    old_url_env: str = ""  # the earlier name of `url_env`, still read (the new name wins)
 
 
 STUDIO = Program("mach-studio", "The visual Product Studio app", STUDIO_DEST, "STUDIO_LOCAL_BUILD", "no_studio", "MACH_STUDIO", "MACH_STUDIO_URL",
                  "Everything else works without it, including Product Studio in the terminal.", False)
-TOWER = Program("mach-observer", "The Control Tower", TOWER_DEST, "TOWER_LOCAL_BUILD", "no_tower", "MACH_TOWER", "MACH_TOWER_URL",
-                "Everything else works without it; the Control Tower only watches the Factory.", True)
-PROGRAMS = (STUDIO, TOWER)
+# The Factory Floor was called the Control Tower: MACH_TOWER, MACH_TOWER_URL and --no-tower still work.
+FLOOR = Program("mach-observer", "The Factory Floor", FLOOR_DEST, "FLOOR_LOCAL_BUILD", "no_floor", "MACH_FLOOR", "MACH_FLOOR_URL",
+                "Everything else works without it; the Factory Floor only watches the Factory.", True, "MACH_TOWER", "MACH_TOWER_URL")
+PROGRAMS = (STUDIO, FLOOR)
+_NOTED = set()
+
+
+def env_setting(name: str, old: str = "") -> Tuple[Optional[str], str]:
+    """The value of an environment setting and the name it came from. `old` is its earlier name, still
+    read; when both are set and disagree, the new name wins and a one-line note says so."""
+    new_value, old_value = os.environ.get(name), os.environ.get(old) if old else None
+    if new_value is not None and old_value is not None and new_value != old_value and (name, old) not in _NOTED:
+        _NOTED.add((name, old))
+        print(f"Note: {name} and {old} (its earlier name) disagree; using {name}.")
+    if new_value is not None or not old_value:
+        return new_value, name
+    return old_value, old
 
 
 class Item(NamedTuple):
@@ -175,7 +191,10 @@ def program_asset(program: Program) -> Optional[str]:
 
 def program_override(program: Program) -> Optional[str]:
     """The environment variable that points this program's release somewhere else, if one is set."""
-    return next((name for name in (program.url_env, STUDIO.url_env) if os.environ.get(name)), None)
+    value, name = env_setting(program.url_env, program.old_url_env)
+    if value:
+        return name
+    return STUDIO.url_env if os.environ.get(STUDIO.url_env) else None
 
 
 def release_repo() -> str:
@@ -184,8 +203,8 @@ def release_repo() -> str:
 
 
 def program_base(program: Program, version: str) -> str:
-    """Where a version's release files are. MACH_STUDIO_URL (or MACH_TOWER_URL for the Control Tower)
-    replaces it: a mirror, or a folder as file://... The Control Tower falls back to MACH_STUDIO_URL,
+    """Where a version's release files are. MACH_STUDIO_URL (or MACH_FLOOR_URL for the Factory Floor)
+    replaces it: a mirror, or a folder as file://... The Factory Floor falls back to MACH_STUDIO_URL,
     since both programs are files of the same release."""
     override = program_override(program)
     if override:
@@ -201,12 +220,12 @@ def studio_base(version: str) -> str:
     return program_base(STUDIO, version)
 
 
-def tower_asset() -> Optional[str]:
-    return program_asset(TOWER)
+def floor_asset() -> Optional[str]:
+    return program_asset(FLOOR)
 
 
-def tower_base(version: str) -> str:
-    return program_base(TOWER, version)
+def floor_base(version: str) -> str:
+    return program_base(FLOOR, version)
 
 
 class NotPublished(Fail):
@@ -321,7 +340,7 @@ def program_item(program: Program, root: Path, project: Path, version: str, args
     current = project / program.dest
     kept = Item(program.dest, current.read_bytes(), "managed", True) if current.is_file() else None
     lower = program.title[0].lower() + program.title[1:]
-    if getattr(args, program.flag, False) or os.environ.get(program.env, "").lower() in SKIP_WORDS:
+    if getattr(args, program.flag, False) or (env_setting(program.env, program.old_env)[0] or "").lower() in SKIP_WORDS:
         return kept, f"{program.title} was not installed (skipped).", None
     local = root / globals()[program.local]
     if local.is_file():
@@ -348,7 +367,7 @@ def studio_item(root: Path, project: Path, version: str, args: argparse.Namespac
 
 
 def program_items(root: Path, project: Path, version: str, args: argparse.Namespace) -> Tuple[List[Item], str, Dict[str, Dict[str, str]]]:
-    """Every prebuilt program (the visual Product Studio app, the Control Tower), their notes, and
+    """Every prebuilt program (the visual Product Studio app, the Factory Floor), their notes, and
     what the manifest records about each one installed now (which release, from where, what was checked)."""
     items: List[Item] = []
     notes: List[str] = []
@@ -729,12 +748,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     common(p)
     p.add_argument("--no-scaffold", action="store_true", help="install only the skills and agents")
     p.add_argument("--no-studio", action="store_true", help="do not download the visual Product Studio app")
-    p.add_argument("--no-tower", action="store_true", help="do not download the Control Tower (the Factory's read-only observer)")
+    p.add_argument("--no-floor", "--no-tower", dest="no_floor", action="store_true", help="do not download the Factory Floor (the Factory's read-only observer); --no-tower is its earlier name")
     p.set_defaults(func=cmd_install)
     p = sub.add_parser("scaffold", help="create only the factory files (for projects that use the MACH plugin)")
     common(p)
     p.add_argument("--no-studio", action="store_true", help="do not download the visual Product Studio app")
-    p.add_argument("--no-tower", action="store_true", help="do not download the Control Tower (the Factory's read-only observer)")
+    p.add_argument("--no-floor", "--no-tower", dest="no_floor", action="store_true", help="do not download the Factory Floor (the Factory's read-only observer); --no-tower is its earlier name")
     p.set_defaults(func=cmd_scaffold)
     p = sub.add_parser("uninstall", help="remove what MACH installed; your tickets, specs and cells are kept")
     common(p)

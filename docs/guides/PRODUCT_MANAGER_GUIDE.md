@@ -1,6 +1,6 @@
 # Product Manager Guide
 
-This guide is for a product manager who defines work in MACH Product Studio. It assumes no engineering background and teaches no Git. Product Studio is experimental. This guide describes the code at this release candidate, not a promise of readiness for regulated or enterprise production use.
+This guide is for a product manager who defines work in MACH Product Studio. It assumes no engineering background and teaches no Git. This guide describes the code at this release candidate, not a promise of readiness for regulated or enterprise production use.
 
 Where something was only tested with stand-ins or on one machine, the text says so. See `RELEASE_NOTES_DRAFT.md` for the list of what was and was not tested.
 
@@ -125,7 +125,7 @@ When engineering has built a wave and checked it as a release, they give you a r
 
 **This is available in the terminal only today.** The visual app has no screen for it. Ask Claude in the terminal to record it. Claude reads the file with you first: its outcome, blockers, incomplete items and exceptions. Only on your explicit decision does it run the record command with accepted or rejected, your role (for example `product-owner`, never your name) and an optional note. Accepting is refused unless the file is for that release and commit, holds that exact wave, and says `qualified` or `qualified_with_exceptions`. Rejecting is always possible. The decision reaches engineering when you send it, as its own request (section 9: `send <wave> --acceptance` when the definition has nothing new). It releases and deploys nothing.
 
-The acceptance record was used for real, by a simulated product manager, on three waves of a throwaway project: it is tied to the wave as merged at the release commit, not to your draft, so a later draft revision no longer blocks it, and `accepted` appeared only after each record merged. Engineering's release-readiness snapshot, read by the Control Tower, said "not recorded" until then. Sending the acceptance alone was fixed after that run (section 9) and has not been seen again live.
+The acceptance record was used for real, by a simulated product manager, on three waves of a throwaway project: it is tied to the wave as merged at the release commit, not to your draft, so a later draft revision no longer blocks it, and `accepted` appeared only after each record merged. Engineering's release-readiness snapshot, read by the Factory Floor, said "not recorded" until then. Sending the acceptance alone was fixed after that run (section 9) and has not been seen again live.
 
 ## 12. What the messages mean
 
