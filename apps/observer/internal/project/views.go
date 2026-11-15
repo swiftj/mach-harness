@@ -774,6 +774,12 @@ func HistoryFacts(s *State) map[string]any {
 	for c, n := range s.GapClasses {
 		classes[c] = n
 	}
+	// A copy, never the state's own map: the result is encoded after the projector's lock is
+	// released (Status, the health route) while the projector goes on counting gaps.
+	gaps := make(map[string]int64, len(s.GapCounts))
+	for r, n := range s.GapCounts {
+		gaps[r] = n
+	}
 	if s.Partial != "" {
 		classes["evicted"]++
 	}
@@ -791,7 +797,7 @@ func HistoryFacts(s *State) map[string]any {
 		completeness = "partial"
 	}
 	return map[string]any{"completeness": completeness, "partial": s.Partial, "lost": lost, "not_interpreted": notInterpreted,
-		"classes": classes, "gaps": s.GapCounts, "not_v3": s.NotV3}
+		"classes": classes, "gaps": gaps, "not_v3": s.NotV3}
 }
 
 // HasPrefixAny reports whether v starts with any prefix.
