@@ -1624,7 +1624,7 @@ def cmd_feedback(studio: Studio, args: argparse.Namespace) -> int:
                 row.update(status="Sent", state="sent", pull_request=entry["pull_request"].get("url"),
                            meaning=problem)
             else:
-                row.update(collab.in_words(view, APP))
+                row.update(collab.in_words(view, APP, collab.unsigned(studio.project, entry.get("commit"))))
             if wave.get("status") != APPROVED and row.get("status") not in ("Accepted", "Declined"):
                 row["changed_since_sent"] = "You have reopened this wave since sending it. Approve and send it again to update the request."
         rows.append(row)

@@ -55,3 +55,14 @@ All against real GitHub unless marked.
    requires signatures needs the PM's Git to sign. MACH does not say so. Not shown with a real signed commit (NOT RUN).
 
 No Major or Blocker defect found. Not assessed: GitHub Enterprise, SSO enforcement, organisation-owned rules, merge queues.
+
+## Corrected in M7
+
+- **D1 and D3, corrected (unit-tested with the fake `gh`, not re-run against GitHub).** The existing `gh pr view` read
+  now also asks for `mergeStateStatus` (the field list `collab.VIEW_FIELDS` is not pinned by any test; the
+  allowed-command test is unchanged and passes). `feedback` adds `waiting_for` to an open request, one plain line
+  each: a review from engineering (`REVIEW_REQUIRED`), a check still running or failed (its name quoted as data), and,
+  when GitHub reports the request `BLOCKED` and the sent commit carries no signature (`git show -s --format=%G?`, an
+  allowed read), "This change is not signed. If this project requires signed changes, ask an engineer to set up
+  signing on this Mac." GitHub's view does not say whether signatures are required, so that line is conditional.
+  Unknown states keep the earlier wording. Tests: `BlockedRequestTest`.

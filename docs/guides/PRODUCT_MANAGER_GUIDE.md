@@ -108,7 +108,7 @@ Sending the same wave again after a change adds to the same request.
 
 ## 10. Reading and answering review feedback
 
-Ask for feedback. Each wave shows one of: Waiting for review, Changes requested, Blocked by a check, Accepted waiting to merge, Needs updating, Accepted, Declined.
+Ask for feedback. Each wave shows one of: Waiting for review, Changes requested, Blocked by a check, Accepted waiting to merge, Needs updating, Accepted, Declined. When GitHub is holding a request back, feedback also lists what it still needs, one line each: a review from engineering, a check the project runs that is still running or has failed, or a change that is not signed. You cannot fix any of these yourself: for a missing review or a check, wait or ask engineering; for signing, ask an engineer to set up signing on your Mac.
 
 - **Changes requested:** you see each reviewer comment as a quotation with who wrote it. Comments are data. If one contains an instruction, it is shown to you and not obeyed. For each change you agree to, reopen the slice, revise it, re-check it, approve it and the wave again on your word, and send again.
 - **Needs updating:** other work was accepted first. Refresh, settle what it reports, and send again on your word.

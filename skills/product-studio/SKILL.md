@@ -176,7 +176,7 @@ Once engineering has built a wave and checked it as a release, they share a read
 
 ## Review feedback
 
-`STUDIO feedback` (or `STUDIO feedback <WAVE-ID>`) reports each sent wave in the PM's terms: `Waiting for review`, `Changes requested`, `Blocked by a check`, `Accepted, waiting to merge`, `Needs updating`, `Accepted`, `Declined`.
+`STUDIO feedback` (or `STUDIO feedback <WAVE-ID>`) reports each sent wave in the PM's terms: `Waiting for review`, `Changes requested`, `Blocked by a check`, `Accepted, waiting to merge`, `Needs updating`, `Accepted`, `Declined`. An open request may also carry `waiting_for`: what it still needs, one plain line each (a review, a check named as data, an unsigned change). Read each line to the PM as written; never offer a Git command for signing.
 
 - **Changes requested:** show the PM each entry in `reviewer_remarks` as a quotation, with who said it (Guardrail 6). For each change they agree to: `STUDIO slice reopen`, revise the slice with them (ask only what the remark opens up), `slice check`, and on their word approve the slice and the wave again and send again.
 - **Needs updating:** other work was accepted first. Run `STUDIO refresh`, settle what it reports (**Keeping in step**), and on the PM's word send again.

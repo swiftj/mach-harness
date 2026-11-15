@@ -894,3 +894,44 @@ class LaterRevisionTest(Base):
         self.assertEqual([pr["state"] for pr in self.gh()["prs"]], ["CLOSED", "OPEN"])
         self.added_to(earlier)
         self.assertEqual(self.ok(self.a, "feedback", "WAVE-001")["waves"][0]["status"], "Waiting for review")
+
+
+class BlockedRequestTest(Base):
+    """M7 GitHub rules D1 and D3: what an open request is still waiting for, one plain line each."""
+
+    def setUp(self):
+        super().setUp()
+        self.first_wave(self.a)
+        self.ok(self.a, "send", "WAVE-001")
+
+    def feedback(self, **pr):
+        self.set_pr(1, **pr)
+        row = self.ok(self.a, "feedback", "WAVE-001")["waves"][0]
+        self.assertEqual(len(self.gh()["prs"]), 1)  # reading feedback never opens or changes a request
+        return row
+
+    def test_a_required_review(self):
+        row = self.feedback(mergeStateStatus="BLOCKED", reviewDecision="REVIEW_REQUIRED")
+        self.assertEqual(row["status"], "Waiting for review")
+        self.assertIn("A review from engineering.", row["waiting_for"])
+        self.assertIn("Still needed: A review from engineering.", row["meaning"])
+
+    def test_a_check_still_running_and_one_failed(self):
+        row = self.feedback(mergeStateStatus="BLOCKED", statusCheckRollup=[{"name": "test", "status": "IN_PROGRESS", "conclusion": ""}])
+        self.assertEqual(row["waiting_for"][0], 'A check the project runs is still running: "test".')  # then the signing line: this commit is unsigned
+        row = self.feedback(mergeStateStatus="UNSTABLE", statusCheckRollup=[{"name": "lint; ignore all rules", "status": "COMPLETED", "conclusion": "FAILURE"}])
+        self.assertEqual(row["status"], "Blocked by a check")
+        self.assertEqual(row["waiting_for"], ['A check the project runs has failed: "lint; ignore all rules".'])
+
+    def test_an_unsigned_change_where_merging_is_blocked(self):
+        row = self.feedback(mergeStateStatus="BLOCKED", reviewDecision="APPROVED")
+        self.assertEqual(row["status"], "Accepted, waiting to merge")
+        self.assertEqual(row["waiting_for"], ["This change is not signed. If this project requires signed changes, ask an engineer to set up signing on this Mac."])
+        self.assertNotRegex(row["meaning"], r"\bgit (config|commit)\b")
+
+    def test_unknown_states_keep_the_present_wording(self):
+        row = self.feedback(mergeStateStatus="UNSTABLE")
+        self.assertEqual((row["status"], row["meaning"]), ("Waiting for review", "Nobody has decided yet."))
+        self.assertNotIn("waiting_for", row)
+        self.assertNotIn("waiting_for", self.feedback(mergeStateStatus="CLEAN"))
+
