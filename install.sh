@@ -121,7 +121,9 @@ else
     VERSION="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["tag_name"])' "$WORK/latest.json" 2>/dev/null || true)"
     VERSION="${VERSION#v}"
   fi
-  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || refuse "'$VERSION' is not a MACH release version (x.y.z, or x.y.z-rc.N for a release candidate)"
+  # The pattern lives in a variable so that a plain POSIX shell can still parse this file (sh -n).
+  version_pattern='^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'
+  [[ "$VERSION" =~ $version_pattern ]] || refuse "'$VERSION' is not a MACH release version (x.y.z, or x.y.z-rc.N for a release candidate)"
 
   if python3 -I -c 'import sys; v, last = (tuple(map(int, a.split("-")[0].split("."))) for a in sys.argv[1:]); sys.exit(0 if v <= last else 1)' \
        "$VERSION" "$LAST_WITHOUT_ARCHIVE"; then
