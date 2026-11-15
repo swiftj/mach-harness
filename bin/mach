@@ -495,6 +495,7 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
         "files": dict(sorted(recorded.items())),
         "blocks": blocks,
     }
+    manifest["source"] = install_source()
     # Which release each prebuilt program came from: a copy kept from an earlier install keeps its record.
     installed = {dest: info for dest, info in {**earlier_programs, **(programs or {})}.items() if dest in recorded}
     if installed:
@@ -515,6 +516,15 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
               else "\nNext: run  /mach:intent <your feature idea>")
         print("Remove with:  python3 .factory/bin/mach uninstall")
     return 1 if conflicts else 0
+
+
+def install_source() -> Dict[str, str]:
+    """Where this MACH source came from and how it was checked, for the manifest. install.sh says so in
+    MACH_INSTALL_SOURCE / MACH_INSTALL_CHECKED (never a local path); bin/mach run directly says that."""
+    source, checked = os.environ.get("MACH_INSTALL_SOURCE"), os.environ.get("MACH_INSTALL_CHECKED")
+    if source and checked:
+        return {"from": source, "checked": checked}
+    return {"from": "a MACH copy (bin/mach run directly)", "checked": "not verified (bin/mach was run directly, not through install.sh)"}
 
 
 def require_git() -> None:

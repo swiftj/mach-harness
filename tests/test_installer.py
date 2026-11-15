@@ -779,6 +779,232 @@ class InstallScriptTest(Base):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(list(self.project.iterdir()), [])
 
+    def test_install_sh_is_valid_shell(self):
+        done = subprocess.run(["sh", "-n", str(ROOT / "install.sh")], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        done = subprocess.run(["bash", "-n", str(ROOT / "install.sh")], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+
+REPO = "swiftj/mach-harness"
+NEW, OLD = "0.13.0", "0.12.0"  # a release with a source archive; the last one without
+
+
+def source_tree(folder, prefix, version):
+    """What `git archive --prefix=<prefix>/` gives for the parts the installer needs, at `version`."""
+    tree = folder / prefix
+    for part in (".claude-plugin", "bin", "skills", "agents", "workflows", "templates"):
+        shutil.copytree(ROOT / part, tree / part, ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
+    plugin = tree / ".claude-plugin/plugin.json"
+    plugin.write_text(json.dumps({**json.loads(plugin.read_text()), "version": version}), encoding="utf-8")
+    return tree
+
+
+def targz(tree, path):
+    import tarfile
+    with tarfile.open(path, "w:gz") as archive:
+        archive.add(tree, arcname=tree.name)
+    return path.read_bytes()
+
+
+class SourceArchiveTest(Base):
+    """M7 (2): install.sh installs a release's source archive, checked against SHA256SUMS and, with gh,
+    its attestation, before any of it runs. No network: a fake `curl` on PATH maps every https:// URL to a
+    folder (simulated GitHub), and `gh` is a fake script (simulated: no real attestation is verified)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.built = tempfile.TemporaryDirectory()
+        here = Path(cls.built.name).resolve()
+        cls.good = targz(source_tree(here, f"mach-{NEW}", NEW), here / "new.tar.gz")
+        cls.old = targz(source_tree(here, f"mach-harness-{OLD}", OLD), here / "old.tar.gz")
+        cls.main = targz(source_tree(here, "mach-harness-main", "0.13.1"), here / "main.tar.gz")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.built.cleanup()
+
+    def setUp(self):
+        super().setUp()
+        base = Path(self.tmp.name).resolve()
+        self.web, self.bin, self.temp = base / "web", base / "bin", base / "tmp"
+        for folder in (self.web, self.bin, self.temp):
+            folder.mkdir()
+        # PATH: only the tools install.sh and bin/mach use, never a real gh.
+        for tool in ("bash", "sh", "env", "tar", "gzip", "mktemp", "rm", "mkdir", "awk", "tr", "cat", "git",
+                     "shasum", "sha256sum", "perl", "dirname", "uname", "ls"):
+            found = shutil.which(tool)
+            if found:
+                (self.bin / tool).symlink_to(found)
+        (self.bin / "python3").symlink_to(sys.executable)
+        curl = self.bin / "curl"
+        curl.write_text('#!/bin/sh\nn=$#\nfor a in "$@"; do\n  case "$a" in\n    https://*) a="file://$FAKE_WEB/${a#https://}" ;;\n'
+                        '    =https) a="=https,file" ;;\n  esac\n  set -- "$@" "$a"\ndone\nshift "$n"\n'
+                        f'exec {shutil.which("curl")} "$@"\n', encoding="utf-8")
+        curl.chmod(0o755)
+        self.gh_log = base / "gh-args"
+        self.release(NEW, self.good)
+        self.write(f"api.github.com/repos/{REPO}/releases/latest", json.dumps({"tag_name": f"v{NEW}"}).encode())
+
+    def write(self, path, data):
+        target = self.web / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    def release(self, version, archive, listed=None, sums=True):
+        folder = f"github.com/{REPO}/releases/download/v{version}"
+        name = f"mach-{version}-source.tar.gz"
+        if archive is not None:
+            self.write(f"{folder}/{name}", archive)
+        if sums:
+            lines = [f"{mach.sha(b'studio')}  mach-studio-darwin-arm64"]
+            if listed is not False:
+                lines.append(f"{listed or mach.sha(archive)}  {name}")
+            self.write(f"{folder}/SHA256SUMS", ("\n".join(lines) + "\n").encode())
+
+    def fake_gh(self, exit_code):
+        gh = self.bin / "gh"
+        gh.write_text(f'#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "{self.gh_log}"\nexit {exit_code}\n', encoding="utf-8")
+        gh.chmod(0o755)
+
+    def sh(self, *args, **env):
+        base = {key: value for key, value in os.environ.items() if not key.startswith("MACH_") or key in ("MACH_STUDIO", "MACH_TOWER")}
+        base.update(PATH=str(self.bin), FAKE_WEB=str(self.web), TMPDIR=str(self.temp))
+        return subprocess.run([shutil.which("bash"), str(ROOT / "install.sh"), *args], cwd=self.project, capture_output=True, text=True,
+                              env={**base, **env})
+
+    def note(self, done):
+        return next(line for line in (done.stdout + done.stderr).splitlines() if line.startswith(("MACH source:", "error:")))
+
+    def assert_refused(self, done, words):
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertIn(words, done.stderr)
+        self.assertIn("Nothing was installed", done.stderr)
+        self.assertEqual(list(self.project.iterdir()), [], "nothing is written to the project")
+        self.assertEqual(list(self.temp.iterdir()), [], "the downloads are removed")
+
+    def source_record(self):
+        return json.loads((self.project / mach.MANIFEST).read_text())["source"]
+
+    def test_the_newest_release_is_checked_and_installed_and_the_manifest_says_how(self):
+        done = self.sh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue((self.project / SKILL).is_file())
+        self.assertEqual(json.loads((self.project / mach.MANIFEST).read_text())["version"], NEW)
+        expected = (f"MACH source: github.com/{REPO} release v{NEW} (mach-{NEW}-source.tar.gz), checked against the release's checksum; "
+                    f"its build provenance was not verified ({mach.NO_GH}).")
+        self.assertEqual(self.note(done), expected)
+        self.assertEqual(self.source_record(), {"from": f"github.com/{REPO} release v{NEW} (mach-{NEW}-source.tar.gz)",
+                                                "checked": f"checked against the release's checksum; its build provenance was not verified ({mach.NO_GH})"})
+        self.assertEqual(list(self.temp.iterdir()), [])
+
+    def test_a_fake_gh_that_verifies_is_named_with_the_same_words_as_the_programs(self):
+        self.fake_gh(0)
+        done = self.sh(MACH_VERSION=NEW)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("checked against the release's checksum and its build provenance was verified with the GitHub CLI "
+                      f"(gh attestation verify, {REPO}).", self.note(done))
+        args = self.gh_log.read_text().split("\n")
+        self.assertEqual(args[:2], ["attestation", "verify"])
+        self.assertEqual(Path(args[2]).name, f"mach-{NEW}-source.tar.gz")
+        self.assertEqual(args[3:7], ["--repo", REPO, "--signer-workflow", f"{REPO}/{mach.RELEASE_WORKFLOW}"])
+        self.assertIn("build provenance was verified", self.source_record()["checked"])
+        self.assertEqual(list(self.temp.iterdir()), [])
+
+    def test_a_fake_gh_that_fails_refuses_before_anything_runs(self):
+        self.fake_gh(1)
+        done = self.sh()
+        self.assert_refused(done, f"mach-{NEW}-source.tar.gz matched the release's checksum, but its build provenance did not verify "
+                                  f"(gh attestation verify, {REPO}), so it was refused and removed")
+
+    def test_gh_not_signed_in_is_the_same_as_no_gh(self):
+        self.fake_gh(mach.GH_AUTH_REQUIRED)
+        done = self.sh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn(f"its build provenance was not verified ({mach.NO_GH})", self.note(done))
+
+    def test_a_tampered_archive_is_refused_nothing_installed_downloads_removed(self):
+        self.release(NEW, self.good[:-40] + b"tampered" * 5, listed=mach.sha(self.good))
+        self.fake_gh(0)  # would pass: the checksum must refuse it first
+        done = self.sh()
+        self.assert_refused(done, f"mach-{NEW}-source.tar.gz does not match the release's published checksum, so it was refused")
+        self.assertFalse(self.gh_log.exists(), "gh is not asked about a file that failed its checksum")
+
+    def test_require_provenance_without_gh_is_refused(self):
+        done = self.sh(MACH_REQUIRE_PROVENANCE="1")
+        self.assert_refused(done, f"its build provenance could not be verified ({mach.NO_GH}) and MACH_REQUIRE_PROVENANCE=1 requires it, so it was refused")
+        self.fake_gh(0)
+        done = self.sh(MACH_REQUIRE_PROVENANCE="1")
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_a_release_before_source_archives_installs_with_a_note_unless_provenance_is_required(self):
+        self.write(f"codeload.github.com/{REPO}/tar.gz/refs/tags/v{OLD}", self.old)
+        done = self.sh(MACH_VERSION=OLD)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue((self.project / SKILL).is_file())
+        self.assertEqual(self.note(done), f"MACH source: github.com/{REPO} tag v{OLD}; it was not verified (release v{OLD} predates MACH's "
+                                          "source archives, so its source has no checksum or attestation).")
+        self.assertIn("not verified", self.source_record()["checked"])
+        shutil.rmtree(self.project)
+        self.project.mkdir()
+        self.assert_refused(self.sh(MACH_VERSION=f"v{OLD}", MACH_REQUIRE_PROVENANCE="yes"), "MACH_REQUIRE_PROVENANCE=1 requires it")
+
+    def test_a_newer_release_without_its_archive_is_refused_never_installed_unchecked(self):
+        self.write(f"codeload.github.com/{REPO}/tar.gz/refs/tags/v{NEW}", self.good)  # a fallback must not be taken
+        self.release(NEW, None, listed=False)
+        self.assert_refused(self.sh(), f"release v{NEW} does not list mach-{NEW}-source.tar.gz in its SHA256SUMS")
+        shutil.rmtree(self.web / f"github.com/{REPO}/releases/download/v{NEW}")
+        self.assert_refused(self.sh(), f"release v{NEW} was not found, or it has no checksum file (SHA256SUMS)")
+        self.release(NEW, None, listed="a" * 64)  # listed, but the file is missing
+        self.assert_refused(self.sh(), f"release v{NEW} does not have the file mach-{NEW}-source.tar.gz")
+
+    def test_an_archive_that_names_another_version_is_refused(self):
+        self.release("0.14.0", self.good)
+        self.assert_refused(self.sh(MACH_VERSION="0.14.0"), f"the downloaded source says it is MACH '{NEW}', not 0.14.0")
+
+    def test_a_branch_only_by_explicit_choice_and_said_to_be_unverified(self):
+        self.write(f"codeload.github.com/{REPO}/tar.gz/refs/heads/main", self.main)
+        done = self.sh(MACH_REF="main")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue((self.project / SKILL).is_file())
+        self.assertEqual(self.note(done), f"MACH source: github.com/{REPO} branch main; it was not verified (a branch has no checksum "
+                                          "or build provenance; install a release to have it checked).")
+        self.assertEqual(self.source_record()["from"], f"github.com/{REPO} branch main")
+        shutil.rmtree(self.project)
+        self.project.mkdir()
+        self.assert_refused(self.sh(MACH_REF="main", MACH_REQUIRE_PROVENANCE="1"), "MACH_REQUIRE_PROVENANCE=1 requires it")
+
+    def test_a_local_copy_says_it_was_not_verified_and_records_no_path(self):
+        done = self.sh(MACH_SOURCE=str(ROOT))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("MACH source: the local copy named by MACH_SOURCE; it was not verified", self.note(done))
+        self.assertEqual(self.source_record()["from"], "a local copy (MACH_SOURCE)")
+        self.assertNotIn(str(ROOT), (self.project / mach.MANIFEST).read_text())
+
+    def test_only_one_source_may_be_chosen(self):
+        self.assert_refused(self.sh(MACH_REF="main", MACH_VERSION=NEW), "set only one of MACH_SOURCE, MACH_REF and MACH_VERSION")
+
+    def test_flags_and_upgrade_still_work(self):
+        done = self.sh("install", "--no-studio", "--no-tower", MACH_STUDIO="", MACH_TOWER="")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("The visual Product Studio app was not installed (skipped).", done.stdout)
+        self.assertIn("The Control Tower was not installed (skipped).", done.stdout)
+        self.write(f"codeload.github.com/{REPO}/tar.gz/refs/tags/v{OLD}", self.old)
+        shutil.rmtree(self.project)
+        self.project.mkdir()
+        self.assertEqual(self.sh(MACH_VERSION=OLD).returncode, 0)
+        self.fake_gh(0)
+        done = self.sh()  # upgrade v0.12.0 -> v0.13.0 over the existing install
+        self.assertEqual(done.returncode, 0, done.stderr)
+        manifest = json.loads((self.project / mach.MANIFEST).read_text())
+        self.assertEqual(manifest["version"], NEW)
+        self.assertIn("build provenance was verified", manifest["source"]["checked"])
+
+    def test_bin_mach_run_directly_records_that(self):
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertIn("run directly", self.source_record()["checked"])
+
 
 class PackagingTest(unittest.TestCase):
     def test_the_release_workflow_publishes_what_the_installer_downloads(self):
@@ -794,12 +1020,31 @@ class PackagingTest(unittest.TestCase):
     def test_the_release_workflow_builds_smokes_and_attests_the_observer(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertIn('OUT="$PWD/dist/mach-observer-${target%/*}-${target#*/}" sh apps/observer/build.sh', workflow)
-        self.assertIn("sha256sum mach-studio-* mach-observer-* > SHA256SUMS", workflow)
+        self.assertIn("sha256sum mach-studio-* mach-observer-* mach-*-source.tar.gz > SHA256SUMS", workflow)
         self.assertIn("sh apps/observer/smoke.sh", workflow)
         smoked = set(re.findall(r"observer: (mach-observer-[a-z0-9-]+) \}", workflow))
         self.assertEqual(smoked, {f"mach-observer-{build}" for build in mach.STUDIO_BUILDS})
         self.assertRegex(workflow, r"subject-path: \|\n\s+dist/mach-studio-\*\n\s+dist/mach-observer-\*")
         self.assertNotIn("windows", workflow.lower())
+
+    def test_the_release_workflow_publishes_and_attests_the_source_archive_install_sh_checks(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        script = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn('git archive --format=tar --prefix="mach-$PLUGIN_VERSION/" HEAD | gzip -9n > "dist/mach-$PLUGIN_VERSION-source.tar.gz"', workflow)
+        self.assertRegex(workflow, r"dist/mach-observer-\*\n\s+dist/mach-\*-source\.tar\.gz\n\s+dist/SHA256SUMS")
+        self.assertLess(workflow.index("-source.tar.gz > SHA256SUMS"), workflow.index("attest-build-provenance"))
+        self.assertIn('ARCHIVE="mach-$VERSION-source.tar.gz"', script)
+        # install.sh verifies the archive itself (the downloaded bin/mach cannot vouch for its own archive),
+        # with the same command, rule and words as bin/mach.
+        for words in (f'RELEASE_WORKFLOW="{mach.RELEASE_WORKFLOW}"', f'NO_GH="{mach.NO_GH}"', f"GH_AUTH_REQUIRED={mach.GH_AUTH_REQUIRED}",
+                      'gh attestation verify "$WORK/$ARCHIVE" --repo "$REPO" --signer-workflow "$REPO/$RELEASE_WORKFLOW"',
+                      "checked against the release's checksum and its build provenance was verified with the GitHub CLI (gh attestation verify, $REPO)",
+                      "checked against the release's checksum; its build provenance was not verified ($REASON)",
+                      "but its build provenance did not verify (gh attestation verify, $REPO), so it was refused and removed",
+                      "and MACH_REQUIRE_PROVENANCE=1 requires it, so it was refused"):
+            self.assertIn(words, script)
+        self.assertNotIn("refs/heads/$REF\" | tar", script)  # nothing is piped from a download into tar unchecked
+        self.assertIn("codeload.github.com/$REPO/tar.gz/refs/heads/$REF", script)  # only under an explicit MACH_REF
 
     def test_the_release_workflow_pins_its_tools_stamps_versions_and_publishes_sboms(self):
         # M7: third-party actions by full commit SHA (a tag can be moved), Go by patch release, syft by version.
@@ -813,7 +1058,7 @@ class PackagingTest(unittest.TestCase):
         self.assertNotIn("go-version-file", workflow)
         self.assertRegex(workflow, r"syft-version: v\d+\.\d+\.\d+")
         self.assertIn('-o "spdx-json=$file.spdx.json"', workflow)
-        self.assertRegex(workflow, r"subject-path: \|\n\s+dist/mach-studio-\*\n\s+dist/mach-observer-\*\n\s+dist/SHA256SUMS")
+        self.assertRegex(workflow, r"subject-path: \|\n\s+dist/mach-studio-\*\n\s+dist/mach-observer-\*\n\s+dist/mach-\*-source\.tar\.gz\n\s+dist/SHA256SUMS")
         self.assertLess(workflow.index("attest-build-provenance"), workflow.index("download-syft"))  # SBOMs are not attested subjects
         self.assertIn("export VERSION", workflow)
         for app in ("studio", "observer"):

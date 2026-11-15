@@ -1,7 +1,8 @@
 # Publishes a MACH release when a version tag is pushed: two prebuilt programs for each supported
-# machine, plus SHA256SUMS covering both:
+# machine, the installer's source archive, and SHA256SUMS covering all of them, each attested:
 #   mach-studio-<os>-<arch>    the visual Product Studio's host, with the Product Studio web app embedded
 #   mach-observer-<os>-<arch>  the Control Tower's read-only observer, with the Control Tower embedded
+#   mach-<version>-source.tar.gz  the repository at the tag (git archive), which install.sh installs
 # The installer (bin/mach) downloads the files for the person's machine from this release and checks
 # them against SHA256SUMS, so the file names here and in bin/mach must stay the same. Releases made
 # before the observer shipped have no mach-observer-* file; the installer treats that as normal.
@@ -78,7 +79,21 @@ jobs:
             SKIP_INSTALL=1 CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} \
               OUT="$PWD/dist/mach-observer-${target%/*}-${target#*/}" sh apps/observer/build.sh
           done
-          (cd dist && sha256sum mach-studio-* mach-observer-* > SHA256SUMS && cat SHA256SUMS)
+
+      # What install.sh installs: the repository at this commit as one archive. git archive writes the
+      # tree in sorted order and stamps every entry with the commit's time; gzip -n adds no name or
+      # time; so the same commit gives the same bytes (with the same gzip). install.sh checks it
+      # against SHA256SUMS and its attestation before running any of it, so it is smoke-tested here.
+      - name: Package the installer's source and list every file in SHA256SUMS
+        run: |
+          PLUGIN_VERSION=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          git archive --format=tar --prefix="mach-$PLUGIN_VERSION/" HEAD | gzip -9n > "dist/mach-$PLUGIN_VERSION-source.tar.gz"
+          work=$(mktemp -d)
+          mkdir "$work/src" "$work/project"
+          tar -xzf "dist/mach-$PLUGIN_VERSION-source.tar.gz" -C "$work/src" --strip-components=1
+          MACH_STUDIO=skip MACH_TOWER=skip python3 "$work/src/bin/mach" install --project "$work/project"
+          test -f "$work/project/.claude/skills/mach-intent/SKILL.md"
+          (cd dist && sha256sum mach-studio-* mach-observer-* mach-*-source.tar.gz > SHA256SUMS && cat SHA256SUMS)
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -139,6 +154,7 @@ jobs:
           subject-path: |
             dist/mach-studio-*
             dist/mach-observer-*
+            dist/mach-*-source.tar.gz
             dist/SHA256SUMS
       # One SPDX SBOM per program, attached beside SHA256SUMS. Made after the attestation so the
       # attested subjects stay the programs and the sums file.
