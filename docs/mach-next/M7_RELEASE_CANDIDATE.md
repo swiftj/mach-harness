@@ -1,5 +1,7 @@
 # M7 release candidate v0.13.0-rc.2: what was actually published
 
+> **Superseded by the "rc.4" section at the end.** The patched-copy results below (7b, the patched part of 8 and 10) were made with a modified `install.sh` and are superseded by rc.4's unmodified installer.
+
 Verified on one Apple Silicon Mac against real GitHub, 2026-11-14, by downloading what the release workflow
 published. Raw command output is kept as text in the agent's scratch (`.../m7/agents/release/c*.txt`).
 
@@ -97,3 +99,42 @@ No Major defects were found.
 
 Process note: one command in this run briefly created a scratch project folder in the main checkout by a
 working-directory mistake; it was removed at once, and `git status` there stayed clean.
+
+
+## rc.4
+
+Release `v0.13.0-rc.4` (pre-release, 14 assets; `v0.12.0` still the latest full release), run `43679699926`, commit
+`21cf88a0f753fb7e918828441b5efaa155b1763c`. Verified on the same Apple Silicon Mac against real GitHub, 2026-11-15,
+using only what rc.4 ships, including **its own unmodified `install.sh`** from the verified source archive. No patched copies.
+
+- `v0.13.0-rc.1`: tagged, never published; its build failed on a data race in the observer and a Linux file-identity defect.
+- `v0.13.0-rc.3`: tagged, never published; its build failed on a shell-syntax error on Linux in the installer.
+- `v0.13.0-rc.2`: published, but its installer refused any pre-release version (defect 1 above). **Its patched-copy results (7b, 8 patched, 10) are superseded by A to D below.**
+
+### SHA256SUMS (rc.4)
+
+```
+14b617baccf0a9eec8a5fc131cec7de67fa702a33c5d701418c6550a50fc162f  mach-studio-darwin-arm64
+25a4f335b0ebe317926587656999c8055efbf2fa4956ae877286fa0ebfbe1925  mach-studio-linux-amd64
+a140930a7809638b6266ca25479df607ef77430e01dbdf6deaa85c78f79fbfaa  mach-studio-linux-arm64
+1d2ae3a0f9ab314244d40c370d430cdb6d6f022a93c0b3a13edb06f8261f68ad  mach-observer-darwin-arm64
+2108cf3903be890a21402483abe9b7e236acae5e1c290897fdea32d6bea93242  mach-observer-linux-amd64
+341eccdd338192d64ce18604229aa8be895c29b77f48b791d6a28c0d83d22d7c  mach-observer-linux-arm64
+ee6fae22b75543f8edc69094fd5a9225de51cef6a034a4e05414e5cfd9b4c542  mach-0.13.0-rc.4-source.tar.gz
+```
+
+`shasum -a 256 -c SHA256SUMS`: 7 of 7 OK. Attestations: all eight (six programs, source archive, `SHA256SUMS`) verify with
+`--repo swiftj/mach-harness --signer-workflow swiftj/mach-harness/.github/workflows/release.yml`. Attested workflow
+`release.yml@refs/tags/v0.13.0-rc.4`, ref `refs/tags/v0.13.0-rc.4`, commit `21cf88a0f753fb7e918828441b5efaa155b1763c`.
+Tag `v0.13.0-rc.4` is an annotated tag object (`c154675...`).
+
+### A to D (unmodified rc.4 installer)
+
+| | Check | Result | Verdict |
+| :-- | :--- | :--- | :--- |
+| A | `MACH_VERSION=0.13.0-rc.4`, fresh project, `gh` signed in | Installed. Notes: source "checked against the release's checksum and its build provenance was verified with the GitHub CLI"; same for the Product Studio app and the Control Tower. Both programs print `0.13.0-rc.4`. Manifest records the check for the source and each program. No `.factory/local`, so no `runner.json` (Factory disabled). | PASS |
+| B | `MACH_REQUIRE_PROVENANCE=1`, `PATH=/usr/bin:/bin` (no `gh`) | Refused: "its build provenance could not be verified (GitHub CLI not available) and MACH_REQUIRE_PROVENANCE=1 requires it". Exit 2; project left empty. | PASS |
+| C | No `MACH_VERSION`: resolves `v0.12.0`, "it was not verified (release v0.12.0 predates MACH's source archives...)". Draft made with `studio.py project init`. Upgrade with `MACH_VERSION=0.13.0-rc.4` | Both programs replaced (rc.4 sums); draft file hash unchanged. Second run: "Everything is already up to date"; the only file that differs is `.factory/.mach-manifest.json` (its `updated_at`). | PASS |
+| D | `env -i PATH=/usr/bin:/bin`, `-project` | Both print `0.13.0-rc.4`. Studio: link 303, `/api/session` 200 with the cookie. Observer: link 303, `/api/v1/session` 200, `/api/v1/release/readiness` returns an empty result, not an error. Both bound to `127.0.0.1`; no process left after SIGTERM. | PASS |
+
+Still not verified: Linux by hand (CI only), notarisation, a second machine, and `gh` present but not signed in.
