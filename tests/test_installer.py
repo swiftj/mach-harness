@@ -838,7 +838,8 @@ class SourceArchiveTest(Base):
                 (self.bin / tool).symlink_to(found)
         (self.bin / "python3").symlink_to(sys.executable)
         curl = self.bin / "curl"
-        curl.write_text('#!/bin/sh\nn=$#\nfor a in "$@"; do\n  case "$a" in\n    https://*) a="file://$FAKE_WEB/${a#https://}" ;;\n'
+        curl.write_text('#!/bin/sh\nn=$#\nfor a in "$@"; do\n  case "$a" in\n    https://*\\?*) a="file://$FAKE_WEB/$(printf %s "${a#https://}" | tr "?=&" "___")" ;;\n'
+                        '    https://*) a="file://$FAKE_WEB/${a#https://}" ;;\n'
                         '    =https) a="=https,file" ;;\n  esac\n  set -- "$@" "$a"\ndone\nshift "$n"\n'
                         f'exec {shutil.which("curl")} "$@"\n', encoding="utf-8")
         curl.chmod(0o755)
@@ -936,6 +937,23 @@ class SourceArchiveTest(Base):
         self.fake_gh(0)
         done = self.sh(MACH_REQUIRE_PROVENANCE="1")
         self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_the_default_install_of_an_old_release_points_at_a_newer_verifiable_candidate(self):
+        """With no version asked for, the newest full release is installed; when that one predates source
+        archives and a later candidate exists, the person is told how to get the one that can be verified."""
+        self.write(f"codeload.github.com/{REPO}/tar.gz/refs/tags/v{OLD}", self.old)
+        self.write(f"api.github.com/repos/{REPO}/releases/latest", json.dumps({"tag_name": f"v{OLD}"}).encode())
+        listing = [{"tag_name": f"v{NEW}", "prerelease": True, "draft": False}, {"tag_name": f"v{OLD}", "prerelease": False, "draft": False}]
+        self.write(f"api.github.com/repos/{REPO}/releases_per_page_30", json.dumps(listing).encode())  # the fake curl maps ?= to _
+        done = self.sh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn(f"A later release candidate, v{NEW}, is available and its source can be verified.", done.stdout)
+        self.assertIn(f"run this again with MACH_VERSION={NEW} set", done.stdout)
+        shutil.rmtree(self.project)
+        self.project.mkdir()
+        done = self.sh(MACH_VERSION=OLD)  # asked for by name: no suggestion
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertNotIn("A later release candidate", done.stdout)
 
     def test_a_release_before_source_archives_installs_with_a_note_unless_provenance_is_required(self):
         self.write(f"codeload.github.com/{REPO}/tar.gz/refs/tags/v{OLD}", self.old)

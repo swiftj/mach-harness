@@ -130,6 +130,23 @@ else
     # Made before source archives were published: install it as before, and say it was not verified.
     FROM="github.com/$REPO tag v$VERSION"
     unverified "$FROM" "release v$VERSION predates MACH's source archives, so its source has no checksum or attestation"
+    # Nobody asked for this version: it is only the newest full release. If a later release candidate exists,
+    # say so, because that one can be verified. Looking it up is best effort and never stops the install.
+    if [ -z "${MACH_VERSION:-}" ] && download "https://api.github.com/repos/$REPO/releases?per_page=30" "$WORK/releases.json" 2>/dev/null; then
+      NEWER="$(python3 -I -c '
+import json, re, sys
+def core(v): return tuple(map(int, v.split("-")[0].split(".")))
+have = core(sys.argv[2])
+for r in json.load(open(sys.argv[1])):
+    tag = str(r.get("tag_name", "")).lstrip("v")
+    if not r.get("draft") and re.fullmatch(r"\d+\.\d+\.\d+(-rc\.\d+)?", tag) and core(tag) > have:
+        print(tag); break
+' "$WORK/releases.json" "$VERSION" 2>/dev/null || true)"
+      if [ -n "$NEWER" ]; then
+        echo "MACH $VERSION is the newest full release. A later release candidate, v$NEWER, is available and its source can be verified."
+        echo "To install that one instead, run this again with MACH_VERSION=$NEWER set."
+      fi
+    fi
     download "https://codeload.github.com/$REPO/tar.gz/refs/tags/v$VERSION" "$WORK/tag.tar.gz" \
       || refuse "release v$VERSION of github.com/$REPO could not be downloaded; check the version and the internet connection"
     unpack "$WORK/tag.tar.gz"
