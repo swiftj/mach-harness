@@ -129,7 +129,7 @@ Each of these was a gap when M3 was first finished. All are now built and tested
 - **One guarded way into the line.** `Factory.dispatch(..., by=, authorize=)` is the only place work enters the line. An engineer's explicit command needs nothing more. Any other caller must pass `authorize`, a function that is shown the plan and returns `(True, reason)`; without it, or on anything but `True`, nothing is dispatched. The supervisor's policy check (enabled, not paused, its mode, its preflight) is that function. The `work.scheduled` event records `by` and the `authorization` given.
 - **One writer at a time.** Intake, reconcile and dispatch hold `.factory/intake/lock`, a file created exclusively that names its holder. A second process is refused with who holds it. A lock is taken over only when its holder is provably gone (same machine, no such process) or it is older than 15 minutes. Reading (status, plan, events, a dry run) never needs it.
 - **What to run.** The plan lists `runnable`: dispatched slices the line can move right now, with each ticket and its next station. A driver starts the belt with those tickets. A slice counts against `factory.max_parallel` from dispatch until it is integrated or abandoned.
-- **The event log as the feed.** `product events --since N` is one ordered stream for the supervisor and Control Tower; `human.required` is the escalation signal.
+- **The event log as the feed.** `product events --since N` is one ordered stream for the supervisor and Factory Floor; `human.required` is the escalation signal.
 
 What M4 itself still has to build: the machine-local policy and `/mach:run factory enable|disable|status|pause|resume`, the preflight, starting and supervising the belt, and advisory hooks.
 

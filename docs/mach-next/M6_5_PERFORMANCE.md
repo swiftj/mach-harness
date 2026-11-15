@@ -1,6 +1,6 @@
 # M6.5 Factory Analytics: performance
 
-Measured on 2026-11-14 with `web/apps/control-tower/scripts/analytics-measure.mjs` (how to run it, what each
+Measured on 2026-11-14 with `web/apps/factory-floor/scripts/analytics-measure.mjs` (how to run it, what each
 step does and the budgets' origin: `M6_5_TESTING.md`). Three runs on the realistic large project, each
 against the M6.3 observer (`b37c036`) on an identical copy of the same project. Every figure below is the
 median of the three runs, with the range in brackets where it matters.

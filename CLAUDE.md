@@ -48,7 +48,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 ├── CLAUDE.md                   # Core workspace rules & factory specification (this file)
 ├── README.md                   # Install, quick start, and uninstall
 ├── install.sh                  # One-line installer (downloads this repo, runs bin/mach)
-├── .github/workflows/release.yml  # On a version tag: builds the Product Studio host and the Control Tower's observer per platform, smoke-tests both, publishes the release
+├── .github/workflows/release.yml  # On a version tag: builds the Product Studio host and the Factory Floor's observer per platform, smoke-tests both, publishes the release
 ├── Makefile                    # make test / make validate
 ├── .claude-plugin/
 │   ├── plugin.json             # Plugin manifest: the plugin is named "mach"
@@ -65,7 +65,7 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   ├── cleanup/                # Built. Archive, teardown and run record after merge
 │   ├── observe/                # Built. Scorecard, recurring patterns, rule proposals
 │   ├── run/                    # Built. Orchestrator: next-step state machine
-│   ├── product-studio/         # Experimental (MACH Next M1). Product manager's workspace: project, epics, slices, delivery waves
+│   ├── product-studio/         # Built. Product manager's workspace: project, epics, slices, delivery waves
 │   └── init/                   # Built. Plugin-only: scaffolds a project
 ├── agents/
 │   ├── contract-engineer.md    # Stage 2 of intent, pinned to the contracts tier
@@ -74,12 +74,12 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 │   └── reviewer.md             # One seat on the review panel; model set per seat
 ├── workflows/
 │   └── belt.js                 # Dynamic Workflow `mach:belt` (`mach-belt` in a project): several tickets in parallel
-├── apps/studio/                # Experimental (MACH Next M5). Go host for the visual Product Studio: loopback only, embeds the web app
-├── apps/observer/              # Experimental (MACH Next M6.1). mach-observer: the Control Tower's read-only observer; loopback only, GET only, embeds the Control Tower
-├── web/                        # Experimental (MACH Next M5). pnpm workspace: @mach/ui design system, showcase, product-studio app, fixtures, e2e; and control-tower, the Control Tower (Factory Floor, Execution Timeline, Factory Analytics), which reads the observer or a fixture labelled Simulation
+├── apps/studio/                # Go host for the visual Product Studio: loopback only, embeds the web app
+├── apps/observer/              # mach-observer: the Factory Floor's read-only observer; loopback only, GET only, embeds the Factory Floor
+├── web/                        # pnpm workspace: @mach/ui design system, showcase, product-studio app, fixtures, e2e; and factory-floor, the Factory Floor (workspaces Atlas, Timeline, Analytics), which reads the observer or a fixture labelled Simulation
 ├── templates/                  # What gets scaffolded into a project
 ├── tests/                      # unittest suites and fixtures
-└── docs/                       # Original design notes per station, prd-slice (reference), and mach-next/ (experimental design)
+└── docs/                       # Original design notes per station, prd-slice (reference), and mach-next/ (milestone designs and reports)
 ```
 
 Skill folders are named for the station (`skills/intent/`). As a plugin the command is `/mach:intent`; the installer copies the same folder to `.claude/skills/mach-intent/` and the command is `/mach-intent`. Agents are renamed the same way (`mach:contract-engineer` / `mach-contract-engineer`).
@@ -104,17 +104,17 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── audit-report.json       # Latest readiness scorecard; the gate other stations read
     ├── .mach-manifest.json     # What the installer wrote, with hashes, so uninstall is exact
     ├── bin/mach                # Copy of the installer, for status and uninstall
-    ├── bin/mach-studio         # Experimental. The visual Product Studio's host, downloaded for this machine; git-ignored
-    ├── bin/mach-observer       # Experimental. The Control Tower's read-only observer, downloaded for this machine; git-ignored
+    ├── bin/mach-studio         # The visual Product Studio's host, downloaded for this machine; git-ignored
+    ├── bin/mach-observer       # The Factory Floor's read-only observer, downloaded for this machine; git-ignored
     ├── tickets/                # Local Markdown ticket queue (the default provider)
     ├── inbox/                  # Normalized incoming ticket payloads and telemetry traces
     ├── archive/                # <ticket_id>.tar.gz per finished cell, and runs.jsonl, one line per ticket
     ├── observations/           # metrics.json and observation-<date>.md reports
     ├── holdouts/<ticket_id>/   # Optional extra checks a person leaves for the verifier; the builder is never shown them
-    ├── studio/                 # Experimental. Product Studio's drafts, session and publication ledger; git-ignored, never read by a station
-    ├── intake/                 # Experimental. The Factory's intake ledger (ledger.json) and its event log (events.jsonl); git-ignored
-    ├── local/                  # Experimental. Machine-local authorization (runner.json), the supervisor's lease, and each execution's output; git-ignored, never shared
-    │   └── observer/           # Experimental. The observer's redacted index, its lock and the next one-time link; the only place it writes
+    ├── studio/                 # Product Studio's drafts, session and publication ledger; git-ignored, never read by a station
+    ├── intake/                 # The Factory's intake ledger (ledger.json) and its event log (events.jsonl); git-ignored
+    ├── local/                  # Machine-local authorization (runner.json), the supervisor's lease, and each execution's output; git-ignored, never shared
+    │   └── observer/           # The observer's redacted index, its lock and the next one-time link; the only place it writes
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
             ├── cell.json       # Cell state: stage, mode, slice ID, risk tier, app type, contracts
@@ -124,7 +124,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
             ├── plan.md         # How: contracts, test-first task checklist, file touch map
             ├── build.json      # Build state: task progress, suite state, recorded deviations
             ├── build-report.json  # What was built, how, and every gate override, for verify and review
-            ├── lifecycle.jsonl # Experimental (M6.1). One line per station decision, written after the station's own files; observational, never changes a result
+            ├── lifecycle.jsonl # One line per station decision, written after the station's own files; observational, never changes a result
             ├── evidence/       # Captured verification artifacts, results.json and the summary.json verdict
             ├── review/         # round-N/: packet, diff, votes, findings.md, decision.json
             └── repo/           # Git worktree on feature/<ticket_id>: code, contracts, specs/slices/
@@ -246,8 +246,8 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **No person for tuning**: a `factory-tuning` ticket is decided by a unanimous three-seat panel on the contracts tier, with no human approval, provided its diff touches only rule files and its own spec and tests. Reviewers must block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit. Observe never proposes such a change: those stay a person's decision.
 * **Output**: `.factory/observations/metrics.json`, `observation-<date>.md`, `last-pass.json`, and the tuning ticket.
 
-### Experimental: `/mach-product-studio` — Product Manager's Workspace (MACH Next M1, M2 and M5)
-* **Status**: experimental, on the MACH Next branch. Design and milestones are in `docs/mach-next/`.
+### `/mach-product-studio` — Product Manager's Workspace
+* **Design**: `docs/mach-next/` (M1, M2 and M5).
 * **Purpose**: A product manager defines a project (vision, outcomes), its epics, and one slice at a time through the same interview the intent skill uses; saves and resumes drafts; approves slices; and groups approved slices into delivery waves. `studio.py` owns IDs, files, validation and approval.
 * **Workspace**: everything is a draft in `.factory/studio/draft/`, which mirrors the repository layout (`product/project.json`, `product/epics/`, `product/slices/`, `product/intents/`, `product/delivery-waves/`, `specs/slices/`). It is git-ignored. The main checkout is never written to, so no existing gate can be tripped.
 * **Shared with the intent skill, never copied**: the interview method (`skills/intent/references/interview-method.md`), the slice template and grammar references, the spec validator (`validate_slice.py`) and the slice ID allocator (`cell.py slice_ids`), which counts product work orders and Studio drafts as well as specs and open cells.
@@ -300,7 +300,7 @@ Two drivers use it:
 
 Neither driver grooms interactively on a person's behalf or approves a high-risk change. Whether the line merges is a project setting.
 
-### Experimental: product intake and scheduling (`/mach-run product`, MACH Next M3)
+### Product intake and scheduling (`/mach-run product`)
 
 Approved delivery waves that Product Studio published and engineering merged are taken into the Factory through the run skill. `skills/run/scripts/intake.py` does the work; `run.py product status|intake|plan|dispatch|events` are its commands. Design: `docs/mach-next/M3_DESIGN.md`.
 
@@ -308,11 +308,11 @@ Approved delivery waves that Product Studio published and engineering merged are
 * **Revisions**: a waiting slice takes a new revision on its ticket; work in the line is never changed and is flagged for a person; integrated work gets a follow-up ticket and keeps its history.
 * **Scheduler**: every slice is `completed`, `active`, `ready`, `blocked` or `superseded`, with reasons. A dependency counts as done only when its commit is on the integration branch, checked in Git; a finished build or an approved cell is still `active`. `factory.max_parallel` limits what is dispatchable.
 * **Dispatch**: only on an engineer's explicit command. It opens the cell, writes `intent.md` from the approved why, passes `cell.py finalize`, and stops at `spec-ready`. It starts no agent; `run.py next` and the belt take over with every gate in place. Product-sourced work is never reviewed below Medium.
-* **Events**: each ledger transition is appended to `.factory/intake/events.jsonl` with a schema version and sequence number, for the supervisor (M4) and Control Tower (M6).
+* **Events**: each ledger transition is appended to `.factory/intake/events.jsonl` with a schema version and sequence number, for the supervisor and the Factory Floor.
 * **Ready for a supervisor**: `product reconcile` is intake plus a recorded plan in one step; intake, reconcile and dispatch hold a lock so there is one writer at a time; and any caller but an engineer must bring an authorization to dispatch, or nothing is dispatched.
 * **Never**: runs in the background, reads the machine-local Factory policy, fetches unless asked, changes the main checkout, merges or pushes.
 
-### Experimental: the Factory Supervisor (`/mach-run factory`, MACH Next M4)
+### The Factory Supervisor (`/mach-run factory`)
 
 On a machine whose engineer has enabled it, a supervisor keeps approved product work moving unattended. It is off on every machine until enabled there. Code: `policy.py`, `executor.py`, `supervisor.py`, `service.py` and `activation.py` in `skills/run/scripts/`. Design: `docs/mach-next/M4_DESIGN.md`.
 
@@ -322,24 +322,24 @@ On a machine whose engineer has enabled it, a supervisor keeps approved product 
 * **Execution**: one `claude -p` per ticket, in an explicit restricted permission mode, with an explicit tool list, a spending limit and a known session ID, behind a detached wrapper that records its start and end. A tool outside the list is refused and raised to a person, never granted. By default every execution stops before the merge station.
 * **Recovery**: a claim is on disk before a process exists. A restarted supervisor tells apart a claim that never started, an execution still running, one that ended unwatched and one whose outcome is unknown. Unknown outcomes are counted or raised to a person; a lost merge or cleanup is never retried automatically.
 * **One runner per project, per machine**: an ownership lease with a heartbeat. Nothing coordinates two engineers' machines.
+* **No operating-system sandbox** around an unattended execution: it may run `python3` with the engineer's home folder and network. `factory enable` states this and the engineer accepts it explicitly.
 * **Optional, each on explicit request**: advisory Git hooks (a wake-up note, never authorization), fetching on a timer, and a per-user macOS LaunchAgent. None is installed by cloning, installing or running a ticket.
 
-### Experimental: the Control Tower (MACH Next M6.1/M6.2/M6.3/M6.5)
+### The Factory Floor
 
-A read-only view of the Factory in the browser. Code: `apps/observer` (Go, standard library only) and `web/apps/control-tower`. Design: `docs/mach-next/M6_1_OBSERVER_DESIGN.md`, `M6_1_EVENT_CONTRACT.md`, `M6_1_SHARED_CONTRACTS.md`, `M6_1_STATION_TELEMETRY.md`.
+A read-only view of the Factory in the browser. Three workspaces: Atlas (the Factory Atlas and the Execution Blueprint, keys `1` and `2`), Timeline and Analytics. Code: `apps/observer` (Go, standard library only) and `web/apps/factory-floor`. Design: `docs/mach-next/M6_1_OBSERVER_DESIGN.md`, `M6_1_EVENT_CONTRACT.md`, `M6_1_SHARED_CONTRACTS.md`, `M6_1_STATION_TELEMETRY.md`.
 
 * **Lifecycle log (M6.1)**: each station appends one line to `.factory/worktrees/<ticket_id>/lifecycle.jsonl` (`station.entered`/`exited`, `gate.evaluated`, build tasks, verification checks, review rounds and verdicts, human approval, merge, cleanup) through one helper, `skills/intent/scripts/lifecycle.py`, after the station's own write. A failure to record changes no exit code, output or station file; the station files win on any disagreement. Cleanup's records go only into the archived copy.
-* **The observer (`mach-observer`)**: follows the intake event log, every cell's lifecycle log, execution streams and the archive; normalises them to event schema 3, redacts before indexing, and keeps its index under `.factory/local/observer/`. It serves a versioned GET-only API (`/api/v1/...`), a server-sent event stream and the embedded Control Tower on `127.0.0.1` behind a one-time link. It starts no process, runs no MACH script, takes no MACH lock and connects to nothing, so stopping it never affects the line. Evidence images and video are served only when `tower.evidence_media` is true in `.factory/config.json`.
-* **Started by a skill step, not a command**: asked to "open the Control Tower", the run skill starts `.factory/bin/mach-observer --project <root>` (or a checkout's own build), relays the printed link, and reads `.factory/local/observer/link` for a second browser. `run.py` has no command for it; no station, agent or workflow calls it (`tests/test_mach_tower.py`).
-* **Shipping**: built per platform by the `release` workflow with the Control Tower embedded, smoke-tested with `apps/observer/smoke.sh`, listed in `SHA256SUMS` and attested; the installer fetches it like `mach-studio` (`--no-tower`, `MACH_TOWER=skip`, `MACH_TOWER_URL`). Releases before it (up to v0.12.0) have none; the install then succeeds with a one-line note.
-* **Execution Timeline (M6.3)**: the Control Tower's second workspace (`#timeline`, key `3`): what the Factory did, when, and how it is known. The whole history's overview with a brush, hierarchical tracks in two groupings (product: wave, slice, cell, stations; execution: run, claim, workflow, agents, tools) drawn in a timing grammar that shows how each end is known, investigation lenses named as questions, an "In time" inspector section and a structured table. Code: `web/apps/control-tower/src/timeline/` and `apps/observer/internal/project` (spans, marks, concurrency). Observer routes, GET only: `/api/v1/spans` (windowed, `truncated`, `total_uncapped`), `/api/v1/marks`, `/api/v1/concurrency`; `/api/v1/series` and `/api/v1/history` extended. It reads only: it closes nothing, and work still open when a history is no longer live is "no end recorded". Test tooling never shipped: `apps/observer/internal/testkit/cmd/mach-synth` (synthetic histories for the browser suite). Design: `docs/mach-next/M6_3_DESIGN.md`.
-* **Factory Analytics (M6.5)**: the Control Tower's third workspace (`#analytics`, key `4`): how well the Factory operates, where time and rework go, and what is recorded as spent. Seven areas over one set of filters (Pulse, Flow and bottlenecks, Quality and remediation, Agent and model economics, Reliability and autonomy, Compare, Improvement opportunities). It extends the observer's existing metric engine (`apps/observer/internal/metrics`, the catalog in `docs/mach-next/M6_1_SHARED_CONTRACTS.md`); there is no second engine and no catalog ID is renamed. Observer routes, GET only, under `/api/v1/analytics/`: `metrics` (time windows, `last_runs`, two-way grouping, trend buckets, distributions, basis counts, coverage), `flow`, `contributors` (the entities behind a figure: identifiers, codes and numbers, never prose), `runs`, `insights` (deterministic rules, advisory); all take one cursor (`at`) per view and an as-of time. Every figure carries its sample, coverage and basis; a missing value is never zero; recorded cost is never divided among agents or stations. The observe station's scorecard metrics match `observe.py` (`tests/test_mach_analytics_parity.py`). Code: `web/apps/control-tower/src/analytics/`, `apps/observer/internal/insight`, `internal/project/flow*.go`. Design and limits: `docs/mach-next/M6_5_DESIGN.md`, `M6_5_SECURITY.md`, `M6_5_TESTING.md`, `M6_5_ACCESSIBILITY.md`.
+* **The observer (`mach-observer`)**: follows the intake event log, every cell's lifecycle log, execution streams and the archive; normalises them to event schema 3, redacts before indexing, and keeps its index under `.factory/local/observer/`. It serves a versioned GET-only API (`/api/v1/...`), a server-sent event stream and the embedded Factory Floor on `127.0.0.1` behind a one-time link. It starts no process, runs no MACH script, takes no MACH lock and connects to nothing, so stopping it never affects the line. Evidence images and video are served only when `floor.evidence_media` is true in `.factory/config.json`.
+* **Started by a skill step, not a command**: asked to "open the Factory Floor", the run skill starts `.factory/bin/mach-observer --project <root>` (or a checkout's own build), relays the printed link, and reads `.factory/local/observer/link` for a second browser. `run.py` has no command for it; no station, agent or workflow calls it (`tests/test_mach_floor.py`).
+* **Shipping**: built per platform by the `release` workflow with the Factory Floor embedded, smoke-tested with `apps/observer/smoke.sh`, listed in `SHA256SUMS` and attested; the installer fetches it like `mach-studio` (`--no-floor`, `MACH_FLOOR=skip`, `MACH_FLOOR_URL`). The 0.13.0 release candidates carry it; v0.12.0 and earlier have none, and the install then succeeds with a one-line note. The macOS programs are not notarised.
+* **Execution Timeline (M6.3)**: the Timeline workspace (`#timeline`, key `3`): what the Factory did, when, and how it is known. The whole history's overview with a brush, hierarchical tracks in two groupings (product: wave, slice, cell, stations; execution: run, claim, workflow, agents, tools) drawn in a timing grammar that shows how each end is known, investigation lenses named as questions, an "In time" inspector section and a structured table. Code: `web/apps/factory-floor/src/timeline/` and `apps/observer/internal/project` (spans, marks, concurrency). Observer routes, GET only: `/api/v1/spans` (windowed, `truncated`, `total_uncapped`), `/api/v1/marks`, `/api/v1/concurrency`; `/api/v1/series` and `/api/v1/history` extended. It reads only: it closes nothing, and work still open when a history is no longer live is "no end recorded". Test tooling never shipped: `apps/observer/internal/testkit/cmd/mach-synth` (synthetic histories for the browser suite). Design: `docs/mach-next/M6_3_DESIGN.md`.
+* **Factory Analytics (M6.5)**: the Analytics workspace (`#analytics`, key `4`): how well the Factory operates, where time and rework go, and what is recorded as spent. Seven areas over one set of filters (Pulse, Flow and bottlenecks, Quality and remediation, Agent and model economics, Reliability and autonomy, Compare, Improvement opportunities). It extends the observer's existing metric engine (`apps/observer/internal/metrics`, the catalog in `docs/mach-next/M6_1_SHARED_CONTRACTS.md`); there is no second engine and no catalog ID is renamed. Observer routes, GET only, under `/api/v1/analytics/`: `metrics` (time windows, `last_runs`, two-way grouping, trend buckets, distributions, basis counts, coverage), `flow`, `contributors` (the entities behind a figure: identifiers, codes and numbers, never prose), `runs`, `insights` (deterministic rules, advisory); all take one cursor (`at`) per view and an as-of time. Every figure carries its sample, coverage and basis; a missing value is never zero; recorded cost is never divided among agents or stations. The observe station's scorecard metrics match `observe.py` (`tests/test_mach_analytics_parity.py`). Code: `web/apps/factory-floor/src/analytics/`, `apps/observer/internal/insight`, `internal/project/flow*.go`. Design and limits: `docs/mach-next/M6_5_DESIGN.md`, `M6_5_SECURITY.md`, `M6_5_TESTING.md`, `M6_5_ACCESSIBILITY.md`.
 * **Execution provenance (M6.5)**: when the supervisor starts an execution it records one snapshot of what the run was started with (`skills/run/scripts/provenance.py`): MACH's version, a digest per skill, agent and workflow file, the configuration's digest and a `config_id`. Digests, versions and identifiers only. It is captured after authorization and cannot change whether or how an execution starts; a failed capture is recorded as such. Executions from before it read as not recorded.
-* **One product (M6.6)**: the three workspaces share one source state (Live Factory, Historical replay, Simulation, stale, disconnected, a source unavailable, history incomplete). Held at an earlier moment, nothing after the playhead is shown in any workspace unless the person turns on "Show what happened after this moment". Figures counted by whole UTC day say which day they stop at. Every field the observer declares as free text (`display_policy.free_text`) is shown plain, bounded and labelled as not checked for names, and never placed in a tooltip, an accessible name, the address or storage. Checked against real supervised runs. Acceptance: `docs/mach-next/M6_6_ACCEPTANCE.md`.
-* **Not finished**: no published release carries the observer yet.
+* **One product (M6.6)**: the three workspaces share one source state (Live Factory, Historical replay, Simulation, stale, disconnected, a source unavailable, history incomplete). Held at an earlier moment, nothing after the playhead is shown in any workspace unless the person turns on "Show what happened after this moment". Figures counted by whole UTC day say which day they stop at. Every field the observer declares as free text (`display_policy.free_text`) is shown plain, bounded and labelled as not checked for names (names in it are shown, not removed), and never placed in a tooltip, an accessible name, the address or storage. Checked against real supervised runs. Acceptance: `docs/mach-next/M6_6_ACCEPTANCE.md`.
 * **Never**: enables, starts, pauses, dispatches, approves or merges anything; writes outside `.factory/local/observer/`; listens on anything but `127.0.0.1`.
 
-### Experimental: release qualification (`/mach-run release`, MACH Next M7)
+### Release qualification (`/mach-run release`)
 
 `skills/run/scripts/qualify.py`, reached as `run.py release status|qualify|show|except`, evaluates approved delivery waves at one exact commit of the integration branch and writes a deterministic snapshot, `.factory/release/<release-id>/readiness.json` (schema `docs/mach-next/schemas/release-readiness.v1.schema.json`). Design: `docs/mach-next/M7_RELEASE_QUALIFICATION.md`.
 

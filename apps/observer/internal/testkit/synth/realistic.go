@@ -174,7 +174,7 @@ func (w *world) adjustForConfig(p profile, cfg string) profile {
 
 // installedAs is how the snapshot says MACH was installed: the provenance schema's value for a
 // Claude Code plugin install. Spelled from parts so this test tooling never carries the quoted word
-// that tests/test_mach_tower.py guards in the observer's source (it names Go's plugin package).
+// that tests/test_mach_floor.py guards in the observer's source (it names Go's plugin package).
 const installedAs = "plug" + "in"
 
 func digest(s string) string {

@@ -34,7 +34,7 @@ Grouped by purpose (`git log 106f4d3..HEAD` has every commit):
 | `7e23f84`, `b73c025`, `9b8ad80` | Factory: the plan gate, non-progressing builds, re-plan, execution scope, revised slices, the belt hand-off |
 | `b0d3e88`, `24ed432`, `96971bd` | Product Studio: refusal messages, blocked requests, revised waves and slices |
 | `0fcbb1b` | Review records are never overwritten |
-| `3a4bb22`, `ff1758a`, `1243a95`, `acc950f` | Control Tower and observer |
+| `3a4bb22`, `ff1758a`, `1243a95`, `acc950f` | Factory Floor and observer |
 | `b4bfa2d`, `f76d7a8`, `67842ad` | Threat model, adversarial tests, guides, matrix v3 |
 
 ## 2. Implementation summary
@@ -179,8 +179,8 @@ none of the verification described here.
 
 ## 11. Installation, upgrade and rollback
 
-A fresh install with no Node or Go on `PATH` gave a working Product Studio, a disabled Factory and a Control
-Tower that observes without enabling anything. Tampered, truncated and missing assets are refused or
+A fresh install with no Node or Go on `PATH` gave a working Product Studio, a disabled Factory and a Factory
+Floor that observes without enabling anything. Tampered, truncated and missing assets are refused or
 skipped. An upgrade from `v0.12.0` kept drafts, the intake ledger, a cell, the archive, the disabled
 authorization, edited settings and a customised `REVIEW.md`; the live runs upgraded a project holding real
 state three times. One upgrade effect is deliberate: a machine enabled for supervised mode before M7 reads
@@ -195,7 +195,7 @@ construction; rejected reviews followed by revision; a pending human approval; a
 could not build; a non-progressing station; an abandoned ticket. Real GitHub: an invalid token, a refused
 push, a refusal by a repository rule. Simulated: network loss during publication, a pull-request creation
 that fails after the push. From the release pipeline: a corrupted download, an unavailable asset. From
-M6.6: a Control Tower disconnect and gaps in the event stream. Not exercised: an interrupted intake outside
+M6.6: a Factory Floor disconnect and gaps in the event stream. Not exercised: an interrupted intake outside
 unit tests, a station writing incomplete evidence, the emergency stop.
 
 No scenario dispatched work without authorization or altered a verification result. Two lost or stranded
@@ -203,7 +203,7 @@ state before their fixes: a re-review overwriting a round, and two PM workspaces
 reconcile defect; both are fixed, the first observed live, the second by unit tests on copies of the stuck
 workspaces.
 
-## 13. Control Tower accuracy
+## 13. Factory Floor accuracy
 
 Against the live runs: station times matched the lifecycle logs to the millisecond; per-run cost and tokens
 matched the execution records; blocked and waiting-on-a-person were distinct; nothing later was revealed
@@ -228,14 +228,14 @@ and one corrected sentence in a skill:
 | Observer: `go vet`, `go test -race` | pass, 16 packages |
 | Studio host: `go vet`, `go test -race` | pass, 5 packages |
 | Web lint, typecheck, build | pass |
-| Control Tower unit tests | 700 of 700 |
+| Factory Floor unit tests | 700 of 700 |
 | Product Studio web unit tests | 7 of 7 |
 | Python (`make test`) | 782 run, pass, 1 skipped (631 at the baseline; 151 added in M7) |
 | Release workflow on GitHub, tag `v0.13.0-rc.4` | build, three smoke jobs (macOS Apple Silicon, Linux AMD64, Linux ARM64) and publish all pass |
 
 The race detector was not used on the Go suites locally before the release workflow exposed a race; it is
-used in this run and in the workflow. Not run in M7: the Control Tower and Product Studio browser suites
-(the M6.6 results stand; the M7 changes to the Control Tower have unit tests only), and the scanners on the
+used in this run and in the workflow. Not run in M7: the Factory Floor and Product Studio browser suites
+(the M6.6 results stand; the M7 changes to the Factory Floor have unit tests only), and the scanners on the
 candidate.
 
 ## 16. Manual and real-machine acceptance
@@ -262,7 +262,7 @@ a pass there.
 | `install.sh` itself is fetched unchecked, and from `main` until the branch is merged | Major until merged, then a stated trust root |
 | Interactive runs still honour a setting that removes the security seat | Minor |
 | Recorded cost excludes failed executions; killed executions record no cost | Minor, product owner's decision |
-| Control Tower items in section 13; no private vulnerability-reporting address; three leftover candidate tags and one superseded pre-release | Minor |
+| Factory Floor items in section 13; no private vulnerability-reporting address; three leftover candidate tags and one superseded pre-release | Minor |
 
 No Blocker is open. No Major is waived by this report.
 

@@ -2,7 +2,7 @@
 // start token and the session cookie it becomes, the Host, Origin and fetch-site checks, and the
 // response headers.
 //
-// Copied and adapted from apps/studio/internal/security (MACH Next M5, session.go and
+// Copied and adapted from apps/studio/internal/security (M5, session.go and
 // headers.go) rather than shared, so that Product Studio's host is not touched in this wave. The
 // differences are deliberate: the observer answers GET only, so it has no CSRF token and no
 // state-changing check; it refuses any request whose Origin or Sec-Fetch-Site says it came from

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "MACH design system: tokens, themes, primitives, shell, lifecycle visuals, graph foundation and API-client conventions. Shared by Product Studio and Control Tower.",
+  "description": "MACH design system: tokens, themes, primitives, shell, lifecycle visuals, graph foundation and API-client conventions. Shared by Product Studio and Factory Floor.",
   "sideEffects": [
     "*.css"
   ],

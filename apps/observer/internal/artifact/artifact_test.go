@@ -145,7 +145,7 @@ func TestImagesNeedTheOptIn(t *testing.T) {
 	if e := byPath(c)["cell:evidence/shot.png"]; e.ContentAccess != "media-disabled" || !strings.Contains(e.AccessReason, "evidence_media") {
 		t.Fatalf("%+v", e)
 	}
-	write(t, filepath.Join(f.root, ".factory/config.json"), []byte(`{"tower":{"evidence_media":true}}`))
+	write(t, filepath.Join(f.root, ".factory/config.json"), []byte(`{"floor":{"evidence_media":true}}`))
 	fresh(c)
 	e := byPath(c)["cell:evidence/shot.png"]
 	if e.ContentAccess != "media" {
@@ -157,7 +157,7 @@ func TestImagesNeedTheOptIn(t *testing.T) {
 	}
 	// A config file that is a link is not read: the default (off) applies.
 	os.Remove(filepath.Join(f.root, ".factory/config.json"))
-	write(t, filepath.Join(f.root, "elsewhere.json"), []byte(`{"tower":{"evidence_media":true}}`))
+	write(t, filepath.Join(f.root, "elsewhere.json"), []byte(`{"floor":{"evidence_media":true}}`))
 	os.Symlink(filepath.Join(f.root, "elsewhere.json"), filepath.Join(f.root, ".factory/config.json"))
 	fresh(c)
 	if e := byPath(c)["cell:evidence/shot.png"]; e.ContentAccess != "media-disabled" {

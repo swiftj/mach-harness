@@ -11,7 +11,7 @@ import (
 // The scrubber replaces every person the project's records and git identities name (People),
 // wherever they appear. A name that appears only in prose (a reviewer's finding, a verifier's
 // note) is not known to it and is served as written. A served text that holds such prose says so,
-// so the Control Tower can show it: the catalog entry carries FreeText and FreeTextNote, and the
+// so the Factory Floor can show it: the catalog entry carries FreeText and FreeTextNote, and the
 // content reply the header FreeTextHeader with FreeTextValue.
 const (
 	FreeTextHeader = "X-MACH-Free-Text"

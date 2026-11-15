@@ -1,7 +1,7 @@
 # Publishes a MACH release when a version tag is pushed: two prebuilt programs for each supported
 # machine, the installer's source archive, and SHA256SUMS covering all of them, each attested:
 #   mach-studio-<os>-<arch>    the visual Product Studio's host, with the Product Studio web app embedded
-#   mach-observer-<os>-<arch>  the Control Tower's read-only observer, with the Control Tower embedded
+#   mach-observer-<os>-<arch>  the Factory Floor's read-only observer, with the Factory Floor embedded
 #   mach-<version>-source.tar.gz  the repository at the tag (git archive), which install.sh installs
 # The installer (bin/mach) downloads the files for the person's machine from this release and checks
 # them against SHA256SUMS, so the file names here and in bin/mach must stay the same. Releases made
@@ -61,7 +61,7 @@ jobs:
 
       - name: Test the observer and the station telemetry it reads
         run: |
-          python3 -m unittest tests.test_lifecycle tests.test_mach_tower
+          python3 -m unittest tests.test_lifecycle tests.test_mach_floor
           cd apps/observer && go vet ./... && go test -race -count=1 ./...
 
       # Each program's --version says which release it is: the plugin's version on a tag, that
@@ -91,7 +91,7 @@ jobs:
           work=$(mktemp -d)
           mkdir "$work/src" "$work/project"
           tar -xzf "dist/mach-$PLUGIN_VERSION-source.tar.gz" -C "$work/src" --strip-components=1
-          MACH_STUDIO=skip MACH_TOWER=skip python3 "$work/src/bin/mach" install --project "$work/project"
+          MACH_STUDIO=skip MACH_FLOOR=skip python3 "$work/src/bin/mach" install --project "$work/project"
           test -f "$work/project/.claude/skills/mach-intent/SKILL.md"
           (cd dist && sha256sum mach-studio-* mach-observer-* mach-*-source.tar.gz > SHA256SUMS && cat SHA256SUMS)
 
@@ -128,10 +128,10 @@ jobs:
           chmod +x "dist/${{ matrix.observer }}"
           "dist/${{ matrix.observer }}" --version
           sh apps/observer/smoke.sh "dist/${{ matrix.observer }}"
-      - name: The observer embeds the Control Tower, not the placeholder page
+      - name: The observer embeds the Factory Floor, not the placeholder page
         run: |
-          if grep -q 'built without the Control Tower app' "dist/${{ matrix.observer }}"; then
-            echo "dist/${{ matrix.observer }} serves the placeholder page: build.sh did not embed the Control Tower" >&2
+          if grep -q 'built without the Factory Floor app' "dist/${{ matrix.observer }}"; then
+            echo "dist/${{ matrix.observer }} serves the placeholder page: build.sh did not embed the Factory Floor" >&2
             exit 1
           fi
 

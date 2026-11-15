@@ -1,4 +1,4 @@
-// mach-observer is the read-only local observer behind the MACH Control Tower. It follows the
+// mach-observer is the read-only local observer behind the MACH Factory Floor. It follows the
 // Factory's own files, keeps a redacted index of what it saw under .factory/local/observer/, and
 // serves that index and a live event stream on the loopback interface.
 //
@@ -128,7 +128,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	defer st.Close()
 
-	// The last port is bound again when it is free, so a Control Tower page left open across a
+	// The last port is bound again when it is free, so a Factory Floor page left open across a
 	// restart reaches the observer at the same origin; its cookie is still valid (sessions below).
 	want, remembered := *port, false
 	if want == 0 && indexDir != "" {
@@ -176,7 +176,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	srv := server.New(server.Options{Root: root, Guard: guard, Log: feedLog, Projector: proj, Catalog: artifact.New(root),
 		Ingest: ingestSource{loop}, Factory: factorySource{root}, UI: webui.Handler(), Logger: logger, Done: done, LinkFile: linkFile}).HTTPServer()
 
-	fmt.Fprintf(stdout, "MACH Control Tower observer for %s (read-only)\n", filepath.Base(root))
+	fmt.Fprintf(stdout, "MACH Factory Floor observer for %s (read-only)\n", filepath.Base(root))
 	fmt.Fprintf(stdout, "Open: %s\n", guard.StartURL())
 	if linkFile != "" {
 		fmt.Fprintf(stdout, "The link works once. A fresh link for another browser is kept in %s. Press Ctrl+C to stop.\n", linkFile)

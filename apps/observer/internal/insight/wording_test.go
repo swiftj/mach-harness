@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// M6.6 I-09: the insight templates word durations and moments as the Control Tower does
+// M6.6 I-09: the insight templates word durations and moments as the Factory Floor does
 // (web shell/time.ts duration, analytics clockText). Wording only: the figures are unchanged.
-func TestDurationWordsMatchTheControlTower(t *testing.T) {
+func TestDurationWordsMatchTheFactoryFloor(t *testing.T) {
 	cases := map[float64]string{
 		340:                  "340 ms",
 		48_000:               "48 s",
@@ -26,7 +26,7 @@ func TestDurationWordsMatchTheControlTower(t *testing.T) {
 	}
 }
 
-func TestMomentWordsMatchTheControlTower(t *testing.T) {
+func TestMomentWordsMatchTheFactoryFloor(t *testing.T) {
 	ms := int64(1793784583000) // 2026-11-04 09:29:43 UTC
 	if got := dayText(&ms); got != "4 Nov, 09:29:43 UTC" {
 		t.Errorf("dayText = %q", got)

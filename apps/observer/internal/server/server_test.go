@@ -851,7 +851,7 @@ func TestArtifactAPI(t *testing.T) {
 	if resp, env, _ := h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/shot.png"]+"/content", nil); resp.StatusCode != 403 || env.Error.Reason != "media-disabled" {
 		t.Fatalf("%d %+v", resp.StatusCode, env.Error)
 	}
-	writeFile(t, filepath.Join(h.root, ".factory/config.json"), []byte(`{"tower":{"evidence_media":true}}`))
+	writeFile(t, filepath.Join(h.root, ".factory/config.json"), []byte(`{"floor":{"evidence_media":true}}`))
 	time.Sleep(2100 * time.Millisecond) // the catalog's cache
 	resp, _, body = h.do(t, "GET", "/api/v1/artifacts/"+ids["evidence/shot.png"]+"/content", nil)
 	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "image/png" || string(body) != string(png) || resp.Header.Get("X-MACH-Evidence-Match") != "match" {

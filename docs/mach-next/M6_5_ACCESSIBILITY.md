@@ -7,7 +7,7 @@ Playwright, and the workspace's own audit script) plus scripted keyboard walks i
 conformance claim: no assistive-technology user has tested it, and no manual screen-reader session (VoiceOver,
 NVDA, JAWS) was recorded.
 
-Code: `web/apps/control-tower/src/analytics/ui/kit.tsx` (chart frame, marks, readouts, drawer focus helper,
+Code: `web/apps/factory-floor/src/analytics/ui/kit.tsx` (chart frame, marks, readouts, drawer focus helper,
 announcements), `ui/charts/index.tsx` and `ui/charts/Flow.tsx` (the charts), `ui/charts/a11y.ts` (spoken
 words and contrast arithmetic), `ui/areas/RefList.tsx` (the Rows drawer), `ui/analytics.css` (colours,
 focus rings). Tests: `test/analytics-a11y.test.mjs`. Audit: `scripts/analytics-audit.mjs`
@@ -145,7 +145,7 @@ audit): in the drawer, 80 Tabs and 10 Shift+Tabs never left it; Escape and Close
 Rows; a definition popover opened on Enter and returned focus to its button on Escape; in a chart Right,
 End and Home moved between marks and Escape moved focus to the chart's Table button.
 
-Captures (git-ignored), `web/apps/control-tower/screenshots/analytics/a11y/`: `before-*` and `after-*` of
+Captures (git-ignored), `web/apps/factory-floor/screenshots/analytics/a11y/`: `before-*` and `after-*` of
 Pulse, Flow, Economics, Quality, Compare and the Rows drawer at 1512 and 1100 px (Pulse and Economics also
 light). Compared pixel by pixel, only Flow's station outlines changed (`compare-flow-nodes-dark-1512.png`);
 `after-focus-*`, `after-escape-*`, `after-table-*` show focus, Escape and the table equivalents.

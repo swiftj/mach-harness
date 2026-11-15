@@ -76,10 +76,10 @@ by path (`_test.go`, `tests/`) so the scan is quiet and a new hit elsewhere stan
 - `bin/mach:194` dynamic urllib: the code checks the scheme is `https://` or `file://` first (and carries a `noqa`). False positive.
 - `skills/run/scripts/executor.py:278,312`, `policy.py:88` insecure file permissions: flagged on `os.chmod`/`os.open` with modes `0o700`/`0o600`, which are the restrictive ones. False positive.
 - `skills/ticket/scripts/ticket.py:846` sha1: used for a 16-character dedupe fingerprint, not for security. False positive.
-- Partial parse: `web/apps/control-tower/src/analytics/data/index.ts:11` (`type` import syntax unsupported by the parser). That file was only partly analysed.
+- Partial parse: `web/apps/factory-floor/src/analytics/data/index.ts:11` (`type` import syntax unsupported by the parser). That file was only partly analysed.
 
 ### OSV
-- GHSA-g3hv-75wg-m249 (CVE-2026-118764), `minimatch@10.2.6`, Moderate/6.9, CWE-405 (pattern amplification when `optimizationLevel >= 2`), fixed in 11.0.1. In `web/pnpm-lock.yaml` it comes in through `@typescript-eslint` (lint toolchain), not shipped in the Control Tower bundle. Classification: needs a person (likely accept for dev-only use, or bump when typescript-eslint allows). `minimatch@3.1.5` is not flagged. Both Go modules: no advisories. Disagreement: Trivy (DB of the same day) reported none for the same lockfile, so tools differ in coverage and lag.
+- GHSA-g3hv-75wg-m249 (CVE-2026-118764), `minimatch@10.2.6`, Moderate/6.9, CWE-405 (pattern amplification when `optimizationLevel >= 2`), fixed in 11.0.1. In `web/pnpm-lock.yaml` it comes in through `@typescript-eslint` (lint toolchain), not shipped in the Factory Floor bundle. Classification: needs a person (likely accept for dev-only use, or bump when typescript-eslint allows). `minimatch@3.1.5` is not flagged. Both Go modules: no advisories. Disagreement: Trivy (DB of the same day) reported none for the same lockfile, so tools differ in coverage and lag.
 
 ## 4. Confirmed findings
 

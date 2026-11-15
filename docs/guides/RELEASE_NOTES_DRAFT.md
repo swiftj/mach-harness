@@ -1,6 +1,6 @@
 # MACH release notes (draft) `<version>`
 
-Status: release candidate, draft. Everything here is experimental where marked. MACH is not claimed to be ready for regulated or enterprise production use. Facts come from the code at this commit and the M7 documents in `docs/mach-next/`. Anything not shown is marked "not tested". The acceptance matrix (`docs/mach-next/M7_ACCEPTANCE_MATRIX.md`, version 3) lists every scenario with its status.
+Status: release candidate, draft. MACH is not claimed to be ready for regulated or enterprise production use. Facts come from the code at this commit and the M7 documents in `docs/mach-next/`. Anything not shown is marked "not tested". The acceptance matrix (`docs/mach-next/M7_ACCEPTANCE_MATRIX.md`, version 3) lists every scenario with its status.
 
 ## Supported platforms
 
@@ -12,7 +12,7 @@ Per `.github/workflows/release.yml`, the release builds `mach-studio` and `mach-
 
 Each is smoke-tested on a native runner of its kind (`macos-latest`, `ubuntu-24.04-arm`, `ubuntu-latest`) before anything is published. The workflow has run on a tag: `v0.13.0-rc.2` was published as a pre-release with six programs, six SBOMs, a source archive and `SHA256SUMS`, and every build, smoke and publish job succeeded. Its earlier attempts were never published: `rc.1` failed on a data race in the observer and a Linux file-identity defect (both fixed), and `rc.3` on a shell-syntax error in the installer on Linux (fixed). Only the `darwin/arm64` programs were run by hand from the published files; the Linux builds are verified by the release's own smoke jobs, not by hand.
 
-**Windows and Intel Mac are not built or tested.** The v0.12.0 release still carries a `darwin-amd64` Studio file, but the installer never selects it. On those machines the Python skills and scripts and the terminal version of Product Studio can run, but the visual app and the Control Tower have no program for them. The Python scripts themselves were run only on macOS.
+**Windows and Intel Mac are not built or tested.** The v0.12.0 release still carries a `darwin-amd64` Studio file, but the installer never selects it. On those machines the Python skills and scripts and the terminal version of Product Studio can run, but the visual app and the Factory Floor have no program for them. The Python scripts themselves were run only on macOS.
 
 **The macOS programs are ad hoc signed and not notarised.** Gatekeeper rejects them. A program downloaded through a browser carries macOS's quarantine mark and is blocked on first run until you allow it in System Settings; the installer's own download carries no such mark. The installer's checksum and attestation checks are the protection there, not Gatekeeper. The browser case was not exercised.
 
@@ -26,11 +26,11 @@ Claude Code, `git`, and `python3` 3.8 or later. The GitHub CLI (`gh`) is needed 
 |---|---|---|
 | Stations: ticket, audit, intent, build, verify, review, merge, cleanup, observe | Built, tested | The factory's conveyor belt. Scripts decide gates, order, commits and verdicts. |
 | `run` skill and `mach:belt` workflow | Built | Names the next step per ticket; runs several tickets in parallel cells. A supervised execution works on its own ticket only. |
-| Product Studio, terminal (experimental) | Built | Project, epics, slices by interview, approval, delivery waves, refresh, conflicts, send, feedback, product acceptance record. A wave's definition and the acceptance are sent as separate requests. |
-| Product Studio, visual app (experimental) | Built | Same workspace in a browser on `127.0.0.1`. Product acceptance is terminal-only. |
-| Product intake and scheduling (experimental) | Built | Takes merged approved waves in, plans by dependency, dispatches on an engineer's word. A revised slice is taken in after its abandoned ticket by itself; for work still in the line a person decides with `product resolve --supersede-in-work`. |
-| Factory supervisor (experimental) | Built | Off until enabled per machine with a code. Observe and supervised modes. Supervised mode also needs the execution risk accepted with `--accept-execution-risk`. Stops at every human gate. Parks a run that makes no progress at once. |
-| Control Tower (experimental) | Built | Read-only live view: Factory floor, Execution Timeline, Analytics. |
+| Product Studio, terminal | Built | Project, epics, slices by interview, approval, delivery waves, refresh, conflicts, send, feedback, product acceptance record. A wave's definition and the acceptance are sent as separate requests. |
+| Product Studio, visual app | Built | Same workspace in a browser on `127.0.0.1`. Product acceptance is terminal-only. |
+| Product intake and scheduling | Built | Takes merged approved waves in, plans by dependency, dispatches on an engineer's word. A revised slice is taken in after its abandoned ticket by itself; for work still in the line a person decides with `product resolve --supersede-in-work`. |
+| Factory supervisor | Built | Off until enabled per machine with a code. Observe and supervised modes. Supervised mode also needs the execution risk accepted with `--accept-execution-risk`. Stops at every human gate. Parks a run that makes no progress at once. |
+| Factory Floor | Built | Read-only live view in three workspaces: Atlas, Timeline (Execution Timeline), Analytics. |
 | Release qualification (new in M7) | Built | `run.py release`: one commit, four outcomes, a deterministic readiness file, an outcome line naming every check not assessed, scanner reports with a required format. |
 | Product acceptance record (new in M7) | Built | `studio.py acceptance record`, bound to the wave as merged at a release and commit. |
 | Installer provenance check (new in M7) | Built | The one-line installer installs a release, verifies its source archive and programs against `SHA256SUMS` and, with `gh`, their build attestation, before any downloaded code runs. |
@@ -43,7 +43,7 @@ Based on a hand-built upgrade from v0.12.0 state (`M7_DISTRIBUTION.md`), a real 
 
 - **Kept byte-identical:** Studio drafts, the intake ledger and events, cells, the archive and run records, `runner.json`, the observer folder, `.factory/config.json` and a customised `REVIEW.md`.
 - **A supervised authorization written before the execution-risk acceptance reads as disabled.** After upgrading, enable again and confirm with `--accept-execution-risk`. Observe-mode authorization is unaffected.
-- **Changed:** MACH's own scripts and skills, the managed block in `.gitignore`, the manifest, and the downloaded programs. The Control Tower program is added.
+- **Changed:** MACH's own scripts and skills, the managed block in `.gitignore`, the manifest, and the downloaded programs. The Factory Floor program is added.
 - **A second upgrade** touched no file but the manifest's timestamp.
 - **No migration step** was needed or found. Cross-version compatibility of an observer index could not be shown because v0.12.0 shipped no observer.
 - **Rollback is not documented.** In the hand-built test, running the older installer over the newer one restored the older files and removed the observer, and the older scripts read the state without error. Back up `.factory/` first. The installer never touches it.
@@ -56,14 +56,14 @@ Based on a hand-built upgrade from v0.12.0 state (`M7_DISTRIBUTION.md`), a real 
 1. **`install.sh` itself is not verified.** The installer checks the release's archive and programs; nothing checks the script you ran, which is fetched from `main`. Installing a branch or a local copy is possible only by explicit choice and says it was not verified.
 2. **A prompt injection that succeeds in an unattended run can run arbitrary code as the engineer** (`Bash(python3 *)` is on the tool list). No operating-system sandbox exists. Enabling supervised mode records that a person accepted this; it removes none of it. Real model behaviour under injection was not tested.
 3. **Recorded cost excludes failed executions.** Analytics says "a lower bound": in the real runs it left out USD 0.77 and 0.44 of known failed cost, and killed executions have no recorded cost at all, so real spend can be higher than shown. The per-run and per-day limits count only recorded cost.
-4. **Names in free text are shown by the Control Tower**, labelled, not removed. No confidentiality claim is made.
+4. **Names in free text are shown by the Factory Floor**, labelled, not removed. No confidentiality claim is made.
 5. **Nothing distinguishes a product manager's copy from an engineer's.** `factory enable` produces a code there. Which machine may enable is decided only by the person at it.
 6. **No notarisation.** The macOS programs are ad hoc signed (see Supported platforms).
 7. **The source archive is not byte-reproducible across gzip implementations.** The tar inside is identical; the published checksum is for the published file, so installs are unaffected.
-8. **A repeated review round or a voided decision is not shown on the Control Tower page.** The observer serves them; the page does not word them. An abandoned cell's tile still shows its last stage (its mast and inspector say Abandoned).
+8. **A repeated review round or a voided decision is not shown on the Factory Floor page.** The observer serves them; the page does not word them. An abandoned cell's tile still shows its last stage (its mast and inspector say Abandoned).
 9. **A supervisor hold has no reason code**, and repeated lifecycle lines are counted again. A 240,000-event history switches views slower than its budget.
 10. **No vulnerability-reporting address yet** (see Security disclosures).
-11. **Fixes from the third live run were not re-observed live.** They have unit tests only: the belt's hand-off validation, Product Studio's workspace repair, the scanner-report format and the outcome line, sending an acceptance alone, the Control Tower's wording for killed and abandoned runs, and the installer's candidate-version and POSIX-shell fixes.
+11. **Fixes from the third live run were not re-observed live.** They have unit tests only: the belt's hand-off validation, Product Studio's workspace repair, the scanner-report format and the outcome line, sending an acceptance alone, the Factory Floor's wording for killed and abandoned runs, and the installer's candidate-version and POSIX-shell fixes.
 12. **Nothing was tested on a second machine, with two GitHub accounts, with signed commits or with Enterprise single sign-on.** Rules were enforced by real GitHub.com on one personal account; an approved review under enforced rules and a signed commit were not shown.
 13. **Nothing designates one runner across machines.** Two engineers' machines can both enable.
 14. **No dependency, secret or static scan of generated code in the line.** The audit only checks that a secret scanner is configured. Release qualification reads scanner reports someone else produces; the real runs had no dependency manifest for osv-scanner to read.
@@ -88,7 +88,7 @@ Fixed during M7 and seen working again in a later live run: a plan whose impleme
 - Windows and Intel Mac builds.
 - Apple notarisation.
 - A rollback procedure.
-- Default withholding of free text in the Control Tower.
+- Default withholding of free text in the Factory Floor.
 
 ## Tested scenarios
 
@@ -123,7 +123,7 @@ Suitable for publication as they stand:
 - The installer checks a release's archive and programs against a published checksum from the same release, and verifies build provenance when the GitHub CLI is installed and signed in. A forged checksum beside a tampered file is accepted when provenance is not verified; `MACH_REQUIRE_PROVENANCE=1` refuses instead.
 - `install.sh` is itself fetched from the `main` branch and is not checked: it is the remaining trust root.
 - The macOS programs are not notarised.
-- Personal names in free text are shown in the Control Tower, labelled and not removed.
+- Personal names in free text are shown in the Factory Floor, labelled and not removed.
 - MACH relies on the repository host's rules (branch protection, reviews, signed commits, single sign-on). It does not replace them. They were tested on GitHub.com with one personal account, not against a real organisation.
 - Generated code is reviewed by agents. MACH does not scan it for vulnerable dependencies or secrets. Do not read a passing review as a security guarantee.
 - The scans run on one snapshot found no confirmed High or Critical finding and no real secret. One Moderate advisory in lint tooling, not shipped, awaits a decision.

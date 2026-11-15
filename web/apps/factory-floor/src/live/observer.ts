@@ -1,0 +1,938 @@
+/**
+ * The observer's read-only HTTP API (`/api/v1`, docs/mach-next/M6_1_OBSERVER_DESIGN.md section 12,
+ * contract section 14), as the Factory Floor reads it. `fetch` is injected so tests run against an
+ * in-memory fake; the browser passes its own (same origin, cookie credentials).
+ *
+ * Every response is M5's envelope: `{ok: true, data}` or `{ok: false, error: {kind, message, ...}}`.
+ * The client names the schema it reads (`X-MACH-Event-Schema: 3`). Everything is read tolerantly:
+ * unknown fields are ignored, missing optional ones are null.
+ */
+
+import type { FactoryStatus, RuntimeState, RuntimeSummary } from "../scene/connection";
+import type { ObserverHistory } from "../sim/provenance";
+import type { ObserverSnapshotState } from "../sim/v3";
+
+export type { FactoryStatus, RuntimeState, RuntimeSummary };
+
+export interface FetchResponseLike {
+  readonly status: number;
+  json(): Promise<unknown>;
+  /** The reply's headers (the browser's fetch has them; a test double may not). */
+  readonly headers?: { get(name: string): string | null };
+  text?(): Promise<string>;
+}
+export type FetchLike = (
+  url: string,
+  init?: { readonly headers?: Readonly<Record<string, string>>; readonly credentials?: "same-origin"; /** M6.3: lets a superseded request be cancelled (a fetch that ignores it is still safe: the answer is discarded). */ readonly signal?: AbortSignal },
+) => Promise<FetchResponseLike>;
+
+export type ObserverErrorKind = "invalid" | "unauthorized" | "not_found" | "cursor_reset" | "cursor_expired" | "unavailable" | "internal" | "network" | "protocol";
+
+export class ObserverError extends Error {
+  readonly kind: ObserverErrorKind;
+  readonly status: number;
+  /** The error object's other fields (`generation`, `floor`, `head`, `reason`, `cursor`). */
+  readonly detail: Readonly<Record<string, unknown>>;
+  constructor(kind: ObserverErrorKind, message: string, status: number, detail: Readonly<Record<string, unknown>> = {}) {
+    super(message);
+    this.name = "ObserverError";
+    this.kind = kind;
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+export interface ObserverSession {
+  readonly generation: string;
+  readonly eventSchema: number | null;
+  readonly eventRevision: number | null;
+  readonly kinds: readonly string[];
+  readonly snapshot: boolean;
+  /**
+   * `capabilities.stream_observations` (observer M6.2): `ok` is false only when stream records were
+   * refused (null in the reply before any stream is read, said here as false); `state` is the worst
+   * runtime state over every stream; `versions` each version seen.
+   */
+  readonly streamObservations: {
+    readonly ok: boolean;
+    readonly reason: string | null;
+    readonly policy: string | null;
+    readonly state: RuntimeState | null;
+    readonly claudeCodeVersion: string | null;
+    readonly provenVersions: readonly string[];
+    readonly versions: RuntimeSummary["versions"];
+  } | null;
+  readonly people: "role";
+  readonly project: string | null;
+  /** The observer's clock when it answered (Unix ms), if the session says it (`now_ms`, or `now`); else null. */
+  readonly nowMs: number | null;
+}
+
+export interface EventsPage {
+  readonly generation: string;
+  readonly events: readonly unknown[];
+  readonly next: string | null;
+  readonly head: string | null;
+  readonly floor: string | null;
+  readonly more: boolean;
+  /** The observer's watermark (contract 6.6), Unix ms, when the response carries it. */
+  readonly watermark: number | null;
+}
+
+export interface ObserverSnapshot {
+  /** The cursor the state is at: stream from it (`after=`) for no gap and no repeat. */
+  readonly cursor: string;
+  readonly generation: string;
+  /** Rebuilt from the observer's nearest checkpoint (a cursor earlier than its projection). */
+  readonly reconstructed: boolean;
+  /** The projected state, normalised to the shape the reducer reads (every part optional). */
+  readonly state: ObserverSnapshotState;
+}
+
+/** A window of history in `order` (`GET /api/v1/history`), for replay. */
+export interface HistoryPage {
+  readonly generation: string;
+  readonly events: readonly unknown[];
+  /** Page on with `from_order` = this while `more`. */
+  readonly nextFromOrder: string | null;
+  readonly more: boolean;
+  /** False when part of the window may have left the observer's memory. */
+  readonly complete: boolean;
+  readonly watermark: number | null;
+  /** M6.3: the page stopped at the observer's scan cap (`more` is then true too); absent from an older observer. */
+  readonly capped?: boolean;
+}
+
+/** Counts of events per time bucket (`GET /api/v1/series`), for drawing a long history without loading it. */
+export interface SeriesData {
+  readonly fromMs: number;
+  readonly toMs: number;
+  readonly bucketMs: number;
+  /** Sparse: buckets with no event are absent. `atLeast`: the count is a lower bound (coarse sampling). */
+  readonly buckets: readonly { readonly fromMs: number; readonly count: number; readonly atLeast?: boolean }[];
+  /** Events in the range, as the observer counts them (null for coarse sampling). */
+  readonly total: number | null;
+  /** True when sampled through `/history` because `/series` is not served. */
+  readonly coarse: boolean;
+}
+
+/** The parts of `GET /api/v1/health` the Factory Floor reads (observer M6.2; absent parts are null). */
+export interface ObserverHealth {
+  readonly delivery: { readonly lastHoldMs: number | null; readonly p95HoldMs: number | null } | null;
+  readonly head: string | null;
+  readonly sources: FactoryStatus["sources"];
+  /** `ingest.runtime`: the streams' runtimes summed. */
+  readonly runtime: RuntimeSummary | null;
+  /** `projection.history`: how complete the observer's history is, by gap class. */
+  readonly history: ObserverHistory | null;
+}
+
+/** The plan's facts on a cell (`/cells/{t}` `plan`, observer M6.2, D11); each null when not recorded. */
+export interface ObserverPlanFacts {
+  readonly appType: string | null;
+  readonly risk: string | null;
+  readonly contracts: number | null;
+  readonly tasks: number | null;
+  /** The event that recorded them (the plan's exit), null when a run record gave them. */
+  readonly recordedBy: string | null;
+}
+
+/** The parts of `GET /api/v1/cells/{ticket}` the Factory Floor reads. */
+export interface ObserverCell {
+  readonly ticketId: string;
+  readonly sliceId: string | null;
+  readonly stage: string | null;
+  readonly risk: string | null;
+  readonly appType: string | null;
+  readonly round: number | null;
+  readonly plan: ObserverPlanFacts | null;
+  /** The projection's cursor the reply describes. */
+  readonly cursor: string | null;
+}
+
+/**
+ * The station visit an artifact belongs to (observer M6.2, D12): `recorded` when a verification check
+ * names the file with its hash (`rule: check-hash`), `reconstructed` when the observer joined it by
+ * its verification folder (`folder`), its round and file time (`round-and-time`) or its round only
+ * (`round`). For M6.4 (Evidence Theater); nothing draws it yet.
+ */
+export interface ArtifactVisitLink {
+  readonly visitId: string;
+  readonly basis: "recorded" | "reconstructed";
+  readonly rule: string | null;
+}
+
+/** One entry of the observer's evidence catalog (`GET /api/v1/artifacts`), metadata only. */
+export interface ArtifactEntry {
+  readonly id: string;
+  readonly ref: string | null;
+  readonly ticketId: string | null;
+  readonly path: string | null;
+  readonly kind: string | null;
+  readonly nature: string | null;
+  readonly mediaType: string | null;
+  readonly bytes: number | null;
+  readonly sha256: string | null;
+  readonly integrity: string | null;
+  readonly verifiedEvidence: boolean;
+  readonly round: number | null;
+  /** `recorded` when the round came from results.json's review loop or the review folder's number. */
+  readonly roundBasis: string | null;
+  /** M7: k for a review folder round-N.k (a repeat of judging round N after a voided approval); null otherwise. */
+  readonly repeat?: number | null;
+  /** M7: a review decision the merge station voided: codes and commits only. Null when it stands. */
+  readonly voided?: { readonly reason_code: string; readonly outcome_before?: string } | null;
+  readonly commit: string | null;
+  /** The visit it belongs to; null when no visit fits. */
+  readonly visit: ArtifactVisitLink | null;
+  readonly contentAccess: string | null;
+  /**
+   * The served text holds free prose the observer cannot check for names no record gives (`free_text`,
+   * R1, the product owner's decision): it is served, and must be labelled wherever it is listed or
+   * opened. False for media, records of identifiers only, and content that is not served.
+   */
+  readonly freeText: boolean;
+  /** The observer's own words for it (`free_text_note`), e.g. "free text, not checked for names"; null when not free text. */
+  readonly freeTextNote: string | null;
+}
+
+/** The label every listing or opening of a free-text evidence document carries (R1). */
+export const FREE_TEXT_LABEL = "Free text, not checked for names";
+
+/** The label for a catalog entry, or null when it holds no free text. */
+export function freeTextLabel(entry: Pick<ArtifactEntry, "freeText"> | null | undefined): string | null {
+  return entry?.freeText ? FREE_TEXT_LABEL : null;
+}
+
+/** What an artifact content reply's headers say (`X-MACH-Free-Text`, `X-MACH-Redacted`). */
+export interface ContentLabels {
+  readonly freeText: boolean;
+  /** Replacements the observer made, when it says. */
+  readonly redacted: number | null;
+}
+export function readContentLabels(headers: { get(name: string): string | null } | null | undefined): ContentLabels {
+  const free = headers?.get("X-MACH-Free-Text") ?? null;
+  const red = headers?.get("X-MACH-Redacted") ?? null;
+  const n = red === null ? NaN : Number(red);
+  return { freeText: free !== null && free.trim().toLowerCase() === "unchecked-for-names", redacted: Number.isFinite(n) ? n : null };
+}
+
+/**
+ * The observer's current summaries (`/waves`, `/slices`, `/cells`, `/runs`), bounded by how many
+ * waves, slices, cells and executions there are, never by how many events: the state a long history
+ * starts from (D17) without the whole snapshot. `cursor` is the projection position they describe
+ * (the highest of the replies).
+ */
+export interface ObserverSummaries {
+  readonly cursor: string | null;
+  readonly state: ObserverSnapshotState;
+}
+
+export interface ObserverClient {
+  session(): Promise<ObserverSession>;
+  /** Events after a cursor, in delivery order. */
+  events(after: string, limit?: number): Promise<EventsPage>;
+  /** History in `order` within a window (`from_order` inclusive start, `to_order` end), for replay. */
+  history(window?: { readonly fromOrder?: string | null; readonly toOrder?: string | null; readonly fromMs?: number | null; readonly toMs?: number | null; readonly limit?: number }): Promise<HistoryPage>;
+  /** The projected state at a cursor (default: the observer's own position) and that cursor. */
+  snapshot(at?: string): Promise<ObserverSnapshot>;
+  factoryStatus(): Promise<FactoryStatus>;
+  /** Counts per time bucket; throws not_found on an observer without the route. */
+  series(window?: { readonly fromMs?: number | null; readonly toMs?: number | null; readonly bucketMs?: number | null }): Promise<SeriesData>;
+  health(): Promise<ObserverHealth>;
+  /** One cell's detail (`/cells/{ticket}`): its plan facts and stage. */
+  cell(ticket: string): Promise<ObserverCell>;
+  /** The evidence catalog, metadata only (`/artifacts`), one page. */
+  artifacts(query?: { readonly ticket?: string; readonly limit?: number; readonly offset?: number }): Promise<{ readonly items: readonly ArtifactEntry[]; readonly more: boolean }>;
+  /** One served text (`/artifacts/{id}/content`) with what its headers say (free text, redactions). */
+  artifactContent(id: string): Promise<{ readonly text: string; readonly labels: ContentLabels }>;
+  /** The current waves, slices, cells and executions, paged through (see ObserverSummaries). */
+  summaries(): Promise<ObserverSummaries>;
+  // ---- M6.3 (Execution Timeline). Optional so other implementations keep compiling; createObserverClient has them all.
+  /** One page of `/api/v1/spans` (windowed, filtered), items unparsed: src/timeline/data reads them. */
+  spans?(query: ObserverSpansQuery): Promise<ObserverSpansPage>;
+  /** One page of `/api/v1/marks`; throws not_found on an observer without the route. */
+  marks?(query: ObserverMarksQuery): Promise<ObserverMarksPage>;
+  /** `/api/v1/concurrency`, unparsed; throws not_found on an observer without the route. */
+  concurrency?(query: ObserverConcurrencyQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `/api/v1/series` with a filter (ticket, execution, event kinds), each bucket's counts by kind kept. */
+  seriesFor?(query: ObserverSeriesQuery): Promise<FilteredSeries>;
+  // ---- M6.5 (Factory Analytics). Optional like the M6.3 methods; each returns the reply's `data`
+  // unparsed (src/analytics/data validates it). A 404 (`not_found`) means an observer without
+  // analytics; a 400 (`invalid`) carries the observer's reason in its message.
+  /** `GET /api/v1/analytics/metrics`. */
+  analyticsMetrics?(query: ObserverAnalyticsMetricsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `GET /api/v1/analytics/flow`. */
+  analyticsFlow?(query: ObserverAnalyticsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `GET /api/v1/analytics/contributors`. */
+  analyticsContributors?(query: ObserverAnalyticsContributorsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `GET /api/v1/analytics/runs`. */
+  analyticsRuns?(query: ObserverAnalyticsRunsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `GET /api/v1/analytics/insights` (M6_5_DESIGN.md 3.5). */
+  analyticsInsights?(query: ObserverAnalyticsQuery): Promise<Readonly<Record<string, unknown>>>;
+  /** `/session`'s `display_policy` unparsed (`free_text` says which fields hold prose); null when absent. */
+  displayPolicy?(): Promise<Readonly<Record<string, unknown>> | null>;
+}
+
+/** The filters every analytics route reads (M6_5_DESIGN.md 3); a route that cannot honour one answers 400. Values are identifiers or codes, never prose. */
+export const ANALYTICS_FILTERS = ["risk", "app_type", "model", "station", "wave", "outcome", "provenance"] as const;
+export type ObserverAnalyticsFilter = (typeof ANALYTICS_FILTERS)[number];
+
+/** The common analytics parameters: one cursor (`at`) for every query of a view, a window or the last N runs, filters. */
+export interface ObserverAnalyticsQuery {
+  readonly at?: string | null;
+  readonly fromMs?: number | null;
+  readonly toMs?: number | null;
+  readonly lastRuns?: number | null;
+  /** `as_of_ms` (a playhead): nothing recorded later is counted; combinable with `at`. An observer without it answers 400. */
+  readonly asOfMs?: number | null;
+  readonly filters?: Readonly<Partial<Record<ObserverAnalyticsFilter, string>>>;
+  readonly signal?: AbortSignal;
+}
+export interface ObserverAnalyticsMetricsQuery extends ObserverAnalyticsQuery {
+  readonly ids?: readonly string[];
+  /** At most two dimensions. */
+  readonly groupBy?: readonly string[];
+  readonly bucket?: "day" | "week" | null;
+  readonly distribution?: boolean;
+}
+export interface ObserverAnalyticsContributorsQuery extends ObserverAnalyticsQuery {
+  readonly metric: string;
+  /** dimension → code, every one must match (`group=station:verify,round:1`). */
+  readonly group?: Readonly<Record<string, string>>;
+  readonly order?: "impact" | "recent";
+  readonly limit?: number;
+}
+export interface ObserverAnalyticsRunsQuery extends ObserverAnalyticsQuery {
+  readonly of?: "runs" | "executions";
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+/** The query string of an analytics route's common parameters (exported for tests). Only identifiers and numbers. */
+export function analyticsParams(query: ObserverAnalyticsQuery): URLSearchParams {
+  const q = new URLSearchParams();
+  if (query.at) q.set("at", query.at);
+  if (typeof query.asOfMs === "number" && Number.isFinite(query.asOfMs)) q.set("as_of_ms", String(Math.max(0, Math.floor(query.asOfMs))));
+  if (typeof query.fromMs === "number" && Number.isFinite(query.fromMs)) q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+  if (typeof query.toMs === "number" && Number.isFinite(query.toMs)) q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+  if (typeof query.lastRuns === "number" && query.lastRuns > 0) q.set("last_runs", String(Math.floor(query.lastRuns)));
+  for (const name of ANALYTICS_FILTERS) {
+    const v = query.filters?.[name];
+    if (typeof v === "string" && v) q.set(name, v);
+  }
+  return q;
+}
+
+/** `/api/v1/spans` (M6.3): `from_ms`/`to_ms` overlap, `span` exact, `sort=start`. */
+export interface ObserverSpansQuery {
+  readonly fromMs?: number | null;
+  readonly toMs?: number | null;
+  readonly kinds?: readonly string[];
+  readonly ticket?: string;
+  readonly execution?: string;
+  readonly wave?: string;
+  readonly span?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly signal?: AbortSignal;
+}
+export interface ObserverSpansPage {
+  readonly items: readonly unknown[];
+  /** The reply's `total` (after the observer's cap), null when absent. */
+  readonly total: number | null;
+  /** `total_uncapped` (M6.3), null from an observer that does not say. */
+  readonly totalUncapped: number | null;
+  /** `truncated` (M6.3), null from an observer that does not say. */
+  readonly truncated: boolean | null;
+  readonly more: boolean;
+  readonly offset: number;
+  readonly cursor: string | null;
+}
+/** `/api/v1/marks` (M6.3): a window, or the nearest strictly after or before a time. */
+export interface ObserverMarksQuery {
+  readonly fromMs?: number | null;
+  readonly toMs?: number | null;
+  readonly afterMs?: number | null;
+  readonly beforeMs?: number | null;
+  readonly kinds?: readonly string[];
+  readonly limit?: number;
+  /** Paging within a window (round 4); an observer without paging ignores it. */
+  readonly offset?: number;
+  readonly signal?: AbortSignal;
+}
+export interface ObserverMarksPage {
+  readonly items: readonly unknown[];
+  readonly truncated: boolean | null;
+  readonly cursor: string | null;
+  /** Round 4 paging: more marks follow at `offset + items.length`; null when the reply does not say. */
+  readonly more?: boolean | null;
+  readonly total?: number | null;
+  readonly offset?: number | null;
+}
+export interface ObserverConcurrencyQuery {
+  readonly fromMs: number;
+  readonly toMs: number;
+  readonly bucketMs: number;
+  readonly kinds?: readonly string[];
+  readonly signal?: AbortSignal;
+}
+export interface ObserverSeriesQuery {
+  readonly fromMs?: number | null;
+  readonly toMs?: number | null;
+  readonly bucketMs?: number | null;
+  readonly ticket?: string;
+  readonly execution?: string;
+  /** Event kinds to count (`kinds=`); an observer that ignores it counts everything, and `kindsApplied` says so. */
+  readonly kinds?: readonly string[];
+  readonly signal?: AbortSignal;
+}
+export interface FilteredSeries {
+  readonly fromMs: number;
+  readonly toMs: number;
+  readonly bucketMs: number;
+  /** Sparse; `kinds` is each bucket's count by event kind when the reply has it. */
+  readonly buckets: readonly { readonly fromMs: number; readonly count: number; readonly kinds: Readonly<Record<string, number>> | null }[];
+  readonly total: number | null;
+  /** The reply's `complete`; null when it does not say. */
+  readonly complete: boolean | null;
+  /** Whether `kinds` was honoured: counts were taken from each bucket's by-kind map, or the reply echoed it. */
+  readonly kindsApplied: boolean;
+  readonly cursor: string | null;
+}
+
+export const EVENT_SCHEMA = 3;
+
+const bool = (value: unknown): boolean | null => (typeof value === "boolean" ? value : null);
+const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : value && typeof value === "object" ? Object.values(value) : []);
+const strings = (value: unknown): string[] => (Array.isArray(value) ? (value.filter((x) => typeof x === "string") as string[]) : []);
+
+/**
+ * `/api/v1/factory/status` in the observer's documented shape (apps/observer/README.md): the policy
+ * `summary {enabled, paused, mode, autonomy}`, `factory_present`, `supervisor {lease_present,
+ * heartbeat_fresh, heartbeat_age_seconds, lease_expired}`, `read_at`, and `freshness` (per-source
+ * state and lag, the ingest's watermark). Missing parts are null.
+ */
+export function readFactoryStatus(data: unknown): FactoryStatus {
+  const d = obj(data);
+  const summary = obj(d.summary);
+  const supervisor = obj(d.supervisor);
+  const freshness = obj(d.freshness);
+  const ingest = obj(freshness.ingest);
+  return {
+    factoryPresent: bool(d.factory_present),
+    enabled: bool(summary.enabled),
+    paused: bool(summary.paused),
+    mode: str(summary.mode),
+    autonomy: str(summary.autonomy),
+    recordedState: str(obj(d.recorded_mode).state),
+    supervisor: {
+      leasePresent: bool(supervisor.lease_present),
+      heartbeatFresh: bool(supervisor.heartbeat_fresh),
+      heartbeatAgeSeconds: num(supervisor.heartbeat_age_seconds),
+      leaseExpired: bool(supervisor.lease_expired),
+    },
+    sources: list(freshness.sources).map((x) => {
+      const src = obj(x);
+      return { key: str(src.key) ?? "", state: str(src.state), lagBytes: num(src.lag_bytes), lastReadAgeMs: num(src.last_read_age_ms), runtime: readRuntime(src.runtime) };
+    }),
+    ingest: { stale: bool(ingest.stale), watermark: timeOf(ingest.watermark_ms), catchingUp: bool(ingest.catching_up) },
+    delivery: ingest.delivery && typeof ingest.delivery === "object" ? { lastHoldMs: num(obj(ingest.delivery).last_hold_ms), p95HoldMs: num(obj(ingest.delivery).hold_ms_p95) } : null,
+    readAt: timeOf(d.read_at),
+    // `/factory/status` carries neither; `/health` does (merged by the live source).
+    runtime: null,
+    history: null,
+  };
+}
+
+const RUNTIME_STATES = ["proven", "compatible-unproven", "incompatible", "unknown"] as const;
+const runtimeState = (value: unknown): RuntimeState | null => (typeof value === "string" && (RUNTIME_STATES as readonly string[]).includes(value) ? (value as RuntimeState) : null);
+
+/** A stream source's runtime (`runtime: {name, version, state, reason, records_accepted, records_refused, ...}`, observer M6.2), or null when absent. */
+function readRuntime(value: unknown): FactoryStatus["sources"][number]["runtime"] {
+  if (!value || typeof value !== "object") return null;
+  const r = obj(value);
+  return { state: runtimeState(r.state), version: str(r.version), reason: str(r.reason), recordsAccepted: num(r.records_accepted), recordsRefused: num(r.records_refused) };
+}
+
+/**
+ * The streams' runtimes summed: `/health` `ingest.runtime` or `/session`
+ * `capabilities.stream_observations` (`{policy, state, proven_versions, versions[{version, state,
+ * executions, records_refused}]}`, observer M6.2), or null when absent.
+ */
+export function readRuntimeSummary(value: unknown): RuntimeSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const r = obj(value);
+  const state = runtimeState(r.state);
+  if (!state) return null;
+  const versions = list(r.versions).map((x) => {
+    const v = obj(x);
+    return { version: str(v.version), state: runtimeState(v.state), executions: num(v.executions), recordsRefused: num(v.records_refused) };
+  });
+  return { state, provenVersions: strings(r.proven_versions), versions };
+}
+
+const counts = (value: unknown): Record<string, number> => {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(obj(value))) if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  return out;
+};
+
+/**
+ * History completeness by gap class (observer M6.2: `/snapshot` `state.history`, `/project`
+ * `history`, `/health` `projection.history`): `{completeness, lost, not_interpreted, classes, gaps,
+ * partial, not_v3}`. Null when absent (an older observer). Partial only when something was lost.
+ */
+export function readObserverHistory(value: unknown): ObserverHistory | null {
+  if (!value || typeof value !== "object") return null;
+  const h = obj(value);
+  const lost = counts(h.lost);
+  const completeness = h.completeness === "partial" || h.completeness === "complete" ? h.completeness : Object.values(lost).some((n) => n > 0) ? "partial" : "complete";
+  return { completeness, lost, notInterpreted: counts(h.not_interpreted), classes: counts(h.classes), partial: str(h.partial) || null };
+}
+
+const planOf = (value: unknown): ObserverPlanFacts | null => {
+  if (!value || typeof value !== "object") return null;
+  const p = obj(value);
+  return { appType: str(p.app_type) || null, risk: str(p.risk) || null, contracts: num(p.contracts), tasks: num(p.tasks), recordedBy: str(p.recorded_by) || null };
+};
+
+/** One catalog entry (`/artifacts` items), with its visit link (observer M6.2). */
+export function readArtifactEntry(value: unknown): ArtifactEntry {
+  const a = obj(value);
+  const v = a.visit && typeof a.visit === "object" ? obj(a.visit) : null;
+  const visit: ArtifactVisitLink | null = v && typeof v.visit_id === "string" && (v.basis === "recorded" || v.basis === "reconstructed") ? { visitId: v.visit_id, basis: v.basis, rule: str(v.rule) } : null;
+  return {
+    id: str(a.id) ?? "",
+    ref: str(a.ref),
+    ticketId: str(a.ticket_id),
+    path: str(a.path_rel),
+    kind: str(a.kind),
+    nature: str(a.nature),
+    mediaType: str(a.media_type),
+    bytes: num(a.bytes),
+    sha256: str(a.sha256),
+    integrity: str(a.integrity),
+    verifiedEvidence: a.verified_evidence === true,
+    round: num(a.round),
+    roundBasis: str(a.round_basis) || null,
+    repeat: num(a.repeat),
+    voided: a.voided && typeof a.voided === "object" && typeof obj(a.voided).reason_code === "string" ? { reason_code: str(obj(a.voided).reason_code) ?? "recorded", outcome_before: str(obj(a.voided).outcome_before) ?? undefined } : null,
+    commit: str(a.commit) || null,
+    visit,
+    contentAccess: str(a.content_access),
+    freeText: a.free_text === true,
+    freeTextNote: a.free_text === true ? (str(a.free_text_note) ?? "free text, not checked for names") : null,
+  };
+}
+
+/** A gate state word from a human gate of the snapshot. */
+const humanGateState = (g: Record<string, unknown>): string => (g.closed ? (g.closed_by === "rejected" ? "failed" : "passed") : "waiting");
+
+/**
+ * `/api/v1/snapshot`'s `state` (the observer's projection: `waves`, `slices`, `cells`, `executions`
+ * as maps by id, `gates` as the human gates) in the shape the reducer reads. Arrays are taken too.
+ */
+export function readSnapshotState(data: unknown): ObserverSnapshotState {
+  const d = obj(data);
+  const waves = list(d.waves).map((x) => obj(x)).filter((w) => typeof w.wave_id === "string");
+  const slices = list(d.slices).map((x) => obj(x)).filter((x) => typeof x.slice_id === "string");
+  const cells = list(d.cells).map((x) => obj(x)).filter((c) => typeof c.ticket_id === "string");
+  const executions = list(d.executions)
+    .map((x) => {
+      const o = obj(x);
+      return Object.keys(obj(o.run)).length ? obj(o.run) : o;
+    })
+    .filter((x) => typeof x.execution_id === "string");
+  const gates = list(d.gates).map((x) => obj(x));
+  return {
+    waves: waves.map((w) => ({ wave_id: w.wave_id as string, slices: strings(w.slices), revision: num(w.revision) })),
+    slices: slices.map((x) => ({ slice_id: x.slice_id as string, ticket_id: str(x.ticket_id), state: str(x.state), dependencies: strings(x.dependencies ?? x.depends_on), revision: num(x.revision) })),
+    cells: cells.map((c) => {
+      const plan = planOf(c.plan);
+      return {
+        ticket_id: c.ticket_id as string,
+        slice_id: str(c.slice_id),
+        stage: str(c.stage),
+        risk: str(c.risk) || null,
+        current_visit: str(c.current_visit),
+        rounds: num(c.round ?? c.rounds),
+        app_type: str(c.app_type) || null,
+        plan: plan ? { app_type: plan.appType, risk: plan.risk, contracts: plan.contracts, tasks: plan.tasks, recorded_by: plan.recordedBy } : null,
+      };
+    }),
+    executions: executions.map((x) => ({ execution_id: x.execution_id as string, ticket_id: str(x.ticket_id), state: str(x.state), attempt: num(x.attempt) })),
+    gates: gates
+      .filter((g) => typeof g.ticket_id === "string" && (g.gate === undefined ? g.kind === "approval" : true))
+      .map((g) => ({ ticket_id: g.ticket_id as string, gate: typeof g.gate === "string" ? g.gate : "human-approval", round: num(g.round), state: typeof g.state === "string" ? g.state : humanGateState(g) })),
+    history: readObserverHistory(d.history),
+  };
+}
+
+const obj = (value: unknown): Record<string, unknown> => (value && typeof value === "object" ? (value as Record<string, unknown>) : {});
+const str = (value: unknown): string | null => (typeof value === "string" ? value : null);
+const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
+
+/** A time the observer sent: Unix ms, or an RFC 3339 string. */
+export function timeOf(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+const KINDS: Readonly<Record<string, ObserverErrorKind>> = {
+  invalid: "invalid",
+  unauthorized: "unauthorized",
+  not_found: "not_found",
+  cursor_reset: "cursor_reset",
+  cursor_expired: "cursor_expired",
+  unavailable: "unavailable",
+  internal: "internal",
+};
+
+export function createObserverClient(options: { readonly fetch: FetchLike; readonly base?: string }): ObserverClient {
+  const base = options.base ?? "/api/v1";
+  const getOnce = async (path: string, signal?: AbortSignal): Promise<Record<string, unknown>> => {
+    const aborted = (): never => {
+      throw signal?.reason ?? new DOMException("The request was superseded.", "AbortError");
+    };
+    if (signal?.aborted) aborted();
+    let response: FetchResponseLike;
+    try {
+      response = await options.fetch(`${base}${path}`, { headers: { "X-MACH-Event-Schema": String(EVENT_SCHEMA), Accept: "application/json" }, credentials: "same-origin", ...(signal ? { signal } : {}) });
+    } catch (error) {
+      if (signal?.aborted) aborted();
+      throw new ObserverError("network", error instanceof Error ? error.message : "The observer could not be reached.", 0);
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = obj(await response.json());
+    } catch {
+      if (signal?.aborted) aborted();
+      throw new ObserverError("protocol", "The observer's response was not JSON.", response.status);
+    }
+    if (signal?.aborted) aborted();
+    if (body.ok === true) return obj(body.data);
+    const error = obj(body.error);
+    throw new ObserverError(KINDS[str(error.kind) ?? ""] ?? "protocol", str(error.message) ?? `The observer answered ${response.status}.`, response.status, error);
+  };
+  // Identical requests in flight are one request (L8 of the live run: the overview, the lenses and the
+  // default window asked the same thing at once). Each caller keeps its own abort: the shared request is
+  // aborted only when every caller waiting on it has given up.
+  const inflight = new Map<string, { readonly promise: Promise<Record<string, unknown>>; readonly ctl: AbortController; waiting: number }>();
+  const get = (path: string, signal?: AbortSignal): Promise<Record<string, unknown>> => {
+    if (signal?.aborted) return Promise.reject(signal.reason ?? new DOMException("The request was superseded.", "AbortError"));
+    let entry = inflight.get(path);
+    if (!entry) {
+      const ctl = new AbortController();
+      const promise = getOnce(path, ctl.signal);
+      const made = { promise, ctl, waiting: 0 };
+      entry = made;
+      inflight.set(path, made);
+      const forget = () => {
+        if (inflight.get(path) === made) inflight.delete(path);
+      };
+      promise.then(forget, forget);
+    }
+    const shared = entry;
+    shared.waiting += 1;
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const settle = () => {
+        done = true;
+        shared.waiting -= 1;
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        if (done) return;
+        settle();
+        if (shared.waiting === 0) {
+          if (inflight.get(path) === shared) inflight.delete(path);
+          shared.ctl.abort();
+        }
+        reject(signal?.reason ?? new DOMException("The request was superseded.", "AbortError"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      shared.promise.then(
+        (value) => {
+          if (done) return;
+          settle();
+          resolve(value);
+        },
+        (error: unknown) => {
+          if (done) return;
+          settle();
+          reject(error);
+        },
+      );
+    });
+  };
+
+  return {
+    async session() {
+      const d = await get("/session");
+      const versions = obj(d.versions);
+      const event = obj(versions.event);
+      const capabilities = obj(d.capabilities);
+      const observations = capabilities.stream_observations === undefined ? null : obj(capabilities.stream_observations);
+      return {
+        generation: str(d.generation) ?? "",
+        eventSchema: num(event.schema),
+        eventRevision: num(event.revision),
+        kinds: Array.isArray(event.kinds) ? (event.kinds.filter((k) => typeof k === "string") as string[]) : [],
+        snapshot: capabilities.snapshot === true,
+        streamObservations: observations
+          ? {
+              ok: observations.ok === true,
+              reason: str(observations.reason),
+              policy: str(observations.policy),
+              state: runtimeState(observations.state),
+              claudeCodeVersion: str(observations.claude_code_version),
+              provenVersions: strings(observations.proven_versions),
+              versions: readRuntimeSummary({ state: "unknown", versions: observations.versions })?.versions ?? [],
+            }
+          : null,
+        people: "role",
+        project: str(obj(d.project).folder),
+        nowMs: num(d.now_ms) ?? (typeof d.now === "string" && Number.isFinite(Date.parse(d.now)) ? Date.parse(d.now) : null),
+      };
+    },
+    async events(after, limit = 1000) {
+      const d = await get(`/events?after=${encodeURIComponent(after)}&limit=${limit}`);
+      return {
+        generation: str(d.generation) ?? "",
+        events: Array.isArray(d.events) ? d.events : [],
+        next: str(d.next),
+        head: str(d.head),
+        floor: str(d.floor),
+        more: d.more === true,
+        watermark: timeOf(d.watermark_ms ?? d.watermark),
+      };
+    },
+    async history(window = {}) {
+      const q = new URLSearchParams();
+      if (window.fromOrder) q.set("from_order", window.fromOrder);
+      else if (typeof window.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(window.fromMs))));
+      if (window.toOrder) q.set("to_order", window.toOrder);
+      else if (typeof window.toMs === "number") q.set("to_ms", String(Math.max(0, Math.floor(window.toMs))));
+      q.set("limit", String(window.limit ?? 1000));
+      const d = await get(`/history?${q.toString()}`);
+      return {
+        generation: str(d.generation) ?? "",
+        events: Array.isArray(d.events) ? d.events : [],
+        nextFromOrder: str(d.next_from_order),
+        more: d.more === true,
+        complete: d.complete !== false,
+        watermark: timeOf(d.watermark_ms),
+        ...(typeof d.capped === "boolean" ? { capped: d.capped } : {}),
+      };
+    },
+    async snapshot(at) {
+      const d = await get(at ? `/snapshot?at=${encodeURIComponent(at)}` : "/snapshot");
+      return { cursor: str(d.cursor) ?? "", generation: str(d.generation) ?? "", reconstructed: d.reconstructed === true, state: readSnapshotState(d.state) };
+    },
+    async factoryStatus() {
+      return readFactoryStatus(await get("/factory/status"));
+    },
+    async series(window = {}) {
+      const q = new URLSearchParams();
+      if (typeof window.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(window.fromMs))));
+      if (typeof window.toMs === "number") q.set("to_ms", String(Math.max(0, Math.floor(window.toMs))));
+      if (typeof window.bucketMs === "number") q.set("bucket_ms", String(Math.max(1000, Math.round(window.bucketMs / 1000) * 1000))); // whole seconds (observer M6.2)
+      const d = await get(`/series${q.size ? `?${q.toString()}` : ""}`);
+      const buckets = list(d.buckets)
+        .map((x) => obj(x))
+        .map((b) => ({ fromMs: num(b.from_ms) ?? 0, count: num(b.count) ?? 0 }))
+        .filter((b) => b.count > 0);
+      return { fromMs: num(d.from_ms) ?? buckets[0]?.fromMs ?? 0, toMs: num(d.to_ms) ?? 0, bucketMs: num(d.bucket_ms) ?? 60_000, buckets, total: num(d.total), coarse: false };
+    },
+    async health() {
+      const d = await get("/health");
+      const freshness = obj(d.freshness);
+      const ingest = obj(d.ingest);
+      const delivery = ingest.delivery && typeof ingest.delivery === "object" ? obj(ingest.delivery) : null;
+      const status = readFactoryStatus({ freshness });
+      return {
+        delivery: delivery ? { lastHoldMs: num(delivery.last_hold_ms), p95HoldMs: num(delivery.hold_ms_p95) } : null,
+        head: str(obj(d.index).head) ?? str(freshness.head),
+        sources: status.sources,
+        runtime: readRuntimeSummary(ingest.runtime),
+        history: readObserverHistory(obj(d.projection).history),
+      };
+    },
+    async cell(ticket) {
+      const d = await get(`/cells/${encodeURIComponent(ticket)}`);
+      return { ticketId: str(d.ticket_id) ?? ticket, sliceId: str(d.slice_id) || null, stage: str(d.stage) || null, risk: str(d.risk) || null, appType: str(d.app_type) || null, round: num(d.round), plan: planOf(d.plan), cursor: str(d.cursor) };
+    },
+    async artifacts(query = {}) {
+      const q = new URLSearchParams();
+      if (query.ticket) q.set("ticket", query.ticket);
+      q.set("limit", String(query.limit ?? 200));
+      if (query.offset) q.set("offset", String(query.offset));
+      const d = await get(`/artifacts?${q.toString()}`);
+      return { items: list(d.items).map(readArtifactEntry), more: d.more === true };
+    },
+    async artifactContent(id) {
+      let response: FetchResponseLike;
+      try {
+        response = await options.fetch(`${base}/artifacts/${encodeURIComponent(id)}/content`, { credentials: "same-origin" });
+      } catch (error) {
+        throw new ObserverError("network", error instanceof Error ? error.message : "The observer did not answer.", 0);
+      }
+      if (response.status !== 200) throw new ObserverError(response.status === 404 ? "not_found" : response.status === 401 ? "unauthorized" : "unavailable", `The artifact's content was not served (${response.status}).`, response.status);
+      const text = response.text ? await response.text() : String(await response.json());
+      return { text, labels: readContentLabels(response.headers) };
+    },
+    async summaries() {
+      let cursor: string | null = null;
+      const seeCursor = (c: unknown): void => {
+        const pos = parseCursor(str(c))?.pos;
+        if (pos !== undefined && (cursor === null || pos > (parseCursor(cursor)?.pos ?? -1))) cursor = str(c);
+      };
+      /** Every page of a list route (`items`, `more`, `offset`, `cursor`), at most `cap` items. */
+      const all = async (route: string, cap = 50_000): Promise<unknown[]> => {
+        const out: unknown[] = [];
+        for (let offset = 0; out.length < cap; ) {
+          const d = await get(`${route}?limit=1000&offset=${offset}`);
+          seeCursor(d.cursor);
+          const items = list(d.items);
+          out.push(...items);
+          if (d.more !== true || !items.length) break;
+          offset += items.length;
+        }
+        return out;
+      };
+      const waves = await get("/waves");
+      seeCursor(waves.cursor);
+      const [slices, cells, runs] = [await all("/slices"), await all("/cells"), await all("/runs")];
+      // How complete the observer's history is (`/project` `history`, observer M6.2); optional.
+      let history: unknown = null;
+      try {
+        const project = await get("/project");
+        seeCursor(project.cursor);
+        history = project.history;
+      } catch (error) {
+        if (!(error instanceof ObserverError)) throw error;
+      }
+      const state = readSnapshotState({ waves: waves.items, slices, cells, executions: runs, history });
+      return { cursor, state };
+    },
+    async spans(query) {
+      const q = new URLSearchParams();
+      if (query.span) q.set("span", query.span);
+      else {
+        if (typeof query.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+        if (typeof query.toMs === "number") q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+        if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
+        if (query.ticket) q.set("ticket", query.ticket);
+        if (query.execution) q.set("execution", query.execution);
+        if (query.wave) q.set("wave", query.wave);
+        q.set("sort", "start");
+        q.set("limit", String(query.limit ?? 1000));
+        if (query.offset) q.set("offset", String(query.offset));
+      }
+      const d = await get(`/spans?${q.toString()}`, query.signal);
+      // `span=` may answer with the list shape (0 or 1 item) or one `span` object.
+      const items = d.span && typeof d.span === "object" ? [d.span] : list(d.items);
+      return { items, total: num(d.total), totalUncapped: num(d.total_uncapped), truncated: bool(d.truncated), more: d.more === true, offset: num(d.offset) ?? query.offset ?? 0, cursor: str(d.cursor) };
+    },
+    async marks(query) {
+      const q = new URLSearchParams();
+      if (typeof query.afterMs === "number") q.set("after_ms", String(Math.max(0, Math.floor(query.afterMs))));
+      else if (typeof query.beforeMs === "number") q.set("before_ms", String(Math.max(0, Math.ceil(query.beforeMs))));
+      else {
+        if (typeof query.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+        if (typeof query.toMs === "number") q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+      }
+      if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
+      if (typeof query.limit === "number") q.set("limit", String(query.limit));
+      if (typeof query.offset === "number" && query.offset > 0) q.set("offset", String(Math.floor(query.offset)));
+      const d = await get(`/marks?${q.toString()}`, query.signal);
+      return { items: list(d.items), truncated: bool(d.truncated), cursor: str(d.cursor), more: bool(d.more), total: num(d.total), offset: num(d.offset) };
+    },
+    async concurrency(query) {
+      const q = new URLSearchParams();
+      q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+      q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+      q.set("bucket_ms", String(Math.max(1000, Math.round(query.bucketMs / 1000) * 1000)));
+      if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
+      return get(`/concurrency?${q.toString()}`, query.signal);
+    },
+    async seriesFor(query) {
+      const q = new URLSearchParams();
+      if (typeof query.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
+      if (typeof query.toMs === "number") q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
+      if (typeof query.bucketMs === "number") q.set("bucket_ms", String(Math.max(1000, Math.round(query.bucketMs / 1000) * 1000)));
+      if (query.ticket) q.set("ticket", query.ticket);
+      if (query.execution) q.set("execution", query.execution);
+      if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
+      const d = await get(`/series${q.size ? `?${q.toString()}` : ""}`, query.signal);
+      const want = query.kinds?.length ? new Set(query.kinds) : null;
+      const echoed = Array.isArray(d.kinds_applied) || d.kinds_applied === true;
+      let applied = !want || echoed;
+      const buckets = list(d.buckets)
+        .map((x) => obj(x))
+        .map((b) => {
+          const kinds = b.kinds && typeof b.kinds === "object" ? counts(b.kinds) : null;
+          let count = num(b.count) ?? 0;
+          // Without an echo, count only the asked kinds from the bucket's own by-kind counts.
+          if (want && !echoed && kinds) {
+            count = Object.entries(kinds).reduce((n, [k, v]) => (want.has(k) ? n + v : n), 0);
+            applied = true;
+          }
+          return { fromMs: num(b.from_ms) ?? 0, count, kinds };
+        })
+        .filter((b) => b.count > 0);
+      return { fromMs: num(d.from_ms) ?? buckets[0]?.fromMs ?? 0, toMs: num(d.to_ms) ?? 0, bucketMs: num(d.bucket_ms) ?? 60_000, buckets, total: want && !echoed ? null : num(d.total), complete: bool(d.complete), kindsApplied: applied, cursor: str(d.head) ?? str(d.cursor) };
+    },
+    // ---- M6.5 analytics (raw `data`; src/analytics/data parses it).
+    async analyticsMetrics(query) {
+      const q = analyticsParams(query);
+      if (query.ids?.length) q.set("ids", query.ids.join(","));
+      if (query.groupBy?.length) q.set("group_by", query.groupBy.join(","));
+      if (query.bucket) q.set("bucket", query.bucket);
+      if (query.distribution) q.set("distribution", "1");
+      return get(`/analytics/metrics${q.size ? `?${q.toString()}` : ""}`, query.signal);
+    },
+    async analyticsFlow(query) {
+      const q = analyticsParams(query);
+      return get(`/analytics/flow${q.size ? `?${q.toString()}` : ""}`, query.signal);
+    },
+    async analyticsContributors(query) {
+      const q = analyticsParams(query);
+      q.set("metric", query.metric);
+      const group = Object.entries(query.group ?? {}).map(([k, v]) => `${k}:${v}`);
+      if (group.length) q.set("group", group.join(","));
+      if (query.order) q.set("order", query.order);
+      if (typeof query.limit === "number") q.set("limit", String(Math.floor(query.limit)));
+      return get(`/analytics/contributors?${q.toString()}`, query.signal);
+    },
+    async analyticsRuns(query) {
+      const q = analyticsParams(query);
+      if (query.of && query.of !== "runs") q.set("of", query.of);
+      if (typeof query.limit === "number") q.set("limit", String(Math.floor(query.limit)));
+      if (typeof query.offset === "number" && query.offset > 0) q.set("offset", String(Math.floor(query.offset)));
+      return get(`/analytics/runs${q.size ? `?${q.toString()}` : ""}`, query.signal);
+    },
+    async analyticsInsights(query) {
+      const q = analyticsParams(query);
+      return get(`/analytics/insights${q.size ? `?${q.toString()}` : ""}`, query.signal);
+    },
+    async displayPolicy() {
+      const d = await get("/session");
+      return d.display_policy && typeof d.display_policy === "object" ? obj(d.display_policy) : null;
+    },
+  };
+}
+
+/** `<epoch>.<pos>` parts; null when the cursor is not one. */
+export function parseCursor(cursor: string | null): { readonly generation: string; readonly pos: number } | null {
+  if (!cursor) return null;
+  const dot = cursor.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const pos = Number(cursor.slice(dot + 1));
+  return Number.isInteger(pos) && pos >= 0 ? { generation: cursor.slice(0, dot), pos } : null;
+}

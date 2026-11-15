@@ -267,7 +267,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.opts.Guard.HostAllowed(r.Host) {
 		rec.Header().Set("Cache-Control", "no-store")
-		msg := "This address is not allowed. Open the Control Tower at 127.0.0.1 or localhost."
+		msg := "This address is not allowed. Open the Factory Floor at 127.0.0.1 or localhost."
 		if isAPI {
 			writeJSON(rec, http.StatusForbidden, fail(KindUnauthorized, msg))
 		} else {
@@ -289,7 +289,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.opts.Guard.Authenticated(r) {
-		writeJSON(rec, http.StatusUnauthorized, fail(KindUnauthorized, "Open the Control Tower from the link the observer printed when it started."))
+		writeJSON(rec, http.StatusUnauthorized, fail(KindUnauthorized, "Open the Factory Floor from the link the observer printed when it started."))
 		return
 	}
 	escaped := r.URL.EscapedPath()

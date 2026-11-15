@@ -33,7 +33,7 @@ importers:
         specifier: 8.72.2
         version: 8.72.2(eslint@9.39.5(jiti@2.7.0))(typescript@6.0.3)
 
-  apps/control-tower:
+  apps/factory-floor:
     dependencies:
       '@mach/ui':
         specifier: workspace:*

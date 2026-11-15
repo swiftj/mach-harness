@@ -5,7 +5,7 @@
  *
  * It brings Tailwind v4, the bundled fonts, the generated tokens, and the Tailwind theme that maps
  * utilities onto tokens. This file is the Tailwind "preset": every colour, font, radius, shadow and
- * duration utility resolves to a --mach-* variable, so light/dark/Control Tower switch at run time.
+ * duration utility resolves to a --mach-* variable, so light/dark/Factory Floor switch at run time.
  */
 @import "./fonts.css";
 @import "tailwindcss";

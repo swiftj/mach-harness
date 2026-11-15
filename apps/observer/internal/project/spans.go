@@ -600,7 +600,7 @@ func cellSpans(b *spanBuilder, s *State, c *Cell) {
 }
 
 // visitBound is where a visit stopped when its exit was not recorded by then, by the rules the
-// Control Tower's scene uses (reduce-v3.ts closeVisits): the first applied after its entry (and,
+// Factory Floor's scene uses (reduce-v3.ts closeVisits): the first applied after its entry (and,
 // when it exited, before its exit) of its execution's end ("execution-ended", reason
 // interrupted; never for the human-approval station: a wait on a person is not an execution's
 // work) and the next entry of the same station ("unclosed-visit", reason superseded: the station

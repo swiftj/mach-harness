@@ -1,10 +1,10 @@
-# M6.6 Phase 7: the Control Tower as an optional observer
+# M6.6 Phase 7: the Factory Floor as an optional observer
 
 Status: measured, 13 scenarios. Raw data: `scratchpad/m66/agents/recover/` (`run.mjs`, `lib.mjs`, `res/s<N>.json`, `res/<N>.out`, `w/s<N>/` copies).
 
 ## Environment
 
-- Observer: prebuilt `scratchpad/m66/shared/bin/mach-observer`, commit `d99edb4` (Control Tower embedded). Page: headless Chromium through the repo's Playwright, one page per scenario (three in 13), text read from the DOM (`data-connection`, `data-live-state`, `data-new-events`, the connection popover's "events received"), no pixels, no images.
+- Observer: prebuilt `scratchpad/m66/shared/bin/mach-observer`, commit `d99edb4` (Factory Floor embedded). Page: headless Chromium through the repo's Playwright, one page per scenario (three in 13), text read from the DOM (`data-connection`, `data-live-state`, `data-new-events`, the connection popover's "events received"), no pixels, no images.
 - Projects: copies of the finished real-run project (`agents/live/P/eng`, 471 events, 46 intake lines, two cell logs) and of the retry project (`agents/live/retry/eng`). No MACH script, Factory or supervisor ran.
 - "Running Factory" simulation: both the intake log and `LOCAL-003/lifecycle.jsonl` were cut at the same instant (2026-11-14T15:25:00Z) and the remaining 56 genuine recorded lines were appended in recorded-time order by a script. These are replayed real records, not invented ones. Execution streams, `result.json` files and `LOCAL-002` were already complete.
 - One scenario per observer, ports 4461-4468, 4472, 4561, 4570 (relay, scenario 2).
@@ -53,4 +53,4 @@ No must-fix defect found.
 
 - **Defect 4 (unavailable source).** The connection badge reads the source states the page already polls every 10 s (`/factory/status` and `/health` `freshness.sources`, GET only, no new store). A source in state `gone`, `unreadable`, `missing` or `error`, or the intake log or run records `ended`, turns the live badge to "Live · a source is unavailable: the intake log" (kinds only: the intake log, the run records, a cell's lifecycle log, an execution stream, an execution record, the archive; never a path), in the warning tone, with a "Sources" row in its popover and one polite announcement; the header carries it on all three workspaces. It clears on the next poll after the source returns. A cell or stream that `ended` is not counted (cleanup and finished executions end legitimately). Code: `shell/notices.ts` (`unavailableSourceWords`, `connectionLook`, `lookKey`), `shell/SourceBadge.tsx`, `shell/Announcer.tsx`. Not re-run live: scenario 8 was not repeated. A `chmod 000` after the file is open is still not noticed (the observer keeps reading the open handle).
 - **Defect 3 (Factory disabled interval).** The Timeline's ruler draws each disabled or paused stretch as a band with its words ("Factory disabled 05:42–06:31", "Factory paused from 07:00, no end recorded"), built from the recorded `factory.disabled`, `factory.paused`, `factory.resumed` and `factory.activated` events. A disabled stretch ends only at a recorded `factory.activated`, a paused one at `factory.resumed`; with no recorded end it is open (dashed right edge, "no end recorded"). Held at the playhead, nothing after it is read. Code: `timeline/data/factoryIntervals.ts`, `timeline/render/WindowRuler.tsx`, `timeline/Workspace.tsx`. Not drawn on the overview or the floor's docked timeline. Not re-run against the retry project.
-- Unit tests: `web/apps/control-tower/test/m66-a11y-reliability-fixes.test.mjs`. Defects 1, 2, 5 and 6 are unchanged.
+- Unit tests: `web/apps/factory-floor/test/m66-a11y-reliability-fixes.test.mjs`. Defects 1, 2, 5 and 6 are unchanged.

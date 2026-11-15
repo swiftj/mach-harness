@@ -8,14 +8,14 @@ MACH has three *product experiences*, not three separately deployed control plan
 
 1. **MACH Product Studio** — the PM/technical founder's environment for product vision, epics, progressively elaborated slices, durable interviews/decisions, approval, iterative delivery waves, and safe source-control collaboration. Rich React/TypeScript/Vite SPA, local native Go service; corresponding `/mach:product-studio` skill in Claude Code. No independent orchestration implementation in the skill.
 2. **MACH Factory** — existing Claude Code + Dynamic Workflow + deterministic MACH station machinery, extended with a project scheduler, intake ledger, and optional local Factory Supervisor. Extend existing `/mach:run` with management (`factory status|enable|disable|pause|resume`); **no new user-facing CLI**. Execution remains disabled on every new machine until explicitly activated.
-3. **MACH Control Tower** — immersive React/TypeScript graph and evidence experience backed by a native Go localhost observer, plus optional Claude Desktop Mod. Observability must not affect execution. A terminal status experience uses the same local state.
+3. **MACH Factory Floor** — immersive React/TypeScript graph and evidence experience backed by a native Go localhost observer, plus optional Claude Desktop Mod. Observability must not affect execution. A terminal status experience uses the same local state.
 
 **No Go/WASM or single-HTML target**. All production UI assets are locally bundled. Go services expose local loopback only and require origin/session protections. No MACH-hosted backend, remote listener, shared database, or mandatory cloud dependency. Claude model connectivity and opt-in GitHub/GHEC outbound synchronization are allowed.
 
 ## Personas are capabilities, not permanent identities
 
 - PM: same project repository cloned to MacBook, uses browser Studio or `/mach:product-studio`, need not learn Git/GitHub CLI or have build toolchains. PM may also be an engineer.
-- Engineer/steward: runs Factory/Control Tower, sets limits and accepts escalations. Factory enablement is **local per machine**, stored in ignored runtime state and never transferred by Git.
+- Engineer/steward: runs Factory/Factory Floor, sets limits and accepts escalations. Factory enablement is **local per machine**, stored in ignored runtime state and never transferred by Git.
 - Multiple PMs collaborate on a shared Git branch-protected repository, with artifact-level semantic reconciliation and human review on conflicting business decisions.
 - Disconnected teams can still exchange versioned `.machpkg` snapshots/updates; not the preferred Git-backed workflow.
 
@@ -61,7 +61,7 @@ Untracked, machine-local:
 5. Intake writes an idempotent ledger entry keyed by project, wave, source commit and normalized content digest; derives local tickets without duplicating existing work.
 6. A deterministic scheduler finds runnable slices, requiring upstream integration rather than merely upstream code generation where declared.
 7. Claude Code/Dynamic Workflow carries out the existing MACH stations; the engineer handles escalations, risk approvals, and merge policy as configured.
-8. Control Tower projects recorded station events, agent/tool observations, and artifact provenance into an interactive view. Recorded gate results outrank inferred agent activity.
+8. Factory Floor projects recorded station events, agent/tool observations, and artifact provenance into an interactive view. Recorded gate results outrank inferred agent activity.
 
 ## Factory local activation / autonomy
 

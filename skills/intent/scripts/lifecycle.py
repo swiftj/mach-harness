@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Station lifecycle telemetry (MACH Next M6.1): one append-only log per cell.
+"""Station lifecycle telemetry: one append-only log per cell.
 
 Every station script reports what it has just decided and recorded to
 .factory/worktrees/<ticket_id>/lifecycle.jsonl, one JSON object per line:

@@ -30,7 +30,7 @@ export interface AppShellProps {
 }
 
 /**
- * The application frame shared by Product Studio and Control Tower:
+ * The application frame shared by Product Studio and Factory Floor:
  *
  *   ┌──────────┬──────────────────────────────────────┐
  *   │          │ top bar: place, connection, actions   │
@@ -239,7 +239,7 @@ export function Page({ children, width = "wide", className }: PageProps) {
 }
 
 export interface BrandProps {
-  /** "Product Studio" or "Control Tower". */
+  /** "Product Studio" or "Factory Floor". */
   product: string;
   /** The project's name from the session or status. */
   project?: string | null;

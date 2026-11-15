@@ -1,3 +1,5 @@
+> These documents were updated to the product's current names: the Factory Floor, and its Atlas, Timeline and Analytics workspaces.
+
 # MACH Next — Branch Foundation
 
 Status: **experimental design + additive, non-dispatching contract prototype**
@@ -16,7 +18,7 @@ This foundation intentionally adds no automatic execution to the existing MACH 0
 
 ## Deliberately *not* implemented yet
 
-- Live Product Studio React UI, Claude Code interview integration, product PR publishing, GitHub sync, Dynamic Workflow dispatch, background supervisor, Control Tower, and a working `/mach:product-studio` skill.
+- Live Product Studio React UI, Claude Code interview integration, product PR publishing, GitHub sync, Dynamic Workflow dispatch, background supervisor, Factory Floor, and a working `/mach:product-studio` skill.
 - Full MACH slice semantic validation. The new validator checks *structural readiness only*. It cannot authorize Factory execution by itself. During integration it must invoke the existing `skills/intent/scripts/validate_slice.py` and any required `cell.py` gates; those gates remain authoritative.
 - Any Git hook installation, auto-sync, remote listener, or automatic mutation of a user's checkout.
 
@@ -38,7 +40,7 @@ The example is a structural fixture, **not** a factory-executable product specif
 - **M3** Factory intake and dependency-aware scheduling: `M3_DESIGN.md`, with the event and ledger schemas in `schemas/`
 - **M4** the Factory Supervisor, opt-in and machine-local: `M4_DESIGN.md`, with the runner policy schema in `schemas/`
 - **M5** the visual Product Studio: `M5_DESIGN.md`, with the working contract in `M5_CONTRACT.md`, the design system in `DESIGN_SYSTEM.md` and the interview proof in `M5_INTERVIEW_POC.md`
-- **M6.0** the Living Factory prototype (a simulation, shown for visual review before the Control Tower is built): the working contract in `M6_0_CONTRACT.md`, the visual, grammar and camera specification in `M6_0_VISUAL_SPEC.md`, the rendering architecture and its tradeoffs in `M6_0_ARCHITECTURE.md`, performance, accessibility and honesty findings in `M6_0_FINDINGS.md`, and what the Factory does not yet report in `M6_0_TELEMETRY_GAPS.md`
+- **M6.0** the Living Factory prototype (a simulation, shown for visual review before the Factory Floor is built): the working contract in `M6_0_CONTRACT.md`, the visual, grammar and camera specification in `M6_0_VISUAL_SPEC.md`, the rendering architecture and its tradeoffs in `M6_0_ARCHITECTURE.md`, performance, accessibility and honesty findings in `M6_0_FINDINGS.md`, and what the Factory does not yet report in `M6_0_TELEMETRY_GAPS.md`
 
 ## Critical integration invariant
 

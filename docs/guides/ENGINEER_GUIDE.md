@@ -1,6 +1,6 @@
 # Engineer Guide
 
-For an engineer who installs MACH, takes in approved product work and decides what may run on their machine. MACH Next (Product Studio, intake, the supervisor, the Control Tower, release qualification) is experimental. Nothing here claims readiness for regulated or enterprise production use. For the security detail, see `OPERATOR_SECURITY_GUIDE.md`.
+For an engineer who installs MACH, takes in approved product work and decides what may run on their machine: Product Studio, intake, the supervisor, the Factory Floor and release qualification. Nothing here claims readiness for regulated or enterprise production use. For the security detail, see `OPERATOR_SECURITY_GUIDE.md`.
 
 In the commands below, `RUN` means `python3 .claude/skills/mach-run/scripts/run.py --project .` in a script install. With the plugin, ask Claude Code to run the `/mach:run` skill; it uses the same script.
 
@@ -100,17 +100,17 @@ A reviewer finding may carry `class: security` and an `impact` (critical, high, 
 
 Still open: a blocker from a non-security seat that is not marked as security is outvoted at Medium as before, and Low tickets have no security seat.
 
-## 5. The Control Tower
+## 5. The Factory Floor
 
-Ask the run skill to "open the Control Tower". It starts `mach-observer` (from `.factory/bin/` or a checkout's build) and gives you a one-time link to `127.0.0.1`. A second browser takes the link kept in `.factory/local/observer/link`. It is read-only: it enables, starts, pauses, dispatches, approves and merges nothing, takes no lock and runs no MACH script. Stopping it never affects the line.
+Ask the run skill to "open the Factory Floor". It starts `mach-observer` (from `.factory/bin/` or a checkout's build) and gives you a one-time link to `127.0.0.1`. A second browser takes the link kept in `.factory/local/observer/link`. It is read-only: it enables, starts, pauses, dispatches, approves and merges nothing, takes no lock and runs no MACH script. Stopping it never affects the line.
 
-Three workspaces: the **Factory floor** (Atlas and Blueprint, keys 1 and 2), the **Execution Timeline** (key 3) and **Analytics** (key 4). It is labelled **Live Factory** when it reads this machine's state, and **Simulation** (invented work) when there is none.
+Three workspaces: the **Atlas** (the Factory Atlas and the Execution Blueprint, keys 1 and 2), the **Timeline** (the Execution Timeline, key 3) and **Analytics** (key 4). It is labelled **Live Factory** when it reads this machine's state, and **Simulation** (invented work) when there is none.
 
 "Held at an earlier moment" means the playhead sits behind the live edge, so Analytics counts only what was recorded up to that moment. Nothing recorded after it is read. `L` or `End` returns to live.
 
-Known limits: a supervisor hold is prose with no reason code, so the Tower cannot show it as a wait on a person. Repeated lifecycle lines are counted again. Analytics cost leaves out failed executions. A 240,000-event history switches between workspaces in 598 to 874 ms against a 300 ms budget. Names in free text are served, labelled (see the operator guide).
+Known limits: a supervisor hold is prose with no reason code, so the Factory Floor cannot show it as a wait on a person. Repeated lifecycle lines are counted again. Analytics cost leaves out failed executions. A 240,000-event history switches between workspaces in 598 to 874 ms against a 300 ms budget. Names in free text are served, labelled (see the operator guide).
 
-What the real supervised runs of M7 (a throwaway project, one Mac) showed and what was done about it. Seen again live after its fix: the plan check refusing a plan that cannot go green, a killed execution recorded as killed, a released claim left out of the execution counts, the release-readiness line following the acceptance record, a re-review after a voided approval kept in its own `round-N.k` folder, and the shared-contract rule in release qualification. Fixed afterwards with unit tests only, not re-observed on a page or in a live run: a killed execution reading "killed (exit code)" on the floor, the Timeline and the retries lens (it read "failed"); a "Parked: ..." reason for a build that stopped making progress; an abandoned ticket dropped from the waiting list ("Abandoned, reissued as ..."); the product state after a revision. Still open: Analytics cost leaves out failed executions, and a killed execution has no recorded cost, so real spend can be higher than shown ("a lower bound"); a repeated review round and a voided approval are **not shown on the Control Tower page** (the observer serves them, the page does not word them); an abandoned cell's tile still shows its last stage word, though its mast and inspector say Abandoned; a supervisor restart has not been checked on the page.
+What the real supervised runs of M7 (a throwaway project, one Mac) showed and what was done about it. Seen again live after its fix: the plan check refusing a plan that cannot go green, a killed execution recorded as killed, a released claim left out of the execution counts, the release-readiness line following the acceptance record, a re-review after a voided approval kept in its own `round-N.k` folder, and the shared-contract rule in release qualification. Fixed afterwards with unit tests only, not re-observed on a page or in a live run: a killed execution reading "killed (exit code)" on the floor, the Timeline and the retries lens (it read "failed"); a "Parked: ..." reason for a build that stopped making progress; an abandoned ticket dropped from the waiting list ("Abandoned, reissued as ..."); the product state after a revision. Still open: Analytics cost leaves out failed executions, and a killed execution has no recorded cost, so real spend can be higher than shown ("a lower bound"); a repeated review round and a voided approval are **not shown on the Factory Floor page** (the observer serves them, the page does not word them); an abandoned cell's tile still shows its last stage word, though its mast and inspector say Abandoned; a supervisor restart has not been checked on the page.
 
 ## 6. Recovering an interrupted run
 

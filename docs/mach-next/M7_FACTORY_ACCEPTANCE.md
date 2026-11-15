@@ -16,7 +16,7 @@ never started. No defect is rated Blocker, because every one had a workaround. F
 | | |
 |---|---|
 | MACH | `git archive` of the M7 worktree HEAD `c73c11e537c69f8f9fd528a9c7805a5480645252` (clean tree) into `scratch/src` |
-| Observer | built from that snapshot with `apps/observer/build.sh` (`SKIP_INSTALL=1`, node_modules cloned in), Control Tower embedded, no source maps; `scratch/bin/mach-observer` |
+| Observer | built from that snapshot with `apps/observer/build.sh` (`SKIP_INSTALL=1`, node_modules cloned in), Factory Floor embedded, no source maps; `scratch/bin/mach-observer` |
 | Project | engineer clone `scratchpad/m7/agents/pm/world/eng`, remote `github.com/swiftj/mach-m7-acceptance` (private, throwaway) |
 | Engineer identity | `GIT_CONFIG_GLOBAL=world/home-eng/.gitconfig` ("Engineer (M7 simulated)"); real HOME kept so Claude Code is signed in |
 | Toolchain | macOS 27.2 arm64, Python 3.15.2, Go 1.27.3, Node 25.8.2, git 2.52.0, gh 2.86.0, Claude Code 2.1.323, gitleaks 8.30.1, osv-scanner 2.7.0 |
@@ -33,7 +33,7 @@ High risk means a unanimous 3-of-3 panel on the contracts tier plus a person's a
 
 | UTC | Command | Result |
 |---|---|---|
-| 22:31 | `bin/mach install --project <eng> --no-studio --no-tower` (from the snapshot) | 12 files updated, `qualify.py` created; committed `a567ec9` and pushed |
+| 22:31 | `bin/mach install --project <eng> --no-studio --no-floor` (from the snapshot) | 12 files updated, `qualify.py` created; committed `a567ec9` and pushed |
 | 22:32:45 | `R factory status` | disabled, no `runner.json` |
 | 22:33:06 | `S audit run --json` | Gold 93 |
 | 22:33:09 | `R factory enable --autonomy observe` | preflight 11/11 ok, code `e9756e`, **nothing enabled** |
@@ -168,20 +168,20 @@ Factory's own verification. Output: `logs/80-journey-wave1.txt`.
 | Overdue report | `/overdue`, `/reports/overdue` → 404 | NOT INTEGRATED (SLICE-003) |
 | NFR: 200 requests against 1,000 items | 1,004 items: p50 0.4 ms, p95 0.5 ms, max 0.7 ms, 0 over 200 ms (one machine, loopback) | PASS |
 
-### Part 8: Control Tower against the records
+### Part 8: Factory Floor against the records
 
 | Item | Observed | Evidence | Result |
 |---|---|---|---|
-| Incoming work | Floor: "3 waves, latest WAVE-003", intake lists SLICE-001→LOCAL-001, SLICE-002→LOCAL-002, SLICE-005 "WAITS · 001, 002", SLICE-006 and SLICE-003 "WAITS · 005". The count reads "6 slices" for 5 slices (D6) | `browser/tower-b1.jsonl` 22:44:18 | PASS, with D6 |
+| Incoming work | Floor: "3 waves, latest WAVE-003", intake lists SLICE-001→LOCAL-001, SLICE-002→LOCAL-002, SLICE-005 "WAITS · 001, 002", SLICE-006 and SLICE-003 "WAITS · 005". The count reads "6 slices" for 5 slices (D6) | `browser/floor-b1.jsonl` 22:44:18 | PASS, with D6 |
 | Two active cells | "LOCAL-001 List and add items, Verified, 3 working; LOCAL-002 Loan limit, Building, 1 working" | same | PASS |
-| Blocked vs waiting on a person | 22:51:07: "LOCAL-002 It is approved. This machine does not merge unattended, so a person merges it. · a person", separate from "SLICE-005 … Waiting on a dependency". 23:08:27: "LOCAL-003 2 execution(s) ended without moving it past 'building'. · a person" | `tower-b3.jsonl` | PASS |
+| Blocked vs waiting on a person | 22:51:07: "LOCAL-002 It is approved. This machine does not merge unattended, so a person merges it. · a person", separate from "SLICE-005 … Waiting on a dependency". 23:08:27: "LOCAL-003 2 execution(s) ended without moving it past 'building'. · a person" | `floor-b3.jsonl` | PASS |
 | Held reasons | the supervisor's texts shown word for word (above) | same | PASS |
 | Station order and times, one ticket | `/api/v1/spans`: LOCAL-002's 15 visit spans match `lifecycle.jsonl` entered and exited to the millisecond, in the same order, including `build#1` across the killed and the resumed execution, and `verify#3`/`review#3` after the conflict | `logs/85-spans-vs-lifecycle-LOCAL-002.txt` | PASS |
-| Retries and refusals reconstructable | Floor "REFUSED build.start, review.submit ×2" = LOCAL-001's three lifecycle refusals; `/runs` lists the killed execution (`exit -9`), the two failed attempts and the released claim (shown as `unknown`, D10) | `tower-b1/b3.jsonl`, `api/runs-2309.json` | PASS, with D10 |
+| Retries and refusals reconstructable | Floor "REFUSED build.start, review.submit ×2" = LOCAL-001's three lifecycle refusals; `/runs` lists the killed execution (`exit -9`), the two failed attempts and the released claim (shown as `unknown`, D10) | `floor-b1/b3.jsonl`, `api/runs-2309.json` | PASS, with D10 |
 | Held at a mid-run moment | after disabling: `#atlas`, `#timeline`, `#analytics` at 22:40:30, live and `?replay`. "LOCAL-001 Verified, Round 1 of 3, Review, at work for 53 s" (true: entered 22:39:37.310, 52.7 s); nothing later (no rejection, which came 22:40:41); Analytics 0 merged, 0 integrated, no cost counted | `hist/hist-results.json` | PASS |
 | Cost and tokens equal the records | `/api/v1/runs`: USD 8.502166 and 11,930,600 tokens, exactly the streams' sum, per execution too. **Analytics K1/K4: USD 8.06**, because `execution.failed` carries no cost (D7). The page's Pulse, read once and not refreshed, said "$5.62 … Not current" (it says it is not current) | `logs/86`, `api/metrics-2309.json` | API PASS; Analytics FAIL (D7) |
 | Coverage counts | "Claude Code streams 2.1.323 proven (4 executions)"; "Least complete: cell lifecycle, 2 of 3" | page samples | NOT ASSESSED (seen, not checked against records) |
-| Integrated, not accepted | API T1 tickets merged 2, T2 accepted delivery (integrated) 2; page "Slices integrated … Accepted by product: Not recorded". It still says "Not recorded" after WAVE-002's acceptance merged (D11) | `api/metrics-2309.json`, `tower-b3.jsonl` 23:06:59 | PASS (never inferred), with D11 |
+| Integrated, not accepted | API T1 tickets merged 2, T2 accepted delivery (integrated) 2; page "Slices integrated … Accepted by product: Not recorded". It still says "Not recorded" after WAVE-002's acceptance merged (D11) | `api/metrics-2309.json`, `floor-b3.jsonl` 23:06:59 | PASS (never inferred), with D11 |
 | Queryable after disable | "Live Factory · Factory not enabled", the history above, `?replay` "HISTORICAL REPLAY" | `hist/` | PASS |
 | Page closed mid-run | closed 22:44:31. A reopen at 22:44:56 closed itself at 22:45:06 (a stale stop file of mine), so the page was effectively closed until 22:50:16. Meanwhile LOCAL-001 wrote 3 and LOCAL-002 5 lifecycle lines in the first 25 s, and both executions ran on to their own end | `logs/50-page-closed.txt` | PASS |
 
@@ -207,12 +207,12 @@ record, or needs a person's unplanned workaround. **Minor** is wrong or misleadi
 | D3 | Major | **A re-review overwrites the round it repeats.** After merge revalidation voided LOCAL-002's approval, the re-review used `review/round-2/` again. Packet, votes, `findings.md`, `decision.json` and the person's earlier approval were replaced. Only `lifecycle.jsonl` (seq 49–53 and 73–77) keeps the first round 2 | LOCAL-002 archive; lifecycle |
 | D4 | Major | **WAVE-001's acceptance cannot be recorded.** Both PM workspaces hold WAVE-001 as a draft at revision 5 (the PM half's D8: SLICE-002 was reopened through another wave). `refresh` does not restore the merged, approved revision 4; `wave approve` makes revision 6; `acceptance record` then refuses: "not the revision that was qualified" | `ev/pm-pma.jsonl`, `pm-pmb.jsonl` |
 | D5 | Major | **A plan whose implementation task cannot go green stops the line.** SLICE-005's plan scopes T05 to `lending/desk.py`, but the whole suite cannot pass until T06 changes the server. `cell.py check-plan` accepted it; `build.green` refused 7 times; 3 executions (USD 1.55) were spent before a person was asked. The builder rightly did not override | `logs/83-local-003.txt`; LOCAL-003 lifecycle; stream results |
-| D6 | Minor | Control Tower product state after a revision: `/slices` shows SLICE-003 `superseded`, revision 4 (the truth is `blocked` at revision 6, ticket LOCAL-005); `/waves` keeps WAVE-003 at revision 2; the Floor says "6 slices" (wave memberships) for 5 slices | `api/slices-2246.json`, `waves-2246.json` vs `logs/63-plan-2247.json` |
+| D6 | Minor | Factory Floor product state after a revision: `/slices` shows SLICE-003 `superseded`, revision 4 (the truth is `blocked` at revision 6, ticket LOCAL-005); `/waves` keeps WAVE-003 at revision 2; the Floor says "6 slices" (wave memberships) for 5 slices | `api/slices-2246.json`, `waves-2246.json` vs `logs/63-plan-2247.json` |
 | D7 | Minor | Analytics recorded cost (K1, K4) leaves out failed executions because `execution.failed` carries no `cost_usd`, though the cost is known: USD 8.06 vs 8.50. `/runs` is right | `api/metrics-2309.json`, `logs/86` |
 | D8 | Minor | A SIGKILLed execution (exit -9) is recorded `execution.completed`, `how: exited`, cost null, with no exit code in the event, because it moved the ticket. The attempt count is reset | events seq 48 |
 | D9 | Minor | A belt run that reports "stuck" is counted completed if the ticket moved at all, so a deterministic plan defect was retried twice more (bounded by `max_attempts`) | events seq 104–117 |
 | D10 | Minor | A claim released without starting (xa1b6c30c0e44; ledger `released, not-started`) is shown as `unknown` in `/api/v1/runs` | `api/runs-2309.json` |
-| D11 | Minor | The Control Tower does not read M7's acceptance record: after `product/acceptance/WAVE-002.json` merged it still says "Accepted by product: Not recorded. No MACH record says a person accepted…" (safe direction, but wrong) | `tower-b3.jsonl` 23:06:59 |
+| D11 | Minor | The Factory Floor does not read M7's acceptance record: after `product/acceptance/WAVE-002.json` merged it still says "Accepted by product: Not recorded. No MACH record says a person accepted…" (safe direction, but wrong) | `floor-b3.jsonl` 23:06:59 |
 | D12 | Minor | After intake took SLICE-003 revision 6, LOCAL-005's ticket body still says "revision 4" and the old spec SHA; only its label and activity log say r6 | `.factory/tickets/LOCAL-005.md` |
 | D13 | Minor | `.factory/release/` is not in the installer's ignored block, so release records show as untracked in `git status` (the audit was not affected) | `git status` after qualify |
 
@@ -237,8 +237,8 @@ multi-clone test, not a test on separate machines.
 - Release `performance_command`: not configured; "not assessed".
 - osv-scanner had no dependency manifest to read; no dependency scan of substance took place.
 - The page was closed about 5½ minutes, not exactly one (see part 8). No screenshot or video was examined as an
-  image. Videos from `tower.mjs` are in `scratch/browser/video/`.
-- Control Tower coverage counts were seen but not checked against the records. Timeline and Analytics were checked
+  image. Videos from `floor.mjs` are in `scratch/browser/video/`.
+- Factory Floor coverage counts were seen but not checked against the records. Timeline and Analytics were checked
   through the API and by DOM text at one moment, not exhaustively.
 - Only one run. Nothing was repeated to check stability.
 
@@ -259,17 +259,17 @@ Still open after the run, none fixed in M7:
 
 - **D5, the stuck plan.** A plan whose implementation task cannot go green is accepted by `cell.py check-plan`;
   the line then spends executions (USD 1.55 here) before a person is asked.
-- **D6** the Control Tower's product state after a revision; **D7** Analytics cost leaves out failed executions
+- **D6** the Factory Floor's product state after a revision; **D7** Analytics cost leaves out failed executions
   (USD 8.06 against 8.50), and a killed execution has no recorded cost; **D8** a killed execution is recorded as
   completed; **D9** a "stuck" belt run counts as completed if the ticket moved at all; **D10** a released claim
-  shows as `unknown`; **D11** the Control Tower does not read the acceptance record; **D12** a ticket body keeps the
+  shows as `unknown`; **D11** the Factory Floor does not read the acceptance record; **D12** a ticket body keeps the
   old revision; **D13** `.factory/release/` is not in the installer's ignored block.
 - **The observer does not list a repeated review folder `round-N.k`** (new with `0fcbb1b`; the observer's review
   reader, `apps/observer/internal/ingest/people.go`, reads `review/round-N`). Not checked further.
 - Whether D5 should be caught by `check-plan`, and whether D8 and D9 should change how attempts are counted, are
   decisions for the lead.
 
-### Corrected after the run: the Control Tower
+### Corrected after the run: the Factory Floor
 
 Against M7 worktree HEAD `4dc67bd`, uncommitted. Unit and Go tests only; the observer was also run once against a
 copy of the finished engineer clone (history only, no MACH script). Not re-observed in a live run or a browser.
@@ -280,7 +280,7 @@ projection from the stored events on first start. The redaction format is unchan
 |---|---|---|
 | Repeated review folders (`round-N.k`, after `0fcbb1b`) | The artifact catalogue and the people scan read `review/round-N.k` as a repeat of judging round N (`round` N, `repeat` k); a decision the merge station voided is listed with `voided` (`reason_code` `branch-changed-after-approval`, the outcome it had, the approved and branch commits) and its record is served with the void record. In the projection a second `review.decided` in the same round replaces the first in R1 (`repeats` counts it); it is not another judging round. The Timeline and inspector do not yet word the repeat or the void: the fields are served, the page does not show them | `internal/artifact/m7_rounds_test.go` |
 | D11 product acceptance | Wording only. Pulse's "Accepted by product: Not recorded" now says "MACH's intake records do not carry product acceptance; see the release readiness snapshot." Showing `.factory/release/<id>/readiness.json`'s `product_acceptance` with its commit is **not done** | none (wording) |
-| D6 product state after a revision | `revision.superseded` with `from_revision` is read as intake wrote it: a waiting ticket takes the new revision (the slice stays, blocked at the new revision; the old revision is kept under `revisions`), work in the line keeps its revision with the newer one as `pending_revision`, a withdrawal still supersedes. A wave takes the revision `intake.validated` last records. The floor counts distinct slices. Against the run's copy: SLICE-003 `blocked` r6 LOCAL-005, WAVE-003 r4 | `internal/project/m7_run_test.go`, `test/m7-tower-fixes.test.mjs` |
+| D6 product state after a revision | `revision.superseded` with `from_revision` is read as intake wrote it: a waiting ticket takes the new revision (the slice stays, blocked at the new revision; the old revision is kept under `revisions`), work in the line keeps its revision with the newer one as `pending_revision`, a withdrawal still supersedes. A wave takes the revision `intake.validated` last records. The floor counts distinct slices. Against the run's copy: SLICE-003 `blocked` r6 LOCAL-005, WAVE-003 r4 | `internal/project/m7_run_test.go`, `test/m7-floor-fixes.test.mjs` |
 | D10 released claim | A claim held by the scheduling decision of its own pass with nothing started is `released` (reconstructed from the pass; the ledger's `released, not-started` is not read). It leaves X1, S1, S2 and K1's populations with the coverage note "a claim released without starting (not an execution)", and W4's open count; its span ends at that decision. Against the run's copy: xa1b6c30c0e44 `released` | `internal/project/m7_run_test.go` |
 | Killed executions (new fields) | `execution.completed` keeps `exit_code` when the record carries it (schema v3 gains an optional `exit_code`); `how: killed` is state `killed` in runs and spans (span reason `interrupted`). Metric populations that change: S3 counts it as not completed (numerator 0, denominator 1), X1 counts it in the numerator like `execution.failed`; K1/K4 are unchanged (D7) | `internal/project/m7_run_test.go` |
 | D7 | Unchanged: a product-owner decision | — |

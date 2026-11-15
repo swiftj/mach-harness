@@ -175,7 +175,7 @@ type Provenance struct {
 	Writer  string `json:"writer"`   // the MACH script that wrote that record
 }
 
-// Settings are the project's tracked Control Tower settings (.factory/config.json "tower"),
+// Settings are the project's tracked Factory Floor settings (.factory/config.json "floor"),
 // read only. EvidenceMedia (default false) lets screenshots and recordings be served.
 type Settings struct {
 	EvidenceMedia bool   `json:"evidence_media"`
@@ -183,7 +183,7 @@ type Settings struct {
 }
 
 // SettingKey is where the opt-in lives, for messages.
-const SettingKey = `.factory/config.json: {"tower": {"evidence_media": true}}`
+const SettingKey = `.factory/config.json: {"floor": {"evidence_media": true}}`
 
 // Catalog builds and caches the catalog for one project.
 type Catalog struct {
@@ -360,17 +360,17 @@ func readSettings(root *os.Root) Settings {
 		return Settings{Source: "default (no readable .factory/config.json)"}
 	}
 	var cfg struct {
-		Tower struct {
+		Floor struct {
 			EvidenceMedia *bool `json:"evidence_media"`
-		} `json:"tower"`
+		} `json:"floor"`
 	}
 	if json.Unmarshal(data, &cfg) != nil {
 		return Settings{Source: "default (.factory/config.json is not valid JSON)"}
 	}
-	if cfg.Tower.EvidenceMedia == nil {
-		return Settings{Source: "default (tower.evidence_media not set)"}
+	if cfg.Floor.EvidenceMedia == nil {
+		return Settings{Source: "default (floor.evidence_media not set)"}
 	}
-	return Settings{EvidenceMedia: *cfg.Tower.EvidenceMedia, Source: ".factory/config.json tower.evidence_media"}
+	return Settings{EvidenceMedia: *cfg.Floor.EvidenceMedia, Source: ".factory/config.json floor.evidence_media"}
 }
 
 // ---- reading what verify.py and review.py wrote ----

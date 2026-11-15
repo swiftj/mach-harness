@@ -1,13 +1,13 @@
 # Operator Security Guide
 
-For the person who decides whether MACH may run on a machine and under what limits. It states what MACH does and does not protect against, from the code and the M7 review documents (`docs/mach-next/M7_THREAT_MODEL.md`, `M7_REVIEW_GATE_AUDIT.md`, `M7_DISTRIBUTION.md`, `M7_SECURITY_SCANS.md`, `M6_6_ACCEPTANCE.md`). MACH is experimental. This guide makes no claim that it is ready for regulated or enterprise production use, and none of it is a confidentiality or compliance claim.
+For the person who decides whether MACH may run on a machine and under what limits. It states what MACH does and does not protect against, from the code and the M7 review documents (`docs/mach-next/M7_THREAT_MODEL.md`, `M7_REVIEW_GATE_AUDIT.md`, `M7_DISTRIBUTION.md`, `M7_SECURITY_SCANS.md`, `M6_6_ACCEPTANCE.md`). This guide makes no claim that it is ready for regulated or enterprise production use, and none of it is a confidentiality or compliance claim.
 
 ## 1. Local service boundaries
 
 | Program | Listens | Who can use it | What it can do |
 |---|---|---|---|
 | `mach-studio` (Product Studio app host) | `127.0.0.1`, a port it picks | A browser holding its session | Runs a fixed list of Product Studio operations. Starts no station, dispatches nothing, enables nothing. |
-| `mach-observer` (Control Tower) | `127.0.0.1` only | A browser holding its session | Reads Factory files. GET only. Starts no process, takes no lock. |
+| `mach-observer` (Factory Floor) | `127.0.0.1` only | A browser holding its session | Reads Factory files. GET only. Starts no process, takes no lock. |
 | The supervisor (`factory serve`) | Nothing | The person who enabled it | Starts `claude -p` executions, if enabled. |
 
 Both programs bind loopback only. No flag or environment value changes it. Each prints a one-time link. The link is exchanged once for a session cookie (`HttpOnly`, `SameSite=Strict`). The host checks the exact Host header, the Origin, a CSRF header and a JSON content type. The pages load nothing from another origin (CSP `default-src 'none'`, `connect-src 'self'`). There is no analytics or telemetry. A cookie without `Secure` is accepted because the service is plain HTTP on loopback.
@@ -46,7 +46,7 @@ Before enabling supervised mode, consider a machine or account with no credentia
 
 MACH's own programs and scripts contact only:
 
-- **GitHub:** `git` and `gh` for refresh, send, feedback and the optional `pr` merge method; the release page for the source archive, the Studio and Control Tower programs and `SHA256SUMS` (HTTPS only, 200 MB cap); `api.github.com` to find the newest release; `gh attestation verify` when present. `codeload.github.com` is used only when you choose a branch (`MACH_REF`) or an old release without a source archive.
+- **GitHub:** `git` and `gh` for refresh, send, feedback and the optional `pr` merge method; the release page for the source archive, the Studio and Factory Floor programs and `SHA256SUMS` (HTTPS only, 200 MB cap); `api.github.com` to find the newest release; `gh attestation verify` when present. `codeload.github.com` is used only when you choose a branch (`MACH_REF`) or an old release without a source archive.
 - **The Claude service:** through Claude Code, for interviews and executions. The repository content an agent reads goes to it.
 
 Nothing else: no CDN, no analytics, no remote fonts. Claude Code's own network use, your tracker commands (Jira, Gitea, Fossil) if you configure them, and any scanners you run (rule or advisory downloads) are outside MACH's control.
@@ -113,8 +113,8 @@ The observer redacts before indexing. A review of 318 replies, the event stream,
 - `install.sh` itself is the remaining trust root: the installer verifies the release's archive and programs, nothing verifies the script you ran. `main` serves the older installer until the release branch is merged.
 - macOS programs are ad hoc signed, not notarised. A browser download is blocked by Gatekeeper on first run; the installer's download is not, and its checksum and attestation checks are the protection.
 - The source archive is not byte-reproducible across gzip implementations (the tar inside is identical), so a rebuilt archive has a different checksum.
-- Recorded cost excludes failed executions, and killed ones have none: real spend can exceed what the Control Tower shows. The per-run and per-day limits count only what is recorded.
-- The Control Tower does not show a repeated review or a voided decision; an abandoned cell's tile shows its last stage.
+- Recorded cost excludes failed executions, and killed ones have none: real spend can exceed what the Factory Floor shows. The per-run and per-day limits count only what is recorded.
+- The Factory Floor does not show a repeated review or a voided decision; an abandoned cell's tile shows its last stage.
 - No address yet for reporting a vulnerability.
 - Fixes from the third live run (the belt hand-off, Product Studio workspace repair, the scanner-report format, the installer's release-candidate handling) have unit tests only and were not re-observed live.
 - No dependency, secret or static scan of generated code in the line.

@@ -4,10 +4,10 @@ import { ThemeProvider, TooltipProvider, Toaster, type ProductName, type ThemePr
 import "./index.css";
 import { App } from "./App";
 
-// ?theme=light|dark and ?product=control-tower let the screenshot script pin what it captures.
+// ?theme=light|dark and ?product=factory-floor let the screenshot script pin what it captures.
 const params = new URLSearchParams(window.location.search);
 const theme = params.get("theme");
-const product: ProductName = params.get("product") === "control-tower" ? "control-tower" : "product-studio";
+const product: ProductName = params.get("product") === "factory-floor" ? "factory-floor" : "product-studio";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("No #root element");

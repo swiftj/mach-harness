@@ -6,7 +6,7 @@
  *
  * Layers:
  *   1. `palette`  raw brand and neutral colours. Components never use these directly.
- *   2. `themes`   semantic roles per theme (light = Product Studio paper, dark = Control Tower night).
+ *   2. `themes`   semantic roles per theme (light = Product Studio paper, dark = Factory Floor night).
  *   3. scales     type, space, radius, elevation, motion, layout.
  *
  * This file has no imports so that Node can run the token scripts with type stripping.
@@ -562,12 +562,12 @@ export const layout = {
 } as const;
 
 /**
- * The two products share every role above. Control Tower (dark, cinematic, technical)
- * changes only these, via `data-product="control-tower"` on the root element.
+ * The two products share every role above. Factory Floor (dark, cinematic, technical)
+ * changes only these, via `data-product="factory-floor"` on the root element.
  */
 export const productOverrides = {
   "product-studio": {},
-  "control-tower": {
+  "factory-floor": {
     "--mach-density": "0.875",
   },
 } as const;

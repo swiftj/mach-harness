@@ -111,7 +111,7 @@ Committed as `f6097ee` (and `0fcbb1b` for the re-review folder, see section 4); 
 - Docs: `agents/reviewer.md`, `skills/review/references/reviewer-brief.md`, `skills/review/SKILL.md`,
   `templates/REVIEW.md` (also G9's first half: the template now states the veto), `CLAUDE.md` section 4.6.
 
-(corrected: the list below was complete when written; `0fcbb1b` added the `round-N.k` folder, which the Control Tower's observer does not list, see `M7_FACTORY_ACCEPTANCE.md`.)
+(corrected: the list below was complete when written; `0fcbb1b` added the `round-N.k` folder, which the Factory Floor's observer does not list, see `M7_FACTORY_ACCEPTANCE.md`.)
 
 Not changed: G4 (below), G6's `overruled_blockers_from` in `decision.json`, G8, G9's `max_loops` sentence, G10, G11.
 Interactive `/mach-run` and the belt workflow still do not check the review settings: a person running a ticket by
@@ -132,6 +132,6 @@ human approval clears it. The smallest design, if wanted:
   a new commit voids an approval today.
 - The tally treats an excepted finding as not vetoing; every other gate (count, human approval, merge's
   commit binding) still applies. Merge and cleanup copy the exception into the run record and the lifecycle log
-  (`review.exception_recorded`), so observe and the Control Tower can show it.
+  (`review.exception_recorded`), so observe and the Factory Floor can show it.
 - It is a new authority (a person overriding a security reviewer), so it needs the product owner's yes before it
   is built, and a decision on who may grant one (any person, or a named security owner from `REVIEW.md`).

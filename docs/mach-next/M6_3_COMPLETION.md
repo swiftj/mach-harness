@@ -20,7 +20,7 @@ only.
 
 ## 2. What was built
 
-The Control Tower has a second workspace beside the Factory Floor, opened from the header or with key `3`.
+The Factory Floor has a second workspace beside the Atlas, opened from the header or with key `3`.
 
 - **Temporal overview.** The whole held history: events recorded per bucket, recorded spans active at once
   (executions, cells in a station, agents) against the recorded parallel limit, landmarks (failures,
@@ -100,7 +100,7 @@ Earlier material, kept: `recordings/timeline/live-supervised-run.mp4` (the live 
 build before the live-run fixes) and progress captures in `screenshots/timeline/`.
 
 **The final set**, made on the product owner's request by an automated pass on commit `c2f3b2b` (the tip of this
-branch, clean tree): the Control Tower built and embedded by `apps/observer/build.sh` and served by that
+branch, clean tree): the Factory Floor built and embedded by `apps/observer/build.sh` and served by that
 `mach-observer` on 127.0.0.1 (ports 4320–4324), each source a copy without its `.factory/local/observer`.
 Screenshots 1512×982 at device scale 2, dark unless named light; recordings real time, 1512×982, a drawn pointer,
 H.264 MP4. Every frame shows a real source label (Live Factory, or Historical replay for 08); none shows Simulation.
@@ -113,7 +113,7 @@ seed and shape; at the fixed end date the appended activity sat 37 h before the 
 moved), appended with `--append --rate 20`. SYN-*, LIVE and every `syn-` file are a real observer reading invented
 records.
 
-`web/apps/control-tower/screenshots/timeline/final/` (37 screenshots, 3 contact sheets):
+`web/apps/factory-floor/screenshots/timeline/final/` (37 screenshots, 3 contact sheets):
 
 | File | Shows | Source |
 |---|---|---|
@@ -139,7 +139,7 @@ records.
 | `14a`/`14b`/`14c-real-a-cross-view-*.png` | one selection on the Atlas, the Blueprint and the Timeline | REAL-A |
 | `contact-sheet-1-…`, `-2-…`, `-3-…png` | the set on three sheets, the third with a still from each recording (labelled with PIL, not ffmpeg) | |
 
-`web/apps/control-tower/recordings/timeline/final/`: `R1-real-a-investigation.mp4` (71 s: Atlas, `3`, overview,
+`web/apps/factory-floor/recordings/timeline/final/`: `R1-real-a-investigation.mp4` (71 s: Atlas, `3`, overview,
 collapse and expand, three "previous failure" jumps to round 1, zoom to it, the security seat, the inspector,
 "Why did it retry?", two passes compared, `1` and `3`); `R2-live-follow-syn-live.mp4` (69 s, LIVE appending:
 filter, following, grouping switch, a lens while following, pinned, Follow); `R3-syn-l-large-history.mp4` (84 s:
@@ -243,7 +243,7 @@ Run on the final tree by the lead, in one pass:
 | Go (`go vet`, `go test ./...`) | all packages pass |
 | Go with the race detector (project, server, store, cmd) | pass |
 | Web lint, typecheck, build (three apps) | pass |
-| Control Tower unit tests | 437 pass (163 at the baseline) |
+| Factory Floor unit tests | 437 pass (163 at the baseline) |
 | Product Studio unit tests | 7 pass |
 | Timeline browser end-to-end, real observer, including the 220,000-event case | 37 of 37 |
 | Accessibility audit | 6 of 6 checks |
@@ -276,9 +276,9 @@ a shared machine; measured one commit before the last fixes):
 | Pan and zoom main-thread work per frame, under 16 ms | 3.44 ms | 4.04 ms |
 | Scrub response, under 100 ms | 10.7 ms | one step of 1,403 ms |
 | Expand or collapse one cell, under 50 ms | 22.8 / 20.5 ms | 65.8 ms |
-| Heap over the Factory Floor, at most +60 MB | +6.7 MB | +6.8 MB |
-| Floor to Timeline, under 300 ms | 154 ms | 503 ms (first switch) |
-| Timeline to Floor | 32 ms | 48 ms |
+| Heap over the Atlas, at most +60 MB | +6.7 MB | +6.8 MB |
+| Atlas to Timeline, under 300 ms | 154 ms | 503 ms (first switch) |
+| Timeline to Atlas | 32 ms | 48 ms |
 
 Every budget is met at the median; three worst cases miss. The first-switch cause (a duplicated first request) and
 the likely cause of the slow scrub step (a history-window swap re-querying the Timeline) were fixed afterwards and
@@ -308,7 +308,7 @@ Spans, marks and the inspector expose artifact catalog ids with the events that 
 (`evidenceRefsOf`, the `EvidenceRef` type, `data-evidence-artifact` on each reference). The observer's restricted
 artifact routes are unchanged. Deep links carry a selection and an exact moment by event id, which is what an
 Evidence Theater link back into the Timeline needs. The workspace switch in the header is a radio group that a
-third workspace joins without touching the Factory Floor's two-view stage.
+third workspace joins without touching the Atlas's two-view stage.
 
 ## 12. Readiness for M6.5 Factory Analytics
 

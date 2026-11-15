@@ -846,7 +846,7 @@ func pctp(v *float64) string {
 
 func points(v float64) string { return strconv.FormatFloat(v*100, 'f', 0, 64) + " percentage points" }
 
-// dayText is a moment in the Control Tower's words (M6.6, I-09): "4 Nov, 09:29:43 UTC", the day as the
+// dayText is a moment in the Factory Floor's words (M6.6, I-09): "4 Nov, 09:29:43 UTC", the day as the
 // Timeline's ruler names it and the clock as its inspector does.
 func dayText(ms *int64) string {
 	if ms == nil {
@@ -858,7 +858,7 @@ func dayText(ms *int64) string {
 
 func usd(v float64) string { return "USD " + strconv.FormatFloat(v, 'f', 2, 64) }
 
-// dur is a duration in the Control Tower's words (M6.6, I-09; web shell/time.ts duration): "340 ms",
+// dur is a duration in the Factory Floor's words (M6.6, I-09; web shell/time.ts duration): "340 ms",
 // "48 s", "4 min 12 s", "1 h 3 min", "1 h", "1 d 15 h", "2 d". Two units at most, the smaller left out
 // when it is zero. Wording only: every threshold and figure is computed before it is worded.
 func dur(ms float64) string {

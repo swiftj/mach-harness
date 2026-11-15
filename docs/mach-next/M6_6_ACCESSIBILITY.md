@@ -1,11 +1,11 @@
-# M6.6 Control Tower: accessibility checks
+# M6.6 Factory Floor: accessibility checks
 
 No WCAG conformance is claimed. No screen-reader session was run. The first part is what a script could
 measure; the second is what only a person can check.
 
 ## Part 1. Automated results
 
-Environment: `mach-observer` built from commit `d99edb4` (Control Tower embedded), serving a copy of the finished
+Environment: `mach-observer` built from commit `d99edb4` (Factory Floor embedded), serving a copy of the finished
 real-run project (`eng`, history only, no MACH script run), on `127.0.0.1`. Playwright with Chromium 145 (checks
 1 to 8) and WebKit 26.0 (checks 1, 2, 8), axe-core 4 with tags wcag2a, wcag2aa, wcag21a, wcag21aa. Views: Atlas,
 Blueprint, Timeline, the seven Analytics areas, and the Analytics Rows drawer. Each check was run once on a
