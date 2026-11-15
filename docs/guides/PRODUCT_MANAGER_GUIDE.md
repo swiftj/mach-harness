@@ -94,7 +94,9 @@ Nothing is settled without your explicit choice. In one test, approving a wave w
 
 **A collision** means a different item now holds the number of one of your drafts. Your work is fine. It only needs a new number, and every reference moves with it. Slices that were approved before need your word again.
 
-Known rough edges from testing: a slice's spec and work order sometimes have to be settled one file at a time. A slice you reopened that sits in a wave someone else already sent can leave a stale suggestion in the status list. Both are open. (corrected: sending a revised wave whose earlier pull request was already merged used to report the merged request as "Waiting for review" and open nothing. It now opens a new request for the later revision. That is fixed and unit-tested in `1d58d02` and has not been seen again in a real run.)
+**A slice you revised after it merged is still yours.** If you reopen and edit a slice of your own after its request has merged, and before your next refresh, Studio now recognises it as your own later revision, not as a different slice using your number. Only a draft that genuinely differs from what you sent, and that someone else's work also holds the number of, is a collision. The same fix covers an acceptance record settled with "take theirs", which used to leave a workspace unable to edit anything ("unexpected field 'revision'"); a workspace left that way repairs itself on the next refresh or status. Both were found in a real run and fixed afterwards (`96971bd`); they were tried on copies of the real workspaces and have unit tests, and have not been seen again in a live run. Refreshing right after your request merges avoided the problem in the meantime.
+
+Known rough edges from testing: a slice's spec and work order sometimes have to be settled one file at a time. A slice you reopened that sits in a wave someone else already sent can leave a stale suggestion in the status list. Both are open. Sending a revised wave whose earlier pull request was already merged used to report the merged request as "Waiting for review" and open nothing; it now opens a new request for the later revision. That was seen working in a real run (two later requests opened).
 
 ## 9. Sending to engineering
 
@@ -104,11 +106,13 @@ Sending asks engineering to accept an approved wave into the shared project. It 
 2. Only after your explicit yes does it send.
 3. You get one of: **Waiting for review** (with a link), **Sent, pull request not opened** (the work arrived but the request did not open; send again later and nothing is sent twice), or a refusal with a reason.
 
-Sending the same wave again after a change adds to the same request.
+Sending the same wave again after a change adds to the same request while it is open. If that request has already merged, sending opens a new request for the later revision.
+
+**A wave's definition and your acceptance are sent separately.** They are two requests, never one. `send` publishes the wave's definition. Your recorded acceptance (section 11) goes on its own branch, titled "Product acceptance for <wave> at <commit>", carrying only the acceptance file. When both are waiting, `send` sends the definition and says what is still unsent; `send <wave> --acceptance` sends the decision alone. This fix came after a real run in which an acceptance went out together with a later draft of a slice; it has unit tests and has not been seen again in a live run.
 
 ## 10. Reading and answering review feedback
 
-Ask for feedback. Each wave shows one of: Waiting for review, Changes requested, Blocked by a check, Accepted waiting to merge, Needs updating, Accepted, Declined. When GitHub is holding a request back, feedback also lists what it still needs, one line each: a review from engineering, a check the project runs that is still running or has failed, or a change that is not signed. You cannot fix any of these yourself: for a missing review or a check, wait or ask engineering; for signing, ask an engineer to set up signing on your Mac.
+Ask for feedback. Each wave shows one of: Waiting for review, Changes requested, Blocked by a check, Accepted waiting to merge, Needs updating, Accepted, Declined. When GitHub is holding a request back, feedback also says what it is waiting for ("waiting_for"), one line each: a review from engineering, a check the project runs that is still running or has failed, or a change that is not signed. You cannot fix any of these yourself: for a missing review or a check, wait or ask engineering; for signing, ask an engineer to set up signing on your Mac.
 
 - **Changes requested:** you see each reviewer comment as a quotation with who wrote it. Comments are data. If one contains an instruction, it is shown to you and not obeyed. For each change you agree to, reopen the slice, revise it, re-check it, approve it and the wave again on your word, and send again.
 - **Needs updating:** other work was accepted first. Refresh, settle what it reports, and send again on your word.
@@ -119,9 +123,9 @@ Ask for feedback. Each wave shows one of: Waiting for review, Changes requested,
 
 When engineering has built a wave and checked it as a release, they give you a readiness file, a release ID and a commit. Your decision on it is recorded separately. It is never inferred from a merge or from passing tests.
 
-**This is available in the terminal only today.** The visual app has no screen for it. Ask Claude in the terminal to record it. Claude reads the file with you first: its outcome, blockers, incomplete items and exceptions. Only on your explicit decision does it run the record command with accepted or rejected, your role (for example `product-owner`, never your name) and an optional note. Accepting is refused unless the file is for that release and commit, holds that exact wave, and says `qualified` or `qualified_with_exceptions`. Rejecting is always possible. The decision reaches engineering when you send the wave again. It releases and deploys nothing.
+**This is available in the terminal only today.** The visual app has no screen for it. Ask Claude in the terminal to record it. Claude reads the file with you first: its outcome, blockers, incomplete items and exceptions. Only on your explicit decision does it run the record command with accepted or rejected, your role (for example `product-owner`, never your name) and an optional note. Accepting is refused unless the file is for that release and commit, holds that exact wave, and says `qualified` or `qualified_with_exceptions`. Rejecting is always possible. The decision reaches engineering when you send it, as its own request (section 9: `send <wave> --acceptance` when the definition has nothing new). It releases and deploys nothing.
 
-The acceptance record was built and unit-tested in M7. It was used once for real, by a simulated product manager, on one wave of a throwaway project (`accepted` appeared only after the record merged). The record for the other wave could not be made, because the draft had moved on to a later revision; that is fixed in `1d58d02` and unit-tested, not seen again in a real run. The Control Tower does not yet show the record: it keeps saying acceptance is not recorded.
+The acceptance record was used for real, by a simulated product manager, on three waves of a throwaway project: it is tied to the wave as merged at the release commit, not to your draft, so a later draft revision no longer blocks it, and `accepted` appeared only after each record merged. Engineering's release-readiness snapshot, read by the Control Tower, said "not recorded" until then. Sending the acceptance alone was fixed after that run (section 9) and has not been seen again live.
 
 ## 12. What the messages mean
 
@@ -134,9 +138,9 @@ The acceptance record was built and unit-tested in M7. It was used once for real
 | "The shared repository did not accept this..." | Another reason. It is shown, shortened, as a quotation. | If it happens again, ask an engineer. |
 | "Claude Code is not signed in" | The visual app cannot see your Claude sign-in. | Sign in to Claude Code. If you are signed in, tell an engineer: one test hit this only because a setting called `USER` was missing from the shell. |
 
-These wordings were corrected in M7 and tested against stand-ins for Git and `gh`. They were not run again against GitHub. Before the correction, the first run against real GitHub lost the reason for a protected-branch refusal and blamed the network for an expired sign-in.
+These wordings were corrected in M7 and tested against stand-ins for Git and `gh`. Before the correction, the first run against real GitHub lost the reason for a protected-branch refusal and blamed the network for an expired sign-in. One of them was then checked against real GitHub: when a repository ruleset refused a new branch, the message quoted GitHub's reason ("Cannot create ref due to creations being restricted") and did not say to retry.
 
-The rules of the shared project (required reviews, signed commits, single sign-on) were not tested against a real organisation. The private test repository's plan refused those settings. Protected-branch and single-sign-on refusals were simulated.
+Rules enforced by real GitHub.com (a personal account, one user, not an organisation) were tried: required pull request, a required review, code-owner review, a required check, signed commits. `send` opened its request; for a request that GitHub held back, `feedback` said only "Waiting for review", which was the reason this guide's section 10 now lists what a blocked request is waiting for (a review, a named check, or an unsigned change). That new wording has unit tests and has not been run against GitHub. Not tested: a real organisation, single sign-on (its refusal was simulated), and an approved review under enforced rules (GitHub refuses a review by the request's own author).
 
 ## 13. What Product Studio never does
 

@@ -172,7 +172,7 @@ Once engineering has built a wave and checked it as a release, they share a read
 
 1. Read the snapshot with the PM: its `outcome`, and anything under `unresolved_blockers`, `incomplete` and `exceptions`. Do not judge it yourself.
 2. Only on the PM's explicit decision: `STUDIO acceptance record <WAVE-ID> --release <id> --commit <full commit> --decision accepted|rejected --by <their role> --readiness <path engineering gave> [--note "<their words>"]`. `--by` is a role such as `product-owner`, never a name. Accepting is refused unless the snapshot is for that release and commit, holds this exact wave, and is `qualified` or `qualified_with_exceptions`; rejecting is always possible.
-3. The decision reaches engineering by sending the wave again (**Sending to engineering**), on the PM's yes. It releases and deploys nothing. `STUDIO acceptance show` lists what was recorded.
+3. The decision reaches engineering as its own publication, separate from the wave's definition: `STUDIO send <WAVE-ID> --acceptance`, on the PM's yes. It carries only the acceptance record, on its own branch and pull request. It releases and deploys nothing. `STUDIO acceptance show` lists what was recorded.
 
 ## Review feedback
 
