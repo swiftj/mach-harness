@@ -7,10 +7,10 @@ address, the requests the page makes) and never compare pixels.
 
 | Tool | File | Modes |
 |---|---|---|
-| Browser tests | `web/apps/control-tower/e2e/analytics-proof.e2e.mjs`, `analytics-shell.e2e.mjs`, `analytics-live.e2e.mjs` | proof, live |
-| Accessibility audit | `web/apps/control-tower/scripts/analytics-audit.mjs` | proof, shell, live |
-| Performance | `web/apps/control-tower/scripts/analytics-measure.mjs` | proof, live |
-| Shared plumbing | `web/apps/control-tower/e2e/analytics-lib.mjs`, `e2e/analytics-global.mjs` | |
+| Browser tests | `web/apps/factory-floor/e2e/analytics-proof.e2e.mjs`, `analytics-shell.e2e.mjs`, `analytics-live.e2e.mjs` | proof, live |
+| Accessibility audit | `web/apps/factory-floor/scripts/analytics-audit.mjs` | proof, shell, live |
+| Performance | `web/apps/factory-floor/scripts/analytics-measure.mjs` | proof, live |
+| Shared plumbing | `web/apps/factory-floor/e2e/analytics-lib.mjs`, `e2e/analytics-global.mjs` | |
 
 ## Modes
 
@@ -39,7 +39,7 @@ work ends, and records three execution configurations plus a not-recorded cohort
 ## Running them
 
 ```
-cd web/apps/control-tower
+cd web/apps/factory-floor
 pnpm run test:e2e:analytics                                   # all three files, one at a time
 E2E_AN_MODE=proof pnpm run test:e2e:analytics                 # proof only (no Go needed)
 E2E_AN_MODE=live  pnpm run test:e2e:analytics                 # live only

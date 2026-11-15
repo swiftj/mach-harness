@@ -1,6 +1,6 @@
 # M6.3 Execution Timeline: browser end-to-end suite
 
-The Timeline's unit and model tests (`web/apps/control-tower/test/timeline-*.test.mjs`) check each part on
+The Timeline's unit and model tests (`web/apps/factory-floor/test/timeline-*.test.mjs`) check each part on
 fixtures. This suite checks the whole workspace in a real browser, over a real `mach-observer`, on real and
 synthetic Factory histories. It asserts on what a person can perceive: roles and accessible names, the
 tree-table (the canvas's structured twin, design section 9), the inspector's text, the lenses' text, the
@@ -9,7 +9,7 @@ tree-table (the canvas's structured twin, design section 9), the inspector's tex
 ## Running it
 
 ```
-cd web/apps/control-tower
+cd web/apps/factory-floor
 pnpm run test:e2e:timeline                 # every file, one at a time
 E2E_LARGE=1 pnpm run test:e2e:timeline     # also the 220,000-event long-history test (minutes)
 node --test --test-concurrency=1 --test-global-setup=e2e/global.mjs e2e/live.e2e.mjs   # one file
@@ -151,5 +151,5 @@ left listening on 4235-4249.
 | live | API GET-only, console | pass | |
 | real run | (14a)-(14d) cross-view, deep links, X4 | pass | |
 | real run | (17a) reduced motion, (17b) keyboard only | pass | |
-| real run | (18) Factory Floor, health unchanged, no file changed | pass | |
+| real run | (18) Atlas, health unchanged, no file changed | pass | |
 | long history | (16) first paint 588 ms (1.5 s); zoom and pan frames 16.7 ms median, 17.2 ms 95th (16 / 33); switch 289, 322, 313 ms (300); observer caught up in 27 s | pass (the switch is just over budget; within 3×) | |

@@ -2,7 +2,7 @@
 
 Status: prototype, built on `feature/mach-next-m6-living-factory` (HEAD `f9fe87e`: the defect fixes `d300d23` to `297c798`, then the second fix round `19b6e20` to `f9fe87e`, which also removed the WebGL light layer), on top of MACH 0.12.0 (`fb86441`). Experimental, like the rest of MACH Next.
 
-M6.0 is a visual-experience prototype of the Control Tower. It is a simulation: it reads no Factory state and changes nothing about how the Factory runs. This note records how its scenes are built and drawn, as the code has it, for the engineer who will build the production Control Tower on it. Companion files:
+M6.0 is a visual-experience prototype of the Factory Floor. It is a simulation: it reads no Factory state and changes nothing about how the Factory runs. This note records how its scenes are built and drawn, as the code has it, for the engineer who will build the production Factory Floor on it. Companion files:
 
 | File | Holds |
 |------|-------|
@@ -10,10 +10,10 @@ M6.0 is a visual-experience prototype of the Control Tower. It is a simulation: 
 | `M6_0_VISUAL_SPEC.md` | The visual grammar (sections a to f, h) and the design owner's rendering recommendation (section g). Referenced here, not repeated |
 | `M6_0_TELEMETRY_GAPS.md` | What the real Factory records today, and what the picture could not show truthfully |
 | `M6_0_FINDINGS.md` | The review findings and the captured evidence (written by the capture owner) |
-| `web/apps/control-tower/src/sim/README.md` | The simulation's API, event model, store, scenario and storyboard, in full |
-| `web/apps/control-tower/README.md` | Running, building, testing, capturing; URL parameters; the keyboard map |
+| `web/apps/factory-floor/src/sim/README.md` | The simulation's API, event model, store, scenario and storyboard, in full |
+| `web/apps/factory-floor/README.md` | Running, building, testing, capturing; URL parameters; the keyboard map |
 
-File references below are relative to `web/apps/control-tower/src` unless they start with `web/` or `docs/`.
+File references below are relative to `web/apps/factory-floor/src` unless they start with `web/` or `docs/`.
 
 ## 1. Shape
 
@@ -86,7 +86,7 @@ How the views derive it:
 - **No hidden inputs.** No `Math.random`, `Date.now`, timers or wall clock in `src/sim`; `src/scene` reads wall time only through `Clock`. IDs and hashes are FNV-1a over labels (`sim/scenario/recorder.ts`).
 - **No early outcomes.** At playhead `t`, the scene and the timeline selectors expose nothing decided after `t`: `cellTimelines(fixture, t)` and `agentTimeline(fixture, id, t)` give open spans `end: null` and no outcome; `moments(fixture, level, t)` lists only what has happened. `finalScene` may be read only for what never changes (names, which columns a layout needs).
 
-The tests (`pnpm --filter @mach/control-tower test`, 70 tests, node's runner, no dependencies):
+The tests (`pnpm --filter @mach/factory-floor test`, 70 tests, node's runner, no dependencies):
 
 | Test file | Tests that hold time and determinism |
 |---|---|
@@ -200,7 +200,7 @@ The canvas redraws only when what it draws changes: width, time window, expansio
 
 ### 3.4 The light layer: built, measured, removed
 
-There is no light layer. The brief asked for a WebGL light-layer experiment; it was built on PixiJS 8 (lamp pools with a bloom, packet trails, a wash on a gate that refuses), loaded as its own chunk behind a switch in the help sheet, off by default, and measured. It was rejected and, on the product owner's decision on 2026-11-12, removed together with the PixiJS dependency in the commit "chore(control-tower): remove the WebGL light layer experiment and the PixiJS dependency" (`f9fe87e`). Why is in section 6.2. The SVG lamp pool in each bay is the only light (`atlas/Bay.tsx`).
+There is no light layer. The brief asked for a WebGL light-layer experiment; it was built on PixiJS 8 (lamp pools with a bloom, packet trails, a wash on a gate that refuses), loaded as its own chunk behind a switch in the help sheet, off by default, and measured. It was rejected and, on the product owner's decision on 2026-11-12, removed together with the PixiJS dependency in the commit "chore(factory-floor): remove the WebGL light layer experiment and the PixiJS dependency" (`f9fe87e`). Why is in section 6.2. The SVG lamp pool in each bay is the only light (`atlas/Bay.tsx`).
 
 ### 3.5 Things computed from the whole run
 
@@ -242,7 +242,7 @@ The rule is that nothing is *shown* before it happens; some things are *laid out
 
 The app holds everything that knows about time and MACH: the simulation, the store, the mapping from simulation words to grammar symbols (`blueprint/vocab.ts`, `atlas/derive.ts`, `shell/vocab.ts`), layout, cameras, interaction and the inspector.
 
-Tokens and themes: `factoryTokens` (projection, grid, elevation, sizes, zoom, motion, budget) in `web/packages/ui/src/tokens/tokens.ts`; 25 factory colour roles as CSS variables `--mach-factory-*` in `web/packages/ui/src/styles/tokens.css`, both themes, contrast-checked by the token script. The Control Tower sets `product="control-tower"` on `ThemeProvider` (`main.tsx`), which defaults to dark and applies its product overrides; `?theme=light|dark` pins it. Components use `fc("role")` or `var(--mach-*)`, never hex; the canvas timeline reads the same variables at draw time. Type: one family, Source Sans 3, plus the mono for IDs; there is no serif. Titles, region lettering and the Blueprint's wave and lane titles are the sans set bold (700; second-level titles and floor lettering 650) (`19b6e20`).
+Tokens and themes: `factoryTokens` (projection, grid, elevation, sizes, zoom, motion, budget) in `web/packages/ui/src/tokens/tokens.ts`; 25 factory colour roles as CSS variables `--mach-factory-*` in `web/packages/ui/src/styles/tokens.css`, both themes, contrast-checked by the token script. The Factory Floor sets `product="factory-floor"` on `ThemeProvider` (`main.tsx`), which defaults to dark and applies its product overrides; `?theme=light|dark` pins it. Components use `fc("role")` or `var(--mach-*)`, never hex; the canvas timeline reads the same variables at draw time. Type: one family, Source Sans 3, plus the mono for IDs; there is no serif. Titles, region lettering and the Blueprint's wave and lane titles are the sans set bold (700; second-level titles and floor lettering 650) (`19b6e20`).
 
 ## 6. Tradeoffs for the reviewers
 
@@ -251,11 +251,11 @@ Tokens and themes: `factoryTokens` (projection, grid, elevation, sizes, zoom, mo
 - **Chosen.** One SVG drawing under one CSS transform; ELK once for the column template; arithmetic for lanes and rows. The reasoning is at the top of `blueprint/index.tsx`.
 - **Why.** The Blueprint is a drawing, not an editable node graph: bubbles, diamonds, round rows, retry loops, fan-out and join, dimension lines, rulers, pinned gutters and a title block share one coordinate system. React Flow would wrap each mark in an HTML node with its own layout, selection and focus model, and its edges would have to relearn every path the grammar already draws. One transform keeps text crisp and hit-testing exact, and lets the gutters and column head pin by CSS variable with no React work per frame. It also gives both views the same camera model.
 - **Cost.** The brief named React Flow; this departs from it. The minimap, zoom controls, edge drawing, culling and the ARIA tree were written by hand (about 4,600 lines in `blueprint/`). `@xyflow/react` stays a dependency of the app, on the product owner's decision, although nothing in the app imports it (the app's stylesheet does import `@mach/ui/graph.css`, the design system's React Flow styles for Product Studio's graph): it is to be considered for future features where it adds real value, not adopted by default. The Blueprint view re-renders at every event (section 3.2), which is fine at 2,126 events over the run but is the first thing to revisit at higher event rates.
-- **Revisit when** the Control Tower needs editing of the graph (dragging, connecting), free-form layouts per run rather than fixed belt columns, or very large graphs far beyond one wave, where React Flow's virtualisation and interaction model would pay for themselves.
+- **Revisit when** the Factory Floor needs editing of the graph (dragging, connecting), free-form layouts per run rather than fixed belt columns, or very large graphs far beyond one wave, where React Flow's virtualisation and interaction model would pay for themselves.
 
 ### 6.2 SVG only; the WebGL light layer was tried and removed
 
-- **Chosen.** SVG for everything. The brief asked for a WebGL light-layer experiment; it was built on PixiJS 8, switchable from the help sheet, off by default, and measured. It was rejected, and removed with the PixiJS dependency on the product owner's decision on 2026-11-12 (commit "chore(control-tower): remove the WebGL light layer experiment and the PixiJS dependency", `f9fe87e`). The code is in Git history.
+- **Chosen.** SVG for everything. The brief asked for a WebGL light-layer experiment; it was built on PixiJS 8, switchable from the help sheet, off by default, and measured. It was rejected, and removed with the PixiJS dependency on the product owner's decision on 2026-11-12 (commit "chore(factory-floor): remove the WebGL light layer experiment and the PixiJS dependency", `f9fe87e`). The code is in Git history.
 - **Why it was rejected.** (1) Its canvas sat between L1 and L3, so its glow lay over the whole drawing, covering machines, agents and text, which carry the meaning, while the SVG lamp pool already said "work is here" at the right tone. (2) It cost about 0.8 ms more per frame (design owner's measure, with side-by-sides). (3) As decoration it could carry no information the drawing did not already have. It also needed `pixi.js/unsafe-eval` under the CSP and a second rendering path kept aligned with the camera.
 - **If WebGL is ever wanted**, the most plausible reason is scale: an Atlas with many more cells than SVG can hold (section 7.3), where a WebGL renderer for the floor and moving marks would be a performance decision, not decoration. That was never measured. Any such layer must follow contract rules 1, 6 and 8 and spec g; the removed code in Git history is a starting point.
 
@@ -335,7 +335,7 @@ What they say: the spec's budget is 2,500 SVG elements at mid zoom for **12** ce
 
 ### 7.4 Security posture that must carry over
 
-- **Read-only observer.** The browser reads; it never writes under `.factory/` and never calls `run.py` at frequency (gaps document 5.8). Nothing in the Control Tower can enable, start, pause, schedule or approve; per `M5_DESIGN.md` section 8, the Factory console is a separate surface with its own operation list, and nothing in the Product Studio host can be extended into enabling execution by adding a route.
+- **Read-only observer.** The browser reads; it never writes under `.factory/` and never calls `run.py` at frequency (gaps document 5.8). Nothing in the Factory Floor can enable, start, pause, schedule or approve; per `M5_DESIGN.md` section 8, the Factory console is a separate surface with its own operation list, and nothing in the Product Studio host can be extended into enabling execution by adding a route.
 - **Loopback host.** As M5: bound to `127.0.0.1` only, one-time token exchanged for an `HttpOnly`, `SameSite=Strict` cookie, `Host` checks, and the M5 Content-Security-Policy. The prototype already builds under that policy (no inline script or style, no `eval`; Radix's style injection is replaced by a constructable stylesheet, `vite.config.ts`) and makes no network request.
 - **Redaction.** Tool inputs and outputs, `Edit` contents, absolute paths, the execution's `spec.json` argv, credential-like values, test output tails and people's names never leave the observer (gaps document 5.7). The simulation already models the boundary: `tool.started` carries only the tool name and a short target. Model-written text (findings, summaries) is shown as text, never rendered as HTML; the prototype uses no `innerHTML`.
 
@@ -348,11 +348,11 @@ What they say: the spec's budget is 2,500 SVG elements at mid zoom for **12** ce
 5. **Two hand-written cameras and two follow rules** (Atlas and Blueprint) that differ in detail (the Atlas may zoom out by a quarter, the Blueprint never zooms; the Atlas follows through focus requests, the Blueprint directly). A production build should share one camera module.
 6. **View determinism is untested.** The simulation's purity is enforced by tests; the views' is by convention and capture.
 
-## 8. File map (`web/apps/control-tower/src`)
+## 8. File map (`web/apps/factory-floor/src`)
 
 | Path | What it is |
 |---|---|
-| `main.tsx`, `App.tsx`, `index.css` | Entry: `ThemeProvider product="control-tower"`, `?theme=`, the Shell |
+| `main.tsx`, `App.tsx`, `index.css` | Entry: `ThemeProvider product="factory-floor"`, `?theme=`, the Shell |
 | `sim/` | The simulation, the only authority (README.md documents its API) |
 | `sim/events.ts` | The factory-event v2 envelope, `REAL_KINDS`, `SIM_KINDS`, `EventDataMap`, `SimEvent` (adds `t`) |
 | `sim/catalog.ts` | `EVENT_CATALOG`: every kind's meaning, payload, telemetry class and source |

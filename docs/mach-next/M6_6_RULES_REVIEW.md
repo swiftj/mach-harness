@@ -102,7 +102,7 @@ Wording that comes closest, quoted:
 
 What the test does not scan: `waitLabels`, the `Threshold` and `Minimum` strings of `Rules`, and the population
 strings built in `gather.go`. None of them contains a forbidden word (read by hand). The Simulation's own findings
-(`web/apps/control-tower/src/analytics/model/findings.ts`) are separate words, also clean by a by-hand scan
+(`web/apps/factory-floor/src/analytics/model/findings.ts`) are separate words, also clean by a by-hand scan
 (one says "The approval itself stays required").
 
 ## (c) Advisory and read-only
@@ -112,9 +112,9 @@ strings built in `gather.go`. None of them contains a forbidden word (read by ha
   same bytes on the same input (`TestDeterministic`).
 - The only route is `GET /api/v1/analytics/insights` (`server/analytics_insights.go`); the server refuses every
   method but GET with 405 (`server/server.go:256`).
-- A finding's only actions in the Control Tower are "Open the figures" (another Analytics area) and "Rows" (the
+- A finding's only actions in the Factory Floor are "Open the figures" (another Analytics area) and "Rows" (the
   contributor list). Nothing files a ticket, changes a rule or a setting. Rule changes go through
-  `observe.py file-ticket` and the review panel, which the observer cannot call (`tests/test_mach_tower.py`).
+  `observe.py file-ticket` and the review panel, which the observer cannot call (`tests/test_mach_floor.py`).
 
 ## (d) Every visible Analytics figure: basis, population, coverage, limitation
 
@@ -146,11 +146,11 @@ attached** and state one or more of the four nowhere on screen.
 
 **Fixed:** `Flow.tsx:266` now reads "Percentiles marked “about” are read inside the observer's buckets; the
 others are exact, over every measured visit." That matches `percentileText` (`model/format.ts:165-169`).
-Test: `web/apps/control-tower/test/m66-policy.test.mjs`. Every other item above is larger than one line, or is
+Test: `web/apps/factory-floor/test/m66-policy.test.mjs`. Every other item above is larger than one line, or is
 a judgement for the lead.
 
 **Corrected in M6.6** (wording and list handling only; no formula or ID changed; test
-`web/apps/control-tower/test/m66-capped-figures.test.mjs`):
+`web/apps/factory-floor/test/m66-capped-figures.test.mjs`):
 
 - **Capped lists.** `model/capped.ts`: a count read from a contributor list cut at 500 rows is said "at least N (the
   list is cut at 500 rows)", and a figure the reply carries is used instead where it has one.

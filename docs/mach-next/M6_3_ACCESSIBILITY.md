@@ -36,7 +36,7 @@ handled (`defaultPrevented`), any event with Ctrl or Cmd, and typing in inputs.
 | `{` `}` | Slower / faster |
 | Home, End | Start of what is held / live edge (a slider, or a widget that handles them, keeps them) |
 | L | Return to live and follow |
-| 1, 2 | Factory floor: Atlas / Blueprint |
+| 1, 2 | Atlas: Factory Atlas / Execution Blueprint |
 | 3 | Timeline, keeping the selection and the playhead |
 | F, Shift+F | Reveal the selection's tracks and span / camera follow back on |
 | Escape | Clear hover, then the selection |
@@ -177,7 +177,7 @@ proportional to the number of spans.
    event descriptions (`src/sim/describe-v3.ts`) and still quotes the code ("left verify:
    FAIL_WITH_EVIDENCE").
 5. **The Factory's state on this machine** (not enabled, paused) is a chip in the top bar, one Tab stop,
-   named by the notice's title and described by its whole text (that the Control Tower cannot enable or
+   named by the notice's title and described by its whole text (that the Factory Floor cannot enable or
    change anything); its popover shows the same. It no longer covers the Atlas or the Blueprint, and it is
    chosen apart from the stage's notice, so an empty or failing stage still says so.
 

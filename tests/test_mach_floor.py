@@ -33,14 +33,13 @@ class NothingInTheLineDependsOnTheObserverTest(unittest.TestCase):
 
     def test_the_run_script_has_no_floor_command(self):
         """Opening the Factory Floor is a skill step, not a command: run.py and the argument hint are unchanged.
-        "tower" is held out too: the Factory Floor's earlier name."""
+        Plain "floor" is not checked in the scripts: they use it for other things (math.floor, RISK_FLOOR)."""
         for name in ("run.py", "supervisor.py", "executor.py", "service.py", "activation.py", "policy.py", "intake.py"):
             source = (ROOT / "skills" / "run" / "scripts" / name).read_text(encoding="utf-8")
-            for word in ("observer", "tower", "Tower", "Factory Floor", "factory floor", "factory-floor", "factory_floor"):
+            for word in ("observer", "Factory Floor", "factory floor", "factory-floor", "factory_floor", "FactoryFloor"):
                 self.assertNotIn(word, source, f"{name}: {word}")
         head = RUN_SKILL.read_text(encoding="utf-8").split("\n---", 1)[0]
         hint = re.search(r'^argument-hint: "(.*)"$', head, re.MULTILINE).group(1)
-        self.assertNotIn("tower", hint.lower())
         self.assertNotIn("floor", hint.lower())
         self.assertNotIn("observer", hint.lower())
 

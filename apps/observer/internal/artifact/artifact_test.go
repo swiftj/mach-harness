@@ -145,7 +145,7 @@ func TestImagesNeedTheOptIn(t *testing.T) {
 	if e := byPath(c)["cell:evidence/shot.png"]; e.ContentAccess != "media-disabled" || !strings.Contains(e.AccessReason, "evidence_media") {
 		t.Fatalf("%+v", e)
 	}
-	write(t, filepath.Join(f.root, ".factory/config.json"), []byte(`{"tower":{"evidence_media":true}}`))
+	write(t, filepath.Join(f.root, ".factory/config.json"), []byte(`{"floor":{"evidence_media":true}}`))
 	fresh(c)
 	e := byPath(c)["cell:evidence/shot.png"]
 	if e.ContentAccess != "media" {
@@ -157,48 +157,12 @@ func TestImagesNeedTheOptIn(t *testing.T) {
 	}
 	// A config file that is a link is not read: the default (off) applies.
 	os.Remove(filepath.Join(f.root, ".factory/config.json"))
-	write(t, filepath.Join(f.root, "elsewhere.json"), []byte(`{"tower":{"evidence_media":true}}`))
+	write(t, filepath.Join(f.root, "elsewhere.json"), []byte(`{"floor":{"evidence_media":true}}`))
 	os.Symlink(filepath.Join(f.root, "elsewhere.json"), filepath.Join(f.root, ".factory/config.json"))
 	fresh(c)
 	if e := byPath(c)["cell:evidence/shot.png"]; e.ContentAccess != "media-disabled" {
 		t.Fatalf("a linked config was followed: %+v", e)
 	}
-}
-
-// "floor" is the setting's name and "tower", its earlier name, still works; when both are set and
-// disagree, "floor" wins and the source says so.
-func TestTheEvidenceMediaSettingAndItsEarlierName(t *testing.T) {
-	f := project(t, nil)
-	c := New(f.root)
-	access := func(config string) (string, string) {
-		write(t, filepath.Join(f.root, ".factory/config.json"), []byte(config))
-		fresh(c)
-		return byPath(c)["cell:evidence/shot.png"].ContentAccess, readSettingsFor(t, f.root).Source
-	}
-	cases := []struct{ config, access, source string }{
-		{`{"floor":{"evidence_media":true}}`, "media", ".factory/config.json floor.evidence_media"},
-		{`{"tower":{"evidence_media":true}}`, "media", ".factory/config.json tower.evidence_media (the earlier name of floor.evidence_media)"},
-		{`{"floor":{"evidence_media":false},"tower":{"evidence_media":true}}`, "media-disabled", "disagrees and is ignored"},
-		{`{"floor":{"evidence_media":true},"tower":{"evidence_media":false}}`, "media", "disagrees and is ignored"},
-		{`{"floor":{"evidence_media":true},"tower":{"evidence_media":true}}`, "media", ".factory/config.json floor.evidence_media"},
-		{`{}`, "media-disabled", "default (floor.evidence_media not set)"},
-	}
-	for _, k := range cases {
-		got, source := access(k.config)
-		if got != k.access || !strings.Contains(source, k.source) {
-			t.Fatalf("%s: access %q source %q", k.config, got, source)
-		}
-	}
-}
-
-func readSettingsFor(t *testing.T, dir string) Settings {
-	t.Helper()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
-	return readSettings(root)
 }
 
 func TestWrongTypeIsRefused(t *testing.T) {

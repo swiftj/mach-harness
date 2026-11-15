@@ -23,7 +23,7 @@ apps/studio/                  Go module: the local host
   internal/interview/         the Claude Code bridge (after the proof of concept)
   internal/webui/             embeds the built React app (dist/)
 web/                          pnpm workspace
-  packages/ui/                @mach/ui: tokens, themes, primitives, shell, graph, API-client conventions (shared with Control Tower)
+  packages/ui/                @mach/ui: tokens, themes, primitives, shell, graph, API-client conventions (shared with Factory Floor)
   apps/product-studio/        the React application
   apps/showcase/              the component showcase, with realistic data
   fixtures/                   real engine output (generate.py); never hand-edited

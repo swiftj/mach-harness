@@ -269,7 +269,7 @@ Not causes, ever: "this event came right after that one", "this agent ran while 
 
 ### 8.1 Honest degraded states
 
-What the Control Tower may draw for a **running Dynamic Workflow agent**, and only from these events:
+What the Factory Floor may draw for a **running Dynamic Workflow agent**, and only from these events:
 
 | May draw | From |
 |---|---|
@@ -580,7 +580,7 @@ Every reader of the v2 log or its schema, found by searching the repository for 
 | `tests/test_mach_product_intake.py` (`EVENT_KEYS`, `events()` helper, lines 885–909) | the log through `product events`, and the v2 schema file | asserts `schema_version == 2` per event, `type in EVENT_TYPES`, the schema's `const` and enum | no |
 | `tests/test_mach_factory_supervisor.py` (lines 1060–1081, 542) | the log and the v2 schema file | asserts the envelope keys, `schema_version == 2`, the schema's `const: 2` and enum | no |
 | `tests/test_mach_product_contracts.py` `test_schema_files_parse` | every file in `schemas/` | asserts each parses and declares draft 2020-12 | the new v3 file is checked too; it passes (run on this branch) |
-| `web/apps/control-tower/test/purity.test.mjs`, `scenario.test.mjs` | `intake.py` source (`EVENT_TYPES`) and the fixture | `REAL_KINDS == EVENT_TYPES`; fixture `schema_version == 2` | no |
+| `web/apps/factory-floor/test/purity.test.mjs`, `scenario.test.mjs` | `intake.py` source (`EVENT_TYPES`) and the fixture | `REAL_KINDS == EVENT_TYPES`; fixture `schema_version == 2` | no |
 
 Consequence worth stating: **no production reader validates `schema_version` per event.** That is why the v2 log must never receive a v3 line: `Factory.events` would pass it through silently, and `save` would trust its `seq`. A test for M6.1 should assert that nothing but `intake.Factory` writes the file (a source scan, like `boundary_test.go`).
 
@@ -631,7 +631,7 @@ Still open:
 
 1. **Audit score.** `build.start` carries `audit_tier`; the score is only in `.factory/audit-report.json`. Wanted in `gate.evaluated`? (Not blocking.)
 2. **Session ids** are kept server-only. Does the inspector need them (for example to offer `claude --resume`)? (Not blocking.)
-3. **Holdout targets.** `verify.targets_listed` lists holdout checks by id from `.factory/holdouts/<ticket>/`. Holdouts are meant to stay unseen by the builder; the Control Tower is not the builder, but confirm that showing their ids (never their content) is acceptable.
+3. **Holdout targets.** `verify.targets_listed` lists holdout checks by id from `.factory/holdouts/<ticket>/`. Holdouts are meant to stay unseen by the builder; the Factory Floor is not the builder, but confirm that showing their ids (never their content) is acceptable.
 4. **Budget stop attribution** reads `stderr.log` for Claude Code's "Budget limit reached" line. That is a second, unstructured source for one field; acceptable, or should `stop_reason` stay `unknown` whenever no result says `error_max_budget_usd`?
 5. ~~**Spend that may be missing**~~ Decided (M6.1 hardening): yes. `execution.usage.cost_complete` (revision 1) says so on the event, with its reasons, and `/api/v1/runs` reports `cost_may_be_under_reported` from it.
 

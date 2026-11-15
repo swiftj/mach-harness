@@ -1,4 +1,4 @@
-# MACH Next — M6.1 assessment: from a simulated Control Tower to production observability
+# MACH Next — M6.1 assessment: from a simulated Factory Floor to production observability
 
 Status: final assessment for M6.1 (live observability) and M6.2, on `feature/mach-next-m6-1-live-observability` at `cac989e` (the merged M6.0 prototype), revised after the stream proof (`M6_1_STREAM_COMPATIBILITY.md`) and the lead's decisions (contract section 16). Read-only: no code was changed. Companion documents: `M6_1_EVENT_CONTRACT.md` (the v3 event contract and migration) and `M6_1_SHARED_CONTRACTS.md` (Execution Timeline, Evidence Theater, Factory Analytics).
 
@@ -8,7 +8,7 @@ Every statement below was read from the code unless it says otherwise. Assumptio
 
 ## 1. Summary
 
-1. **The Control Tower's front end is real; its data is not.** M6.0 built a working renderer (Atlas, Blueprint, timeline, inspector, one store, a pure reducer) over a deterministic fixture. At the baseline there is no observer, no host, no API and no path from any file under `.factory/` to the browser (one is being written now: item 3).
+1. **The Factory Floor's front end is real; its data is not.** M6.0 built a working renderer (Atlas, Blueprint, timeline, inspector, one store, a pure reducer) over a deterministic fixture. At the baseline there is no observer, no host, no API and no path from any file under `.factory/` to the browser (one is being written now: item 3).
 2. **What MACH records today is enough for the Factory-level story** (waves, slices, dependencies, dispatch, executions, cost per execution) through the v2 event log, and enough for a coarse cell story through station state files. It is not enough for station timing, retries, or anything inside an execution.
 3. **Work in flight on this branch changes the picture** (uncommitted, read as it stood): the cell-local lifecycle log (`skills/intent/scripts/lifecycle.py`, called from every station script) covers stations, gates including refusals, build tasks, verification checks, review rounds, approval, merge and cleanup, with millisecond times; the executor now passes `MACH_EXECUTION_ID` to the run; an observer (`apps/observer`) is being written; and the stream proof has settled what can be seen inside a belt execution: each workflow agent (identity, label, phase, model, state, start and duration, tool-call count, last tool name, one token total), never its individual tool calls.
 4. **Of the fixture's 2,126 events**, under the v3 contract: 75 exist today; 235 will come from lifecycle telemetry; 182 are reconstructed from files the stations already write (findings and artifacts); 194 will come from the execution stream (workflow start and end, agents starting and finishing); 1,440 will not exist as events: 1,380 per-call tool events of workflow agents (shown as a count instead), 34 phase moments, 26 task starts (section 6).
@@ -28,9 +28,9 @@ Every statement below was read from the code unless it says otherwise. Assumptio
 | Station records | `cell.json`, `build.json`, `build-report.json`, `evidence/results.json`, `summary.json`, `review/round-N/*`, `decision.json` | works | Mutable snapshots, not histories; non-atomic writes (M6.0 gaps 2.4) |
 | Run record | `.factory/archive/runs.jsonl` (`cleanup.cmd_run`), archives `<t>.tar.gz` | works | One line per finished ticket; no execution id, cost or durations |
 | Observe scorecard | `skills/observe/scripts/observe.py` (`scorecard`, `breakdown`, `group_findings`, `TARGETS`) | works | Average rounds, first-pass rate, escalation, abandonment, tests seen failing first, deviations per ticket; by risk and app type |
-| Loopback host and its security layer | `apps/studio` (Go): `internal/security`, `internal/server` envelope, SSE with replay for the interview (`internal/interview/history.go`) | works, tested | Product Studio's host. Reusable plumbing for a Control Tower host; must not gain Factory routes (M5 section 8) |
+| Loopback host and its security layer | `apps/studio` (Go): `internal/security`, `internal/server` envelope, SSE with replay for the interview (`internal/interview/history.go`) | works, tested | Product Studio's host. Reusable plumbing for a Factory Floor host; must not gain Factory routes (M5 section 8) |
 | Design system and factory grammar | `web/packages/ui` (`@mach/ui`, `@mach/ui/factory`) | works | Tokens, both themes, primitives taking props only |
-| Control Tower renderer | `web/apps/control-tower` | works against the fixture | Pure reducer, structurally shared scenes, one store, two views, canvas timeline; 70 tests |
+| Factory Floor renderer | `web/apps/factory-floor` | works against the fixture | Pure reducer, structurally shared scenes, one store, two views, canvas timeline; 70 tests |
 
 ---
 
@@ -107,15 +107,15 @@ New gaps found in this assessment:
 | File | M6.1 | Why |
 |---|---|---|
 | `apps/studio/internal/security` | reuse (import or extract to a shared package) | token, cookie, Host/Origin, CSP |
-| `apps/studio/internal/server` | reuse the envelope; **no Factory route is added to the studio host** (M5 section 8) | the Control Tower is a separate surface |
+| `apps/studio/internal/server` | reuse the envelope; **no Factory route is added to the studio host** (M5 section 8) | the Factory Floor is a separate surface |
 | `apps/studio/internal/interview/history.go` | pattern only (SSE replay, symlink-safe append) | precedent for the event stream |
-| `apps/studio/cmd/mach-studio/boundary_test.go` | pattern for a Control Tower host boundary test (no `run.py` write operation, no station, no `factory` command) | read-only observer |
+| `apps/studio/cmd/mach-studio/boundary_test.go` | pattern for a Factory Floor host boundary test (no `run.py` write operation, no station, no `factory` command) | read-only observer |
 | `web/packages/ui/src/api` | extend: a typed client for the observer's `/api/v1/*` and the v3 types | shared plumbing (M5 section 8) |
 | `.github/workflows/release.yml`, `bin/mach` | change in M6.2 if the observer ships as its own binary | distribution as for `mach-studio` |
 
 The observer itself is `apps/observer` (Go, in flight: `internal/tail`, `normalize`, `redact`, `event`, `server`, `security`), with its index in `.factory/local/observer/`. Contract section 17 lists the changes it must make; the lead decided the contract wins.
 
-### 5.3 M6.0 (`web/apps/control-tower/src`)
+### 5.3 M6.0 (`web/apps/factory-floor/src`)
 
 | File | Function | M6.1 |
 |---|---|---|

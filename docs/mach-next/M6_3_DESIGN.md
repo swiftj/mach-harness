@@ -6,7 +6,7 @@ against. Where it and the code disagree, fix one of them in the same change.
 
 ## 1. What it is
 
-The Execution Timeline is the second of the Control Tower's four experiences (Factory Floor, Execution
+The Execution Timeline is the second of the Factory Floor's four experiences (Atlas, Execution
 Timeline, Evidence Theater, Factory Analytics). It is a full-workspace instrument for one question: what did
 the Factory do, when, and how do we know. It is drawn in the Living Factory's own language (the drawing-sheet
 ground, the state marks, the tier shapes, the dimension-line grammar of the Blueprint) and is neither a Gantt
@@ -20,7 +20,7 @@ has no observer, derives the same span shape from its scene.
 
 | Capability | At `5bb379e` | M6.3 |
 |---|---|---|
-| Docked timeline under the Factory Floor (transport, ruler with landmarks, one canvas of tracks) | Yes: `src/shell/timeline/` | Kept as it is. Shares the transport, the palette reader and the time helpers. |
+| Docked timeline under the Atlas (transport, ruler with landmarks, one canvas of tracks) | Yes: `src/shell/timeline/` | Kept as it is. Shares the transport, the palette reader and the time helpers. |
 | Track model | One track per cell or slice plus a Factory track; no hierarchy, grouping or virtualisation | New hierarchical model with two groupings (section 4) |
 | Spans from the observer | Not used; `/spans` has no time window and silently cuts at 5,000 | Windowed, flagged, cached (section 6) |
 | Timing quality drawn | Only in hover text; the Blueprint's `DimLine` draws it | A full visual grammar (section 5) |
@@ -36,9 +36,9 @@ observer's index, the history-window loader (`src/live/windows.ts`) and the play
 
 ## 3. The workspace
 
-Primary navigation in the header becomes a two-level control: the workspace (**Factory Floor**, **Timeline**;
+Primary navigation in the header becomes a two-level control: the workspace (**Atlas**, **Timeline**;
 Evidence and Analytics are later milestones and are not drawn as disabled placeholders) and, on the Factory
-Floor only, the existing Atlas/Blueprint switch. Keys `1` and `2` keep their meaning (and switch to the floor);
+Atlas only, the existing Atlas/Blueprint switch. Keys `1` and `2` keep their meaning (and switch to the Atlas);
 `3` opens the Timeline.
 
 The Timeline workspace replaces the stage and the docked timeline. The header, the source badge, the
@@ -119,7 +119,7 @@ model reasoning: only what the general event API already serves.
 The existing transport (`src/shell/timeline/Transport.tsx`) unchanged in behaviour, plus: zoom to selection,
 zoom to brush, a filter bar (execution, cell, slice, station, kind of event) and a jump menu (previous and next
 failure, retry, gate decision, human intervention, gap). Live execution keeps arriving while the playhead is in
-the past, exactly as on the Factory Floor: `following` is the store's flag.
+the past, exactly as in the Atlas: `following` is the store's flag.
 
 **As of the playhead (T6, changed in M6.6, I-04).** M6.3 drew the tracks, their hover words, the table and the lenses
 as of the live edge and tinted the stretch after the playhead. Since M6.6, with the playhead held behind the live
@@ -262,7 +262,7 @@ positions read again.
 
 On a 200,000-event, 12-cell history: first paint of the Timeline under 1.5 s after the scene is ready; pan
 and zoom frames under 16 ms at the median and 33 ms at the 95th percentile; scrub response under 100 ms at the
-median; expand or collapse under 50 ms; no more than +60 MB browser heap over the Factory Floor alone; a
+median; expand or collapse under 50 ms; no more than +60 MB browser heap over the Atlas alone; a
 workspace switch under 300 ms. Means: windowed span queries, a per-window span cache keyed by projection
 position, row virtualisation, level of detail, one canvas, no React element per span, incremental track
 rebuilds keyed by span id.
@@ -279,7 +279,7 @@ keyboard map and the audit are in `M6_3_ACCESSIBILITY.md` (`scripts/timeline-aud
 ## 10. Source layout and ownership
 
 ```
-web/apps/control-tower/src/timeline/
+web/apps/factory-floor/src/timeline/
   contract.ts        the shared types (this document in TypeScript)
   data/              span, mark and concurrency providers: observer and simulation
   tracks/            the hierarchical model, both groupings, filters

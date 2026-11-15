@@ -1,10 +1,10 @@
-# MACH Next — M6.1/M6.2 end-to-end acceptance: a real, authorized Factory run watched live by the Control Tower
+# MACH Next — M6.1/M6.2 end-to-end acceptance: a real, authorized Factory run watched live by the Factory Floor
 
 ## Re-check after the fix rounds (2026-11-12 evening, local; 13 Nov 02:10–03:20 UTC)
 
-Independent re-test of everything that failed or was partial below, against the current code: observer and Control
-Tower at `81dc7cb` (`apps/observer/bin/mach-observer`, built 20:58 from that commit with the current
-`web/apps/control-tower` embedded; asset hashes checked against `web/apps/control-tower/dist`). During the check another
+Independent re-test of everything that failed or was partial below, against the current code: observer and Factory
+Floor at `81dc7cb` (`apps/observer/bin/mach-observer`, built 20:58 from that commit with the current
+`web/apps/factory-floor` embedded; asset hashes checked against `web/apps/factory-floor/dist`). During the check another
 session committed `a0ecc85` (Factory only: supervisor budget, verify/review commands); it does not touch the observer or
 the web app and was only unit-tested here. No model was run, no Factory enabled, no supervisor started. Every observer ran
 on a **copy** of a project with its `.factory/local/observer` removed; the originals were not changed (`diff -rq`, 0
@@ -174,8 +174,8 @@ Severity: Blocker (fails an acceptance rule), High, Medium, Low.
 
 1. **The full supervised path, real, twice** (A observed, B unobserved), from one base:
    - `<scratch>/base` built by the repository's own helpers (`tests/test_mach_product_intake.py` `Base.setUp` + `first()`): a bare origin, a product manager's clone running the real `studio.py` (project, epic, SLICE-001 approved, WAVE-001 approved and **sent** as `product/WAVE-001`), and an engineer's clone that **merged** it and pushed. The intent says **Risk: High**.
-   - In the engineer's clone: an `app/` package, `tests/test_base.py` (passes), canaries (section 10), `bin/mach install --no-studio --no-tower` from this worktree, a real `audit.py run` (**Silver**).
-   - Copied to `A` and `B` (`cp -a`, remotes re-pointed to each copy's own origin). `apps/observer/bin/mach-observer` (built by `SKIP_INSTALL=1 apps/observer/build.sh`, Control Tower embedded) copied to each `.factory/bin/mach-observer`.
+   - In the engineer's clone: an `app/` package, `tests/test_base.py` (passes), canaries (section 10), `bin/mach install --no-studio --no-floor` from this worktree, a real `audit.py run` (**Silver**).
+   - Copied to `A` and `B` (`cp -a`, remotes re-pointed to each copy's own origin). `apps/observer/bin/mach-observer` (built by `SKIP_INSTALL=1 apps/observer/build.sh`, Factory Floor embedded) copied to each `.factory/bin/mach-observer`.
    - In each: `run.py factory enable --autonomy supervised --include-backlog --max-parallel 1 --budget-per-run 5 --budget-per-day 5.5 --max-runs-per-day 2 --max-attempts 1 --max-minutes 40 --max-risk High`, then `--confirm <code>` (authorization machine-local to each scratch folder).
    - `run.py factory tick` in A and B at the same moment: M3 intake and dispatch (`work.scheduled`), the supervisor's claim, and one execution each through MACH's executor and detached wrapper (`--restricted --strict-mcp-config --permission-mode default --permission-prompts none`, the policy's explicit tool list, `--max-budget-usd 5.0`; never `--dangerously-skip-permissions`).
    - A second `tick` on A recovered the first execution and, within the authorization, **started a second execution** (attempt 1 at step `verify`). B was `factory pause`d before its second tick so it would start nothing more. Both were paused, ticked once more to record completion, then `factory disable`d.
@@ -248,7 +248,7 @@ Checked with `[data-stage-active]` scoping, accessible names and the inspector's
 | | Blueprint span: "45 calls · last Bash · calls not observable for workflow agents"; tree item "45 tool calls counted, last tool Bash … Individual calls are not observable". A search of the timeline for tick elements found none, but that selector was guessed, so this one is checked by the accessible names, not proved | | yes (count only) |
 | Workflow (SHIM) | belt, completed 22:53:01, declared phases (7), "a phase list is declared, not entered", 13 agents | `workflow.finished` completed | yes; Record region wrong (D23) |
 
-Honest states seen: "Not recorded" for title, app type, effort, tier, observer lag; cost only per execution and per model; people by role ("approved by a person", supervisor, engineer); source badge "Live Factory" in every live state and "Historical replay" / "Simulation" when chosen; page title "Live Factory: eng · MACH Control Tower", "Historical replay: eng · …", "Simulation (not real execution) · …"; `data-simulation-stamp` count 0 in live and replay. Timeline (live A): tracks "Factory", "LOCAL-001: Awaiting a person", "SLICE-001: Dispatched" (the separate slice track is D5).
+Honest states seen: "Not recorded" for title, app type, effort, tier, observer lag; cost only per execution and per model; people by role ("approved by a person", supervisor, engineer); source badge "Live Factory" in every live state and "Historical replay" / "Simulation" when chosen; page title "Live Factory: eng · MACH Factory Floor", "Historical replay: eng · …", "Simulation (not real execution) · …"; `data-simulation-stamp` count 0 in live and replay. Timeline (live A): tracks "Factory", "LOCAL-001: Awaiting a person", "SLICE-001: Dispatched" (the separate slice track is D5).
 
 ### 5.4 Latency, observer load (measured during the real run)
 

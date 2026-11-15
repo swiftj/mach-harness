@@ -1,14 +1,14 @@
 # M6.5 Factory Analytics: the product owner's acceptance captures
 
 Made on 2026-11-14 between 10:24 and 10:58 UTC by agent `capture65`. Nothing in the product was changed to make
-them. Files are git-ignored: screenshots in `web/apps/control-tower/screenshots/analytics/final/`, recordings in
-`web/apps/control-tower/recordings/analytics/final/`.
+them. Files are git-ignored: screenshots in `web/apps/factory-floor/screenshots/analytics/final/`, recordings in
+`web/apps/factory-floor/recordings/analytics/final/`.
 
 ## What they were made from
 
 - **Web app**: served live by Vite from the working tree. When capture started that tree was `de1ec9b` plus 42
   uncommitted changes; the lead committed them during the run as `6a5caee` and `e76a0d6` (10:30 UTC). No file under
-  `web/apps/control-tower/src` or `web/packages` changed after 10:22 UTC, so the app in every frame is the one
+  `web/apps/factory-floor/src` or `web/packages` changed after 10:22 UTC, so the app in every frame is the one
   committed in **`e76a0d6`**.
 - **Observer**: `mach-observer` built with plain `go build` at 10:23 UTC from the working tree at `de1ec9b` plus its
   uncommitted changes (never `build.sh`). After that, `cmd/mach-observer/{main.go,memlimit.go,memlimit_test.go}`
@@ -345,7 +345,7 @@ Each defect names the capture that shows it. Letters refer to the table above.
 ## Against the owner's criteria, and against the Atlas and Timeline
 
 - **Hierarchy, density, colour**: good. The sheet reads top-down (question, headline sentence with its basis,
-  then sections), and chart density is restrained. Colour stays within the Control Tower's palette: neutral
+  then sections), and chart density is restrained. Colour stays within the Factory Floor's palette: neutral
   marks, green for slices, amber for remediation and missing cost, red for loops back. Light and dark are
   equally finished.
 - **Source and coverage**: strong. Every frame carries the source, window and basis. Coverage and "lower

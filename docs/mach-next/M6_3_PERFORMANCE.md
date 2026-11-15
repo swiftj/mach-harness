@@ -2,7 +2,7 @@
 
 Status: measured on commit `ad925b4` (2026-11-13); results in section 5. The budget is
 `M6_3_DESIGN.md` section 8. This document says what is measured, on what, how, and where the numbers
-go. Nothing here changes what the observer or the Control Tower do.
+go. Nothing here changes what the observer or the Factory Floor do.
 
 ## 1. Budget (design section 8)
 
@@ -14,7 +14,7 @@ On a 200,000-event, 12-cell history:
 | Pan and zoom frames | under 16 ms at the median, 33 ms at the 95th percentile | `panZoom`: animation-frame intervals while panning, zooming and dragging, with main-thread work per frame and long tasks |
 | Scrub response | under 100 ms at the median | `scrub`: playhead move to the end of the next painted frame |
 | Expand or collapse | under 50 ms | `expand`: click to the end of the first frame painted after `aria-expanded` flips |
-| Browser heap | no more than +60 MB over the Factory Floor alone | `heap`: JS heap after a forced GC, floor alone, then with the Timeline up |
+| Browser heap | no more than +60 MB over the Atlas alone | `heap`: JS heap after a forced GC, floor alone, then with the Timeline up |
 | Workspace switch | under 300 ms | `switch`: key `3` and key `1`, key down to the end of the first frame painted in the target workspace |
 | Live edge (not in the budget; recorded) | frames as for pan and zoom | `liveEdge`: frames while a second process appends events to the observed project |
 
@@ -79,7 +79,7 @@ the open build visit every 3 s, a late batch of two lifecycle lines stamped ten 
 
 ### 2.2 Contract-shaped data in memory (node tests, the fake observer)
 
-`web/apps/control-tower/test/fixtures/timeline.mjs`: `spansFixture`, `marksFixture`,
+`web/apps/factory-floor/test/fixtures/timeline.mjs`: `spansFixture`, `marksFixture`,
 `concurrencyFixture`, `densityFixture` and `fakeTimelineData` (a `TimelineData` with binary-searched
 window queries, a cap that sets `truncated`, `nextMark`, `subscribe` and an `advance(ms)` control).
 Defaults: about 60,000 spans of every kind and every duration basis (measured, bounded, inferred,
@@ -88,13 +88,13 @@ open, unknown, and interrupted visits taken up again) and 20,000 marks, made in 
 
 ## 3. The harness
 
-`web/apps/control-tower/scripts/timeline-measure.mjs` with `scripts/timeline-lib.mjs` (modelled on
+`web/apps/factory-floor/scripts/timeline-measure.mjs` with `scripts/timeline-lib.mjs` (modelled on
 `measure.mjs` and `lib.mjs`): the capture build, served on a free port (never 4186), Playwright's
 Chromium, CDP `Performance.getMetrics` and `HeapProfiler.collectGarbage`, an in-page recorder of
 animation frames, long tasks, long animation frames and input-to-frame latency.
 
 ```sh
-cd web/apps/control-tower
+cd web/apps/factory-floor
 # The observer started by the harness on a generated project (cold catch-up measured when the
 # project has no .factory/local/observer yet):
 node scripts/timeline-measure.mjs --project "$SCRATCH/copy-of-synthetic-220k" --observer-bin "$SCRATCH/mach-observer"
@@ -106,7 +106,7 @@ node scripts/timeline-measure.mjs --fixture
 ```
 
 The observer binary: `go build -o "$SCRATCH/mach-observer" ./cmd/mach-observer` in `apps/observer`
-(the placeholder page) or `apps/observer/build.sh` (the Control Tower embedded). When the observer
+(the placeholder page) or `apps/observer/build.sh` (the Factory Floor embedded). When the observer
 serves the placeholder, the harness serves this checkout's capture build itself and forwards
 `/api/` to the observer with the session cookie, so the browser still sees one origin. Each step
 that the interface cannot support yet reports `not measurable yet: <why>` and the run goes on.
@@ -143,7 +143,7 @@ every stream on a proven runtime and no record refused; `/api/v1/spans` held 2,4
 ## 5. Results (2026-11-13, commit `ad925b4`)
 
 Measured on a clean detached checkout of `ad925b4` (the M6.3 tip at the time; the branch has since
-moved). Every figure is from the real `mach-observer` built from that checkout with the Control Tower
+moved). Every figure is from the real `mach-observer` built from that checkout with the Factory Floor
 embedded (`SKIP_INSTALL=1 OUT=... apps/observer/build.sh`), except the simulation rows (the capture
 build). Three runs per workload. "Median" is the median of the three runs' medians; "worst" is the
 single worst observation over all three runs. Misses are stated with their margin and not rounded
@@ -185,7 +185,7 @@ observer indexed 220,267 events and serves 2,420 spans; the Timeline holds all 2
 | (also) | playback keys `,` `.` `Shift+,` `Shift+.` (harness `scrub`) | 16.6 ms (p95 57.2) | p95 60.9 ms | pass |
 | Expand or collapse under 50 ms | one cell (`SYN-001`, `SYN-003`, `SYN-004`), click on the disclosure to the end of the frame after the row says expanded / collapsed | expand 22.8 ms, collapse 20.5 ms | expand 30.2 ms, **collapse 65.8 ms** | median **pass**; worst collapse **miss by 15.8 ms** |
 | (expand all) | every collapsed row in Product grouping, one after another (12 rows) | 22.0 ms per row | **106.4 ms** | median **pass**; worst **miss by 56.4 ms** |
-| Heap: no more than +60 MB over the Factory Floor alone | JS heap after a forced GC: floor alone, then with the Timeline up | +6.7 MB (36.2 to 42.9 MB) | +6.8 MB | **pass** (53.2 MB to spare) |
+| Heap: no more than +60 MB over the Atlas alone | JS heap after a forced GC: floor alone, then with the Timeline up | +6.7 MB (36.2 to 42.9 MB) | +6.8 MB | **pass** (53.2 MB to spare) |
 | Workspace switch under 300 ms | key `3` (floor to Timeline, until ready and painted), 5 per run | 154.2 ms | **503.2 ms** | median **pass**; worst **miss by 203.2 ms** (every run's first switch: 503, 455, 476 ms) |
 | (back) | key `1` (Timeline to floor) | 32.3 ms | 47.6 ms | pass |
 
@@ -354,6 +354,6 @@ node tl-measure.mjs --observer-url $S/synth-b/.factory/local/observer/link --pro
      --observer-pid <pid> --synth-bin $S/bin/mach-synth --append-seconds 60 --append-rate 200 --steps live
 
 # profiles (unminified build of the same commit, served on 4264)
-pnpm exec vite build --minify false --outDir $S/dist-nomin     # in web/apps/control-tower
+pnpm exec vite build --minify false --outDir $S/dist-nomin     # in web/apps/factory-floor
 node profile.mjs <link file> $S/dist-nomin switch|expand|scrub out.json
 ```

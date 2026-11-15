@@ -1,6 +1,5 @@
 """Tests for bin/mach and install.sh: install, update, scaffold and uninstall."""
 
-import contextlib
 import io
 import json
 import os
@@ -45,8 +44,6 @@ class Base(unittest.TestCase):
         # StudioTest and FloorTest cover them.
         for name in ("MACH_STUDIO", "MACH_FLOOR"):
             self.setenv(name, "skip")
-        for name in ("MACH_TOWER", "MACH_TOWER_URL"):  # the Factory Floor's earlier names, still read
-            self.setenv(name, None)
 
     def setenv(self, name, value):
         previous = os.environ.get(name)
@@ -494,44 +491,6 @@ class FloorTest(Base):
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
         self.assertFalse((self.project / mach.FLOOR_DEST).exists())
-
-    def test_the_earlier_names_still_work(self):
-        """The Factory Floor was the Control Tower: --no-tower, MACH_TOWER and MACH_TOWER_URL still work."""
-        self.publish()
-        for command in ("install", "scaffold"):
-            code, out = self.mach(command, "--no-tower")
-            self.assertEqual(code, 0, out)
-            self.assertFalse((self.project / mach.FLOOR_DEST).exists())
-            self.assertIn("The Factory Floor was not installed (skipped).", out)
-        self.setenv("MACH_TOWER", "skip")
-        code, out = self.mach("install")
-        self.assertEqual(code, 0, out)
-        self.assertFalse((self.project / mach.FLOOR_DEST).exists())
-        self.assertIn("The Factory Floor was not installed (skipped).", out)
-        self.setenv("MACH_TOWER", None)
-        data = self.publish()
-        self.setenv("MACH_FLOOR_URL", None)
-        self.setenv("MACH_TOWER_URL", self.release.as_uri())
-        self.assertEqual(mach.floor_base("9.9.9"), self.release.as_uri())
-        code, out = self.mach("install")
-        self.assertEqual(code, 0, out)
-        self.assertEqual((self.project / mach.FLOOR_DEST).read_bytes(), data)
-
-    def test_when_the_new_and_earlier_names_disagree_the_new_one_wins_with_a_note(self):
-        data = self.publish()
-        self.setenv("MACH_FLOOR", "yes")
-        self.setenv("MACH_TOWER", "skip")
-        code, out = self.mach("install")
-        self.assertEqual(code, 0, out)
-        self.assertEqual((self.project / mach.FLOOR_DEST).read_bytes(), data)
-        self.assertEqual([line for line in out.splitlines() if "MACH_TOWER" in line],
-                         ["Note: MACH_FLOOR and MACH_TOWER (its earlier name) disagree; using MACH_FLOOR."])
-        elsewhere = Path(self.tmp.name).resolve() / "elsewhere"
-        self.setenv("MACH_TOWER_URL", elsewhere.as_uri())
-        mach._NOTED.clear()
-        with contextlib.redirect_stdout(io.StringIO()) as note:
-            self.assertEqual(mach.floor_base("9.9.9"), self.release.as_uri())
-        self.assertEqual(note.getvalue(), "Note: MACH_FLOOR_URL and MACH_TOWER_URL (its earlier name) disagree; using MACH_FLOOR_URL.\n")
 
     def test_dry_run_downloads_nothing(self):
         self.publish()

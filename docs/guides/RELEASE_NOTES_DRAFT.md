@@ -30,7 +30,7 @@ Claude Code, `git`, and `python3` 3.8 or later. The GitHub CLI (`gh`) is needed 
 | Product Studio, visual app | Built | Same workspace in a browser on `127.0.0.1`. Product acceptance is terminal-only. |
 | Product intake and scheduling | Built | Takes merged approved waves in, plans by dependency, dispatches on an engineer's word. A revised slice is taken in after its abandoned ticket by itself; for work still in the line a person decides with `product resolve --supersede-in-work`. |
 | Factory supervisor | Built | Off until enabled per machine with a code. Observe and supervised modes. Supervised mode also needs the execution risk accepted with `--accept-execution-risk`. Stops at every human gate. Parks a run that makes no progress at once. |
-| Factory Floor (was Control Tower) | Built | Read-only live view in three workspaces: Atlas, Timeline (Execution Timeline), Analytics. The old installer flag, environment variables and setting (`--no-tower`, `MACH_TOWER`, `MACH_TOWER_URL`, `tower.evidence_media`) still work beside the new `floor` names. |
+| Factory Floor | Built | Read-only live view in three workspaces: Atlas, Timeline (Execution Timeline), Analytics. |
 | Release qualification (new in M7) | Built | `run.py release`: one commit, four outcomes, a deterministic readiness file, an outcome line naming every check not assessed, scanner reports with a required format. |
 | Product acceptance record (new in M7) | Built | `studio.py acceptance record`, bound to the wave as merged at a release and commit. |
 | Installer provenance check (new in M7) | Built | The one-line installer installs a release, verifies its source archive and programs against `SHA256SUMS` and, with `gh`, their build attestation, before any downloaded code runs. |

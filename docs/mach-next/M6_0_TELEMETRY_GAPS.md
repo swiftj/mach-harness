@@ -2,7 +2,7 @@
 
 Owner: Telemetry analyst (M6.0). Read-only analysis of `feature/mach-next-m6-living-factory` at baseline `fb86441` (MACH 0.12.0). No code was changed. Everything below was read from the code. Where a statement is an inference, or is taken from a design document rather than code, it says so.
 
-The question answered: *which M4 telemetry gaps would stop the final Control Tower from showing real execution accurately?* The prototype is driven by a fixture. The real product will be driven by what MACH writes to disk. This document compares the two.
+The question answered: *which M4 telemetry gaps would stop the final Factory Floor from showing real execution accurately?* The prototype is driven by a fixture. The real product will be driven by what MACH writes to disk. This document compares the two.
 
 ---
 
@@ -372,7 +372,7 @@ That is 15 kinds, of which 4 are observer-derived and need no MACH change. It is
 
 ## 8. Reconciliation with the simulation's event catalog
 
-This section was first written before the simulation existed, as notes for its owner. It now records how the catalog that was built (`web/apps/control-tower/src/sim/catalog.ts`, `EVENT_CATALOG`; summarised in `src/sim/README.md` section 7) stands against this document. Checked against the code on `feature/mach-next-m6-living-factory`.
+This section was first written before the simulation existed, as notes for its owner. It now records how the catalog that was built (`web/apps/factory-floor/src/sim/catalog.ts`, `EVENT_CATALOG`; summarised in `src/sim/README.md` section 7) stands against this document. Checked against the code on `feature/mach-next-m6-living-factory`.
 
 - **Envelope.** The fixture uses the real factory-event v2 envelope field for field (`schema_version`, `seq`, `at`, `type`, `project_id`, `source_commit`, `wave_id`, `slice_id`, `revision`, `ticket_id`, `runner_id`, `execution_id`, `source`, `cause`, `refs`, `data`), plus one simulation field, `t` (milliseconds from the scenario start, because `at` has whole seconds only). `M6_0_CONTRACT.md` section 4 now uses the schema's names too, so the earlier mismatch (`event_version`, `kind`) is gone.
 - **Classes.** 51 kinds: 22 `exists`, 25 `derivable`, 4 `missing`. Of the fixture's 2,126 events, 75 are `exists`, 1,940 `derivable` and 111 `missing`.

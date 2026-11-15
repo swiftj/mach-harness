@@ -1,4 +1,4 @@
-# MACH Next — M6.1/M6.2 completion report: production observability and the live Factory floor
+# MACH Next — M6.1/M6.2 completion report: production observability and the live Factory Floor
 
 13 November 2026. Branch `feature/mach-next-m6-1-live-observability`, 21 commits on top of `cac989e` (M6.0 merged).
 This report follows the twelve items the milestone brief asks for. Where a figure was measured by one agent and not
@@ -22,7 +22,7 @@ re-measured independently, it says so.
 | `8df9aaf`, `0cf50ec`, `a9efcba`, `81dc7cb` | First fix round: views, observer, client |
 | `a0ecc85` | Factory: daily budget caps each run; unattended stations use one plain command per call |
 | `b7ede38` | Independent acceptance re-check |
-| `7353ffb`, `c9188ee` | Second fix round: observer idle cost and free-text label; Control Tower re-check defects |
+| `7353ffb`, `c9188ee` | Second fix round: observer idle cost and free-text label; Factory Floor re-check defects |
 
 Nothing is pushed. No tag or release was made.
 
@@ -94,7 +94,7 @@ API under `/api/v1`, GET only, behind the session: `session`, `health`, `factory
 `Last-Event-ID`, heartbeat, gap and reset), `snapshot`, `history`, `series`, `project`, `waves`, `slices`, `cells`,
 `runs`, `runs/{x}/agents|tools`, `spans`, `artifacts`, `artifacts/{id}/content`, `cells/{t}/evidence`,
 `analytics/metrics`, `analytics/runs`. Evidence content goes through a separate route with path validation and
-redaction; media is off unless `tower.evidence_media` is set in `.factory/config.json`.
+redaction; media is off unless `floor.evidence_media` is set in `.factory/config.json`.
 
 ## 6. Remaining telemetry gaps
 
@@ -111,11 +111,11 @@ redaction; media is off unless `tower.evidence_media` is set in `.factory/config
 (section 14) read through `mach-observer` built from `main` at `0fe9e0b`. The captures are generated files and are
 git-ignored, like the M6.0 set; nothing from the run is committed.
 
-- `web/apps/control-tower/screenshots/live/`: 21 screenshots. Atlas at the live edge; the cell, the red-before-green
+- `web/apps/factory-floor/screenshots/live/`: 21 screenshots. Atlas at the live edge; the cell, the red-before-green
   gate with its recorded overrides, the verification verdict, the review consensus with its votes and findings, the
   interrupted build station, an artifact, the line supervisor and a wave selected; the source menu; the connection
   details; the open timeline; a moment between the two runs; the Blueprint, Theater, and both light-theme views.
-- `web/apps/control-tower/recordings/live/real-run-replay.mp4`: 1 min 43 s, real time. Historical replay of the same
+- `web/apps/factory-floor/recordings/live/real-run-replay.mp4`: 1 min 43 s, real time. Historical replay of the same
   history: the first execution on the Atlas, then the second on the Atlas and the Blueprint through both rejected
   review rounds.
 
@@ -123,7 +123,7 @@ Every screenshot is labelled Live Factory and the recording Historical replay; t
 showing Simulation. The browser spoke only to the observer's loopback origin and logged no console error. The page
 text of every screenshot was searched for home paths, account names, addresses, keys and the session link: none.
 
-Found while capturing, and fixed on `fix/control-tower-capture-defects` (the captures above pre-date the fixes):
+Found while capturing, and fixed on `fix/factory-floor-capture-defects` (the captures above pre-date the fixes):
 
 1. **The stage went empty.** Cause: the Atlas and Blueprint viewports were `overflow: hidden`, which still scrolls
    when focus lands on a part outside the visible area (a screen reader or a script; the app's own focus moves
@@ -137,7 +137,7 @@ Found while capturing, and fixed on `fix/control-tower-capture-defects` (the cap
    and that a later execution then finished is marked interrupted: "open for 1 h 0 min, not continuous", with when it
    stopped. A visit that never exited no longer says "ended without an exit record" twice.
 
-Held by `web/apps/control-tower/test/capture-defects.test.mjs` and re-checked in the browser against the same run.
+Held by `web/apps/factory-floor/test/capture-defects.test.mjs` and re-checked in the browser against the same run.
 
 ## 8. Test results
 
@@ -147,7 +147,7 @@ Held by `web/apps/control-tower/test/capture-defects.test.mjs` and re-checked in
 | Go (`go vet`, `go test ./...`, `go test -race ./...`) | all packages pass |
 | Observer build with the app embedded, `smoke.sh` | pass (CSP, no source maps, session, GET only) |
 | Web lint, typecheck, build (three apps) | pass |
-| Control Tower unit tests | 163 pass |
+| Factory Floor unit tests | 163 pass |
 | Product Studio unit tests | 7 pass |
 | Product Studio browser suites (lifecycle, conformance, security, accessibility) | 177 pass |
 | Security: never-does tests (no exec, no write route, no non-loopback bind), fuzz on the parsers | pass |
@@ -181,7 +181,7 @@ Full detail: `M6_2_ACCEPTANCE.md`.
   relative to the project.
 - **Known limit, accepted by the product owner:** a name that appears only in free text (a finding, a verifier's note)
   and that no record or git identity names is served in that document. Such documents carry
-  `free_text: true` and the header `X-MACH-Free-Text: unchecked-for-names`, and the Control Tower labels them
+  `free_text: true` and the header `X-MACH-Free-Text: unchecked-for-names`, and the Factory Floor labels them
   "Free text, not checked for names". Screenshots are not checked for names; media is off by default.
 - Sessions last 12 hours and are stored as an HMAC. A loopback cookie remains reachable by other local processes of the
   same user; that residual risk is the same as M5's.
@@ -222,7 +222,7 @@ Document: `M6_1_SHARED_CONTRACTS.md`.
 ## 13. Final regression
 
 Run on `c9188ee`, the last code commit: Python 590 pass; Go vet, tests and race run pass; observer build and smoke test
-pass; web lint, typecheck and three builds pass; Control Tower 158 and Product Studio 7 unit tests pass; Product Studio
+pass; web lint, typecheck and three builds pass; Factory Floor 158 and Product Studio 7 unit tests pass; Product Studio
 browser suites 177 pass.
 
 ## 14. After the merge: two real supervised runs (13 November 2026)

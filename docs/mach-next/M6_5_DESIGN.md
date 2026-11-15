@@ -6,7 +6,7 @@ and the Analytics workspace; it is extended as increments land.
 ## 1. What existed at the baseline
 
 Baseline suites at `b37c036`: Python 606 pass; Go observer 14 packages pass; web lint, typecheck and build pass;
-Control Tower unit tests 489 pass.
+Factory Floor unit tests 489 pass.
 
 **Metric engine.** The observer already has one: `apps/observer/internal/metrics` keeps mergeable aggregate cells
 (count, sum, min, max, a 64-bucket log histogram, coverage), folded incrementally by
@@ -290,7 +290,7 @@ Changed in M6.6 (Phase 2):
 - **From the Timeline (I-12, I-14).** A selected station visit offers "Open its measured history": Flow for its
   station over the seven UTC days ending with the visit's day; Flow reads the store's one selection and says where
   the visit sits among that period's measured visits ("between A and B, as this one was"), marking it on the
-  histogram. A failed verification or rejected review offers "Show the floor at this moment": the shared playhead
+  histogram. A failed verification or rejected review offers "Show the Atlas at this moment": the shared playhead
   moves to the decision, then the floor shows it with the selection kept.
 - **Back keeps the view (I-15).** Table/Chart toggles, ranking sorts and each area's scroll offset are remembered in
   memory per scene store (codes only, never the address or browser storage), so Back restores them with what the

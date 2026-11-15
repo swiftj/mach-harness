@@ -284,7 +284,7 @@ RUN factory disable
 
 **M5 (Product Studio web app).** Nothing in M4 changes Product Studio. The web app must call `studio.py`'s operations, as the terminal skill does, so both write identical artifacts. It needs no knowledge of the Factory's policy, and must not be given any: a test holds that Product Studio's scripts never name it.
 
-**M6 (Control Tower).**
+**M6 (Factory Floor).**
 
 - **Feed:** `run.py product events --since N`, version 2. One ordered stream covering intake, scheduling and execution.
 - **State:** `run.py factory status` and `run.py product plan` are the read-only snapshots. A dashboard reads these and the paths in `refs`; it never writes.

@@ -304,8 +304,7 @@ with no `.factory/` answers `factory_present: false` and the same keys.
   scrubber would make of it. An ordinary file whose name merely contains such a word (`AC-03-token-refresh.txt`) is
   refused too; open it on disk.
 - **Images and video only when the project opts in:** `.factory/config.json`
-  `{"floor": {"evidence_media": true}}` (tracked; read only; off by default, 403 `media-disabled`;
-  `"tower"`, the earlier name, still works, and `"floor"` wins when both are set).
+  `{"floor": {"evidence_media": true}}` (tracked; read only; off by default, 403 `media-disabled`).
 - **Headers:** `Content-Security-Policy: default-src 'none'; img-src 'self'; media-src 'self';
   sandbox`, `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`,
   `Content-Disposition: inline` (`?download=1` for `attachment`), `X-MACH-Evidence-Match: match`,

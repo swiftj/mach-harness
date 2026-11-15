@@ -1,12 +1,12 @@
 # M6.6 live run and engineer journey
 
-Facts from one short real supervised run on the final commit, with the Control Tower recorded over it. Raw data stays in scratch (`scratchpad/m66/agents/final/`: `logs/`, `out/steps.jsonl`, `out/step13-*.json`, `P/eng`); screenshots and recordings stay in the git-ignored `web/apps/control-tower/screenshots/m66/final/` and `recordings/m66/final/`.
+Facts from one short real supervised run on the final commit, with the Factory Floor recorded over it. Raw data stays in scratch (`scratchpad/m66/agents/final/`: `logs/`, `out/steps.jsonl`, `out/step13-*.json`, `P/eng`); screenshots and recordings stay in the git-ignored `web/apps/factory-floor/screenshots/m66/final/` and `recordings/m66/final/`.
 
 ## 1. Commit and environment
 
-- Commit `e82fe24` (M6.6 worktree HEAD at the start of this run); MACH source exported with `git archive` into `shared/src`; observer `shared/bin/mach-observer` (final build, Control Tower embedded). Nothing was rebuilt.
+- Commit `e82fe24` (M6.6 worktree HEAD at the start of this run); MACH source exported with `git archive` into `shared/src`; observer `shared/bin/mach-observer` (final build, Factory Floor embedded). Nothing was rebuilt.
 - Toolchain as the morning run: Claude Code 2.1.323, Python 3.14, Node 25 with Playwright Chromium (headless, 1512x982 for the journey).
-- Throwaway project `agents/final/P/eng` (library `textkit`; one approved wave of three slices, SLICE-003 depends on SLICE-001), created by `setup.py` through Product Studio's real `send`, engineering merge and `bin/mach install --no-studio --no-tower`. Audit: Silver 70, so every ticket stops at a human gate.
+- Throwaway project `agents/final/P/eng` (library `textkit`; one approved wave of three slices, SLICE-003 depends on SLICE-001), created by `setup.py` through Product Studio's real `send`, engineering merge and `bin/mach install --no-studio --no-floor`. Audit: Silver 70, so every ticket stops at a human gate.
 
 ## 2. Commands (all through `run.py --project <throwaway>`; times UTC, 14 Nov 2026)
 
@@ -33,7 +33,7 @@ No `--dangerously-skip-permissions`, no `--allow-tool`, no `--allow-merge`, no h
 | xe69ffb464082 | LOCAL-002 | 20:32:26 to 20:35:53 | 207 | $1.0321 |
 | Total | | | | $2.1628 |
 
-Two executions, both exit 0, both stopped at the human gate. The Control Tower's Economics showed "$2.16, a lower bound: 2 of 2 (100%) executions with a cost", per ticket $1.08 on 2 tickets: it matches 1.130697 + 1.032128. The limit of 2 runs in 24 hours held SLICE-003 (events seq 33 at 20:39:31: "the limit of 2 executions in 24 hours is reached"); it was never run. LOCAL-002 was left waiting for a person. Wall time of the live part: about 15 minutes.
+Two executions, both exit 0, both stopped at the human gate. The Factory Floor's Economics showed "$2.16, a lower bound: 2 of 2 (100%) executions with a cost", per ticket $1.08 on 2 tickets: it matches 1.130697 + 1.032128. The limit of 2 runs in 24 hours held SLICE-003 (events seq 33 at 20:39:31: "the limit of 2 executions in 24 hours is reached"); it was never run. LOCAL-002 was left waiting for a person. Wall time of the live part: about 15 minutes.
 
 ## 4. The journey, 13 steps
 
@@ -41,7 +41,7 @@ Recorded in three files because the browser was closed on purpose at step 11 and
 
 | # | What was done | Proof (DOM text or record) | Verdict |
 |---|---|---|---|
-| 1 | Opened the one-time link on the real local Factory | Header "MACH Control Tower, Live Factory, Live, eng, real execution of the MACH Factory, live" | PASS |
+| 1 | Opened the one-time link on the real local Factory | Header "MACH Factory Floor, Live Factory, Live, eng, real execution of the MACH Factory, live" | PASS |
 | 2 | Watched approved work scheduled and two cells made | Floor after enabling: "WAVE-001 3 slices", "SLICE-003 WAITS 001", "2 cells"; API cells LOCAL-001 and LOCAL-002 with stage `planned` then building. A first pass ran before the enable and said "Factory not enabled"; it was rerun at 20:33:56 and the rerun is the evidence. No screenshot holds two cells actively building at once (the cells were mostly in planning at the capture); see Defect 5 | PASS (capture caveat) |
 | 3 | Selected LOCAL-001, inspector open | "Cell LOCAL-001 ... Planned ... Progress: 20 tool call(s) so far ... Agent labels: free text, not checked for names" | PASS |
 | 4 | From the inspector to the Timeline | Hash `#timeline?sel=cell:LOCAL-001`, `data-timeline-ready`, 43 spans, selection kept | PASS |

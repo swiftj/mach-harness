@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:mach:schema:factory-event:v3",
   "title": "MACH Factory Event v3 (normalised view)",
-  "description": "One event of the Control Tower's normalised history, as the observer serves it to a client. Version 3 is a VIEW: nothing writes it to .factory/. It is produced by the observer from five sources that stay as they are on disk: the intake log (factory-event v2, unchanged), each cell's lifecycle.jsonl, each execution's started.json and result.json, runs.jsonl, and each execution's stream.jsonl. Every field here is browser-safe by construction; fields that never leave the observer are listed in M6_1_EVENT_CONTRACT.md section 9. This schema is strict for producers (conformance tests); consumers must ignore unknown fields and kinds within version 3. Design: docs/mach-next/M6_1_EVENT_CONTRACT.md.",
+  "description": "One event of the Factory Floor's normalised history, as the observer serves it to a client. Version 3 is a VIEW: nothing writes it to .factory/. It is produced by the observer from five sources that stay as they are on disk: the intake log (factory-event v2, unchanged), each cell's lifecycle.jsonl, each execution's started.json and result.json, runs.jsonl, and each execution's stream.jsonl. Every field here is browser-safe by construction; fields that never leave the observer are listed in M6_1_EVENT_CONTRACT.md section 9. This schema is strict for producers (conformance tests); consumers must ignore unknown fields and kinds within version 3. Design: docs/mach-next/M6_1_EVENT_CONTRACT.md.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -258,7 +258,7 @@
                                            "maxLength": 300
                                          },
                                 "uniqueItems": true,
-                                "description": "Every entity this event touches, as the Control Tower's kind:id refs. Computed by the observer; views never derive them."
+                                "description": "Every entity this event touches, as the Factory Floor's kind:id refs. Computed by the observer; views never derive them."
                               },
                   "parent": {
                               "type": ["string", "null"],

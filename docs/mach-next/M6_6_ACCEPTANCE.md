@@ -1,6 +1,6 @@
-# MACH Next M6.6: Control Tower integration and production hardening — acceptance report
+# MACH Next M6.6: Factory Floor integration and production hardening — acceptance report
 
-M6.6 made the three Control Tower workspaces (Factory Floor, Execution Timeline, Factory Analytics) behave as
+M6.6 made the three Factory Floor workspaces (Atlas, Execution Timeline, Factory Analytics) behave as
 one product, checked them against real MACH Factory execution, and hardened the observer boundary. It added no
 workspace and no execution authority. The full Evidence Theater stays deferred.
 
@@ -10,15 +10,15 @@ Companion documents: `M6_6_PERFORMANCE.md`, `M6_6_ACCESSIBILITY.md`, `M6_6_RELIA
 ## 1. Baseline and commits
 
 - Baseline: `20326ab` on `main`, the merge of M6.5. The M6.5 branch had been merged and deleted.
-- Branch: `feature/mach-next-m6-6-control-tower-hardening`, in its own worktree. `main` was not touched.
+- Branch: `feature/mach-next-m6-6-factory-floor-hardening`, in its own worktree. `main` was not touched.
 - Baseline regression on `20326ab` before any change: Go vet and tests pass (16 packages), web lint, typecheck
-  and build pass, Control Tower unit tests 602 of 602, Python 630 pass (1 skipped).
+  and build pass, Factory Floor unit tests 602 of 602, Python 630 pass (1 skipped).
 
 | Commit | What |
 |---|---|
 | `071e186` | Three stale facts in `CLAUDE.md` |
 | `d9edd9a` | Observer: real-run defects and security fixes |
-| `aa5d9be` | Control Tower: replay, states, time wording, free-text containment, journeys |
+| `aa5d9be` | Factory Floor: replay, states, time wording, free-text containment, journeys |
 | `4180c16` | Design notes brought in line |
 | `cc37615` | Rules review and packaging validation; two small fixes |
 | `359995b` | Two cost rules counted failed executions as missing a cost |
@@ -39,7 +39,7 @@ Companion documents: `M6_6_PERFORMANCE.md`, `M6_6_ACCESSIBILITY.md`, `M6_6_RELIA
 - Day-counted figures say which UTC day they stop at and which parts of an area are cut at the playhead
   exactly. A window is never inverted. An observer without replay-moment support gets "not available".
 - Journey links: a station visit opens its measured history in Flow; a failed verification or rejected review
-  offers "Show the floor at this moment"; Back restores an Analytics view's sort, toggles and scroll.
+  offers "Show the Atlas at this moment"; Back restores an Analytics view's sort, toggles and scroll.
 - One duration and basis vocabulary across Analytics, the Timeline and the observer's insight text.
 
 **What the real runs exposed** (section 5)
@@ -70,7 +70,7 @@ Companion documents: `M6_6_PERFORMANCE.md`, `M6_6_ACCESSIBILITY.md`, `M6_6_RELIA
 
 | Limitation | Severity |
 |---|---|
-| Floor-to-Timeline switch on a 240,000-event history: 598–874 ms against a 300 ms budget (was 2.0–4.9 s) | Should-fix |
+| Atlas-to-Timeline switch on a 240,000-event history: 598–874 ms against a 300 ms budget (was 2.0–4.9 s) | Should-fix |
 | Blueprint navigation and zoom, and observer CPU per appended event (1.65 ms against 1 ms), over budget on M6.5 and M6.6 alike | Should-fix |
 | A supervisor hold cannot be shown as "waiting on a person": the Factory records the reason as prose with no code | Needs a Factory-side change |
 | Repeated cell lifecycle lines are counted again (lifecycle lines carry no identity) | Should-fix, known since M6.2 |
@@ -144,7 +144,7 @@ event. The first two are fixed in the commit after `e82fe24`; none was must-fix.
 
 ## 7. Screenshots and recordings
 
-Git-ignored, in the worktree under `web/apps/control-tower/`: `screenshots/m66/real/` and
+Git-ignored, in the worktree under `web/apps/factory-floor/`: `screenshots/m66/real/` and
 `recordings/m66/real/` (live run 1 and the replay, on the baseline build), `screenshots/m66/final/` and
 `recordings/m66/final/` (final build). Agents did not review the final set as images; it is for the product
 owner to look through. Intermediate sets (`states/`, `floor/`, `words/`) predate later fixes.
@@ -213,8 +213,8 @@ Run by the lead on the final tree. The browser suites ran on `e82fe24`, one comm
 | Go vet and tests, 16 packages | synthetic and recorded-shape | pass |
 | Python `make test` | fixtures | 631 run, pass (1 skipped) |
 | Web lint, typecheck, build | — | pass |
-| Control Tower unit tests | fixtures | 692 of 692 |
-| Tower guards, observe parity | — | pass |
+| Factory Floor unit tests | fixtures | 692 of 692 |
+| Factory Floor guards, observe parity | — | pass |
 | Analytics and journey browser tests | synthetic, real observer | 36 pass, 1 skip |
 | Timeline browser tests | synthetic and a recorded real run | 32 pass |
 | Recovery scenarios | replayed real records | 10 pass, 2 partial, 1 fail (`M6_6_RELIABILITY.md`) |
@@ -240,7 +240,7 @@ recovery scenarios 4 and 8 after their fixes.
 
 ## 14. Recommendation
 
-The Control Tower is ready for release-candidate testing by engineers on their own machines, with three
+The Factory Floor is ready for release-candidate testing by engineers on their own machines, with three
 conditions: a person runs the manual accessibility checklist and looks through the final captures; the
 product owner accepts R1 for that environment; a release is tagged so the per-platform builds, attestation
 and installer download can be checked. It is not ready for an environment that requires confidentiality of
@@ -256,5 +256,5 @@ free text.
 5. Verify release provenance in the installer (attestation, not only the checksum file).
 6. A screen-reader pass and a real Safari pass, and the remaining 320 px items.
 7. A live run that includes a rejection and remediation, and a supervisor restart, observed through the
-   Control Tower.
+   Factory Floor.
 8. The Evidence Theater, on the guarded artifact access that exists.

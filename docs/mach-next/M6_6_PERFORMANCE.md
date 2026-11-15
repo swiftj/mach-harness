@@ -1,4 +1,4 @@
-# M6.6 Control Tower: performance and memory
+# M6.6 Factory Floor: performance and memory
 
 Measured on 2026-11-14 at `4180c16` (clean tree) against a build of `20326ab` (M6.5) on the same history.
 Changed as a result: `timeline/tracks/build.ts` (section 4.1) and two tests; the observer is unchanged.
@@ -9,7 +9,7 @@ Changed as a result: `timeline/tracks/build.ts` (section 4.1) and two tests; the
   built from this tree (the generator last changed in `d9edd9a`, after both of M6.5's corrections): 239,996
   events, 330 cells; the observer indexes 246,257. Every observer run starts from a fresh copy.
 - **Binaries**: `mach-observer` from `go build ./cmd/mach-observer` at `4180c16` and from
-  `git archive 20326ab apps/observer` (plain `go build`, no embedded app). The Control Tower of each commit is a
+  `git archive 20326ab apps/observer` (plain `go build`, no embedded app). The Factory Floor of each commit is a
   production `vite build` (the `20326ab` copy installed offline: dependencies are identical), served by a small
   same-origin static server that forwards `/api/` to that commit's observer. Unminified builds of both were used
   only for CPU profiles.

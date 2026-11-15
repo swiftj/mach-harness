@@ -43,7 +43,7 @@ Suggested branch: `feature/mach-next-product-studio-supervisor`. Keep `main` unt
 - UI and terminal invoke same domain API, not separate business rules.
 - **Pass:** PM completes entire workflow without understanding git, gh, tickets, branches or build toolchains.
 
-## M6 — Control Tower
+## M6 — Factory Floor
 
 - Local Go observer and event store; immutable correlated events and authoritative stage snapshots; SSE with replay cursor and reconnection.
 - React Flow/ELK graph for factory floor; rich timeline, evidence inspector, animations and project-level progress semantics.

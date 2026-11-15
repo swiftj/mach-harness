@@ -210,7 +210,13 @@ func TestTheStartTokenIsNeededAndWorksOnce(t *testing.T) {
 		t.Fatalf("a reused token: %d %v", again.StatusCode, again.Cookies())
 	}
 	forged := *h
-	forged.cookie = &http.Cookie{Name: security.CookieName, Value: h.cookie.Value[:len(h.cookie.Value)-1] + "A"}
+	// Change the first character to a different one. (Replacing the last character with a fixed letter made
+	// this test fail about one run in sixty-four: the real value sometimes already ended in that letter.)
+	swap := "A"
+	if h.cookie.Value[0] == 'A' {
+		swap = "B"
+	}
+	forged.cookie = &http.Cookie{Name: security.CookieName, Value: swap + h.cookie.Value[1:]}
 	status, env = forged.call("GET", "/api/session", "", nil)
 	expect(t, status, env, 401, engine.KindUnauthorized)
 

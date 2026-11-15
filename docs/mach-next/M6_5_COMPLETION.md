@@ -26,7 +26,7 @@ About 50,000 lines added in 218 files against the baseline. Later commits, if an
 
 **Existed at the baseline.** An incremental metric engine in the observer (47 catalogued metrics, 35 returning a
 value), two routes (`/api/v1/analytics/metrics`, `/analytics/runs`) answering at the head only, with one
-grouping and a per-day period. No analytics in the Control Tower.
+grouping and a per-day period. No analytics in the Factory Floor.
 
 **New.** Time windows, a "last N runs" population, cursors, two-way grouping, day and week trend buckets,
 distributions, basis counts and coverage on every metric; flow, bottleneck, contributor and insight routes; an
@@ -113,7 +113,7 @@ and leave out verdicts, percentiles, trends and comparison wording.
 
 ## 7. Screenshots and recordings
 
-In the git-ignored `web/apps/control-tower/screenshots/analytics/final/` and
+In the git-ignored `web/apps/factory-floor/screenshots/analytics/final/` and
 `recordings/analytics/final/`: 104 screenshots (99 a live observer reading synthetic projects, named `syn-`; 3
 Historical replay; 2 Simulated), three contact sheets and four recordings, made at `e76a0d6`. `M6_5_CAPTURES.md`
 lists each file, the figure-against-API comparisons, the privacy and request checks, and the defects the set
@@ -207,8 +207,8 @@ On the final commit, run by the lead on a quiet machine unless stated:
 | Python (`make test`) | 630 pass, 1 skipped (run at `23f0aea`; no Python changed afterwards) |
 | Go observer (`go vet`, `go test ./...`) | all packages pass, including 30 hand-calculated scenario tests |
 | Web lint, typecheck, build | pass |
-| Control Tower unit tests | 602 pass |
-| Observe parity, Tower guard | 15 pass, 1 skipped |
+| Factory Floor unit tests | 602 pass |
+| Observe parity, Factory Floor guard | 15 pass, 1 skipped |
 | Analytics browser suite (run by an agent on the final commit) | 31 pass, 1 deliberate skip, 0 failed, of 32; the fresh-page Timeline landing test passes 10 of 10 |
 
 The scenario suite covers the twenty cases of the brief, six comparison cases and an invariance test (arrival
@@ -258,7 +258,7 @@ number, so a repeated gate or build-task line counts twice.
   not re-measured. The performance figures were taken before two corrections to the synthetic generator.
 - The Analytics trend charts keep their own day labels rather than the Timeline's ruler; only the
   work-in-parallel panel uses it.
-- One Control Tower unit test failed once under load and passed on every rerun; it was not traced.
+- One Factory Floor unit test failed once under load and passed on every rerun; it was not traced.
 - The remaining visual and wording items are listed in `M6_5_CAPTURES.md`.
 
 ## 18. M6.6 readiness

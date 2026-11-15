@@ -22,10 +22,10 @@ revise the slice through Studio's own commands. The revisions were made from a f
 | | |
 |---|---|
 | MACH | `git archive` of M7 worktree HEAD **`b73c025b6f274bb6624d6057346d87721dc0c6e7`** (clean tree) into `scratch/src` |
-| Upgrade | `bin/mach install --project <eng> --no-studio --no-tower` from the snapshot; committed `5ab20e4` ("upgrade MACH to b73c025") and pushed. PM clones `pma`, `pmb`: `git pull`, then the same install. Each rewrote the tracked manifest, dropping `mach-studio`, as N11 in run 2 did; restored with `git checkout` |
+| Upgrade | `bin/mach install --project <eng> --no-studio --no-floor` from the snapshot; committed `5ab20e4` ("upgrade MACH to b73c025") and pushed. PM clones `pma`, `pmb`: `git pull`, then the same install. Each rewrote the tracked manifest, dropping `mach-studio`, as N11 in run 2 did; restored with `git checkout` |
 | Project | engineer clone `scratchpad/m7/agents/pm/world/eng`, remote `github.com/swiftj/mach-m7-acceptance`. PM clones `world/pma`, `world/pmb`, and a new `world/pmc` (PM A's identity and HOME, see deviation 1) |
 | Identities | engineer: `GIT_CONFIG_GLOBAL=world/home-eng/.gitconfig`. PMs: through the PM agent's `w.py` (separate HOME and Git identity; the token is only in the environment) |
-| Observer | built from the snapshot with `go build` only (`apps/observer`, the placeholder UI, **no Control Tower page**). Used for one API read in C4 |
+| Observer | built from the snapshot with `go build` only (`apps/observer`, the placeholder UI, **no Factory Floor page**). Used for one API read in C4 |
 | Scratch | `scratch` = `/private/tmp/claude-501/-Users-johnswift-Projects-mach-harness/4cf98ed8-7452-4d90-8d38-55769b828040/scratchpad/m7/agents/live3`: `logs/`, `api/`, `tools/`, `PROGRESS.md` |
 
 ### Commands (in order; `R` = `run.py --project <eng>`, `S <station>` = that station's script in the clone, `PM A/B/C` = `studio.py` as that PM)
@@ -122,7 +122,7 @@ revise the slice through Studio's own commands. The revisions were made from a f
    one eligible ticket, nothing else would have started anyway.
 5. **Release qualification was run twice** (§3). The second run used the osv report with the real exit code and source
    count added (the facts in `logs/scans/osv.log`). That report file is a scanner input, not a MACH state file.
-6. The observer was built API-only (`go build`, placeholder page), not with `build.sh` and the Control Tower. Its
+6. The observer was built API-only (`go build`, placeholder page), not with `build.sh` and the Factory Floor. Its
    one-time link went to `logs/observer.out` (loopback, used once). Nothing was checked on a page.
 7. The day limits were set from my reading of the ledger with `supervisor.allowance`'s rule (`logs/32`), not from a
    figure `factory status` prints. It prints none: a small gap, noted, not a defect.
@@ -130,7 +130,7 @@ revise the slice through Studio's own commands. The revisions were made from a f
 ## 6. Not shown
 
 - The emergency `factory stop` path was not exercised (the watcher never fired).
-- No Control Tower page was checked; `/api/v1/runs` only.
+- No Factory Floor page was checked; `/api/v1/runs` only.
 - osv-scanner had no dependency manifest to read; no dependency scan of substance. `performance_command` not
   configured.
 - One run, each check once, a local multi-clone setup on one Mac (not separate machines).

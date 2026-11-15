@@ -9,11 +9,11 @@
 | Commit | Subject |
 |---|---|
 | `19b6e20` | feat(ui): no serif face; titles and place names are the sans set bold |
-| `3d6c463` | fix(control-tower): Blueprint station lines no longer print on top of each other |
-| `2cb599e` | fix(control-tower): Blueprint callouts stay in view, corner controls never overlap, minimap is one keyboard control, consensus counts read true |
-| `6c348ef` | fix(control-tower): one placement pass for Atlas labels; no overlapping callouts; opaque selection label |
-| `575790e` | fix(control-tower): inspector times and review counts read true; hidden view catches up after a jump and rests while scrubbing |
-| `f9fe87e` | chore(control-tower): remove the WebGL light layer experiment and the PixiJS dependency |
+| `3d6c463` | fix(factory-floor): Blueprint station lines no longer print on top of each other |
+| `2cb599e` | fix(factory-floor): Blueprint callouts stay in view, corner controls never overlap, minimap is one keyboard control, consensus counts read true |
+| `6c348ef` | fix(factory-floor): one placement pass for Atlas labels; no overlapping callouts; opaque selection label |
+| `575790e` | fix(factory-floor): inspector times and review counts read true; hidden view catches up after a jump and rests while scrubbing |
+| `f9fe87e` | chore(factory-floor): remove the WebGL light layer experiment and the PixiJS dependency |
 
 In detail:
 
@@ -25,7 +25,7 @@ In detail:
 
 ### 0.2 Decisions
 
-- **The WebGL light layer was removed.** The brief asked for the experiment. It was built on PixiJS 8 and measured (sections 1 and 4 below record it). It was rejected because its glow sat above the whole drawing, covering machines, agents and text; it cost about 0.8 ms per frame; and as decoration it could carry no information the drawing did not already have. It was removed with the PixiJS dependency on the product owner's decision on 2026-11-12, in the commit "chore(control-tower): remove the WebGL light layer experiment and the PixiJS dependency". The code is in Git history if a WebGL renderer is ever wanted, most plausibly for scale (many more cells than SVG can hold), which was never measured.
+- **The WebGL light layer was removed.** The brief asked for the experiment. It was built on PixiJS 8 and measured (sections 1 and 4 below record it). It was rejected because its glow sat above the whole drawing, covering machines, agents and text; it cost about 0.8 ms per frame; and as decoration it could carry no information the drawing did not already have. It was removed with the PixiJS dependency on the product owner's decision on 2026-11-12, in the commit "chore(factory-floor): remove the WebGL light layer experiment and the PixiJS dependency". The code is in Git history if a WebGL renderer is ever wanted, most plausibly for scale (many more cells than SVG can hold), which was never measured.
 - **React Flow (`@xyflow/react`) stays installed although nothing in the app imports it.** The Blueprint remains one hand-drawn SVG. It was kept on the product owner's decision, to be considered for future features where it adds real value (editing a graph, free-form layouts, very large graphs), not adopted by default.
 
 ### 0.3 The 14 earlier defects, now
@@ -92,7 +92,7 @@ The 94 screenshots were re-taken after the typeface change but **before** the se
 
 The rest of this document is the independent re-measure of the Living Factory prototype after the first defect-fix round (branch `feature/mach-next-m6-living-factory`, HEAD `8a83ab0`; the fixes are `b124554..8a83ab0`). The first report measured `34e5f39`; where both exist, the tables give **before → after**. Everything was measured on the **capture build** (`vite build --mode capture`: the production build plus the `window.__machSim` hook; the production build has the same bundle size). The prototype is a simulation; so is everything in the screenshots and recordings.
 
-Evidence: `web/apps/control-tower/screenshots/` (README lists every file), `screenshots/_perf/report.json`, `_a11y/report.json`, `_honesty/report.json`, `_layout/report.json`, and `web/apps/control-tower/recordings/`. Scripts: `web/apps/control-tower/scripts/{lib,capture,record,measure,audit,honesty}.mjs`.
+Evidence: `web/apps/factory-floor/screenshots/` (README lists every file), `screenshots/_perf/report.json`, `_a11y/report.json`, `_honesty/report.json`, `_layout/report.json`, and `web/apps/factory-floor/recordings/`. Scripts: `web/apps/factory-floor/scripts/{lib,capture,record,measure,audit,honesty}.mjs`.
 
 **What changed in the app that the scripts had to follow.** The stage now keeps both views mounted; the inactive one is `visibility: hidden`, `inert` and `aria-hidden`, but still has layout boxes and DOM, so every selector, box and count is scoped to `[data-stage-active]`. The light layer's canvas was `.atlas-effects-layer canvas` (the first canvas on the page is the timeline's); the layer has since been removed (section 0.2). Atlas arrows are spatial, so reachability is now proved by building the arrow graph (every arrow from every entity) and searching it from the entry point. The timeline starts as a one-row summary, the inspector is narrower (344 / 368 px), the mode switch is a flat 700 ms fold (a cut under reduced motion), and the Blueprint at Fit draws simplified marks.
 

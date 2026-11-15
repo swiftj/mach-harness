@@ -1,6 +1,6 @@
 # MACH Next — Design system
 
-The visual language and the shared frontend foundation for MACH's browser experiences: **Product Studio** (M5) and **Control Tower** (next). One family, two products. This file is the reference for anyone building screens; the code is `web/packages/ui` (`@mach/ui`) and the living specimen is `web/apps/showcase`.
+The visual language and the shared frontend foundation for MACH's browser experiences: **Product Studio** (M5) and **Factory Floor** (next). One family, two products. This file is the reference for anyone building screens; the code is `web/packages/ui` (`@mach/ui`) and the living specimen is `web/apps/showcase`.
 
 ```
 pnpm install                 # in web/
@@ -26,7 +26,7 @@ pnpm contrast                # prints the contrast table below
 
 | Name | Hex | Role |
 |------|-----|------|
-| charcoal | `#141413` | Ink in light; the Control Tower canvas |
+| charcoal | `#141413` | Ink in light; the Factory Floor canvas |
 | cream | `#FAF9F5` | The Product Studio canvas |
 | terracotta | `#D97757` | Brand accent: primary action, current place. Never body text on cream (2.96:1) |
 | blue | `#6A9BCC` | Information, in progress, focus family |
@@ -155,7 +155,7 @@ Rules: sentence case everywhere; no all-caps labels; no eyebrow above a heading;
 - **Spacing** is Tailwind's 4px step. Inside a panel: 8, 12, 16. Between groups: 24. Between sections: 32–40. Page padding: 40px horizontal, 32px top.
 - **Control heights**: 28 (`sm`, toolbars), 36 (`md`, default), 44 (`lg`, the main act of a page). Every target is at least 24×24 (WCAG 2.5.8).
 - **Radius by hierarchy**: `xs` 3px (tags, IDs, keys), `sm` 5px (controls), `md` 8px (panels, banners, graph nodes), `lg` 12px (dialogs, sheets, popovers), `full` (status pills). Nothing else.
-- **Density**: Product Studio is comfortable (`--mach-density: 1`). Control Tower sets 0.875, intended for its tables and logs. No component reads it yet; Control Tower's first dense components should scale row height and padding by it.
+- **Density**: Product Studio is comfortable (`--mach-density: 1`). Factory Floor sets 0.875, intended for its tables and logs. No component reads it yet; Factory Floor's first dense components should scale row height and padding by it.
 - **Shell**: rail 248px (64px collapsed), top bar 56px, content max 1200px, reading measure 68ch. Only `<main>` scrolls; the page never scrolls sideways.
 
 ## 5. Surfaces, borders, elevation
@@ -189,7 +189,7 @@ Shadows are tinted charcoal, never grey-blue. In dark, elevation shows mainly as
 
 - **Rail** (`NavRail`, `NavSection`, `NavItem`): the current page has `aria-current="page"`, an accent bar, `accent-soft` fill and `accent-ink` label. Below 1180px the rail collapses to icons by itself; the person can toggle it. Collapsed items keep their name (tooltip and `aria-label`), and a badge becomes a dot.
 - **Top bar** (`TopBar`): where you are on the left; status (connection) then at most one primary action on the right.
-- **Connection** (`ConnectionIndicator`): two separate links, each with icon and words. *Host*: Connecting, Connected, Host not responding, Session ended. *Shared project*: Refreshed 14:32, Not refreshed yet, Shared project unreachable (with the engine's `problem` in the popover). Changes are announced through a polite live region. Control Tower uses the host half only.
+- **Connection** (`ConnectionIndicator`): two separate links, each with icon and words. *Host*: Connecting, Connected, Host not responding, Session ended. *Shared project*: Refreshed 14:32, Not refreshed yet, Shared project unreachable (with the engine's `problem` in the popover). Changes are announced through a polite live region. Factory Floor uses the host half only.
 - **Skip link**: "Skip to content" is the first tab stop.
 - **Theme**: `ThemeProvider` sets `data-theme` and `data-product` on `<html>`. `ThemeSwitch` offers Light, Dark, System as a radio group; the choice is stored in `localStorage` (guarded; it falls back to the system).
 
@@ -282,7 +282,7 @@ Easings: standard `cubic-bezier(0.2,0,0,1)`, enter `(0,0,0,1)`, exit `(0.4,0,1,1
 - **Node states** add a border style so state reads without colour: proposed (dashed), interviewing / ready / approved / submitted (solid), accepted (double), blocked (heavy, danger), superseded (dashed, faded). Mapping from the engine is presentation only (`sliceGraphState`): a slice's status, raised to submitted when its wave was sent, accepted or blocked when review said so.
 - **Edges**: *contains* (project → epic → slice) thin solid `graph-edge`, recedes; *depends* dashed `graph-edge-dependency` with an arrowhead, drawn from the prerequisite to the slice that needs it, so the left-to-right order is delivery order.
 - **Interaction**: no dragging or connecting (structure changes go through the engine). Tab moves between nodes, Enter or Space selects, the focus ring sits 3px outside the node. Zoom controls bottom right.
-- **Control Tower** adds kinds (station, cell, agent) and states with the same vocabulary; it keeps the glyphs and border semantics.
+- **Factory Floor** adds kinds (station, cell, agent) and states with the same vocabulary; it keeps the glyphs and border semantics.
 
 ## 12. Accessibility and keyboard
 
@@ -303,17 +303,17 @@ MACH targets laptops: 1280–1728px wide, and a narrower 1100px layout.
 
 - **≥ 1180px**: rail expanded (248px).
 - **1100–1179px**: rail collapses to 64px icons by itself; content keeps its 40px padding.
-- **Below 1024px**: the shell keeps a 1024px minimum width rather than reflowing into a phone layout; Product Studio and Control Tower are desk tools. (Revisit if a tablet use appears.)
+- **Below 1024px**: the shell keeps a 1024px minimum width rather than reflowing into a phone layout; Product Studio and Factory Floor are desk tools. (Revisit if a tablet use appears.)
 - Grids of specimens and panels use fractional columns with `minmax(0, 1fr)` so long IDs and paths wrap instead of overflowing; reading text never exceeds 68ch at any width.
 - The capture script checks that neither the page nor `<main>` scrolls horizontally at 1440 and 1100.
 
-## 14. Product Studio and Control Tower: one family
+## 14. Product Studio and Factory Floor: one family
 
-| | Product Studio | Control Tower |
+| | Product Studio | Factory Floor |
 |---|---|---|
 | Who | Product managers, founders | Engineers running the Factory |
 | Character | Warm, calm, editorial, legible | Dark, cinematic, technical, precise |
-| Default theme | System (light paper) | Dark (`product="control-tower"` defaults to dark) |
+| Default theme | System (light paper) | Dark (`product="factory-floor"` defaults to dark) |
 | Display face | Source Sans 3, bold | Source Sans 3, bold |
 | Density | Comfortable | Compact (`--mach-density: 0.875`) |
 | Mono | Identifiers only | Identifiers, logs, durations, event streams |

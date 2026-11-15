@@ -42,7 +42,7 @@ No Blocker was found by this work. T1 and T2 should be decided before the releas
    tests, code, evidence and findings. The model is untrusted relative to the script.
 9. **The cell**: a Git worktree on `feature/<ticket>`; the generated code and its build/test commands run here with
    the engineer's privileges.
-10. **Observer and Control Tower** (`apps/observer`): read-only, loopback, GET only (`M6_5_SECURITY.md` §8).
+10. **Observer and Factory Floor** (`apps/observer`): read-only, loopback, GET only (`M6_5_SECURITY.md` §8).
 11. **Installer and release**: `install.sh`, `bin/mach`, `.github/workflows/release.yml`.
 
 | Boundary | Crosses it | Enforced by | Weakest point |
@@ -131,7 +131,7 @@ software"; **Minor** for the claim actually made (reviewed, with a release gate 
 Observer column: from `M6_5_SECURITY.md` §8 and `M6_6_ACCEPTANCE.md` §8 (not redone here). Studio column: code read
 here and the tests named.
 
-| Requirement | Product Studio host | Control Tower observer |
+| Requirement | Product Studio host | Factory Floor observer |
 |---|---|---|
 | Loopback only | **Met.** `server.go:32-37` binds `tcp4 127.0.0.1`, port only. `TestOnlyTheLoopbackInterfaceIsBound`, (M7) `TestM7TheHostBindsLoopbackOnly` | **Met.** §8 M6.6 |
 | No wildcard or LAN listener | **Met.** No flag or env selects an address; (M7) dial to each non-loopback IPv4 refused | **Met.** §8 |
@@ -139,7 +139,7 @@ here and the tests named.
 | Host and Origin validation | **Met.** `session.go:99-126`. (M7) 9 Host and 8 Origin spellings refused | **Met.** §8 |
 | CSRF and DNS rebinding | **Met.** CSRF header token, served only to the session; exact Host. (M7) `TestM7NoCSRFTokenWithoutTheSession` | **Met** (GET only, Host/Origin/Fetch-Site). §8 |
 | Safe Markdown and untrusted text | **Met as far as read:** no `innerHTML`/`dangerouslySetInnerHTML` in `web/apps/product-studio/src`; CSP `script-src 'self'`. A rendered-page attack was **not assessed** here | **Met** with labels; R1 open (below) |
-| Artifact access control | **Met.** Only this project's draft spec/why by validated slice ID (`security/drafts.go`); `TestDraftWritesAreCheckedAndConfined`, `TestSymlinkAttacksOnDraftWrites`, (M7) `TestM7DraftsOutsideTheWorkspaceAreRefused` | **Met.** Evidence media only with `tower.evidence_media`; §8 |
+| Artifact access control | **Met.** Only this project's draft spec/why by validated slice ID (`security/drafts.go`); `TestDraftWritesAreCheckedAndConfined`, `TestSymlinkAttacksOnDraftWrites`, (M7) `TestM7DraftsOutsideTheWorkspaceAreRefused` | **Met.** Evidence media only with `floor.evidence_media`; §8 |
 | No arbitrary file reads | **Met.** No route takes a path; unknown JSON fields refused (`args.go` `Decode`). (M7) `TestM7ArgumentsCannotBecomeOptionsOrPaths` | **Met.** §8 |
 | No browser-triggered shell | **Met.** Fixed operation list (`engine/ops.go:400-430`) run as argv to `studio.py`; none starts a station, dispatches or enables. (M7) `TestM7OnlyListedOperationsExist`. The interview turn is a restricted `claude -p` (2.4) | **Met.** Starts no process. §8 |
 | No credential exposure | **Met.** Child env filtered (`engine.go:252`); logs hold no token (`TestLogsHoldNoSecretsOrContents`) | **Met.** §8 |
