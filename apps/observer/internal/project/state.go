@@ -577,6 +577,9 @@ type HumanGate struct {
 	SliceID  string `json:"slice_id,omitempty"`
 	Round    *int64 `json:"round"`
 	Reason   string `json:"reason,omitempty"`
+	// Code is why the supervisor parked the ticket, when the execution it parked after recorded it:
+	// not_progressing (workflow-stuck | same-refusal, M7). The words are the page's.
+	Code     string `json:"code,omitempty"`
 	Opened   *Stamp `json:"opened"`
 	Closed   *Stamp `json:"closed"`
 	ClosedBy string `json:"closed_by,omitempty"`
@@ -618,16 +621,18 @@ type Execution struct {
 	// claimed it, with nothing started: the supervisor released the claim without starting it
 	// (ledger state "released", how "not-started"; M7 D10). Reconstructed from the pass, never
 	// set once anything of the execution started or ended.
-	Released     *Stamp               `json:"released,omitempty"`
-	Usage        *Usage               `json:"usage"`
-	Session      *Session             `json:"session"`
-	Workflows    map[string]*Workflow `json:"workflows"`
-	Agents       map[string]*Agent    `json:"agents"`
-	Queued       map[string]*Agent    `json:"queued"`
-	Tools        map[string]*Tool     `json:"tools"`
-	ToolsDropped int64                `json:"tools_dropped"`
-	Refused      []Refusal            `json:"refused"`
-	Visits       []string             `json:"visits"`
+	Released *Stamp `json:"released,omitempty"`
+	// NotProgressing is execution.failed's not_progressing (workflow-stuck | same-refusal; M7).
+	NotProgressing string               `json:"not_progressing,omitempty"`
+	Usage          *Usage               `json:"usage"`
+	Session        *Session             `json:"session"`
+	Workflows      map[string]*Workflow `json:"workflows"`
+	Agents         map[string]*Agent    `json:"agents"`
+	Queued         map[string]*Agent    `json:"queued"`
+	Tools          map[string]*Tool     `json:"tools"`
+	ToolsDropped   int64                `json:"tools_dropped"`
+	Refused        []Refusal            `json:"refused"`
+	Visits         []string             `json:"visits"`
 	// Provenance is the snapshot the supervisor took once, when it started this execution (event
 	// revision 3: execution.started.provenance), or nil; ProvenanceReason says why it is nil. It is
 	// never filled in afterwards. SourceCommit is the intake log's product source commit on that start.

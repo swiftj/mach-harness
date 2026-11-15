@@ -105,3 +105,20 @@ export function costSeries(k1ByDay: MetricRow | undefined, from: number, to: num
 
 /** Stations in belt order with their words; `human` is the approval wait. */
 export const BELT: readonly Station[] = STATIONS.filter((s) => s !== "human");
+
+/**
+ * M7 D11: the newest release readiness snapshot (GET /api/v1/release/readiness, `latest`) as one
+ * line, from codes and commits only: "Release WAVE-002-e325cb6f23ba at e325cb6f23ba: qualified;
+ * product acceptance: accepted". Null when there is none or it is not readable: acceptance is never
+ * inferred.
+ */
+export function readinessLine(reply: unknown): string | null {
+  const data = (reply as { data?: { latest?: unknown } } | null)?.data ?? (reply as { latest?: unknown } | null);
+  const l = (data as { latest?: Record<string, unknown> | null } | null)?.latest;
+  if (!l || typeof l !== "object") return null;
+  const id = typeof l.release_id === "string" ? l.release_id : null;
+  const commit = typeof l.commit === "string" && /^[0-9a-f]{7,64}$/.test(l.commit) ? l.commit.slice(0, 12) : null;
+  const code = (v: unknown) => (typeof v === "string" && /^[a-z][a-z_-]{0,39}$/.test(v) ? v.replace(/[_-]/g, " ") : "not recorded");
+  if (!id) return null;
+  return `Release ${id} at ${commit ?? "a commit not recorded"}: ${code(l.outcome)}; product acceptance: ${code(l.product_acceptance)}`;
+}

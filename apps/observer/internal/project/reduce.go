@@ -689,7 +689,8 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		key := "required:" + e.ID
-		s.Gates[key] = &HumanGate{Key: key, Kind: "required", TicketID: e.Ticket(), SliceID: feed.Str(e.IDs.SliceID), Reason: d.Reason, Opened: st}
+		s.Gates[key] = &HumanGate{Key: key, Kind: "required", TicketID: e.Ticket(), SliceID: feed.Str(e.IDs.SliceID), Reason: d.Reason, Opened: st,
+			Code: s.parkedFor(e.Ticket(), e.Execution(), st)}
 		m.Count("S4", s.cdims(e.Ticket()), day(st), 1)
 	case "factory.activated":
 		var d struct {
@@ -899,6 +900,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			ClaudeError *string `json:"claude_error"`
 			ExitCode    *int64  `json:"exit_code"`
 			Attempt     *int64  `json:"attempt"`
+			Stuck       *string `json:"not_progressing"`
 		}
 		e.DataAs(&d)
 		if x.Completed == nil && x.Claimed != nil && x.MK1FailedDay == "" {
@@ -909,6 +911,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			x.MK1FailedDay = orDefault(day(st), "-")
 		}
 		x.Failed, x.StageAtEnd, x.Next, x.How, x.ClaudeError = st, d.Stage, d.Next, feed.Str(d.How), feed.Str(d.ClaudeError)
+		x.NotProgressing = feed.Str(d.Stuck)
 		if d.ExitCode != nil {
 			x.ExitCode = d.ExitCode
 		}
@@ -918,6 +921,30 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		m.Rate("S3", s.cdims(x.TicketID, "stage", x.StageAtStart), day(st), 0, 1)
 		m.Rate("X1", s.cdims(x.TicketID, "stage", x.StageAtStart, "ticket", x.TicketID), day(st), 1, 0)
 	}
+}
+
+// parkedFor is the not_progressing code of the execution the supervisor parked a ticket after: the
+// one human.required names, else the ticket's latest failed execution, if it recorded one and no
+// other gate for the ticket opened since. "" when none.
+func (s *State) parkedFor(ticket, execution string, st *Stamp) string {
+	if x := s.Executions[execution]; x != nil {
+		return x.NotProgressing
+	}
+	var last *Execution
+	for _, x := range s.Executions {
+		if x.TicketID == ticket && ticket != "" && x.Failed != nil && x.Failed.Pos <= st.Pos && (last == nil || x.Failed.Pos > last.Failed.Pos) {
+			last = x
+		}
+	}
+	if last == nil || last.NotProgressing == "" {
+		return ""
+	}
+	for _, g := range s.Gates {
+		if g.TicketID == ticket && g.Opened != nil && g.Opened.Pos > last.Failed.Pos {
+			return ""
+		}
+	}
+	return last.NotProgressing
 }
 
 const exReleased = "a claim released without starting (not an execution)"

@@ -284,3 +284,15 @@ projection from the stored events on first start. The redaction format is unchan
 | D10 released claim | A claim held by the scheduling decision of its own pass with nothing started is `released` (reconstructed from the pass; the ledger's `released, not-started` is not read). It leaves X1, S1, S2 and K1's populations with the coverage note "a claim released without starting (not an execution)", and W4's open count; its span ends at that decision. Against the run's copy: xa1b6c30c0e44 `released` | `internal/project/m7_run_test.go` |
 | Killed executions (new fields) | `execution.completed` keeps `exit_code` when the record carries it (schema v3 gains an optional `exit_code`); `how: killed` is state `killed` in runs and spans (span reason `interrupted`). Metric populations that change: S3 counts it as not completed (numerator 0, denominator 1), X1 counts it in the numerator like `execution.failed`; K1/K4 are unchanged (D7) | `internal/project/m7_run_test.go` |
 | D7 | Unchanged: a product-owner decision | — |
+
+Follow-up, uncommitted, on `3a4bb22`: `execution.failed`'s `not_progressing` (`workflow-stuck`, `same-refusal`) is carried as a
+code (schema v3 gains it, and documents `how: killed`); the person gate after it carries the code and the page says
+"Parked: the build stopped on the same task with the same refusal twice". `GET /api/v1/release/readiness` reads
+`.factory/release/<id>/readiness.json` and `run.json` read-only (codes and commits only, newest by `evaluated_at`), and
+Pulse's product-acceptance line shows "Release <id> at <commit>: <outcome>; product acceptance: <decision>"; with no
+snapshot the earlier wording stays. The floor, the Timeline (stopped words, the "In time" headline, the retries lens,
+which no longer counts a released claim as a run) and Pulse's outcome words ("Failed or killed") say killed and released.
+Still not shown on the page: a repeat review and a voided decision. The artifact catalogue serves them and the words exist
+(`reviewRepeatWords`, `voidedDecisionWords`), but the inspector's artifacts come from `artifact.recorded` events, which do
+not carry them. Tests: `internal/normalize/m7_supervisor_test.go`, `internal/server/release_test.go`,
+`internal/project/m7_run_test.go`, `test/m7-page-words.test.mjs`.

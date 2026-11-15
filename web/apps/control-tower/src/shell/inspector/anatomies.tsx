@@ -37,6 +37,7 @@ import {
   type WaveState,
   type WorkflowEntity,
   executionEndedAt,
+  parkedWords,
 } from "../../sim";
 import { useScene } from "../../scene";
 import { AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateGlyph, StateWord, StationGlyph, ToolGlyph } from "../glyphs";
@@ -849,7 +850,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
             <Empty>
               {attention ? (
                 <>
-                  Waiting for a person: <FreeText field="personNeeded" text={attention.reason} />.
+                  Waiting for a person: {parkedWords(attention.code) ?? <FreeText field="personNeeded" text={attention.reason} />}.
                 </>
               ) : (
                 "Waiting for a person to approve this High-risk change."

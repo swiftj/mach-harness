@@ -158,8 +158,8 @@ export interface V3DataMap {
   "execution.started": { until: string | null; workflow: string; limits: Readonly<Record<string, number>> };
   "station.observed": { from_stage: Stage | null; stage: Stage };
   "recovery.started": { kind: "ended-while-unwatched" | "still-running" | "claim-never-started" | "outcome-unknown" | "took-over-from-dead-supervisor" };
-  "execution.completed": { stage: Stage | null; next: StepAction | null; waiting_for: string | null; how: string | null; seen_to_end: boolean; cost_usd: number | null; refused_tools: string[] };
-  "execution.failed": { stage: Stage | null; next: StepAction | null; how: string | null; claude_error: string | null; exit_code: number | null; attempt: number };
+  "execution.completed": { stage: Stage | null; next: StepAction | null; waiting_for: string | null; how: string | null; seen_to_end: boolean; cost_usd: number | null; refused_tools: string[]; exit_code?: number | null };
+  "execution.failed": { stage: Stage | null; next: StepAction | null; how: string | null; claude_error: string | null; exit_code: number | null; attempt: number; not_progressing?: "workflow-stuck" | "same-refusal" | null };
   "station.entered": { station: StationId; stage: Stage | null; action: StepAction | null; resumed: boolean; unclosed_visit: string | null; head: string | null; counts: Counts };
   /** Revision 2: on the plan's exit, `app_type` and `risk` (the plan's own facts); `counts.contracts` and `counts.tasks`. */
   "station.exited": { station: StationId; outcome: string; stage: Stage | null; duration_ms: number | null; closed_by: "cleanup" | null; head: string | null; counts: Counts; app_type?: string | null; risk?: Risk | null };

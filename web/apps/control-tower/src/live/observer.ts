@@ -178,6 +178,10 @@ export interface ArtifactEntry {
   readonly round: number | null;
   /** `recorded` when the round came from results.json's review loop or the review folder's number. */
   readonly roundBasis: string | null;
+  /** M7: k for a review folder round-N.k (a repeat of judging round N after a voided approval); null otherwise. */
+  readonly repeat?: number | null;
+  /** M7: a review decision the merge station voided: codes and commits only. Null when it stands. */
+  readonly voided?: { readonly reason_code: string; readonly outcome_before?: string } | null;
   readonly commit: string | null;
   /** The visit it belongs to; null when no visit fits. */
   readonly visit: ArtifactVisitLink | null;
@@ -512,6 +516,8 @@ export function readArtifactEntry(value: unknown): ArtifactEntry {
     verifiedEvidence: a.verified_evidence === true,
     round: num(a.round),
     roundBasis: str(a.round_basis) || null,
+    repeat: num(a.repeat),
+    voided: a.voided && typeof a.voided === "object" && typeof obj(a.voided).reason_code === "string" ? { reason_code: str(obj(a.voided).reason_code) ?? "recorded", outcome_before: str(obj(a.voided).outcome_before) ?? undefined } : null,
     commit: str(a.commit) || null,
     visit,
     contentAccess: str(a.content_access),

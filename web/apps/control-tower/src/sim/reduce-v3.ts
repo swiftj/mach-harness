@@ -522,7 +522,9 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     case "human.required": {
       const key = ticket ?? e.ids.slice_id ?? "factory";
       s = movedOnFrom(s, ticket, "", at, e);
-      return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, key, { reason: e.data.reason, at: t, seq }) } };
+      // M7: parked at once after an execution that was not progressing: the code, for the page's words.
+      const code = s.executions[e.ids.execution_id ?? ""]?.notProgressing ?? null;
+      return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, key, { reason: e.data.reason, at: t, seq, code }) } };
     }
     case "scheduling.decided": {
       const d = e.data;
@@ -535,6 +537,15 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
           if (!id) continue;
           const was = prior[id];
           holds[id] = was && was.why === h.why ? was : { why: h.why, since: t, seq };
+        }
+      }
+      // M7 D10: a claim made since the previous decision, never started, whose ticket this decision
+      // holds was released before starting (the supervisor claims first, then reports it held).
+      const heldTickets = new Set(d.held.map((h) => h.ticket_id).filter((id): id is string => !!id));
+      const since = s.supervisor.lastDecisionAt ?? -Infinity;
+      for (const x of Object.values(s.executions)) {
+        if (x.state === "claimed" && heldTickets.has(x.ticketId) && x.claimedAt >= since && x.startedAt === null && x.processStartedAt === null && x.releasedAt === null && x.meta.authority !== "simulated") {
+          s = withExecution(s, x.id, (y) => ({ ...y, releasedAt: at }));
         }
       }
       return {
@@ -586,6 +597,9 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         endedAt: at,
         workflowRunning: false,
         outcome: { stage: stageOf(d.stage), next: d.next ?? "stop", waitingFor: e.type === "execution.completed" ? e.data.waiting_for : null, costUsd: cost ?? 0 },
+        how: d.how ?? x.how,
+        exitCode: d.exit_code ?? x.exitCode,
+        notProgressing: e.type === "execution.failed" ? (e.data.not_progressing ?? null) : x.notProgressing,
         meta: touch(x.meta, e, { end: timeQualityOf(e.time.precision), unknown: cost === null && !failed ? withAll(x.meta.unknown, "costUsd") : x.meta.unknown }),
       }));
       s = withCost(s, before, id);

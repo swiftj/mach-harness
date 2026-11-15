@@ -358,6 +358,10 @@ func (l *Ledger) data(ev *event.Event, typ string, in map[string]any) (map[strin
 		d["how"] = tokOrNil(get("how"))
 		d["claude_error"] = tokOrNil(get("claude_error"))
 		d["exit_code"] = intOrNil(get("exit_code"))
+		if _, ok := in["not_progressing"]; ok {
+			// M7: why the supervisor parked the ticket at once (a code; human.required follows).
+			d["not_progressing"] = enum(get("not_progressing"), "workflow-stuck", "same-refusal")
+		}
 		a := intOrNil(get("attempt"))
 		require(ev, d, "attempt", a, int64(0))
 		if n, ok := a.(int64); ok && n >= 1 {

@@ -151,3 +151,28 @@ func exclusions(s *State, id, reason string) (n float64) {
 	}
 	return n
 }
+
+// M7 (7e23f84): an execution that is not progressing fails with not_progressing and the supervisor
+// parks the ticket at once (human.required, the reason in its words): the gate carries the code.
+func TestM7NotProgressingParksWithACode(t *testing.T) {
+	ev := m7Run()
+	add := func(e *feedtest.Ev) { ev = append(ev, e.Build()) }
+	add(feedtest.New("intake-log", "work.claimed", 500_000).Ticket("LOCAL-003").Exec("xcd07441a6874").ID("slice_id", "SLICE-005").Data(map[string]any{"stage": "building", "next": "build", "attempt": 2}))
+	add(feedtest.New("intake-log", "execution.failed", 600_000).Ticket("LOCAL-003").Exec("xcd07441a6874").ID("slice_id", "SLICE-005").Data(map[string]any{"stage": "building", "next": "build",
+		"how": "exited", "claude_error": nil, "exit_code": 0, "attempt": 2, "not_progressing": "same-refusal"}))
+	add(feedtest.New("intake-log", "human.required", 600_000).Ticket("LOCAL-003").Exec("xcd07441a6874").ID("slice_id", "SLICE-005").Data(map[string]any{
+		"reason": "Two executions in a row stopped at build task T05, refused by build.green (suite-failing). Retrying would repeat it; the plan or the code needs a person."}))
+	s := m66State(t, ev)
+	if x := s.Executions["xcd07441a6874"]; x.NotProgressing != "same-refusal" || ExecStateIn(s, x) != "failed" {
+		t.Fatalf("execution = %q %q", x.NotProgressing, ExecStateIn(s, x))
+	}
+	found := false
+	for _, g := range OpenGates(s) {
+		if g.TicketID == "LOCAL-003" && g.Kind == "required" {
+			found = g.Code == "same-refusal"
+		}
+	}
+	if !found {
+		t.Fatal("LOCAL-003's open gate does not carry same-refusal")
+	}
+}

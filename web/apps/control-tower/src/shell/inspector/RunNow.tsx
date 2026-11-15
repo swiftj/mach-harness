@@ -4,7 +4,7 @@
  * working now, who is waiting and why, and the counts so far, from received facts only.
  */
 import { useMemo } from "react";
-import { holdOf, isKnown, ref, streamObservationOf, type CellStage } from "../../sim";
+import { holdOf, isKnown, parkedWords, ref, streamObservationOf, type CellStage } from "../../sim";
 import { useScene, useSceneStore } from "../../scene";
 import { ActorGlyph, CellGlyph, SliceGlyph } from "../glyphs";
 import { indexFor, lastAtOrBefore, quotingKindOf } from "../history";
@@ -96,7 +96,7 @@ export function RunNow() {
           <RefList>
             {Object.entries(attention).map(([id, a]) => (
               <RefLink key={id} to={ref.gate(`${id}/human-approval`)} glyph={<CellGlyph size={18} state="human" />} detail="a person">
-                <span className="font-mono text-[12px]">{id}</span> <FreeText field="personNeeded" text={a.reason} labelled expandable={false} />
+                <span className="font-mono text-[12px]">{id}</span> {parkedWords(a.code) ?? <FreeText field="personNeeded" text={a.reason} labelled expandable={false} />}
               </RefLink>
             ))}
             {waiting.map((s) => {

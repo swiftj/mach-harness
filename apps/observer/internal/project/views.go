@@ -109,26 +109,28 @@ type RunView struct {
 	Claimed     *TimeView `json:"claimed_at"`
 	// StartedAt and EndedAt are the process's own times (execution-record) when recorded, else
 	// the supervisor's (intake log), which are stamped late; TimeBasis says which.
-	StartedAt     *TimeView              `json:"started_at"`
-	EndedAt       *TimeView              `json:"ended_at"`
-	TimeBasis     string                 `json:"time_basis"`
-	Duration      Duration               `json:"duration"`
-	Ended         string                 `json:"ended,omitempty"`
-	ExitCode      *int64                 `json:"exit_code"`
-	How           string                 `json:"how,omitempty"`
-	StageAtStart  string                 `json:"stage_at_start,omitempty"`
-	StageAtEnd    string                 `json:"stage_at_end,omitempty"`
-	Moved         *bool                  `json:"moved"`
-	Cost          Cost                   `json:"cost"`
-	Tokens        *int64                 `json:"tokens_total"`
-	Models        map[string]*ModelUsage `json:"models"`
-	UnderReported bool                   `json:"cost_may_be_under_reported"`
-	UnderReasons  []string               `json:"under_reported_reasons"`
-	RefusedTools  []string               `json:"refused_tools"`
-	RefusedFrom   string                 `json:"refused_tools_authority,omitempty"` // observed (stream) until execution.completed, then authoritative; see refusedTools
-	Recovery      []string               `json:"recovery"`
-	Agents        int                    `json:"agents"`
-	Visits        []string               `json:"visits"`
+	StartedAt *TimeView `json:"started_at"`
+	EndedAt   *TimeView `json:"ended_at"`
+	TimeBasis string    `json:"time_basis"`
+	Duration  Duration  `json:"duration"`
+	Ended     string    `json:"ended,omitempty"`
+	ExitCode  *int64    `json:"exit_code"`
+	How       string    `json:"how,omitempty"`
+	// NotProgressing is the code the supervisor parked the ticket for after this execution (M7).
+	NotProgressing string                 `json:"not_progressing,omitempty"`
+	StageAtStart   string                 `json:"stage_at_start,omitempty"`
+	StageAtEnd     string                 `json:"stage_at_end,omitempty"`
+	Moved          *bool                  `json:"moved"`
+	Cost           Cost                   `json:"cost"`
+	Tokens         *int64                 `json:"tokens_total"`
+	Models         map[string]*ModelUsage `json:"models"`
+	UnderReported  bool                   `json:"cost_may_be_under_reported"`
+	UnderReasons   []string               `json:"under_reported_reasons"`
+	RefusedTools   []string               `json:"refused_tools"`
+	RefusedFrom    string                 `json:"refused_tools_authority,omitempty"` // observed (stream) until execution.completed, then authoritative; see refusedTools
+	Recovery       []string               `json:"recovery"`
+	Agents         int                    `json:"agents"`
+	Visits         []string               `json:"visits"`
 	// Provenance: the snapshot taken at start, or null with a reason (not-recorded for every
 	// execution before M6.5, capture-failed, not-understood). Never inferred after the fact.
 	Provenance         map[string]any `json:"provenance"`
@@ -173,7 +175,7 @@ func refusedTools(x *Execution) ([]string, string) {
 // later records ends at that bound here too (ended_at not_after, duration inferred, max only).
 func Run(s *State, x *Execution) RunView {
 	v := RunView{ExecutionID: x.ExecutionID, TicketID: x.TicketID, SliceID: x.SliceID, Workflow: x.Workflow, State: ExecStateIn(s, x), Attempt: x.Attempt,
-		Claimed: TV(x.Claimed), Ended: x.Ended, ExitCode: x.ExitCode, How: x.How, StageAtStart: x.StageAtStart, StageAtEnd: x.StageAtEnd,
+		Claimed: TV(x.Claimed), Ended: x.Ended, ExitCode: x.ExitCode, How: x.How, NotProgressing: x.NotProgressing, StageAtStart: x.StageAtStart, StageAtEnd: x.StageAtEnd,
 		Recovery: nonNilS(x.Recovery), Agents: len(x.Agents) + len(x.Queued), Visits: nonNilS(x.Visits),
 		Models: map[string]*ModelUsage{}, UnderReasons: []string{}}
 	v.RefusedTools, v.RefusedFrom = refusedTools(x)
