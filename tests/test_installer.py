@@ -787,7 +787,7 @@ class InstallScriptTest(Base):
 
 
 REPO = "swiftj/mach-harness"
-NEW, OLD = "0.13.0", "0.12.0"  # a release with a source archive; the last one without
+NEW, OLD = "0.13.0-rc.2", "0.12.0"  # a release with a source archive (a candidate, so the suffix is exercised); the last one without
 
 
 def source_tree(folder, prefix, version):
