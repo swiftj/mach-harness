@@ -197,6 +197,17 @@ class ReviewRelayTest(Base):
         self.assertEqual(len(re.findall(r"references/(?:architecture|security|product)\.md", seat["prompt"])), 3)
 
 
+class DecideCommandTest(Base):
+    def test_decide_is_wired_and_reads_only(self):
+        (self.project / ".factory").mkdir(exist_ok=True)
+        code, out, err = self.run_cmd("decide", "--json")
+        self.assertEqual(code, 0, err)
+        self.assertIn("nothing_waiting", json.loads(out))
+        code, out, _ = self.run_cmd("decide")
+        self.assertEqual(code, 0)
+        self.assertTrue(out.strip())
+
+
 class StatusTest(Base):
     def test_status_lists_cells_and_ungroomed_tickets(self):
         self.ready()
@@ -406,6 +417,7 @@ class WorkflowScriptTest(unittest.TestCase):
             "no_prompt": {"action": "verify", "stop": False, "reason": "r", "agent_type": "mach:verifier", "prompt": "  "},
             "made_up": {"action": "deploy", "stop": False, "reason": "r", "prompt": "x"},
             "stop": {"action": "stop", "stop": True, "reason": "waiting", "needs": "human-approval", "agent_type": "''"},
+            "worker_in_cell": {"action": "stop", "stop": True, "reason": "Another worker was handed the plan step.", "needs": " worker-in-cell ", "agent_type": ""},
         }
         program = (f"const AGENT_TYPES = {types}\n{source}\nconst cases = {json.dumps(cases)}\n"
                    "const out = {}; for (const [k, v] of Object.entries(cases)) out[k] = cleanStep(v, AGENT_TYPES)\n"
@@ -423,6 +435,7 @@ class WorkflowScriptTest(unittest.TestCase):
         self.assertIn("no prompt", got["no_prompt"]["error"])
         self.assertIn("unknown step 'deploy'", got["made_up"]["error"])
         self.assertEqual((got["stop"]["step"]["stop"], got["stop"]["step"]["agent_type"]), (True, ""))
+        self.assertEqual((got["worker_in_cell"]["step"]["stop"], got["worker_in_cell"]["step"]["needs"], got["worker_in_cell"]["note"]), (True, "worker-in-cell", ""))
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_a_relayed_schedule_is_cleaned_before_any_ticket_starts(self):
@@ -471,10 +484,15 @@ class WorkflowScriptTest(unittest.TestCase):
     BELT_HARNESS = r"""
 const stages = STAGES
 const asked = []
+const logs = []
 const scheduleSays = SCHEDULE_RULES
 async function agent(prompt, opts) {
   opts = opts || {}
-  if (opts.label === 'locate the belt script') return { project: '/p', run_script: '/x/run.py', python: 'python3' }
+  if (opts.label === 'locate the belt script') {
+    const found = { project: '/p', run_script: '/x/run.py', python: 'python3' }
+    if ('holder' in scheduleSays) found.holder = scheduleSays.holder
+    return found
+  }
   const block = prompt.match(/```bash\n(.*)\n```/)
   if (!block) {  // a worker: move the ticket the way its station would
     const [verb, ticket] = prompt.split(' ')
@@ -483,13 +501,16 @@ async function agent(prompt, opts) {
     asked.push(`${verb} ${ticket}`)
     return 'done'
   }
-  const command = block[1].replace('python3 "/x/run.py" --project "/p" ', '')
-  asked.push(command)
+  asked.push(block[1].replace('python3 "/x/run.py" --project "/p" ', ''))
+  const command = asked[asked.length - 1].replace(/ --holder [0-9a-f]+$/, '')
   if (command === 'where') return { is_mach_project: true }
   if (command.startsWith('status')) return { audit_state: 'ok', observe_due: false, factory_tuning_ready: [] }
   if (command.startsWith('next ')) {
     const ticket = command.split(' ')[1]
     const stage = stages[ticket]
+    if ((scheduleSays.claimed || []).includes(ticket)) {
+      return { action: 'stop', stop: true, reason: 'Another worker was handed the plan step at 09:00.', stage, needs: 'worker-in-cell', agent_type: '' }
+    }
     if (stage === 'spec-ready') return { action: 'plan', stop: false, reason: 'r', stage, agent_type: '', model: 'opus', prompt: `Plan ${ticket}` }
     if (stage === 'planned') return { action: 'build', stop: false, reason: 'r', stage, agent_type: 'mach:builder', prompt: `Build ${ticket}` }
     return { action: 'stop', stop: true, reason: 'approved', stage, needs: 'merge', agent_type: '' }
@@ -516,11 +537,11 @@ async function agent(prompt, opts) {
 }
 async function parallel(fns) { return Promise.all(fns.map(fn => fn())) }
 function phase() {}
-function log() {}
+function log(message) { logs.push(message) }
 async function workflow(args, agent, parallel, pipeline, phase, log, budget) {
 BODY
 }
-workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.stdout.write(JSON.stringify({ result, asked, stages })))
+workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.stdout.write(JSON.stringify({ result, asked, stages, logs })))
 """
 
     def run_belt(self, args, stages, rules):
@@ -554,6 +575,54 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         (only,) = got["result"]["tickets"]
         self.assertEqual((only["outcome"], only["waiting_for"]), ("stopped", "a person: stopped before build, as asked"))
         self.assertNotIn("Build A", got["asked"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_the_belt_passes_one_holder_on_every_next_and_schedule(self):
+        """M9 5.2: the belt gets one holder from its first relay (run.py where) and passes it on every next and schedule."""
+        holder = "0123456789abcdef0123456789abcdef"
+        got = self.run_belt({"tickets": ["A", "B"]}, {"A": "spec-ready", "B": "planned"}, {"holder": f' "{holder}" '})
+        relayed = [command for command in got["asked"] if command.split(" ")[0] in ("next", "schedule", "where", "status", "review-start", "review-tally")]
+        claimed = [command for command in relayed if command.startswith(("next ", "schedule "))]
+        self.assertTrue(claimed and all(command.endswith(f" --holder {holder}") for command in claimed), claimed)
+        self.assertTrue(all(command.count("--holder") == 1 for command in claimed))
+        self.assertFalse([command for command in relayed if "--holder" in command and not command.startswith(("next ", "schedule "))])
+        self.assertIn(f"schedule A B --holder {holder}", got["asked"])
+        self.assertEqual({item["ticket"]: item["outcome"] for item in got["result"]["tickets"]}, {"A": "stopped", "B": "stopped"})
+        self.assertFalse(any("holder" in message for message in got["logs"]))
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_without_a_usable_holder_the_belt_runs_unclaimed_and_says_so(self):
+        for bad in ("", "not-hex; rm -rf /", "ABCDEF0123456789", "a" * 65, None):
+            rules = {} if bad is None else {"holder": bad}
+            got = self.run_belt(["A"], {"A": "planned"}, rules)
+            self.assertFalse([command for command in got["asked"] if "--holder" in command], bad)
+            self.assertIn("next A --headless", got["asked"])
+            self.assertTrue(any("No usable holder" in message for message in got["logs"]), bad)
+            self.assertEqual(got["stages"]["A"], "approved")
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_worker_in_the_cell_stops_the_ticket_like_any_stop(self):
+        got = self.run_belt({"tickets": ["A", "B"]}, {"A": "spec-ready", "B": "planned"}, {"holder": "ab" * 16, "claimed": ["A"]})
+        (a,) = [item for item in got["result"]["tickets"] if item["ticket"] == "A"]
+        self.assertEqual((a["outcome"], a["waiting_for"]), ("stopped", "worker-in-cell"))
+        self.assertNotIn("Plan A", got["asked"], "no second worker is started in a claimed cell")
+        self.assertIn("A: worker-in-cell", got["result"]["waiting_on_a_person"])
+        self.assertEqual(got["stages"]["B"], "approved")
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_relayed_holder_is_cleaned(self):
+        source = self.SCRIPT[self.SCRIPT.index("// BEGIN cleanHolder"):self.SCRIPT.index("// END cleanHolder")]
+        cases = {"plain": "0123456789abcdef", "quoted": ' "0123456789abcdef"\n', "upper": "0123456789ABCDEF", "short": "abc1234",
+                 "long": "a" * 65, "longest": "a" * 64, "shell": "abcdef12 --take-over", "number": 12345678, "none": None}
+        program = (f"{source}\nconst cases = {json.dumps(cases)}\n"
+                   "const out = {}; for (const [k, v] of Object.entries(cases)) out[k] = cleanHolder(v)\n"
+                   "process.stdout.write(JSON.stringify(out))\n")
+        done = subprocess.run(["node", "-e", program], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        got = json.loads(done.stdout)
+        self.assertEqual((got["plain"], got["quoted"], got["longest"]), ("0123456789abcdef", "0123456789abcdef", "a" * 64))
+        for key in ("upper", "short", "long", "shell", "number", "none"):
+            self.assertEqual(got[key], "", key)
 
     def test_the_belt_runs_tickets_in_a_scheduled_pool(self):
         self.assertIn("const plan = cleanSchedule(asked, pending, [...running.keys()], MAX_AT_ONCE)", self.SCRIPT)

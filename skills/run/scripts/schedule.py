@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MACH schedule: which of several tickets may start now, and why the others wait.
 
-Reached as `run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run]`.
+Reached as `run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run] [--holder H]`.
 It reads; it starts nothing and writes nothing. The rule is one pure function, `decide`, used by three callers:
 this command, the belt workflow (through its relay) and the supervisor (imported directly).
 
@@ -18,7 +18,8 @@ A ticket in "prepare" may start, under the ceiling, only as far as the build sta
 then scheduled again with its plan known.
 
 Rules, applied in the order the tickets were given:
-    1. a ticket already running is skipped
+    1. a ticket already running is skipped; one another worker has a fresh claim on is held ("claimed", run.py
+       schedule --holder H: a claim by another holder than H; without --holder, any fresh claim)
     2. ceiling: running plus started never exceeds the ceiling in force
     3. dependency: a ticket waits while a ticket it depends on is not integrated
     4. High risk: among tickets in the line, at most the High-risk ceiling run at once
@@ -89,6 +90,11 @@ def decide(tickets: Sequence[Dict[str, Any]], running: Sequence[Dict[str, Any]],
         if ticket_id in running_ids or ticket_id in seen:
             continue  # rule 1, and a ticket named twice is decided once
         seen.add(ticket_id)
+        claimed = facts.get("claimed")
+        if claimed:  # another worker is on it now: checked before the ceiling, so the reason given is the true one
+            hold(ticket_id, "claimed", f"another worker was handed its {claimed.get('step')} step at {claimed.get('at')}; "
+                 f"the claim lapses at {claimed.get('lapses_at')}, or when the ticket moves to a new stage", [])
+            continue
         if len(busy) >= ceiling:
             hold(ticket_id, "ceiling", f"all {ceiling} place(s) are in use", [str(item["ticket_id"]) for item in busy])
             continue
@@ -253,14 +259,16 @@ def dependencies(root: Path, factory: Optional[Callable[[], Any]]) -> Dict[str, 
 
 def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[Callable[[str], Path]] = None,
          factory: Optional[Callable[[], Any]] = None, workflow: str = "mach:belt", supervised: Optional[str] = None,
-         resolved: Optional[Dict[str, str]] = None, beside: Sequence[str] = ()) -> Dict[str, Any]:
+         resolved: Optional[Dict[str, str]] = None, beside: Sequence[str] = (), claims: Any = None) -> Dict[str, Any]:
     """The schedule for the tickets in `args` (ticket_ids, running, limit, sequential, by_person, dry_run).
 
     run.py resolves bare numbers first and passes what was typed for each resolved ticket in `resolved`, and the
     supervised execution this runs inside, if any, in `supervised`. `beside` names the tickets of the supervisor's
     other live executions: they take no place here (the supervisor keeps its own ceiling), but the High-risk and
     file-overlap rules count them, and one whose plan is not written yet holds a ticket in the line, because its
-    files are not known. Returns the report; prints and writes nothing."""
+    files are not known. `claims` is the shared claim helper (claim.py): a pending ticket with a fresh claim by a
+    holder other than `args.holder` (any fresh claim, with no holder) is held. Returns the report; prints and
+    writes nothing."""
     if args.by_person and supervised:
         raise ScheduleError(f"--by-person is a person's word, and this runs inside a supervised Factory execution (for {supervised}); the settings ceiling applies.")
     factory_section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
@@ -270,6 +278,14 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
     parse = plan_parser(sibling)
     waits = dependencies(project, factory)
     facts = [ticket_facts(project, name, parse, waits.get(name, [])) for name in tickets]
+    if claims is not None:
+        limit, mine = claims.minutes(config), getattr(args, "holder", None)
+        for item in facts:
+            if item["ticket_id"] in running:
+                continue
+            held = claims.current(project / ".factory" / "worktrees" / item["ticket_id"], limit)
+            if held and held["holder"] != mine:
+                item["claimed"] = claims.public(held, limit)
     busy = [ticket_facts(project, name, parse, waits.get(name, [])) for name in running]
     peers = [dict(ticket_facts(project, name, parse), waits_for=[]) for name in dict.fromkeys(beside) if name not in tickets and name not in running]
     peers = [dict(item, phase="line", files=None) if item["phase"] == "prepare" else item for item in peers]  # no plan yet: files not known
@@ -280,7 +296,8 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
         if item["ticket_id"] in given:
             item["given"] = given[item["ticket_id"]]
     skipped = [name for name in tickets if name in running]
-    simulated = simulate([item for item in facts if item["ticket_id"] not in running], busy, ceiling["in_force"], ceiling["high"])
+    # The advisory order leaves claims out: a claim lapses or ends with its stage, and the simulation assumes work finishes.
+    simulated = simulate([dict(item, claimed=None) for item in facts if item["ticket_id"] not in running], busy, ceiling["in_force"], ceiling["high"])
     workflow_args: Dict[str, Any] = {"tickets": [name for name in tickets if name not in decided["running"]]}
     if args.sequential:
         workflow_args["sequential"] = True

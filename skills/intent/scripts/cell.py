@@ -806,6 +806,27 @@ def cmd_ticket_note(project: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_claim(project: Path, args: argparse.Namespace) -> int:
+    """Claim a step of this cell before starting a worker on it outside run.py next (claim.py). Refuses on
+    another holder's fresh claim. Without --holder a new holder is made; it is printed for later calls."""
+    import claim as claims  # the shared helper beside this script; loaded only for this command
+    root = cell_dir(project, args.ticket_id)
+    if not (root / "cell.json").is_file():
+        raise CellError(f"No cell for {args.ticket_id}. Run: cell.py open {args.ticket_id}")
+    holder = args.holder or claims.new_holder()
+    limit = claims.minutes(load_config(project))
+    try:
+        result = claims.take(root, args.step, holder, limit)
+    except claims.ClaimError as exc:
+        raise CellError(str(exc))
+    except OSError as exc:
+        raise CellError(f"The claim could not be recorded ({exc.__class__.__name__}), so do not start the worker.")
+    if result["refused"]:
+        raise CellError(claims.in_words(result["refused"], limit) + " Do not start another worker on it; a person can say to take over.")
+    print(json.dumps({"ticket_id": args.ticket_id, **claims.shown(result["claim"], limit)}, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage MACH cells for the mach-intent skill.")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
@@ -842,6 +863,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id")
     p.add_argument("--no-commit", action="store_true", help="do not commit the contracts on the cell's branch")
     p.set_defaults(func=cmd_check_plan)
+
+    p = sub.add_parser("claim", help="claim a step of the cell before starting a worker on it; refuses on another worker's fresh claim")
+    p.add_argument("ticket_id")
+    p.add_argument("step", help="the step, such as plan")
+    p.add_argument("--holder", help="the holder token a claim printed earlier (default: a new one)")
+    p.set_defaults(func=cmd_claim)
 
     p = sub.add_parser("status", help="show one cell, or list all cells")
     p.add_argument("ticket_id", nargs="?")

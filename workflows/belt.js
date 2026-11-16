@@ -106,6 +106,14 @@ function cleanSchedule(plan, pending, running, most) {
   return { start, held, ceiling }
 }
 // END cleanSchedule
+// BEGIN cleanHolder: a pure function, evaluated on its own by tests/test_run.py.
+// The holder token the first relay copied from run.py where. A model's copy is not trusted: only lowercase hex of a
+// bounded length is used; anything else counts as no holder, and the run then claims nothing.
+function cleanHolder(value) {
+  const read = typeof value === 'string' ? value.trim().replace(/^["'`\s]+|["'`\s]+$/g, '') : ''
+  return /^[0-9a-f]{8,64}$/.test(read) ? read : ''
+}
+// END cleanHolder
 const STATUS = {
   type: 'object',
   properties: {
@@ -151,7 +159,7 @@ const SCHEDULE = {
 
 const WHERE = {
   type: 'object',
-  properties: { project: text, run_script: text, python: text },
+  properties: { project: text, run_script: text, python: text, holder: text },
   required: ['project', 'run_script'],
 }
 const CHECK = {
@@ -165,7 +173,7 @@ const where = await agent(
   'Do these two things in order, and do not change directory at any point.\n' +
     '1. Run `pwd` as your very first command and note its output: that folder is the project. Report it as "project".\n' +
     '2. Find the MACH conveyor-belt script: use the MACH run skill with the single word "where": /mach:run where\n' +
-    '   It prints a small JSON object; report its "run_script" and "python" fields exactly. Ignore its "project" field: use the folder from step 1.\n' +
+    '   It prints a small JSON object; report its "run_script", "python" and "holder" fields exactly. Ignore its "project" field: use the folder from step 1.\n' +
     '   If that skill cannot be loaded, look for .claude/skills/mach-run/scripts/run.py under the project folder; if it exists, report its ' +
     'absolute path as run_script and "python3" as python. If neither works, report an empty run_script.',
   { label: 'locate the belt script', phase: 'Preflight', schema: WHERE, model: 'haiku', effort: 'low' },
@@ -174,11 +182,15 @@ if (!where || !/run\.py$/.test(where.run_script || '') || !where.project) {
   return { error: 'The MACH run script could not be located, so nothing was started. Check that MACH is installed in this project (the plugin, or .claude/skills/mach-run).' }
 }
 const RUN = `${where.python || 'python3'} "${where.run_script}" --project "${where.project}"`
+// One holder for this whole run: every `next` claims its step for it, and `schedule` holds only tickets another
+// worker has claimed. Without a usable one the run claims nothing, and run.py still refuses a step another worker holds.
+const HOLDER = cleanHolder(where.holder)
+if (!HOLDER) log('No usable holder came back from run.py where, so this run claims no steps; a ticket another worker holds is still refused.')
 
 function clerk(command, schema, label, phase) {
   return agent(
     'Run exactly the one command in the code block below, complete and unchanged, including its last words, and nothing else:\n\n' +
-      '```bash\n' + `${RUN} ${command}` + '\n```\n\n' +
+      '```bash\n' + `${RUN} ${command}${HOLDER && /^(next|schedule) /.test(command) ? ' --holder ' + HOLDER : ''}` + '\n```\n\n' +
       'Report the fields of the JSON it prints, copied exactly; use an empty string where a field is null or absent. ' +
       'If the command prints no JSON or fails, set "action" (or "outcome", or "refused") to "ERROR", set any true/false field to false, and put its error text in "reason" (or "detail"). ' +
       'Do not run any other command, load any skill, or try another way.',

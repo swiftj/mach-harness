@@ -607,5 +607,115 @@ class RoundRepeatListingTest(unittest.TestCase):
             self.assertEqual([(number, path.name) for number, path in listed], [(1, "round-1"), (2, "round-2"), (2, "round-2.1"), (10, "round-10")])
 
 
+class ReplanRefsTest(Base):
+    """cell.py replan saves the branch's old tip under refs/mach/replan/<ticket>/<n>. Cleanup keeps what those refs hold
+    in the archive, checks the archive, and only then deletes them: never another ticket's."""
+
+    WHY = "Product cancelled the feature on 2026-11-01."
+    REF = "refs/mach/replan/LOCAL-001/1"
+    OTHER = "refs/mach/replan/LOCAL-0011/1"
+
+    def set_aside(self):
+        """The branch as a re-plan leaves it: a task commit saved under the replan ref, the branch reset before it."""
+        before = git(self.work, "rev-parse", "HEAD").stdout.strip()
+        self.put(self.work, {"app/old_plan.py": "OLD = 1\n"})
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "test(SLICE-001): T01 the old plan's test [LOCAL-001]")
+        tip = git(self.work, "rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(git(self.work, "update-ref", self.REF, tip).returncode, 0)
+        self.assertEqual(git(self.work, "update-ref", self.OTHER, tip).returncode, 0)
+        self.assertEqual(git(self.work, "reset", "-q", "--hard", before).returncode, 0)
+        return tip
+
+    def refs(self):
+        return git(self.project, "for-each-ref", "--format=%(refname)", "refs/mach/").stdout.split()
+
+    def test_the_plan_lists_the_refs_and_changes_nothing(self):
+        self.worked()
+        self.set_aside()
+        self.merge()
+        self.set_cell(stage="approved")
+        before = (self.snapshot(), self.refs())
+        plan = self.c_ok("plan", "LOCAL-001")
+        self.assertEqual((self.snapshot(), self.refs()), before)
+        self.assertEqual((plan["replan_refs"], plan["would"]["delete_replan_refs"], plan["would"]["bundle_replans"], plan["replan_commits_to_bundle"]),
+                         ([self.REF], [self.REF], True, 1))
+        self.assertTrue([m for m in plan["would"]["archive_members"] if m.startswith("LOCAL-001/replans.bundle")])
+
+    def test_a_merged_ticket_archives_the_set_aside_commits_then_deletes_only_its_own_refs(self):
+        self.worked()
+        tip = self.set_aside()
+        self.merge()
+        self.set_cell(stage="approved")
+        done = self.c_ok("run", "LOCAL-001")
+        self.assertEqual((done["replans_bundle"], done["replan_refs_deleted"], done["replan_note"]), ("LOCAL-001/replans.bundle", [self.REF], None))
+        self.assertEqual(self.refs(), [self.OTHER], "another ticket's re-plan ref is never touched")
+        self.assertEqual(list((self.project / ".factory/tmp").iterdir()), [])
+        out = Path(self.tmp.name).resolve() / "out"
+        out.mkdir()
+        with tarfile.open(str(self.archive / "LOCAL-001.tar.gz")) as tar:
+            (out / "replans.bundle").write_bytes(tar.extractfile("LOCAL-001/replans.bundle").read())
+        clone = Path(self.tmp.name).resolve() / "clone"
+        self.assertEqual(git(self.project.parent, "clone", "-q", "--no-local", str(self.project), str(clone)).returncode, 0)
+        fetched = git(clone, "fetch", "-q", str(out / "replans.bundle"), f"{self.REF}:refs/heads/restored")
+        self.assertEqual(fetched.returncode, 0, fetched.stderr)
+        self.assertEqual(git(clone, "rev-parse", "restored").stdout.strip(), tip)
+        self.assertIn("OLD = 1", git(clone, "show", "restored:app/old_plan.py").stdout)
+
+    def test_refs_whose_commits_are_on_main_need_no_bundle_and_are_still_deleted(self):
+        self.worked()
+        self.merge()
+        self.set_cell(stage="approved")
+        self.assertEqual(git(self.project, "update-ref", self.REF, "main").returncode, 0)
+        plan = self.c_ok("plan", "LOCAL-001")
+        self.assertEqual((plan["would"]["bundle_replans"], plan["would"]["delete_replan_refs"]), (False, [self.REF]))
+        done = self.c_ok("run", "LOCAL-001")
+        self.assertEqual((done["replans_bundle"], done["replan_refs_deleted"]), (None, [self.REF]))
+        self.assertNotIn("LOCAL-001/replans.bundle", self.members())
+        self.assertEqual(self.refs(), [])
+
+    def test_abandoning_bundles_both_the_branch_and_the_set_aside_commits(self):
+        self.worked()
+        self.set_aside()
+        done = self.c_ok("run", "LOCAL-001", "--abandon", self.WHY)
+        self.assertIn("LOCAL-001/branch.bundle", self.members())
+        self.assertIn("LOCAL-001/replans.bundle", self.members())
+        self.assertEqual(done["replan_refs_deleted"], [self.REF])
+
+    def test_a_failed_archive_keeps_the_refs(self):
+        self.worked()
+        self.set_aside()
+        self.merge()
+        self.set_cell(stage="approved")
+        real = cleanup.bundle_replans
+
+        def broken(project, refs, excludes, path):
+            raise cleanup.CleanupError("git could not bundle the re-plan refs.")
+        cleanup.bundle_replans = broken
+        self.addCleanup(setattr, cleanup, "bundle_replans", real)
+        self.assertIn("Archiving failed, so nothing was deleted", self.c_refused("run", "LOCAL-001"))
+        self.assertEqual(sorted(self.refs()), sorted([self.OTHER, self.REF]))
+        self.assertIn(BRANCH, self.branches())
+        self.assertFalse((self.archive / "LOCAL-001.tar.gz").exists())
+
+    def test_a_ref_that_moved_after_the_plan_is_kept(self):
+        self.worked()
+        self.set_aside()
+        self.merge()
+        self.set_cell(stage="approved")
+        real = cleanup.write_archive
+
+        def moving(*args, **kwargs):
+            names = real(*args, **kwargs)
+            git(self.project, "update-ref", self.REF, "main")
+            return names
+        cleanup.write_archive = moving
+        self.addCleanup(setattr, cleanup, "write_archive", real)
+        done = self.c_ok("run", "LOCAL-001")
+        self.assertEqual(done["replan_refs_deleted"], [])
+        self.assertIn(self.REF, done["replan_note"])
+        self.assertIn(self.REF, self.refs())
+
+
 if __name__ == "__main__":
     unittest.main()

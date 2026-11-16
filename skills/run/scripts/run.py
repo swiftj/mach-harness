@@ -6,11 +6,13 @@ verification and review decisions). This script reads those records and names th
 step, who should do it, and on which model, so the order of the factory is decided by a script
 and not by whoever is driving it.
 
-    run.py next <ticket> [--headless]    the next step for one ticket
-    run.py status [--headless]            the next step for every open ticket and cell
+    run.py next <ticket> [--headless] [--holder H|new] [--take-over]
+                                         the next step for one ticket; with a holder, the step is claimed for it
+    run.py status [--headless]            the next step for every open ticket and cell, and who is working on one now
     run.py explain <ticket> [--json]     why a ticket failed, was sent back or is waiting; reads only (explain.py)
+    run.py decide [<ticket>...] [--json] each ticket waiting on a person, with the options it really has; reads only (decide.py)
     run.py doctor [--fix] [--json]       check the machine and the project; works before .factory exists (doctor.py)
-    run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run]
+    run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run] [--holder H]
                                          which tickets may start now and why the others wait; reads only (schedule.py)
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
     run.py review-tally <ticket>         count the review votes
@@ -44,6 +46,11 @@ the ticket (the intake ledger's supervised executions), otherwise the text "not 
 A ticket a person names may be a bare number: `4` or `104` resolves to the one known ticket with that
 number (open cells, local tickets, the inbox, or the tracker's own numbering). The resolved ID is reported
 as "resolved_from"; more than one match is refused with the candidates, and a full ID is never reinterpreted.
+
+One worker per ticket: `next --holder H` claims the work step it names for H (claim.py, beside the intent
+station's scripts), and answers `stop` with `needs: "worker-in-cell"` while another holder's claim is fresh.
+Without a holder it writes nothing and is refused the same way. A stop is never claimed. `where` prints a new
+holder each time. `--take-over` replaces a fresh claim, only on a person's explicit word.
 
 Standard library only. It reads; the only commands it runs are git queries and the review
 station's own script. The product commands are the exception and live in intake.py: on an
@@ -101,6 +108,20 @@ def cleanup_station() -> Any:
         spec.loader.exec_module(module)
         _CLEANUP.append(module)
     return _CLEANUP[0]
+
+
+_CLAIMS: List[Any] = []
+
+
+def claims() -> Any:
+    """The shared claim helper (the intent station's claim.py), loaded once, whichever way MACH is installed."""
+    if not _CLAIMS:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_claim", sibling("intent") / "scripts" / "claim.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _CLAIMS.append(module)
+    return _CLAIMS[0]
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
@@ -361,6 +382,7 @@ NEEDS_TEXT = {
     "person-to-take-over": "Take over the escalated ticket: it used all its judging rounds.",
     "repository-hardening": "Harden the repository first: its readiness tier is Bronze.",
     "person": "Dispatch this ticket on its own.",
+    "worker-in-cell": "Another worker is already on this ticket's step: wait for it to finish, or say to take over.",
 }
 
 
@@ -451,9 +473,12 @@ def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    ready = [row for row in rows if row["action"] != "stop"]
+    ready = [row for row in rows if row["action"] != "stop" and "claim" not in row]
+    worked = [row for row in rows if "claim" in row]
     waiting = [row for row in rows if row["action"] == "stop" and row.get("needs") not in (None, "nothing")]
     where = f"{len(rows)} ticket{'s' if len(rows) != 1 else ''}: {len(ready)} ready to run, {len(waiting)} waiting on a person"
+    if worked:
+        where += f", {len(worked)} with a worker on it now"
     decide = "; ".join(f"{row['ticket_id']}: {NEEDS_TEXT.get(row['needs'], row['needs'])}" for row in waiting) or "Nothing"
     cost = recorded_cost(project, [row["ticket_id"] for row in rows])
     return {"where": where, "needs_person": decide, "time_and_cost": f"time per ticket: see its next step; cost {cost['text']}",
@@ -462,7 +487,7 @@ def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any
 
 def cmd_where(project: Project, args: argparse.Namespace) -> int:
     print(json.dumps({"run_script": str(Path(__file__).resolve()), "project": str(project.root), "python": sys.executable,
-                      "is_mach_project": (project.root / ".factory").is_dir()}, indent=2))
+                      "is_mach_project": (project.root / ".factory").is_dir(), "holder": claims().new_holder()}, indent=2))
     return 0
 
 
@@ -502,15 +527,63 @@ def cmd_next(project: Project, args: argparse.Namespace) -> int:
     if refused:
         print(json.dumps(refused, indent=2, ensure_ascii=False))
         return 1
+    holder, made = getattr(args, "holder", None), False
+    take_over = bool(getattr(args, "take_over", False))
+    if holder == "new" or (holder is None and take_over):
+        holder, made = claims().new_holder(), True
+    elif holder is not None and not claims().valid_holder(holder):
+        raise RunError("--holder takes 'new' or the holder token an earlier answer printed (hex).")
     found = next_step(project, args.ticket_id, args.headless)
     if found.get("action") == "cleanup" and execution_scope(project):
         found["prompt"] = (str(found.get("prompt") or "") + "\nThis is a supervised Factory execution for this ticket only: do not run the observe skill, "
                            "even if cleanup says an observe pass is due. The supervisor reports a due pass to a person.")
+    found = claim_step(project, found, holder, take_over)
+    if made:
+        found["holder"] = holder
     shown = {"digest": digest(project, found), **found}  # the digest first; every field the belt reads is unchanged
     if getattr(args, "resolved_from", None):
         shown["resolved_from"] = args.resolved_from
     print(json.dumps(shown, indent=2, ensure_ascii=False))
     return 0
+
+
+def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], take_over: bool) -> Dict[str, Any]:
+    """One worker per ticket (claim.py). A work step is claimed for `holder`, or its own claim renewed; another
+    holder's fresh claim turns the answer into a stop (`worker-in-cell`) that does not show that holder. With no
+    holder nothing is written, and the answer is refused the same way while any claim is fresh. A stop is never
+    claimed, and a ticket with no cell has nothing to claim. A claim that cannot be written is refused: the step
+    is not handed out."""
+    if found.get("stop"):
+        return found
+    ticket_id = found["ticket_id"]
+    root = project.cell_dir(ticket_id)
+    C = claims()
+    if C.stage_of(root) is None:
+        return found
+    limit = C.minutes(project.config)
+
+    def refused(other: Dict[str, Any]) -> Dict[str, Any]:
+        return step(ticket_id, found.get("stage"), "stop", C.in_words(other, limit) + " Do not start another worker on it. A person can say to take over this step.",
+                    needs="worker-in-cell", other_claim=C.public(other, limit))
+
+    if holder is None:
+        other = C.current(root, limit)
+        return refused(other) if other else found
+    try:
+        result = C.take(root, found["action"], holder, limit, take_over=take_over)
+    except (C.ClaimError, OSError) as exc:
+        raise RunError(f"The claim on this step could not be recorded ({exc}), so the step was not handed out.")
+    if result["refused"]:
+        return refused(result["refused"])
+    found = dict(found, claim=C.shown(result["claim"], limit))
+    if result["replaced"]:
+        before = C.public(result["replaced"], limit)
+        found["took_over"] = before
+        found["reason"] = (f"{found['reason']} Taken over, as a person asked: another worker had been handed the {before['step']} step "
+                           f"at {before['at']}; its claim is replaced.")
+    if found.get("action") == "plan" and found.get("prompt"):
+        found["prompt"] += (f"\nThis step is claimed for holder {holder}: when the skill claims the plan step, pass --holder {holder}.")
+    return found
 
 
 def cmd_explain(project: Project, args: argparse.Namespace) -> int:
@@ -524,6 +597,34 @@ def cmd_explain(project: Project, args: argparse.Namespace) -> int:
         report["resolved_from"] = args.resolved_from
     print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else explain.human(report))
     return code
+
+
+def cmd_decide(project: Project, args: argparse.Namespace) -> int:
+    """Each ticket waiting on a person, with the options its stations really accept (decide.py). Reads only: writes,
+    claims, records and starts nothing. It is a person's walkthrough, so it never runs inside a supervised execution."""
+    scope = execution_scope(project)
+    if scope is not None:
+        raise RunError(f"This Factory execution was started for {scope} only, and nobody is here to decide: the walkthrough of decisions is for a person.")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import decide
+    provider = os.environ.get("ISSUE_PROVIDER") or project.section("tickets").get("provider") or "local"
+    known, resolved, ticket_ids = known_tickets(project), {}, []
+    for given in args.ticket_ids:
+        ticket_id, typed = resolve_ticket(given, known, provider in NATIVE_NUMBER_PROVIDERS)
+        if not TICKET_ID_RE.match(ticket_id):
+            raise RunError(f"'{given}' is not a usable ticket ID.")
+        if typed:
+            resolved[typed] = ticket_id
+        ticket_ids.append(ticket_id)
+    try:
+        report = decide.main(ticket_ids, project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
+                             intent_skill=skill("intent"))
+    except decide.DecideError as exc:
+        raise RunError(str(exc))
+    if resolved:
+        report["resolved_from"] = {ticket_id: typed for typed, ticket_id in resolved.items()}
+    print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else decide.human(report))
+    return 0
 
 
 def cmd_doctor(root: Path, args: argparse.Namespace) -> int:
@@ -557,6 +658,8 @@ def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
         return found
 
     args.ticket_ids, args.running = resolve(args.ticket_ids), resolve(args.running or [])
+    if getattr(args, "holder", None) is not None and not claims().valid_holder(args.holder):
+        raise RunError("--holder takes the holder token an earlier answer printed (hex).")
     scope = execution_scope(project)
     beside: List[str] = []
     if scope is not None:
@@ -570,7 +673,7 @@ def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
                          and isinstance(record.get("ticket_id"), str) and TICKET_ID_RE.match(record["ticket_id"]) and record["ticket_id"] != scope})
     try:
         report = schedule.main(args, project.root, config=project.config, sibling=sibling, factory=lambda: factory(project)[1],
-                               workflow=workflow_name(), supervised=scope, resolved=resolved, beside=beside)
+                               workflow=workflow_name(), supervised=scope, resolved=resolved, beside=beside, claims=claims())
     except schedule.ScheduleError as exc:
         raise RunError(str(exc))
     if resolved:
@@ -594,16 +697,23 @@ def cmd_status(project: Project, args: argparse.Namespace) -> int:
     if scope is not None:
         ids = [ticket_id for ticket_id in ids if ticket_id == scope]  # a supervised execution sees only its own ticket
     rows = []
+    C = claims()
+    limit = C.minutes(project.config)
     for ticket_id in ids:
         info = next_step(project, ticket_id, args.headless)
-        rows.append({key: info[key] for key in ("ticket_id", "stage", "action", "needs", "reason")})
-    tuning = [row["ticket_id"] for row in rows if row["action"] != "stop" and "factory-tuning" in project.ticket_labels(row["ticket_id"])]
+        row = {key: info[key] for key in ("ticket_id", "stage", "action", "needs", "reason")}
+        held = C.current(project.cell_dir(ticket_id), limit)
+        if held:
+            row["claim"] = C.public(held, limit)  # someone is working on it: the step and since when, never the holder
+        rows.append(row)
+    tuning = [row["ticket_id"] for row in rows if row["action"] != "stop" and "claim" not in row and "factory-tuning" in project.ticket_labels(row["ticket_id"])]
     due = project.observe_due()
     if scope is not None:
         # The observe pass and any tuning ticket it files are separate work: the supervisor, which alone dispatches, reports them.
         tuning, due = [], False
     print(json.dumps({"digest": status_digest(project, rows), "audit": project.audit(), "observe_due": due, "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
-                      "ready_to_run": [row["ticket_id"] for row in rows if row["action"] != "stop"],
+                      "ready_to_run": [row["ticket_id"] for row in rows if row["action"] != "stop" and "claim" not in row],
+                      "being_worked_on": [row["ticket_id"] for row in rows if "claim" in row],
                       "waiting_on_a_person": [row["ticket_id"] for row in rows if row["action"] == "stop"]}, indent=2, ensure_ascii=False))
     return 0
 
@@ -814,6 +924,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("next", help="the next step for one ticket")
     p.add_argument("ticket_id")
     p.add_argument("--headless", action="store_true", help="no person is available to answer questions")
+    p.add_argument("--holder", metavar="H", help="claim the step for this holder: 'new' for a new one, then the token it printed")
+    p.add_argument("--take-over", action="store_true", help="replace another worker's fresh claim; only on a person's explicit word")
     p.set_defaults(func=cmd_next)
     p = sub.add_parser("where", help="print where this script and the project are, for the workflow")
     p.set_defaults(func=cmd_where)
@@ -824,6 +936,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id")
     p.add_argument("--json", action="store_true", help="the facts as JSON instead of a short list")
     p.set_defaults(func=cmd_explain)
+    p = sub.add_parser("decide", help="each ticket waiting on a person, with the options it really has; reads only")
+    p.add_argument("ticket_ids", nargs="*", metavar="ticket", help="only these tickets (default: every open ticket)")
+    p.add_argument("--json", action="store_true", help="the options as JSON, for the run skill's walkthrough")
+    p.set_defaults(func=cmd_decide)
+
     p = sub.add_parser("doctor", help="check the machine and the project; --fix only creates missing MACH folders")
     p.add_argument("--fix", action="store_true", help="create missing MACH folders; never edits settings or enables anything")
     p.add_argument("--json", action="store_true")
@@ -835,6 +952,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sequential", action="store_true", help="one ticket at a time")
     p.add_argument("--by-person", action="store_true", help="with --limit: a person raised the limit for this run (at most 8); refused in a supervised execution")
     p.add_argument("--dry-run", action="store_true", help="say so in the report; the command never starts anything either way")
+    p.add_argument("--holder", metavar="H", help="the caller's holder token: a ticket another holder has a fresh claim on is held")
     p.set_defaults(func=cmd_schedule)
     for name, func, text in (("review-start", cmd_review_start, "start the review round and print one prompt per seat"),
                              ("review-tally", cmd_review_tally, "count the review votes")):

@@ -12,7 +12,10 @@ branch, and never touches code on the main checkout.
     cleanup.py status                              every cell, its stage, and whether it is merged
 
 The only paths it deletes are .factory/worktrees/<ticket>/ and its own partial files under
-.factory/tmp/. It archives first, checks the archive, and only then deletes.
+.factory/tmp/. It archives first, checks the archive, and only then deletes. The only refs it deletes
+are the cell's own feature branch and the old branch tips a re-plan saved under
+refs/mach/replan/<ticket>/ (cell.py replan); the commits those tips hold are kept in the archive
+(replans.bundle) unless the default branch or the archived branch bundle already holds them.
 
 Standard library only.
 """
@@ -214,6 +217,26 @@ def unmerged_commits(project: Path, branch: str, refs: List[str]) -> int:
     return int(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip().isdigit() else 0
 
 
+def replan_refs(project: Path, ticket_id: str) -> List[Tuple[str, str]]:
+    """The old branch tips a re-plan saved for this ticket (cell.py replan): every ref under exactly
+    refs/mach/replan/<ticket_id>/, with the commit it points at. Another ticket's refs are never listed."""
+    prefix = f"refs/mach/replan/{ticket_id}/"
+    found = []
+    for line in git(project, "for-each-ref", "--format=%(refname) %(objectname)", prefix).stdout.splitlines():
+        name, _, sha = line.partition(" ")
+        if name.startswith(prefix) and len(name) > len(prefix) and sha.strip():
+            found.append((name, sha.strip()))
+    return found
+
+
+def unkept_commits(project: Path, refs: List[str], excludes: List[str]) -> int:
+    """How many commits the refs reach that none of the excludes do: what only a bundle would keep."""
+    if not refs:
+        return 0
+    done = git(project, "rev-list", "--count", *refs, *(["--not", *excludes] if excludes else []))
+    return int(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip().isdigit() else len(refs)
+
+
 def next_archive(project: Path, ticket_id: str) -> Path:
     folder = project / ".factory" / "archive"
     path, number = folder / f"{ticket_id}.tar.gz", 1
@@ -394,9 +417,16 @@ def survey(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None) 
 
     force = abandoning or bool(landed and not merged)
     bundle = abandoning and has_branch and unmerged > 0
+    tips = replan_refs(project, ticket_id)
+    replans = [ref for ref, _ in tips]
+    # A re-plan's old tips are held already when the default branch reaches them, or the branch bundle archived beside them does.
+    replan_excludes = refs + ([f"refs/heads/{branch}"] if bundle else [])
+    replan_unkept = unkept_commits(project, replans, replan_excludes)
     members = [f"{ticket_id}/{name_}" for name_ in cell.members()]
     if bundle:
         members.append(f"{ticket_id}/branch.bundle (the {unmerged} commit(s) of {branch} that are not on {name or 'any other branch'})")
+    if replan_unkept:
+        members.append(f"{ticket_id}/replans.bundle (the {replan_unkept} commit(s) the re-plans set aside, under {', '.join(replans)})")
     if dirty:
         members.append(f"{ticket_id}/uncommitted.patch and {ticket_id}/untracked/ (the uncommitted work)")
     return {
@@ -404,12 +434,15 @@ def survey(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None) 
         "outcome": "abandoned" if abandoning else "merged", "abandon_reason": reason,
         "stage": stage, "isolation": cell.info.get("isolation"), "branch": branch, "default_branch": name,
         "merged": merged, "merged_into": target, "merged_as": landed, "unmerged_commits": unmerged, "uncommitted": dirty,
+        "replan_refs": replans, "replan_tips": dict(tips), "replan_commits_to_bundle": replan_unkept, "replan_bundle_excludes": replan_excludes,
         "would": {
             "archive": relative(project, next_archive(project, ticket_id)), "archive_members": members,
             "remove_worktree": relative(project, cell.repo) if cell.isolated and cell.repo.exists() else None,
             "remove_folder": relative(project, cell.root),
             "bundle_branch": bundle,
             "delete_branch": f"git branch {'-D' if force else '-d'} {branch}" if cell.isolated and has_branch else None,
+            "bundle_replans": replan_unkept > 0,
+            "delete_replan_refs": replans,
             "append_record": f".factory/archive/{RUN_LOG}",
         },
         "never": "No merge, no push, no remote branch deleted, nothing changed on the main checkout.",
@@ -435,18 +468,31 @@ def bundle_branch(cell: Cell, refs: List[str], path: Path) -> None:
         raise CleanupError(f"The bundle of {cell.branch} does not verify: {check.stderr.strip()}")
 
 
+def bundle_replans(project: Path, refs: List[str], excludes: List[str], path: Path) -> None:
+    """Save the commits a re-plan set aside (the refs under refs/mach/replan/<ticket>/) as a git bundle, and check git can read it back."""
+    done = git(project, "bundle", "create", str(path), *refs, *(["--not", *excludes] if excludes else []))
+    if done.returncode != 0 or not path.is_file() or path.stat().st_size == 0:
+        raise CleanupError(f"git could not bundle the re-plan refs {', '.join(refs)}: {done.stderr.strip()}")
+    check = git(project, "bundle", "verify", str(path))
+    if check.returncode != 0:
+        raise CleanupError(f"The bundle of the re-plan refs does not verify: {check.stderr.strip()}")
+
+
 def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optional[List[str]] = None, merged_as: Optional[str] = None,
-                  log: Optional[bytes] = None) -> List[str]:
+                  log: Optional[bytes] = None, replans: Optional[Tuple[List[str], List[str]]] = None) -> List[str]:
     """Write the archive beside the others, check it, and return its member names. On any failure nothing is left behind.
 
     bundle_refs, when given, are the default branch refs: the cell's branch is bundled against them and added.
     log, when given, is the cell's lifecycle log with cleanup's own closing records appended; it is archived in
     place of the file on disk, which is never changed (the cell folder is deleted next). A cell with no lifecycle
     log (made before M6.1, or by hand) is archived exactly as before, with no log added.
+    replans, when given, is (the re-plan refs, the refs whose commits are held already): the commits only the
+    re-plan refs reach are bundled and added as replans.bundle.
     """
     project, prefix = cell.project, cell.ticket_id
     partial = project / ".factory" / "tmp" / f"cleanup-{target.name}.partial"
     bundle = project / ".factory" / "tmp" / f"cleanup-{target.name}.bundle"
+    replan_bundle = project / ".factory" / "tmp" / f"cleanup-{target.name}.replans.bundle"
     expected = [f"{prefix}/{name}" for name in cell.members()]
     try:
         partial.parent.mkdir(parents=True, exist_ok=True)
@@ -463,6 +509,10 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
                 bundle_branch(cell, bundle_refs, bundle)
                 tar.add(str(bundle), arcname=f"{prefix}/branch.bundle")
                 expected.append(f"{prefix}/branch.bundle")
+            if replans is not None:
+                bundle_replans(project, replans[0], replans[1], replan_bundle)
+                tar.add(str(replan_bundle), arcname=f"{prefix}/replans.bundle")
+                expected.append(f"{prefix}/replans.bundle")
             if dirty:
                 patch = subprocess.run(["git", "diff", "HEAD", "--binary"], cwd=str(cell.repo), capture_output=True)
                 if patch.returncode != 0:
@@ -491,8 +541,9 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
             partial.unlink()
         raise CleanupError(f"Archiving failed, so nothing was deleted. {exc}", code="archive-failed")
     finally:
-        if bundle.exists():
-            bundle.unlink()
+        for leftover in (bundle, replan_bundle):
+            if leftover.exists():
+                leftover.unlink()
     if not target.is_file() or target.stat().st_size == 0:
         raise CleanupError(f"The archive {target} is missing or empty after writing, so nothing was deleted.")
     return sorted(names)
@@ -525,7 +576,8 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         ("cleanup.completed", "cleanup", {"outcome": plan["outcome"], "archive": archive, "bundle": bool(bundled), "uncommitted_saved": bool(plan["uncommitted"])}),
         ("station.exited", "cleanup", {"outcome": plan["outcome"]}),
     ], "abandoned" if abandoning else "closed")
-    members = write_archive(cell, target, plan["uncommitted"], default_branch(project)[1] if bundled else None, plan["merged_as"], log)
+    replans = (plan["replan_refs"], plan["replan_bundle_excludes"]) if plan["would"]["bundle_replans"] else None
+    members = write_archive(cell, target, plan["uncommitted"], default_branch(project)[1] if bundled else None, plan["merged_as"], log, replans)
 
     kept = f"The archive is at {archive}; the run record is not written yet. Fix the cause and run cleanup again."
     root = locked_cell_path(project, cell.ticket_id)  # asked again, immediately before deleting
@@ -551,6 +603,17 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         if not branch_deleted:
             note = f"git kept the branch {cell.branch}: {done.stderr.strip()} Delete it yourself" + (" once the main checkout has the merge." if not abandoning else ".")
 
+    # The archive is written and checked: only now are the re-plan refs deleted, each only if it still points where it did when planned.
+    planned = plan["replan_tips"]
+    replans_deleted, replan_note = [], None
+    for ref in plan["would"]["delete_replan_refs"]:
+        sha = planned.get(ref)
+        if sha and ref.startswith(f"refs/mach/replan/{cell.ticket_id}/") and git(project, "update-ref", "-d", ref, sha).returncode == 0:
+            replans_deleted.append(ref)
+    kept_refs = [ref for ref in plan["would"]["delete_replan_refs"] if ref not in replans_deleted]
+    if kept_refs:
+        replan_note = f"git kept the re-plan refs {', '.join(kept_refs)}; their commits are in the archive. Delete them yourself with git update-ref -d."
+
     with (target.parent / RUN_LOG).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     state = "closed, with the label 'abandoned'" if abandoning else "closed"
@@ -561,6 +624,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         "restore": (f"The branch's {plan['unmerged_commits']} unmerged commit(s) are saved in the archive. To restore: tar -xzf {archive} {cell.ticket_id}/branch.bundle && "
                     f"git fetch {cell.ticket_id}/branch.bundle {cell.branch}:{cell.branch}") if bundled else None,
         "removed": removed, "branch": cell.branch, "branch_deleted": branch_deleted, "branch_note": note,
+        "replans_bundle": f"{cell.ticket_id}/replans.bundle" if replans else None, "replan_refs_deleted": replans_deleted, "replan_note": replan_note,
         "record": record, "run_log": relative(project, target.parent / RUN_LOG),
         "observe_due": observe["due"], "finished_since_last_observe_pass": observe["finished_since_last_pass"],
         "next": f"Set the ticket {cell.ticket_id} to {state}, using the ticket skill."
