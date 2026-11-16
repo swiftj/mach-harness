@@ -5,8 +5,8 @@ Read-only by default. It measures and reports; a check that could not be perform
 "not_checked", never "ok". With --fix it creates only the installer's standard data folders that
 are missing, and only when .factory/ already exists. It never writes a settings file, never enables
 or installs anything, starts no MACH station or agent, and never reads the machine-local Factory
-folder (.factory/local/). Its only network access is `gh auth status` for the GitHub tracker, whose
-output is never shown: only its exit code is used. Standard library only.
+folder (.factory/local/). Its only network access is `gh` (`auth status`, and `label list` and two `api`
+reads when origin is on github.com), whose output is never shown: only exit codes and parsed fields are used. Standard library only.
 """
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ import argparse
 import json
 import os
 import platform
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -148,7 +150,7 @@ def resolve_provider(config: Any) -> Tuple[str, str, Dict[str, Any]]:
     return "local", "the default", tickets
 
 
-def check_tracker(project: Path, config: Any) -> List[Dict[str, str]]:
+def check_tracker(project: Path, config: Any, gh_state: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
     title = "Ticket tracker"
     provider, source, tickets = resolve_provider(config)
     if provider not in PROVIDER_PROGRAMS:
@@ -172,6 +174,8 @@ def check_tracker(project: Path, config: Any) -> List[Dict[str, str]]:
     if provider != "github" or program != "gh":
         return [check("tracker", title, "ok", f"The {provider} tracker (from {source}); '{program}' is on PATH. Sign-in was not checked.")]
     code, out, err = run([path, "auth", "status"], project, GH_TIMEOUT)
+    if gh_state is not None:
+        gh_state["auth"] = (code, (out + "\n" + err).lower())
     if code is None:
         return [check("tracker", title, "not_checked", f"GitHub tracker (from {source}); 'gh auth status' {err}.",
                       "Run 'gh auth status' yourself when the network is available.")]
@@ -294,6 +298,120 @@ def check_remote(project: Path) -> List[Dict[str, str]]:
                   "Add a remote with 'git remote add origin <url>' if you want pull requests.")]
 
 
+def github_repo(project: Path) -> Optional[str]:
+    """OWNER/REPO when origin is a github.com address, else None. The URL itself is never kept or shown."""
+    program = shutil.which("git")
+    if not program:
+        return None
+    code, out, _ = run([program, "config", "--get", "remote.origin.url"], project, GIT_TIMEOUT)
+    if code != 0:
+        return None
+    url = out.strip()
+    match = (re.match(r"^(?:https?|ssh|git)://(?:[^/@]*@)?github\.com(?::\d+)?/([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", url, re.I)
+             or re.match(r"^(?:[^/@\s]+@)?github\.com:([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", url, re.I))
+    if not match or not all(re.match(r"^[A-Za-z0-9._-]+$", part) for part in match.groups()):
+        return None
+    return f"{match.group(1)}/{match.group(2)}"
+
+
+def check_requests(project: Path, config: Any, gh_state: Dict[str, Any]) -> List[Dict[str, str]]:
+    """GitHub Issues as requests. Runs only for a github.com origin; read-only; creates nothing."""
+    repo = github_repo(project)
+    if repo is None:
+        return []
+    title = "Requests"
+    tickets = config.get("tickets") if isinstance(config, dict) else None
+    github = tickets.get("github") if isinstance(tickets, dict) else None
+    github = github if isinstance(github, dict) else {}
+    results: List[Dict[str, str]] = []
+    path = shutil.which("gh")
+    ready = False
+    if not path:
+        results.append(check("requests.signin", f"{title}: sign-in", "not_checked", f"The GitHub CLI ('gh') is not on PATH, so {repo} cannot be asked.",
+                             "Install the GitHub CLI and run 'gh auth login' to use GitHub Issues as requests."))
+    else:
+        if "auth" not in gh_state:
+            code, out, err = run([path, "auth", "status"], project, GH_TIMEOUT)
+            gh_state["auth"] = (code, (out + "\n" + err).lower())
+        code, lowered = gh_state["auth"]
+        if code is None:
+            results.append(check("requests.signin", f"{title}: sign-in", "not_checked", "'gh auth status' did not answer.",
+                                 "Run 'gh auth status' yourself when the network is available."))
+        elif code == 0:
+            ready = True
+            results.append(check("requests.signin", f"{title}: sign-in", "ok", f"The GitHub CLI is signed in; requests would be read from {repo}."))
+        elif any(word in lowered for word in NETWORK_WORDS):
+            results.append(check("requests.signin", f"{title}: sign-in", "not_checked", "GitHub could not be reached to check the sign-in.",
+                                 "Run 'gh auth status' yourself when the network is available."))
+        else:
+            results.append(check("requests.signin", f"{title}: sign-in", "warn", f"The GitHub CLI is not signed in, so requests in {repo} cannot be read.",
+                                 "Run 'gh auth login', then 'gh auth status' to confirm."))
+    skipped = "Needs the GitHub CLI signed in first."
+    request_label = github.get("request_label")
+    request_label = request_label if isinstance(request_label, str) and request_label.strip() else "mach:request"
+    wanted = [request_label, "mach:grooming", "mach:ready", "mach:blocked"]
+    if not ready:
+        results.append(check("requests.labels", f"{title}: labels", "not_checked", skipped, ""))
+    else:
+        code, out, err = run([path, "label", "list", "--repo", repo, "--limit", "200", "--json", "name"], project, GH_TIMEOUT)
+        names = None
+        if code == 0:
+            try:
+                data = json.loads(out)
+                if isinstance(data, list):
+                    names = {item.get("name") for item in data if isinstance(item, dict)}
+            except ValueError:
+                names = None
+        if names is None:
+            why = err if code is None else "could not list the labels"
+            results.append(check("requests.labels", f"{title}: labels", "not_checked", f"{repo}: 'gh label list' {why}.",
+                                 "Run 'gh label list' yourself when the network is available."))
+        else:
+            missing = [name for name in wanted if name not in names]
+            if missing:
+                lines = "\n".join(f"    gh label create {shlex.quote(name)} --repo {repo}" for name in missing)
+                results.append(check("requests.labels", f"{title}: labels", "warn", f"{repo} lacks the label(s): {', '.join(missing)}.",
+                                     f"Run these yourself (MACH never creates labels):\n{lines}"))
+            else:
+                results.append(check("requests.labels", f"{title}: labels", "ok", f"All four MACH status labels exist in {repo}."))
+    if not ready:
+        results.append(check("requests.permission", f"{title}: permission", "not_checked", skipped, ""))
+    else:
+        code, out, err = run([path, "api", "user", "--jq", ".login"], project, GH_TIMEOUT)
+        login = out.strip()
+        if code != 0 or not re.match(r"^[A-Za-z0-9-]+$", login):
+            results.append(check("requests.permission", f"{title}: permission", "not_checked", "The signed-in account's name could not be read.",
+                                 "Run 'gh api user' yourself when the network is available."))
+        else:
+            code, out, err = run([path, "api", f"repos/{repo}/collaborators/{login}/permission", "--jq", ".permission"], project, GH_TIMEOUT)
+            level = out.strip().lower()
+            if code != 0:
+                results.append(check("requests.permission", f"{title}: permission", "not_checked",
+                                     f"This account's permission on {repo} could not be read.",
+                                     "Check that the account can see the repository."))
+            elif level in ("admin", "write", "maintain"):
+                results.append(check("requests.permission", f"{title}: permission", "ok",
+                                     f"This account can write to {repo}, so it can confirm who labelled a request."))
+            elif level in ("read", "none", "triage"):
+                results.append(check("requests.permission", f"{title}: permission", "warn",
+                                     f"This account has {level} access to {repo}: requests can be listed but this account may not be able to confirm who labelled them, or to send.",
+                                     "Sign in with an account that has write access ('gh auth login')."))
+            else:
+                results.append(check("requests.permission", f"{title}: permission", "not_checked", f"This account's permission on {repo} was not recognised.", ""))
+    accounts = github.get("monitor_accounts")
+    if accounts is not None:
+        bad = not isinstance(accounts, list) or any(
+            not (isinstance(a, dict) and isinstance(a.get("login"), str) and a.get("login")
+                 and isinstance(a.get("id"), int) and not isinstance(a.get("id"), bool)) for a in accounts)
+        if bad:
+            results.append(check("requests.monitors", f"{title}: monitoring accounts", "fail",
+                                 "A monitoring account is matched on its numeric id; add it.",
+                                 "Write each entry in tickets.github.monitor_accounts of .factory/config.json as {\"login\": \"name\", \"id\": 12345}."))
+        else:
+            results.append(check("requests.monitors", f"{title}: monitoring accounts", "ok", f"{len(accounts)} monitoring account(s), each with a login and a numeric id."))
+    return results
+
+
 # --- running and reporting --------------------------------------------------------------------
 
 def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
@@ -303,12 +421,14 @@ def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
     checks += check_python()
     checks += check_claude(project)
     install, config = check_install(project, fix, created)
-    checks += check_tracker(project, config)
+    gh_state: Dict[str, Any] = {}
+    checks += check_tracker(project, config, gh_state)
     checks += install
     checks += check_rules(project)
     checks += check_audit(project)
     checks += check_hosts(project)
     checks += check_remote(project)
+    checks += check_requests(project, config, gh_state)
     summary = {status: sum(1 for c in checks if c["status"] == status) for status in STATUSES}
     return {"project": str(project), "checks": checks, "summary": summary, "created": created}
 

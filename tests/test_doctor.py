@@ -269,6 +269,123 @@ class DoctorTest(unittest.TestCase):
             self.assertNotIn("runner", output)
             self.assertNotIn(".factory/local", output)
 
+    # requests (GitHub Issues as requests)
+    def github_project(self, config=None, url="https://github.com/acme/widgets.git"):
+        self.healthy(config)
+        self.git("remote", "set-url", "origin", url)
+        self.log = self.project.parent / "gh.log"
+
+    def fake_gh(self, labels='[{"name":"mach:request"},{"name":"mach:grooming"},{"name":"mach:ready"},{"name":"mach:blocked"}]',
+                permission="write", extra=""):
+        self.fake("gh", f'''echo "$@" >> "{self.log}"
+{extra}
+case "$1 $2" in
+  "auth status") exit 0;;
+  "label list") echo '{labels}'; exit 0;;
+  "api user") echo octo; exit 0;;
+  "label create") exit 0;;
+esac
+case "$2" in repos/*) echo {permission}; exit 0;; esac
+exit 1''')
+
+    def gh_calls(self):
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def test_requests_not_emitted_without_a_github_origin(self):
+        self.healthy()
+        self.log = self.project.parent / "gh.log"
+        self.fake_gh()
+        _, checks, _, out = self.checks("--fix")
+        self.assertEqual([k for k in checks if k.startswith("requests")], [])
+        self.assertNotIn("Requests", out)
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_requests_all_good(self):
+        self.github_project()
+        self.fake_gh()
+        code, checks, _, _ = self.checks()
+        self.assertEqual(code, 0)
+        for key in ("requests.signin", "requests.labels", "requests.permission"):
+            self.assertEqual(checks[key]["status"], "ok", checks[key])
+        self.assertIn("acme/widgets", checks["requests.labels"]["detail"])
+        self.assertEqual(sum(1 for c in self.gh_calls() if c.startswith("auth status")), 1)
+
+    def test_requests_reuse_the_tracker_sign_in(self):
+        self.github_project({"tickets": {"provider": "github"}})
+        self.fake_gh()
+        _, checks, _, _ = self.checks()
+        self.assertEqual(checks["tracker"]["status"], "ok")
+        self.assertEqual(checks["requests.signin"]["status"], "ok")
+        self.assertEqual(sum(1 for c in self.gh_calls() if c.startswith("auth status")), 1)
+
+    def test_requests_missing_labels_warn_with_one_create_line_each(self):
+        self.github_project({"tickets": {"provider": "local", "github": {"request_label": "mach:ask"}}})
+        self.fake_gh(labels='[{"name":"mach:ask"},{"name":"mach:ready"}]')
+        _, checks, _, _ = self.checks()
+        labels = checks["requests.labels"]
+        self.assertEqual(labels["status"], "warn")
+        creates = [line for line in labels["fix"].splitlines() if "gh label create" in line]
+        self.assertEqual(len(creates), 2)
+        self.assertIn("mach:grooming", creates[0])
+        self.assertIn("mach:blocked", creates[1])
+        self.assertTrue(all("--repo acme/widgets" in line for line in creates))
+
+    def test_requests_fix_creates_no_label(self):
+        self.github_project()
+        self.fake_gh(labels="[]")
+        _, checks, _, _ = self.checks("--fix")
+        self.assertEqual(checks["requests.labels"]["status"], "warn")
+        self.assertFalse([c for c in self.gh_calls() if c.startswith("label create")])
+
+    def test_requests_read_permission_warns(self):
+        self.github_project()
+        self.fake_gh(permission="read")
+        code, checks, _, _ = self.checks()
+        self.assertEqual(code, 0)
+        self.assertEqual(checks["requests.permission"]["status"], "warn")
+
+    def test_requests_timeout_is_not_checked(self):
+        self.github_project()
+        self.fake_gh(extra='case "$1" in auth) ;; *) exec /bin/sleep 5;; esac')
+        with mock.patch.object(doctor, "GH_TIMEOUT", 1):
+            code, checks, _, _ = self.checks()
+        self.assertEqual(code, 0)
+        self.assertEqual(checks["requests.labels"]["status"], "not_checked")
+        self.assertEqual(checks["requests.permission"]["status"], "not_checked")
+
+    def test_requests_monitor_account_needs_a_numeric_id(self):
+        for accounts in (["octo-bot"], [{"login": "octo-bot"}], [{"login": "octo-bot", "id": "7"}]):
+            self.github_project({"tickets": {"provider": "local", "github": {"monitor_accounts": accounts}}})
+            self.fake_gh()
+            code, checks, _, _ = self.checks()
+            self.assertEqual(code, 1, accounts)
+            self.assertEqual(checks["requests.monitors"]["status"], "fail")
+            self.assertIn("matched on its numeric id; add it", checks["requests.monitors"]["detail"])
+            shutil.rmtree(self.project / ".git")
+            shutil.rmtree(self.project / ".factory")
+        self.github_project({"tickets": {"provider": "local", "github": {"monitor_accounts": [{"login": "octo-bot", "id": 7}]}}})
+        self.fake_gh()
+        _, checks, _, _ = self.checks()
+        self.assertEqual(checks["requests.monitors"]["status"], "ok")
+
+    def test_requests_never_show_the_origin_credential(self):
+        self.github_project(url="https://user:secret@github.com/acme/widgets.git")
+        self.fake_gh()
+        _, checks, _, out = self.checks()
+        self.assertEqual(checks["requests.labels"]["status"], "ok")
+        _, text = self.run_doctor()
+        self.assertNotIn("secret", out)
+        self.assertNotIn("secret", text)
+        self.assertFalse([c for c in self.gh_calls() if "secret" in c or "https://" in c])
+
+    def test_github_repo_forms(self):
+        self.healthy()
+        for url, want in (("git@github.com:o/r.git", "o/r"), ("ssh://git@github.com/o/r", "o/r"),
+                          ("https://github.com/o/r/", "o/r"), ("https://example.com/o/r.git", None),
+                          ("https://github.com.evil.test/o/r.git", None)):
+            self.git("remote", "set-url", "origin", url)
+            self.assertEqual(doctor.github_repo(self.project), want, url)
+
     def test_source_rules(self):
         source = (ROOT / "skills/run/scripts/doctor.py").read_text(encoding="utf-8")
         self.assertNotIn("runner" + ".json", source)
