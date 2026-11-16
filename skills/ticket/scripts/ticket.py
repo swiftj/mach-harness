@@ -93,11 +93,8 @@ STATE_NAMES = {
     "fossil": {"open": "Open", "in_progress": "Open", "needs_review": "Review", "blocked": "Deferred", "closed": "Closed"},
 }
 
-EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-SECRET_RE = re.compile(
-    r"(?i)\b(bearer|token|api[_-]?key|secret|password|passwd|authorization|cookie|session(?:id)?)\b(\s*[=:]\s*|\s+)((?:bearer\s+|basic\s+)?(?:\"[^\"]*\"|'[^']*'|\S+))"
-)
-LONG_TOKEN_RE = re.compile(r"\b(?=[A-Za-z0-9_\-]*\d)(?=[A-Za-z0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{32,}\b")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from issue_rules import EMAIL_RE, LONG_TOKEN_RE, SECRET_RE, redact  # noqa: E402,F401  one redaction for telemetry and requests
 
 
 class TicketError(Exception):
@@ -106,13 +103,6 @@ class TicketError(Exception):
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def redact(text: str) -> str:
-    """Remove personal data and credentials before text leaves the raw payload."""
-    text = SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}<redacted>", text)
-    text = EMAIL_RE.sub("<email>", text)
-    return LONG_TOKEN_RE.sub("<redacted>", text)
 
 
 def find_project(start: Path) -> Path:

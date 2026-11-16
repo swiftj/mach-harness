@@ -16,6 +16,17 @@
     "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^SLICE-[0-9]{3,}$"}},
     "open_questions": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "spec_path": {"type": ["string", "null"]},
-    "spec_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+    "spec_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "origin": {
+      "description": "Optional (M8): the request a slice came from. Identifiers only; never the issue's text, link or author.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "repository", "number"],
+      "properties": {
+        "kind": {"const": "github_issue"},
+        "repository": {"type": "string", "pattern": "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"},
+        "number": {"type": "integer", "minimum": 1}
+      }
+    }
   }
 }
