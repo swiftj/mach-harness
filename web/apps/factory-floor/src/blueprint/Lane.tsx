@@ -62,12 +62,14 @@ function storyOf(lane: Lane, activity: ActivityState | null, label: string | nul
   if (!cell) return [slice.scheduler === "waiting-on-dependency" ? `Waits for ${slice.dependsOn.map((d) => d.replace("SLICE-", "")).join(" and ")}` : slice.scheduler];
   const out = [`${stageWords(cell.stage)}${cell.round > 1 ? ` · round ${cell.round}` : ""}${activity === "stale" || activity === "unknown" || activity === "interrupted" ? ` · ${label ? label.toLowerCase() : activityWords(activity)}` : ""}`];
   const human = [...cell.reviews].reverse().find((r) => r.humanApproval)?.humanApproval;
+  const sentBack = [...cell.reviews].reverse().find((r) => r.humanSentBack)?.humanSentBack;
   const rejected = cell.reviews.find((r) => r.outcome === "REJECTED");
   const failedCheck = cell.verifications.find((v) => v.status === "FAIL_WITH_EVIDENCE")?.checks.find((c) => c.result === "fail");
   const outvoted = cell.reviews.flatMap((r) => r.findings).find((f) => f.outvoted);
   if (failedCheck) out.push(`${failedCheck.targetId} failed, back to build`);
   if (rejected) out.push(`Rejected: ${rejected.findings.find((f) => f.severity === "blocker")?.rule ?? "blocker"}`);
   if (outvoted) out.push(`Blocker ${outvoted.rule ?? ""} outvoted`);
+  if (sentBack) out.push(`Sent back by ${sentBack.by}`);
   if (human) out.push(`Approved by ${human.by}`);
   else if (cell.stage === "awaiting-human") out.push("Waiting for a person");
   return out.slice(0, 3);

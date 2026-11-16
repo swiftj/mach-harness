@@ -747,6 +747,7 @@ func (w *world) runRecord(c *cell) obj {
 		{"review_rejections", f.rejections},
 		{"escalated", f.escalated || c.stage == "blocked"},
 		{"human_approval", f.human},
+		{"sent_back_by_person", 0},
 		{"deviations", devs},
 		{"blockers", blockers},
 		{"notes", notes},

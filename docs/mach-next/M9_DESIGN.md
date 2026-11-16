@@ -211,3 +211,22 @@ only on a person's word).
 - Cleanup removes the saved branch tips a re-plan left (`refs/mach/replan/<ticket_id>/*`) after it has
   archived them.
 - `board` is renamed `status`.
+
+## 8. A person may send a change back
+
+Until now a person could only approve a change the panel had approved. The walkthrough's inventory showed
+there was no gate for "change this first".
+
+- `review.py send-back <ticket> --by NAME --reason TEXT`, reached as `/mach-run send-back <ticket> "<why>"`.
+  Only for a cell awaiting a person, at the commit the panel voted on, on the person's explicit word, with
+  the reason in their own words.
+- The reason is written to `review/round-N/person-findings.md`, with a pointer to the panel's findings, and
+  becomes the findings the builder revises against. No reviewer's vote or finding is changed.
+- It counts as a judging round. Before the last round the decision is `REJECTED` and the cell returns to
+  `built`; in the last round it is `ESCALATE` and the cell is `blocked`. The decision carries
+  `rejected_by: "a person"` and `human_send_back` (who, the reason, when).
+- The lifecycle log records `human.approval_recorded` with `decision: "SENT_BACK"` and the visit's exit as
+  `sent-back` or `escalated`. The reason is never logged. The Factory Floor reads a send-back as an answer
+  that closes the wait, and never as an approval.
+- The run record gains `sent_back_by_person` (a count); a send-back is also a review rejection there.
+- The walkthrough offers it beside "Approve", and says when it would be the last round.

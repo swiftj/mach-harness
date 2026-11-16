@@ -1321,13 +1321,22 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		var d struct {
 			ByRole    string `json:"by_role"`
 			NoteGiven bool   `json:"note_given"`
+			Decision  any    `json:"decision"`
 		}
 		e.DataAs(&d)
-		c.Approvals = append(c.Approvals, &Approval{Round: round, ByRole: orDefault(d.ByRole, "person"), NoteGiven: d.NoteGiven, At: st})
+		// A person answers the approval gate either way: an approval, or (M9) sending the change
+		// back to the build station. Both close the gate and its wait (W3); only an approval is
+		// one. Anything but SENT_BACK, a missing decision included, reads as an approval.
+		decision := HumanDecision(d.Decision)
+		c.Approvals = append(c.Approvals, &Approval{Round: round, ByRole: orDefault(d.ByRole, "person"), NoteGiven: d.NoteGiven, Decision: decision, At: st})
+		closedBy := e.Type
+		if decision == DecisionSentBack {
+			closedBy = ClosedSentBack
+		}
 		var answered []*HumanGate
 		for _, g := range s.Gates {
 			if g.Kind == "approval" && g.Closed == nil && g.TicketID == c.TicketID && (round == nil || sameRev(g.Round, round)) {
-				g.Closed, g.ClosedBy = st, e.Type
+				g.Closed, g.ClosedBy = st, closedBy
 				if g.Opened != nil {
 					m.OpenAdd("W3", day(g.Opened), -1)
 				}
@@ -1341,7 +1350,7 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		for _, a := range answered {
 			for _, g := range s.Gates {
 				if g.Kind == "required" && g.Closed == nil && g.TicketID == c.TicketID && a.Opened != nil && g.Opened != nil && g.Opened.Pos > a.Opened.Pos {
-					g.Closed, g.ClosedBy = st, e.Type
+					g.Closed, g.ClosedBy = st, closedBy
 				}
 			}
 		}

@@ -21,7 +21,7 @@ OBSERVE_EVERY = 5
 
 RECORD_KEYS = {
     "ticket_id", "slice_id", "title", "risk", "app_type", "mode", "outcome", "abandon_reason", "rounds", "first_pass", "verify_failures",
-    "review_rejections", "escalated", "human_approval", "deviations", "blockers", "verify_findings", "tests_seen_failing_first",
+    "review_rejections", "escalated", "human_approval", "sent_back_by_person", "deviations", "blockers", "verify_findings", "tests_seen_failing_first",
     "tests_passing_on_first_run", "created_at", "closed_at", "archive", "notes",
     # record_version 2: what landed and where, and the product slice a ticket came from
     "record_version", "integration", "product",

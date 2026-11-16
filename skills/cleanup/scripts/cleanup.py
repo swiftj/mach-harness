@@ -341,6 +341,7 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
         "review_rejections": sum(1 for decision in decisions if decision.get("outcome") in ("REJECTED", "ESCALATE")),
         "escalated": any(decision.get("outcome") == "ESCALATE" for decision in decisions) or info.get("stage") == "blocked",
         "human_approval": any(decision.get("human_approval") is not None for decision in decisions),
+        "sent_back_by_person": sum(1 for decision in decisions if decision.get("rejected_by") == "a person"),
         "deviations": [{"type": str(d.get("type") or ""), "task": text_or_none(d.get("task")), "detail": str(d.get("detail") or "")}
                        for d in (build.get("deviations") if isinstance(build.get("deviations"), list) else []) if isinstance(d, dict)],
         "blockers": blockers,

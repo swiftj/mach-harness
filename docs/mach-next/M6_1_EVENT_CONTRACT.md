@@ -364,7 +364,7 @@ Data mapping, raw → v3 (anything the raw record lacks is null and listed in `u
 | `review.round_started` | `round`, `max_rounds`, `risk`, `tuning`, `seats[]`, `models{seat: model}`, `approvals_needed`, `human_approval_required`, `delta` | `risk`, `max_rounds`, `tuning`, `approvals_needed`, `human_approval_required`, `panel[{seat, model}]`, `delta`, `restarted` (a second start of the same round) |
 | `review.verdict_submitted` | `round`, `seat`, `vote`, `blockers`, `notes`, `rules[]` (spec and matrix IDs only) | `seat`, `vote`, `blockers`, `notes`, `rules`, `model` (from the round's panel: identity) |
 | `review.decided` | `round`, `decision`, `approvals`, `needed`, `votes{}`, `blockers`, `security_veto`, `human_approval_required` | `outcome`, `approvals`, `approvals_needed`, `votes`, `blockers`, `security_veto`, `human_approval_required` |
-| `human.approval_recorded` | `round`, `decision`, `note_given` | `by_role: "person"`, `note_given` |
+| `human.approval_recorded` | `round`, `decision`, `note_given` | `by_role: "person"`, `note_given`, `decision` (`APPROVED` or `SENT_BACK`; anything else is stored as null and read as an approval) |
 | `merge.completed` | `method`, `approved_commit`, `landed_commit`, `merge_commit`, `revalidated`, `pull_request` | the same |
 | `cleanup.completed` | `outcome`, `archive`, `bundle`, `uncommitted_saved` (in the archived copy of the log only) | the same |
 
@@ -461,7 +461,7 @@ All authoritative; req. ids `ticket_id`, `cell_instance`, `visit_id`, `station` 
 | `review.round_started` | `risk`, `max_rounds`, `tuning`, `approvals_needed`, `human_approval_required`, `panel[{seat, model}]`, `delta`, `restarted` | `review.started` |
 | `review.verdict_submitted` | `seat`, `vote`, `blockers`, `notes`, `rules[]`, `model` | `review.vote` |
 | `review.decided` | `outcome`, `approvals`, `approvals_needed`, `votes{seat: vote}`, `blockers`, `security_veto`, `human_approval_required` | `review.decided` (outvoted blockers: a seat that voted `REJECT` in an `APPROVED` round) |
-| `human.approval_recorded` | `by_role`, `note_given` | `human.approval_recorded` (the name is dropped) |
+| `human.approval_recorded` | `by_role`, `note_given`, `decision` | `human.approval_recorded` (the name is dropped; a send-back's reason is never recorded) |
 | `merge.completed` | `method`, `merge_commit`, `approved_commit`, `landed_commit`, `revalidated`, `pull_request` | `merge.completed`; `merge.revalidated` (passed) |
 | `cleanup.completed` | `outcome`, `archive`, `bundle`, `uncommitted_saved` | `cleanup.completed` |
 

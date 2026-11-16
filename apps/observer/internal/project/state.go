@@ -12,12 +12,14 @@
 package project
 
 import (
+	"strings"
+
 	"mach/observer/internal/metrics"
 )
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 7 // 7: M7 released claims, slice revision changes and pending revisions, wave revisions from intake, killed executions; 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
+const FormatVersion = 8 // 8: a person's decision at the approval gate (M9: approved or sent back); 7: M7 released claims, slice revision changes and pending revisions, wave revisions from intake, killed executions; 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -544,8 +546,34 @@ type Approval struct {
 	Round     *int64 `json:"round"`
 	ByRole    string `json:"by_role"`
 	NoteGiven bool   `json:"note_given"`
-	At        *Stamp `json:"at"`
+	// Decision is what the person answered: APPROVED, or SENT_BACK (M9: the change went back to
+	// the build station). A record with no decision, or one this observer does not know, is an
+	// approval, as it always was. The cell's approvals list carries both; a reader counting
+	// approvals counts only APPROVED.
+	Decision string `json:"decision"`
+	At       *Stamp `json:"at"`
 }
+
+// The person's answers at the approval gate.
+const (
+	DecisionApproved = "APPROVED"
+	DecisionSentBack = "SENT_BACK"
+	// ClosedSentBack is a human gate's closed_by (and its wait span's outcome) when the person
+	// sent the change back; an approval keeps closed_by human.approval_recorded.
+	ClosedSentBack = "sent-back"
+)
+
+// HumanDecision reads human.approval_recorded's decision: SENT_BACK in any case is a send-back;
+// anything else, a missing or unknown value included, is an approval.
+func HumanDecision(v any) string {
+	if s, ok := v.(string); ok && strings.EqualFold(strings.TrimSpace(s), DecisionSentBack) {
+		return DecisionSentBack
+	}
+	return DecisionApproved
+}
+
+// Approved reports whether the person approved (not sent the change back).
+func (a *Approval) Approved() bool { return a.Decision != DecisionSentBack }
 
 // Merge is the cell's merge.
 type Merge struct {

@@ -8,7 +8,7 @@ import type { AnySimEvent } from "./events";
 import { describe } from "./describe";
 import type { LogEntry } from "./log";
 import type { AnyV3Event, UnknownV3Event } from "./v3";
-import { isKnownV3Kind } from "./v3";
+import { isKnownV3Kind, isSentBack } from "./v3";
 import { gapClassWord } from "./provenance";
 import { gapClassOf } from "./reduce-v3";
 
@@ -121,7 +121,7 @@ export function describeV3(event: AnyV3Event | UnknownV3Event): string {
     case "review.decided":
       return `${who}: review ${e.data.outcome} (${e.data.approvals} approve, ${e.data.approvals_needed} needed).`;
     case "human.approval_recorded":
-      return `${who}: a person approved.`;
+      return isSentBack(e.data.decision) ? `${who}: sent back to the build station by a person.` : `${who}: a person approved.`;
     case "merge.completed":
       return `${who} merged.`;
     case "cleanup.completed":

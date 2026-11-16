@@ -846,6 +846,17 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
                 </p>
               </div>
             </div>
+          ) : review?.humanSentBack ? (
+            <div className="flex items-start gap-3 rounded-sm border border-factory-human bg-factory-human-soft px-3 py-2">
+              <GateGlyphSmall kind="human" size={24} state="failed" />
+              <div>
+                <p className="text-body-sm font-semibold text-ink">Sent back by {review.humanSentBack.by}</p>
+                <p className="mt-0.5 text-body-sm text-ink-muted">
+                  <span className="font-mono text-[12px] tabular">{timecode(review.humanSentBack.at, false)}</span>
+                  {review.humanSentBack.noteGiven ? ", with a reason (not shown here)" : ", no reason given"}. The change went back to the build station; it was not approved.
+                </p>
+              </div>
+            </div>
           ) : (
             <Empty>
               {attention ? (

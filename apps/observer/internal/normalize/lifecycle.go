@@ -486,7 +486,10 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		d["by_role"] = "person"
 		d["note_given"] = boolOr(get("note_given"), false)
 		get("round")
-		get("decision")
+		// The person's answer, an enumerated code (M9): APPROVED or SENT_BACK, any case; a
+		// synthetic history's "approve" is APPROVED. Anything else is not kept (null), and reads
+		// as an approval.
+		d["decision"] = humanDecision(get("decision"))
 		ev.Ref(event.RefActor("person"))
 	case "merge.completed":
 		require(ev, d, "method", enum(get("method"), "local", "pr"), "local")

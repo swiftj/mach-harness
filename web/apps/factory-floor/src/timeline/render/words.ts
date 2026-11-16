@@ -320,16 +320,20 @@ export const ATTEMPT_WORDS = "An attempt is the supervisor's own count of its tr
 
 /** An outcome string in words: "changes-requested" reads "changes requested". */
 export function outcomeWords(outcome: string): string {
+  if (SENT_BACK_OUTCOME.test(outcome)) return "sent back to the build station by a person";
   if (/^human\.approval/i.test(outcome)) return "approved by a person";
   return outcome.replace(/[-_.]+/g, " ").toLowerCase();
 }
 
 const FAILED_OUTCOME = /fail|reject|refus|declin|denied/i;
+/** A person's answer at the approval gate that sent the change back to the build station (M9): never an approval. */
+export const SENT_BACK_OUTCOME = /^sent[-_ ]?back$/i;
 
 /** Whether a wait on a person ended in an approval, as recorded by `liveAt`. */
 export function personApproved(span: TimelineSpan, liveAt: number): boolean {
   if (span.kind !== "person-wait" && span.kind !== "gate-wait") return false;
   if (!outcomeKnownAt(span, liveAt) || !span.outcome) return false;
+  if (SENT_BACK_OUTCOME.test(span.outcome)) return false;
   if (span.end?.reason === "refused" || span.end?.reason === "failed" || FAILED_OUTCOME.test(span.outcome)) return false;
   return /approv|pass|completed/i.test(span.outcome);
 }
@@ -348,6 +352,7 @@ function outcomePhrase(span: TimelineSpan, liveAt: number): string {
   const o = span.outcome ?? "";
   if (span.kind === "seat") return `voted ${outcomeWords(o)}`;
   if (span.kind === "person-wait" || span.kind === "gate-wait") {
+    if (SENT_BACK_OUTCOME.test(o)) return "a person sent it back to the build station";
     if (personApproved(span, liveAt)) return /approval|review|human-approval/i.test(`${o} ${span.entity}`) ? "a person approved the review" : "a person approved";
     if (FAILED_OUTCOME.test(o)) return "a person declined";
     return outcomeWords(o);

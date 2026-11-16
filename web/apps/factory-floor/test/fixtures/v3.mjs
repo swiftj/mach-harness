@@ -91,7 +91,7 @@ const defaultIds = { agent: () => `a${pad(++counter, 16)}`, gen: () => "3f2a9c1e
  * review (rejected), revise, verify, review (approved, awaiting a person), and, with `approve`, the
  * person's approval. Returns events without positions.
  */
-export function beltRun({ ticket = "LOCAL-031", slice = "SLICE-021", wave = "WAVE-007", execution = "x1a2b3c4d5e6f", t0 = Date.UTC(2026, 10, 12, 9, 0, 0), intakeGen = "0badc0de", cellGen = "3f2a9c1e", approve = true, ids = defaultIds, dependencies = [], intakeSeq = 1, progressEvery = 1 } = {}) {
+export function beltRun({ ticket = "LOCAL-031", slice = "SLICE-021", wave = "WAVE-007", execution = "x1a2b3c4d5e6f", t0 = Date.UTC(2026, 10, 12, 9, 0, 0), intakeGen = "0badc0de", cellGen = "3f2a9c1e", approve = true, decision = undefined, ids = defaultIds, dependencies = [], intakeSeq = 1, progressEvery = 1 } = {}) {
   const out = [];
   const intakeKey = `i:${intakeGen}`;
   const cellKey = `c:${ticket}:${cellGen}`;
@@ -254,9 +254,12 @@ export function beltRun({ ticket = "LOCAL-031", slice = "SLICE-021", wave = "WAV
 
   if (approve) {
     t += 60_000;
-    life("human.approval_recorded", { by_role: "person", note_given: false }, { entities: [`gate:${ticket}/human-approval#${round}`] });
+    // decision (M9): left out by default, as records before M9 were; SENT_BACK sends the change back to build.
+    const sentBack = typeof decision === "string" && decision.toUpperCase() === "SENT_BACK";
+    life("human.approval_recorded", { by_role: "person", note_given: sentBack, ...(decision !== undefined ? { decision } : {}) }, { entities: [`gate:${ticket}/human-approval#${round}`] });
     t += 10;
-    exit("approved", "approved");
+    if (sentBack) exit("sent-back", "built");
+    else exit("approved", "approved");
   }
   return { events: out, end: t, agents, intakeSeq: iseq, round };
 }

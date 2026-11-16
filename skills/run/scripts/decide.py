@@ -295,6 +295,11 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
             options.append(option("approve", "Approve the change",
                                   "The review station records the person's approval of this round, and the line carries the ticket on to its next step.",
                                   f"approve {ticket}"))
+            last = type(decision.get("round")) is int and decision["round"] >= explain.max_rounds(config)
+            options.append(option("send-back", "Send it back",
+                                  ("The review station records the person's reason and, because this is the ticket's last round, escalates it instead of building again."
+                                   if last else "The review station records the person's reason as the finding to answer, and the builder revises; it uses one of the ticket's rounds."),
+                                  f'send-back {ticket} "<why>"', needs_reason=True))
         else:
             facts["note"] = "This round's findings file is missing, so approval is not offered: a person sees the findings before approving."
         options.append(abandon(ticket))

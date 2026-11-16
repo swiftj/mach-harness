@@ -66,4 +66,13 @@ Record the outcome on the ticket with the ticket skill if it is installed: a com
 
 ## Recording a person's approval
 
-When the input is `<ticket> approve --by <name>`, or the user approves a ticket that is `AWAITING_HUMAN`: if their message says they have read the findings for this round, or you showed them the findings earlier in this conversation, their approval is complete; do not ask again. Otherwise show them the outcome and the findings once, and wait for their answer. Then run `REVIEW approve-human <ticket> --by '<name>' --note '<their words, if they gave a reason>'`. If they decline, do not record anything: ask whether they want it returned to the build station with their reasons as findings, and write those reasons to a file with the Write tool for `build revise --findings`.
+When the input is `<ticket> approve --by <name>`, or the user approves a ticket that is `AWAITING_HUMAN`: if their message says they have read the findings for this round, or you showed them the findings earlier in this conversation, their approval is complete; do not ask again. Otherwise show them the outcome and the findings once, and wait for their answer. Then run `REVIEW approve-human <ticket> --by '<name>' --note '<their words, if they gave a reason>'`. If they decline, do not record an approval: ask whether they want it sent back to the build station, and follow **Recording a person sending it back** below.
+
+## Recording a person sending it back
+
+A person may answer a ticket that is `AWAITING_HUMAN` by sending it back: the panel approved, and they want something changed before they will approve. Only on their explicit word in this conversation, with the reason in their own words. Never write the reason for them, and never improve it.
+
+Run `REVIEW send-back <ticket> --by '<name>' --reason '<their words: what has to change>'`. It counts as one of the ticket's three judging rounds, like any rejection, so if this is the last round tell them first that sending it back escalates the ticket and it will not be built again.
+
+- `REJECTED`: the cell is back at the build station. The script wrote their reason to `person-findings.md` in the round's folder, with a pointer to the panel's own findings. Return it to the build station as its `next` says (`build revise <ticket> --findings <that file>`), and record it on the ticket as for a rejection.
+- `ESCALATE`: it was the last round. Do as its `next` says: label the ticket `blocked-requires-sme`, set its state to blocked, and tell the person.

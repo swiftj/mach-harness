@@ -449,6 +449,9 @@ function calloutOffers(L: PlantLayout, scene: Scene, t: number, reduced: boolean
     } else if (hg.state === "passed" && hg.decidedAt !== null && !(cell?.archived)) {
       const by = cell?.reviews.find((x) => x.humanApproval)?.humanApproval?.by ?? "a person";
       put("ha", at, `Approved by ${by}`, `${hg.ticketId} released to merge`, "human", q(anim("humanRelease", t - hg.decidedAt, reduced)));
+    } else if (hg.state === "failed" && hg.decidedAt !== null && !(cell?.archived)) {
+      const by = [...(cell?.reviews ?? [])].reverse().find((x) => x.humanSentBack)?.humanSentBack?.by ?? "a person";
+      put("hs", at, `Sent back by ${by}`, `${hg.ticketId} back to the build station, not approved`, "fail", q(anim("humanRelease", t - hg.decidedAt, reduced)));
     }
   }
   // A dependency unlocking: the waiting slice becomes eligible.

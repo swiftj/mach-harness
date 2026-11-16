@@ -208,6 +208,7 @@ function gateWord(cell: CellState, g: GateState): { text: string; state: Factory
   if (g.gate === "review" && g.state === "failed" && g.decidedAt !== null) return { text: "Rejected", state: "failed", at: g.decidedAt };
   if (g.gate === "human-approval" && (g.state === "waiting" || g.state === "open")) return { text: "Waiting for a person", state: "human", at: g.openedAt };
   if (g.gate === "human-approval" && g.state === "passed" && g.decidedAt !== null) return { text: "Approved", state: "human", at: g.decidedAt };
+  if (g.gate === "human-approval" && g.state === "failed" && g.decidedAt !== null) return { text: "Sent back by a person", state: "failed", at: g.decidedAt };
   return null;
 }
 

@@ -222,6 +222,10 @@ function revisionsOf(scene: Scene): Revision[] {
         const by = [...cell.reviews].reverse().find((r) => r.humanApproval)?.humanApproval?.by ?? "a person";
         out.push({ at: g.decidedAt, ticket: cell.ticketId, text: `Approved by ${by}`, short: `Approved by ${by}`, tone: "human" });
       }
+      if (g.gate === "human-approval" && g.state === "failed") {
+        const by = [...cell.reviews].reverse().find((r) => r.humanSentBack)?.humanSentBack?.by ?? "a person";
+        out.push({ at: g.decidedAt, ticket: cell.ticketId, text: `Sent back by ${by}; back to build`, short: `Sent back by ${by}`, tone: "fail" });
+      }
     }
     for (const r of cell.reviews) {
       const outvoted = r.findings.find((f) => f.outvoted);

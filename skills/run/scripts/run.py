@@ -289,7 +289,7 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         decision = load_json(root / "review" / "decision.json", {}) or {}
         summary = load_json(root / "evidence" / "summary.json", {}) or {}
         if decision.get("outcome") == "REJECTED" and decision.get("head") == head:
-            return step(ticket_id, stage, "revise", "The merge station sent this build back." if decision.get("rejected_by") else "Review rejected this build.", agent_type=agent_type("builder"), findings=decision.get("findings"),
+            return step(ticket_id, stage, "revise", ("A person sent this build back." if decision.get("rejected_by") == "a person" else "The merge station sent this build back." if decision.get("rejected_by") else "Review rejected this build."), agent_type=agent_type("builder"), findings=decision.get("findings"),
                         prompt=f"Revise MACH ticket {ticket_id} after a rejected review. Findings: {decision.get('findings')}")
         if summary.get("status") == "FAIL_WITH_EVIDENCE" and summary.get("head") == head:
             findings = str(root / "evidence" / "findings.md")

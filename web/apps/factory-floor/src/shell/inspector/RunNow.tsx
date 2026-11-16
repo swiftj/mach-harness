@@ -207,7 +207,7 @@ function ReceivedCounts() {
           ["Agents", `${counters.agentsActive} working, ${counters.agentsStarted} started${unobserved ? `; not observed in ${unobserved} of ${executionCount} execution${executionCount === 1 ? "" : "s"}` : ""}`],
           ["Tool calls", countOnly ? `${perCall.toLocaleString("en-GB")} observed one by one; ${counted.toLocaleString("en-GB")} reported as counts by ${countOnly} workflow agent${countOnly === 1 ? "" : "s"}` : `${perCall.toLocaleString("en-GB")} observed`],
           ["Review rounds", `${counters.reviewRounds}, ${counters.blockers} blockers, ${counters.notes} notes`],
-          ["People", `${counters.humanApprovals} approval${counters.humanApprovals === 1 ? "" : "s"} by a person`],
+          ["People", `${counters.humanApprovals} approval${counters.humanApprovals === 1 ? "" : "s"} by a person${counters.humanSendBacks ? `; ${counters.humanSendBacks} sent back to the build station` : ""}`],
           ["Landed", `${counters.merged} merged, ${counters.integrated} integrated`],
           [
             "Cost",

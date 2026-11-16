@@ -435,7 +435,7 @@ func (g *gen) appendRun(c *cell) error {
 	}
 	line, _ := json.Marshal(map[string]any{"record_version": 2, "ticket_id": c.ticket, "closed_at": isoS(w.ms(closed) + 1000), "outcome": "merged",
 		"rounds": c.round, "first_pass": verifyFails+rejections == 0, "verify_failures": verifyFails, "review_rejections": rejections, "escalated": false,
-		"human_approval": false, "deviations": []any{}, "blockers": []any{}, "risk": c.risk, "app_type": "cli", "tests_seen_failing_first": 2,
+		"human_approval": false, "sent_back_by_person": 0, "deviations": []any{}, "blockers": []any{}, "risk": c.risk, "app_type": "cli", "tests_seen_failing_first": 2,
 		"tests_passing_on_first_run": 2, "integration": map[string]any{"method": "local", "merge_commit": c.head},
 		"product": map[string]any{"slice_id": c.slice.id, "wave_id": c.slice.wave.id, "revision": c.slice.rev}})
 	path := g.path(".factory", "archive", "runs.jsonl")

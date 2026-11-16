@@ -343,7 +343,8 @@ export function spansOfScene(scene: Scene, log: SceneLog | null = null): Timelin
         ids: { ...base, round: g.round },
         start: { at: g.openedAt, refs: [`gate:${g.id}`, cellRef], eventId: simulated ? `sim:${g.seq}` : null },
         end: decided ? { at: g.decidedAt as number, refs: [`gate:${g.id}`, cellRef], reason: g.state === "failed" ? "refused" : "completed" } : null,
-        outcome: decided ? g.state : null,
+        // The person's gate fails only one way: they sent the change back (M9), as the observer says it.
+        outcome: decided ? (g.state === "failed" ? "sent-back" : g.state) : null,
         authority: g.meta.authority,
         ...(g.round !== null ? { attrs: { round: g.round } } : {}),
       });
@@ -494,7 +495,7 @@ export function marksOfScene(scene: Scene, spans: readonly TimelineSpan[]): Time
     }
     if (s.kind === "gate-wait" && s.start?.at !== null && s.start?.at !== undefined) {
       out.push({ id: `human:${s.id}`, kind: "human", at: s.start.at, until: at, eventId: s.start.eventId, entity: s.entity, label: "A person's approval was required.", verdict: "required", authority: auth(s.authority) });
-      out.push({ id: `human-approved:${s.id}`, kind: "human", at, until: null, eventId: s.end?.eventId ?? null, entity: s.entity, label: s.outcome === "failed" ? "A person declined the approval." : "A person approved.", verdict: s.outcome === "failed" ? "rejected" : "approved", authority: auth(s.authority) });
+      out.push({ id: `human-approved:${s.id}`, kind: "human", at, until: null, eventId: s.end?.eventId ?? null, entity: s.entity, label: s.outcome === "sent-back" ? "A person sent the change back to the build station." : s.outcome === "failed" ? "A person declined the approval." : "A person approved.", verdict: s.outcome === "sent-back" ? "sent-back" : s.outcome === "failed" ? "rejected" : "approved", authority: auth(s.authority) });
     }
     if (s.kind === "visit" && s.attrs.action === "revise" && s.start?.at !== null && s.start?.at !== undefined) {
       out.push({ id: `retry:${s.id}`, kind: "retry", at: s.start.at, until: null, eventId: s.start.eventId, entity: s.entity, label: "The build station revised the work.", verdict: null, authority: auth(s.authority) });

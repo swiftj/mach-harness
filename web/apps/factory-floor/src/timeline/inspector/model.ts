@@ -553,6 +553,9 @@ const STATION_OUTCOME_WORDS: Readonly<Record<string, string>> = {
   INCOMPLETE_EVIDENCE: "evidence incomplete",
   APPROVE: "approve",
   REJECT: "reject",
+  // A person's answer at the approval gate (M9): a wait's outcome and the human-approval visit's.
+  "sent-back": "sent back to the build station by a person",
+  SENT_BACK: "sent back to the build station by a person",
 };
 
 /** An outcome in words, and the station's own word when it is one (shown beside them, in mono); null words when it is already plain. */

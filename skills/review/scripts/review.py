@@ -10,6 +10,7 @@ which model, what a valid finding looks like, each reviewer's vote, and the outc
                                                                (default FILE: findings-<ROLE>.json in the round's review folder)
     review.py tally <ticket>                                   count the votes and decide
     review.py approve-human <ticket> --by NAME                 record a person's sign-off
+    review.py send-back <ticket> --by NAME --reason TEXT       record a person sending it back to the build station
     review.py status <ticket>
 
 A reviewer never states a vote. A submission with at least one blocker is a REJECT; one with
@@ -536,6 +537,46 @@ def cmd_approve_human(cell: Cell, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_send_back(cell: Cell, args: argparse.Namespace) -> int:
+    """A person's other answer once the panel has approved: send the change back to the build station with their reason.
+
+    It counts as a judging round, like any rejection: before the last round the cell returns to 'built' for a
+    revision; in the last round the ticket is escalated. The reason is the person's, in their words; it becomes
+    the finding the builder must answer. Nothing a reviewer wrote is changed."""
+    decision = load_json(cell.folder / "decision.json")
+    if not isinstance(decision, dict) or decision.get("outcome") != "AWAITING_HUMAN" or cell.info.get("stage") != "awaiting-human":
+        raise ReviewError("This ticket is not waiting for a person's approval. A person sends a change back only after the panel has approved it.", code="not-awaiting-human")
+    if decision.get("head") != cell.head():
+        raise ReviewError("The cell's code changed after the panel voted. Review it again.", code="code-changed")
+    name = " ".join(args.by.split())
+    if len(name) < 2:
+        raise ReviewError("--by must name the person who sent it back.")
+    reason = (args.reason or "").strip()
+    if len(reason) < 10:
+        raise ReviewError("--reason must say, in the person's own words, what has to change before they will approve.", code="reason-missing")
+    number = decision.get("round") if type(decision.get("round")) is int else cell.packet["round"]
+    last = number >= cell.packet["max_rounds"]
+    outcome = "ESCALATE" if last else "REJECTED"
+    panel_findings = decision.get("findings")
+    path = cell.folder / "person-findings.md"
+    path.write_text(f"# Sent back by a person: {cell.ticket_id}, round {number} of {cell.packet['max_rounds']}\n\n"
+                    f"The review panel approved this round, and {name} sent it back before approving it.\n\n"
+                    f"1. **Sent back by a person.** {reason}\n\n"
+                    f"The panel's own findings for this round, none of them blocking, are in {panel_findings}.\n", encoding="utf-8")
+    decision.update({"outcome": outcome, "findings": str(path), "panel_findings": panel_findings, "rejected_by": "a person", "human_approval": None,
+                     "human_send_back": {"by": name, "reason": reason, "recorded_at": now(), "recorded_by": "an agent, on the person's instruction in conversation"}})
+    write_json(cell.folder / "decision.json", decision)
+    write_json(cell.root / "review" / "decision.json", decision)
+    cell.info.update({"stage": "blocked" if last else "built", "review": outcome})
+    cell.save_info()
+    telemetry(cell.root, "human.approval_recorded", "human-approval", lambda: {"round": number, "decision": "SENT_BACK", "note_given": True})
+    telemetry(cell.root, "station.exited", "human-approval", lambda: {"outcome": "escalated" if last else "sent-back", "stage": cell.info["stage"]})
+    print(json.dumps({"outcome": outcome, "round": number, "sent_back_by": name, "findings": str(path),
+                      "next": (f"This was round {number} of {cell.packet['max_rounds']}, the last. Do not send it to the build station. Label the ticket 'blocked-requires-sme', set its state to blocked, and tell the person."
+                               if last else f"Return it to the build station: build revise {cell.ticket_id} --findings {path}")}, indent=2))
+    return 0
+
+
 def cmd_status(cell: Cell, args: argparse.Namespace) -> int:
     votes = cell.votes()
     print(json.dumps({
@@ -565,6 +606,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--by", required=True, help="the name of the person who approved")
     p.add_argument("--note")
     p.set_defaults(func=cmd_approve_human)
+    p = sub.add_parser("send-back", help="record a person sending the change back to the build station, after the panel approved")
+    p.add_argument("ticket_id")
+    p.add_argument("--by", required=True, help="the name of the person who sent it back")
+    p.add_argument("--reason", required=True, help="what has to change, in the person's own words")
+    p.set_defaults(func=cmd_send_back)
     return parser
 
 
@@ -578,7 +624,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"refused: {exc}", file=sys.stderr)
         if project is not None and args.command != "status":
             telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated",
-                      "human-approval" if args.command == "approve-human" else "review", lambda: {
+                      "human-approval" if args.command in ("approve-human", "send-back") else "review", lambda: {
                           "gate": f"review.{args.command}", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False,
                           "seat": getattr(args, "reviewer", None)})
         return 1

@@ -87,7 +87,7 @@ const WAIT_TONE_KINDS: ReadonlySet<SpanKind> = new Set<SpanKind>(["slice-wait", 
 /** An outcome word's tone: failures, stops from outside, or a pass. */
 export function outcomeTone(outcome: string): Tone {
   const o = outcome.toLowerCase();
-  if (/fail|reject|refus|block|escalat|error|denied|changes/.test(o)) return "fail";
+  if (/fail|reject|refus|block|escalat|error|denied|changes|sent.?back/.test(o)) return "fail";
   if (/interrupt|supersed|time.?out|killed|cancel|abandon|unknown/.test(o)) return "halt";
   return "pass";
 }

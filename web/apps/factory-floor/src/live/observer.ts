@@ -527,7 +527,7 @@ export function readArtifactEntry(value: unknown): ArtifactEntry {
 }
 
 /** A gate state word from a human gate of the snapshot. */
-const humanGateState = (g: Record<string, unknown>): string => (g.closed ? (g.closed_by === "rejected" ? "failed" : "passed") : "waiting");
+const humanGateState = (g: Record<string, unknown>): string => (g.closed ? (g.closed_by === "rejected" || g.closed_by === "sent-back" ? "failed" : "passed") : "waiting");
 
 /**
  * `/api/v1/snapshot`'s `state` (the observer's projection: `waves`, `slices`, `cells`, `executions`

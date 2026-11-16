@@ -416,6 +416,8 @@ export function GatehouseWorks() {
   const H = L.human;
   const waiting = gate?.state === "waiting";
   const approvals = Object.values(scene.cells).flatMap((c) => c.reviews.filter((r) => r.humanApproval).map((r) => ({ ticket: c.ticketId, by: r.humanApproval!.by, at: r.humanApproval!.at }))).sort((a, b) => a.at - b.at);
+  // Send-backs are a person's answer too, never counted as approvals (M9).
+  const sentBack = Object.values(scene.cells).reduce((n, c) => n + c.reviews.filter((r) => r.humanSentBack).length, 0);
   const dim = gate ? isDimmed(highlight, ref.cell(gate.ticketId)) : false;
   return (
     <g style={{ opacity: dim ? 0.28 : 1 }}>
@@ -432,7 +434,7 @@ export function GatehouseWorks() {
       {lod !== "far" ? (
         <>
           <Prism box={{ x: L.regions.human.x + 16, y: L.regions.human.y + 26, w: 46, d: 16, z: PLATE_Z, h: 4 }} top="machine-top" hatch="shade" rim={false} />
-          <FloorLettering at={{ x: L.regions.human.x + 19, y: L.regions.human.y + 33, z: PLATE_Z + 4 }} text={`Register · ${approvals.length} approval${approvals.length === 1 ? "" : "s"}`} size={5.6} font="sans" tone="muted" weight={600} decorative />
+          <FloorLettering at={{ x: L.regions.human.x + 19, y: L.regions.human.y + 33, z: PLATE_Z + 4 }} text={`Register · ${approvals.length} approval${approvals.length === 1 ? "" : "s"}${sentBack ? ` · ${sentBack} sent back` : ""}`} size={5.6} font="sans" tone="muted" weight={600} decorative />
           {approvals.slice(-1).map((a) => (
             <FloorLettering key={a.ticket} at={{ x: L.regions.human.x + 19, y: L.regions.human.y + 39, z: PLATE_Z + 4 }} text={`${a.ticket} · ${a.by}`} size={5.2} font="sans" tone="human" weight={600} decorative />
           ))}
