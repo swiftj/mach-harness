@@ -129,3 +129,85 @@ The merge itself is unchanged: `--match-head-commit`, a merge commit, no branch 
 
 Letting the panel review a pull request a person wrote; provider detection (`tickets.provider:
 "auto"`); recording the High-risk ceiling in execution provenance.
+
+## 5. One worker per ticket: the claim
+
+Found in the live check: nothing stopped a second worker from planning a cell a first worker was still
+planning. Only the supervisor claimed work before starting it.
+
+### 5.1 The claim
+
+A small file in the cell, `.factory/worktrees/<ticket_id>/claim.json`:
+`{"step", "stage", "holder", "at", "renewed_at"}`. One shared helper, `skills/intent/scripts/claim.py`
+(beside `lifecycle.py`, loaded by the other stations the same way), reads and writes it atomically.
+
+A claim is **fresh** while the cell's stage is still the stage it was made at and it was made or renewed
+less than `factory.claim_minutes` ago (default 90). Otherwise it is stale and counts for nothing. It is a
+guard against accidents between honest drivers, not a security boundary.
+
+A **holder** is a random token a driver gets once and passes back: `run.py where` prints a new one
+(`holder`), and so does the first `run.py next --holder new`.
+
+### 5.2 Who claims, and who is refused
+
+| Caller | Behaviour |
+|---|---|
+| `run.py next <ticket> --holder H` naming a work step | Claims the step for H, or renews H's claim. If another holder's claim is fresh: the answer is `stop`, `needs: "worker-in-cell"`, with the step, when it was handed out and when the claim lapses. |
+| `run.py next <ticket>` with no holder | Never claims. Refused the same way while any claim is fresh. Otherwise answers as today. |
+| `run.py next <ticket> --take-over` | Only on a person's explicit word. Replaces a fresh claim, and says whose step it replaced. |
+| `cell.py claim <ticket> <step> [--holder H]` | For a station that starts a worker itself, outside `run.py next`: the intent skill claims `plan` before it starts the contract engineer. Refuses on another holder's fresh claim. |
+| `run.py schedule ... --holder H` | A pending ticket with another holder's fresh claim is held (`rule: "claimed"`). |
+| `run.py status` | Each row shows a fresh claim: the step and since when. It answers "is someone working on this?" |
+
+A stop (`action: stop`) is never claimed. Moving to a new stage makes the old claim stale; nothing needs
+releasing. The belt workflow gets one holder for the run from its first relay and passes it on every
+`next` and `schedule`. The run skill does the same within a conversation. Recording a claim changes no
+station's result; a failure to write one is reported and the step is not handed out.
+
+## 6. The walkthrough of decisions
+
+### 6.1 What it is
+
+When work stops for a person, the run skill walks the person through each waiting ticket, one at a time:
+what happened, then a prompt with the options for that situation, the recommended one first. It starts on
+its own at the end of `/mach-run <ticket>` and of `/mach-run <a> <b> <c>` whenever something waits on a
+person. `/mach-run decide [<ticket>...]` returns to it later. It never runs unattended: not in the belt,
+not in a supervised execution, not headless.
+
+### 6.2 A script lists the options
+
+`skills/run/scripts/decide.py`, reached as `run.py decide [<ticket>...] [--json]`. It reads only. For each
+ticket waiting on a person it gives:
+
+- `situation`: stage, risk, round, and the facts `explain.py` already gathers (the failing requirement or
+  check, each blocker with its rule), bounded, passed on as data.
+- `show_first`: files the person must be shown before deciding (the round's `findings.md` before an
+  approval).
+- `options`: each with `key`, `label` (one to five words), `does` (one sentence), `route` (the existing
+  run-skill input that carries it out, such as `approve <ticket>`), `needs_reason`, and `recommended`.
+- `recommendation`: `{"basis": "rule", "why": ...}` where a rule decides it, else
+  `{"basis": "judgement"}`: the script recommends nothing and Claude may give its own reading, labelled
+  as its own.
+
+Only options whose gate exists in a station's script are listed; `decide.py` adds no power. The states it
+covers, each read from the stations' own files: waiting for a person's approval; approved with merges
+kept for a person; a pull request that cannot land yet; a spec with open questions; a build stopped at a
+gate; escalated after three rounds; a Bronze repository; a ticket the supervisor parked; a worker in the
+cell (5.2). "Skip for now" is always possible and changes nothing.
+
+### 6.3 Carrying a choice out
+
+The skill routes the choice to the station that owns it, under that station's gates, exactly as if the
+person had typed it. A choice that needs a reason is asked for in the person's own words. One new route
+is added to the run skill for this: `replan <ticket> "<why>"` (the intent station's `cell.py replan`,
+only on a person's word).
+
+## 7. Small fixes from the live check
+
+- `build.py red` refuses a test that leaves out or respells a spec ID of its task, while it can be edited.
+- `/mach-run approve <ticket>` carries the ticket on to the next step.
+- The findings review names the commit the panel approved, and says when the branch was brought up to date.
+- A file or slice name made of plain words is not masked as a secret.
+- Cleanup removes the saved branch tips a re-plan left (`refs/mach/replan/<ticket_id>/*`) after it has
+  archived them.
+- `board` is renamed `status`.
