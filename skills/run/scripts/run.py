@@ -8,6 +8,8 @@ and not by whoever is driving it.
 
     run.py next <ticket> [--headless]    the next step for one ticket
     run.py board [--headless]            the next step for every open ticket and cell
+    run.py explain <ticket> [--json]     why a ticket failed, was sent back or is waiting; reads only (explain.py)
+    run.py doctor [--fix] [--json]       check the machine and the project; works before .factory exists (doctor.py)
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
     run.py review-tally <ticket>         count the review votes
     run.py where                         where this script and the project are (used by the workflow)
@@ -33,6 +35,14 @@ A step is either work ("action": audit, groom, plan, build, revise, verify, revi
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
 person's approval, a merge, or a person to take over an escalated ticket.
 
+`next`, `board` and `explain` also carry a "digest": where the ticket stands, what a person must decide,
+and time and cost. Time comes from the cell's own records; a cost appears only where one was recorded for
+the ticket (the intake ledger's supervised executions), otherwise the text "not recorded". It is never estimated.
+
+A ticket a person names may be a bare number: `4` or `104` resolves to the one known ticket with that
+number (open cells, local tickets, the inbox, or the tracker's own numbering). The resolved ID is reported
+as "resolved_from"; more than one match is refused with the candidates, and a full ID is never reinterpreted.
+
 Standard library only. It reads; the only commands it runs are git queries and the review
 station's own script. The product commands are the exception and live in intake.py: on an
 engineer's explicit command they file tickets and open cells through the ticket and intent
@@ -47,7 +57,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 HARDENING_LABEL = "repo-hardening"
@@ -297,6 +307,157 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}').", needs="person-to-take-over")
 
 
+NUMBERED_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-0*(\d+)$")
+NATIVE_NUMBER_PROVIDERS = ("github", "gitea")  # trackers whose own ticket ID is the issue number itself
+
+
+def resolve_ticket(given: str, known: Iterable[str], native_numbers: bool = False) -> Tuple[str, Optional[str]]:
+    """A bare number a person typed, resolved to the one known ticket with that number; anything else is returned unchanged.
+
+    Returns (ticket ID, what was typed) when a number was resolved to a different ID, else (given, None). A full ID, or a
+    number that is itself a known ID, is never reinterpreted. No match, or more than one, is refused: nothing is guessed."""
+    if not re.fullmatch(r"\d+", given or ""):
+        return given, None
+    names = set(known)
+    if given in names:
+        return given, None
+    number = int(given)
+    matches = {name for name in names if (found := NUMBERED_ID_RE.match(name)) and int(found.group(1)) == number}
+    if native_numbers:
+        matches.add(str(number))
+    if not matches:
+        raise RunError(f"No known ticket has the number {given}: no open cell, local ticket or inbox record matches it. Use the ticket's full ID.")
+    if len(matches) > 1:
+        raise RunError(f"{given} could be more than one ticket: {', '.join(sorted(matches))}. Use the full ID; nothing was done.")
+    found_id = matches.pop()
+    return found_id, (given if found_id != given else None)
+
+
+def known_tickets(project: Project) -> List[str]:
+    """Every ticket ID this project knows locally: open cells, local tickets and inbox records."""
+    factory = project.root / ".factory"
+    names = [path.name for path in (factory / "worktrees").iterdir() if path.is_dir()] if (factory / "worktrees").is_dir() else []
+    names += [path.stem for path in (factory / "tickets").glob("*.md")] if (factory / "tickets").is_dir() else []
+    names += [path.stem for path in (factory / "inbox").glob("*.json")] if (factory / "inbox").is_dir() else []
+    return sorted({name for name in names if TICKET_ID_RE.match(name)})
+
+
+def resolve_args(project: Project, args: argparse.Namespace) -> Optional[str]:
+    """Resolve the ticket a person named on a per-ticket command; returns what they typed when it was a bare number."""
+    given = getattr(args, "ticket_id", None)
+    if not isinstance(given, str):
+        return None
+    provider = os.environ.get("ISSUE_PROVIDER") or project.section("tickets").get("provider") or "local"
+    args.ticket_id, resolved_from = resolve_ticket(given, known_tickets(project), provider in NATIVE_NUMBER_PROVIDERS)
+    return resolved_from
+
+
+NEEDS_TEXT = {
+    "answers": "Answer the spec's open questions in the grooming interview.",
+    "human-approval": "Approve the change, or not, after reading the review findings.",
+    "merge": "Merge the approved branch; the project's settings keep merging for a person.",
+    "person-to-take-over": "Take over the escalated ticket: it used all its judging rounds.",
+    "repository-hardening": "Harden the repository first: its readiness tier is Bronze.",
+    "person": "Dispatch this ticket on its own.",
+}
+
+
+def parse_time(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def elapsed(project: Project, ticket_id: str) -> Optional[float]:
+    """Seconds from the cell's first record to its last: the lifecycle log, else cell.json's own timestamps. None when neither exists."""
+    cellroot = project.cell_dir(ticket_id)
+    moments = []
+    try:
+        lines = (cellroot / "lifecycle.jsonl").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        moment = parse_time(record.get("at")) if isinstance(record, dict) else None
+        if moment:
+            moments.append(moment)
+    if len(moments) < 2:
+        cell = load_json(cellroot / "cell.json", {}) or {}
+        moments = [moment for moment in (parse_time(cell.get("created_at")), parse_time(cell.get("updated_at"))) if moment] if isinstance(cell, dict) else []
+    if len(moments) < 2:
+        return None
+    return max((max(moments) - min(moments)).total_seconds(), 0.0)
+
+
+def duration_text(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "time not recorded"
+    minutes = int(seconds // 60)
+    if minutes < 1:
+        return "under a minute recorded"
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    parts = ([f"{days} d"] if days else []) + ([f"{hours} h"] if hours else []) + ([f"{minutes} min"] if minutes else [])
+    return " ".join(parts) + " recorded"
+
+
+def recorded_cost(project: Project, ticket_ids: Sequence[str]) -> Dict[str, Any]:
+    """Cost exactly as recorded for these tickets: the supervised executions in the intake ledger that report one.
+    Nothing else is a record of cost here; work a person drove has none. Never estimated, never derived from tokens."""
+    ledger = load_json(project.root / ".factory" / "intake" / "ledger.json", {}) or {}
+    executions = ((ledger.get("supervisor") or {}).get("executions") or {}) if isinstance(ledger, dict) else {}
+    total, counted, without = 0.0, 0, 0
+    for record in executions.values() if isinstance(executions, dict) else []:
+        if not isinstance(record, dict) or record.get("ticket_id") not in ticket_ids:
+            continue
+        cost = record.get("cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+            total, counted = total + float(cost), counted + 1
+        else:
+            without += 1
+    if not counted:
+        return {"cost_usd": None, "text": "not recorded"}
+    text = f"${total:.2f} recorded over {counted} execution{'s' if counted != 1 else ''}"
+    if without:
+        text += f" ({without} more with no cost recorded)"
+    return {"cost_usd": round(total, 6), "text": text}
+
+
+def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
+    """Three lines for the top of a ticket's status: where it is, what a person must decide, time and cost."""
+    ticket_id, stage, action = info.get("ticket_id"), info.get("stage"), info.get("action")
+    place = f"stage {stage}" if stage else "no cell yet"
+    where = f"{ticket_id}: {place}; " + (f"stopped: {info.get('reason')}" if info.get("stop") else f"next: {action}. {info.get('reason')}")
+    needs = info.get("needs") if info.get("stop") else None
+    if needs and needs != "nothing":
+        decide = NEEDS_TEXT.get(needs, f"A person is needed ({needs}).")
+    elif info.get("interactive"):
+        decide = "Answer the grooming interview, one question at a time."
+    else:
+        decide = "Nothing"
+    seconds = elapsed(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else None
+    cost = recorded_cost(project, [ticket_id])
+    return {"where": where, "needs_person": decide, "time_and_cost": f"{duration_text(seconds)}; cost {cost['text']}",
+            "elapsed_seconds": seconds, "cost_usd": cost["cost_usd"]}
+
+
+def board_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    ready = [row for row in rows if row["action"] != "stop"]
+    waiting = [row for row in rows if row["action"] == "stop" and row.get("needs") not in (None, "nothing")]
+    where = f"{len(rows)} ticket{'s' if len(rows) != 1 else ''}: {len(ready)} ready to run, {len(waiting)} waiting on a person"
+    decide = "; ".join(f"{row['ticket_id']}: {NEEDS_TEXT.get(row['needs'], row['needs'])}" for row in waiting) or "Nothing"
+    cost = recorded_cost(project, [row["ticket_id"] for row in rows])
+    return {"where": where, "needs_person": decide, "time_and_cost": f"time per ticket: see its next step; cost {cost['text']}",
+            "elapsed_seconds": None, "cost_usd": cost["cost_usd"]}
+
+
 def cmd_where(project: Project, args: argparse.Namespace) -> int:
     print(json.dumps({"run_script": str(Path(__file__).resolve()), "project": str(project.root), "python": sys.executable,
                       "is_mach_project": (project.root / ".factory").is_dir()}, indent=2))
@@ -343,8 +504,36 @@ def cmd_next(project: Project, args: argparse.Namespace) -> int:
     if found.get("action") == "cleanup" and execution_scope(project):
         found["prompt"] = (str(found.get("prompt") or "") + "\nThis is a supervised Factory execution for this ticket only: do not run the observe skill, "
                            "even if cleanup says an observe pass is due. The supervisor reports a due pass to a person.")
-    print(json.dumps(found, indent=2, ensure_ascii=False))
+    shown = {"digest": digest(project, found), **found}  # the digest first; every field the belt reads is unchanged
+    if getattr(args, "resolved_from", None):
+        shown["resolved_from"] = args.resolved_from
+    print(json.dumps(shown, indent=2, ensure_ascii=False))
     return 0
+
+
+def cmd_explain(project: Project, args: argparse.Namespace) -> int:
+    """Why a ticket failed, was sent back or is waiting (explain.py). Reads only: writes, records and starts nothing."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import explain
+    found = next_step(project, args.ticket_id, False)
+    report, code = explain.explain(project.root, args.ticket_id, found, project.config)
+    report = {"digest": digest(project, found), **report}
+    if getattr(args, "resolved_from", None):
+        report["resolved_from"] = args.resolved_from
+    print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else explain.human(report))
+    return code
+
+
+def cmd_doctor(root: Path, args: argparse.Namespace) -> int:
+    """The doctor (doctor.py), loaded only when asked for. Reachable before the project has a .factory folder."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import doctor
+    except ModuleNotFoundError as exc:
+        if exc.name != "doctor":
+            raise
+        raise RunError(f"The doctor is not installed next to this script ({Path(__file__).resolve().parent / 'doctor.py'}).")
+    return doctor.main([*(["--fix"] if args.fix else []), *(["--json"] if args.json else [])], project=root)
 
 
 def cmd_board(project: Project, args: argparse.Namespace) -> int:
@@ -370,7 +559,7 @@ def cmd_board(project: Project, args: argparse.Namespace) -> int:
     if scope is not None:
         # The observe pass and any tuning ticket it files are separate work: the supervisor, which alone dispatches, reports them.
         tuning, due = [], False
-    print(json.dumps({"audit": project.audit(), "observe_due": due, "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
+    print(json.dumps({"digest": board_digest(project, rows), "audit": project.audit(), "observe_due": due, "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
                       "ready_to_run": [row["ticket_id"] for row in rows if row["action"] != "stop"],
                       "waiting_on_a_person": [row["ticket_id"] for row in rows if row["action"] == "stop"]}, indent=2, ensure_ascii=False))
     return 0
@@ -570,6 +759,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("board", help="the next step for every open ticket and cell")
     p.add_argument("--headless", action="store_true")
     p.set_defaults(func=cmd_board)
+    p = sub.add_parser("explain", help="why a ticket failed, was sent back or is waiting; reads only")
+    p.add_argument("ticket_id")
+    p.add_argument("--json", action="store_true", help="the facts as JSON instead of a short list")
+    p.set_defaults(func=cmd_explain)
+    p = sub.add_parser("doctor", help="check the machine and the project; --fix only creates missing MACH folders")
+    p.add_argument("--fix", action="store_true", help="create missing MACH folders; never edits settings or enables anything")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=None)
     for name, func, text in (("review-start", cmd_review_start, "start the review round and print one prompt per seat"),
                              ("review-tally", cmd_review_tally, "count the review votes")):
         p = sub.add_parser(name, help=text)
@@ -672,9 +869,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         root = args.project.resolve() if args.project else find_project(Path.cwd())
         if args.command == "factory" and getattr(args, "action", None) == "wake" and not (root / ".factory").is_dir():
             return 0  # a hook fired somewhere MACH is not: stay silent
+        if args.command == "doctor":
+            return cmd_doctor(root, args)  # before the .factory check: the doctor is how a project without one is set right
         if args.command != "where" and not (root / ".factory").is_dir():
             raise RunError(f"{root} is not a MACH project (it has no .factory folder). Run this from the project's folder, or pass --project.")
-        return args.func(Project(root), args)
+        project = Project(root)
+        args.resolved_from = resolve_args(project, args)
+        return args.func(project, args)
     except RunError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1

@@ -253,6 +253,114 @@ class NamingTest(Base):
             run.sibling("nonexistent")
 
 
+class DigestTest(Base):
+    def test_next_leads_with_the_digest_and_says_not_recorded_without_a_recorded_cost(self):
+        self.ready()
+        step = self.next()
+        self.assertEqual(next(iter(step)), "digest", "the digest is printed first")
+        digest = step["digest"]
+        self.assertEqual(step["action"], "build", "the step itself is unchanged")
+        self.assertEqual(digest["where"], "LOCAL-001: stage planned; next: build. Groomed and cleared to build.")
+        self.assertEqual(digest["needs_person"], "Nothing")
+        self.assertTrue(digest["time_and_cost"].endswith("; cost not recorded"))
+        self.assertIsNone(digest["cost_usd"])
+
+    def test_a_stop_says_what_a_person_decides(self):
+        self.verified()
+        self.set_cell(stage="awaiting-human")
+        self.assertEqual(self.next()["digest"]["needs_person"], run.NEEDS_TEXT["human-approval"])
+        self.assertEqual(self.next(ticket="LOCAL-002")["digest"]["needs_person"], "Answer the grooming interview, one question at a time.")
+
+    def test_only_a_recorded_cost_is_shown_and_time_comes_from_the_cell(self):
+        (self.project / ".factory").mkdir()
+        self.put(self.project, {
+            ".factory/intake/ledger.json": json.dumps({"supervisor": {"executions": {
+                "x000000000001": {"ticket_id": "LOCAL-001", "cost_usd": 0.5}, "x000000000002": {"ticket_id": "LOCAL-001", "cost_usd": 0.25},
+                "x000000000003": {"ticket_id": "LOCAL-001", "cost_usd": None}, "x000000000004": {"ticket_id": "LOCAL-001", "cost_usd": True},
+                "x000000000005": {"ticket_id": "LOCAL-002", "cost_usd": 9.0}}}}),
+            ".factory/worktrees/LOCAL-001/cell.json": json.dumps({"stage": "verified", "created_at": "2026-11-12T10:00:00+00:00", "updated_at": "2026-11-12T12:05:00+00:00"}),
+        })
+        digest = self.next()["digest"]
+        self.assertEqual(digest["time_and_cost"], "2 h 5 min recorded; cost $0.75 recorded over 2 executions (2 more with no cost recorded)")
+        self.assertEqual((digest["cost_usd"], digest["elapsed_seconds"]), (0.75, 7500.0))
+        self.assertTrue(self.next(ticket="LOCAL-003")["digest"]["time_and_cost"].endswith("cost not recorded"))
+        self.assertEqual(self.next(ticket="LOCAL-003")["digest"]["time_and_cost"], "time not recorded; cost not recorded")
+
+    def test_board_carries_a_digest(self):
+        self.ready()
+        self.cell_cmd("open", "LOCAL-009")
+        (self.project / ".factory/worktrees/LOCAL-009/cell.json").write_text(json.dumps({"ticket_id": "LOCAL-009", "stage": "blocked"}))
+        board = json.loads(self.run_cmd("board")[1])
+        self.assertEqual(next(iter(board)), "digest")
+        self.assertEqual(board["digest"]["where"], "2 tickets: 1 ready to run, 1 waiting on a person")
+        self.assertEqual(board["digest"]["needs_person"], "LOCAL-009: " + run.NEEDS_TEXT["person-to-take-over"])
+        self.assertTrue(board["digest"]["time_and_cost"].endswith("cost not recorded"))
+
+    def test_the_digest_reads_no_machine_local_file(self):
+        """Cost comes from the intake ledger, which run.py already reads; nothing under .factory/local is opened for it."""
+        for name in ("run.py", "explain.py"):
+            source = (ROOT / "skills/run/scripts" / name).read_text()
+            self.assertNotIn("runner.json", source)
+            self.assertNotIn('/ "local"', source)
+
+
+class BareNumberTest(Base):
+    KNOWN = ["LOCAL-001", "LOCAL-004", "LOCAL-104", "GH-7", "LOCAL-007", "104"]
+
+    def test_the_pure_resolver(self):
+        resolve = run.resolve_ticket
+        self.assertEqual(resolve("4", self.KNOWN), ("LOCAL-004", "4"))
+        self.assertEqual(resolve("004", self.KNOWN), ("LOCAL-004", "004"))
+        self.assertEqual(resolve("1", self.KNOWN), ("LOCAL-001", "1"))
+        self.assertEqual(resolve("LOCAL-004", self.KNOWN), ("LOCAL-004", None), "a full ID is never reinterpreted")
+        self.assertEqual(resolve("LOCAL-999", self.KNOWN), ("LOCAL-999", None))
+        self.assertEqual(resolve("104", self.KNOWN), ("104", None), "a number that is itself a known ID stays as it is")
+        with self.assertRaises(run.RunError) as ambiguous:
+            resolve("7", self.KNOWN)
+        self.assertIn("GH-7, LOCAL-007", str(ambiguous.exception))
+        with self.assertRaises(run.RunError) as missing:
+            resolve("55", self.KNOWN)
+        self.assertIn("No known ticket has the number 55", str(missing.exception))
+        self.assertEqual(resolve("55", self.KNOWN, native_numbers=True), ("55", None), "a GitHub-style tracker numbers its own tickets")
+        with self.assertRaises(run.RunError):
+            resolve("4", self.KNOWN, native_numbers=True)  # the tracker's own 4 and LOCAL-004
+
+    def test_next_and_explain_accept_a_bare_number(self):
+        self.ready()
+        step = self.next(ticket="1")
+        self.assertEqual((step["ticket_id"], step["resolved_from"], step["action"]), ("LOCAL-001", "1", "build"))
+        self.assertNotIn("resolved_from", self.next(ticket="LOCAL-001"))
+        code, out, err = self.run_cmd("explain", "001", "--json")
+        self.assertEqual(code, 0, err)
+        self.assertEqual((json.loads(out)["ticket_id"], json.loads(out)["resolved_from"]), ("LOCAL-001", "001"))
+
+    def test_no_match_and_more_than_one_are_refused(self):
+        (self.project / ".factory").mkdir()
+        self.put(self.project, {".factory/tickets/LOCAL-004.md": "---\nid: LOCAL-004\nstate: open\nlabels: []\n---\n",
+                                ".factory/inbox/JIRA-4.json": json.dumps({"ticket_id": "JIRA-4"})})
+        code, _, err = self.run_cmd("next", "9")
+        self.assertEqual(code, 1)
+        self.assertIn("No known ticket has the number 9", err)
+        code, out, err = self.run_cmd("next", "4")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("JIRA-4, LOCAL-004", err)
+        self.assertIn("nothing was done", err)
+
+
+class DoctorTest(Base):
+    def test_doctor_is_reachable_without_a_factory_folder(self):
+        self.assertFalse((self.project / ".factory").exists())
+        calls = []
+        fake = type(sys)("doctor")
+        fake.main = lambda argv=None, project=None: calls.append((list(argv or []), project)) or 0
+        with mock.patch.dict(sys.modules, {"doctor": fake}):
+            code, _, err = self.run_cmd("doctor", "--fix", "--json")
+            self.assertEqual(code, 0, err)
+            self.assertEqual(self.run_cmd("doctor")[0], 0)
+        self.assertEqual(calls, [(["--fix", "--json"], self.project), ([], self.project)])
+        self.assertFalse((self.project / ".factory").exists(), "run.py itself creates nothing for the doctor")
+
+
 class WorkflowScriptTest(unittest.TestCase):
     SCRIPT = (ROOT / "workflows" / "belt.js").read_text(encoding="utf-8")
 

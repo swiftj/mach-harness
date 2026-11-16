@@ -1,288 +1,294 @@
 # MACH
 
-MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. It moves one ticket at a time through stations (groom, build, verify, review, merge, clean up), each run by its own agent in its own context, inside an isolated git worktree called a cell. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
+MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.13.0.** Every station is built and tested (ticket, audit, intent, build, verify, review, merge, cleanup, observe), with an orchestrator that moves a ticket from station to station. A new project is set to merge approved tickets itself; set `merge.mode` to `manual` to keep the merge for a person. [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.13.0.** [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+
+## Contents
+
+- [Who does what](#who-does-what)
+- [Install](#install)
+- [The two commands](#the-two-commands)
+- [How work flows](#how-work-flows)
+- [For product managers](#for-product-managers)
+- [For engineers](#for-engineers)
+- [When the factory needs you](#when-the-factory-needs-you)
+- [Finding out where things stand](#finding-out-where-things-stand)
+- [Every command](#every-command)
+- [Settings](#settings)
+- [Guides](#guides)
+
+## Who does what
+
+| | Does | Never has to |
+|---|---|---|
+| **Product manager** | Describes the product, answers the interview, approves slices, sends them to engineering | Use Git, read code, or answer a technical question |
+| **Engineer** | Installs MACH, takes approved work in, runs the line, approves high-risk changes | Write the spec, the tests or the code by hand |
+| **The factory** | Grooms, plans, builds, verifies, reviews, merges, cleans up, and learns from finished tickets | Decide a high-risk change, or start on its own on a machine where nobody enabled it |
+
+Some words used below:
+
+- A **slice** is one thin, complete outcome for one kind of user, small enough to build and check in one go.
+- A **delivery wave** is a group of approved slices sent to engineering together.
+- A **ticket** is one piece of work in the factory. A **cell** is the ticket's private workspace: its own Git worktree and branch, so nothing touches your main checkout until it is merged.
+- A **station** is one step of the line (groom, build, verify, review, merge, clean up), run by its own agent with a fresh context.
 
 ## Install
 
 You need Claude Code, `git`, and `python3` 3.8 or later.
 
-### As a plugin (every project)
-
-In Claude Code:
+**As a plugin, for every project.** In Claude Code:
 
 ```
 /plugin marketplace add swiftj/mach-harness
 /plugin install mach@mach-harness
 ```
 
-Then, in each project you want the factory in, run `/mach:init` once. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
+Then run `/mach:init` once in each project. It creates the factory files (`.factory/`, `REVIEW.md`, `AGENTS.md`, make targets, a MACH section in `CLAUDE.md`) and overwrites nothing that exists.
 
-Commands are namespaced: `/mach:run`, `/mach:intent`, `/mach:build`, `/mach:verify`, `/mach:review`, `/mach:merge`, `/mach:cleanup`, `/mach:observe`, `/mach:ticket`, `/mach:audit`, `/mach:init`. `/mach:product-studio` is the product manager's workspace (design notes in [`docs/mach-next/`](docs/mach-next/README.md)).
-
-### With one command (one project)
-
-From the project's root:
+**With one command, for one project.** From the project's root:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | bash
 ```
 
-This installs the newest MACH release (set `MACH_VERSION=0.13.0` for another one): it copies the skills into `.claude/skills/` and creates the same factory files. Commands are `/mach-intent` and so on. Restart Claude Code afterwards. Before any downloaded code runs, the installer checks the release's source archive (see [What the installer verifies](#what-the-installer-verifies)) and prints one `MACH source:` line saying what it checked and what it could not. To install a branch instead, set `MACH_REF=main`; to install from a local clone, `MACH_SOURCE=/path/to/mach-harness`. Either way the line says the source was not verified.
+This installs the newest release, after checking it, and prints one `MACH source:` line saying what it verified. Restart Claude Code afterwards. Run it again later to update.
 
-From a local clone, the same thing is:
-
-```bash
-python3 /path/to/mach-harness/bin/mach install
-```
-
-Add `--dry-run` to see what would change first. Running install again updates MACH in place.
-
-### The visual Product Studio app
-
-Product Studio also has a visual app that runs on your own machine. Its host is one small program, built for Apple silicon Macs and for Linux (arm64 and amd64) and attached to each [MACH release](https://github.com/swiftj/mach-harness/releases). There is no build for Intel Macs or Windows. The macOS programs are not notarised, so macOS refuses a copy downloaded in a browser; install them through the installer. Both installs fetch it for you: the one-command installer and `/mach:init` download the file for your machine from the release that matches the installed MACH version, check it (see [What the installer verifies](#what-the-installer-verifies)), and put it at `.factory/bin/mach-studio` (git-ignored). Nothing else is downloaded, and nothing runs until you ask Product Studio to "open the app".
-
-If the download is not possible (offline, no build for your machine, or a version with no release yet), the install still succeeds and says so; everything else works without the app. Pass `--no-studio` to skip it.
-
-### The Factory Floor
-
-The Factory Floor is a read-only view of the Factory in your browser: delivery waves, cells moving through the stations, review rounds, executions and their evidence. It has three workspaces: the Atlas (the Factory Atlas and the Execution Blueprint, keys `1` and `2`), the Timeline and Analytics. Its Timeline (key `3`) lays the whole history out in time, with how each start and end is known, and answers questions such as "Why did it retry?". Its program, `mach-observer`, is published beside the Product Studio host, for the same machines, and the installers fetch and check it the same way and put it at `.factory/bin/mach-observer` (git-ignored). Releases made before it shipped have no such file; the install then says so in one line and succeeds. Pass `--no-floor` (or set `MACH_FLOOR=skip`) to skip it; `MACH_FLOOR_URL` fetches it from another place, as `MACH_STUDIO_URL` does for the studio. Evidence screenshots and recordings are shown only when `.factory/config.json` sets `"floor": {"evidence_media": true}`. `bin/mach status` says whether each program is installed, and `mach-studio --version` / `mach-observer --version` which release it was built for (the install manifest records the same).
-
-### What the installer verifies
-
-**MACH itself.** Each release (after v0.12.0) carries `mach-<version>-source.tar.gz`, the repository at the release tag, listed in `SHA256SUMS` and attested by the release workflow like the programs. `install.sh` downloads that archive and `SHA256SUMS`, compares the archive's SHA-256 with `sha256sum` or `shasum`, and, when the GitHub CLI (`gh`) is installed and signed in, runs `gh attestation verify` on it with the same rule as for the programs below. All of this happens before any downloaded code runs. A failed check refuses the install: nothing is installed, the downloads are removed, and nothing unchecked is tried instead. A release newer than v0.12.0 without its archive is refused. Without `gh` the line says the build provenance was not verified; `MACH_REQUIRE_PROVENANCE=1` refuses instead. Releases up to v0.12.0 have no archive: their tag is downloaded and the line says the source was not verified (refused under `MACH_REQUIRE_PROVENANCE=1`, as are `MACH_REF` and `MACH_SOURCE`). The install manifest (`.factory/.mach-manifest.json`, `source`) records where the source came from and how it was checked. Not verified: `install.sh` itself, which comes from the `main` branch; to avoid trusting that, read it before running it.
-
-**The programs.** Each downloaded program is compared with the SHA-256 listed in the release's `SHA256SUMS`. That file comes from the same place as the program, so on its own it catches a broken or incomplete download, not a replaced one. When the program comes from the project's GitHub release and the GitHub CLI (`gh`) is installed and signed in, the installer also runs `gh attestation verify` on it, which checks that the release workflow built it; if that check fails the program is refused (the rest of MACH still installs). Without `gh` the note says the build provenance was not verified; set `MACH_REQUIRE_PROVENANCE=1` to refuse the program instead. A release fetched from `MACH_STUDIO_URL` or `MACH_FLOOR_URL` (a mirror or a local folder) is checked against its checksum only, and the note says so. Each release also carries an SPDX SBOM per program (`<program>.spdx.json`).
-
-Ask the run skill to "open the Factory Floor" (or "watch the factory"). It starts the observer for the session, which prints a one-time link to `127.0.0.1`; the link for a second browser is kept in `.factory/local/observer/link`. There is no new command. The observer only reads the Factory's files: it cannot enable, start, pause, approve or merge anything, holds no MACH lock, and stopping it never affects the line. With no Factory state on the machine, it shows a clearly labelled Simulation instead of Live Factory.
-
-## Quick start
+**Then check the setup:**
 
 ```
-/mach-intent Let workspace admins invite a teammate by email
+/mach-run doctor
 ```
 
-(`/mach:intent ...` with the plugin.) MACH creates a ticket and a cell, then interviews you **one question at a time**. Each question is a yes-or-no proposal with a recommended answer:
+It checks Git, Python, Claude Code, your ticket tracker's sign-in and the MACH files, and lists what to do about anything missing. It changes nothing.
 
-```markdown
-❓ **Q4** - **Full workspace**: When every seat is taken, should the admin be refused with "All seats are in use. Add seats to invite more people." and no invitation sent?
+Both installs also fetch two small programs for the browser views (Product Studio's app and the Factory Floor), for Apple silicon Macs and Linux. What is downloaded, how it is verified, and the options to skip or pin a version are in [Installing](docs/guides/INSTALLING.md).
 
-➡️ Yes, reject the invitation with that message and send nothing.
+## The two commands
+
+Almost everything goes through two commands.
+
+| Command | For | What it is |
+|---|---|---|
+| `/mach-product-studio` | Product managers | The workspace for the project, its epics, slices and delivery waves |
+| `/mach-run` | Engineers | The line: move a ticket, see the board, take in product work, check the setup |
+
+Both take plain words as well as the forms shown in this guide: "open the app", "what is LOCAL-004 waiting for?", "open the Factory Floor".
+
+**Names.** With the one-command install the commands are `/mach-run`, `/mach-product-studio` and so on. With the plugin they are `/mach:run`, `/mach:product-studio`. This guide uses the first form.
+
+## How work flows
+
+```text
+  PRODUCT MANAGER                      ENGINEER                        THE FACTORY
+  /mach-product-studio                 /mach-run
+
+  describe the project
+  interview, one question
+  at a time, per slice
+  approve slices
+  group them into a wave
+  send the wave  ───────────────►  review and merge the
+  (one pull request)               product pull request
+                                   take the work in  ───────────►  one ticket per slice
+                                   dispatch what is ready           groom ► plan ► build ► verify
+                                                                    ► review ► merge ► clean up
+                                   approve high-risk changes  ◄──  stops wherever a person is needed
+  record acceptance  ◄───────────  qualify the release
 ```
 
-| You say | What happens |
-|---------|--------------|
-| `yes` | The recommendation is accepted. |
-| `14 days, not 7` | Your answer is used. |
-| `I don't know` | The point becomes an open question with a note on who can answer it. Nothing downstream is guessed. |
-| `you decide` | The recommendation is used and listed under Assumptions for you to review. |
-| `use your recommendations for the rest` | The interview ends; every remaining choice is listed under Assumptions, except ones too risky to guess. |
-| `I need to stop` | Progress is saved. Say `Continue SLICE-004` later. |
+A small team, or one person, can skip the left column: an engineer can groom an idea directly and run it down the line (see [One idea, start to finish](#one-idea-start-to-finish)).
 
-You never argue scope: the skill cuts the idea down to the smallest complete outcome for one kind of user and reserves slice IDs for everything it defers. You never answer in technical terms: "store it in Redis" becomes "changes are visible within 60 seconds".
+## For product managers
 
-When nothing is left to ask, it shows a three-point summary, and on your yes it produces, in `.factory/worktrees/<ticket>/`:
+Open Claude Code in the project folder and type:
 
-| Artifact | What it is |
-|----------|------------|
-| `intent.md` | Why: the problem, who it is for, goal ancestry, risk tier. |
-| `spec.md`, `spec.json` | What: invariants (RFC 2119), functional requirements (EARS), a decision matrix covering every combination of conditions, and Given/When/Then scenarios. `spec.json` expands the matrix into concrete test cases. |
-| contracts | The boundaries the slice touches (Protocol Buffers, OpenAPI, JSON Schema), written by a separate contract engineer agent that sees only `spec.json`. |
-| `plan.md` | How: a test-first task list in which every requirement and scenario is assigned to a task, plus a file touch map. |
-
-The slice spec and contracts are committed on the cell's branch, `feature/<ticket>`, never on your main checkout. The durable copy of each spec lives in `specs/slices/` and merges with the code.
-
-### What is checked by script, not by a model
-
-- The spec's structure, grammar, and traceability; that the decision matrix covers every combination with no two rules in conflict; that every outside dependency has a failure requirement and a scenario (`validate_slice.py`, 47 rule codes).
-- That no open question remains before contracts are written (`cell.py finalize`).
-- That slice IDs are unique across every ticket being groomed at once.
-- That the plan puts tests first, assigns every requirement and scenario, and lists only contracts that exist (`cell.py check-plan`).
-
-### Headless grooming
-
-For tickets no person is available to answer, such as ones generated from crash telemetry:
-
-```bash
-claude -p "/mach-intent AUTO-20261109 --headless"
+```
+/mach-product-studio
 ```
 
-Each question is answered from facts in the project or a strict default and recorded as "Decided without a PM". Anything involving money, access, irreversible deletion, or two rules in conflict is never guessed: it becomes an open question, the ticket is labelled `blocked-requires-sme`, and no contracts or plan are written until a person finishes the interview.
+With nothing after it, it shows where things stand and suggests the next step. Say "open the app" to work in your browser instead; the app and the conversation share the same drafts.
 
-## Running the whole line
+1. **Describe the project.** A name, a vision, and the outcomes you want for people.
+2. **Add an epic**, a larger capability, and approve it.
+3. **Start a slice.** Claude interviews you one question at a time. Each question is a yes-or-no proposal with a recommended answer:
+
+   | You say | What happens |
+   |---|---|
+   | `yes` | The recommendation is accepted. |
+   | `14 days, not 7` | Your answer is used. |
+   | `I don't know` | It becomes an open question with a note on who can answer it. Nothing is guessed. |
+   | `you decide` | The recommendation is used and listed as an assumption for you to review. |
+   | `I need to stop` | Your progress is saved. Say "continue SLICE-004" later. |
+
+   You never argue scope or answer in technical terms: the interview cuts the idea down to the smallest complete outcome and reserves IDs for what it defers.
+4. **Approve the slice** once the spec passes its checks and no question is open.
+5. **Group approved slices into a delivery wave**, approve it, and say "send the wave". Engineering receives one pull request. Sending starts no engineering work.
+6. **Read the feedback.** Say "feedback" to see whether engineering accepted the wave or asked for changes.
+
+Everything you write is a private draft on your computer until you send a wave. Full guide: [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md).
+
+## For engineers
+
+### Before the first ticket
+
+```
+/mach-run doctor     is this machine and project set up?
+/mach-run audit      is the repository ready for agents?
+```
+
+The audit runs your build, tests and linter and gives a tier. **Gold** allows full autonomy. **Silver** builds, with a person approving each change. **Bronze**, which includes any failing build or test suite, blocks autonomous work until the repository is hardened.
+
+### One idea, start to finish
+
+```
+/mach-run new "Let workspace admins invite a teammate by email"
+```
+
+MACH creates a ticket and a cell and interviews you, the same way as in Product Studio. On your yes it writes the why (`intent.md`), the spec, the boundary contracts and a test-first plan into the cell. Then:
 
 ```
 /mach-run LOCAL-001
 ```
 
-This moves one ticket from wherever it is to the next point where a person is needed. A script reads what each station recorded and names the next step; the session starts the right worker for it (a fresh sub-agent for the build, for verification, and for each review seat), then asks again. It stops and tells you what it is waiting for:
+This moves the ticket from wherever it is to the next point where a person is needed. A script reads what each station recorded and names the next step; a fresh agent does it; then the script is asked again. You can name a ticket by its number alone: `/mach-run 1`.
 
-- answers to open questions in the spec;
-- your approval of a high-risk change;
-- the merge, if your project keeps it for a person (`merge.mode` or `merge.auto` in `.factory/config.json`);
-- a person to take over a ticket that failed three rounds.
+An interrupted run loses nothing. Run the same command again and it resumes at the station it had reached.
 
-`/mach-run board` shows every open ticket, its stage and its next step, without starting anything. To watch the line in a browser instead, ask the run skill to open the Factory Floor (read-only; see Install).
+### Approved product work
 
-To move several tickets at once, unattended and in parallel, run the MACH Dynamic Workflow with their IDs, for example by asking Claude Code to "run the mach-belt workflow for LOCAL-002 and LOCAL-003". The workflow is named `mach-belt` in a project install and `mach:belt` with the plugin. Each ticket is built, verified and reviewed in its own cell; the run ends with a list of what each ticket is waiting for.
-
-The line is driven by what each station recorded, so an interrupted run loses nothing: run it again and it resumes at the station it had reached. When you start the workflow from a non-interactive `claude -p` session, set `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, or the session stops background work after ten minutes.
-
-The sections below describe each station; you can also run any of them yourself.
-
-## Building a groomed ticket
+When a product manager's wave has been merged:
 
 ```
-/mach-build LOCAL-001
+/mach-run product status      what is approved and merged; changes nothing
+/mach-run product intake      file one ticket per new slice
+/mach-run product plan        what is ready, active, blocked, and why
+/mach-run product dispatch SLICE-001
 ```
 
-The builder implements the ticket inside its cell, following `plan.md` one task at a time. It writes the tests and the code; a script runs the tests, decides whether each step counts, and makes every commit. The script refuses:
+Dispatch opens the cell and stops; `/mach-run <ticket>` then runs it. Nothing is dispatched without your command.
 
-- starting on a repository the audit has not cleared, or on a ticket that is not fully groomed;
-- a task out of order;
-- a test that was never seen failing, or code committed while the suite fails;
-- a change to a test that is already committed;
-- a change to a file the plan did not give the task;
-- finishing while any requirement or scenario in the spec is not named by a test.
+### Several tickets at once
 
-Each refusal has an override that needs a written reason, and every use is recorded in `build-report.json` for the reviewers. After a failed verification or a rejected review, `/mach-build LOCAL-001 --revise findings.md` starts a revision. A ticket gets three judging rounds in all; on the third failure it is escalated to a person.
+Ask Claude Code to "run the mach-belt workflow for LOCAL-002 and LOCAL-003" (`mach:belt` with the plugin). Each ticket is built, verified and reviewed in its own cell, and the run ends with what each one is waiting for.
 
-To run the builder on the model tier the factory assigns, start it as the `builder` agent (`mach:builder` with the plugin, `mach-builder` in a project install).
-
-## Verifying a built ticket
+### Unattended, on a machine you choose
 
 ```
-/mach-verify LOCAL-001
+/mach-run factory enable
 ```
 
-Run this in a fresh session, or as the `verifier` agent, never in the conversation that built the ticket. The verifier runs the slice the way its user would and saves what it captures in the cell's `evidence/` folder: screenshots and recordings for a web app, a terminal session and exit codes for a command-line tool, request and response dumps for an API, a consumer-side transcript for a library.
+The supervisor keeps approved product work moving without you. It is off on every machine until an engineer enables it there, after reading exactly what will be allowed and confirming with a code. `/mach-run factory status`, `pause`, `resume`, `disable` and `stop` complete it. Read [Operator Security Guide](docs/guides/OPERATOR_SECURITY_GUIDE.md) first.
 
-It must prove every scenario in the spec with the scenario's own data, and every decision matrix rule with data of its own choosing. A script checks that each claim points at an evidence file captured in this run, refuses the builder's own test log as proof, catches evidence edited after it was recorded, and gives the verdict:
+### Watching it
 
-| Verdict | Meaning |
-|---------|---------|
-| `PASS` | Everything is proven with evidence. The ticket goes to review. |
-| `FAIL_WITH_EVIDENCE` | A behavior does not match the spec. The findings go back to the build station, using one of the three review loops. |
-| `INCOMPLETE_EVIDENCE` | Something is unproven, or a required kind of evidence is missing. |
+Say "open the Factory Floor" to `/mach-run`. It opens a read-only view in your browser: the Atlas (what is where), the Timeline (what happened, when) and Analytics (how well the factory runs). It cannot start, approve or merge anything.
 
-To give the verifier an extra check the builder never sees, put a file describing it in `.factory/holdouts/<ticket>/`.
-
-## Reviewing a verified ticket
+### Releasing
 
 ```
-/mach-review LOCAL-001
+/mach-run release qualify WAVE-001
 ```
 
-The session you run this in chairs the panel; it does not review. It starts one reviewer per seat, each a fresh sub-agent that has seen nothing of the build or of the other reviewers, and tells them only where to look:
+It checks, at one exact commit, that every slice in the wave is merged, verified and reviewed, reruns the tests, and writes a readiness snapshot. It never tags or deploys.
 
-| Risk tier | Panel | Needed to pass |
-|-----------|-------|----------------|
-| High | Architecture, security, product, on the `opus` tier | All three, then a person's approval |
-| Factory tuning | The same three seats, on the `opus` tier | All three; no person, if only rule files change |
-| Medium | The same three seats, on the `sonnet` tier | Two of three |
-| Low | One general reviewer | That reviewer |
+Full guide: [Engineer Guide](docs/guides/ENGINEER_GUIDE.md).
 
-Reviewers do not vote. Each submits findings, and any finding marked `blocker` makes that seat a reject. A blocker must name the requirement or rule it breaks and the file that shows it, so a reviewer cannot block on taste. A script counts the result:
+## When the factory needs you
 
-- `APPROVED`: the branch may be merged, by the merge station or by you, depending on your settings.
-- `AWAITING_HUMAN`: the panel approved a high-risk change. You are shown the findings; say you approve and it is recorded with your name.
-- `REJECTED`: the findings go back to the build station.
-- `ESCALATE`: this was the third failed round. The ticket is labelled `blocked-requires-sme` and waits for a person.
+The line stops and says what it is waiting for. These are all the cases.
 
-When a reviewer's blocker is outvoted on a medium-risk change, the outcome says so.
+| It says | What to do |
+|---|---|
+| The spec has open questions | Finish the interview: `/mach-run <ticket>` continues it |
+| Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach-run approve <ticket>` |
+| Approved, waiting for a person to merge | `/mach-run merge <ticket>` |
+| Blocked: escalated after three rounds | `/mach-run explain <ticket>`, then fix it yourself or abandon it: `/mach-run abandon <ticket> "<why>"` |
+| The repository is Bronze | `/mach-run audit` lists what to fix |
+| The audit is missing or out of date | `/mach-run audit` |
 
-A ticket that is sent back and revised gets a narrower second review: reviewers see what changed since the last round and check that the earlier blockers are fixed. A blocker on code that did not change and was not blocked before is refused; it can only be a note. Reviewers also report a recurring defect once, as a class listing every place, so one revision can clear it.
+A ticket gets three judging rounds in all, counting failed verifications and rejected reviews. On the third failure it is handed to a person; the factory does not keep trying.
 
-## Merging an approved ticket
-
-```
-/mach-merge LOCAL-001
-```
-
-Review approves one exact commit, and the merge station lands that commit or refuses:
-
-- **Approval is bound to the commit.** If anything was added to the branch after review, the approval is void and the ticket goes back to verification.
-- **It is re-tested against today's main.** If main has moved since approval, the branch is brought up to date inside the cell and the test suite runs again before anything lands, so two tickets that each passed alone cannot break main together. A failing suite sends the ticket back to the build station; a conflict stops for a person.
-- **Locally or through a pull request.** With `merge.method` set to `local` it makes a merge commit on your main checkout. With `pr` it pushes the branch, opens a pull request summarising the verification and review, and merges it at the approved commit, so your CI, review bots and team see a normal pull request.
-
-Who merges is a setting, by risk tier:
-
-```json
-"merge": { "mode": "auto", "method": "local", "auto": { "low": true, "medium": true, "high": true } }
-```
-
-`mode: "auto"` lets the line merge approved tickets; `"manual"` leaves every merge to you. Under `auto`, set a tier to `false` to keep that tier for a person. A high-risk ticket only reaches "approved" after a person has signed off in review, so with the defaults a person still decides every high-risk change. You can always merge one yourself: `/mach-merge LOCAL-001 --by-person`.
-
-## After the merge
+## Finding out where things stand
 
 ```
-/mach-cleanup LOCAL-001
+/mach-run board              every open ticket and its next step
+/mach-run explain LOCAL-004  why this ticket failed or is waiting
 ```
 
-Once the approved branch is merged, by the merge station or by you, cleanup archives the cell's artifacts to `.factory/archive/LOCAL-001.tar.gz`, removes the cell's worktree, folder and local branch, and appends a one-line record of how the ticket went to `.factory/archive/runs.jsonl`. It shows you a plan first, archives before it deletes, and deletes nothing if the archive fails.
+Every status opens with three lines:
 
-- If you squash-merge or rebase, tell it the commit: `/mach-cleanup LOCAL-001 --merged-as <commit>`.
-- To drop a ticket that will not be finished: `/mach-cleanup LOCAL-001 --abandon "<why>"`. Uncommitted work and a git bundle of the branch are saved in the archive first.
-- `/mach-cleanup orphans` lists cells that look finished or broken.
-
-It never merges, pushes, or deletes anything on a remote.
-
-## Learning from finished tickets
-
-```
-/mach-observe
+```text
+Where: LOCAL-004: stage built; next: revise. The review rejected this build.
+A person must decide: Nothing
+Time and cost: 42 min recorded; cost not recorded
 ```
 
-Observe closes the loop: the factory tunes its own rules from what its finished tickets show.
+A cost appears only where one was recorded, which today means work the supervisor ran. It is never estimated.
 
-1. **Measure.** It reads the run record of every finished ticket and reports a scorecard: average judging rounds per ticket, first-pass rate, escalation rate, and the share of tests seen failing before their code was written.
-2. **Find what recurs.** The same review rule broken in several tickets, the same builder deviation, the same kind of verification failure, or a theme that keeps appearing in reviewers' non-blocking notes.
-3. **Propose.** For each, the smallest rule that would have prevented it, aimed at `REVIEW.md`, `CLAUDE.md`, `AGENTS.md` or a skill's instructions, citing the tickets that prove it.
-4. **File.** With `--auto`, or on your yes, it files one ticket labelled `factory-tuning` carrying every proposal.
-5. **Apply through the line.** That ticket is groomed, built, verified and reviewed like any other, so each rule change is a reviewed diff you can revert.
+`explain` names the requirement or scenario that failed, the check or test that showed it, each reviewer's blocker with the rule it cites, and how many of the three rounds are used.
 
-It runs on its own: after every fifth finished ticket (`observe.every` in `.factory/config.json`), cleanup reports that a pass is due, and the line or the workflow starts one and then runs the tuning ticket.
+## Every command
 
-A tuning ticket needs no person. It is decided by a unanimous three-reviewer panel on the strongest model tier, provided it changes only the factory's rule files. Reviewers are told to block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit, and observe will not propose one; those remain your decisions. It proposes nothing until five tickets have finished.
+`/mach-product-studio` and `/mach-run` are the ones to remember. The station commands at the bottom of the table still work and you can run any of them yourself, but `/mach-run` calls them for you.
 
-## Is the repository ready?
+| Command | What it does |
+|---|---|
+| `/mach-product-studio` | Project, epics, slices, waves; `refresh`, `send`, `feedback`; "open the app" |
+| `/mach-run <ticket>` | Move one ticket to the next point a person is needed |
+| `/mach-run board` | Every open ticket and its next step |
+| `/mach-run explain <ticket>` | Why a ticket failed or is waiting |
+| `/mach-run doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
+| `/mach-run new "<idea>"` | Start the interview for a new idea |
+| `/mach-run approve <ticket>` | Record your approval of a change that needs a person |
+| `/mach-run merge <ticket>` | Merge an approved ticket yourself |
+| `/mach-run abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
+| `/mach-run audit` | The repository's readiness tier |
+| `/mach-run product status\|intake\|plan\|dispatch` | Take approved product work into the factory |
+| `/mach-run factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
+| `/mach-run release status\|qualify\|show` | Is a wave ready to release, at one commit |
+| `/mach-intent <ticket or idea>` | The interview, spec, contracts and plan; `--headless` when no person can answer |
+| `/mach-build <ticket>` | Build test-first inside the cell |
+| `/mach-verify <ticket>` | Prove the built slice with captured evidence |
+| `/mach-review <ticket>` | The review panel; `approve --by <name>` records a person's approval |
+| `/mach-merge <ticket>` | Land exactly the approved commit; `--by-person` to merge it yourself |
+| `/mach-cleanup <ticket>` | Archive and remove a finished cell; `--abandon "<why>"` to drop one |
+| `/mach-observe` | Scorecard of finished tickets and proposed rule changes |
+| `/mach-audit` | The repository's readiness tier |
+| `/mach-ticket list\|view\|create\|update\|comment\|ingest-telemetry` | The ticket queue, and crash reports turned into tickets |
+| `/mach:init` | Plugin only: create the factory files in a project |
 
-```
-/mach-audit
-```
+Outside Claude Code: `make mach-status` (what is installed and the open cells), `make mach-cells` (the worktrees behind them), `make mach-uninstall`.
 
-Agents working in a repository with a broken build, failing tests or no linter compound the damage, so MACH measures the repository first. The audit runs your build, tests and linter, scores five areas out of 100, and writes `.factory/audit-report.json`:
+What each station checks and refuses is in the [Station Reference](docs/guides/STATION_REFERENCE.md).
 
-| Tier | Score | What it means |
-|------|-------|---------------|
-| Gold | 90 to 100 | Full autonomy. |
-| Silver | 70 to 89 | Agents may build, but a person reviews every change before it merges. |
-| Bronze | under 70 | Autonomous work is blocked until the repository is hardened. |
+## Settings
 
-A build or test suite that fails, is missing, or could not be run makes the tier Bronze whatever the score. The scorecard lists each failed check with the points fixing it would add. Commands are detected from your Makefile and package manifests; set `audit.commands.build`, `test` or `lint` in `.factory/config.json` if yours are different. The audit executes your project's own commands, so run it only on code you would build yourself.
+Settings are in `.factory/config.json`. The ones people change most:
 
-## Tickets and telemetry
+| Setting | Default | Meaning |
+|---|---|---|
+| `tickets.provider` | `local` | Where tickets live: Markdown files in `.factory/tickets/`, or `github`, `gitea-cli`, `jira`, `fossil` |
+| `merge.mode` | `auto` | `auto` lets the line merge approved tickets; `manual` leaves every merge to you |
+| `merge.method` | `local` | `local` makes a merge commit; `pr` opens a pull request and merges the approved commit |
+| `merge.auto.<tier>` | `true` | Set a risk tier to `false` to keep its merges for a person |
+| `review.<tier>` | see file | Reviewers, approvals needed, and whether a person must approve |
+| `factory.max_parallel` | `3` | How many tickets may run at once |
+| `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
+| `floor.evidence_media` | off | Show evidence screenshots and recordings in the Factory Floor |
 
-```
-/mach-ticket list
-/mach-ticket view LOCAL-001
-/mach-ticket update LOCAL-001 --state blocked --label blocked-requires-sme
-/mach-ticket ingest-telemetry sentry crash.json
-```
+A high-risk change always needs a person's approval in review unless you change that setting yourself. `REVIEW.md` and `AGENTS.md` are yours to edit once created.
 
-Tickets live in `.factory/tickets/` as Markdown files by default. That folder is a local working queue and is git-ignored, because stations update tickets as they work; to share tickets with a team, use a tracker. Set `tickets.provider` in `.factory/config.json` to `github`, `gitea-cli`, `jira` or `fossil` to use a tracker through its command-line tool; if your tool takes different arguments, replace any command under `tickets.commands`. MACH has five ticket states (`open`, `in_progress`, `needs_review`, `blocked`, `closed`); on trackers with only open and closed, the others are kept as `mach:<state>` labels.
+## Guides
 
-`ingest-telemetry` turns a Sentry, PostHog or Datadog payload, a failed CI log, or an application error log into an `AUTO-<timestamp>` ticket with the error, the culprit file and line, and a trimmed trace. Email addresses, tokens and other credentials are redacted from everything it writes except the raw payload, which stays in the git-ignored `.factory/inbox/`. The same fault is not ticketed twice while its ticket is open. Groom the result with `/mach-intent AUTO-... --headless`.
-
-## Day to day
-
-```bash
-make mach-status      # what is installed, what you changed, and the open cells
-make mach-cells       # the git worktrees behind the cells
-```
-
-Settings are in `.factory/config.json`: the ticket provider (local Markdown files in `.factory/tickets/` by default), the model tier for each station, review thresholds, and whether cells commit automatically. `REVIEW.md` and `AGENTS.md` are yours to edit once created.
+| Guide | For |
+|---|---|
+| [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md) | Product Studio from first project to recorded acceptance |
+| [Engineer Guide](docs/guides/ENGINEER_GUIDE.md) | Intake, the supervisor, human gates, recovery, release qualification |
+| [Station Reference](docs/guides/STATION_REFERENCE.md) | What each station does and what its script refuses |
+| [Installing](docs/guides/INSTALLING.md) | The browser programs and what the installer verifies |
+| [Operator Security Guide](docs/guides/OPERATOR_SECURITY_GUIDE.md) | What an unattended run can reach, and the limits to know |
+| [`CLAUDE.md`](CLAUDE.md) | The full blueprint |
 
 ## Uninstall
 
@@ -330,7 +336,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `apps/studio/`, `apps/observer/` | The Product Studio host and the Factory Floor's read-only observer (Go), each with `build.sh` (embeds its web app) and `smoke.sh`. |
 | `bin/mach`, `install.sh` | The installer. |
 | `templates/` | What gets scaffolded into a project. |
-| `docs/` | The original design notes for each station, and the prd-slice skill the interview is adapted from. |
+| `docs/` | The guides (`docs/guides/`), the original design notes for each station, and the prd-slice skill the interview is adapted from. |
 
 When you change the validator, change its references, the fixture in `tests/fixtures/`, and the tests together: a test fails if any rule code the validator can emit is missing from `skills/intent/references/`.
 
