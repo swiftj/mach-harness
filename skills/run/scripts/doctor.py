@@ -371,7 +371,7 @@ def check_requests(project: Path, config: Any, gh_state: Dict[str, Any]) -> List
             if missing:
                 lines = "\n".join(f"    gh label create {shlex.quote(name)} --repo {repo}" for name in missing)
                 results.append(check("requests.labels", f"{title}: labels", "warn", f"{repo} lacks the label(s): {', '.join(missing)}.",
-                                     f"Run these yourself (MACH never creates labels):\n{lines}"))
+                                     f"To create them now, run these yourself (the doctor creates none; MACH adds a missing status label of its own when it first needs it, and never the request label):\n{lines}"))
             else:
                 results.append(check("requests.labels", f"{title}: labels", "ok", f"All four MACH status labels exist in {repo}."))
     if not ready:

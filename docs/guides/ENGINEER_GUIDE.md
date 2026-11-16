@@ -34,6 +34,21 @@ Approved waves that product managers published and engineering merged are taken 
 - `product dispatch <SLICE-ID>...` or `--ready` opens the cells and stops at `spec-ready`. It starts no agent. Product-sourced work is never reviewed below Medium.
 - `product reconcile` is intake plus a recorded plan. It never dispatches.
 
+### Slices that came from a GitHub issue
+
+A slice made from a request carries the issue's repository and number in its work order (identifiers only, no issue text). Intake copies it into the ledger, the ticket text (`Request: OWNER/REPO#42`), the cell's `product` block and the run record. Because it is part of the approved definition, changing it needs `slice reopen`.
+
+Intake writes to the request's issue at two moments, through `ticket.py request-status`, whatever `tickets.provider` is:
+
+- **Merged.** When a slice's ticket is first filed, intake adds `mach:ready`, removes `mach:grooming` and comments once: "SLICE-012 revision 1 is approved and merged; the Factory may take it (ticket 104)."
+- **Blocked.** When the cell of such a slice is `blocked`, intake comments once: "Ticket 104 is blocked and waits for a person." It adds no label to a product request.
+
+These writes never block or fail intake. Each is recorded in the ledger (`request_status`) before it is tried. One that GitHub does not take stays pending and is tried again on the next `product intake` or `reconcile`; the report shows how many are pending, done or refused. A write for a repository other than the project's `origin` is refused and not retried. Each comment ends with a hidden marker, so a write whose outcome was lost is found on the issue and not repeated.
+
+Settings: `tickets.github.status_comments: false` stops the comments and keeps the labels. `tickets.github.request_label` names the request label.
+
+Labels: if `mach:ready` (or `mach:grooming`, `mach:blocked`) does not exist, MACH creates it, only for those three names and never over an existing label. `mach:request` is never created by MACH; a person with write access applies it. `/mach-run doctor` lists any of the four missing from the repository with the `gh label create` line to run yourself.
+
 A changed definition under work in progress, a withdrawn slice, an abandoned ticket that is still open or a ticket claiming a merge not on the branch is `needs_person`. MACH reports it and does not choose. Two cases it now settles with a recorded reason, shown on a real Factory run (a throwaway project):
 
 - **A revised slice whose earlier ticket was abandoned and closed.** The next `product intake` files the newer revision as a new ticket by itself, exactly once, and records that it follows the abandoned one. Close the abandoned ticket first; an abandoned ticket left open is reported for you to close.
