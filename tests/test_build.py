@@ -336,7 +336,7 @@ class StepTest(Base):
         self.put(self.work, {"tests/test_invite.py": RED_TEST, "app/invite.py": IMPL})
         self.assertIn("files the plan did not give it: app/invite.py", self.refused("red", "LOCAL-001", "T01"))
         (self.work / "app/invite.py").unlink()
-        self.put(self.work, {"tests/test_invite.py": "import unittest\n\nclass T(unittest.TestCase):\n    def test_nothing(self):\n        pass\n"})
+        self.put(self.work, {"tests/test_invite.py": "import unittest\n\n# FR-01 FR-02 FR-03 FR-04 FR-05 FR-07 INV-01 INV-02 INV-04\nclass T(unittest.TestCase):\n    def test_nothing(self):\n        pass\n"})
         self.assertIn("never seen failing", self.refused("red", "LOCAL-001", "T01"))
         self.assertEqual(self.log()[0], "spec(SLICE-001): Invite a teammate by email [LOCAL-001]", "a refused step commits nothing")
         self.put(self.work, {"tests/test_invite.py": RED_TEST})
@@ -377,7 +377,7 @@ class StepTest(Base):
         self.put(self.work, {"app/invite.py": IMPL2})
         self.assertIn("files the plan did not give it", self.refused("red", "LOCAL-001", "T03"))
         git(self.work, "checkout", "-q", "--", "app/invite.py")
-        self.put(self.work, {"tests/test_scenarios.py": "import unittest\nfrom app.invite import invite\n\nclass S(unittest.TestCase):\n    def test_again(self):\n        self.assertEqual(invite('x'), 'sent')\n"})
+        self.put(self.work, {"tests/test_scenarios.py": "import unittest\nfrom app.invite import invite\n\nclass S(unittest.TestCase):\n    def test_again(self):\n        \"\"\"AC-01 AC-02 AC-03 FR-06 FR-08 FR-09 INV-03\"\"\"\n        self.assertEqual(invite('x'), 'sent')\n"})
         self.assertIn("rerun with --covered", self.refused("red", "LOCAL-001", "T03"))
         done = self.ok("red", "LOCAL-001", "T03", "--covered", "T02 already implements sending.")
         self.assertEqual(done["suite"], "green")
@@ -474,11 +474,30 @@ class AlreadyDoneTest(Base):
         self.assertEqual(codes[-2:], ["already-done-has-changes", "already-done-has-changes"])
 
     def test_refused_when_a_committed_test_does_not_name_every_id_of_the_task(self):
-        self.through_covered_scenarios(SCENARIO_TEST.replace("FR-06 ", ""))
+        self.through_covered_scenarios()
+        # The red step no longer lets a test leave out an ID of its own task, so the gap is made in the recorded
+        # plan: T04 is given an ID that no committed test names.
+        path = self.cellroot / "build.json"
+        state = json.loads(path.read_text())
+        state["tasks"][3]["ids"] = sorted([*state["tasks"][3]["ids"], "FR-99"])
+        path.write_text(json.dumps(state))
         refusal = self.refused("green", "LOCAL-001", "T04", "--already-done", "x")
-        self.assertIn("none names FR-06", refusal)
+        self.assertIn("none names FR-99", refusal)
         self.assertEqual(self.state()["tasks"][3]["status"], "pending")
         self.assertEqual(self.lifecycle()[-1]["data"]["reason_code"], "already-done-not-covered")
+
+    def test_red_refuses_a_test_that_leaves_out_or_respells_an_id_of_its_task(self):
+        self.build_through("T01")
+        self.put(self.work, {"app/invite.py": IMPL2})
+        self.ok("green", "LOCAL-001", "T02")
+        self.put(self.work, {"tests/test_scenarios.py": SCENARIO_TEST.replace("FR-06 ", "fr06 ")})
+        refusal = self.refused("red", "LOCAL-001", "T03", "--covered", "T02 already implements release.")
+        self.assertIn("no test names FR-06 (found in another spelling: FR-06)", refusal)
+        self.assertIn("FR-02, not fr02 or FR_02", refusal)
+        self.assertEqual(self.lifecycle()[-1]["data"]["reason_code"], "red-ids-not-named")
+        self.assertEqual(self.state()["tasks"][2]["status"], "pending", "the test is not committed, so it can still be edited")
+        self.put(self.work, {"tests/test_scenarios.py": SCENARIO_TEST})
+        self.ok("red", "LOCAL-001", "T03", "--covered", "T02 already implements release.")
 
     def test_refused_when_the_suite_fails(self):
         self.build_through("T01")  # RED_TEST names FR-01 and FR-02 but app/invite.py does not exist yet

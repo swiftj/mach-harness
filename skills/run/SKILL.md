@@ -58,7 +58,7 @@ If the input is exactly `where`, an automated workflow is asking where this skil
 |-------|---------------|
 | `answers` | The spec has open questions. List them and offer to continue the interview now. |
 | `repository-hardening` | The repository is not ready for autonomous work. Give the audit's blockers and offer to file a hardening ticket. |
-| `human-approval` | The panel approved a change that needs a person. Show the outcome and the findings file, and ask for their decision. If they approve, record it with the review skill and continue. |
+| `human-approval` | The panel approved a change that needs a person. Show the outcome and the findings file, and ask for their decision. If they approve, record it with the review skill and continue with the next step the script names, in the same turn. |
 | `merge` | The ticket is approved and its branch is ready, and this project's settings leave the merge to a person (`merge.mode` or `merge.auto` in `.factory/config.json`). They can merge it themselves, or tell you to run the merge skill with `--by-person`. After they merge, running this skill again cleans up. If they squash or rebase when merging, the line cannot see it: they run the cleanup skill with `--merged-as <commit>`. |
 | `nothing` | The ticket is finished or closed. Say so; there is nothing to run. |
 | `person-to-take-over` | The ticket was escalated or is in a state the line cannot handle. Give the reason and the findings. |
@@ -82,7 +82,7 @@ These are the things a person asks for by name. Each is carried out by the stati
 
 | Input | Do | Rule |
 |---|---|---|
-| `approve <ticket>` | Follow the review skill's human-approval steps for that ticket. | Only on the person's explicit approval after they have seen this round's findings. Record it under their name. If the ticket is not awaiting a person, say what it is waiting for and record nothing. |
+| `approve <ticket>` | Follow the review skill's human-approval steps for that ticket. Once the approval is recorded, carry straight on with **One ticket** for the same ticket, in the same turn: ask the script what is next and do it (the merge when the script names a `merge` step, then cleanup), until the script stops for a person. The person does not run a second command. | Only on the person's explicit approval after they have seen this round's findings. Record it under their name. If the ticket is not awaiting a person, say what it is waiting for and record nothing. The approval approves the change; it does not override the project's merge settings. If the script then stops because those settings leave the merge to a person, say so and that `merge <ticket>` lands it. |
 | `merge <ticket>` | Run the merge skill for that ticket with `--by-person`. | Only when the person says to merge it. The merge station still lands only the approved commit, or refuses. |
 | `abandon <ticket> "<why>"` | Run the cleanup skill for that ticket with `--abandon "<why>"`. | Only on the person's explicit request, with their reason in their words. Show cleanup's plan first. |
 | `new "<idea>"` | Run the intent skill with the idea, in this conversation. | The person is the product owner and answers the interview. |

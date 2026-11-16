@@ -231,7 +231,7 @@ The line stops and says what it is waiting for. These are all the cases.
 | It says | What to do |
 |---|---|
 | The spec has open questions | Finish the interview: `/mach-run <ticket>` continues it |
-| Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach-run approve <ticket>` |
+| Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach-run approve <ticket>`. It records your approval and carries the ticket on to the merge and cleanup |
 | Approved, waiting for a person to merge | `/mach-run merge <ticket>` |
 | Blocked: escalated after three rounds | `/mach-run explain <ticket>`, then fix it yourself or abandon it: `/mach-run abandon <ticket> "<why>"` |
 | The repository is Bronze | `/mach-run audit` lists what to fix |
@@ -271,7 +271,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach-run explain <ticket>` | Why a ticket failed or is waiting |
 | `/mach-run doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
 | `/mach-run new "<idea>"` | Start the interview for a new idea |
-| `/mach-run approve <ticket>` | Record your approval of a change that needs a person |
+| `/mach-run approve <ticket>` | Record your approval of a change that needs a person, then carry the ticket on |
 | `/mach-run merge <ticket>` | Merge an approved ticket yourself |
 | `/mach-run abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
 | `/mach-run audit` | The repository's readiness tier |

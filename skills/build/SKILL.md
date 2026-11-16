@@ -66,7 +66,7 @@ Repeat until `BUILD next <ticket>` says all tasks are done:
 | `[contract]`, `[refactor]`, `[docs]` | What the task says | `BUILD done <ticket> <task>` | A green suite stays green. |
 
 **Writing a test.**
-- Name the spec ID each test proves (`FR-04`, `INV-01`, `AC-03`) in its name, docstring or a comment; `BUILD finish` checks every ID is named.
+- Name the spec ID each test proves in its docstring or a comment, written exactly as the spec writes it, with its capitals and hyphen: `FR-04`, `INV-01`, `AC-03`. A function name cannot hold a hyphen, so `test_fr04_...` alone does not count. `BUILD red` refuses a test that leaves out an ID the plan gave its task, while the test can still be edited, and `BUILD finish` checks every ID is named.
 - For the decision matrix, write one table-driven test that reads the cases from `decision_matrix.cases` in the cell's `spec.json` content: copy the cases into the test as data, one row per case, keeping each case ID (`R2-3`). Assert the expected outcome with its exact message, and the side effects, including that a refusal changes nothing.
 - For a scenario, follow its Given, When, Then steps with the scenario's own data. Simulate outside services, including the failure the scenario describes. Control the clock; never sleep.
 - Check that the test fails for the right reason: the behavior is missing, not a typo, a broken test command, or an error before your test is reached. `BUILD red` refuses a failure whose output never mentions your test file. If the test command itself is wrong, stop and report a plan defect at this first task; do not carry on with a suite that cannot run.
