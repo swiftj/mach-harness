@@ -300,6 +300,14 @@ Two drivers use it:
 
 Neither driver grooms interactively on a person's behalf or approves a high-risk change. Whether the line merges is a project setting.
 
+Three aids sit beside the state machine and change nothing it decides:
+
+* **Digest**: `next`, `board` and `explain` open with three lines: where the ticket stands, what a person must decide, and time and cost. A cost appears only where one was recorded (supervised executions in the intake ledger); otherwise it reads "not recorded". It is never estimated.
+* **`/mach-run explain <ticket>`** (`explain.py`): why a ticket failed, was sent back or is waiting, from the stations' own files: the requirement or scenario, the failing check, each reviewer blocker with the rule it cites, rounds used. It reads only, never opens an archive, and passes reviewer and verifier text on as bounded data.
+* **`/mach-run doctor`** (`doctor.py`): checks Git and worktrees, Python, Claude Code, tracker sign-in, the MACH install and the project's rule files; works before `.factory/` exists. `--fix` only creates missing MACH folders. It never reads `.factory/local/`, never shows a tracker's sign-in output, and enables nothing.
+
+A ticket a person names may be a bare number (`/mach-run 4`): it resolves to the one known ticket with that number, and more than one match is refused with the candidates.
+
 ### Product intake and scheduling (`/mach-run product`)
 
 Approved delivery waves that Product Studio published and engineering merged are taken into the Factory through the run skill. `skills/run/scripts/intake.py` does the work; `run.py product status|intake|plan|dispatch|events` are its commands. Design: `docs/mach-next/M3_DESIGN.md`.

@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""MACH doctor: checks that this workstation and project are ready for the MACH line.
+
+Read-only by default. It measures and reports; a check that could not be performed is
+"not_checked", never "ok". With --fix it creates only the installer's standard data folders that
+are missing, and only when .factory/ already exists. It never writes a settings file, never enables
+or installs anything, starts no MACH station or agent, and never reads the machine-local Factory
+folder (.factory/local/). Its only network access is `gh auth status` for the GitHub tracker, whose
+output is never shown: only its exit code is used. Standard library only.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+# Mirrors MIN_PYTHON in bin/mach, the installer (tests/test_doctor.py holds the two equal).
+MIN_PYTHON = (3, 8)
+# Mirrors DATA_DIRS in bin/mach: the folders the installer scaffolds (tests hold the two equal).
+DATA_DIRS = (".factory/tickets", ".factory/inbox", ".factory/worktrees", ".factory/archive", "specs/slices")
+MANIFEST = ".factory/.mach-manifest.json"
+CONFIG = ".factory/config.json"
+AUDIT_REPORT = ".factory/audit-report.json"
+RULE_FILES = ("CLAUDE.md", "AGENTS.md", "REVIEW.md")
+# Only the Studio host: the Factory Floor's program is deliberately not named by any script
+# (tests/test_mach_floor.py), so its presence is left to `mach status`.
+HOSTS = ((".factory/bin/mach-studio", "Product Studio's visual app"),)
+# Mirrors PROVIDERS and the default programs in skills/ticket/scripts/ticket.py.
+PROVIDER_PROGRAMS = {"local": None, "github": "gh", "gitea-cli": "gt", "jira": "jira", "fossil": "fossil"}
+STATUSES = ("ok", "warn", "fail", "not_checked")
+GIT_TIMEOUT = 10
+CLAUDE_TIMEOUT = 10
+GH_TIMEOUT = 15
+# Words in `gh auth status` output that mean the network, not the sign-in, failed. The output is
+# only searched for these; it is never printed, stored or returned.
+NETWORK_WORDS = ("error connecting", "could not resolve", "dial tcp", "timeout", "timed out", "no such host",
+                 "network is unreachable", "connection refused")
+
+
+def find_project(start: Path) -> Path:
+    start = start.resolve()
+    parts = start.parts
+    for index in range(len(parts) - 2, 0, -1):
+        if parts[index] == "worktrees" and parts[index - 1] == ".factory":
+            return Path(*parts[:index - 1])
+    for marker in (".factory", ".git"):
+        for folder in [start, *start.parents]:
+            if (folder / marker).exists():
+                return folder
+    return start
+
+
+def check(id_: str, title: str, status: str, detail: str, fix: str = "") -> Dict[str, str]:
+    return {"id": id_, "title": title, "status": status, "detail": detail, "fix": fix}
+
+
+def run(argv: List[str], cwd: Path, timeout: int) -> Tuple[Optional[int], str, str]:
+    """Runs one program with an explicit argument list. Returns (None, "", reason) when it could not run."""
+    try:
+        done = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
+                              stdin=subprocess.DEVNULL, check=False)
+    except subprocess.TimeoutExpired:
+        return None, "", f"did not answer within {timeout} seconds"
+    except OSError as exc:
+        return None, "", f"could not be started ({exc.strerror or exc})"
+    return done.returncode, done.stdout or "", done.stderr or ""
+
+
+def read_json(path: Path) -> Tuple[Any, str]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), ""
+    except OSError as exc:
+        return None, f"cannot be read ({exc.strerror or exc})"
+    except ValueError as exc:
+        return None, f"is not valid JSON ({exc})"
+
+
+# --- checks -----------------------------------------------------------------------------------
+
+def check_git(project: Path) -> List[Dict[str, str]]:
+    title = "Git"
+    program = shutil.which("git")
+    if not program:
+        return [check("git", title, "fail", "Git is not installed or not on PATH.", "Install Git, then run this check again.")]
+    code, out, err = run([program, "--version"], project, GIT_TIMEOUT)
+    if code != 0:
+        return [check("git", title, "not_checked", f"git --version {err.strip() or 'failed'}.", "Check that Git works in a terminal.")]
+    version = out.strip()
+    code, _, _ = run([program, "rev-parse", "--is-inside-work-tree"], project, GIT_TIMEOUT)
+    if code is None:
+        return [check("git", title, "not_checked", f"{version}; could not ask Git about the project.", "Check that Git works in this folder.")]
+    if code != 0:
+        return [check("git", title, "fail", f"{version}; this project is not a Git repository.",
+                      "Run 'git init' and make a first commit; MACH builds each ticket in its own Git worktree.")]
+    code, _, _ = run([program, "worktree", "list"], project, GIT_TIMEOUT)
+    if code is None:
+        return [check("git", title, "not_checked", f"{version}; 'git worktree list' did not answer.", "Check that Git works in this folder.")]
+    if code != 0:
+        return [check("git", title, "fail", f"{version}; 'git worktree list' fails in this project.",
+                      "Update Git to a version with worktree support (2.5 or later).")]
+    code, _, _ = run([program, "rev-parse", "--verify", "--quiet", "HEAD"], project, GIT_TIMEOUT)
+    if code is None:
+        return [check("git", title, "not_checked", f"{version}; could not find out whether the project has a commit.", "")]
+    if code != 0:
+        return [check("git", title, "warn", f"{version}; the repository has no commit yet, so cells work in the project folder itself.",
+                      "Make a first commit so each ticket gets its own isolated worktree.")]
+    return [check("git", title, "ok", f"{version}; worktrees work and the repository has commits.")]
+
+
+def check_python() -> List[Dict[str, str]]:
+    need = ".".join(map(str, MIN_PYTHON))
+    have = platform.python_version()
+    if sys.version_info[:2] >= MIN_PYTHON:
+        return [check("python", "Python", "ok", f"Python {have} (the installer needs {need} or later).")]
+    return [check("python", "Python", "fail", f"Python {have}; the installer needs {need} or later.",
+                  f"Install Python {need} or later and make it the one 'python3' runs.")]
+
+
+def check_claude(project: Path) -> List[Dict[str, str]]:
+    title = "Claude Code"
+    program = shutil.which("claude")
+    if not program:
+        return [check("claude", title, "warn", "The 'claude' program is not on PATH.",
+                      "Install Claude Code's command-line program if you want to run MACH from a terminal; "
+                      "the desktop app with the MACH plugin works without it.")]
+    code, out, err = run([program, "--version"], project, CLAUDE_TIMEOUT)
+    if code is None:
+        return [check("claude", title, "not_checked", f"'claude --version' {err}.", "Check that 'claude --version' works in a terminal.")]
+    if code != 0:
+        return [check("claude", title, "warn", "'claude --version' failed.", "Reinstall or update Claude Code.")]
+    first = (out.strip().splitlines() or [""])[0][:80]
+    return [check("claude", title, "ok", f"Claude Code {first}".rstrip() + ".")]
+
+
+def resolve_provider(config: Any) -> Tuple[str, str, Dict[str, Any]]:
+    tickets = config.get("tickets") if isinstance(config, dict) else None
+    tickets = tickets if isinstance(tickets, dict) else {}
+    if os.environ.get("ISSUE_PROVIDER"):
+        return os.environ["ISSUE_PROVIDER"], "the ISSUE_PROVIDER environment variable", tickets
+    if tickets.get("provider"):
+        return str(tickets["provider"]), "tickets.provider in .factory/config.json", tickets
+    return "local", "the default", tickets
+
+
+def check_tracker(project: Path, config: Any) -> List[Dict[str, str]]:
+    title = "Ticket tracker"
+    provider, source, tickets = resolve_provider(config)
+    if provider not in PROVIDER_PROGRAMS:
+        return [check("tracker", title, "fail", f"Unknown ticket provider '{provider}' (from {source}).",
+                      f"Use one of: {', '.join(PROVIDER_PROGRAMS)}.")]
+    if provider == "local":
+        if not (project / ".factory").is_dir():
+            return [check("tracker", title, "not_checked", "MACH is not installed here, so there is no local ticket queue yet.", "")]
+        return [check("tracker", title, "ok", f"Local Markdown tickets in .factory/tickets/ (from {source}).")]
+    program = PROVIDER_PROGRAMS[provider]
+    commands = tickets.get("commands")
+    if isinstance(commands, dict):
+        override = commands.get("view") or commands.get("list")
+        if isinstance(override, list) and override and isinstance(override[0], str):
+            program = override[0]
+    path = shutil.which(program)
+    if not path:
+        status = "fail" if provider == "github" else "warn"
+        return [check("tracker", title, status, f"The {provider} tracker (from {source}) needs '{program}', which is not on PATH.",
+                      f"Install '{program}' or change tickets.provider in .factory/config.json.")]
+    if provider != "github" or program != "gh":
+        return [check("tracker", title, "ok", f"The {provider} tracker (from {source}); '{program}' is on PATH. Sign-in was not checked.")]
+    code, out, err = run([path, "auth", "status"], project, GH_TIMEOUT)
+    if code is None:
+        return [check("tracker", title, "not_checked", f"GitHub tracker (from {source}); 'gh auth status' {err}.",
+                      "Run 'gh auth status' yourself when the network is available.")]
+    if code == 0:
+        return [check("tracker", title, "ok", f"GitHub tracker (from {source}); the GitHub CLI is signed in.")]
+    lowered = (out + "\n" + err).lower()
+    if any(word in lowered for word in NETWORK_WORDS):
+        return [check("tracker", title, "not_checked", f"GitHub tracker (from {source}); GitHub could not be reached to check the sign-in.",
+                      "Run 'gh auth status' yourself when the network is available.")]
+    return [check("tracker", title, "fail", f"GitHub tracker (from {source}); the GitHub CLI is not signed in.",
+                  "Run 'gh auth login', then 'gh auth status' to confirm.")]
+
+
+def check_install(project: Path, fix: bool, created: List[str]) -> Tuple[List[Dict[str, str]], Any]:
+    factory = project / ".factory"
+    if not factory.is_dir():
+        return [check("install", "MACH install", "fail", f"MACH is not installed here: {project} has no .factory/ folder.",
+                      "Install MACH in this project (the installer, or /mach:init with the plugin).")], None
+    results: List[Dict[str, str]] = []
+    config, problem = read_json(project / CONFIG)
+    if not (project / CONFIG).is_file():
+        config = None
+        results.append(check("install.config", "Settings file", "fail", f"{CONFIG} is missing.",
+                             "Run the installer again; it recreates the settings file without touching anything else."))
+    elif problem:
+        config = None
+        results.append(check("install.config", "Settings file", "fail", f"{CONFIG} {problem}.", f"Correct {CONFIG} by hand so it is a JSON object."))
+    elif not isinstance(config, dict):
+        config = None
+        results.append(check("install.config", "Settings file", "fail", f"{CONFIG} is valid JSON but not an object.", f"Correct {CONFIG} so it is a JSON object."))
+    else:
+        results.append(check("install.config", "Settings file", "ok", f"{CONFIG} reads as a JSON object."))
+    if (project / MANIFEST).is_file():
+        manifest, problem = read_json(project / MANIFEST)
+        version = manifest.get("version") if isinstance(manifest, dict) else None
+        if problem or not isinstance(manifest, dict):
+            results.append(check("install.manifest", "Install record", "warn", f"{MANIFEST} {problem or 'is not a JSON object'}.",
+                                 "Run the installer again to rewrite its record."))
+        else:
+            results.append(check("install.manifest", "Install record", "ok", f"MACH {version or '(version not recorded)'} recorded in {MANIFEST}."))
+    else:
+        results.append(check("install.manifest", "Install record", "warn",
+                             f"{MANIFEST} is missing, so 'mach status' and 'mach uninstall' cannot tell what was installed.",
+                             "Run the installer (or /mach:init with the plugin) again; it writes the record and changes nothing you made."))
+    missing = [folder for folder in DATA_DIRS if not (project / folder).is_dir()]
+    if missing and fix:
+        for folder in missing:
+            target = project / folder
+            if target.exists():  # a file in the way: never replaced
+                continue
+            try:
+                target.mkdir(parents=True)
+            except OSError:
+                continue
+            created.append(folder)
+        missing = [folder for folder in DATA_DIRS if not (project / folder).is_dir()]
+    if missing:
+        results.append(check("install.folders", "Standard folders", "warn", "Missing: " + ", ".join(f"{m}/" for m in missing) + ".",
+                             "Run this check again with --fix to create the missing folders."))
+    else:
+        done = f" Created: {', '.join(f'{c}/' for c in created)}." if created else ""
+        results.append(check("install.folders", "Standard folders", "ok", "All standard folders exist." + done))
+    return results, config
+
+
+def check_rules(project: Path) -> List[Dict[str, str]]:
+    results = []
+    for name in RULE_FILES:
+        if (project / name).is_file():
+            results.append(check(f"rules.{name}", name, "ok", f"{name} exists."))
+        else:
+            results.append(check(f"rules.{name}", name, "warn", f"{name} is missing; agents work without the project's rules.",
+                                 "Run the installer again; it seeds REVIEW.md and AGENTS.md and adds a MACH section to CLAUDE.md."))
+    return results
+
+
+def check_audit(project: Path) -> List[Dict[str, str]]:
+    path = project / AUDIT_REPORT
+    if not path.is_file():
+        return [check("audit", "Readiness audit", "warn", "No readiness audit has been run, so no station will build yet.",
+                      "Run the audit station (/mach-audit) when you are ready.")]
+    report, problem = read_json(path)
+    if problem or not isinstance(report, dict):
+        return [check("audit", "Readiness audit", "warn", f"{AUDIT_REPORT} {problem or 'is not a JSON object'}.", "Run the audit station (/mach-audit) again.")]
+    tier, score = report.get("readiness_tier"), report.get("readiness_score")
+    if tier in ("Gold", "Silver"):
+        return [check("audit", "Readiness audit", "ok", f"Last audit: {tier} ({score} points). Whether it is current is decided by the audit gate.")]
+    if tier:
+        return [check("audit", "Readiness audit", "warn", f"Last audit: {tier} ({score} points); autonomous building is blocked.",
+                      "Work through the repository-hardening ticket, then run the audit station again.")]
+    return [check("audit", "Readiness audit", "warn", f"{AUDIT_REPORT} records no tier.", "Run the audit station (/mach-audit) again.")]
+
+
+def check_hosts(project: Path) -> List[Dict[str, str]]:
+    results = []
+    for dest, what in HOSTS:
+        name = Path(dest).name
+        path = project / dest
+        if path.is_file() and os.access(path, os.X_OK):
+            results.append(check(f"hosts.{name}", name, "ok", f"{dest} is present and can run ({what})."))
+        elif path.is_file():
+            results.append(check(f"hosts.{name}", name, "warn", f"{dest} is present but cannot be run.",
+                                 "Run the installer again to fetch a fresh copy."))
+        else:
+            results.append(check(f"hosts.{name}", name, "warn", f"{dest} is not installed, so {what} cannot open in a browser; the terminal still works.",
+                                 "Run the installer again on a supported machine (macOS on Apple silicon, Linux) to fetch it."))
+    return results
+
+
+def check_remote(project: Path) -> List[Dict[str, str]]:
+    program = shutil.which("git")
+    if not program:
+        return [check("remote", "Git remote", "not_checked", "Git is not available to ask.", "")]
+    code, out, err = run([program, "remote", "get-url", "origin"], project, GIT_TIMEOUT)
+    if code is None:
+        return [check("remote", "Git remote", "not_checked", f"'git remote get-url origin' {err}.", "")]
+    if code == 0 and out.strip():
+        return [check("remote", "Git remote", "ok", "The project has a remote named origin.")]
+    return [check("remote", "Git remote", "warn", "No remote: pull-request merge and Product Studio's send are unavailable.",
+                  "Add a remote with 'git remote add origin <url>' if you want pull requests.")]
+
+
+# --- running and reporting --------------------------------------------------------------------
+
+def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
+    created: List[str] = []
+    checks: List[Dict[str, str]] = []
+    checks += check_git(project)
+    checks += check_python()
+    checks += check_claude(project)
+    install, config = check_install(project, fix, created)
+    checks += check_tracker(project, config)
+    checks += install
+    checks += check_rules(project)
+    checks += check_audit(project)
+    checks += check_hosts(project)
+    checks += check_remote(project)
+    summary = {status: sum(1 for c in checks if c["status"] == status) for status in STATUSES}
+    return {"project": str(project), "checks": checks, "summary": summary, "created": created}
+
+
+def render(result: Dict[str, Any]) -> str:
+    words = {"ok": "ok", "warn": "warning", "fail": "FAILED", "not_checked": "not checked"}
+    lines = [f"MACH check of {result['project']}", ""]
+    for c in result["checks"]:
+        lines.append(f"  {words[c['status']]:<12} {c['title']}: {c['detail']}")
+    todo = [c for c in result["checks"] if c["status"] in ("fail", "warn") and c["fix"]]
+    if result["created"]:
+        lines += ["", "Created:"] + [f"  {folder}/" for folder in result["created"]]
+    if todo:
+        lines += ["", "What to do:"] + [f"  - {c['title']}: {c['fix']}" for c in todo]
+    lines += ["", "The Factory supervisor is not checked here; for it, run /mach-run factory status."]
+    s = result["summary"]
+    lines.append(f"{s['ok']} ok, {s['warn']} warnings, {s['fail']} failed, {s['not_checked']} not checked.")
+    return "\n".join(lines)
+
+
+def main(argv: Optional[Sequence[str]] = None, project: Optional[Path] = None) -> int:
+    parser = argparse.ArgumentParser(prog="doctor", description="Check that this workstation and project are ready for MACH. Read-only unless --fix.")
+    parser.add_argument("--fix", action="store_true", help="create the installer's standard folders that are missing; nothing else")
+    parser.add_argument("--json", action="store_true", help="print the result as JSON")
+    args = parser.parse_args(argv)
+    root = Path(project).resolve() if project is not None else find_project(Path.cwd())
+    result = diagnose(root, fix=args.fix)
+    if args.json:
+        print(json.dumps({"checks": result["checks"], "summary": result["summary"], "created": result["created"]}, indent=2))
+    else:
+        print(render(result))
+    return 1 if result["summary"]["fail"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
