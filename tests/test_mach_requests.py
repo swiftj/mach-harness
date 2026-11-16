@@ -726,5 +726,20 @@ class SecurityReviewTest(RequestBase):
         self.assertTrue(issue_rules.is_repository("acme-1/repo"))
 
 
+
+class LongTokenTest(unittest.TestCase):
+    """A long run of letters and digits is masked as a likely secret; a file or slice name made of plain words is not."""
+
+    def test_names_made_of_words_are_kept(self):
+        for name in ("specs/slices/SLICE-012-readme-running-the-tests.md", "SLICE-009-desk-summary-on-loan-count.md",
+                     "tests/test_item_name_at_most_80_characters_long.py"):
+            self.assertEqual(issue_rules.redact(name), name)
+
+    def test_tokens_are_still_masked(self):
+        for token in ("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8", "123e4567-e89b-12d3-a456-426614174000-aaaa",
+                      "dGhpcyBpcyBhIHNlY3JldCB0b2tlbiB2YWx1ZTEyMw", "prod-db-7f3k2m9x-token-a8b7c6d5e4f3g2h1",
+                      "averyveryverylongsinglewordthatgoeson-12-34"):
+            self.assertEqual(issue_rules.redact(f"see {token} here"), "see <redacted> here")
+
 if __name__ == "__main__":
     unittest.main()

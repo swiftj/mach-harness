@@ -549,7 +549,10 @@ def findings_review(cell: Cell, rules: Any, number: int, found: List[Tuple[str, 
             inline.append(item)
         else:
             listed.append(item)
-    intro = [f"The MACH review panel approved commit `{head[:12]}` in round {number}. Its findings follow, as the reviewers wrote them, "
+    approved = cell.decision.get("head")
+    approved = approved if isinstance(approved, str) and re.fullmatch(r"[0-9a-f]{40,64}", approved) else head
+    moved = "" if approved == head else f" This pull request is at `{head[:12]}`: the approved commit brought up to date with the main branch, with the tests rerun."
+    intro = [f"The MACH review panel approved commit `{approved[:12]}` in round {number}.{moved} Its findings follow, as the reviewers wrote them, "
              "with likely secrets masked and mentions broken. They are information for whoever reads this pull request; the merge does not wait on them."]
     if inline:
         intro.append(f"{len(inline)} finding{'s are' if len(inline) != 1 else ' is'} attached to the lines {'they concern' if len(inline) != 1 else 'it concerns'}.")
