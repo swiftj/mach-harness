@@ -1,6 +1,7 @@
 # Design: GitHub Issues as requests, and ease-of-use additions
 
-Status: agreed design, 2026-11-15. No code has been written. This replaces the earlier draft of this
+Status: agreed design, 2026-11-15. Built so far: step 1, requests from GitHub Issues (`docs/mach-next/M8_DESIGN.md`),
+scheduling and the pull request additions (`docs/mach-next/M9_DESIGN.md`). This replaces the earlier draft of this
 file, which described a hand-applied `mach:ready` trigger, concurrency chosen by Claude and a squash
 merge; none of those was adopted (section 9).
 
@@ -115,7 +116,7 @@ Order and parallelism stay decided by script.
 | `/mach-run --sequential` | One at a time |
 | `/mach-run --dry-run` | The plan `product plan` already computes, with the reasons, and nothing started |
 
-`/mach-run` with no ticket keeps its present meaning (the board). It never starts every eligible ticket.
+`/mach-run` with no ticket keeps its present meaning (the status of every ticket). It never starts every eligible ticket.
 
 ## 5. Merge by pull request
 

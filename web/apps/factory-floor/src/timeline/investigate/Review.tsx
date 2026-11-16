@@ -125,8 +125,8 @@ function RoundDrawing({ r, top, s, liveAt, onReveal }: { r: ReviewRound; top: nu
       {r.human ? (
         <Fig
           id={`human:${r.ref}`}
-          name={`A person's approval required after round ${r.round} from ${when(r.human.from)}${r.human.to !== null ? ` to ${when(r.human.to)}` : ", still waiting at the live edge"}${r.human.approved ? `; a person approved the code at ${when(r.human.approved.at)}` : ""}`}
-          sources={[...r.human.sources, ...(r.human.approved ? [r.human.approved.source] : [])]}
+          name={`A person's approval required after round ${r.round} from ${when(r.human.from)}${r.human.to !== null ? ` to ${when(r.human.to)}` : ", still waiting at the live edge"}${r.human.approved ? `; a person approved the code at ${when(r.human.approved.at)}` : ""}${r.human.sentBack ? `; a person sent the change back to the build station at ${when(r.human.sentBack.at)}, not approved` : ""}`}
+          sources={[...r.human.sources, ...(r.human.approved ? [r.human.approved.source] : []), ...(r.human.sentBack ? [r.human.sentBack.source] : [])]}
           onActivate={() => onReveal(r.human!.ref, r.human!.from)}
         >
           {(() => {

@@ -89,7 +89,7 @@ var Allow = map[string]*Shape{
 	"review.round_started":     obj("risk", "max_rounds", "tuning", "approvals_needed", "human_approval_required", "panel", list(obj("seat", "model")), "delta", "restarted"),
 	"review.verdict_submitted": obj("seat", "vote", "blockers", "notes", "rules", leafList, "model"),
 	"review.decided":           obj("outcome", "approvals", "approvals_needed", "votes", anyKeys(scalar), "blockers", "security_veto", "human_approval_required"),
-	"human.approval_recorded":  obj("by_role", "note_given"),
+	"human.approval_recorded":  obj("by_role", "note_given", "decision"), // decision: Enums (M9)
 	"merge.completed":          obj("method", "merge_commit", "approved_commit", "landed_commit", "revalidated", "pull_request"),
 	"cleanup.completed":        obj("outcome", "archive", "bundle", "uncommitted_saved"),
 
@@ -229,11 +229,38 @@ func Enforce(ev *event.Event, c *Counters) bool {
 		ev.Data = map[string]any{}
 	}
 	n := prune(ev.Data, shape)
+	n += pruneEnums(ev.Type, ev.Data)
 	ev.Withheld += n
 	if c != nil {
 		c.FieldsDropped += int64(n)
 	}
 	return true
+}
+
+// Enums are data fields that are enumerated codes, not prose: only these values are kept; any
+// other value becomes null and is counted as withheld.
+var Enums = map[string]map[string][]string{
+	"human.approval_recorded": {"decision": {"APPROVED", "SENT_BACK"}},
+}
+
+func pruneEnums(typ string, data map[string]any) int {
+	n := 0
+	for k, allowed := range Enums[typ] {
+		v, ok := data[k]
+		if !ok || v == nil {
+			continue
+		}
+		s, _ := v.(string)
+		keep := false
+		for _, a := range allowed {
+			keep = keep || s == a
+		}
+		if !keep {
+			data[k] = nil
+			n++
+		}
+	}
+	return n
 }
 
 func cut(s string) (string, string, bool) {

@@ -253,7 +253,7 @@ class HistoryTest(Base):
     def test_overrides_and_refusals_keep_their_history(self):
         self.ready()
         self.ok("start", TICKET)
-        self.put(self.work, {"tests/test_invite.py": "import unittest\n\n# FR-01\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n"})
+        self.put(self.work, {"tests/test_invite.py": "import unittest\n\n# FR-01 FR-02 FR-03 FR-04 FR-05 FR-07 INV-01 INV-02 INV-04\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n"})
         self.assertIn("never seen failing", self.refused("red", TICKET, "T01"))
         self.ok("red", TICKET, "T01", "--covered", "Earlier work in the base suite already satisfies this check.")
         gates = [(r["visit"], r["data"]["gate"], r["data"]["outcome"], r["data"]["reason_code"], r["data"]["overridden_by_reason"])

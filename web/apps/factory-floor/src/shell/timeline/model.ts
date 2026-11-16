@@ -251,6 +251,7 @@ export function timelineModel(): TimelineModel {
       }
       for (const round of cell.reviews) {
         if (round.humanApproval) track.marks.push({ ref: ref.gate(`${ticketId}/human-approval`), t: round.humanApproval.at, kind: "person", text: `${round.humanApproval.by} approved` });
+        if (round.humanSentBack) track.marks.push({ ref: ref.gate(`${ticketId}/human-approval`), t: round.humanSentBack.at, kind: "person", text: `Sent back by ${round.humanSentBack.by}` });
         for (const f of round.findings) put(ref.finding(f.id), -1, f.at, f.at);
       }
       if (cell.merged) track.marks.push({ ref: ref.station("merge", ticketId), t: cell.merged.at, kind: "merge", text: `Merged ${cell.merged.commit.slice(0, 7)}${cell.merged.revalidated ? " after revalidation" : ""}` });
@@ -392,7 +393,8 @@ export function liveTimelineModel(log: SceneLog, liveAt: number, index: HistoryI
       const r = ref.station(v.station, ticketId);
       track.stations.push({ ref: r, station: v.station, round: v.round, start: v.enteredAt, end: v.leftAt, outcome: v.outcome, startQuality: v.meta.start, endQuality: v.leftAt === null ? "unknown" : v.meta.end });
       put(r, trackId, -1, v.enteredAt, v.leftAt);
-      if (v.outcome === "failed" || v.outcome === "rejected") {
+      // A person's send-back (the human-approval visit, M9) has its own mark from the review round below.
+      if ((v.outcome === "failed" || v.outcome === "rejected") && v.station !== "human-approval") {
         const gate = v.station === "verify" ? ref.gate(`${ticketId}/verification#${v.round}`) : ref.gate(`${ticketId}/review#${v.round}`);
         track.marks.push({ ref: gate, t: v.leftAt ?? v.enteredAt, kind: "fail", text: v.station === "verify" ? `Verification failed, round ${v.round}` : `Review rejected, round ${v.round}` });
       }
@@ -404,6 +406,7 @@ export function liveTimelineModel(log: SceneLog, liveAt: number, index: HistoryI
     for (const round of cell.reviews) {
       // People by role only (contract D15).
       if (round.humanApproval) track.marks.push({ ref: ref.gate(`${ticketId}/human-approval`), t: round.humanApproval.at, kind: "person", text: "A person approved" });
+      if (round.humanSentBack) track.marks.push({ ref: ref.gate(`${ticketId}/human-approval`), t: round.humanSentBack.at, kind: "person", text: "Sent back by a person" });
       for (const f of round.findings) put(ref.finding(f.id), trackId, -1, f.at, f.at);
     }
     if (cell.merged) track.marks.push({ ref: ref.station("merge", ticketId), t: cell.merged.at, kind: "merge", text: `Merged ${cell.merged.commit.slice(0, 7)}${cell.merged.revalidated ? " after revalidation" : ""}` });

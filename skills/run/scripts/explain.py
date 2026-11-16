@@ -8,7 +8,7 @@ Sources, all inside .factory/worktrees/<ticket>/ (written by the stations, never
     cell.json                       stage and risk
     build.json, build-report.json   the revision loop, and every gate override with its reason
     evidence/summary.json           the verification verdict: failed checks (AC-NN, RN, H-...), suite, contracts, unproven items
-    review/decision.json            the latest review decision; rejected_by marks a merge station send-back
+    review/decision.json            the latest review decision; rejected_by marks a send-back by the merge station or by a person
     review/round-N/votes/*.json     each seat's findings: blocker, rule cited, file, line, class and impact
     review/merge-findings.md        what the merge station sent back
     lifecycle.jsonl                 refused gates (build, an incomplete verification, a merge conflict) and timings
@@ -37,6 +37,7 @@ HEADLINES = {
     "verification_incomplete": "Verification could not finish: items were left unproven",
     "review_rejected": "The review panel rejected the build",
     "sent_back_by_merge": "The merge station sent the build back",
+    "sent_back_by_person": "A person sent the change back after the panel approved it",
     "merge_refused": "The merge station stopped",
     "build_gate_refused": "A build gate refused",
     "escalated": "The ticket used all its rounds and was escalated to a person",
@@ -260,7 +261,12 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
             candidates.append((number + 1, 0, "verification_failed", verification_causes(cellroot, summary, index), "evidence/findings.md"))
         if decision.get("outcome") in ("REJECTED", "ESCALATE"):
             number = decision.get("round") if isinstance(decision.get("round"), int) else 0
-            if decision.get("rejected_by"):
+            if decision.get("rejected_by") == "a person":
+                sent = decision.get("human_send_back") if isinstance(decision.get("human_send_back"), dict) else {}
+                where = "/".join(round_folder(cellroot, decision).relative_to(cellroot).parts + ("person-findings.md",))
+                candidates.append((number, 2, "sent_back_by_person",
+                                   [cause("person", "sent-back", index, detail=sent.get("reason") or "A person sent the change back.", source_file=where)], where))
+            elif decision.get("rejected_by"):
                 text = ""
                 try:
                     text = (cellroot / "review" / "merge-findings.md").read_text(encoding="utf-8", errors="replace")

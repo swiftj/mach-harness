@@ -53,7 +53,7 @@ var ContributorFigures = map[string]ContributorFigure{
 	"W1":    {"W1", true, "dependency waits", "ms", []string{"kind", "station", "basis"}},
 	"W2":    {"W2", true, "queue waits (eligible to dispatched)", "ms", []string{"kind", "station", "basis"}},
 	"W2b":   {"W2b", true, "execution-capacity waits", "ms", []string{"kind", "station", "basis"}},
-	"W3":    {"W3", true, "waits for a person's approval", "ms", []string{"kind", "station", "basis"}},
+	"W3":    {"W3", true, "waits for a person's answer at the approval gate (an approval or a send-back)", "ms", []string{"kind", "station", "basis"}},
 	"S4":    {"S4", true, "tickets parked for a person (person waits)", "ms", []string{"kind", "station", "basis"}},
 	"Q1":    {"Q1", true, "round-1 verifications that did not pass", "verifications", []string{"round", "status", "station"}},
 	"verification_failures": {"verification_failures", false, "verifications that did not pass, every round", "verifications",

@@ -153,6 +153,18 @@ class RecordsTest(unittest.TestCase):
         self.assertEqual((report["next"]["action"], report["next"]["needs"]), ("stop", "person-to-take-over"))
         self.assertEqual(report["digest"]["needs_person"], run.NEEDS_TEXT["person-to-take-over"])
 
+    def test_a_change_a_person_sent_back_gives_their_reason(self):
+        self.write("cell.json", {"ticket_id": TICKET, "stage": "built"})
+        self.write("review/round-1/person-findings.md", "x")
+        self.write("review/decision.json", {"outcome": "REJECTED", "round": 1, "rejected_by": "a person",
+                                            "human_send_back": {"by": "Dana Smith", "reason": "The error text must name the field."},
+                                            "findings": str(self.cellroot / "review/round-1/person-findings.md")})
+        report = self.explain()
+        self.assertEqual(report["headline_code"], "sent_back_by_person")
+        self.assertEqual([(c["kind"], c["id"]) for c in report["causes"]], [("person", "sent-back")])
+        self.assertIn("must name the field", json.dumps(report["causes"]))
+        self.assertEqual(report["findings_file"], "review/round-1/person-findings.md")
+
     def test_nothing_failed_still_gives_the_next_step(self):
         self.write("cell.json", {"ticket_id": TICKET, "stage": "verified", "risk": "Low"})
         report = self.explain()

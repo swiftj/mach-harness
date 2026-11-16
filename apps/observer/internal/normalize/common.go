@@ -247,6 +247,22 @@ func enum(v any, allowed ...string) any {
 	return nil
 }
 
+// humanDecision normalises human.approval_recorded's decision to APPROVED or SENT_BACK, or nil
+// for a missing or unknown value.
+func humanDecision(v any) any {
+	s, ok := v.(string)
+	if !ok {
+		return nil
+	}
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "APPROVED", "APPROVE":
+		return "APPROVED"
+	case "SENT_BACK":
+		return "SENT_BACK"
+	}
+	return nil
+}
+
 // idList keeps the identifiers of a list, at most max.
 func idList(v any, max int) []any {
 	out := []any{}

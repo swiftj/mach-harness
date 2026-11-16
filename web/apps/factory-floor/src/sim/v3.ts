@@ -169,7 +169,7 @@ export interface V3DataMap {
   "review.round_started": { risk: Risk; max_rounds: number; tuning: boolean; approvals_needed: number; human_approval_required: boolean; panel: Array<{ seat: ReviewSeat; model: string | null }>; delta: boolean; restarted: boolean };
   "review.verdict_submitted": { seat: ReviewSeat; vote: "APPROVE" | "REJECT"; blockers: number; notes: number; rules: string[]; model: string | null };
   "review.decided": { outcome: "APPROVED" | "AWAITING_HUMAN" | "REJECTED" | "ESCALATE"; approvals: number; approvals_needed: number; votes: Readonly<Record<string, "APPROVE" | "REJECT">>; blockers: number; security_veto: boolean; human_approval_required: boolean };
-  "human.approval_recorded": { by_role: "person"; note_given: boolean };
+  "human.approval_recorded": { by_role: "person"; note_given: boolean; decision?: "APPROVED" | "SENT_BACK" | null };
   "merge.completed": { method: "local" | "pr"; merge_commit: string | null; approved_commit: string | null; landed_commit: string | null; revalidated: boolean; pull_request: number | null };
   "cleanup.completed": { outcome: "merged" | "abandoned"; archive: string | null; bundle: boolean; uncommitted_saved: boolean };
   "execution.process_started": Record<string, never>;
@@ -378,4 +378,13 @@ const pad = (n: number, width: number): string => String(Math.max(0, Math.floor(
  */
 export function eventOrderOf(event: EngineEvent): string {
   return isV3(event) ? event.order : `${pad(event.t, 15)}~0~sim~${pad(event.seq, 12)}~0000`;
+}
+
+/**
+ * Whether a person's answer at the approval gate (human.approval_recorded's `decision`, M9) sent the
+ * change back to the build station. SENT_BACK in any case is a send-back; anything else, a missing
+ * decision included (records written before M9), is an approval.
+ */
+export function isSentBack(decision: unknown): boolean {
+  return typeof decision === "string" && decision.trim().toUpperCase() === "SENT_BACK";
 }

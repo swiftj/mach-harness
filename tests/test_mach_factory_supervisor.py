@@ -516,7 +516,7 @@ class CapacityReportTest(Base):
         self.two_ready()
         self.assertEqual(self.product("reconcile")["plan"]["limits"]["max_parallel"], 3)
         plan = self.factory("status")["plan"]
-        self.assertEqual((plan["limits"], plan["max_parallel_from"]), ({"max_parallel": 3, "active": 0, "free": 3}, {"project": 3, "machine_policy": None, "in_force": 3}))
+        self.assertEqual((plan["limits"], plan["max_parallel_from"]), ({"max_parallel": 3, "max_parallel_high": 1, "active": 0, "free": 3}, {"project": 3, "machine_policy": None, "in_force": 3}))
         self.assertEqual((plan["dispatchable"], plan["waiting_for_a_place"]), (["SLICE-001", "SLICE-002"], []))
 
     def test_supervised_reports_the_machine_cap_and_holds_the_slice_waiting_for_a_place(self):
@@ -525,11 +525,11 @@ class CapacityReportTest(Base):
         report = self.tick()
         self.assertEqual([item["slice_id"] for item in report["dispatched"]], ["SLICE-001"])  # one place, one dispatch: unchanged
         self.assertIn({"slice_id": "SLICE-002", "why": "it is ready and waits for a free place: 0 of 1 in use"}, report["held"])
-        self.assertEqual(report["limits"], {"max_parallel": 1, "active": 0, "free": 1})
+        self.assertEqual(report["limits"], {"max_parallel": 1, "max_parallel_high": 1, "active": 0, "free": 1})
         decided = [event for event in self.events() if event["type"] == "scheduling.decided"][-1]
         self.assertIn({"slice_id": "SLICE-002", "why": "it is ready and waits for a free place: 0 of 1 in use"}, decided["data"]["held"])
         plan = self.factory("status")["plan"]
-        self.assertEqual((plan["limits"], plan["max_parallel_from"]), ({"max_parallel": 1, "active": 1, "free": 0}, {"project": 3, "machine_policy": 1, "in_force": 1}))
+        self.assertEqual((plan["limits"], plan["max_parallel_from"]), ({"max_parallel": 1, "max_parallel_high": 1, "active": 1, "free": 0}, {"project": 3, "machine_policy": 1, "in_force": 1}))
         self.assertEqual((plan["dispatchable"], plan["waiting_for_a_place"]), ([], ["SLICE-002"]))
         self.wait()
         report = self.tick()
@@ -703,7 +703,7 @@ class SupervisedTest(Base):
         self.assertEqual(run.next_step(run.Project(self.eng), "LOCAL-001", True), step)  # the station state machine is untouched
         out = io.StringIO()
         with redirect_stdout(out):
-            run.main(["--project", str(self.eng), "board"])
+            run.main(["--project", str(self.eng), "status"])
         self.assertEqual(json.loads(out.getvalue())["ready_to_run"], ["LOCAL-001"])
 
     def test_including_the_backlog_hands_work_in_the_line_to_the_supervisor(self):
@@ -741,6 +741,59 @@ class SupervisedTest(Base):
         self.assertEqual(report["started"], [])
         self.assertIn("above the Medium this machine allows unattended", report["held"][0]["why"])
         self.assertEqual(self.calls(), [])
+
+
+def plan_md(*files):
+    rows = "\n".join(f"| `{name}` | modify | T01 |" for name in files)
+    return ("# Plan\n\n## Tasks\n\n- [ ] T01 [test] A test for the change (FR-01)\n\n"
+            "## File touch map\n\n| File | Change | Tasks |\n|------|--------|-------|\n" + rows + "\n")
+
+
+class ScheduleHoldTest(Base):
+    """M9 1.7: before it starts an execution, the supervisor applies the schedule's High-risk and file-overlap rules
+    (schedule.decide) against its live executions. A held ticket is reported with the reason and tried on a later pass."""
+
+    def two_planned(self, risks, files, **factory):
+        self.first()
+        self.publish(self.a, self.slice(self.a, "Second"))
+        self.config(build={"require_audit": False}, factory={"max_parallel": 3, **factory})
+        self.product("intake")
+        self.product("dispatch", "SLICE-001", "SLICE-002")
+        for ticket, risk, names in zip(("LOCAL-001", "LOCAL-002"), risks, files):
+            self.set_cell(ticket, stage="planned", risk=risk)
+            (self.eng / ".factory/worktrees" / ticket / "plan.md").write_text(plan_md(*names))
+        self.enable("--include-backlog")
+
+    def test_a_ticket_sharing_files_with_a_running_one_waits_for_a_later_pass(self):
+        self.two_planned(("Medium", "Medium"), (["app/x.py", "app/a.py"], ["app/x.py", "app/b.py"]))
+        report = self.tick()
+        self.assertEqual([item["ticket_id"] for item in report["started"]], ["LOCAL-001"])
+        self.assertIn({"ticket_id": "LOCAL-002", "slice_id": "SLICE-002", "why": "it shares files with LOCAL-001: app/x.py"}, report["held"])
+        decided = [event for event in self.events() if event["type"] == "scheduling.decided"][-1]
+        self.assertIn({"ticket_id": "LOCAL-002", "slice_id": "SLICE-002", "why": "it shares files with LOCAL-001: app/x.py"}, decided["data"]["held"])
+        self.assertEqual(self.ledger()["supervisor"]["parked"], {})  # held, not parked: nothing waits for a person
+        self.wait()
+        report = self.tick()  # LOCAL-001 ended (approved, waiting for a person to merge): LOCAL-002 may go
+        self.assertEqual([item["ticket_id"] for item in report["started"]], ["LOCAL-002"])
+        self.wait()
+
+    def test_more_high_risk_work_than_the_high_risk_ceiling_waits(self):
+        self.two_planned(("High", "High"), (["app/a.py"], ["app/b.py"]))
+        report = self.tick()
+        self.assertEqual([item["ticket_id"] for item in report["started"]], ["LOCAL-001"])
+        (held,) = [item for item in report["held"] if item.get("ticket_id") == "LOCAL-002"]
+        self.assertIn("its risk tier is High, and LOCAL-001 already take(s) the 1 place(s) for High-risk work", held["why"])
+        self.assertEqual(report["limits"]["max_parallel_high"], 1)
+        self.wait()
+        self.assertEqual([item["ticket_id"] for item in self.tick()["started"]], ["LOCAL-002"])
+        self.wait()
+
+    def test_a_higher_high_risk_ceiling_lets_both_run_and_separate_files_never_hold(self):
+        self.two_planned(("High", "High"), (["app/a.py"], ["app/b.py"]), max_parallel_high=2)
+        report = self.tick()
+        self.assertEqual(sorted(item["ticket_id"] for item in report["started"]), ["LOCAL-001", "LOCAL-002"])
+        self.assertEqual(report["limits"]["max_parallel_high"], 2)
+        self.wait()
 
 
 class LimitsTest(Base):
@@ -991,7 +1044,7 @@ class ExecutionScopeTest(Base):
         answers = self.root / "answers.json"
         self.claude({"default": {"stage": "building", "run_py": str(SCRIPTS / "run.py"), "answers": str(answers),
                                  "ask": {"other": ["next", "LOCAL-002", "--headless"], "own": ["next", "LOCAL-001", "--headless"],
-                                         "review": ["review-start", "LOCAL-002"], "board": ["board", "--headless"]}}})
+                                         "review": ["review-start", "LOCAL-002"], "status": ["status", "--headless"]}}})
         self.tick()
         self.wait()
         got = json.loads(answers.read_text())
@@ -1003,22 +1056,22 @@ class ExecutionScopeTest(Base):
         self.assertEqual(json.loads(got["own"]["out"])["ticket_id"], "LOCAL-001")
         self.assertEqual(got["review"]["code"], 1)
         self.assertIn("started for LOCAL-001 only", got["review"]["err"])
-        board = json.loads(got["board"]["out"])
+        board = json.loads(got["status"]["out"])
         self.assertEqual((board["observe_due"], board["factory_tuning_ready"], board["scoped_to"]), (False, [], "LOCAL-001"))
         self.assertEqual([row["ticket_id"] for row in board["tickets"]], ["LOCAL-001"])
         # Outside an execution, a person still sees the due pass.
-        code, out, _ = self.run_board()
+        code, out, _ = self.run_status()
         self.assertEqual((code, json.loads(out)["observe_due"]), (0, True))
 
-    def run_board(self):
+    def run_status(self):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            code = run.main(["--project", str(self.eng), "board", "--headless"])
+            code = run.main(["--project", str(self.eng), "status", "--headless"])
         return code, out.getvalue(), err.getvalue()
 
     def test_an_unknown_execution_may_work_on_nothing(self):
         with mock.patch.dict(os.environ, {"MACH_EXECUTION_ID": "x0000000000ff"}):
-            code, _, err = self.run_board()
+            code, _, err = self.run_status()
         self.assertEqual(code, 1)
         self.assertIn("which the intake ledger does not record", err)
 

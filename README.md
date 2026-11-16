@@ -71,7 +71,7 @@ Almost everything goes through two commands.
 | Command | For | What it is |
 |---|---|---|
 | `/mach-product-studio` | Product managers | The workspace for the project, its epics, slices and delivery waves |
-| `/mach-run` | Engineers | The line: move a ticket, see the board, take in product work, check the setup |
+| `/mach-run` | Engineers | The line: move a ticket, see the status of every ticket, take in product work, check the setup |
 
 Both take plain words as well as the forms shown in this guide: "open the app", "what is LOCAL-004 waiting for?", "open the Factory Floor".
 
@@ -180,7 +180,25 @@ Dispatch opens the cell and stops; `/mach-run <ticket>` then runs it. Nothing is
 
 ### Several tickets at once
 
-Ask Claude Code to "run the mach-belt workflow for LOCAL-002 and LOCAL-003" (`mach:belt` with the plugin). Each ticket is built, verified and reviewed in its own cell, and the run ends with what each one is waiting for.
+```
+/mach-run 2 3 5
+```
+
+MACH shows the schedule first, then runs the tickets with the belt workflow (`mach-belt`; `mach:belt` with the plugin). Each ticket is built, verified and reviewed in its own cell, and the run ends with what each one is waiting for.
+
+A script decides what may run together, and it only ever runs fewer than the limit, never more:
+
+- No more than `factory.max_parallel` tickets run at once, and no more than `factory.max_parallel_high` of them High risk.
+- A ticket waits for the tickets it depends on to be merged.
+- Two tickets whose plans change the same file do not run at the same time.
+
+| Add | To |
+|---|---|
+| `--dry-run` | See the schedule and the reason for every wait; nothing starts |
+| `--limit 2` | Run at most two at once (the settings limit still applies) |
+| `--sequential` | Run one at a time |
+
+Only you can raise a limit: in the settings, or by telling Claude Code to raise it for one run. `/mach-run` with no ticket still shows the status of every ticket and starts nothing.
 
 ### Unattended, on a machine you choose
 
@@ -208,15 +226,23 @@ Full guide: [Engineer Guide](docs/guides/ENGINEER_GUIDE.md).
 
 ## When the factory needs you
 
-The line stops and says what it is waiting for. These are all the cases.
+When a run stops for you, MACH walks you through it: one ticket at a time, what happened, then a prompt with the options that ticket really has. A script lists the options, so they are the same every time, and where a rule decides it, one is marked as recommended. You pick one, or skip it and nothing changes. To come back to it later:
+
+```
+/mach-run decide
+```
+
+These are the cases, and what each choice runs if you would rather type it yourself.
 
 | It says | What to do |
 |---|---|
 | The spec has open questions | Finish the interview: `/mach-run <ticket>` continues it |
-| Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach-run approve <ticket>` |
+| Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach-run approve <ticket>`. It records your approval and carries the ticket on to the merge and cleanup. To have something changed first: `/mach-run send-back <ticket> "<why>"`. Your reason goes to the builder as the finding to answer, and it uses one of the ticket's three rounds |
 | Approved, waiting for a person to merge | `/mach-run merge <ticket>` |
 | Blocked: escalated after three rounds | `/mach-run explain <ticket>`, then fix it yourself or abandon it: `/mach-run abandon <ticket> "<why>"` |
 | The repository is Bronze | `/mach-run audit` lists what to fix |
+| A build stopped at a gate before any review | Run it again, or start the plan over: `/mach-run replan <ticket> "<why>"` |
+| A worker is already on this ticket | Wait for it; or, if that worker is gone, tell Claude Code to take over |
 | The audit is missing or out of date | `/mach-run audit` |
 
 A ticket gets three judging rounds in all, counting failed verifications and rejected reviews. On the third failure it is handed to a person; the factory does not keep trying.
@@ -224,7 +250,7 @@ A ticket gets three judging rounds in all, counting failed verifications and rej
 ## Finding out where things stand
 
 ```
-/mach-run board              every open ticket and its next step
+/mach-run status              every open ticket and its next step
 /mach-run explain LOCAL-004  why this ticket failed or is waiting
 ```
 
@@ -248,12 +274,16 @@ A cost appears only where one was recorded, which today means work the superviso
 |---|---|
 | `/mach-product-studio` | Project, epics, slices, waves; requests from GitHub issues; `refresh`, `send`, `feedback`; "open the app" |
 | `/mach-run <ticket>` | Move one ticket to the next point a person is needed |
-| `/mach-run board` | Every open ticket and its next step |
+| `/mach-run <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
+| `/mach-run status` | Every open ticket and its next step |
 | `/mach-run explain <ticket>` | Why a ticket failed or is waiting |
+| `/mach-run decide` | Walk through every ticket that waits on you, with its options |
 | `/mach-run doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
 | `/mach-run new "<idea>"` | Start the interview for a new idea |
-| `/mach-run approve <ticket>` | Record your approval of a change that needs a person |
+| `/mach-run approve <ticket>` | Record your approval of a change that needs a person, then carry the ticket on |
+| `/mach-run send-back <ticket> "<why>"` | Send a change the panel approved back to the builder, with your reason |
 | `/mach-run merge <ticket>` | Merge an approved ticket yourself |
+| `/mach-run replan <ticket> "<why>"` | Start a ticket's plan over, before any review round; the old plan is kept |
 | `/mach-run abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
 | `/mach-run audit` | The repository's readiness tier |
 | `/mach-run product status\|intake\|plan\|dispatch` | Take approved product work into the factory |
@@ -282,10 +312,13 @@ Settings are in `.factory/config.json`. The ones people change most:
 |---|---|---|
 | `tickets.provider` | `local` | Where tickets live: Markdown files in `.factory/tickets/`, or `github`, `gitea-cli`, `jira`, `fossil` |
 | `merge.mode` | `auto` | `auto` lets the line merge approved tickets; `manual` leaves every merge to you |
-| `merge.method` | `local` | `local` makes a merge commit; `pr` opens a pull request and merges the approved commit |
+| `merge.method` | `local` | `local` makes a merge commit; `pr` opens a pull request that refers to the request's issue, and merges the approved commit |
 | `merge.auto.<tier>` | `true` | Set a risk tier to `false` to keep its merges for a person |
 | `review.<tier>` | see file | Reviewers, approvals needed, and whether a person must approve |
 | `factory.max_parallel` | `3` | How many tickets may run at once |
+| `factory.max_parallel_high` | `1` | How many High-risk tickets may run at once |
+| `factory.claim_minutes` | `90` | How long a worker's claim on a ticket holds without news of it, before another worker may take the ticket |
+| `merge.pr.inline_findings` | `true` | With `merge.method` `pr`, post the review panel's findings on the pull request |
 | `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
 | `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |
 | `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |

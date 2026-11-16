@@ -20,11 +20,18 @@ Settings, in .factory/config.json under "merge":
     auto    which risk tiers the line may merge on its own in auto mode,
             default {"low": true, "medium": true, "high": true}. A High ticket only reaches
             'approved' after a person signed off in review, unless the review settings say otherwise.
+    pr.inline_findings
+            with the pull request method, post the approving round's findings on the pull request
+            once, as one review of type comment (default true; only an explicit false turns it off)
+
+A pull request for work that came from a GitHub issue says "Refs #<n>" (never a closing keyword:
+the issue closes on the product manager's word). Posting findings never blocks or delays the merge.
 
 Standard library only. It never force-pushes, never rewrites history, and never deletes a branch.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -34,7 +41,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 BYPRODUCT_RE = re.compile(
@@ -124,6 +131,8 @@ class Cell:
         self.method = merge.get("method") if merge.get("method") in ("local", "pr") else "local"
         auto = merge.get("auto") if isinstance(merge.get("auto"), dict) else {}
         self.auto = {tier: auto.get(tier.lower(), True) is not False for tier in TIERS}
+        pr = merge.get("pr") if isinstance(merge.get("pr"), dict) else {}
+        self.inline_findings = pr.get("inline_findings") is not False
 
     def head(self) -> str:
         return git(self.work, "rev-parse", "HEAD").stdout.strip()
@@ -282,37 +291,338 @@ def revalidate(cell: Cell, main: str) -> Optional[Dict[str, Any]]:
     return cell.info["revalidated"]
 
 
+# ---- text from the cell on the platform ----
+
+# An issue or pull request reference GitHub would link (#12, owner/name#12, GH-12, .../issues/12). A zero-width
+# space after the marker leaves the text readable but links nothing, so no text taken from the cell can close,
+# or cross-reference, an issue.
+REFERENCE_RE = re.compile(r"(#|\bGH-|/issues/|/pull/|/discussions/)(?=[0-9])", re.IGNORECASE)
+MENTION_RE = re.compile(r"@(?=[A-Za-z0-9_])")
+BREAK = "\u200b"  # a zero-width space, written as an escape so it can be seen
+
+
+def inert(value: Any, limit: int = 200) -> str:
+    """One line of text from the cell made safe for a pull request: printable, bounded, linking no issue."""
+    text = "" if value is None else str(value)
+    text = " ".join("".join(ch if ch.isprintable() else " " for ch in text[:limit * 4]).split())
+    if len(text) > limit:
+        text = text[:limit - 1].rstrip() + "…"
+    return MENTION_RE.sub("@" + BREAK, REFERENCE_RE.sub(lambda m: m.group(1) + BREAK, text))
+
+
+_ISSUE_RULES: List[Any] = []
+
+
+def issue_rules() -> Any:
+    """The ticket station's shared pure rules (redaction, repository and issue number checks), loaded from the
+    sibling skill folder whichever way MACH is installed, never copied. None if it cannot be loaded."""
+    if not _ISSUE_RULES:
+        found = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-ticket", "ticket"):
+            path = skills / name / "scripts" / "issue_rules.py"
+            if path.is_file():
+                try:
+                    spec = importlib.util.spec_from_file_location("mach_ticket_issue_rules", path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    found = module
+                except Exception:  # noqa: BLE001
+                    found = None
+                break
+        _ISSUE_RULES.append(found)
+    return _ISSUE_RULES[0]
+
+
+REMOTE_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/\s]+@)?[^/\s]+/|[^@/\s:]+@[^:/\s]+:)([^/\s]+/[^/\s]+?)(?:\.git)?/?$")
+PR_URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]{1,9})$")
+
+
+def origin_repository(project: Path) -> Optional[str]:
+    """owner/name of the origin remote as configured (before any URL rewriting), or None."""
+    rules = issue_rules()
+    url = git(project, "config", "--get", "remote.origin.url").stdout.strip()
+    found = REMOTE_RE.match(url)
+    if rules is None or not found or not rules.is_repository(found.group(1)):
+        return None
+    return found.group(1)
+
+
+def refs_line(cell: Cell) -> Optional[str]:
+    """'Refs #<n>' for work from an issue in this repository, 'Refs owner/name#<n>' otherwise; None if the cell
+    names no request or what it names is not a valid repository and issue number. Never a closing keyword."""
+    rules = issue_rules()
+    product = cell.info.get("product")
+    origin = product.get("origin") if isinstance(product, dict) else None
+    if rules is None or not isinstance(origin, dict) or origin.get("kind") != "github_issue":
+        return None
+    repository, number = origin.get("repository"), origin.get("number")
+    if not rules.is_repository(repository) or not rules.is_issue_number(number):
+        return None
+    here = origin_repository(cell.project)
+    return f"Refs #{number}" if here is not None and here.lower() == repository.lower() else f"Refs {repository}#{number}"
+
+
+def pr_title(cell: Cell) -> str:
+    return inert(f"{cell.ticket_id}: {cell.info.get('title') or cell.info.get('slice_id') or 'change'}", 240)
+
+
 def pr_body(cell: Cell) -> str:
     checks = cell.summary.get("checks") or {}
+    checks = checks if isinstance(checks, dict) else {}
     votes = cell.decision.get("votes") or {}
+    votes = votes if isinstance(votes, dict) else {}
     human = cell.decision.get("human_approval") or {}
     evidence = [entry.get("file") for entry in cell.summary.get("evidence_files") or [] if isinstance(entry, dict)]
+    passed = sum(1 for c in checks.values() if isinstance(c, dict) and c.get("result") == "pass")
     lines = [
-        f"**Ticket:** {cell.ticket_id}  ",
-        f"**Slice:** {cell.info.get('slice_id')} (`{cell.info.get('spec_path')}`)  ",
-        f"**Risk tier:** {cell.info.get('risk')}",
+        f"**Ticket:** {inert(cell.ticket_id)}  ",
+        f"**Slice:** {inert(cell.info.get('slice_id'))} (`{inert(cell.info.get('spec_path'))}`)  ",
+        f"**Risk tier:** {inert(cell.info.get('risk'))}",
         "",
         "## Verification",
-        f"{cell.summary.get('status', 'unknown')}: {sum(1 for c in checks.values() if c.get('result') == 'pass')} of {len(checks)} checks passed, "
+        f"{inert(cell.summary.get('status', 'unknown'))}: {passed} of {len(checks)} checks passed, "
         "run by an independent verifier against the built slice.",
         "",
         "## Review",
-        f"Round {cell.decision.get('round')}: " + ", ".join(f"{seat} {vote}" for seat, vote in votes.items()) + f". Blockers: {cell.decision.get('blockers', 0)}.",
-        f"Approved by a person: {human.get('by')}." if human else "No person's approval was required for this ticket.",
+        f"Round {inert(cell.decision.get('round'))}: " + ", ".join(f"{inert(seat, 40)} {inert(vote, 20)}" for seat, vote in votes.items())
+        + f". Blockers: {inert(cell.decision.get('blockers', 0))}.",
+        f"Approved by a person: {inert(human.get('by') if isinstance(human, dict) else human)}." if human else "No person's approval was required for this ticket.",
         "",
         "## Build",
-        f"{cell.build.get('diff', '')}. Tests seen failing before their code was written: {cell.build.get('tests_seen_failing_first', 0)}. "
+        f"{inert(cell.build.get('diff', ''), 400)}. Tests seen failing before their code was written: {inert(cell.build.get('tests_seen_failing_first', 0))}. "
         f"Gate overrides recorded: {len(cell.build.get('deviations') or [])}.",
         "",
-        f"Approved commit: `{cell.decision.get('head')}`. Evidence ({len(evidence)} files) and the reviewers' findings are kept with the ticket's cell and archived on cleanup.",
+        f"Approved commit: `{inert(cell.decision.get('head'), 64)}`. Evidence ({len(evidence)} files) and the reviewers' findings are kept with the ticket's cell and archived on cleanup.",
         "",
         "Opened by the MACH merge station.",
     ]
+    refs = refs_line(cell)
+    if refs:
+        lines += ["", refs]
     return "\n".join(lines)
 
 
-def gh(cell: Cell, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["gh", *args], cwd=str(cell.project), capture_output=True, text=True, errors="replace")
+def gh(cell: Cell, *args: str, stdin: Optional[str] = None, timeout: Optional[int] = None) -> subprocess.CompletedProcess:
+    """Run gh in the main checkout. With a timeout, a hung or missing gh comes back as a failure, never an exception."""
+    try:
+        return subprocess.run(["gh", *args], cwd=str(cell.project), capture_output=True, text=True, errors="replace",
+                              input=stdin, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(["gh", *args], 124, "", f"gh did not answer within {timeout} seconds")
+    except OSError as exc:
+        if timeout is None:
+            raise
+        return subprocess.CompletedProcess(["gh", *args], 127, "", f"gh could not be started: {exc.strerror or exc}")
+
+
+# ---- the approving round's findings on the pull request ----
+
+GH_TIMEOUT = 60
+MAX_POST_ATTEMPTS = 3
+MAX_POSTED_FINDINGS = 60
+DETAIL_LIMIT = 600
+TITLE_LIMIT = 200
+RULE_LIMIT = 120
+SEAT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+IMPACTS = ("critical", "high", "medium", "low")
+PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._+-]{1,255}$")
+HUNK_RE = re.compile(r"^@@ -[0-9]+(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@")
+
+
+def plain_path(value: Any) -> Optional[str]:
+    """A file path that is a plain relative path inside the repository, or None."""
+    if not isinstance(value, str) or not value or len(value) > 400:
+        return None
+    parts = value.split("/")
+    if any(part in ("", ".", "..") or not PATH_SEGMENT_RE.match(part) for part in parts) or parts[0] == ".git":
+        return None
+    return value
+
+
+def diff_lines(cell: Cell) -> Optional[Dict[str, Set[int]]]:
+    """For each file, the right-side lines inside the pull request's diff: the branch against its merge base
+    with the main branch, with Git's default three lines of context. None if Git cannot say."""
+    main_head = git(cell.project, "rev-parse", "HEAD").stdout.strip()
+    base = git(cell.work, "merge-base", main_head, "HEAD").stdout.strip() if main_head else ""
+    if not re.fullmatch(r"[0-9a-f]{40,64}", base):
+        return None
+    done = git(cell.work, "-c", "core.quotePath=true", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--unified=3", "-M",
+               "--src-prefix=a/", "--dst-prefix=b/", base, "HEAD")
+    if done.returncode != 0:
+        return None
+    lines: Dict[str, Set[int]] = {}
+    current: Optional[str] = None
+    old_left = new_left = 0
+    for line in done.stdout.splitlines():
+        if old_left > 0 or new_left > 0:
+            tag = line[:1]
+            if tag == "\\":
+                continue
+            if tag in (" ", ""):
+                old_left, new_left = old_left - 1, new_left - 1
+            elif tag == "-":
+                old_left -= 1
+            elif tag == "+":
+                new_left -= 1
+            continue
+        if line.startswith("diff --git "):
+            current = None
+        elif line.startswith("+++ "):
+            name = line[4:]
+            current = name[2:] if name.startswith("b/") else None  # a deleted file, or a quoted name: nothing inline
+        elif line.startswith("@@"):
+            found = HUNK_RE.match(line)
+            if not found:
+                continue
+            old_left = int(found.group(1)) if found.group(1) is not None else 1
+            start, count = int(found.group(2)), int(found.group(3)) if found.group(3) is not None else 1
+            new_left = count
+            if current is not None and count:
+                lines.setdefault(current, set()).update(range(start, start + count))
+    return lines
+
+
+def approving_findings(cell: Cell) -> Tuple[Optional[int], List[Tuple[str, Dict[str, Any]]]]:
+    """(round, [(seat, finding)]) from the approving round's votes, blockers first, seats in name order."""
+    number = cell.decision.get("round")
+    if type(number) is not int or number < 1:
+        return None, []
+    folder = cell.root / "review" / f"round-{number}" / "votes"
+    found: List[Tuple[str, Dict[str, Any]]] = []
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        seat = path.stem
+        vote = load_json(path, {})
+        if not SEAT_RE.match(seat) or not isinstance(vote, dict) or not isinstance(vote.get("findings"), list):
+            continue
+        found += [(seat, finding) for finding in vote["findings"] if isinstance(finding, dict)]
+    found.sort(key=lambda pair: 0 if pair[1].get("severity") == "blocker" else 1)
+    return number, found
+
+
+def finding_text(rules: Any, seat: str, finding: Dict[str, Any]) -> Dict[str, Any]:
+    """One finding as it may leave the machine: redacted by the ticket station's rules, bounded, mentions and
+    issue references broken, control characters gone."""
+    def safe(value: Any, limit: int, one_line: bool) -> str:
+        text, _ = rules.bound_text(value if isinstance(value, str) else "", limit, one_line=one_line)
+        return MENTION_RE.sub("@" + BREAK, REFERENCE_RE.sub(lambda m: m.group(1) + BREAK, text))
+
+    severity = finding.get("severity") if finding.get("severity") in ("blocker", "note") else "note"
+    label = f"**{seat}** · {severity}"
+    if finding.get("class") == "security":
+        impact = finding.get("impact") if finding.get("impact") in IMPACTS else "unstated"
+        label += f" · security, {impact} impact"
+    line = finding.get("line")
+    return {"label": label, "title": safe(finding.get("title"), TITLE_LIMIT, True) or "(no title)",
+            "detail": safe(finding.get("detail"), DETAIL_LIMIT, False), "rule": safe(finding.get("rule"), RULE_LIMIT, True),
+            "path": plain_path(finding.get("file")), "had_file": bool(finding.get("file")),
+            "line": line if type(line) is int and 0 < line < 10 ** 7 else None}
+
+
+def comment_text(item: Dict[str, Any]) -> str:
+    parts = [f"{item['label']}: **{item['title']}**"]
+    if item["detail"]:
+        parts.append(item["detail"])
+    if item["rule"]:
+        parts.append(f"Cites: {item['rule']}")
+    return "\n\n".join(parts)
+
+
+def summary_text(item: Dict[str, Any]) -> str:
+    if item["path"]:
+        where = f"`{item['path']}" + (f":{item['line']}`" if item["line"] else "`")
+    else:
+        where = "file not shown" if item["had_file"] else "no file"
+    detail = " ".join(item["detail"].split())
+    return f"- {item['label']}, {where}: **{item['title']}**" + (f" {detail}" if detail else "") + (f" Cites: {item['rule']}." if item["rule"] else "")
+
+
+def findings_review(cell: Cell, rules: Any, number: int, found: List[Tuple[str, Dict[str, Any]]], head: str) -> Dict[str, Any]:
+    """The review to post: inline comments for findings on lines in the diff, the rest in the summary."""
+    in_diff = diff_lines(cell) or {}
+    shown, hidden = found[:MAX_POSTED_FINDINGS], len(found) - min(len(found), MAX_POSTED_FINDINGS)
+    inline: List[Dict[str, Any]] = []
+    listed: List[Dict[str, Any]] = []
+    for seat, finding in shown:
+        item = finding_text(rules, seat, finding)
+        if item["path"] and item["line"] and item["line"] in in_diff.get(item["path"], set()):
+            inline.append(item)
+        else:
+            listed.append(item)
+    approved = cell.decision.get("head")
+    approved = approved if isinstance(approved, str) and re.fullmatch(r"[0-9a-f]{40,64}", approved) else head
+    moved = "" if approved == head else f" This pull request is at `{head[:12]}`: the approved commit brought up to date with the main branch, with the tests rerun."
+    intro = [f"The MACH review panel approved commit `{approved[:12]}` in round {number}.{moved} Its findings follow, as the reviewers wrote them, "
+             "with likely secrets masked and mentions broken. They are information for whoever reads this pull request; the merge does not wait on them."]
+    if inline:
+        intro.append(f"{len(inline)} finding{'s are' if len(inline) != 1 else ' is'} attached to the lines {'they concern' if len(inline) != 1 else 'it concerns'}.")
+    if listed:
+        intro += ["", "Findings not on a line of this diff:", *[summary_text(item) for item in listed]]
+    if hidden:
+        intro += ["", f"{hidden} more finding{'s are' if hidden != 1 else ' is'} not shown here; every finding is kept with the ticket's cell."]
+    return {"body": "\n".join(intro), "inline": inline, "listed": listed, "hidden": hidden,
+            "payload": {"commit_id": head, "event": "COMMENT", "body": "\n".join(intro),
+                        "comments": [{"path": item["path"], "line": item["line"], "side": "RIGHT", "body": comment_text(item)} for item in inline]}}
+
+
+def last_line(done: subprocess.CompletedProcess, fallback: str) -> str:
+    text = ((done.stderr or "").strip() or (done.stdout or "").strip()).splitlines() or [fallback]
+    rules = issue_rules()
+    line = " ".join(text[-1].split())[:200]
+    return rules.redact(line) if rules is not None else line
+
+
+def post_findings(cell: Cell, url: str, head: str) -> Dict[str, Any]:
+    """Post the approving round's findings on the pull request once. Never raises, never blocks the merge;
+    what happened is recorded in cell.json and returned for the station's result."""
+    if not cell.inline_findings:
+        return {"posted": False, "reason": "merge.pr.inline_findings is false in .factory/config.json."}
+    record = cell.info.get("pull_request_findings")
+    record = record if isinstance(record, dict) and record.get("pull_request") == url else None
+    if record and record.get("how") in ("review", "comment", "nothing to post"):
+        return {"posted": False, "reason": f"Already done for this pull request ({record['how']}, {record.get('at')}).",
+                **({"inline": record.get("inline"), "summary": record.get("summary")} if record["how"] != "nothing to post" else {})}
+    attempts = int(record.get("attempts") or 0) if record else 0
+    if attempts >= MAX_POST_ATTEMPTS:
+        return {"posted": False, "reason": f"Not tried again: posting failed {attempts} times. The findings are kept with the ticket's cell."}
+
+    def keep(how: str, **fields: Any) -> Dict[str, Any]:
+        entry = {"pull_request": url, "round": number, "head": head, "at": now(), "how": how, "attempts": attempts + 1, **fields}
+        cell.info["pull_request_findings"] = entry
+        cell.save_info()
+        return entry
+
+    number, found = approving_findings(cell)
+    if not found:
+        keep("nothing to post", inline=0, summary=0)
+        return {"posted": False, "reason": "The approving round recorded no findings, so there was nothing to post."}
+    rules = issue_rules()
+    if rules is None:
+        keep("failed", reason="the ticket station's shared rules could not be loaded")
+        return {"posted": False, "reason": "The ticket station's shared rules could not be loaded, so reviewer text could not be redacted; nothing was posted."}
+    from_url = PR_URL_RE.match(url)
+    repository = origin_repository(cell.project) or (from_url.group(1) if from_url and rules.is_repository(from_url.group(1)) else None)
+    if repository is None or not from_url:
+        keep("failed", reason="the pull request's repository and number could not be established")
+        return {"posted": False, "reason": "The pull request's repository and number could not be established, so nothing was posted."}
+    pull = int(from_url.group(2))
+    review = findings_review(cell, rules, number, found, head)
+    counts = {"inline": len(review["inline"]), "summary": len(review["listed"]), "not_shown": review["hidden"]}
+    made = gh(cell, "api", "--method", "POST", f"repos/{repository}/pulls/{pull}/reviews", "--input", "-",
+              stdin=json.dumps(review["payload"]), timeout=GH_TIMEOUT)
+    if made.returncode == 0:
+        keep("review", **counts)
+        return {"posted": True, "how": "review", **counts}
+    why = last_line(made, "gh api failed")
+    plain = review["body"] + ("\n\n" + "\n".join(summary_text(item) for item in review["inline"]) if review["inline"] else "")
+    said = gh(cell, "pr", "comment", str(pull), "--repo", repository, "--body-file", "-", stdin=plain, timeout=GH_TIMEOUT)
+    if said.returncode == 0:
+        counts = {"inline": 0, "summary": counts["inline"] + counts["summary"], "not_shown": review["hidden"]}
+        keep("comment", review_failed=why, **counts)
+        return {"posted": True, "how": "comment", "review_failed": why, **counts}
+    reason = f"The review could not be created ({why}), nor a plain comment ({last_line(said, 'gh pr comment failed')})."
+    entry = keep("failed", reason=reason)
+    return {"posted": False, "reason": reason + f" Attempt {entry['attempts']} of {MAX_POST_ATTEMPTS}; the merge went ahead."}
 
 
 def land_by_pr(cell: Cell, main: str, merge_now: bool) -> Dict[str, Any]:
@@ -322,8 +632,7 @@ def land_by_pr(cell: Cell, main: str, merge_now: bool) -> Dict[str, Any]:
         raise MergeError("The branch could not be pushed: " + (pushed.stderr.strip().splitlines() or ["git push failed"])[-1])
     url = cell.info.get("pull_request")
     if not url:
-        title = f"{cell.ticket_id}: {cell.info.get('title') or cell.info.get('slice_id') or 'change'}"
-        made = gh(cell, "pr", "create", "--head", cell.branch, "--base", main, "--title", title, "--body", pr_body(cell))
+        made = gh(cell, "pr", "create", "--head", cell.branch, "--base", main, "--title", pr_title(cell), "--body", pr_body(cell))
         found = re.search(r"https?://\S+/pull/\d+", made.stdout + made.stderr)
         if not found:
             raise MergeError("The pull request could not be opened: " + ((made.stderr.strip() or made.stdout.strip()).splitlines() or ["gh pr create failed"])[-1])
@@ -331,22 +640,27 @@ def land_by_pr(cell: Cell, main: str, merge_now: bool) -> Dict[str, Any]:
         cell.info["pull_request"] = url
         cell.info["stage"] = "pr-open"
         cell.save_info()
+    try:
+        posted = post_findings(cell, url, head)
+    except Exception as exc:  # noqa: BLE001  posting findings never stands in the merge's way
+        posted = {"posted": False, "reason": f"Posting the findings failed unexpectedly ({type(exc).__name__}); the merge went ahead."}
     state = gh(cell, "pr", "view", url, "--json", "state,mergeCommit,headRefOid")
     view = load_text(state.stdout)
     if view.get("state") != "MERGED" and merge_now:
         done = gh(cell, "pr", "merge", url, "--merge", "--match-head-commit", head)
         if done.returncode != 0:
-            return {"merged": False, "pull_request": url,
+            return {"merged": False, "pull_request": url, "findings_posted": posted,
                     "note": "The pull request is open but could not be merged yet: " + ((done.stderr.strip() or done.stdout.strip()).splitlines() or ["gh pr merge failed"])[-1]}
         view = load_text(gh(cell, "pr", "view", url, "--json", "state,mergeCommit,headRefOid").stdout)
     if view.get("state") != "MERGED":
-        return {"merged": False, "pull_request": url, "note": "The pull request is open and waiting to be merged."}
+        return {"merged": False, "pull_request": url, "findings_posted": posted, "note": "The pull request is open and waiting to be merged."}
     git(cell.project, "fetch", "origin")
     # Keep the main checkout level with the platform, so the next ticket starts from what just landed.
     synced = False
     if git(cell.project, "branch", "--show-current").stdout.strip() == main and not dirty(cell.project):
         synced = git(cell.project, "merge", "--ff-only", f"origin/{main}").returncode == 0
-    return {"merged": True, "pull_request": url, "merge_commit": (view.get("mergeCommit") or {}).get("oid"), "main_checkout_updated": synced}
+    return {"merged": True, "pull_request": url, "merge_commit": (view.get("mergeCommit") or {}).get("oid"), "main_checkout_updated": synced,
+            "findings_posted": posted}
 
 
 def load_text(text: str) -> Dict[str, Any]:
@@ -417,7 +731,7 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
 
 
 def cmd_status(cell: Cell, args: argparse.Namespace) -> int:
-    print(json.dumps({**{key: cell.info.get(key) for key in ("ticket_id", "stage", "branch", "risk", "pull_request", "revalidated", "merged")},
+    print(json.dumps({**{key: cell.info.get(key) for key in ("ticket_id", "stage", "branch", "risk", "pull_request", "pull_request_findings", "revalidated", "merged")},
                       "mode": cell.mode, "method": cell.method, "approved_commit": cell.decision.get("head"), "branch_commit": cell.head()}, indent=2))
     return 0
 

@@ -582,6 +582,14 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
                           "next": f"{following['id']} [{following['kind']}]" if following else "All tasks are done. Run: build.py finish " + cell.ticket_id}, indent=2))
         return 0
     check_scope(cell, task, files, args)
+    if task.get("ids") and not cell.state.get("hardening"):
+        # The finish check needs every spec ID named by a test. Checked here too, while this test can still be
+        # edited: once it is committed it is frozen, and a missing ID would strand the ticket at the end.
+        missing, respelled = unnamed_ids(cell, task["ids"], [*cell.state.get("test_files", []), *files])
+        if missing:
+            raise BuildError(f"{task['id']}: the plan gives this test {', '.join(task['ids'])}, but no test names {', '.join(missing)}"
+                             + (f" (found in another spelling: {', '.join(respelled)})" if respelled else "") + ". " + ID_SPELLING
+                             + " Add it to the test you just wrote, then run this step again.", code="red-ids-not-named")
     result = run_tests(cell)
     note = "Seen failing before the implementation."
     if result["passed"]:
@@ -612,6 +620,21 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
     task["failure_tail"] = "" if result["passed"] else failure_excerpt(result["output"], [Path(name).stem for name in files])
     complete(cell, task, files, result, note)
     return 0
+
+
+def unnamed_ids(cell: Cell, wanted: Sequence[str], names: Sequence[str]) -> Tuple[List[str], List[str]]:
+    """The spec IDs among `wanted` that none of the given test files names exactly as the spec writes them,
+    and, of those, the ones that do appear in another spelling (fr02, FR_02, ac01): the usual slip, because a
+    function name cannot hold a hyphen."""
+    text = "".join((cell.work / name).read_text(encoding="utf-8", errors="replace") for name in sorted(set(names)) if (cell.work / name).is_file())
+    missing = [identifier for identifier in wanted if not re.search(rf"\b{re.escape(identifier)}\b", text)]
+    respelled = [identifier for identifier in missing
+                 if re.search(rf"(?<![A-Za-z0-9]){identifier.split('-')[0]}[-_ ]?{identifier.split('-')[1]}(?![0-9])", text, re.IGNORECASE)]
+    return missing, respelled
+
+
+ID_SPELLING = ("Write each ID exactly as the spec does, with its capitals and hyphen (FR-02, not fr02 or FR_02), in the test's docstring or a comment: "
+               "a function name cannot hold a hyphen, so an ID in a name alone is not counted.")
 
 
 def committed_text(cell: Cell, names: Sequence[str]) -> str:
@@ -752,10 +775,9 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
             lint = {"command": cell.state["lint_cmd"], "status": "unverified", "note": str(exc)}
     spec = load_json(cell.root / "spec.json", {}) or {}
     wanted = [e["id"] for key in ("invariants", "functional_requirements", "scenarios") for e in spec.get(key) or [] if e.get("id")]
-    test_text = "".join((cell.work / name).read_text(encoding="utf-8", errors="replace") for name in cell.state.get("test_files", []) if (cell.work / name).is_file())
-    untraced = [identifier for identifier in wanted if not re.search(rf"\b{re.escape(identifier)}\b", test_text)]
+    untraced, respelled = unnamed_ids(cell, wanted, cell.state.get("test_files", []))
     if untraced and not cell.state.get("hardening"):
-        problems.append(f"No test names these spec IDs: {', '.join(untraced)}. Name the ID each test proves in the test's name, docstring or a comment.")
+        problems.append(f"No test names these spec IDs: {', '.join(untraced)}" + (f" (found in another spelling: {', '.join(respelled)})" if respelled else "") + ". " + ID_SPELLING)
     if problems:
         cell.save()
         telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.finish", "outcome": "refuse", "reason_code": "not-finished",

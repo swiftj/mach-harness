@@ -434,6 +434,12 @@ export interface ReviewRoundState {
   readonly approvals: number | null;
   readonly overruledBlockersFrom: readonly ReviewSeat[];
   readonly humanApproval: { readonly by: string; readonly note: string | null; readonly at: number; readonly eventId: string; readonly late: boolean } | null;
+  /**
+   * A person's answer that sent the change back to the build station instead of approving it (M9:
+   * human.approval_recorded with decision SENT_BACK). Never an approval: `humanApproval` stays null.
+   * The person's reason is never recorded, only whether one was given.
+   */
+  readonly humanSentBack: { readonly by: string; readonly noteGiven: boolean; readonly at: number; readonly eventId: string; readonly late: boolean } | null;
   /** The event that started the round (its seats exist from it), and whether it arrived late. */
   readonly eventId: string;
   readonly late: boolean;
@@ -754,6 +760,8 @@ export interface Counters {
   readonly blockers: number;
   readonly notes: number;
   readonly humanApprovals: number;
+  /** A person's answers that sent the change back to the build station (M9); not approvals. */
+  readonly humanSendBacks: number;
   readonly merged: number;
   readonly integrated: number;
   readonly executionsRunning: number;

@@ -45,6 +45,11 @@ def _long_token(match: "re.Match[str]") -> str:
     core = run.strip("-")  # hyphens at either end of a run were never part of a token
     if len(core) < 32 or not any(ch.isdigit() for ch in core) or not any(ch.isalpha() for ch in core):
         return run
+    # A name made of plain words and numbers joined by hyphens or underscores (SLICE-012-readme-running-the-tests)
+    # is a file or slice name, not a token: three or more parts, none mixing letters with digits, no word over 20 long.
+    parts = [part for part in re.split(r"[-_]", core) if part]
+    if len(parts) >= 3 and all(part.isdigit() or (part.isalpha() and len(part) <= 20) for part in parts):
+        return run
     start = run.index(core)
     return run[:start] + "<redacted>" + run[start + len(core):]
 

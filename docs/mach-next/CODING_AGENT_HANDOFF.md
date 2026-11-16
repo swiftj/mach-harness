@@ -26,7 +26,7 @@ Context: apply the additive M0 patch to the real `swiftj/mach-harness` checkout 
 
 ## Third task: extension of existing `/mach:run` (do not enable yet)
 
-- Add documented plans for `factory status|enable|disable|pause|resume` under `/mach:run`, preserving existing `next`, `board`, `where`, `review-start`, `review-tally` contracts.
+- Add documented plans for `factory status|enable|disable|pause|resume` under `/mach:run`, preserving existing `next`, `status`, `where`, `review-start`, `review-tally` contracts.
 - Define mandatory preflight checks, explicit human consent, status of `observe` vs `supervised` policy, file permissions, local `.git/info/exclude` or tracked `.gitignore` safeguard for `.factory/local/`, and failure recovery.
 - Treat Git hooks only as advisory notifications and never make them start Claude or a build.
 - Do **not** ship an enable operation that flips `enabled=true` without full preflight and dispatcher-side checking.

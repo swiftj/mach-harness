@@ -26,7 +26,9 @@ export const GATE_STATE_WORDS: Readonly<Record<GateState["state"], string>> = {
 };
 
 /** A gate's state in words, with the recorded reason code of an override or a refusal ("Overridden: test-passed-first-run"). */
-export function gateStateWords(gate: Pick<GateState, "state" | "reasonCode">): string {
+export function gateStateWords(gate: Pick<GateState, "state" | "reasonCode"> & { readonly gate?: GateState["gate"] }): string {
+  // The person's gate refuses only one way: they sent the change back to the build station (M9).
+  if (gate.gate === "human-approval" && gate.state === "failed") return "Sent back by a person";
   const word = GATE_STATE_WORDS[gate.state];
   return (gate.state === "overridden" || gate.state === "failed") && gate.reasonCode ? `${word}: ${gate.reasonCode}` : word;
 }

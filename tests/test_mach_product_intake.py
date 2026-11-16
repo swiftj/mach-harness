@@ -513,7 +513,7 @@ class SchedulerTest(Base):
         self.assertEqual(sent["tickets"], ["LOCAL-001", "LOCAL-002"])
         plan, _ = self.plan()
         self.assertEqual((plan["limits"], plan["dispatchable"], plan["waiting_for_a_place"]),
-                         ({"max_parallel": 2, "active": 2, "free": 0}, [], ["SLICE-003", "SLICE-004"]))
+                         ({"max_parallel": 2, "max_parallel_high": 1, "active": 2, "free": 0}, [], ["SLICE-003", "SLICE-004"]))
         self.assertEqual(self.product("dispatch", "--ready")["tickets"], [])
         self.integrate("LOCAL-001")
         self.assertEqual(self.plan()[0]["dispatchable"], ["SLICE-003"])
@@ -670,13 +670,13 @@ class DispatchTest(Base):
         # The existing state machine takes over from here, unchanged.
         step = run.next_step(run.Project(self.eng), "LOCAL-001", True)
         self.assertEqual((step["stage"], step["action"], step["model"]), ("spec-ready", "plan", "opus"))
-        board = json.loads(self.board())
+        board = json.loads(self.status())
         self.assertEqual((board["ready_to_run"], [row["action"] for row in board["tickets"]]), (["LOCAL-001"], ["plan"]))
 
-    def board(self):
+    def status(self):
         out = io.StringIO()
         with redirect_stdout(out):
-            run.main(["--project", str(self.eng), "board"])
+            run.main(["--project", str(self.eng), "status"])
         return out.getvalue()
 
     def test_dispatch_is_idempotent_and_resumes(self):

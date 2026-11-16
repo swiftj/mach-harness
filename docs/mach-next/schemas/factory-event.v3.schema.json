@@ -1647,7 +1647,7 @@
                                                "type": "object",
                                                "additionalProperties": false,
                                                "required": ["by_role", "note_given"],
-                                               "properties": {"by_role": {"enum": ["person"]}, "note_given": {"type": "boolean"}}
+                                               "properties": {"by_role": {"enum": ["person"]}, "note_given": {"type": "boolean"}, "decision": {"enum": ["APPROVED", "SENT_BACK", null]}}
                                              },
              "data_merge_completed": {
                                        "type": "object",

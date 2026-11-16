@@ -34,7 +34,7 @@ import type {
 import { gateId } from "./model";
 import type { Authority, EntityMeta, HistoryGapState } from "./provenance";
 import type { AnyV3Event, FactoryEventV3, UnknownV3Event, V3DataMap } from "./v3";
-import { isEntityRefString, isKnownV3Kind, occurredMs, timeQualityOf } from "./v3";
+import { isEntityRefString, isKnownV3Kind, isSentBack, occurredMs, timeQualityOf } from "./v3";
 import type { AgentRole, AppType, ArtifactKind, BeltPhase, CellStage, ModelId, Risk, StationId, StepAction, ToolName } from "./vocabulary";
 import { ARTIFACT_KINDS, BELT_PHASES, CELL_STAGES, MAX_ROUNDS, RISKS, TOOLS } from "./vocabulary";
 import { bump, EMPTY_EXECUTION_EXTRAS, newCell, put, replaceLast, schedule, setGate, withAgent, withCell, withExecution, withSlice } from "./reducer";
@@ -158,6 +158,7 @@ function outcomeOf(word: string): StationOutcome {
       return "approved";
     case "REJECTED":
     case "rejected":
+    case "sent-back":
       return "rejected";
     case "AWAITING_HUMAN":
     case "awaiting-human":
@@ -720,6 +721,19 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     case "human.approval_recorded": {
       s = ensureCell(s, e, definitions);
       const round = e.ids.round ?? s.cells[ticket ?? ""]?.round ?? 1;
+      if (isSentBack(e.data.decision)) {
+        // The person answered (the gate and its wait end) by sending the change back to the build
+        // station: not an approval. The review's own outcome stays as the panel decided it.
+        s = withCell(s, ticket, (cell) => ({
+          ...cell,
+          reviews: replaceLast(cell.reviews, (r) => r.round === round, (r) => ({ ...r, humanSentBack: { by: "a person", noteGiven: e.data.note_given === true, at, eventId: e.id, late: e.late === true } })),
+        }));
+        const attention = { ...s.supervisor.attention };
+        if (ticket) delete attention[ticket];
+        s = { ...s, supervisor: { ...s.supervisor, attention } };
+        s = setGate(s, ticket ?? "", "human-approval", round, "failed", "Sent back to the build station by a person.", at, seq, metaOf(e));
+        return { ...s, counters: bump(s.counters, { humanSendBacks: 1 }) };
+      }
       s = withCell(s, ticket, (cell) => ({
         ...cell,
         reviews: replaceLast(cell.reviews, (r) => r.round === round, (r) => ({ ...r, outcome: "APPROVED", humanApproval: { by: "a person", note: null, at, eventId: e.id, late: e.late === true } })),
@@ -1035,6 +1049,16 @@ function observeStream(s: Scene, e: AnyV3Event): Scene {
 const NOT_LOST = new Set(["unknown-type", "conflict"]);
 
 /** The class of a gap from its precise reason, for observers that send no `class`. */
+/**
+ * A ticket has one human-approval gate record. When a person sent the change back (M9) and a later
+ * review asks a person again, the new wait starts now, not when the first one did.
+ */
+function reopenSentBack(s: Scene, ticket: string, at: number): Scene {
+  const id = gateId(ticket, "human-approval");
+  const g = s.gates[id];
+  return g && g.state === "failed" ? { ...s, gates: { ...s.gates, [id]: { ...g, openedAt: at } } } : s;
+}
+
 export function gapClassOf(reason: string): string {
   switch (reason) {
     case "unknown-type":
@@ -1110,7 +1134,7 @@ function stationEntered(input: Scene, e: E<"station.entered">, at: number): Scen
     s = withCell(s, ticket, (c) => ({ ...c, verifications: [...c.verifications.filter((x) => !(x.round === round && x.status === "running")), v] }));
     s = setGate(s, ticket ?? "", "verification", round, "open", "Checks to prove not listed yet.", at, e.pos, metaOf(e));
   }
-  if (d.station === "human-approval") s = setGate(s, ticket ?? "", "human-approval", round, "waiting", "A person must approve before merge.", at, e.pos, metaOf(e));
+  if (d.station === "human-approval") s = setGate(reopenSentBack(s, ticket ?? "", at), ticket ?? "", "human-approval", round, "waiting", "A person must approve before merge.", at, e.pos, metaOf(e));
   return s;
 }
 
@@ -1270,6 +1294,7 @@ function reviewStarted(input: Scene, e: E<"review.round_started">, at: number): 
     approvals: null,
     overruledBlockersFrom: [],
     humanApproval: null,
+    humanSentBack: null,
     eventId: e.id,
     late: e.late === true,
     decidedEventId: null,
@@ -1304,7 +1329,7 @@ function reviewDecided(input: Scene, e: E<"review.decided">, at: number): Scene 
     })),
   }));
   s = setGate(s, ticket ?? "", "review", round, passed ? "passed" : "failed", `${d.outcome}: ${d.approvals} approved, ${d.approvals_needed} needed`, at, e.pos, metaOf(e));
-  if (d.outcome === "AWAITING_HUMAN") s = setGate(s, ticket ?? "", "human-approval", round, "waiting", "The panel approved; a person must approve before merge.", at, e.pos, metaOf(e));
+  if (d.outcome === "AWAITING_HUMAN") s = setGate(reopenSentBack(s, ticket ?? "", at), ticket ?? "", "human-approval", round, "waiting", "The panel approved; a person must approve before merge.", at, e.pos, metaOf(e));
   return s;
 }
 

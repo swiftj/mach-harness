@@ -484,6 +484,48 @@ class HumanApprovalTest(Base):
         self.assertIn(waiting, self.r_refused("approve-human", TICKET, "--by", "Dana Smith"))
         self.assertIsNone(json.loads((self.cellroot / "review/decision.json").read_text())["human_approval"])
 
+    def test_a_person_can_send_it_back_with_their_reason(self):
+        self.verified()
+        self.assertIn("not waiting for a person's approval", self.r_refused("send-back", TICKET, "--by", "Dana Smith", "--reason", "The error text is wrong."))
+        self.edit_json("cell.json", risk="High")
+        self.r_ok("start", TICKET)
+        self.cast()
+        self.assertEqual(self.tally()[1]["outcome"], "AWAITING_HUMAN")
+        self.assertIn("--by must name the person", self.r_refused("send-back", TICKET, "--by", " D ", "--reason", "The error text is wrong."))
+        self.assertIn("in the person's own words", self.r_refused("send-back", TICKET, "--by", "Dana Smith", "--reason", " no "))
+        self.assertEqual(self.cell_json()["stage"], "awaiting-human", "a refused send-back changes nothing")
+        done = self.r_ok("send-back", TICKET, "--by", " Dana  Smith ", "--reason", " The error text must name the field. ")
+        self.assertEqual((done["outcome"], done["sent_back_by"], done["round"]), ("REJECTED", "Dana Smith", 1))
+        self.assertIn("build revise", done["next"])
+        decision = json.loads((self.cellroot / "review/decision.json").read_text())
+        self.assertEqual(decision, json.loads((self.round / "decision.json").read_text()))
+        self.assertEqual((decision["outcome"], decision["rejected_by"], decision["human_approval"]), ("REJECTED", "a person", None))
+        self.assertEqual((decision["human_send_back"]["by"], decision["human_send_back"]["reason"]), ("Dana Smith", "The error text must name the field."))
+        findings = Path(decision["findings"]).read_text()
+        self.assertIn("The error text must name the field.", findings)
+        self.assertIn(decision["panel_findings"], findings, "the builder is pointed at the panel's own findings too")
+        cell = self.cell_json()
+        self.assertEqual((cell["stage"], cell["review"]), ("built", "REJECTED"))
+        self.assertIn("not waiting for a person's approval", self.r_refused("approve-human", TICKET, "--by", "Dana Smith"))
+        self.assertIn("not waiting for a person's approval", self.r_refused("send-back", TICKET, "--by", "Dana Smith", "--reason", "Again, the same thing."))
+        log = [json.loads(line) for line in (self.cellroot / "lifecycle.jsonl").read_text().splitlines()]
+        recorded = [r["data"] for r in log if r["type"] == "human.approval_recorded"]
+        self.assertEqual(recorded, [{"round": 1, "decision": "SENT_BACK", "note_given": True}])
+        self.assertEqual([r["data"] for r in log if r["type"] == "station.exited"][-1], {"outcome": "sent-back", "stage": "built"})
+        self.assertNotIn("must name the field", (self.cellroot / "lifecycle.jsonl").read_text(), "the person's reason is never in the log")
+
+    def test_sending_back_in_the_last_round_escalates(self):
+        self.config({"review": {"max_loops": 1}})
+        self.verified()
+        self.edit_json("cell.json", risk="High")
+        self.r_ok("start", TICKET)
+        self.cast()
+        self.assertEqual(self.tally()[1]["outcome"], "AWAITING_HUMAN")
+        done = self.r_ok("send-back", TICKET, "--by", "Dana Smith", "--reason", "The error text must name the field.")
+        self.assertEqual(done["outcome"], "ESCALATE")
+        self.assertIn("blocked-requires-sme", done["next"])
+        self.assertEqual((self.cell_json()["stage"], self.cell_json()["review"]), ("blocked", "ESCALATE"))
+
     def test_sign_off_is_recorded_and_approves_the_cell(self):
         self.awaiting()
         self.assertIn("--by must name the person", self.r_refused("approve-human", TICKET, "--by", " D "))

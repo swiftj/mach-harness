@@ -641,7 +641,7 @@ export function hitTest(rows: TrackLayout[], view: View, x: number, y: number, e
     return null;
   }
 
-  for (const g of track.gates) if (near(g.t, 5)) return { ref: g.ref, trackId: track.id, title: g.ref.slice(5), detail: `Gate ${GATE_STATE_WORDS[g.state].toLowerCase()}`, start: g.t, end: g.t };
+  for (const g of track.gates) if (near(g.t, 5)) return { ref: g.ref, trackId: track.id, title: g.ref.slice(5), detail: g.gate === "human-approval" && g.state === "failed" ? "Sent back by a person" : `Gate ${GATE_STATE_WORDS[g.state].toLowerCase()}`, start: g.t, end: g.t };
   for (const m of track.marks) if (near(m.t, 4)) return { ref: m.ref, trackId: track.id, title: m.text, detail: "", start: m.t, end: m.t };
   if (local > 24) {
     const a = track.artifacts.find((x) => near(x.t, 2));

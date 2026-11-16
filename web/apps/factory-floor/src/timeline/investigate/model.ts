@@ -820,7 +820,15 @@ export interface ReviewRound {
   /** Only when the decision (or a gate decision of the round) records a security veto. */
   readonly securityVeto: TimelineMark | null;
   /** A person's approval asked for after this round, and given. */
-  readonly human: { readonly from: number; readonly to: number | null; readonly ref: string; readonly sources: readonly Source[]; readonly approved: { readonly at: number; readonly ref: string; readonly source: Source } | null } | null;
+  readonly human: {
+    readonly from: number;
+    readonly to: number | null;
+    readonly ref: string;
+    readonly sources: readonly Source[];
+    readonly approved: { readonly at: number; readonly ref: string; readonly source: Source } | null;
+    /** The person answered by sending the change back to the build station (M9): never an approval. */
+    readonly sentBack: { readonly at: number; readonly ref: string; readonly source: Source } | null;
+  } | null;
 }
 
 export type MergeAuthority = "policy" | "person" | "not-recorded";
@@ -934,7 +942,10 @@ export function reviewCells(spans: readonly TimelineSpan[], marks: readonly Time
         const approvedMark = humanMarks.find((m) => m.verdict === "approved" && m.at >= from && m.at < nextStart) ?? null;
         const waitApproved = wait && until !== null && outcomeKnownAt(wait, liveAt) && /pass|approv|completed/i.test(wait.outcome ?? "") ? wait : null;
         const approved = approvedMark ? { at: approvedMark.at, ref: approvedMark.entity ?? `cell:${t}`, source: markSource(approvedMark, "a person's approval") } : waitApproved ? { at: until!, ref: waitApproved.entity, source: spanSource(waitApproved, `approval gate ended ${waitApproved.outcome}`) } : null;
-        human = { from, to: until, ref: wait?.entity ?? required?.entity ?? `cell:${t}`, sources: [...(wait ? [spanSource(wait, "wait for a person's approval")] : []), ...(required ? [markSource(required, "a person's approval was required")] : [])], approved };
+        const sentMark = humanMarks.find((m) => m.verdict === "sent-back" && m.at >= from && m.at < nextStart) ?? null;
+        const waitSent = wait && until !== null && outcomeKnownAt(wait, liveAt) && /^sent[-_ ]?back$/i.test(wait.outcome ?? "") ? wait : null;
+        const sentBack = sentMark ? { at: sentMark.at, ref: sentMark.entity ?? `cell:${t}`, source: markSource(sentMark, "a person sent the change back") } : waitSent ? { at: until!, ref: waitSent.entity, source: spanSource(waitSent, "approval gate ended: sent back") } : null;
+        human = { from, to: until, ref: wait?.entity ?? required?.entity ?? `cell:${t}`, sources: [...(wait ? [spanSource(wait, "wait for a person's approval")] : []), ...(required ? [markSource(required, "a person's approval was required")] : [])], approved: sentBack ? null : approved, sentBack };
       }
       return {
         ticket: t,

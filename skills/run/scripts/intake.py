@@ -69,6 +69,7 @@ EVENT_TYPES = (
 )
 APPROVED = "approved_for_engineering"
 DEFAULT_MAX_PARALLEL = 3
+DEFAULT_MAX_PARALLEL_HIGH = 1
 MAX_PRODUCT_FILE_BYTES = 1024 * 1024  # a product file larger than this is refused as invalid, never parsed
 RISK_FLOOR = "Medium"  # product-sourced work is never reviewed below this tier
 REQUEST_STATUS_MAX_ATTEMPTS = 20  # a status write GitHub could not be reached for is given up after this many tries
@@ -204,6 +205,8 @@ class Factory:
         section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
         limit = section.get("max_parallel")
         self.max_parallel = limit if type(limit) is int and limit > 0 else DEFAULT_MAX_PARALLEL
+        high = section.get("max_parallel_high")  # High-risk tickets in the line at once; reported, never above max_parallel
+        self.max_parallel_high = high if type(high) is int and high >= 1 else DEFAULT_MAX_PARALLEL_HIGH
         merge = config.get("merge") if isinstance(config.get("merge"), dict) else {}
         self.named_branch = section.get("integration_branch") or merge.get("into")
 
@@ -1216,7 +1219,7 @@ class Factory:
             "source_problems": source["problems"], "notes": source["notes"],
             "last_intake": (ledger.get("source") or {}).get("commit"),
             "intake_is_current": bool(source.get("product_commit")) and (ledger.get("source") or {}).get("commit") == source.get("product_commit"),
-            "limits": {"max_parallel": self.max_parallel, "active": len(active), "free": free},
+            "limits": {"max_parallel": self.max_parallel, "max_parallel_high": min(self.max_parallel_high, self.max_parallel), "active": len(active), "free": free},
             "counts": counts, "cycles": [[*cycle, cycle[0]] for cycle in cycles],
             "dispatchable": [key for key in ready if rows[key]["dispatchable"]],
             "waiting_for_a_place": [key for key in ready if not rows[key]["dispatchable"]],

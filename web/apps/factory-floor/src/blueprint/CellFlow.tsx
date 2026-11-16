@@ -608,6 +608,10 @@ function gateCallout(cell: CellState, g: GateState): { text: string; detail: str
     if (g.state === "passed" && r?.humanApproval) {
       return { text: `Approved by ${r.humanApproval.by}`, detail: `${clock(r.humanApproval.at)} · waited ${duration(r.humanApproval.at - g.openedAt)}`, tone: "human", at: r.humanApproval.at };
     }
+    const sent = [...cell.reviews].reverse().find((x) => x.humanSentBack)?.humanSentBack;
+    if (g.state === "failed" && sent) {
+      return { text: `Sent back by ${sent.by}`, detail: `${clock(sent.at)} · back to the build station · waited ${duration(sent.at - g.openedAt)}`, tone: "fail", at: sent.at };
+    }
     if (g.state === "waiting" || g.state === "open") {
       const req = [...cell.reviews].reverse().find((x) => x.humanApprovalRequired);
       return { text: "Waiting for a person", detail: `since ${clock(g.openedAt)}${req?.humanApprovalReasons[0] ? ` · ${clip(req.humanApprovalReasons[0], 48)}` : ""}`, tone: "human", at: g.openedAt };

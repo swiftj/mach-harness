@@ -203,6 +203,10 @@ func cellMarks(b *markBuilder, s *State, c *Cell) {
 		}
 	}
 	for _, a := range c.Approvals {
+		if !a.Approved() {
+			b.add("human", a.At, nil, "cell:"+t, "A "+orDefault(a.ByRole, "person")+" sent the change back to the build station.", ClosedSentBack)
+			continue
+		}
 		b.add("human", a.At, nil, "cell:"+t, "A "+orDefault(a.ByRole, "person")+" recorded an approval.", "approved")
 	}
 	if c.Merge != nil {

@@ -42,9 +42,9 @@ class LineIsUnchangedTest(Base):
         (local / "runner.json").write_text(json.dumps(ENABLED))
 
     def observe(self):
-        code, board, err = self.run_cmd("board")
+        code, board, err = self.run_cmd("status")
         self.assertEqual(code, 0, err)
-        return {"next": self.next(), "headless": self.next("--headless"), "other": self.next(ticket="LOCAL-002"), "board": json.loads(board)}
+        return {"next": self.next(), "headless": self.next("--headless"), "other": self.next(ticket="LOCAL-002"), "status": json.loads(board)}
 
     def check_unchanged(self):
         before = self.observe()
