@@ -174,12 +174,12 @@ const where = await agent(
     '1. Run `pwd` as your very first command and note its output: that folder is the project. Report it as "project".\n' +
     '2. Find the MACH conveyor-belt script: use the MACH run skill with the single word "where": /mach:run where\n' +
     '   It prints a small JSON object; report its "run_script", "python" and "holder" fields exactly. Ignore its "project" field: use the folder from step 1.\n' +
-    '   If that skill cannot be loaded, look for .claude/skills/mach-run/scripts/run.py under the project folder; if it exists, report its ' +
+    '   If that skill cannot be loaded, look for .claude/skills/mach/scripts/run.py under the project folder; if it exists, report its ' +
     'absolute path as run_script and "python3" as python. If neither works, report an empty run_script.',
   { label: 'locate the belt script', phase: 'Preflight', schema: WHERE, model: 'haiku', effort: 'low' },
 )
 if (!where || !/run\.py$/.test(where.run_script || '') || !where.project) {
-  return { error: 'The MACH run script could not be located, so nothing was started. Check that MACH is installed in this project (the plugin, or .claude/skills/mach-run).' }
+  return { error: 'The MACH run script could not be located, so nothing was started. Check that MACH is installed in this project (the plugin, or .claude/skills/mach).' }
 }
 const RUN = `${where.python || 'python3'} "${where.run_script}" --project "${where.project}"`
 // One holder for this whole run: every `next` claims its step for it, and `schedule` holds only tickets another

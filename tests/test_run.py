@@ -1,4 +1,4 @@
-"""Tests for run.py (the next-step state machine) and the mach-run workflow script."""
+"""Tests for run.py (the next-step state machine) and the belt workflow script."""
 
 import io
 import json

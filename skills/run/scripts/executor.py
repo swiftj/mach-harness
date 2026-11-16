@@ -171,7 +171,7 @@ def plugin(root: Path, run_script: Path) -> Dict[str, Any]:
     In both cases the names are the plugin's: mach:belt, mach:builder, /mach:run.
     """
     skill = Path(run_script).resolve().parent.parent
-    if skill.name.startswith("mach-"):
+    if skill.name == "mach" or skill.name.startswith("mach-"):
         folder = project_plugin(root)
         return {"kind": "project", "plugin_dir": folder, "workflow": WORKFLOW, "add_dirs": [], "denied": protected(root, folder)}
     folder = skill.parent.parent
@@ -199,7 +199,8 @@ def unprefixed(text: str, name: str) -> str:
     end = text.find("\n---", 4)
     if end < 0:
         return text
-    head = re.sub(rf"(?m)^name:\s*mach-{re.escape(name)}\s*$", f"name: {name}", text[:end], count=1)
+    installed = "mach" if name == "run" else f"mach-{name}"  # the run skill is plain 'mach' in a project
+    head = re.sub(rf"(?m)^name:\s*{re.escape(installed)}\s*$", f"name: {name}", text[:end], count=1)
     return head + text[end:]
 
 
@@ -209,8 +210,8 @@ def project_files(root: Path) -> Dict[str, bytes]:
     files: Dict[str, bytes] = {}
     stations = []
     skills = source / "skills"
-    for skill in sorted(skills.glob("mach-*")) if skills.is_dir() else []:
-        station = skill.name[len("mach-"):]
+    for skill in sorted([*skills.glob("mach-*"), skills / "mach"]) if skills.is_dir() else []:
+        station = "run" if skill.name == "mach" else skill.name[len("mach-"):]
         if skill.is_symlink() or not skill.is_dir() or station in NOT_FOR_THE_FACTORY:
             continue
         stations.append(station)
@@ -239,10 +240,12 @@ def project_files(root: Path) -> Dict[str, bytes]:
             continue
         name = path.stem[len("mach-"):]
         installed = path.read_text(encoding="utf-8")
-        # Only a skill command where a person would type one: never a path such as .claude/skills/mach-run/.
+        # Only a skill command where a person would type one: never a path such as .claude/skills/mach-build/ or
+        # .claude/skills/mach/. In a project the run skill's command is plain /mach.
         text = re.sub(r"(?<![\w./-])/mach-(%s)\b" % "|".join(map(re.escape, stations)), r"/mach:\1", installed)
+        text = re.sub(r"(?<![\w./-])/mach(?![\w:/.-])", "/mach:run", text)
         text = text.replace(f"  name: 'mach-{name}',", f"  name: '{name}',", 1)
-        if text.replace("/mach:", "/mach-").replace(f"  name: '{name}',", f"  name: 'mach-{name}',", 1) != installed:
+        if re.sub(r"/mach:run\b", "/mach", text).replace("/mach:", "/mach-").replace(f"  name: '{name}',", f"  name: 'mach-{name}',", 1) != installed:
             raise PluginError(f"The installed workflow {path.name} could not be mapped back to MACH's plugin names.")
         files[f"workflows/{name}.js"] = text.encode("utf-8")
     version = "0.0.0"

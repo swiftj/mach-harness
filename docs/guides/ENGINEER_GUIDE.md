@@ -2,11 +2,11 @@
 
 For an engineer who installs MACH, takes in approved product work and decides what may run on their machine: Product Studio, intake, the supervisor, the Factory Floor and release qualification. Nothing here claims readiness for regulated or enterprise production use. For the security detail, see `OPERATOR_SECURITY_GUIDE.md`.
 
-In the commands below, `RUN` means `python3 .claude/skills/mach-run/scripts/run.py --project .` in a script install. With the plugin, ask Claude Code to run the `/mach:run` skill; it uses the same script.
+In the commands below, `RUN` means `python3 .claude/skills/mach/scripts/run.py --project .` in a script install. With the plugin, ask Claude Code to run the `/mach:run` skill; it uses the same script.
 
 ## 1. Installation and repository requirements
 
-You need Claude Code, `git` and `python3` 3.8 or later. Install as a plugin (`/plugin marketplace add swiftj/mach-harness`, `/plugin install mach@mach-harness`, then `/mach:init` in each project) or with `install.sh` (script install, commands such as `/mach-run`). `--dry-run` shows what would change. Install again to update in place. `python3 .factory/bin/mach uninstall` removes only what the manifest lists, and keeps files you changed and everything under `.factory/` that is state.
+You need Claude Code, `git` and `python3` 3.8 or later. Install as a plugin (`/plugin marketplace add swiftj/mach-harness`, `/plugin install mach@mach-harness`, then `/mach:init` in each project) or with `install.sh` (script install, commands such as `/mach`). `--dry-run` shows what would change. Install again to update in place. `python3 .factory/bin/mach uninstall` removes only what the manifest lists, and keeps files you changed and everything under `.factory/` that is state.
 
 A missing Git or Python stops the installer with a message that names `xcode-select --install` on a Mac. Python 3.8 is the stated minimum. Only 3.9.6 and 3.15 were run.
 
@@ -47,7 +47,7 @@ These writes never block or fail intake. Each is recorded in the ledger (`reques
 
 Settings: `tickets.github.status_comments: false` stops the comments and keeps the labels. `tickets.github.request_label` names the request label.
 
-Labels: if `mach:ready` (or `mach:grooming`, `mach:blocked`) does not exist, MACH creates it, only for those three names and never over an existing label. `mach:request` is never created by MACH; a person with write access applies it. `/mach-run doctor` lists any of the four missing from the repository with the `gh label create` line to run yourself.
+Labels: if `mach:ready` (or `mach:grooming`, `mach:blocked`) does not exist, MACH creates it, only for those three names and never over an existing label. `mach:request` is never created by MACH; a person with write access applies it. `/mach doctor` lists any of the four missing from the repository with the `gh label create` line to run yourself.
 
 A changed definition under work in progress, a withdrawn slice, an abandoned ticket that is still open or a ticket claiming a merge not on the branch is `needs_person`. MACH reports it and does not choose. Two cases it now settles with a recorded reason, shown on a real Factory run (a throwaway project):
 
@@ -105,7 +105,7 @@ Also `--max-risk` (tickets above it wait for a person), `--allow-merge` (default
 
 Enabling does not start a supervisor. Run `RUN factory serve` for the session, or use `--persistent`. `RUN factory tick` makes one pass.
 
-**What a supervised execution may touch.** One execution works on the one ticket it was started for. Inside it, `RUN next`, `review-start` and `review-tally` for any other ticket are refused ("started for <ticket> only"), `status` lists only that ticket, and the belt starts no observe pass and no `factory-tuning` ticket. When an observe pass is due the supervisor starts nothing for it: it raises one `human.required` per count of finished tickets ("An observe pass is due: N tickets have finished since the last one") and you run the pass yourself. A person-started `/mach-run` or belt is unchanged. Observed live in a short run.
+**What a supervised execution may touch.** One execution works on the one ticket it was started for. Inside it, `RUN next`, `review-start` and `review-tally` for any other ticket are refused ("started for <ticket> only"), `status` lists only that ticket, and the belt starts no observe pass and no `factory-tuning` ticket. When an observe pass is due the supervisor starts nothing for it: it raises one `human.required` per count of finished tickets ("An observe pass is due: N tickets have finished since the last one") and you run the pass yourself. A person-started `/mach` or belt is unchanged. Observed live in a short run.
 
 **A run that makes no progress is parked at once.** If an execution ends with the same refusal twice (a build stopped on the same task) or the belt reports `stuck` for the ticket, the supervisor records `not_progressing`, parks the ticket for a person and does not spend the remaining attempts ("Retrying would repeat it"). A killed execution (a signal, a negative exit code) is recorded as killed with its exit code and counts as a failed attempt; only a clean exit clears the count. The plan gate also refuses, at `cell.py check-plan`, a plan whose later `[impl]` task names a requirement that all of its tests already preceded, which is the plan that cannot go green. Observed live: the plan check refusing a real plan, a stuck belt parked at once (at the plan station, not a build) and a killed execution recorded as killed. The same-refusal build case has tests only. Where a parked ticket's plan is wrong, use `replan` above.
 

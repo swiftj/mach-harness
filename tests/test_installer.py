@@ -71,16 +71,18 @@ class InstallTest(Base):
                          ".claude/skills/mach-verify/SKILL.md", ".claude/skills/mach-verify/references/evidence-runners.md", ".claude/agents/mach-verifier.md",
                          ".claude/skills/mach-review/SKILL.md", ".claude/skills/mach-review/references/reviewer-brief.md", ".claude/agents/mach-reviewer.md",
                          ".claude/skills/mach-cleanup/scripts/cleanup.py", ".claude/skills/mach-observe/scripts/observe.py",
-                         ".claude/skills/mach-run/scripts/run.py", ".claude/workflows/mach-belt.js",
+                         ".claude/skills/mach/scripts/run.py", ".claude/workflows/mach-belt.js",
                          ".claude/skills/mach-merge/SKILL.md", ".claude/skills/mach-merge/scripts/merge.py",
                          ".claude/agents/mach-contract-engineer.md", ".factory/bin/mach", ".factory/mach.mk", ".factory/config.json",
                          "REVIEW.md", "AGENTS.md", "Makefile", "CLAUDE.md", ".gitignore", ".factory/.mach-manifest.json"):
             self.assertIn(expected, files)
         self.assertFalse(any("mach-init" in name or "__pycache__" in name for name in files), "plugin-only and cache files must not be installed")
         self.assertIn(b"\nname: mach-intent\n", files[SKILL])
+        self.assertIn(b"\nname: mach\n", files[".claude/skills/mach/SKILL.md"], "the run skill is the one command, /mach")
+        self.assertFalse(any(name.startswith(".claude/skills/mach-run/") for name in files), "no folder is left under the old name")
         self.assertIn(b"\nname: mach-contract-engineer\n", files[".claude/agents/mach-contract-engineer.md"])
         workflow = files[".claude/workflows/mach-belt.js"]
-        self.assertIn(b"/mach-run where", workflow)
+        self.assertIn(b"/mach where", workflow)
         self.assertIn(b"  name: 'mach-belt',", workflow)
         self.assertNotIn(b"/mach:", workflow)
         self.assertTrue((self.project / ".factory/tickets").is_dir())
@@ -114,7 +116,7 @@ class InstallTest(Base):
         self.assertIn(".factory/local/", ignore)
         self.assertIn(".factory/intake/", ignore)
         self.assertEqual(json.loads((self.project / ".factory/config.json").read_text())["factory"], {"max_parallel": 3, "max_parallel_high": 1})
-        done = subprocess.run([sys.executable, str(self.project / ".claude/skills/mach-run/scripts/run.py"), "--project", str(self.project), "product", "status"],
+        done = subprocess.run([sys.executable, str(self.project / ".claude/skills/mach/scripts/run.py"), "--project", str(self.project), "product", "status"],
                               capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)  # the installed run skill finds the installed product-studio and intent skills
         self.assertEqual(json.loads(done.stdout)["factory_started"], False)

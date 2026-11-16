@@ -100,7 +100,7 @@ rejected by security, R2 3/3, then the R2 re-review 3/3.
 | Observe mode | takes in and plans, starts nothing | tick: both ready slices held, "observe mode, which never starts work"; no `executions/` folder; no `claude -p` process | `logs/13-observe-tick.txt` | PASS |
 | Supervised with the given limits | limits as given; no hooks, timer or service; merging off | `runner.json` limits as given; `git_hooks: []`; no LaunchAgent; "Never merges"; tool list is the default | `logs/10-activation.txt` | PASS |
 | Tracked `factory.max_parallel: 5` | local ceiling holds | `max_parallel_from: project 5, machine_policy 2, in_force 2` | `logs/14-ceiling.txt` | PASS |
-| Tracked `review.medium.reviewers: 1` | supervisor refuses with its message | status `restricted_by_project` and tick: both slices held: "review.medium.reviewers is 1: Medium-risk tickets would be reviewed without the security seat. Unattended execution is refused while that is so; a person can still run that ticket by hand (/mach-run)." Nothing started (audit was fresh, so the hold was not the audit) | `logs/14-ceiling.txt` | PASS |
+| Tracked `review.medium.reviewers: 1` | supervisor refuses with its message | status `restricted_by_project` and tick: both slices held: "review.medium.reviewers is 1: Medium-risk tickets would be reviewed without the security seat. Unattended execution is refused while that is so; a person can still run that ticket by hand (/mach)." Nothing started (audit was fresh, so the hold was not the audit) | `logs/14-ceiling.txt` | PASS |
 | Both reverted | config as before | `git diff a567ec9 -- .factory/config.json` empty after `efbdf08` | — | PASS |
 
 ### Part 2: construction

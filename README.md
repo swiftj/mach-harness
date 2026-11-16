@@ -57,7 +57,7 @@ This installs the newest release, after checking it, and prints one `MACH source
 **Then check the setup:**
 
 ```
-/mach-run doctor
+/mach doctor
 ```
 
 It checks Git, Python, Claude Code, your ticket tracker's sign-in and the MACH files, and lists what to do about anything missing. It changes nothing.
@@ -71,11 +71,11 @@ Almost everything goes through two commands.
 | Command | For | What it is |
 |---|---|---|
 | `/mach-product-studio` | Product managers | The workspace for the project, its epics, slices and delivery waves |
-| `/mach-run` | Engineers | The line: move a ticket, see the status of every ticket, take in product work, check the setup |
+| `/mach` | Engineers | The line: move a ticket, see the status of every ticket, take in product work, check the setup |
 
 Both take plain words as well as the forms shown in this guide: "open the app", "what is LOCAL-004 waiting for?", "open the Factory Floor".
 
-**Names.** With the one-command install the commands are `/mach-run`, `/mach-product-studio` and so on. With the plugin they are `/mach:run`, `/mach:product-studio`. This guide uses the first form.
+**Names.** With the one-command install the main command is `/mach`, and the others carry a dash: `/mach-product-studio`, `/mach-intent`. With the plugin every command carries the plugin's name and a colon, so the main one is `/mach:run` and the others `/mach:product-studio`, `/mach:intent`; Claude Code does not let a plugin's command be a bare `/mach`. This guide uses the first form. In a terminal, `mach` is a different thing: the installer (`mach install`, `mach status`, `mach uninstall`).
 
 ## How work flows
 
@@ -83,7 +83,7 @@ A request can start as a GitHub issue labelled `mach:request`; Product Studio sh
 
 ```text
   PRODUCT MANAGER                      ENGINEER                        THE FACTORY
-  /mach-product-studio                 /mach-run
+  /mach-product-studio                 /mach
 
   describe the project
   interview, one question
@@ -143,8 +143,8 @@ Everything you write is a private draft on your computer until you send a wave. 
 ### Before the first ticket
 
 ```
-/mach-run doctor     is this machine and project set up?
-/mach-run audit      is the repository ready for agents?
+/mach doctor     is this machine and project set up?
+/mach audit      is the repository ready for agents?
 ```
 
 The audit runs your build, tests and linter and gives a tier. **Gold** allows full autonomy. **Silver** builds, with a person approving each change. **Bronze**, which includes any failing build or test suite, blocks autonomous work until the repository is hardened.
@@ -152,16 +152,16 @@ The audit runs your build, tests and linter and gives a tier. **Gold** allows fu
 ### One idea, start to finish
 
 ```
-/mach-run new "Let workspace admins invite a teammate by email"
+/mach new "Let workspace admins invite a teammate by email"
 ```
 
 MACH creates a ticket and a cell and interviews you, the same way as in Product Studio. On your yes it writes the why (`intent.md`), the spec, the boundary contracts and a test-first plan into the cell. Then:
 
 ```
-/mach-run LOCAL-001
+/mach LOCAL-001
 ```
 
-This moves the ticket from wherever it is to the next point where a person is needed. A script reads what each station recorded and names the next step; a fresh agent does it; then the script is asked again. You can name a ticket by its number alone: `/mach-run 1`.
+This moves the ticket from wherever it is to the next point where a person is needed. A script reads what each station recorded and names the next step; a fresh agent does it; then the script is asked again. You can name a ticket by its number alone: `/mach 1`.
 
 An interrupted run loses nothing. Run the same command again and it resumes at the station it had reached.
 
@@ -170,18 +170,18 @@ An interrupted run loses nothing. Run the same command again and it resumes at t
 When a product manager's wave has been merged:
 
 ```
-/mach-run product status      what is approved and merged; changes nothing
-/mach-run product intake      file one ticket per new slice
-/mach-run product plan        what is ready, active, blocked, and why
-/mach-run product dispatch SLICE-001
+/mach product status      what is approved and merged; changes nothing
+/mach product intake      file one ticket per new slice
+/mach product plan        what is ready, active, blocked, and why
+/mach product dispatch SLICE-001
 ```
 
-Dispatch opens the cell and stops; `/mach-run <ticket>` then runs it. Nothing is dispatched without your command.
+Dispatch opens the cell and stops; `/mach <ticket>` then runs it. Nothing is dispatched without your command.
 
 ### Several tickets at once
 
 ```
-/mach-run 2 3 5
+/mach 2 3 5
 ```
 
 MACH shows the schedule first, then runs the tickets with the belt workflow (`mach-belt`; `mach:belt` with the plugin). Each ticket is built, verified and reviewed in its own cell, and the run ends with what each one is waiting for.
@@ -198,26 +198,26 @@ A script decides what may run together, and it only ever runs fewer than the lim
 | `--limit 2` | Run at most two at once (the settings limit still applies) |
 | `--sequential` | Run one at a time |
 
-Only you can raise a limit: in the settings, or by telling Claude Code to raise it for one run. `/mach-run` with no ticket still shows the status of every ticket and starts nothing.
+Only you can raise a limit: in the settings, or by telling Claude Code to raise it for one run. `/mach` with no ticket still shows the status of every ticket and starts nothing.
 
 ### Unattended, on a machine you choose
 
 ```
-/mach-run factory enable
+/mach factory enable
 ```
 
-The supervisor keeps approved product work moving without you. It is off on every machine until an engineer enables it there, after reading exactly what will be allowed and confirming with a code. `/mach-run factory status`, `pause`, `resume`, `disable` and `stop` complete it. Read [Operator Security Guide](docs/guides/OPERATOR_SECURITY_GUIDE.md) first.
+The supervisor keeps approved product work moving without you. It is off on every machine until an engineer enables it there, after reading exactly what will be allowed and confirming with a code. `/mach factory status`, `pause`, `resume`, `disable` and `stop` complete it. Read [Operator Security Guide](docs/guides/OPERATOR_SECURITY_GUIDE.md) first.
 
-Issues that a production monitoring account files and labels itself can also be taken in: `/mach-run requests monitor` takes up to three per pass for grooming without a person. The supervisor does the same only where you add `--monitoring-requests` when enabling it; that is off by default, and it builds only what grooming rates below High risk.
+Issues that a production monitoring account files and labels itself can also be taken in: `/mach requests monitor` takes up to three per pass for grooming without a person. The supervisor does the same only where you add `--monitoring-requests` when enabling it; that is off by default, and it builds only what grooming rates below High risk.
 
 ### Watching it
 
-Say "open the Factory Floor" to `/mach-run`. It opens a read-only view in your browser: the Atlas (what is where), the Timeline (what happened, when) and Analytics (how well the factory runs). It cannot start, approve or merge anything.
+Say "open the Factory Floor" to `/mach`. It opens a read-only view in your browser: the Atlas (what is where), the Timeline (what happened, when) and Analytics (how well the factory runs). It cannot start, approve or merge anything.
 
 ### Releasing
 
 ```
-/mach-run release qualify WAVE-001
+/mach release qualify WAVE-001
 ```
 
 It checks, at one exact commit, that every slice in the wave is merged, verified and reviewed, reruns the tests, and writes a readiness snapshot. It never tags or deploys.
@@ -229,29 +229,29 @@ Full guide: [Engineer Guide](docs/guides/ENGINEER_GUIDE.md).
 When a run stops for you, MACH walks you through it: one ticket at a time, what happened, then a prompt with the options that ticket really has. A script lists the options, so they are the same every time, and where a rule decides it, one is marked as recommended. You pick one, or skip it and nothing changes. To come back to it later:
 
 ```
-/mach-run decide
+/mach decide
 ```
 
 These are the cases, and what each choice runs if you would rather type it yourself.
 
 | It says | What to do |
 |---|---|
-| The spec has open questions | Finish the interview: `/mach-run <ticket>` continues it |
-| Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach-run approve <ticket>`. It records your approval and carries the ticket on to the merge and cleanup. To have something changed first: `/mach-run send-back <ticket> "<why>"`. Your reason goes to the builder as the finding to answer, and it uses one of the ticket's three rounds |
-| Approved, waiting for a person to merge | `/mach-run merge <ticket>` |
-| Blocked: escalated after three rounds | `/mach-run explain <ticket>`, then fix it yourself or abandon it: `/mach-run abandon <ticket> "<why>"` |
-| The repository is Bronze | `/mach-run audit` lists what to fix |
-| A build stopped at a gate before any review | Run it again, or start the plan over: `/mach-run replan <ticket> "<why>"` |
+| The spec has open questions | Finish the interview: `/mach <ticket>` continues it |
+| Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach approve <ticket>`. It records your approval and carries the ticket on to the merge and cleanup. To have something changed first: `/mach send-back <ticket> "<why>"`. Your reason goes to the builder as the finding to answer, and it uses one of the ticket's three rounds |
+| Approved, waiting for a person to merge | `/mach merge <ticket>` |
+| Blocked: escalated after three rounds | `/mach explain <ticket>`, then fix it yourself or abandon it: `/mach abandon <ticket> "<why>"` |
+| The repository is Bronze | `/mach audit` lists what to fix |
+| A build stopped at a gate before any review | Run it again, or start the plan over: `/mach replan <ticket> "<why>"` |
 | A worker is already on this ticket | Wait for it; or, if that worker is gone, tell Claude Code to take over |
-| The audit is missing or out of date | `/mach-run audit` |
+| The audit is missing or out of date | `/mach audit` |
 
 A ticket gets three judging rounds in all, counting failed verifications and rejected reviews. On the third failure it is handed to a person; the factory does not keep trying.
 
 ## Finding out where things stand
 
 ```
-/mach-run status              every open ticket and its next step
-/mach-run explain LOCAL-004  why this ticket failed or is waiting
+/mach status              every open ticket and its next step
+/mach explain LOCAL-004  why this ticket failed or is waiting
 ```
 
 Every status opens with three lines:
@@ -268,27 +268,27 @@ A cost appears only where one was recorded, which today means work the superviso
 
 ## Every command
 
-`/mach-product-studio` and `/mach-run` are the ones to remember. The station commands at the bottom of the table still work and you can run any of them yourself, but `/mach-run` calls them for you.
+`/mach-product-studio` and `/mach` are the ones to remember. The station commands at the bottom of the table still work and you can run any of them yourself, but `/mach` calls them for you.
 
 | Command | What it does |
 |---|---|
 | `/mach-product-studio` | Project, epics, slices, waves; requests from GitHub issues; `refresh`, `send`, `feedback`; "open the app" |
-| `/mach-run <ticket>` | Move one ticket to the next point a person is needed |
-| `/mach-run <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
-| `/mach-run status` | Every open ticket and its next step |
-| `/mach-run explain <ticket>` | Why a ticket failed or is waiting |
-| `/mach-run decide` | Walk through every ticket that waits on you, with its options |
-| `/mach-run doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
-| `/mach-run new "<idea>"` | Start the interview for a new idea |
-| `/mach-run approve <ticket>` | Record your approval of a change that needs a person, then carry the ticket on |
-| `/mach-run send-back <ticket> "<why>"` | Send a change the panel approved back to the builder, with your reason |
-| `/mach-run merge <ticket>` | Merge an approved ticket yourself |
-| `/mach-run replan <ticket> "<why>"` | Start a ticket's plan over, before any review round; the old plan is kept |
-| `/mach-run abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
-| `/mach-run audit` | The repository's readiness tier |
-| `/mach-run product status\|intake\|plan\|dispatch` | Take approved product work into the factory |
-| `/mach-run factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
-| `/mach-run release status\|qualify\|show` | Is a wave ready to release, at one commit |
+| `/mach <ticket>` | Move one ticket to the next point a person is needed |
+| `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
+| `/mach status` | Every open ticket and its next step |
+| `/mach explain <ticket>` | Why a ticket failed or is waiting |
+| `/mach decide` | Walk through every ticket that waits on you, with its options |
+| `/mach doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
+| `/mach new "<idea>"` | Start the interview for a new idea |
+| `/mach approve <ticket>` | Record your approval of a change that needs a person, then carry the ticket on |
+| `/mach send-back <ticket> "<why>"` | Send a change the panel approved back to the builder, with your reason |
+| `/mach merge <ticket>` | Merge an approved ticket yourself |
+| `/mach replan <ticket> "<why>"` | Start a ticket's plan over, before any review round; the old plan is kept |
+| `/mach abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
+| `/mach audit` | The repository's readiness tier |
+| `/mach product status\|intake\|plan\|dispatch` | Take approved product work into the factory |
+| `/mach factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
+| `/mach release status\|qualify\|show` | Is a wave ready to release, at one commit |
 | `/mach-intent <ticket or idea>` | The interview, spec, contracts and plan; `--headless` when no person can answer |
 | `/mach-build <ticket>` | Build test-first inside the cell |
 | `/mach-verify <ticket>` | Prove the built slice with captured evidence |

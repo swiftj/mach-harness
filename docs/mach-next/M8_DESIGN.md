@@ -25,7 +25,7 @@ start or merge anything. Every report Product Studio prints still carries `"fact
 | Product manager | `send <WAVE-ID>` (unchanged) | The pull request body says `Refs #<n>` for each request | One comment per request on the issue |
 | Engineer or supervisor | `product intake` / `product reconcile` (unchanged) | Takes the merged slices in | `mach:ready` and one comment on the issue |
 | Product manager | `request met <n>` | Closes the issue | The issue is closed |
-| Engineer | `/mach-run requests monitor` | Takes monitoring issues in for headless grooming, at most three | The intake ledger only |
+| Engineer | `/mach requests monitor` | Takes monitoring issues in for headless grooming, at most three | The intake ledger only |
 
 ## 2. Decisions
 
@@ -278,7 +278,7 @@ pose as the monitor. An issue from any other author is a person's request and go
 Studio lists monitoring requests as "handled by the Factory" and offers no pick-up.
 
 **Who polls.** Never Product Studio. Only `monitoring.py`, reached two ways: an engineer's explicit
-`/mach-run requests monitor [--dry-run]` (`run.py requests monitor`), or a supervisor pass when the
+`/mach requests monitor [--dry-run]` (`run.py requests monitor`), or a supervisor pass when the
 effective policy allows it. It reads issues through `ticket.py list --label mach:request` and a new
 read-only `ticket.py request-check N` (author id, label event, permission, through `issue_rules`), and
 records what it takes in the intake ledger under a new `monitoring` map, keyed by ticket ID (on GitHub,

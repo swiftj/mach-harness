@@ -135,12 +135,17 @@ def require_source(root: Path) -> str:
     return version
 
 
-def prefixed(text: str, name: str) -> str:
-    """Rename a plugin component ('intent') to its project name ('mach-intent') in its front matter."""
+def project_name(skill: str) -> str:
+    """A skill's name in a project: the run skill is the factory's one command, /mach; every other is /mach-<station>."""
+    return "mach" if skill == "run" else f"mach-{skill}"
+
+
+def prefixed(text: str, name: str, installed: Optional[str] = None) -> str:
+    """Rename a plugin component ('intent') to its project name ('mach-intent', or 'mach' for the run skill) in its front matter."""
     if not text.startswith("---\n"):
         return text
     end = text.find("\n---", 4)
-    head = NAME_LINE_RE.sub(f"name: mach-{name}", text[:end], count=1)
+    head = NAME_LINE_RE.sub(f"name: {installed or 'mach-' + name}", text[:end], count=1)
     return head + text[end:]
 
 
@@ -153,15 +158,16 @@ def skill_items(root: Path) -> List[Item]:
             relative = path.relative_to(skill)
             data = path.read_bytes()
             if relative.as_posix() == "SKILL.md":
-                data = prefixed(data.decode("utf-8"), skill.name).encode("utf-8")
-            items.append(Item(f".claude/skills/mach-{skill.name}/{relative.as_posix()}", data, "managed", path.suffix == ".py"))
+                data = prefixed(data.decode("utf-8"), skill.name, project_name(skill.name)).encode("utf-8")
+            items.append(Item(f".claude/skills/{project_name(skill.name)}/{relative.as_posix()}", data, "managed", path.suffix == ".py"))
     agents = root / "agents"
     for path in sorted(agents.glob("*.md")) if agents.is_dir() else []:
         items.append(Item(f".claude/agents/mach-{path.name}", prefixed(path.read_text(encoding="utf-8"), path.stem).encode("utf-8"), "managed"))
     workflows = root / "workflows"
     for path in sorted(workflows.glob("*.js")) if workflows.is_dir() else []:
-        # As a plugin the workflow is mach:<name> and the skills /mach:<station>; in a project they are mach-<name> and /mach-<station>.
-        text = path.read_text(encoding="utf-8").replace("/mach:", "/mach-").replace(f"  name: '{path.stem}',", f"  name: 'mach-{path.stem}',", 1)
+        # As a plugin the workflow is mach:<name> and the skills /mach:<station>; in a project they are mach-<name> and /mach-<station>,
+        # and the run skill is /mach, in the folder .claude/skills/mach/.
+        text = re.sub(r"/mach:run\b", "/mach", path.read_text(encoding="utf-8")).replace("/mach:", "/mach-").replace(f"  name: '{path.stem}',", f"  name: 'mach-{path.stem}',", 1)
         items.append(Item(f".claude/workflows/mach-{path.name}", text.encode("utf-8"), "managed"))
     return items
 
@@ -512,7 +518,7 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
     if "scaffold" in components and "Makefile" not in recorded and not args.dry_run:
         print("\nYour Makefile was left alone. To get the 'make mach-*' targets, add this line to it:\n  include .factory/mach.mk")
     if not args.dry_run:
-        print("\nNext: restart Claude Code in this project, then run  /mach-intent <your feature idea>" if "skills" in components
+        print("\nNext: restart Claude Code in this project, then run  /mach doctor  to check the setup" if "skills" in components
               else "\nNext: run  /mach:intent <your feature idea>")
         print("Remove with:  python3 .factory/bin/mach uninstall")
     return 1 if conflicts else 0

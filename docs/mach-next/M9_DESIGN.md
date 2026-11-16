@@ -64,8 +64,8 @@ Bare numbers resolve as for `next`. Output (JSON): `ceiling` (`settings`, `high`
 `after`), `running`, `batches` (a simulation of the order, assuming each batch finishes; advisory),
 `workflow` and `workflow_args` (what to hand the belt), and `started: false`.
 
-`/mach-run <a> <b> <c>` shows this schedule, then starts the belt workflow with those tickets.
-`/mach-run --dry-run` with no ticket is `product plan`. `/mach-run` with no ticket stays the board.
+`/mach <a> <b> <c>` shows this schedule, then starts the belt workflow with those tickets.
+`/mach --dry-run` with no ticket is `product plan`. `/mach` with no ticket stays the board.
 
 ### 1.6 The belt workflow
 
@@ -170,8 +170,8 @@ station's result; a failure to write one is reported and the step is not handed 
 
 When work stops for a person, the run skill walks the person through each waiting ticket, one at a time:
 what happened, then a prompt with the options for that situation, the recommended one first. It starts on
-its own at the end of `/mach-run <ticket>` and of `/mach-run <a> <b> <c>` whenever something waits on a
-person. `/mach-run decide [<ticket>...]` returns to it later. It never runs unattended: not in the belt,
+its own at the end of `/mach <ticket>` and of `/mach <a> <b> <c>` whenever something waits on a
+person. `/mach decide [<ticket>...]` returns to it later. It never runs unattended: not in the belt,
 not in a supervised execution, not headless.
 
 ### 6.2 A script lists the options
@@ -205,7 +205,7 @@ only on a person's word).
 ## 7. Small fixes from the live check
 
 - `build.py red` refuses a test that leaves out or respells a spec ID of its task, while it can be edited.
-- `/mach-run approve <ticket>` carries the ticket on to the next step.
+- `/mach approve <ticket>` carries the ticket on to the next step.
 - The findings review names the commit the panel approved, and says when the branch was brought up to date.
 - A file or slice name made of plain words is not masked as a secret.
 - Cleanup removes the saved branch tips a re-plan left (`refs/mach/replan/<ticket_id>/*`) after it has
@@ -217,7 +217,7 @@ only on a person's word).
 Until now a person could only approve a change the panel had approved. The walkthrough's inventory showed
 there was no gate for "change this first".
 
-- `review.py send-back <ticket> --by NAME --reason TEXT`, reached as `/mach-run send-back <ticket> "<why>"`.
+- `review.py send-back <ticket> --by NAME --reason TEXT`, reached as `/mach send-back <ticket> "<why>"`.
   Only for a cell awaiting a person, at the commit the panel voted on, on the person's explicit word, with
   the reason in their own words.
 - The reason is written to `review/round-N/person-findings.md`, with a pointer to the panel's findings, and
