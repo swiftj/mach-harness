@@ -319,8 +319,9 @@ class SupervisorTest(Base):
         self.groomed("42", "Medium")
         report = self.tick()
         self.assertEqual([item["ticket_id"] for item in report["started"]], ["42"])
-        runs = sorted(self.runs_for("42"), key=lambda record: record["claimed_at"])
-        self.assertEqual([record["until"] for record in runs], ["build", "merge"])  # the default stop before merge still holds
+        # first_execution already held that the first run stops before build. Claim times have one-second
+        # resolution, so the two runs are compared as a set, not by an order two equal times cannot give.
+        self.assertEqual(sorted(record["until"] for record in self.runs_for("42")), ["build", "merge"])  # the default stop before merge still holds
         self.assertEqual(self.entries()["42"]["state"], "building")
         argv = self.calls()[-1]["argv"]
         self.assertIn("--restricted", argv)
