@@ -266,6 +266,18 @@ def integration_record(cell: Cell, plan: Dict[str, Any], approved: Optional[str]
     }
 
 
+def product_record(product: Dict[str, Any]) -> Dict[str, Any]:
+    """The product block of a run record. `origin` (M8: the GitHub issue a slice came from, as
+    identifiers only) is carried only when the cell has one, so a record without it is unchanged
+    and record_version stays 2."""
+    block = {key: product.get(key) for key in ("slice_id", "revision", "wave_id", "digest", "source_commit")}
+    origin = product.get("origin")
+    if isinstance(origin, dict) and origin.get("kind") == "github_issue" and isinstance(origin.get("repository"), str) \
+            and type(origin.get("number")) is int:
+        block["origin"] = {"kind": "github_issue", "repository": origin["repository"], "number": origin["number"]}
+    return block
+
+
 def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """One line for the run log. Field names are read by the observe station; do not rename them."""
     info, build = cell.info, cell.build
@@ -296,7 +308,7 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
     return {
         "record_version": RECORD_VERSION,
         "integration": integration_record(cell, plan, approved) if plan else None,
-        "product": {key: product.get(key) for key in ("slice_id", "revision", "wave_id", "digest", "source_commit")} if product else None,
+        "product": product_record(product) if product else None,
         "ticket_id": cell.ticket_id, "slice_id": text_or_none(info.get("slice_id")), "title": str(info.get("title") or ""),
         "risk": info.get("risk") if info.get("risk") in RISKS else None, "app_type": text_or_none(info.get("app_type")),
         "mode": info.get("mode") if info.get("mode") in MODES else None,

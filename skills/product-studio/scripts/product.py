@@ -40,6 +40,11 @@ SHAPES = {
     "slice": ("schema_version", "slice_id", "project_id", "epic_id", "revision", "title", "status", "dependencies", "open_questions", "spec_path", "spec_sha256"),
     "wave": ("schema_version", "wave_id", "project_id", "revision", "base_project_revision", "status", "slices", "approval"),
 }
+# Fields an artifact may carry or leave out. A slice without them is byte-for-byte what it was before.
+OPTIONAL = {"slice": ("origin",)}
+# Where a slice came from (M8): identifiers only, never an issue's text, link or author.
+ORIGIN_KINDS = ("github_issue",)
+REPOSITORY_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 ENUMS = {
     "project": {"status": ("draft", "active", "archived")},
     "epic": {"status": ("proposed", "approved", "deferred", "completed", "superseded")},
@@ -88,11 +93,17 @@ def _is_timestamp(value: Any) -> bool:
     return zone == "Z" or (int(zone[1:3]) < 24 and int(zone[4:6]) < 60)
 
 
+def _is_origin(value: Any) -> bool:
+    return (isinstance(value, dict) and set(value) == {"kind", "repository", "number"} and value.get("kind") in ORIGIN_KINDS
+            and isinstance(value.get("repository"), str) and bool(REPOSITORY_RE.fullmatch(value["repository"]))
+            and type(value.get("number")) is int and value["number"] >= 1)
+
+
 def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) -> None:
     required = set(SHAPES[kind])
     for key in sorted(required - set(data)):
         _error(errors, location, "missing field '{}'".format(key))
-    for key in sorted(set(data) - required):
+    for key in sorted(set(data) - required - set(OPTIONAL.get(kind, ()))):
         _error(errors, location, "unexpected field '{}'".format(key))
     if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         _error(errors, location, "schema_version must be integer 1")
@@ -129,6 +140,8 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             _error(errors, location, "spec_path must be text or null")
         if digest is not None and (not isinstance(digest, str) or not HEX_RE.fullmatch(digest)):
             _error(errors, location, "spec_sha256 must be lowercase 64-character SHA-256 or null")
+        if "origin" in data and not _is_origin(data["origin"]):
+            _error(errors, location, "origin must be {kind: github_issue, repository: OWNER/REPO, number: a positive integer}")
     if kind == "wave":
         approval = data.get("approval")
         if approval is not None and (

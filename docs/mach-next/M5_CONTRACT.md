@@ -193,3 +193,19 @@ The app is split by feature. Each folder under `web/apps/product-studio/src/feat
 A feature owner who needs something shared (a component, a client method, a type) builds it inside their own feature folder and names it in their report for promotion. Nobody edits another owner's files.
 
 Routes: `/` workspace, `/vision`, `/roadmap`, `/slices/:sliceId` specification, `/slices/:sliceId/interview`, `/inbox` decisions, `/waves` (with the send flow beneath it), `/shared` collaboration and refresh.
+
+### 8.4 Requests from GitHub issues (M8)
+
+From `M8_DESIGN.md` D3 and D8; `apps/studio/README.md` has the exact arguments.
+
+| Operation | Command | Changes state |
+|-----------|---------|---------------|
+| `request.list` | `request list` | no; never calls GitHub |
+| `request.show` | `request show <n>` | no |
+| `request.pick` | `request pick <n> --epic --title [--also]` | yes: a draft slice with `origin`; re-reads the issue and may write its status on GitHub |
+| `request.link` | `request link <n> <slice>` | yes: the draft work order's `origin` only |
+| `request.met` | `request met <n>` | closes the issue on GitHub as completed |
+
+`<n>` is a whole number from 1 to 999,999,999, sent as a JSON number. `refresh` is unchanged as an operation and its report gains a `requests` block. The interviewer's allowed operations (8.2) do not change: it may not pick up, link or close a request, and sees a request only through its own slice's `slice resume` and `slice show`.
+
+Item states are the engine's: `accepted`, `not_accepted`, and the state of an issue filed by a monitoring account, which the app matches by its `handled_by_` prefix and shows with no action. In the app, issue text is a React text node in a bounded, focusable region, never markup, a link, an attribute, the document title, the address or browser storage; a request's accessible name is "Request #N". The five operations' types live in the Inbox feature (`features/inbox/requests/api.ts`) for promotion to `@mach/ui`'s `Operations` table.

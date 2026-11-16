@@ -1,7 +1,7 @@
 # Product Studio end-to-end suites
 
 The real app in a real Chromium, the real Go host (`apps/studio`) and the real engine
-(`skills/product-studio/scripts/studio.py`), driven together. Fixtures are not used anywhere here.
+(`skills/product-studio/scripts/studio.py`), driven together. Fixtures are not used, except by the two request suites (below).
 
 Every run builds the host with the app embedded in a scratch folder (the app's own `dist/` and the
 committed placeholder in `apps/studio/internal/webui/dist` are never touched), then for each suite
@@ -37,6 +37,7 @@ From the repository root (or `cd web/e2e && npm run <name>`):
 | Conformance | `node --test --test-reporter=spec web/e2e/suites/conformance.test.mjs` | The same 24 operations through `studio.py` directly and through the host API leave identical `.factory/studio/draft/` trees and `status`; the host's reports equal the engine's own `--app` reports; the pull requests match. Every allowlisted op answers with the envelope; nothing outside the allowlist is reachable. |
 | Security | `node --test --test-reporter=spec web/e2e/suites/security.test.mjs` | Cookie, Host, Origin, CSRF and Content-Type checks; the one-time token; loopback-only binding (lsof, LAN addresses, `::1`); draft-route traversal, bad names and symlinks; CSP on every response, no outside request; no credential readable by the page or present in any response or log; nothing can enable the Factory or write `.factory/local/`; the interviewer's allow/deny rules; `factory_authorized: false`; a byte-identical checkout. |
 | Accessibility and visuals | `node --test --test-reporter=spec web/e2e/suites/a11y.test.mjs` | axe (WCAG 2.2 AA tags) on every route with real data in light and dark; no horizontal overflow at 1440x900 and 1100x800; a keyboard-only pass of the main path (skip link, tab order, visible focus, dialogs trap focus, one Escape closes, focus returns); reduced motion. |
+| Requests (fixture mode) | `node --test --test-reporter=spec web/e2e/suites/requests.test.mjs web/e2e/suites/requests-text.test.mjs` | The exception to "no fixtures": GitHub issue requests (M8 D8) cannot be reached without GitHub, so these two build the app with `vite build --mode fixtures` into a scratch folder and serve it from 127.0.0.1 (`lib/fixtures.mjs`), with no host or engine. Every request state and its buttons, pick-up read back from the list, a refusal in the engine's words, axe in light and dark; and a hostile request body (script, event handler, `javascript:` link, a fence line, 20,000 characters) served without the CSP is one text node, ran nothing, and appears in no attribute, title, address or storage. DOM checks only, no screenshots. |
 | Real interview (opt-in, spends money) | `E2E_REAL_CLAUDE=1 node --test --test-reporter=spec web/e2e/suites/interview-real.test.mjs` | Your real, signed-in `claude`: start, one real parsed question, answer, the next message, stop. Uses only the host's documented `--budget-per-turn` (default 0.30) and `--model` (default `sonnet`) to bound spend; override with `E2E_REAL_BUDGET` / `E2E_REAL_MODEL`. Skipped without the variable. |
 
 All four default suites in one go: `cd web/e2e && npm run all`.
@@ -66,5 +67,6 @@ lib/host.mjs        starts the host; raw HTTP with full header control; an API c
 lib/app.mjs         a watched page (console, CSP, outside requests, API failures), screenshots, steps
 lib/content.mjs     a valid spec and why (the repository's fixture)
 lib/seed.mjs        a project with something on every screen, built through the engine
+lib/fixtures.mjs    the app built in fixture mode and served from 127.0.0.1 (request suites only)
 suites/*.test.mjs   the suites (node:test)
 ```

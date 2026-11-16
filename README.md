@@ -79,6 +79,8 @@ Both take plain words as well as the forms shown in this guide: "open the app", 
 
 ## How work flows
 
+A request can start as a GitHub issue labelled `mach:request`; Product Studio shows it, and the product manager takes it from there.
+
 ```text
   PRODUCT MANAGER                      ENGINEER                        THE FACTORY
   /mach-product-studio                 /mach-run
@@ -127,6 +129,14 @@ With nothing after it, it shows where things stand and suggests the next step. S
 6. **Read the feedback.** Say "feedback" to see whether engineering accepted the wave or asked for changes.
 
 Everything you write is a private draft on your computer until you send a wave. Full guide: [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md).
+
+### Starting from a GitHub issue
+
+1. Someone files an issue in plain words. A person with write access to the repository labels it `mach:request`.
+2. After a refresh it appears under Requests (say "show requests"). A request labelled by anyone else is listed as "not accepted", with the reason.
+3. Say "pick up request 42". You choose the epic and a title, and are interviewed as usual. The issue's text is shown to you as what was asked for; it never answers a question for you.
+4. The issue gets a `mach:grooming` label and short comments with slice IDs and links as work moves: taken in, sent, merged.
+5. When a slice made from it is approved, say "request 42 is met" and the issue closes.
 
 ## For engineers
 
@@ -179,6 +189,8 @@ Ask Claude Code to "run the mach-belt workflow for LOCAL-002 and LOCAL-003" (`ma
 ```
 
 The supervisor keeps approved product work moving without you. It is off on every machine until an engineer enables it there, after reading exactly what will be allowed and confirming with a code. `/mach-run factory status`, `pause`, `resume`, `disable` and `stop` complete it. Read [Operator Security Guide](docs/guides/OPERATOR_SECURITY_GUIDE.md) first.
+
+Issues that a production monitoring account files and labels itself can also be taken in: `/mach-run requests monitor` takes up to three per pass for grooming without a person. The supervisor does the same only where you add `--monitoring-requests` when enabling it; that is off by default, and it builds only what grooming rates below High risk.
 
 ### Watching it
 
@@ -234,7 +246,7 @@ A cost appears only where one was recorded, which today means work the superviso
 
 | Command | What it does |
 |---|---|
-| `/mach-product-studio` | Project, epics, slices, waves; `refresh`, `send`, `feedback`; "open the app" |
+| `/mach-product-studio` | Project, epics, slices, waves; requests from GitHub issues; `refresh`, `send`, `feedback`; "open the app" |
 | `/mach-run <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach-run board` | Every open ticket and its next step |
 | `/mach-run explain <ticket>` | Why a ticket failed or is waiting |
@@ -275,6 +287,8 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `review.<tier>` | see file | Reviewers, approvals needed, and whether a person must approve |
 | `factory.max_parallel` | `3` | How many tickets may run at once |
 | `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
+| `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |
+| `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |
 | `floor.evidence_media` | off | Show evidence screenshots and recordings in the Factory Floor |
 
 A high-risk change always needs a person's approval in review unless you change that setting yourself. `REVIEW.md` and `AGENTS.md` are yours to edit once created.

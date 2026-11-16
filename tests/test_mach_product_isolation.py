@@ -120,6 +120,22 @@ class NothingIsWiredInTest(unittest.TestCase):
             text = (ROOT / "skills" / "run" / "scripts" / name).read_text()
             self.assertNotIn('"factory_started": True', text)
 
+    def test_monitoring_reads_no_local_policy_and_starts_only_the_ticket_station(self):
+        """M8 D7: monitoring.py is told whether the grant is in force; it never reads the machine-local policy, never
+        imports Product Studio or the supervisor's modules, and reaches GitHub only through the ticket station's script."""
+        source = (ROOT / "skills" / "run" / "scripts" / "monitoring.py").read_text()
+        tree = ast.parse(source)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported |= {alias.name.split(".")[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertEqual(imported, {"json", "os", "sys", "datetime", "pathlib", "typing", "issue_rules"})
+        for word in ("runner.json", "subprocess", "Popen", "os.system", "claude", "Workflow", "socket", "http", "studio", "collab", "\"fetch\"", "\"push\""):
+            self.assertNotIn(word, source, word)
+        self.assertEqual(set(re.findall(r"self\.line\.ticket\(\"([\w-]+)\"", source)), {"list", "request-check"})
+
     def test_the_validator_cannot_start_or_serve_anything(self):
         """Standard-library reading and checking only: no processes, no network, no writing."""
         allowed = {"argparse", "datetime", "hashlib", "json", "re", "sys", "pathlib", "typing"}
@@ -147,14 +163,15 @@ class NothingIsWiredInTest(unittest.TestCase):
     def test_studio_uses_only_the_git_and_gh_commands_it_is_meant_to(self):
         """Product Studio may read, fetch, build a contribution in its own temporary worktree and
         push that one branch. It may never rewrite history or move the product manager's checkout."""
-        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py")}
-        imported = set()
-        for node in ast.walk(ast.parse(sources["studio.py"])):
-            if isinstance(node, ast.Import):
-                imported |= {alias.name.split(".")[0] for alias in node.names}
-            elif isinstance(node, ast.ImportFrom):
-                imported.add((node.module or "").split(".")[0])
-        self.assertFalse(imported & {"subprocess", "socket", "http", "urllib", "shutil"}, imported)  # Git and gh go through collab.py
+        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py", "requests_in.py")}
+        for name in ("studio.py", "requests_in.py"):
+            imported = set()
+            for node in ast.walk(ast.parse(sources[name])):
+                if isinstance(node, ast.Import):
+                    imported |= {alias.name.split(".")[0] for alias in node.names}
+                elif isinstance(node, ast.ImportFrom):
+                    imported.add((node.module or "").split(".")[0])
+            self.assertFalse(imported & {"subprocess", "socket", "http", "urllib", "shutil"}, (name, imported))  # Git and gh go through collab.py
         used = set()
         for source in sources.values():
             used |= set(re.findall(r"git\(\[\"([a-z-]+)\"", source))                          # cell.git(["config", ...], project)
@@ -164,19 +181,78 @@ class NothingIsWiredInTest(unittest.TestCase):
         self.assertEqual(used - self.GIT_ALLOWED, set())
         gh_used = set(re.findall(r"gh\([a-z_.]+, \"pr\", \"([a-z]+)\"", sources["collab.py"])) | set(re.findall(r"\[\"pr\", \"([a-z]+)\"", sources["collab.py"]))
         self.assertEqual(gh_used, {"list", "create", "view"})  # never merge, close, review or edit
+        collab_source = sources["collab.py"]
+        self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"issue\", \"([a-z]+)\"", collab_source)), {"list", "view", "edit", "comment", "close"})
+        self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"label\", \"([a-z]+)\"", collab_source)), {"create"})
+        self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"repo\", \"([a-z]+)\"", collab_source)), {"view"})
+        self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"([a-z]+)\"", collab_source)), {"pr", "issue", "label", "repo", "api"})
+        # gh api only reads, and only the two paths that say who labelled an issue and what access that account has.
+        api_calls = re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"api\"[^\n]*", collab_source)
+        self.assertEqual(len(api_calls), 2, api_calls)
+        self.assertTrue(all(call.startswith("gh_json(") for call in api_calls), api_calls)  # a read, never a write
+        self.assertEqual(sorted(re.search(r"(EVENTS_PATH|PERMISSION_PATH)\.format", call).group(1) for call in api_calls), ["EVENTS_PATH", "PERMISSION_PATH"])
+        self.assertIn('EVENTS_PATH = "repos/{repository}/issues/{number}/events?per_page=100"', collab_source)
+        self.assertIn('PERMISSION_PATH = "repos/{repository}/collaborators/{login}/permission"', collab_source)
+        for flag in ("\"-X\"", "\"--method\"", "\"-F\"", "\"--field\"", "\"--raw-field\"", "\"--input\""):
+            self.assertNotIn(flag, collab_source, flag)
+        # A label is added only from MACH's own status labels, never removed by Studio, and never created with --force.
+        edits = re.findall(r"\"issue\", \"edit\"[^\n]*", collab_source)
+        self.assertTrue(edits)
+        self.assertTrue(all("\"--add-label\", label" in edit for edit in edits), edits)
+        self.assertIn("if label not in labels:", collab_source)
+        self.assertNotIn("--remove-label", collab_source)
+        studio_source = sources["studio.py"] + sources["requests_in.py"]
+        self.assertNotIn("STATUS_LABELS[", studio_source)
+        self.assertIn("rules.STATUS_LABELS)", sources["requests_in.py"])
+        self.assertNotIn("--force", re.search(r"\"label\", \"create\"[^\n]*\n[^\n]*", collab_source).group(0))
         for source in sources.values():
             for word in ("--force", "\"-f\"", "--force-with-lease", "\"reset\"", "\"checkout\"", "\"switch\"", "\"rebase\"", "\"stash\"", "\"pull\"",
                          "\"clean\"", "--no-verify", "--no-gpg-sign", "--admin", "--auto", "runner.json", "read_local_policy", "run.py", "ticket-new",
-                         "cell_dir", "write_cell"):
+                         "cell_dir", "write_cell", "ticket.py", "import ticket", "--delete", "\"lock\"", "\"transfer\""):
                 self.assertNotIn(word, source, word)
+        # studio.py has its own `slice reopen`; no GitHub reopen exists anywhere Studio reaches GitHub.
+        for name in ("collab.py", "requests_in.py"):
+            for word in ("reopen", "lock", "transfer"):
+                self.assertNotIn(word, re.sub(r"(?i)\bblock\w*|\bclock\w*|\blocal\w*", "", sources[name]), (name, word))
         # A push names an exact commit and a branch under the product prefix; nothing else is pushed.
         pushes = re.findall(r"git\([^\n]*\"push\"[^\n]*", "\n".join(sources.values()))
         self.assertEqual(len(pushes), 1)
         self.assertIn("refs/heads/{branch}", pushes[0])
         self.assertIn("branch = studio.shared.prefix + wave_id", sources["studio.py"])
 
+    def test_studio_imports_only_the_rules_from_the_ticket_skill(self):
+        """Product Studio shares the ticket skill's issue rules and nothing else from it."""
+        ticket_modules = {path.stem for path in (ROOT / "skills" / "ticket" / "scripts").glob("*.py")}
+        self.assertIn("issue_rules", ticket_modules)
+        found = set()
+        for path in sorted((ROOT / "skills" / "product-studio").rglob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text())):
+                if isinstance(node, ast.Import):
+                    found |= {alias.name.split(".")[0] for alias in node.names} & ticket_modules
+                elif isinstance(node, ast.ImportFrom):
+                    found |= {(node.module or "").split(".")[0]} & ticket_modules
+        self.assertEqual(found, {"issue_rules"})
+
+    def test_issue_rules_is_pure(self):
+        """The shared rules decide and format; they run nothing, write nothing and reach nothing."""
+        tree = ast.parse((ROOT / "skills" / "ticket" / "scripts" / "issue_rules.py").read_text())
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [(node.module or "").split(".")[0]]
+            for name in names:
+                self.assertIn(name, {"hashlib", "json", "re", "typing", "unicodedata"}, f"issue_rules.py imports {name}")
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                self.assertNotIn(node.func.id, ("open", "eval", "exec", "__import__", "compile"))
+            if isinstance(node, ast.Attribute):
+                self.assertFalse(node.attr.startswith("write_") or node.attr in ("unlink", "mkdir", "system", "popen", "run"), node.attr)
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, ("subprocess", "os", "socket"))
+
     def test_report_never_authorizes(self):
-        for name in ("product.py", "studio.py", "collab.py"):
+        for name in ("product.py", "studio.py", "collab.py", "requests_in.py"):
             source = (PRODUCT_SCRIPTS / name).read_text()
             self.assertNotIn('"factory_authorized": True', source)
         for name in ("product.py", "studio.py"):

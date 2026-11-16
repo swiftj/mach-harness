@@ -34,6 +34,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collab  # noqa: E402
 import product  # noqa: E402
+import requests_in  # noqa: E402
 
 
 class StudioError(Exception):
@@ -88,6 +89,16 @@ def intent_modules():
     return cell, validate_slice
 
 
+def ticket_rules():
+    """The ticket skill's issue_rules.py, and nothing else from that skill: which label event
+    decides, redaction, bounding and fencing issue text, and the status comment templates."""
+    scripts = str(sibling("ticket") / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import issue_rules  # noqa: E402
+    return issue_rules
+
+
 KINDS = {
     "epic": ("epics", "EPIC", product.EPIC_RE, "epic_id"),
     "slice": ("slices", "SLICE", product.SLICE_RE, "slice_id"),
@@ -136,6 +147,10 @@ class Studio:
                 raise StudioError(f"{folder} is a symbolic link. Product Studio only works in a real folder inside the project.")
         self.shared = collab.Shared(project, self.cell.load_config(project))
         self._theirs: Optional[Dict[str, bytes]] = None
+
+    def requests(self) -> requests_in.Requests:
+        """GitHub issues labelled as requests: the cache, pick-up and the outbox of status writes."""
+        return requests_in.Requests(self.project, self.home, self.cell.load_config(self.project), ticket_rules(), write)
 
     # ---- workspace ----
 
@@ -655,12 +670,29 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
         "needs_reconciling": reconciling(sync),
         "shared_project": shared_project_words(studio),
         "last_refreshed": session.get("refreshed_at"),
+        **github_updates_waiting(studio),
         "structurally_valid": structural["valid"] if structural else None,
         "structural_errors": structural["errors"] if structural else [],
         "factory_authorized": False,
         "suggested_next": [action["sentence"] for action in actions],
         "next_actions": [{key: action[key] for key in ("kind", "target", "title", "reason", "related")} for action in actions],
     }
+
+
+def github_updates_waiting(studio: Studio) -> Dict[str, Any]:
+    """Status updates to requests' issues not made yet (read from the local cache; no network).
+    Nothing at all when there are none, so a project without requests reports as before."""
+    outbox = studio.requests().load()["outbox"]
+    waiting = len([entry for entry in outbox if entry.get("state") not in ("done", "gave_up")])
+    given_up = len([entry for entry in outbox if entry.get("state") == "gave_up" and not entry.get("reported")])
+    found: Dict[str, Any] = {}
+    if waiting:
+        found.update(github_updates_waiting=waiting,
+                     github_updates_note=f"{waiting} update{'s' if waiting != 1 else ''} to GitHub waiting; they will be sent on the next refresh.")
+    if given_up:
+        found.update(github_updates_not_made=given_up,
+                     github_updates_not_made_note=f"{given_up} update{'s' if given_up != 1 else ''} to GitHub could not be made and will not be tried again; refresh to see which.")
+    return found
 
 
 def shared_wave(studio: Studio, wave_id: str, data: Dict[str, Any], theirs: Dict[str, bytes], ledger: Dict[str, Any], source: Any) -> Dict[str, Any]:
@@ -838,32 +870,40 @@ def reserved_ids(studio: Studio) -> Dict[str, Any]:
     }
 
 
-def cmd_slice_new(studio: Studio, args: argparse.Namespace) -> int:
+def start_slice(studio: Studio, epic_id: str, title: str, depends_on: Sequence[str], given_id: Optional[str],
+                origin: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The steps of `slice new`, shared with `request pick`, which also records where the slice came from."""
     studio.sync()
-    epic = studio.load("epic", args.epic)
+    epic = studio.load("epic", epic_id)
     if epic.get("status") in ("completed", "superseded"):
-        raise StudioError(f"{args.epic} is {state(epic.get('status'))}; a new slice needs an open epic.")
-    if args.id:
-        if not product.SLICE_RE.fullmatch(args.id):
-            raise StudioError(f"'{args.id}' is not a usable slice ID, such as SLICE-004.")
-        number = int(args.id.split("-")[1])
+        raise StudioError(f"{epic_id} is {state(epic.get('status'))}; a new slice needs an open epic.")
+    if given_id:
+        if not product.SLICE_RE.fullmatch(given_id):
+            raise StudioError(f"'{given_id}' is not a usable slice ID, such as SLICE-004.")
+        number = int(given_id.split("-")[1])
         used, reserved = studio.cell.slice_ids(studio.project)
         if number in used:
-            raise StudioError(f"{args.id} is already taken by {used[number]}.")
+            raise StudioError(f"{given_id} is already taken by {used[number]}.")
         if number not in reserved:
-            raise StudioError(say(f"{args.id} is not a reserved ID. Leave --id out to take the next free one; pass it only to pick up an ID an earlier spec deferred this feature to.",
-                                  f"{args.id} is not a reserved ID. Leave the ID out to take the next free one; give one only to pick up an ID an earlier spec deferred this feature to."))
-        slice_id = args.id
+            raise StudioError(say(f"{given_id} is not a reserved ID. Leave --id out to take the next free one; pass it only to pick up an ID an earlier spec deferred this feature to.",
+                                  f"{given_id} is not a reserved ID. Leave the ID out to take the next free one; give one only to pick up an ID an earlier spec deferred this feature to."))
+        slice_id = given_id
     else:
         slice_id = studio.next_id("slice")
-    data = {"schema_version": 1, "slice_id": slice_id, "project_id": studio.project_id(), "epic_id": args.epic, "revision": 1,
-            "title": args.title.strip(), "status": "draft", "dependencies": clean_list(args.depends_on, "dependency"),
+    data = {"schema_version": 1, "slice_id": slice_id, "project_id": studio.project_id(), "epic_id": epic_id, "revision": 1,
+            "title": title.strip(), "status": "draft", "dependencies": clean_list(depends_on, "dependency"),
             "open_questions": [], "spec_path": None, "spec_sha256": None}
+    if origin is not None:
+        data["origin"] = origin
     studio.commit_or_restore([("slice", data)], "Starting the slice")
     session = studio.session()
     session["current_slice"] = slice_id
     studio.save_session(session)
-    return emit({"slice": data, **slice_paths(studio, slice_id), "ids": reserved_ids(studio)})
+    return {"slice": data, **slice_paths(studio, slice_id), "ids": reserved_ids(studio)}
+
+
+def cmd_slice_new(studio: Studio, args: argparse.Namespace) -> int:
+    return emit(start_slice(studio, args.epic, args.title, args.depends_on, args.id))
 
 
 def edit_refusal(slice_id: str, data: Dict[str, Any]) -> Optional[str]:
@@ -917,7 +957,17 @@ def cmd_slice_resume(studio: Studio, args: argparse.Namespace) -> int:
         "resume_note": (session["notes"].get(slice_id) or {}).get("note"),
         "open_questions": data.get("open_questions") or [],
         "check": check, "ids": reserved_ids(studio),
+        **request_field(studio, slice_id, data),
     })
+
+
+def request_field(studio: Studio, slice_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    """For a slice that came from a request: the request's text as it was when the slice was
+    started, fenced as data. A slice with no origin gets no field at all."""
+    origin = data.get("origin")
+    if not isinstance(origin, dict):
+        return {}
+    return {"request": studio.requests().fenced_for(slice_id, origin)}
 
 
 def cmd_slice_pause(studio: Studio, args: argparse.Namespace) -> int:
@@ -1000,6 +1050,7 @@ def cmd_slice_show(studio: Studio, args: argparse.Namespace) -> int:
         "why": why_sections(intent_text, studio.cell),
         "check": check,
         "resume_note": (studio.session()["notes"].get(slice_id) or {}).get("note"),
+        **request_field(studio, slice_id, data),
         "factory_authorized": False,
     })
 
@@ -1243,6 +1294,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
     if fetched:
         session["refreshed_at"] = now(None)
         studio.save_session(session)
+    requests = studio.requests().refresh(studio.all("slice"))  # never refuses: GitHub's problems are reported in the block
     return emit({
         "refreshed": fetched,
         "problem": None if fetched else problem,
@@ -1252,7 +1304,99 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         "approvals_withdrawn": sync["approvals_withdrawn"],
         "needs_reconciling": reconciling(sync),
         **({"repaired": sync["repaired"]} if sync.get("repaired") else {}),
+        "requests": requests,
+        "factory_authorized": False,
     })
+
+
+# ---- requests: GitHub issues labelled as requests (M8) ----
+
+REQUEST_NOTE = "Requests come from GitHub issues. Picking one up only starts a draft slice; nothing is approved, sent or started."
+
+
+def request_number(value: str) -> int:
+    if not value.isdigit() or not 1 <= int(value) < 10 ** 9:
+        raise StudioError(f"'{value}' is not a request number, such as 42.")
+    return int(value)
+
+
+def request_error(exc: requests_in.RequestError) -> StudioError:
+    return StudioError(say(str(exc), exc.app or str(exc)))
+
+
+def cmd_request_list(studio: Studio, args: argparse.Namespace) -> int:
+    reqs = studio.requests()
+    return emit({"requests": reqs.block(reqs.load(), refreshed=False, slices=studio.all("slice")), "note": REQUEST_NOTE, "factory_authorized": False})
+
+
+def cmd_request_show(studio: Studio, args: argparse.Namespace) -> int:
+    number = request_number(args.number)
+    reqs = studio.requests()
+    data = reqs.load()
+    if str(number) not in data["items"]:
+        raise StudioError(f"No request #{number} is known here. Refresh to see the open requests.")
+    # The text only fenced, and none at all for a request that does not count.
+    return emit({"request": reqs.show(data, number, studio.all("slice")), "note": REQUEST_NOTE, "factory_authorized": False})
+
+
+def cmd_request_pick(studio: Studio, args: argparse.Namespace) -> int:
+    number = request_number(args.number)
+    reqs = studio.requests()
+    try:
+        record, offline = reqs.check_pick(number, args.also)
+    except requests_in.RequestError as exc:
+        raise request_error(exc)
+    repository = reqs.load().get("repository")
+    origin = {"kind": "github_issue", "repository": repository, "number": number}
+    started = start_slice(studio, args.epic, args.title, [], args.id, origin)  # the local act completes before any GitHub write
+    slice_id = started["slice"]["slice_id"]
+    writes = reqs.record_pick(number, record, slice_id)
+    gave_up = writes.pop("gave_up", 0)
+    return emit({**started, "picked": True, "request": reqs.fenced_for(slice_id, origin),
+                 "github_updates": {**writes, **({"could_not_be_made": gave_up} if gave_up else {}),
+                                    "note": None if not writes["waiting"] and not gave_up else
+                                    "Some updates to GitHub could not be made yet; they will be sent on the next refresh. Your slice is saved."
+                                    if not gave_up else "Some updates to GitHub could not be made and will not be tried again. Your slice is saved."},
+                 "used_cached_request": offline,
+                 "note": "A draft slice was started from the request. The interview still asks you every question; nothing is approved or sent.",
+                 "factory_authorized": False})
+
+
+def cmd_request_link(studio: Studio, args: argparse.Namespace) -> int:
+    number = request_number(args.number)
+    studio.sync()
+    reqs = studio.requests()
+    try:
+        record = reqs.accepted(number)
+    except requests_in.RequestError as exc:
+        raise request_error(exc)
+    data = require_editable(studio, args.slice_id)
+    origin = {"kind": "github_issue", "repository": record["repository"], "number": number}
+    existing = data.get("origin")
+    if existing is not None and existing != origin:
+        raise StudioError(f"{args.slice_id} already came from another request (#{(existing or {}).get('number')}). A slice records one request.")
+    data["origin"] = origin
+    studio.commit_or_restore([("slice", data)], f"Linking {args.slice_id} to request #{number}")
+    reqs.record_link(number, args.slice_id)
+    return emit({"linked": True, "slice": studio.load("slice", args.slice_id), "request": number,
+                 "note": "Only the draft work order changed. Nothing was written to GitHub.", "factory_authorized": False})
+
+
+def cmd_request_met(studio: Studio, args: argparse.Namespace) -> int:
+    number = request_number(args.number)
+    studio.sync()
+    reqs = studio.requests()
+    repository = reqs.load().get("repository")
+    approved = sorted(slice_id for slice_id, work in studio.all("slice").items()
+                      if work.get("status") == APPROVED and requests_in.origin_number(work, repository) == number)
+    if not repository or not approved:
+        raise StudioError(f"Request #{number} has no approved slice yet. A request is marked as met only once at least one slice made from it is approved.")
+    writes = reqs.queue_close(number)
+    return emit({"met": True, "request": number, "approved_slices": approved,
+                 "closed": writes["made"] > 0,
+                 "note": "The issue was closed on GitHub as completed." if writes["made"] else
+                         "The issue could not be closed yet; it will be closed on the next refresh.",
+                 "factory_authorized": False})
 
 
 def resolve_artifact(given: str, candidates: Sequence[str]) -> str:
@@ -1491,6 +1635,9 @@ def request_text(studio: Studio, wave: Dict[str, Any]) -> Tuple[str, str]:
             lines.append(f"- Risk tier proposed by product: {intent['risk']}")
         if work.get("dependencies"):
             lines.append(f"- Depends on: {', '.join(work['dependencies'])}")
+        origin = work.get("origin")
+        if isinstance(origin, dict) and type(origin.get("number")) is int:
+            lines.append(f"- Request: Refs #{origin['number']}")  # the number only; never the issue's text, and never Closes
         lines.append("")
     lines.append("Sent from MACH Product Studio.")
     return title, "\n".join(lines)
@@ -1634,7 +1781,14 @@ def cmd_send(studio: Studio, args: argparse.Namespace) -> int:
             entry["pull_request"] = request
             studio.save_ledger(ledger)
     request = entry.get("pull_request") or {}
-    return emit({"sent": True, "published": publishing, "still_unsent": unsent, "wave_id": wave_id, "shared": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
+    request_updates = None
+    if publishing == "definition" and isinstance(request.get("number"), int):
+        slices = studio.all("slice")
+        try:
+            request_updates = studio.requests().queue_sent({sid: slices.get(sid) or {} for sid in wave.get("slices") or []}, request["number"])
+        except (requests_in.RequestError, OSError, ValueError) as exc:  # the wave is sent; a status comment never undoes that
+            request_updates = {"made": 0, "waiting": 0, "problem": str(exc)}
+    return emit({"sent": True, "request_updates": request_updates, "published": publishing, "still_unsent": unsent, "wave_id": wave_id, "shared": [describe_file(relative, relative not in theirs) for relative in sorted(changed)],
                  "status": "Waiting for review" if request else say("Sent, pull request not opened", "Sent, review request not opened"),
                  "state": "waiting_for_review" if request else "sent_request_not_opened",
                  "pull_request": request.get("url"), "branch": branch,
@@ -1776,6 +1930,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="slice")
 
+    request = sub.add_parser("request", help="GitHub issues labelled as requests").add_subparsers(dest="action", required=True)
+    request.add_parser("list", help="the requests found at the last refresh; changes nothing").set_defaults(func=cmd_request_list)
+    p = request.add_parser("show", help="one request, its text fenced as data; changes nothing")
+    p.add_argument("number")
+    p.set_defaults(func=cmd_request_show)
+    p = request.add_parser("pick", help="start a slice from a request (only on the product manager's word)")
+    p.add_argument("number")
+    p.add_argument("--epic", required=True)
+    p.add_argument("--title", required=True)
+    p.add_argument("--id", help="only to pick up an ID that an earlier spec reserved for this feature")
+    p.add_argument("--also", action="store_true", help="pick it up even though another product manager already has")
+    p.set_defaults(func=cmd_request_pick)
+    p = request.add_parser("link", help="record that a draft slice also serves a request (only on the product manager's word)")
+    p.add_argument("number")
+    p.add_argument("slice_id")
+    p.set_defaults(func=cmd_request_link)
+    p = request.add_parser("met", help="close the request's issue as completed (only on the product manager's word)")
+    p.add_argument("number")
+    p.set_defaults(func=cmd_request_met)
+
     acceptance = sub.add_parser("acceptance", help="product's decision on a qualified release of a wave").add_subparsers(dest="action", required=True)
     p = acceptance.add_parser("record", help="record accepted or rejected for one wave at one release")
     p.add_argument("wave_id")
@@ -1837,7 +2011,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if not project.is_dir():
             raise StudioError(f"{project} is not a folder.")
         return args.func(Studio(project), args)
-    except (StudioError, collab.CollabError) as exc:
+    except (StudioError, collab.CollabError, requests_in.RequestError) as exc:
         return refuse(exc)
     except FileNotFoundError as exc:
         if exc.filename == "git":  # Git is not installed: say so plainly, not as a traceback

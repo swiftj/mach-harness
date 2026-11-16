@@ -8,6 +8,8 @@
     ticket.py update <id> [...]           change state or labels, add a comment
     ticket.py comment <id> --body B       add a comment
     ticket.py ingest-telemetry SRC FILE   turn a crash, alert or failed build into an AUTO- ticket
+    ticket.py request-status OWNER/REPO#N --moment merged|blocked --ref ID... --nonce HEX
+                                          status label and comment on a request's GitHub issue (M8)
 
 Providers: local (Markdown files in .factory/tickets/, the default), github (gh), gitea-cli (gt),
 jira, fossil. Local and GitHub are fully handled here. For the others this script runs the
@@ -93,11 +95,9 @@ STATE_NAMES = {
     "fossil": {"open": "Open", "in_progress": "Open", "needs_review": "Review", "blocked": "Deferred", "closed": "Closed"},
 }
 
-EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-SECRET_RE = re.compile(
-    r"(?i)\b(bearer|token|api[_-]?key|secret|password|passwd|authorization|cookie|session(?:id)?)\b(\s*[=:]\s*|\s+)((?:bearer\s+|basic\s+)?(?:\"[^\"]*\"|'[^']*'|\S+))"
-)
-LONG_TOKEN_RE = re.compile(r"\b(?=[A-Za-z0-9_\-]*\d)(?=[A-Za-z0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{32,}\b")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from issue_rules import EMAIL_RE, LONG_TOKEN_RE, SECRET_RE, redact  # noqa: E402,F401  one redaction for telemetry and requests
+import issue_rules  # noqa: E402  the shared request rules: templates, markers, status labels
 
 
 class TicketError(Exception):
@@ -106,13 +106,6 @@ class TicketError(Exception):
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def redact(text: str) -> str:
-    """Remove personal data and credentials before text leaves the raw payload."""
-    text = SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}<redacted>", text)
-    text = EMAIL_RE.sub("<email>", text)
-    return LONG_TOKEN_RE.sub("<redacted>", text)
 
 
 def find_project(start: Path) -> Path:
@@ -869,6 +862,7 @@ def cmd_ingest(ctx: Context, args: argparse.Namespace) -> int:
     seed = seed_intent(ticket_id, source, info)
     body = seed.split("## 1. Problem Context & Telemetry Stack Trace\n", 1)[1]
     body = "## Problem Context & Telemetry Stack Trace\n" + body.replace("## 2. Objective & Fix Scope", "## Acceptance criteria")
+    body = body.rstrip("\n") + "\n\n" + issue_rules.fault_line(fingerprint) + "\n"  # how a repeat of this fault is recognised (M8 D7)
     ticket = normalized(ticket_id, "telemetry", title, body, telemetry_labels(source, info), "open",
                         telemetry={"source": source, **{k: v for k, v in info.items() if k != "trace" and v not in (None, "", {})}},
                         fingerprint=fingerprint, occurrences_ingested=1)
@@ -887,6 +881,266 @@ def cmd_ingest(ctx: Context, args: argparse.Namespace) -> int:
         "seeded_intent": str(seed_path), "tracker": tracker or "not synced", "next": f"Groom it with the intent skill: {ticket_id} --headless",
     }, indent=2, ensure_ascii=False))
     return 0
+
+
+# ---------------------------------------------------------------- request status (M8)
+#
+# Status writes on a product request's GitHub issue, called by the run skill's intake. Always gh,
+# whatever tickets.provider says, and only on the repository the project's `origin` remote names.
+# Only OWNER/REPO is handed to gh, never the remote's address, which may carry a credential.
+# A gh failure is reported by its kind alone; gh's own words are never relayed.
+
+REQUEST_MOMENTS = {
+    # moment: (labels added, labels removed). A product request's blocked moment is a comment only:
+    # mach:blocked stays with monitoring issues, which are their own execution tickets.
+    "merged": (("mach:ready",), (issue_rules.GROOMING,)),
+    "blocked": ((), ()),
+}
+REQUEST_RE = re.compile(r"^([^#\s]+)#([0-9]{1,9})$")
+GITHUB_REMOTE_RE = re.compile(r"^(?:https://(?:[^/@\s]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)"
+                              r"([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
+GH_TIMEOUT_SECONDS = 60
+GH_FAILURES = (  # (kind, marks), checked in order against gh's output in lower case
+    ("network", ("could not resolve host", "no such host", "dial tcp", "timed out", "timeout", "request canceled", "connection refused",
+                 "connection reset", "network is unreachable", "error connecting to", "tls handshake", "unexpected eof")),
+    ("auth", ("gh auth login", "not logged in", "bad credentials", "http 401", "authentication", "token is expired", "token has expired")),
+    ("refused", ("http 403", "forbidden", "resource not accessible", "must have", "saml", "single sign-on", "rate limit", "http 422",
+                 "issues are disabled", "locked")),
+    ("not_found", ("not found", "http 404", "could not resolve to")),
+)
+EXIT_ALREADY_DONE = 3
+EXIT_PENDING = 4
+
+
+class GhFailed(Exception):
+    """A gh call that did not succeed; carries only the classified kind."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.kind = kind
+
+
+def gh_failure_kind(output: str) -> str:
+    text = output.lower()
+    return next((kind for kind, marks in GH_FAILURES if any(mark in text for mark in marks)), "other")
+
+
+def gh_call(project: Path, *args: str) -> str:
+    """Run gh with a fixed argument list; returns stdout or raises GhFailed with the kind only."""
+    if shutil.which("gh") is None:
+        raise GhFailed("no_gh")
+    env = dict(os.environ, GH_PROMPT_DISABLED="1", NO_COLOR="1")
+    try:
+        done = subprocess.run(["gh", *args], cwd=str(project), capture_output=True, text=True, timeout=GH_TIMEOUT_SECONDS, env=env)
+    except subprocess.TimeoutExpired:
+        raise GhFailed("network")
+    except OSError:
+        raise GhFailed("no_gh")
+    if done.returncode != 0:
+        raise GhFailed(gh_failure_kind(done.stderr + "\n" + done.stdout))
+    return done.stdout
+
+
+def origin_repository(project: Path) -> Optional[str]:
+    """OWNER/REPO as the project's `origin` remote names it, or None when it is not on github.com."""
+    try:
+        done = subprocess.run(["git", "config", "--get", "remote.origin.url"], cwd=str(project), capture_output=True, text=True)
+    except OSError:
+        return None
+    named = GITHUB_REMOTE_RE.fullmatch(done.stdout.strip()) if done.returncode == 0 else None
+    return named.group(1) if named else None
+
+
+def parse_request(value: str) -> Tuple[str, int]:
+    match = REQUEST_RE.fullmatch(value or "")
+    if not match or not issue_rules.is_repository(match.group(1)) or not issue_rules.is_issue_number(int(match.group(2))):
+        raise TicketError("Name the request as OWNER/REPO#N, for example acme/app#42.")
+    return match.group(1), int(match.group(2))
+
+
+def status_label(project: Path, repository: str, number: int, label: str) -> None:
+    """Add one of MACH's status labels. It is created only when GitHub says it is missing, only for
+    a name MACH owns, and never with --force, so an existing label is never overwritten."""
+    if label not in issue_rules.STATUS_LABELS:
+        raise TicketError(f"{label} is not one of MACH's status labels.")
+    edit = ("issue", "edit", str(number), "--repo", repository, "--add-label", label)
+    try:
+        gh_call(project, *edit)
+    except GhFailed as failed:
+        if failed.kind != "not_found":
+            raise
+        spec = issue_rules.STATUS_LABELS[label]
+        gh_call(project, "label", "create", label, "--repo", repository, "--color", spec["color"], "--description", spec["description"])
+        gh_call(project, *edit)
+
+
+def issue_is_here(project: Path, repository: str, number: int) -> bool:
+    """Checked before any write: the issue GitHub finds by this number must still live in
+    `repository`. An issue moved to another repository answers at its new address and is never written to."""
+    found = json.loads(gh_call(project, "issue", "view", str(number), "--repo", repository, "--json", "number,url") or "null")
+    url = found.get("url") if isinstance(found, dict) else None
+    return isinstance(url, str) and url.lower().startswith(f"https://github.com/{repository}/issues/".lower())
+
+
+def cmd_request_status(ctx: Context, args: argparse.Namespace) -> int:
+    repository, number = parse_request(args.request)
+    refs = list(dict.fromkeys(args.ref or []))
+    if not issue_rules.is_nonce(args.nonce):
+        raise TicketError("A status write needs the intake ledger's nonce (--nonce, 32 hexadecimal characters); it was missing or malformed.")
+    try:
+        written = issue_rules.comment(args.moment, refs, args.nonce)
+    except ValueError as exc:
+        raise TicketError(f"The references do not fit the {args.moment} status: {exc}.")
+    remote = origin_repository(ctx.project)
+    if remote is None:
+        raise TicketError("This project's origin remote is not a GitHub repository, so it has no requests to update.")
+    if remote.lower() != repository.lower():
+        raise TicketError(f"{repository} is not this project's origin repository ({remote}). Status is written only there.")
+    github = ctx.tickets.get("github") if isinstance(ctx.tickets.get("github"), dict) else {}
+    comments_on = github.get("status_comments") is not False
+    add, remove = REQUEST_MOMENTS[args.moment]
+    result: Dict[str, Any] = {"request": f"{repository}#{number}", "moment": args.moment, "key": written["key"], "refs": refs,
+                              "labels_added": [], "labels_removed": [], "comment": "off", "status": "pending", "kind": None}
+
+    def answer(status: str, kind: Optional[str] = None) -> int:
+        result.update(status=status, kind=kind)
+        print(json.dumps(result, indent=2))
+        return {"done": 0, "already_done": EXIT_ALREADY_DONE}.get(status, EXIT_PENDING)
+
+    try:
+        # The repository as GitHub names it, resolved the way Product Studio resolves it.
+        named = json.loads(gh_call(ctx.project, "repo", "view", remote, "--json", "nameWithOwner") or "null")
+        canonical = named.get("nameWithOwner") if isinstance(named, dict) else None
+        if not issue_rules.is_repository(canonical):
+            return answer("pending", "other")
+        if canonical != repository:
+            raise TicketError(f"{repository} is not this project's origin repository ({canonical}). Status is written only there.")
+        if not issue_is_here(ctx.project, repository, number):
+            return answer("pending", "moved")  # the issue has moved to another repository: nothing is written
+        for label in add:
+            status_label(ctx.project, repository, number, label)
+            result["labels_added"].append(label)
+        for label in remove:
+            try:
+                gh_call(ctx.project, "issue", "edit", str(number), "--repo", repository, "--remove-label", label)
+                result["labels_removed"].append(label)
+            except GhFailed as failed:
+                if failed.kind != "not_found":  # a label that does not exist is already absent
+                    raise
+        if not comments_on:
+            return answer("done")
+        # A write whose outcome was lost may already be there: its hidden marker says so.
+        view = json.loads(gh_call(ctx.project, "issue", "view", str(number), "--repo", repository, "--json", "comments") or "null")
+        comments = view.get("comments") if isinstance(view, dict) else None
+        if not isinstance(comments, list):
+            return answer("pending", "other")
+        if issue_rules.has_marker([item.get("body") for item in comments if isinstance(item, dict)], written["key"]):
+            result["comment"] = "already_present"
+            return answer("already_done")
+        result["comment"] = "not_posted"
+        gh_call(ctx.project, "issue", "comment", str(number), "--repo", repository, "--body", written["body"])
+        result["comment"] = "posted"
+        return answer("done")
+    except GhFailed as failed:
+        return answer("pending", failed.kind)
+    except ValueError:
+        return answer("pending", "other")
+# ---------------------------------------------------------------- monitoring requests (read only)
+
+GH_API_HEADERS = ("-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28")
+ISSUE_PATH = "repos/{repository}/issues/{number}"
+ISSUE_JQ = "{id: .user.id, login: .user.login, type: .user.type, created_at: .created_at, state: .state, title: .title, body: .body}"
+EVENTS_PATH = "repos/{repository}/issues/{number}/events?per_page=100"
+EVENTS_JQ = ('.[] | select(.event=="labeled" or .event=="unlabeled") | {event, label: .label.name, '
+             'login: .actor.login, id: .actor.id, type: .actor.type, app: (.performed_via_github_app != null), at: .created_at}')
+PERMISSION_PATH = "repos/{repository}/collaborators/{login}/permission"
+PERMISSION_JQ = "{permission, role_name}"
+
+
+def gh_read(ctx: Context, *args: str) -> Tuple[Optional[str], Optional[Dict[str, str]]]:
+    """One read-only gh call, through gh_call: a time limit, and a failure reported by its kind alone.
+    gh's own words are never relayed. Returns (output, None) or (None, the failure)."""
+    try:
+        return gh_call(ctx.project, *args), None
+    except GhFailed as failed:
+        kind = "forbidden" if failed.kind == "refused" else failed.kind
+        return None, {"kind": kind, "reason": f"GitHub did not answer the read ({kind})"}
+
+
+def cmd_request_check(ctx: Context, args: argparse.Namespace) -> int:
+    """Who filed issue N, who applied the request label and with what access, and which fault it reports.
+    Reads only: makes no write to GitHub or to the project. The issue's text is not printed, only its
+    redacted, bounded title and the fault key computed from it."""
+    if ctx.provider != "github":
+        raise TicketError("request-check reads GitHub issues; this project's ticket provider is " + ctx.provider + ".")
+    number = int(args.number) if str(args.number).isdigit() else 0
+    if not issue_rules.is_issue_number(number):
+        raise TicketError(f"'{args.number}' is not an issue number.")
+    github = (ctx.tickets.get("github") or {}) if isinstance(ctx.tickets.get("github"), dict) else {}
+    label = github.get("request_label") if isinstance(github.get("request_label"), str) and github["request_label"].strip() else issue_rules.DEFAULT_REQUEST_LABEL
+    accounts = issue_rules.monitor_accounts(github.get("monitor_accounts"))
+    report: Dict[str, Any] = {"number": number, "repository": None, "label": label, "author": None, "created_at": None, "issue_state": None,
+                              "title": None, "fault": None, "event": None, "permission": None, "failure": None}
+
+    def done(decision: Dict[str, Any]) -> int:
+        print(json.dumps({**report, "decision": decision}, indent=2, ensure_ascii=False))
+        return 0
+
+    out, failure = gh_read(ctx, "repo", "view", "--json", "nameWithOwner")
+    repository = None
+    if out is not None:
+        try:
+            repository = json.loads(out).get("nameWithOwner")
+        except (ValueError, AttributeError):
+            repository = None
+        if not issue_rules.is_repository(repository):
+            repository, failure = None, {"kind": "other", "reason": "GitHub did not name the repository"}
+    report["repository"] = repository
+    if repository is None:
+        report["failure"] = failure
+        return done({"monitoring": None, "state": "not_accepted", "reason": issue_rules.NOT_ACCEPTED["unconfirmed"], "labelled_by": None, "event": None})
+    out, failure = gh_read(ctx, "api", *GH_API_HEADERS, ISSUE_PATH.format(repository=repository, number=number), "--jq", ISSUE_JQ)
+    issue: Dict[str, Any] = {}
+    if out is not None:
+        try:
+            issue = json.loads(out)
+        except ValueError:
+            issue = {}
+        if not isinstance(issue, dict) or type(issue.get("id")) is not int:
+            issue, failure = {}, {"kind": "other", "reason": "GitHub's answer for the issue could not be read"}
+    if not issue:
+        report["failure"] = failure
+        return done({"monitoring": None, "state": "not_accepted", "reason": issue_rules.NOT_ACCEPTED["unconfirmed"], "labelled_by": None, "event": None})
+    author = {"id": issue["id"], "login": issue.get("login") if isinstance(issue.get("login"), str) else None, "type": issue.get("type") if isinstance(issue.get("type"), str) else None}
+    title, _ = issue_rules.bound_text(issue.get("title"), issue_rules.TITLE_LIMIT, one_line=True)
+    report.update({"author": author, "created_at": issue.get("created_at") if isinstance(issue.get("created_at"), str) else None,
+                   "issue_state": str(issue.get("state") or "").lower() or None, "title": title,
+                   "fault": issue_rules.fault_key(issue.get("title"), issue.get("body"))})
+    if not any(account["id"] == author["id"] for account in accounts):
+        return done(issue_rules.monitoring_acceptance(author, None, None, accounts))  # a person's request: nothing more is asked of GitHub
+    out, failure = gh_read(ctx, "api", "--paginate", *GH_API_HEADERS, EVENTS_PATH.format(repository=repository, number=number), "--jq", EVENTS_JQ)
+    if out is None:
+        report["failure"] = failure
+        return done(issue_rules.monitoring_acceptance(author, None, None, accounts, failure))
+    raw = []
+    for line in out.splitlines():
+        try:
+            raw.append(json.loads(line))
+        except ValueError:
+            continue
+    event = issue_rules.deciding_event(issue_rules.label_events(raw), label)
+    report["event"] = event
+    permission = None
+    if event is not None and event.get("id") != author["id"] and issue_rules.actor_problem(event) is None:
+        out, failure = gh_read(ctx, "api", *GH_API_HEADERS, PERMISSION_PATH.format(repository=repository, login=event["login"]), "--jq", PERMISSION_JQ)
+        if out is not None:
+            try:
+                permission = json.loads(out)
+            except ValueError:
+                permission, failure = None, {"kind": "other", "reason": "GitHub's permission answer could not be read"}
+        report["permission"] = permission if isinstance(permission, dict) else None
+        report["failure"] = failure
+    return done(issue_rules.monitoring_acceptance(author, event, permission, accounts, failure if permission is None else None))
 
 
 # ---------------------------------------------------------------- entry point
@@ -936,6 +1190,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-sync", action="store_true", help="write the inbox files only; do not file a ticket in the tracker")
     p.add_argument("--allow-duplicate", action="store_true", help="create a ticket even if the same fault already has an open one")
     p.set_defaults(func=cmd_ingest)
+
+    p = sub.add_parser("request-status", help="status label and comment on a product request's GitHub issue (called by intake)")
+    p.add_argument("request", help="OWNER/REPO#N; must be the origin remote's repository")
+    p.add_argument("--moment", required=True, choices=sorted(REQUEST_MOMENTS))
+    p.add_argument("--ref", action="extend", nargs="+", required=True, help="identifiers for the comment: SLICE-NNN@rN, ticket:ID")
+    p.add_argument("--nonce", help="the intake ledger's marker nonce; required")
+    p.set_defaults(func=cmd_request_status)
+    p = sub.add_parser("request-check", help="read only: who filed GitHub issue N and who applied the request label, with what access")
+    p.add_argument("number")
+    p.set_defaults(func=cmd_request_check)
     return parser
 
 

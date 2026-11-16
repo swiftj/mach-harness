@@ -166,8 +166,9 @@ class Lease:
 class Supervisor:
     def __init__(self, root: Path, config: Dict[str, Any], line: Any, *, next_step: Callable[[str], Dict[str, Any]],
                  audit: Callable[[], Dict[str, Any]], git: Callable[..., subprocess.CompletedProcess], run_script: Path, workflow: str,
-                 observe_due: Optional[Callable[[], Dict[str, Any]]] = None):
+                 observe_due: Optional[Callable[[], Dict[str, Any]]] = None, sibling: Optional[Callable[[str], Path]] = None):
         self.root = root
+        self.sibling = sibling  # where the other skills are: monitoring requests read the ticket station's shared rules
         self.observe_due = observe_due
         self.config = config
         self.line = line
@@ -237,6 +238,10 @@ class Supervisor:
             self.line.save(ledger)
         reconciled = self.line.reconcile()
         report["intake"] = {key: reconciled["intake"].get(key) for key in ("created", "updated", "superseded", "needs_person", "refused")}
+        station = self.monitoring(pol)
+        if station is not None:  # M8 D7: only when this machine's effective policy grants monitoring requests
+            taken = station.take_in()
+            report["monitoring"] = {key: taken.get(key) for key in ("taken_in", "duplicates", "not_accepted", "problem")}
         with self.line.lock("supervisor"):
             ledger = self.line.ledger()
             after = (ledger.get("source") or {}).get("commit")
@@ -249,6 +254,9 @@ class Supervisor:
             if allowed:
                 self.schedule(ledger, pol, plan, report)
                 ledger = self.line.ledger()
+                if station is not None:
+                    self.schedule_monitoring(station, ledger, pol, report)
+                    self.line.save(ledger)
                 report["state"] = "supervised"
                 report["factory_started"] = bool(report["started"])
             else:
@@ -550,6 +558,70 @@ class Supervisor:
             started = self.start(ledger, pol, ticket, slice_id, budget_usd)
             (report["started"] if started.get("started") else report["held"]).append(started)
 
+    # ---- monitoring requests (M8 D7) ----
+
+    def monitoring(self, pol: Dict[str, Any]) -> Any:
+        """The monitoring station, only when the effective policy grants it: this machine's explicit grant, supervised
+        autonomy, not forbidden by the project, and the Factory free to execute now. Otherwise None, and nothing is read."""
+        if not pol.get("monitoring_requests") or not policy_module.may_execute(pol)[0] or self.sibling is None:
+            return None
+        import monitoring
+        return monitoring.Monitoring(self.root, self.config, self.line, self.sibling)
+
+    def schedule_monitoring(self, station: Any, ledger: Dict[str, Any], pol: Dict[str, Any], report: Dict[str, Any]) -> None:
+        """Start monitoring tickets in two executions: grooming and planning, stopped before build; then, only if the
+        groomed risk tier is below High and within this machine's limit, the rest of the line. Every limit of the
+        product path applies; a ticket that cannot go on is parked for a person."""
+        supervisor = ledger["supervisor"]
+        entries = station.entries(ledger)
+
+        def live() -> List[Dict[str, Any]]:
+            return [record for record in supervisor["executions"].values() if record["state"] in LIVE]
+
+        def advance(entry: Dict[str, Any]) -> None:
+            ticket = entry["ticket_id"]
+            common = {"ticket_id": ticket, "slice_id": None}
+            if any(record["ticket_id"] == ticket for record in live()):
+                return
+            if ticket in supervisor["parked"]:
+                report["held"].append({"ticket_id": ticket, "why": "waiting for a person: " + supervisor["parked"][ticket]["reason"]})
+                return
+            step = self.next_step(ticket)
+            if entry["state"] == "grooming" and step.get("action") == "build":
+                ok, why = station.risk_gate(ticket, pol["max_risk"])
+                if not ok:
+                    self.park(ledger, ticket, why, common)
+                    report["held"].append({"ticket_id": ticket, "why": why})
+                    return
+                entry.update({"state": "building", "risk": why, "groomed_at": stamp()})
+            elif entry["state"] == "building":
+                ok, why = station.risk_gate(ticket, pol["max_risk"])  # read again: a plan may have raised it
+                if not ok:
+                    self.park(ledger, ticket, why, common)
+                    report["held"].append({"ticket_id": ticket, "why": why})
+                    return
+            until = "build" if entry["state"] == "grooming" else None if pol.get("allow_merge") else "merge"
+            if step.get("action") in (None, "stop") or step.get("action") == until:
+                why = step.get("reason") or "the line has stopped for this ticket"
+                if entry["state"] == "grooming" and step.get("action") in (None, "stop"):
+                    self.park(ledger, ticket, f"Headless grooming stopped for a person: {why}", common)
+                report["held"].append({"ticket_id": ticket, "why": why})
+                return
+            if len(live()) >= pol["limits"]["max_parallel"]:
+                report["held"].append({"ticket_id": ticket, "why": f"all {pol['limits']['max_parallel']} place(s) are in use"})
+                return
+            budget_usd, over = self.allowance(ledger, pol)
+            if over:
+                report["held"].append({"ticket_id": ticket, "why": over})
+                return
+            started = self.start(ledger, pol, ticket, None, budget_usd, first_stop=until if entry["state"] == "grooming" else None)
+            (report["started"] if started.get("started") else report["held"]).append(started)
+
+        for entry in sorted((item for item in entries.values() if item.get("state") in ("grooming", "building")), key=station.order):
+            advance(entry)
+        for ticket in station.select(ledger, pol["limits"]["max_parallel"] - len(live())):
+            advance(entries[ticket])
+
     def risk_of(self, ticket: str) -> Optional[str]:
         try:
             risk = json.loads((self.root / ".factory" / "worktrees" / ticket / "cell.json").read_text(encoding="utf-8")).get("risk")
@@ -557,9 +629,11 @@ class Supervisor:
             return None
         return risk if risk in RISKS else None
 
-    def start(self, ledger: Dict[str, Any], pol: Dict[str, Any], ticket: str, slice_id: str, budget_usd: Optional[float] = None) -> Dict[str, Any]:
+    def start(self, ledger: Dict[str, Any], pol: Dict[str, Any], ticket: str, slice_id: Optional[str], budget_usd: Optional[float] = None,
+              first_stop: Optional[str] = None) -> Dict[str, Any]:
         """Claim, then check everything once more, then start. The claim is on disk before any process exists.
-        `budget_usd` is the spending limit the run is given: the per-run limit, cut to what the day has left (allowance)."""
+        `budget_usd` is the spending limit the run is given: the per-run limit, cut to what the day has left (allowance).
+        `first_stop` stops the belt earlier than usual (a monitoring ticket's first execution stops before build)."""
         if budget_usd is None:
             budget_usd, over = self.allowance(ledger, pol)
             if over:
@@ -567,7 +641,7 @@ class Supervisor:
         supervisor = ledger["supervisor"]
         step = self.next_step(ticket)
         execution_id = "x" + secrets.token_hex(6)
-        until = None if pol.get("allow_merge") else "merge"
+        until = first_stop or (None if pol.get("allow_merge") else "merge")
         record = {"execution_id": execution_id, "ticket_id": ticket, "slice_id": slice_id, "state": "claimed", "claimed_at": stamp(), "runner_id": pol["runner_id"],
                   "instance": self.lease.instance, "session_id": str(uuid.uuid4()), "stage_at_start": step.get("stage"), "action_at_start": step.get("action"),
                   "until": until, "attempt": int((supervisor["attempts"].get(ticket) or {}).get("count") or 0) + 1, "wrapper_pid": None, "started_at": None,

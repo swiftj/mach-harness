@@ -34,6 +34,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import subprocess
 import sys
 import tarfile
@@ -70,9 +71,12 @@ APPROVED = "approved_for_engineering"
 DEFAULT_MAX_PARALLEL = 3
 MAX_PRODUCT_FILE_BYTES = 1024 * 1024  # a product file larger than this is refused as invalid, never parsed
 RISK_FLOOR = "Medium"  # product-sourced work is never reviewed below this tier
+REQUEST_STATUS_MAX_ATTEMPTS = 20  # a status write GitHub could not be reached for is given up after this many tries
+REQUEST_STATUS_GIVE_UP_KINDS = ("auth", "refused", "not_found", "moved")  # failures a retry cannot fix
 LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process that is gone, is taken over
 ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
 IGNORE_LINE = ".factory/intake/"
+ORIGIN_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 
 
 class IntakeError(Exception):
@@ -96,6 +100,26 @@ def write_atomic(path: Path, text: str) -> None:
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(text, encoding="utf-8")
     os.replace(str(temporary), str(path))
+
+
+def request_status_nonce(ledger: Dict[str, Any]) -> str:
+    """The ledger's random nonce for status markers, made once. Only this Factory knows it, so
+    nobody else can write a comment carrying a marker MACH would take as its own."""
+    nonce = ledger.get("request_status_nonce")
+    if not (isinstance(nonce, str) and re.fullmatch(r"[0-9a-f]{32}", nonce)):
+        nonce = ledger["request_status_nonce"] = secrets.token_hex(16)
+    return nonce
+
+
+def request_origin(work: Any) -> Optional[Dict[str, Any]]:
+    """The GitHub issue a slice came from (M8), as identifiers only, or None. Product Studio's
+    validator has already checked it; anything that does not fit exactly is ignored."""
+    origin = work.get("origin") if isinstance(work, dict) else None
+    if (isinstance(origin, dict) and set(origin) == {"kind", "repository", "number"} and origin.get("kind") == "github_issue"
+            and isinstance(origin.get("repository"), str) and ORIGIN_REPOSITORY_RE.fullmatch(origin["repository"]) and ".." not in origin["repository"]
+            and type(origin.get("number")) is int and 1 <= origin["number"] < 10 ** 9):
+        return {"kind": "github_issue", "repository": origin["repository"], "number": origin["number"]}
+    return None
 
 
 def number(identifier: str) -> int:
@@ -577,6 +601,8 @@ class Factory:
                 row = {"slice_id": slice_id, "title": work.get("title"), "wave_id": snap.wave_of(slice_id), "revision": work.get("revision"),
                        "digest": digest, "dependencies": list(work.get("dependencies") or []), "epic_id": work.get("epic_id"),
                        "spec_path": work.get("spec_path"), "spec_sha256": work.get("spec_sha256"), "ticket_id": (entry or {}).get("ticket_id")}
+                if request_origin(work):
+                    row["origin"] = request_origin(work)
                 if entry is None or entry.get("state") == "superseded":
                     row["status"] = "new"
                 elif entry.get("digest") == digest:
@@ -618,6 +644,7 @@ class Factory:
             f"- Delivery wave: {row.get('wave_id')}, approved by {approval.get('actor')} on {approval.get('approved_at')}",
             f"- Spec: {row.get('spec_path')} (SHA-256 {row.get('spec_sha256')})",
             f"- Why: product/intents/{row['slice_id']}.md",
+            *([f"- Request: {row['origin']['repository']}#{row['origin']['number']}"] if row.get("origin") else []),
             f"- Depends on: {', '.join(row.get('dependencies') or []) or 'nothing'}",
             f"- Taken in from commit {snap.commit}",
             "",
@@ -631,7 +658,9 @@ class Factory:
         if dry_run:
             return self._intake(True, adopt, reissue)
         with self.lock("intake"):
-            return self._intake(False, adopt, reissue)
+            report = self._intake(False, adopt, reissue)
+            self.send_request_status(report)
+            return report
 
     def reconcile(self) -> Dict[str, Any]:
         """Bring this Factory level with the integration branch and with its own line, in one step.
@@ -643,6 +672,7 @@ class Factory:
         with self.lock("reconcile"):
             report = self._intake(False, None, ())
             plan = self.plan(record=True)
+            self.send_request_status(report)
         return {"intake": report, "plan": plan, "last_event": self.ledger()["next_seq"] - 1, "factory_started": False}
 
     def _intake(self, dry_run: bool, adopt: Optional[Dict[str, str]], reissue: Sequence[str]) -> Dict[str, Any]:
@@ -716,6 +746,8 @@ class Factory:
                 if row["work"] in ("queued", "unticketed"):
                     old_marker = self.marker(slice_id, entry.get("revision"))
                     entry.update(self.definition(row, snap))
+                    if not row.get("origin"):
+                        entry.pop("origin", None)  # the new revision names no request
                     self.emit(ledger, "revision.superseded", slice_id=slice_id, wave_id=row["wave_id"], revision=row["revision"], ticket_id=entry.get("ticket_id"),
                               from_revision=change["from_revision"], effect="The waiting ticket now carries the new revision.")
                     self.save(ledger)
@@ -785,10 +817,94 @@ class Factory:
             self.plan(ledger=ledger, record=True)
         return report
 
+    # ---- status writes on a slice's request (M8) ----
+    #
+    # The ledger's request_status map is an outbox. A write is recorded there before it is tried,
+    # tickets are filed and the ledger saved before any attempt, and a write GitHub did not take
+    # stays pending for the next intake or reconcile. Nothing waits on it and nothing fails because
+    # of it. The ticket station makes the write and checks the issue for its marker first.
+
+    def queue_request_status(self, ledger: Dict[str, Any], entry: Dict[str, Any], moment: str, refs: List[str]) -> bool:
+        """Record one status write for the slice's request, once. True when it was newly queued."""
+        origin = request_origin(entry)
+        if origin is None:
+            return False
+        key = sha(("\n".join([moment, origin["repository"], str(origin["number"]), *sorted(refs)])).encode("utf-8"))[:16]
+        outbox = ledger.setdefault("request_status", {})
+        request_status_nonce(ledger)
+        if key in outbox:
+            return False
+        outbox[key] = {"moment": moment, "repository": origin["repository"], "number": origin["number"], "refs": list(refs),
+                       "slice_id": entry.get("slice_id"), "ticket_id": entry.get("ticket_id"), "state": "pending",
+                       "queued_at": now(), "attempts": 0, "last_attempt_at": None, "kind": None, "done_at": None}
+        return True
+
+    def send_request_status(self, report: Dict[str, Any]) -> None:
+        """Try every pending status write once, through the ticket station. Called after intake and
+        reconcile have filed their tickets and saved the ledger."""
+        ledger = self.ledger()
+        outbox = ledger.get("request_status")
+        if not isinstance(outbox, dict) or not outbox:
+            return
+        for key in sorted(outbox):
+            write = outbox[key]
+            if not isinstance(write, dict) or write.get("state") != "pending":
+                continue
+            if int(write.get("attempts") or 0) >= REQUEST_STATUS_MAX_ATTEMPTS:
+                write.update(state="gave_up", kind=write.get("kind") or "network", gave_up_at=now())
+                self.save(ledger)
+                continue
+            argv = ["request-status", f"{write['repository']}#{write['number']}", "--moment", str(write["moment"]),
+                    "--nonce", request_status_nonce(ledger)]
+            for ref in write.get("refs") or []:
+                argv += ["--ref", str(ref)]
+            done = self.ticket(*argv)
+            try:
+                answer = json.loads(done.stdout) if done.stdout.strip() else {}
+            except ValueError:
+                answer = {}
+            status = answer.get("status") if isinstance(answer, dict) else None
+            write["attempts"] = int(write.get("attempts") or 0) + 1
+            write["last_attempt_at"] = now()
+            if done.returncode in (0, 3) and status in ("done", "already_done"):
+                write.update(state="done", kind=None, done_at=now(), outcome=status)
+            elif done.returncode == 2:
+                write.update(state="refused", kind="refused")  # refused here (not this project's repository, bad references): never retried
+            else:
+                kind = answer.get("kind") if isinstance(answer, dict) else None
+                write["kind"] = kind if isinstance(kind, str) and re.fullmatch(r"[a-z_]{1,20}", kind) else "other"
+                if write["kind"] in REQUEST_STATUS_GIVE_UP_KINDS:
+                    write.update(state="gave_up", gave_up_at=now())  # a retry cannot fix it: reported, never tried again
+            self.save(ledger)
+        counts: Dict[str, int] = {}
+        for write in outbox.values():
+            if isinstance(write, dict):
+                counts[str(write.get("state"))] = counts.get(str(write.get("state")), 0) + 1
+        report["request_status"] = {"pending": counts.get("pending", 0), "done": counts.get("done", 0), "refused": counts.get("refused", 0)}
+        if counts.get("gave_up"):
+            report["request_status"]["gave_up"] = counts["gave_up"]
+
+    def request_status_summary(self) -> Dict[str, Any]:
+        """Status updates to requests' issues waiting to reach GitHub, and any given up. Nothing at
+        all when there are none, so a project without requests reports exactly as before."""
+        outbox = self.ledger().get("request_status")
+        if not isinstance(outbox, dict):
+            return {}
+        states = [write.get("state") for write in outbox.values() if isinstance(write, dict)]
+        found = {}
+        if states.count("pending"):
+            found["waiting"] = states.count("pending")
+        if states.count("gave_up"):
+            found["gave_up"] = states.count("gave_up")
+        return {"request_status_updates": found} if found else {}
+
     def definition(self, row: Dict[str, Any], snap: Snapshot) -> Dict[str, Any]:
-        return {"title": row.get("title"), "epic_id": row.get("epic_id"), "wave_id": row.get("wave_id"), "revision": row.get("revision"),
-                "digest": row.get("digest"), "spec_path": row.get("spec_path"), "spec_sha256": row.get("spec_sha256"),
-                "dependencies": list(row.get("dependencies") or []), "source_commit": snap.commit}
+        found = {"title": row.get("title"), "epic_id": row.get("epic_id"), "wave_id": row.get("wave_id"), "revision": row.get("revision"),
+                 "digest": row.get("digest"), "spec_path": row.get("spec_path"), "spec_sha256": row.get("spec_sha256"),
+                 "dependencies": list(row.get("dependencies") or []), "source_commit": snap.commit}
+        if row.get("origin"):
+            found["origin"] = dict(row["origin"])  # M8: the request it came from; absent, the entry is as before
+        return found
 
     def new_entry(self, row: Dict[str, Any], snap: Snapshot, history: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {"slice_id": row["slice_id"], **self.definition(row, snap), "ticket_id": None, "pending_ticket": True, "state": "materialized",
@@ -834,6 +950,7 @@ class Factory:
             extra["follows"] = entry["follows"]  # the earlier ticket this one replaces, and why
         self.emit(ledger, "slice.materialized", slice_id=slice_id, wave_id=entry.get("wave_id"), revision=entry.get("revision"), ticket_id=ticket_id,
                   digest=entry.get("digest"), adopted=adopted, dependencies=entry.get("dependencies"), **extra)
+        self.queue_request_status(ledger, entry, "merged", [f"{slice_id}@r{entry.get('revision')}", f"ticket:{ticket_id}"])
         self.save(ledger)
         if entry.get("revision_issue"):
             report["created"].append({"slice_id": slice_id, "revision": entry.get("revision"), "ticket_id": ticket_id, "reissued": True})
@@ -1134,6 +1251,8 @@ class Factory:
             if row["needs_person"] and entry.get("last_attention") != attention:
                 self.emit(ledger, "human.required", slice_id=key, wave_id=row["wave_id"], revision=row["revision"], ticket_id=row["ticket_id"],
                           reason="; ".join(attention) or "A person is needed.")
+            if row["state"] == "active" and row.get("stage") == "blocked" and entry.get("origin") and row.get("ticket_id"):
+                changed = self.queue_request_status(ledger, entry, "blocked", [f"ticket:{row['ticket_id']}"]) or changed
             new_attention = attention if row["needs_person"] else None
             if before != row["state"] or entry.get("last_reasons") != reasons or entry.get("last_attention") != new_attention:
                 entry.update({"last_state": row["state"], "last_reasons": reasons, "last_attention": new_attention})
@@ -1259,6 +1378,8 @@ class Factory:
         cell_file = self.root / ".factory" / "worktrees" / ticket_id / "cell.json"
         provenance = {"slice_id": slice_id, "revision": entry.get("revision"), "wave_id": entry.get("wave_id"), "digest": entry.get("digest"),
                       "spec_sha256": entry.get("spec_sha256"), "source_commit": snap.commit}
+        if request_origin(entry):
+            provenance["origin"] = request_origin(entry)  # M8: identifiers only; the run record carries it on
         existing = json.loads(cell_file.read_text(encoding="utf-8")) if cell_file.is_file() else None
         if isinstance(existing, dict) and existing.get("stage") != "interview":
             if (existing.get("product") or {}).get("digest") != entry.get("digest"):

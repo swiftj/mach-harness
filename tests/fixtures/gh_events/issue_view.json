@@ -1,0 +1,4 @@
+{"number": 42, "title": "Let admins invite a teammate", "body": "Our admins need to bring colleagues in.\n\nToday they email support.",
+ "author": {"id": "U_kgDOAAAAAA", "is_bot": false, "login": "casey-customer", "name": "Casey"},
+ "labels": [{"id": "LA_1", "name": "mach:request", "description": "", "color": "5319E7"}],
+ "state": "OPEN", "updatedAt": "2026-11-10T09:01:00Z"}

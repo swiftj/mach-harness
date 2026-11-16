@@ -243,7 +243,8 @@ class SchemaParityTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 schema = self.schema(kind)
                 self.assertEqual(sorted(schema["required"]), sorted(validate.SHAPES[kind]))
-                self.assertEqual(sorted(schema["properties"]), sorted(validate.SHAPES[kind]))
+                # Optional fields (M8: a slice's origin) are described but never required.
+                self.assertEqual(sorted(schema["properties"]), sorted(validate.SHAPES[kind] + validate.OPTIONAL.get(kind, ())))
                 self.assertIs(schema["additionalProperties"], False)
                 self.assertEqual(schema["properties"]["schema_version"], {"const": 1})
 

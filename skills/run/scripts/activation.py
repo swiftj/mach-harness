@@ -31,6 +31,14 @@ import supervisor as supervisor_module
 from supervisor import SUPERVISOR, Supervisor
 
 LIVE = supervisor_module.LIVE
+# What `factory enable` says about monitoring requests (M8 D7), in exactly these words.
+MONITORING_STATEMENT = {
+    False: "Does not take issues from monitoring accounts. Those wait for an engineer.",
+    True: ("Also takes issues filed by the monitoring accounts this project lists (tickets.github.monitor_accounts) and grooms them without a person, "
+           "at most 3 per pass. Each answer is recorded as decided without a product manager; anything about money, access, deletion or conflicting rules "
+           "stops for a person. Builds only what grooming rates below High risk, and within this machine's risk limit. The issue text comes from outside "
+           "the team; it is treated as data."),
+}
 
 
 class ActivationError(Exception):
@@ -80,9 +88,9 @@ def backlog(ctx: Context) -> List[Dict[str, Any]]:
 
 
 def describe(pol: Dict[str, Any]) -> Dict[str, Any]:
-    return {key: pol.get(key) for key in ("enabled", "paused", "autonomy", "auto_sync", "allow_merge", "persistent", "max_risk", "limits", "allowed_tools",
+    return {"monitoring_requests": pol.get("monitoring_requests") is True, **{key: pol.get(key) for key in ("enabled", "paused", "autonomy", "auto_sync", "allow_merge", "persistent", "max_risk", "limits", "allowed_tools",
                                           "excluded_slices", "source_branch", "runner_id", "machine", "enabled_by", "enabled_at",
-                                          "execution_risk_accepted")}
+                                          "execution_risk_accepted")}}
 
 
 def status(ctx: Context) -> Dict[str, Any]:
@@ -149,6 +157,10 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
     request = {"autonomy": args.autonomy, "limits": limits, "allow_merge": bool(args.allow_merge), "auto_sync": bool(args.auto_sync), "persistent": bool(args.persistent),
                "hooks": bool(args.hooks), "max_risk": args.max_risk, "extra_tools": list(args.allow_tool or []),
                "backlog": "include" if args.include_backlog else "exclude" if args.exclude_backlog else None}
+    if getattr(args, "monitoring_requests", False):  # only on the engineer's explicit request, and only for supervised work
+        if request["autonomy"] != "supervised":
+            raise ActivationError("--monitoring-requests needs --autonomy supervised: monitoring requests are groomed and built by executions. Nothing was enabled.")
+        request["monitoring_requests"] = True
     try:
         policy_module.build(ctx.root, request, "check", "claude", "main", [])  # reject a bad limit before anything else
     except policy_module.PolicyError as exc:
@@ -173,6 +185,7 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
         "fetches": "Fetches from the shared repository on a timer. Never changes your checkout." if request["auto_sync"] else "Never fetches by itself.",
         "git_hooks": "Adds wake-up notes to post-merge, post-checkout and post-rewrite." if request["hooks"] else "No Git hooks.",
         "persistent": "Installs a per-user service that keeps the supervisor running without a Claude session." if request["persistent"] else "Runs only while you start it; no service is installed.",
+        "monitoring_requests": MONITORING_STATEMENT[request.get("monitoring_requests") is True],
         "work_already_here": waiting, "work_already_here_decision": request["backlog"],
         # The central residual risk, stated from the tool list itself; a person accepts it explicitly for any mode that starts agents.
         "execution_risk": policy_module.execution_risk(list(dict.fromkeys([*policy_module.default_tools(), *request["extra_tools"]])))

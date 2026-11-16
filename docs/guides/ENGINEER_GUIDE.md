@@ -34,6 +34,21 @@ Approved waves that product managers published and engineering merged are taken 
 - `product dispatch <SLICE-ID>...` or `--ready` opens the cells and stops at `spec-ready`. It starts no agent. Product-sourced work is never reviewed below Medium.
 - `product reconcile` is intake plus a recorded plan. It never dispatches.
 
+### Slices that came from a GitHub issue
+
+A slice made from a request carries the issue's repository and number in its work order (identifiers only, no issue text). Intake copies it into the ledger, the ticket text (`Request: OWNER/REPO#42`), the cell's `product` block and the run record. Because it is part of the approved definition, changing it needs `slice reopen`.
+
+Intake writes to the request's issue at two moments, through `ticket.py request-status`, whatever `tickets.provider` is:
+
+- **Merged.** When a slice's ticket is first filed, intake adds `mach:ready`, removes `mach:grooming` and comments once: "SLICE-012 revision 1 is approved and merged; the Factory may take it (ticket 104)."
+- **Blocked.** When the cell of such a slice is `blocked`, intake comments once: "Ticket 104 is blocked and waits for a person." It adds no label to a product request.
+
+These writes never block or fail intake. Each is recorded in the ledger (`request_status`) before it is tried. One that GitHub does not take stays pending and is tried again on the next `product intake` or `reconcile`; the report shows how many are pending, done or refused. A write for a repository other than the project's `origin` is refused and not retried. Each comment ends with a hidden marker, so a write whose outcome was lost is found on the issue and not repeated.
+
+Settings: `tickets.github.status_comments: false` stops the comments and keeps the labels. `tickets.github.request_label` names the request label.
+
+Labels: if `mach:ready` (or `mach:grooming`, `mach:blocked`) does not exist, MACH creates it, only for those three names and never over an existing label. `mach:request` is never created by MACH; a person with write access applies it. `/mach-run doctor` lists any of the four missing from the repository with the `gh label create` line to run yourself.
+
 A changed definition under work in progress, a withdrawn slice, an abandoned ticket that is still open or a ticket claiming a merge not on the branch is `needs_person`. MACH reports it and does not choose. Two cases it now settles with a recorded reason, shown on a real Factory run (a throwaway project):
 
 - **A revised slice whose earlier ticket was abandoned and closed.** The next `product intake` files the newer revision as a new ticket by itself, exactly once, and records that it follows the abandoned one. Close the abandoned ticket first; an abandoned ticket left open is reported for you to close.
@@ -42,6 +57,18 @@ A changed definition under work in progress, a withdrawn slice, an abandoned tic
 **Re-planning a wrong plan.** `cell.py replan <ticket> --reason "<why>"` (the intent station's script), only when you say so, returns a `planned` or `building` cell to `spec-ready` so the line plans it again. Nothing is lost: the old `plan.md`, `build.json` and `build-report.json` go under `plan-history/<n>/`, and if the branch had moved its old tip is kept as `refs/mach/replan/<ticket>/<n>`. It refuses a cell that has been through a judging round, uncommitted changes, task work already on main, and an empty reason. It adds no judging round. `RUN next` then says `plan`.
 
 Open question from testing: nothing distinguishes a product manager's copy from an engineer's. A refused dispatch there was refused only because the copy had no intake ledger. `factory enable` ran its preflight and issued a code there. Treat "only an engineer dispatches" as a convention until this is decided.
+
+### Issues filed by a monitoring system
+
+List the monitoring accounts in `.factory/config.json` as `tickets.github.monitor_accounts`, each with its `login` and its numeric `id` (`gh api users/<login> --jq .id`). An account is matched on the id, never on the login alone.
+
+- An issue such an account files **and labels itself** with the request label is a monitoring request. One a person labelled is that person's request and goes to Product Studio. No issue is handled in both places.
+- `RUN requests monitor --dry-run` shows what would be taken in; without `--dry-run` it records up to three per pass, oldest first, for headless grooming. It starts no agent.
+- The same fault is taken once. A repeat is counted against the first issue and left alone; MACH does not close or comment on it.
+- Headless grooming records every answer as decided without a product manager. Money, access, irreversible deletion or conflicting rules stop for a person.
+- The supervisor takes monitoring requests only if you enabled it with `--monitoring-requests` (supervised autonomy only; off by default, and `factory.monitoring_requests: false` in the project's settings forbids it). It runs each in two steps: grooming and planning first, then the build only when the risk tier is below High and within this machine's limit. Such work is never reviewed below Medium, and product work is scheduled first.
+
+Not yet seen in a real supervised run: that the line stops before the build as intended, and that headless grooming of an issue leaves a risk tier.
 
 ## 3. Local activation of the Factory
 
