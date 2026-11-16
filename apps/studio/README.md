@@ -114,6 +114,20 @@ application/json`. A GET never needs Origin or the CSRF token.
 `continue_command` is `/mach:product-studio continue` (plugin) or `/mach-product-studio continue`
 (project install); the app adds the slice ID.
 
+Requests from GitHub issues (M8, `docs/mach-next/M8_DESIGN.md` D8) are five more operations, each
+one engine command; `number` is a JSON whole number from 1 to 999,999,999 (a string, a fraction, zero
+or a negative number is `invalid`), and no other field is accepted:
+
+| Operation | Arguments | Engine command | Kind |
+|-----------|-----------|----------------|------|
+| `request.list` | `{}` | `request list` | read-only, never calls GitHub |
+| `request.show` | `{number}` | `request show <n>` | read-only |
+| `request.pick` | `{number, epic, title, also?}` | `request pick <n> --epic=E --title=T [--also]` | may fetch |
+| `request.link` | `{number, slice_id}` | `request link <n> <SLICE>` | changes the draft only |
+| `request.met` | `{number}` | `request met <n>` | may fetch (closes the issue) |
+
+`refresh` returns the `requests` block as well. The interviewer's allowed operations are unchanged.
+
 ### Interview events
 
 Each event is `id: <seq>`, `event: <name>`, `data: <JSON>`. `seq` rises through an interview. On

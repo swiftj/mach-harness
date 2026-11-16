@@ -9,6 +9,8 @@ import { CollisionCard } from "./CollisionCard";
 import { ConflictCard } from "./ConflictCard";
 import { OpenQuestionsCard } from "./OpenQuestionsCard";
 import { artifactFromPath, titleFor } from "../../api/describe";
+import { useRequestList } from "./requests/api";
+import { RequestsGroup } from "./requests/RequestsGroup";
 
 function Group({ id, title, hint, count, children }: { id: string; title: string; hint: string; count: number; children: ReactNode }) {
   return (
@@ -90,6 +92,7 @@ export function InboxScreen() {
   const feedback = useDeliveryRead("feedback", status.data?.waves.some((w) => w.sent) ? {} : null);
   const memory = useDeliveryMemory();
   const [renumbered, setRenumbered] = useState<Renumber | null>(null);
+  const requests = useRequestList();
 
   if (status.loading && !status.data) {
     return (
@@ -125,6 +128,8 @@ export function InboxScreen() {
     : memory.withdrawn.filter((w) => present(w.id));
   const again = memory.needsApprovalAgain.filter((w) => present(w.id) && !withdrawn.some((x) => x.id === w.id));
   const questions = data.slices.filter((s) => s.open_questions > 0);
+  // Requests from GitHub issues: no section at all when the shared repository is not on GitHub.
+  const requestsShown = Boolean(requests.data?.repository) || (requests.error !== null && !requests.data);
 
   const groups = [
     { id: "conflicts", label: "Versions to choose", count: reconciling.conflicts.length },
@@ -132,6 +137,7 @@ export function InboxScreen() {
     { id: "engineering", label: "Engineering is waiting on you", count: engineering.length },
     { id: "approvals", label: "Approvals to give again", count: withdrawn.length + again.length },
     { id: "questions", label: "Open questions", count: questions.length },
+    { id: "requests", label: "Requests", count: requests.data?.items.length ?? 0 },
   ].filter((g) => g.count > 0);
   const total = groups.reduce((n, g) => n + g.count, 0);
 
@@ -255,6 +261,12 @@ export function InboxScreen() {
             {questions.map((slice) => (
               <OpenQuestionsCard key={slice.slice_id} slice={slice} status={data} />
             ))}
+          </Group>
+        ) : null}
+
+        {requestsShown ? (
+          <Group id="requests" title="Requests" hint="GitHub issues labelled as requests. Picking one up starts a draft slice; the interview still asks you every question." count={requests.data?.items.length ?? 0}>
+            <RequestsGroup list={requests} status={data} />
           </Group>
         ) : null}
       </div>

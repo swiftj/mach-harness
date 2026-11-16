@@ -12,11 +12,12 @@ import { createWorld } from "../lib/world.mjs";
 import { apiClient, startHost } from "../lib/host.mjs";
 import { specFor, whyFor } from "../lib/content.mjs";
 
-// The host's allowlist as documented (contract section 3 and 8.1, apps/studio/README.md).
+// The host's allowlist as documented (contract sections 3, 8.1 and 8.4, apps/studio/README.md).
 const ALLOWLIST = [
   "where", "status", "validate", "refresh", "project.init", "project.set", "epic.add", "epic.set", "epic.approve", "epic.renumber",
   "slice.new", "slice.set", "slice.resume", "slice.pause", "slice.check", "slice.show", "slice.approve", "slice.reopen", "slice.renumber",
   "wave.new", "wave.add", "wave.remove", "wave.approve", "wave.renumber", "reconcile", "send.preview", "send", "feedback",
+  "request.list", "request.show", "request.pick", "request.link", "request.met",
 ];
 
 let binary, terminal, terminalApp, web, host, api;

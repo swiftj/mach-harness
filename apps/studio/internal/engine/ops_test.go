@@ -13,14 +13,15 @@ import (
 func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	want := []string{
 		"epic.add", "epic.approve", "epic.renumber", "epic.set", "feedback", "project.init", "project.set",
-		"reconcile", "refresh", "send", "send.preview", "slice.approve", "slice.check", "slice.new", "slice.pause",
+		"reconcile", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
+		"send", "send.preview", "slice.approve", "slice.check", "slice.new", "slice.pause",
 		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "status", "validate",
 		"wave.add", "wave.approve", "wave.new", "wave.remove", "wave.renumber", "where",
 	}
 	if got := engine.Names(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("allowlist\n got %v\nwant %v", got, want)
 	}
-	for _, name := range []string{"slice.show", "where"} {
+	for _, name := range []string{"request.list", "request.show", "slice.show", "where"} {
 		if op, _ := engine.Lookup(name); !op.ReadOnly {
 			t.Errorf("%s should be read-only", name)
 		}
@@ -29,6 +30,15 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 		if op, _ := engine.Lookup(name); !op.JSONOnFailure {
 			t.Errorf("%s reports problems as JSON with exit code 1", name)
 		}
+	}
+	// Reading GitHub: only picking up (a live re-read) and marking as met (closing the issue).
+	for _, name := range []string{"request.pick", "request.met"} {
+		if op, _ := engine.Lookup(name); !op.Network || op.ReadOnly {
+			t.Errorf("%s reaches GitHub and changes the workspace", name)
+		}
+	}
+	if op, _ := engine.Lookup("request.link"); op.Network || op.ReadOnly {
+		t.Errorf("request.link changes only the draft and never reaches GitHub")
 	}
 }
 
@@ -96,6 +106,12 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 		{"send", `{"wave_id":"WAVE-001"}`, []string{"send", "WAVE-001"}},
 		{"feedback", `{}`, []string{"feedback"}},
 		{"feedback", `{"wave_id":"WAVE-001"}`, []string{"feedback", "WAVE-001"}},
+		{"request.list", `{}`, []string{"request", "list"}},
+		{"request.show", `{"number":42}`, []string{"request", "show", "42"}},
+		{"request.pick", `{"number":42,"epic":"EPIC-001","title":"Export a report"}`,
+			[]string{"request", "pick", "42", "--epic=EPIC-001", "--title=Export a report"}},
+		{"request.link", `{"number":42,"slice_id":"SLICE-003"}`, []string{"request", "link", "42", "SLICE-003"}},
+		{"request.met", `{"number":42}`, []string{"request", "met", "42"}},
 	}
 	covered := map[string]bool{}
 	for _, c := range cases {
@@ -112,6 +128,68 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 	for _, name := range engine.Names() {
 		if !covered[name] {
 			t.Errorf("no argument-vector case for %s", name)
+		}
+	}
+}
+
+// The request operations: typed arguments to a fixed vector; the number is a positive whole number.
+func TestRequestOpsArgv(t *testing.T) {
+	good := []struct {
+		op, body string
+		want     []string
+	}{
+		{"request.list", ``, []string{"request", "list"}},
+		{"request.show", `{"number":1}`, []string{"request", "show", "1"}},
+		{"request.met", `{"number":999999999}`, []string{"request", "met", "999999999"}},
+		{"request.pick", `{"number":7,"epic":"EPIC-002","title":"--also","also":false}`,
+			[]string{"request", "pick", "7", "--epic=EPIC-002", "--title=--also"}},
+		{"request.pick", `{"number":7,"epic":"EPIC-002","title":"Export","also":true}`,
+			[]string{"request", "pick", "7", "--epic=EPIC-002", "--title=Export", "--also"}},
+		{"request.link", `{"number":12,"slice_id":"SLICE-010"}`, []string{"request", "link", "12", "SLICE-010"}},
+	}
+	for _, c := range good {
+		got, err := argv(t, c.op, c.body)
+		if err != nil {
+			t.Errorf("%s %s: %v", c.op, c.body, err)
+			continue
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s %s\n got %q\nwant %q", c.op, c.body, got, c.want)
+		}
+	}
+	bad := []struct{ op, body, says string }{
+		{"request.show", `{}`, "request number"},
+		{"request.show", `{"number":0}`, "request number"},
+		{"request.show", `{"number":-3}`, "request number"},
+		{"request.met", `{"number":1000000000}`, "request number"},
+		{"request.met", `{"number":"42"}`, "wrong type"},
+		{"request.met", `{"number":"42; rm -rf /"}`, "wrong type"},
+		{"request.met", `{"number":4.5}`, "wrong type"},
+		{"request.met", `{"number":1e3}`, "wrong type"},
+		{"request.met", `{"number":null}`, "request number"},
+		{"request.show", `{"number":42,"verb":"met"}`, "Unknown field"},
+		{"request.list", `{"number":42}`, "Unknown field"},
+		{"request.pick", `{"number":42,"epic":"EPIC-001","title":"T","id":"SLICE-004"}`, "Unknown field"},
+		{"request.pick", `{"number":42,"epic":"EPIC-001","title":"T","repo":"other/repo"}`, "Unknown field"},
+		{"request.pick", `{"number":42,"epic":"EPIC-001","title":"T","also":"yes"}`, "wrong type"},
+		{"request.pick", `{"number":42,"epic":"EPIC-1","title":"T"}`, "EPIC-001"},
+		{"request.pick", `{"number":42,"epic":"EPIC-001","title":""}`, "title is required"},
+		{"request.pick", `{"number":42,"epic":"EPIC-001","title":"a\u0000b"}`, "control character"},
+		{"request.pick", `{"epic":"EPIC-001","title":"T"}`, "request number"},
+		{"request.link", `{"number":42,"slice_id":"SLICE-001/../x"}`, "SLICE-001"},
+		{"request.link", `{"number":42}`, "slice_id is required"},
+		{"request.link", `{"number":-1,"slice_id":"SLICE-001"}`, "request number"},
+		{"request.link", `{"number":42,"slice_id":"SLICE-001","also":true}`, "Unknown field"},
+	}
+	for _, c := range bad {
+		_, err := argv(t, c.op, c.body)
+		var refused *engine.InvalidError
+		if !errors.As(err, &refused) {
+			t.Errorf("%s %s: want an invalid request, got %v", c.op, c.body, err)
+			continue
+		}
+		if !strings.Contains(refused.Message, c.says) {
+			t.Errorf("%s %s: message %q should mention %q", c.op, c.body, refused.Message, c.says)
 		}
 	}
 }

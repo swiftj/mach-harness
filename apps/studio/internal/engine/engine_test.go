@@ -67,6 +67,12 @@ func TestEveryOperationAgainstTheRealEngine(t *testing.T) {
 	if refreshed := mustOK(t, e, "refresh", `{}`); refreshed["refreshed"] != false {
 		t.Fatalf("refresh without a shared repository: %v", refreshed)
 	}
+	// No GitHub repository: no requests, and nothing to show or close.
+	if listed := mustOK(t, e, "request.list", `{}`); listed["requests"].(map[string]any)["repository"] != nil {
+		t.Fatalf("request.list without a shared repository: %v", listed)
+	}
+	mustFail(t, e, "request.show", `{"number":42}`, engine.KindRefused, "No request #42")
+	mustFail(t, e, "request.met", `{"number":42}`, engine.KindRefused, "no approved slice")
 	mustOK(t, e, "project.init", `{"id":"team-space","name":"Team Space","vision":"Teams work together.","outcome":["Teams can work together"]}`)
 	mustOK(t, e, "project.set", `{"name":"Team Rooms"}`)
 	if name := readJSON(t, testkit.Draft(project, "product", "project.json"))["name"]; name != "Team Rooms" {

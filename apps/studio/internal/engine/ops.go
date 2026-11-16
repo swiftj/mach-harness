@@ -2,6 +2,7 @@ package engine
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -391,6 +392,77 @@ func (a *FeedbackArgs) Argv() ([]string, error) {
 	return argv, nil
 }
 
+// ---- requests: GitHub issues labelled as requests (M8) ----
+
+// maxRequestNumber is the engine's own bound (`request_number`: below 10^9).
+const maxRequestNumber = 999_999_999
+
+// checkRequestNumber accepts a positive whole number. A string, a fraction or a negative number
+// never reaches this point as a number: Decode refuses the wrong type.
+func checkRequestNumber(n int) error {
+	if n < 1 || n > maxRequestNumber {
+		return invalid("number must be a request number such as 42.")
+	}
+	return nil
+}
+
+type requestListArgs struct{ NoArgs }
+
+func (requestListArgs) Argv() ([]string, error) { return []string{"request", "list"}, nil }
+
+// RequestNumberArgs serves request show and request met.
+type RequestNumberArgs struct {
+	Number int `json:"number"`
+	verb   string
+}
+
+func (a *RequestNumberArgs) Argv() ([]string, error) {
+	if err := checkRequestNumber(a.Number); err != nil {
+		return nil, err
+	}
+	return []string{"request", a.verb, strconv.Itoa(a.Number)}, nil
+}
+
+type RequestPickArgs struct {
+	Number int    `json:"number"`
+	Epic   string `json:"epic"`
+	Title  string `json:"title"`
+	// Also picks the request up even though another product manager already has.
+	Also bool `json:"also"`
+}
+
+func (a *RequestPickArgs) Argv() ([]string, error) {
+	if err := checkRequestNumber(a.Number); err != nil {
+		return nil, err
+	}
+	if err := checkID("epic", a.Epic, EpicIDPattern, "EPIC-001"); err != nil {
+		return nil, err
+	}
+	if err := checkText("title", a.Title, maxShortText, true); err != nil {
+		return nil, err
+	}
+	argv := []string{"request", "pick", strconv.Itoa(a.Number), flag("epic", a.Epic), flag("title", a.Title)}
+	if a.Also {
+		argv = append(argv, "--also")
+	}
+	return argv, nil
+}
+
+type RequestLinkArgs struct {
+	Number  int    `json:"number"`
+	SliceID string `json:"slice_id"`
+}
+
+func (a *RequestLinkArgs) Argv() ([]string, error) {
+	if err := checkRequestNumber(a.Number); err != nil {
+		return nil, err
+	}
+	if err := checkID("slice_id", a.SliceID, SliceIDPattern, "SLICE-001"); err != nil {
+		return nil, err
+	}
+	return []string{"request", "link", strconv.Itoa(a.Number), a.SliceID}, nil
+}
+
 // ---- the allowlist ----
 
 var operations = map[string]Operation{}
@@ -426,6 +498,11 @@ func init() {
 	register(Operation{Name: "send.preview", New: func() Args { return &SendArgs{dryRun: true} }, Network: true})
 	register(Operation{Name: "send", New: func() Args { return &SendArgs{} }, Network: true})
 	register(Operation{Name: "feedback", New: func() Args { return &FeedbackArgs{} }, Network: true})
+	register(Operation{Name: "request.list", New: func() Args { return &requestListArgs{} }, ReadOnly: true})
+	register(Operation{Name: "request.show", New: func() Args { return &RequestNumberArgs{verb: "show"} }, ReadOnly: true})
+	register(Operation{Name: "request.pick", New: func() Args { return &RequestPickArgs{} }, Network: true})
+	register(Operation{Name: "request.link", New: func() Args { return &RequestLinkArgs{} }})
+	register(Operation{Name: "request.met", New: func() Args { return &RequestNumberArgs{verb: "met"} }, Network: true})
 }
 
 // Lookup returns the allowlisted operation with this name.
