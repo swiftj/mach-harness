@@ -234,7 +234,7 @@ function PlayerPanel({ open }: { open: EvidenceOpen }) {
             {behind && !revealed ? "No check was recorded for this ticket by the playhead." : "No verification check has been recorded for this ticket yet."}
           </p>
         ) : model && current ? (
-          <div className="grid min-h-0 gap-3 lg:h-[68vh] lg:grid-cols-[minmax(220px,260px)_minmax(220px,280px)_minmax(0,1fr)]">
+          <div className="grid min-h-0 gap-3 lg:h-[68vh] lg:grid-cols-[minmax(280px,320px)_minmax(220px,280px)_minmax(0,1fr)]">
             <ChecksColumn model={model} current={current} failedOnly={failedOnly} onFailedOnly={setFailedOnly} onChoose={choose} />
             <FilesColumn model={model} check={check} current={current} onChoose={choose} />
             <ViewerColumn model={model} check={check} file={file} client={client ?? null} />
@@ -310,7 +310,7 @@ function ChecksColumn({ model, current, failedOnly, onFailedOnly, onChoose }: { 
           Failed only ({failed})
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5" tabIndex={-1}>
+      <div className="max-h-[30vh] min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5 lg:max-h-none" tabIndex={-1}>
         {model.runs.map((run) => {
           const checks = failedOnly ? run.checks.filter((c) => c.result === "fail") : run.checks;
           if (!checks.length) return null;
@@ -371,7 +371,7 @@ function FilesColumn({ model, check, current, onChoose }: { model: EvidenceModel
           Files{check ? <span className="font-mono text-[12px] font-normal text-ink-muted"> of {check.id}</span> : null}
         </h3>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
+      <div className="max-h-[22vh] min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5 lg:max-h-none">
         {!check || check.files.length === 0 ? (
           <p className="px-1.5 text-body-sm text-ink-muted">This check names no file.</p>
         ) : (
