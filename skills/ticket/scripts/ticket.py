@@ -8,6 +8,8 @@
     ticket.py update <id> [...]           change state or labels, add a comment
     ticket.py comment <id> --body B       add a comment
     ticket.py ingest-telemetry SRC FILE   turn a crash, alert or failed build into an AUTO- ticket
+    ticket.py request-status OWNER/REPO#N --moment merged|blocked --ref ID...
+                                          status label and comment on a request's GitHub issue (M8)
 
 Providers: local (Markdown files in .factory/tickets/, the default), github (gh), gitea-cli (gt),
 jira, fossil. Local and GitHub are fully handled here. For the others this script runs the
@@ -95,6 +97,7 @@ STATE_NAMES = {
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from issue_rules import EMAIL_RE, LONG_TOKEN_RE, SECRET_RE, redact  # noqa: E402,F401  one redaction for telemetry and requests
+import issue_rules  # noqa: E402  the shared request rules: templates, markers, status labels
 
 
 class TicketError(Exception):
@@ -879,6 +882,158 @@ def cmd_ingest(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- request status (M8)
+#
+# Status writes on a product request's GitHub issue, called by the run skill's intake. Always gh,
+# whatever tickets.provider says, and only on the repository the project's `origin` remote names.
+# Only OWNER/REPO is handed to gh, never the remote's address, which may carry a credential.
+# A gh failure is reported by its kind alone; gh's own words are never relayed.
+
+REQUEST_MOMENTS = {
+    # moment: (labels added, labels removed). A product request's blocked moment is a comment only:
+    # mach:blocked stays with monitoring issues, which are their own execution tickets.
+    "merged": (("mach:ready",), (issue_rules.GROOMING,)),
+    "blocked": ((), ()),
+}
+REQUEST_RE = re.compile(r"^([^#\s]+)#([0-9]{1,9})$")
+GITHUB_REMOTE_RE = re.compile(r"^(?:https://(?:[^/@\s]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)"
+                              r"([A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
+GH_TIMEOUT_SECONDS = 60
+GH_FAILURES = (  # (kind, marks), checked in order against gh's output in lower case
+    ("network", ("could not resolve host", "no such host", "dial tcp", "timed out", "timeout", "request canceled", "connection refused",
+                 "connection reset", "network is unreachable", "error connecting to", "tls handshake", "unexpected eof")),
+    ("auth", ("gh auth login", "not logged in", "bad credentials", "http 401", "authentication", "token is expired", "token has expired")),
+    ("refused", ("http 403", "forbidden", "resource not accessible", "must have", "saml", "single sign-on", "rate limit", "http 422",
+                 "issues are disabled", "locked")),
+    ("not_found", ("not found", "http 404", "could not resolve to")),
+)
+EXIT_ALREADY_DONE = 3
+EXIT_PENDING = 4
+
+
+class GhFailed(Exception):
+    """A gh call that did not succeed; carries only the classified kind."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.kind = kind
+
+
+def gh_failure_kind(output: str) -> str:
+    text = output.lower()
+    return next((kind for kind, marks in GH_FAILURES if any(mark in text for mark in marks)), "other")
+
+
+def gh_call(project: Path, *args: str) -> str:
+    """Run gh with a fixed argument list; returns stdout or raises GhFailed with the kind only."""
+    if shutil.which("gh") is None:
+        raise GhFailed("no_gh")
+    env = dict(os.environ, GH_PROMPT_DISABLED="1", NO_COLOR="1")
+    try:
+        done = subprocess.run(["gh", *args], cwd=str(project), capture_output=True, text=True, timeout=GH_TIMEOUT_SECONDS, env=env)
+    except subprocess.TimeoutExpired:
+        raise GhFailed("network")
+    except OSError:
+        raise GhFailed("no_gh")
+    if done.returncode != 0:
+        raise GhFailed(gh_failure_kind(done.stderr + "\n" + done.stdout))
+    return done.stdout
+
+
+def origin_repository(project: Path) -> Optional[str]:
+    """OWNER/REPO as the project's `origin` remote names it, or None when it is not on github.com."""
+    try:
+        done = subprocess.run(["git", "config", "--get", "remote.origin.url"], cwd=str(project), capture_output=True, text=True)
+    except OSError:
+        return None
+    named = GITHUB_REMOTE_RE.fullmatch(done.stdout.strip()) if done.returncode == 0 else None
+    return named.group(1) if named else None
+
+
+def parse_request(value: str) -> Tuple[str, int]:
+    match = REQUEST_RE.fullmatch(value or "")
+    if not match or not issue_rules.is_repository(match.group(1)) or not issue_rules.is_issue_number(int(match.group(2))):
+        raise TicketError("Name the request as OWNER/REPO#N, for example acme/app#42.")
+    return match.group(1), int(match.group(2))
+
+
+def status_label(project: Path, repository: str, number: int, label: str) -> None:
+    """Add one of MACH's status labels. It is created only when GitHub says it is missing, only for
+    a name MACH owns, and never with --force, so an existing label is never overwritten."""
+    if label not in issue_rules.STATUS_LABELS:
+        raise TicketError(f"{label} is not one of MACH's status labels.")
+    edit = ("issue", "edit", str(number), "--repo", repository, "--add-label", label)
+    try:
+        gh_call(project, *edit)
+    except GhFailed as failed:
+        if failed.kind != "not_found":
+            raise
+        spec = issue_rules.STATUS_LABELS[label]
+        gh_call(project, "label", "create", label, "--repo", repository, "--color", spec["color"], "--description", spec["description"])
+        gh_call(project, *edit)
+
+
+def cmd_request_status(ctx: Context, args: argparse.Namespace) -> int:
+    repository, number = parse_request(args.request)
+    refs = list(dict.fromkeys(args.ref or []))
+    try:
+        written = issue_rules.comment(args.moment, refs)
+    except ValueError as exc:
+        raise TicketError(f"The references do not fit the {args.moment} status: {exc}.")
+    remote = origin_repository(ctx.project)
+    if remote is None:
+        raise TicketError("This project's origin remote is not a GitHub repository, so it has no requests to update.")
+    if remote.lower() != repository.lower():
+        raise TicketError(f"{repository} is not this project's origin repository ({remote}). Status is written only there.")
+    github = ctx.tickets.get("github") if isinstance(ctx.tickets.get("github"), dict) else {}
+    comments_on = github.get("status_comments") is not False
+    add, remove = REQUEST_MOMENTS[args.moment]
+    result: Dict[str, Any] = {"request": f"{repository}#{number}", "moment": args.moment, "key": written["key"], "refs": refs,
+                              "labels_added": [], "labels_removed": [], "comment": "off", "status": "pending", "kind": None}
+
+    def answer(status: str, kind: Optional[str] = None) -> int:
+        result.update(status=status, kind=kind)
+        print(json.dumps(result, indent=2))
+        return {"done": 0, "already_done": EXIT_ALREADY_DONE}.get(status, EXIT_PENDING)
+
+    try:
+        # The repository as GitHub names it, resolved the way Product Studio resolves it.
+        named = json.loads(gh_call(ctx.project, "repo", "view", remote, "--json", "nameWithOwner") or "null")
+        canonical = named.get("nameWithOwner") if isinstance(named, dict) else None
+        if not issue_rules.is_repository(canonical):
+            return answer("pending", "other")
+        if canonical != repository:
+            raise TicketError(f"{repository} is not this project's origin repository ({canonical}). Status is written only there.")
+        for label in add:
+            status_label(ctx.project, repository, number, label)
+            result["labels_added"].append(label)
+        for label in remove:
+            try:
+                gh_call(ctx.project, "issue", "edit", str(number), "--repo", repository, "--remove-label", label)
+                result["labels_removed"].append(label)
+            except GhFailed as failed:
+                if failed.kind != "not_found":  # a label that does not exist is already absent
+                    raise
+        if not comments_on:
+            return answer("done")
+        # A write whose outcome was lost may already be there: its hidden marker says so.
+        view = json.loads(gh_call(ctx.project, "issue", "view", str(number), "--repo", repository, "--json", "comments") or "null")
+        comments = view.get("comments") if isinstance(view, dict) else None
+        if not isinstance(comments, list):
+            return answer("pending", "other")
+        if issue_rules.has_marker([item.get("body") for item in comments if isinstance(item, dict)], written["key"]):
+            result["comment"] = "already_present"
+            return answer("already_done")
+        result["comment"] = "not_posted"
+        gh_call(ctx.project, "issue", "comment", str(number), "--repo", repository, "--body", written["body"])
+        result["comment"] = "posted"
+        return answer("done")
+    except GhFailed as failed:
+        return answer("pending", failed.kind)
+    except ValueError:
+        return answer("pending", "other")
+
+
 # ---------------------------------------------------------------- entry point
 
 def build_parser() -> argparse.ArgumentParser:
@@ -926,6 +1081,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-sync", action="store_true", help="write the inbox files only; do not file a ticket in the tracker")
     p.add_argument("--allow-duplicate", action="store_true", help="create a ticket even if the same fault already has an open one")
     p.set_defaults(func=cmd_ingest)
+
+    p = sub.add_parser("request-status", help="status label and comment on a product request's GitHub issue (called by intake)")
+    p.add_argument("request", help="OWNER/REPO#N; must be the origin remote's repository")
+    p.add_argument("--moment", required=True, choices=sorted(REQUEST_MOMENTS))
+    p.add_argument("--ref", action="extend", nargs="+", required=True, help="identifiers for the comment: SLICE-NNN@rN, ticket:ID")
+    p.set_defaults(func=cmd_request_status)
     return parser
 
 

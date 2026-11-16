@@ -135,6 +135,97 @@
               "supervisor"
             ],
             "description": "Who moves a dispatched ticket through the line. The supervisor runs only its own."
+          },
+          "origin": {
+            "type": "object",
+            "description": "M8. The GitHub issue the slice came from, copied from its work order: identifiers only. Absent for a slice with no request.",
+            "required": [
+              "kind",
+              "repository",
+              "number"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "github_issue"
+              },
+              "repository": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
+              },
+              "number": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "request_status": {
+      "type": "object",
+      "description": "M8. Optional; present once a slice with a request has a status write. The outbox of status writes on requests' GitHub issues, keyed by a 16-hex digest of moment, repository, issue number and references. Each write is recorded before it is tried; done is never tried again; pending is retried on the next intake or reconcile; refused (by the ticket station, not by GitHub) is not retried.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "moment",
+          "repository",
+          "number",
+          "refs",
+          "slice_id",
+          "ticket_id",
+          "state",
+          "queued_at",
+          "attempts",
+          "last_attempt_at",
+          "kind",
+          "done_at"
+        ],
+        "properties": {
+          "moment": {
+            "enum": [
+              "merged",
+              "blocked"
+            ]
+          },
+          "repository": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Identifiers the comment names: SLICE-NNN@rN and ticket:ID."
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "done",
+              "refused"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last attempt did not complete, as a classified kind (network, auth, refused, not_found, no_gh, other); never GitHub's own words."
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "already_done"
+            ],
+            "description": "On a done write: whether this attempt wrote the comment or found its marker already on the issue."
           }
         }
       }
