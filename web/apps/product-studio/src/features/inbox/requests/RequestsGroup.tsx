@@ -21,6 +21,7 @@ export function RequestsGroup({ list, status }: { list: RequestList; status: Sta
     );
   }
   const waiting = block.updates_waiting ?? 0;
+  const notMade = block.could_not_update?.length ?? 0;
   return (
     <>
       {block.problem ? (
@@ -51,6 +52,11 @@ export function RequestsGroup({ list, status }: { list: RequestList; status: Sta
       {waiting > 0 ? (
         <Banner tone="info" title="Updates to GitHub waiting">
           {plural(waiting, "update")} to GitHub {waiting === 1 ? "is" : "are"} waiting and will be sent on the next refresh.
+        </Banner>
+      ) : null}
+      {notMade > 0 ? (
+        <Banner tone="warning" title="Updates to GitHub not made">
+          {plural(notMade, "update")} could not be made and will not be tried again.
         </Banner>
       ) : null}
       {block.truncated_note ? (

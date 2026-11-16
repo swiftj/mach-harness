@@ -84,10 +84,13 @@ FAILURE_KINDS = (
     ("rule", ("[remote rejected]", "gh006", "gh013", "protected branch", "hook declined", "push declined", "rule violation",
               "permission to ", "http 403", "403 forbidden", "returned error: 403", "resource not accessible", "must have push access",
               "not permitted", "pre-receive")),
-    ("network", ("could not resolve", "failed to connect", "connection refused", "connection timed out", "timed out", "network is unreachable",
+    ("network", ("could not resolve host", "could not resolve proxy", "failed to connect", "connection refused", "connection timed out", "timed out", "network is unreachable",
                  "no route to host", "connection reset", "deadline exceeded", "dial tcp", "no such host", "error connecting to",
                  "proxy connect", "unable to access", "does not appear to be a git repository", "could not read from remote repository",
                  "ssl certificate", "ssl connect")),
+    # GitHub's "Could not resolve to an issue/Repository ..." means the thing does not exist, not
+    # that the network is down; it is matched after every genuine network phrase.
+    ("not_found", ("could not resolve to", "http 404", "not found (http", "404 not found")),
 )
 
 
@@ -600,7 +603,7 @@ def _gh_write(project: Path, *args: str) -> Failure:
     return None
 
 
-GITHUB_REMOTE_RE = re.compile(r"^(?:https://(?:[^/@\s]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
+GITHUB_REMOTE_RE = re.compile(r"^(?:https://(?:[^/@\s]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
 
 
 def request_repository(project: Path) -> Tuple[Optional[str], Failure]:
@@ -616,7 +619,7 @@ def request_repository(project: Path) -> Tuple[Optional[str], Failure]:
     if failure:
         return None, failure
     name = found.get("nameWithOwner") if isinstance(found, dict) else None
-    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}", name):
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}", name):
         return None, {"kind": "other", "reason": "GitHub did not name the shared repository.", "link": ""}
     return name, None
 
@@ -660,11 +663,30 @@ def issue_comment_bodies(project: Path, repository: str, number: int) -> Tuple[O
     return [str(c.get("body") or "") for c in comments or [] if isinstance(c, dict)], None
 
 
+MOVED = {"kind": "moved", "reason": "The issue has moved to another repository.", "link": ""}
+
+
+def issue_is_here(project: Path, repository: str, number: int) -> Failure:
+    """Checked before every write: the issue as GitHub finds it now must still live in
+    `repository`. An issue moved to another repository is still found by its old number, at its
+    new address, and is never written to."""
+    found, failure = _gh_json(project, "issue", "view", str(int(number)), "--repo", repository, "--json", "number,url")
+    if failure:
+        return failure
+    url = found.get("url") if isinstance(found, dict) else None
+    if not isinstance(url, str) or not url.lower().startswith(f"https://github.com/{repository}/issues/".lower()):
+        return dict(MOVED)
+    return None
+
+
 def add_status_label(project: Path, repository: str, number: int, label: str, labels: Dict[str, Dict[str, str]]) -> Failure:
     """Add one of MACH's status labels. The label is created only when GitHub says it does not
     exist, and only for a name MACH owns; an existing label is never overwritten."""
     if label not in labels:
         return {"kind": "other", "reason": "not a MACH status label", "link": ""}
+    moved = issue_is_here(project, repository, number)
+    if moved:
+        return moved
     failure = _gh_write(project, "issue", "edit", str(int(number)), "--repo", repository, "--add-label", label)
     if failure and failure.get("not_found"):
         made = _gh_write(project, "label", "create", label, "--repo", repository, "--color", labels[label]["color"],
@@ -675,8 +697,8 @@ def add_status_label(project: Path, repository: str, number: int, label: str, la
 
 
 def comment_on_issue(project: Path, repository: str, number: int, body: str) -> Failure:
-    return _gh_write(project, "issue", "comment", str(int(number)), "--repo", repository, "--body", body)
+    return issue_is_here(project, repository, number) or _gh_write(project, "issue", "comment", str(int(number)), "--repo", repository, "--body", body)
 
 
 def close_issue(project: Path, repository: str, number: int) -> Failure:
-    return _gh_write(project, "issue", "close", str(int(number)), "--repo", repository, "--reason", "completed")
+    return issue_is_here(project, repository, number) or _gh_write(project, "issue", "close", str(int(number)), "--repo", repository, "--reason", "completed")

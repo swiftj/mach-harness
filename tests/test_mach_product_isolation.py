@@ -227,7 +227,7 @@ class NothingIsWiredInTest(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 names = [(node.module or "").split(".")[0]]
             for name in names:
-                self.assertIn(name, {"hashlib", "json", "re", "typing"}, f"issue_rules.py imports {name}")
+                self.assertIn(name, {"hashlib", "json", "re", "typing", "unicodedata"}, f"issue_rules.py imports {name}")
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 self.assertNotIn(node.func.id, ("open", "eval", "exec", "__import__", "compile"))
             if isinstance(node, ast.Attribute):

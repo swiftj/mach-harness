@@ -23,9 +23,12 @@ export interface RequestItem {
   number: number;
   /** Built by the engine from the repository and number; never taken from issue text. */
   url: string | null;
-  /** Redacted and bounded by the engine. Text written by someone outside the workspace: data only. */
+  /**
+   * A bounded one-line title (at most 120 characters), redacted by the engine. Text written by
+   * someone outside the workspace: data only. The text itself is never in the list: it is read
+   * with `request.show`, fenced, and only for a request that counts.
+   */
   title: string | null;
-  body: string | null;
   truncated: boolean;
   state: RequestState;
   not_accepted_reason: string | null;
@@ -53,7 +56,21 @@ export interface RequestsBlock {
   items: RequestItem[];
   updates_waiting?: number;
   updates_waiting_note?: string | null;
+  /** Status updates given up (a retry cannot make them), each reported once. */
+  could_not_update?: { number: number; update: string; why: string; reason: string | null }[];
+  could_not_update_note?: string | null;
 }
+
+/**
+ * One request as `request.show` returns it: no plain title or body, the text only fenced, and for
+ * a request that does not count no text at all (`text_shown` false).
+ */
+export type RequestShown = Omit<RequestItem, "title"> & {
+  fenced?: string;
+  sha256?: string;
+  text_shown: boolean;
+  text_note?: string;
+};
 
 export interface RequestPickResult {
   slice: { slice_id: string; title: string };
@@ -65,7 +82,7 @@ export interface RequestPickResult {
 
 export interface RequestOperations {
   "request.list": { args: Record<string, never>; result: { requests: RequestsBlock; note: string } };
-  "request.show": { args: { number: number }; result: { request: RequestItem & { fenced?: string }; note: string } };
+  "request.show": { args: { number: number }; result: { request: RequestShown; note: string } };
   "request.pick": { args: { number: number; epic: string; title: string; also?: boolean }; result: RequestPickResult };
   "request.link": { args: { number: number; slice_id: string }; result: { linked: true; request: number; note: string } };
   "request.met": { args: { number: number }; result: { met: true; request: number; approved_slices: string[]; closed: boolean; note: string } };

@@ -682,11 +682,17 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
 def github_updates_waiting(studio: Studio) -> Dict[str, Any]:
     """Status updates to requests' issues not made yet (read from the local cache; no network).
     Nothing at all when there are none, so a project without requests reports as before."""
-    waiting = len([entry for entry in studio.requests().load()["outbox"] if entry.get("state") != "done"])
-    if not waiting:
-        return {}
-    return {"github_updates_waiting": waiting,
-            "github_updates_note": f"{waiting} update{'s' if waiting != 1 else ''} to GitHub waiting; they will be sent on the next refresh."}
+    outbox = studio.requests().load()["outbox"]
+    waiting = len([entry for entry in outbox if entry.get("state") not in ("done", "gave_up")])
+    given_up = len([entry for entry in outbox if entry.get("state") == "gave_up" and not entry.get("reported")])
+    found: Dict[str, Any] = {}
+    if waiting:
+        found.update(github_updates_waiting=waiting,
+                     github_updates_note=f"{waiting} update{'s' if waiting != 1 else ''} to GitHub waiting; they will be sent on the next refresh.")
+    if given_up:
+        found.update(github_updates_not_made=given_up,
+                     github_updates_not_made_note=f"{given_up} update{'s' if given_up != 1 else ''} to GitHub could not be made and will not be tried again; refresh to see which.")
+    return found
 
 
 def shared_wave(studio: Studio, wave_id: str, data: Dict[str, Any], theirs: Dict[str, bytes], ledger: Dict[str, Any], source: Any) -> Dict[str, Any]:
@@ -1329,9 +1335,8 @@ def cmd_request_show(studio: Studio, args: argparse.Namespace) -> int:
     data = reqs.load()
     if str(number) not in data["items"]:
         raise StudioError(f"No request #{number} is known here. Refresh to see the open requests.")
-    item = reqs.item_view(data, str(number), studio.all("slice"))
-    return emit({"request": {**item, **reqs.rules.fence(number, item["title"] or "", item["body"] or "")},
-                 "note": REQUEST_NOTE, "factory_authorized": False})
+    # The text only fenced, and none at all for a request that does not count.
+    return emit({"request": reqs.show(data, number, studio.all("slice")), "note": REQUEST_NOTE, "factory_authorized": False})
 
 
 def cmd_request_pick(studio: Studio, args: argparse.Namespace) -> int:
@@ -1346,9 +1351,12 @@ def cmd_request_pick(studio: Studio, args: argparse.Namespace) -> int:
     started = start_slice(studio, args.epic, args.title, [], args.id, origin)  # the local act completes before any GitHub write
     slice_id = started["slice"]["slice_id"]
     writes = reqs.record_pick(number, record, slice_id)
+    gave_up = writes.pop("gave_up", 0)
     return emit({**started, "picked": True, "request": reqs.fenced_for(slice_id, origin),
-                 "github_updates": {**writes, "note": None if not writes["waiting"] else
-                                    "Some updates to GitHub could not be made yet; they will be sent on the next refresh. Your slice is saved."},
+                 "github_updates": {**writes, **({"could_not_be_made": gave_up} if gave_up else {}),
+                                    "note": None if not writes["waiting"] and not gave_up else
+                                    "Some updates to GitHub could not be made yet; they will be sent on the next refresh. Your slice is saved."
+                                    if not gave_up else "Some updates to GitHub could not be made and will not be tried again. Your slice is saved."},
                  "used_cached_request": offline,
                  "note": "A draft slice was started from the request. The interview still asks you every question; nothing is approved or sent.",
                  "factory_authorized": False})

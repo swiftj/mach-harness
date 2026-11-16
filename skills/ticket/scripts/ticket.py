@@ -8,7 +8,7 @@
     ticket.py update <id> [...]           change state or labels, add a comment
     ticket.py comment <id> --body B       add a comment
     ticket.py ingest-telemetry SRC FILE   turn a crash, alert or failed build into an AUTO- ticket
-    ticket.py request-status OWNER/REPO#N --moment merged|blocked --ref ID...
+    ticket.py request-status OWNER/REPO#N --moment merged|blocked --ref ID... --nonce HEX
                                           status label and comment on a request's GitHub issue (M8)
 
 Providers: local (Markdown files in .factory/tickets/, the default), github (gh), gitea-cli (gt),
@@ -897,7 +897,7 @@ REQUEST_MOMENTS = {
 }
 REQUEST_RE = re.compile(r"^([^#\s]+)#([0-9]{1,9})$")
 GITHUB_REMOTE_RE = re.compile(r"^(?:https://(?:[^/@\s]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)"
-                              r"([A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
+                              r"([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
 GH_TIMEOUT_SECONDS = 60
 GH_FAILURES = (  # (kind, marks), checked in order against gh's output in lower case
     ("network", ("could not resolve host", "no such host", "dial tcp", "timed out", "timeout", "request canceled", "connection refused",
@@ -973,11 +973,21 @@ def status_label(project: Path, repository: str, number: int, label: str) -> Non
         gh_call(project, *edit)
 
 
+def issue_is_here(project: Path, repository: str, number: int) -> bool:
+    """Checked before any write: the issue GitHub finds by this number must still live in
+    `repository`. An issue moved to another repository answers at its new address and is never written to."""
+    found = json.loads(gh_call(project, "issue", "view", str(number), "--repo", repository, "--json", "number,url") or "null")
+    url = found.get("url") if isinstance(found, dict) else None
+    return isinstance(url, str) and url.lower().startswith(f"https://github.com/{repository}/issues/".lower())
+
+
 def cmd_request_status(ctx: Context, args: argparse.Namespace) -> int:
     repository, number = parse_request(args.request)
     refs = list(dict.fromkeys(args.ref or []))
+    if not issue_rules.is_nonce(args.nonce):
+        raise TicketError("A status write needs the intake ledger's nonce (--nonce, 32 hexadecimal characters); it was missing or malformed.")
     try:
-        written = issue_rules.comment(args.moment, refs)
+        written = issue_rules.comment(args.moment, refs, args.nonce)
     except ValueError as exc:
         raise TicketError(f"The references do not fit the {args.moment} status: {exc}.")
     remote = origin_repository(ctx.project)
@@ -1004,6 +1014,8 @@ def cmd_request_status(ctx: Context, args: argparse.Namespace) -> int:
             return answer("pending", "other")
         if canonical != repository:
             raise TicketError(f"{repository} is not this project's origin repository ({canonical}). Status is written only there.")
+        if not issue_is_here(ctx.project, repository, number):
+            return answer("pending", "moved")  # the issue has moved to another repository: nothing is written
         for label in add:
             status_label(ctx.project, repository, number, label)
             result["labels_added"].append(label)
@@ -1086,6 +1098,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("request", help="OWNER/REPO#N; must be the origin remote's repository")
     p.add_argument("--moment", required=True, choices=sorted(REQUEST_MOMENTS))
     p.add_argument("--ref", action="extend", nargs="+", required=True, help="identifiers for the comment: SLICE-NNN@rN, ticket:ID")
+    p.add_argument("--nonce", help="the intake ledger's marker nonce; required")
     p.set_defaults(func=cmd_request_status)
     return parser
 

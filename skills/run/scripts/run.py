@@ -635,7 +635,7 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
             found.pop("_snapshot", None)
             plan = line.plan()
             result = {**found, "plan_summary": {key: plan[key] for key in ("counts", "dispatchable", "waiting_for_a_place", "needs_person", "intake_is_current", "limits")},
-                      "factory_started": False}
+                      **line.request_status_summary(), "factory_started": False}
         elif args.action == "intake":
             if args.fetch:
                 fetch(project)

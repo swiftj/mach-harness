@@ -34,6 +34,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import subprocess
 import sys
 import tarfile
@@ -70,6 +71,8 @@ APPROVED = "approved_for_engineering"
 DEFAULT_MAX_PARALLEL = 3
 MAX_PRODUCT_FILE_BYTES = 1024 * 1024  # a product file larger than this is refused as invalid, never parsed
 RISK_FLOOR = "Medium"  # product-sourced work is never reviewed below this tier
+REQUEST_STATUS_MAX_ATTEMPTS = 20  # a status write GitHub could not be reached for is given up after this many tries
+REQUEST_STATUS_GIVE_UP_KINDS = ("auth", "refused", "not_found", "moved")  # failures a retry cannot fix
 LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process that is gone, is taken over
 ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
 IGNORE_LINE = ".factory/intake/"
@@ -97,6 +100,15 @@ def write_atomic(path: Path, text: str) -> None:
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(text, encoding="utf-8")
     os.replace(str(temporary), str(path))
+
+
+def request_status_nonce(ledger: Dict[str, Any]) -> str:
+    """The ledger's random nonce for status markers, made once. Only this Factory knows it, so
+    nobody else can write a comment carrying a marker MACH would take as its own."""
+    nonce = ledger.get("request_status_nonce")
+    if not (isinstance(nonce, str) and re.fullmatch(r"[0-9a-f]{32}", nonce)):
+        nonce = ledger["request_status_nonce"] = secrets.token_hex(16)
+    return nonce
 
 
 def request_origin(work: Any) -> Optional[Dict[str, Any]]:
@@ -819,6 +831,7 @@ class Factory:
             return False
         key = sha(("\n".join([moment, origin["repository"], str(origin["number"]), *sorted(refs)])).encode("utf-8"))[:16]
         outbox = ledger.setdefault("request_status", {})
+        request_status_nonce(ledger)
         if key in outbox:
             return False
         outbox[key] = {"moment": moment, "repository": origin["repository"], "number": origin["number"], "refs": list(refs),
@@ -837,7 +850,12 @@ class Factory:
             write = outbox[key]
             if not isinstance(write, dict) or write.get("state") != "pending":
                 continue
-            argv = ["request-status", f"{write['repository']}#{write['number']}", "--moment", str(write["moment"])]
+            if int(write.get("attempts") or 0) >= REQUEST_STATUS_MAX_ATTEMPTS:
+                write.update(state="gave_up", kind=write.get("kind") or "network", gave_up_at=now())
+                self.save(ledger)
+                continue
+            argv = ["request-status", f"{write['repository']}#{write['number']}", "--moment", str(write["moment"]),
+                    "--nonce", request_status_nonce(ledger)]
             for ref in write.get("refs") or []:
                 argv += ["--ref", str(ref)]
             done = self.ticket(*argv)
@@ -855,12 +873,30 @@ class Factory:
             else:
                 kind = answer.get("kind") if isinstance(answer, dict) else None
                 write["kind"] = kind if isinstance(kind, str) and re.fullmatch(r"[a-z_]{1,20}", kind) else "other"
+                if write["kind"] in REQUEST_STATUS_GIVE_UP_KINDS:
+                    write.update(state="gave_up", gave_up_at=now())  # a retry cannot fix it: reported, never tried again
             self.save(ledger)
         counts: Dict[str, int] = {}
         for write in outbox.values():
             if isinstance(write, dict):
                 counts[str(write.get("state"))] = counts.get(str(write.get("state")), 0) + 1
         report["request_status"] = {"pending": counts.get("pending", 0), "done": counts.get("done", 0), "refused": counts.get("refused", 0)}
+        if counts.get("gave_up"):
+            report["request_status"]["gave_up"] = counts["gave_up"]
+
+    def request_status_summary(self) -> Dict[str, Any]:
+        """Status updates to requests' issues waiting to reach GitHub, and any given up. Nothing at
+        all when there are none, so a project without requests reports exactly as before."""
+        outbox = self.ledger().get("request_status")
+        if not isinstance(outbox, dict):
+            return {}
+        states = [write.get("state") for write in outbox.values() if isinstance(write, dict)]
+        found = {}
+        if states.count("pending"):
+            found["waiting"] = states.count("pending")
+        if states.count("gave_up"):
+            found["gave_up"] = states.count("gave_up")
+        return {"request_status_updates": found} if found else {}
 
     def definition(self, row: Dict[str, Any], snap: Snapshot) -> Dict[str, Any]:
         found = {"title": row.get("title"), "epic_id": row.get("epic_id"), "wave_id": row.get("wave_id"), "revision": row.get("revision"),

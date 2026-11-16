@@ -69,6 +69,10 @@ test("every state of D8 renders with its own buttons", async () => {
     assert.match(await card(page, 42).innerText(), /Not accepted as a request/);
     assert.match(await card(page, 42).innerText(), /@casey-guest, who cannot change this repository/);
     assert.equal(await card(page, 42).getByRole("link", { name: /^View on GitHub/ }).count(), 1);
+    // ...and no text at all: the person can read it on GitHub.
+    assert.equal(await card(page, 42).getByRole("button", { name: /request's text/ }).count(), 0);
+    assert.equal(await card(page, 42).getByRole("region").count(), 0);
+    assert.doesNotMatch(await card(page, 42).innerText(), /Please add a delete button/);
 
     // Picked up by someone else.
     assert.deepEqual(await buttons(page, 43), ["Pick up as well", "Link a draft slice"]);
@@ -90,6 +94,27 @@ test("every state of D8 renders with its own buttons", async () => {
 
     // The group is listed among the kinds of decision.
     assert.equal(await page.getByRole("navigation", { name: "Decisions by kind" }).getByRole("link", { name: /^Requests/ }).count(), 1);
+    await clean(watched);
+  } finally {
+    await watched.context.close();
+  }
+});
+
+test("a request's text is read with request.show when opened, without its fence lines", async () => {
+  const watched = await open("all");
+  const { page } = watched;
+  try {
+    assert.doesNotMatch(await card(page, 41).innerText(), /Finance needs the monthly report/, "the list carries no text");
+    await card(page, 41).getByRole("button", { name: "Show the request's text", exact: true }).click();
+    const region = card(page, 41).getByRole("region", { name: "Text of request #41", exact: true });
+    await region.waitFor();
+    assert.equal(
+      await region.evaluate((el) => el.textContent),
+      "Export the monthly report as a spreadsheet\n\nFinance needs the monthly report in a spreadsheet.\nToday we copy it by hand.",
+    );
+    assert.deepEqual(await region.evaluate((el) => [...el.childNodes].map((n) => n.nodeType)), [3]);
+    await card(page, 41).getByRole("button", { name: "Hide the request's text", exact: true }).click();
+    assert.equal(await card(page, 41).getByRole("region").count(), 0);
     await clean(watched);
   } finally {
     await watched.context.close();

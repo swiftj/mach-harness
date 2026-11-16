@@ -107,10 +107,21 @@ class Base(intake_tests.Base, request_tests.RequestBase):
 
     def merged_body(self, slice_id="SLICE-001", ticket_id="LOCAL-001"):
         revision = self.ledger()["slices"][slice_id]["revision"]
-        return issue_rules.comment("merged", [f"{slice_id}@r{revision}", f"ticket:{ticket_id}"])["body"]
+        return issue_rules.comment("merged", [f"{slice_id}@r{revision}", f"ticket:{ticket_id}"], self.nonce_eng())["body"]
 
-    def request_status(self, *argv):
-        return subprocess.run([sys.executable, str(TICKET), "--project", str(self.eng), "request-status", *argv], capture_output=True, text=True)
+    def nonce_eng(self):
+        """The Factory's own marker nonce, kept in its intake ledger."""
+        path = self.eng / ".factory/intake/ledger.json"
+        ledger = self.ledger() if path.is_file() else {"schema_version": 1}
+        if "request_status_nonce" not in ledger:  # made when the first write is queued; a test may need it earlier
+            ledger["request_status_nonce"] = "0123456789abcdef0123456789abcdef"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(ledger))
+        return ledger["request_status_nonce"]
+
+    def request_status(self, *argv, nonce="0123456789abcdef0123456789abcdef"):
+        extra = ["--nonce", nonce] if nonce else []
+        return subprocess.run([sys.executable, str(TICKET), "--project", str(self.eng), "request-status", *argv, *extra], capture_output=True, text=True)
 
 
 class MergedTest(Base):
@@ -176,7 +187,7 @@ class MergedTest(Base):
         self.product("intake", "--dry-run")
         # The comment is already on the issue, as if an earlier write's answer was lost before it was recorded.
         revision = json.loads(git(self.eng, "show", "origin/main:product/slices/SLICE-001.json"))["revision"]
-        body = issue_rules.comment("merged", [f"SLICE-001@r{revision}", "ticket:LOCAL-001"])["body"]
+        body = issue_rules.comment("merged", [f"SLICE-001@r{revision}", "ticket:LOCAL-001"], self.nonce_eng())["body"]
         self.issue(comments=[*self.comments(), body])
         self.product("intake")
         self.assertEqual(self.moment("merged"), [body])
@@ -214,7 +225,7 @@ class BlockedTest(Base):
         self.product("reconcile")
         self.product("reconcile")
         self.product("intake")
-        expected = issue_rules.comment("blocked", ["ticket:LOCAL-001"])["body"]
+        expected = issue_rules.comment("blocked", ["ticket:LOCAL-001"], self.nonce_eng())["body"]
         self.assertEqual(self.moment("blocked"), [expected])
         self.assertTrue(expected.startswith("Ticket LOCAL-001 is blocked and waits for a person."))
         self.assertNotIn("mach:blocked", self.labels())  # a product request's issue mirrors no line state
@@ -304,6 +315,83 @@ class OriginTest(Base):
         self.assertIn(body, self.ticket_text("LOCAL-001"))
         self.product("dispatch", "SLICE-001")
         self.assertEqual(list(self.cell("LOCAL-001")["product"]), ["slice_id", "revision", "wave_id", "digest", "spec_sha256", "source_commit"])
+
+
+class SecurityReviewTest(Base):
+    """Regression tests for the ticket and intake side of the security review."""
+
+    def test_l2_request_status_needs_the_nonce_and_a_forged_marker_does_not_stop_it(self):
+        import hashlib
+        self.requested()
+        argv = (f"{REPO}#42", "--moment", "blocked", "--ref", "ticket:LOCAL-009")
+        before = len(self.gh().get("calls", []))
+        for nonce in (None, "short", "Z" * 32):
+            done = self.request_status(*argv, nonce=nonce)
+            self.assertEqual(done.returncode, 2, done.stdout)
+            self.assertIn("nonce", done.stderr)
+        self.assertEqual(len(self.gh().get("calls", [])), before)
+        old_key = hashlib.sha256(("blocked\nticket:LOCAL-009").encode()).hexdigest()[:16]
+        self.issue(comments=[*self.comments(), "spoof " + issue_rules.marker("blocked", old_key)])
+        done = self.request_status(*argv)
+        self.assertEqual((done.returncode, json.loads(done.stdout)["comment"]), (0, "posted"))
+        self.assertEqual(len(self.moment("blocked")), 2)  # the forgery and the real one
+
+    def test_l2_intake_keeps_its_own_random_nonce(self):
+        self.requested()
+        self.product("intake")
+        nonce = self.ledger()["request_status_nonce"]
+        self.assertTrue(issue_rules.is_nonce(nonce))
+        self.assertNotEqual(nonce, "0123456789abcdef0123456789abcdef")
+        self.assertEqual(self.moment("merged"), [self.merged_body()])
+
+    def test_l3_ticket_classifier_tells_not_found_from_network(self):
+        sys.path.insert(0, str(TICKET.parent))
+        import ticket
+        self.assertEqual(ticket.gh_failure_kind("GraphQL: Could not resolve to an issue or pull request with the number of 42."), "not_found")
+        self.assertEqual(ticket.gh_failure_kind("GraphQL: Could not resolve to a Repository with the name 'a/b'."), "not_found")
+        self.assertEqual(ticket.gh_failure_kind("dial tcp: lookup api.github.com: no such host"), "network")
+        self.assertEqual(ticket.gh_failure_kind("Could not resolve host: api.github.com"), "network")
+        self.assertIsNone(ticket.GITHUB_REMOTE_RE.fullmatch("git@github.com:-evil/repo.git"))  # N7
+
+    def test_l6_intake_gives_up_on_unfixable_writes_and_caps_retries(self):
+        self.requested()
+        self.set_gh(issue_fail={"issue edit": "HTTP 403: Resource not accessible by integration"})
+        taken = self.product("intake")
+        self.assertEqual(taken["request_status"]["gave_up"], 1)
+        (write,) = self.outbox().values()
+        self.assertEqual((write["state"], write["kind"], write["attempts"]), ("gave_up", "refused", 1))
+        self.set_gh(issue_fail={})
+        calls = len(self.status_calls())
+        self.product("reconcile")
+        self.assertEqual(len(self.status_calls()), calls)  # never tried again
+        status = self.product("status")
+        self.assertEqual(status["request_status_updates"], {"gave_up": 1})
+        # A network failure is retried, but at most 20 times.
+        ledger = self.ledger()
+        for item in ledger["request_status"].values():
+            item.update(state="pending", kind="network", attempts=20)
+        (self.eng / ".factory/intake/ledger.json").write_text(json.dumps(ledger))
+        self.assertEqual(self.product("status")["request_status_updates"], {"waiting": 1})
+        self.product("reconcile")
+        self.assertEqual(len(self.status_calls()), calls)
+        (write,) = self.outbox().values()
+        self.assertEqual(write["state"], "gave_up")
+
+    def test_status_without_requests_prints_what_it_printed_before(self):
+        self.first()
+        self.product("intake")
+        self.assertNotIn("request_status_updates", self.product("status"))
+
+    def test_n6_moved_issue_is_never_written_and_given_up(self):
+        self.requested()
+        self.issue(url="https://github.com/someone/else/issues/9")
+        calls = len(self.status_calls())
+        taken = self.product("intake")
+        self.assertEqual(len(self.status_calls()), calls)  # no label, no comment
+        (write,) = self.outbox().values()
+        self.assertEqual((write["state"], write["kind"]), ("gave_up", "moved"))
+        self.assertEqual(taken["request_status"]["gave_up"], 1)
+        self.assertNotIn("mach:ready", self.labels())
 
 
 if __name__ == "__main__":

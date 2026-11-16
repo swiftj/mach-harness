@@ -35,3 +35,15 @@ export function requestActions(item: RequestFacts, approved: readonly string[]):
     viewOnGitHub: item.url !== null && /^https:\/\/github\.com\//.test(item.url),
   };
 }
+
+/**
+ * The text inside the engine's fence: the opening and closing marker lines removed, nothing else
+ * changed. Anything that does not look like a fenced text gives null, so nothing unfenced is shown.
+ */
+export function unfence(fenced: string | undefined | null): string | null {
+  if (typeof fenced !== "string") return null;
+  const lines = fenced.split("\n");
+  const [first, last] = [lines[0] ?? "", lines[lines.length - 1] ?? ""];
+  if (lines.length < 2 || !first.startsWith("<<<REQUEST-DATA ") || !last.startsWith("<<<END-REQUEST-DATA ")) return null;
+  return lines.slice(1, -1).join("\n");
+}

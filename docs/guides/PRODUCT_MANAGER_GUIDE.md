@@ -41,7 +41,7 @@ Someone can ask for something by filing an issue on GitHub. When a person with w
 
 Titles and text are cut to a safe length (200 and 20,000 characters), and passwords and email addresses found in them are removed. The check works on patterns, so it can miss something. Do not paste secrets into issues.
 
-**Why some requests are "not accepted".** MACH checks who applied the label, so that a request cannot be started by someone without the right to. A request that does not pass is still listed, with the reason, and cannot be picked up.
+**Why some requests are "not accepted".** MACH checks who applied the label, so that a request cannot be started by someone without the right to. A request that does not pass is still listed, with the reason, and cannot be picked up; its text is not shown in Product Studio, only on GitHub. "Accepted" means only that a person with write access labelled it: nobody has checked what it says, and its author can still edit it.
 
 | Reason shown | In plain words |
 |---|---|

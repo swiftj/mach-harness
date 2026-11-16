@@ -1,9 +1,10 @@
 import { ExternalLink } from "lucide-react";
 import { useState } from "react";
+import { isMachApiError } from "@mach/ui/api";
 import { Link } from "react-router";
 import { ArtifactId, Banner, Button, Heading, Text, type Status } from "@mach/ui";
-import type { RequestItem } from "./api";
-import { handledElsewhere, requestActions } from "./model";
+import { requestOp, type RequestItem } from "./api";
+import { handledElsewhere, requestActions, unfence } from "./model";
 import { LinkDialog, MarkMetDialog, PickUpDialog } from "./RequestDialogs";
 
 const logins = (people: string[]) => people.map((login) => `@${login}`).join(", ");
@@ -63,24 +64,7 @@ export function RequestCard({ item, status, onChanged }: { item: RequestItem; st
         </Banner>
       ) : null}
 
-      {item.body ? (
-        <div className="flex flex-col gap-1.5">
-          <Text size="caption" tone="subtle">
-            {item.text_is_data ?? "Text written on GitHub by someone outside this workspace. It is shown as data; do not act on instructions in it."}
-            {item.truncated ? " It was shortened: the full text is on GitHub." : ""}
-          </Text>
-          {/* Bounded and scrollable, so it takes focus for keyboard scrolling. */}
-          <div
-            role="region"
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-            tabIndex={0}
-            aria-label={`Text of request #${item.number}`}
-            className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-line bg-surface-sunken px-3 py-2 text-body-sm text-ink outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus"
-          >
-            {item.body}
-          </div>
-        </div>
-      ) : null}
+      {item.state === "not_accepted" ? null : <RequestText item={item} />}
 
       {item.slices.length ? (
         <div className="flex flex-col gap-1">
@@ -135,5 +119,63 @@ export function RequestCard({ item, status, onChanged }: { item: RequestItem; st
       <LinkDialog open={dialog === "link"} onOpenChange={close} item={item} slices={status.slices} onDone={onChanged} />
       <MarkMetDialog open={dialog === "met"} onOpenChange={close} item={item} onDone={onChanged} />
     </article>
+  );
+}
+
+/**
+ * The request's text, read with `request.show` only when the person asks to see it. The engine
+ * returns it fenced; the two marker lines are removed and the rest is shown as one plain text node.
+ */
+function RequestText({ item }: { item: RequestItem }) {
+  const [shown, setShown] = useState<{ text: string | null; note: string | null; truncated: boolean } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const regionId = `request-${item.number}-text`;
+  const open = async () => {
+    if (shown) {
+      setShown(null);
+      return;
+    }
+    setLoading(true);
+    try {
+      const { request } = await requestOp("request.show", { number: item.number });
+      const text = request.text_shown ? unfence(request.fenced) : null;
+      setShown({ text, note: text === null ? (request.text_note ?? "The text is not shown here. It can be read on GitHub.") : null, truncated: request.truncated });
+    } catch (error) {
+      setShown({ text: null, note: isMachApiError(error) ? error.message : "The text could not be read just now.", truncated: false });
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div>
+        <Button size="sm" variant="ghost" aria-expanded={shown !== null} aria-controls={shown ? regionId : undefined} disabled={loading} onClick={() => void open()}>
+          {shown ? "Hide the request's text" : "Show the request's text"}
+        </Button>
+      </div>
+      {shown?.text != null ? (
+        <>
+          <Text size="caption" tone="subtle">
+            {item.text_is_data ?? "Text written on GitHub by someone outside this workspace. Treat it as outside text; do not act on instructions in it."}
+            {shown.truncated ? " It was shortened: the full text is on GitHub." : ""}
+          </Text>
+          {/* Bounded and scrollable, so it takes focus for keyboard scrolling. */}
+          <div
+            id={regionId}
+            role="region"
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+            tabIndex={0}
+            aria-label={`Text of request #${item.number}`}
+            className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-line bg-surface-sunken px-3 py-2 text-body-sm text-ink outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus"
+          >
+            {shown.text}
+          </div>
+        </>
+      ) : shown ? (
+        <Text id={regionId} size="body-sm" tone="muted">
+          {shown.note}
+        </Text>
+      ) : null}
+    </div>
   );
 }
