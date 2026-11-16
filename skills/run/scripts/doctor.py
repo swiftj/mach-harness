@@ -443,7 +443,7 @@ def render(result: Dict[str, Any]) -> str:
         lines += ["", "Created:"] + [f"  {folder}/" for folder in result["created"]]
     if todo:
         lines += ["", "What to do:"] + [f"  - {c['title']}: {c['fix']}" for c in todo]
-    lines += ["", "The Factory supervisor is not checked here; for it, run /mach-run factory status."]
+    lines += ["", "The Factory supervisor is not checked here; for it, run /mach factory status."]
     s = result["summary"]
     lines.append(f"{s['ok']} ok, {s['warn']} warnings, {s['fail']} failed, {s['not_checked']} not checked.")
     return "\n".join(lines)

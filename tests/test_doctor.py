@@ -108,7 +108,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(sum(data["summary"].values()), len(checks))
         code, text = self.run_doctor()
         self.assertEqual(code, 0)
-        self.assertIn("/mach-run factory status", text)
+        self.assertIn("/mach factory status", text)
         self.assertIn("0 failed", text)
 
     def test_missing_factory_is_a_failure_not_a_crash(self):

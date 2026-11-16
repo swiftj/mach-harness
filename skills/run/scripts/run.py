@@ -71,9 +71,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 HARDENING_LABEL = "repo-hardening"
 SKILL_DIR = Path(__file__).resolve().parent.parent
-# Installed into a project, skills are folders named mach-<station> and agents mach-<name>;
-# as a plugin they are <station> and mach:<name>.
-PROJECT_INSTALL = SKILL_DIR.name.startswith("mach-")
+# Installed into a project, skills are folders named mach-<station> (this one is plain mach, the command /mach)
+# and agents mach-<name>; as a plugin they are <station> and mach:<name>.
+PROJECT_INSTALL = SKILL_DIR.name == "mach" or SKILL_DIR.name.startswith("mach-")
 
 
 class RunError(Exception):
@@ -81,7 +81,9 @@ class RunError(Exception):
 
 
 def skill(name: str) -> str:
-    return f"/mach-{name}" if PROJECT_INSTALL else f"/mach:{name}"
+    if PROJECT_INSTALL:
+        return "/mach" if name == "run" else f"/mach-{name}"
+    return f"/mach:{name}"
 
 
 def agent_type(name: str) -> str:
@@ -90,7 +92,7 @@ def agent_type(name: str) -> str:
 
 def sibling(name: str) -> Path:
     """Another station's skill folder, whichever way MACH is installed."""
-    for candidate in (SKILL_DIR.parent / f"mach-{name}", SKILL_DIR.parent / name):
+    for candidate in (SKILL_DIR.parent / ("mach" if name == "run" else f"mach-{name}"), SKILL_DIR.parent / name):
         if candidate.is_dir():
             return candidate
     raise RunError(f"The MACH {name} skill is not installed next to this one ({SKILL_DIR.parent}).")

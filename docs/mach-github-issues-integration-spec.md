@@ -110,13 +110,13 @@ Order and parallelism stay decided by script.
 
 | Command | Behaviour |
 |---|---|
-| `/mach-run 104` | A bare number resolves to the ticket (`GH-104`, `LOCAL-104`); ambiguity is reported, not guessed |
-| `/mach-run 104 105 106` | Those tickets, scheduled by the rules above |
-| `/mach-run --limit <n>` | At most `n` at once for this run, within the settings' ceiling unless the engineer says otherwise |
-| `/mach-run --sequential` | One at a time |
-| `/mach-run --dry-run` | The plan `product plan` already computes, with the reasons, and nothing started |
+| `/mach 104` | A bare number resolves to the ticket (`GH-104`, `LOCAL-104`); ambiguity is reported, not guessed |
+| `/mach 104 105 106` | Those tickets, scheduled by the rules above |
+| `/mach --limit <n>` | At most `n` at once for this run, within the settings' ceiling unless the engineer says otherwise |
+| `/mach --sequential` | One at a time |
+| `/mach --dry-run` | The plan `product plan` already computes, with the reasons, and nothing started |
 
-`/mach-run` with no ticket keeps its present meaning (the status of every ticket). It never starts every eligible ticket.
+`/mach` with no ticket keeps its present meaning (the status of every ticket). It never starts every eligible ticket.
 
 ## 5. Merge by pull request
 
@@ -136,8 +136,8 @@ All are reached through the existing entry points; there is no new command-line 
 
 | Addition | What it does | Notes |
 |---|---|---|
-| **Doctor** (`/mach-run doctor`) | Checks Git and worktrees, Python, Claude Code, tracker sign-in, the installed MACH version and files, and the project's settings | Reports and suggests. `--fix` only creates missing MACH folders; it never edits settings or enables anything |
-| **Explain** (`/mach-run explain <ticket>`) | Says why a ticket failed or was rejected: the requirement or scenario, the failing test and line, the reviewer's blocker and the rule it cites | Read from `build-report.json`, `evidence/summary.json`, `findings.md` and `review/round-N/decision.json`; changes nothing |
+| **Doctor** (`/mach doctor`) | Checks Git and worktrees, Python, Claude Code, tracker sign-in, the installed MACH version and files, and the project's settings | Reports and suggests. `--fix` only creates missing MACH folders; it never edits settings or enables anything |
+| **Explain** (`/mach explain <ticket>`) | Says why a ticket failed or was rejected: the requirement or scenario, the failing test and line, the reviewer's blocker and the rule it cites | Read from `build-report.json`, `evidence/summary.json`, `findings.md` and `review/round-N/decision.json`; changes nothing |
 | **Digest** | Three lines at the top of every status: where it is, what a person must decide, time and cost | Cost is shown only where it was recorded; otherwise "not recorded", never an estimate |
 | **Notifications** | Tells a channel when a ticket waits for a person | One outbound webhook (Slack and Discord both accept it), set per machine, off by default. The message names the ticket and the command to run; it never contains a link that approves |
 | **Evidence player** | Recordings, screenshots and transcripts shown beside the ticket in the Factory Floor | Read-only; still behind `floor.evidence_media` |
@@ -181,7 +181,7 @@ Each step is its own branch, with tests, and merges only on explicit approval.
 | Idea | Why not |
 |---|---|
 | A hand-applied `mach:ready` label that sends an issue straight to a cell | An issue can be edited after labelling and needs little permission to label; approval stays in Git |
-| `/mach-run` with no ticket starting everything eligible | Work starts on an engineer's command or an enabled supervisor, never by default |
+| `/mach` with no ticket starting everything eligible | Work starts on an engineer's command or an enabled supervisor, never by default |
 | Concurrency chosen by Claude, up to 10 cells | Not repeatable or testable, and it could exceed a limit an engineer set on their own machine |
 | Squash merge, branch deletion, auto-merge by default | Contradicts the merge station's rules |
 | pr-agent as the reviewer | One model call per command and no verdict; needs an API key and adds dependencies; the panel is the stronger gate |

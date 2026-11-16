@@ -59,7 +59,7 @@ class PolicyError(Exception):
     """A problem the caller can fix; run.py prints it as a refusal."""
 
 
-BY_HAND = "a person can still run that ticket by hand (/mach-run)"
+BY_HAND = "a person can still run that ticket by hand (/mach)"
 
 
 def security_review_problems(config: Dict[str, Any]) -> List[str]:

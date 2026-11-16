@@ -176,9 +176,9 @@ HOME".
 - **Commands to continue** (engineer, from the engineer clone; `GH_TOKEN` only if pushing):
 
       cd <scratch>/m7/agents/pm/world/eng
-      HOME=../home-eng python3 .claude/skills/mach-run/scripts/run.py --project . product plan
+      HOME=../home-eng python3 .claude/skills/mach/scripts/run.py --project . product plan
       HOME=../home-eng python3 .claude/skills/mach-audit/scripts/audit.py        # the station the Factory task runs first
-      HOME=../home-eng python3 .claude/skills/mach-run/scripts/run.py --project . factory enable   # then --confirm <code> only on a person's yes
+      HOME=../home-eng python3 .claude/skills/mach/scripts/run.py --project . factory enable   # then --confirm <code> only on a person's yes
 
   The PM commands are the same `studio.py` commands with `--project <clone>`; see `p1_pms.py` for the exact
   calls.

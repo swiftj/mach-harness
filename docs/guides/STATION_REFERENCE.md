@@ -1,6 +1,6 @@
 # Station Reference
 
-What each station does, what its script refuses, and how to run one yourself. Most people never need to: `/mach-run <ticket>` calls each station in turn. Commands are shown for a one-project install (`/mach-build`); with the plugin they are `/mach:build` and so on. For the short guide, see the [README](../../README.md).
+What each station does, what its script refuses, and how to run one yourself. Most people never need to: `/mach <ticket>` calls each station in turn. Commands are shown for a one-project install (`/mach-build`); with the plugin they are `/mach:build` and so on. For the short guide, see the [README](../../README.md).
 
 ## Grooming a ticket
 

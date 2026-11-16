@@ -1471,7 +1471,7 @@ class BoundaryTest(Base):
     def test_a_script_install_gets_a_stable_generated_plugin_in_ignored_local_state(self):
         installed = subprocess.run([sys.executable, str(ROOT / "bin" / "mach"), "install", "--project", str(self.eng)], capture_output=True, text=True)
         self.assertEqual(installed.returncode, 0, installed.stderr + installed.stdout)
-        run_script = self.eng / ".claude/skills/mach-run/scripts/run.py"
+        run_script = self.eng / ".claude/skills/mach/scripts/run.py"
         folder = self.eng / ".factory/local/claude-plugin"
         first = executor.plugin(self.eng, run_script)
         self.assertEqual((first["kind"], first["plugin_dir"], first["workflow"], first["add_dirs"]), ("project", folder, "mach:belt", []))
