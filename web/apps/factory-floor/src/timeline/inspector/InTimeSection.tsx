@@ -11,6 +11,10 @@ import { timecode } from "../../shell/time";
 import { findArtifact, type ArtifactState, type EntityRef } from "../../sim";
 import { showInTimeline, showOnFloor, showOnFloorAt, useScene, useSceneStore, useStore } from "../../scene";
 import { ArtifactLink } from "../../shell/inspector/anatomies";
+import { useCatalogEntries } from "../../shell/inspector/catalog";
+import { OpenEvidence } from "../../evidence/OpenEvidence";
+import { catalogIdOf, checkCitingPath } from "../../evidence/model";
+import type { ArtifactEntry } from "../../live/observer";
 import { AuthorityBadge, Elapsed, Facts, JumpButton, Mono, RefLink, RefList, Section, precisionWords, useEntityEvents, type Fact } from "../../shell/inspector/parts";
 import { RULE_WORDS } from "../../shell/inspector/Provenance";
 import { FreeText, FreeTextLabel } from "../../shell/inspector/FreeText";
@@ -393,11 +397,14 @@ function EvidenceRefs({ entity }: { entity: EntityRef }) {
     }
     return byId;
   }, [scene, refs]);
+  const ticket = artifacts.values().next().value?.ticketId ?? null;
+  const live = artifacts.values().next().value?.meta.authority !== "simulated";
+  const catalog = useCatalogEntries(ticket, live);
   if (!refs.length) return null;
   return (
     <div className="mt-3">
       <p className="text-caption font-semibold text-ink">Evidence references</p>
-      <p className="text-caption text-ink-subtle">Recorded facts only; opening an artifact's content waits for the Evidence Theater.</p>
+      <p className="text-caption text-ink-subtle">Recorded facts here; a file a verification check cites opens in the evidence player, by its catalog id.</p>
       <RefList>
         {refs.map((r) => {
           const a = artifacts.get(r.artifactId);
@@ -405,9 +412,10 @@ function EvidenceRefs({ entity }: { entity: EntityRef }) {
             <div key={r.artifactId} className="flex flex-col" data-evidence-artifact={r.artifactId}>
               {a ? <ArtifactLink artifact={a} /> : null}
               <span className="px-1.5 font-mono text-[12px] text-ink-muted">
-                <span className="font-sans text-ink-subtle">Catalog id: </span>
+                <span className="font-sans text-ink-subtle">Scene id: </span>
                 {r.artifactId}
               </span>
+              {a ? <EvidenceOpenFor artifact={a} catalog={catalog} /> : null}
               <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1.5 pb-1 text-caption text-ink-subtle">
                 <span>Produced:</span>
                 {r.producedBy ? <JumpButton eventId={r.producedBy} label="Go to event" /> : <span>no record names the write</span>}
@@ -430,5 +438,28 @@ function EvidenceRefs({ entity }: { entity: EntityRef }) {
         })}
       </RefList>
     </div>
+  );
+}
+
+/**
+ * Opens the evidence player at a referenced file (M6.4): the scene's artifact id mapped to the observer's
+ * catalog id the way the inspector's free-text label maps it (`catalogIdOf`, over `catalogEntriesOf`);
+ * the simulation keeps its scene id. Offered only when a recorded check cites the file.
+ */
+function EvidenceOpenFor({ artifact, catalog }: { artifact: ArtifactState; catalog: readonly ArtifactEntry[] | null }) {
+  // A string, so the selector is stable.
+  const checkId = useScene((s) => {
+    const cell = s.cells[artifact.ticketId];
+    return (cell ? checkCitingPath(cell, artifact.path)?.checkId : null) ?? null;
+  });
+  const artifactId = catalog ? catalogIdOf(catalog, artifact) : null;
+  const start = useMemo(() => ({ artifactId, sceneArtifactId: artifact.id, path: artifact.path }), [artifactId, artifact.id, artifact.path]);
+  if (!checkId) return null;
+  return (
+    <span className="px-1.5 pb-1">
+      <OpenEvidence ticket={artifact.ticketId} check={checkId} start={start} variant="ghost">
+        {`Open in the evidence player (${checkId})`}
+      </OpenEvidence>
+    </span>
   );
 }

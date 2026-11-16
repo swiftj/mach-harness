@@ -322,7 +322,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
 | `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |
 | `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |
-| `floor.evidence_media` | off | Show evidence screenshots and recordings in the Factory Floor |
+| `floor.evidence_media` | off | Let the Factory Floor's evidence player show screenshots and recordings; transcripts and other text are shown either way |
 
 A high-risk change always needs a person's approval in review unless you change that setting yourself. `REVIEW.md` and `AGENTS.md` are yours to edit once created.
 

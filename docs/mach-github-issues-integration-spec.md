@@ -1,7 +1,8 @@
 # Design: GitHub Issues as requests, and ease-of-use additions
 
 Status: agreed design, 2026-11-15. Built so far: step 1, requests from GitHub Issues (`docs/mach-next/M8_DESIGN.md`),
-scheduling and the pull request additions (`docs/mach-next/M9_DESIGN.md`). This replaces the earlier draft of this
+scheduling and the pull request additions (`docs/mach-next/M9_DESIGN.md`), and the evidence player
+(`docs/mach-next/M6_4_EVIDENCE_PLAYER.md`). This replaces the earlier draft of this
 file, which described a hand-applied `mach:ready` trigger, concurrency chosen by Claude and a squash
 merge; none of those was adopted (section 9).
 

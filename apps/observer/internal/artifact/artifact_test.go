@@ -415,3 +415,51 @@ func TestServedTextUsesTheSharedScrubber(t *testing.T) {
 		}
 	}
 }
+
+// A .http request/response dump (the verify station's API evidence) is text: served scrubbed, like
+// every other text, and refused when its bytes are not text.
+func TestHTTPDumpIsText(t *testing.T) {
+	dump := "POST /api/v1/login HTTP/1.1\nHost: localhost\nAuthorization: Bearer sk-ant-abcdefghijklmnopqrstuvwxyz0123\n\n" +
+		"HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"ok\":true,\"path\":\"/Users/someone/app/db.sqlite\"}\n"
+	f := project(t, map[string]string{
+		"AC-02.http":     dump,
+		"AC-03.http":     "\x00\x01\x02 binary pretending to be a dump",
+		"AC-04.http":     "<!doctype html><script>alert(1)</script>",
+		"AC-05.HTTP":     "GET / HTTP/1.1\n",
+		"AC-06.http.png": "GET / HTTP/1.1\n",
+	})
+	c := New(f.root)
+	got := byPath(c)
+	e := got["cell:evidence/AC-02.http"]
+	if e.ContentAccess != "text" || e.MediaType != "text/plain" || e.Integrity != "match" {
+		t.Fatalf("a text .http dump is not served as text: %+v", e)
+	}
+	if class, ok := Allowed("AC-02.http", "text/plain"); !ok || class != ClassText {
+		t.Fatalf("Allowed(.http, text/plain) = %q, %v", class, ok)
+	}
+	content, err := c.Read(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(content.Data)
+	if strings.Contains(s, "sk-ant-") || strings.Contains(s, "/Users/someone") || content.Redacted == 0 {
+		t.Fatalf(".http dump not scrubbed (%d): %q", content.Redacted, s)
+	}
+	// The shared scrubber takes a request target for an absolute path, as in any other text.
+	if !strings.HasPrefix(s, "POST ") || !strings.Contains(s, "Host: localhost\n") || !strings.Contains(s, "HTTP/1.1 200 OK\n") {
+		t.Fatalf("lines lost: %q", s)
+	}
+	if e5 := got["cell:evidence/AC-05.HTTP"]; e5.ContentAccess != "text" {
+		t.Fatalf("the extension is matched without case, as every other: %+v", e5)
+	}
+	// Bytes that are not text, or are markup, are refused whatever the name says.
+	for _, k := range []string{"cell:evidence/AC-03.http", "cell:evidence/AC-04.http", "cell:evidence/AC-06.http.png"} {
+		e := got[k]
+		if e.ContentAccess != "none" {
+			t.Fatalf("%s: %+v", k, e)
+		}
+		if _, err := c.Read(e); !errors.Is(err, ErrTypeMatch) {
+			t.Fatalf("%s: %v", k, err)
+		}
+	}
+}

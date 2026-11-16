@@ -173,3 +173,22 @@ func TestKeptSessionsHashExpireAndBind(t *testing.T) {
 		t.Fatalf("%d kept", len(kept))
 	}
 }
+
+// The page's policy, held exactly: the M5 policy plus media-src 'self' (M6.4: the evidence player
+// plays a same-origin recording) and nothing else.
+func TestPagePolicyIsExact(t *testing.T) {
+	const want = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; " +
+		"font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; " +
+		"frame-ancestors 'none'; object-src 'none'"
+	if ContentSecurityPolicy != want {
+		t.Fatalf("page policy = %q\nwant %q", ContentSecurityPolicy, want)
+	}
+	h := http.Header{}
+	Headers(h)
+	if got := h.Get("Content-Security-Policy"); got != want {
+		t.Fatalf("Headers set the policy %q, want %q", got, want)
+	}
+	if n := strings.Count(want, "media-src"); n != 1 || !strings.Contains(want, "media-src 'self';") {
+		t.Fatalf("media-src must appear once, as 'self' only")
+	}
+}

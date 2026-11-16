@@ -190,13 +190,18 @@ test("I-22: the Factory-level station never says 'Not visited' when a cell has b
 
 // ---------------------------------------------------------------- I-45: the artifact section's wording
 
-test("I-45: the artifact section says it shows recorded facts and that opening content waits for the Evidence Theater", () => {
+test("I-45 (updated for M6.4): the artifact section shows recorded facts; a file a check cites opens in the evidence player, never inline", () => {
   const anat = src("shell/inspector/anatomies.tsx");
-  assert.match(anat, /export const ARTIFACT_CONTENT_NOTE = "These are the artifact's recorded facts\. Its content is not opened here: opening it waits for the Evidence Theater, a later milestone\."/);
+  assert.match(anat, /export const ARTIFACT_CONTENT_NOTE = "These are the artifact's recorded facts\. A file a verification check cites opens in the evidence player, beside the check it proves; any other file is listed here with its facts only\."/);
+  assert.doesNotMatch(anat, /Evidence Theater, a later milestone/, "the old 'not opened here' wording is gone");
   const artifact = anat.slice(anat.indexOf("export function ArtifactAnatomy"), anat.indexOf("export function GateAnatomy"));
   assert.match(artifact, /\{ARTIFACT_CONTENT_NOTE\}/);
-  assert.doesNotMatch(artifact, /artifactContent/, "no content is read");
-  assert.match(src("timeline/inspector/InTimeSection.tsx"), /Recorded facts only; opening an artifact's content waits for the Evidence Theater\./);
+  assert.match(artifact, /<OpenEvidence ticket=\{artifact\.ticketId\} check=\{citing\.checkId\}/, "a cited file opens the player at its check");
+  assert.doesNotMatch(artifact, /artifactContent|artifactText|artifactContentUrl/, "the inspector itself reads no content");
+  const intime = src("timeline/inspector/InTimeSection.tsx");
+  assert.match(intime, /Recorded facts here; a file a verification check cites opens in the evidence player, by its catalog id\./);
+  assert.doesNotMatch(intime, /waits for the Evidence Theater/);
+  assert.doesNotMatch(intime, /artifactContent|artifactText|artifactContentUrl/, "the Timeline's inspector reads no content");
 });
 
 test("I-03 (for states): a trend column whose period holds a suspect day is marked; a later day under a playhead is not named", () => {

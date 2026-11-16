@@ -55,6 +55,12 @@ export function applyHash(store: SceneStore, h: HashState): void {
   }
   if (h.sel) store.select(h.sel);
   if (h.theater) store.setTheater(true);
+  // M6.4: the evidence player, by ticket and check only; an address without it closes it (Back).
+  const ev = store.getState().evidence;
+  if (h.evidence) {
+    if (!ev || ev.ticket !== h.evidence.ticket) store.openEvidence(h.evidence.ticket, { check: h.evidence.check });
+    else store.setEvidenceCheck(h.evidence.check);
+  } else if (ev) store.closeEvidence();
   if (h.route === "timeline") {
     if (h.group) store.setTimelineView({ grouping: h.group });
     if (h.win) store.setTimelineView({ window: h.win });
@@ -184,6 +190,7 @@ export function createHashSync(store: SceneStore, host: HashHost, settleMs = SET
       lens: s.timeline.lens,
       table: s.timeline.table,
       analytics: s.analytics,
+      evidence: s.evidence ? { ticket: s.evidence.ticket, check: s.evidence.check } : null,
     });
     if (next === last) return;
     last = next;

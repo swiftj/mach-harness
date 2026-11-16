@@ -33,6 +33,7 @@ import { INITIAL_CONNECTION } from "./connection";
 import { INITIAL_TIMELINE_VIEW, type TimelineViewState, type TimeWindow } from "../timeline/contract";
 import { applyAnalyticsPatch, INITIAL_ANALYTICS_VIEW, NO_ANALYTICS_FILTERS, type AnalyticsArea, type AnalyticsFilters, type AnalyticsFocus, type AnalyticsPick, type AnalyticsViewPatch, type AnalyticsViewState, type AnalyticsWindow } from "./analytics";
 import { storeView } from "./view";
+import { EVIDENCE_CHECK, EVIDENCE_TICKET } from "../evidence/ids";
 
 /** Factory milliseconds per wall millisecond at 1x: the 55-minute run plays in about 5.5 minutes. Simulation and replay playback only; live time runs at 1. */
 export const PLAYBACK_BASE_RATE = 10;
@@ -71,6 +72,18 @@ export const NO_FIXTURE: Fixture = Object.freeze({
 });
 
 /** A request for the camera, honoured by both views. `nonce` changes on every request, so asking twice re-frames. */
+/**
+ * The evidence player (M6.4), open over the workspace for one ticket. The address carries only the
+ * ticket and the check (both identifiers); `start` says which file to begin at and is kept in memory
+ * only, never written to the address, storage or a title (a scene artifact id holds its path).
+ */
+export interface EvidenceOpen {
+  readonly ticket: string;
+  readonly check: string | null;
+  readonly start: { readonly artifactId?: string | null; readonly sceneArtifactId?: string | null; readonly path?: string | null } | null;
+}
+
+
 export interface FocusRequest {
   readonly target: EntityRef | "overview";
   readonly reason: "select" | "chapter" | "follow" | "api";
@@ -187,6 +200,8 @@ export interface SceneStoreState {
   readonly analytics: AnalyticsViewState;
   /** Theater Mode: the Atlas only; always off while another workspace is up. */
   readonly theater: boolean;
+  /** The evidence player, when open (M6.4): one ticket, and the check it shows. Interface state only. */
+  readonly evidence: EvidenceOpen | null;
   readonly reducedMotion: boolean;
   /**
    * Camera follow, one flag for both views and the Shell. On by default. Off as soon as the person
@@ -292,6 +307,11 @@ export interface SceneStore {
   setAnalyticsView(patch: AnalyticsViewPatch): void;
   /** Theater Mode on or off. Asking for it while another workspace is up does nothing: it belongs to the floor. */
   setTheater(on: boolean): void;
+  /** Open the evidence player for a ticket (M6.4), at a check and, in memory only, a file. An id that is not an identifier is refused. */
+  openEvidence(ticket: string, options?: { readonly check?: string | null; readonly start?: EvidenceOpen["start"] }): void;
+  /** The check the open player shows (written to the address); nothing when the player is closed or the id is not an identifier. */
+  setEvidenceCheck(check: string | null): void;
+  closeEvidence(): void;
   setReducedMotion(on: boolean): void;
   /** Camera follow on or off. A view calls setFollow(false) when the person pans or zooms. */
   setFollow(on: boolean): void;
@@ -414,6 +434,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     timeline: INITIAL_TIMELINE_VIEW,
     analytics: INITIAL_ANALYTICS_VIEW,
     theater: false,
+    evidence: null,
     reducedMotion: options.reducedMotion ?? false,
     follow: true,
   };
@@ -702,6 +723,20 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     setTheater(on) {
       if (on && state.workspace !== "floor") return;
       if (on !== state.theater) set({ theater: on });
+    },
+    openEvidence(ticket, opts = {}) {
+      if (!EVIDENCE_TICKET.test(ticket)) return;
+      const check = opts.check && EVIDENCE_CHECK.test(opts.check) ? opts.check : null;
+      set({ evidence: { ticket, check, start: opts.start ?? null } });
+    },
+    setEvidenceCheck(check) {
+      const cur = state.evidence;
+      if (!cur) return;
+      const next = check && EVIDENCE_CHECK.test(check) ? check : null;
+      if (next !== cur.check) set({ evidence: { ...cur, check: next } });
+    },
+    closeEvidence() {
+      if (state.evidence) set({ evidence: null });
     },
     setReducedMotion(on) {
       if (on !== state.reducedMotion) set({ reducedMotion: on });
