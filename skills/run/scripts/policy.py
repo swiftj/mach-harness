@@ -195,6 +195,8 @@ def read(root: Path) -> Dict[str, Any]:
     for field in ("runner_id", "machine", "project_root", "source_branch", "claude", "enabled_by", "enabled_at"):
         if not isinstance(data.get(field), str) or not data[field].strip():
             problems.append(f"'{field}' is missing")
+    if "monitoring_requests" in data and type(data["monitoring_requests"]) is not bool:  # optional (M8): missing reads as false
+        problems.append("'monitoring_requests' must be true or false")
     if data.get("max_risk") not in RISKS:
         problems.append("'max_risk' must be Low, Medium or High")
     limits = data.get("limits")
@@ -256,6 +258,12 @@ def effective(policy: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         result["max_risk"] = ceiling
         result["restricted_by_project"].append(f"factory.max_risk is {ceiling}")
     result["limits"] = limits
+    # Monitoring requests (M8 D7): only this machine's explicit grant, only in supervised autonomy; the project can forbid it, never grant it.
+    granted = policy.get("monitoring_requests") is True
+    if granted and section.get("monitoring_requests") is False:
+        granted = False
+        result["restricted_by_project"].append("factory.monitoring_requests is false: issues from monitoring accounts are not taken in unattended")
+    result["monitoring_requests"] = granted and result.get("autonomy") == "supervised"
     # Re-checked on every pass and before every dispatch, from the file on disk: a tracked change after enabling holds the line.
     result["security_review_problems"] = security_review_problems(tracked_config(policy.get("project_root"), config) if policy.get("project_root") else config)
     result["restricted_by_project"] += result["security_review_problems"]
@@ -324,7 +332,10 @@ def build(root: Path, request: Dict[str, Any], enabled_by: str, claude: str, sou
             raise PolicyError(f"'{name}' must be a number from {low} to {high}.")
         limits[name] = value
     tools = list(dict.fromkeys([*default_tools(), *[tool.strip() for tool in request.get("extra_tools") or [] if tool.strip()]]))
-    return {
+    monitoring = request.get("monitoring_requests") is True
+    if monitoring and request.get("autonomy") != "supervised":
+        raise PolicyError("--monitoring-requests needs --autonomy supervised: monitoring requests are groomed and built by executions.")
+    built = {
         "schema_version": POLICY_VERSION, "enabled": True, "paused": False, "autonomy": request["autonomy"],
         "auto_sync": bool(request.get("auto_sync")), "allow_merge": bool(request.get("allow_merge")), "persistent": bool(request.get("persistent")),
         "max_risk": request.get("max_risk") or "High", "limits": limits, "allowed_tools": tools,
@@ -333,6 +344,9 @@ def build(root: Path, request: Dict[str, Any], enabled_by: str, claude: str, sou
         "enabled_by": enabled_by, "enabled_at": stamp(),
         "execution_risk_accepted": None,  # set at confirmation, for a mode that starts agents, only on a person's explicit acceptance
     }
+    if monitoring:
+        built["monitoring_requests"] = True  # written only when granted: a file without it reads as false
+    return built
 
 
 def save(root: Path, policy: Dict[str, Any]) -> None:

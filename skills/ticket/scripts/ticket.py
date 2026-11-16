@@ -862,6 +862,7 @@ def cmd_ingest(ctx: Context, args: argparse.Namespace) -> int:
     seed = seed_intent(ticket_id, source, info)
     body = seed.split("## 1. Problem Context & Telemetry Stack Trace\n", 1)[1]
     body = "## Problem Context & Telemetry Stack Trace\n" + body.replace("## 2. Objective & Fix Scope", "## Acceptance criteria")
+    body = body.rstrip("\n") + "\n\n" + issue_rules.fault_line(fingerprint) + "\n"  # how a repeat of this fault is recognised (M8 D7)
     ticket = normalized(ticket_id, "telemetry", title, body, telemetry_labels(source, info), "open",
                         telemetry={"source": source, **{k: v for k, v in info.items() if k != "trace" and v not in (None, "", {})}},
                         fingerprint=fingerprint, occurrences_ingested=1)
@@ -1044,6 +1045,102 @@ def cmd_request_status(ctx: Context, args: argparse.Namespace) -> int:
         return answer("pending", failed.kind)
     except ValueError:
         return answer("pending", "other")
+# ---------------------------------------------------------------- monitoring requests (read only)
+
+GH_API_HEADERS = ("-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28")
+ISSUE_PATH = "repos/{repository}/issues/{number}"
+ISSUE_JQ = "{id: .user.id, login: .user.login, type: .user.type, created_at: .created_at, state: .state, title: .title, body: .body}"
+EVENTS_PATH = "repos/{repository}/issues/{number}/events?per_page=100"
+EVENTS_JQ = ('.[] | select(.event=="labeled" or .event=="unlabeled") | {event, label: .label.name, '
+             'login: .actor.login, id: .actor.id, type: .actor.type, app: (.performed_via_github_app != null), at: .created_at}')
+PERMISSION_PATH = "repos/{repository}/collaborators/{login}/permission"
+PERMISSION_JQ = "{permission, role_name}"
+
+
+def gh_read(ctx: Context, *args: str) -> Tuple[Optional[str], Optional[Dict[str, str]]]:
+    """One read-only gh call, through gh_call: a time limit, and a failure reported by its kind alone.
+    gh's own words are never relayed. Returns (output, None) or (None, the failure)."""
+    try:
+        return gh_call(ctx.project, *args), None
+    except GhFailed as failed:
+        kind = "forbidden" if failed.kind == "refused" else failed.kind
+        return None, {"kind": kind, "reason": f"GitHub did not answer the read ({kind})"}
+
+
+def cmd_request_check(ctx: Context, args: argparse.Namespace) -> int:
+    """Who filed issue N, who applied the request label and with what access, and which fault it reports.
+    Reads only: makes no write to GitHub or to the project. The issue's text is not printed, only its
+    redacted, bounded title and the fault key computed from it."""
+    if ctx.provider != "github":
+        raise TicketError("request-check reads GitHub issues; this project's ticket provider is " + ctx.provider + ".")
+    number = int(args.number) if str(args.number).isdigit() else 0
+    if not issue_rules.is_issue_number(number):
+        raise TicketError(f"'{args.number}' is not an issue number.")
+    github = (ctx.tickets.get("github") or {}) if isinstance(ctx.tickets.get("github"), dict) else {}
+    label = github.get("request_label") if isinstance(github.get("request_label"), str) and github["request_label"].strip() else issue_rules.DEFAULT_REQUEST_LABEL
+    accounts = issue_rules.monitor_accounts(github.get("monitor_accounts"))
+    report: Dict[str, Any] = {"number": number, "repository": None, "label": label, "author": None, "created_at": None, "issue_state": None,
+                              "title": None, "fault": None, "event": None, "permission": None, "failure": None}
+
+    def done(decision: Dict[str, Any]) -> int:
+        print(json.dumps({**report, "decision": decision}, indent=2, ensure_ascii=False))
+        return 0
+
+    out, failure = gh_read(ctx, "repo", "view", "--json", "nameWithOwner")
+    repository = None
+    if out is not None:
+        try:
+            repository = json.loads(out).get("nameWithOwner")
+        except (ValueError, AttributeError):
+            repository = None
+        if not issue_rules.is_repository(repository):
+            repository, failure = None, {"kind": "other", "reason": "GitHub did not name the repository"}
+    report["repository"] = repository
+    if repository is None:
+        report["failure"] = failure
+        return done({"monitoring": None, "state": "not_accepted", "reason": issue_rules.NOT_ACCEPTED["unconfirmed"], "labelled_by": None, "event": None})
+    out, failure = gh_read(ctx, "api", *GH_API_HEADERS, ISSUE_PATH.format(repository=repository, number=number), "--jq", ISSUE_JQ)
+    issue: Dict[str, Any] = {}
+    if out is not None:
+        try:
+            issue = json.loads(out)
+        except ValueError:
+            issue = {}
+        if not isinstance(issue, dict) or type(issue.get("id")) is not int:
+            issue, failure = {}, {"kind": "other", "reason": "GitHub's answer for the issue could not be read"}
+    if not issue:
+        report["failure"] = failure
+        return done({"monitoring": None, "state": "not_accepted", "reason": issue_rules.NOT_ACCEPTED["unconfirmed"], "labelled_by": None, "event": None})
+    author = {"id": issue["id"], "login": issue.get("login") if isinstance(issue.get("login"), str) else None, "type": issue.get("type") if isinstance(issue.get("type"), str) else None}
+    title, _ = issue_rules.bound_text(issue.get("title"), issue_rules.TITLE_LIMIT, one_line=True)
+    report.update({"author": author, "created_at": issue.get("created_at") if isinstance(issue.get("created_at"), str) else None,
+                   "issue_state": str(issue.get("state") or "").lower() or None, "title": title,
+                   "fault": issue_rules.fault_key(issue.get("title"), issue.get("body"))})
+    if not any(account["id"] == author["id"] for account in accounts):
+        return done(issue_rules.monitoring_acceptance(author, None, None, accounts))  # a person's request: nothing more is asked of GitHub
+    out, failure = gh_read(ctx, "api", "--paginate", *GH_API_HEADERS, EVENTS_PATH.format(repository=repository, number=number), "--jq", EVENTS_JQ)
+    if out is None:
+        report["failure"] = failure
+        return done(issue_rules.monitoring_acceptance(author, None, None, accounts, failure))
+    raw = []
+    for line in out.splitlines():
+        try:
+            raw.append(json.loads(line))
+        except ValueError:
+            continue
+    event = issue_rules.deciding_event(issue_rules.label_events(raw), label)
+    report["event"] = event
+    permission = None
+    if event is not None and event.get("id") != author["id"] and issue_rules.actor_problem(event) is None:
+        out, failure = gh_read(ctx, "api", *GH_API_HEADERS, PERMISSION_PATH.format(repository=repository, login=event["login"]), "--jq", PERMISSION_JQ)
+        if out is not None:
+            try:
+                permission = json.loads(out)
+            except ValueError:
+                permission, failure = None, {"kind": "other", "reason": "GitHub's permission answer could not be read"}
+        report["permission"] = permission if isinstance(permission, dict) else None
+        report["failure"] = failure
+    return done(issue_rules.monitoring_acceptance(author, event, permission, accounts, failure if permission is None else None))
 
 
 # ---------------------------------------------------------------- entry point
@@ -1100,6 +1197,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ref", action="extend", nargs="+", required=True, help="identifiers for the comment: SLICE-NNN@rN, ticket:ID")
     p.add_argument("--nonce", help="the intake ledger's marker nonce; required")
     p.set_defaults(func=cmd_request_status)
+    p = sub.add_parser("request-check", help="read only: who filed GitHub issue N and who applied the request label, with what access")
+    p.add_argument("number")
+    p.set_defaults(func=cmd_request_check)
     return parser
 
 

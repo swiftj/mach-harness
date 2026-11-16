@@ -120,6 +120,22 @@ class NothingIsWiredInTest(unittest.TestCase):
             text = (ROOT / "skills" / "run" / "scripts" / name).read_text()
             self.assertNotIn('"factory_started": True', text)
 
+    def test_monitoring_reads_no_local_policy_and_starts_only_the_ticket_station(self):
+        """M8 D7: monitoring.py is told whether the grant is in force; it never reads the machine-local policy, never
+        imports Product Studio or the supervisor's modules, and reaches GitHub only through the ticket station's script."""
+        source = (ROOT / "skills" / "run" / "scripts" / "monitoring.py").read_text()
+        tree = ast.parse(source)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported |= {alias.name.split(".")[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertEqual(imported, {"json", "os", "sys", "datetime", "pathlib", "typing", "issue_rules"})
+        for word in ("runner.json", "subprocess", "Popen", "os.system", "claude", "Workflow", "socket", "http", "studio", "collab", "\"fetch\"", "\"push\""):
+            self.assertNotIn(word, source, word)
+        self.assertEqual(set(re.findall(r"self\.line\.ticket\(\"([\w-]+)\"", source)), {"list", "request-check"})
+
     def test_the_validator_cannot_start_or_serve_anything(self):
         """Standard-library reading and checking only: no processes, no network, no writing."""
         allowed = {"argparse", "datetime", "hashlib", "json", "re", "sys", "pathlib", "typing"}

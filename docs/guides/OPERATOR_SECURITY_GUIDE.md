@@ -34,6 +34,10 @@ What still catches the result inside the line, not its side effects: a task may 
 
 Before enabling supervised mode, consider a machine or account with no credentials you cannot afford to lose. The planned remedy (an operating-system sandbox with no network and only the cell writable) is deferred.
 
+### Monitoring requests widen what the supervisor may start
+
+By default the supervisor runs only approved product work. With `--monitoring-requests` it also grooms, without a person, issues that a listed monitoring account filed and labelled itself, and builds those rated below High risk. The issue text comes from outside the team: it is redacted, bounded and treated as data, and it cannot change the execution's command, tool list or limits. The grant is machine-local, off unless you asked for it, forbidden by `factory.monitoring_requests: false`, and never granted by any tracked file. This path has been tested against fakes only, not in a real supervised run.
+
 ## 3. Credential handling
 
 - An execution's environment is a fixed list: `HOME`, `USER`, `LOGNAME`, `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `SHELL`, `TERM`, `CLAUDE_CONFIG_DIR`, plus proxy variables that carry no user:password. Any name matching key, token, secret and similar is dropped. `GIT_TERMINAL_PROMPT=0` makes a Git command that wants a password fail.

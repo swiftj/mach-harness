@@ -190,6 +190,8 @@ Ask Claude Code to "run the mach-belt workflow for LOCAL-002 and LOCAL-003" (`ma
 
 The supervisor keeps approved product work moving without you. It is off on every machine until an engineer enables it there, after reading exactly what will be allowed and confirming with a code. `/mach-run factory status`, `pause`, `resume`, `disable` and `stop` complete it. Read [Operator Security Guide](docs/guides/OPERATOR_SECURITY_GUIDE.md) first.
 
+Issues that a production monitoring account files and labels itself can also be taken in: `/mach-run requests monitor` takes up to three per pass for grooming without a person. The supervisor does the same only where you add `--monitoring-requests` when enabling it; that is off by default, and it builds only what grooming rates below High risk.
+
 ### Watching it
 
 Say "open the Factory Floor" to `/mach-run`. It opens a read-only view in your browser: the Atlas (what is where), the Timeline (what happened, when) and Analytics (how well the factory runs). It cannot start, approve or merge anything.

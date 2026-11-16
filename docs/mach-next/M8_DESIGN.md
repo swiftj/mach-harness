@@ -272,8 +272,8 @@ product managers see each other's names on the next `refresh` and decide between
 **Which issues.** `tickets.github.monitor_accounts` holds objects, `{"login": "acme-sentry[bot]", "id":
 123456}`. An issue is a monitoring request when its author's numeric `id` (from
 `gh api repos/OWNER/REPO/issues/N --jq '{id: .user.id, login: .user.login, type: .user.type}'`) is in
-the list and the request label was applied either by that same account `id` or by a person with write
-access (D1). A login match without the `id` never counts, so a renamed or re-registered account cannot
+the list and the request label was applied by that same account `id` (as built: an issue a person labelled goes to Product Studio only, so no issue is handled in two places; the design first also allowed a person with write
+access, D1). A login match without the `id` never counts, so a renamed or re-registered account cannot
 pose as the monitor. An issue from any other author is a person's request and goes to Product Studio;
 Studio lists monitoring requests as "handled by the Factory" and offers no pick-up.
 
