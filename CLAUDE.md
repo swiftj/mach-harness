@@ -306,6 +306,8 @@ Three aids sit beside the state machine and change nothing it decides:
 * **`/mach-run explain <ticket>`** (`explain.py`): why a ticket failed, was sent back or is waiting, from the stations' own files: the requirement or scenario, the failing check, each reviewer blocker with the rule it cites, rounds used. It reads only, never opens an archive, and passes reviewer and verifier text on as bounded data.
 * **`/mach-run doctor`** (`doctor.py`): checks Git and worktrees, Python, Claude Code, tracker sign-in, the MACH install and the project's rule files; works before `.factory/` exists. `--fix` only creates missing MACH folders. It never reads `.factory/local/`, never shows a tracker's sign-in output, and enables nothing.
 
+The things a person asks for by name also go through the run skill, which routes each to the station that owns it under that station's own gates: `/mach-run approve <ticket>` (review's human approval), `merge <ticket>` (the merge station, by a person), `abandon <ticket> "<why>"` (cleanup), `new "<idea>"` (the intent interview), `audit` and `tickets`. The station commands remain and behave the same.
+
 A ticket a person names may be a bare number (`/mach-run 4`): it resolves to the one known ticket with that number, and more than one match is refused with the candidates.
 
 ### Product intake and scheduling (`/mach-run product`)

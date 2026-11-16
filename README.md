@@ -134,7 +134,7 @@ Everything you write is a private draft on your computer until you send a wave. 
 
 ```
 /mach-run doctor     is this machine and project set up?
-/mach-audit          is the repository ready for agents?
+/mach-run audit      is the repository ready for agents?
 ```
 
 The audit runs your build, tests and linter and gives a tier. **Gold** allows full autonomy. **Silver** builds, with a person approving each change. **Bronze**, which includes any failing build or test suite, blocks autonomous work until the repository is hardened.
@@ -142,7 +142,7 @@ The audit runs your build, tests and linter and gives a tier. **Gold** allows fu
 ### One idea, start to finish
 
 ```
-/mach-intent Let workspace admins invite a teammate by email
+/mach-run new "Let workspace admins invite a teammate by email"
 ```
 
 MACH creates a ticket and a cell and interviews you, the same way as in Product Studio. On your yes it writes the why (`intent.md`), the spec, the boundary contracts and a test-first plan into the cell. Then:
@@ -200,12 +200,12 @@ The line stops and says what it is waiting for. These are all the cases.
 
 | It says | What to do |
 |---|---|
-| The spec has open questions | Finish the interview: `/mach-intent <ticket>` |
-| Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach-review <ticket> approve --by <your name>` |
-| Approved, waiting for a person to merge | `/mach-merge <ticket> --by-person` |
-| Blocked: escalated after three rounds | `/mach-run explain <ticket>`, then fix it yourself or abandon it: `/mach-cleanup <ticket> --abandon "<why>"` |
-| The repository is Bronze | `/mach-audit` lists what to fix |
-| The audit is missing or out of date | `/mach-audit` |
+| The spec has open questions | Finish the interview: `/mach-run <ticket>` continues it |
+| Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach-run approve <ticket>` |
+| Approved, waiting for a person to merge | `/mach-run merge <ticket>` |
+| Blocked: escalated after three rounds | `/mach-run explain <ticket>`, then fix it yourself or abandon it: `/mach-run abandon <ticket> "<why>"` |
+| The repository is Bronze | `/mach-run audit` lists what to fix |
+| The audit is missing or out of date | `/mach-run audit` |
 
 A ticket gets three judging rounds in all, counting failed verifications and rejected reviews. On the third failure it is handed to a person; the factory does not keep trying.
 
@@ -230,7 +230,7 @@ A cost appears only where one was recorded, which today means work the superviso
 
 ## Every command
 
-The first two are the ones to remember. The stations are listed because you can run any of them yourself, but `/mach-run` calls them for you.
+`/mach-product-studio` and `/mach-run` are the ones to remember. The station commands at the bottom of the table still work and you can run any of them yourself, but `/mach-run` calls them for you.
 
 | Command | What it does |
 |---|---|
@@ -239,6 +239,11 @@ The first two are the ones to remember. The stations are listed because you can 
 | `/mach-run board` | Every open ticket and its next step |
 | `/mach-run explain <ticket>` | Why a ticket failed or is waiting |
 | `/mach-run doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
+| `/mach-run new "<idea>"` | Start the interview for a new idea |
+| `/mach-run approve <ticket>` | Record your approval of a change that needs a person |
+| `/mach-run merge <ticket>` | Merge an approved ticket yourself |
+| `/mach-run abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
+| `/mach-run audit` | The repository's readiness tier |
 | `/mach-run product status\|intake\|plan\|dispatch` | Take approved product work into the factory |
 | `/mach-run factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
 | `/mach-run release status\|qualify\|show` | Is a wave ready to release, at one commit |
