@@ -197,8 +197,8 @@ class ReviewRelayTest(Base):
         self.assertEqual(len(re.findall(r"references/(?:architecture|security|product)\.md", seat["prompt"])), 3)
 
 
-class BoardTest(Base):
-    def test_board_lists_cells_and_ungroomed_tickets(self):
+class StatusTest(Base):
+    def test_status_lists_cells_and_ungroomed_tickets(self):
         self.ready()
         for title in ("First", "Second", "Third"):  # numbered 002 to 004: LOCAL-001 is already taken by the groomed cell
             self.cell_cmd("ticket-new", "--title", title)
@@ -206,7 +206,7 @@ class BoardTest(Base):
         path.write_text(path.read_text().replace("state: open", "state: closed"))
         self.cell_cmd("open", "LOCAL-009")
         (self.project / ".factory/worktrees/LOCAL-009/cell.json").write_text(json.dumps({"ticket_id": "LOCAL-009", "stage": "blocked"}))
-        code, out, _ = self.run_cmd("board", "--headless")
+        code, out, _ = self.run_cmd("status", "--headless")
         board = json.loads(out)
         self.assertEqual(code, 0)
         self.assertEqual(board["audit"]["state"], "ok")
@@ -214,16 +214,16 @@ class BoardTest(Base):
         self.assertEqual((board["ready_to_run"], board["waiting_on_a_person"]), (["LOCAL-001", "LOCAL-002", "LOCAL-004"], ["LOCAL-009"]))
         self.assertEqual((board["observe_due"], board["factory_tuning_ready"]), (False, []))
 
-    def test_board_says_when_observe_is_due_and_which_tuning_tickets_are_ready(self):
+    def test_status_says_when_observe_is_due_and_which_tuning_tickets_are_ready(self):
         runs = "".join(json.dumps({"ticket_id": f"T-{n}", "outcome": "merged"}) + "\n" for n in range(1, 6))
         self.put(self.project, {".factory/archive/runs.jsonl": runs,
                                 ".factory/tickets/LOCAL-007.md": '---\nid: LOCAL-007\nstate: open\nlabels: ["factory-tuning"]\n---\n'})
-        board = json.loads(self.run_cmd("board")[1])
+        board = json.loads(self.run_cmd("status")[1])
         self.assertEqual((board["observe_due"], board["factory_tuning_ready"]), (True, ["LOCAL-007"]))
         self.put(self.project, {".factory/observations/last-pass.json": json.dumps({"runs_total": 5})})
-        self.assertFalse(json.loads(self.run_cmd("board")[1])["observe_due"])
+        self.assertFalse(json.loads(self.run_cmd("status")[1])["observe_due"])
         self.put(self.project, {".factory/config.json": json.dumps({"observe": {"every": 2}}), ".factory/observations/last-pass.json": json.dumps({"runs_total": 3})})
-        self.assertTrue(json.loads(self.run_cmd("board")[1])["observe_due"])
+        self.assertTrue(json.loads(self.run_cmd("status")[1])["observe_due"])
 
 
 class NamingTest(Base):
@@ -240,7 +240,7 @@ class NamingTest(Base):
         self.assertEqual(code, 0)
         self.assertEqual((Path(where["run_script"]), Path(where["project"])), (ROOT / "skills/run/scripts/run.py", self.project))
         self.assertFalse(where["is_mach_project"])
-        for command in (["next", "LOCAL-001"], ["board"], ["review-start", "LOCAL-001"]):
+        for command in (["next", "LOCAL-001"], ["status"], ["review-start", "LOCAL-001"]):
             code, _, err = self.run_cmd(*command)
             self.assertEqual(code, 1)
             self.assertIn("is not a MACH project", err)
@@ -286,11 +286,11 @@ class DigestTest(Base):
         self.assertTrue(self.next(ticket="LOCAL-003")["digest"]["time_and_cost"].endswith("cost not recorded"))
         self.assertEqual(self.next(ticket="LOCAL-003")["digest"]["time_and_cost"], "time not recorded; cost not recorded")
 
-    def test_board_carries_a_digest(self):
+    def test_status_carries_a_digest(self):
         self.ready()
         self.cell_cmd("open", "LOCAL-009")
         (self.project / ".factory/worktrees/LOCAL-009/cell.json").write_text(json.dumps({"ticket_id": "LOCAL-009", "stage": "blocked"}))
-        board = json.loads(self.run_cmd("board")[1])
+        board = json.loads(self.run_cmd("status")[1])
         self.assertEqual(next(iter(board)), "digest")
         self.assertEqual(board["digest"]["where"], "2 tickets: 1 ready to run, 1 waiting on a person")
         self.assertEqual(board["digest"]["needs_person"], "LOCAL-009: " + run.NEEDS_TEXT["person-to-take-over"])
@@ -486,7 +486,7 @@ async function agent(prompt, opts) {
   const command = block[1].replace('python3 "/x/run.py" --project "/p" ', '')
   asked.push(command)
   if (command === 'where') return { is_mach_project: true }
-  if (command.startsWith('board')) return { audit_state: 'ok', observe_due: false, factory_tuning_ready: [] }
+  if (command.startsWith('status')) return { audit_state: 'ok', observe_due: false, factory_tuning_ready: [] }
   if (command.startsWith('next ')) {
     const ticket = command.split(' ')[1]
     const stage = stages[ticket]

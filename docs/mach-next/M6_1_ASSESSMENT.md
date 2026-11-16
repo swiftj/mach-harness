@@ -97,7 +97,7 @@ New gaps found in this assessment:
 | `executor.py` | `folder`, `outcome`, `tool_summary`, `CREDENTIAL_NAME_RE` | read; the observer re-implements `tool_summary`'s rule in Go, with a parity test | refusals summarised the same way |
 | `executor.py` | `wrapper`, `EXECUTION_ENV` | **changed in flight**: the wrapper sets `MACH_EXECUTION_ID` in the run's environment | lifecycle `execution_id` |
 | `executor.py` | `wrapper` | no change in M6.1 (no timing sidecar, lead's decision 7) | |
-| `run.py` | `product events` (`cmd` for `product`), `cmd_board` | read; `cmd_board`'s cell discovery is mirrored | |
+| `run.py` | `product events` (`cmd` for `product`), `cmd_status` | read; `cmd_status`'s cell discovery is mirrored | |
 | station scripts (`audit.py`, `cell.py`, `build.py`, `verify.py`, `review.py`, `merge.py`, `cleanup.py`) | each script's `telemetry()` wrapper around `lifecycle.record`; `cleanup.py` uses `lifecycle.closing` | **changed in flight, by the lifecycle owner** | the contract's section 10.2 maps every call site's `data` |
 | `cleanup.py` | `write_archive`, `cmd_run` | read (archives and `runs.jsonl`) | `lifecycle.jsonl` is in the archive automatically (everything but `repo/`) |
 | `skills/observe/scripts/observe.py` | `scorecard`, `breakdown`, `group_findings`, `finding_kind`, `TARGETS` | read; Analytics reuses the definitions with a parity test (shared contracts section 4) | one definition of first pass, rounds, escalation |

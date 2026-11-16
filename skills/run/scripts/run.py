@@ -7,7 +7,7 @@ step, who should do it, and on which model, so the order of the factory is decid
 and not by whoever is driving it.
 
     run.py next <ticket> [--headless]    the next step for one ticket
-    run.py board [--headless]            the next step for every open ticket and cell
+    run.py status [--headless]            the next step for every open ticket and cell
     run.py explain <ticket> [--json]     why a ticket failed, was sent back or is waiting; reads only (explain.py)
     run.py doctor [--fix] [--json]       check the machine and the project; works before .factory exists (doctor.py)
     run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run]
@@ -37,7 +37,7 @@ A step is either work ("action": audit, groom, plan, build, revise, verify, revi
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
 person's approval, a merge, or a person to take over an escalated ticket.
 
-`next`, `board` and `explain` also carry a "digest": where the ticket stands, what a person must decide,
+`next`, `status` and `explain` also carry a "digest": where the ticket stands, what a person must decide,
 and time and cost. Time comes from the cell's own records; a cost appears only where one was recorded for
 the ticket (the intake ledger's supervised executions), otherwise the text "not recorded". It is never estimated.
 
@@ -174,7 +174,7 @@ class Project:
         return None
 
     def observe_status(self) -> Dict[str, Any]:
-        """Whether an observe pass is due, as the cleanup station decides it: the one source for cleanup, the board and the supervisor."""
+        """Whether an observe pass is due, as the cleanup station decides it: the one source for cleanup, the status command and the supervisor."""
         return cleanup_station().observe_due(self.root)
 
     def observe_due(self) -> bool:
@@ -450,7 +450,7 @@ def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
             "elapsed_seconds": seconds, "cost_usd": cost["cost_usd"]}
 
 
-def board_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     ready = [row for row in rows if row["action"] != "stop"]
     waiting = [row for row in rows if row["action"] == "stop" and row.get("needs") not in (None, "nothing")]
     where = f"{len(rows)} ticket{'s' if len(rows) != 1 else ''}: {len(ready)} ready to run, {len(waiting)} waiting on a person"
@@ -579,7 +579,7 @@ def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_board(project: Project, args: argparse.Namespace) -> int:
+def cmd_status(project: Project, args: argparse.Namespace) -> int:
     ids: List[str] = []
     worktrees = project.root / ".factory" / "worktrees"
     for path in sorted(worktrees.glob("*/cell.json")) if worktrees.is_dir() else []:
@@ -602,7 +602,7 @@ def cmd_board(project: Project, args: argparse.Namespace) -> int:
     if scope is not None:
         # The observe pass and any tuning ticket it files are separate work: the supervisor, which alone dispatches, reports them.
         tuning, due = [], False
-    print(json.dumps({"digest": board_digest(project, rows), "audit": project.audit(), "observe_due": due, "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
+    print(json.dumps({"digest": status_digest(project, rows), "audit": project.audit(), "observe_due": due, "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
                       "ready_to_run": [row["ticket_id"] for row in rows if row["action"] != "stop"],
                       "waiting_on_a_person": [row["ticket_id"] for row in rows if row["action"] == "stop"]}, indent=2, ensure_ascii=False))
     return 0
@@ -817,9 +817,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_next)
     p = sub.add_parser("where", help="print where this script and the project are, for the workflow")
     p.set_defaults(func=cmd_where)
-    p = sub.add_parser("board", help="the next step for every open ticket and cell")
+    p = sub.add_parser("status", help="the next step for every open ticket and cell")
     p.add_argument("--headless", action="store_true")
-    p.set_defaults(func=cmd_board)
+    p.set_defaults(func=cmd_status)
     p = sub.add_parser("explain", help="why a ticket failed, was sent back or is waiting; reads only")
     p.add_argument("ticket_id")
     p.add_argument("--json", action="store_true", help="the facts as JSON instead of a short list")

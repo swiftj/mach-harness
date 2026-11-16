@@ -43,7 +43,7 @@ Assumptions are marked **[A*n*]** and collected in section 15. Everything about 
 
 Read but not turned into events: `.factory/intake/ledger.json` (identity map: slice to ticket, execution to session; dependency edges), each `cell.json` (cell discovery and `history.began` snapshots), `review/round-N/votes/<role>.json` (finding titles), `evidence/results.json` (hash checks), `.factory/audit-report.json`.
 
-**Discovery.** The observer lists `.factory/worktrees/*/` (as `run.py cmd_board` does), `.factory/archive/*.tar.gz` and `.factory/local/executions/*/`. It never discovers work through the ledger alone, so hand-driven tickets, `AUTO-*` tickets and the belt's tuning ticket are seen (gap G4).
+**Discovery.** The observer lists `.factory/worktrees/*/` (as `run.py cmd_status` does), `.factory/archive/*.tar.gz` and `.factory/local/executions/*/`. It never discovers work through the ledger alone, so hand-driven tickets, `AUTO-*` tickets and the belt's tuning ticket are seen (gap G4).
 
 ---
 

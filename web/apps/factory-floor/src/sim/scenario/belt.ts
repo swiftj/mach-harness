@@ -145,7 +145,7 @@ export function clerk(lane: Lane, t: number, label: string, command: string, pha
   return { end, finished: call.finished };
 }
 
-/** The workflow starts for one ticket: belt.js preflight (locate run.py, check the project, read the board). */
+/** The workflow starts for one ticket: belt.js preflight (locate run.py, check the project, read the status). */
 export function startWorkflow(lane: Lane, t: number, sessionId: string, cause: Handle): number {
   lane.ev(t, "workflow.started", { workflow: "mach:belt", args: [lane.ticket], until: null, phases: ["Preflight", "Groom", "Build", "Verify", "Review", "Wrap up", "Learn"], session_id: sessionId }, cause);
   lane.ev(t + 200, "workflow.phase", { workflow: "mach:belt", phase: "Preflight" });
@@ -154,7 +154,7 @@ export function startWorkflow(lane: Lane, t: number, sessionId: string, cause: H
   locate.tool("Skill", "mach:run where", 3800, { summary: "run_script, python" });
   let at = locate.finish("run.py located");
   at = clerk(lane, at + 400, "check the project", "where", "Preflight", "is_mach_project: true", 2600).end;
-  at = clerk(lane, at + 400, "read the board", "board --headless", "Preflight", "audit_state: ok (Gold, 94); observe_due: false", 5200).end;
+  at = clerk(lane, at + 400, "read the status", "status --headless", "Preflight", "audit_state: ok (Gold, 94); observe_due: false", 5200).end;
   return at + 600;
 }
 
@@ -559,7 +559,7 @@ export function cleanup(lane: Lane, t: number, rounds: number): number {
 /** The belt's last steps: the final "what next?" said stop, then Learn, then the workflow returns. */
 export function endWorkflow(lane: Lane, t: number, outcome: { stage: CellStage | ""; waiting_for: string }): number {
   lane.ev(t, "workflow.phase", { workflow: "mach:belt", phase: "Learn" });
-  const asked = clerk(lane, t + 400, "is an observe pass due?", "board --headless", "Learn", "observe_due: false", 4800);
+  const asked = clerk(lane, t + 400, "is an observe pass due?", "status --headless", "Learn", "observe_due: false", 4800);
   lane.ev(asked.end + 300, "workflow.finished", { workflow: "mach:belt", tickets: [{ ticket: lane.ticket, outcome: "stopped", stage: outcome.stage, waiting_for: outcome.waiting_for }], learning: "no observe pass was due" }, asked.finished);
   return asked.end + 300;
 }

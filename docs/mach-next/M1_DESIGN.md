@@ -129,7 +129,7 @@ The M0 isolation tests are extended to enforce each line, with `skills/product-s
 3. Editing an approved spec fails validation; `reopen` restores a consistent state and invalidates the wave.
 4. `cell.py next-id` skips IDs held by product work orders and Studio drafts; Studio skips IDs held by open cells and reserved pointers. One function, tested from both sides.
 5. A draft resumes after the session ends, at the saved question.
-6. The main checkout is byte-identical before and after a full Studio session, and `run.py next` and `board` are unchanged.
+6. The main checkout is byte-identical before and after a full Studio session, and `run.py next` and `status` are unchanged.
 7. The same operations run twice produce byte-identical artifacts.
 8. All existing suites pass unchanged; the installer ships `product-studio` in both layouts.
 9. One live run of `/mach:product-studio` and one headless `/mach:intent` on the fixture.

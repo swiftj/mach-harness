@@ -94,7 +94,7 @@ var (
 
 var phaseTitles = []string{"Preflight", "Groom", "Build", "Verify", "Review", "Wrap up", "Learn"}
 
-var fillerLabels = []string{"collect the evidence", "summarise the diff", "check the contracts", "read the plan", "list the changed files", "compare the spec", "read the board", "check the suite"}
+var fillerLabels = []string{"collect the evidence", "summarise the diff", "check the contracts", "read the plan", "list the changed files", "compare the spec", "read the status", "check the suite"}
 
 var tools = []string{"Bash", "Read", "Edit", "Grep", "Write", "Glob", "StructuredOutput"}
 
@@ -212,7 +212,7 @@ func (w *world) workflowVisits(c *cell, x *execution, t float64) float64 {
 	x.toolUse = w.call("Workflow", t, t+0.043, false).id
 	x.wfStart = t + 0.05
 	t += 0.1
-	for _, l := range []string{"locate the belt script", "check the project", "read the board"} {
+	for _, l := range []string{"locate the belt script", "check the project", "read the status"} {
 		t = w.clerk(x, l, 1, t)
 	}
 	planned := 4

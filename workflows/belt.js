@@ -3,7 +3,7 @@ export const meta = {
   description: 'Run MACH tickets through the factory unattended: build, verify and review each in its own cell, several at once as the schedule allows',
   whenToUse: 'Several groomed MACH tickets should move through build, verification and review without a person driving each one. Pass the ticket IDs as args, e.g. ["LOCAL-001", "LOCAL-002"], or {"tickets": ["LOCAL-001", "LOCAL-002"], "until": "merge", "limit": 2, "sequential": false, "by_person": false}. run.py schedule decides which may run together. Stops each ticket wherever a person is needed.',
   phases: [
-    { title: 'Preflight', detail: 'read the board, refresh the readiness audit once' },
+    { title: 'Preflight', detail: 'read the status, refresh the readiness audit once' },
     { title: 'Groom', detail: 'headless grooming for tickets that need it' },
     { title: 'Build', detail: 'one builder per ticket, in its own cell' },
     { title: 'Verify', detail: 'a fresh verifier per build' },
@@ -106,7 +106,7 @@ function cleanSchedule(plan, pending, running, most) {
   return { start, held, ceiling }
 }
 // END cleanSchedule
-const BOARD = {
+const STATUS = {
   type: 'object',
   properties: {
     audit_state: { type: 'string', description: 'the "state" field of the "audit" object' },
@@ -249,9 +249,9 @@ if (!check || check.is_mach_project !== true) {
 }
 
 // The audit measures the whole repository, so refresh it once here rather than once per ticket.
-const board = await clerk('board --headless', BOARD, 'read the board', 'Preflight')
-if (board && (board.audit_state === 'missing' || board.audit_state === 'stale')) {
-  log(`The readiness audit is ${board.audit_state}; running it once before any ticket starts.`)
+const status = await clerk('status --headless', STATUS, 'read the status', 'Preflight')
+if (status && (status.audit_state === 'missing' || status.audit_state === 'stale')) {
+  log(`The readiness audit is ${status.audit_state}; running it once before any ticket starts.`)
   await agent('Use the MACH audit skill on the main checkout: /mach:audit', { label: 'readiness audit', phase: 'Preflight', model: 'sonnet' })
 }
 
@@ -323,16 +323,16 @@ for (const result of report) {
 
 // Learn: when enough tickets have finished, the observe station measures them and files one tuning ticket,
 // and that ticket runs through the same line. Rule changes are never written directly.
-// Inside a supervised Factory execution, run.py's board reports no pass due and no tuning ticket, and refuses every
+// Inside a supervised Factory execution, run.py's status reports no pass due and no tuning ticket, and refuses every
 // ticket but the execution's own: the pass is separate work that the supervisor leaves for a person.
 phase('Learn')
 let learned = 'no observe pass was due'
-const after = await clerk('board --headless', BOARD, 'is an observe pass due?', 'Learn')
+const after = await clerk('status --headless', STATUS, 'is an observe pass due?', 'Learn')
 if (after && after.observe_due === true) {
   await agent('Use the MACH observe skill unattended: /mach:observe --auto', { label: 'observe pass', phase: 'Learn' })
   learned = 'an observe pass ran'
 }
-const settled = after && after.observe_due === true ? await clerk('board --headless', BOARD, 'any tuning ticket to run?', 'Learn') : after
+const settled = after && after.observe_due === true ? await clerk('status --headless', STATUS, 'any tuning ticket to run?', 'Learn') : after
 const tuning = ((settled && settled.factory_tuning_ready) || []).filter(id => !tickets.includes(id))
 if (tuning.length) {
   log(`Running the tuning ticket${tuning.length > 1 ? 's' : ''} ${tuning.join(', ')} through the line.`)

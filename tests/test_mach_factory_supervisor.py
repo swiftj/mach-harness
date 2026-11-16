@@ -703,7 +703,7 @@ class SupervisedTest(Base):
         self.assertEqual(run.next_step(run.Project(self.eng), "LOCAL-001", True), step)  # the station state machine is untouched
         out = io.StringIO()
         with redirect_stdout(out):
-            run.main(["--project", str(self.eng), "board"])
+            run.main(["--project", str(self.eng), "status"])
         self.assertEqual(json.loads(out.getvalue())["ready_to_run"], ["LOCAL-001"])
 
     def test_including_the_backlog_hands_work_in_the_line_to_the_supervisor(self):
@@ -1044,7 +1044,7 @@ class ExecutionScopeTest(Base):
         answers = self.root / "answers.json"
         self.claude({"default": {"stage": "building", "run_py": str(SCRIPTS / "run.py"), "answers": str(answers),
                                  "ask": {"other": ["next", "LOCAL-002", "--headless"], "own": ["next", "LOCAL-001", "--headless"],
-                                         "review": ["review-start", "LOCAL-002"], "board": ["board", "--headless"]}}})
+                                         "review": ["review-start", "LOCAL-002"], "status": ["status", "--headless"]}}})
         self.tick()
         self.wait()
         got = json.loads(answers.read_text())
@@ -1056,22 +1056,22 @@ class ExecutionScopeTest(Base):
         self.assertEqual(json.loads(got["own"]["out"])["ticket_id"], "LOCAL-001")
         self.assertEqual(got["review"]["code"], 1)
         self.assertIn("started for LOCAL-001 only", got["review"]["err"])
-        board = json.loads(got["board"]["out"])
+        board = json.loads(got["status"]["out"])
         self.assertEqual((board["observe_due"], board["factory_tuning_ready"], board["scoped_to"]), (False, [], "LOCAL-001"))
         self.assertEqual([row["ticket_id"] for row in board["tickets"]], ["LOCAL-001"])
         # Outside an execution, a person still sees the due pass.
-        code, out, _ = self.run_board()
+        code, out, _ = self.run_status()
         self.assertEqual((code, json.loads(out)["observe_due"]), (0, True))
 
-    def run_board(self):
+    def run_status(self):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            code = run.main(["--project", str(self.eng), "board", "--headless"])
+            code = run.main(["--project", str(self.eng), "status", "--headless"])
         return code, out.getvalue(), err.getvalue()
 
     def test_an_unknown_execution_may_work_on_nothing(self):
         with mock.patch.dict(os.environ, {"MACH_EXECUTION_ID": "x0000000000ff"}):
-            code, _, err = self.run_board()
+            code, _, err = self.run_status()
         self.assertEqual(code, 1)
         self.assertIn("which the intake ledger does not record", err)
 

@@ -116,7 +116,7 @@ Order and parallelism stay decided by script.
 | `/mach-run --sequential` | One at a time |
 | `/mach-run --dry-run` | The plan `product plan` already computes, with the reasons, and nothing started |
 
-`/mach-run` with no ticket keeps its present meaning (the board). It never starts every eligible ticket.
+`/mach-run` with no ticket keeps its present meaning (the status of every ticket). It never starts every eligible ticket.
 
 ## 5. Merge by pull request
 

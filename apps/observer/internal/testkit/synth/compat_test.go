@@ -37,20 +37,20 @@ var compatGolden = []struct {
 	sum    string
 }{
 	{"twelve cells, seed 7", synth.Options{Cells: 12, Events: 5000, Seed: 7, Hours: 30, AgentsPerExecution: 24},
-		"c47e8003b7b15f213be7b363b05a6dac70e9ed380dd677c1a61950dc30ca65fe", "8ec7df212cde9104528aef7a30640015da7d0a1c338686140e48e710026ec943"},
+		"daa388a20f4ccca1864fb8f4aff98cd522fda9fc99e71e9588e61665c2c7ca00", "4a5307c1a91bc9121a0a98df41a3107d6b9a7037bd7f8d4c1538f637f6657113"},
 	{"twenty cells, seed 3", synth.Options{Cells: 20, Events: 9000, Seed: 3, Hours: 12, AgentsPerExecution: 12},
-		"4479e9f22e186dafd48dd5ca0755700404e002a139980ab9cfb845ac032eca20", "00cda2ca6269e45199e76a845e9d4c1fe5d7cea8a292b48bc4339d45bd467d3d"},
+		"9b4afb05824b60d7fe9ebcf9cbfd9a8501500cb81d8f2c50705be3ab3e2adfa8", "f80c846422ffbba1787efbc47a03cb4bfbd61df05d4220d3eb4d492cd700985f"},
 	// The default history (mach-synth with no options but --out): the Timeline's 220,000 events.
 	{"the default history", synth.Options{Seed: 1},
-		"2d804da80ad74581214fc735f000de08fe2479fa59a60d9147533765f117eab2", "1ee3e9b9a8eeb5844cbbc200c50ebe61f36edc7763f4895aa8db5a04a032f644"},
+		"440512d4b74b3131f83eee09c3b88e0be3aefbe1f61f04e06353c9fb5cc3be61", "cde0dd1f5494e57ffdd8ecd7b7de4cbd66f54fb988c45ab937855b08600e3c24"},
 	// The analytics mode's default profile, recorded before --profile realistic was added: tiny,
 	// medium and a third shape, as mach-synth --analytics writes them.
 	{"analytics tiny", synth.Options{Analytics: true, Cells: 2, Waves: 1, Seed: 1},
-		"6bf9d2838e4e10e764d3b9c693f6fbde28b12d38ce020481415263226649d541", "56d4197e85741a17c9df1fad630613e26d895fd8038f0fe8104f0268bd70f8eb"},
+		"296128d52df4f5261d7c4b38d783a10ec0f8a57cf0411b6bb76b89fe94a1e1e9", "6acf2a5b8c22b533d58f8bb4e4806f64b55847b5646f6203233502f49203da28"},
 	{"analytics medium", synth.Options{Analytics: true, Cells: 60, Waves: 8, Seed: 1},
-		"bf1a44c61b1786dd5e29a5fa5fbf56ecbe774d22ecd942ffc473918f9c604826", "c40e1691449900dd8e6d59791d26f8e54974b730ddb1b4c74584f5bd1706116b"},
+		"266a6edfb09f9eabf4aa608941de22c6ccda875305325c9d20bb8f18e3a54720", "f2f47dfb7b5bbe9d6b0517bc50df02c90098c5beadbe77bb0719c9f8a93e4c35"},
 	{"analytics thirty cells, seed 5", synth.Options{Analytics: true, Cells: 30, Waves: 4, Seed: 5},
-		"66bb0520b6e7f88465a5c355b522072171ae8d94a9b5a1f1c331fcfa75fd4eb3", "cc48c8d4425b0263169b79cd5aef1594a5708983ac833b5d4173b2908567f0f0"},
+		"4ac7d8719642c24c64e561723c79e626554c600a51b1125f3f1acf6e85716e2e", "bb526e552935e6647d3aac26190e033f15cceec008a8d18254ec7e536131d9e2"},
 }
 
 // TestCompatibleWithoutAnalytics: the same options and seed give byte-identical files and the same

@@ -670,13 +670,13 @@ class DispatchTest(Base):
         # The existing state machine takes over from here, unchanged.
         step = run.next_step(run.Project(self.eng), "LOCAL-001", True)
         self.assertEqual((step["stage"], step["action"], step["model"]), ("spec-ready", "plan", "opus"))
-        board = json.loads(self.board())
+        board = json.loads(self.status())
         self.assertEqual((board["ready_to_run"], [row["action"] for row in board["tickets"]]), (["LOCAL-001"], ["plan"]))
 
-    def board(self):
+    def status(self):
         out = io.StringIO()
         with redirect_stdout(out):
-            run.main(["--project", str(self.eng), "board"])
+            run.main(["--project", str(self.eng), "status"])
         return out.getvalue()
 
     def test_dispatch_is_idempotent_and_resumes(self):

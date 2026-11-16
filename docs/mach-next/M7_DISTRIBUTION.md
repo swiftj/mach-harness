@@ -50,7 +50,7 @@ Integrity claims in README and installer, and whether the code does them:
 | Factory Floor observes | `.factory/bin/mach-observer --project .`, open link, `/api/v1/health`, `/api/v1/snapshot` | Pass. Link redeemed, health fresh, snapshot empty and not partial. Factory still disabled afterwards. | `observer.log` |
 | Only loopback | `lsof -nP -a -p <pids> -i` | Pass. Two sockets, both `127.0.0.1` LISTEN; no established connection to any host. This is a snapshot, not a capture. | `t2-sockets.txt` |
 | Python missing | install with no python3 on PATH | `MACH needs python3 (3.8 or later). Install it and run this again.` Exit 1. Clear in what is missing; says nothing about how to get it. | `t2-missing-tools.txt` |
-| Git missing | install with no git on PATH | The install succeeds with no mention of git. `studio.py status` then dies with a Python traceback ending `FileNotFoundError: [Errno 2] No such file or directory: 'git'`. `run.py board` still works. | `t2-missing-tools.txt` |
+| Git missing | install with no git on PATH | The install succeeds with no mention of git. `studio.py status` then dies with a Python traceback ending `FileNotFoundError: [Errno 2] No such file or directory: 'git'`. `run.py status` still works. | `t2-missing-tools.txt` |
 
 A mistake in this run: a first "git missing" attempt omitted `MACH_SOURCE`, so it downloaded the main branch and the real `v0.12.0` release from GitHub once. Those results were discarded and the check was redone offline. The one-time observer link was printed to the terminal once (throwaway project, link already used).
 
@@ -68,7 +68,7 @@ A mistake in this run: a first "git missing" attempt omitted `MACH_SOURCE`, so i
 
 ## 4. Upgrade from v0.12.0 (hand-built state)
 
-Old layout: `old/` installed with its own installer (studio only; a stand-in `SHA256SUMS`, as v0.12.0 had no observer). State created with the old `studio.py` or copied from the M6.6 live-run project (`scratchpad/m66/agents/live/P/eng`): a Studio draft workspace (project, approved epic, `SLICE-001` approved for engineering, `SLICE-002` draft), intake `ledger.json` and `events.jsonl`, cell `LOCAL-002` (with a git worktree for `repo/`), `archive/` with `runs.jsonl` and a tarball, a disabled `runner.json`, an observer index folder, tickets, an edited `.factory/config.json`, a `REVIEW.md` with a local rule appended. Fixture note: the first attempt crashed `run.py board` and `product status` because the cell had no `repo/`; the old scripts crashed the same way on that state, so it was a fixture fault. It was fixed in both copies before the results below.
+Old layout: `old/` installed with its own installer (studio only; a stand-in `SHA256SUMS`, as v0.12.0 had no observer). State created with the old `studio.py` or copied from the M6.6 live-run project (`scratchpad/m66/agents/live/P/eng`): a Studio draft workspace (project, approved epic, `SLICE-001` approved for engineering, `SLICE-002` draft), intake `ledger.json` and `events.jsonl`, cell `LOCAL-002` (with a git worktree for `repo/`), `archive/` with `runs.jsonl` and a tarball, a disabled `runner.json`, an observer index folder, tickets, an edited `.factory/config.json`, a `REVIEW.md` with a local rule appended. Fixture note: the first attempt crashed `run.py status` and `product status` because the cell had no `repo/`; the old scripts crashed the same way on that state, so it was a fixture fault. It was fixed in both copies before the results below.
 
 | Check | Result | Evidence |
 |---|---|---|
@@ -78,7 +78,7 @@ Old layout: `old/` installed with its own installer (studio only; a stand-in `SH
 | `.gitignore` | Changed: the MACH block gained the `mach-observer` line. Managed block, expected. | `t4-upgrade1.txt` |
 | Manifest | Updated (`updated_at`, 58 to 61 files). `version` is still `0.12.0`, the same before and after. | `t4-manifest-old.json` |
 | Factory | `runner.json` unchanged (`enabled: false`); `run.py factory status` says disabled. | `t4-readers.txt` |
-| New scripts read old state | `run.py board`, `run.py product status`, `studio.py status` (slices `approved_for_engineering` and `draft` as before), `cleanup.py status` (cell listed): all pass; the board output matches the old scripts' on the same state. | `t4-readers.txt` |
+| New scripts read old state | `run.py status`, `run.py product status`, `studio.py status` (slices `approved_for_engineering` and `draft` as before), `cleanup.py status` (cell listed): all pass; the board output matches the old scripts' on the same state. | `t4-readers.txt` |
 | Observer starts on the old index folder | Starts, says "the kept browser sessions belong to another project folder; ignoring them", health fresh, snapshot has the three cells, not partial. Not a true old-observer index: v0.12.0 shipped no observer, so cross-version index compatibility cannot be shown. State files were unchanged afterwards. | `observer-up.log` |
 | Second upgrade | Exit 0, no file touched ("Everything" up to date); state hashes identical. Idempotent. | `t4-upgrade2.txt`, `t4-s4.txt` |
 
@@ -86,7 +86,7 @@ Old layout: `old/` installed with its own installer (studio only; a stand-in `SH
 
 There is no documented rollback (README and `bin/mach` do not mention it). Reinstalling the old installer over the new one, as a person would:
 
-- Works: exit 0; 25 files restored to old content; `.factory/bin/mach-observer`, `lifecycle.py` and `provenance.py` removed as "no longer shipped"; studio kept; manifest back to 58 files. The old `run.py board`, `product status`, `factory status`, `cleanup.py status` and `studio.py status` all read the state without error, including a cell that holds the new `lifecycle.jsonl` (`t5-old-readers.txt`).
+- Works: exit 0; 25 files restored to old content; `.factory/bin/mach-observer`, `lifecycle.py` and `provenance.py` removed as "no longer shipped"; studio kept; manifest back to 58 files. The old `run.py status`, `product status`, `factory status`, `cleanup.py status` and `studio.py status` all read the state without error, including a cell that holds the new `lifecycle.jsonl` (`t5-old-readers.txt`).
 - Does not work or is not shown: the Factory Floor is gone after rollback (v0.12.0 has none; reinstalling the new version restores it). `__pycache__` folders from the newer scripts stay behind (harmless). State written by the new version with a changed format was not found: no state file in this layer carries a version that the old scripts reject. Not shown: state written by a future format change, because none has happened yet between these two versions.
 - Smallest recovery: run the new installer again over the old (tested: 28 files restored, observer back, state unchanged). Back up `.factory/` first if state matters; the installer itself never touches it.
 

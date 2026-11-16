@@ -71,7 +71,7 @@ Almost everything goes through two commands.
 | Command | For | What it is |
 |---|---|---|
 | `/mach-product-studio` | Product managers | The workspace for the project, its epics, slices and delivery waves |
-| `/mach-run` | Engineers | The line: move a ticket, see the board, take in product work, check the setup |
+| `/mach-run` | Engineers | The line: move a ticket, see the status of every ticket, take in product work, check the setup |
 
 Both take plain words as well as the forms shown in this guide: "open the app", "what is LOCAL-004 waiting for?", "open the Factory Floor".
 
@@ -198,7 +198,7 @@ A script decides what may run together, and it only ever runs fewer than the lim
 | `--limit 2` | Run at most two at once (the settings limit still applies) |
 | `--sequential` | Run one at a time |
 
-Only you can raise a limit: in the settings, or by telling Claude Code to raise it for one run. `/mach-run` with no ticket still shows the board and starts nothing.
+Only you can raise a limit: in the settings, or by telling Claude Code to raise it for one run. `/mach-run` with no ticket still shows the status of every ticket and starts nothing.
 
 ### Unattended, on a machine you choose
 
@@ -242,7 +242,7 @@ A ticket gets three judging rounds in all, counting failed verifications and rej
 ## Finding out where things stand
 
 ```
-/mach-run board              every open ticket and its next step
+/mach-run status              every open ticket and its next step
 /mach-run explain LOCAL-004  why this ticket failed or is waiting
 ```
 
@@ -267,7 +267,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach-product-studio` | Project, epics, slices, waves; requests from GitHub issues; `refresh`, `send`, `feedback`; "open the app" |
 | `/mach-run <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach-run <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
-| `/mach-run board` | Every open ticket and its next step |
+| `/mach-run status` | Every open ticket and its next step |
 | `/mach-run explain <ticket>` | Why a ticket failed or is waiting |
 | `/mach-run doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
 | `/mach-run new "<idea>"` | Start the interview for a new idea |

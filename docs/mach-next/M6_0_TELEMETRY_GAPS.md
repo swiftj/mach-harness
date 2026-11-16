@@ -205,7 +205,7 @@ For every gap: what is missing, why it matters, the smallest faithful fix, cost 
 
 - **Missing.** Engineer-driven runs; tickets outside the ledger (`LOCAL-*`, `AUTO-*`, `factory-tuning`); the observe pass and tuning ticket the belt runs inside an unrelated execution.
 - **Why it matters.** The picture would quietly leave out real work, and attribute a tuning ticket's cost and time to the ticket whose execution it ran in.
-- **Smallest faithful fix.** G2's cell-local log covers every cell whoever drives it. The observer discovers cells by listing `.factory/worktrees/*/cell.json` (as `run.py:cmd_board` does) and archives, not by reading the ledger. For the belt's extra work: `executor.outcome` already parses the workflow result; keeping its full `tickets[]` (including `stations`) would at least record that a second ticket ran in the execution.
+- **Smallest faithful fix.** G2's cell-local log covers every cell whoever drives it. The observer discovers cells by listing `.factory/worktrees/*/cell.json` (as `run.py:cmd_status` does) and archives, not by reading the ledger. For the belt's extra work: `executor.outcome` already parses the workflow result; keeping its full `tickets[]` (including `stations`) would at least record that a second ticket ran in the execution.
 - **Cost and risk.** Low once G2 exists.
 - **Execution path.** G2 (stations) plus a parsing change in `executor.outcome`.
 
