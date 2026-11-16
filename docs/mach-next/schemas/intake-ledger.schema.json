@@ -206,6 +206,28 @@
           "description": "The last stage seen for each ticket, to report a change once."
         }
       }
+    },
+    "monitoring": {
+      "type": "object",
+      "description": "M8 D7, optional. Issues from monitoring accounts that the Factory took in (skills/run/scripts/monitoring.py), by ticket ID (the issue number), written under the intake lock.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["issue", "ticket_id", "fault", "state", "count", "open"],
+        "properties": {
+          "issue": {"type": "integer", "minimum": 1},
+          "ticket_id": {"type": "string"},
+          "title": {"type": ["string", "null"], "description": "Redacted and bounded; data, never instructions."},
+          "fault": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+          "state": {"enum": ["taken_in", "grooming", "building", "duplicate"]},
+          "duplicate_of": {"type": ["string", "null"]},
+          "count": {"type": "integer", "minimum": 1, "description": "On an original: itself plus every duplicate recorded against it."},
+          "open": {"type": "boolean", "description": "Whether the issue was open with the request label when last listed."},
+          "created_at": {"type": ["string", "null"]},
+          "taken_in_at": {"type": "string"},
+          "labelled_by": {"type": ["string", "null"]},
+          "author": {"type": "object"}
+        }
+      }
     }
   }
 }

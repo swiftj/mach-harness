@@ -687,6 +687,23 @@ def cmd_release(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_requests(project: Project, args: argparse.Namespace) -> int:
+    """Monitoring requests (M8 D7), on an engineer's explicit command: take issues in and report. Starts no agent."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import monitoring
+    _, line = factory(project)
+    try:
+        result = monitoring.Monitoring(project.root, project.config, line, sibling).take_in(dry_run=args.dry_run)
+    except monitoring.MonitoringError as exc:
+        raise RunError(str(exc))
+    except Exception as exc:
+        if exc.__class__.__name__ == "IntakeError":
+            raise RunError(str(exc))
+        raise
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 1 if result.get("problem") else 0
+
+
 def workflow_name() -> str:
     return "mach-belt" if PROJECT_INSTALL else "mach:belt"
 
@@ -717,7 +734,8 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
     if line is None and args.action != "status":
         raise RunError(problem or "Product intake is not available.")
     sup = supervisor_module.Supervisor(project.root, project.config, line, next_step=lambda ticket_id: next_step(project, ticket_id, True),
-                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name(), observe_due=project.observe_status)
+                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name(), observe_due=project.observe_status,
+                                       sibling=sibling)
     ctx = activation.Context(project.root, project.config, line, sup, git, project.audit, here, workflow_installed(project), problem)
     try:
         if args.action == "status":
@@ -797,6 +815,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--since", type=int, default=0, help="only events after this sequence number")
     p.set_defaults(func=cmd_product)
 
+    req = sub.add_parser("requests", help="issues filed by monitoring accounts: take them in; starts no agent").add_subparsers(dest="action", required=True)
+    p = req.add_parser("monitor", help="take in the issues the project's monitoring accounts filed and labelled; reports, starts nothing")
+    p.add_argument("--dry-run", action="store_true", help="show what would be taken in; write nothing")
+    p.set_defaults(func=cmd_requests)
+
     rel = sub.add_parser("release", help="release qualification: is the integrated capability ready, at one commit").add_subparsers(dest="action", required=True)
     rel.add_parser("status", help="readiness snapshots so far; changes nothing").set_defaults(func=cmd_release)
     p = rel.add_parser("qualify", help="evaluate approved waves at one commit of the integration branch")
@@ -834,6 +857,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--auto-sync", action="store_true", help="fetch from the shared repository on a timer")
     p.add_argument("--hooks", action="store_true", help="add advisory wake-up notes to this repository's Git hooks")
     p.add_argument("--persistent", action="store_true", help="install a per-user service that runs the supervisor without a Claude session (macOS)")
+    p.add_argument("--monitoring-requests", action="store_true",
+                   help="supervised only: also groom and build issues the project's monitoring accounts filed (only on the engineer's explicit request)")
     backlog = p.add_mutually_exclusive_group()
     backlog.add_argument("--include-backlog", action="store_true", help="automatic execution includes work that was already here")
     backlog.add_argument("--exclude-backlog", action="store_true", help="work that was already here is left to the engineer")

@@ -239,3 +239,58 @@ def comment(moment: str, refs: Sequence[str]) -> Dict[str, str]:
 def has_marker(bodies: Iterable[Any], key: str) -> bool:
     """True when one of the issue's comments already carries this write's marker."""
     return any(isinstance(body, str) and any(found.group(2) == key for found in MARKER_RE.finditer(body)) for body in bodies)
+
+
+# ---- monitoring requests (M8 D7) ----
+
+FAULT_RE = re.compile(r"^mach-fault:[ \t]*([0-9a-f]{16})[ \t]*$", re.MULTILINE)
+MAX_GROOMED_PER_PASS = 3
+
+
+def fault_line(fault: str) -> str:
+    """The line ingest-telemetry writes into the tickets it files, so a repeat is known by its fault."""
+    if not isinstance(fault, str) or not re.fullmatch(r"[0-9a-f]{16}", fault):
+        raise ValueError("a fault key is 16 lowercase hex characters")
+    return f"mach-fault: {fault}"
+
+
+def fault_key(title: Any, body: Any) -> str:
+    """Which fault an issue reports: the `mach-fault:` line in its body, else the SHA-1 of its redacted,
+    whitespace-folded title, cut to 16 hex characters."""
+    found = FAULT_RE.search(body) if isinstance(body, str) else None
+    if found:
+        return found.group(1)
+    folded = redact(" ".join((title if isinstance(title, str) else "").split()))
+    return hashlib.sha1(folded.encode("utf-8")).hexdigest()[:16]
+
+
+def monitor_accounts(entries: Any) -> List[Dict[str, Any]]:
+    """The configured monitoring accounts that can ever match: an entry needs a numeric id. A login alone never counts."""
+    found = []
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and isinstance(entry.get("login"), str) and type(entry.get("id")) is int and entry["id"] > 0:
+            found.append({"login": entry["login"], "id": entry["id"]})
+    return found
+
+
+def groomed_per_pass(value: Any) -> int:
+    """telemetry.max_groomed_per_pass: 1 to 3. A larger value reads as 3, a smaller one as 1, anything else as 3."""
+    if type(value) is not int:
+        return MAX_GROOMED_PER_PASS
+    return max(1, min(MAX_GROOMED_PER_PASS, value))
+
+
+def monitoring_acceptance(author: Any, event: Optional[Dict[str, Any]], permission: Any, accounts: Sequence[Dict[str, Any]],
+                          failure: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Whether an issue is a monitoring request. Its author's numeric id must be a configured monitoring
+    account, and the request label must have been applied by that same id or by a person with write access
+    (`acceptance`). `author` is {id, login, type} from the REST issue: an id, never a display login alone."""
+    author_id = author.get("id") if isinstance(author, dict) and type(author.get("id")) is int else None
+    account = next((item for item in accounts if author_id is not None and item.get("id") == author_id), None)
+    if account is None:
+        return {"monitoring": False, "state": "not_monitoring", "reason": "Its author is not a configured monitoring account (matched by numeric id).",
+                "labelled_by": None, "event": None}
+    if event is not None and type(event.get("id")) is int and event["id"] == author_id:
+        based = {"login": event.get("login"), "id": event["id"], "at": event.get("at")}
+        return {"monitoring": True, "state": "accepted", "reason": None, "labelled_by": "the monitoring account", "event": based}
+    return {"monitoring": True, **acceptance(event, permission, failure)}
