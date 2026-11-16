@@ -1,7 +1,7 @@
 ---
 name: run
-description: Drives MACH tickets along the factory's conveyor belt. For one ticket, works out the next station from the recorded state and runs it (audit, grooming, build, verify, review, cleanup), stopping wherever a person is needed; for several tickets, shows the board. Use when asked to run, continue, resume or ship a ticket through the factory or pipeline, to run the whole pipeline, to see what is next for a ticket, or for the factory's status board. Also takes approved product work from Product Studio into the factory: shows incoming delivery waves, the dependency-aware plan of what is ready or blocked and why, and dispatches chosen slices on the engineer's explicit word. Also the Factory's on/off switch for this machine: factory status, enable, pause, resume, disable and stop, for unattended (autopilot, supervisor, background) execution. Also explains why a ticket failed or is waiting (explain), and checks the machine and project setup (doctor). Also opens the Factory Floor, a read-only live view of the Factory in the browser, when asked to open the Factory Floor or watch the factory.
-argument-hint: "[ticket ID or number | board | explain <ticket> | doctor [--fix] | approve <ticket> | merge <ticket> | abandon <ticket> <why> | new <idea> | audit | product [intake|plan|dispatch <slice>...] | release [status|qualify <wave>...|show <id>] | requests monitor [--dry-run] | factory [status|enable|pause|resume|disable|stop]] [--headless] [--until <station>]"
+description: Drives MACH tickets along the factory's conveyor belt. For one ticket, works out the next station from the recorded state and runs it (audit, grooming, build, verify, review, cleanup), stopping wherever a person is needed; for several tickets named together, shows the schedule (which may run at once, which wait and why) and starts the belt workflow; with no ticket, shows the board. Use when asked to run, continue, resume or ship a ticket through the factory or pipeline, to run the whole pipeline, to see what is next for a ticket, or for the factory's status board. Also takes approved product work from Product Studio into the factory: shows incoming delivery waves, the dependency-aware plan of what is ready or blocked and why, and dispatches chosen slices on the engineer's explicit word. Also the Factory's on/off switch for this machine: factory status, enable, pause, resume, disable and stop, for unattended (autopilot, supervisor, background) execution. Also explains why a ticket failed or is waiting (explain), and checks the machine and project setup (doctor). Also opens the Factory Floor, a read-only live view of the Factory in the browser, when asked to open the Factory Floor or watch the factory.
+argument-hint: "[ticket ID or number | <ticket> <ticket>... [--limit n] [--sequential] [--dry-run] | --dry-run | board | explain <ticket> | doctor [--fix] | approve <ticket> | merge <ticket> | abandon <ticket> <why> | new <idea> | audit | product [intake|plan|dispatch <slice>...] | release [status|qualify <wave>...|show <id>] | requests monitor [--dry-run] | factory [status|enable|pause|resume|disable|stop]] [--headless] [--until <station>]"
 compatibility: "python3 >= 3.8, git"
 ---
 
@@ -67,7 +67,7 @@ End with a short account of the run: each station that ran and its result, in or
 
 ### The board
 
-For `board`, run `RUN board` and show it as a table: each ticket, its stage, the next action, and what stopped tickets are waiting for. Say if an observe pass is due (`observe_due`) and list any tuning tickets ready to run (`factory_tuning_ready`). Group the tickets that can move now apart from those waiting on a person. Do not start anything.
+For `board`, or no input at all, run `RUN board` and show it as a table: each ticket, its stage, the next action, and what stopped tickets are waiting for. Say if an observe pass is due (`observe_due`) and list any tuning tickets ready to run (`factory_tuning_ready`). Group the tickets that can move now apart from those waiting on a person. If more than one can move now, offer to run them together (**Several tickets at once**). Do not start anything.
 
 ### Status, explanations and setup
 
@@ -112,7 +112,7 @@ When the input starts with `product`, an engineer is working with delivery waves
 | `product reconcile` | `RUN product reconcile` | Intake and a recorded plan in one step, for catching up after time away. Report it as you would an intake followed by a plan. It never dispatches. |
 | `product resolve <SLICE-ID> --supersede-in-work "<why>"` | `RUN product resolve <SLICE-ID> --supersede-in-work "<why>"`, **only on a person's explicit instruction**, like `approve-human`: never because intake listed it under `needs_person`, and never with a reason you wrote yourself | Use it only when a newer approved revision waits behind work still in progress and the person decides that work is superseded. Report `superseded_in_work` (ticket, revision, who and why) and the new ticket under `created`. Say that the earlier ticket and its cell were not changed: the engineer finishes or abandons it, and it is no longer the slice's work. |
 
-After a dispatch, on the engineer's yes: for one ticket, continue with **One ticket** above for that ticket ID. For several, the engineer runs the belt workflow named in `workflow` with the `tickets` list. Either way every station and every gate applies exactly as for any other ticket; the first step is the contracts and plan stage, because the spec is already approved.
+After a dispatch, on the engineer's yes: for one ticket, continue with **One ticket** above for that ticket ID. For several, continue with **Several tickets at once** below with those ticket IDs. Either way every station and every gate applies exactly as for any other ticket; the first step is the contracts and plan stage, because the spec is already approved.
 
 A slice is `completed` only when its commit is on the integration branch. A ticket whose build finished, or even one that was approved, is still `active`, and what depends on it stays blocked. Say this plainly if the engineer asks why something is not ready.
 
@@ -173,7 +173,27 @@ Grooming a monitoring request is headless and happens either when the engineer r
 
 ### Several tickets at once
 
-This skill moves one ticket per conversation. To move several unattended, each in its own cell and in parallel, the user runs the MACH belt workflow with the ticket IDs (`mach:belt` with the plugin, `mach-belt` in a project install). Suggest it when the board shows more than one ticket ready to run; do not start it yourself unless asked.
+When the input names more than one ticket (`<a> <b> <c>`, full IDs or bare numbers), with any of `--limit <n>`, `--sequential`, `--dry-run` and `--until <station>`, a script decides which may run together; you show its answer and start the belt workflow with it.
+
+1. Run `RUN schedule <a> <b> <c>`, adding `--limit <n>`, `--sequential` and `--dry-run` as the input has them. It reads only: it starts and writes nothing.
+2. Show the schedule in plain words, before anything starts:
+   - **How many at once**: `ceiling.in_force`, and where it comes from: the settings (`ceiling.settings`), the `--limit` given, `--sequential`, or a person's raise for this run (`ceiling.raised_by_person`). If `ceiling.clamped_from` is set, say that the limit asked for was higher and was lowered, giving `ceiling.note`. High-risk tickets in the line run at most `ceiling.high` at a time.
+   - **Starting now**: each ticket under `start`. One with `until` set to `build` has no plan yet: it goes as far as the build station and is then scheduled again with its plan known.
+   - **Waiting**: each ticket under `held`, with its `why` word for word and the tickets it waits for (`after`).
+   - **Likely order**: `batches`, said to be advisory (it assumes each batch finishes), and any ticket under `never_starts`.
+   - Which ticket each bare number resolved to (`resolved_from`), and any ticket under `skipped_as_running`.
+3. With `--dry-run`, stop here.
+4. Otherwise start the belt workflow named in `workflow` with exactly the `workflow_args` the script printed, adding `"until": "<station>"` only if the input has `--until <station>`. The workflow asks the same script again each time a ticket finishes, so the order stays the script's.
+5. When it returns, report each ticket's outcome, then `held` with each reason, `waiting_on_a_person` and `problems`, as for one ticket.
+
+Rules:
+
+- **The script sets the ceiling.** You may pass a lower `--limit` than the engineer asked for, and must say why (for example, two of the tickets change the same part of the code and the engineer wants them reviewed one after the other). You never pass a higher one: the script lowers it to the settings and says so.
+- **Only a person raises it.** Add `--by-person` (with `--limit <n>`, at most 8) only when the engineer said, in this conversation, to raise the limit for this run. Never on your own initiative, never because work is waiting, and never inside a supervised Factory execution (`MACH_EXECUTION_ID` is set), where the script refuses it.
+- **Never work around a hold.** A ticket the schedule holds is not started by hand, in this conversation or in another workflow, to get past it. If the engineer wants it to go first, they say so and you run it alone with **One ticket**.
+- A bare number that matches more than one ticket is refused with the candidates: show them and ask which one.
+
+`/mach-run --dry-run` with no ticket is `RUN product plan`: show it as for `product plan` and start nothing. `/mach-run` with no ticket is the board and never starts anything.
 
 ## The Factory Floor
 

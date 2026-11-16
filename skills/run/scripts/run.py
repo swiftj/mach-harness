@@ -10,6 +10,8 @@ and not by whoever is driving it.
     run.py board [--headless]            the next step for every open ticket and cell
     run.py explain <ticket> [--json]     why a ticket failed, was sent back or is waiting; reads only (explain.py)
     run.py doctor [--fix] [--json]       check the machine and the project; works before .factory exists (doctor.py)
+    run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run]
+                                         which tickets may start now and why the others wait; reads only (schedule.py)
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
     run.py review-tally <ticket>         count the review votes
     run.py where                         where this script and the project are (used by the workflow)
@@ -536,6 +538,47 @@ def cmd_doctor(root: Path, args: argparse.Namespace) -> int:
     return doctor.main([*(["--fix"] if args.fix else []), *(["--json"] if args.json else [])], project=root)
 
 
+def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
+    """Which of several tickets may start now, and why the others wait (schedule.py). Reads only: starts and writes nothing."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import schedule
+    provider = os.environ.get("ISSUE_PROVIDER") or project.section("tickets").get("provider") or "local"
+    known, resolved = known_tickets(project), {}
+
+    def resolve(names: Sequence[str]) -> List[str]:
+        found = []
+        for given in names:
+            ticket_id, typed = resolve_ticket(given, known, provider in NATIVE_NUMBER_PROVIDERS)
+            if not TICKET_ID_RE.match(ticket_id):
+                raise RunError(f"'{given}' is not a usable ticket ID.")
+            if typed:
+                resolved[typed] = ticket_id
+            found.append(ticket_id)
+        return found
+
+    args.ticket_ids, args.running = resolve(args.ticket_ids), resolve(args.running or [])
+    scope = execution_scope(project)
+    beside: List[str] = []
+    if scope is not None:
+        others = [ticket_id for ticket_id in args.ticket_ids if ticket_id != scope]
+        if others:
+            raise RunError(f"This Factory execution was started for {scope} only. {', '.join(others)} need(s) their own dispatch; nothing was scheduled.")
+        # The supervisor's other executions run beside this one: the High-risk and file-overlap rules count them.
+        ledger = load_json(project.root / ".factory" / "intake" / "ledger.json", {}) or {}
+        records = ((ledger.get("supervisor") or {}).get("executions") or {}) if isinstance(ledger, dict) else {}
+        beside = sorted({record.get("ticket_id") for record in records.values() if isinstance(record, dict) and record.get("state") in ("claimed", "started")
+                         and isinstance(record.get("ticket_id"), str) and TICKET_ID_RE.match(record["ticket_id"]) and record["ticket_id"] != scope})
+    try:
+        report = schedule.main(args, project.root, config=project.config, sibling=sibling, factory=lambda: factory(project)[1],
+                               workflow=workflow_name(), supervised=scope, resolved=resolved, beside=beside)
+    except schedule.ScheduleError as exc:
+        raise RunError(str(exc))
+    if resolved:
+        report["resolved_from"] = {ticket_id: typed for typed, ticket_id in resolved.items()}
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_board(project: Project, args: argparse.Namespace) -> int:
     ids: List[str] = []
     worktrees = project.root / ".factory" / "worktrees"
@@ -785,6 +828,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fix", action="store_true", help="create missing MACH folders; never edits settings or enables anything")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=None)
+    p = sub.add_parser("schedule", help="which of several tickets may start now, and why the others wait; reads only")
+    p.add_argument("ticket_ids", nargs="+", metavar="ticket")
+    p.add_argument("--running", nargs="+", action="extend", metavar="ticket", help="tickets already running")
+    p.add_argument("--limit", type=int, help="at most this many at once; never above the settings ceiling without --by-person")
+    p.add_argument("--sequential", action="store_true", help="one ticket at a time")
+    p.add_argument("--by-person", action="store_true", help="with --limit: a person raised the limit for this run (at most 8); refused in a supervised execution")
+    p.add_argument("--dry-run", action="store_true", help="say so in the report; the command never starts anything either way")
+    p.set_defaults(func=cmd_schedule)
     for name, func, text in (("review-start", cmd_review_start, "start the review round and print one prompt per seat"),
                              ("review-tally", cmd_review_tally, "count the review votes")):
         p = sub.add_parser(name, help=text)

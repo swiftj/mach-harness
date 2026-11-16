@@ -424,6 +424,147 @@ class WorkflowScriptTest(unittest.TestCase):
         self.assertIn("unknown step 'deploy'", got["made_up"]["error"])
         self.assertEqual((got["stop"]["step"]["stop"], got["stop"]["step"]["agent_type"]), (True, ""))
 
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_relayed_schedule_is_cleaned_before_any_ticket_starts(self):
+        """M9 1.6: a relay's copy of run.py schedule is not trusted. Only pending tickets start, each once, never past the ceiling read or 8."""
+        source = self.SCRIPT[self.SCRIPT.index("// BEGIN cleanSchedule"):self.SCRIPT.index("// END cleanSchedule")]
+        start = lambda *names: [{"ticket_id": name, "until": ""} for name in names]
+        cases = {
+            "pending_only": [{"in_force": 3, "start": start("A", "Z", "A", "B"), "held": [], "refused": ""}, ["A", "B", "C"], []],
+            "ceiling_counts_running": [{"in_force": 2, "start": start("B", "C"), "held": [], "refused": ""}, ["B", "C"], ["A"]],
+            "never_past_eight": [{"in_force": 50, "start": start(*[f"T{n}" for n in range(12)]), "held": [], "refused": ""}, [f"T{n}" for n in range(12)], []],
+            "unreadable_ceiling_is_one": [{"in_force": "lots", "start": start("A", "B"), "held": [], "refused": ""}, ["A", "B"], []],
+            "missing_ceiling_is_one": [{"start": start("A", "B"), "held": []}, ["A", "B"], []],
+            "ceiling_as_text": [{"in_force": " 2 ", "start": start("A", "B", "C"), "held": [], "refused": ""}, ["A", "B", "C"], []],
+            "already_running": [{"in_force": 3, "start": start("A", "B"), "held": [], "refused": ""}, ["A", "B"], ["A"]],
+            "until": [{"in_force": 8, "start": [{"ticket_id": "A", "until": "build"}, {"ticket_id": "B", "until": '""'}, {"ticket_id": "C", "until": "null"},
+                                                {"ticket_id": "D", "until": "deploy"}, {"ticket_id": "E"}], "held": [], "refused": ""}, ["A", "B", "C", "D", "E"], []],
+            "given": [{"in_force": 3, "start": [{"ticket_id": "LOCAL-004", "given": "4", "until": ""}], "held": [], "refused": ""}, ["4"], []],
+            "held": [{"in_force": 1, "start": start("A"), "held": [{"ticket_id": "A", "why": "x"}, {"ticket_id": "B", "why": " it waits ", "after": ["A", "", 7]},
+                                                              {"ticket_id": "B", "why": "again"}, {"ticket_id": "Q", "why": "not pending"}, {"ticket_id": "C", "why": "x" * 900}], "refused": ""},
+                     ["A", "B", "C"], []],
+            "refused": [{"in_force": 3, "start": start("A"), "held": [], "refused": "refused: no such ticket"}, ["A"], []],
+            "nothing": [None, ["A"], []],
+            "junk": [{"in_force": 3, "start": "A B", "held": {"A": 1}, "refused": ""}, ["A"], []],
+        }
+        program = (f"{source}\nconst cases = {json.dumps(cases)}\n"
+                   "const out = {}; for (const [k, [plan, pending, running]] of Object.entries(cases)) out[k] = cleanSchedule(plan, pending, running, 8)\n"
+                   "process.stdout.write(JSON.stringify(out))\n")
+        done = subprocess.run(["node", "-e", program], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        got = json.loads(done.stdout)
+        names = lambda key: [item["ticket"] for item in got[key]["start"]]
+        self.assertEqual(names("pending_only"), ["A", "B"])
+        self.assertEqual(names("ceiling_counts_running"), ["B"])
+        self.assertEqual((len(names("never_past_eight")), got["never_past_eight"]["ceiling"]), (8, 8))
+        self.assertEqual((names("unreadable_ceiling_is_one"), names("missing_ceiling_is_one"), names("ceiling_as_text")), (["A"], ["A"], ["A", "B"]))
+        self.assertEqual(names("already_running"), ["B"])
+        self.assertEqual([item["until"] for item in got["until"]["start"]], ["build", "", "", "build", ""])
+        self.assertEqual(got["given"]["start"], [{"ticket": "4", "until": ""}])
+        self.assertEqual([(item["ticket"], item["after"]) for item in got["held"]["held"]], [("B", ["A"]), ("C", [])])
+        self.assertEqual(got["held"]["held"][0]["why"], "it waits")
+        self.assertEqual(len(got["held"]["held"][1]["why"]), 400)
+        self.assertEqual(got["refused"], {"error": "refused: no such ticket", "start": [], "held": []})
+        self.assertEqual(got["nothing"]["error"], "run.py schedule returned nothing usable")
+        self.assertEqual((got["junk"]["start"], got["junk"]["held"]), ([], []))
+
+    BELT_HARNESS = r"""
+const stages = STAGES
+const asked = []
+const scheduleSays = SCHEDULE_RULES
+async function agent(prompt, opts) {
+  opts = opts || {}
+  if (opts.label === 'locate the belt script') return { project: '/p', run_script: '/x/run.py', python: 'python3' }
+  const block = prompt.match(/```bash\n(.*)\n```/)
+  if (!block) {  // a worker: move the ticket the way its station would
+    const [verb, ticket] = prompt.split(' ')
+    if (verb === 'Plan') stages[ticket] = scheduleSays.stuck_plan && scheduleSays.stuck_plan.includes(ticket) ? stages[ticket] : 'planned'
+    if (verb === 'Build') stages[ticket] = 'approved'
+    asked.push(`${verb} ${ticket}`)
+    return 'done'
+  }
+  const command = block[1].replace('python3 "/x/run.py" --project "/p" ', '')
+  asked.push(command)
+  if (command === 'where') return { is_mach_project: true }
+  if (command.startsWith('board')) return { audit_state: 'ok', observe_due: false, factory_tuning_ready: [] }
+  if (command.startsWith('next ')) {
+    const ticket = command.split(' ')[1]
+    const stage = stages[ticket]
+    if (stage === 'spec-ready') return { action: 'plan', stop: false, reason: 'r', stage, agent_type: '', model: 'opus', prompt: `Plan ${ticket}` }
+    if (stage === 'planned') return { action: 'build', stop: false, reason: 'r', stage, agent_type: 'mach:builder', prompt: `Build ${ticket}` }
+    return { action: 'stop', stop: true, reason: 'approved', stage, needs: 'merge', agent_type: '' }
+  }
+  if (command.startsWith('schedule ')) {
+    const words = command.split(' ').slice(1)
+    const at = words.indexOf('--running')
+    const pending = words.slice(0, at < 0 ? words.length : at).filter(word => !word.startsWith('--'))
+    const running = at < 0 ? [] : words.slice(at + 1).filter(word => !word.startsWith('--'))
+    const start = []
+    const held = []
+    for (const ticket of pending) {
+      const rule = (scheduleSays.hold || {})[ticket]
+      if (rule && (rule === '*' || running.includes(rule) || start.some(item => item.ticket_id === rule))) {
+        held.push({ ticket_id: ticket, why: `held behind ${rule}`, after: [rule] })
+        continue
+      }
+      const prepare = stages[ticket] === 'spec-ready' || (scheduleSays.always_prepare || []).includes(ticket)
+      start.push({ ticket_id: ticket, until: prepare ? 'build' : '' })
+    }
+    return { refused: '', in_force: 3, start, held }
+  }
+  return {}
+}
+async function parallel(fns) { return Promise.all(fns.map(fn => fn())) }
+function phase() {}
+function log() {}
+async function workflow(args, agent, parallel, pipeline, phase, log, budget) {
+BODY
+}
+workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.stdout.write(JSON.stringify({ result, asked, stages })))
+"""
+
+    def run_belt(self, args, stages, rules):
+        body = self.SCRIPT.replace("export const meta", "const meta", 1)
+        program = (self.BELT_HARNESS.replace("STAGES", json.dumps(stages)).replace("SCHEDULE_RULES", json.dumps(rules))
+                   .replace("ARGS", json.dumps(args)).replace("BODY", body))
+        done = subprocess.run(["node", "-e", program], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_the_pool_prepares_requeues_and_holds_as_the_schedule_says(self):
+        got = self.run_belt({"tickets": ["A", "B", "D"], "limit": 2}, {"A": "spec-ready", "B": "planned", "D": "planned"}, {"hold": {"B": "A", "D": "*"}})
+        outcomes = {item["ticket"]: item["outcome"] for item in got["result"]["tickets"]}
+        self.assertEqual(outcomes, {"A": "stopped", "B": "stopped", "D": "held"})
+        schedules = [command for command in got["asked"] if command.startswith("schedule")]
+        self.assertEqual(schedules[0], "schedule A B D --limit 2")
+        self.assertIn("schedule A B D --limit 2", schedules[1:])  # A came back from preparing, in the order given
+        self.assertLess(got["asked"].index("Plan A"), got["asked"].index("Build B"), "B started only after A stopped preparing")
+        self.assertEqual(got["result"]["held"], ["D: held behind *"])
+        self.assertEqual((got["stages"]["A"], got["stages"]["B"]), ("approved", "approved"))
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_the_pool_keeps_until_array_args_and_reports_a_ticket_prepared_twice_as_stuck(self):
+        got = self.run_belt(["A", "C"], {"A": "planned", "C": "spec-ready"}, {"always_prepare": ["C"]})
+        outcomes = {item["ticket"]: (item["outcome"], item.get("reason", "")) for item in got["result"]["tickets"]}
+        self.assertEqual(outcomes["A"][0], "stopped")
+        self.assertEqual(outcomes["C"], ("stuck", "it was prepared twice without reaching the line: its plan is still not recorded"))
+        self.assertEqual(got["asked"].count("Plan C"), 1)
+        got = self.run_belt({"tickets": ["A"], "until": "build"}, {"A": "spec-ready"}, {})
+        (only,) = got["result"]["tickets"]
+        self.assertEqual((only["outcome"], only["waiting_for"]), ("stopped", "a person: stopped before build, as asked"))
+        self.assertNotIn("Build A", got["asked"])
+
+    def test_the_belt_runs_tickets_in_a_scheduled_pool(self):
+        self.assertIn("const plan = cleanSchedule(asked, pending, [...running.keys()], MAX_AT_ONCE)", self.SCRIPT)
+        self.assertIn("const MAX_AT_ONCE = 8", self.SCRIPT)
+        self.assertIn("await Promise.race(", self.SCRIPT)
+        self.assertIn("for (const result of await pool(tuning)) report.push(result)", self.SCRIPT)  # tuning tickets go through the same pool
+        self.assertNotIn("parallel(tickets.map", self.SCRIPT)
+        self.assertIn("Array.isArray(args) ? args : options.tickets", self.SCRIPT)  # an array of IDs still works
+        self.assertIn("if (until && step.action === until)", self.SCRIPT)  # a ticket the schedule starts to prepare still stops at the run's own until
+        self.assertIn("if (prepare && step.action === prepare)", self.SCRIPT)
+
     def test_the_belt_uses_only_cleaned_steps_and_a_strict_schema(self):
         self.assertIn("const read = cleanStep(await clerk(`next ${ticket} --headless`, STEP", self.SCRIPT)
         self.assertIn("enum: ['', ...AGENT_TYPES]", self.SCRIPT)

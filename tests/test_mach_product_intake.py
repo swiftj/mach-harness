@@ -513,7 +513,7 @@ class SchedulerTest(Base):
         self.assertEqual(sent["tickets"], ["LOCAL-001", "LOCAL-002"])
         plan, _ = self.plan()
         self.assertEqual((plan["limits"], plan["dispatchable"], plan["waiting_for_a_place"]),
-                         ({"max_parallel": 2, "active": 2, "free": 0}, [], ["SLICE-003", "SLICE-004"]))
+                         ({"max_parallel": 2, "max_parallel_high": 1, "active": 2, "free": 0}, [], ["SLICE-003", "SLICE-004"]))
         self.assertEqual(self.product("dispatch", "--ready")["tickets"], [])
         self.integrate("LOCAL-001")
         self.assertEqual(self.plan()[0]["dispatchable"], ["SLICE-003"])

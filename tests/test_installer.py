@@ -113,7 +113,7 @@ class InstallTest(Base):
         self.assertIn(".factory/studio/", ignore)
         self.assertIn(".factory/local/", ignore)
         self.assertIn(".factory/intake/", ignore)
-        self.assertEqual(json.loads((self.project / ".factory/config.json").read_text())["factory"], {"max_parallel": 3})
+        self.assertEqual(json.loads((self.project / ".factory/config.json").read_text())["factory"], {"max_parallel": 3, "max_parallel_high": 1})
         done = subprocess.run([sys.executable, str(self.project / ".claude/skills/mach-run/scripts/run.py"), "--project", str(self.project), "product", "status"],
                               capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)  # the installed run skill finds the installed product-studio and intent skills

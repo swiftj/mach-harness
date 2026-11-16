@@ -541,6 +541,8 @@ class Supervisor:
             elif self.risk_of(ticket) and RISKS.index(self.risk_of(ticket)) > RISKS.index(pol["max_risk"]):
                 reason = f"its risk tier is {self.risk_of(ticket)}, above the {pol['max_risk']} this machine allows unattended"
                 self.park(ledger, ticket, f"Its risk tier ({self.risk_of(ticket)}) is above what this machine runs unattended ({pol['max_risk']}).", {"ticket_id": ticket, "slice_id": slice_id})
+            elif (beside := self.held_beside(ticket, live)):
+                reason = beside  # the schedule's High-risk or file-overlap rule; tried again on a later pass
             else:
                 budget_usd, reason = self.allowance(ledger, pol)
             until = None if pol.get("allow_merge") else "merge"
@@ -610,6 +612,10 @@ class Supervisor:
             if len(live()) >= pol["limits"]["max_parallel"]:
                 report["held"].append({"ticket_id": ticket, "why": f"all {pol['limits']['max_parallel']} place(s) are in use"})
                 return
+            beside = self.held_beside(ticket, live())
+            if beside:
+                report["held"].append({"ticket_id": ticket, "why": beside})
+                return
             budget_usd, over = self.allowance(ledger, pol)
             if over:
                 report["held"].append({"ticket_id": ticket, "why": over})
@@ -621,6 +627,18 @@ class Supervisor:
             advance(entry)
         for ticket in station.select(ledger, pol["limits"]["max_parallel"] - len(live())):
             advance(entries[ticket])
+
+    def held_beside(self, ticket: str, live: List[Dict[str, Any]]) -> Optional[str]:
+        """Why this ticket may not start beside the executions running now, by the schedule's own rule (schedule.decide):
+        High-risk work in the line beyond the High-risk ceiling, or a file in common with a ticket in the line. None
+        when neither holds it. The ceiling on places is checked separately, as before; dependencies are M3's."""
+        import schedule
+        parse = schedule.plan_parser(self.sibling)
+        running = [schedule.ticket_facts(self.root, record["ticket_id"], parse) for record in live if record["ticket_id"] != ticket]
+        mine = schedule.ticket_facts(self.root, ticket, parse)
+        high = min(int(getattr(self.line, "max_parallel_high", 1) or 1), int(self.line.max_parallel))
+        decided = schedule.decide([mine], running, len(running) + 1, high)
+        return next((item["why"] for item in decided["held"] if item["rule"] in ("high-risk", "overlap")), None)
 
     def risk_of(self, ticket: str) -> Optional[str]:
         try:

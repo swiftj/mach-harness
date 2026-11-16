@@ -180,7 +180,25 @@ Dispatch opens the cell and stops; `/mach-run <ticket>` then runs it. Nothing is
 
 ### Several tickets at once
 
-Ask Claude Code to "run the mach-belt workflow for LOCAL-002 and LOCAL-003" (`mach:belt` with the plugin). Each ticket is built, verified and reviewed in its own cell, and the run ends with what each one is waiting for.
+```
+/mach-run 2 3 5
+```
+
+MACH shows the schedule first, then runs the tickets with the belt workflow (`mach-belt`; `mach:belt` with the plugin). Each ticket is built, verified and reviewed in its own cell, and the run ends with what each one is waiting for.
+
+A script decides what may run together, and it only ever runs fewer than the limit, never more:
+
+- No more than `factory.max_parallel` tickets run at once, and no more than `factory.max_parallel_high` of them High risk.
+- A ticket waits for the tickets it depends on to be merged.
+- Two tickets whose plans change the same file do not run at the same time.
+
+| Add | To |
+|---|---|
+| `--dry-run` | See the schedule and the reason for every wait; nothing starts |
+| `--limit 2` | Run at most two at once (the settings limit still applies) |
+| `--sequential` | Run one at a time |
+
+Only you can raise a limit: in the settings, or by telling Claude Code to raise it for one run. `/mach-run` with no ticket still shows the board and starts nothing.
 
 ### Unattended, on a machine you choose
 
@@ -248,6 +266,7 @@ A cost appears only where one was recorded, which today means work the superviso
 |---|---|
 | `/mach-product-studio` | Project, epics, slices, waves; requests from GitHub issues; `refresh`, `send`, `feedback`; "open the app" |
 | `/mach-run <ticket>` | Move one ticket to the next point a person is needed |
+| `/mach-run <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
 | `/mach-run board` | Every open ticket and its next step |
 | `/mach-run explain <ticket>` | Why a ticket failed or is waiting |
 | `/mach-run doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
@@ -282,10 +301,12 @@ Settings are in `.factory/config.json`. The ones people change most:
 |---|---|---|
 | `tickets.provider` | `local` | Where tickets live: Markdown files in `.factory/tickets/`, or `github`, `gitea-cli`, `jira`, `fossil` |
 | `merge.mode` | `auto` | `auto` lets the line merge approved tickets; `manual` leaves every merge to you |
-| `merge.method` | `local` | `local` makes a merge commit; `pr` opens a pull request and merges the approved commit |
+| `merge.method` | `local` | `local` makes a merge commit; `pr` opens a pull request that refers to the request's issue, and merges the approved commit |
 | `merge.auto.<tier>` | `true` | Set a risk tier to `false` to keep its merges for a person |
 | `review.<tier>` | see file | Reviewers, approvals needed, and whether a person must approve |
 | `factory.max_parallel` | `3` | How many tickets may run at once |
+| `factory.max_parallel_high` | `1` | How many High-risk tickets may run at once |
+| `merge.pr.inline_findings` | `true` | With `merge.method` `pr`, post the review panel's findings on the pull request |
 | `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
 | `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |
 | `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |
