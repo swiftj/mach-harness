@@ -91,5 +91,60 @@ occasion for that wait up to five times, then given up and shown in `notify stat
 
 ## 8. Not in this step
 
-Messages for anything but a wait for a person; several channels; rich formatting; reminders; an
-acknowledgement from the channel; reading replies.
+Messages for anything but a wait for a person; more than one webhook, or any channel beyond the webhook
+and the banner of section 9; rich formatting; reminders; an acknowledgement from the channel; reading
+replies.
+
+## 9. A banner on this Mac
+
+Besides the webhook, a person may turn on a macOS Notification Center banner on this machine. macOS
+only; nothing else (no iMessage, no other system's notifications).
+
+**The switch.** `notify banner on [--label <words>]` and `notify banner off`, through the run skill, on a
+person's word. The switch is stored in the same `.factory/local/notify.json`, with the same care
+(mode 0600, bound to this machine and this folder, read as off when anything is wrong). The file may
+hold the webhook's address, the banner switch (`"banner": true`), or both; neither needs the other.
+`banner off` removes the switch and, when no address is stored either, the file. `notify off` removes
+the address only; its report says whether the banner is still on (`still_on`).
+
+**macOS only.** Decided by `platform.system() == "Darwin"`. Elsewhere `notify banner on` is refused with
+a plain sentence, and a stored switch is ignored: it reads as off, with the reason in `notify status`.
+`notify banner off` works on any system.
+
+**How it is shown.** `/usr/bin/osascript`, at that fixed path, run with no shell and a five-second
+timeout. The script text is fixed and the words are passed as arguments to its run handler, never
+written into the script:
+
+```
+/usr/bin/osascript -e 'on run argv'
+                   -e 'display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)'
+                   -e 'end run'
+                   <text> <title> <subtitle>
+```
+
+(each `-e` line and each text is one argument; the quotes above are only for reading). No sound.
+
+- Title: `MACH · <label>`. Subtitle: `<ticket> is waiting for a person.`
+- Text: the webhook message's middle line (section 5), then `In Claude Code: <command>`.
+- Fixed words and identifiers only, exactly as section 5. The ticket ID must match the ticket ID pattern,
+  and the label the label rule, before either is passed.
+
+If `/usr/bin/osascript` is not there, if it exits with anything but 0, or if it runs past five seconds,
+the banner has failed; that is recorded (`osascript-missing`, `exit-<code>`, `timeout`), never raised.
+
+**What "ran" means.** The banner counts as sent when osascript exits 0. MACH cannot see whether macOS
+displayed it: macOS may hide banners from scripts until the person allows notifications for "Script
+Editor" (or the program macOS names) in System Settings. `notify status` and `notify test` say "ran",
+not "delivered".
+
+**Same rules as the webhook.** The same triggers (section 4), the same boundaries (section 7), and
+`factory.notifications: false` forbids it too, `notify test` included. A wait is announced once on each
+channel that is on. The channels fail independently: each keeps its own attempts, last error and give-up
+(after five) in `notify-state.json`, and a failure on one never stops the other. A channel turned on
+while a wait is already recorded announces that wait once on the new channel. Inside a supervised
+execution `run.py next --headless` sends on neither channel and reads neither setting; the supervisor
+sends.
+
+**Status and test.** `notify status` shows each channel on its own: on or off and why, the webhook's
+host and last message, the banner's last run, and each one's failing and given-up waits. `notify test`
+sends on every channel that is on and reports each: the webhook's `sent`, the banner's `ran`.

@@ -37,9 +37,11 @@ and not by whoever is driving it.
     run.py notify [status]               whether a waiting ticket is announced to a channel from this machine; changes nothing
     run.py notify set --from-file PATH | --from-env NAME [--label WORDS]
                                          store the channel's address (never taken on the command line); sends nothing
-    run.py notify test | off             send one test message; remove the stored address
+    run.py notify banner on|off [--label WORDS]
+                                         a macOS Notification Center banner on this Mac, beside or instead of the webhook
+    run.py notify test | off             one test message on each channel that is on; remove the stored address (the banner stays)
 
-`next <ticket> --headless` that stops for a person sends one message to the channel set on this machine (notify.py),
+`next <ticket> --headless` that stops for a person sends one message on each channel on for this machine (notify.py),
 once per wait, and never inside a supervised execution. No other command here sends or reads the address.
 
 A step is either work ("action": audit, groom, plan, build, revise, verify, review, merge, cleanup)
@@ -572,7 +574,7 @@ def notifier(project: Project) -> Any:
 
 
 def cmd_notify(project: Project, args: argparse.Namespace) -> int:
-    """Notifications from this machine (notify.py): status, set, test, off. A person's setting, on their word."""
+    """Notifications from this machine (notify.py): status, set, banner, test, off. A person's setting, on their word."""
     if execution_scope(project) is not None:
         raise RunError("Notifications are a person's setting on this machine; a supervised execution does not read or change them.")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -586,6 +588,8 @@ def cmd_notify(project: Project, args: argparse.Namespace) -> int:
                 raise RunError("Give exactly one of --from-file PATH or --from-env NAME. The address itself is never taken on the command line.")
             url = notify.address_from_file(Path(args.from_file)) if args.from_file else notify.address_from_env(args.from_env)
             result = notify.store(project.root, project.config, url, args.label)
+        elif action == "banner":
+            result = notify.set_banner(project.root, project.config, args.switch == "on", args.label)
         elif action == "test":
             result = notifier(project).test(f"{skill('run')} notify")
         else:
@@ -596,7 +600,7 @@ def cmd_notify(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
-NOTIFY_USAGE = ("refused: that is not a notify command as written. Use: notify [status | set --from-file PATH | set --from-env NAME [--label WORDS] | test | off]. "
+NOTIFY_USAGE = ("refused: that is not a notify command as written. Use: notify [status | set --from-file PATH | set --from-env NAME [--label WORDS] | banner on|off [--label WORDS] | test | off]. "
                 "The address is never taken on the command line: write it into a file or export it in your shell. Nothing was stored or sent.")
 
 
@@ -1119,7 +1123,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--event", default="manual")
     p.set_defaults(func=cmd_factory)
 
-    p = sub.add_parser("notify", help="tell a channel when a ticket waits for a person: status, set, test, off")
+    p = sub.add_parser("notify", help="tell a channel when a ticket waits for a person: status, set, banner, test, off")
     p.error = quiet_error  # argparse would repeat what was typed, which may be the address
     p.set_defaults(func=cmd_notify, action=None)
     notify_actions = p.add_subparsers(dest="action", parser_class=QuietParser)
@@ -1129,8 +1133,11 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--from-file", metavar="PATH", help="a file holding only the address, written by the person")
     source.add_argument("--from-env", metavar="NAME", help="the name of an environment variable holding the address")
     p.add_argument("--label", metavar="WORDS", help="the person's own words to start each message with (default: the folder's name)")
-    notify_actions.add_parser("test", help="send one test message")
-    notify_actions.add_parser("off", help="remove the stored address")
+    p = notify_actions.add_parser("banner", help="a macOS Notification Center banner on this Mac: on or off; sends nothing")
+    p.add_argument("switch", choices=("on", "off"))
+    p.add_argument("--label", metavar="WORDS", help="the person's own words for the banner's title (default: the folder's name)")
+    notify_actions.add_parser("test", help="send one test message on each channel that is on")
+    notify_actions.add_parser("off", help="remove the stored address; the banner, if on, stays")
     return parser
 
 

@@ -29,6 +29,8 @@ SCRIPTS = ROOT / "skills" / "run" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "tests"))
 import notify  # noqa: E402
+
+ORIGINAL_RUN_OSASCRIPT = notify.run_osascript
 import run  # noqa: E402
 
 URL = "https://hooks.example.test/services/T000/B000/XXXX"  # obviously fake; the opener carries it to 127.0.0.1
@@ -96,6 +98,39 @@ def local_opener(port):
     return opener
 
 
+class Banners:
+    """A stand-in for osascript, installed for every test: it records each argv and answers as told. The real
+    osascript is never run in these tests; the system's name is a Mac unless a test says otherwise."""
+
+    def __init__(self, case, system="Darwin"):
+        self.calls = []
+        self.behaviour = {"exit": 0}
+        self.system = system
+        folder = Path(tempfile.mkdtemp(prefix="mach-osa-"))
+        case.addCleanup(shutil.rmtree, folder, True)
+        self.path = folder / "osascript"
+        self.path.write_text("a stand-in; never run\n")
+        for name, value in (("OSASCRIPT", str(self.path)), ("run_osascript", self.run), ("system_name", lambda: self.system)):
+            patcher = mock.patch.object(notify, name, value)
+            patcher.start()
+            case.addCleanup(patcher.stop)
+
+    def run(self, argv, timeout):
+        self.calls.append({"argv": list(argv), "timeout": timeout})
+        if self.behaviour.get("raise"):
+            raise RuntimeError("the runner broke")
+        if self.behaviour.get("timeout"):
+            return False, "timeout"
+        code = self.behaviour.get("exit", 0)
+        return (True, None) if code == 0 else (False, f"exit-{code}")
+
+    def texts(self):
+        return [call["argv"][7:] for call in self.calls]
+
+
+FIXED_SCRIPT = ["-e", "on run argv", "-e", "display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)", "-e", "end run"]
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="mach-notify-")).resolve()
@@ -115,6 +150,7 @@ class Base(unittest.TestCase):
         self.addCleanup(env.stop)
         os.environ.pop(run.EXECUTION_ENV, None)
         self.outputs = []
+        self.banners = Banners(self)
 
     def write_config(self, data):
         (self.project / ".factory" / "config.json").write_text(json.dumps(data))
@@ -190,7 +226,8 @@ class AddressTest(Base):
         result = self.ok("notify", "set", "--from-env", "MACH_NOTIFY_URL", "--label", "Shop team")
         self.assertEqual((result["host"], result["label"]), ("hooks.example.test", "Shop team"))
         status = self.ok("notify", "status")
-        self.assertEqual((status["on"], status["host"], status["label"], status["last_sent"]), (True, "hooks.example.test", "Shop team", None))
+        self.assertEqual((status["on"], status["webhook"]["host"], status["label"], status["webhook"]["last_sent"]), (True, "hooks.example.test", "Shop team", None))
+        self.assertEqual((status["banner"]["on"], status["banner"]["why_off"]), (False, "The banner is not turned on here."))
         self.assert_address_nowhere()
 
     def test_refused_addresses_store_nothing_and_never_repeat_the_address(self):
@@ -254,7 +291,7 @@ class AddressTest(Base):
         self.assertEqual(self.ok("notify", "off")["removed"], True)
         self.assertFalse(self.local("notify.json").exists())
         status = self.ok("notify", "status")
-        self.assertEqual((status["on"], status["host"]), (False, None))
+        self.assertEqual((status["on"], status["webhook"]["host"]), (False, None))
         self.assertIn("off", self.refused("notify", "test"))
         self.assertEqual(self.receiver.requests, [])
 
@@ -267,7 +304,7 @@ class ReadsAsOffTest(Base):
     def assert_off(self, why):
         status = self.ok("notify", "status")
         self.assertFalse(status["on"])
-        self.assertIn(why, status["why_off"])
+        self.assertIn(why, status["webhook"]["why_off"])
         self.next("T-1", "--headless")
         self.assertEqual(self.receiver.requests, [])
 
@@ -379,16 +416,207 @@ class MessageTest(Base):
     def test_the_test_message(self):
         self.set_address("--label", "Shop team")
         result = self.ok("notify", "test")
-        self.assertEqual((result["sent"], result["host"]), (True, "hooks.example.test"))
+        self.assertEqual((result["webhook"]["sent"], result["webhook"]["host"], result["banner"]["on"]), (True, "hooks.example.test", False))
         self.assertEqual(self.receiver.texts(), ["MACH · Shop team: this is a test message.\n"
                                                  "Nothing is waiting; notifications are on for this project on this machine.\nIn Claude Code: /mach:run notify"])
-        self.assertTrue(self.ok("notify", "status")["last_test"]["sent"])
+        self.assertTrue(self.ok("notify", "status")["last_test"]["webhook"]["sent"])
 
     def test_labels_that_could_carry_a_link_or_a_mention_are_refused(self):
         for label in ("https://x", "a:b", "@channel", "<!here>", "x" * 61, "a/b", "a&b", "line\nbreak", ""):
             with self.subTest(label=label):
                 self.assertIn("The label may use", self.refused("notify", "set", "--from-file", str(self.address_file()), "--label", label))
         self.assertEqual(notify.default_label(Path("/x/my:app@home")), "my-app-home")
+
+
+class BannerTest(Base):
+    """A macOS Notification Center banner, beside or instead of the webhook (design section 9)."""
+
+    def setUp(self):
+        super().setUp()
+        self.cell("T-1", "awaiting-human")
+
+    def expected_argv(self, body, title, subtitle):
+        return [str(self.banners.path), *FIXED_SCRIPT, body, title, subtitle]
+
+    def test_on_and_off_store_only_the_switch_and_send_nothing(self):
+        result = self.ok("notify", "banner", "on", "--label", "Shop team")
+        self.assertEqual((result["banner"], result["label"], result["webhook_still_on"], result["sent"]), ("on", "Shop team", False, False))
+        data = self.stored()
+        self.assertEqual(set(data), {"version", "banner", "label", "created_at", "machine", "project_root"})
+        self.assertEqual((data["banner"], data["machine"], data["project_root"]), (True, platform.node(), str(self.project)))
+        self.assertEqual(self.local("notify.json").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.banners.calls, [])
+        status = self.ok("notify", "status")
+        self.assertEqual((status["on"], status["banner"]["on"], status["webhook"]["on"], status["webhook"]["why_off"]),
+                         (True, True, False, "No address is stored on this machine for this project."))
+        self.assertIn("osascript exited 0", status["banner"]["meaning"])
+        self.assertIn("cannot see whether macOS displayed", status["banner"]["meaning"])
+        self.assertEqual(self.ok("notify", "banner", "off"), {"banner": "off", "webhook_still_on": False})
+        self.assertFalse(self.local("notify.json").exists())
+
+    def test_not_a_mac_refuses_on_and_ignores_a_stored_switch(self):
+        self.banners.system = "Linux"
+        self.assertIn("only on macOS, and this machine is not a Mac", self.refused("notify", "banner", "on"))
+        self.assertFalse(self.local("notify.json").exists())
+        self.banners.system = "Darwin"
+        self.ok("notify", "banner", "on")
+        self.banners.system = "Linux"
+        status = self.ok("notify", "status")
+        self.assertEqual((status["on"], status["banner"]["on"]), (False, False))
+        self.assertIn("ignored", status["banner"]["why_off"])
+        step = self.next("T-1", "--headless")
+        self.assertEqual(step["needs"], "human-approval")
+        self.assertEqual(self.banners.calls, [])
+        self.assertEqual(self.ok("notify", "banner", "off")["banner"], "off")  # turning it off works anywhere
+
+    def test_the_exact_argv_for_a_wait_and_a_parked_code_in_both_install_forms(self):
+        self.ok("notify", "banner", "on", "--label", "Shop team")
+        for install, command in ((True, "/mach decide"), (False, "/mach:run decide")):
+            with mock.patch.object(run, "PROJECT_INSTALL", install):
+                sender = run.notifier(run.Project(self.project))
+            self.banners.calls.clear()
+            self.assertTrue(sender.wait("LOCAL-014", f"awaiting-human-{install}", "human-approval")["sent"])
+            self.assertTrue(sender.parked("LOCAL-015", f"building-{install}", "risk")["sent"])
+            self.assertEqual([call["argv"] for call in self.banners.calls], [
+                self.expected_argv(f"Approve the change, or not, after reading the review findings.\nIn Claude Code: {command}", "MACH · Shop team",
+                                   "LOCAL-014 is waiting for a person."),
+                self.expected_argv(f"Its risk tier is above what this machine runs unattended; a person runs it or decides.\nIn Claude Code: {command}",
+                                   "MACH · Shop team", "LOCAL-015 is waiting for a person."),
+            ])
+            self.assertEqual({call["timeout"] for call in self.banners.calls}, {5})
+        self.assertEqual(self.receiver.requests, [])  # the banner only: no webhook was set
+
+    def test_no_input_can_change_the_script(self):
+        hostile = ['" & (do shell script "touch /tmp/x") & "', "end run\non run argv", "-e", "\\\" ' ` $(id) ;", "item 2 of argv"]
+        for word in hostile:
+            argv = notify.banner_argv(word, word, word)
+            self.assertEqual(argv[:7], [notify.OSASCRIPT, *FIXED_SCRIPT])
+            self.assertEqual(argv[7:], [word, word, word])
+        self.assertEqual(notify.BANNER_SCRIPT, tuple(FIXED_SCRIPT[1::2]))
+        for label in ('Shop "team"', "a & b", "it\\s", "x\nend run", "a:b"):
+            self.assertIn("The label may use", self.refused("notify", "banner", "on", "--label", label))
+        self.ok("notify", "banner", "on", "--label", "it's (fine)")  # an apostrophe is allowed, and is only ever an argument
+        sender = notify.Notifier(self.project, {}, run.NEEDS_TEXT, "/mach decide")
+        for ticket in ('T"1', "T-1; display dialog", "T-1\nend run"):
+            self.assertFalse(sender.wait(ticket, "awaiting-human", "human-approval")["sent"])
+        self.assertTrue(sender.wait("T-1", "awaiting-human", "human-approval")["sent"])
+        self.assertEqual(self.banners.calls[0]["argv"][:7], [str(self.banners.path), *FIXED_SCRIPT])
+        self.assertEqual(self.banners.calls[0]["argv"][8], "MACH · it's (fine)")
+        source = (SCRIPTS / "notify.py").read_text()
+        self.assertIn("shell=False", source)
+        self.assertNotIn("shell=True", source)
+        self.assertNotIn("do shell script", source)
+        self.assertNotIn("sound name", source)
+
+    def test_missing_osascript_a_non_zero_exit_and_a_timeout_are_failures_that_change_nothing(self):
+        self.ok("notify", "banner", "on")
+        answer = self.next("T-1")  # the answer a person driving it sees; headless differs only by being headless
+        with mock.patch.object(notify, "OSASCRIPT", str(self.root / "no-such" / "osascript")):
+            code, out, _ = self.run_cmd("next", "T-1", "--headless")
+        self.assertEqual((code, json.loads(out)["needs"]), (0, answer["needs"]))
+        self.assertEqual(self.banners.calls, [])
+        banner = self.state()["waits"]["T-1"]["channels"]["banner"]
+        self.assertEqual((banner["state"], banner["last_error"]), ("pending", "osascript-missing"))
+        for behaviour, error in (({"exit": 1}, "exit-1"), ({"timeout": True}, "timeout"), ({"raise": True}, "error")):
+            self.banners.behaviour = behaviour
+            code, out, _ = self.run_cmd("next", "T-1", "--headless")
+            self.assertEqual((code, json.loads(out)["needs"]), (0, "human-approval"))
+            self.assertEqual(self.state()["waits"]["T-1"]["channels"]["banner"]["last_error"], error)
+        self.assertEqual(self.ok("notify", "status")["banner"]["failing"][0]["last_error"], "error")
+
+    def test_the_real_runner_reports_exit_codes_and_timeouts_without_a_shell(self):
+        with mock.patch.object(notify, "run_osascript", ORIGINAL_RUN_OSASCRIPT):
+            self.assertEqual(notify.run_osascript([sys.executable, "-c", "pass"], 5), (True, None))
+            self.assertEqual(notify.run_osascript([sys.executable, "-c", "raise SystemExit(3)"], 5), (False, "exit-3"))
+            started = time.time()
+            self.assertEqual(notify.run_osascript([sys.executable, "-c", "import time; time.sleep(5)"], 0.3), (False, "timeout"))
+            self.assertLess(time.time() - started, 4)
+            self.assertEqual(notify.run_osascript([str(self.root / "no-such-program")], 5), (False, "osascript-failed-to-start"))
+
+    def test_both_channels_each_announced_once_and_failing_independently(self):
+        self.set_address()
+        self.ok("notify", "banner", "on")
+        self.receiver.behaviour = {"status": 500}
+        self.next("T-1", "--headless")
+        self.assertEqual((len(self.receiver.requests), len(self.banners.calls)), (1, 1))  # the webhook's failure did not stop the banner
+        channels = self.state()["waits"]["T-1"]["channels"]
+        self.assertEqual((channels["webhook"]["state"], channels["banner"]["state"]), ("pending", "sent"))
+        self.receiver.behaviour = {"status": 200}
+        self.next("T-1", "--headless")
+        self.next("T-1", "--headless")
+        self.assertEqual((len(self.receiver.requests), len(self.banners.calls)), (2, 1))  # retried on its own channel only
+        status = self.ok("notify", "status")
+        self.assertEqual((status["webhook"]["last_sent"]["ticket_id"], status["banner"]["last_ran"]["ticket_id"]), ("T-1", "T-1"))
+        # the other way round, at a new wait: the banner fails five times and is given up; the webhook is sent once
+        self.cell("T-1", "blocked")
+        self.banners.behaviour = {"exit": 1}
+        for _ in range(7):
+            self.next("T-1", "--headless")
+        self.assertEqual((len(self.receiver.requests), len(self.banners.calls)), (3, 6))
+        channels = self.state()["waits"]["T-1"]["channels"]
+        self.assertEqual((channels["webhook"]["state"], channels["banner"]["state"], channels["banner"]["attempts"]), ("sent", "given-up", 5))
+        status = self.ok("notify", "status")
+        self.assertEqual([(row["ticket_id"], row["last_error"]) for row in status["banner"]["given_up"]], [("T-1", "exit-1")])
+        self.assertEqual(status["webhook"]["given_up"], [])
+        self.assert_address_nowhere()
+
+    def test_webhook_only_never_runs_the_banner(self):
+        self.set_address()
+        self.next("T-1", "--headless")
+        self.assertEqual((len(self.receiver.requests), self.banners.calls), (1, []))
+
+    def test_notify_off_removes_the_address_and_says_the_banner_stays(self):
+        self.set_address()
+        self.ok("notify", "banner", "on")
+        result = self.ok("notify", "off")
+        self.assertEqual((result["removed"], result["banner_still_on"], result["still_on"]), (True, True, ["banner"]))
+        self.assertNotIn("url", self.stored())
+        status = self.ok("notify", "status")
+        self.assertEqual((status["webhook"]["on"], status["banner"]["on"]), (False, True))
+        self.next("T-1", "--headless")
+        self.assertEqual((len(self.receiver.requests), len(self.banners.calls)), (0, 1))
+        self.set_address()
+        self.assertEqual(self.ok("notify", "banner", "off"), {"banner": "off", "webhook_still_on": True})
+        self.assertEqual(self.stored()["url"], URL)
+        self.assertNotIn("banner", self.stored())
+
+    def test_notify_test_reports_each_channel(self):
+        self.set_address("--label", "Shop team")
+        self.ok("notify", "banner", "on")
+        result = self.ok("notify", "test")
+        self.assertEqual((result["webhook"]["sent"], result["banner"]["ran"]), (True, True))
+        self.assertIn("cannot see whether macOS displayed", result["banner"]["meaning"])
+        self.assertEqual(self.banners.texts(), [["Nothing is waiting; notifications are on for this project on this machine.\nIn Claude Code: /mach:run notify",
+                                                 "MACH · Shop team", "This is a test message."]])
+        self.banners.behaviour = {"exit": 1}
+        code, out, _ = self.run_cmd("notify", "test")
+        self.assertEqual((code, json.loads(out)["banner"]["ran"], json.loads(out)["banner"]["error"], json.loads(out)["webhook"]["sent"]), (0, False, "exit-1", True))
+        self.assertEqual(self.ok("notify", "status")["last_test"]["banner"], {"ran": False, "error": "exit-1"})
+
+    def test_forbidden_by_the_tracked_settings_including_test(self):
+        self.ok("notify", "banner", "on")
+        self.write_config({"tickets": {"provider": "local"}, "factory": {"notifications": False}})
+        status = self.ok("notify", "status")
+        self.assertEqual((status["banner"]["on"], status["forbidden_by_project"]), (False, True))
+        self.assertIn("forbid", self.refused("notify", "test"))
+        self.assertIn("forbid", self.refused("notify", "banner", "on"))
+        self.next("T-1", "--headless")
+        self.assertEqual(self.banners.calls, [])
+        self.assertEqual(self.ok("notify", "banner", "off")["banner"], "off")  # turning it off is always allowed
+
+    def test_a_banner_switch_from_another_machine_or_folder_reads_as_off(self):
+        self.ok("notify", "banner", "on")
+        for changes, why in (({"machine": "someone-elses-laptop"}, "another machine"), ({"project_root": str(self.root / "copy")}, "different folder"),
+                             ({"banner": "yes"}, "not valid")):
+            data = {**json.loads(self.local("notify.json").read_text()), **changes}
+            self.local("notify.json").write_text(json.dumps(data))
+            status = self.ok("notify", "status")
+            self.assertFalse(status["banner"]["on"])
+            self.assertIn(why, status["banner"]["why_off"])
+            self.next("T-1", "--headless")
+            self.assertEqual(self.banners.calls, [])
+            self.local("notify.json").unlink()
+            self.ok("notify", "banner", "on")
 
 
 class TriggerTest(Base):
@@ -406,8 +634,8 @@ class TriggerTest(Base):
         self.assertEqual(len(self.receiver.requests), 2)
         self.assertIn("Approve the change, or not", self.receiver.texts()[1])
         state = self.state()
-        self.assertEqual((state["waits"]["T-1"]["stage"], state["waits"]["T-1"]["state"]), ("awaiting-human", "sent"))
-        self.assertEqual(state["last_sent"]["ticket_id"], "T-1")
+        self.assertEqual((state["waits"]["T-1"]["stage"], state["waits"]["T-1"]["channels"]["webhook"]["state"]), ("awaiting-human", "sent"))
+        self.assertEqual(state["last_sent"]["webhook"]["ticket_id"], "T-1")
         self.assertEqual(self.local("notify-state.json").stat().st_mode & 0o777, 0o600)
         self.assert_address_nowhere()
 
@@ -438,6 +666,7 @@ class TriggerTest(Base):
 
     def test_inside_a_supervised_execution_it_neither_sends_nor_opens_the_setting(self):
         self.set_address()
+        self.ok("notify", "banner", "on")
         self.cell("T-1", "awaiting-human")
         intake = self.project / ".factory" / "intake"
         intake.mkdir()
@@ -474,6 +703,7 @@ class TriggerTest(Base):
         self.assertEqual(touched, [])
         reader.assert_not_called()
         poster.assert_not_called()
+        self.assertEqual(self.banners.calls, [])
         self.assertEqual(self.receiver.requests, [])
         self.assertFalse(self.local("notify-state.json").exists())
         self.assertIn("person's setting", self.refused("notify", "status"))
@@ -484,7 +714,7 @@ class TriggerTest(Base):
         self.receiver.behaviour = {"redirect": "https://elsewhere.example.test/catch"}
         self.next("T-1", "--headless")
         self.assertEqual([request["path"] for request in self.receiver.requests], ["/services/T000/B000/XXXX"])
-        wait = self.state()["waits"]["T-1"]
+        wait = self.state()["waits"]["T-1"]["channels"]["webhook"]
         self.assertEqual((wait["state"], wait["last_error"], wait["attempts"]), ("pending", "redirect-refused", 1))
 
     def test_failures_change_no_answer_or_exit_code_and_are_given_up_after_five(self):
@@ -495,10 +725,10 @@ class TriggerTest(Base):
         for _ in range(7):
             self.assertEqual(self.next("T-1", "--headless"), quiet)
         self.assertEqual(len(self.receiver.requests), 5)
-        wait = self.state()["waits"]["T-1"]
+        wait = self.state()["waits"]["T-1"]["channels"]["webhook"]
         self.assertEqual((wait["state"], wait["attempts"], wait["last_error"]), ("given-up", 5, "http-500"))
         status = self.ok("notify", "status")
-        self.assertEqual([(row["ticket_id"], row["last_error"]) for row in status["given_up"]], [("T-1", "http-500")])
+        self.assertEqual([(row["ticket_id"], row["last_error"]) for row in status["webhook"]["given_up"]], [("T-1", "http-500")])
         self.receiver.behaviour = {"status": 200}
         self.next("T-1", "--headless")
         self.assertEqual(len(self.receiver.requests), 5)  # given up stays given up for this wait
@@ -517,13 +747,13 @@ class TriggerTest(Base):
             code, out, _ = self.run_cmd("next", "T-1", "--headless")
             self.assertLess(time.time() - started, 5)
         self.assertEqual((code, json.loads(out)["needs"]), (0, "human-approval"))
-        wait = self.state()["waits"]["T-1"]
+        wait = self.state()["waits"]["T-1"]["channels"]["webhook"]
         self.assertEqual((wait["state"], wait["last_error"]), ("pending", "timeout"))
-        self.assertEqual(self.ok("notify", "status")["failing"][0]["last_error"], "timeout")
+        self.assertEqual(self.ok("notify", "status")["webhook"]["failing"][0]["last_error"], "timeout")
         self.receiver.behaviour = {"status": 200}
         self.next("T-1", "--headless")
-        self.assertEqual(self.state()["waits"]["T-1"]["state"], "sent")
-        self.assertEqual(self.state()["waits"]["T-1"]["attempts"], 2)
+        self.assertEqual(self.state()["waits"]["T-1"]["channels"]["webhook"]["state"], "sent")
+        self.assertEqual(self.state()["waits"]["T-1"]["channels"]["webhook"]["attempts"], 2)
 
     def test_the_sender_uses_one_post_with_a_five_second_timeout_and_never_raises(self):
         calls = []
@@ -553,6 +783,7 @@ class SupervisorTriggerTest(SupervisorBase):
         patcher = mock.patch.object(notify, "make_opener", lambda: local_opener(self.receiver.port))
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.banners = Banners(self)
         hook = self.root / "hook.txt"
         hook.write_text(URL + "\n")
         code, out, err = self.run_cmd("notify", "set", "--from-file", str(hook), "--label", "Shop team")
@@ -592,6 +823,34 @@ class SupervisorTriggerTest(SupervisorBase):
             self.assertEqual(self.tick()["held"][0]["why"], "it is approved and waits for a person to merge it")
         self.assertEqual(self.receiver.texts(), [self.expected("LOCAL-001", notify.PARK_TEXT["merge"])])
         self.assert_nowhere()
+
+    def test_both_channels_once_per_wait_across_the_two_triggers(self):
+        self.assertEqual(self.run_cmd("notify", "banner", "on")[0], 0)
+        self.supervised()
+        self.tick()
+        self.wait()
+        self.tick()
+        self.assertEqual(len(self.receiver.requests), 1)
+        self.assertEqual(self.banners.texts(), [[run.NEEDS_TEXT["merge"] + "\nIn Claude Code: /mach:run decide", "MACH · Shop team", "LOCAL-001 is waiting for a person."]])
+        self.run_cmd("next", "LOCAL-001", "--headless")
+        self.tick()
+        self.assertEqual((len(self.receiver.requests), len(self.banners.calls)), (1, 1))
+
+    def test_a_failed_merge_wait_message_is_tried_again_while_it_still_waits(self):
+        self.first()
+        self.config(build={"require_audit": False}, merge={"mode": "auto", "method": "local"})
+        self.enable("--include-backlog")
+        self.claude({"default": {"stage": "approved"}})
+        self.tick()
+        self.wait()
+        self.receiver.behaviour = {"status": 500}
+        self.tick()
+        self.assertEqual(len(self.receiver.requests), 1)
+        self.receiver.behaviour = {"status": 200}
+        self.tick()
+        self.assertEqual(len(self.receiver.requests), 2)
+        self.tick()
+        self.assertEqual(len(self.receiver.requests), 2)
 
     def test_a_parked_ticket_is_announced_by_its_reason_code_never_its_reason(self):
         self.supervised()
@@ -633,7 +892,7 @@ class SupervisorTriggerTest(SupervisorBase):
             self.tick()  # the next occasion for the same wait: every pass, while it is parked at the same stage
             self.assertEqual(len(self.receiver.requests), count)
         status = json.loads(self.run_cmd("notify", "status")[1])
-        self.assertEqual([(row["ticket_id"], row["last_error"], row["attempts"]) for row in status["given_up"]], [("LOCAL-001", "http-503", 5)])
+        self.assertEqual([(row["ticket_id"], row["last_error"], row["attempts"]) for row in status["webhook"]["given_up"]], [("LOCAL-001", "http-503", 5)])
         self.assertEqual(len(self.calls()), 1)  # nothing about the line changed
         self.assert_nowhere()
 
@@ -702,11 +961,12 @@ class BoundaryTest(unittest.TestCase):
         start = text.index("\n### Notifications\n")
         section = text[start:text.index("\n### ", start + 5)]
         for phrase in ("RUN notify set --from-file <path>", "RUN notify set --from-env <NAME>", "Never ask the person to paste it here",
-                       "never read the file they put it in", "delete the file", "can approve, start or change nothing"):
+                       "never read the file they put it in", "delete the file", "can approve, start or change nothing",
+                       "RUN notify banner on", "RUN notify banner off", "Script Editor", "only whether the command ran", "never \"delivered\""):
             self.assertIn(phrase, section)
         head = text.split("\n---", 1)[0]
         hint = re.search(r'^argument-hint: "(.*)"$', head, re.MULTILINE).group(1)
-        self.assertIn("notify [status|set|test|off]", hint)
+        self.assertIn("notify [status|set|banner|test|off]", hint)
         self.assertNotIn('"', hint)
 
 

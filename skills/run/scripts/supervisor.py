@@ -50,6 +50,7 @@ except ImportError:
 
 RISKS = ("Low", "Medium", "High")
 LIVE = ("claimed", "started")
+MERGE_WAIT = "it is approved and waits for a person to merge it"
 NEVER_RETRIED = ("merge", "cleanup")  # stations whose effects reach beyond the cell: an unknown outcome goes to a person
 LEASE_SECONDS = 180
 # The least an execution is started with: the lowest per-run limit a person can set (policy.LIMITS). When the
@@ -502,9 +503,11 @@ class Supervisor:
         if self.notifier is None or report.get("state") == "disabled":
             return
         parked = report.get("parked") or {}
+        # An approved ticket this machine will not merge is neither stopped nor parked; this pass's report says it still waits.
+        to_merge = {item.get("ticket_id") for item in report.get("held") or [] if item.get("why") == MERGE_WAIT}
 
         def still_waiting(ticket: str, stage: Optional[str]) -> bool:
-            if ticket in parked:
+            if ticket in parked or ticket in to_merge:
                 return self.stage_of(ticket) == stage
             step = self.next_step(ticket)
             return bool(step.get("stop")) and step.get("needs") not in QUIET_NEEDS and step.get("stage") == stage
@@ -607,7 +610,7 @@ class Supervisor:
             until = None if pol.get("allow_merge") else "merge"
             if not reason and until and item.get("next") == until:
                 # Approved, and this machine does not merge unattended: say so once, claim nothing.
-                reason = "it is approved and waits for a person to merge it"
+                reason = MERGE_WAIT
                 if supervisor.setdefault("told", {}).get(ticket) != until:
                     supervisor["told"][ticket] = until
                     self.line.emit(ledger, "human.required", ticket_id=ticket, slice_id=slice_id, reason="It is approved. This machine does not merge unattended, so a person merges it.",

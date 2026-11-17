@@ -348,13 +348,14 @@ On a machine whose engineer has enabled it, a supervisor keeps approved product 
 
 ### Notifications (`/mach notify`)
 
-One outbound message to a channel when a ticket that nobody is watching stops for a person. Off on every machine until a person sets an address there. Code: `skills/run/scripts/notify.py`. Design: `docs/mach-next/M10_NOTIFICATIONS.md`.
+A person is told when a ticket that nobody is watching stops for them: by one outbound message to a channel, by a macOS Notification Center banner, or both. Off on every machine until a person turns a channel on there. Code: `skills/run/scripts/notify.py`. Design: `docs/mach-next/M10_NOTIFICATIONS.md`.
 
 * **The address is machine-local and secret**: `.factory/local/notify.json`, private and git-ignored, bound to this machine and folder. Missing, malformed or written elsewhere reads as off. No tracked file can turn notifications on or supply an address; `factory.notifications: false` in the tracked settings forbids them, including the test message. The address is read from a file or an environment variable the person prepared (`notify set --from-file|--from-env`), never from the conversation or a command line, and is never printed or logged; status shows the host only.
 * **When**: `run.py next <ticket> --headless` answers a stop a person must act on (a run of several tickets, or any unattended run by hand); a supervised execution ends with its ticket waiting; the supervisor parks a ticket; or an approved ticket waits because this machine does not merge unattended. A person driving one ticket in conversation gets none. Inside a supervised execution `run.py` neither sends nor reads the address: the supervisor sends.
 * **Once per wait**: keyed by ticket and stage in `.factory/local/notify-state.json`, recorded before sending.
 * **What it says**: fixed words and identifiers only: the label the person chose, the ticket ID, the script's fixed sentence for that wait, and the command (`/mach decide`). Never a title, reviewer or verifier text, a path, a commit, a name or a link.
 * **Sending**: standard library, one POST, five seconds, redirects refused. A failure changes no result, step or exit code; it is retried while the ticket still waits, five attempts in all, then given up and shown in `notify status`.
+* **The banner** (`notify banner on|off`, macOS only; refused elsewhere, and a stored switch on another system reads as off): `/usr/bin/osascript` with no shell and a fixed script, the words passed as arguments and never written into the script. Same triggers, same fixed words, once per wait on each channel that is on; the channels fail and retry independently. "Ran" means the command exited 0: MACH cannot see whether macOS showed it.
 * **Never**: listens, approves, starts or changes anything; nothing but `run.py` and the supervisor it builds reads the address, and `doctor`, `explain`, `decide`, intake, release qualification, Product Studio and the observer never do.
 
 ### The Factory Floor

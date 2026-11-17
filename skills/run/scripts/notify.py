@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Notifications (M10): one outbound message when a ticket is waiting for a person.
+"""Notifications (M10): one message on each channel that is on when a ticket is waiting for a person.
 
-The channel's address is a secret. It lives only in .factory/local/notify.json, private to this user
+Two channels, each off until a person turns it on on this machine: a webhook (Slack or Discord) and, on
+macOS only, a Notification Center banner shown with /usr/bin/osascript (no shell; the words are arguments
+to a fixed script, never part of it). Each channel keeps its own attempts and give-up, and fails alone.
+
+The webhook's address is a secret. It lives only in .factory/local/notify.json, private to this user
 (mode 0600), git-ignored with the rest of .factory/local/, and bound to this machine and this folder.
 A missing, unreadable, symbolic-link, malformed or shared file, one written on another machine or for
 another folder, or one tracked by Git, reads as off. The project's tracked settings can only forbid
@@ -14,8 +18,10 @@ A message is built only from fixed words and identifiers: the label a person cho
 name), the ticket ID, a fixed sentence for the kind of wait, and the command to run. It carries no link
 and can approve, start or change nothing.
 
-Once per wait: a wait is keyed by ticket and stage in .factory/local/notify-state.json, recorded before
-the message is sent. A failure is recorded with its HTTP status or kind of error, tried again on the next
+The same file holds the banner switch; it may hold the address, the switch or both.
+
+Once per wait, per channel: a wait is keyed by ticket and stage in .factory/local/notify-state.json,
+recorded before the message is sent. A failure is recorded with its HTTP status or kind of error, tried again on the next
 occasion for that wait, and given up after MAX_ATTEMPTS. Sending never raises to its caller.
 
 Standard library only. Imported by run.py; not a command of its own.
@@ -177,7 +183,18 @@ def default_label(root: Path) -> str:
     return name or "project"
 
 
-# ---- the stored setting ----
+# ---- the stored setting: a webhook address, the banner switch, or both ----
+
+CHANNELS = ("webhook", "banner")
+NO_ADDRESS = "No address is stored on this machine for this project."
+NO_BANNER = "The banner is not turned on here."
+NOT_A_MAC = "Banners are shown only on macOS, and this machine is not a Mac."
+FORBIDDEN_WHY = "This project's settings forbid notifications (factory.notifications is false)."
+
+
+def system_name() -> str:
+    """The operating system's name (platform.system()); a banner needs "Darwin". Replaced in tests."""
+    return platform.system()
 
 
 def unsafe(root: Path) -> Optional[str]:
@@ -197,41 +214,69 @@ def unsafe(root: Path) -> Optional[str]:
     return None
 
 
-def read(root: Path, config: Mapping[str, Any]) -> Dict[str, Any]:
-    """Whether notifications are on here, and where to. Off unless everything checks out. The address is in "url" only."""
-    off = {"on": False, "url": None, "host": None, "label": None, "forbidden_by_project": False}
-    if forbidden(root, config):
-        return {**off, "forbidden_by_project": True, "why": "This project's settings forbid notifications (factory.notifications is false)."}
+def load_setting(root: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """(the stored setting, None), (None, None) when there is none, or (None, why it cannot be this machine's setting)."""
     path = config_path(root)
     try:
         problem = unsafe(root)
         if problem:
-            return {**off, "why": problem}
+            return None, problem
         if not path.is_file():
-            return {**off, "why": "No address is stored on this machine for this project."}
+            return None, None
         with path.open("rb") as handle:
             raw = handle.read(MAX_FILE_BYTES + 1)
         if len(raw) > MAX_FILE_BYTES:
-            return {**off, "why": "The notification setting is too large to be one."}
+            return None, "The notification setting is too large to be one."
         data = json.loads(raw.decode("utf-8"))
     except (OSError, UnicodeError, ValueError):
-        return {**off, "why": "The notification setting cannot be read."}
+        return None, "The notification setting cannot be read."
     if not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != VERSION:
-        return {**off, "why": f"The notification setting is not version {VERSION}."}
-    if check_address(data.get("url")):
-        return {**off, "why": "The stored address is not one MACH sends to (https, a host, no user name or password)."}
+        return None, f"The notification setting is not version {VERSION}."
     label = data.get("label")
     if not isinstance(label, str) or not LABEL_RE.fullmatch(label):
-        return {**off, "why": "The stored label is not valid."}
+        return None, "The stored label is not valid."
     for field in ("created_at", "machine", "project_root"):
         if not isinstance(data.get(field), str) or not data[field].strip():
-            return {**off, "why": f"The notification setting has no '{field}'."}
+            return None, f"The notification setting has no '{field}'."
     if data["machine"] != platform.node():
-        return {**off, "why": "The notification setting was written on another machine. It does not travel: set it again here."}
+        return None, "The notification setting was written on another machine. It does not travel: set it again here."
     if Path(data["project_root"]) != Path(root):
-        return {**off, "why": "The notification setting was written for a different folder. It does not follow a copied or moved project: set it again here."}
-    return {"on": True, "url": data["url"], "host": host_of(data["url"]), "label": label, "forbidden_by_project": False, "why": None,
-            "created_at": data["created_at"]}
+        return None, "The notification setting was written for a different folder. It does not follow a copied or moved project: set it again here."
+    return data, None
+
+
+def read(root: Path, config: Mapping[str, Any]) -> Dict[str, Any]:
+    """Which channels are on here. Each is off unless everything checks out; the address is in webhook.url only."""
+
+    def off(why_webhook: Optional[str], why_banner: Optional[str], why: Optional[str] = None, forbidden_here: bool = False) -> Dict[str, Any]:
+        return {"on": False, "label": None, "forbidden_by_project": forbidden_here, "why": why,
+                "webhook": {"on": False, "url": None, "host": None, "why": why_webhook}, "banner": {"on": False, "why": why_banner}}
+
+    if forbidden(root, config):
+        return off(FORBIDDEN_WHY, FORBIDDEN_WHY, FORBIDDEN_WHY, True)
+    data, problem = load_setting(root)
+    if problem:
+        return off(problem, problem, problem)
+    if data is None:
+        return off(NO_ADDRESS, NO_BANNER)
+    url = data.get("url")
+    if url is None:
+        webhook = {"on": False, "url": None, "host": None, "why": NO_ADDRESS}
+    elif check_address(url):
+        webhook = {"on": False, "url": None, "host": None, "why": "The stored address is not one MACH sends to (https, a host, no user name or password)."}
+    else:
+        webhook = {"on": True, "url": url, "host": host_of(url), "why": None}
+    switch = data.get("banner", False)
+    if type(switch) is not bool:
+        banner = {"on": False, "why": "The stored banner switch is not valid."}
+    elif not switch:
+        banner = {"on": False, "why": NO_BANNER}
+    elif system_name() != "Darwin":
+        banner = {"on": False, "why": NOT_A_MAC + " The stored switch is ignored here."}
+    else:
+        banner = {"on": True, "why": None}
+    return {"on": webhook["on"] or banner["on"], "label": data["label"], "forbidden_by_project": False, "why": None,
+            "webhook": webhook, "banner": banner, "created_at": data["created_at"]}
 
 
 def ignored_by_git(root: Path, path: Path) -> bool:
@@ -244,42 +289,85 @@ def ignored_by_git(root: Path, path: Path) -> bool:
     return done.returncode != 1
 
 
-def store(root: Path, config: Mapping[str, Any], url: str, label: Optional[str]) -> Dict[str, Any]:
-    """Check the address and store it for this machine and folder. Sends nothing."""
-    if forbidden(root, config):
-        raise NotifyError(FORBIDDEN)
-    problem = check_address(url)
-    if problem:
-        raise NotifyError(problem + " Nothing was stored.")
-    label = clean_label(label) if label is not None else default_label(root)
+def current(root: Path) -> Dict[str, Any]:
+    """The setting to change: what is stored, when it is this machine's own; otherwise nothing (it is replaced)."""
+    data, problem = load_setting(root)
+    return dict(data) if data and not problem else {}
+
+
+def write_setting(root: Path, data: Dict[str, Any], label: Optional[str]) -> Dict[str, Any]:
+    """Store what remains of the setting for this machine and folder; with neither channel left, remove the file."""
     path = config_path(root)
     if path.is_symlink() or policy_module.local_dir(root).is_symlink() or (root / ".factory").is_symlink():
         raise NotifyError("The notification setting or its folder is a symbolic link; nothing was written.")
     if policy_module.tracked_by_git(root, path):
         raise NotifyError("The notification setting is tracked by Git; nothing was written over it. Remove it from Git first.")
+    kept = {key: data[key] for key in ("url", "banner") if key in data and data[key] not in (None, False)}
+    if not kept:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        return {}
     if not ignored_by_git(root, path):
-        raise NotifyError(".factory/local/ is not ignored by Git, so the address could be committed. Add it to .gitignore first; nothing was stored.")
-    data = {"version": VERSION, "url": url, "label": label, "created_at": stamp(), "machine": platform.node(), "project_root": str(root)}
-    policy_module.write_private(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+        raise NotifyError(".factory/local/ is not ignored by Git, so this setting could be committed. Add it to .gitignore first; nothing was stored.")
+    stored = {"version": VERSION, **kept, "label": label if label is not None else data.get("label") or default_label(root),
+              "created_at": data.get("created_at") or stamp(), "machine": platform.node(), "project_root": str(root)}
+    policy_module.write_private(path, json.dumps(stored, indent=2, sort_keys=True) + "\n")
     with contextlib.suppress(OSError):
         os.chmod(str(path), 0o600)
-    return {"stored": True, "host": host_of(url), "label": label, "sent": False,
+    return stored
+
+
+def store(root: Path, config: Mapping[str, Any], url: str, label: Optional[str]) -> Dict[str, Any]:
+    """Check the webhook address and store it for this machine and folder, beside the banner switch if that is on. Sends nothing."""
+    if forbidden(root, config):
+        raise NotifyError(FORBIDDEN)
+    problem = check_address(url)
+    if problem:
+        raise NotifyError(problem + " Nothing was stored.")
+    label = clean_label(label) if label is not None else None
+    stored = write_setting(root, {**current(root), "url": url}, label)
+    return {"stored": True, "host": host_of(url), "label": stored["label"], "sent": False, "banner": bool(stored.get("banner")),
             "note": "The address is stored on this machine only. Delete the file or variable you put it in."}
 
 
+def set_banner(root: Path, config: Mapping[str, Any], on: bool, label: Optional[str] = None) -> Dict[str, Any]:
+    """Turn the macOS banner on or off for this machine and folder. Sends nothing."""
+    label = clean_label(label) if label is not None else None
+    if not on:
+        stored = write_setting(root, {**current(root), "banner": False}, label)
+        return {"banner": "off", "webhook_still_on": bool(stored.get("url"))}
+    if forbidden(root, config):
+        raise NotifyError(FORBIDDEN)
+    if system_name() != "Darwin":
+        raise NotifyError(NOT_A_MAC + " Nothing was stored.")
+    stored = write_setting(root, {**current(root), "banner": True}, label)
+    return {"banner": "on", "label": stored["label"], "webhook_still_on": bool(stored.get("url")), "sent": False,
+            "note": "macOS may hide banners from scripts until notifications are allowed for the program shown (often Script Editor) in System Settings."}
+
+
 def remove(root: Path) -> Dict[str, Any]:
+    """Remove the stored webhook address. The banner switch, if on, stays."""
     path = config_path(root)
-    existed = path.is_file() or path.is_symlink()
-    with contextlib.suppress(FileNotFoundError):
-        path.unlink()
-    return {"removed": existed, "on": False}
+    data = current(root)
+    if data:
+        existed = bool(data.get("url"))
+        data.pop("url", None)
+        stored = write_setting(root, data, None)
+    else:  # nothing this machine can use: whatever is there goes
+        existed = path.is_file() or path.is_symlink()
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        stored = {}
+    banner = bool(stored.get("banner"))
+    return {"removed": existed, "webhook": "off", "banner_still_on": banner,
+            "still_on": ["banner"] if banner else [], "note": "The macOS banner is still on here; notify banner off turns it off." if banner else "Nothing is on here now."}
 
 
 # ---- the state of each wait ----
 
 
 def empty_state() -> Dict[str, Any]:
-    return {"version": VERSION, "waits": {}, "last_sent": None, "last_test": None}
+    return {"version": VERSION, "waits": {}, "last_sent": {}, "last_test": None}
 
 
 def load_state(root: Path) -> Dict[str, Any]:
@@ -292,7 +380,10 @@ def load_state(root: Path) -> Dict[str, Any]:
         return empty_state()
     if not isinstance(data, dict) or not isinstance(data.get("waits"), dict):
         return empty_state()
-    return {**empty_state(), **data}
+    state = {**empty_state(), **data}
+    if not isinstance(state.get("last_sent"), dict):
+        state["last_sent"] = {}
+    return state
 
 
 def save_state(root: Path, state: Dict[str, Any]) -> None:
@@ -317,7 +408,7 @@ def locked(root: Path) -> Iterator[None]:
         os.close(handle)
 
 
-# ---- sending ----
+# ---- sending to a webhook ----
 
 
 class RefuseRedirects(urllib.request.HTTPRedirectHandler):
@@ -359,6 +450,43 @@ def post(url: str, text: str, opener: Optional[urllib.request.OpenerDirector] = 
         return False, "error"
 
 
+# ---- a banner on this Mac ----
+
+OSASCRIPT = "/usr/bin/osascript"
+# Fixed script lines. The words are arguments to its run handler, never part of the script text.
+BANNER_SCRIPT = ("on run argv",
+                 "display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)",
+                 "end run")
+
+
+def banner_argv(body: str, title: str, subtitle: str) -> List[str]:
+    argv = [OSASCRIPT]
+    for line in BANNER_SCRIPT:
+        argv += ["-e", line]
+    return argv + [body, title, subtitle]
+
+
+def run_osascript(argv: List[str], timeout: float) -> Tuple[bool, Optional[str]]:
+    """Run osascript with no shell. (ran, kind of error). Replaced in tests: the real one is never run there."""
+    try:
+        done = subprocess.run(argv, shell=False, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
+    except OSError:
+        return False, "osascript-failed-to-start"
+    return (True, None) if done.returncode == 0 else (False, f"exit-{done.returncode}")
+
+
+def show_banner(body: str, title: str, subtitle: str) -> Tuple[bool, Optional[str]]:
+    """One Notification Center banner, no sound. "Ran" means osascript exited 0: whether macOS showed it is not known. Never raises."""
+    try:
+        if not Path(OSASCRIPT).is_file():
+            return False, "osascript-missing"
+        return run_osascript(banner_argv(body, title, subtitle), TIMEOUT_SECONDS)
+    except Exception:
+        return False, "error"
+
+
 def message(label: str, ticket_id: str, middle: str, command: str) -> str:
     return f"MACH · {label}: {ticket_id} is waiting for a person.\n{middle}\nIn Claude Code: {command}"
 
@@ -367,9 +495,20 @@ def trial_message(label: str, command: str) -> str:
     return f"MACH · {label}: this is a test message.\nNothing is waiting; notifications are on for this project on this machine.\nIn Claude Code: {command}"
 
 
+def banner_texts(label: str, ticket_id: str, middle: str, command: str) -> Tuple[str, str, str]:
+    """(body, title, subtitle): the webhook message's words, split the way a banner shows them."""
+    return f"{middle}\nIn Claude Code: {command}", f"MACH · {label}", f"{ticket_id} is waiting for a person."
+
+
+def trial_banner_texts(label: str, command: str) -> Tuple[str, str, str]:
+    return (f"Nothing is waiting; notifications are on for this project on this machine.\nIn Claude Code: {command}", f"MACH · {label}",
+            "This is a test message.")
+
+
 class Notifier:
-    """Sends the once-per-wait message. Built from fixed text: `needs_text` is the run script's sentence per kind of wait,
-    `command` the decide command in this install's form. `opener` replaces the HTTP sender (tests only)."""
+    """Sends the once-per-wait message on each channel that is on. Built from fixed text: `needs_text` is the run script's
+    sentence per kind of wait, `command` the decide command in this install's form. `opener` replaces the HTTP sender
+    (tests only); the banner's runner is replaced in tests through run_osascript."""
 
     def __init__(self, root: Path, config: Mapping[str, Any], needs_text: Mapping[str, str], command: str,
                  opener: Optional[urllib.request.OpenerDirector] = None):
@@ -401,49 +540,65 @@ class Notifier:
         except Exception:  # a notification never changes what its caller does
             return {"sent": False, "why": "error"}
 
+    def deliver(self, channel: str, settings: Dict[str, Any], ticket_id: str, kind: str) -> Tuple[bool, Optional[str]]:
+        middle = self.middle(kind)
+        if channel == "webhook":
+            return post(settings["webhook"]["url"], message(settings["label"], ticket_id, middle, self.command), self.opener)
+        return show_banner(*banner_texts(settings["label"], ticket_id, middle, self.command))
+
     def _announce(self, ticket_id: str, stage: Optional[str], kind: str) -> Dict[str, Any]:
         if not isinstance(ticket_id, str) or not TICKET_ID_RE.match(ticket_id) or (stage is not None and not isinstance(stage, str)):
             return {"sent": False, "why": "not a ticket"}
         settings = read(self.root, self.config)
-        if not settings["on"]:
+        channels = [channel for channel in CHANNELS if settings[channel]["on"]]
+        if not channels:
             return {"sent": False, "why": "off"}
+        todo: List[str] = []
         with locked(self.root):
             state = load_state(self.root)
             wait = state["waits"].get(ticket_id)
-            if isinstance(wait, dict) and wait.get("stage") == stage:
-                if wait.get("state") == "sent":
-                    return {"sent": False, "why": "already sent for this wait"}
-                if wait.get("state") == "given-up" or int(wait.get("attempts") or 0) >= MAX_ATTEMPTS:
-                    wait["state"] = "given-up"
-                    save_state(self.root, state)
-                    return {"sent": False, "why": "given up"}
-            else:
-                wait = {"stage": stage, "kind": kind, "attempts": 0, "state": "pending", "first_seen_at": stamp(), "last_error": None}
+            if not (isinstance(wait, dict) and wait.get("stage") == stage and isinstance(wait.get("channels"), dict)):
+                wait = {"stage": stage, "kind": kind, "first_seen_at": stamp(), "channels": {}}
                 state["waits"][ticket_id] = wait
-            wait["attempts"] = int(wait.get("attempts") or 0) + 1
-            wait["last_try_at"] = stamp()
+            for channel in channels:  # each channel keeps its own attempts and give-up
+                record = wait["channels"].setdefault(channel, {"attempts": 0, "state": "pending", "last_error": None})
+                if record.get("state") == "sent":
+                    continue
+                if record.get("state") == "given-up" or int(record.get("attempts") or 0) >= MAX_ATTEMPTS:
+                    record["state"] = "given-up"
+                    continue
+                record["attempts"] = int(record.get("attempts") or 0) + 1
+                record["last_try_at"] = stamp()
+                todo.append(channel)
             save_state(self.root, state)  # recorded before it is sent: a second caller sees this wait
-        sent, error = post(settings["url"], message(settings["label"], ticket_id, self.middle(kind), self.command), self.opener)
+        if not todo:
+            return {"sent": False, "why": "already sent or given up for this wait"}
+        results = {channel: self.deliver(channel, settings, ticket_id, kind) for channel in todo}
         with locked(self.root):
             state = load_state(self.root)
             wait = state["waits"].get(ticket_id)
-            if isinstance(wait, dict) and wait.get("stage") == stage:
-                if sent:
-                    wait.update({"state": "sent", "sent_at": stamp(), "last_error": None})
-                    state["last_sent"] = {"ticket_id": ticket_id, "stage": stage, "at": wait["sent_at"]}
-                else:
-                    wait["last_error"] = error
-                    if int(wait.get("attempts") or 0) >= MAX_ATTEMPTS:
-                        wait.update({"state": "given-up", "given_up_at": stamp()})
+            if isinstance(wait, dict) and wait.get("stage") == stage and isinstance(wait.get("channels"), dict):
+                for channel, (sent, error) in results.items():
+                    record = wait["channels"].get(channel)
+                    if not isinstance(record, dict):
+                        continue
+                    if sent:
+                        record.update({"state": "sent", "sent_at": stamp(), "last_error": None})
+                        state["last_sent"][channel] = {"ticket_id": ticket_id, "stage": stage, "at": record["sent_at"]}
+                    else:
+                        record["last_error"] = error
+                        if int(record.get("attempts") or 0) >= MAX_ATTEMPTS:
+                            record.update({"state": "given-up", "given_up_at": stamp()})
                 save_state(self.root, state)
-        return {"sent": sent, "error": error}
+        return {"sent": any(sent for sent, _ in results.values()), "channels": {channel: {"sent": sent, "error": error} for channel, (sent, error) in results.items()}}
 
     def pending(self) -> List[Tuple[str, Optional[str], str]]:
-        """Waits recorded but not yet sent nor given up: (ticket, stage, kind). Reads the state file only, never the address."""
+        """Waits with a channel not yet sent nor given up: (ticket, stage, kind). Reads the state file only, never the setting."""
         try:
             waits = load_state(self.root)["waits"]
             return [(ticket, wait.get("stage"), str(wait.get("kind") or "parked:general")) for ticket, wait in sorted(waits.items())
-                    if isinstance(wait, dict) and wait.get("state") == "pending"]
+                    if isinstance(wait, dict) and isinstance(wait.get("channels"), dict)
+                    and any(isinstance(record, dict) and record.get("state") == "pending" for record in wait["channels"].values())]
         except Exception:
             return []
 
@@ -457,34 +612,55 @@ class Notifier:
                 continue
 
     def test(self, command: str) -> Dict[str, Any]:
-        """One test message, on a person's word. Honours a project that forbids notifications."""
+        """One test message on each channel that is on, on a person's word. Honours a project that forbids notifications."""
         if forbidden(self.root, self.config):
             raise NotifyError(FORBIDDEN)
         settings = read(self.root, self.config)
         if not settings["on"]:
-            raise NotifyError(f"Notifications are off here: {settings['why']} Nothing was sent.")
-        sent, error = post(settings["url"], trial_message(settings["label"], command), self.opener)
+            reasons = settings["why"] or f"{settings['webhook']['why']} {settings['banner']['why']}"
+            raise NotifyError(f"Notifications are off here: {reasons} Nothing was sent.")
+        result: Dict[str, Any] = {"label": settings["label"]}
+        if settings["webhook"]["on"]:
+            sent, error = post(settings["webhook"]["url"], trial_message(settings["label"], command), self.opener)
+            result["webhook"] = {"on": True, "sent": sent, "error": error, "host": settings["webhook"]["host"]}
+        else:
+            result["webhook"] = {"on": False, "why_off": settings["webhook"]["why"]}
+        if settings["banner"]["on"]:
+            ran, error = show_banner(*trial_banner_texts(settings["label"], command))
+            result["banner"] = {"on": True, "ran": ran, "error": error,
+                                "meaning": "ran means osascript exited 0; MACH cannot see whether macOS displayed the banner."}
+        else:
+            result["banner"] = {"on": False, "why_off": settings["banner"]["why"]}
         with contextlib.suppress(Exception):
             with locked(self.root):
                 state = load_state(self.root)
-                state["last_test"] = {"at": stamp(), "sent": sent, "error": error}
+                state["last_test"] = {"at": stamp(), **{channel: {key: result[channel].get(key) for key in ("sent", "ran", "error") if key in result[channel]}
+                                                        for channel in CHANNELS if result[channel]["on"]}}
                 save_state(self.root, state)
-        return {"sent": sent, "error": error, "host": settings["host"], "label": settings["label"]}
+        return result
 
 
 def status(root: Path, config: Mapping[str, Any]) -> Dict[str, Any]:
-    """Whether it is on here, the host and label, the last message sent and any failures. Changes nothing."""
+    """Each channel on its own: on or off, the last message, failures. Changes nothing; never shows the address."""
     settings = read(root, config)
     state = load_state(root)
     waits = state["waits"]
 
-    def row(ticket_id: str, wait: Dict[str, Any]) -> Dict[str, Any]:
-        return {"ticket_id": ticket_id, "stage": wait.get("stage"), "attempts": wait.get("attempts"), "last_error": wait.get("last_error"),
-                "last_try_at": wait.get("last_try_at")}
+    def rows(channel: str, wanted: str) -> List[Dict[str, Any]]:
+        found = []
+        for ticket_id, wait in sorted(waits.items()):
+            record = (wait.get("channels") or {}).get(channel) if isinstance(wait, dict) and isinstance(wait.get("channels"), dict) else None
+            if isinstance(record, dict) and record.get("state") == wanted and (wanted != "pending" or record.get("last_error")):
+                found.append({"ticket_id": ticket_id, "stage": wait.get("stage"), "attempts": record.get("attempts"),
+                              "last_error": record.get("last_error"), "last_try_at": record.get("last_try_at")})
+        return found
 
-    failing = [row(ticket, wait) for ticket, wait in sorted(waits.items()) if isinstance(wait, dict) and wait.get("state") == "pending" and wait.get("last_error")]
-    given_up = [row(ticket, wait) for ticket, wait in sorted(waits.items()) if isinstance(wait, dict) and wait.get("state") == "given-up"]
-    return {"on": settings["on"], "why_off": settings.get("why"), "host": settings.get("host"), "label": settings.get("label"),
-            "forbidden_by_project": settings["forbidden_by_project"], "last_sent": state.get("last_sent"), "last_test": state.get("last_test"),
-            "failing": failing, "given_up": given_up, "max_attempts": MAX_ATTEMPTS,
-            "sends": "One message when a ticket waits for a person in unattended work, once per wait. It can approve, start or change nothing."}
+    webhook, banner = settings["webhook"], settings["banner"]
+    return {"on": settings["on"], "label": settings["label"], "forbidden_by_project": settings["forbidden_by_project"], "why_off": settings["why"],
+            "webhook": {"on": webhook["on"], "why_off": webhook["why"], "host": webhook["host"], "last_sent": state["last_sent"].get("webhook"),
+                        "failing": rows("webhook", "pending"), "given_up": rows("webhook", "given-up")},
+            "banner": {"on": banner["on"], "why_off": banner["why"], "last_ran": state["last_sent"].get("banner"),
+                       "failing": rows("banner", "pending"), "given_up": rows("banner", "given-up"),
+                       "meaning": "ran means osascript exited 0; MACH cannot see whether macOS displayed the banner."},
+            "last_test": state.get("last_test"), "max_attempts": MAX_ATTEMPTS,
+            "sends": "One message on each channel that is on when a ticket waits for a person in unattended work, once per wait. It can approve, start or change nothing."}
