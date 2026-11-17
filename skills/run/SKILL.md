@@ -1,7 +1,7 @@
 ---
 name: run
 description: Drives MACH tickets along the factory's conveyor belt. For one ticket, works out the next station from the recorded state and runs it (audit, grooming, build, verify, review, cleanup), stopping wherever a person is needed; for several tickets named together, shows the schedule (which may run at once, which wait and why) and starts the belt workflow; with no ticket, shows the status of every ticket. Use when asked to run, continue, resume or ship a ticket through the factory or pipeline, to run the whole pipeline, to see what is next for a ticket, or for the status of every ticket. Also takes approved product work from Product Studio into the factory: shows incoming delivery waves, the dependency-aware plan of what is ready or blocked and why, and dispatches chosen slices on the engineer's explicit word. Also the Factory's on/off switch for this machine: factory status, enable, pause, resume, disable and stop, for unattended (autopilot, supervisor, background) execution. Also explains why a ticket failed or is waiting (explain), and checks the machine and project setup (doctor). Also opens the Factory Floor, a read-only live view of the Factory in the browser, when asked to open the Factory Floor or watch the factory.
-argument-hint: "[ticket ID or number | <ticket> <ticket>... [--limit n] [--sequential] [--dry-run] | --dry-run | status | explain <ticket> | doctor [--fix] | decide [<ticket>...] | approve <ticket> | send-back <ticket> <why> | merge <ticket> | replan <ticket> <why> | abandon <ticket> <why> | new <idea> | audit | product [intake|plan|dispatch <slice>...] | release [status|qualify <wave>...|show <id>] | requests monitor [--dry-run] | factory [status|enable|pause|resume|disable|stop]] [--headless] [--until <station>]"
+argument-hint: "[ticket ID or number | <ticket> <ticket>... [--limit n] [--sequential] [--dry-run] | --dry-run | status | studio | floor | explain <ticket> | doctor [--fix] | decide [<ticket>...] | approve <ticket> | send-back <ticket> <why> | merge <ticket> | replan <ticket> <why> | abandon <ticket> <why> | new <idea> | audit | product [intake|plan|dispatch <slice>...] | release [status|qualify <wave>...|show <id>] | requests monitor [--dry-run] | factory [status|enable|pause|resume|disable|stop]] [--headless] [--until <station>]"
 compatibility: "python3 >= 3.8, git"
 ---
 
@@ -15,7 +15,7 @@ You are the factory's line supervisor. You do not groom, build, verify or judge:
 
 `RUN` below means `python3 "${CLAUDE_SKILL_DIR}/scripts/run.py"`. It reads what every station recorded and names the single next step.
 
-If, instead of a ticket ID or a command, the person asks to open the Factory Floor, to watch the factory, or to see the Factory live in a browser, go to **The Factory Floor** at the end. It is not a command and takes no argument.
+If the input is `floor`, or the person asks in words to open the Factory Floor, to watch the factory, or to see the Factory live in a browser, go to **The Factory Floor** at the end. If the input is `studio`, or the person asks in words to open Product Studio or its app, use the product-studio skill with "open the app" and follow its **The visual app** steps. Both are words this skill recognises, for a person; neither is a command of `RUN`, and neither takes an argument. Never open either on your own initiative, in headless mode, or inside a supervised Factory execution.
 
 ## Locating the script
 

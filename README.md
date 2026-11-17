@@ -212,7 +212,7 @@ Issues that a production monitoring account files and labels itself can also be 
 
 ### Watching it
 
-Say "open the Factory Floor" to `/mach`. It opens a read-only view in your browser: the Atlas (what is where), the Timeline (what happened, when) and Analytics (how well the factory runs). It cannot start, approve or merge anything.
+Run `/mach floor`, or say "open the Factory Floor". It opens a read-only view in your browser: the Atlas (what is where), the Timeline (what happened, when) and Analytics (how well the factory runs). It cannot start, approve or merge anything.
 
 ### Releasing
 
@@ -276,6 +276,8 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
 | `/mach status` | Every open ticket and its next step |
+| `/mach studio` | Open Product Studio in your browser |
+| `/mach floor` | Open the Factory Floor in your browser: a read-only view of the factory |
 | `/mach explain <ticket>` | Why a ticket failed or is waiting |
 | `/mach decide` | Walk through every ticket that waits on you, with its options |
 | `/mach doctor` | Check this machine and project; `--fix` creates missing MACH folders only |

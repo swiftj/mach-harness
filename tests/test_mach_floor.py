@@ -32,16 +32,25 @@ class NothingInTheLineDependsOnTheObserverTest(unittest.TestCase):
         self.assertEqual(found, [])
 
     def test_the_run_script_has_no_floor_command(self):
-        """Opening the Factory Floor is a skill step, not a command: run.py and the argument hint are unchanged.
-        Plain "floor" is not checked in the scripts: they use it for other things (math.floor, RISK_FLOOR)."""
+        """Opening the Factory Floor is a skill step, not a script command: run.py has none. The skill recognises the
+        word `floor` (and `studio` for Product Studio) from a person; that is routing in the skill, and no script,
+        station, agent or workflow can call it. Plain "floor" is not checked in the scripts: they use it for other
+        things (math.floor, RISK_FLOOR)."""
         for name in ("run.py", "supervisor.py", "executor.py", "service.py", "activation.py", "policy.py", "intake.py"):
             source = (ROOT / "skills" / "run" / "scripts" / name).read_text(encoding="utf-8")
             for word in ("observer", "Factory Floor", "factory floor", "factory-floor", "factory_floor", "FactoryFloor"):
                 self.assertNotIn(word, source, f"{name}: {word}")
         head = RUN_SKILL.read_text(encoding="utf-8").split("\n---", 1)[0]
         hint = re.search(r'^argument-hint: "(.*)"$', head, re.MULTILINE).group(1)
-        self.assertNotIn("floor", hint.lower())
+        self.assertIn("| studio | floor |", hint)
         self.assertNotIn("observer", hint.lower())
+        self.assertNotIn("factory-floor", hint.lower())
+        text = RUN_SKILL.read_text(encoding="utf-8")
+        self.assertIn("neither is a command of `RUN`", text)
+        self.assertIn("Never open either on your own initiative, in headless mode, or inside a supervised Factory execution.", text)
+        parser = (ROOT / "skills" / "run" / "scripts" / "run.py").read_text(encoding="utf-8")
+        for word in ('add_parser("floor"', 'add_parser("studio"'):
+            self.assertNotIn(word, parser)
 
 
 class TheObserverCannotActTest(unittest.TestCase):
