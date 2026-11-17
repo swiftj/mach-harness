@@ -426,9 +426,33 @@ def check_intent(path: Path, header_fields: Sequence[str] = INTENT_FIELDS) -> Tu
     return [f"{path.name}: {p}" for p in problems], {"risk": tier}
 
 
+def set_aside_plan(root: Path, cell: Dict[str, Any], reason: str) -> Optional[Dict[str, Any]]:
+    """A planned cell whose spec has just changed: its plan was written for a spec that no longer exists. Keep the old
+    plan on record (plan-history/<n>/, as a re-plan does) so the contract engineer writes a new one. Nothing is built
+    yet, so no work is discarded and the branch is left as it is; this needs no separate instruction from a person."""
+    plan = root / "plan.md"
+    if not plan.is_file():
+        return None
+    history = root / "plan-history"
+    number = 1 + max([int(path.name) for path in history.glob("*") if path.name.isdigit()] or [0])
+    keep = history / str(number)
+    keep.mkdir(parents=True)
+    plan.replace(keep / "plan.md")
+    (keep / "replan.json").write_text(json.dumps({"replan": number, "at": now(), "reason": reason, "from_stage": "planned", "kept": ["plan.md"],
+                                                 "reset": None, "automatic": True}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    cell["replans"] = number
+    telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.replan", "outcome": "pass", "reason_code": "spec-changed", "overridden_by_reason": False,
+                                                       "from_stage": "planned", "replan": number, "reset": False})
+    return {"replan": number, "kept_in": str(keep), "reason": reason}
+
+
+SPEC_CHANGED = "The spec changed after the plan was written."
+
+
 def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
+    stage_before, spec_before = cell.get("stage"), cell.get("spec_sha256")
     spec = resolve_spec(project, cell, args.spec)
     findings, model = analyze_spec(project, spec, ready=True)
     hard = [f for f in findings if f.severity == "error" and f.rule != "open-questions"]
@@ -474,6 +498,7 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
 
     export = {"ticket_id": cell["ticket_id"], "risk": cell["risk"], "spec_path": cell["spec_path"], **model}
     spec_json.write_text(json.dumps(export, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    replanned = set_aside_plan(root, cell, SPEC_CHANGED) if stage_before == "planned" and spec_before and spec_before != cell["spec_sha256"] else None
     cell["stage"] = "spec-ready"
     write_cell(project, cell)
     telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
@@ -483,8 +508,9 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         # The branch as it stands at spec-ready: where a re-plan returns it to (cell.py replan).
         cell["spec_commit"] = git(["rev-parse", "HEAD"], workdir(project, cell)).stdout.strip() or None
         write_cell(project, cell)
-    print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts}, indent=2))
-    print(f"READY: wrote {root / 'spec.md'} and {spec_json}.")
+    print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts, **({"replanned": replanned} if replanned else {})}, indent=2))
+    print(f"READY: wrote {root / 'spec.md'} and {spec_json}." + (" The spec changed after its plan was written, so the old plan is kept on record and "
+                                                                "the contract engineer writes a new one: go to stage 2." if replanned else ""))
     return 0
 
 

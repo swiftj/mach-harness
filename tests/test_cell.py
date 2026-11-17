@@ -458,6 +458,33 @@ class ReplanTest(Base):
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)["reset"]["saved_as"], "refs/mach/replan/LOCAL-001/1")
 
+    def test_a_spec_corrected_after_planning_sets_the_plan_aside_without_a_separate_instruction(self):
+        info = self.planned()
+        spec = Path(info["specs_dir"]) / SPEC_NAME
+        spec.write_text(SPEC.replace("7 days", "14 days"))
+        code, out, err = run("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", project=self.project)
+        self.assertEqual(code, 0, err + out)
+        self.assertIn("the contract engineer writes a new one", out)
+        cell = json.loads((self.cell / "cell.json").read_text())
+        self.assertEqual((cell["stage"], cell["replans"]), ("spec-ready", 1))
+        self.assertFalse((self.cell / "plan.md").exists(), "the plan written for the old spec is no longer the cell's plan")
+        self.assertTrue((self.cell / "plan-history/1/plan.md").is_file())
+        kept = json.loads((self.cell / "plan-history/1/replan.json").read_text())
+        self.assertEqual((kept["reason"], kept["from_stage"], kept["automatic"], kept["reset"]), ("The spec changed after the plan was written.", "planned", True, None))
+        gates = [json.loads(line) for line in (self.cell / "lifecycle.jsonl").read_text().splitlines()]
+        self.assertIn(("plan.replan", "spec-changed"), [(g["data"].get("gate"), g["data"].get("reason_code")) for g in gates if g["type"] == "gate.evaluated"])
+        # A new plan for the corrected spec passes as any plan does.
+        Path(info["plan_path"]).write_text(PLAN, encoding="utf-8")
+        code, out, _ = self.check()
+        self.assertEqual(code, 0, out)
+
+    def test_finalizing_an_unchanged_spec_again_sets_no_plan_aside(self):
+        self.planned()
+        code, out, err = run("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", project=self.project)
+        self.assertEqual(code, 0, err + out)
+        self.assertTrue((self.cell / "plan.md").is_file())
+        self.assertFalse((self.cell / "plan-history").exists())
+
     def test_refusals(self):
         def refused(expected, setup=None, reason="the plan is wrong"):
             with self.subTest(expected=expected):

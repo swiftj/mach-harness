@@ -131,6 +131,17 @@ Run this only when `CELL finalize` printed `READY`, or the cell's `stage` is alr
 
 Never say "gate", "claim", "holder" or "the step" to the person, and never say a worker "reports": say it "finishes".
 
+**Say what is happening, not how you are doing it.** The person does not need your bookkeeping. Never narrate holders, claims, tokens, stage names, which command you are rerunning, or "the prompt it printed", and never show a holder's value. Before each step, one short sentence in the words a person on a factory floor would use: who is working, on what, and what happens next.
+
+| Say | Not |
+|---|---|
+| "This ticket is ready to be planned again. I'm checking what's next." | "The routing sheet still reports my own earlier plan-step claim (holder 728f…), since finalizing reset the cell to spec-ready. I'm rechecking the sheet under that holder before writing a new plan." |
+| "The contract engineer is building the plan." | "The routing sheet names the plan step under this conversation's claim. I'm starting a fresh planning agent with the prompt it printed." |
+| "The builder is picking the build back up where it stopped." | "The cell is at building, so I'm resuming under my holder." |
+| "Checking what's next." | "Running next with --holder to renew the claim." |
+
+If you catch yourself explaining a mechanism, replace it with what the person will see happen.
+
 1. Claim the step, so that no second worker plans this cell at the same time. If the prompt that started you names a holder for the plan step (the run skill and the belt pass one), run `CELL claim <ticket-id> plan --holder <holder>` with it; otherwise run `CELL claim <ticket-id> plan`. If it refuses, another worker already has this ticket's plan step: do not start the contract engineer and do not plan it yourself. Tell the person which step it has, since when, and when the claim lapses, as the refusal says, and that they can say to take over; then stop.
 2. Start the contract engineer sub-agent: `mach:contract-engineer` if MACH is installed as a plugin, `mach-contract-engineer` if it is installed in the project. If neither exists, start a general sub-agent on the `opus` model with a fresh context. Give it:
    - the ticket ID and the full JSON that `CELL open <ticket-id>` prints;
@@ -140,5 +151,5 @@ Never say "gate", "claim", "holder" or "the step" to the person, and never say a
    Do not paste the interview or your own conclusions into its prompt: it works from `spec.json` alone, so the spec is tested as the only source of truth.
 3. If you cannot start sub-agents, read `references/contracts-and-plan.md` and do the work yourself.
 4. When it reports, do not take its word: run `CELL check-plan <ticket-id>` yourself. `PLANNED` means the contracts exist, the plan is test-first, every requirement and scenario in the spec is assigned to a task, and no `[impl]` task waits on a later one to go green; the script has committed the contracts on the cell's branch.
-5. If the sub-agent reports a **spec defect**, something in the spec that contradicts itself or cannot be built, do not let it or yourself patch the spec. Put the defect to the PM as a question with your recommendation, update the spec, and rerun Phase 4 steps 5 to 8 before starting stage 2 again.
+5. If the sub-agent reports a **spec defect**, something in the spec that contradicts itself or cannot be built, do not let it or yourself patch the spec. Put the defect to the PM as a question with your recommendation. Their answer is the decision: once they have given it, update the spec, rerun Phase 4 steps 5 to 8, and start stage 2 again **in the same turn, without asking for anything more**. If the plan had already been written, `CELL finalize` sees that the spec changed, keeps the old plan on record in the cell's `plan-history/` and returns the cell to `spec-ready` (it prints `replanned`); nothing has been built, so nothing is lost. Do not run `CELL replan` for this and do not ask the PM to tell you to re-plan: that command is for a plan a person says is wrong, and for a cell that is already being built. Tell the PM in one line what is happening: "I've corrected the spec. The contract engineer is building the plan again for the corrected spec."
 6. Final handoff, in plain English: the ticket is groomed and ready to build; where `plan.md` is; the risk tier and what it means for review (High needs every reviewer and a person to approve); how many contract files and tasks there are; and any engineering decision the PM would care about, in business terms. Record it on the ticket with the label `groomed`. If the ticket carries `blocked-requires-sme` from an earlier headless pass, remove that label (`--remove-label` with `CELL ticket-note`) and set the state back to `in_progress`.
