@@ -212,7 +212,7 @@ Issues that a production monitoring account files and labels itself can also be 
 
 ### Watching it
 
-Say "open the Factory Floor" to `/mach`. It opens a read-only view in your browser: the Atlas (what is where), the Timeline (what happened, when) and Analytics (how well the factory runs). It cannot start, approve or merge anything.
+Run `/mach floor`, or say "open the Factory Floor". It opens a read-only view in your browser: the Atlas (what is where), the Timeline (what happened, when) and Analytics (how well the factory runs). It cannot start, approve or merge anything.
 
 ### Releasing
 
@@ -247,6 +247,28 @@ These are the cases, and what each choice runs if you would rather type it yours
 
 A ticket gets three judging rounds in all, counting failed verifications and rejected reviews. On the third failure it is handed to a person; the factory does not keep trying.
 
+### Being told when the factory is waiting
+
+MACH can tell you when a ticket that nobody is watching stops for a person. It is off until you turn it on, on each machine, and there are two ways; use either or both.
+
+**A banner on your Mac** (macOS only):
+
+```
+/mach notify banner on
+/mach notify test
+```
+
+macOS may hide banners from scripts until you allow notifications for the program it names (usually Script Editor) in System Settings. MACH can tell that the banner command ran, not that macOS showed it, so run the test once and look.
+
+**A message to a channel.** Put your channel's webhook address in a file yourself (it is a secret, so don't paste it into the conversation), then:
+
+```
+/mach notify set --from-file ~/hook.txt --label "Shop team"
+/mach notify test
+```
+
+Delete the file afterwards. A message names the ticket, says what is needed in a fixed sentence, and gives the command to run (`/mach decide`). It never includes a title, reviewer text, a name or a link, and it can approve nothing. `/mach notify` shows what is on and the last message sent; `/mach notify off` removes the address and `/mach notify banner off` turns the banner off. Slack and Discord webhook addresses both work.
+
 ## Finding out where things stand
 
 ```
@@ -276,9 +298,12 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
 | `/mach status` | Every open ticket and its next step |
+| `/mach studio` | Open Product Studio in your browser |
+| `/mach floor` | Open the Factory Floor in your browser: a read-only view of the factory |
 | `/mach explain <ticket>` | Why a ticket failed or is waiting |
 | `/mach decide` | Walk through every ticket that waits on you, with its options |
 | `/mach doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
+| `/mach notify [set\|banner\|test\|off]` | Tell you when a ticket waits for a person, by a banner on your Mac, a message to a channel, or both; off until you turn it on, on this machine |
 | `/mach new "<idea>"` | Start the interview for a new idea |
 | `/mach approve <ticket>` | Record your approval of a change that needs a person, then carry the ticket on |
 | `/mach send-back <ticket> "<why>"` | Send a change the panel approved back to the builder, with your reason |
@@ -318,7 +343,9 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `factory.max_parallel` | `3` | How many tickets may run at once |
 | `factory.max_parallel_high` | `1` | How many High-risk tickets may run at once |
 | `factory.claim_minutes` | `90` | How long a worker's claim on a ticket holds without news of it, before another worker may take the ticket |
+| `factory.notifications` | not set | `false` forbids notifications for this project on every machine. Nothing in this file can turn them on |
 | `merge.pr.inline_findings` | `true` | With `merge.method` `pr`, post the review panel's findings on the pull request |
+| `build.commands.test_file` | worked out | How to run only some test files, with `{files}` where their paths go, for example `pytest {files}`. The build station uses it to see a new test fail in seconds. It is worked out for Python's unittest and pytest; set it for other test runners. It is used only if a committed test passes when run this way |
 | `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
 | `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |
 | `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |

@@ -1,0 +1,150 @@
+# M10: Notifications
+
+Status: design, 2026-11-16. Step 5 of `docs/mach-github-issues-integration-spec.md`.
+
+## 1. Purpose
+
+Tell a channel when a ticket is waiting for a person, so unattended work does not sit unnoticed. One
+outbound message per waiting ticket. Nothing else: no progress feed, no successes, no reminders.
+
+It is off on every machine until a person turns it on there. It can never approve, start or change
+anything, and it never carries a link that does.
+
+## 2. Where the address lives
+
+The webhook's address is a secret. It lives only in `.factory/local/notify.json`, private to the user
+(mode 0600) and git-ignored like the rest of `.factory/local/`:
+`{"version": 1, "url", "label", "created_at", "machine"}`.
+
+- Missing, unreadable, malformed, or written on another machine: off.
+- No tracked file can turn notifications on or supply an address. The project's tracked settings can
+  only forbid them: `"factory": {"notifications": false}`.
+- The address is never printed, logged, put in an event, or passed on a command line. Status shows the
+  host only.
+
+## 3. Commands (through the run skill, on a person's word)
+
+| Input | What it does |
+|---|---|
+| `/mach notify` or `notify status` | Whether it is on here, the host it sends to, the label, the last message sent and any failures. Changes nothing. |
+| `notify set --from-file <path>` or `--from-env <NAME>` [`--label <words>`] | Reads the address from a file the person wrote or an environment variable they set, checks it, and stores it. The address never passes through the conversation: the skill tells the person how to put it in a file themselves, and never asks them to paste it. |
+| `notify test` | Sends one test message. |
+| `notify off` | Removes the stored address. |
+
+The address must be `https`, name a host, and carry no user name or password. `set` sends nothing.
+
+## 4. When a message is sent
+
+Only when work that nobody is watching stops for a person:
+
+1. **A run of several tickets, or any headless run driven by hand:** `run.py next <ticket> --headless`
+   answers `stop` with something a person must do (`needs` other than `nothing`, and not
+   `worker-in-cell`).
+2. **A supervised execution ends** with the ticket waiting for a person, or **the supervisor parks** a
+   ticket for a person. The supervisor sends these; a `run.py` call inside a supervised execution never
+   sends and never reads the address.
+
+3. **An approved ticket waits to be merged** because this machine does not merge unattended, though the
+   project's settings would let the line merge. The supervisor sends this too.
+
+A person driving one ticket in conversation (`/mach <ticket>`, not headless) is already there: nothing
+is sent.
+
+**Once per wait.** A message is keyed by ticket and stage, recorded in
+`.factory/local/notify-state.json` before it is sent. The same ticket at the same stage is not announced
+again, whichever path saw it first. When the ticket moves on and later waits at another stage, that is a
+new wait.
+
+## 5. What a message says
+
+Fixed words and identifiers only:
+
+```
+MACH · <label>: LOCAL-014 is waiting for a person.
+Approve the change, or not, after reading the review findings.
+In Claude Code: /mach decide
+```
+
+- `<label>` is the person's own words from `notify set --label`, or the project folder's name.
+- The middle line is the script's fixed sentence for that kind of wait (`NEEDS_TEXT`), or a fixed
+  sentence for a parked ticket by its reason code. Never a ticket title, a reviewer's or verifier's
+  text, a file path, a commit, a person's name, or a link.
+- The last line is the command, in the form this install uses (`/mach decide` or `/mach:run decide`).
+
+Body: `{"text": …}`, and for a Discord address `{"content": …}`, chosen by the address's host.
+
+## 6. Sending
+
+Standard library only (`urllib`). One POST, five-second timeout, redirects refused (an address that
+redirects is treated as a failure, so the message cannot be carried to another host). A failure never
+changes a station's result, a step's answer or an exit code. It is recorded in the state file with the
+HTTP status or the kind of error (never the address or the response body), tried again on the next
+occasion for that wait up to five times, then given up and shown in `notify status`.
+
+## 7. Boundaries
+
+- Outbound only. Nothing listens.
+- The observer, Product Studio, intake, release qualification, `doctor`, `explain` and `decide` never
+  read `.factory/local/notify.json` and never send.
+- Enabling notifications enables nothing else, and `factory enable` is unchanged.
+- Tracked settings that forbid notifications are honoured by every path, including `notify test`.
+
+## 8. Not in this step
+
+Messages for anything but a wait for a person; more than one webhook, or any channel beyond the webhook
+and the banner of section 9; rich formatting; reminders; an acknowledgement from the channel; reading
+replies.
+
+## 9. A banner on this Mac
+
+Besides the webhook, a person may turn on a macOS Notification Center banner on this machine. macOS
+only; nothing else (no iMessage, no other system's notifications).
+
+**The switch.** `notify banner on [--label <words>]` and `notify banner off`, through the run skill, on a
+person's word. The switch is stored in the same `.factory/local/notify.json`, with the same care
+(mode 0600, bound to this machine and this folder, read as off when anything is wrong). The file may
+hold the webhook's address, the banner switch (`"banner": true`), or both; neither needs the other.
+`banner off` removes the switch and, when no address is stored either, the file. `notify off` removes
+the address only; its report says whether the banner is still on (`still_on`).
+
+**macOS only.** Decided by `platform.system() == "Darwin"`. Elsewhere `notify banner on` is refused with
+a plain sentence, and a stored switch is ignored: it reads as off, with the reason in `notify status`.
+`notify banner off` works on any system.
+
+**How it is shown.** `/usr/bin/osascript`, at that fixed path, run with no shell and a five-second
+timeout. The script text is fixed and the words are passed as arguments to its run handler, never
+written into the script:
+
+```
+/usr/bin/osascript -e 'on run argv'
+                   -e 'display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)'
+                   -e 'end run'
+                   <text> <title> <subtitle>
+```
+
+(each `-e` line and each text is one argument; the quotes above are only for reading). No sound.
+
+- Title: `MACH · <label>`. Subtitle: `<ticket> is waiting for a person.`
+- Text: the webhook message's middle line (section 5), then `In Claude Code: <command>`.
+- Fixed words and identifiers only, exactly as section 5. The ticket ID must match the ticket ID pattern,
+  and the label the label rule, before either is passed.
+
+If `/usr/bin/osascript` is not there, if it exits with anything but 0, or if it runs past five seconds,
+the banner has failed; that is recorded (`osascript-missing`, `exit-<code>`, `timeout`), never raised.
+
+**What "ran" means.** The banner counts as sent when osascript exits 0. MACH cannot see whether macOS
+displayed it: macOS may hide banners from scripts until the person allows notifications for "Script
+Editor" (or the program macOS names) in System Settings. `notify status` and `notify test` say "ran",
+not "delivered".
+
+**Same rules as the webhook.** The same triggers (section 4), the same boundaries (section 7), and
+`factory.notifications: false` forbids it too, `notify test` included. A wait is announced once on each
+channel that is on. The channels fail independently: each keeps its own attempts, last error and give-up
+(after five) in `notify-state.json`, and a failure on one never stops the other. A channel turned on
+while a wait is already recorded announces that wait once on the new channel. Inside a supervised
+execution `run.py next --headless` sends on neither channel and reads neither setting; the supervisor
+sends.
+
+**Status and test.** `notify status` shows each channel on its own: on or off and why, the webhook's
+host and last message, the banner's last run, and each one's failing and given-up waits. `notify test`
+sends on every channel that is on and reports each: the webhook's `sent`, the banner's `ran`.

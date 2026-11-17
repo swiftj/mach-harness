@@ -319,6 +319,176 @@ def run_tests(cell: Cell) -> Dict[str, Any]:
     return run_command(cell, command, timeout)
 
 
+TEST_FILE_RE = re.compile(r"(?:^|/)(?:test_[^/]*\.py|[^/]*_test\.py)$")
+
+
+def test_file_template(cell: Cell) -> Optional[str]:
+    """How this project runs only some test files: a command with a {files} place, or None when it cannot be known.
+
+    The project's own setting wins (build.commands.test_file or audit.commands.test_file, which must contain
+    {files}). Otherwise it is worked out for runners whose command line is known: Python's unittest and pytest.
+    For anything else (make, npm, go, cargo ...) there is no guess, and the whole suite is run as before."""
+    for section in ("build", "audit"):
+        commands = cell.section(section).get("commands")
+        given = commands.get("test_file") if isinstance(commands, dict) else None
+        if isinstance(given, str) and "{files}" in given:
+            return given.strip()
+    command = cell.state.get("test_cmd")
+    try:
+        argv = shlex.split(command) if isinstance(command, str) else []
+    except ValueError:
+        return None
+    lead = []
+    while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
+        lead.append(argv.pop(0))
+    if not argv:
+        return None
+    program = Path(argv[0]).name
+    quoted = [shlex.quote(part) for part in lead]
+    if re.fullmatch(r"python[0-9.]*", program) and "-m" in argv:
+        at = argv.index("-m")
+        module = argv[at + 1] if at + 1 < len(argv) else ""
+        if module in ("unittest", "pytest"):
+            return " ".join(quoted + [shlex.quote(part) for part in argv[:at + 2]] + ["{files}"])
+    if program in ("pytest", "py.test"):
+        return " ".join(quoted + [shlex.quote(argv[0]), "{files}"])
+    return None
+
+
+def test_file_command(cell: Cell, files: Sequence[str]) -> Optional[str]:
+    """The command that runs only these test files, when this cell has checked that such a run can be trusted."""
+    template = cell.state.get("test_file_cmd")
+    names = [name for name in files if TEST_FILE_RE.search(name) and (cell.work / name).is_file()]
+    if not isinstance(template, str) or not names or len(names) != len([name for name in files if (cell.work / name).is_file()]):
+        return None  # no trusted way, or the task also changed files that are not test files: run the whole suite
+    return template.replace("{files}", " ".join(shlex.quote(name) for name in names))
+
+
+def calibrate_test_file(cell: Cell) -> Dict[str, Any]:
+    """Decide once, at the start, whether running one test file on its own can be trusted in this project.
+
+    It is trusted only if a test file that is already committed, and passes in the whole suite, also passes when
+    run on its own. Otherwise a new test could fail on its own for a reason that is not the test (the runner cannot
+    load it that way), and be counted as seen failing. With no such proof the whole suite is run for every step."""
+    listed = git(cell.work, "ls-files").stdout.split("\n")
+    known = sorted(name for name in listed if TEST_FILE_RE.search(name))
+    if not known:
+        return {"trusted": False, "why": "no Python test file is committed yet to check a single-file run against"}
+    # The project's own way first; then, for a test command of another shape (make test, a script), the two usual
+    # ways to run a Python test file. Each is only a candidate: it is trusted only if it passes the check below.
+    own = test_file_template(cell)
+    candidates = [own] if own else [f"{shlex.quote(sys.executable)} -m unittest {{files}}", f"{shlex.quote(sys.executable)} -m pytest {{files}}"]
+    timeout = min(120, cell.section("audit").get("timeouts", {}).get("test", 300) if isinstance(cell.section("audit").get("timeouts"), dict) else 300)
+    why = "no single-file command passed the check"
+    for template in candidates:
+        try:
+            tried = run_command(cell, template.replace("{files}", shlex.quote(known[0])), timeout)
+        except BuildError as exc:
+            why = f"the single-file command could not run ({exc})"
+            continue
+        if tried["passed"]:
+            cell.state["test_file_cmd"] = template
+            check = {"trusted": True, "checked_with": known[0], "seconds": tried["seconds"], "command": template, "one_test_at_a_time": False}
+            # Can one test be run on its own? Only for runners whose form is known, and only if a committed test passes that way.
+            kind = "pytest" if re.search(r"(?:^|[\s/])(?:pytest|py\.test)(?:\s|$)", template) else "unittest" if "-m unittest" in template else None
+            existing = tests_in((cell.work / known[0]).read_text(encoding="utf-8", errors="replace")) or {}
+            first = next((test for test in sorted(existing) if kind == "pytest" or "." in test), None)
+            if kind and first:
+                cell.state["test_one"] = kind
+                proof = run_one_test(cell, known[0], first, timeout)
+                if proof is not None and proof["passed"]:
+                    check["one_test_at_a_time"] = True
+                else:
+                    cell.state.pop("test_one", None)
+            return check
+        why = f"{known[0]} passes in the whole suite but not when run on its own, so single-file runs are not trusted here"
+    return {"trusted": False, "why": why + "; set build.commands.test_file to name a command with {files}" if not own else why}
+
+
+def tests_in(source: str) -> Optional[Dict[str, str]]:
+    """Each test in a Python test file, as "Class.test_name" (or "test_name" at module level), with a fingerprint of its code."""
+    import ast
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None
+    found: Dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            found[node.name] = ast.dump(node)
+        elif isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.startswith("test"):
+                    found[f"{node.name}.{item.name}"] = ast.dump(item)
+    return found
+
+
+def tests_of_this_task(cell: Cell, files: Sequence[str]) -> Optional[List[Tuple[str, str]]]:
+    """(file, test) for every test this task added or changed, or None when that cannot be read from the files.
+
+    Several tasks often share one test file, and the suite may already be failing from an earlier task's tests. So the
+    question "was this task's test seen failing?" is asked of this task's own tests, not of the file or the suite."""
+    mine: List[Tuple[str, str]] = []
+    for name in files:
+        path = cell.work / name
+        if not path.is_file():
+            continue
+        if not TEST_FILE_RE.search(name):
+            return None  # the task changed something that is not a Python test file: judged the old way
+        now_tests = tests_in(path.read_text(encoding="utf-8", errors="replace"))
+        shown = git(cell.work, "show", f"HEAD:{name}")
+        before = tests_in(shown.stdout) if shown.returncode == 0 else {}
+        if now_tests is None or before is None:
+            return None
+        mine += [(name, test) for test, code in now_tests.items() if before.get(test) != code]
+    return mine or None
+
+
+def one_test_command(cell: Cell, name: str, test: str) -> Optional[str]:
+    """The command that runs exactly one test, for the runners whose form is known; None otherwise."""
+    template = cell.state.get("test_file_cmd")
+    kind = cell.state.get("test_one")
+    if not isinstance(template, str) or kind not in ("unittest", "pytest"):
+        return None
+    if kind == "pytest":
+        return template.replace("{files}", shlex.quote(name + "::" + test.replace(".", "::")))
+    if "." not in test:
+        return None  # unittest does not collect a test function outside a class
+    return template.replace("{files}", shlex.quote(name)) + " -k " + shlex.quote("*." + test)
+
+
+NO_TESTS_RE = re.compile(r"\bRan 0 tests\b|NO TESTS RAN|no tests ran|collected 0 items", re.IGNORECASE)
+
+
+def run_one_test(cell: Cell, name: str, test: str, timeout: int) -> Optional[Dict[str, Any]]:
+    """One test run on its own: passed or failed, or None when the runner found no such test (so nothing is known)."""
+    command = one_test_command(cell, name, test)
+    if command is None:
+        return None
+    done = run_command(cell, command, timeout)
+    if NO_TESTS_RE.search(done["output"]) or done["exit_code"] in (5, 124):
+        return None
+    return done
+
+
+def run_this_tasks_tests(cell: Cell, files: Sequence[str]) -> Optional[Dict[str, Any]]:
+    """Each of this task's tests run on its own: which fail and which already pass. None when that cannot be done."""
+    mine = tests_of_this_task(cell, files)
+    if not mine or len(mine) > 40 or cell.state.get("test_one") not in ("unittest", "pytest"):
+        return None
+    timeout = min(120, cell.section("audit").get("timeouts", {}).get("test", 300) if isinstance(cell.section("audit").get("timeouts"), dict) else 300)
+    failed, passed, seconds, output = [], [], 0.0, []
+    for name, test in mine:
+        done = run_one_test(cell, name, test, timeout)
+        if done is None:
+            return None
+        seconds += done["seconds"]
+        (passed if done["passed"] else failed).append(test)
+        if not done["passed"]:
+            output.append(done["output"])
+    return {"failed": failed, "passed": passed, "seconds": round(seconds, 1), "output": "\n".join(output)}
+
+
 def changed_files(cell: Cell) -> List[str]:
     out = git(cell.work, "status", "--porcelain", "--untracked-files=all").stdout
     files = []
@@ -386,7 +556,8 @@ def complete(cell: Cell, task: Dict[str, Any], files: Sequence[str], result: Opt
     sha = commit(cell, files, f"{COMMIT_PREFIX[task['kind']]}({scope}): {task['id']} {summary} [{cell.ticket_id}]")
     task.update({"status": "done", "commit": sha, "files_changed": list(files), "note": note, "at": now(), "loop": cell.state.get("loop", 0)})
     if result:
-        task["test_run"] = {key: result[key] for key in ("exit_code", "seconds")}
+        task["test_run"] = {"exit_code": result["exit_code"], "seconds": result["seconds"], "scope": result.get("scope", "whole suite"),
+                            "command": result.get("command") if result.get("scope", "whole suite") == "whole suite" else None}
     tick_plan(cell, task["id"])
     cell.save()
     cell.report_overrides(task["id"])
@@ -503,6 +674,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
                              "so the main checkout's tests fail too: run the audit, and harden the repository first.\n" + baseline["output_tail"][-800:],
                              code="baseline-red")
         cell.state["suite"] = "green"
+        cell.state["test_file_check"] = calibrate_test_file(cell)
     cell.state["baseline_run"] = {k: v for k, v in baseline.items() if k not in ("output_tail", "output")}
     cell.info.update({"stage": "building", "human_review_required": bool(gate["human_review_required"]) or cell.info.get("risk") == "High"})
     cell.save()
@@ -514,6 +686,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     print(json.dumps({
         "status": "STARTED", "ticket_id": cell.ticket_id, "workdir": str(cell.work), "branch": cell.info.get("branch"),
         "tasks": len(tasks), "test_cmd": cell.state["test_cmd"], "lint_cmd": cell.state["lint_cmd"], "audit": gate,
+        "new_tests_run_alone": cell.state.get("test_file_check") or {"trusted": False, "why": "no passing baseline run to check a single-file run against"},
         "synced_with_main": f"The cell was behind main and has been brought up to date ({synced[:10]})." if synced else None,
         "next": f"{tasks[0]['id']} [{tasks[0]['kind']}]",
     }, indent=2))
@@ -590,7 +763,45 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
             raise BuildError(f"{task['id']}: the plan gives this test {', '.join(task['ids'])}, but no test names {', '.join(missing)}"
                              + (f" (found in another spelling: {', '.join(respelled)})" if respelled else "") + ". " + ID_SPELLING
                              + " Add it to the test you just wrote, then run this step again.", code="red-ids-not-named")
-    result = run_tests(cell)
+    # A test task asks one thing: does the new test fail? Where this cell has checked that a test file can be run on
+    # its own, only the new test files are run. If they pass on their own, the whole suite is run and the rules are
+    # exactly as before.
+    mine = run_this_tasks_tests(cell, files)
+    if mine is not None:
+        # This task's own tests were each run alone. What the rest of the file or the suite does says nothing about them.
+        task["tests_first_run"] = {"failed": mine["failed"], "passed": mine["passed"]}
+        result = {"exit_code": 1 if mine["failed"] else 0, "seconds": mine["seconds"], "passed": not mine["failed"], "output": mine["output"],
+                  "output_tail": mine["output"][-3000:], "scope": "new tests only", "one_at_a_time": True}
+        note = "Seen failing before the implementation."
+        if mine["passed"]:
+            names = ", ".join(mine["passed"][:8]) + (f" and {len(mine['passed']) - 8} more" if len(mine["passed"]) > 8 else "")
+            if not args.covered:
+                raise BuildError(
+                    f"{task['id']}: {len(mine['passed'])} of this task's {len(mine['passed']) + len(mine['failed'])} new test(s) already pass before any code is written "
+                    f"({names}), so they were never seen failing. Either they do not exercise new behavior, or earlier work already satisfies them. If earlier "
+                    "work satisfies them, rerun with --covered \"<which task and why>\"; the reviewers are told.", code="red-before-green")
+            cell.deviation(task["id"], "test-passed-first-run", f"{args.covered} (passing on first run: {names})")
+            note = ("Passed on its first run: " + args.covered) if not mine["failed"] else f"{len(mine['failed'])} seen failing; {len(mine['passed'])} passed on first run: {args.covered}"
+        elif args.covered:
+            note += " (--covered was given but not needed: every new test fails, so nothing was recorded for it.)"
+        if mine["failed"]:
+            cell.state["suite"] = "red"
+        cell.state["test_files"] = sorted(set(cell.state.get("test_files", [])) | set(files))
+        task["first_run"] = "fail" if mine["failed"] else "pass"
+        task["failure_tail"] = failure_excerpt(result["output"], [Path(name).stem for name in files]) if mine["failed"] else ""
+        complete(cell, task, files, result, note)
+        return 0
+    alone = test_file_command(cell, files)
+    result = None
+    if alone:
+        timeout = cell.section("audit").get("timeouts", {}).get("test", 300) if isinstance(cell.section("audit").get("timeouts"), dict) else 300
+        result = run_command(cell, alone, timeout)
+        result["scope"] = "new tests only"
+        if result["passed"]:
+            result = None
+    if result is None:
+        result = run_tests(cell)
+        result["scope"] = "whole suite"
     note = "Seen failing before the implementation."
     if result["passed"]:
         if not args.covered:
@@ -689,6 +900,7 @@ def cmd_green(cell: Cell, args: argparse.Namespace) -> int:
         return green_already_done(cell, task, files, args.already_done)
     check_scope(cell, task, files, args)
     result = run_tests(cell)
+    result["scope"] = "whole suite"
     if not result["passed"]:
         raise BuildError(f"{task['id']}: the suite does not pass yet, so nothing was committed.\n{result['output_tail'][-1500:]}", code="suite-red")
     cell.state["suite"] = "green"
@@ -750,6 +962,58 @@ def ui_findings(cell: Cell, baseline: str) -> List[str]:
     return findings[:50]
 
 
+def seconds_between(earlier: Any, later: Any) -> Optional[float]:
+    try:
+        a = datetime.fromisoformat(str(earlier).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(str(later).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return round(max((b - a).total_seconds(), 0.0), 1)
+
+
+def timing(cell: Cell, final: Dict[str, Any]) -> Dict[str, Any]:
+    """Where the build's time went, from what each step recorded. Test time is measured; the time since the previous
+    step is the clock between two recorded moments, so it includes the builder's work and any time the build sat idle."""
+    steps = []
+    previous = cell.state.get("started_at")
+    for task in cell.state["tasks"]:
+        run = task.get("test_run") if isinstance(task.get("test_run"), dict) else {}
+        steps.append({"task": task.get("id"), "kind": task.get("kind"), "loop": task.get("loop"), "tests": run.get("scope"), "test_seconds": run.get("seconds"),
+                      "seconds_since_previous_step": seconds_between(previous, task.get("at")) if previous and task.get("at") else None})
+        previous = task.get("at") or previous
+    baseline = cell.state.get("baseline_run") if isinstance(cell.state.get("baseline_run"), dict) else {}
+    measured = [step["test_seconds"] for step in steps if isinstance(step["test_seconds"], (int, float))]
+    extra = [value for value in (baseline.get("seconds"), None if final.get("reused_from") else final.get("seconds")) if isinstance(value, (int, float))]
+    return {
+        "started_at": cell.state.get("started_at"), "finished_at": now(), "elapsed_seconds": seconds_between(cell.state.get("started_at"), now()),
+        "test_seconds_total": round(sum(measured) + sum(extra), 1), "test_runs": len(measured) + len(extra),
+        "whole_suite_runs": sum(1 for step in steps if step["tests"] == "whole suite") + len(extra),
+        "new_tests_only_runs": sum(1 for step in steps if step["tests"] == "new tests only"),
+        "baseline_test_seconds": baseline.get("seconds"), "final_test_seconds": None if final.get("reused_from") else final.get("seconds"),
+        "final_run_reused_from": final.get("reused_from"),
+        "new_tests_run_alone": cell.state.get("test_file_check") or {"trusted": False},
+        "note": "Elapsed time is the clock from start to finish and includes any time the build sat idle or was resumed later.",
+        "steps": steps,
+    }
+
+
+def reusable_suite_run(cell: Cell) -> Optional[Dict[str, Any]]:
+    """The whole-suite run of the last step, when it is a run of exactly the code that is committed now.
+
+    The last task's step ran the whole suite on its changes and then committed them. If that commit is still the
+    branch's tip, the tree is clean and the test command is the same, running the suite again would run the same
+    code and learn nothing. Anything else (a test task last, a different tip, a failed run) runs it again."""
+    last = next((task for task in reversed(cell.state["tasks"]) if task.get("status") == "done" and task.get("commit")), None)
+    run = last.get("test_run") if last else None
+    if not isinstance(run, dict) or run.get("scope") != "whole suite" or run.get("exit_code") != 0 or run.get("command") != cell.state.get("test_cmd"):
+        return None
+    if cell.state.get("suite") != "green" or cell.state["tasks"][-1] is not last or git(cell.work, "rev-parse", "HEAD").stdout.strip() != last["commit"]:
+        return None
+    return {"command": run["command"], "exit_code": 0, "passed": True, "seconds": 0.0, "output_tail": "", "output": "",
+            "scope": "whole suite", "reused_from": last["id"], "reused_run_seconds": run.get("seconds"),
+            "note": f"Not run again: the whole suite passed on exactly this code when {last['id']} was completed."}
+
+
 def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     if cell.info.get("stage") == "built":
@@ -761,7 +1025,10 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     dirty = changed_files(cell)
     if dirty:
         problems.append(f"Uncommitted changes in the cell: {', '.join(dirty[:8])}. Every change belongs to a task.")
-    tests = run_tests(cell)
+    tests = reusable_suite_run(cell) if not dirty and not pending else None
+    if tests is None:
+        tests = run_tests(cell)
+        tests["scope"] = "whole suite"
     if not tests["passed"]:
         problems.append("The test suite does not pass:\n" + tests["output_tail"][-800:])
     lint: Dict[str, Any] = {"command": cell.state.get("lint_cmd"), "status": "none configured"}
@@ -796,11 +1063,15 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "tests": {k: v for k, v in tests.items() if k not in ("output_tail", "output")}, "lint": {k: v for k, v in lint.items() if k not in ("output_tail", "output")},
         "tasks": [{k: t.get(k) for k in ("id", "kind", "status", "commit", "note", "first_run", "loop")} for t in cell.state["tasks"]],
         "tests_seen_failing_first": sum(1 for t in cell.state["tasks"] if t.get("first_run") == "fail"),
+        "new_tests_first_run": {"seen_failing": sum(len((t.get("tests_first_run") or {}).get("failed") or []) for t in cell.state["tasks"]),
+                                "already_passing": {t["id"]: t["tests_first_run"]["passed"] for t in cell.state["tasks"] if (t.get("tests_first_run") or {}).get("passed")},
+                                "tasks_checked_test_by_test": [t["id"] for t in cell.state["tasks"] if t.get("tests_first_run")]},
         "tests_passing_on_first_run": [t["id"] for t in cell.state["tasks"] if t.get("first_run") == "pass"],
         "tests_written_early": [t["id"] for t in cell.state["tasks"] if t.get("first_run") == "not-run"],
         "impls_already_done": sorted({d.get("task") for d in cell.state.get("deviations") or [] if d.get("type") == "impl-already-done" and d.get("task")}),
         "deviations": cell.state.get("deviations", []), "files_changed": files, "diff": stat,
         "test_files": cell.state.get("test_files", []), "styling_findings": styling,
+        "timing": timing(cell, tests),
     }
     (cell.root / "build-report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     cell.info["stage"] = "built"

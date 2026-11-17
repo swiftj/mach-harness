@@ -46,6 +46,17 @@ A script does the measuring and the scoring. `AUDIT` below means `python3 "${CLA
 
    A build or test suite that fails, is missing, or could not be run here is a **blocker**: the tier is Bronze whatever the score. Readiness is never granted on tests nobody ran.
 
+   **Say what the result means, not the medal.** A person does not know what Gold, Silver or Bronze mean, or what the score ranges are. Lead with the plain meaning; give the tier's name and the score once, in brackets, only as the factory's own label for it:
+
+   | Result | Say |
+   |---|---|
+   | Gold | "This repository is ready. The factory can build here and merge its own work once review passes. (Readiness: Gold, 93 of 100.)" |
+   | Silver | "This repository is mostly ready. The factory can build here, but a person must approve every change before it merges. (Readiness: Silver, 78 of 100.)" Then the one or two things that would make it fully ready. |
+   | Bronze | "This repository is not ready yet, so the factory will not build here. What needs fixing first: …" and list the failed checks in plain words, most important first. (Readiness: Bronze, 61 of 100.) |
+   | The build or the tests fail, are missing or could not be run | "The factory will not build here until the project's own build and tests run cleanly: …" whatever the score. |
+
+   Never give only a tier and a number. Never say a repository "scored" or "came back" a tier.
+
 6. **On Bronze, propose hardening; do not start it.** List the failed checks, most points first, as the work that would lift the tier. If the user asks you to file it, or the input has `--fix`, file one ticket titled "Harden repository for autonomous work" with the label `repo-hardening`, listing each failed check and its fix as an acceptance criterion. Use the ticket skill if it is installed. Hardening tickets are the one kind of work allowed in a Bronze repository, and a person reviews each before it merges.
 
 ## For other stations
