@@ -180,7 +180,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Start gates**: the audit allows building (a Bronze repository builds only `repo-hardening` tickets); the cell is `planned` and its spec unchanged; the cell is isolated and clean; the tests pass before anything is touched.
 * **Enforced by script**:
   * **Order**: tasks are completed in plan order, each with the step its kind requires.
-  * **Red before green**: a `[test]` task is accepted only if the suite fails with it; an `[impl]` task only if the whole suite passes.
+  * **Red before green**: a `[test]` task is accepted only if the suite fails with it; an `[impl]` task only if the whole suite passes. To see a new test fail, the station runs only the new test files where it has checked, at the start, that a committed test file passes when run on its own in this project (`build.commands.test_file`, or worked out for unittest and pytest); otherwise, and whenever the new test passes on its own, it runs the whole suite as before. Where one test can be run on its own (unittest and pytest, checked the same way), the task's own tests, the ones it added or changed, are each run alone: a test that already passes before any code is written is never counted as seen failing because other tests in the same file or suite fail, and needs the `--covered` reason, which is recorded with its name. Code tasks always run the whole suite, and so does the finish, unless the last task's whole-suite run passed on exactly the commit that is the branch's tip, in which case that run stands and is not repeated.
   * **Frozen tests**: a committed test cannot be changed by a later non-test task.
   * **Scope**: a task may change only the files the plan gave it.
   * **Traceability**: every `FR`, `INV` and `AC` in the spec must be named by a test before the build can finish. A `[test]` task that leaves out or respells an ID the plan gave it (`fr02` for `FR-02`) is refused when the test is written, while it can still be edited.
@@ -188,7 +188,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Design System & Anti-Slop UI Anchor**: For frontend work the builder finds the existing component library and design tokens first and must reuse them, with semantic HTML and ARIA accessibility. Inline styles and hard-coded colors added in interface files are listed in the build report.
 * **No Dead Code**: Prohibits unused helpers, spurious dependencies, and monolithic multi-thousand-line files.
 * **Revision rounds**: `build.py revise` starts a revision after a failed verification or a rejected review. A ticket gets three judging rounds in all; on the third failure it refuses and directs escalation to `blocked-requires-sme`.
-* **Output**: commits on `feature/<ticket_id>`, one per task; `build.json` and `build-report.json` in the cell; cell stage `built`.
+* **Output**: commits on `feature/<ticket_id>`, one per task; `build.json` and `build-report.json` in the cell; cell stage `built`. The report's `timing` says where the time went: each step's test run and whether it was the new tests only or the whole suite, the time since the previous step, and totals. Test time is measured; elapsed time is the clock and includes idle time.
 
 ### 5. `/mach-verify` — Multi-Target Dynamic Evidence Engine
 * **Assigned Model**: `sonnet` (`claude-sonnet-5-5`) (Medium Effort, Fresh Context), pinned in the `verifier` agent

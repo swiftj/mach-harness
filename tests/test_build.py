@@ -188,6 +188,17 @@ class Base(unittest.TestCase):
 
 
 class StartTest(Base):
+    def test_a_single_file_command_that_fails_its_check_is_not_trusted(self):
+        self.ready()
+        path = self.project / ".factory/config.json"
+        config = json.loads(path.read_text()) if path.is_file() else {}
+        config.setdefault("build", {})["commands"] = {"test_file": f"{sys.executable} -c 'import sys; sys.exit(3)' {{files}}"}
+        path.write_text(json.dumps(config))
+        started = self.ok("start", "LOCAL-001")
+        self.assertFalse(started["new_tests_run_alone"]["trusted"])
+        self.assertIn("not when run on its own", started["new_tests_run_alone"]["why"])
+        self.assertNotIn("test_file_cmd", self.state())
+
     def test_start_records_plan_and_baseline(self):
         self.ready()
         started = self.ok("start", "LOCAL-001")
@@ -347,9 +358,95 @@ class StepTest(Base):
         self.assertEqual((state["test_files"], state["tasks"][0]["first_run"]), (["tests/test_invite.py"], "fail"))
         self.assertIn("- [x] T01 [test]", (self.cellroot / "plan.md").read_text())
 
+    def test_a_test_task_runs_only_the_new_test_where_that_is_trusted(self):
+        check = self.state()["test_file_check"]
+        self.assertTrue(check["trusted"], check)
+        self.assertIn("{files}", self.state()["test_file_cmd"])
+        self.put(self.work, {"tests/test_invite.py": RED_TEST})
+        self.ok("red", "LOCAL-001", "T01")
+        self.assertEqual(self.state()["tasks"][0]["test_run"]["scope"], "new tests only")
+        self.put(self.work, {"app/invite.py": IMPL})
+        self.ok("green", "LOCAL-001", "T02")
+        self.assertEqual(self.state()["tasks"][1]["test_run"]["scope"], "whole suite", "a code task always runs the whole suite")
+
+    def test_the_whole_suite_runs_where_a_single_file_run_is_not_trusted(self):
+        state = self.state()
+        state.pop("test_file_cmd", None)
+        (self.cellroot / "build.json").write_text(json.dumps(state))
+        self.put(self.work, {"tests/test_invite.py": RED_TEST})
+        self.ok("red", "LOCAL-001", "T01")
+        self.assertEqual(self.state()["tasks"][0]["test_run"]["scope"], "whole suite")
+
+    def test_a_new_test_that_passes_alone_is_judged_by_the_whole_suite_as_before(self):
+        self.build_through("T02")
+        self.put(self.work, {"tests/test_scenarios.py": "import unittest\nfrom app.invite import invite\n\nclass S(unittest.TestCase):\n    def test_again(self):\n"
+                                                        "        \"\"\"AC-01 AC-02 AC-03 FR-06 FR-08 FR-09 INV-03\"\"\"\n        self.assertEqual(invite('x'), 'sent')\n"})
+        self.assertIn("rerun with --covered", self.refused("red", "LOCAL-001", "T03"))
+
+    def test_the_build_report_says_where_the_time_went(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        timing = json.loads((self.cellroot / "build-report.json").read_text())["timing"]
+        self.assertEqual([(s["task"], s["kind"], s["tests"]) for s in timing["steps"]],
+                         [("T01", "test", "new tests only"), ("T02", "impl", "whole suite"), ("T03", "test", "new tests only"), ("T04", "impl", "whole suite"), ("T05", "docs", "whole suite")])
+        self.assertEqual((timing["new_tests_only_runs"], timing["whole_suite_runs"], timing["test_runs"]), (2, 4, 6))  # two code tasks, the docs task and the baseline; the final run is the docs task's, not run again
+        self.assertTrue(all(isinstance(s["test_seconds"], (int, float)) for s in timing["steps"]))
+        self.assertTrue(all(isinstance(s["seconds_since_previous_step"], (int, float)) for s in timing["steps"]))
+        self.assertGreaterEqual(timing["test_seconds_total"], sum(s["test_seconds"] for s in timing["steps"]))
+        self.assertTrue(timing["new_tests_run_alone"]["trusted"])
+        self.assertEqual((timing["final_run_reused_from"], timing["final_test_seconds"]), ("T05", None))
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertEqual((report["tests"]["passed"], report["tests"]["reused_from"]), (True, "T05"))
+        self.assertIn("includes any time the build sat idle", timing["note"])
+
+    def test_the_final_run_is_made_again_when_the_code_is_not_what_the_last_step_ran(self):
+        self.build_through("T05")
+        (self.work / "NOTES.txt").write_text("a commit that no task made\n")
+        git(self.work, "add", "NOTES.txt")
+        git(self.work, "commit", "-q", "-m", "stray")
+        self.ok("finish", "LOCAL-001")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertNotIn("reused_from", report["tests"])
+        self.assertIsInstance(report["timing"]["final_test_seconds"], (int, float))
+
+    MIXED = ("import unittest\nfrom app.invite import invite\n\nclass S(unittest.TestCase):\n"
+             "    def test_already_true(self):\n        \"\"\"AC-01 AC-02 AC-03 FR-06 FR-08 FR-09 INV-03\"\"\"\n        self.assertEqual(invite('x'), 'sent')\n"
+             "    def test_not_built_yet(self):\n        from app.invite import release\n        self.assertEqual(release('x'), 'released')\n")
+
+    def test_each_new_test_is_judged_on_its_own_not_by_the_file_or_the_suite(self):
+        """Found in a live run: tests that already passed were counted as seen failing, because other tests in the same run failed."""
+        self.build_through("T02")
+        self.assertTrue(self.state()["test_file_check"]["one_test_at_a_time"])
+        self.put(self.work, {"tests/test_scenarios.py": self.MIXED})
+        refusal = self.refused("red", "LOCAL-001", "T03")
+        self.assertIn("1 of this task's 2 new test(s) already pass before any code is written (S.test_already_true)", refusal)
+        self.assertEqual(self.state()["tasks"][2]["status"], "pending")
+        self.ok("red", "LOCAL-001", "T03", "--covered", "T02 already sends the invitation.")
+        task = self.state()["tasks"][2]
+        self.assertEqual(task["tests_first_run"], {"failed": ["S.test_not_built_yet"], "passed": ["S.test_already_true"]})
+        self.assertEqual((task["first_run"], task["test_run"]["scope"]), ("fail", "new tests only"))
+        deviation = self.state()["deviations"][-1]
+        self.assertEqual(deviation["type"], "test-passed-first-run")
+        self.assertIn("S.test_already_true", deviation["detail"])
+
+    def test_covered_given_for_tests_that_all_fail_is_said_and_not_recorded(self):
+        self.put(self.work, {"tests/test_invite.py": RED_TEST})
+        done = self.ok("red", "LOCAL-001", "T01", "--covered", "I thought earlier work covered it.")
+        self.assertIn("--covered was given but not needed", done["note"])
+        self.assertEqual(self.state()["deviations"], [])
+
+    def test_the_report_counts_new_tests_seen_failing_one_by_one(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        counted = json.loads((self.cellroot / "build-report.json").read_text())["new_tests_first_run"]
+        self.assertEqual(counted["tasks_checked_test_by_test"], ["T01", "T03"])
+        self.assertGreaterEqual(counted["seen_failing"], 2)
+        self.assertEqual(counted["already_passing"], {})
+
     def test_red_must_involve_the_new_test(self):
         state = self.state()
         state["test_cmd"] = f"{sys.executable} -c 'import sys; print(\"ImportError: Start directory is not importable\"); sys.exit(1)'"
+        state.pop("test_file_cmd", None)  # the whole suite is run, as where single-file runs are not trusted
         (self.cellroot / "build.json").write_text(json.dumps(state))
         self.put(self.work, {"tests/test_invite.py": RED_TEST})
         refusal = self.refused("red", "LOCAL-001", "T01")
