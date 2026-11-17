@@ -319,6 +319,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `factory.max_parallel_high` | `1` | How many High-risk tickets may run at once |
 | `factory.claim_minutes` | `90` | How long a worker's claim on a ticket holds without news of it, before another worker may take the ticket |
 | `merge.pr.inline_findings` | `true` | With `merge.method` `pr`, post the review panel's findings on the pull request |
+| `build.commands.test_file` | worked out | How to run only some test files, with `{files}` where their paths go, for example `pytest {files}`. The build station uses it to see a new test fail in seconds. It is worked out for Python's unittest and pytest; set it for other test runners. It is used only if a committed test passes when run this way |
 | `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
 | `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |
 | `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |
