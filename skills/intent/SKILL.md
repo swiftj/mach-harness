@@ -119,6 +119,18 @@ Then record the result on the ticket: a comment with the slice ID, the outcome s
 
 Run this only when `CELL finalize` printed `READY`, or the cell's `stage` is already `spec-ready`.
 
+**How to say it to the person.** The steps below use the factory's own terms (claim, holder, gate, `check-plan`). Those are for you. Tell the person what is happening in plain words, naming the worker and what it is doing:
+
+| Moment | Say | Not |
+|---|---|---|
+| The contract engineer has started | "The contract engineer is building the plan for this slice." | "The plan step is claimed for this conversation." |
+| You are waiting for it | "When the contract engineer finishes building the plan, I'll validate it." | "When the contract engineer reports, I'll check the plan gate." |
+| The plan is valid | "The plan has been created with 11 tasks (9 tests and 2 implementation), and 1 contract file." Use the real counts from `CELL check-plan`. | "The plan passed its gate." |
+| What comes next | "The next step is to run `/mach 4` to start the factory's build, verify and review process." Use the ticket's number on its own where it is unambiguous, and the command form this install uses. | "Then /mach LOCAL-004 will take it through build, verify and review." |
+| Another worker already has this ticket's plan | "Another worker is already building the plan for this ticket, since <time>. You can wait for it, or tell me to take over." | "The claim is held by another holder." |
+
+Never say "gate", "claim", "holder" or "the step" to the person, and never say a worker "reports": say it "finishes".
+
 1. Claim the step, so that no second worker plans this cell at the same time. If the prompt that started you names a holder for the plan step (the run skill and the belt pass one), run `CELL claim <ticket-id> plan --holder <holder>` with it; otherwise run `CELL claim <ticket-id> plan`. If it refuses, another worker already has this ticket's plan step: do not start the contract engineer and do not plan it yourself. Tell the person which step it has, since when, and when the claim lapses, as the refusal says, and that they can say to take over; then stop.
 2. Start the contract engineer sub-agent: `mach:contract-engineer` if MACH is installed as a plugin, `mach-contract-engineer` if it is installed in the project. If neither exists, start a general sub-agent on the `opus` model with a fresh context. Give it:
    - the ticket ID and the full JSON that `CELL open <ticket-id>` prints;
