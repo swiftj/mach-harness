@@ -34,6 +34,15 @@ and not by whoever is driving it.
     run.py factory pause | resume | disable | stop
     run.py factory serve                 the supervisor: ticks until the Factory is disabled here
     run.py factory tick                  one supervisor pass
+    run.py notify [status]               whether a waiting ticket is announced to a channel from this machine; changes nothing
+    run.py notify set --from-file PATH | --from-env NAME [--label WORDS]
+                                         store the channel's address (never taken on the command line); sends nothing
+    run.py notify banner on|off [--label WORDS]
+                                         a macOS Notification Center banner on this Mac, beside or instead of the webhook
+    run.py notify test | off             one test message on each channel that is on; remove the stored address (the banner stays)
+
+`next <ticket> --headless` that stops for a person sends one message on each channel on for this machine (notify.py),
+once per wait, and never inside a supervised execution. No other command here sends or reads the address.
 
 A step is either work ("action": audit, groom, plan, build, revise, verify, review, merge, cleanup)
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
@@ -546,7 +555,64 @@ def cmd_next(project: Project, args: argparse.Namespace) -> int:
     if getattr(args, "resolved_from", None):
         shown["resolved_from"] = args.resolved_from
     print(json.dumps(shown, indent=2, ensure_ascii=False))
+    if args.headless and found.get("stop") and found.get("needs") not in (None, "nothing", "worker-in-cell") and execution_scope(project) is None:
+        # Unattended work stopped for a person: tell the channel once per wait. Inside a supervised execution the
+        # supervisor tells it, and the address is not read here. Nothing about this changes the answer or the exit code.
+        sys.stdout.flush()
+        try:
+            notifier(project).wait(found["ticket_id"], found.get("stage"), found["needs"])
+        except Exception:
+            pass
     return 0
+
+
+def notifier(project: Project) -> Any:
+    """The once-per-wait message sender (notify.py), loaded only where a message may be sent."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import notify
+    return notify.Notifier(project.root, project.config, NEEDS_TEXT, f"{skill('run')} decide")
+
+
+def cmd_notify(project: Project, args: argparse.Namespace) -> int:
+    """Notifications from this machine (notify.py): status, set, banner, test, off. A person's setting, on their word."""
+    if execution_scope(project) is not None:
+        raise RunError("Notifications are a person's setting on this machine; a supervised execution does not read or change them.")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import notify
+    action = args.action or "status"
+    try:
+        if action == "status":
+            result = notify.status(project.root, project.config)
+        elif action == "set":
+            if bool(args.from_file) == bool(args.from_env):
+                raise RunError("Give exactly one of --from-file PATH or --from-env NAME. The address itself is never taken on the command line.")
+            url = notify.address_from_file(Path(args.from_file)) if args.from_file else notify.address_from_env(args.from_env)
+            result = notify.store(project.root, project.config, url, args.label)
+        elif action == "banner":
+            result = notify.set_banner(project.root, project.config, args.switch == "on", args.label)
+        elif action == "test":
+            result = notifier(project).test(f"{skill('run')} notify")
+        else:
+            result = notify.remove(project.root)
+    except notify.NotifyError as exc:
+        raise RunError(str(exc))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+NOTIFY_USAGE = ("refused: that is not a notify command as written. Use: notify [status | set --from-file PATH | set --from-env NAME [--label WORDS] | banner on|off [--label WORDS] | test | off]. "
+                "The address is never taken on the command line: write it into a file or export it in your shell. Nothing was stored or sent.")
+
+
+def quiet_error(message: str) -> None:
+    """argparse quotes what it could not parse; for notify that may be the address, so nothing typed is repeated."""
+    print(NOTIFY_USAGE, file=sys.stderr)
+    sys.exit(2)
+
+
+class QuietParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:  # noqa: D401 (argparse's signature)
+        quiet_error(message)
 
 
 def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], take_over: bool) -> Dict[str, Any]:
@@ -890,7 +956,7 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
         raise RunError(problem or "Product intake is not available.")
     sup = supervisor_module.Supervisor(project.root, project.config, line, next_step=lambda ticket_id: next_step(project, ticket_id, True),
                                        audit=project.audit, git=git, run_script=here, workflow=workflow_name(), observe_due=project.observe_status,
-                                       sibling=sibling)
+                                       sibling=sibling, notifier=notifier(project))
     ctx = activation.Context(project.root, project.config, line, sup, git, project.audit, here, workflow_installed(project), problem)
     try:
         if args.action == "status":
@@ -1056,11 +1122,32 @@ def build_parser() -> argparse.ArgumentParser:
     p = fac.add_parser("wake", help=argparse.SUPPRESS)
     p.add_argument("--event", default="manual")
     p.set_defaults(func=cmd_factory)
+
+    p = sub.add_parser("notify", help="tell a channel when a ticket waits for a person: status, set, banner, test, off")
+    p.error = quiet_error  # argparse would repeat what was typed, which may be the address
+    p.set_defaults(func=cmd_notify, action=None)
+    notify_actions = p.add_subparsers(dest="action", parser_class=QuietParser)
+    notify_actions.add_parser("status", help="whether it is on here, the host, the label, the last message and failures; changes nothing")
+    p = notify_actions.add_parser("set", help="store the address from a file or an environment variable; sends nothing")
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("--from-file", metavar="PATH", help="a file holding only the address, written by the person")
+    source.add_argument("--from-env", metavar="NAME", help="the name of an environment variable holding the address")
+    p.add_argument("--label", metavar="WORDS", help="the person's own words to start each message with (default: the folder's name)")
+    p = notify_actions.add_parser("banner", help="a macOS Notification Center banner on this Mac: on or off; sends nothing")
+    p.add_argument("switch", choices=("on", "off"))
+    p.add_argument("--label", metavar="WORDS", help="the person's own words for the banner's title (default: the folder's name)")
+    notify_actions.add_parser("test", help="send one test message on each channel that is on")
+    notify_actions.add_parser("off", help="remove the stored address; the banner, if on, stays")
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        if getattr(args, "command", None) == "notify":
+            quiet_error("")  # an address typed on the command line is refused without being repeated
+        parser.error("unrecognized arguments: " + " ".join(unknown))
     try:
         root = args.project.resolve() if args.project else find_project(Path.cwd())
         if args.command == "factory" and getattr(args, "action", None) == "wake" and not (root / ".factory").is_dir():
