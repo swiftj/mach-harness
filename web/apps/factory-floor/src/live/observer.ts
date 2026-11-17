@@ -66,6 +66,8 @@ export interface ObserverSession {
   readonly project: string | null;
   /** The observer's clock when it answered (Unix ms), if the session says it (`now_ms`, or `now`); else null. */
   readonly nowMs: number | null;
+  /** `capabilities.evidence_media` (M6.4): screenshots and recordings are served; null when the session does not say. */
+  readonly evidenceMedia?: boolean | null;
 }
 
 export interface EventsPage {
@@ -194,6 +196,170 @@ export interface ArtifactEntry {
   readonly freeText: boolean;
   /** The observer's own words for it (`free_text_note`), e.g. "free text, not checked for names"; null when not free text. */
   readonly freeTextNote: string | null;
+  // ---- M6.4 (evidence player): read so the player can say where a file is read from, what it proves and why it is withheld.
+  /** `cell` (the live worktree's cell folder) or `archive` (the finished ticket's archive); null when the reply does not say. */
+  readonly origin?: "cell" | "archive" | null;
+  /** `artifact:<ticket>:<path>` (no version); null when absent. */
+  readonly logical?: string | null;
+  /** The hash the verifier recorded for it, when a record names one. */
+  readonly recordedSha256?: string | null;
+  /** The checks it is evidence for (`targets[{id, kind, result}]`): identifiers and codes only. */
+  readonly targets?: readonly ArtifactTarget[];
+  /** The observer's catalog words for why its content is or is not served (`access_reason`, group A); null when absent. */
+  readonly accessReason?: string | null;
+}
+
+/** A check an evidence file proves (`targets[]` of a catalog entry). */
+export interface ArtifactTarget {
+  readonly id: string;
+  readonly kind: string | null;
+  readonly result: string | null;
+}
+
+/** A recorded time as the projection serves it (`TimeView`: `at`, `precision`, bounds, the event that recorded it). */
+export interface ObserverTimeView {
+  readonly atMs: number | null;
+  readonly notBeforeMs: number | null;
+  readonly notAfterMs: number | null;
+  readonly precision: string | null;
+  readonly eventId: string | null;
+}
+
+/** One file a recorded check names (`/cells/{t}/evidence` `checks[].evidence[]`), linked to its catalog entry when there is one. */
+export interface CellEvidenceFile {
+  /** The path the check names, relative to the cell (`evidence/…`): group B, a file name may hold a name. */
+  readonly file: string;
+  /** The hash the check recorded. */
+  readonly sha256: string | null;
+  /** The catalog id, or null when the file is not catalogued (`integrity` is then `missing`). */
+  readonly artifactId: string | null;
+  /** `match`, `mismatch` (the file differs from what this check recorded), `missing` or `unchecked`. */
+  readonly integrity: string;
+  /** The catalog entry's `content_access`, when catalogued. */
+  readonly contentAccess: string | null;
+}
+
+/** One recorded verification check with its files. */
+export interface CellEvidenceCheck {
+  readonly targetId: string;
+  /** `scenario`, `matrix rule`, `holdout`, or another kind the verifier wrote; null when not recorded. */
+  readonly targetKind: string | null;
+  readonly result: string | null;
+  readonly round: number | null;
+  readonly visitId: string | null;
+  readonly at: ObserverTimeView | null;
+  readonly evidence: readonly CellEvidenceFile[];
+}
+
+/** `GET /api/v1/cells/{ticket}/evidence`: the cell's catalogued artifacts and its recorded checks. */
+export interface CellEvidence {
+  readonly ticketId: string;
+  readonly artifacts: readonly ArtifactEntry[];
+  readonly checks: readonly CellEvidenceCheck[];
+  /** The project's tracked Factory Floor setting (`settings.evidence_media`); null when the reply does not say. */
+  readonly evidenceMedia: boolean | null;
+  /** Where the observer read the setting from (`settings.source`), a catalog string. */
+  readonly settingsSource: string | null;
+  readonly cursor: string | null;
+  /** The observer's own note on what verified evidence is (a catalog string). */
+  readonly note: string | null;
+}
+
+/** Why the content route refused, as its reason codes (`error.reason`), plus what the client itself saw. */
+export type ArtifactRefusal =
+  | "credential-name"
+  | "media-disabled"
+  | "link"
+  | "too-large"
+  | "changed"
+  | "duplicate"
+  | "type"
+  | "unavailable"
+  | "not-found"
+  | "unauthorized"
+  | "invalid"
+  | "network"
+  | "refused";
+
+/** What a served text's headers say (`X-MACH-Free-Text`, `X-MACH-Redacted`, `X-MACH-Truncated`, `X-MACH-Evidence-Match`). */
+export interface TextContentLabels extends ContentLabels {
+  /** The observer cut the text short. */
+  readonly truncated: boolean;
+  /** `X-MACH-Evidence-Match`: the bytes served are the bytes the catalog hashed (`match`); null when the header is absent. */
+  readonly evidenceMatch: string | null;
+}
+
+export type ArtifactTextResult =
+  | { readonly ok: true; readonly text: string; readonly labels: TextContentLabels }
+  | { readonly ok: false; readonly reason: ArtifactRefusal; readonly status: number; /** True when a 503 was retried once and refused again. */ readonly retried: boolean };
+
+/** A catalog id as the observer issues them (`^a[0-9a-f]{24}$`): anything else is never put in a URL. */
+export const ARTIFACT_ID = /^a[0-9a-f]{24}$/;
+
+/**
+ * The content route's URL for an image or video element: by catalog id only, never by path. Null for
+ * anything that is not a catalog id, so a path or prose can never reach the address of a request.
+ */
+export function artifactContentUrl(id: string, base = "/api/v1"): string | null {
+  return ARTIFACT_ID.test(id) ? `${base}/artifacts/${id}/content` : null;
+}
+
+const REFUSALS: ReadonlySet<string> = new Set(["credential-name", "media-disabled", "link", "too-large", "changed", "duplicate", "type"]);
+
+/** A refusal reply's reason code: the envelope's `error.reason` when it is one the route uses, else one from the status. */
+export function refusalOf(status: number, body: unknown): ArtifactRefusal {
+  const reason = str(obj(obj(body).error).reason);
+  if (reason && REFUSALS.has(reason)) return reason as ArtifactRefusal;
+  if (status === 503) return "unavailable";
+  if (status === 404) return "not-found";
+  if (status === 401) return "unauthorized";
+  if (status === 400) return "invalid";
+  if (status === 413) return "too-large";
+  if (status === 415) return "type";
+  return "refused";
+}
+
+/** The headers of a served text. */
+export function readTextContentLabels(headers: { get(name: string): string | null } | null | undefined): TextContentLabels {
+  const base = readContentLabels(headers);
+  const truncated = (headers?.get("X-MACH-Truncated") ?? "").trim().toLowerCase() === "true";
+  const match = headers?.get("X-MACH-Evidence-Match") ?? null;
+  return { ...base, truncated, evidenceMatch: match === null ? null : match.trim().toLowerCase() };
+}
+
+const timeView = (value: unknown): ObserverTimeView | null => {
+  if (!value || typeof value !== "object") return null;
+  const t = obj(value);
+  return { atMs: timeOf(t.at), notBeforeMs: timeOf(t.not_before), notAfterMs: timeOf(t.not_after), precision: str(t.precision), eventId: str(t.event_id) || null };
+};
+
+/** `/cells/{ticket}/evidence`'s `data`, read tolerantly. */
+export function readCellEvidence(data: unknown, ticket: string): CellEvidence {
+  const d = obj(data);
+  const settings = d.settings && typeof d.settings === "object" ? obj(d.settings) : null;
+  return {
+    ticketId: str(d.ticket_id) ?? ticket,
+    artifacts: list(d.artifacts).map(readArtifactEntry).filter((a) => a.id !== ""),
+    checks: list(d.checks)
+      .map((x) => obj(x))
+      .filter((k) => typeof k.target_id === "string" && k.target_id !== "")
+      .map((k) => ({
+        targetId: k.target_id as string,
+        targetKind: str(k.target_kind) || null,
+        result: str(k.result) || null,
+        round: num(k.round),
+        visitId: str(k.visit_id) || null,
+        at: timeView(k.at),
+        evidence: list(k.evidence).map((x) => {
+          const f = obj(x);
+          return { file: str(f.file) ?? "", sha256: str(f.sha256) || null, artifactId: str(f.artifact_id) || null, integrity: str(f.integrity) ?? "missing", contentAccess: str(f.content_access) || null };
+        }),
+      })),
+    evidenceMedia: settings ? bool(settings.evidence_media) : null,
+    settingsSource: settings ? str(settings.source) : null,
+    cursor: str(d.cursor),
+    note: str(d.note),
+  };
 }
 
 /** The label every listing or opening of a free-text evidence document carries (R1). */
@@ -248,6 +414,16 @@ export interface ObserverClient {
   artifactContent(id: string): Promise<{ readonly text: string; readonly labels: ContentLabels }>;
   /** The current waves, slices, cells and executions, paged through (see ObserverSummaries). */
   summaries(): Promise<ObserverSummaries>;
+  // ---- M6.4 (evidence player). Optional like the M6.3 methods; createObserverClient has them all.
+  /** `/cells/{ticket}/evidence`: the cell's checks, each with its files linked to the catalog. */
+  cellEvidence?(ticket: string, signal?: AbortSignal): Promise<CellEvidence>;
+  /**
+   * One served text by catalog id, with its headers; a refusal is a value with its reason code, never
+   * thrown. A 503 ("too many reads at once") is asked again once after its Retry-After, then given up.
+   */
+  artifactText?(id: string, signal?: AbortSignal): Promise<ArtifactTextResult>;
+  /** The URL an image or video element loads (the content route, by catalog id only); null for anything that is not a catalog id. */
+  artifactContentUrl?(id: string): string | null;
   // ---- M6.3 (Execution Timeline). Optional so other implementations keep compiling; createObserverClient has them all.
   /** One page of `/api/v1/spans` (windowed, filtered), items unparsed: src/timeline/data reads them. */
   spans?(query: ObserverSpansQuery): Promise<ObserverSpansPage>;
@@ -523,6 +699,14 @@ export function readArtifactEntry(value: unknown): ArtifactEntry {
     contentAccess: str(a.content_access),
     freeText: a.free_text === true,
     freeTextNote: a.free_text === true ? (str(a.free_text_note) ?? "free text, not checked for names") : null,
+    origin: a.origin === "cell" || a.origin === "archive" ? a.origin : null,
+    logical: str(a.logical) || null,
+    recordedSha256: str(a.recorded_sha256) || null,
+    targets: list(a.targets)
+      .map((x) => obj(x))
+      .filter((t) => typeof t.id === "string" && t.id !== "")
+      .map((t) => ({ id: t.id as string, kind: str(t.kind) || null, result: str(t.result) || null })),
+    accessReason: str(a.access_reason) || null,
   };
 }
 
@@ -593,8 +777,9 @@ const KINDS: Readonly<Record<string, ObserverErrorKind>> = {
   internal: "internal",
 };
 
-export function createObserverClient(options: { readonly fetch: FetchLike; readonly base?: string }): ObserverClient {
+export function createObserverClient(options: { readonly fetch: FetchLike; readonly base?: string; /** How a Retry-After is waited out (the browser's timer from the shell; tests pass their own). Without it the retry is at once. */ readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void> }): ObserverClient {
   const base = options.base ?? "/api/v1";
+  const sleep = options.sleep ?? defaultSleep;
   const getOnce = async (path: string, signal?: AbortSignal): Promise<Record<string, unknown>> => {
     const aborted = (): never => {
       throw signal?.reason ?? new DOMException("The request was superseded.", "AbortError");
@@ -698,6 +883,7 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
         people: "role",
         project: str(obj(d.project).folder),
         nowMs: num(d.now_ms) ?? (typeof d.now === "string" && Number.isFinite(Date.parse(d.now)) ? Date.parse(d.now) : null),
+        evidenceMedia: bool(capabilities.evidence_media),
       };
     },
     async events(after, limit = 1000) {
@@ -785,6 +971,46 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       if (response.status !== 200) throw new ObserverError(response.status === 404 ? "not_found" : response.status === 401 ? "unauthorized" : "unavailable", `The artifact's content was not served (${response.status}).`, response.status);
       const text = response.text ? await response.text() : String(await response.json());
       return { text, labels: readContentLabels(response.headers) };
+    },
+    async cellEvidence(ticket, signal) {
+      const d = await get(`/cells/${encodeURIComponent(ticket)}/evidence`, signal);
+      return readCellEvidence(d, ticket);
+    },
+    async artifactText(id, signal) {
+      const url = artifactContentUrl(id, base);
+      if (!url) return { ok: false, reason: "invalid", status: 0, retried: false };
+      const once = async (): Promise<{ readonly response: FetchResponseLike | null }> => {
+        try {
+          return { response: await options.fetch(url, { credentials: "same-origin", headers: { Accept: "text/plain" }, ...(signal ? { signal } : {}) }) };
+        } catch (error) {
+          if (signal?.aborted) throw signal.reason ?? error;
+          return { response: null };
+        }
+      };
+      let retried = false;
+      let { response } = await once();
+      if (response && response.status === 503) {
+        retried = true;
+        const after = Number(response.headers?.get("Retry-After") ?? "1");
+        await sleep(Math.min(5, Math.max(0, Number.isFinite(after) ? after : 1)) * 1000, signal);
+        ({ response } = await once());
+      }
+      if (!response) return { ok: false, reason: "network", status: 0, retried };
+      if (response.status !== 200) {
+        let body: unknown = null;
+        try {
+          body = await response.json();
+        } catch {
+          body = null;
+        }
+        return { ok: false, reason: refusalOf(response.status, body), status: response.status, retried };
+      }
+      // Served text is plain text; never JSON-parsed, never markup.
+      const text = response.text ? await response.text() : "";
+      return { ok: true, text, labels: readTextContentLabels(response.headers) };
+    },
+    artifactContentUrl(id) {
+      return artifactContentUrl(id, base);
     },
     async summaries() {
       let cursor: string | null = null;
@@ -926,6 +1152,11 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       return d.display_policy && typeof d.display_policy === "object" ? obj(d.display_policy) : null;
     },
   };
+}
+
+/** No timer of its own (src/live reads time only through what it is given): without an injected `sleep`, the one retry is asked at once. */
+function defaultSleep(_ms: number, signal?: AbortSignal): Promise<void> {
+  return signal?.aborted ? Promise.reject(signal.reason) : Promise.resolve();
 }
 
 /** `<epoch>.<pos>` parts; null when the cursor is not one. */

@@ -94,6 +94,9 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["Shift+T"], action: "Expand or collapse the docked timeline (Atlas)", group: "Panels", workspace: "floor" },
   { keys: ["?"], action: "This list", group: "Panels" },
   { keys: ["S"], action: "Choose the source: Live Factory, Historical replay or Simulation", group: "Panels" },
+  // M6.4: the evidence player's own keys, handled inside its panel (which owns the keyboard while open).
+  { keys: [",", "."], action: "Evidence player: previous / next file", group: "Panels", view: true },
+  { keys: ["[", "]"], action: "Evidence player: previous / next check", group: "Panels", view: true },
   { keys: ["+", "-", "0"], action: "Zoom in / out / fit", group: "In a view", view: true },
   { keys: ["Shift+Arrows"], action: "Pan", group: "In a view", view: true },
   { keys: ["Enter", "Space"], action: "Select the focused entity", group: "In a view", view: true },

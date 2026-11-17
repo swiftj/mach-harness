@@ -4,8 +4,9 @@ import "net/http"
 
 // ContentSecurityPolicy allows nothing but this origin, as M5's host does: every script, style,
 // font and image is embedded in the binary, and the app talks only to its own API (including the
-// event stream, which is same-origin and covered by connect-src 'self').
-const ContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+// event stream, which is same-origin and covered by connect-src 'self'). media-src 'self' lets the
+// evidence player play a recording served by this origin's artifact content route (M6.4).
+const ContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; " +
 	"font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; " +
 	"frame-ancestors 'none'; object-src 'none'"
 

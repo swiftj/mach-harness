@@ -466,3 +466,15 @@ What remains live (about 180 MB) is mostly React's fibers for both views (153,00
 hidden view stays mounted for fast switching) and the scene log (about 25 MB); the suspected
 per-checkpoint copies and summary seeds are small (ingest 12 MB, the bounded start 12 MB).
 Culling the Blueprint's off-screen lanes would be the next step.
+
+## M6.4: the evidence player's calls
+
+`docs/mach-next/M6_4_EVIDENCE_PLAYER.md`; the player is `src/evidence/`. Tests: `test/evidence-model.test.mjs`, `e2e/evidence.e2e.mjs`.
+
+| Call | What it does |
+|---|---|
+| `client.cellEvidence(ticket)` | `GET /cells/{ticket}/evidence`, read by `readCellEvidence`: the checks with their files (`artifactId`, `integrity`, `contentAccess`), the cell's catalog entries, `settings.evidence_media` and the observer's note. |
+| `readArtifactEntry` | Now also keeps `origin` (cell or archive), `logical`, `recordedSha256`, `targets[{id, kind, result}]` and `accessReason`. |
+| `session().evidenceMedia` | `capabilities.evidence_media`; null when the session does not say (the player then fails closed: media off). |
+| `client.artifactText(id)` | One served text by catalog id with `readTextContentLabels` (free text, redactions, `X-MACH-Truncated`, `X-MACH-Evidence-Match`); a refusal is a value with its reason code (`refusalOf`: `credential-name`, `media-disabled`, `link`, `too-large`, `changed`, `duplicate`, `type`, `unavailable`, `not-found`, ...), never thrown. A 503 is asked again once after its Retry-After on the `sleep` the shell injects (`shell/source/boot.ts`; src/live keeps no timer of its own). |
+| `artifactContentUrl(id)` | The content route for an image or video element, for a catalog id (`^a[0-9a-f]{24}$`) only; null for anything else, so a path or prose never reaches a request. |

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -130,6 +131,7 @@ func (s *Server) evidence(w http.ResponseWriter, r *http.Request) {
 			byPath[e.Path] = e
 		}
 	}
+	earlier := earlierRuns(mine)
 	if mine == nil {
 		mine = []artifact.Entry{}
 	}
@@ -143,7 +145,7 @@ func (s *Server) evidence(w http.ResponseWriter, r *http.Request) {
 			for _, k := range c.Checks {
 				files := []map[string]any{}
 				for _, ev := range k.Evidence {
-					entry, catalogued := byPath[ev.File]
+					entry, catalogued := runFile(byPath, earlier, k, ev.File, ev.SHA256)
 					f := map[string]any{"file": ev.File, "sha256": ev.SHA256, "artifact_id": nil, "integrity": "missing"}
 					if catalogued {
 						f["artifact_id"], f["integrity"], f["content_access"] = entry.ID, entry.Integrity, entry.ContentAccess
@@ -160,6 +162,92 @@ func (s *Server) evidence(w http.ResponseWriter, r *http.Request) {
 		return http.StatusOK, ok(map[string]any{"ticket_id": t, "artifacts": mine, "checks": checks, "settings": set, "cursor": s.cursor(st.Pos),
 			"note": "verified evidence is a file results.json names with a matching hash; prose is written by an agent and is never proof"})
 	})
+}
+
+// earlierRuns lists the cell's earlier verification folders the catalog holds
+// (evidence/previous-N, where verify.py moves a run's files when the ticket is verified again),
+// latest first.
+func earlierRuns(entries []artifact.Entry) []string {
+	nums := map[int]bool{}
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Path, "evidence/previous-")
+		if !ok {
+			continue
+		}
+		n, _, _ := strings.Cut(rest, "/")
+		if v, err := strconv.Atoi(n); err == nil && v > 0 && strconv.Itoa(v) == n {
+			nums[v] = true
+		}
+	}
+	var out []int
+	for v := range nums {
+		out = append(out, v)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(out)))
+	folders := make([]string, 0, len(out))
+	for _, v := range out {
+		folders = append(folders, "evidence/previous-"+strconv.Itoa(v))
+	}
+	return folders
+}
+
+// runFile finds the catalogued file a recorded check names, in the check's own verification run.
+// A check names evidence/<file> whichever run recorded it; when the ticket is verified again,
+// verify.py moves the earlier run's files to evidence/previous-N/<file>, so the candidates are the
+// current evidence/<file> and every evidence/previous-N/<file>. The one whose hash is the hash the
+// check recorded is its file; when more than one holds those bytes, the one whose results.json
+// lists this check, in the check's round, is preferred, then the current run, then the latest
+// earlier run. When none holds the recorded bytes, the check's own run's file (by results.json and
+// round) is returned if there is one, else the current file: the caller then reports a mismatch,
+// or missing when nothing is catalogued.
+func runFile(byPath map[string]artifact.Entry, earlier []string, k *project.Check, file, sha string) (artifact.Entry, bool) {
+	candidates := []string{file}
+	if rest, ok := strings.CutPrefix(file, "evidence/"); ok && !strings.HasPrefix(rest, "previous-") {
+		for _, folder := range earlier {
+			candidates = append(candidates, folder+"/"+rest)
+		}
+	}
+	own := func(e artifact.Entry) int {
+		score := 0
+		for _, t := range e.Targets {
+			if t.ID == k.TargetID {
+				score += 2
+				break
+			}
+		}
+		if e.Round != nil && k.Round != nil && *e.Round == *k.Round {
+			score++
+		}
+		return score
+	}
+	var best artifact.Entry
+	found, bestScore := false, -1
+	for _, p := range candidates {
+		e, ok := byPath[p]
+		if !ok || sha == "" || e.SHA256 != sha {
+			continue
+		}
+		if sc := own(e); sc > bestScore {
+			best, found, bestScore = e, true, sc
+		}
+	}
+	if found {
+		return best, true
+	}
+	for _, p := range candidates {
+		e, ok := byPath[p]
+		if !ok {
+			continue
+		}
+		if sc := own(e); sc > bestScore && sc >= 2 {
+			best, found, bestScore = e, true, sc
+		}
+	}
+	if found {
+		return best, true
+	}
+	e, ok := byPath[file]
+	return e, ok
 }
 
 // content: GET /api/v1/artifacts/{id}/content. By catalog id only; the bytes served are exactly

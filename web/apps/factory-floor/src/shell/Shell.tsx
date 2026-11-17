@@ -33,6 +33,7 @@ import { parseHash, type HashAt } from "./source/hash";
 import { applyHash, browserHashHost, createHashSync, type LostReason } from "./source/hashSync";
 import { locateEvent } from "./source/locate";
 import { HelpSheet } from "./HelpSheet";
+import { EvidencePlayer } from "../evidence/EvidencePlayer";
 import { Inspector } from "./inspector/Inspector";
 import { useShellKeys } from "./keyboard";
 import { Stage } from "./Stage";
@@ -382,9 +383,10 @@ export function Shell() {
         setHelp(true);
       },
       openSource: () => setSourceOpen(true),
-      modalOpen: () => helpRef.current,
+      // The help sheet, or the evidence player (M6.4): a panel over the workspace that owns the keyboard while open.
+      modalOpen: () => helpRef.current || store.getState().evidence !== null,
     }),
-    [toggleInspector, toggleTimeline],
+    [toggleInspector, toggleTimeline, store],
   );
   useShellKeys(commands);
 
@@ -580,6 +582,7 @@ export function Shell() {
 
       <Announcer />
       <HelpSheet open={help} onOpenChange={setHelp} opener={helpOpener} />
+      <EvidencePlayer />
     </div>
   );
 }

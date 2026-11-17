@@ -80,7 +80,7 @@ test("containField: an opaque value at the field's limit, a placeholder wherever
 // ---------------------------------------------------------------- the source guard
 
 // The inspector files (floor and Timeline): every anatomy, the header, the evidence list, the run at the playhead, "In time".
-const INSPECTOR_FILES = ["shell/inspector/anatomies.tsx", "shell/inspector/Inspector.tsx", "shell/inspector/parts.tsx", "shell/inspector/RunNow.tsx", "shell/inspector/Provenance.tsx", "timeline/inspector/InTimeSection.tsx"];
+const INSPECTOR_FILES = ["shell/inspector/anatomies.tsx", "shell/inspector/Inspector.tsx", "shell/inspector/parts.tsx", "shell/inspector/RunNow.tsx", "shell/inspector/Provenance.tsx", "timeline/inspector/InTimeSection.tsx", "evidence/EvidencePlayer.tsx", "evidence/OpenEvidence.tsx"];
 
 // How the scene names each policy field (text/fields.ts KNOWN_FREE_TEXT_FIELDS, through the reducers).
 const POLICY_READS = [
@@ -184,7 +184,8 @@ test("the session's policy is read outside analytics/: one shared hook over the 
 
 import { readdirSync, statSync } from "node:fs";
 
-const ROOTS = ["blueprint", "atlas", "shell", "timeline"];
+// M6.4: the evidence player's folder is scanned like the inspectors it opens from.
+const ROOTS = ["blueprint", "atlas", "shell", "timeline", "evidence"];
 const walk = (dir) =>
   readdirSync(new URL(`../src/${dir}`, import.meta.url)).flatMap((name) => {
     const rel = `${dir}/${name}`;
@@ -260,7 +261,7 @@ export function containmentOffenders(file, text) {
   return out;
 }
 
-test("guard: blueprint, atlas, shell and timeline print the policy's free text only through the shared containment, and never name with it", () => {
+test("guard: blueprint, atlas, shell, timeline and evidence print the policy's free text only through the shared containment, and never name with it", () => {
   assert.ok(ALL_FILES.length > 60, `scanned ${ALL_FILES.length} files`);
   const found = ALL_FILES.flatMap((f) => containmentOffenders(f, src(f)));
   assert.deepEqual(found, [], `\n${found.map((x) => x.join("  ")).join("\n")}`);
@@ -305,4 +306,63 @@ test("a sentence is treated as quoting prose only when it carries one of its eve
   assert.equal(F.eventQuotesFreeText({ type: "execution.completed", data: { waiting_for: null } }, null), false);
   assert.match(src("shell/history.ts"), /eventQuotesFreeText\(entry\.event, undefined, title\)/);
   assert.match(src("shell/inspector/FreeText.tsx"), /quotesFreeText\(policy, entry, words\)/);
+});
+
+// ---------------------------------------------------------------- M6.4: the evidence player (design 4.3, rules 2, 3 and 6; C1 to C4)
+
+const EVIDENCE_FILES = walk("evidence");
+const codeOf = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+/** [file:line, rule, line]: content or a file name used where the player's rules forbid it. */
+export function playerOffenders(file, text) {
+  const out = [];
+  codeOf(text)
+    .split("\n")
+    .forEach((line, i) => {
+      const at = `${file}:${i + 1}`;
+      // Rule 3 (C1): text never as markup, never Markdown, no links made from content.
+      if (/dangerouslySetInnerHTML|\.innerHTML|\.outerHTML|insertAdjacentHTML|\bmarked\b|markdown-it|remark|rehype|<a\s|\bhref=/.test(line)) out.push([at, "markup or a link", line.trim()]);
+      // Rule 6 (C4): nothing in the title, storage or a copied link.
+      if (/document\.title|localStorage|sessionStorage|indexedDB|navigator\.clipboard|history\.(push|replace)State/.test(line)) out.push([at, "title, storage or address", line.trim()]);
+      // Rule 6: accessible names and hovers use IDs and types, never a file's name, its path or its text.
+      for (const m of line.matchAll(/(?:aria-label|alt|title|label)=\{(`[^`]*`|[^}]*)\}?/g)) {
+        const expr = m[1] ?? "";
+        // In a template only the interpolations are code; the words around them are MACH's own.
+        const code = expr.startsWith("`") ? [...expr.matchAll(/\$\{([^}]*)\}/g)].map((x) => x[1]).join(" ") : expr;
+        if (/\b(?:name|path|text|accessWords)\b/.test(code.replace(/fileAccessibleName\(/, ""))) out.push([at, "named with prose", m[0]]);
+      }
+      // Rule 6 (C2, C3): a file's name or path is printed only contained.
+      if (/\{(?:file|f)\.(?:name|path)\}/.test(line)) out.push([at, "a file name printed raw", line.trim()]);
+      // Rule 2: a request is made only by catalog id, through the client.
+      if (/\bfetch\(|XMLHttpRequest|new URL\(|\/api\/v1/.test(line)) out.push([at, "a request outside the client", line.trim()]);
+    });
+  return out;
+}
+
+test("guard: the evidence player renders content as text nodes only, names with IDs and types, keeps names contained and stores nothing", () => {
+  assert.ok(EVIDENCE_FILES.length >= 3, `scanned ${EVIDENCE_FILES.join(", ")}`);
+  const found = EVIDENCE_FILES.flatMap((f) => playerOffenders(f, src(f)));
+  assert.deepEqual(found, [], `\n${found.map((x) => x.join("  ")).join("\n")}`);
+  const player = src("evidence/EvidencePlayer.tsx");
+  // File names go through the one contained component, at a bounded length, the label once per panel.
+  assert.match(player, /<UncheckedText text=\{unchecked\(file\.name, "artifact path_rel", NAME_MAX\)\} max=\{NAME_MAX\} labelled expandable=\{false\} \/>/);
+  assert.match(player, /File names: <UncheckedNote \/>/);
+  // Served text: one text node in a <pre>, and labelled when the catalog or the headers say it is free text.
+  assert.match(player, /<pre [^>]*>\s*\{text\}\s*<\/pre>/);
+  assert.match(player, /freeText=\{catalogFreeText \|\| r\.labels\.freeText\}/);
+  assert.match(player, /\{FREE_TEXT_LABEL\}/);
+});
+
+test("guard: the player's guard bites", () => {
+  const bad = [
+    '      <pre dangerouslySetInnerHTML={{ __html: text }} />',
+    '      <img src={url} alt={file.name} />',
+    '      <span>{file.path}</span>',
+    '      document.title = `Evidence ${file.name}`;',
+    '      localStorage.setItem("last", path);',
+    '      <a href={text}>open</a>',
+    '      fetch(`/api/v1/artifacts/${id}/content`);',
+  ].join("\n");
+  const kinds = playerOffenders("bad.tsx", bad).map(([, kind]) => kind);
+  for (const k of ["markup or a link", "named with prose", "a file name printed raw", "title, storage or address", "a request outside the client"]) assert.ok(kinds.includes(k), k);
 });

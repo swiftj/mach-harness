@@ -54,3 +54,25 @@ export function useFreeTextLabel(artifact: Pick<ArtifactState, "id" | "ticketId"
   }, [client, real, key]);
   return found && found.key === key ? found.label : null;
 }
+
+/**
+ * The catalog entries for a ticket (metadata only), for the evidence player's entry points to map a
+ * scene artifact to its catalog id (M6.4). Null for the simulation, before the catalog answers, or when
+ * it could not be read.
+ */
+export function useCatalogEntries(ticket: string | null, enabled: boolean): Entries | null {
+  const { client } = useSource();
+  const [found, setFound] = useState<{ ticket: string; entries: Entries } | null>(null);
+  useEffect(() => {
+    if (!client || !enabled || !ticket) return;
+    let alive = true;
+    entriesFor(client, ticket).then(
+      (entries) => alive && setFound({ ticket, entries }),
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, [client, enabled, ticket]);
+  return found && found.ticket === ticket ? found.entries : null;
+}

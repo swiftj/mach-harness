@@ -68,7 +68,8 @@ Every route is GET only (anything else: 405 with `Allow: GET`), needs the sessio
 `Host` `127.0.0.1:<port>` or `localhost:<port>` (403), no foreign `Origin` or `Sec-Fetch-Site`
 (403), and a plain path (no `..`, `//`, `%2f`, `%2e`, `%5c`, `%00`: 400). Every reply is
 `{"ok":true,"data":…}` or `{"ok":false,"error":{"kind","message",…}}` with `Cache-Control: no-store`
-and the M5 CSP. The event schema is chosen with `?schema=3` or `X-MACH-Event-Schema: 3`; absent
+and the page policy: the M5 CSP plus `media-src 'self'`, so the evidence player can play a recording this origin
+serves (`security.ContentSecurityPolicy`, held exactly by `TestPagePolicyIsExact`). The event schema is chosen with `?schema=3` or `X-MACH-Event-Schema: 3`; absent
 means 3; any other value is 400 `invalid` with `supported: [3]`. Cursors are `<generation>.<pos>`.
 
 | Route | Purpose | Limits and notes |
@@ -86,7 +87,7 @@ means 3; any other value is 400 `invalid` with `supported: [3]`. Cursors are `<g
 | `slices`, `slices/{slice}` | scheduler state (`completed`, `active`, `ready`, `blocked`, `superseded`), dependencies, recorded reasons, `waiting {kind: dependency \| capacity \| person \| unknown, basis, reasons, since}`, state history, earlier revisions | `wave`, `state`, `limit`, `offset`; capacity only from `capacity.wait_changed` or the scheduler's fixed sentence; never from silence |
 | `cells`, `cells/{ticket}` | cells; `app_type` and `risk` (`null` while unknown, never `""`; the same in `plan`), `plan {app_type, risk, contracts, tasks, recorded_by}` (the plan station's exit); detail adds visits (with gates, tasks, checks, measured duration), rounds, gates, build tasks, verification checks and targets, review rounds with panel, verdicts and decision, findings (prose), human approvals (role only, each with `decision`: `APPROVED`, or `SENT_BACK` when the person sent the change back to the build station; a record without one reads `APPROVED`), merge, cleanup, human gates (`closed_by: "sent-back"` when the person sent the change back, which closes the gate and its W3 wait as an approval does; the gate-wait span's outcome is the same word), wait | `stage`, `archived`, `limit`, `offset`; gates capped at 1,000 per cell (`gates_dropped`) |
 | `cells/{ticket}/visits/{visit}` | one visit and its events (visit as `build%232`) | up to 1,000 events still held |
-| `cells/{ticket}/evidence` | the cell's catalogued artifacts and its recorded checks, each evidence file linked to its catalog id and integrity | |
+| `cells/{ticket}/evidence` | the cell's catalogued artifacts and its recorded checks, each evidence file linked to its catalog id and integrity | A check names `evidence/<file>` whichever run recorded it; it is linked to the file of its own run: the current `evidence/<file>` or the `evidence/previous-N/<file>` holding the hash it recorded (ties: the run whose `results.json` lists the check in its round, then the latest). With no such file, its own run's file (else the current one) is reported as `mismatch`, or `missing` |
 | `runs`, `runs/{execution}` | executions: state (`claimed`, `running`, `ended`, `finished`, `failed`, `interrupted`, `timed-out`, `could-not-start`, `unknown`), true process times (`time_basis: process`) or the supervisor's (`bounded`), cost with its source (stream usage, else MACH's record; null with a reason), tokens and cost per model, `cost_may_be_under_reported` with reasons (from the stream's own `execution.usage.cost_complete` when there is one; the process ending interrupted, timed out or unknown also counts), refused tools, recovery; detail adds workflows, usage, session | `state=active\|finished\|unknown`, `ticket`, `limit` (200, max 1000), `offset` |
 | `runs/{execution}/agents` | workflow agents and Agent-tool sub-agents: label, phase, model, state, queue wait, run time, token total, tool-call count, last tool, refusals | never a cost, never per-call records |
 | `runs/{execution}/tools` | main-loop and Agent-tool sub-agent tool calls, with spans; refusals | workflow agents' calls are a count only |
@@ -269,7 +270,8 @@ with no `.factory/` answers `factory_present: false` and the same keys.
   member name twice is listed with `content_access: "none"` and says so (409 `duplicate`); a file over 64 MiB is
   listed, not hashed, and says it is too large (413 `too-large`).
 - **Types, by sniffing:** text (served by default as `text/plain; charset=utf-8`, cut to 256 KiB with
-  `X-MACH-Truncated`), PNG, JPEG, GIF, WebP, WebM, MP4.
+  `X-MACH-Truncated`; extensions `.txt`, `.md`, `.json`, `.log`, `.out`, `.cast`, `.csv`, `.yaml`, `.yml`, `.diff`,
+  `.patch`, `.http` (an API ticket's request/response dump) and none), PNG, JPEG, GIF, WebP, WebM, MP4.
 - **MACH's JSON records are redacted by kind** (`redact.ScrubRecord`): `decision.json`, votes, `results.json`,
   `summary.json`, `build-report.json`, `cell.json`, run records. Every person-bearing field (`by`, `recorded_by`,
   `approved_by`, `enabled_by`, `author`, `committer`, names and e-mails, a vote's `reviewer` unless it is a seat, and

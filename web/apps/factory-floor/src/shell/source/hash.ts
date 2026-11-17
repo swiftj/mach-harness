@@ -16,6 +16,8 @@
  * - `lens`: an investigation lens (`retries`, `concurrency`, `waits`, `review`, `recovery`). Timeline only.
  * - `table=1`: the Timeline as a table (the structured alternative). Timeline only.
  * - `theater=1`: the floor only (read, never written: as before M6.3).
+ * - `evidence=<ticket>` and `check=<id>`: the evidence player open over any workspace (M6.4), for one
+ *   ticket at one check. Identifiers only (never a path, a file name or prose); anything else is dropped.
  *
  * Analytics (M6.5 design section 4), its interface state (scene/analytics.ts) and nothing else:
  * - `area`: `pulse` (left out), `flow`, `quality`, `economics`, `reliability`, `compare`, `opportunities`.
@@ -33,6 +35,7 @@
  * Unknown parameters are ignored; a malformed one is dropped on its own and never throws.
  */
 import type { EntityRef } from "../../sim";
+import { EVIDENCE_CHECK, EVIDENCE_TICKET } from "../../evidence/ids";
 import type { LensId } from "../../timeline/contract";
 import {
   INITIAL_ANALYTICS_VIEW,
@@ -76,6 +79,19 @@ export interface HashState {
   readonly theater: boolean;
   /** Analytics' whole interface state, defaults filled in. Null unless the route is `analytics`. */
   readonly analytics: AnalyticsViewState | null;
+  /** The evidence player (M6.4): a ticket and, optionally, a check. Null when the address names none. */
+  readonly evidence: HashEvidence | null;
+}
+
+export interface HashEvidence {
+  readonly ticket: string;
+  readonly check: string | null;
+}
+
+/** `evidence=` and `check=`, identifiers only. */
+export function parseEvidence(ticket: string | null | undefined, check: string | null | undefined): HashEvidence | null {
+  if (!ticket || !EVIDENCE_TICKET.test(ticket)) return null;
+  return { ticket, check: check && EVIDENCE_CHECK.test(check) ? check : null };
 }
 
 const REF = /^[a-z]+:.+/;
@@ -157,6 +173,7 @@ export function parseHash(hash: string): HashState {
     table: timeline && p.get("table") === "1",
     theater: !timeline && route !== "analytics" && p.get("theater") === "1",
     analytics: route === "analytics" ? parseAnalytics(p) : null,
+    evidence: parseEvidence(p.get("evidence"), p.get("check")),
   };
 }
 
@@ -304,6 +321,8 @@ export interface HashWrite {
   readonly table?: boolean;
   /** Written when the route is `analytics`. */
   readonly analytics?: AnalyticsViewState;
+  /** The evidence player, when open: written last, identifiers only. */
+  readonly evidence?: HashEvidence | null;
 }
 
 export function formatAt(at: HashAt): string {
@@ -323,6 +342,11 @@ export function formatHash(w: HashWrite): string {
     if (w.group !== "product") parts.push(`group=${w.group}`);
     if (w.lens) parts.push(`lens=${w.lens}`);
     if (w.table) parts.push("table=1");
+  }
+  const ev = w.evidence ? parseEvidence(w.evidence.ticket, w.evidence.check) : null;
+  if (ev) {
+    parts.push(`evidence=${encodeURIComponent(ev.ticket)}`);
+    if (ev.check) parts.push(`check=${encodeURIComponent(ev.check)}`);
   }
   return `#${w.route}${parts.length ? `?${parts.join("&")}` : ""}`;
 }

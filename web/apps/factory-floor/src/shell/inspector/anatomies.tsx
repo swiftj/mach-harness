@@ -66,6 +66,8 @@ import { activityNote, agentsWords, interruptionWords, modelCostsOf, planWords, 
 import { useFreeTextLabel } from "./catalog";
 import { EventWords, FreeText, FreeTextLabel } from "./FreeText";
 import { gatePositionWords, outcomeStateWords, outcomeWordsOf, visitStateWords } from "../../timeline/inspector";
+import { OpenEvidence } from "../../evidence/OpenEvidence";
+import { checkCitingPath } from "../../evidence/model";
 import { historyEndedAt, useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
 
@@ -104,11 +106,11 @@ function AgentLink({ agent }: { agent: AgentState }) {
 }
 
 /**
- * What the inspector shows of an artifact (I-45): its recorded facts. Its content is not opened here;
- * that waits for the Evidence Theater (M6.4), which will open it through the observer's guarded
- * content route with its free-text label.
+ * What the inspector shows of an artifact (I-45, M6.4): its recorded facts. Its content is never read
+ * here; a file a verification check cites opens in the evidence player (src/evidence), through the
+ * observer's guarded content route by catalog id, beside the check it proves, with its free-text label.
  */
-export const ARTIFACT_CONTENT_NOTE = "These are the artifact's recorded facts. Its content is not opened here: opening it waits for the Evidence Theater, a later milestone.";
+export const ARTIFACT_CONTENT_NOTE = "These are the artifact's recorded facts. A file a verification check cites opens in the evidence player, beside the check it proves; any other file is listed here with its facts only.";
 
 /**
  * The persistent label on an evidence document served as free text the observer could not check for
@@ -320,6 +322,7 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
   const factory = useSceneStore((s) => s.factoryStatus);
   const agentsLine = useScene((s) => agentsOf(s, factory, cell.executionId, cell.agentOrder.length, active.length));
   const artifactCounts = artifactCountsOf(cell);
+  const recordedChecks = cell.verifications.reduce((n, v) => n + v.checks.filter((c) => c.result !== "pending").length, 0);
   // Live: what the cell is doing now, from what is recorded (the nine states; idle between two
   // executions is said as such, never "working"). A string, so the selector is stable.
   const live = cell.meta.authority !== "simulated";
@@ -378,6 +381,10 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
             );
           })}
         </ol>
+      </Section>
+      <Section title="Evidence" aside={<span className="text-caption text-ink-subtle">{recordedChecks} {recordedChecks === 1 ? "check" : "checks"} recorded</span>}>
+        <p className="mb-2 text-body-sm text-ink-muted">What the verifier captured for each check: screenshots, recordings and transcripts, beside the check they prove.</p>
+        <OpenEvidence ticket={cell.ticketId}>Open the evidence player</OpenEvidence>
       </Section>
       <Section title="Stage history">
         <ol className="flex flex-col gap-1 text-body-sm">
@@ -698,6 +705,8 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
   const freeText = useFreeTextLabel(artifact);
   const writer = artifact.writer.agentId && cell ? (cell.agents[artifact.writer.agentId] ?? null) : null;
   const base = artifact.path.split("/").pop() ?? artifact.path;
+  // M6.4: a file a verification check cites opens in the evidence player at that check.
+  const citing = useMemo(() => (cell ? checkCitingPath(cell, artifact.path) : null), [cell, artifact.path]);
   // Consumers: tool calls in this cell, after the write, whose target names the file. Derived from the
   // calls' short targets, so it is a lower bound.
   const readers = useMemo(() => {
@@ -734,6 +743,13 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
         <p className="mt-3 text-caption text-ink-subtle" data-artifact-content-note="">
           {ARTIFACT_CONTENT_NOTE}
         </p>
+        {citing ? (
+          <div className="mt-2">
+            <OpenEvidence ticket={artifact.ticketId} check={citing.checkId} start={{ sceneArtifactId: artifact.id, path: artifact.path }}>
+              {`Open in the evidence player (${citing.checkId}, round ${citing.round})`}
+            </OpenEvidence>
+          </div>
+        ) : null}
       </Section>
       <Section title="Writer and readers">
         <RefList>
@@ -801,6 +817,11 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
                   {c.title}
                   {c.note ? <span className="block text-caption text-factory-fail">{c.note}</span> : null}
                 </span>
+                {c.result !== "pending" ? (
+                  <OpenEvidence ticket={gate.ticketId} check={c.targetId} variant="ghost" className="shrink-0">
+                    {`Evidence for ${c.targetId}, ${c.evidence.length} ${c.evidence.length === 1 ? "file" : "files"}`}
+                  </OpenEvidence>
+                ) : null}
               </li>
             ))}
           </ul>

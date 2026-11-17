@@ -52,6 +52,7 @@ var extClass = map[string]string{
 	".webm": ClassVideo, ".mp4": ClassVideo,
 	".txt": ClassText, ".md": ClassText, ".json": ClassText, ".log": ClassText, ".out": ClassText, ".cast": ClassText,
 	".csv": ClassText, ".yaml": ClassText, ".yml": ClassText, ".diff": ClassText, ".patch": ClassText, "": ClassText,
+	".http": ClassText, // a request/response dump, which the verify station accepts for API tickets
 }
 
 // Sniff decides a file's media type from its first bytes, never from its name. Only the types the

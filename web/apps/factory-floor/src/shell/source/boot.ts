@@ -40,11 +40,12 @@ export function urlFor(choice: SourceChoice, location: Pick<Location, "pathname"
 export const browserFetch: FetchLike = async (url, init) => {
   // The signal is forwarded so a superseded request (a window the person has already left) is really aborted.
   const response = await fetch(url, { headers: init?.headers, credentials: "same-origin", cache: "no-store", signal: init?.signal });
-  return { status: response.status, json: () => response.json() };
+  // Headers and text for the content route (M6.4): a served text is read as text, never parsed; its headers say whether it was cut short or holds free text.
+  return { status: response.status, json: () => response.json(), headers: response.headers, text: () => response.text() };
 };
 
 export function observerClient(): ObserverClient {
-  return createObserverClient({ fetch: browserFetch });
+  return createObserverClient({ fetch: browserFetch, sleep: browserSleep });
 }
 
 /** What answered at `/api/v1/session`. */
@@ -96,4 +97,23 @@ export function createBrowserLive(client: ObserverClient, reducedMotion: boolean
 export async function createBrowserReplay(client: ObserverClient, reducedMotion: boolean): Promise<SceneStore> {
   const { store } = await createReplay(client, { clock: browserClock(), reducedMotion });
   return store;
+}
+
+/** The content route's "try again" (503, Retry-After) waited out on the browser's timer (M6.4). */
+function browserSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
