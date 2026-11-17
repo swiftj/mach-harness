@@ -247,6 +247,17 @@ These are the cases, and what each choice runs if you would rather type it yours
 
 A ticket gets three judging rounds in all, counting failed verifications and rejected reviews. On the third failure it is handed to a person; the factory does not keep trying.
 
+### Being told when the factory is waiting
+
+MACH can post one message to a channel when a ticket that nobody is watching stops for a person. It is off until you turn it on, on each machine. Put your channel's webhook address in a file yourself (it is a secret, so don't paste it into the conversation), then:
+
+```
+/mach notify set --from-file ~/hook.txt --label "Shop team"
+/mach notify test
+```
+
+Delete the file afterwards. A message names the ticket, says what is needed in a fixed sentence, and gives the command to run (`/mach decide`). It never includes a title, reviewer text, a name or a link, and it can approve nothing. `/mach notify` shows whether it is on and the last message sent; `/mach notify off` removes the address. Slack and Discord webhook addresses both work.
+
 ## Finding out where things stand
 
 ```
@@ -279,6 +290,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach explain <ticket>` | Why a ticket failed or is waiting |
 | `/mach decide` | Walk through every ticket that waits on you, with its options |
 | `/mach doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
+| `/mach notify [set\|test\|off]` | Tell a channel when a ticket waits for a person; off until you set an address on this machine |
 | `/mach new "<idea>"` | Start the interview for a new idea |
 | `/mach approve <ticket>` | Record your approval of a change that needs a person, then carry the ticket on |
 | `/mach send-back <ticket> "<why>"` | Send a change the panel approved back to the builder, with your reason |
@@ -318,6 +330,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `factory.max_parallel` | `3` | How many tickets may run at once |
 | `factory.max_parallel_high` | `1` | How many High-risk tickets may run at once |
 | `factory.claim_minutes` | `90` | How long a worker's claim on a ticket holds without news of it, before another worker may take the ticket |
+| `factory.notifications` | not set | `false` forbids notifications for this project on every machine. Nothing in this file can turn them on |
 | `merge.pr.inline_findings` | `true` | With `merge.method` `pr`, post the review panel's findings on the pull request |
 | `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
 | `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |

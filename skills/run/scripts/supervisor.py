@@ -56,6 +56,7 @@ LEASE_SECONDS = 180
 # day has less than this left, the daily budget is reported as reached.
 MIN_RUN_BUDGET_USD = float(policy_module.LIMITS["max_budget_usd_per_run"][1])
 SUPERVISOR = "supervisor"
+QUIET_NEEDS = (None, "nothing", "worker-in-cell")  # stops nobody has to act on: no message
 
 
 class SupervisorError(Exception):
@@ -166,8 +167,13 @@ class Lease:
 class Supervisor:
     def __init__(self, root: Path, config: Dict[str, Any], line: Any, *, next_step: Callable[[str], Dict[str, Any]],
                  audit: Callable[[], Dict[str, Any]], git: Callable[..., subprocess.CompletedProcess], run_script: Path, workflow: str,
-                 observe_due: Optional[Callable[[], Dict[str, Any]]] = None, sibling: Optional[Callable[[str], Path]] = None):
+                 observe_due: Optional[Callable[[], Dict[str, Any]]] = None, sibling: Optional[Callable[[str], Path]] = None,
+                 notifier: Any = None):
         self.root = root
+        # notify.Notifier, built by run.py, or None for no messages. Messages are queued while the ledger is locked and
+        # sent after it is released, so a slow channel never holds the line; a failure changes nothing here.
+        self.notifier = notifier
+        self.outbox: List[Tuple[str, str, Optional[str], str]] = []
         self.sibling = sibling  # where the other skills are: monitoring requests read the ticket station's shared rules
         self.observe_due = observe_due
         self.config = config
@@ -218,6 +224,14 @@ class Supervisor:
     # ---- one pass ----
 
     def tick(self) -> Dict[str, Any]:
+        try:
+            report = self.one_pass()
+            self.retry_messages(report)  # earlier passes' failed messages first, so this pass's new ones are tried once
+        finally:
+            self.send_messages()
+        return report
+
+    def one_pass(self) -> Dict[str, Any]:
         pol = self.policy()
         report: Dict[str, Any] = {"at": stamp(), "state": "disabled", "autonomy": pol.get("autonomy"), "recovered": [], "dispatched": [], "started": [],
                                   "held": [], "running": [], "notes": [], "factory_started": False}
@@ -356,7 +370,7 @@ class Supervisor:
             self.line.emit(ledger, "execution.failed", stage=step.get("stage"), next=step.get("action"), how=record["how"],
                            claude_error=facts.get("subtype") if facts.get("is_error") else None, exit_code=record["exit_code"], attempt=count,
                            session_id=record["session_id"], not_progressing=stuck[0], **common)
-            self.park(ledger, ticket, stuck[1], common)
+            self.park(ledger, ticket, stuck[1], common, code="no-progress")
             return
         if moved or (known and step.get("action") == "stop"):
             # Refusals that the workers got past are reported with the result. Nothing was granted.
@@ -365,18 +379,22 @@ class Supervisor:
             self.line.emit(ledger, "execution.completed", stage=step.get("stage"), next=step.get("action"), waiting_for=step.get("needs"),
                            how=record["how"], exit_code=record["exit_code"], seen_to_end=known, cost_usd=record["cost_usd"], session_id=record["session_id"],
                            refused_tools=record["refused_tools"], **common)
+            if step.get("stop") and step.get("needs") not in QUIET_NEEDS:
+                self.outbox.append(("wait", ticket, step.get("stage"), str(step.get("needs"))))  # it ended with the ticket waiting for a person
             return
         if record["refused_tools"]:
             # It got nowhere and was refused something: never granted quietly. A person sees what was asked for and decides.
-            self.park(ledger, ticket, "It made no progress and needed tools that are not allowed: " + ", ".join(record["refused_tools"]) + ".", common)
+            self.park(ledger, ticket, "It made no progress and needed tools that are not allowed: " + ", ".join(record["refused_tools"]) + ".", common,
+                      code="tool-refused")
         count = int((supervisor["attempts"].get(ticket) or {}).get("count") or 0) + 1
         supervisor["attempts"][ticket] = {"count": count, "at": f"{step.get('stage')}@{step.get('action')}"}
         self.line.emit(ledger, "execution.failed", stage=step.get("stage"), next=step.get("action"), how=record["how"], claude_error=facts.get("subtype") if facts.get("is_error") else None,
                        exit_code=record["exit_code"], attempt=count, session_id=record["session_id"], **common)
         if not known and record.get("action_at_start") in NEVER_RETRIED:
-            self.park(ledger, ticket, f"The {record.get('action_at_start')} station was running when its execution was lost, and what it did is not known. It is never retried automatically.", common)
+            self.park(ledger, ticket, f"The {record.get('action_at_start')} station was running when its execution was lost, and what it did is not known. It is never retried automatically.", common,
+                      code="outcome-unknown")
         elif count >= int(pol["limits"]["max_attempts"]):
-            self.park(ledger, ticket, f"{count} execution(s) ended without moving it past '{step.get('stage')}'.", common)
+            self.park(ledger, ticket, f"{count} execution(s) ended without moving it past '{step.get('stage')}'.", common, code="no-progress")
 
     def learning_due(self, ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
         """An observe pass that is due is separate work, never part of a ticket's execution (run.py hides it from one).
@@ -449,11 +467,50 @@ class Supervisor:
                                     f"({refusal.get('reason_code')}). Retrying would repeat it; the plan or the code needs a person.")
         return None
 
-    def park(self, ledger: Dict[str, Any], ticket: str, reason: str, common: Dict[str, Any]) -> None:
-        """Take a ticket out of automatic execution until a person says to carry on."""
+    def park(self, ledger: Dict[str, Any], ticket: str, reason: str, common: Dict[str, Any], code: Optional[str] = "general") -> None:
+        """Take a ticket out of automatic execution until a person says to carry on. `code` picks the message's fixed
+        sentence (notify.PARK_TEXT), never `reason`; None when the person who parked it is already here."""
         if ticket not in ledger["supervisor"]["parked"]:
             ledger["supervisor"]["parked"][ticket] = {"reason": reason, "at": stamp()}
             self.line.emit(ledger, "human.required", reason=reason, **common)
+            if code is not None:
+                self.outbox.append(("parked", ticket, self.stage_of(ticket), code))
+
+    # ---- messages to a channel (notify.py) ----
+
+    def stage_of(self, ticket: str) -> Optional[str]:
+        try:
+            stage = json.loads((self.root / ".factory" / "worktrees" / ticket / "cell.json").read_text(encoding="utf-8")).get("stage")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return stage if isinstance(stage, str) else None
+
+    def send_messages(self) -> None:
+        """Send what this pass queued, outside the ledger's lock. Never raises."""
+        queued, self.outbox = self.outbox, []
+        if self.notifier is None:
+            return
+        for kind, ticket, stage, value in queued:
+            with contextlib.suppress(Exception):
+                if kind == "parked":
+                    self.notifier.parked(ticket, stage, value)
+                else:
+                    self.notifier.wait(ticket, stage, value)
+
+    def retry_messages(self, report: Dict[str, Any]) -> None:
+        """The next occasion for a message that failed: each pass, for a wait still at the same stage. Never raises."""
+        if self.notifier is None or report.get("state") == "disabled":
+            return
+        parked = report.get("parked") or {}
+
+        def still_waiting(ticket: str, stage: Optional[str]) -> bool:
+            if ticket in parked:
+                return self.stage_of(ticket) == stage
+            step = self.next_step(ticket)
+            return bool(step.get("stop")) and step.get("needs") not in QUIET_NEEDS and step.get("stage") == stage
+
+        with contextlib.suppress(Exception):
+            self.notifier.retry(still_waiting)
 
     # ---- scheduling ----
 
@@ -540,7 +597,9 @@ class Supervisor:
                 reason = f"all {pol['limits']['max_parallel']} place(s) are in use"
             elif self.risk_of(ticket) and RISKS.index(self.risk_of(ticket)) > RISKS.index(pol["max_risk"]):
                 reason = f"its risk tier is {self.risk_of(ticket)}, above the {pol['max_risk']} this machine allows unattended"
-                self.park(ledger, ticket, f"Its risk tier ({self.risk_of(ticket)}) is above what this machine runs unattended ({pol['max_risk']}).", {"ticket_id": ticket, "slice_id": slice_id})
+                self.park(ledger, ticket, f"Its risk tier ({self.risk_of(ticket)}) is above what this machine runs unattended ({pol['max_risk']}).", {"ticket_id": ticket, "slice_id": slice_id},
+                          code="risk")
+                self.line.save(ledger)  # the park and its event must reach disk: the pass reads the ledger afresh after scheduling
             elif (beside := self.held_beside(ticket, live)):
                 reason = beside  # the schedule's High-risk or file-overlap rule; tried again on a later pass
             else:
@@ -554,6 +613,7 @@ class Supervisor:
                     self.line.emit(ledger, "human.required", ticket_id=ticket, slice_id=slice_id, reason="It is approved. This machine does not merge unattended, so a person merges it.",
                                    refs={"cell": f".factory/worktrees/{ticket}/cell.json"})
                     self.line.save(ledger)
+                    self.outbox.append(("parked", ticket, self.stage_of(ticket), "merge"))  # it waits for a person, though it is neither stopped nor parked
             if reason:
                 report["held"].append({"ticket_id": ticket, "slice_id": slice_id, "why": reason})
                 continue
@@ -592,21 +652,21 @@ class Supervisor:
             if entry["state"] == "grooming" and step.get("action") == "build":
                 ok, why = station.risk_gate(ticket, pol["max_risk"])
                 if not ok:
-                    self.park(ledger, ticket, why, common)
+                    self.park(ledger, ticket, why, common, code="risk" if self.risk_of(ticket) else "general")
                     report["held"].append({"ticket_id": ticket, "why": why})
                     return
                 entry.update({"state": "building", "risk": why, "groomed_at": stamp()})
             elif entry["state"] == "building":
                 ok, why = station.risk_gate(ticket, pol["max_risk"])  # read again: a plan may have raised it
                 if not ok:
-                    self.park(ledger, ticket, why, common)
+                    self.park(ledger, ticket, why, common, code="risk" if self.risk_of(ticket) else "general")
                     report["held"].append({"ticket_id": ticket, "why": why})
                     return
             until = "build" if entry["state"] == "grooming" else None if pol.get("allow_merge") else "merge"
             if step.get("action") in (None, "stop") or step.get("action") == until:
                 why = step.get("reason") or "the line has stopped for this ticket"
                 if entry["state"] == "grooming" and step.get("action") in (None, "stop"):
-                    self.park(ledger, ticket, f"Headless grooming stopped for a person: {why}", common)
+                    self.park(ledger, ticket, f"Headless grooming stopped for a person: {why}", common, code="grooming")
                 report["held"].append({"ticket_id": ticket, "why": why})
                 return
             if len(live()) >= pol["limits"]["max_parallel"]:
@@ -707,7 +767,7 @@ class Supervisor:
                 signalled = executor.stop(record.get("wrapper_pid"), execution_id)
                 record["stop_requested_at"] = stamp()
                 self.park(ledger, record["ticket_id"], "Its execution was stopped by a person. What it had done by then is not known; check the ticket before resuming.",
-                          {"ticket_id": record["ticket_id"], "slice_id": record.get("slice_id"), "execution_id": execution_id})
+                          {"ticket_id": record["ticket_id"], "slice_id": record.get("slice_id"), "execution_id": execution_id}, code=None)  # the person who stopped it is here
                 stopped.append({"execution_id": execution_id, "ticket_id": record["ticket_id"], "signalled": signalled})
             self.line.save(ledger)
         return stopped
