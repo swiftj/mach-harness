@@ -386,7 +386,14 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   // Until when (factory ms; at the live edge, wall ms) a motion may be in progress: frames are asked for until then.
   let motionUntil = Number.NEGATIVE_INFINITY;
 
-  const ownFloor = (): number => (isSim ? 0 : (log.floorTime() ?? confirmed));
+  /**
+   * Live with nothing received yet: where the history the page can show begins, fixed once known (when
+   * the page opened, with a wall clock; else the first confirmed edge). Never the last confirmation:
+   * that moved the extent's start at every heartbeat, and the timeline strip's playhead swept and
+   * jumped back with it.
+   */
+  let emptyFloor: number | null = null;
+  const ownFloor = (): number => (isSim ? 0 : (log.floorTime() ?? emptyFloor ?? confirmed));
   const floorT = (): number => {
     const own = ownFloor();
     const start = windows?.start() ?? null;
@@ -395,13 +402,14 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   const currentLog = (): SceneLog => shown?.log ?? log;
   const extentNow = (liveAt: number) => {
     const own = extentOf(isSim ? fixture : log, isSim ? undefined : liveAt);
-    if (!windows) return own;
+    if (!windows) return source === "live" && log.floorTime() === null ? { ...own, start: ownFloor() } : own;
     return { ...own, start: floorT(), end: Math.max(own.end, liveAt) };
   };
   const edgeOf = (): number => (isSim ? duration : source === "replay" ? (log.headTime() ?? 0) : Math.max(confirmed, log.headTime() ?? confirmed));
   const clamp = (t: number, edge: number): number => Math.min(edge, Math.max(floorT(), t));
   // A live store with a wall clock starts at now (its connection starts as "connecting"), never at the last event's time.
   const startEdge = Math.max(edgeOf(), wallNow() ?? Number.NEGATIVE_INFINITY);
+  if (source === "live" && wallClock) emptyFloor = startEdge;
   const start = isSim ? Math.min(duration, Math.max(0, options.at ?? 0)) : clamp(options.at ?? startEdge, startEdge);
 
   let state: SceneStoreState = {
@@ -478,19 +486,27 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
    * else the store's own (clamped) while the window is fetched. Never changes the playhead.
    */
   let wanted: number | null = null;
+  /** The moment whose window could not be loaded: not asked for again until the playhead moves. */
+  let refused: number | null = null;
   const covers = (w: HistoryWindow, t: number): boolean => t >= w.from && t < w.to;
   const route = (next: SceneStoreState): SceneStoreState => {
     if (!windows) return next;
     const t = next.playhead;
     const ownStart = log.floorTime();
-    const own = next.following || (ownStart !== null && t >= ownStart && source === "live") || (source === "replay" && ownStart !== null && t >= ownStart);
+    // No windowed history (none recorded, or its span not known yet): the store's own log is all there is.
+    const own =
+      next.following ||
+      windows.start() === null ||
+      (ownStart !== null && t >= ownStart && source === "live") ||
+      (source === "replay" && ownStart !== null && t >= ownStart);
     let target: HistoryWindow | null = null;
     let loading = false;
     if (!own) {
       target = shown && covers(shown, t) ? shown : windows.peek(t);
-      if (!target) {
+      if (!target && t === refused) target = shown; // could not be loaded: keep what is shown, not labelled loading
+      else if (!target) {
         loading = true;
-        if (wanted === null || !shown || !covers(shown, t)) requestWindow(t);
+        if (wanted !== t) requestWindow(t);
       }
     }
     if (!loading) wanted = null;
@@ -505,6 +521,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
   };
   const requestWindow = (t: number): void => {
     wanted = t;
+    refused = null;
     void windows?.load(t).then(
       (w) => {
         if (wanted === null || !covers(w, state.playhead)) return;
@@ -512,8 +529,12 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
         set({});
       },
       () => {
-        if (wanted === t) wanted = null;
-        set({ windowLoading: false });
+        // A refusal is not asked again for the same moment (that looped without end, the page frozen);
+        // the next moment the playhead reaches asks afresh.
+        if (wanted !== t) return;
+        wanted = null;
+        refused = t;
+        set({});
       },
     );
   };
@@ -767,6 +788,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     setLiveEdge(t) {
       if (source !== "live" || !(t > confirmed)) return;
       confirmed = t;
+      emptyFloor ??= t;
       confirmedWall = clock.now();
       const liveAt = Math.max(state.liveAt, t);
       set({ liveAt, playhead: state.following ? liveAt : state.playhead, extent: extentNow(liveAt) });
