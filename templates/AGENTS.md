@@ -20,7 +20,7 @@ Each station runs as its own agent with its own context, model tier and permissi
 - An agent writes only where its row says. Nothing writes to the main checkout except the merge station, and it only merges an approved ticket's branch.
 - An agent never grades its own work: builders do not verify, verifiers do not review.
 - An agent that finds the spec wrong or contradictory stops and reports a spec defect; it does not patch the spec or guess.
-- Accepted architecture decisions in `docs/adr/` bind every agent. No agent accepts, changes or supersedes an ADR: the contract engineer may propose a new one on the ticket's branch, and only a person accepts it. A plan that cannot follow an accepted ADR stops for an engineer.
+- Accepted architecture decisions in `docs/adr/` bind every agent. No agent accepts, changes or supersedes an ADR: the contract engineer may propose a new one on the ticket's branch, and only a person accepts it. A plan that cannot follow an accepted ADR stops for an engineer. No ticket is planned until each required topic (`adr.required_topics`: language, framework, storage, testing, deployment and coding standards unless the project lists others) has an accepted ADR on the main branch; `/mach adr baseline` drafts them from the repository for a person to accept.
 - Every agent is given the ticket's goal ancestry from `intent.md`, so a small task is always done in view of what it serves.
 - Agents load tool descriptions and reference files only when they need them, to keep their context small.
 

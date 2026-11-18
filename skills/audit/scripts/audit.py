@@ -484,9 +484,10 @@ def adr_notes(repo: Repo) -> List[str]:
         return ["Architecture decisions were not checked: the intent station's adr.py is not installed beside this skill."]
     listing = adr.main_listing(repo.project, repo.config)
     notes = []
-    if not any(record.get("binding") for record in listing["adrs"]):
-        notes.append(f"No accepted architecture decision (ADR) is recorded in {listing['dir']}. Recording the stack, the main libraries and the security "
-                     "standards as accepted ADRs (start one with /mach adr new) lets the factory plan and review against them. This note does not change the score.")
+    missing = adr.coverage(repo.project, repo.config)["missing"]
+    if missing:
+        notes.append(f"Required topics with no accepted architecture decision (ADR) on the main branch in {listing['dir']}: {', '.join(missing)}. "
+                     f"No ticket is planned until each has one; draft them from the repository with {adr.baseline_command()}. This note does not change the score.")
     if listing["problems"]:
         notes.append(f"{len(listing['problems'])} problem(s) in the ADR files, which hold up planning until an engineer fixes them: " + "; ".join(listing["problems"][:3]))
     return notes

@@ -76,10 +76,78 @@ applies-to:
   [--consequence]... [--applies-to]...` (writes one `proposed` file in the main checkout's working tree, commits
   nothing; refused in a supervised execution). `/mach adr new "<decision>"` is the skill's one-question-at-a-time
   interview in front of it; `/mach adr except` and `/mach adr accept` route to the intent station.
-- **Audit**: a note (`notes` in the report) when no accepted ADR exists, or ADR files cannot be read; no score
-  change, never a blocker.
+- **Audit**: a note (`notes` in the report) naming the required topics with no accepted ADR, or when ADR files
+  cannot be read; no score change, never a blocker.
 - **Never**: observe's instructions forbid proposing anything about an ADR; the reviewer brief makes a tuning rule
   that would let the factory change one a blocker.
+
+## The required baseline (decided 2026-11-18)
+
+No ticket is planned or built until the project's basic technical decisions are written down.
+
+- **Required topics**: `adr.required_topics` in `.factory/config.json` (the scaffolded settings list the six
+  defaults). Default `language` (language and runtime), `framework` (framework and application type), `storage`
+  (data storage), `testing` (testing approach), `deployment` (deployment environment), `coding-standards`. Each
+  default has one fixed line, kept in `adr.py` (`REQUIRED_TOPICS`), which the scripts and the skill show. A team
+  extends the list by adding names. An empty list is the project's explicit choice to require nothing, and the only
+  "off". A setting that is not a list requires the defaults; a name that is not a topic word stays required (no ADR
+  can cover it) and is reported.
+- **Covered**: an ADR that is `accepted`, has no problem and is committed on the main branch (the main checkout's
+  HEAD; in a project with no commit yet its working tree, as for every ADR rule) and names `topic:<name>` in
+  `applies-to`. One ADR may cover several topics. An ADR deciding a topic does not apply covers it. `all` covers no
+  topic; a proposed, malformed or uncommitted ADR covers nothing (`adr.coverage`, `adr.baseline_stop`).
+- **The stop**: `run.py next` at `spec-ready` answers `stop` with `needs: "adr-baseline"`, `missing_topics` and
+  `command`, after the `adr-fix` stop (a malformed ADR is reported first). `cell.py claim <ticket> plan` and
+  `cell.py check-plan` refuse with the same reason, so no driver goes round it: the intent skill's own stage 2
+  after grooming stops at its claim. Text: `NEEDS_TEXT["adr-baseline"]` (the digest and notifications), the status
+  digest's `adr_baseline`, explain's `adrs.baseline_missing`, decide's state `adr-baseline` with three options (draft
+  the baseline, write one decision, check again), none recommended. The supervisor treats it like any stop for a
+  person.
+- **Not held**: grooming (a spec has no technology in it), cells already `planned` or further (never sent back),
+  `factory-tuning` tickets (they change only rule files). **Held**: `repo-hardening` tickets, because hardening
+  chooses exactly what the baseline decides (the test runner, the linter, the build), and the baseline can be drafted
+  whatever the readiness tier.
+- **For these topics the softer rule cannot arise**: planning starts only once they are covered, so the contract
+  engineer follows them; a slice that needs something else for one is an `adr-conflict`, never a proposal. The
+  `proposed` ADR on the ticket's branch stays for every other choice.
+- **`run.py adr baseline`** (`skills/run/scripts/baseline.py`): reads the main checkout's committed files only (`git
+  ls-tree`, `cat-file`, `show`; never the working tree, never a file over 100 KB, at most 20,000 files, vendored and
+  build folders skipped). Evidence per topic, at most 20 items, each a file, what was found and an excerpt of at most
+  160 characters redacted with the ticket station's `issue_rules.redact`:
+  - `language`: languages by file count, runtime version files (`.python-version`, `.nvmrc`, `.tool-versions`, ...),
+    manifests with the lines that pin a runtime (`requires-python`, `engines`, `go`, `rust-version`, ...),
+    lockfiles, the stacks the last audit detected;
+  - `framework`: frameworks named in dependencies (package.json, requirements, pyproject, Cargo, go.mod, Gemfile,
+    composer.json), framework files (`manage.py`, `next.config.js`, ...), declared command-line programs;
+  - `storage`: database drivers and ORMs in dependencies, migration and schema folders, storage configuration
+    (`schema.prisma`, `alembic.ini`, ...), SQL files, data services in compose files;
+  - `testing`: test tools in dependencies, runner configuration, `[tool.pytest]`-style sections, package test
+    scripts, test files by folder, the audit's test command;
+  - `deployment`: Dockerfiles, compose files, Kubernetes, Helm and Terraform, serverless and platform files (Fly,
+    Vercel, Netlify, Render, ...), CI workflows;
+  - `coding-standards`: linters, formatters and type checkers in dependencies and their configuration, `tsconfig`
+    strictness, pre-commit, `.editorconfig`, package lint scripts, the audit's lint command.
+  A topic the project added gets no evidence: the skill asks the engineer.
+- **The record**: `.factory/adr-baseline.json`, git-ignored (added to the installed `.gitignore` block). It is a
+  working record on one machine, like the audit report: it names drafts that exist only in that working tree, and
+  writing a tracked file would leave the main checkout modified. The ADRs drafted from it are what the team shares.
+  Per topic: `evidence`, its `digest`, the `commit` it was read at, `gathered_at`, and `adr` (ID, file, when). A later
+  run reads the repository again only for an uncovered topic with no record, or whose drafted ADR was deleted; a
+  recorded topic is shown from the record (`reused_from_record`, `read_at_an_earlier_commit`). A topic with any ADR
+  naming it in the folder, proposed or uncommitted, is listed under `waiting` and never drafted again.
+- **Drafting**: `run.py adr new --baseline <topic> ... [--open-point P]...` refuses a topic that is not required,
+  already covered, already has an ADR, or has no record; it adds `topic:<topic>` to `applies-to`, lists the recorded
+  evidence and the open points under MADR's `## More Information`, writes the file as `proposed` in the main
+  checkout's working tree and records it. The skill states the decision as what the repository already does and
+  marks anything not evidenced as an open point; with no evidence it asks one question at a time.
+- **`run.py adr accept ADR-NNNN... --by NAME`**: on an engineer's explicit word, sets `status: accepted` in those files
+  in the main checkout's working tree, and adds `decision-makers: NAME` when the header has none. All or nothing:
+  it refuses an unknown ID, a file it cannot read, one not `proposed`, one with a template comment, and one still
+  listing open points. Commits nothing; the decisions bind once committed on the main branch. Refused inside a
+  supervised execution. Editing the file by hand is equally valid.
+- **`adr list`** adds `required_topics`: each topic, the ADRs covering it, ADRs naming it that do not bind yet, and
+  what is missing. **Audit**: the note names the missing topics (still a note). **Doctor**: `adr.baseline`, a
+  warning while a topic is missing.
 
 ## Limits
 

@@ -168,9 +168,23 @@ release's commit as it is bound to a wave's bytes today.
   flagged for the engineer and never restarted.
 - **Commands:** `/mach adr new "<decision>"` (a short interview that writes the file as
   `proposed`; accepting it is the engineer's edit and pull request) and `/mach adr list`.
-- **Readiness check:** a project with no accepted ADR about its stack gets a note, not a lower score.
+- **Readiness check:** a project with no accepted ADR about its stack gets a note, not a lower score
+  (since 2026-11-18 the note names the missing required topics; see the last item).
 - **Never:** the Factory, the observe station and tuning tickets do not accept, change or supersede
   an ADR.
+- **Decided 2026-11-18: no planning without the basics.** The owner: the factory must not start
+  building "unless some technical specs and requirements are available so that the factory builds the
+  correct thing and doesn't speculate what the stack is". So a project names required topics
+  (`adr.required_topics`, default `language`, `framework`, `storage`, `testing`, `deployment`,
+  `coding-standards`; a team adds names, and `[]` requires nothing), and no ticket is planned or built
+  until each has an accepted ADR on the main branch naming `topic:<name>`. An ADR that decides a
+  topic does not apply covers it. The stop is before planning (`adr-baseline`); grooming is not held,
+  because a spec has no technology in it. For these topics the softer rule above (a `proposed` ADR on
+  the ticket's branch, Low and Medium going on) no longer arises; it stays for every other choice.
+  `/mach adr baseline` drafts the missing ADRs from an existing repository's committed files, as
+  `proposed`, for an engineer to correct, accept and commit; what it found is recorded once
+  (`.factory/adr-baseline.json`) so it is not repeated. This brings forward the ADR half of section 9.
+  The readiness check's note now names the missing topics. As built: `M11_ADRS.md`.
 
 ## 8. Order of building
 

@@ -28,7 +28,7 @@ Every reviewer starts with a fresh context: the diff, the cell's artifacts and t
 
 - The change follows the project's layering; no logic leaks across a boundary.
 - Contract files changed only additively and match what the code implements.
-- The change follows every accepted architecture decision (ADR) the ticket was planned under, in `docs/adr/`; a blocker may cite one by its ID, such as `ADR-0007`. A person's recorded exception allows a departure only as far as its reason says. A new library, language or framework no ADR covers arrives as a proposed ADR in the same change.
+- The change follows every accepted architecture decision (ADR) the ticket was planned under, in `docs/adr/`; a blocker may cite one by its ID, such as `ADR-0007`. A person's recorded exception allows a departure only as far as its reason says. The project's basic choices (language, framework, storage, testing, deployment, coding standards, or the topics `adr.required_topics` lists) are always decided before planning: a change that departs from one without a recorded exception is a blocker. A new library or other choice no ADR covers arrives as a proposed ADR in the same change.
 - No dead code, unused helpers, or dependencies the plan did not justify.
 - No file grows past what one person can review; large files are split.
 

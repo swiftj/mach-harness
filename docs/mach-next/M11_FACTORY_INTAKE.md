@@ -15,6 +15,7 @@ GitHub shapes relied on, and the limits. Product Studio's side is in `M11_STUDIO
 | `run.py product dispatch <SLICE-ID or issue number>... \| --ready [--limit n]` | Opens each cell, commits the spec with its header on the ticket's branch, writes `intent.md`, passes `cell.py finalize`, stops at `spec-ready`. |
 | `run.py product reconcile [--fetch]` | Intake, the recorded plan and the status writes in one locked step. Never dispatches. What each supervisor pass calls. |
 | `run.py product events [--since N]` | The event log (schema version 3). |
+| `run.py pull [--limit n] [--sequential] [--dry-run] [--json]` | The engineer's one command (`/mach pull`): under the intake lock, reconcile, then the schedule's rule over the tickets in the line that can move and the slices the plan marks dispatchable (in that order), then the guarded dispatch of the slices chosen. Prints what starts now, what waits and why, what was not accepted, what waits for a person, and the tickets to run. Adds no rule; see "Pull" below. |
 | `run.py release qualify --epic <EPIC-ID or issue number> \| <SLICE-ID>... [--release id] [--commit sha]` | Release qualification by epic or by named slices; snapshot schema version 2. |
 | `ticket.py slice-list`, `slice-check <n>`, `epic-check <n> [--release R --commit C]` | Read only, always `gh`, the `origin` repository only. |
 | `ticket.py slice-status <n> --repository OWNER/REPO --moment building\|question\|shipped\|blocked\|changed --ref SLICE-NNN@rN... --nonce HEX [--question-file F]` | One status write on a slice's own issue. |
@@ -88,6 +89,43 @@ answer). The walkthrough (`decide.py`) offers waiting or abandoning for the seco
 15. **Acceptance.** Read per epic; the latest comment that counts decides; the readiness SHA-256 in it is
     reported, not enforced (the snapshot changes once acceptance is recorded). A release of named slices
     records no acceptance.
+
+## Pull
+
+Before pull an engineer took four steps: `product status`, `product intake`, `product dispatch <n>`,
+`/mach <n>`. The owner's decision: work marked approved and ready is pulled when the engineer runs the
+factory, within the concurrency settings. `run.py pull` (`skills/run/scripts/pull.py`) composes the steps
+that exist and adds no rule:
+
+1. **Take in**: `Factory.reconcile` under the intake lock, which the whole pull holds (the lock is
+   re-entrant, so reconcile and dispatch run inside it). What is not accepted is reported with its reason.
+2. **Choose**: `schedule.main` over, in this order, the tickets with a cell whose next step is work (by
+   ticket number), then the tickets of the slices the plan marks `dispatchable`, in the plan's order. A
+   ready slice beyond the plan's free places is not offered and waits for a later pull with the plan's own
+   reason; a blocked slice waits with the plan's reasons.
+3. **Dispatch**: `Factory.dispatch` with the slices the schedule started, as an engineer's command. A
+   refusal (the checkout is not on the integration branch, a received copy changed) is reported and the
+   rest of the pull stands.
+
+Decisions:
+
+- **Work in the line goes first.** It takes places before new work, so carrying on is never displaced.
+- **The plan's free places still bound dispatch.** The plan counts every active cell, including one stopped
+  for a person, against `factory.max_parallel`; the schedule counts only what can move. A slice is dispatched
+  only when both allow it, which keeps dispatch's own guard unchanged.
+- **A held ticket in the line stays in the run.** The belt asks the schedule each time a place frees, so a
+  ticket held by the ceiling, the High-risk limit or a file overlap starts later in the same run. A ticket
+  another worker holds is left out of the run.
+- **Any stop is a person's.** A ticket whose next step is a stop, with any `needs` but `nothing`, is listed
+  for a person with `run.py next`'s own sentence; a `needs` this version does not know is listed the same way.
+  A slice the plan says needs a person (changed while in progress, abandoned, a merge not on the branch) is
+  listed too; work in progress that can move is still carried on and the listing says so.
+- **No `--by-person`.** Pull takes `--limit` and `--sequential`, which only lower the ceiling. Raising it is
+  `/mach <a> <b> ... --limit n --by-person` or the settings.
+- **Dry run.** Reads only: discover, then the plan over a copy of the ledger with each new slice added in
+  memory. A ready folder's slice is shown without a ticket, since intake has not filed one.
+- **Output.** Plain words by default (`in_words`); `--json` for the skill. Refused inside a supervised
+  execution; no machine-local authorization is read.
 
 ## GitHub shapes relied on
 

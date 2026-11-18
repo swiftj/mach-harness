@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT / "skills" / "build" / "scripts"))
 sys.path.insert(0, str(ROOT / "skills" / "intent" / "scripts"))
 import build  # noqa: E402
 import cell as cell_script  # noqa: E402
+sys.path.insert(0, str(ROOT / "tests"))
+import adr_baseline_fixture  # noqa: E402  (the test projects' covered ADR baseline)
 
 SPEC_NAME = "SLICE-001-invite-teammate.md"
 SPEC = (ROOT / "tests" / "fixtures" / SPEC_NAME).read_text(encoding="utf-8")
@@ -109,7 +111,8 @@ class Base(unittest.TestCase):
         self.project = Path(self.tmp.name).resolve() / "project"
         self.project.mkdir()
         self.put(self.project, {".gitignore": ".factory/\n__pycache__/\n", "README.md": "# Sample\n", "app/__init__.py": "",
-                                "tests/test_base.py": "import unittest\n\nclass B(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n"})
+                                "tests/test_base.py": "import unittest\n\nclass B(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n",
+                                **adr_baseline_fixture.files()})
         git(self.project, "init", "-q", "-b", "main")
         for key, value in (("user.name", "t"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")):
             git(self.project, "config", key, value)

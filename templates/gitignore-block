@@ -9,6 +9,8 @@
 .factory/holdouts/
 .factory/audit-report.json
 .factory/observations/
+# What /mach adr baseline found in the repository: a working record on this machine. The ADRs drafted from it are shared.
+.factory/adr-baseline.json
 # Machine-local Factory authorization. It must never travel by Git: a clone always starts disabled.
 .factory/local/
 # Product Studio drafts: a product manager's unpublished work stays on their machine.

@@ -13,6 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "skills" / "intent" / "scripts"))
 import cell  # noqa: E402
+sys.path.insert(0, str(ROOT / "tests"))
+import adr_baseline_fixture  # noqa: E402  (the test projects' covered ADR baseline)
 
 SPEC_NAME = "SLICE-001-invite-teammate.md"
 SPEC = (ROOT / "tests" / "fixtures" / SPEC_NAME).read_text(encoding="utf-8")
@@ -108,6 +110,7 @@ class Base(unittest.TestCase):
             git(self.project, "config", "user.email", "t@example.com")
             git(self.project, "config", "commit.gpgsign", "false")
             (self.project / "README.md").write_text("demo\n")
+            adr_baseline_fixture.write(self.project)
             git(self.project, "add", ".")
             git(self.project, "commit", "-q", "-m", "init")
 

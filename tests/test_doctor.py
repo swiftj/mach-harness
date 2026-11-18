@@ -16,7 +16,9 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
 import doctor  # noqa: E402
+import adr_baseline_fixture  # noqa: E402
 
 REAL_GIT = shutil.which("git")
 SECRET = "gho_FAKEtoken1234567890"
@@ -68,6 +70,7 @@ class DoctorTest(unittest.TestCase):
             (self.project / folder).mkdir(parents=True, exist_ok=True)
         for name in doctor.RULE_FILES:
             (self.project / name).write_text("# rules\n")
+        adr_baseline_fixture.write(self.project)
         (factory / "audit-report.json").write_text(json.dumps({"readiness_tier": "Gold", "readiness_score": 95}))
         (factory / "bin").mkdir()
         for dest, _ in doctor.HOSTS:

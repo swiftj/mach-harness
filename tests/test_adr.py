@@ -21,6 +21,7 @@ for folder in ("intent", "run", "review", "build", "audit"):
     sys.path.insert(0, str(ROOT / "skills" / folder / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 import adr  # noqa: E402
+import adr_baseline_fixture  # noqa: E402
 import audit  # noqa: E402
 import cell as cell_script  # noqa: E402
 import review  # noqa: E402
@@ -208,8 +209,8 @@ class CheckPlanTest(Project):
         self.assertEqual(code, 0, err + out)
         planned = self.cell_json()["adrs"]
         self.assertEqual((planned["named"], planned["applied"]), (["ADR-0001"], ["ADR-0001"]))
-        self.assertEqual(planned["planned_under"][0]["id"], "ADR-0001")
-        self.assertEqual(planned["planned_under"][0]["digest"], adr.digest(PYTHON_ADR))
+        self.assertEqual([item["id"] for item in planned["planned_under"]], ["ADR-0000", "ADR-0001"], "the test project's baseline, then its own")
+        self.assertEqual(planned["planned_under"][1]["digest"], adr.digest(PYTHON_ADR))
         self.assertEqual(planned["main_commit"], git(self.project, "rev-parse", "HEAD").stdout.strip())
         self.assertEqual((self.cellroot / "adrs" / "ADR-0001.md").read_text(), PYTHON_ADR, "the text in force is kept in the cell")
 
@@ -504,7 +505,7 @@ class TimingTest(Project):
         explained = json.loads(self.run_cmd("explain", TICKET, "--json")[1])
         self.assertEqual(explained["adrs"]["changed_since_plan"][0], {"adr": "ADR-0002", "change": "accepted after planning", "title": "Store every time in UTC"})
         self.ok("start", TICKET)
-        self.assertEqual([item["id"] for item in self.cell_json()["adrs"]["planned_under"]], ["ADR-0001"], "nothing is re-planned")
+        self.assertEqual([item["id"] for item in self.cell_json()["adrs"]["planned_under"]], ["ADR-0000", "ADR-0001"], "nothing is re-planned")
 
     def test_a_changed_adr_is_flagged_as_changed(self):
         self.ready()
@@ -525,12 +526,12 @@ class CommandsTest(Project):
         code, out, err = self.run_cmd("adr", "list")
         self.assertEqual(code, 0, err)
         listed = json.loads(out)
-        self.assertEqual([item["id"] for item in listed["adrs"]], ["ADR-0001", "ADR-0002", "ADR-0003"])
-        self.assertEqual(listed["accepted"], 1)
-        self.assertEqual(listed["adrs"][0]["applies_to"], ["path:app/**"])
+        self.assertEqual([item["id"] for item in listed["adrs"]], ["ADR-0000", "ADR-0001", "ADR-0002", "ADR-0003"])
+        self.assertEqual(listed["accepted"], 2)
+        self.assertEqual(listed["adrs"][1]["applies_to"], ["path:app/**"])
         self.assertIn("status 'maybe' is not one of", " ".join(listed["problems"]))
         self.assertEqual(listed["uncommitted"], ["docs/adr/0003-draft.md"])
-        self.assertFalse(listed["adrs"][2]["committed"])
+        self.assertFalse(listed["adrs"][3]["committed"])
         self.assertEqual(git(self.project, "status", "--porcelain").stdout, before)
 
     def test_adr_new_writes_a_proposed_file_and_commits_nothing(self):
@@ -563,12 +564,13 @@ class AuditNoteTest(Project):
             audit.main(["--project", str(self.project), "run", "--json", "--no-run"])
         return json.loads(out.getvalue())
 
-    def test_a_note_and_no_score_change_when_no_adr_is_accepted(self):
+    def test_a_note_naming_the_missing_required_topics_and_no_score_change(self):
         with_one = self.audit()
         self.assertEqual(with_one["notes"], [])
-        self.main_adr("0001-use-python.md", PYTHON_ADR.replace("status: accepted", "status: proposed"))
+        self.main_adr("0000-test-project-baseline.md", adr_baseline_fixture.TEXT.replace("  - topic:storage\n", "").replace("  - topic:testing\n", ""))
         without = self.audit()
-        self.assertIn("No accepted architecture decision (ADR) is recorded in docs/adr", without["notes"][0])
+        self.assertIn("Required topics with no accepted architecture decision (ADR) on the main branch in docs/adr: storage, testing.", without["notes"][0])
+        self.assertIn("No ticket is planned until each has one", without["notes"][0])
         self.assertEqual((without["readiness_score"], without["blockers"]), (with_one["readiness_score"], with_one["blockers"]))
 
 
@@ -580,7 +582,9 @@ class InstructionsTest(unittest.TestCase):
         self.assertIn("never accept, change or supersede an adr", (ROOT / "skills/observe/SKILL.md").read_text().lower())
 
     def test_the_config_template_lists_the_adr_folder(self):
-        self.assertEqual(json.loads((ROOT / "templates/config.json").read_text())["adr"], {"dir": "docs/adr"})
+        self.assertEqual(json.loads((ROOT / "templates/config.json").read_text())["adr"],
+                         {"dir": "docs/adr", "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]})
+        self.assertEqual(list(adr.REQUIRED_TOPICS), json.loads((ROOT / "templates/config.json").read_text())["adr"]["required_topics"])
 
 
 if __name__ == "__main__":

@@ -252,6 +252,27 @@ def check_rules(project: Path) -> List[Dict[str, str]]:
     return results
 
 
+def check_adr_baseline(project: Path, config: Any) -> List[Dict[str, str]]:
+    """Whether every required topic (adr.required_topics) has an accepted ADR on the main branch; reads only."""
+    try:
+        import importlib.util
+        skills = Path(__file__).resolve().parent.parent.parent
+        script = next(folder / "scripts" / "adr.py" for folder in (skills / "mach-intent", skills / "intent") if (folder / "scripts" / "adr.py").is_file())
+        spec = importlib.util.spec_from_file_location("mach_adr_for_doctor", script)
+        adr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adr)
+        found = adr.coverage(project, config if isinstance(config, dict) else {})
+    except Exception as exc:  # noqa: BLE001  (a check that cannot run says so)
+        return [check("adr.baseline", "Architecture decision baseline", "not_checked", f"It could not be checked ({exc.__class__.__name__}).")]
+    if not found["required"]:
+        return [check("adr.baseline", "Architecture decision baseline", "ok", "This project requires no topic (adr.required_topics is empty).")]
+    if found["missing"]:
+        return [check("adr.baseline", "Architecture decision baseline", "warn",
+                      f"No accepted ADR on the main branch covers: {', '.join(found['missing'])}. No ticket is planned until each is covered.",
+                      f"Draft them from the repository with {adr.baseline_command()}, then accept and commit them by pull request.")]
+    return [check("adr.baseline", "Architecture decision baseline", "ok", f"Every required topic has an accepted ADR ({', '.join(found['required'])}).")]
+
+
 def check_audit(project: Path) -> List[Dict[str, str]]:
     path = project / AUDIT_REPORT
     if not path.is_file():
@@ -425,6 +446,7 @@ def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
     checks += check_tracker(project, config, gh_state)
     checks += install
     checks += check_rules(project)
+    checks += check_adr_baseline(project, config)
     checks += check_audit(project)
     checks += check_hosts(project)
     checks += check_remote(project)

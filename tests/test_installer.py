@@ -90,7 +90,9 @@ class InstallTest(Base):
         config = json.loads(files[".factory/config.json"])
         self.assertEqual(config["observe"], {"every": 5})
         self.assertEqual((config["merge"]["mode"], config["merge"]["method"]), ("auto", "local"))
-        self.assertEqual(config["adr"], {"dir": "docs/adr"}, "architecture decisions are read from docs/adr unless the project says otherwise")
+        self.assertEqual(config["adr"], {"dir": "docs/adr", "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]},
+                         "architecture decisions are read from docs/adr, and these six topics need one before planning, unless the project says otherwise")
+        self.assertIn(".claude/skills/mach/scripts/baseline.py", files, "the baseline's evidence gatherer is installed with the run skill")
         self.assertIn(".claude/skills/mach-intent/scripts/adr.py", files, "the shared ADR helper is installed with the intent station")
 
     def test_installed_skill_is_runnable_and_self_contained(self):
