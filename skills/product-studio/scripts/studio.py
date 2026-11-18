@@ -908,7 +908,8 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     if data.get("status") in EDITABLE_SLICE:
         result, problems, refusal_hint = approval_problems(studio, data, slice_id)
         if problems:
-            raise StudioError(f"{slice_id} cannot be marked ready yet:\n  " + "\n  ".join(problems), refusal_hint)
+            # The app titles the refusal itself, so its wording is the reasons alone.
+            raise StudioError(say(f"{slice_id} cannot be marked ready yet:\n  " + "\n  ".join(problems), "\n".join(problems)), refusal_hint)
     elif data.get("status") == APPROVED:
         spec = studio.spec_of(slice_id)
         if spec is None or sha(spec.read_bytes()) != data.get("spec_sha256"):

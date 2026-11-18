@@ -102,6 +102,8 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
           }
         >
           <div className="flex flex-col gap-4 pb-1">
+            {/* First, so the reason and the way on are never below the fold. */}
+            {error ? <Failure error={error} what={`${id} was not marked ready`} /> : null}
             <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-label text-ink">What the engine's check says</p>
@@ -120,12 +122,6 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
                 </Text>
               ) : null}
             </div>
-            <Text size="body-sm" tone="muted">
-              The engine checks again first, including whether the slice's epic is approved. If something is missing it says what, and nothing
-              is saved. Where GitHub cannot be used from this computer, the slice is written to a folder instead, and you are told how it
-              reaches the builders.
-            </Text>
-            {error ? <Failure error={error} what={`${id} was not marked ready`} /> : null}
           </div>
         </DialogContent>
       )}
