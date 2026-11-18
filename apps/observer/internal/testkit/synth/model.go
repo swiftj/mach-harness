@@ -5,11 +5,11 @@
 // (docs/mach-next/M6_3_PERFORMANCE.md); it is never built into mach-observer.
 //
 // Everything is a pure function of the options: the same seed gives byte-identical files (file
-// modification times aside). Ids are invented (SYN-*, SLICE-*, WAVE-*, P-SYNTH), people appear only
+// modification times aside). Ids are invented (SYN-*, SLICE-*, EPIC-*, P-SYNTH), people appear only
 // as roles, and nothing names a path outside the generated folder.
 //
 // The generator works in two steps. A small scheduler (simulate.go) plays the Factory forward in
-// model seconds: waves arrive, slices wait on dependencies, the supervisor dispatches and holds work
+// model seconds: epics arrive, slices wait on dependencies, the supervisor dispatches and holds work
 // against max_parallel, and each cell runs its executions (profile.go) station by station. The
 // whole model is then scaled so the history spans the requested hours, and written (write.go),
 // spreading the remaining event budget over the workflow agents' progress records.
@@ -33,10 +33,10 @@ type Options struct {
 	// AgentsPerExecution is the target number of workflow agents per belt execution.
 	AgentsPerExecution int
 	// Analytics generates an analytics-grade project instead (analytics.go): many finished tickets
-	// over many delivery waves, run records exactly as the cleanup station writes them, and a
+	// over many epics, run records exactly as the cleanup station writes them, and a
 	// ground-truth expected.json. Without it every other option behaves exactly as before.
 	Analytics   bool
-	Waves       int // analytics: delivery waves (default: one per eight cells)
+	Epics       int // analytics: epics (default: one per eight cells)
 	MaxParallel int // analytics: the supervisor's max_parallel (default 4)
 	// Profile is the analytics profile: "" (the default, compact and stretched over Hours) or
 	// "realistic" (realistic.go: real-time durations, a working week, provenance configurations;
@@ -94,7 +94,7 @@ func (o Options) check() error {
 
 // ---- the model (times are model seconds from the start, scaled when written) ----
 
-type wave struct {
+type epic struct {
 	id     string
 	at     float64
 	slices []*slice
@@ -103,7 +103,7 @@ type wave struct {
 type slice struct {
 	id     string
 	n      int
-	wave   *wave
+	epic   *epic
 	ticket string
 	cell   *cell // nil for a slice that never gets a cell
 	rev    int
@@ -135,7 +135,7 @@ type intakeRec struct {
 	t, wt  float64
 	typ    string
 	source string
-	wave   string
+	epic   string
 	slice  string
 	rev    int
 	ticket string
@@ -230,7 +230,7 @@ type execution struct {
 type world struct {
 	o             Options
 	rng           *rand.Rand
-	waves         []*wave
+	epics         []*epic
 	slices        []*slice
 	cells         []*cell
 	execs         []*execution

@@ -39,8 +39,8 @@ func provSnapshot() map[string]any {
 func provStarted(t *testing.T, data map[string]any, sourceCommit any) (*event.Event, map[string]any) {
 	t.Helper()
 	data["until"], data["workflow"], data["limits"], data["session_id"] = "merge", "mach:belt", map[string]any{"minutes": 60, "budget_usd": 25}, "9f1c"
-	line, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": 1, "at": "2026-11-14T12:00:00Z", "type": "execution.started", "project_id": "P-1",
-		"source_commit": sourceCommit, "wave_id": nil, "slice_id": "SLICE-001", "revision": 1, "ticket_id": "LOCAL-001", "runner_id": "R-1",
+	line, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": 1, "at": "2026-11-14T12:00:00Z", "type": "execution.started",
+		"source_commit": sourceCommit, "epic_id": nil, "issue": nil, "slice_id": "SLICE-001", "revision": 1, "ticket_id": "LOCAL-001", "runner_id": "R-1",
 		"execution_id": "x0123456789ab", "source": "supervisor", "cause": nil, "refs": nil, "data": data})
 	l := NewLedger("0badc0de", provRoot, NewIdentity())
 	evs := l.Line(line, Read{Line: 1, At: time.Date(2026, 11, 14, 12, 0, 1, 0, time.UTC)})

@@ -7,7 +7,7 @@ import { ev, finalize } from "./fixtures/v3.mjs";
 function run() {
   let seq = 0;
   const t0 = Date.UTC(2026, 10, 15, 1, 0, 0, 999);
-  const i = (type, t, ids, data, stream = "intake-log") => ev(type, { stream, key: stream === "intake-log" ? "i:92586180" : "r:runs", seq: ++seq, t, precision: "s", ids: { project_id: "lending-desk", wave_id: "WAVE-003", ...ids }, entities: ids.slice_id ? [`slice:${ids.slice_id}`] : [], data });
+  const i = (type, t, ids, data, stream = "intake-log") => ev(type, { stream, key: stream === "intake-log" ? "i:92586180" : "r:runs", seq: ++seq, t, precision: "s", ids: { project_id: "lending-desk", epic_id: "EPIC-003", ...ids }, entities: ids.slice_id ? [`slice:${ids.slice_id}`] : [], data });
   const events = [
     i("slice.materialized", t0, { slice_id: "SLICE-005", ticket_id: "LOCAL-003", revision: 4 }, { digest: "a".repeat(64), adopted: false, dependencies: [], reissued: null, title: null }),
     i("human.required", t0 + 1000, { slice_id: "SLICE-005", ticket_id: "LOCAL-003", revision: 4 }, { reason: "2 execution(s) ended without moving it past 'building'." }),

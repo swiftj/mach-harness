@@ -122,7 +122,7 @@ func (w *world) intakeAdd(t float64, typ, source string, c *cell, s *slice, x *e
 		s = c.slice
 	}
 	if s != nil {
-		r.slice, r.rev, r.wave = s.id, s.rev, s.wave.id
+		r.slice, r.rev, r.epic = s.id, s.rev, s.epic.id
 	}
 	if c != nil {
 		r.ticket = c.ticket

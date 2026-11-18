@@ -24,7 +24,7 @@ func TestBackfillIsNeverLate(t *testing.T) {
 	root := testkit.Project(t)
 	// Before the observer starts: a ledger stamped at 10:00 and three cells whose logs are older
 	// (09:xx), read after the ledger, so in delivery order they sort before what is delivered.
-	testkit.Append(t, testkit.LedgerPath(root), v2(1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"}))
+	testkit.Append(t, testkit.LedgerPath(root), v3(1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"}))
 	for c := 1; c <= 3; c++ {
 		ticket := fmt.Sprintf("T-%d", c)
 		testkit.WriteFile(t, filepath.Join(testkit.CellDir(root, ticket), "cell.json"), mustJSON(map[string]any{"stage": "building", "created_at": "2026-11-12T09:00:00+00:00"}))
@@ -105,7 +105,7 @@ func TestSourceStatsReportSizeAndReadTime(t *testing.T) {
 	var ledger []byte
 	const budget = 50
 	for i := 1; i <= 2*budget; i++ {
-		ledger = append(ledger, v2(i, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"})...)
+		ledger = append(ledger, v3(i, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"})...)
 	}
 	testkit.WriteFile(t, testkit.LedgerPath(root), ledger)
 	testkit.WriteFile(t, filepath.Join(testkit.CellDir(root, "T-1"), "cell.json"), mustJSON(map[string]any{"stage": "building"}))
@@ -141,7 +141,7 @@ func TestSourceStatsReportSizeAndReadTime(t *testing.T) {
 		t.Fatalf("cell after drain: %+v", stat(cellKey+"T-1"))
 	}
 	// Growth not yet read shows as lag on the next read; a removed file has no size.
-	testkit.Append(t, testkit.LedgerPath(root), v2(2*budget+1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"}))
+	testkit.Append(t, testkit.LedgerPath(root), v3(2*budget+1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"}))
 	if s := stat(LedgerKey); *s.Size != s.Offset {
 		t.Fatal("stats changed without a read")
 	}

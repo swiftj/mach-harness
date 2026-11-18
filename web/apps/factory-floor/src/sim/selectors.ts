@@ -12,6 +12,7 @@ import { describeEntry, significanceOf } from "./describe-v3";
 import { indexFixture, lowerBound, upperBound } from "./engine";
 import type { LogEntry, SceneLog } from "./log";
 import { isSceneLog } from "./log";
+import { isV3 } from "./v3";
 import type { LogFold } from "./fold";
 import { countThrough, createLogFold } from "./fold";
 import type { ActivityState, Authority, EntityMeta } from "./provenance";
@@ -34,7 +35,6 @@ import type {
   SliceState,
   StationVisit,
   ToolCallState,
-  WaveState,
 } from "./model";
 import { gateId, isActorRef, ref, refId, refKind } from "./model";
 import type { CapacityWaitState, GateEvaluation, LiveEntityKind, LiveRef } from "./model";
@@ -225,7 +225,6 @@ export function extentOf(history: History, liveAt?: number): Extent {
 // ---------------------------------------------------------------- the scene, flattened
 
 export type EntityState =
-  | { kind: "wave"; value: WaveState }
   | { kind: "slice"; value: SliceState }
   | { kind: "cell"; value: CellState }
   | { kind: "station"; value: { station: StationId; ticketId: string | null; visits: readonly StationVisit[]; cells: readonly string[] } }
@@ -286,7 +285,6 @@ export interface ProjectEntity {
   readonly name: string | null;
   readonly integrationBranch: string | null;
   readonly factory: Scene["factory"];
-  readonly waves: number;
   readonly slices: number;
   readonly cells: number;
   readonly executions: number;
@@ -358,8 +356,6 @@ export function entityAt(scene: Scene, entity: AnyRef): EntityState | null {
       const actor = isActorRef(entity) ? scene.actors[id as ActorId] : undefined;
       return actor ? { kind: "actor", value: actor } : null;
     }
-    case "wave":
-      return scene.waves[id] ? { kind: "wave", value: scene.waves[id] } : null;
     case "slice":
       return scene.slices[id] ? { kind: "slice", value: scene.slices[id] } : null;
     case "cell":
@@ -452,7 +448,6 @@ export function entityAt(scene: Scene, entity: AnyRef): EntityState | null {
           name: scene.project.name || null,
           integrationBranch: scene.project.integrationBranch || null,
           factory: scene.factory,
-          waves: Object.keys(scene.waves).length,
           slices: Object.keys(scene.slices).length,
           cells: Object.keys(scene.cells).length,
           executions: Object.keys(scene.executions).length,
@@ -689,7 +684,7 @@ const momentCache = new WeakMap<Fixture, readonly Moment[]>();
 /** One entry as a moment, whatever its source. */
 function momentOfEntry(entry: LogEntry): Moment {
   const event = entry.event;
-  const sim = event.schema_version !== 3;
+  const sim = !isV3(event);
   return {
     id: entry.id,
     seq: sim ? (event as AnySimEvent).seq : (event as { pos: number }).pos,
@@ -711,7 +706,7 @@ const momentFolds: Readonly<Record<Significance, (log: SceneLog) => LogFold<Mome
 };
 function significanceOfEntry(entry: LogEntry): Significance {
   const event = entry.event;
-  return event.schema_version !== 3 ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOf(event.type);
+  return !isV3(event) ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOf(event.type);
 }
 
 /** The first `n` items of a fold's list, one array per (list, n) while it is in use, so a selector can compare by identity. */
@@ -1244,24 +1239,22 @@ export interface CellHome {
   readonly ticketId: string;
   /** The slice it builds, when recorded. */
   readonly sliceId: string | null;
-  /** The wave its slice belongs to, when recorded (the slice's own, else a wave that lists it). */
-  readonly waveId: string | null;
+  /** The epic its slice belongs to, when recorded (M11). */
+  readonly epicId: string | null;
   /** The lane's title: the slice's title when recorded, else the ticket. Never a placeholder. */
   readonly laneTitle: string;
   readonly sliceKnown: boolean;
-  readonly waveKnown: boolean;
 }
 
 /**
  * A cell's home in the picture, defined for every cell: a cell with no slice (a hand-driven ticket,
- * history begun part-way) stands under its own ticket, in a wave that is "not recorded".
+ * history begun part-way) stands under its own ticket, with no epic.
  */
 export function cellHome(scene: Scene, ticketId: string): CellHome {
   const cell = scene.cells[ticketId];
   const slice = cell?.sliceId ? scene.slices[cell.sliceId] : undefined;
-  const waveId = slice ? (scene.waves[slice.waveId] ? slice.waveId : (Object.values(scene.waves).find((w) => w.sliceIds.includes(slice.id))?.id ?? null)) : cell?.sliceId ? (Object.values(scene.waves).find((w) => w.sliceIds.includes(cell.sliceId))?.id ?? null) : null;
   const title = slice && isKnown(slice.meta, "title") ? slice.title : ticketId;
-  return { ticketId, sliceId: cell?.sliceId || null, waveId, laneTitle: title, sliceKnown: Boolean(slice), waveKnown: waveId !== null };
+  return { ticketId, sliceId: cell?.sliceId || null, epicId: slice?.epicId ?? null, laneTitle: title, sliceKnown: Boolean(slice) };
 }
 
 // ---------------------------------------------------------------- bays: a stable assignment table
@@ -1273,12 +1266,10 @@ export interface BayClaim {
 }
 
 export interface BayOrder {
-  /** Changes whenever `slots` or `waveIds` change. */
+  /** Changes whenever `slots` changes. */
   readonly version: number;
   /** Index i is bay i, for the life of the log (and so of its store): a bay never moves. */
   readonly slots: readonly BayClaim[];
-  /** Waves in the order they were assigned, also never reordered. */
-  readonly waveIds: readonly string[];
 }
 
 interface BayTable {
@@ -1286,7 +1277,6 @@ interface BayTable {
   seen: WeakMap<SceneLog, number>;
   slots: BayClaim[];
   index: Map<string, number>;
-  waveIds: string[];
   out: BayOrder;
 }
 /** One table per lineage (SceneLog.lineage): every log showing part of the same history shares it. */
@@ -1299,10 +1289,9 @@ function firstOrder(log: SceneLog, entity: EntityRef): string | null {
 
 /**
  * The bays a log's history calls for, with an assignment table kept for the life of the log: what is
- * new is ordered by the contract's `order` of its first event (a wave's slices by their place in the
- * wave), then appended. Once a bay index is given it never changes, even when an older wave arrives
- * late. A slice outside any wave and a cell whose slice is not known each get a bay too; when a
- * cell's slice becomes known, its bay is kept and re-keyed to the slice.
+ * new is ordered by the contract's `order` of its first event, then appended. Once a bay index is
+ * given it never changes, even when an older slice arrives late. A cell whose slice is not known gets
+ * a bay too; when a cell's slice becomes known, its bay is kept and re-keyed to the slice.
  *
  * The table belongs to the log's lineage, not to the log: separate logs of one history share it, so a
  * ticket keeps its bay whichever of them is read. A log that does not know something another one did
@@ -1314,7 +1303,7 @@ export function bayOrder(log: SceneLog): BayOrder {
   const logVersion = log.version();
   if (table && table.seen.get(log) === logVersion) return table.out;
   if (!table) {
-    table = { seen: new WeakMap(), slots: [], index: new Map(), waveIds: [], out: { version: 0, slots: [], waveIds: [] } };
+    table = { seen: new WeakMap(), slots: [], index: new Map(), out: { version: 0, slots: [] } };
     bayTables.set(lineage, table);
   }
   const scene = log.head();
@@ -1323,30 +1312,13 @@ export function bayOrder(log: SceneLog): BayOrder {
   for (const c of Object.values(scene.cells)) if (c.sliceId) ticketOfSlice.set(c.sliceId, c.ticketId);
   const ticketFor = (sliceId: string): string => ticketOfSlice.get(sliceId) ?? (scene.slices[sliceId]?.ticketId || sliceId);
 
-  // Waves: new ones by the order of their first event.
-  const newWaves = Object.values(scene.waves)
-    .filter((w) => !table.waveIds.includes(w.id))
-    .map((w) => ({ id: w.id, key: firstOrder(log, ref.wave(w.id)) ?? "" }))
-    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.id < b.id ? -1 : 1));
-  if (newWaves.length) {
-    table.waveIds = [...table.waveIds, ...newWaves.map((w) => w.id)];
-    changed = true;
-  }
-
-  // Candidates not yet assigned, each with its key: (order of first event, place in its wave).
-  const candidates: { sliceId: string; ticketId: string; key: string; place: number }[] = [];
+  // Candidates not yet assigned, each with the order key of its first event.
+  const candidates: { sliceId: string; ticketId: string; key: string }[] = [];
   const offered = new Set<string>();
-  const offer = (sliceId: string, key: string | null, place: number): void => {
-    if (!sliceId || offered.has(sliceId)) return;
-    offered.add(sliceId);
-    if (table.index.has(sliceId)) return;
-    candidates.push({ sliceId, ticketId: ticketFor(sliceId), key: key ?? "", place });
-  };
-  for (const w of Object.values(scene.waves)) {
-    const key = firstOrder(log, ref.wave(w.id));
-    w.sliceIds.forEach((id, i) => offer(id, key, i));
+  for (const id of Object.keys(scene.slices)) {
+    offered.add(id);
+    if (!table.index.has(id)) candidates.push({ sliceId: id, ticketId: ticketFor(id), key: firstOrder(log, ref.slice(id)) ?? "" });
   }
-  for (const id of Object.keys(scene.slices)) offer(id, firstOrder(log, ref.slice(id)), 0);
   const tickets = new Set<string>();
   for (const slot of table.slots) tickets.add(slot.ticketId);
   for (const c of candidates) tickets.add(c.ticketId);
@@ -1355,9 +1327,9 @@ export function bayOrder(log: SceneLog): BayOrder {
     if (tickets.has(c.ticketId)) continue;
     const key = `cell:${c.ticketId}`;
     if (table.index.has(key)) continue;
-    candidates.push({ sliceId: key, ticketId: c.ticketId, key: firstOrder(log, ref.cell(c.ticketId)) ?? "", place: 0 });
+    candidates.push({ sliceId: key, ticketId: c.ticketId, key: firstOrder(log, ref.cell(c.ticketId)) ?? "" });
   }
-  candidates.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.place - b.place || (a.sliceId < b.sliceId ? -1 : 1)));
+  candidates.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.sliceId < b.sliceId ? -1 : 1));
 
   let slots = table.slots;
   for (const c of candidates) {
@@ -1390,7 +1362,7 @@ export function bayOrder(log: SceneLog): BayOrder {
   }
   table.slots = slots;
   table.seen.set(log, logVersion);
-  if (changed) table.out = { version: table.out.version + 1, slots: table.slots, waveIds: table.waveIds };
+  if (changed) table.out = { version: table.out.version + 1, slots: table.slots };
   return table.out;
 }
 
@@ -1562,15 +1534,6 @@ export function notInterpretedCount(scene: Scene): number {
   return n;
 }
 
-/**
- * How many distinct slices the received waves name. A slice that belongs to two waves (a revised
- * wave that carries it again) is one slice, not two wave memberships (M7 D6: the floor said
- * "6 slices" for 5).
- */
-export function distinctSliceCount(scene: Pick<Scene, "waves">): number {
-  return new Set(Object.values(scene.waves).flatMap((w) => w.sliceIds)).size;
-}
-
 /** M7: the words for why the supervisor parked a ticket at once (execution.failed `not_progressing`). Codes only in; never the recorded prose. */
 export const PARKED_WORDS: Readonly<Record<"workflow-stuck" | "same-refusal", string>> = {
   "same-refusal": "Parked: the build stopped on the same task with the same refusal twice",
@@ -1612,4 +1575,14 @@ export function ticketClosed(scene: Pick<Scene, "cells" | "slices">, ticket: str
   if (cell.runRecord?.outcome === "abandoned") return true;
   const now = cell.sliceId ? scene.slices[cell.sliceId]?.ticketId : undefined;
   return !!now && now !== ticket && !cell.merged;
+}
+
+/**
+ * The epics the scene's slices name (M11), in the order their first slice arrived: ids only, never
+ * names. A slice with no recorded epic adds none.
+ */
+export function epicsInArrivalOrder(scene: Pick<Scene, "slices">): string[] {
+  const out: string[] = [];
+  for (const s of Object.values(scene.slices).sort((a, b) => a.since - b.since || (a.id < b.id ? -1 : 1))) if (s.epicId && !out.includes(s.epicId)) out.push(s.epicId);
+  return out;
 }

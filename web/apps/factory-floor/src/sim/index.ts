@@ -22,4 +22,4 @@ export * from "./fold";
 export { describe } from "./describe";
 export { actorOf, ACTOR_INFO, ACTOR_KINDS } from "./actors";
 export { progress, spanProgress, ease, easeOut, motionProgress, MOTION } from "./motion";
-export { SCENARIO, buildScenario, tickAfter, PEOPLE, PROJECT, WAVE, TICKETS, SLICE_IDS, SCENARIO_START, isoAt } from "./scenario";
+export { SCENARIO, buildScenario, tickAfter, PEOPLE, PROJECT, EPIC, ISSUES, TICKETS, SLICE_IDS, SCENARIO_START, isoAt } from "./scenario";

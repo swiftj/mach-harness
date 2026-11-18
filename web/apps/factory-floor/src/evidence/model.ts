@@ -333,7 +333,7 @@ export function buildLiveModel(reply: CellEvidence, options: { readonly sessionM
   return { ticket: reply.ticketId, source: "live", runs, mediaEnabled, readFrom: readFromOf(checks.flatMap((c) => c.files)), note: reply.note };
 }
 
-/** The path a simulated check's evidence names (`LOCAL-031:evidence/x.png`), without the ticket. */
+/** The path a simulated check's evidence names (`131:evidence/x.png`), without the ticket. */
 function simPath(ticket: string, ref: string): string {
   return ref.startsWith(`${ticket}:`) ? ref.slice(ticket.length + 1) : ref;
 }

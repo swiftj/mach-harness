@@ -7,7 +7,7 @@
  */
 import { memo } from "react";
 import { AgentHead, StateMark, fc, project, round, type Lod, type MarkState } from "@mach/ui";
-import type { SceneLog } from "../sim";
+import { epicsInArrivalOrder, type SceneLog } from "../sim";
 import { useSceneStore } from "../scene";
 
 const ZONES_X = "ABCDEFGHJK";
@@ -103,28 +103,28 @@ function hhmm(t: number): string {
 
 /**
  * Three lines, joined by newlines (so the store selector returns a string and the sheet re-renders
- * only when they change): the heading, the project and wave, and what the drawing is (its source and
+ * only when they change): the heading, the project and its epics, and what the drawing is (its source and
  * how complete its history is).
  */
 function titleOf(log: SceneLog, t: number, connection: string | null): string {
   const defs = log.definitions;
   const sim = log.provenance.source === "simulation";
   if (sim) {
-    const wave = Object.values(defs.waves)[0];
-    return [wave ? wave.title : defs.project.name, `${defs.project.name} · ${wave?.id ?? ""} · ${wave?.epicId ?? ""} ${wave?.epicTitle ?? ""}`, "Factory Atlas · plant in 2:1 axonometric · simulation"].join("\n");
+    const epic = Object.values(defs.epics)[0];
+    return [epic ? epic.title : defs.project.name, `${defs.project.name} · ${epic?.id ?? ""}${epic?.issue ? ` · issue #${epic.issue}` : ""}`, "Factory Atlas · plant in 2:1 axonometric · simulation"].join("\n");
   }
   const head = log.head();
-  const waves = Object.values(head.waves).sort((a, b) => a.discoveredAt - b.discoveredAt);
-  const wave = waves[waves.length - 1];
+  const epics = epicsInArrivalOrder(head);
   const project = head.project.name || head.project.id || log.provenance.origin || "Project not recorded";
-  const heading = wave ? (wave.meta.unknown.includes("title") ? wave.id : wave.title) : project;
-  const waveLine = waves.length === 0 ? "no wave received yet" : waves.length === 1 ? wave!.id : `${waves.length} waves, latest ${wave!.id}`;
+  // Epic ids only: an epic's name is free text and this sheet draws strings.
+  const heading = epics.at(-1) ?? project;
+  const epicLine = Object.keys(head.slices).length === 0 ? "no slice received yet" : epics.length === 0 ? "no epic recorded" : epics.length === 1 ? epics[0] : `${epics.length} epics, latest ${epics.at(-1)}`;
   const c = log.sceneAt(t).completeness;
   const complete = c.state === "complete" ? "" : c.state === "reconstructed" ? ` · reconstructed from the observer's state${c.since !== null ? ` at ${hhmm(c.since)}` : ""}` : ` · partial history${c.since !== null ? ` since ${hhmm(c.since)}` : ""}`;
   // Records received but not interpreted (unknown kinds) lose no history: said as such, never "partial".
   const notRead = Object.values(c.notInterpreted).reduce((n, k) => n + k, 0);
   const uninterpreted = notRead ? ` · ${notRead} record${notRead === 1 ? "" : "s"} received, not interpreted` : "";
-  return [heading, `${project} · ${waveLine}`, `Factory Atlas · ${log.provenance.label.toLowerCase()}${connection ? `, ${connection === "no-session" ? "no session" : connection}: as last seen` : ""}${complete}${uninterpreted}`].join("\n");
+  return [heading, `${project} · ${epicLine}`, `Factory Atlas · ${log.provenance.label.toLowerCase()}${connection ? `, ${connection === "no-session" ? "no session" : connection}: as last seen` : ""}${complete}${uninterpreted}`].join("\n");
 }
 
 /** Key to the marks and the flow arrow, upper right, right-aligned to x. */

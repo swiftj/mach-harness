@@ -9,16 +9,16 @@ const of = (type) => events.filter((e) => e.type === type);
 const first = (pred) => events.find(pred);
 const minutes = (t) => `${Math.floor(t / 60000)}:${String(Math.floor(t / 1000) % 60).padStart(2, "0")}`;
 
-const ENVELOPE = ["schema_version", "seq", "at", "type", "project_id", "source_commit", "wave_id", "slice_id", "revision", "ticket_id", "runner_id", "execution_id", "source", "cause", "refs", "data"];
+const ENVELOPE = ["schema_version", "seq", "at", "type", "source_commit", "epic_id", "issue", "slice_id", "revision", "ticket_id", "runner_id", "execution_id", "source", "cause", "refs", "data"];
 
 test("the scenario is deterministic: building it again gives the same bytes", () => {
   assert.equal(JSON.stringify(buildScenario()), JSON.stringify(SCENARIO));
 });
 
-test("every event has the factory-event v2 envelope, plus t", () => {
+test("every event has the factory-event v3 envelope, plus t", () => {
   for (const e of events) {
     assert.deepEqual(Object.keys(e).sort(), [...ENVELOPE, "t"].sort(), `seq ${e.seq}`);
-    assert.equal(e.schema_version, 2);
+    assert.equal(e.schema_version, 3);
     assert.ok(["intake", "engineer", "supervisor"].includes(e.source), `seq ${e.seq} source ${e.source}`);
     assert.equal(e.at, isoAt(e.t));
     assert.match(e.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
@@ -43,7 +43,6 @@ test("causes point backwards; real kinds leave cause null, as MACH does today", 
 // The data fields each real emitter writes (intake.py, supervisor.py, activation.py).
 const REAL_FIELDS = {
   "factory.activated": ["autonomy", "by", "limits", "allow_merge", "persistent", "backlog", "excluded_slices"],
-  "wave.discovered": ["slices", "approval"],
   "intake.validated": ["digest"],
   "slice.materialized": ["digest", "adopted", "dependencies"],
   "slice.integrated": ["commit"],
@@ -75,11 +74,14 @@ test("every kind in the fixture is in the catalog", () => {
 });
 
 test("every beat the contract asks for is present (section 4)", () => {
-  // An approved wave arrives and becomes tickets.
-  const wave = first((e) => e.type === "wave.discovered");
-  assert.ok(wave);
-  assert.equal(wave.data.slices.length, 5);
-  assert.equal(of("slice.materialized").length, 5);
+  // Five slices of one epic, each marked ready as its own issue, are verified and become their tickets (M11).
+  assert.equal(of("intake.validated").length, 5);
+  const filed = of("slice.materialized");
+  assert.equal(filed.length, 5);
+  for (const e of filed) {
+    assert.equal(e.epic_id, "EPIC-004");
+    assert.equal(e.ticket_id, String(e.issue), "a slice's ticket is its issue number");
+  }
   // Scheduler decisions: runnable, waiting and why.
   assert.ok(of("dependency.blocked").some((e) => e.slice_id === "SLICE-024" && /SLICE-021/.test(e.data.reasons.join())));
   assert.ok(of("scheduling.decided").some((e) => e.data.dispatched.length === 3));
@@ -145,8 +147,8 @@ test("every agent that starts either finishes once, after it started, or is stil
     finished.add(e.data.agent_id);
   }
   const running = [...started.keys()].filter((id) => !finished.has(id));
-  // Only LOCAL-034's execution is still at work when the scenario ends.
-  for (const id of running) assert.equal(started.get(id).ticket_id, "LOCAL-034", `${id} never finished`);
+  // Only 134's execution is still at work when the scenario ends.
+  for (const id of running) assert.equal(started.get(id).ticket_id, "134", `${id} never finished`);
   // A sub-agent's parent is running when it starts.
   for (const e of of("agent.started")) {
     if (!e.data.parent_agent_id) continue;

@@ -3,14 +3,13 @@
  * (M6_0_VISUAL_SPEC.md b.2 and b.3). Pure; no React.
  *
  * Laid out from what is known so far, never from the end of the run (M6.2): the bays are the slices
- * of the waves received (in the order the waves arrived), then any other slice received, then any
- * cell opened whose slice is not known. A bay's place is a function of its index alone, so a bay
+ * received (in the order they arrived), then any cell opened whose slice is not known. A bay's place is a function of its index alone, so a bay
  * keeps its place as more arrive (spatial memory): the first nine fill columns of three, the next
  * ones a fourth row across the three columns. The floor is always at least three rows deep, so the
- * intake's centre line does not move as the first slices arrive. What grows when a wave arrives is
+ * intake's centre line does not move as the first slices arrive. What grows when slices arrive is
  * the floor's width (a new column) or depth (the fourth row), and with it the regions downstream.
  *
- * The simulation's head scene holds its whole wave from the start, so its plant is the same as when
+ * The simulation's head scene holds all its slices from the start, so its plant is the same as when
  * it was laid out from the fixture's definitions.
  */
 import { cellAnatomy, factoryTokens, type PlanBox, type Vec3 } from "@mach/ui";
@@ -66,7 +65,6 @@ export interface PlantLayout {
   freeBays: readonly { x: number; y: number; index: number }[];
   bayByTicket: ReadonlyMap<string, BaySlot>;
   bayBySlice: ReadonlyMap<string, BaySlot>;
-  waveIds: readonly string[];
   intake: {
     hopper: Vec3;
     dockEdge: Vec3;
@@ -117,8 +115,8 @@ const cache = new Map<string, PlantLayout>();
  * approval gatehouse into the integration yard, whose main line runs back along -x across the front
  * to the archive. Any plan rectangle projects to about 2:1, so a near-square plan fills the stage.
  */
-export function plantLayout(list: readonly PlantSlot[], waveIds: readonly string[] = []): PlantLayout {
-  const key = `${slotsKey(list)}#${waveIds.join(",")}`;
+export function plantLayout(list: readonly PlantSlot[]): PlantLayout {
+  const key = slotsKey(list);
   const hit = cache.get(key);
   if (hit) return hit;
   const n = Math.max(1, list.length);
@@ -241,7 +239,6 @@ export function plantLayout(list: readonly PlantSlot[], waveIds: readonly string
     }),
     bayByTicket: new Map(bays.map((b) => [b.ticketId, b])),
     bayBySlice: new Map(bays.map((b) => [b.sliceId, b])),
-    waveIds,
     intake: {
       hopper,
       dockEdge: P(dock.x + 6, mid),

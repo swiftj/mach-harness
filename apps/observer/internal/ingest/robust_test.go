@@ -21,13 +21,13 @@ func TestHundredMegabyteLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Write(v2(1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"}))
+	f.Write(v3(1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"}))
 	chunk := bytes.Repeat([]byte(`{"x":"aaaaaaaaaaaaaaaa`), 1<<15) // 720 KiB
 	for written := 0; written < 100<<20; written += len(chunk) {
 		f.Write(chunk)
 	}
 	f.Write([]byte("\n"))
-	f.Write(v2(3, "human.required", "intake", "T-1", "", map[string]any{"reason": "after the long line"}))
+	f.Write(v3(3, "human.required", "intake", "T-1", "", map[string]any{"reason": "after the long line"}))
 	f.Close()
 	runtime.GC()
 	var ms runtime.MemStats
@@ -132,8 +132,8 @@ func TestFactoryAppearsAfterStart(t *testing.T) {
 	if s := o.Stats(); s.FactoryFound || s.CatchingUp || st.Head() != 0 {
 		t.Fatalf("no Factory: %+v", s)
 	}
-	testkit.WriteFile(t, testkit.LedgerPath(root), append(v2(1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"}),
-		v2(2, "human.required", "intake", "T-1", "", map[string]any{"reason": "a person"})...))
+	testkit.WriteFile(t, testkit.LedgerPath(root), append(v3(1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"}),
+		v3(2, "human.required", "intake", "T-1", "", map[string]any{"reason": "a person"})...))
 	for i := 0; i < 3; i++ {
 		now = now.Add(200 * time.Millisecond)
 		o.Tick()

@@ -41,7 +41,8 @@ export const uuidFrom = (label: string): string => {
 
 export interface Envelope {
   source: EventSource;
-  wave_id?: string | null;
+  epic_id?: string | null;
+  issue?: number | null;
   slice_id?: string | null;
   revision?: number | null;
   ticket_id?: string | null;
@@ -66,15 +67,13 @@ interface Draft {
 }
 
 export class Recorder {
-  readonly projectId: string;
   readonly runnerId: string;
   readonly productCommit: string;
   private readonly drafts: Draft[] = [];
   /** Every stage change, for the supervisor's per-tick observation pass. */
-  readonly stageChanges: Array<{ t: number; ticket: string; slice: string; wave: string; to: CellStage; archivedAt?: number }> = [];
+  readonly stageChanges: Array<{ t: number; ticket: string; slice: string; epic: string; issue: number | null; to: CellStage; archivedAt?: number }> = [];
 
-  constructor(projectId: string, runnerId: string, productCommit: string) {
-    this.projectId = projectId;
+  constructor(runnerId: string, productCommit: string) {
     this.runnerId = runnerId;
     this.productCommit = productCommit;
   }
@@ -101,9 +100,9 @@ export class Recorder {
         seq,
         at: isoAt(draft.t),
         type: draft.type,
-        project_id: this.projectId,
         source_commit: env.source_commit === undefined ? this.productCommit : env.source_commit,
-        wave_id: env.wave_id ?? null,
+        epic_id: env.epic_id ?? null,
+        issue: env.issue ?? null,
         slice_id: env.slice_id ?? null,
         revision: env.revision ?? null,
         ticket_id: env.ticket_id ?? null,
@@ -134,7 +133,8 @@ export class Lane {
   readonly rec: Recorder;
   readonly ticket: string;
   readonly slice: string;
-  readonly wave: string;
+  readonly epic: string;
+  readonly issue: number | null;
   readonly revision: number;
   readonly num: string;
   execution: string | null = null;
@@ -145,11 +145,12 @@ export class Lane {
   private toolCount = 0;
   private readonly versions = new Map<string, number>();
 
-  constructor(rec: Recorder, ticket: string, slice: string, wave: string, revision: number) {
+  constructor(rec: Recorder, ticket: string, slice: string, epic: string, issue: number | null, revision: number) {
     this.rec = rec;
     this.ticket = ticket;
     this.slice = slice;
-    this.wave = wave;
+    this.epic = epic;
+    this.issue = issue;
     this.revision = revision;
     this.num = ticket.replace(/^\D+/, "");
   }
@@ -157,7 +158,8 @@ export class Lane {
   env(extra: Partial<Envelope> = {}): Envelope {
     return {
       source: "supervisor",
-      wave_id: this.wave,
+      epic_id: this.epic,
+      issue: this.issue,
       slice_id: this.slice,
       revision: this.revision,
       ticket_id: this.ticket,
@@ -190,7 +192,7 @@ export class Lane {
   setStage(t: number, to: CellStage, by: string, cause: Handle | null = null): Handle {
     const from = this.stage;
     this.stage = to;
-    this.rec.stageChanges.push({ t, ticket: this.ticket, slice: this.slice, wave: this.wave, to });
+    this.rec.stageChanges.push({ t, ticket: this.ticket, slice: this.slice, epic: this.epic, issue: this.issue, to });
     return this.ev(t, "cell.stage_changed", { from, to, by }, cause);
   }
 

@@ -75,9 +75,9 @@ type SpanAttrs struct {
 
 // spanMeta is what the filters need to know about where a span came from.
 type spanMeta struct {
-	src    byte // srcCell | srcExec | srcSlice | srcWave
+	src    byte // srcCell | srcExec | srcSlice
 	ticket string
-	wave   string
+	epic   string
 	execs  []string
 }
 
@@ -85,7 +85,6 @@ const (
 	srcCell byte = iota + 1
 	srcExec
 	srcSlice // slice waits and eligibility, capacity waits: never under an execution filter
-	srcWave
 )
 
 // From and To are the span's extent in Unix milliseconds: the start's earliest bound and the
@@ -169,7 +168,7 @@ func (b *spanBuilder) add(kind, entity, parent, group string, ids map[string]str
 // SpanFilter selects spans. FromMS and ToMS select spans overlapping the window (an open span
 // overlaps everything after its start); SpanID selects one span exactly.
 type SpanFilter struct {
-	Ticket, Execution, Wave, Entity, SpanID string
+	Ticket, Execution, Epic, Entity, SpanID string
 	Kinds                                   map[string]bool
 	FromMS, ToMS                            *int64
 }
@@ -180,19 +179,15 @@ func (f SpanFilter) match(sp *Span) bool {
 	m := sp.meta
 	switch m.src {
 	case srcCell:
-		if !f.wantTicket(m.ticket) || (f.Wave != "" && m.wave != f.Wave) || (f.Execution != "" && !contains(m.execs, f.Execution)) {
+		if !f.wantTicket(m.ticket) || (f.Epic != "" && m.epic != f.Epic) || (f.Execution != "" && !contains(m.execs, f.Execution)) {
 			return false
 		}
 	case srcExec:
-		if (f.Execution != "" && (len(m.execs) == 0 || m.execs[0] != f.Execution)) || !f.wantTicket(m.ticket) || (f.Wave != "" && m.wave != f.Wave) {
+		if (f.Execution != "" && (len(m.execs) == 0 || m.execs[0] != f.Execution)) || !f.wantTicket(m.ticket) || (f.Epic != "" && m.epic != f.Epic) {
 			return false
 		}
 	case srcSlice:
-		if f.Execution != "" || !f.wantTicket(m.ticket) || (f.Wave != "" && m.wave != f.Wave) {
-			return false
-		}
-	case srcWave:
-		if f.Execution != "" || f.Ticket != "" || (f.Wave != "" && m.wave != f.Wave) {
+		if f.Execution != "" || !f.wantTicket(m.ticket) || (f.Epic != "" && m.epic != f.Epic) {
 			return false
 		}
 	}
@@ -238,23 +233,23 @@ func buildSpans(s *State) []*Span {
 	b := &spanBuilder{}
 	for _, t := range sortedKeys(s.Cells) {
 		c := s.Cells[t]
-		b.cur = spanMeta{src: srcCell, ticket: t, wave: c.WaveID, execs: c.Executions}
+		b.cur = spanMeta{src: srcCell, ticket: t, epic: s.epicOf(c), execs: c.Executions}
 		cellSpans(b, s, c)
 	}
 	for _, id := range sortedKeys(s.Executions) {
 		x := s.Executions[id]
-		wave := ""
+		epic := ""
 		if c := s.Cells[x.TicketID]; c != nil {
-			wave = c.WaveID
+			epic = s.epicOf(c)
 		}
-		b.cur = spanMeta{src: srcExec, ticket: x.TicketID, wave: wave, execs: []string{id}}
+		b.cur = spanMeta{src: srcExec, ticket: x.TicketID, epic: epic, execs: []string{id}}
 		execSpans(b, s, x)
 	}
 	for _, id := range sortedKeys(s.Slices) {
 		sl := s.Slices[id]
-		b.cur = spanMeta{src: srcSlice, ticket: sl.TicketID, wave: sl.WaveID}
+		b.cur = spanMeta{src: srcSlice, ticket: sl.TicketID, epic: sl.EpicID}
 		ids := map[string]string{"slice_id": sl.SliceID}
-		for k, v := range map[string]string{"wave_id": sl.WaveID, "ticket_id": sl.TicketID} {
+		for k, v := range map[string]string{"epic_id": sl.EpicID, "ticket_id": sl.TicketID} {
 			if v != "" {
 				ids[k] = v
 			}
@@ -305,11 +300,11 @@ func buildSpans(s *State) []*Span {
 	}
 	// Execution-capacity waits, closed then open, keyed by the event that opened them.
 	capacity := func(t string, opened, released *Stamp) {
-		wave := ""
+		epic := ""
 		if c := s.Cells[t]; c != nil {
-			wave = c.WaveID
+			epic = s.epicOf(c)
 		}
-		b.cur = spanMeta{src: srcSlice, ticket: t, wave: wave}
+		b.cur = spanMeta{src: srcSlice, ticket: t, epic: epic}
 		ref := "cell:" + t
 		if sp := b.add("capacity-wait", ref, ref, ref, map[string]string{"ticket_id": t}, opened, released, "", "completed", false, ""); sp != nil {
 			sp.SpanID += "@" + opened.EventID
@@ -328,11 +323,11 @@ func buildSpans(s *State) []*Span {
 		if sl := s.Slices[w.SliceID]; sl != nil {
 			ticket = sl.TicketID
 		}
-		b.cur = spanMeta{src: srcSlice, ticket: ticket, wave: w.WaveID}
+		b.cur = spanMeta{src: srcSlice, ticket: ticket, epic: w.EpicID}
 		ref := "slice:" + w.SliceID
 		ids := map[string]string{"slice_id": w.SliceID}
-		if w.WaveID != "" {
-			ids["wave_id"] = w.WaveID
+		if w.EpicID != "" {
+			ids["epic_id"] = w.EpicID
 		}
 		if sp := b.add("capacity-wait", ref, ref, ref, ids, w.Opened, w.Released, "", "completed", false, "held-sentence"); sp != nil {
 			sp.SpanID += "@" + w.Opened.EventID
@@ -347,11 +342,6 @@ func buildSpans(s *State) []*Span {
 	}
 	for _, id := range sortedKeys(s.Pending.SliceCapacity) {
 		sliceCapacity(s.Pending.SliceCapacity[id])
-	}
-	for _, id := range sortedKeys(s.Waves) {
-		w := s.Waves[id]
-		b.cur = spanMeta{src: srcWave, wave: id}
-		b.add("wave", "wave:"+id, "", "wave:"+id, map[string]string{"wave_id": id}, w.FirstSeen, waveDone(s, w), "", "completed", false, "")
 	}
 	assignLanes(b.out)
 	sort.SliceStable(b.out, func(i, j int) bool {
@@ -393,25 +383,6 @@ func idChar(s string, i int) bool {
 // sameRevision reports two recorded revisions that are the same (or not recorded on either side).
 func sameRevision(a, b *int64) bool {
 	return a == nil || b == nil || *a == *b
-}
-
-// waveDone is when a wave's last slice was integrated, once every slice is integrated or
-// superseded; nil before.
-func waveDone(s *State, w *Wave) *Stamp {
-	var last *Stamp
-	if len(w.Slices) == 0 {
-		return nil
-	}
-	for _, sid := range w.Slices {
-		sl := s.Slices[sid]
-		if sl == nil || (sl.Integrated == nil && sl.Superseded == nil) {
-			return nil
-		}
-		if sl.Integrated != nil && (last == nil || sl.Integrated.Pos > last.Pos) {
-			last = sl.Integrated
-		}
-	}
-	return last
 }
 
 func nonEmpty(list []string) []string {

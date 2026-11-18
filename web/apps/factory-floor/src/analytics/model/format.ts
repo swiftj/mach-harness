@@ -103,7 +103,7 @@ export function sampleText(r: Pick<MetricRow, "kind" | "unit" | "denominator" | 
   if (n === null) return "no sample";
   // A per-model figure's denominator counts each model an execution used: pairs, not executions.
   if (/\bused the model\b/.test(r.denominator)) return `${count(n)} model–execution ${n === 1 ? "pair" : "pairs"}`;
-  const noun = r.denominator.replace(/^(tickets|visits|executions|rounds|slices|agents|waves)\b/, "$1");
+  const noun = r.denominator.replace(/^(tickets|visits|executions|rounds|slices|agents|epics)\b/, "$1");
   return `${count(n)} ${shortNoun(noun, n)}`;
 }
 

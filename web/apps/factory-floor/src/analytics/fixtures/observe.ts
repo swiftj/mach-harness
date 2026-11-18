@@ -243,7 +243,7 @@ export function simulatedSnapshot(filters: AnalyticsFilters, opts: SnapshotOptio
       T.cover("T1", [], logged(tk.id));
     }
     if (inW(tk.integratedAt) && tk.slice) {
-      T.count("T2", [`wave=${tk.wave}`, `day=${dayKey(tk.integratedAt!)}`]);
+      T.count("T2", [`epic=${tk.epic}`, `day=${dayKey(tk.integratedAt!)}`]);
       contrib("T2", { ref: `slice:${tk.slice}`, label: tk.slice, ticket: tk.id, value: 1, basis: "measured", at_ms: tk.integratedAt });
     }
   }
@@ -282,7 +282,7 @@ export function simulatedSnapshot(filters: AnalyticsFilters, opts: SnapshotOptio
       contrib("C3", { ref: cellRef(tk.id), label: tk.id, ticket: tk.id, value: ms, basis: "measured", at_ms: tk.mergedAt });
     }
     if (tk.slice && inW(tk.integratedAt)) {
-      T.duration("C4", [`wave=${tk.wave}`], tk.integratedAt! - tk.eligibleAt);
+      T.duration("C4", [`epic=${tk.epic}`], tk.integratedAt! - tk.eligibleAt);
       contrib("C4", { ref: `slice:${tk.slice}`, label: tk.slice, ticket: tk.id, value: tk.integratedAt! - tk.eligibleAt, basis: "measured", at_ms: tk.integratedAt });
     }
   }
@@ -302,7 +302,7 @@ export function simulatedSnapshot(filters: AnalyticsFilters, opts: SnapshotOptio
       T.unmeasured(id, w.kind === "human" ? [`risk=${tk.risk}`] : [], "open");
       continue;
     }
-    T.duration(id, w.kind === "human" ? [`risk=${tk.risk}`] : tk.wave ? [`wave=${tk.wave}`] : [], w.end - w.start);
+    T.duration(id, w.kind === "human" ? [`risk=${tk.risk}`] : tk.epic ? [`epic=${tk.epic}`] : [], w.end - w.start);
     contrib(id, { ref, label: w.ticket, ticket: w.ticket, value: w.end - w.start, basis: id === "W2b" ? "inferred" : "measured", at_ms: w.start });
   }
   for (const id of ["W1", "W2", "W2b", "W3"] as const) T.touch(id);
@@ -462,7 +462,7 @@ export function simulatedSnapshot(filters: AnalyticsFilters, opts: SnapshotOptio
   for (const d of CATALOG) totals[d.id] = rowOf(T, d.id, filters);
   const grouped: Record<string, MetricRow> = {};
   const G: readonly (readonly [MetricId, Dimension])[] = [
-    ["T1", "day"], ["T1", "risk"], ["T1", "writer"], ["T2", "day"], ["T2", "wave"], ["C1", "station"], ["C1", "round"], ["C1", "risk"], ["C2", "station"], ["C3", "risk"],
+    ["T1", "day"], ["T1", "risk"], ["T1", "writer"], ["T2", "day"], ["T2", "epic"], ["C1", "station"], ["C1", "round"], ["C1", "risk"], ["C2", "station"], ["C3", "risk"],
     ["W3", "risk"], ["Q1", "risk"], ["Q1", "day"], ["Q2", "day"], ["Q2", "risk"], ["Q2", "app_type"], ["Q3", "risk"], ["Q4", "target_kind"], ["R1", "round"], ["R1", "risk"], ["R2", "rule"], ["R2", "seat"], ["R3", "risk"],
     ["R5", "risk"], ["G1", "risk"], ["X1", "stage"], ["X2", "station"], ["X2", "gate"], ["X2", "reason_code"], ["X3", "gate"], ["S1", "kind"], ["S3", "stage"], ["S5", "tool"], ["S6", "stop_reason"],
     ["K1", "day"], ["K1", "stage"], ["K2", "model"], ["K3", "model"], ["K3", "token_kind"], ["K4", "ticket"], ["K7", "station"], ["K7", "model"], ["K8", "station"], ["K8", "model"], ["K8", "seat"], ["K9", "phase"], ["K10", "station"], ["K10", "model"],

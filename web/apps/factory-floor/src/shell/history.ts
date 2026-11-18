@@ -1,8 +1,8 @@
 /**
  * What the shell reads from a history besides the scene: its significant moments (for the Line's
  * "What just happened", Theater's caption, the announcer and the inspector's "latest moment") and its
- * landmarks (the simulation's storyboard chapters; for real history, real moments: a wave arriving,
- * the Factory enabled or paused, executions starting and ending, verdicts, a person needed or
+ * landmarks (the simulation's storyboard chapters; for real history, real moments: the Factory
+ * enabled or paused, executions starting and ending, verdicts, a person needed or
  * approving).
  *
  * For a live log this is built incrementally by the scene model's shared folds (src/sim/fold.ts, the
@@ -14,6 +14,7 @@ import {
   chapters as storyChapters,
   createLogFold,
   describeEntry,
+  isV3,
   moments as momentsOf,
   type Fixture,
   type Moment,
@@ -27,7 +28,7 @@ export interface Landmark {
   readonly t: number;
   readonly title: string;
   /** What it is: a storyboard chapter, or the kind of real moment. */
-  readonly kind: "chapter" | "wave" | "factory" | "execution" | "verdict" | "person";
+  readonly kind: "chapter" | "factory" | "execution" | "verdict" | "person";
   /** Simulation: the chapter's summary; real history: null. */
   readonly summary: string | null;
   /** Real history, when its title quotes prose the observer has not checked for names: the event's kind; otherwise (and the simulation) null. */
@@ -46,7 +47,6 @@ export interface HistoryIndex {
 
 /** The kinds that make a real landmark, and what kind of landmark each is. */
 const LANDMARK_KINDS: Readonly<Record<string, Landmark["kind"]>> = {
-  "wave.discovered": "wave",
   "factory.activated": "factory",
   "factory.paused": "factory",
   "factory.resumed": "factory",
@@ -61,7 +61,7 @@ const LANDMARK_KINDS: Readonly<Record<string, Landmark["kind"]>> = {
 
 const landmarkFold = createLogFold<Landmark>((entry) => {
   const kind = LANDMARK_KINDS[entry.event.type];
-  if (!kind || entry.event.schema_version !== 3) return null;
+  if (!kind || !isV3(entry.event)) return null;
   const title = describeEntry(entry);
   return { id: entry.id, t: entry.t, title, kind, summary: null, eventType: eventQuotesFreeText(entry.event, undefined, title) ? entry.event.type : null };
 });

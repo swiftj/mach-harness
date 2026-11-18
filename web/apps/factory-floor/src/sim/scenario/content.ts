@@ -1,7 +1,8 @@
 /**
- * What the scenario is about: one approved delivery wave for the invoicing area of a B2B billing
- * web app ("Tally"), its five slices, and for each cell the plan, the evidence and the review
- * findings its agents produce. Plain data; the story (story.ts) decides when things happen.
+ * What the scenario is about: one epic for the invoicing area of a B2B billing web app ("Tally"),
+ * five of its slices marked ready to build in Product Studio, each a GitHub issue whose number is
+ * also its ticket, and for each cell the plan, the evidence and the review findings its agents
+ * produce. Plain data; the story (story.ts) decides when things happen.
  */
 import type { ProductDefinitions } from "../model";
 import type { ReviewSeat, TaskKind } from "../vocabulary";
@@ -10,7 +11,7 @@ import type { TargetKind } from "../events";
 export const PROJECT = { id: "tally-web", name: "Tally", integrationBranch: "main" } as const;
 
 export const PEOPLE = {
-  /** Product manager who approved the wave in Product Studio. */
+  /** Product manager who marked the slices ready to build in Product Studio. */
   productManager: "Maya Lindqvist",
   /** Engineer who enabled the Factory on this machine. */
   engineer: "Priya Raman",
@@ -18,35 +19,45 @@ export const PEOPLE = {
   approver: "Daniel Okafor",
 } as const;
 
-export const WAVE = {
-  id: "WAVE-007",
-  revision: 1,
-  title: "Invoicing: get paid on time",
-  epicId: "EPIC-004",
-  epicTitle: "Collect what customers owe",
-  approvedAt: "2026-11-10T13:42:18Z",
+/** The epic the five slices belong to, and its GitHub issue. */
+export const EPIC = {
+  id: "EPIC-004",
+  title: "Collect what customers owe",
+  issue: 130,
 } as const;
+
+/** Every slice is at its first revision. */
+export const REVISION = 1;
 
 export const SLICE_IDS = ["SLICE-021", "SLICE-022", "SLICE-023", "SLICE-024", "SLICE-025"] as const;
 
+/** Each slice's GitHub issue number, which is also its ticket (M11). */
+export const ISSUES: Readonly<Record<string, number>> = {
+  "SLICE-021": 131,
+  "SLICE-022": 132,
+  "SLICE-023": 133,
+  "SLICE-024": 134,
+  "SLICE-025": 135,
+};
+
 export const TICKETS: Readonly<Record<string, string>> = {
-  "SLICE-021": "LOCAL-031",
-  "SLICE-022": "LOCAL-032",
-  "SLICE-023": "LOCAL-033",
-  "SLICE-024": "LOCAL-034",
-  "SLICE-025": "LOCAL-035",
+  "SLICE-021": "131",
+  "SLICE-022": "132",
+  "SLICE-023": "133",
+  "SLICE-024": "134",
+  "SLICE-025": "135",
 };
 
 export const DEFINITIONS: ProductDefinitions = {
   project: PROJECT,
-  waves: { [WAVE.id]: { id: WAVE.id, title: WAVE.title, epicId: WAVE.epicId, epicTitle: WAVE.epicTitle } },
+  epics: { [EPIC.id]: { id: EPIC.id, title: EPIC.title, issue: EPIC.issue } },
   slices: {
     "SLICE-021": {
       id: "SLICE-021",
       title: "Invoice list with status filters",
       summary: "Finance staff filter the invoice list by draft, open, overdue, paid or void, 25 to a page, oldest due first.",
-      waveId: WAVE.id,
-      epicId: WAVE.epicId,
+      epicId: EPIC.id,
+      issue: 131,
       risk: "Medium",
       appType: "web",
       dependencies: [],
@@ -56,8 +67,8 @@ export const DEFINITIONS: ProductDefinitions = {
       id: "SLICE-022",
       title: "Charge a saved card for an open invoice",
       summary: "From an open invoice, charge the customer's default saved card once; a decline leaves the invoice open with the processor's reason.",
-      waveId: WAVE.id,
-      epicId: WAVE.epicId,
+      epicId: EPIC.id,
+      issue: 132,
       risk: "High",
       appType: "web",
       dependencies: [],
@@ -67,8 +78,8 @@ export const DEFINITIONS: ProductDefinitions = {
       id: "SLICE-023",
       title: "Download an invoice as a PDF",
       summary: "Anyone in the workspace downloads an invoice as a PDF named by its number; void invoices carry a VOID watermark.",
-      waveId: WAVE.id,
-      epicId: WAVE.epicId,
+      epicId: EPIC.id,
+      issue: 133,
       risk: "Medium",
       appType: "web",
       dependencies: [],
@@ -78,8 +89,8 @@ export const DEFINITIONS: ProductDefinitions = {
       id: "SLICE-024",
       title: "Email a reminder when an invoice becomes overdue",
       summary: "On the first day an invoice is overdue the customer's billing contact gets one reminder, and no second one within seven days.",
-      waveId: WAVE.id,
-      epicId: WAVE.epicId,
+      epicId: EPIC.id,
+      issue: 134,
       risk: "Medium",
       appType: "web",
       dependencies: ["SLICE-021"],
@@ -89,8 +100,8 @@ export const DEFINITIONS: ProductDefinitions = {
       id: "SLICE-025",
       title: "Pay-now link in overdue reminders",
       summary: "Each overdue reminder carries a signed link that charges the saved card for exactly that invoice.",
-      waveId: WAVE.id,
-      epicId: WAVE.epicId,
+      epicId: EPIC.id,
+      issue: 135,
       risk: "High",
       appType: "web",
       dependencies: ["SLICE-022", "SLICE-024"],
@@ -150,10 +161,10 @@ export interface CellContent {
 const tsx = (name: string) => `web/src/pages/invoices/${name}`;
 
 export const CONTENT: Readonly<Record<string, CellContent>> = {
-  // ---------------------------------------------------------------- LOCAL-031: fails verification once
-  "LOCAL-031": {
+  // ---------------------------------------------------------------- 131: fails verification once
+  "131": {
     slice: "SLICE-021",
-    ticket: "LOCAL-031",
+    ticket: "131",
     scope: "SLICE-021",
     contracts: [{ path: "proto/invoices/v1/invoice_list.proto", existing: false, summary: "ListInvoices with a status filter and cursor paging" }],
     tasks: [
@@ -203,10 +214,10 @@ export const CONTENT: Readonly<Record<string, CellContent>> = {
     diffStat: "14 files changed, 912 insertions(+), 6 deletions(-)",
   },
 
-  // ---------------------------------------------------------------- LOCAL-032: High risk, review blocker, human gate
-  "LOCAL-032": {
+  // ---------------------------------------------------------------- 132: High risk, review blocker, human gate
+  "132": {
     slice: "SLICE-022",
-    ticket: "LOCAL-032",
+    ticket: "132",
     scope: "SLICE-022",
     contracts: [{ path: "proto/billing/v1/payments.proto", existing: true, summary: "adds ChargeInvoice to PaymentsService (changes an existing contract)" }],
     tasks: [
@@ -253,10 +264,10 @@ export const CONTENT: Readonly<Record<string, CellContent>> = {
     diffStat: "11 files changed, 1047 insertions(+), 12 deletions(-)",
   },
 
-  // ---------------------------------------------------------------- LOCAL-033: first-pass, one outvoted blocker
-  "LOCAL-033": {
+  // ---------------------------------------------------------------- 133: first-pass, one outvoted blocker
+  "133": {
     slice: "SLICE-023",
-    ticket: "LOCAL-033",
+    ticket: "133",
     scope: "SLICE-023",
     contracts: [{ path: "api/openapi/invoice-pdf.yaml", existing: false, summary: "GET /invoices/{id}/pdf, application/pdf" }],
     tasks: [
@@ -290,10 +301,10 @@ export const CONTENT: Readonly<Record<string, CellContent>> = {
     diffStat: "12 files changed, 734 insertions(+), 3 deletions(-)",
   },
 
-  // ---------------------------------------------------------------- LOCAL-034: dispatched once SLICE-021 is merged
-  "LOCAL-034": {
+  // ---------------------------------------------------------------- 134: dispatched once SLICE-021 is merged
+  "134": {
     slice: "SLICE-024",
-    ticket: "LOCAL-034",
+    ticket: "134",
     scope: "SLICE-024",
     contracts: [{ path: "proto/notifications/v1/reminders.proto", existing: false, summary: "OverdueReminder job and its delivery record" }],
     tasks: [

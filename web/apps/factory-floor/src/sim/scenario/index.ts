@@ -6,7 +6,7 @@ import type { Fixture } from "../model";
 import { buildScenario } from "./story";
 
 export { buildScenario, tickAfter } from "./story";
-export { CONTENT, DEFINITIONS, PEOPLE, PROJECT, SLICE_IDS, TICKETS, WAVE } from "./content";
+export { CONTENT, DEFINITIONS, EPIC, ISSUES, PEOPLE, PROJECT, SLICE_IDS, TICKETS } from "./content";
 export { SCENARIO_START, SCENARIO_START_MS, isoAt } from "./recorder";
 
 /** The fixture every view renders. */

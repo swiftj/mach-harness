@@ -25,8 +25,9 @@ import (
 	"mach/observer/internal/redact"
 )
 
-// SourceVersions. The intake log is read at version 2 (with waves) and 3 (M11: slices from issues and
-// ready folders; no wave_id or project_id, so a wave and a project are absent, never invented).
+// SourceVersions. The intake log is read at version 2 and 3 (M11: slices from issues and ready
+// folders, with epic_id and issue; no project_id, so a project is absent, never invented). A version 2
+// line's wave_id and its wave.discovered lines are dropped: waves are gone, and nothing replaces them.
 const (
 	LifecycleVersion = "1"
 )

@@ -212,6 +212,6 @@
   "ok": true
  },
  "path": "/factory/status",
- "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --epics 8; its wave fields renamed by hand for M11 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
  "status": 200
 }

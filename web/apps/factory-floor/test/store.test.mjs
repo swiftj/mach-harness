@@ -42,14 +42,14 @@ test("the store has no playback controls", () => {
 
 test("selection asks the camera to focus; focus requests repeat; a selection without focus leaves the camera", () => {
   const { store } = make();
-  store.select("cell:LOCAL-031");
+  store.select("cell:131");
   const first = store.getState().focus;
-  assert.equal(first.target, "cell:LOCAL-031");
+  assert.equal(first.target, "cell:131");
   assert.equal(store.getState().follow, false, "framing what the person picked takes the camera off follow");
-  store.focusOn("cell:LOCAL-031");
+  store.focusOn("cell:131");
   assert.notEqual(store.getState().focus.nonce, first.nonce);
-  store.select("cell:LOCAL-033", { focus: false });
-  assert.equal(store.getState().focus.target, "cell:LOCAL-031");
+  store.select("cell:133", { focus: false });
+  assert.equal(store.getState().focus.target, "cell:131");
   store.setFollow(true);
   store.focusOn("overview", "follow");
   assert.equal(store.getState().follow, true, "the follow camera's own requests keep follow on");
@@ -77,7 +77,7 @@ test("hover highlights the dependency set; Theater Mode is one state", () => {
 test("workspace: the Line by default; switching keeps the selection; Theater Mode is the Floor's", () => {
   const { store } = make();
   assert.equal(store.getState().workspace, "line");
-  store.select("cell:LOCAL-031", { focus: false });
+  store.select("cell:131", { focus: false });
   store.setTheater(true);
   assert.equal(store.getState().theater, false, "Theater Mode cannot start on the Line");
   store.setWorkspace("floor");
@@ -85,7 +85,7 @@ test("workspace: the Line by default; switching keeps the selection; Theater Mod
   assert.equal(store.getState().theater, true);
   store.setWorkspace("analytics");
   assert.equal(store.getState().theater, false, "it ends on leaving the Floor");
-  assert.equal(store.getState().selection, "cell:LOCAL-031");
+  assert.equal(store.getState().selection, "cell:131");
   store.setWorkspace("timeline");
   assert.equal(store.getState().workspace, "analytics", "an unknown workspace is ignored");
 });
@@ -94,15 +94,15 @@ test("showOnLine selects without moving the camera; showOnFloor frames the selec
   const { showOnLine, showOnFloor } = await import("../src/scene/store.ts");
   const { store } = make();
   store.setWorkspace("analytics");
-  showOnLine(store, "cell:LOCAL-032");
+  showOnLine(store, "cell:132");
   assert.equal(store.getState().workspace, "line");
-  assert.equal(store.getState().selection, "cell:LOCAL-032");
+  assert.equal(store.getState().selection, "cell:132");
   assert.equal(store.getState().focus, null, "the Line has no camera to move");
   showOnFloor(store);
   assert.equal(store.getState().workspace, "floor");
   assert.equal("view" in store.getState(), false, "the Floor has one drawing: no Atlas/Blueprint choice");
   assert.equal("setView" in store, false);
-  assert.equal(store.getState().focus.target, "cell:LOCAL-032");
+  assert.equal(store.getState().focus.target, "cell:132");
 });
 
 test("window.__machSim (development and capture builds): the simulation's moment and the manual clock", () => {
@@ -124,8 +124,8 @@ test("window.__machSim (development and capture builds): the simulation's moment
   hook.advance(1000, 100);
   assert.equal(hook.state().now, 500_000 + 1000 * PLAYBACK_BASE_RATE);
   hook.setWorkspace("floor");
-  hook.select("cell:LOCAL-031");
-  assert.deepEqual([hook.state().workspace, hook.state().selection], ["floor", "cell:LOCAL-031"]);
+  hook.select("cell:131");
+  assert.deepEqual([hook.state().workspace, hook.state().selection], ["floor", "cell:131"]);
   watch();
   off();
   assert.equal("__machSim" in target, false);
@@ -142,16 +142,16 @@ test("heldStore: held, a hidden workspace sees nothing change and is told nothin
   const frozen = held.getState();
   clock.frames(1, 0);
   clock.frames(10, 100);
-  store.select("cell:LOCAL-031");
+  store.select("cell:131");
   assert.equal(told, 0);
   assert.equal(held.getState(), frozen);
   assert.notEqual(store.getState().now, frozen.now, "the store itself goes on");
-  held.select("cell:LOCAL-033", { focus: false });
-  assert.equal(store.getState().selection, "cell:LOCAL-033", "actions go straight to the store");
+  held.select("cell:133", { focus: false });
+  assert.equal(store.getState().selection, "cell:133", "actions go straight to the store");
   held.hold(false);
   assert.equal(told, 1);
   assert.equal(held.getState(), store.getState());
-  store.hover("cell:LOCAL-031");
+  store.hover("cell:131");
   assert.equal(told, 2, "released, it follows every change");
   off();
 });
@@ -162,7 +162,7 @@ test("A3: heldStore holds itself when the workspace leaves the Floor; the switch
   const held = heldStore(store);
   const seen = [];
   const off = held.subscribe(() => seen.push(held.getState()));
-  store.select("cell:LOCAL-031", { focus: false });
+  store.select("cell:131", { focus: false });
   assert.equal(seen.length, 1, "on the Floor it follows every change");
   const before = held.getState();
   showOnLine(store);
@@ -170,7 +170,7 @@ test("A3: heldStore holds itself when the workspace leaves the Floor; the switch
   assert.equal(seen.length, 1);
   assert.equal(held.getState(), before);
   assert.equal(held.getState().workspace, "floor", "the hidden Floor still sees itself as it was");
-  store.select("cell:LOCAL-033", { focus: false });
+  store.select("cell:133", { focus: false });
   assert.equal(seen.length, 1, "nothing while the Line is up");
   showOnFloor(store);
   assert.equal(held.held(), false);
@@ -193,16 +193,16 @@ test("A4: a store view hidden by hand keeps its state and tells nothing; shown a
   const view = storeView(store);
   let told = 0;
   const off = view.subscribe(() => told++);
-  store.select("cell:LOCAL-031", { focus: false });
+  store.select("cell:131", { focus: false });
   assert.equal(told, 1, "shown: every change");
   view.setShown(false);
   const frozen = view.getState();
-  store.select("cell:LOCAL-032", { focus: false });
-  store.select("cell:LOCAL-033", { focus: false });
+  store.select("cell:132", { focus: false });
+  store.select("cell:133", { focus: false });
   assert.equal(told, 1);
   assert.equal(view.getState(), frozen);
-  view.select("cell:LOCAL-034", { focus: false });
-  assert.equal(store.getState().selection, "cell:LOCAL-034", "actions go straight to the store");
+  view.select("cell:134", { focus: false });
+  assert.equal(store.getState().selection, "cell:134", "actions go straight to the store");
   view.setShown(true);
   assert.equal(told, 2, "caught up once");
   assert.equal(view.getState(), store.getState());

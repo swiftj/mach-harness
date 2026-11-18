@@ -88,7 +88,6 @@ export function emptyScene(definitions: ProductDefinitions, source: SceneProvena
     project: definitions.project,
     factory: { enabled: false, autonomy: null, enabledBy: null, allowMerge: false, limits: null, runnerId: null, productCommit: null, paused: false },
     supervisor: { lastDecisionAt: null, lastDecision: null, attention: {} },
-    waves: {},
     slices: {},
     dependencies: {},
     cells: {},
@@ -277,30 +276,6 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
       return { ...s, factory: { ...s.factory, enabled: false } };
     case "revision.discovered":
       return { ...s, factory: { ...s.factory, productCommit: event.data.commit } };
-    case "wave.discovered": {
-      const id = event.wave_id ?? "";
-      const def = definitions.waves[id];
-      return {
-        ...s,
-        waves: put(s.waves, id, {
-          id,
-          title: def?.title ?? id,
-          epicTitle: def?.epicTitle ?? "",
-          revision: event.revision,
-          sliceIds: event.data.slices,
-          approvedBy: event.data.approval.actor,
-          approvedAt: event.data.approval.approved_at,
-          state: "discovered",
-          discoveredAt: t,
-          seq,
-          meta: SIM_META,
-        }),
-      };
-    }
-    case "intake.validated": {
-      const wave = s.waves[event.wave_id ?? ""];
-      return wave ? { ...s, waves: put(s.waves, wave.id, { ...wave, state: "validated" }) } : s;
-    }
     case "slice.materialized": {
       const id = event.slice_id ?? "";
       const def = definitions.slices[id];
@@ -309,7 +284,9 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         id,
         title: def?.title ?? id,
         summary: def?.summary ?? "",
-        waveId: event.wave_id ?? "",
+        epicId: event.epic_id ?? def?.epicId ?? null,
+        epicTitle: definitions.epics[event.epic_id ?? def?.epicId ?? ""]?.title ?? null,
+        issue: event.issue ?? def?.issue ?? null,
         revision: event.revision,
         risk: def?.risk ?? "Medium",
         ticketId: ticket ?? "",

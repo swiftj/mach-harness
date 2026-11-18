@@ -19,34 +19,39 @@ type Identity struct {
 	// incarnations per ticket: generation -> first `at` of its lifecycle file (contract 5.2: the
 	// k-th incarnation is cell:<ticket>~<k>, numbered by the file's first at).
 	incarnations map[string]map[string]int64
-	// titles per slice, with the revision the ledger recorded them for (raw: scrubbed when used).
-	titles map[string]sliceTitle
+	// titles per slice and of its epic, with the revision the ledger recorded them for (raw: scrubbed
+	// when used).
+	titles map[string]SliceTitles
 }
 
-type sliceTitle struct {
-	title    string
+// SliceTitles are a slice's title and its epic's name as the intake ledger records them (raw).
+type SliceTitles struct {
+	Title    string
+	Epic     string
 	revision int64
 }
 
-// SliceTitleMax is the most characters of a slice title kept (redact.FreeTextFields).
+// SliceTitleMax is the most characters of a slice title or an epic name kept (redact.FreeTextFields).
 const SliceTitleMax = 200
 
-// SliceTitle is the title the intake ledger records for a slice, and the revision it is for.
-func (id *Identity) SliceTitle(slice string) (string, int64, bool) {
+// SliceTitle is the title and epic name the intake ledger records for a slice, and the revision they
+// are for.
+func (id *Identity) SliceTitle(slice string) (SliceTitles, int64, bool) {
 	t, ok := id.titles[slice]
-	return t.title, t.revision, ok
+	return t, t.revision, ok
 }
 
 // Product is a cell's product identity.
 type Product struct {
 	SliceID  string
-	WaveID   string
+	EpicID   string // M11
+	Issue    int64  // M11: the slice's issue number; 0 when it came from a folder or is not recorded
 	Revision *int64
 }
 
 // NewIdentity makes an empty identity map.
 func NewIdentity() *Identity {
-	return &Identity{execs: map[string]string{}, cells: map[string]Product{}, incarnations: map[string]map[string]int64{}, titles: map[string]sliceTitle{}}
+	return &Identity{execs: map[string]string{}, cells: map[string]Product{}, incarnations: map[string]map[string]int64{}, titles: map[string]SliceTitles{}}
 }
 
 // LearnExecution records that an execution served a ticket.
@@ -123,7 +128,7 @@ func (id *Identity) Current(ticket string) int {
 }
 
 // ReadLedger learns from .factory/intake/ledger.json: the project id, each execution's ticket
-// (supervisor.executions) and each slice's ticket and wave. Unknown shapes are ignored.
+// (supervisor.executions) and each slice's ticket, epic and issue. Unknown shapes are ignored.
 func (id *Identity) ReadLedger(data []byte) {
 	var raw struct {
 		ProjectID  any                       `json:"project_id"`
@@ -145,9 +150,12 @@ func (id *Identity) ReadLedger(data []byte) {
 	}
 	for sliceID, rec := range raw.Slices {
 		s, ok := redact.ID(sliceID)
-		if title, okTitle := rec["title"].(string); ok && okTitle && len(title) <= 4*SliceTitleMax {
+		epic := obj(rec["epic"])
+		title, _ := rec["title"].(string)
+		epicTitle, _ := epic["title"].(string)
+		if ok && len(title) <= 4*SliceTitleMax && len(epicTitle) <= 4*SliceTitleMax && (title != "" || epicTitle != "") {
 			if r, okR := redact.Int(rec["revision"]); okR {
-				id.titles[s] = sliceTitle{title: title, revision: r}
+				id.titles[s] = SliceTitles{Title: title, Epic: epicTitle, revision: r}
 			}
 		}
 		t, okT := Ticket(rec["ticket_id"])
@@ -158,8 +166,11 @@ func (id *Identity) ReadLedger(data []byte) {
 		if p.SliceID == "" {
 			p.SliceID = s
 		}
-		if w, ok := redact.ID(rec["wave_id"]); ok && p.WaveID == "" {
-			p.WaveID = w
+		if e, ok := redact.ID(epic["epic_id"]); ok && p.EpicID == "" {
+			p.EpicID = e
+		}
+		if n, ok := redact.Int(rec["issue"]); ok && n > 0 && p.Issue == 0 {
+			p.Issue = n
 		}
 		if r, ok := redact.Int(rec["revision"]); ok && p.Revision == nil {
 			p.Revision = &r
@@ -192,7 +203,8 @@ func ParseCell(data []byte) CellInfo {
 	}
 	if p := obj(raw["product"]); p != nil {
 		ci.Product.SliceID, _ = redact.ID(p["slice_id"])
-		ci.Product.WaveID, _ = redact.ID(p["wave_id"])
+		ci.Product.EpicID, _ = redact.ID(p["epic_id"])
+		ci.Product.Issue = issueNumber(p["issue"])
 		if r, ok := redact.Int(p["revision"]); ok {
 			ci.Product.Revision = &r
 		}
@@ -201,4 +213,12 @@ func ParseCell(data []byte) CellInfo {
 		ci.Product.SliceID, _ = redact.ID(raw["slice_id"])
 	}
 	return ci
+}
+
+// issueNumber is the number of a product block's issue ({"repository", "number"}, M11), or 0.
+func issueNumber(v any) int64 {
+	if n, ok := redact.Int(obj(v)["number"]); ok && n > 0 {
+		return n
+	}
+	return 0
 }

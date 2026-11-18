@@ -4,7 +4,7 @@
 //
 //	go run ./internal/testkit/cmd/mach-synth --out <dir> --cells 12 --events 220000 --seed 1 [--hours 30] [--end now]
 //	go run ./internal/testkit/cmd/mach-synth --out <dir> --append --rate 200 [--duration 60s]
-//	go run ./internal/testkit/cmd/mach-synth --out <dir> --analytics [--cells 300] [--waves 38] [--hours 504] [--events N] [--seed 1] [--profile realistic]
+//	go run ./internal/testkit/cmd/mach-synth --out <dir> --analytics [--cells 300] [--epics 38] [--hours 504] [--events N] [--seed 1] [--profile realistic]
 //
 // The first form writes <dir>/.factory/... (the intake log and ledger, cell lifecycle logs and
 // files, archives, execution records and Claude Code streams), <dir>/synth-summary.json and
@@ -47,7 +47,7 @@ func run(args []string) error {
 	rate := fs.Int("rate", 200, "with --append: events per second")
 	duration := fs.Duration("duration", 0, "with --append: how long to run (default: until interrupted)")
 	analytics := fs.Bool("analytics", false, "generate an analytics-grade project (many finished tickets, run records, expected.json); unset options take the analytics defaults")
-	waves := fs.Int("waves", 0, "with --analytics: delivery waves (default: one per eight cells)")
+	epics := fs.Int("epics", 0, "with --analytics: epics (default: one per eight cells)")
 	maxPar := fs.Int("max-parallel", 0, "with --analytics: the supervisor's max_parallel (default 4)")
 	profile := fs.String("profile", "", "with --analytics: \"realistic\" for real-time durations, a working week and provenance configurations (the history is as long as the work; --hours is not used)")
 	if err := fs.Parse(args); err != nil {
@@ -81,7 +81,7 @@ func run(args []string) error {
 	}
 	if *analytics {
 		// Only what was asked for: the rest takes the analytics defaults (events: no progress fill).
-		o = synth.Options{Out: abs, Seed: *seed, Analytics: true, Waves: *waves, MaxParallel: *maxPar, Profile: *profile}
+		o = synth.Options{Out: abs, Seed: *seed, Analytics: true, Epics: *epics, MaxParallel: *maxPar, Profile: *profile}
 		if given["cells"] {
 			o.Cells = *cells
 		}

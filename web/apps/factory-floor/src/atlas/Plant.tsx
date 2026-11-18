@@ -69,12 +69,12 @@ const Regions = memo(function Regions({ layout: L, lod, captions, active }: Omit
   const I = L.integration;
   return (
     <g>
-      {/* The dock, where approved waves come in from Product Studio. */}
+      {/* The dock, where slices marked ready in Product Studio come in. */}
       <Prism box={{ x: L.dock.x, y: L.dock.y, w: L.dock.w, d: L.dock.d, z: 0, h: PLATE_Z - 2 }} hatch="both" top="plate-lit" />
       {lod !== "far" ? (
         <>
           <FloorLettering at={{ x: L.dock.x + 6, y: L.dock.y + 12, z: PLATE_Z - 2 }} text="DOCK · PRODUCT STUDIO" size={8} font="mono" tone="subtle" weight={500} decorative />
-          <FloorLettering at={{ x: L.dock.x + 6, y: L.dock.y + L.dock.d - 6, z: PLATE_Z - 2 }} text="approved waves only" size={8} font="mono" tone="subtle" weight={500} decorative />
+          <FloorLettering at={{ x: L.dock.x + 6, y: L.dock.y + L.dock.d - 6, z: PLATE_Z - 2 }} text="ready slices only" size={8} font="mono" tone="subtle" weight={500} decorative />
         </>
       ) : null}
       {/* Regions, back to front. */}

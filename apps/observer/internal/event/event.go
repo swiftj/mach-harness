@@ -23,10 +23,12 @@ import (
 // Revision 1 added execution.usage's cost_complete and cost_incomplete_reasons. Revision 2 added
 // history.gap's class and history_lost (and the reasons unexpected-shape and evicted), and
 // origin.runtime_state on events read from an execution stream. Revision 3 (M6.5) added
-// execution.started's source_commit, provenance and provenance_reason.
+// execution.started's source_commit, provenance and provenance_reason. Revision 4 (M11) is not
+// additive, since MACH has no users yet: ids.wave_id is replaced by ids.epic_id, ids.issue is added,
+// wave.discovered is gone, and slice.materialized gains epic_title.
 const (
 	Version  = 3
-	Revision = 3
+	Revision = 4
 )
 
 // Gap classes (history.gap data.class, revision 2): what a gap means for the history a reader
@@ -135,7 +137,8 @@ type Time struct {
 // IDs are the identities an event is about (contract section 4). Every key is always written.
 type IDs struct {
 	ProjectID     string
-	WaveID        string
+	EpicID        string // the epic a slice belongs to (M11)
+	Issue         int64  // the slice's GitHub issue number (M11); 0 = null
 	SliceID       string
 	Revision      *int64
 	TicketID      string
@@ -260,7 +263,8 @@ type timeWire struct {
 
 type idsWire struct {
 	ProjectID     *string `json:"project_id"`
-	WaveID        *string `json:"wave_id"`
+	EpicID        *string `json:"epic_id"`
+	Issue         *int64  `json:"issue"`
 	SliceID       *string `json:"slice_id"`
 	Revision      *int64  `json:"revision"`
 	TicketID      *string `json:"ticket_id"`
@@ -315,7 +319,7 @@ func (e *Event) toWire() wire {
 			Writer: e.Origin.Writer, Script: nz(e.Origin.Script), SourceVersion: nz(e.Origin.SourceVersion), RuntimeState: e.Origin.RuntimeState},
 		Time: timeWire{OccurredAt: nz(e.Time.OccurredAt), Precision: e.Time.Precision, NotBefore: nz(e.Time.NotBefore),
 			NotAfter: nz(e.Time.NotAfter), ObservedAt: e.Time.ObservedAt, OrderMS: e.Time.OrderMS},
-		IDs: idsWire{ProjectID: nz(e.IDs.ProjectID), WaveID: nz(e.IDs.WaveID), SliceID: nz(e.IDs.SliceID), Revision: e.IDs.Revision,
+		IDs: idsWire{ProjectID: nz(e.IDs.ProjectID), EpicID: nz(e.IDs.EpicID), Issue: nzi(e.IDs.Issue), SliceID: nz(e.IDs.SliceID), Revision: e.IDs.Revision,
 			TicketID: nz(e.IDs.TicketID), CellInstance: nz(e.IDs.CellInstance), ExecutionID: nz(e.IDs.ExecutionID),
 			RunnerID: nz(e.IDs.RunnerID), VisitID: nz(e.IDs.VisitID), Station: nz(e.IDs.Station), Round: nzi(e.IDs.Round),
 			Attempt: nzi(e.IDs.Attempt), Seat: nz(e.IDs.Seat), AgentID: nz(e.IDs.AgentID), ParentAgentID: nz(e.IDs.ParentAgentID),
@@ -359,7 +363,7 @@ func (e *Event) UnmarshalJSON(b []byte) error {
 			Script: dz(w.Origin.Script), SourceVersion: dz(w.Origin.SourceVersion), RuntimeState: w.Origin.RuntimeState},
 		Time: Time{OccurredAt: dz(w.Time.OccurredAt), Precision: w.Time.Precision, NotBefore: dz(w.Time.NotBefore),
 			NotAfter: dz(w.Time.NotAfter), ObservedAt: w.Time.ObservedAt, OrderMS: w.Time.OrderMS},
-		IDs: IDs{ProjectID: dz(w.IDs.ProjectID), WaveID: dz(w.IDs.WaveID), SliceID: dz(w.IDs.SliceID), Revision: w.IDs.Revision,
+		IDs: IDs{ProjectID: dz(w.IDs.ProjectID), EpicID: dz(w.IDs.EpicID), Issue: dzi(w.IDs.Issue), SliceID: dz(w.IDs.SliceID), Revision: w.IDs.Revision,
 			TicketID: dz(w.IDs.TicketID), CellInstance: dz(w.IDs.CellInstance), ExecutionID: dz(w.IDs.ExecutionID),
 			RunnerID: dz(w.IDs.RunnerID), VisitID: dz(w.IDs.VisitID), Station: dz(w.IDs.Station), Round: dzi(w.IDs.Round),
 			Attempt: dzi(w.IDs.Attempt), Seat: dz(w.IDs.Seat), AgentID: dz(w.IDs.AgentID), ParentAgentID: dz(w.IDs.ParentAgentID),
@@ -518,7 +522,6 @@ func OrderKey(orderMS int64, rank int, key string, seq int64, part int) string {
 
 // Ref builders (contract section 5.2). Components are encoded so a ref is always parseable.
 func RefProject(id string) string             { return "project:" + Enc(id) }
-func RefWave(id string) string                { return "wave:" + Enc(id) }
 func RefSlice(id string) string               { return "slice:" + Enc(id) }
 func RefExecution(x string) string            { return "execution:" + Enc(x) }
 func RefWorkflow(x, task string) string       { return "workflow:" + Enc(x) + "/" + Enc(task) }
@@ -586,7 +589,7 @@ func ValidGeneration(g string) bool {
 
 // Kinds is the version 3 kind catalog (contract section 11), in catalog order.
 var Kinds = []string{
-	"wave.discovered", "intake.validated", "intake.refused", "slice.materialized", "slice.integrated", "dependency.resolved",
+	"intake.validated", "intake.refused", "slice.materialized", "slice.integrated", "dependency.resolved",
 	"dependency.blocked", "work.scheduled", "revision.superseded", "human.required", "factory.activated", "factory.disabled",
 	"factory.paused", "factory.resumed", "revision.discovered", "scheduling.decided", "work.claimed", "execution.started",
 	"station.observed", "recovery.started", "execution.completed", "execution.failed",
@@ -628,7 +631,8 @@ type compactTime struct {
 
 type compactIDs struct {
 	ProjectID     *string `json:"project_id,omitempty"`
-	WaveID        *string `json:"wave_id,omitempty"`
+	EpicID        *string `json:"epic_id,omitempty"`
+	Issue         *int64  `json:"issue,omitempty"`
 	SliceID       *string `json:"slice_id,omitempty"`
 	Revision      *int64  `json:"revision,omitempty"`
 	TicketID      *string `json:"ticket_id,omitempty"`

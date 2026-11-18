@@ -132,7 +132,8 @@ export function CellGlyph({ size, state = "idle" }: { size?: number; state?: Fac
   );
 }
 
-export function WaveGlyph({ size }: { size?: number }) {
+/** A project: a stack of sheets. */
+export function ProjectGlyph({ size }: { size?: number }) {
   return (
     <Glyph size={size}>
       {[4, 0, -4].map((d) => (

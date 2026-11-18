@@ -14,7 +14,7 @@ func TestEveryKindHasAnAllowlist(t *testing.T) {
 			t.Errorf("no allowlist for %s", k)
 		}
 	}
-	if len(Allow) != len(event.Kinds) || len(event.Kinds) != 54 {
+	if len(Allow) != len(event.Kinds) || len(event.Kinds) != 53 {
 		t.Fatalf("%d allowlists, %d kinds", len(Allow), len(event.Kinds))
 	}
 }

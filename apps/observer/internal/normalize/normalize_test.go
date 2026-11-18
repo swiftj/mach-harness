@@ -113,8 +113,8 @@ func TestOneRefusalPerToolWithItsDetail(t *testing.T) {
 		{[]any{"Bash"}, []any{"Bash"}},
 		{[]any{}, []any{}},
 	} {
-		line, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": 1, "at": "2026-11-14T15:17:50Z", "type": "execution.completed", "project_id": "P-1",
-			"source_commit": nil, "wave_id": nil, "slice_id": "SLICE-001", "revision": nil, "ticket_id": "LOCAL-001", "runner_id": "R-1",
+		line, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": 1, "at": "2026-11-14T15:17:50Z", "type": "execution.completed",
+			"source_commit": nil, "epic_id": nil, "issue": nil, "slice_id": "SLICE-001", "revision": nil, "ticket_id": "LOCAL-001", "runner_id": "R-1",
 			"execution_id": "x0123456789ab", "source": "supervisor", "cause": nil, "refs": nil,
 			"data": map[string]any{"cost_usd": 1.1, "how": "exited", "next": "stop", "refused_tools": c.in, "seen_to_end": true, "stage": "awaiting-human", "waiting_for": "human-approval"}})
 		evs := NewLedger("0badc0de", "/work/p", NewIdentity()).Line(line, Read{Line: 1, At: time.Date(2026, 11, 14, 15, 17, 51, 0, time.UTC)})
@@ -130,26 +130,27 @@ func TestOneRefusalPerToolWithItsDetail(t *testing.T) {
 }
 
 // D6: the intake log records no slice title; the intake ledger does, and slice.materialized
-// carries it for the revision the ledger names (never another revision's title), scrubbed.
+// carries it for the revision the ledger names (never another revision's title), scrubbed. M11: the
+// epic's name likewise.
 func TestSliceTitleComesFromTheLedgerForItsRevision(t *testing.T) {
 	id := NewIdentity()
-	id.ReadLedger([]byte(`{"project_id":"textkit","slices":{"SLICE-003":{"ticket_id":"LOCAL-003","wave_id":"WAVE-001","revision":2,"title":"Unique link name"},
+	id.ReadLedger([]byte(`{"project_id":"textkit","slices":{"SLICE-003":{"ticket_id":"LOCAL-003","epic":{"epic_id":"EPIC-001","issue":41,"title":"Short links"},"issue":57,"revision":2,"title":"Unique link name"},
 		"SLICE-004":{"ticket_id":"LOCAL-004","revision":1,"title":"Mail ops@example.com when it fails"}}}`))
 	line := func(slice, ticket string, rev int) []byte {
-		b, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": 1, "at": "2026-11-14T15:10:37Z", "type": "slice.materialized", "project_id": "textkit",
-			"source_commit": nil, "wave_id": "WAVE-001", "slice_id": slice, "revision": rev, "ticket_id": ticket, "runner_id": nil,
+		b, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": 1, "at": "2026-11-14T15:10:37Z", "type": "slice.materialized",
+			"source_commit": nil, "epic_id": "EPIC-001", "issue": nil, "slice_id": slice, "revision": rev, "ticket_id": ticket, "runner_id": nil,
 			"execution_id": nil, "source": "intake", "cause": nil, "refs": nil, "data": map[string]any{"adopted": false, "dependencies": []string{}, "digest": strings.Repeat("c", 64)}})
 		return b
 	}
 	for _, c := range []struct {
 		slice, ticket string
 		rev           int
-		want          any
+		want, epic    any
 	}{
-		{"SLICE-003", "LOCAL-003", 2, "Unique link name"},
-		{"SLICE-003", "LOCAL-003", 1, nil}, // an earlier revision: the ledger's title is not its title
-		{"SLICE-004", "LOCAL-004", 1, "Mail [email] when it fails"},
-		{"SLICE-009", "LOCAL-009", 1, nil},
+		{"SLICE-003", "LOCAL-003", 2, "Unique link name", "Short links"},
+		{"SLICE-003", "LOCAL-003", 1, nil, nil}, // an earlier revision: the ledger's title is not its title
+		{"SLICE-004", "LOCAL-004", 1, "Mail [email] when it fails", nil},
+		{"SLICE-009", "LOCAL-009", 1, nil, nil},
 	} {
 		evs := NewLedger("0badc0de", "/work/p", id).Line(line(c.slice, c.ticket, c.rev), Read{Line: 1, At: time.Date(2026, 11, 14, 15, 10, 38, 0, time.UTC)})
 		if len(evs) != 1 {
@@ -162,11 +163,15 @@ func TestSliceTitleComesFromTheLedgerForItsRevision(t *testing.T) {
 		if got := evs[0].Data["title"]; got != c.want {
 			t.Errorf("%s r%d: title %v, want %v", c.slice, c.rev, got, c.want)
 		}
+		if got := evs[0].Data["epic_title"]; got != c.epic {
+			t.Errorf("%s r%d: epic title %v, want %v", c.slice, c.rev, got, c.epic)
+		}
 	}
 }
 
-// M11: an intake line of version 3 names no wave and no project; both stay absent, never invented.
-func TestAVersion3IntakeLineHasNoWave(t *testing.T) {
+// M11: an intake line of version 3 names its epic and issue, and no project, which stays absent,
+// never invented.
+func TestAVersion3IntakeLineNamesItsEpicAndIssue(t *testing.T) {
 	id := NewIdentity()
 	b, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": 1, "at": "2026-11-17T10:00:00Z", "type": "slice.materialized",
 		"source_commit": nil, "epic_id": "EPIC-001", "issue": 57, "slice_id": "SLICE-001", "revision": 1, "ticket_id": "57", "runner_id": nil,
@@ -175,8 +180,8 @@ func TestAVersion3IntakeLineHasNoWave(t *testing.T) {
 	if len(evs) != 1 || evs[0].Type != "slice.materialized" {
 		t.Fatalf("got %+v", evs)
 	}
-	if evs[0].IDs.WaveID != "" || evs[0].IDs.ProjectID != "" || evs[0].Origin.SourceVersion != "3" {
-		t.Errorf("wave %q project %q version %q", evs[0].IDs.WaveID, evs[0].IDs.ProjectID, evs[0].Origin.SourceVersion)
+	if evs[0].IDs.EpicID != "EPIC-001" || evs[0].IDs.Issue != 57 || evs[0].IDs.ProjectID != "" || evs[0].Origin.SourceVersion != "3" {
+		t.Errorf("epic %q issue %d project %q version %q", evs[0].IDs.EpicID, evs[0].IDs.Issue, evs[0].IDs.ProjectID, evs[0].Origin.SourceVersion)
 	}
 	if evs[0].IDs.SliceID != "SLICE-001" || evs[0].IDs.TicketID != "57" {
 		t.Errorf("ids %+v", evs[0].IDs)

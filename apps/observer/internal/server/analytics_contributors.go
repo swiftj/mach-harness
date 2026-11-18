@@ -38,7 +38,7 @@ func (s *Server) analyticsContributors(w http.ResponseWriter, r *http.Request) {
 		invalid("metric must be one of " + strings.Join(names, ", ") + ".")
 		return
 	}
-	cq := project.ContributorQuery{Risk: p.Risk, AppType: p.AppType, Wave: p.Wave, Group: map[string]string{}, Order: "impact", Limit: DefaultContributors}
+	cq := project.ContributorQuery{Risk: p.Risk, AppType: p.AppType, Epic: p.Epic, Group: map[string]string{}, Order: "impact", Limit: DefaultContributors}
 	if v := q.Get("order"); v != "" {
 		if v != "impact" && v != "recent" {
 			invalid("order must be impact or recent.")
@@ -92,7 +92,7 @@ func (s *Server) analyticsContributors(w http.ResponseWriter, r *http.Request) {
 		cq.Group[name] = v
 	}
 	// last_runs: the run records among the last N (run figures), or their tickets' items.
-	supported := []string{"risk", "app_type", "wave", "station", "model", "last_runs"}
+	supported := []string{"risk", "app_type", "epic", "station", "model", "last_runs"}
 	cq.LastRuns = p.LastRuns
 	if e := unsupported(p, supported...); e != nil {
 		writeJSON(w, http.StatusBadRequest, *e)

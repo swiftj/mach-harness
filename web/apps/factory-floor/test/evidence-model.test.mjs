@@ -369,11 +369,11 @@ test("archived cells work as live ones and say they are read from the archive", 
 test("simulation: the scenario's checks with content the app makes itself, labelled; a recording says there is none", () => {
   const log = sim.fixtureLog(sim.SCENARIO);
   const end = log.sceneAt(sim.SCENARIO.duration);
-  const cell = end.cells["LOCAL-031"];
+  const cell = end.cells["131"];
   const m = M.buildSimModel(cell);
   assert.equal(m.source, "simulation");
   assert.equal(m.readFrom, "simulation");
-  assert.deepEqual(m.runs.map((r) => r.round), [2, 1], "LOCAL-031 failed verification once");
+  assert.deepEqual(m.runs.map((r) => r.round), [2, 1], "131 failed verification once");
   assert.ok(M.listedChecks(m, true).length >= 1, "round 1's failed check");
   const files = M.listedChecks(m).flatMap((c) => c.files.map((f) => [c, f]));
   assert.ok(files.length > 0);
@@ -388,11 +388,11 @@ test("simulation: the scenario's checks with content the app makes itself, label
   assert.match(M.SIM_RECORDING_WORDS, /^There is no recording in a simulation\./);
   assert.match(M.SIM_CONTENT_NOTE, /not a capture/);
   // Its text says what it is.
-  const json = M.simulatedText({ ticket: "LOCAL-032", checkId: "R1", kind: "matrix rule", result: "pass", round: 1, note: "one charge", path: "evidence/r1-charged-once.json" });
+  const json = M.simulatedText({ ticket: "132", checkId: "R1", kind: "matrix rule", result: "pass", round: 1, note: "one charge", path: "evidence/r1-charged-once.json" });
   assert.equal(JSON.parse(json).simulation, "sample written by the Factory Floor; not a capture");
   assert.match(M.simulatedText({ ticket: "T", checkId: "X", kind: null, result: null, round: null, note: null, path: "evidence/test.log" }), /^# Simulation: sample written by the Factory Floor; not a capture/);
   // At an earlier moment: the scene there holds fewer checks, and nothing later.
-  const early = M.buildSimModel(log.sceneAt(sim.SCENARIO.duration / 3).cells["LOCAL-031"] ?? cell);
+  const early = M.buildSimModel(log.sceneAt(sim.SCENARIO.duration / 3).cells["131"] ?? cell);
   for (const c of M.listedChecks(early)) assert.ok(c.atMs <= sim.SCENARIO.duration / 3);
 });
 
@@ -440,11 +440,11 @@ test("the store opens the player for identifiers only; the file to start at stay
     onHashChange: () => () => {},
   };
   const sync = createHashSync(store, host);
-  store.openEvidence("LOCAL-031", { check: "AC-01", start: { sceneArtifactId: "LOCAL-031:evidence/ac-01-overdue-filter.png", path: "evidence/ac-01-overdue-filter.png" } });
-  assert.equal(hash, "#floor?evidence=LOCAL-031&check=AC-01");
+  store.openEvidence("131", { check: "AC-01", start: { sceneArtifactId: "131:evidence/ac-01-overdue-filter.png", path: "evidence/ac-01-overdue-filter.png" } });
+  assert.equal(hash, "#floor?evidence=131&check=AC-01");
   assert.doesNotMatch(hash, /png|evidence%2F|overdue/);
   store.setEvidenceCheck("R4");
-  assert.equal(hash, "#floor?evidence=LOCAL-031&check=R4");
+  assert.equal(hash, "#floor?evidence=131&check=R4");
   store.setEvidenceCheck("evidence/x.png");
   assert.equal(store.getState().evidence.check, null);
   store.closeEvidence();
@@ -452,8 +452,8 @@ test("the store opens the player for identifiers only; the file to start at stay
   sync.dispose();
   // Opened from the address (Back to it), and closed by an address without it.
   const { applyHash } = await import("../src/shell/source/hashSync.ts");
-  applyHash(store, H.parseHash("#floor?evidence=LOCAL-032&check=R2"));
-  assert.deepEqual(store.getState().evidence, { ticket: "LOCAL-032", check: "R2", start: null });
+  applyHash(store, H.parseHash("#floor?evidence=132&check=R2"));
+  assert.deepEqual(store.getState().evidence, { ticket: "132", check: "R2", start: null });
   applyHash(store, H.parseHash("#floor"));
   assert.equal(store.getState().evidence, null);
   store.dispose?.();

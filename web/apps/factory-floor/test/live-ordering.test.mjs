@@ -11,7 +11,7 @@ import { seeded } from "./fixtures/observer.mjs";
 const { createSceneLog, provenance, findAgent, entityAt, relatedRefs, liveEntityAt, activityOf } = sim;
 const make = (extra = {}) => createSceneLog({ definitions: live.LIVE_DEFINITIONS, provenance: provenance("live"), checkpointEvery: 32, cacheSize: 64, ...extra });
 
-const TWO = finalize([...beltRun({ ticket: "LOCAL-031", slice: "SLICE-021", execution: "x00000000031a" }).events, ...beltRun({ ticket: "LOCAL-032", slice: "SLICE-022", execution: "x00000000032b", intakeGen: "1badc0de", cellGen: "4f2a9c1e", t0: Date.UTC(2026, 10, 12, 9, 0, 30) }).events]);
+const TWO = finalize([...beltRun({ ticket: "131", slice: "SLICE-021", execution: "x00000000031a" }).events, ...beltRun({ ticket: "132", slice: "SLICE-022", execution: "x00000000032b", intakeGen: "1badc0de", cellGen: "4f2a9c1e", t0: Date.UTC(2026, 10, 12, 9, 0, 30) }).events]);
 const SETTLE_MS = 1500;
 const inOrder = (() => {
   const log = make();
@@ -77,17 +77,17 @@ test("a pure re-delivery changes nothing: same head object, no transition", () =
 });
 
 test("a late event re-derives the affected scenes from the nearest checkpoint, keeping unchanged entities' identity", () => {
-  const lateIndex = TWO.findIndex((e, i) => i > TWO.length - 200 && e.ids.ticket_id === "LOCAL-031" && e.type === "agent.progressed");
+  const lateIndex = TWO.findIndex((e, i) => i > TWO.length - 200 && e.ids.ticket_id === "131" && e.type === "agent.progressed");
   const late = TWO[lateIndex];
   const log = make();
   log.ingest(TWO.filter((_, i) => i !== lateIndex));
   const before = log.head();
-  const other = before.cells["LOCAL-032"];
+  const other = before.cells["132"];
   const r = log.ingest([{ ...late, late: true }]);
   assert.equal(r.late, 1);
   assert.ok(r.rederived > 0 && r.rederived <= TWO.length - lateIndex + 32, `re-derived ${r.rederived} for an event ${TWO.length - lateIndex} from the head`);
   assert.deepStrictEqual(log.head(), inOrder);
-  assert.equal(log.head().cells["LOCAL-032"], other, "a cell the late event did not touch keeps its object");
+  assert.equal(log.head().cells["132"], other, "a cell the late event did not touch keeps its object");
   // Scenes before the insertion point are untouched; at it, the late event is in.
   assert.equal(log.sceneAt(late.time.order_ms).lastEventId !== undefined, true);
   assert.ok(log.entry(late.id).late);

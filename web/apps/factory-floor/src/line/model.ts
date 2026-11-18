@@ -112,6 +112,11 @@ export interface LineRow {
   readonly sliceId: string | null;
   /** The slice's title as recorded (free text: shown contained, never in a label). Null when none is recorded. */
   readonly title: string | null;
+  /** The slice's epic (M11), when recorded: its id, and its name as recorded (free text, like the title). */
+  readonly epicId: string | null;
+  readonly epicTitle: string | null;
+  /** The slice's GitHub issue number, when recorded; shown as text, never as a link. */
+  readonly issue: number | null;
   readonly risk: Risk | null;
   readonly state: LineState;
   /** The column the ticket stands at. */
@@ -309,6 +314,11 @@ function waitingColumn(cell: CellState): number {
 
 const command = (verb: "decide" | "explain", ticketId: string) => `/mach ${verb} ${ticketId}`;
 
+/** A row's epic and issue, from its slice: what is recorded, else null. */
+function epicOf(slice: SliceState | undefined): Pick<LineRow, "epicId" | "epicTitle" | "issue"> {
+  return { epicId: slice?.epicId ?? null, epicTitle: slice?.epicTitle?.trim() ? slice.epicTitle : null, issue: slice?.issue ?? null };
+}
+
 /** One cell as a row of the Line. */
 export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
   const slice = scene.slices[cell.sliceId];
@@ -319,6 +329,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
     ticketId: cell.ticketId,
     sliceId: cell.sliceId || null,
     title,
+    ...epicOf(slice),
     risk: cell.meta.unknown.includes("risk") ? null : cell.risk,
     times: stationTimes(cell, now),
     roundsUsed: roundsUsed(cell),
@@ -476,6 +487,7 @@ export function rowOfSlice(scene: Scene, slice: SliceState): LineRow {
     ticketId: slice.ticketId,
     sliceId: slice.id,
     title: slice.title.trim() && slice.title !== slice.id ? slice.title : null,
+    ...epicOf(slice),
     risk: slice.meta.unknown.includes("risk") ? null : slice.risk,
     state: "held",
     column: PLAN,

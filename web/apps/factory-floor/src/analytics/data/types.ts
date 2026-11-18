@@ -339,7 +339,7 @@ export interface ContributorItem {
   readonly to_ms: number | null;
   readonly risk: string | null;
   readonly app_type: string | null;
-  readonly wave: string | null;
+  readonly epic: string | null;
   /** The item's codes for the figure's dimensions. */
   readonly group: Readonly<Record<string, string>>;
 }
@@ -388,7 +388,7 @@ export interface ExecutionItem {
   readonly started_ms: number | null;
   readonly risk: string | null;
   readonly app_type: string | null;
-  readonly wave: string | null;
+  readonly epic: string | null;
   readonly usage: UsageFacts;
   /** The recorded snapshot's comparable identity (`config_id`), null when none was recorded. Digests and versions only. */
   readonly config_id: string | null;
@@ -418,7 +418,7 @@ export interface RunItem {
   readonly tests_passing_on_first_run: number | null;
   readonly risk: string | null;
   readonly app_type: string | null;
-  readonly wave: string | null;
+  readonly epic: string | null;
   readonly merge_method: string | null;
   readonly merge_commit: string | null;
   readonly closed_at: Stamp | null;

@@ -19,7 +19,7 @@ export function clientEvent<K extends "client.history_missing" | "client.snapsho
     authority: "reconstructed",
     time: { occurred_at: iso, precision: "bounded", not_before: null, not_after: iso, observed_at: iso, order_ms: t },
     order: `${pad(t, 15)}~7~k~${pad(n, 12)}~0000`,
-    ids: { project_id: null, wave_id: null, slice_id: null, revision: null, ticket_id: null, cell_instance: null, execution_id: null, runner_id: null, visit_id: null, station: null, round: null, attempt: null, seat: null, agent_id: null, parent_agent_id: null, tool_call_id: null },
+    ids: { project_id: null, epic_id: null, issue: null, slice_id: null, revision: null, ticket_id: null, cell_instance: null, execution_id: null, runner_id: null, visit_id: null, station: null, round: null, attempt: null, seat: null, agent_id: null, parent_agent_id: null, tool_call_id: null },
     entities: [],
     parent: null,
     cause: null,

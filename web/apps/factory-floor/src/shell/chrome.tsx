@@ -4,7 +4,7 @@
  */
 import { useId } from "react";
 import { cn, MachMark, fc } from "@mach/ui";
-import { SCENARIO, WAVE } from "../sim";
+import { EPIC, SCENARIO, epicsInArrivalOrder } from "../sim";
 import { useScene, useSceneStore, type Workspace } from "../scene";
 import { SourceStamp } from "./SourceBadge";
 import { useSource } from "./source/context";
@@ -22,8 +22,8 @@ const startDate = new Date(SCENARIO.startAt);
 const dateWords = `${startDate.getUTCDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][startDate.getUTCMonth()]} ${startDate.getUTCFullYear()}`;
 
 export const RUN = {
-  waveId: WAVE.id,
-  waveTitle: SCENARIO.definitions.waves[WAVE.id]?.title ?? WAVE.id,
+  epicId: EPIC.id,
+  epicTitle: SCENARIO.definitions.epics[EPIC.id]?.title ?? EPIC.id,
   project: SCENARIO.definitions.project.name,
   date: dateWords,
   startClock: SCENARIO.startAt.slice(11, 16),
@@ -40,16 +40,16 @@ export function Brand() {
   );
 }
 
-/** The simulation's run: the wave, its title, the product and the simulated date. */
+/** The simulation's run: the epic, its name, the product and the simulated date. */
 function SimulatedRun({ compact }: { compact?: boolean }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2.5">
-      {/* The run's name gives way last: the history's start, then the waves, are cut first. */}
+      {/* The run's name gives way last: the history's start, then the epic, are cut first. */}
       <h1 className="max-w-[45%] shrink-0 truncate font-sans text-body-lg font-bold leading-none text-ink">
-        {RUN.waveTitle}
+        {RUN.epicTitle}
         <span className="sr-only">, a simulated run of the MACH Factory</span>
       </h1>
-      <span className="shrink-0 font-mono text-caption text-ink-subtle max-[799px]:hidden">{RUN.waveId}</span>
+      <span className="shrink-0 font-mono text-caption text-ink-subtle max-[799px]:hidden">{RUN.epicId}</span>
       {compact ? null : (
         <span className="hidden min-w-0 truncate text-caption text-ink-subtle min-[1360px]:inline">
           {RUN.project}, {RUN.date} from {RUN.startClock} UTC
@@ -59,23 +59,19 @@ function SimulatedRun({ compact }: { compact?: boolean }) {
   );
 }
 
-/** Real history: the observer's project, the waves received so far, and where the history held begins. */
+/** Real history: the observer's project, the epics whose slices were received so far, and where the history held begins. */
 function RealRun({ compact }: { compact?: boolean }) {
   const { project } = useSource();
   const start = useSceneStore((s) => s.extent.start);
   const held = useSceneStore((s) => s.log.size() > 0);
-  // Wave ids, in arrival order: a string so the title re-renders only when a wave arrives.
-  const waves = useScene((s) =>
-    Object.values(s.waves)
-      .sort((a, b) => a.discoveredAt - b.discoveredAt)
-      .map((w) => w.id)
-      .join(" "),
-  );
-  const list = waves ? waves.split(" ") : [];
+  // Epic ids (codes, never names), in the order their first slice arrived: a string so the title
+  // re-renders only when a new epic appears.
+  const epics = useScene((s) => epicsInArrivalOrder(s).join(" "));
+  const list = epics ? epics.split(" ") : [];
   const title = project ?? "This project";
   return (
     <div className="flex min-w-0 items-baseline gap-2.5">
-      {/* The run's name gives way last: the history's start, then the waves, are cut first. */}
+      {/* The run's name gives way last: the history's start, then the epics, are cut first. */}
       <h1 className="max-w-[45%] shrink-0 truncate font-sans text-body-lg font-bold leading-none text-ink">
         {title}
         <span className="sr-only">, real execution of the MACH Factory, live</span>

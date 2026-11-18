@@ -29,7 +29,7 @@ type Contributor struct {
 	ToMS      *int64   `json:"to_ms"`
 	Risk      *string  `json:"risk"`
 	AppType   *string  `json:"app_type"`
-	Wave      *string  `json:"wave"`
+	Epic      *string  `json:"epic"`
 	// Group holds the item's codes for the figure's dimensions (station, round, kind, state, model,
 	// gate, reason_code, status, target_kind, outcome, action, basis, source).
 	Group map[string]string `json:"group"`
@@ -93,7 +93,7 @@ type ContributorQuery struct {
 	LastRuns            int
 	Window              bool
 	From, To            int64
-	Risk, AppType, Wave string
+	Risk, AppType, Epic string
 	Group               map[string]string // dimension -> code; every one must match
 	Order               string            // impact | recent
 	Limit               int
@@ -134,7 +134,7 @@ func (ix *FlowIndex) Contributors(id string, q ContributorQuery) ContributorPage
 		if q.Window && (c.AtMS < q.From || c.AtMS >= q.To) {
 			continue
 		}
-		if !want(q.Risk, deref(c.Risk)) || !want(q.AppType, deref(c.AppType)) || !want(q.Wave, deref(c.Wave)) {
+		if !want(q.Risk, deref(c.Risk)) || !want(q.AppType, deref(c.AppType)) || !want(q.Epic, deref(c.Epic)) {
 			continue
 		}
 		match := true
@@ -231,7 +231,7 @@ func (ix *FlowIndex) cellFacts(c *Contributor, ticket string) {
 	c.Cell = strp("cell:" + ticket)
 	// The same join the metric engine makes (TicketDims), so a figure's groups and its contributors agree.
 	d := TicketDims(ix.st, ticket)
-	c.Risk, c.AppType, c.Wave = strp(d["risk"]), strp(d["app_type"]), strp(d["wave"])
+	c.Risk, c.AppType, c.Epic = strp(d["risk"]), strp(d["app_type"]), strp(d["epic"])
 }
 
 func f64(v int64) *float64 {
@@ -566,8 +566,8 @@ func (ix *FlowIndex) buildContributors(id string) []Contributor {
 				continue
 			}
 			c := ix.durationContributor("slice:"+id, sl.TicketID, sl.eligible(), sl.Integrated)
-			if c.Wave == nil || *c.Wave == "" {
-				c.Wave = strp(sl.WaveID)
+			if c.Epic == nil || *c.Epic == "" {
+				c.Epic = strp(sl.EpicID)
 			}
 			out = append(out, c)
 		}

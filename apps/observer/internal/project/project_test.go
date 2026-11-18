@@ -287,7 +287,7 @@ func TestSpans(t *testing.T) {
 		}
 	})
 	// No early outcomes: at a cursor before the build visit's exit, the span is open.
-	s, _, _ := p.At(20)
+	s, _, _ := p.At(19)
 	for _, sp := range Spans(s, SpanFilter{Ticket: "T-1", Kinds: map[string]bool{"visit": true}}) {
 		if sp.SpanID == "visit:visit:T-1/build#1" && (sp.End != nil || sp.Outcome != nil || sp.Duration.Basis != "open") {
 			t.Fatalf("an outcome before its time: %+v", sp)

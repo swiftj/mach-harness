@@ -33,7 +33,9 @@ import (
 // of version 2 is rebuilt.
 //
 // 4: cells keep their measured values up to ValueCap, for exact percentiles.
-const DefinitionsVersion = 4
+//
+// 5 (M11): the wave dimension is the epic dimension; T3 and C5 are retired.
+const DefinitionsVersion = 5
 
 // Buckets is the histogram size: bucket 0 is under one second; bucket i (1..63) holds durations
 // in [2^((i-1)/3), 2^(i/3)) seconds, so bucket 63 reaches about 30 days.

@@ -57,7 +57,7 @@
      "to_ms": 1794060103060,
      "unit": "ms",
      "value": 19516765,
-     "wave": "WAVE-007"
+     "epic": "EPIC-007"
     },
     {
      "app_type": "web",
@@ -79,7 +79,7 @@
      "to_ms": 1794166668715,
      "unit": "ms",
      "value": 19429299,
-     "wave": "WAVE-008"
+     "epic": "EPIC-008"
     },
     {
      "app_type": "cli",
@@ -101,7 +101,7 @@
      "to_ms": 1792913320460,
      "unit": "ms",
      "value": 19408211,
-     "wave": "WAVE-002"
+     "epic": "EPIC-002"
     },
     {
      "app_type": "library",
@@ -123,7 +123,7 @@
      "to_ms": 1793048502462,
      "unit": "ms",
      "value": 19357052,
-     "wave": "WAVE-002"
+     "epic": "EPIC-002"
     },
     {
      "app_type": "web",
@@ -145,7 +145,7 @@
      "to_ms": 1793443855130,
      "unit": "ms",
      "value": 19309725,
-     "wave": "WAVE-004"
+     "epic": "EPIC-004"
     }
    ],
    "limit": 5,
@@ -174,6 +174,6 @@
   "ok": true
  },
  "path": "/analytics/contributors?metric=C1&group=station:verify&limit=5",
- "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --epics 8; its wave fields renamed by hand for M11 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
  "status": 200
 }

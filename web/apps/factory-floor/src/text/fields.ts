@@ -13,6 +13,7 @@ import { DEFAULT_UNCHECKED_MAX, unchecked, uncheckedView, type DisplayPolicy, ty
 export const KNOWN_FREE_TEXT_FIELDS: readonly FreeTextField[] = Object.freeze([
   { kind: "review.finding", path: "data.title", max: 200 },
   { kind: "slice.materialized", path: "data.title", max: 200 },
+  { kind: "slice.materialized", path: "data.epic_title", max: 200 },
   { kind: "agent.queued", path: "data.label", max: 120 },
   { kind: "agent.started", path: "data.label", max: 120 },
   { kind: "agent.queued", path: "data.phase", max: 60 },
@@ -109,6 +110,8 @@ export const FREE_TEXT = {
   findingTitle: { kind: ["review.finding"], path: "data.title" },
   // A slice's title (and a cell's, which copies it), from the intake ledger.
   sliceTitle: { kind: ["slice.materialized"], path: "data.title" },
+  // The name of a slice's epic, from the intake ledger (M11).
+  epicTitle: { kind: ["slice.materialized"], path: "data.epic_title" },
   refusedTool: { kind: ["execution.completed"], path: "data.refused_tools[]" },
   agentLabel: { kind: ["agent.queued", "agent.started"], path: "data.label" },
   agentPhase: { kind: ["agent.queued", "agent.started"], path: "data.phase" },
@@ -152,7 +155,7 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
   "agent.queued": "An agent was queued",
   "agent.started": "An agent started",
   "workflow.phases_declared": "A workflow declared its phases",
-  "intake.refused": "Intake refused a wave",
+  "intake.refused": "Intake refused a slice",
   "dependency.blocked": "A slice waits on a dependency",
   "human.required": "A person is needed",
   "factory.paused": "The Factory was paused",
@@ -165,7 +168,7 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
 
 /**
  * Words for an event that never quote its prose: null when its kind carries no prose under the session's
- * policy (its own sentence is MACH's words and may be used as it is). `who` is an id (ticket, slice, wave).
+ * policy (its own sentence is MACH's words and may be used as it is). `who` is an id (ticket, slice, epic).
  */
 export function codesOnlyWords(kind: string, who: string | null = null): string | null {
   if (!kindHasFreeText(session, kind)) return null;

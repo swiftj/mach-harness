@@ -53,7 +53,6 @@ The observer projects events into spans. A span is a derived record; it is rebui
 
 | Kind | Opens | Closes | Notes |
 |---|---|---|---|
-| `wave` | `wave.discovered` | last slice's `slice.integrated` (`completed`) or `revision.superseded` of all slices | a wave is never "finished" before its last slice integrates |
 | `slice-wait` | `dependency.blocked` | `dependency.resolved` | dependency wait (2.5) |
 | `capacity-wait` | `capacity.wait_changed` `waiting` (reconstructed from the supervisor's "all N place(s) are in use" hold) | `capacity.wait_changed` `released` | execution-capacity wait, per ticket; id `capacity-wait:cell:<ticket>@<opening event id>`, `ids: {ticket_id}`; never from silence |
 | `slice-eligible` | `dependency.resolved` (or `slice.materialized` with no dependencies) | `work.scheduled` | queue wait; capacity is not separable (2.5) |
@@ -120,7 +119,7 @@ The client's reducer stays the one authority on scene state (M6.0 contract rule 
 
 ### 2.8 What the Timeline asks the observer for
 
-`GET /api/v1/spans?entity=<ref>&kinds=&ticket=&execution=&wave=&span=&from_ms=&to_ms=` → spans as in 2.1, those overlapping the window, at most 5,000 (`truncated`) (built); `GET /api/v1/history?from_order=&to_order=&entities=` → the events of a window in history order, from memory or the index's segments on disk; a page reads at most 10,000 lines from disk and then stops with `capped: true` and `more: true` (built); `GET /api/v1/series?from_ms=&to_ms=&bucket_ms=&ticket=|execution=` → event counts per bucket by kind and authority, whole minutes for the whole index (also per ticket or per execution) (built; the counts series of 2.6 stays **deferred**: a client computes it from `/spans`); `GET /api/v1/concurrency?from_ms=&to_ms=&bucket_ms=&kinds=` → per bucket and span kind the most and mean active, with the recorded Factory limits, each with `applies_to` (the span kinds it bounds: `max_parallel` → `["execution", "cell"]`, others `null`) (built); `GET /api/v1/marks` → instants to jump to, paged with `offset` (`more`, `next_offset`) in a stable order; `retry` is a revise visit and `attempt` a cell's execution after its first (built). All are derived from the projection (format 3: wait history, capacity waits, recovery and gap times, limit history), built from a snapshot outside the projection's lock and shared by concurrent requests, GET only, behind the session.
+`GET /api/v1/spans?entity=<ref>&kinds=&ticket=&execution=&epic=&span=&from_ms=&to_ms=` → spans as in 2.1, those overlapping the window, at most 5,000 (`truncated`) (built); `GET /api/v1/history?from_order=&to_order=&entities=` → the events of a window in history order, from memory or the index's segments on disk; a page reads at most 10,000 lines from disk and then stops with `capped: true` and `more: true` (built); `GET /api/v1/series?from_ms=&to_ms=&bucket_ms=&ticket=|execution=` → event counts per bucket by kind and authority, whole minutes for the whole index (also per ticket or per execution) (built; the counts series of 2.6 stays **deferred**: a client computes it from `/spans`); `GET /api/v1/concurrency?from_ms=&to_ms=&bucket_ms=&kinds=` → per bucket and span kind the most and mean active, with the recorded Factory limits, each with `applies_to` (the span kinds it bounds: `max_parallel` → `["execution", "cell"]`, others `null`) (built); `GET /api/v1/marks` → instants to jump to, paged with `offset` (`more`, `next_offset`) in a stable order; `retry` is a revise visit and `attempt` a cell's execution after its first (built). All are derived from the projection (format 3: wait history, capacity waits, recovery and gap times, limit history), built from a snapshot outside the projection's lock and shared by concurrent requests, GET only, behind the session.
 
 ---
 
@@ -140,7 +139,7 @@ The catalog is the observer's projection of `artifact.recorded` events (event co
 | `sha256`, `bytes`, `media_type` | computed by the observer from the file (or the Git object) |
 | `integrity` | `match` (the observer's hash equals the hash a MACH record holds), `mismatch`, `missing` (the file is gone), `unchecked` (no MACH record holds a hash for it) |
 | `commit` | the exact commit the artifact speaks about: evidence → `results.json head` of its verification round; vote → its `head`; decision → its `head`; build report → its `head`; a build task's commit → itself; merge → the merge commit |
-| `links` | `{project_id, wave_id, slice_id, revision, ticket_id, cell_instance, visit_id, round, station, execution_id}` |
+| `links` | `{project_id, epic_id, issue, slice_id, revision, ticket_id, cell_instance, visit_id, round, station, execution_id}` |
 | `produced_by` | `{event_id, authority}`: the authoritative event that names it (a `verify.check_recorded`, a `build.task_completed`, a `review.verdict_submitted`), or the visit at whose exit the observer first saw it |
 | `writer` | Always `unknown` for work done by workflow agents: their `Write`/`Edit` calls are not in the stream. Only a main-loop or Agent-tool call can be named. The producing station and visit (`produced_by`) are recorded; the agent is not |
 | `supersedes` | the previous version's `ref` for the same logical artifact, if any |
@@ -161,7 +160,7 @@ Evidence Theater must never let a reader take a model's explanation for proof. F
 
 ### 3.3 Links
 
-Every artifact links to: project, wave, slice and revision (from the cell's product block), ticket and cell instance, station visit, judging round, execution (when the producing event recorded it), and the exact commit. A reader can go from a slice in Product Studio terms to the screenshot that proved its scenario `AC-02` in round 2 at commit `9f2c0a1`, and back.
+Every artifact links to: project, epic, the slice's issue, slice and revision (from the cell's product block), ticket and cell instance, station visit, judging round, execution (when the producing event recorded it), and the exact commit. A reader can go from a slice in Product Studio terms to the screenshot that proved its scenario `AC-02` in round 2 at commit `9f2c0a1`, and back.
 
 ### 3.4 Hashes and provenance
 
@@ -203,20 +202,20 @@ Text evidence is withheld by default because it is captured from a running appli
 
 ### 4.2 Metric catalog
 
-Dimensions: `project`, `wave`, `slice`, `ticket`, `risk`, `app_type`, `station`, `round`, `seat`, `model`, `writer` (supervisor or hand-driven: whether an `execution_id` is recorded), `period` (day, week). "Avail." is M6.1 availability: **yes**, **lifecycle** (needs the lifecycle log), **stream** (from the execution stream, as proven), **no**.
+Dimensions: `project`, `epic` (M11; it replaced `wave`), `slice`, `ticket`, `risk`, `app_type`, `station`, `round`, `seat`, `model`, `writer` (supervisor or hand-driven: whether an `execution_id` is recorded), `period` (day, week). "Avail." is M6.1 availability: **yes**, **lifecycle** (needs the lifecycle log), **stream** (from the execution stream, as proven), **no**.
 
 | Id | Metric | Numerator | Denominator | Dimensions | Source (authority) | Limitations | Avail. |
 |---|---|---|---|---|---|---|---|
-| T1 | Tickets merged | `merge.completed` count | per period | project, wave, risk, app_type, writer | lifecycle (auth.) | merged ≠ accepted (T2) | lifecycle |
-| T2 | Accepted delivery | `slice.integrated` count (the slice's commit is on the integration branch) | per period | project, wave, risk | v2 (auth.) | stamped when the plan noticed; non-product tickets have no slice | yes |
-| T3 | Waves delivered | waves whose every current slice revision is integrated | per period | project | v2 | a superseded revision restarts it | yes |
+| T1 | Tickets merged | `merge.completed` count | per period | project, epic, risk, app_type, writer | lifecycle (auth.) | merged ≠ accepted (T2) | lifecycle |
+| T2 | Accepted delivery | `slice.integrated` count (the slice's commit is on the integration branch) | per period | project, epic, risk | v2 and v3 (auth.) | stamped when the plan noticed; non-product tickets have no slice | yes |
+| T3 | *Retired in M11* (was "Waves delivered") | | | | | Delivery waves were removed; an epic is never "delivered" by a recorded fact (the Factory does not know an epic's last slice), so nothing replaces it. Slices integrated per epic: T2 grouped by `epic`. | no |
 | C1 | Station cycle time | sum of `visit` durations | visits | station, round, risk, app_type | lifecycle (measured) | cells without a log excluded (coverage) | lifecycle |
 | C2 | Station visits per ticket | visits | tickets with a log | station | lifecycle | | lifecycle |
-| C3 | End-to-end cycle time, dispatch to merge | `work.scheduled` → `merge.completed` | merged product tickets | wave, risk, app_type | v2 + lifecycle (measured, `s`) | product tickets only | lifecycle |
-| C4 | End-to-end, eligible to integrated | `dependency.resolved` → `slice.integrated` | integrated slices | wave, risk | v2 | includes queue wait | yes |
-| C5 | Wave lead time | `wave.discovered` → last `slice.integrated` | delivered waves | project | v2 | | yes |
-| W1 | Dependency wait | `slice-wait` durations | slices ever blocked | wave | v2 | | yes |
-| W2 | Queue wait (eligible, not dispatched) | `slice-eligible` durations | dispatched slices | wave, writer | v2 | a slice waiting for a free cell is not recorded, so cell-capacity and engineer waits are not separable (G6) | yes |
+| C3 | End-to-end cycle time, dispatch to merge | `work.scheduled` → `merge.completed` | merged product tickets | epic, risk, app_type | v2 + lifecycle (measured, `s`) | product tickets only | lifecycle |
+| C4 | End-to-end, eligible to integrated | `dependency.resolved` → `slice.integrated` | integrated slices | epic, risk | v2 and v3 | includes queue wait | yes |
+| C5 | *Retired in M11* (was "Wave lead time") | | | | | Waves were removed, and the moment an epic is complete is not recorded, so nothing replaces it. A slice's lead time is C4 (eligible to integrated); the moment it was marked ready is not in the intake log, so no ready-to-merged figure is offered. | no |
+| W1 | Dependency wait | `slice-wait` durations | slices ever blocked | epic | v2 and v3 | | yes |
+| W2 | Queue wait (eligible, not dispatched) | `slice-eligible` durations | dispatched slices | epic, writer | v2 | a slice waiting for a free cell is not recorded, so cell-capacity and engineer waits are not separable (G6) | yes |
 | W2b | Execution-capacity wait | `capacity.wait_changed` `waiting` → `released` durations | tickets ever held for capacity | | reconstructed from `scheduling.decided.held[]` (rule `held-sentence`) | supervised mode only; `scheduling.decided` is emitted only on change, so the release is when the next distinct decision no longer holds it; never inferred from silence | yes |
 | W3 | Human approval wait | `gate-wait` durations | rounds `AWAITING_HUMAN` | risk | lifecycle | | lifecycle |
 | W4 | Supervisor start latency | `claim` durations | executions started | | v2 + execution records | | yes |
@@ -267,11 +266,11 @@ Q2, Q3, R5, R6, G1 and G2 are computed by Analytics from `run.recorded` events w
 
 Analytics must not rescan raw events on each load.
 
-- **Projection.** The observer folds each committed event into a per-entity state table (cells, visits, rounds, executions, slices, waves, seats) as it ingests. Spans close when their closing event arrives.
+- **Projection.** The observer folds each committed event into a per-entity state table (cells, visits, rounds, executions, slices, seats) as it ingests. Spans close when their closing event arrives.
 - **Aggregates.** When a span closes or a countable event arrives, the observer updates aggregate cells keyed by `(metric, dimension values, period bucket)`. Each cell holds mergeable values only: count, sum, min, max, and a fixed log-scale histogram for durations (for example 64 buckets from 1 s to 30 days), from which p50 and p90 are read. Mergeable values make late events cheap: a late event is applied as a delta to its own bucket, with no recomputation of others.
 - **Late and corrected inputs.** The aggregate store records the last `pos` applied. An event marked `late` is applied normally (it is a delta). A `history.gap` with `reason: conflict` marks affected buckets `suspect` until the next rebuild.
 - **Rebuild.** Aggregates carry `definitions_version`. Changing a metric's definition, or a new epoch, rebuilds them by replaying the index once, in `order`. The rebuild is the same fold, so its result equals the incremental one (a test replays a history both ways and compares).
-- **Reads.** `GET /api/v1/analytics/metrics?ids=&group_by=&bucket=&distribution=&from_ms=&to_ms=&last_runs=&at=` and the filters `risk`, `app_type`, `model`, `station`, `wave`, `outcome` (M6.5; parameters and reply in `M6_5_DESIGN.md` section 3.1) reads aggregate cells only: cells are kept per UTC day and dimension values, so a window is widened to whole days and the period is `day` or `week` (`bucket`). Percentiles across buckets merge histograms. Each row returns `value`, `numerator_value`, `denominator_value`, `coverage`, `basis` and `limitations` (the catalog's text).
+- **Reads.** `GET /api/v1/analytics/metrics?ids=&group_by=&bucket=&distribution=&from_ms=&to_ms=&last_runs=&at=` and the filters `risk`, `app_type`, `model`, `station`, `epic`, `outcome` (M6.5; parameters and reply in `M6_5_DESIGN.md` section 3.1) reads aggregate cells only: cells are kept per UTC day and dimension values, so a window is widened to whole days and the period is `day` or `week` (`bucket`). Percentiles across buckets merge histograms. Each row returns `value`, `numerator_value`, `denominator_value`, `coverage`, `basis` and `limitations` (the catalog's text).
 - **Storage** **[A1]**: standard library only, as the M5 host: an append-only segment file for the index, and the projection and aggregates as compacted JSON snapshots written every N events and at shutdown, each with the `pos` it covers; on start, load the snapshot and replay the index tail. Sized for thousands of tickets per project; a database is not needed at that scale (open question 5).
 
 ### 4.6 Across projects

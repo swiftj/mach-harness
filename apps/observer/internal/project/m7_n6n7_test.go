@@ -13,7 +13,7 @@ import (
 // (execution.failed, how "killed", exit -9).
 func m7Run2() []map[string]any {
 	i := func(typ string, ms int64) *feedtest.Ev {
-		return feedtest.New("intake-log", typ, ms).ID("project_id", "lending-desk").ID("wave_id", "WAVE-003")
+		return feedtest.New("intake-log", typ, ms).ID("project_id", "lending-desk").ID("epic_id", "EPIC-003")
 	}
 	var out []map[string]any
 	add := func(e *feedtest.Ev) { out = append(out, e.Build()) }

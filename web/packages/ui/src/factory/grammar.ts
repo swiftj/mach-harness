@@ -205,7 +205,7 @@ export const stationOrder: readonly StationKind[] = ["intake", "groom", "plan", 
 export type RegionKind = "intake" | "floor" | "review" | "human" | "integration" | "archive";
 
 export const regions: Record<RegionKind, { label: string; description: string }> = {
-  intake: { label: "Intake and scheduling", description: "Waves arrive, tickets are filed, the scheduler decides what may start." },
+  intake: { label: "Intake and scheduling", description: "Slices marked ready arrive, tickets are filed, the scheduler decides what may start." },
   floor: { label: "Construction floor", description: "One cell per ticket: grooming, planning, building and verification, each in its own worktree." },
   review: { label: "Review chamber", description: "Three fresh reviewers in parallel; their findings decide the vote." },
   human: { label: "Human approval", description: "Where high-risk work waits for a person." },

@@ -241,7 +241,6 @@ export const ACTOR_WORDS: Record<ActorId, { role: string; does: string }> = {
 
 export const KIND_WORDS: Record<ShellKind, string> = {
   actor: "Actor",
-  wave: "Delivery wave",
   slice: "Slice",
   cell: "Cell",
   station: "Station visit",

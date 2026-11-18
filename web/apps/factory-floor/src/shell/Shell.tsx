@@ -70,7 +70,7 @@ function useMedia(query: string): boolean {
   return match;
 }
 
-/** The workspace and the selection in the address (#line?sel=cell:LOCAL-031), both ways. Grammar: source/hash.ts. */
+/** The workspace and the selection in the address (#line?sel=cell:131), both ways. Grammar: source/hash.ts. */
 function useHashSync(): void {
   const store = useStore();
   // Read once before the first render, so the stage mounts the workspace the address names (no switch, and no transition, at start-up).

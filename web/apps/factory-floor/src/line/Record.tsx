@@ -14,6 +14,7 @@ import { duration } from "../shell/time";
 import { columnOf, LINE_STATIONS, type LineRow } from "./model";
 import { StatePill } from "./Marks";
 import { costWords, modelWords } from "./words";
+import { EpicLine } from "./Epic";
 
 /** The models recorded for agents that worked on this visit (same station, started while it was open). */
 function visitModels(cell: CellState, v: StationVisit): string | null {
@@ -119,6 +120,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
                 <FreeText field="sliceTitle" text={row.title} />
               </p>
             ) : null}
+            <EpicLine row={row} className="mt-1 block text-body-sm text-ink-muted" />
             <p className="mt-2 flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
               <StatePill state={row.state} />
               <span>

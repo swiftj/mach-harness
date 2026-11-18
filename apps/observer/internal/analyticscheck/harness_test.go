@@ -76,7 +76,7 @@ type L struct {
 	Ticket  string
 	Exec    string
 	Slice   string
-	Wave    string
+	Epic    string
 	Rev     int64
 	Source  string
 	Seq     int // 0: the next seq
@@ -86,7 +86,7 @@ type L struct {
 }
 
 func (l L) line(seq int) []byte {
-	var ticket, x, slice, wave, rev, commit any
+	var ticket, x, slice, epic, rev, commit any
 	if l.Ticket != "" {
 		ticket = l.Ticket
 	}
@@ -100,8 +100,8 @@ func (l L) line(seq int) []byte {
 			rev = 1
 		}
 	}
-	if l.Wave != "" {
-		wave = l.Wave
+	if l.Epic != "" {
+		epic = l.Epic
 	}
 	if l.Commit != "" {
 		commit = l.Commit
@@ -118,8 +118,8 @@ func (l L) line(seq int) []byte {
 	if p == "" {
 		p = "P-CHECK"
 	}
-	b, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": seq, "at": l.At.UTC().Format("2006-01-02T15:04:05Z"), "type": l.Type,
-		"project_id": p, "source_commit": commit, "wave_id": wave, "slice_id": slice, "revision": rev, "ticket_id": ticket,
+	b, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": seq, "at": l.At.UTC().Format("2006-01-02T15:04:05Z"), "type": l.Type,
+		"project_id": p, "source_commit": commit, "epic_id": epic, "issue": nil, "slice_id": slice, "revision": rev, "ticket_id": ticket,
 		"runner_id": nil, "execution_id": x, "source": src, "cause": nil, "refs": nil, "data": data})
 	return append(b, '\n')
 }
@@ -254,7 +254,7 @@ func (f *fx) workflow(x string, start, end time.Time, status string) {
 		{"type": "system", "subtype": "task_started", "task_id": task, "tool_use_id": tu, "description": "mach-belt", "task_type": "local_workflow",
 			"workflow_name": "mach-belt", "prompt": "-", "session_id": "s-" + x},
 		{"type": "user", "timestamp": iso(start.Add(50 * time.Millisecond)), "session_id": "s-" + x, "parent_tool_use_id": nil,
-			"message": M{"role": "user", "content": []any{M{"type": "tool_result", "tool_use_id": tu, "content": "-", "is_error": false}}},
+			"message":         M{"role": "user", "content": []any{M{"type": "tool_result", "tool_use_id": tu, "content": "-", "is_error": false}}},
 			"tool_use_result": M{"status": "async_launched", "taskId": task, "taskType": "local_workflow", "workflowName": "mach-belt"}},
 		{"type": "system", "subtype": "task_updated", "task_id": task, "patch": M{"status": status, "end_time": end.UnixMilli()}, "session_id": "s-" + x},
 		{"type": "system", "subtype": "task_notification", "task_id": task, "tool_use_id": tu, "status": status,
@@ -287,8 +287,8 @@ func (f *fx) run(ticket string, closed time.Time, fields map[string]any) {
 	testkit.Append(f.t, filepath.Join(f.root, ".factory", "archive", "runs.jsonl"), append(b, '\n'))
 }
 
-func (f *fx) slice(id, ticket, wave string, rev int64) {
-	f.slices[id] = map[string]any{"ticket_id": ticket, "wave_id": wave, "revision": rev, "state": "dispatched"}
+func (f *fx) slice(id, ticket, epic string, rev int64) {
+	f.slices[id] = map[string]any{"ticket_id": ticket, "epic": map[string]any{"epic_id": epic}, "revision": rev, "state": "dispatched"}
 	f.ledger()
 }
 

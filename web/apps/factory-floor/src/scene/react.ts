@@ -3,7 +3,7 @@
  *
  *   const now = useSceneStore((s) => s.now);
  *   const scene = useScene();                       // log.sceneAt(now), stable between events
- *   const cell = useScene((scene) => scene.cells["LOCAL-031"]);
+ *   const cell = useScene((scene) => scene.cells["131"]);
  *   const { select, hover } = useSceneActions();
  *
  * Selectors must return a value that is the same (===) when nothing it depends on changed: a field,
