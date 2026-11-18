@@ -7,7 +7,7 @@ Each station runs as its own agent with its own context, model tier and permissi
 | Ticket | `mach-ticket` | Fetches and normalizes tickets and telemetry; updates ticket state | `utility` | `.factory/inbox/`, `.factory/tickets/` |
 | Audit | `mach-audit` | Scores whether the repository is ready for autonomous work | `build` | `.factory/audit-report.json` |
 | Intent | `mach-intent` | Interviews the product owner; writes `intent.md` and the slice spec | `planning` | the cell folder; `specs/slices/` in the cell's checkout |
-| Intent, stage 2 | `mach-contract-engineer` agent | Derives contracts and `plan.md` from the spec | `contracts` | contract files in the cell's checkout; `plan.md` |
+| Intent, stage 2 | `mach-contract-engineer` agent | Derives contracts and `plan.md` from the spec, under the accepted architecture decisions | `contracts` | contract files and a proposed ADR in the cell's checkout; `plan.md` |
 | Build | `mach-build`, `mach-builder` agent | Test-first implementation, following `plan.md` | `build` | the cell's checkout only |
 | Verify | `mach-verify`, `mach-verifier` agent | Runs the built slice and captures evidence, in a fresh context | `build` | the cell's `evidence/` only |
 | Review | `mach-review`, `mach-reviewer` agent per seat | Independent reviewers submit findings against `REVIEW.md`; a script tallies | `contracts` for High risk, `build` otherwise | the cell's `review/` only |
@@ -20,6 +20,7 @@ Each station runs as its own agent with its own context, model tier and permissi
 - An agent writes only where its row says. Nothing writes to the main checkout except the merge station, and it only merges an approved ticket's branch.
 - An agent never grades its own work: builders do not verify, verifiers do not review.
 - An agent that finds the spec wrong or contradictory stops and reports a spec defect; it does not patch the spec or guess.
+- Accepted architecture decisions in `docs/adr/` bind every agent. No agent accepts, changes or supersedes an ADR: the contract engineer may propose a new one on the ticket's branch, and only a person accepts it. A plan that cannot follow an accepted ADR stops for an engineer.
 - Every agent is given the ticket's goal ancestry from `intent.md`, so a small task is always done in view of what it serves.
 - Agents load tool descriptions and reference files only when they need them, to keep their context small.
 

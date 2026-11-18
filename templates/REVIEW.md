@@ -28,6 +28,7 @@ Every reviewer starts with a fresh context: the diff, the cell's artifacts and t
 
 - The change follows the project's layering; no logic leaks across a boundary.
 - Contract files changed only additively and match what the code implements.
+- The change follows every accepted architecture decision (ADR) the ticket was planned under, in `docs/adr/`; a blocker may cite one by its ID, such as `ADR-0007`. A person's recorded exception allows a departure only as far as its reason says. A new library, language or framework no ADR covers arrives as a proposed ADR in the same change.
 - No dead code, unused helpers, or dependencies the plan did not justify.
 - No file grows past what one person can review; large files are split.
 
@@ -44,6 +45,10 @@ Every reviewer starts with a fresh context: the diff, the cell's artifacts and t
 - Refusals change nothing.
 - The evidence shows the scenarios actually happening, not just tests passing.
 - Nothing was built that the spec does not ask for.
+
+## Architecture decisions
+
+Technology decisions (stack, libraries, languages, component structure, API contracts, security standards) are recorded as ADRs in `docs/adr/NNNN-title.md` (MADR format; `adr.dir` in `.factory/config.json` moves the folder). Only an ADR whose `status` is `accepted` binds; an `applies-to` field (`path:<glob>`, `app:<type>`, `topic:<word>` or `all`) says what it covers. People change ADRs by ordinary pull requests. The factory never accepts, changes or supersedes one, and a `factory-tuning` ticket never touches the ADR folder. A decision accepted or changed after a ticket was planned binds tickets planned afterwards; that ticket is flagged, never restarted.
 
 ## Loop limit
 

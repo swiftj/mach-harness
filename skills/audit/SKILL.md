@@ -34,6 +34,7 @@ A script does the measuring and the scoring. `AUDIT` below means `python3 "${CLA
    - any blocker, first and plainly;
    - each pillar's score in one line;
    - the three most valuable improvements from the report's recommendations, with the points each would add;
+   - each line under `notes`, in plain words. A note changes neither the score nor the tier and is never a blocker. When the project has no accepted architecture decision (ADR), say what that means: "No technology decisions are recorded yet, so the factory plans and reviews without them. Recording the stack and main libraries as decisions (`/mach adr new`) lets it hold every change to them." When ADR files cannot be read, say that planning waits until an engineer fixes them by pull request;
    - where the report file is.
 
 5. Act on the tier:

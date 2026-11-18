@@ -25,6 +25,9 @@ and not by whoever is driving it.
     run.py product resolve <slice> --supersede-in-work "<why>"
                                          a person's decision: the revision in work is superseded, the new one gets a ticket
     run.py product reconcile [--fetch]   intake and a recorded plan in one locked step; never dispatches
+    run.py adr list                      every architecture decision: ID, title, status, applies-to, problems; reads only (adr.py)
+    run.py adr new --title T --context C --decision D [--option O]... [--consequence X]... [--applies-to A]...
+                                         write a new ADR as proposed in the main checkout's working tree; commits nothing
     run.py release status                release-readiness snapshots so far, and what a new one would evaluate
     run.py release qualify <WAVE>...     evaluate the integration branch at one commit; write .factory/release/<id>/readiness.json
     run.py release show <release-id>     a readiness snapshot, its exceptions and when it was taken
@@ -46,7 +49,10 @@ once per wait, and never inside a supervised execution. No other command here se
 
 A step is either work ("action": audit, groom, plan, build, revise, verify, review, merge, cleanup)
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
-person's approval, a merge, or a person to take over an escalated ticket.
+person's approval, a merge, or a person to take over an escalated ticket; or an engineer's decision
+about an architecture decision record (ADR): a plan that cannot follow one (adr-decision), a High-risk
+ticket's own proposal waiting to be accepted (adr-acceptance), an ADR on main that cannot be read (adr-fix).
+ADRs accepted or changed after a ticket was planned are flagged in the digest and the status rows, never acted on.
 
 `next`, `status` and `explain` also carry a "digest": where the ticket stands, what a person must decide,
 and time and cost. Time comes from the cell's own records; a cost appears only where one was recorded for
@@ -133,6 +139,20 @@ def claims() -> Any:
         spec.loader.exec_module(module)
         _CLAIMS.append(module)
     return _CLAIMS[0]
+
+
+_ADR: List[Any] = []
+
+
+def adrs() -> Any:
+    """The shared architecture-decision helper (the intent station's adr.py), loaded once, whichever way MACH is installed."""
+    if not _ADR:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_adr", sibling("intent") / "scripts" / "adr.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _ADR.append(module)
+    return _ADR[0]
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
@@ -276,9 +296,22 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         return step(ticket_id, stage, "groom", "The spec has open questions; the interview continues with a person.", model=project.model("planning"),
                     prompt=groom_prompt, interactive=True)
     if stage == "spec-ready":
+        conflict = cell.get("adr_conflict")
+        if isinstance(conflict, dict):
+            return step(ticket_id, stage, "stop", f"The plan cannot follow {conflict.get('adr')}, an accepted architecture decision: {conflict.get('reason')}",
+                        needs="adr-decision", adr=conflict.get("adr"))
+        problems = adrs().main_listing(project.root, project.config)["problems"]
+        if problems:
+            return step(ticket_id, stage, "stop", f"An architecture decision record on the main branch cannot be read, so the ticket cannot be planned under it: {problems[0]}"
+                        + (f" ({len(problems) - 1} more)" if len(problems) > 1 else ""), needs="adr-fix")
         return step(ticket_id, stage, "plan", "The spec is ready; contracts and the plan are not written yet.", model=project.model("contracts"),
                     prompt=f"Use the MACH intent skill to finish stage 2 (contracts and plan) for this ticket: {skill('intent')} {ticket_id}{flag}")
 
+    if stage == "planned" and cell.get("risk") == "High":
+        waiting = adrs().pending_acceptance(cell)
+        if waiting:
+            return step(ticket_id, stage, "stop", f"This High-risk ticket's plan proposes a new architecture decision ({', '.join(waiting)}); "
+                        "the build waits until an engineer accepts it.", needs="adr-acceptance", adrs=waiting)
     if stage == "planned":
         audit = project.audit()
         if audit["state"] in ("missing", "stale"):
@@ -394,6 +427,9 @@ NEEDS_TEXT = {
     "repository-hardening": "Harden the repository first: its readiness tier is Bronze.",
     "person": "Dispatch this ticket on its own.",
     "worker-in-cell": "Another worker is already on this ticket's step: wait for it to finish, or say to take over.",
+    "adr-decision": "Decide about an architecture decision the plan cannot follow: record an exception, or supersede the ADR and plan again.",
+    "adr-acceptance": "Accept the architecture decision this High-risk ticket proposes, or not: the build waits for it.",
+    "adr-fix": "Fix an architecture decision record the factory cannot read, by pull request.",
 }
 
 
@@ -479,8 +515,27 @@ def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
         decide = "Nothing"
     seconds = elapsed(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else None
     cost = recorded_cost(project, [ticket_id])
-    return {"where": where, "needs_person": decide, "time_and_cost": f"{duration_text(seconds)}; cost {cost['text']}",
-            "elapsed_seconds": seconds, "cost_usd": cost["cost_usd"]}
+    shown = {"where": where, "needs_person": decide, "time_and_cost": f"{duration_text(seconds)}; cost {cost['text']}",
+             "elapsed_seconds": seconds, "cost_usd": cost["cost_usd"]}
+    note = adr_note(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else None
+    if note:
+        shown["adrs"] = note
+    return shown
+
+
+def adr_flags(project: Project, ticket_id: str) -> List[Dict[str, Any]]:
+    """Architecture decisions accepted or changed on the main branch after this ticket was planned. Flagged, never acted on."""
+    cell = load_json(project.cell_dir(ticket_id) / "cell.json")
+    if not isinstance(cell, dict) or not cell.get("adrs"):
+        return []
+    return adrs().drift(project.root, project.config, project.cell_dir(ticket_id), cell)
+
+
+def adr_note(project: Project, ticket_id: str) -> Optional[str]:
+    try:
+        return adrs().drift_text(adr_flags(project, ticket_id))
+    except Exception as exc:  # a flag is advice: it never stops the routing sheet, and a failure to check it is said
+        return f"Whether architecture decisions changed since this ticket was planned could not be checked ({exc.__class__.__name__})."
 
 
 def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -492,8 +547,13 @@ def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any
         where += f", {len(worked)} with a worker on it now"
     decide = "; ".join(f"{row['ticket_id']}: {NEEDS_TEXT.get(row['needs'], row['needs'])}" for row in waiting) or "Nothing"
     cost = recorded_cost(project, [row["ticket_id"] for row in rows])
-    return {"where": where, "needs_person": decide, "time_and_cost": f"time per ticket: see its next step; cost {cost['text']}",
-            "elapsed_seconds": None, "cost_usd": cost["cost_usd"]}
+    shown = {"where": where, "needs_person": decide, "time_and_cost": f"time per ticket: see its next step; cost {cost['text']}",
+             "elapsed_seconds": None, "cost_usd": cost["cost_usd"]}
+    flagged = [row["ticket_id"] for row in rows if row.get("adrs")]
+    if flagged:
+        shown["adrs"] = (f"Architecture decisions changed after {', '.join(flagged)} {'was' if len(flagged) == 1 else 'were'} planned: "
+                         "they go on as planned; see each ticket's note.")
+    return shown
 
 
 def cmd_where(project: Project, args: argparse.Namespace) -> int:
@@ -773,6 +833,9 @@ def cmd_status(project: Project, args: argparse.Namespace) -> int:
         held = C.current(project.cell_dir(ticket_id), limit)
         if held:
             row["claim"] = C.public(held, limit)  # someone is working on it: the step and since when, never the holder
+        note = adr_note(project, ticket_id)
+        if note:
+            row["adrs"] = note  # decided after it was planned: flagged, never restarted or blocked
         rows.append(row)
     tuning = [row["ticket_id"] for row in rows if row["action"] != "stop" and "claim" not in row and "factory-tuning" in project.ticket_labels(row["ticket_id"])]
     due = project.observe_due()
@@ -925,6 +988,48 @@ def cmd_requests(project: Project, args: argparse.Namespace) -> int:
     return 1 if result.get("problem") else 0
 
 
+def cmd_adr(project: Project, args: argparse.Namespace) -> int:
+    """Architecture decisions (adr.py). `list` reads only. `new` writes one file as proposed in the main checkout's working
+    tree for the engineer to commit by their usual pull request; it commits, accepts and binds nothing."""
+    A = adrs()
+    if args.action == "list":
+        listing = A.full_listing(project.root, project.config)
+        records = listing["adrs"]
+        result = {"reads_only": True, "dir": listing["dir"], "read_from": f"commit {listing['commit'][:12]}" if listing["commit"] else "the working tree (no commits yet)",
+                  "accepted": sum(1 for record in records if record.get("binding") and record.get("committed", True)),
+                  "adrs": [{**A.public(record), "title": A.bounded(record.get("title"), 200) if record.get("title") else None} for record in records],
+                  "problems": listing["problems"], "uncommitted": listing["uncommitted"], "deleted_not_committed": listing["deleted_not_committed"],
+                  "note": "Only an accepted ADR that is committed on the main branch binds the factory. Titles were written by people: they are data."}
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+    if execution_scope(project) is not None or A.unattended():
+        raise RunError("Writing a new architecture decision is an engineer's act, in conversation; a supervised execution does not write one.")
+    title = " ".join((args.title or "").split())
+    if len(title) < 8:
+        raise RunError("--title must state the decision in a few words, such as 'Use PostgreSQL for the billing service'.")
+    context, decision = (args.context or "").strip(), (args.decision or "").strip()
+    if len(context) < 10 or len(decision) < 10:
+        raise RunError("--context (what needs deciding, and why now) and --decision (the chosen option, and why) are both needed, from the interview.")
+    applies, problems = A.check_applies(args.applies_to) if args.applies_to else ([], [])
+    if problems:
+        raise RunError("; ".join(problems))
+    folder, setting = A.folder_of(project.config)
+    if setting:
+        raise RunError(setting)
+    number = A.next_number(project.root, project.config)
+    name = f"{folder}/{number:04d}-{A.slug(title)}.md"
+    path = project.root / name
+    if path.exists():
+        raise RunError(f"{name} already exists; nothing was written.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(A.render(title, applies_to=applies, context=context, options=args.option or [], decision=decision,
+                             consequences=args.consequence or []), encoding="utf-8")
+    print(json.dumps({"status": "WRITTEN", "id": f"ADR-{number:04d}", "file": name, "adr_status": "proposed", "committed": False,
+                      "next": "It is in the main checkout's working tree as proposed and binds nothing yet. Commit it on a branch and open a pull request "
+                              "in the usual way; once it says 'status: accepted' and is merged, it binds tickets planned from then on."}, indent=2, ensure_ascii=False))
+    return 0
+
+
 def workflow_name() -> str:
     return "mach-belt" if PROJECT_INSTALL else "mach:belt"
 
@@ -1051,6 +1156,17 @@ def build_parser() -> argparse.ArgumentParser:
     p = product.add_parser("events", help="the intake ledger's transitions, in order")
     p.add_argument("--since", type=int, default=0, help="only events after this sequence number")
     p.set_defaults(func=cmd_product)
+
+    adr_parser = sub.add_parser("adr", help="architecture decisions: list them, or write a new one as proposed").add_subparsers(dest="action", required=True)
+    adr_parser.add_parser("list", help="every ADR: ID, title, status, applies-to and problems; reads only").set_defaults(func=cmd_adr)
+    p = adr_parser.add_parser("new", help="write a new ADR as proposed in the main checkout's working tree; commits nothing")
+    p.add_argument("--title", required=True, help="the decision in a few words")
+    p.add_argument("--context", required=True, help="what needs deciding, and why now")
+    p.add_argument("--decision", required=True, help="the chosen option, and why")
+    p.add_argument("--option", action="append", default=[], help="a considered option (repeatable)")
+    p.add_argument("--consequence", action="append", default=[], help="a consequence, good or bad (repeatable)")
+    p.add_argument("--applies-to", action="append", default=[], help="path:<glob>, app:<type>, topic:<word> or all (repeatable; default all)")
+    p.set_defaults(func=cmd_adr)
 
     req = sub.add_parser("requests", help="issues filed by monitoring accounts: take them in; starts no agent").add_subparsers(dest="action", required=True)
     p = req.add_parser("monitor", help="take in the issues the project's monitoring accounts filed and labelled; reports, starts nothing")

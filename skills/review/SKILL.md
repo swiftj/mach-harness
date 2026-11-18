@@ -27,7 +27,7 @@ You chair the factory's review panel. You do not review the change yourself: you
 
 ### 1. Start
 
-Run `REVIEW start <ticket>`. It refuses unless the cell is verified, with passing evidence for exactly the code being reviewed. On success it writes the review packet and the diff, and prints the round, the risk tier, the approvals needed, whether a person must approve, and the `panel`: one seat per reviewer, each with a `role` and a `model`.
+Run `REVIEW start <ticket>`. It refuses unless the cell is verified, with passing evidence for exactly the code being reviewed. It also refuses a change that edits or removes an existing architecture decision record (ADR), and a `factory-tuning` ticket whose change touches the ADR folder at all: a tuning ticket changes only the factory's rule files, and only people accept, change or supersede an ADR. On success it writes the review packet and the diff, and prints the round, the risk tier, the approvals needed, whether a person must approve, and the `panel`: one seat per reviewer, each with a `role` and a `model`. The packet's `adrs` lists the ADRs the change is held to (the ones its plan was made under, with the copy of each text kept in the cell), any exception a person recorded, the ticket's own proposed ADRs (reviewed with the change), and any ADR changed on the main branch since planning, which does not bind this ticket.
 
 If it refuses, report the reason and stop.
 

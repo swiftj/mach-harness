@@ -29,6 +29,11 @@ raised on any file. A blocker from the security seat rejects the round as before
 
 The third failed round for a ticket, counting failed verifications, is escalated to a person.
 
+Architecture decisions (adr.py, the intent station's shared helper): the packet lists the ADRs the change is held to,
+the ones its plan was made under, with the copies the cell keeps, any exception a person recorded, and the ticket's own
+proposals. A blocker may cite an ADR (ADR-0007) as its rule only when that ADR is in force for the ticket. Review does
+not start on a change that edits or removes an existing ADR, nor on a factory-tuning change that touches the ADR folder.
+
 Standard library only.
 """
 
@@ -99,6 +104,19 @@ def telemetry(*args: Any, **kwargs: Any) -> None:
     """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
     if lifecycle is not None:
         lifecycle.record(*args, **kwargs)
+
+
+# Architecture decisions: the shared helper, also with the intent station. Its rules are gates, so review without it refuses.
+try:
+    import adr  # noqa: E402
+except Exception:  # noqa: BLE001
+    adr = None
+
+
+def adr_module() -> Any:
+    if adr is None:
+        raise ReviewError("The intent station's adr.py is not installed beside this skill, so the architecture-decision rules cannot be checked.", code="adr-helper-missing")
+    return adr
 
 
 
@@ -275,6 +293,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     main_branch = git(cell.project, "branch", "--show-current").stdout.strip()
     fork = git(cell.work, "merge-base", "HEAD", main_branch).stdout.strip() if main_branch and cell.info.get("isolation") == "worktree" else ""
     baseline = fork if fork and fork != head else cell.build.get("baseline")
+    adr_refusals(cell, baseline, head, tuning)
     cell.open_round()
     cell.folder.mkdir(parents=True, exist_ok=True)
     for stale in (cell.folder / "votes").glob("*.json") if (cell.folder / "votes").is_dir() else []:
@@ -315,6 +334,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
             cell.packet["human_approval_reasons"] = ["the tuning ticket changes files other than the factory's rules: " + ", ".join(outside[:6])]
             cell.packet["human_approval_required"] = True
     cell.packet["tuning"] = tuning
+    cell.packet["adrs"] = packet_adrs(cell, baseline, head, tuning)
     write_json(cell.folder / "packet.json", cell.packet)
     telemetry(cell.root, "gate.evaluated", "review", lambda: {"gate": "review.start", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
     telemetry(cell.root, "station.entered", "review", lambda: {"stage": stage, "head": lifecycle.short(head), "round": cell.packet["round"]})
@@ -326,6 +346,76 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "round", "max_rounds", "risk", "tuning", "approvals_needed", "human_approval_required", "human_approval_reasons", "panel", "diff_stat")},
         "next": "Start one fresh reviewer per panel seat, in parallel, each on its seat's model. Then run tally."}, indent=2))
     return 0
+
+
+def adr_refusals(cell: Cell, baseline: Optional[str], head: str, tuning: bool) -> None:
+    """A change that edits or deletes an existing ADR is not reviewed; nor is a tuning ticket that touches the ADR folder."""
+    A = adr_module()
+    folder = A.folder_of(cell.config)[0]
+    touched = [line.split("\t") for line in git(cell.work, "diff", "--name-status", f"{baseline}..{head}", "--", folder).stdout.splitlines() if line.strip()] if baseline else []
+    if tuning and touched:
+        raise ReviewError(f"This factory-tuning ticket's change touches the ADR folder ({', '.join(item[-1] for item in touched[:3])}). A tuning ticket changes only "
+                          "the factory's rule files; architecture decisions are people's.", code="tuning-touches-adrs")
+    edited = [item[-1] for item in touched if item[0][:1] != "A"]
+    if edited:
+        raise ReviewError(f"The change edits or removes architecture decision records that already exist ({', '.join(edited[:3])}). Only people change an ADR, "
+                          "by pull request on the main branch.", code="adr-changed")
+
+
+def packet_adrs(cell: Cell, baseline: Optional[str], head: str, tuning: bool) -> Dict[str, Any]:
+    """The architecture decisions this change is reviewed against: what the plan was made under, from the copies the cell keeps."""
+    A = adr_module()
+    folder = A.folder_of(cell.config)[0]
+    record = A.planned_record(cell.info)
+    applied = set(record.get("applied") or [])
+    in_force, parsed = [], []
+    for item in record.get("planned_under") or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        copy = cell.root / str(item.get("copy") or "")
+        entry = {"id": item["id"], "title": item.get("title"), "digest": item.get("digest"), "origin": item.get("origin"), "file": item.get("file"),
+                 "read": str(copy) if item.get("copy") and copy.is_file() else None}
+        in_force.append(entry)
+        if entry["read"]:
+            text = copy.read_text(encoding="utf-8", errors="replace")
+            parsed.append(dict(A.parse(text, str(item.get("file") or f"{folder}/{item['id'][4:]}-x.md")), id=item["id"], binding=True))
+    files = sorted(set(cell.packet.get("files_changed") or []) | set(record.get("files") or []))
+    chosen = {found["id"]: found["because"] for found in A.select(parsed, files=files, app_type=cell.info.get("app_type"), topics=A.cell_topics(cell.root),
+                                                                   named=record.get("named") or [])}
+    try:
+        changed = A.drift(cell.project, cell.config, cell.root, cell.info)
+    except Exception:  # noqa: BLE001 - advice for the reviewers; the review stands without it
+        changed = []
+    return {
+        "apply": [dict(entry, because=chosen[entry["id"]]) for entry in in_force if entry["id"] in chosen or entry["id"] in applied],
+        "in_force": in_force,
+        "exceptions": [{key: item.get(key) for key in ("adr", "by", "reason", "at")} for item in A.exceptions(cell.info)],
+        "proposed": [{"id": item.get("id"), "file": item.get("file"), "title": item.get("title"),
+                      "accepted_by": next((given.get("by") for given in cell.info.get("adr_acceptances") or [] if isinstance(given, dict) and given.get("id") == item.get("id")), None)}
+                     for item in record.get("proposed") or [] if isinstance(item, dict)],
+        "changed_since_plan": changed,
+        "note": A.DATA_NOTE + " A blocker may cite an ADR in 'in_force' by its ID, such as ADR-0007, as the rule it breaks.",
+    }
+
+
+def check_adr_citation(cell: Cell, label: str, rule: str) -> None:
+    """A blocker that cites an ADR must cite one this change is held to: accepted, and in force when the plan was made."""
+    cited = adr_module().ids_in(rule)
+    if not cited:
+        return
+    in_force = {item.get("id") for item in (cell.packet.get("adrs") or {}).get("in_force") or [] if isinstance(item, dict)}
+    for ident in cited:
+        if ident in in_force:
+            continue
+        listing = adr_module().main_listing(cell.project, cell.config)
+        record = adr_module().by_id(listing["adrs"]).get(ident)
+        if record is None:
+            raise ReviewError(f"{label}: the rule cites {ident}, which does not exist. Cite an ADR from the packet's 'adrs.in_force', or another rule.", code="adr-citation")
+        if record.get("binding"):
+            raise ReviewError(f"{label}: {ident} was accepted or changed after this ticket was planned, so it does not bind this change. Record it as a note.",
+                              code="adr-citation")
+        status = f"superseded by {record['superseded_by']}" if record.get("superseded_by") else record.get("status") or "unreadable"
+        raise ReviewError(f"{label}: {ident} is {status}, not accepted, so a blocker cannot cite it. Record it as a note, or cite another rule.", code="adr-citation")
 
 
 def is_security_veto(finding: Dict[str, Any]) -> bool:
@@ -366,6 +456,7 @@ def check_findings(cell: Cell, data: Any, reviewer: Optional[str] = None) -> Lis
                 raise ReviewError(f"{label}: a blocker must name the 'rule' it breaks: a spec ID such as FR-04, or the REVIEW.md or CLAUDE.md rule, quoted or named.")
             if not isinstance(name, str) or not name.strip():
                 raise ReviewError(f"{label}: a blocker must name the 'file' that shows the problem (a path in the cell's checkout, or evidence/<file>).")
+            check_adr_citation(cell, label, rule)
         if isinstance(name, str) and name.strip():
             path = cell.root / name if name.startswith(("evidence/", "review/")) or name in ("plan.md", "intent.md", "spec.json", "build-report.json") else cell.work / name
             in_checkout = path == cell.work / name
