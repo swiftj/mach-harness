@@ -20,8 +20,8 @@ function useNarrow(): boolean {
 }
 
 export interface AppShellProps {
-  /** The navigation rail (<NavRail>). */
-  nav: ReactNode;
+  /** The navigation rail (<NavRail>). Optional: a product whose top bar carries its navigation leaves it out. */
+  nav?: ReactNode;
   /** The top bar (<TopBar>). */
   topBar: ReactNode;
   children: ReactNode;
@@ -39,6 +39,8 @@ export interface AppShellProps {
  *   └──────────┴──────────────────────────────────────┘
  *
  * The page never scrolls horizontally; only <main> scrolls. A skip link jumps past the rail.
+ * Without a rail (Product Studio), the top bar spans the width and carries the way around:
+ * a breadcrumb back to the home screen and a <NavMenu> of the secondary screens.
  */
 export function AppShell({ nav, topBar, children, mainId = "main" }: AppShellProps) {
   return (
@@ -57,7 +59,7 @@ export function AppShell({ nav, topBar, children, mainId = "main" }: AppShellPro
       >
         Skip to content
       </a>
-      {nav}
+      {nav ?? null}
       <div className="flex min-w-0 flex-1 flex-col">
         {topBar}
         <main id={mainId} tabIndex={-1} className="relative min-h-0 flex-1 overflow-y-auto focus:outline-none">

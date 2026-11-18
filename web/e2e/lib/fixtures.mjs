@@ -48,6 +48,8 @@ export async function serveFixtures({ csp = true } = {}) {
     origin,
     /** The Inbox under a request scenario: url("all"), url("hostile", "refuse=1"). */
     url: (scenario, extra = "") => `${origin}/?requests=${scenario}${extra ? `&${extra}` : ""}#/inbox`,
+    /** Any screen, with the fixture transport's query parameters: at("/", "fixture=status.conflicts"). */
+    at: (route, query = "") => `${origin}/${query ? `?${query}` : ""}#${route}`,
     stop: () => new Promise((resolve) => server.close(resolve)),
   };
 }

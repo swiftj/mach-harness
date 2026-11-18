@@ -51,7 +51,7 @@ test("every route with real data: axe in light and dark, no overflow at either s
           for (const size of sizes) {
             await page.setViewportSize({ width: size.width, height: size.height });
             await settle(page, 400);
-            const name = `${route === "/" ? "workspace" : route.slice(1).replace(/\//g, "-")}-${theme}-${size.name}`;
+            const name = `${route === "/" ? "home" : route.slice(1).replace(/\//g, "-")}-${theme}-${size.name}`;
             const dir = join(screenshots, "routes");
             mkdirSync(dir, { recursive: true });
             await page.screenshot({ path: join(dir, `${name}.png`) });
@@ -305,7 +305,9 @@ test("keyboard only: the lifecycle's main path", async (t) => {
     });
 
     await step("create, approve and send a wave", async () => {
-      await tabTo("Delivery waves", { back: true });
+      await tabTo("More", { back: true });
+      await press("Enter");
+      await tabTo(/^Send to engineering/);
       await press("Enter");
       await page.getByRole("heading", { level: 1, name: "Delivery waves" }).waitFor();
       await settle(page);
