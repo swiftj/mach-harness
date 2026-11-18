@@ -33,6 +33,9 @@
   "observe": {
     "every": 5
   },
+  "adr": {
+    "dir": "docs/adr"
+  },
   "factory": {
     "max_parallel": 3,
     "max_parallel_high": 1

@@ -98,6 +98,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
 │   └── workflows/mach-belt.js
 ├── specs/
 │   └── slices/                 # SLICE-NNN-name.md: the durable slice specs, merged with the code
+├── docs/adr/                   # NNNN-title.md: architecture decisions (MADR), changed by people through pull requests; adr.dir moves it
 ├── proto/                      # Boundary contracts (Protocol Buffers, OpenAPI, JSON Schema)
 └── .factory/
     ├── config.json             # Factory configuration (ticket provider, model tiers, thresholds)
@@ -121,7 +122,8 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
             ├── intent.md       # Why: problem, goal ancestry, constraints, risk tier
             ├── spec.md         # What: copy of the validated slice spec
             ├── spec.json       # The spec as data, every matrix rule expanded into test cases
-            ├── plan.md         # How: contracts, test-first task checklist, file touch map
+            ├── plan.md         # How: contracts, test-first task checklist, file touch map, the ADRs it relies on
+            ├── adrs/           # ADR-NNNN.md: the text of each architecture decision the plan was made under
             ├── build.json      # Build state: task progress, suite state, recorded deviations
             ├── build-report.json  # What was built, how, and every gate override, for verify and review
             ├── lifecycle.jsonl # One line per station decision, written after the station's own files; observational, never changes a result
@@ -160,6 +162,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
   * **Silver (70–89%)**: Autonomous build permitted with mandatory human review before PR merge.
   * **Bronze/Fail (<70%)**: Autonomous execution blocked; hardening work is filed as a `repo-hardening` ticket.
 * **Blockers**: A build or test suite that fails, is missing, or could not be run makes the tier Bronze whatever the score. Checks that cannot be verified locally are reported as unverified, never assumed to pass.
+* **Notes**: a project with no accepted ADR, or with ADR files that cannot be read, gets a note in the report. A note changes neither the score nor the tier.
 * **Gate**: `audit.py gate` is what other stations call. It refuses when the report is missing, older than `audit.max_age_days`, for a different commit than the main checkout, or Bronze.
 * **Output**: `.factory/audit-report.json`. Options: `--strict` (Gold or fail), `--fix` (create a missing `.gitignore`), `--json`.
 
@@ -168,7 +171,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Purpose**: Turns one ticket into the artifact chain. Supersedes the earlier grilling-loop design; it is the `prd-slice` skill adapted to the factory.
 * **Stage 1 — Interview**: Carves the ticket down to one thin vertical slice (the skill decides scope, deferring the rest to reserved slice IDs) and interviews the product owner **one yes-or-no question at a time, each with a recommended answer**, until every branch of the design tree is settled. Facts are looked up by sub-agents, never asked. Writes `intent.md` and a business-level slice spec: RFC 2119 invariants, EARS functional requirements, a complete decision matrix, and Given/When/Then scenarios. No status codes, schemas or technology appear in the spec.
 * **Deterministic gates**: `validate_slice.py` checks structure, grammar, matrix completeness and traceability; `cell.py finalize` requires zero open questions before it exports `spec.json`. Slice IDs are allocated across every open cell so parallel tickets cannot collide.
-* **Stage 2 — Contracts & plan**: A fresh-context contract engineer works from `spec.json` alone to write the boundary contracts and a test-first `plan.md`. `cell.py check-plan` requires every requirement and scenario to be assigned to a task, tests before implementation, and each listed contract to exist. Changing a contract that already exists on the main checkout raises the ticket to High risk, and `cell.py check-plan` enforces it; adding a new contract does not. A spec corrected after its plan was written (a defect the contract engineer found, settled by the product owner's answer) needs no separate instruction to plan again: `cell.py finalize` sees that the spec changed, keeps the old plan in the cell's `plan-history/` and returns the cell to `spec-ready`. Nothing is built yet, so nothing is lost. `cell.py replan` remains for a plan a person says is wrong, and for a cell already being built.
+* **Stage 2 — Contracts & plan**: A fresh-context contract engineer works from `spec.json` alone to write the boundary contracts and a test-first `plan.md`. `cell.py check-plan` requires every requirement and scenario to be assigned to a task, tests before implementation, and each listed contract to exist. Changing a contract that already exists on the main checkout raises the ticket to High risk, and `cell.py check-plan` enforces it; adding a new contract does not. The plan names under `ADRs` every architecture decision it relies on or proposes, and `check-plan` holds it to the accepted ones (see **Architecture decisions** in section 5). A spec corrected after its plan was written (a defect the contract engineer found, settled by the product owner's answer) needs no separate instruction to plan again: `cell.py finalize` sees that the spec changed, keeps the old plan in the cell's `plan-history/` and returns the cell to `spec-ready`. Nothing is built yet, so nothing is lost. `cell.py replan` remains for a plan a person says is wrong, and for a cell already being built.
 * **Modes**:
   * *Interactive*: the default.
   * *Headless* (`--headless`, which the orchestrator passes for `AUTO-` tickets): answers each question from facts or safe, strict defaults and records every one as "Decided without a PM"; anything touching money, access, irreversible deletion, or conflicting rules becomes an open question, which blocks stage 2 and labels the ticket `blocked-requires-sme`.
@@ -185,6 +188,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
   * **Scope**: a task may change only the files the plan gave it.
   * **Traceability**: every `FR`, `INV` and `AC` in the spec must be named by a test before the build can finish. A `[test]` task that leaves out or respells an ID the plan gave it (`fr02` for `FR-02`) is refused when the test is written, while it can still be edited.
   * **Overrides are recorded**: each gate has an override that requires a reason, and every use is written to `build-report.json` for the reviewers.
+  * **Architecture decisions**: the builder is given the accepted ADRs the plan was made under and has no override for them; no task changes a file in the ADR folder, and a High-risk ticket whose plan proposes an ADR does not start until a person accepts it. The build report lists the ADRs in force and every exception.
 * **Design System & Anti-Slop UI Anchor**: For frontend work the builder finds the existing component library and design tokens first and must reuse them, with semantic HTML and ARIA accessibility. Inline styles and hard-coded colors added in interface files are listed in the build report.
 * **No Dead Code**: Prohibits unused helpers, spurious dependencies, and monolithic multi-thousand-line files.
 * **Revision rounds**: `build.py revise` starts a revision after a failed verification or a rejected review. A ticket gets three judging rounds in all; on the third failure it refuses and directs escalation to `blocked-requires-sme`.
@@ -218,7 +222,8 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
   * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden. A blocker from the security seat is never outvoted: it rejects the round whatever the count (`review.security_veto`, on unless a project switches it off). Since M7 any seat may mark a blocker `"class": "security"` with an `impact`; one of high or critical impact rejects the round at every tier, no setting switches that off, and a later round may raise it on any file. The supervisor refuses unattended work while tracked settings switch the veto off, take the security seat off Medium or High panels, or drop High-risk human approval; a person can still run that ticket by hand.
   * **Low Risk** (Docs, wording): **1/1**, one general reviewer.
   * A Silver readiness tier also requires a human approval, whatever the risk.
-* **Start gate**: only a cell with a passing verification for exactly the code under review.
+* **Start gate**: only a cell with a passing verification for exactly the code under review. A change that edits or removes an existing ADR is refused, and so is a `factory-tuning` change that touches the ADR folder.
+* **Architecture decisions**: the packet lists the ADRs the change is held to (as they were when it was planned), any exception and the ticket's own proposals; the architecture seat checks the diff against them, and a blocker may cite an ADR by its ID only if it is accepted and in force for the ticket.
 * **Three-Round Limit**: A ticket gets three judging rounds, counting failed verifications. A rejection in round one or two returns to the build station with `findings.md`; a rejection in round three is `ESCALATE`: the cell is `blocked` and the ticket is labelled `blocked-requires-sme`.
 * **Human approval** is recorded with `review.py approve-human`, only on a person's explicit instruction after they have seen the findings. The station never merges.
 * **A person may send it back** instead of approving (`review.py send-back`, reached as `/mach send-back <ticket> "<why>"`), only on their explicit word and with their reason in their own words. The reason becomes the finding the builder answers (`person-findings.md` in the round's folder). It counts as a judging round like any rejection: in the last round the ticket is escalated. The lifecycle log records that a person answered and how, never the reason.
@@ -245,6 +250,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Proposals**: the smallest rule that would have prevented each pattern, targeted at `REVIEW.md`, `CLAUDE.md`, `AGENTS.md` or a skill's instructions, citing the tickets that prove it. `observe.py report` refuses proposals without evidence from the sample, aimed at any other file, numbering more than five, or made on fewer than five finished tickets.
 * **Closing the loop**: `observe.py file-ticket` files one ticket labelled `factory-tuning` carrying every proposal. It goes through grooming, build, verification and review like any other ticket, so each rule change is a reviewed, revertible diff. Rules are never edited directly.
 * **Trigger**: after every `observe.every` finished tickets (5 by default), cleanup and `/mach status` report that a pass is due; `/mach` and the belt workflow start it with `--auto` and the workflow then runs the tuning ticket.
+* **Never an ADR**: observe never proposes a rule that targets an architecture decision record, and a tuning ticket never accepts, changes or supersedes one; the review station refuses a tuning change that touches the ADR folder.
 * **No person for tuning**: a `factory-tuning` ticket is decided by a unanimous three-seat panel on the contracts tier, with no human approval, provided its diff touches only rule files and its own spec and tests. Reviewers must block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit. Observe never proposes such a change: those stay a person's decision.
 * **Output**: `.factory/observations/metrics.json`, `observation-<date>.md`, `last-pass.json`, and the tuning ticket.
 
@@ -285,8 +291,8 @@ The order of the belt is decided by a script, not by whoever is driving. `skills
 | Cell stage | Next step |
 |------------|-----------|
 | no cell, `interview`, `spec-open` | groom (intent); in headless mode a spec with open questions stops for a person |
-| `spec-ready` | plan (intent stage 2) |
-| `planned` | audit if the report is missing or stale; stop if Bronze and not a hardening ticket; otherwise build |
+| `spec-ready` | plan (intent stage 2); stop if the plan cannot follow an accepted ADR (`adr-decision`) or an ADR on main cannot be read (`adr-fix`) |
+| `planned` | stop if High risk and its own proposed ADR is not accepted (`adr-acceptance`); audit if the report is missing or stale; stop if Bronze and not a hardening ticket; otherwise build |
 | `building` | build (resume) |
 | `built` | revise if verification failed or review rejected this build; otherwise verify |
 | `verified` | review |
@@ -307,7 +313,7 @@ Neither driver grooms interactively on a person's behalf or approves a high-risk
 
 **One worker per ticket (M9).** A driver that is handed a work step claims it: `run.py next --holder <token>` writes `.factory/worktrees/<ticket_id>/claim.json` through one shared helper, `skills/intent/scripts/claim.py`, and the intent skill claims `plan` with `cell.py claim` before it starts the contract engineer. While another holder's claim is fresh (the cell is still at the stage it was made at, and it was made or renewed less than `factory.claim_minutes` ago, 90 by default), `next` answers `stop` with `needs: "worker-in-cell"`, the schedule holds the ticket, and `status` shows who is at work since when. A stop is never claimed, and a call with no holder writes nothing. Only a person's explicit word takes a claim over (`--take-over`). It guards against two honest drivers colliding; it is not a security boundary, and it changes no station's result.
 
-**The walkthrough of decisions (M9).** When work stops for a person, the run skill walks them through each waiting ticket: what happened, then a prompt with that ticket's options. `skills/run/scripts/decide.py` (`run.py decide [<ticket>...]`) lists the options and reads only; it lists only what a station's script really accepts in that state, and marks one as recommended only where a rule decides it. Approving or rejecting a change is never recommended by rule. The skill routes the choice to the station that owns it, under its own gates, and asks for any reason in the person's own words. It starts on its own at the end of `/mach <ticket>` and of several tickets, and never unattended: not in the belt, not headless, and the script refuses it inside a supervised execution. One route was added for it: `/mach replan <ticket> "<why>"` (the intent station's `cell.py replan`).
+**The walkthrough of decisions (M9).** When work stops for a person, the run skill walks them through each waiting ticket: what happened, then a prompt with that ticket's options. `skills/run/scripts/decide.py` (`run.py decide [<ticket>...]`) lists the options and reads only; it lists only what a station's script really accepts in that state, and marks one as recommended only where a rule decides it. Approving or rejecting a change is never recommended by rule. The skill routes the choice to the station that owns it, under its own gates, and asks for any reason in the person's own words. It starts on its own at the end of `/mach <ticket>` and of several tickets, and never unattended: not in the belt, not headless, and the script refuses it inside a supervised execution. One route was added for it: `/mach replan <ticket> "<why>"` (the intent station's `cell.py replan`). The ADR stops add two more: `/mach adr except <ticket> <ADR-NNNN> "<why>"` (`cell.py adr-exception`) and `/mach adr accept <ticket> <ADR-NNNN>` (`cell.py adr-accept`).
 
 Three aids sit beside the state machine and change nothing it decides:
 
@@ -392,6 +398,17 @@ Step 6 of the belt. `skills/merge/scripts/merge.py` lands exactly what review ap
 * **On the pull request (M9)**: the body refers to the request's issue with `Refs #<n>`, never a closing keyword, because the issue closes on the product manager's word. Unless `merge.pr.inline_findings` is `false`, the approving round's findings are posted once as one review: inline where the line is in the diff, otherwise in its summary, each with its seat, severity and the rule it cites. Reviewer text is redacted and bounded, and mentions are broken. A failure to post never blocks the merge.
 * **Policy** (`merge` in `.factory/config.json`): `mode` `auto` or `manual`; `auto.<tier>` to keep a risk tier for a person. `--by-person` lets a person merge whatever the policy. High-risk tickets still need a person's approval in review unless the review settings say otherwise.
 * **Never**: force-pushes, rewrites history, deletes a branch, or merges into anything but the default branch.
+
+### Architecture decisions (ADRs)
+
+Engineers record technology decisions (stack, libraries, languages, component structure, API contracts, security standards) as MADR files, `docs/adr/NNNN-title.md` (`adr.dir` in `.factory/config.json` moves the folder), and change them only by ordinary pull requests. Only `status: accepted` binds. MACH reads one extra header field, `applies-to`: `path:<glob>`, `app:<app_type>`, `topic:<word>` or `all` (missing means `all`). One shared helper, `skills/intent/scripts/adr.py`, finds, parses, lists and selects them for a cell, reading the main checkout's committed state plus the ADR files the cell's own branch added; a malformed ADR is a problem with its reason, never silently accepted or ignored. Design: `docs/mach-next/M11_DESIGN.md` section 7; as built: `docs/mach-next/M11_ADRS.md`. MACH's own `docs/mach-next/ADRS.md` is unrelated.
+
+* **Plan**: the contract engineer reads them with `cell.py adrs`. `check-plan` refuses a plan that names an ADR that does not exist or is not accepted, or whose file touch map falls under an accepted ADR's `path:` globs without naming it or a person's recorded exception, and any plan task that changes an ADR file. It records in `cell.json` the ADRs (ID and digest) the plan was made under and keeps a copy of each text in the cell.
+* **Cannot comply**: `cell.py adr-conflict` records which ADR and why; the routing sheet stops (`adr-decision`) and the walkthrough offers what the scripts accept: a person's exception (`cell.py adr-exception --by --reason`, their words, shown to the builder and reviewers) or, once an engineer has superseded or changed the ADR, `replan`. Neither is recommended by rule.
+* **No ADR covers a needed choice**: the contract engineer drafts a `proposed` ADR on the ticket's branch (`cell.py adr-draft`) and the plan lists it. Low and Medium risk go on and the proposal is reviewed with the change; High risk stops (`adr-acceptance`) until a person accepts it (`cell.py adr-accept --by`, which sets the status on the branch copy and commits it there).
+* **Timing**: an ADR accepted or changed later binds tickets planned afterwards; work already planned is flagged in `next`, `status` and `explain`, never restarted or blocked, and a reviewer may not cite it as a blocker.
+* **Commands**: `/mach adr list` (reads only) and `/mach adr new "<decision>"` (a short interview, then `run.py adr new` writes the file as `proposed` in the main checkout's working tree; the engineer commits it by pull request).
+* **Never**: the Factory, the observe station and `factory-tuning` tickets do not accept, change or supersede an ADR. The exception and accept acts are refused inside a supervised execution.
 
 ### Review rounds after the first
 

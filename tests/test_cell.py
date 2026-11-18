@@ -57,6 +57,7 @@ PLAN = """# Plan: SLICE-001: Invite a teammate by email
 - **App type:** web
 - **Risk tier:** High
 - **Contracts:** `proto/openapi/members.yaml`
+- **ADRs:** None.
 
 ## Contracts
 

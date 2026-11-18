@@ -61,6 +61,7 @@ PLAN = """# Plan: SLICE-001: Invite a teammate by email
 - **App type:** library
 - **Risk tier:** Medium
 - **Contracts:** None. This sample changes no boundary.
+- **ADRs:** None.
 
 ## Contracts
 

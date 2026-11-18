@@ -11,6 +11,7 @@ Paths are relative to the cell's working folder ("workdir").
 - **App type:** <web | cli | api | grpc | rest | desktop | mobile | library>
 - **Risk tier:** <High | Medium | Low>
 - **Contracts:** <comma-separated contract file paths, or "None." with a reason>
+- **ADRs:** <comma-separated IDs of every architecture decision the plan relies on or proposes, such as ADR-0003, ADR-0012; or "None.">
 
 ## Contracts
 
@@ -39,5 +40,7 @@ Paths are relative to the cell's working folder ("workdir").
 ## Engineering decisions
 
 <!-- Technical choices made while planning that the spec left to engineering, each with its reason,
-     so reviewers can challenge them. Use "- None." if there were none. -->
+     so reviewers can challenge them. A choice an accepted ADR already makes is not repeated here: name
+     the ADR under 'ADRs'. A new library, language or framework no ADR covers gets a proposed ADR
+     (cell.py adr-draft), listed under 'ADRs'. Use "- None." if there were none. -->
 - <Decision, and why>

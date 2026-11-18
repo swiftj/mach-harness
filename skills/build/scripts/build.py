@@ -19,6 +19,10 @@ handed to verification.
     build.py revise <ticket>           start a revision after a failed round; the third failed round escalates
     build.py status <ticket>
 
+Architecture decisions (adr.py, the intent station's shared helper): `start` lists the accepted ADRs the plan was made
+under and refuses a High-risk ticket whose own proposed ADR no person has accepted; no step may change a file in the ADR
+folder, and no override allows it; the build report lists the ADRs in force and every exception.
+
 Standard library only. It runs the project's test and lint commands inside the cell.
 """
 
@@ -92,6 +96,37 @@ def telemetry(*args: Any, **kwargs: Any) -> None:
     """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
     if lifecycle is not None:
         lifecycle.record(*args, **kwargs)
+
+
+# Architecture decisions: the shared helper, also with the intent station. Its rules are gates, so a build without it refuses.
+try:
+    import adr  # noqa: E402
+except Exception:  # noqa: BLE001
+    adr = None
+
+
+def adr_module() -> Any:
+    if adr is None:
+        raise BuildError("The intent station's adr.py is not installed beside this skill, so the architecture-decision rules cannot be checked.", code="adr-helper-missing")
+    return adr
+
+
+def adr_folder(cell: "Cell") -> str:
+    return adr_module().folder_of(cell.config)[0]
+
+
+def adrs_in_force(cell: "Cell") -> Dict[str, Any]:
+    """What the builder is held to: the accepted ADRs the plan was made under that apply to it, each with the copy of its text
+    kept in the cell, the exceptions a person recorded, and this ticket's own proposals. There is no override for them."""
+    A = adr_module()
+    record = A.planned_record(cell.info)
+    applied = set(record.get("applied") or [])
+    apply = [{"id": item.get("id"), "title": item.get("title"), "read": str(cell.root / str(item.get("copy") or "")) if item.get("copy") else None,
+              "file": item.get("file"), "digest": item.get("digest")}
+             for item in record.get("planned_under") or [] if isinstance(item, dict) and (item.get("id") in applied or item.get("origin") == "ticket")]
+    return {"apply": apply, "exceptions": [{key: item.get(key) for key in ("adr", "by", "reason", "at")} for item in A.exceptions(cell.info)],
+            "proposed": [{key: item.get(key) for key in ("id", "file", "title")} for item in record.get("proposed") or [] if isinstance(item, dict)],
+            "note": A.DATA_NOTE + " No gate override covers an ADR, and no task changes an ADR file."}
 
 
 
@@ -510,9 +545,15 @@ def commit(cell: Cell, files: Sequence[str], message: str) -> str:
 
 
 def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: argparse.Namespace) -> None:
-    """A task may change only the files the plan gave it, and never a committed test unless it says so."""
+    """A task may change only the files the plan gave it, and never a committed test unless it says so. No task changes an
+    architecture decision record, and no override allows it."""
     if not files:
         raise BuildError(f"{task['id']} changed no files. Do the task's work in {cell.work} first.", code="changed-no-files")
+    folder = adr_folder(cell)
+    decisions = [name for name in files if adr_module().in_folder(name, folder)]
+    if decisions:
+        raise BuildError(f"{task['id']} changes architecture decision records ({', '.join(decisions[:3])}). Only people change an ADR, by pull request; "
+                         "no override allows it. Undo those changes. If the code cannot follow an ADR, stop and report it.", code="adr-files")
     frozen = sorted(set(files) & set(cell.state.get("test_files", []))) if task["kind"] != "test" else []
     if frozen:
         if not args.amend_test:
@@ -638,6 +679,12 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     dirty = changed_files(cell)
     if dirty:
         raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}). Commit or remove them before building starts.", code="uncommitted-changes")
+    waiting = adr_module().pending_acceptance(cell.info) if cell.info.get("risk") == "High" else []
+    if waiting:
+        raise BuildError(f"This High-risk ticket's plan proposes {', '.join(waiting)}, and no engineer has accepted it yet. The build waits for that "
+                         "acceptance (cell.py adr-accept, on a person's word).", code="adr-not-accepted")
+    if isinstance(cell.info.get("adr_conflict"), dict):
+        raise BuildError(f"The plan cannot follow {cell.info['adr_conflict'].get('adr')}, and an engineer has not decided yet.", code="adr-conflict")
     for task in tasks:
         task["status"] = "pending"
     synced = sync_with_main(cell)
@@ -687,6 +734,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "status": "STARTED", "ticket_id": cell.ticket_id, "workdir": str(cell.work), "branch": cell.info.get("branch"),
         "tasks": len(tasks), "test_cmd": cell.state["test_cmd"], "lint_cmd": cell.state["lint_cmd"], "audit": gate,
         "new_tests_run_alone": cell.state.get("test_file_check") or {"trusted": False, "why": "no passing baseline run to check a single-file run against"},
+        "adrs": adrs_in_force(cell),
         "synced_with_main": f"The cell was behind main and has been brought up to date ({synced[:10]})." if synced else None,
         "next": f"{tasks[0]['id']} [{tasks[0]['kind']}]",
     }, indent=2))
@@ -930,6 +978,10 @@ def cmd_add_task(cell: Cell, args: argparse.Namespace) -> int:
     loop = cell.state.get("loop", 0)
     if loop == 0 or cell.info.get("stage") != "building":
         raise BuildError("Tasks are added only during a revision round. The plan comes from the intent skill; if it is wrong, report a plan defect instead.", code="not-revising")
+    folder = adr_folder(cell)
+    decisions = [name for name in args.file if adr_module().in_folder(name[2:] if name.startswith("./") else name, folder)]
+    if decisions:
+        raise BuildError(f"A task may not change architecture decision records ({', '.join(decisions[:3])}): only people change an ADR.", code="adr-files")
     count = sum(1 for task in cell.state["tasks"] if task["id"].startswith(f"R{loop}-"))
     task_id = f"R{loop}-T{count + 1:02d}"
     text = " ".join(args.text.split())
@@ -1072,6 +1124,7 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "deviations": cell.state.get("deviations", []), "files_changed": files, "diff": stat,
         "test_files": cell.state.get("test_files", []), "styling_findings": styling,
         "timing": timing(cell, tests),
+        "adrs": adrs_report(cell),
     }
     (cell.root / "build-report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     cell.info["stage"] = "built"
@@ -1087,6 +1140,19 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "next": "Hand the cell to the verify station. The builder does not verify or review its own work.",
     }, indent=2))
     return 0
+
+
+def adrs_report(cell: Cell) -> Dict[str, Any]:
+    """For verification and review: the ADRs in force for this build (id and digest of the text the plan was made under),
+    every exception a person recorded, with their name and reason, and this ticket's own proposals."""
+    A = adr_module()
+    record = A.planned_record(cell.info)
+    applied = set(record.get("applied") or [])
+    return {"in_force": [{key: item.get(key) for key in ("id", "title", "digest", "origin")} for item in record.get("planned_under") or []
+                         if isinstance(item, dict) and (item.get("id") in applied or item.get("origin") == "ticket")],
+            "exceptions": [{key: item.get(key) for key in ("adr", "by", "reason", "at")} for item in A.exceptions(cell.info)],
+            "proposed": [{key: item.get(key) for key in ("id", "file", "title")} for item in record.get("proposed") or [] if isinstance(item, dict)],
+            "accepted_on_branch": [{key: item.get(key) for key in ("id", "by", "at")} for item in cell.info.get("adr_acceptances") or [] if isinstance(item, dict)]}
 
 
 def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
@@ -1132,7 +1198,8 @@ def cmd_status(cell: Cell, args: argparse.Namespace) -> int:
         "ticket_id": cell.ticket_id, "stage": cell.info.get("stage"), "loop": cell.state.get("loop", 0), "suite": cell.state.get("suite"),
         "done": sum(1 for t in tasks if t["status"] == "done"), "tasks": len(tasks), "deviations": len(cell.state.get("deviations") or []),
         "next": (cell.next_task() or {}).get("id") if tasks else None, "workdir": str(cell.work),
-    }, indent=2))
+        "adrs": adrs_in_force(cell) if adr is not None else None,
+    }, indent=2, ensure_ascii=False))
     return 0
 
 

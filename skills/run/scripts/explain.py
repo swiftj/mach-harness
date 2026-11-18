@@ -59,6 +59,55 @@ def clean(value: Any, limit: int = LIMIT) -> Optional[str]:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+_ADR: List[Any] = []
+
+
+def adr_helper() -> Any:
+    """The intent station's adr.py, the shared architecture-decision helper, whichever way MACH is installed."""
+    if not _ADR:
+        import importlib.util
+        skills = Path(__file__).resolve().parent.parent.parent
+        script = next((folder / "scripts" / "adr.py" for folder in (skills / "mach-intent", skills / "intent") if (folder / "scripts" / "adr.py").is_file()), None)
+        if script is None:
+            raise RuntimeError("The intent station's adr.py is not installed beside this skill.")
+        spec = importlib.util.spec_from_file_location("mach_adr_for_explain", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _ADR.append(module)
+    return _ADR[0]
+
+
+def adr_facts(root: Path, cellroot: Path, cell: Dict[str, Any], config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """What the cell records about architecture decisions: a conflict waiting for an engineer, exceptions, the ADRs the plan
+    named or proposes, proposals waiting for acceptance, and ADRs changed on the main branch since it was planned."""
+    facts: Dict[str, Any] = {}
+    conflict = cell.get("adr_conflict")
+    if isinstance(conflict, dict):
+        facts["conflict"] = {"adr": clean(conflict.get("adr"), 20), "title": clean(conflict.get("title"), 200), "reason": clean(conflict.get("reason")),
+                             "source_file": "cell.json"}
+    found = [{"adr": clean(item.get("adr"), 20), "by": clean(item.get("by"), 80), "reason": clean(item.get("reason")), "at": clean(item.get("at"), 40)}
+             for item in cell.get("adr_exceptions") or [] if isinstance(item, dict)]
+    if found:
+        facts["exceptions"] = found[:10]
+    planned = cell.get("adrs") if isinstance(cell.get("adrs"), dict) else {}
+    if planned.get("planned_at"):
+        facts["named_in_plan"] = [clean(item, 20) for item in planned.get("named") or []][:20]
+        facts["proposed"] = [clean(item.get("id"), 20) for item in planned.get("proposed") or [] if isinstance(item, dict)][:10]
+    try:
+        A = adr_helper()
+        waiting = A.pending_acceptance(cell)
+        if waiting and planned.get("planned_at"):
+            facts["waiting_for_acceptance"] = [clean(item, 20) for item in waiting][:10]
+        flags = A.drift(root, config, cellroot, cell)
+        if flags:
+            facts["changed_since_plan"] = [{"adr": clean(flag.get("id"), 20), "change": clean(flag.get("change"), 40), "title": clean(flag.get("title"), 200)}
+                                           for flag in flags][:20]
+            facts["changed_since_plan_note"] = "They apply to tickets planned from now on; this ticket goes on under the ADRs it was planned with."
+    except Exception as exc:  # explain reads and reports; a failure to check is said, never hidden
+        facts["not_checked"] = f"Architecture decisions could not be checked ({exc.__class__.__name__})."
+    return facts or None
+
+
 def load_json(path: Path, default: Any = None) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -320,6 +369,9 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     base["headline"] = HEADLINES[base["headline_code"]]
     base["overrides"] = [{"task": clean(item.get("task"), 20), "type": clean(item.get("type"), 60), "detail": clean(item.get("detail")),
                           "source_file": "build-report.json"} for item in (report.get("deviations") or [])[:20] if isinstance(item, dict)]
+    facts = adr_facts(root, cellroot, cell, config)
+    if facts:
+        base["adrs"] = facts
     return base, 0
 
 
@@ -355,6 +407,17 @@ def human(report: Dict[str, Any]) -> str:
         lines.append(f"- outvoted blocker from the {item.get('seat')} seat: {item.get('file') or '-'}" + (f' cites "{item["rule"]}"' if item.get("rule") else ""))
     if report.get("overrides"):
         lines.append(f"Gate overrides recorded by the builder: {len(report['overrides'])} (see build-report.json).")
+    facts = report.get("adrs") or {}
+    if facts.get("conflict"):
+        lines.append(f"- [adr] the plan cannot follow {facts['conflict']['adr']}: \"{facts['conflict'].get('reason') or ''}\"")
+    for item in facts.get("exceptions") or []:
+        lines.append(f"- [adr] exception to {item['adr']} recorded by {item['by']}: \"{item.get('reason') or ''}\"")
+    if facts.get("waiting_for_acceptance"):
+        lines.append(f"- [adr] proposed and waiting for an engineer to accept: {', '.join(facts['waiting_for_acceptance'])}")
+    for item in facts.get("changed_since_plan") or []:
+        lines.append(f"- [adr] {item['adr']} {item['change']}: it applies to tickets planned from now on; this one goes on as planned")
+    if facts.get("not_checked"):
+        lines.append(f"- [adr] {facts['not_checked']}")
     if report.get("headline_code") not in ("unknown_ticket", "archived", "finished"):
         lines.append(f"Rounds: {report['rounds_used']} of {report['max_rounds']} used, {report['rounds_left']} left.")
     nxt = report.get("next") or {}

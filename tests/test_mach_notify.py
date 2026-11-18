@@ -376,7 +376,8 @@ class MessageTest(Base):
     def test_the_exact_text_for_each_kind_of_wait_in_both_install_forms(self):
         self.set_address("--label", "Shop team")
         waits = [needs for needs in run.NEEDS_TEXT if needs not in notify.QUIET_NEEDS]
-        self.assertEqual(sorted(waits), ["answers", "human-approval", "merge", "person", "person-to-take-over", "repository-hardening"])
+        self.assertEqual(sorted(waits), ["adr-acceptance", "adr-decision", "adr-fix", "answers", "human-approval", "merge", "person", "person-to-take-over",
+                                         "repository-hardening"])
         for install, command in ((True, "/mach decide"), (False, "/mach:run decide")):
             with mock.patch.object(run, "PROJECT_INSTALL", install):
                 sender = run.notifier(run.Project(self.project))
@@ -385,8 +386,8 @@ class MessageTest(Base):
                 self.receiver.requests.clear()
                 self.assertTrue(sender.wait(ticket, f"stage-{install}", needs)["sent"])
                 self.assertEqual(self.receiver.texts(), [f"MACH · Shop team: {ticket} is waiting for a person.\n{run.NEEDS_TEXT[needs]}\nIn Claude Code: {command}"])
-        self.assertEqual(self.receiver.texts(), ["MACH · Shop team: LOCAL-005 is waiting for a person.\n"
-                                                 "Dispatch this ticket on its own.\nIn Claude Code: /mach:run decide"])
+        self.assertEqual(self.receiver.texts(), ["MACH · Shop team: LOCAL-008 is waiting for a person.\n"
+                                                 "Fix an architecture decision record the factory cannot read, by pull request.\nIn Claude Code: /mach:run decide"])
 
     def test_the_exact_text_for_each_parked_reason_code(self):
         self.set_address()

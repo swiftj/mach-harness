@@ -7,6 +7,10 @@ repository with at least one commit, the cell also holds repo/, a git worktree o
 feature/<ticket_id>; all code, contracts, and the slice spec are written there, never on the
 main checkout. Without git history the cell has no repo/ and work happens in the project root.
 
+Architecture decisions (adr.py, beside this script): `adrs` shows the contract engineer the ADRs that bind the cell;
+`adr-draft` proposes one on the ticket's branch; `adr-conflict` stops a plan that cannot follow one; `adr-exception`
+and `adr-accept` are a person's acts, refused inside a supervised execution; `check-plan` holds the plan to them.
+
 Standard library only. Deterministic: the mach-intent skill calls this for everything a script
 can decide, so the model only makes the judgment calls.
 """
@@ -23,6 +27,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validate_slice  # noqa: E402
+import adr  # noqa: E402  (architecture decisions: the shared helper beside this script)
 
 try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
     import lifecycle  # noqa: E402
@@ -45,12 +50,14 @@ REQ_RE = re.compile(r"\b(?:FR|INV|AC)-\d{2,}\b")
 PLAN_TASK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+((?:R\d+-)?T\d+)\s+\[(test|impl|contract|refactor|docs)\]\s+(.*)$")
 INTENT_SECTIONS = ("Why", "Goal ancestry", "Constraints", "Risk", "Deferred work")
 INTENT_FIELDS = ("Ticket", "Slice", "Mode", "Status")
-PLAN_FIELDS = ("App type", "Risk tier", "Contracts")
+PLAN_FIELDS = ("App type", "Risk tier", "Contracts", "ADRs")
 PLAN_SECTIONS = ("Contracts", "Tasks", "File touch map", "Engineering decisions")
 APP_TYPES = ("web", "cli", "api", "grpc", "rest", "desktop", "mobile", "library")
 RISK_TIERS = ("High", "Medium", "Low")
 STAGES = ("interview", "spec-open", "spec-ready", "planned")
 EXCLUDE_LINE = ".factory/worktrees/"
+TUNING_LABEL = "factory-tuning"
+ADR_ID_RE = re.compile(r"^ADR-\d{4}$")
 
 
 class CellError(Exception):
@@ -620,6 +627,7 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     elif not re.search(r"\[test\]", task_lines[0]):
         problems.append("the first task must be a [test] task: tests are written before implementation")
     problems.extend(unreachable_green(task_lines))
+    decisions = plan_adrs(project, root, cell, header, text, app_type, problems)
 
     if problems:
         for problem in problems:
@@ -628,18 +636,143 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
                                                            "overridden_by_reason": False, "errors": len(problems)})
         print(f"FAILED: {len(problems)} error(s)")
         return 1
-    cell.update({"app_type": app_type, "risk": risk, "contracts": contracts, "stage": "planned"})
+    keep_adr_copies(root, decisions["copies"])
+    cell.update({"app_type": app_type, "risk": risk, "contracts": contracts, "stage": "planned", "adrs": decisions["record"]})
+    cell.pop("adr_conflict", None)
     if model.get("risk") != risk or model.get("app_type") != app_type:
         # Keep the exported spec in step with the plan, so every reader sees one risk tier and app type.
         model.update({"risk": risk, "app_type": app_type})
         spec_json.write_text(json.dumps(model, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     write_cell(project, cell)
+    proposed = [item["file"] for item in decisions["record"]["proposed"]]
     telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.check", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
     telemetry(root, "station.exited", "plan", lambda: {"outcome": "planned", "stage": "planned", "app_type": app_type, "risk": risk,
-                                                       "contracts": len(contracts), "tasks": len(task_lines)})
-    report(commit(project, cell, contracts, f"contract({cell.get('slice_id')}): boundary contracts [{cell['ticket_id']}]", args.no_commit))
-    print(json.dumps({"status": "PLANNED", "app_type": app_type, "risk": risk, "contracts": contracts, "tasks": len(task_lines)}, indent=2))
+                                                       "contracts": len(contracts), "tasks": len(task_lines), "adrs": len(decisions["record"]["named"]),
+                                                       "adrs_proposed": len(proposed)})
+    report(commit(project, cell, contracts + proposed, f"contract({cell.get('slice_id')}): boundary contracts" + (" and proposed ADRs" if proposed else "")
+                  + f" [{cell['ticket_id']}]", args.no_commit))
+    waiting = [item["id"] for item in decisions["record"]["proposed"]] if risk == "High" else []
+    print(json.dumps({"status": "PLANNED", "app_type": app_type, "risk": risk, "contracts": contracts, "tasks": len(task_lines),
+                      "adrs": {"named": decisions["record"]["named"], "applied": decisions["record"]["applied"],
+                               "proposed": [item["id"] for item in decisions["record"]["proposed"]], "exceptions": [item.get("adr") for item in adr.exceptions(cell)]},
+                      **({"waits_for_acceptance": waiting, "next": "This High-risk ticket proposes a new ADR: the build waits until an engineer accepts it "
+                                                                  "(cell.py adr-accept, on their word)."} if waiting else {})}, indent=2))
     return 0
+
+
+def ticket_labels(project: Path, ticket_id: str) -> List[str]:
+    """The ticket's labels from its inbox record and its local Markdown ticket."""
+    labels: List[str] = []
+    try:
+        inbox = json.loads((project / ".factory" / "inbox" / f"{ticket_id}.json").read_text(encoding="utf-8"))
+        labels += [str(label) for label in (inbox.get("labels") or [] if isinstance(inbox, dict) else [])]
+    except (OSError, ValueError):
+        pass
+    local = project / ".factory" / "tickets" / f"{ticket_id}.md"
+    if local.is_file():
+        front = re.match(r"^---\n(.*?)\n---", local.read_text(encoding="utf-8"), re.DOTALL)
+        line = re.search(r"^labels:\s*(.*)$", front.group(1), re.MULTILINE) if front else None
+        if line:
+            labels += [a or b for a, b in re.findall(r'"([^"]*)"|([^\s,\[\]"]+)', line.group(1))]
+    return labels
+
+
+_PARSE_PLAN: List[Any] = []
+
+
+def plan_files(text: str) -> List[str]:
+    """Every file the plan says it touches, as the build station reads the plan (its own parse_plan, loaded, never copied)."""
+    if not _PARSE_PLAN:
+        import importlib.util
+        here = Path(__file__).resolve().parent.parent
+        script = here.parent / ("mach-build" if here.name.startswith("mach-") else "build") / "scripts" / "build.py"
+        if not script.is_file():
+            raise CellError(f"The build station is not installed beside this one ({script}), so the plan's files cannot be read.")
+        spec = importlib.util.spec_from_file_location("mach_build_station_for_plan", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _PARSE_PLAN.append(module.parse_plan)
+    tasks, touch = _PARSE_PLAN[0](text)
+    names = set(touch) | {name for task in tasks for name in task.get("files") or []}
+    return sorted(name[2:] if name.startswith("./") else name for name in names if isinstance(name, str) and name)
+
+
+def plan_adrs(project: Path, root: Path, cell: Dict[str, Any], header: Dict[str, str], text: str, app_type: str, problems: List[str]) -> Dict[str, Any]:
+    """check-plan's architecture-decision rules. Appends to `problems`; returns what the plan was made under, for cell.json.
+
+    A plan names under 'ADRs' every ADR it relied on and every ADR this ticket proposes. A named ADR must exist and be
+    accepted, or be this ticket's own proposal. A plan whose files fall under an accepted ADR's path globs must name it,
+    unless a person recorded an exception to it for this ticket. The plan's tasks never change an ADR file."""
+    config = load_config(project)
+    view = adr.cell_view(project, config, root, cell)
+    folder = view["dir"]
+    records = adr.by_id(view["adrs"])
+    raw = header.get("ADRs", "")
+    named: List[str] = []
+    if raw and not raw.lower().startswith("none"):
+        items = [item.strip().strip("`").strip() for item in raw.split(",") if item.strip()]
+        wrong = [item for item in items if not ADR_ID_RE.match(item)]
+        if wrong:
+            problems.append("'ADRs' lists ADR IDs such as ADR-0007, separated by commas, or says 'None.'; it cannot read: " + ", ".join(wrong[:5]))
+        named = list(dict.fromkeys(item for item in items if ADR_ID_RE.match(item)))
+    problems.extend(f"an ADR on the main branch cannot be read, and an engineer fixes it by pull request: {problem}" for problem in view["problems"]["main"])
+    problems.extend(f"ADR: {problem}" for problem in view["problems"]["cell"])
+    for ident in named:
+        record = records.get(ident)
+        if record is None:
+            problems.append(f"'ADRs' names {ident}, which does not exist in {folder}")
+        elif record["origin"] == "main" and not record["binding"]:
+            status = f"superseded by {record['superseded_by']}" if record.get("superseded_by") else record.get("status") or "unreadable"
+            problems.append(f"'ADRs' names {ident}, which is {status}, not accepted: a plan relies only on accepted ADRs, and only an engineer accepts one, by pull request")
+    own = [record for record in view["own"]]
+    for record in own:
+        if record["id"] and record["id"] not in named:
+            problems.append(f"this ticket proposes {record['id']} ({record['file']}), but 'ADRs' does not list it: the plan lists every ADR it proposes")
+        leftovers = leftover(record.get("text") or "")
+        if leftovers:
+            problems.append(f"{record['file']}: " + "; ".join(leftovers[:3]))
+    files = plan_files(text)
+    touching = [name for name in files if adr.in_folder(name, folder)]
+    if touching:
+        problems.append(f"the plan's tasks change ADR files ({', '.join(touching[:3])}): an ADR is never built. A ticket proposes one while it is "
+                        "planned (cell.py adr-draft); only people change an existing ADR")
+    excepted = {item.get("adr") for item in adr.exceptions(cell)}
+    for record in view["adrs"]:
+        if not record["binding"] or record["id"] in named or record["id"] in excepted:
+            continue
+        matched = adr.path_matches(record, files)
+        if matched:
+            problems.append(f"{', '.join(matched[:3])}{' and more' if len(matched) > 3 else ''} fall under {record['id']} ({adr.bounded(record['title'], 80)}) by its "
+                            f"path globs, but 'ADRs' does not name it. Name it and follow it, or, if the plan cannot follow it, report that (cell.py adr-conflict)")
+    if TUNING_LABEL in ticket_labels(project, cell["ticket_id"]) and (own or touching):
+        problems.append("a factory-tuning ticket never proposes, changes or supersedes an ADR: architecture decisions are people's")
+    conflict = cell.get("adr_conflict")
+    if isinstance(conflict, dict):
+        problems.append(f"the plan cannot follow {conflict.get('adr')}, as recorded; an engineer decides first (an exception, or a superseded ADR and a new plan)")
+    binding = [record for record in view["adrs"] if record["binding"]]
+    applied = adr.select(binding, files=files, app_type=app_type or None, topics=adr.cell_topics(root), named=named)
+    record = {
+        "planned_at": now(), "dir": folder, "main_commit": view["main_commit"], "named": named, "applied": [item["id"] for item in applied],
+        "planned_under": [{"id": item["id"], "digest": item["digest"], "title": adr.bounded(item["title"], 200), "file": item["file"], "origin": item["origin"],
+                           "copy": f"adrs/{item['id']}.md"} for item in binding],
+        "proposed": [{"id": item["id"], "file": item["file"], "digest": item["digest"], "title": adr.bounded(item["title"], 200), "copy": f"adrs/{item['id']}.md"}
+                     for item in own if item["status"] == "proposed"],
+        "files": files[:500],
+    }
+    # The text each ADR had when the plan was made, kept in the cell: the builder and the reviewers read these copies, so a
+    # change on the main branch afterwards never changes what this ticket is held to.
+    copies = {f"{item['id']}.md": item["text"] for item in [*binding, *[item for item in own if item["status"] == "proposed"]]}
+    return {"record": record, "copies": copies}
+
+
+def keep_adr_copies(root: Path, copies: Dict[str, str]) -> None:
+    folder = root / "adrs"
+    if folder.is_dir() and not folder.is_symlink():
+        for old in folder.glob("ADR-*.md"):
+            old.unlink()
+    folder.mkdir(exist_ok=True)
+    for name, text in copies.items():
+        (folder / name).write_text(text, encoding="utf-8")
 
 
 REPLAN_STAGES = ("planned", "building")
@@ -674,6 +807,8 @@ def replan_commits(project: Path, cell: Dict[str, Any], state: Dict[str, Any], w
             continue  # the build station's merge of main into the branch
         elif message.startswith(f"contract({cell.get('slice_id')}): "):
             continue  # the plan's own contracts, which the next plan writes again
+        elif message.startswith("adr(ADR-") and message.endswith(f" [{cell.get('ticket_id')}]"):
+            continue  # a person's acceptance of this plan's own proposed ADR; the saved tip keeps it
         else:
             keep.append(f"{sha[:12]} {message[:60]}")
     if merged:
@@ -692,6 +827,8 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     stage = cell.get("stage")
+    if stage == "spec-ready" and isinstance(cell.get("adr_conflict"), dict):
+        return replan_after_adr(project, root, cell, reason)
     if stage not in REPLAN_STAGES:
         raise CellError(f"Only a planned or building cell can be re-planned; {args.ticket_id} is '{stage}'.")
     build_json = root / "build.json"
@@ -731,6 +868,219 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
     write_cell(project, cell)
     print(json.dumps({"status": "REPLANNED", "ticket_id": args.ticket_id, "stage": "spec-ready", "kept_in": str(keep), "reset": reset,
                       "next": "plan: the contract engineer writes a new plan.md and 'cell.py check-plan' checks it"}, indent=2))
+    return 0
+
+
+def binding_record(project: Path, root: Path, cell: Dict[str, Any], ident: str) -> Dict[str, Any]:
+    """An accepted ADR that binds this cell, or a refusal that says why the ID does not name one."""
+    if not ADR_ID_RE.match(ident or ""):
+        raise CellError(f"'{ident}' is not an ADR ID such as ADR-0007.")
+    view = adr.cell_view(project, load_config(project), root, cell)
+    record = adr.by_id(view["adrs"]).get(ident)
+    if record is None:
+        raise CellError(f"{ident} does not exist in {view['dir']}.")
+    if not record["binding"]:
+        status = f"superseded by {record['superseded_by']}" if record.get("superseded_by") else record.get("status") or "unreadable"
+        raise CellError(f"{ident} is {status}, not accepted, so it binds nothing" + (f" ({'; '.join(record['problems'][:2])})" if record["problems"] else "") + ".")
+    return record
+
+
+def replan_after_adr(project: Path, root: Path, cell: Dict[str, Any], reason: str) -> int:
+    """A plan stopped because it cannot follow an ADR, and an engineer has since superseded or changed that ADR by pull
+    request: clear the stop so the contract engineer plans again under the ADRs as they are now. Only on a person's word."""
+    conflict = cell["adr_conflict"]
+    view = adr.cell_view(project, load_config(project), root, cell)
+    record = adr.by_id(view["adrs"]).get(conflict.get("adr"))
+    if record is not None and record["binding"] and record["digest"] == conflict.get("digest"):
+        raise CellError(f"{conflict.get('adr')} is unchanged on the main branch and still accepted, so a new plan would stop at it again. "
+                        "An engineer supersedes or changes it by pull request first, or a person records an exception (cell.py adr-exception).")
+    now_is = "no longer exists" if record is None else ("changed" if record["binding"] else f"now {record.get('status') or 'unreadable'}")
+    cell.pop("adr_conflict")
+    cell.setdefault("adr_replans", []).append({"adr": conflict.get("adr"), "was": conflict.get("digest"), "now": now_is, "reason": reason, "at": now()})
+    write_cell(project, cell)
+    telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.adr", "outcome": "pass", "reason_code": "adr-changed", "overridden_by_reason": False,
+                                                       "item": conflict.get("adr")})
+    print(json.dumps({"status": "REPLANNED", "ticket_id": cell["ticket_id"], "stage": "spec-ready", "adr": conflict.get("adr"), "adr_now": now_is,
+                      "next": "plan: the contract engineer writes a new plan.md under the ADRs as they are now, and 'cell.py check-plan' checks it"}, indent=2))
+    return 0
+
+
+def cmd_adrs(project: Path, args: argparse.Namespace) -> int:
+    """The ADRs for this cell: an index of every ADR, the text of the accepted ones that apply, the ticket's own proposals,
+    exceptions and problems. Reads only."""
+    cell = read_cell(project, args.ticket_id)
+    root = cell_dir(project, args.ticket_id)
+    config = load_config(project)
+    view = adr.cell_view(project, config, root, cell)
+    app_type = (args.app_type or cell.get("app_type") or config.get("app_type") or "")
+    if app_type and app_type not in adr.APP_TYPES:
+        raise CellError("--app-type must be one of: " + ", ".join(adr.APP_TYPES))
+    files = list(args.path or [])
+    plan = root / "plan.md"
+    if plan.is_file():
+        files += plan_files(plan.read_text(encoding="utf-8"))
+    topics = sorted(set(adr.cell_topics(root)) | set(adr.words(" ".join(args.topic or []))))
+    records = adr.by_id(view["adrs"])
+    chosen = adr.select([record for record in view["adrs"] if record["binding"]], files=files, app_type=app_type or None, topics=topics)
+    chosen.sort(key=lambda item: (0 if "all" in item["because"] else 1, item["id"]))
+    shown = adr.shown([dict(records[item["id"]], because=item["because"]) for item in chosen])
+    print(json.dumps({
+        "ticket_id": args.ticket_id, "dir": view["dir"], "main_commit": view["main_commit"], "data_note": adr.DATA_NOTE,
+        "index": [adr.public(record) for record in view["adrs"]],
+        "apply": shown,
+        "selected_by": {"app_type": app_type or None, "paths": sorted(set(files))[:200], "topics_from": "the spec, the plan's engineering decisions and --topic"},
+        "proposed_by_this_ticket": [adr.public(record) for record in view["own"]],
+        "exceptions": adr.exceptions(cell), "conflict": cell.get("adr_conflict"), "problems": view["problems"],
+        "rules": ["Follow every accepted ADR in 'apply'; name each ADR the plan relies on under 'ADRs' in plan.md.",
+                  "An accepted ADR in 'index' whose path globs match a file the plan touches must be named too: check-plan refuses a plan that leaves it out.",
+                  "A needed choice no ADR covers (a new library, language, framework or similar): propose an ADR with cell.py adr-draft and list it under 'ADRs'.",
+                  "A plan that cannot follow an accepted ADR: stop and record it with cell.py adr-conflict; never plan around it."],
+    }, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_adr_draft(project: Path, args: argparse.Namespace) -> int:
+    """Write a new ADR as `proposed` on this ticket's branch, numbered so no other proposal takes the number; the contract
+    engineer then fills in its sections. check-plan refuses it while a template comment is left, and commits it."""
+    cell = read_cell(project, args.ticket_id)
+    root = cell_dir(project, args.ticket_id)
+    if cell.get("stage") != "spec-ready":
+        raise CellError(f"An ADR is proposed while the plan is written, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'.")
+    if cell.get("isolation") != "worktree":
+        raise CellError("This cell has no branch of its own (the project has no git history yet), so it cannot propose an ADR. An engineer writes it with /mach adr new.")
+    if TUNING_LABEL in ticket_labels(project, args.ticket_id):
+        raise CellError("A factory-tuning ticket never proposes an ADR: architecture decisions are people's.")
+    title = " ".join((args.title or "").split())
+    if len(title) < 8:
+        raise CellError("--title must state the decision in a few words, such as 'Use PostgreSQL for the billing service'.")
+    applies, problems = adr.check_applies(args.applies_to) if args.applies_to else ([], [])
+    if problems:
+        raise CellError("; ".join(problems))
+    config = load_config(project)
+    folder, setting = adr.folder_of(config)
+    if setting:
+        raise CellError(setting)
+    number = adr.next_number(project, config)
+    name = f"{folder}/{number:04d}-{adr.slug(title)}.md"
+    path = workdir(project, cell) / name
+    if path.exists():
+        raise CellError(f"{name} already exists.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(adr.render(title, applies_to=applies), encoding="utf-8")
+    print(json.dumps({"status": "DRAFTED", "id": f"ADR-{number:04d}", "file": name, "path": str(path),
+                      "next": "Fill in its sections with your file tools, removing every template comment. Keep 'status: proposed': only a person "
+                              "accepts an ADR. List it under 'ADRs' in plan.md; check-plan checks it and commits it with the contracts."}, indent=2))
+    return 0
+
+
+def cmd_adr_conflict(project: Path, args: argparse.Namespace) -> int:
+    """The contract engineer's way to say the slice cannot be planned under an accepted ADR. The ticket stops for an
+    engineer, who records an exception or supersedes the ADR; the plan is not written around it."""
+    cell = read_cell(project, args.ticket_id)
+    root = cell_dir(project, args.ticket_id)
+    if cell.get("stage") != "spec-ready":
+        raise CellError(f"A conflict with an ADR is recorded while the plan is written, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'.")
+    record = binding_record(project, root, cell, args.adr)
+    reason = " ".join((args.reason or "").split())
+    if len(reason) < 20:
+        raise CellError("--reason must say which part of the ADR the slice cannot follow, and why, in a sentence or two.")
+    cell["adr_conflict"] = {"adr": record["id"], "digest": record["digest"], "title": adr.bounded(record["title"], 200), "file": record["file"],
+                            "reason": reason[:2000], "at": now()}
+    write_cell(project, cell)
+    telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.adr", "outcome": "refuse", "reason_code": "adr-conflict", "overridden_by_reason": False,
+                                                       "item": record["id"]})
+    print(json.dumps({"status": "STOPPED", "ticket_id": args.ticket_id, "adr": record["id"],
+                      "next": f"Stop: do not write the plan around {record['id']}. An engineer decides: record an exception for this ticket, or supersede the ADR "
+                              "by pull request and have the ticket planned again."}, indent=2))
+    return 0
+
+
+def cmd_adr_exception(project: Path, args: argparse.Namespace) -> int:
+    """A person's exception to one accepted ADR for this ticket, with their reason in their words. Only on their
+    explicit word; refused inside a supervised execution. Shown to the contract engineer, the builder and the reviewers."""
+    if adr.unattended():
+        raise CellError(adr.UNATTENDED)
+    cell = read_cell(project, args.ticket_id)
+    root = cell_dir(project, args.ticket_id)
+    if cell.get("stage") != "spec-ready":
+        raise CellError(f"An exception to an ADR is recorded before the ticket is planned, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'. "
+                        "To plan a planned ticket again first, use replan.")
+    name = " ".join((args.by or "").split())
+    if len(name) < 2:
+        raise CellError("--by must name the person who decided.")
+    reason = " ".join((args.reason or "").split())
+    if len(reason) < 10:
+        raise CellError("--reason must say, in the person's own words, why this ticket may depart from the ADR.")
+    record = binding_record(project, root, cell, args.adr)
+    if any(item.get("adr") == record["id"] for item in adr.exceptions(cell)):
+        raise CellError(f"An exception to {record['id']} is already recorded for {args.ticket_id}.")
+    cell.setdefault("adr_exceptions", []).append({"adr": record["id"], "digest": record["digest"], "title": adr.bounded(record["title"], 200), "by": name,
+                                                  "reason": reason[:2000], "at": now(), "recorded_by": "an agent, on the person's instruction in conversation"})
+    conflict = cell.get("adr_conflict")
+    cleared = isinstance(conflict, dict) and conflict.get("adr") == record["id"]
+    if cleared:
+        cell.pop("adr_conflict")
+    write_cell(project, cell)
+    telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.adr", "outcome": "override", "reason_code": "adr-exception", "overridden_by_reason": True,
+                                                       "item": record["id"]})
+    print(json.dumps({"status": "RECORDED", "ticket_id": args.ticket_id, "adr": record["id"], "by": name, "conflict_cleared": cleared,
+                      "next": "The contract engineer plans the ticket with this exception; the builder and the reviewers are shown it."}, indent=2))
+    return 0
+
+
+def cmd_adr_accept(project: Path, args: argparse.Namespace) -> int:
+    """A person accepts ADRs this ticket proposes: the status on the ticket's branch copy becomes `accepted`, committed
+    on its branch. Only on their explicit word; refused inside a supervised execution. Accepting an ADR on the main branch
+    is an engineer's own edit and pull request, never this."""
+    if adr.unattended():
+        raise CellError(adr.UNATTENDED)
+    cell = read_cell(project, args.ticket_id)
+    root = cell_dir(project, args.ticket_id)
+    if cell.get("stage") != "planned":
+        raise CellError(f"A ticket's proposed ADR is accepted after its plan is checked and before it is built; {args.ticket_id} is '{cell.get('stage')}'.")
+    name = " ".join((args.by or "").split())
+    if len(name) < 2:
+        raise CellError("--by must name the person who accepted it.")
+    proposed = {item.get("id"): item for item in adr.planned_record(cell).get("proposed") or [] if isinstance(item, dict)}
+    view = adr.cell_view(project, load_config(project), root, cell)
+    own = adr.by_id(view["own"])
+    targets = []
+    for ident in dict.fromkeys(args.adr):
+        record, planned = own.get(ident), proposed.get(ident)
+        if planned is None or record is None:
+            raise CellError(f"{ident} is not an ADR this ticket's plan proposes" + (f"; it proposes {', '.join(sorted(proposed))}" if proposed else "") + ".")
+        if record["status"] != "proposed" or record["problems"]:
+            raise CellError(f"{ident} is {record['status'] or 'unreadable'}" + (f" ({'; '.join(record['problems'][:2])})" if record["problems"] else "") + "; only a readable proposed ADR is accepted.")
+        if record["digest"] != planned.get("digest"):
+            raise CellError(f"{ident} changed after the plan was checked; check the plan again before it is accepted.")
+        targets.append(record)
+    work = workdir(project, cell)
+    accepted = []
+    for record in targets:
+        try:
+            text = adr.set_status(record["text"], "accepted")
+        except adr.ADRError as exc:
+            raise CellError(f"{record['id']}: {exc}")
+        (work / record["file"]).write_text(text, encoding="utf-8")
+        message = commit(project, cell, [record["file"]], f"adr({record['id']}): accepted by {name} [{cell['ticket_id']}]", False)
+        if not message or message.startswith("warning"):
+            raise CellError(f"{record['id']} was set to accepted but not committed on the ticket's branch" + (f": {message}" if message else
+                            " (git.auto_commit is false); commit it on the branch yourself") + ".")
+        item = {"id": record["id"], "digest": adr.digest(text), "by": name, "note": (args.note or "").strip() or None, "at": now(),
+                "recorded_by": "an agent, on the person's instruction in conversation"}
+        cell.setdefault("adr_acceptances", []).append(item)
+        planned_under = cell.setdefault("adrs", {}).setdefault("planned_under", [])
+        planned_under.append({"id": record["id"], "digest": item["digest"], "title": adr.bounded(record["title"], 200), "file": record["file"], "origin": "ticket",
+                              "copy": f"adrs/{record['id']}.md"})
+        (root / "adrs").mkdir(exist_ok=True)
+        (root / "adrs" / f"{record['id']}.md").write_text(text, encoding="utf-8")
+        accepted.append(record["id"])
+        write_cell(project, cell)
+        telemetry(root, "gate.evaluated", "plan", lambda ident=record["id"]: {"gate": "plan.adr", "outcome": "pass", "reason_code": "adr-accepted",
+                                                                              "overridden_by_reason": False, "item": ident})
+    print(json.dumps({"status": "ACCEPTED", "ticket_id": args.ticket_id, "accepted": accepted, "by": name, "waiting": adr.pending_acceptance(cell),
+                      "next": "The accepted ADR lands on the main branch with this ticket's change." + (" The build may start." if not adr.pending_acceptance(cell) else "")},
+                     indent=2))
     return 0
 
 
@@ -881,7 +1231,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-commit", action="store_true", help="do not commit the spec on the cell's branch")
     p.set_defaults(func=cmd_finalize)
 
-    p = sub.add_parser("replan", help="return a planned or building cell to spec-ready to plan it again; only on a person's instruction")
+    p = sub.add_parser("replan", help="return a planned or building cell to spec-ready to plan it again, or plan again a cell stopped at an ADR an "
+                       "engineer has since superseded; only on a person's instruction")
     p.add_argument("ticket_id")
     p.add_argument("--reason", required=True, help="why the plan is wrong")
     p.set_defaults(func=cmd_replan)
@@ -895,6 +1246,39 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("step", help="the step, such as plan")
     p.add_argument("--holder", help="the holder token a claim printed earlier (default: a new one)")
     p.set_defaults(func=cmd_claim)
+
+    p = sub.add_parser("adrs", help="the architecture decisions for this cell: an index, the accepted ones that apply, proposals; reads only")
+    p.add_argument("ticket_id")
+    p.add_argument("--app-type", help="the app type the plan will state, when the cell has none yet")
+    p.add_argument("--topic", action="append", default=[], help="a topic word the slice concerns, such as database (repeatable)")
+    p.add_argument("--path", action="append", default=[], help="a file the plan will touch, relative to the repository root (repeatable)")
+    p.set_defaults(func=cmd_adrs)
+
+    p = sub.add_parser("adr-draft", help="write a new ADR as proposed on this ticket's branch, with a free number; the contract engineer fills it in")
+    p.add_argument("ticket_id")
+    p.add_argument("--title", required=True, help="the decision in a few words")
+    p.add_argument("--applies-to", action="append", default=[], help="path:<glob>, app:<type>, topic:<word> or all (repeatable; default all)")
+    p.set_defaults(func=cmd_adr_draft)
+
+    p = sub.add_parser("adr-conflict", help="record that the plan cannot follow an accepted ADR; the ticket stops for an engineer")
+    p.add_argument("ticket_id")
+    p.add_argument("--adr", required=True, help="the ADR's ID, such as ADR-0007")
+    p.add_argument("--reason", required=True, help="which part of it the slice cannot follow, and why")
+    p.set_defaults(func=cmd_adr_conflict)
+
+    p = sub.add_parser("adr-exception", help="a person's exception to one accepted ADR for this ticket; only on their explicit word")
+    p.add_argument("ticket_id")
+    p.add_argument("--adr", required=True, help="the ADR's ID, such as ADR-0007")
+    p.add_argument("--by", required=True, help="the name of the person who decided")
+    p.add_argument("--reason", required=True, help="why this ticket may depart from it, in the person's own words")
+    p.set_defaults(func=cmd_adr_exception)
+
+    p = sub.add_parser("adr-accept", help="a person accepts an ADR this ticket proposes, on its branch; only on their explicit word")
+    p.add_argument("ticket_id")
+    p.add_argument("--adr", required=True, action="append", help="the proposed ADR's ID (repeatable)")
+    p.add_argument("--by", required=True, help="the name of the person who accepted it")
+    p.add_argument("--note")
+    p.set_defaults(func=cmd_adr_accept)
 
     p = sub.add_parser("status", help="show one cell, or list all cells")
     p.add_argument("ticket_id", nargs="?")
@@ -923,7 +1307,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return args.func(project, args)
     except CellError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        station, gate = {"finalize": ("groom", "groom.finalize"), "check-plan": ("plan", "plan.check"), "replan": ("plan", "plan.replan")}.get(args.command, (None, None))
+        station, gate = {"finalize": ("groom", "groom.finalize"), "check-plan": ("plan", "plan.check"), "replan": ("plan", "plan.replan"),
+                         "adr-conflict": ("plan", "plan.adr"), "adr-exception": ("plan", "plan.adr"), "adr-accept": ("plan", "plan.adr")}.get(args.command, (None, None))
         if station:
             telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", station, lambda: {
                 "gate": gate, "outcome": "refuse", "reason_code": "refused", "overridden_by_reason": False})

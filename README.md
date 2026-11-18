@@ -149,6 +149,28 @@ Everything you write is a private draft on your computer until you send a wave. 
 
 The audit runs your build, tests and linter and gives a tier. **Gold** allows full autonomy. **Silver** builds, with a person approving each change. **Bronze**, which includes any failing build or test suite, blocks autonomous work until the repository is hardened.
 
+### Architecture decisions
+
+Record your technology decisions (stack, libraries, languages, component structure, API contracts, security standards) as ADRs: MADR files in `docs/adr/NNNN-title.md`, changed by you through ordinary pull requests. Only `status: accepted` binds the factory. One extra header field says what a decision covers:
+
+```markdown
+---
+status: accepted
+applies-to:
+  - path:services/api/**
+  - topic:database
+---
+
+# Use PostgreSQL for every service's own data
+```
+
+The contract engineer plans under the accepted ones and names each it relied on; a plan that touches files an ADR covers must name it. The builder follows them with no override, and the architecture reviewer checks the change against them. A plan that cannot follow one stops for you: record an exception for that ticket, or supersede the ADR and plan again. A choice no ADR covers arrives as a proposed ADR in the ticket's own change; for a high-risk ticket the build waits until you accept it. A decision accepted later binds tickets planned afterwards; work already planned is flagged, never restarted. The factory never accepts, changes or supersedes an ADR.
+
+```
+/mach adr list                 every decision, its status and what it applies to
+/mach adr new "<decision>"     a short interview, then the file is written as proposed for you to commit
+```
+
 ### One idea, start to finish
 
 ```
@@ -243,6 +265,9 @@ These are the cases, and what each choice runs if you would rather type it yours
 | The repository is Bronze | `/mach audit` lists what to fix |
 | A build stopped at a gate before any review | Run it again, or start the plan over: `/mach replan <ticket> "<why>"` |
 | A worker is already on this ticket | Wait for it; or, if that worker is gone, tell Claude Code to take over |
+| The plan cannot follow an architecture decision | Record an exception for this ticket: `/mach adr except <ticket> <ADR-NNNN> "<why>"`. Or supersede the ADR by pull request, then `/mach replan <ticket> "<why>"` |
+| A high-risk ticket proposes a new architecture decision | Read the proposal, then `/mach adr accept <ticket> <ADR-NNNN>`; it is accepted on the ticket's branch and lands with the change |
+| An ADR file cannot be read | Fix it by pull request; `/mach adr list` names the problem, and `/mach <ticket>` plans the ticket once it is fixed |
 | The audit is missing or out of date | `/mach audit` |
 
 A ticket gets three judging rounds in all, counting failed verifications and rejected reviews. On the third failure it is handed to a person; the factory does not keep trying.
@@ -310,6 +335,10 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach merge <ticket>` | Merge an approved ticket yourself |
 | `/mach replan <ticket> "<why>"` | Start a ticket's plan over, before any review round; the old plan is kept |
 | `/mach abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
+| `/mach adr list` | Every architecture decision: ID, title, status, what it applies to, problems |
+| `/mach adr new "<decision>"` | A short interview, then a new ADR written as proposed for you to commit by pull request |
+| `/mach adr except <ticket> <ADR-NNNN> "<why>"` | Let one ticket depart from an accepted ADR, with your reason |
+| `/mach adr accept <ticket> <ADR-NNNN>` | Accept the ADR a ticket proposes, on that ticket's branch |
 | `/mach audit` | The repository's readiness tier |
 | `/mach product status\|intake\|plan\|dispatch` | Take approved product work into the factory |
 | `/mach factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
@@ -349,6 +378,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
 | `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |
 | `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |
+| `adr.dir` | `docs/adr` | The folder of the project's architecture decision records |
 | `floor.evidence_media` | off | Let the Factory Floor's evidence player show screenshots and recordings; transcripts and other text are shown either way |
 
 A high-risk change always needs a person's approval in review unless you change that setting yourself. `REVIEW.md` and `AGENTS.md` are yours to edit once created.

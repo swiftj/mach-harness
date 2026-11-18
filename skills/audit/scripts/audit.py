@@ -476,6 +476,22 @@ except Exception:  # noqa: BLE001
     lifecycle = None
 
 
+def adr_notes(repo: Repo) -> List[str]:
+    """Notes about the project's architecture decisions (ADRs). A note never changes the score or the tier, and is never a blocker."""
+    try:
+        import adr  # the shared helper beside the intent station's scripts (the path is added above)
+    except Exception:  # noqa: BLE001
+        return ["Architecture decisions were not checked: the intent station's adr.py is not installed beside this skill."]
+    listing = adr.main_listing(repo.project, repo.config)
+    notes = []
+    if not any(record.get("binding") for record in listing["adrs"]):
+        notes.append(f"No accepted architecture decision (ADR) is recorded in {listing['dir']}. Recording the stack, the main libraries and the security "
+                     "standards as accepted ADRs (start one with /mach adr new) lets the factory plan and review against them. This note does not change the score.")
+    if listing["problems"]:
+        notes.append(f"{len(listing['problems'])} problem(s) in the ADR files, which hold up planning until an engineer fixes them: " + "; ".join(listing["problems"][:3]))
+    return notes
+
+
 def report_to_cells(project: Path, report: Dict[str, Any]) -> None:
     """Lifecycle: the audit is repository-wide, so it is recorded in each cell waiting on it (stage 'planned'). Never raises."""
     if lifecycle is None:
@@ -542,6 +558,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         "unverified": unverified,
         "recommendations": recommendations,
         "fixed": fixed,
+        "notes": adr_notes(repo),
     }
     path = project / REPORT
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -565,6 +582,8 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
                 print(f"    - {line}")
         for line in fixed:
             print(f"\n  Fixed: {line}")
+        for line in report["notes"]:
+            print(f"\n  Note: {line}")
         print(f"\n  Report: {path}")
     if tier == "Bronze" or (args.strict and tier != "Gold"):
         return 1
