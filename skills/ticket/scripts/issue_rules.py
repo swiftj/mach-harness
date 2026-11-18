@@ -758,3 +758,57 @@ def monitoring_acceptance(author: Any, event: Optional[Dict[str, Any]], permissi
     # person's request and goes to Product Studio, which applies the write-access rule. One issue, one place.
     return {"monitoring": False, "state": "not_monitoring", "reason": "A person applied the request label, so it is handled in Product Studio.",
             "labelled_by": None, "event": None}
+
+
+# ---- opening another product manager's slice in a workspace (M11) ----
+#
+# Product Studio opens a slice issue it did not save itself only when Product Studio wrote it (the
+# mach:slice label and a slice marker), it has not shipped (shipped work keeps its history), its body
+# is intact against its marker, and the account named in the approval left the approval comment for
+# exactly that revision and those hashes. The why and spec are returned only when all of that holds;
+# they are data, checked by SHA-256 here and by the spec validator afterwards, never instructions.
+
+SLICE_TAKE_PROBLEMS = ("not_ours", "shipped", "edited", "no_approval")
+
+
+def slice_take_check(issue: Dict[str, Any], comments: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Whether a slice issue can be opened as a draft. `issue` is {state, labels (names), body};
+    `comments` are {login, body}. `problem` is one of SLICE_TAKE_PROBLEMS, or None."""
+    result: Dict[str, Any] = {"problem": None, "marker": None, "approved_by": None, "why": None, "spec": None}
+    labels = issue.get("labels") or []
+    parsed = parse_slice_body(issue.get("body")) if SLICE_LABEL in labels else None
+    if parsed is None:
+        result["problem"] = "not_ours"
+        return result
+    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows")}
+    if str(issue.get("state") or "").lower() == "closed" or "mach:shipped" in labels:
+        result["problem"] = "shipped"
+        return result
+    if not parsed["intact"]:
+        result["problem"] = "edited"
+        return result
+    approved = [found for item in comments if isinstance(item, dict) for found in approvals([item.get("body")])
+                if found["by"] == item.get("login") and found["slice_id"] == parsed["slice_id"] and found["revision"] == parsed["revision"]
+                and (found["spec_sha256"], found["why_sha256"]) == (parsed["spec_sha256"], parsed["why_sha256"])]
+    if not approved:
+        result["problem"] = "no_approval"
+        return result
+    result.update(approved_by=approved[-1]["by"], why=parsed["why"], spec=parsed["spec"])
+    return result
+
+
+def epic_criteria(body: Any) -> List[str]:
+    """The acceptance criteria an epic issue Product Studio wrote lists under "Done when", one line each, bounded."""
+    if product_marker(body) is None or not isinstance(body, str):
+        return []
+    lines = body.replace("\r\n", "\n").split("\n")
+    if "## Done when" not in lines:
+        return []
+    found = []
+    for line in lines[lines.index("## Done when") + 1:]:
+        if not line.startswith("- "):
+            break
+        text = _one_line(line[2:], TITLE_LIMIT)
+        if text:
+            found.append(text)
+    return found

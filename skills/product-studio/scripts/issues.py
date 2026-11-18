@@ -171,6 +171,15 @@ def place_sub_issue(project: Path, repository: str, number: int, child: int, aft
                             "-F", f"sub_issue_id={int(child)}", *where)
 
 
+def sub_issue_numbers(project: Path, repository: str, number: int) -> Tuple[Optional[List[Tuple[int, int]]], Failure]:
+    """The epic's sub-issues as (id, number), in their order: read to compare with the product manager's order."""
+    found, failure = collab._gh_json(project, "api", "--paginate", *collab.API_HEADERS, SUB_ISSUES_PATH.format(repository=repository, number=int(number)),
+                                     "--jq", ".[] | {id, number}", lines=True)
+    if failure:
+        return None, failure
+    return [(item["id"], item["number"]) for item in found or [] if isinstance(item, dict) and type(item.get("id")) is int and type(item.get("number")) is int], None
+
+
 READY = "mach:ready"
 ISSUE_PATH = "repos/{repository}/issues/{number}"
 SUB_ISSUES_PATH = "repos/{repository}/issues/{number}/sub_issues"

@@ -95,3 +95,83 @@ The Factory's intake, release-qualification, requests-intake and supervisor test
 | Maximum sub-issues per parent; maximum pinned issues | **Not confirmed** |
 | `gh api user` returns the signed-in account's `login` | Not stated on the `gh api` page; it is the REST "get the authenticated user" endpoint |
 | `gh issue view --json comments` gives `author.login` and `body` | Not checked against the manual; the M8 request code already relies on `body` |
+
+## Added: the order within an epic, and opening another product manager's slice
+
+This replaces decisions 1 and 14 above: the product manager now sets the order, and a slice saved by
+someone else can be opened here.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `slice move <SLICE-ID> --before <SLICE-ID> \| --after <SLICE-ID> \| --first \| --last` | Sets the slice's place among its epic's slices. Refused across epics. Saved here first; where two or more of the epic's slices are on GitHub, GitHub's order is then put in place. |
+| `slice take <issue number \| SLICE-ID>` | Opens a slice issue that has no draft here as a draft, exactly as its issue holds it. |
+
+Both run only on the product manager's word. `status` gains an `order` list (one row per epic), and
+`refresh`'s `github` block gains the same list.
+
+### The order
+
+- **Where it is kept.** `.factory/studio/issues.json` gains `order`, per epic: `slices` (the product
+  manager's order), `github` (`repository`, `slices`, `read_at`: GitHub's order as last read or
+  written), `move` (`state` `trying` or `done`, `slices`, `at`) and `taken_at`. An epic's slices are
+  the drafts here that belong to it and the slices GitHub lists under its issue. The order is
+  `slices`, then any slice not listed there by slice ID, so nothing changes until a slice is moved.
+- **Drafts.** A move among drafts writes nothing to GitHub. `slice ready` links a new sub-issue just
+  after the nearest earlier slice in this order that the workspace saved itself (or before the next
+  one), and the task list is written in this order. `slice renumber` keeps the draft's place.
+- **On GitHub.** The move is recorded as `trying` before anything is written. GitHub is read first
+  and only what is out of place is moved: the largest set of sub-issues already in the wanted order
+  stays, and each other one is placed with `PATCH …/sub_issues/priority`, after the slice before it
+  (or before the first one staying). In the task-list form the epic's body is rewritten from its
+  template. A lost answer or a failure stops the command; moving again finishes, and nothing is moved
+  twice. GitHub unusable (no gh, not signed in) with the epic's slices on GitHub refuses and changes
+  nothing.
+- **Refresh.** Each epic's order is read back (sub-issues, else the task list; a slice with a shipped
+  and a newer issue is placed by its newest). When the relative order of the slices it had before
+  changed since this workspace last read or wrote it, another product manager changed it: theirs is
+  taken, drafts only here keep their place just after the slice they followed, and the row says so.
+  A new slice joining is not a change of order. An unfinished move of this workspace's own is never
+  overwritten. On the first read, GitHub's order is taken only when no order was ever set here.
+
+### Opening another product manager's slice
+
+- **Accepted only** when the issue carries `mach:slice` and a slice marker, has not shipped, its body
+  is intact against its marker, and the account the approval names wrote an approval comment for
+  exactly that revision and those hashes (`issue_rules.slice_take_check`). Then the spec passes the
+  spec validator with `--ready` checks, as a local spec does, and names the same slice. Only then are
+  the why and the spec written, verbatim.
+- **The epic** is the issue the marker names, which must be an epic Product Studio wrote. An epic
+  here under the same ID is used when it is linked to that issue, or not linked and has the same
+  title; otherwise it is refused, pointing to `epic renumber`. With no epic here, one is created
+  `approved`, with the title and the "Done when" criteria from its issue (`issue_rules.epic_criteria`).
+- **Dependencies** must already be drafts here; the refusal names the slice to open first.
+- **State.** A slice marked ready, being built, or with a question from the builders opens
+  `approved_for_engineering` (reopen to change it); one not marked ready opens editable. The record
+  gets the issue, base revision and both hashes, so `slice reopen`, `slice ready` (a new revision of
+  the same issue) and the newer-elsewhere rule work as for any slice. A slice following a shipped
+  issue records that issue as shipped.
+- **Interrupted or repeated.** The record is written before the files; taking again finishes. A
+  second take of the same issue changes nothing and reports `already_in_workspace`. Text left for
+  that slice ID that is not a draft and differs from GitHub's is left alone and refused.
+
+### Decisions where the brief left a choice
+
+1. Moving needs the epic in this workspace; the slices moved may be drafts here or slices GitHub
+   lists under it (from the last refresh), so a slice need not be opened here to be ordered.
+2. One reprioritise call per slice out of place, never a whole-epic rewrite in the sub-issue form.
+3. A shipped slice is refused with the reason; the message says a changed version opens a new issue.
+   Nothing here makes that changed version from someone else's shipped slice.
+4. The approval's author is checked against the login in the approval; whether the comment was edited
+   is not checked here (the Factory checks it), because the hashes already bind the text.
+5. `refresh` still lists slices not in this workspace with `in_workspace: false`; that is where the
+   app offers `slice take`.
+
+### GitHub shapes
+
+| Shape | Confirmed? |
+|---|---|
+| `PATCH …/sub_issues/priority` with `sub_issue_id` and one of `after_id` / `before_id` (issue ids, not numbers), 200 on success | Confirmed (docs.github.com, sub-issues, read 2026-11-18). Whether giving both is an error is not stated; only one is ever sent. |
+| `GET …/sub_issues` items have `id` and `number`; read with `--jq '.[] \| {id, number}'` | Confirmed. That the list is in the parent's order is **not stated**. |
+| Maximum sub-issues per parent | **Not stated** |
