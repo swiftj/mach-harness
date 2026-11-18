@@ -168,7 +168,7 @@ The contract engineer plans under the accepted ones and names each it relied on;
 ```
 /mach adr list                 every decision, its status and what it applies to, and which required topics are missing
 /mach adr new "<decision>"     a short interview, then the file is written as proposed for you to commit
-/mach adr baseline             draft the missing required decisions from the repository, as proposed files
+/mach adr baseline             draft the missing required decisions from the repository, then settle what it could not find with you, one question at a time
 /mach adr accept <ADR-NNNN>... mark proposed files you have read as accepted; you commit them
 ```
 
@@ -279,7 +279,7 @@ These are the cases, and what each choice runs if you would rather type it yours
 | The plan cannot follow an architecture decision | Record an exception for this ticket: `/mach adr except <ticket> <ADR-NNNN> "<why>"`. Or supersede the ADR by pull request, then `/mach replan <ticket> "<why>"` |
 | A high-risk ticket proposes a new architecture decision | Read the proposal, then `/mach adr accept <ticket> <ADR-NNNN>`; it is accepted on the ticket's branch and lands with the change |
 | An ADR file cannot be read | Fix it by pull request; `/mach adr list` names the problem, and `/mach <ticket>` plans the ticket once it is fixed |
-| The project's basic technical decisions are not written down | `/mach adr baseline`, then correct, accept and commit the drafts; `/mach <ticket>` plans the ticket once they are merged |
+| The project's basic technical decisions are not written down | `/mach adr baseline`: it drafts them, asks you about what the repository does not show, and accepts them on your word; commit them (it offers to open the pull request); `/mach <ticket>` plans the ticket once they are merged |
 | The audit is missing or out of date | `/mach audit` |
 
 A ticket gets three judging rounds in all, counting failed verifications and rejected reviews. On the third failure it is handed to a person; the factory does not keep trying.

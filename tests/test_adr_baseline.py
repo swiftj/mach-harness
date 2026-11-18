@@ -429,7 +429,7 @@ class AcceptTest(Repository):
         self.write("0003-open.md", adr.render("Deploy somewhere", applies_to=["topic:deployment"], context="Why now here.", options=["A"], decision="Chosen here.",
                                                consequences=["Good."], open_points=["Which region"]))
         self.write("0004-done.md", adr_text("Already accepted", applies=["topic:testing"]))
-        cases = {"ADR-0002": "still holds a template comment", "ADR-0003": "still lists open points", "ADR-0004": "it is accepted, not proposed",
+        cases = {"ADR-0002": "still holds a template comment", "ADR-0003": "still lists 1 open point(s)", "ADR-0004": "it is accepted, not proposed",
                  "ADR-0009": "no such ADR"}
         before = {path.name: path.read_text() for path in self.adr_dir.iterdir()}
         for ident, expected in cases.items():
