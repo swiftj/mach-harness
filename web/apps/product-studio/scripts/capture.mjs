@@ -131,7 +131,7 @@ for (const scenario of ["empty", "established"]) {
 
         await page.goto(`${host.origin}/#/vision`);
         await settle(page);
-        await page.getByRole("button", { name: "Approve EPIC-002" }).click();
+        await page.getByRole("button", { name: "Approve this epic’s scope: EPIC-002" }).click();
         await page.getByRole("dialog").waitFor();
         await page.waitForTimeout(400);
         await page.screenshot({ path: join(out, `established-vision-approve-${theme}-1440.png`) });

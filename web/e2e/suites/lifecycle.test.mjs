@@ -94,9 +94,9 @@ test("lifecycle: from nothing to a slice ready to build, through the UI only", a
     assert.deepEqual([epic.epic_id, epic.title, epic.status], ["EPIC-001", "Team membership", "proposed"]);
     const card = main().getByRole("listitem").filter({ has: page.getByRole("heading", { name: "Team membership" }) });
     await card.getByText("Proposed").waitFor();
-    await card.getByRole("button", { name: "Approve EPIC-001" }).click();
+    await card.getByRole("button", { name: "Approve this epic’s scope: EPIC-001" }).click();
     await shoot(page, FOLDER, "03a-approve-epic-dialog");
-    await dialog().getByRole("button", { name: "Approve epic" }).click();
+    await dialog().getByRole("button", { name: "Approve this epic’s scope" }).click();
     await dialog().waitFor({ state: "detached" });
     await card.getByText("Approved", { exact: true }).waitFor();
     epic = engineStatus().epics[0];

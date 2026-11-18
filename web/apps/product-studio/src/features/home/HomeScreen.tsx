@@ -166,7 +166,7 @@ function ProjectHome({ status }: { status: Status }) {
             ))
           ) : (
             <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-line-strong px-5 py-5">
-              <Text>No epics yet. An epic is a larger capability, such as “Team membership”, that several slices deliver.</Text>
+              <Text>No epics yet. An epic is a larger capability, such as “Team membership”, that several slices of intent deliver.</Text>
               <Button variant="primary" size="sm" onClick={() => setAddEpic(true)}>
                 Add the first epic
               </Button>
@@ -353,8 +353,8 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
           </Text>
         ) : null}
         {epic.status === "proposed" ? (
-          <Button size="sm" className="ml-auto" onClick={onApprove}>
-            Approve {epic.epic_id}
+          <Button size="sm" className="ml-auto" aria-label={`Approve this epic’s scope: ${epic.epic_id}`} onClick={onApprove}>
+            Approve this epic’s scope
           </Button>
         ) : null}
       </div>

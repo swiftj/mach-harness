@@ -76,7 +76,7 @@ function EpicSheetBody({ state, onClose }: { state: NonNullable<EpicSheetState>;
             ? editing.status === "approved"
               ? "This epic is approved. Changing it keeps the approval; check that its slices still fit."
               : "Changes are saved to your draft."
-            : "A capability several slices will deliver. It starts as proposed; you approve it when its scope is right."
+            : "A capability that several slices of intent will deliver. It starts as proposed; you approve it when its scope is right."
         }
         footer={
           <>
@@ -96,7 +96,7 @@ function EpicSheetBody({ state, onClose }: { state: NonNullable<EpicSheetState>;
           {replaceCriteria ? (
             <fieldset className="flex flex-col gap-2">
               <legend className="text-label text-ink">Acceptance criteria</legend>
-              <p className="-mt-0.5 text-body-sm text-ink-muted">Each says something that is true when the whole capability is done.</p>
+              <p className="-mt-0.5 text-body-sm text-ink-muted">Each says something that must be true when this epic is completed.</p>
               <ol className="flex flex-col gap-2">
                 {criteria.map((criterion, index) => (
                   <li key={index} className="flex items-center gap-2">
