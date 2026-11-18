@@ -190,7 +190,16 @@ An interrupted run loses nothing. Run the same command again and it resumes at t
 
 ### Approved product work
 
-When a product manager marks a slice ready, it arrives as a GitHub issue (or, without GitHub, as a `product/ready/SLICE-NNN/` folder):
+When a product manager marks a slice ready, it arrives as a GitHub issue (or, without GitHub, as a `product/ready/SLICE-NNN/` folder). To run the factory on whatever is ready:
+
+```
+/mach pull                take in every slice marked ready and start the next batch
+/mach pull --dry-run      the same schedule, changing nothing
+```
+
+Pull takes each ready slice in (one that is not accepted is listed with its reason and never built), picks the next batch with the same rules as several tickets at once (below), starts those slices and carries on the tickets already in the line, and lists what waits and why and what waits for you. `--limit <n>` and `--sequential` run fewer at once. When everything that can move has stopped, it walks you through what waits for you. Pull runs while you are in the conversation; the unattended way is the supervisor (`/mach factory`).
+
+To look, or to do one step yourself:
 
 ```
 /mach product status      what is marked ready, and what is not accepted and why; changes nothing
@@ -345,7 +354,8 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach adr baseline` | Draft the required basic decisions (language, framework, storage, testing, deployment, coding standards) from the repository |
 | `/mach adr accept <ADR-NNNN>...` | Mark proposed ADRs in your working tree accepted; you commit them |
 | `/mach audit` | The repository's readiness tier |
-| `/mach product status\|intake\|import\|plan\|dispatch` | Take slices marked ready into the factory |
+| `/mach pull [--limit n] [--sequential] [--dry-run]` | Take in every slice marked ready and start the next batch |
+| `/mach product status\|intake\|import\|plan\|dispatch` | Take slices marked ready into the factory, one step at a time |
 | `/mach factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
 | `/mach release status\|qualify\|show` | Is an epic, or a set of slices, ready to release, at one commit |
 | `/mach-intent <ticket or idea>` | The interview, spec, contracts and plan; `--headless` when no person can answer |
