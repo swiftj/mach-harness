@@ -166,7 +166,7 @@ function ProjectHome({ status }: { status: Status }) {
             ))
           ) : (
             <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-line-strong px-5 py-5">
-              <Text>No epics yet. An epic is a larger capability, such as “Team membership”, that several slices deliver.</Text>
+              <Text>No epics yet. An epic is a larger capability, such as “Team membership”, that several slices of intent deliver.</Text>
               <Button variant="primary" size="sm" onClick={() => setAddEpic(true)}>
                 Add the first epic
               </Button>

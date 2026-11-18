@@ -309,14 +309,14 @@ function Epics({ status }: { status: Status }) {
 
   return (
     <section id="epics" aria-labelledby="epics-title" className="flex scroll-mt-6 flex-col gap-5">
-      <div className="flex items-end justify-between gap-6 border-b border-line pb-3">
+      <div className="flex flex-col gap-3 border-b border-line pb-3">
         <div className="flex max-w-reading flex-col gap-1">
           <Heading level={2} id="epics-title">
             Epics
           </Heading>
           <Text tone="muted">The larger capabilities that make up the product. Approving an epic lets its slices be marked ready to build.</Text>
         </div>
-        <Button variant="primary" onClick={() => setSheet({ mode: "add" })}>
+        <Button size="sm" variant="ghost" className="self-start" onClick={() => setSheet({ mode: "add" })}>
           <Plus aria-hidden="true" />
           Add an epic
         </Button>
