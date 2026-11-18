@@ -185,6 +185,8 @@ export interface Status {
   current_slice: string | null;
   last_refreshed: string | null;
   saved: SavedReport;
+  /** Each epic's order of its slices. */
+  order: OrderRow[];
   /** Updates to requests' issues not made yet, in plain words. Absent when there are none. */
   github_updates_note?: string;
   github_updates_not_made_note?: string;
@@ -287,6 +289,7 @@ export interface RefreshGithub {
   epics: Record<string, number>;
   epic_urls: Record<string, string>;
   slices: RefreshGithubSlice[];
+  order: OrderRow[];
 }
 
 export interface Refresh {
@@ -413,6 +416,49 @@ export interface SliceReopen {
   /** Where the slice had been saved, and what the builders had done with it. */
   github: { where: "github" | "folder" | null; issue?: number; building?: boolean; question?: boolean; shipped?: boolean };
   /** The engine's note: what reopening did and what follows, in the PM's words. */
+  note: string;
+  factory_authorized: false;
+}
+
+/** One epic's order (`status.order[]`, `refresh.github.order[]`, `slice move`'s `order`): the product manager's order of its slices. */
+export interface OrderRow {
+  epic_id: string;
+  issue: number | null;
+  /** In order. A slice not in this workspace is one GitHub lists under the epic. */
+  slices: Array<{ slice_id: string; title: string | null; in_workspace: boolean; issue: number | null; state_label: SliceStateLabel | null }>;
+  on_github: boolean;
+  github_order: string[] | null;
+  github_read_at: string | null;
+  /** Whether GitHub holds this order; null when it does not need to or was not read. */
+  matches_github: boolean | null;
+  /** A move saved here and not yet in place on GitHub: moving again finishes it. */
+  unfinished: boolean;
+  /** Another product manager's order was taken from GitHub at the last refresh. */
+  taken_from_github: boolean;
+  could_not_read: boolean;
+  /** What the product manager should know about this order, in the engine's words. */
+  note: string | null;
+}
+
+/** `slice move`: where the slice now is. */
+export interface SliceMove {
+  moved: string;
+  epic_id: string;
+  /** 1-based. */
+  position: number;
+  order: OrderRow;
+  github: "in_place" | "not_needed" | (string & {});
+  note: string;
+  factory_authorized: false;
+}
+
+/** `slice take`: a slice another product manager saved on GitHub, opened here. */
+export interface SliceTake {
+  taken: boolean;
+  already_in_workspace: boolean;
+  slice: WorkOrder;
+  issue: number;
+  url: string;
   note: string;
   factory_authorized: false;
 }
@@ -585,6 +631,8 @@ export interface Operations {
   "slice.reopen": { args: { slice_id: string }; result: SliceReopen };
   "slice.show": { args: { slice_id: string }; result: SliceShow };
   "slice.renumber": { args: { identifier: string }; result: Renumber };
+  "slice.move": { args: { slice_id: string; before?: string; after?: string; first?: true; last?: true }; result: SliceMove };
+  "slice.take": { args: { issue: number } | { slice_id: string }; result: SliceTake };
   reconcile: { args: { slice_id: string; take: "mine" | "theirs" }; result: Reconcile };
 }
 
@@ -599,7 +647,7 @@ export type OperationResult<K extends OperationName> = Operations[K]["result"];
 export const readOnlyOperations: ReadonlySet<OperationName> = new Set<OperationName>(["where", "status", "validate", "slice.show"]);
 
 /** Operations that record a person's decision. The UI confirms each in a dialog before calling it. */
-export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>(["epic.approve", "slice.ready", "slice.reopen", "reconcile", "slice.renumber", "epic.renumber"]);
+export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>(["epic.approve", "slice.ready", "slice.reopen", "reconcile", "slice.renumber", "epic.renumber", "slice.take"]);
 
 /* ── Host endpoints (contract section 4) ────────────────────────────────── */
 

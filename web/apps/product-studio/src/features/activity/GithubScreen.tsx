@@ -1,6 +1,10 @@
 import { CircleAlert, RefreshCw } from "lucide-react";
-import { Link } from "react-router";
-import { ArtifactId, Banner, Button, ErrorState, Heading, Page, Skeleton, SliceGithubPills, SliceStatusPill, EpicStatusPill, Text, builderStates, describeError, formatWhen, type OnGithubIssue, type RefreshGithubSlice, type Status } from "@mach/ui";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router";
+import { ArtifactId, Banner, Button, ConfirmDialog, ErrorState, Heading, Page, Skeleton, SliceGithubPills, SliceStatusPill, EpicStatusPill, Text, builderStates, describeError, formatWhen, toast, type OnGithubIssue, type RefreshGithubSlice, type Status } from "@mach/ui";
+import { failureText } from "@mach/ui/api";
+import { client } from "../../api/client";
+import { toApiError } from "../../api/session";
 import { useRefresh, useStatus } from "../../api/store";
 import { IssueLink, IssueNumber } from "../../shared/IssueLink";
 
@@ -183,7 +187,7 @@ function Elsewhere({ slices }: { slices: RefreshGithubSlice[] }) {
           Saved by others
         </Heading>
         <Text size="body-sm" tone="muted">
-          Slices on GitHub that are not in your workspace. Their titles are as written on GitHub.
+          Slices on GitHub that are not in your workspace. Their titles are as written on GitHub. Open one here to read it, change it or mark it ready yourself.
         </Text>
       </div>
       <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
@@ -201,10 +205,55 @@ function Elsewhere({ slices }: { slices: RefreshGithubSlice[] }) {
                 {latest.approved_by ? `, approved by ${latest.approved_by}` : ""}
               </Text>
               <IssueNumber number={latest.issue} url={null} />
+              <OpenHereButton sliceId={slice.slice_id} issue={latest.issue} title={latest.title} />
             </li>
           );
         })}
       </ul>
     </section>
+  );
+}
+
+/** "Open it here": a slice another product manager saved becomes a draft in this workspace. A person's act, confirmed in a dialog. */
+function OpenHereButton({ sliceId, issue, title }: { sliceId: string; issue: number; title: string | null }) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<ReturnType<typeof failureText> | null>(null);
+  const take = async () => {
+    setError(null);
+    try {
+      const result = await client.op("slice.take", { issue });
+      toast({ tone: "success", title: `${result.slice.slice_id} is in your workspace`, description: result.note });
+      void navigate(`/slices/${result.slice.slice_id}`);
+      return true;
+    } catch (cause) {
+      setError(failureText(toApiError(cause, "slice.take"), `${sliceId} was not opened here`));
+      return false;
+    }
+  };
+  return (
+    <>
+      <Button size="sm" variant="primary" onClick={() => setOpen(true)}>
+        Open it here<span className="sr-only">: {sliceId}</span>
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) setError(null);
+        }}
+        title={`Open ${sliceId} in your workspace?`}
+        description={`This copies #${issue} into your workspace exactly as it is on GitHub, with its epic if you do not have it. Nothing changes on GitHub. A slice that is marked ready opens as approved; reopen it to change it. Only a version that was not changed after it was approved can be opened.`}
+        confirmLabel="Open it here"
+        onConfirm={take}
+        error={error}
+      >
+        {title ? (
+          <Text size="body-sm" tone="muted">
+            Its title on GitHub: <span className="text-ink">{title}</span>
+          </Text>
+        ) : null}
+      </ConfirmDialog>
+    </>
   );
 }

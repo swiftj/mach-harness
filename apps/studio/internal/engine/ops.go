@@ -289,6 +289,66 @@ func (a *SliceIDArgs) Argv() ([]string, error) {
 
 // ReconcileArgs serves reconcile for a slice someone else saved a newer version of on GitHub:
 // the product manager keeps theirs or takes the other version, whole.
+// SliceMoveArgs serves slice.move: exactly one of before, after, first or last.
+type SliceMoveArgs struct {
+	SliceID string  `json:"slice_id"`
+	Before  *string `json:"before"`
+	After   *string `json:"after"`
+	First   bool    `json:"first"`
+	Last    bool    `json:"last"`
+}
+
+func (a *SliceMoveArgs) Argv() ([]string, error) {
+	if err := checkID("slice_id", a.SliceID, SliceIDPattern, "SLICE-001"); err != nil {
+		return nil, err
+	}
+	if err := checkOptionalID("before", a.Before, SliceIDPattern, "SLICE-002"); err != nil {
+		return nil, err
+	}
+	if err := checkOptionalID("after", a.After, SliceIDPattern, "SLICE-002"); err != nil {
+		return nil, err
+	}
+	var where []string
+	if a.Before != nil {
+		where = append(where, flag("before", *a.Before))
+	}
+	if a.After != nil {
+		where = append(where, flag("after", *a.After))
+	}
+	if a.First {
+		where = append(where, "--first")
+	}
+	if a.Last {
+		where = append(where, "--last")
+	}
+	if len(where) != 1 {
+		return nil, invalid("Give exactly one of before, after, first or last.")
+	}
+	return append([]string{"slice", "move", a.SliceID}, where...), nil
+}
+
+// SliceTakeArgs serves slice.take: the slice's issue number or its slice ID, exactly one.
+type SliceTakeArgs struct {
+	Issue   *int    `json:"issue"`
+	SliceID *string `json:"slice_id"`
+}
+
+func (a *SliceTakeArgs) Argv() ([]string, error) {
+	switch {
+	case a.Issue != nil && a.SliceID == nil:
+		if err := checkRequestNumber(*a.Issue); err != nil {
+			return nil, invalid("issue must be an issue number such as 41.")
+		}
+		return []string{"slice", "take", strconv.Itoa(*a.Issue)}, nil
+	case a.SliceID != nil && a.Issue == nil:
+		if err := checkID("slice_id", *a.SliceID, SliceIDPattern, "SLICE-001"); err != nil {
+			return nil, err
+		}
+		return []string{"slice", "take", *a.SliceID}, nil
+	}
+	return nil, invalid("Give exactly one of issue or slice_id.")
+}
+
 type ReconcileArgs struct {
 	SliceID string `json:"slice_id"`
 	Take    string `json:"take"`
@@ -400,6 +460,8 @@ func init() {
 	register(Operation{Name: "slice.show", New: func() Args { return &SliceIDArgs{verb: "show"} }, ReadOnly: true})
 	register(Operation{Name: "slice.ready", New: func() Args { return &SliceIDArgs{verb: "ready"} }, Network: true})
 	register(Operation{Name: "slice.reopen", New: func() Args { return &SliceIDArgs{verb: "reopen"} }, Network: true})
+	register(Operation{Name: "slice.move", New: func() Args { return &SliceMoveArgs{} }, Network: true})
+	register(Operation{Name: "slice.take", New: func() Args { return &SliceTakeArgs{} }, Network: true})
 	register(Operation{Name: "slice.renumber", New: func() Args { return &RenumberArgs{kind: "slice"} }})
 	register(Operation{Name: "reconcile", New: func() Args { return &ReconcileArgs{} }, Network: true})
 	register(Operation{Name: "request.list", New: func() Args { return &requestListArgs{} }, ReadOnly: true})

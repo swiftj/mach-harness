@@ -1,0 +1,26 @@
+{
+  "exit_code": 0,
+  "data": {
+    "taken": false,
+    "already_in_workspace": true,
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 1,
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "spec_path": "specs/slices/SLICE-001-invite-a-teammate.md",
+      "spec_sha256": "b0097bdf9d525aac493e1f8038476fc27984db47a22b6f3d229d6fd3ca4c15aa",
+      "status": "approved_for_engineering",
+      "title": "Invite a teammate"
+    },
+    "issue": 3,
+    "url": "https://github.com/acme/team-space/issues/3",
+    "factory_authorized": false,
+    "note": "SLICE-001 is already in your workspace from #3. Nothing was changed."
+  },
+  "refused": null,
+  "hint": null
+}

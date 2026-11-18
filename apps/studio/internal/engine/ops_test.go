@@ -14,8 +14,8 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	want := []string{
 		"epic.add", "epic.approve", "epic.renumber", "epic.set", "project.init", "project.set",
 		"reconcile", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
-		"slice.check", "slice.new", "slice.pause", "slice.ready",
-		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "status", "validate", "where",
+		"slice.check", "slice.move", "slice.new", "slice.pause", "slice.ready",
+		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "status", "validate", "where",
 	}
 	if got := engine.Names(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("allowlist\n got %v\nwant %v", got, want)
@@ -32,7 +32,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	}
 	// Reaching GitHub: marking ready, reopening, taking a version, picking up a request (a live
 	// re-read) and marking it as met (closing the issue).
-	for _, name := range []string{"slice.ready", "slice.reopen", "reconcile", "request.pick", "request.met"} {
+	for _, name := range []string{"slice.ready", "slice.reopen", "slice.move", "slice.take", "reconcile", "request.pick", "request.met"} {
 		if op, _ := engine.Lookup(name); !op.Network || op.ReadOnly {
 			t.Errorf("%s reaches GitHub and changes the workspace", name)
 		}
@@ -62,7 +62,7 @@ func TestCommandsTheAppNeverOffersAreUnreachable(t *testing.T) {
 		}
 		return len(argv) > 1 && argv[0] == "slice" && argv[1] == "approve"
 	}
-	bodies := []string{`{}`, `{"slice_id":"SLICE-001"}`, `{"slice_id":"SLICE-001","take":"mine"}`, `{"identifier":"SLICE-001"}`,
+	bodies := []string{`{}`, `{"slice_id":"SLICE-001"}`, `{"slice_id":"SLICE-001","first":true}`, `{"issue":41}`, `{"slice_id":"SLICE-001","take":"mine"}`, `{"identifier":"SLICE-001"}`,
 		`{"identifier":"EPIC-001"}`, `{"epic_id":"EPIC-001"}`, `{"number":42}`, `{"number":42,"slice_id":"SLICE-001"}`}
 	for _, name := range engine.Names() {
 		for _, body := range bodies {
@@ -130,6 +130,12 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 		{"slice.check", `{"slice_id":"SLICE-001","ready":true}`, []string{"slice", "check", "SLICE-001", "--ready"}},
 		{"slice.show", `{"slice_id":"SLICE-001"}`, []string{"slice", "show", "SLICE-001"}},
 		{"slice.ready", `{"slice_id":"SLICE-001"}`, []string{"slice", "ready", "SLICE-001"}},
+		{"slice.move", `{"slice_id":"SLICE-003","before":"SLICE-002"}`, []string{"slice", "move", "SLICE-003", "--before=SLICE-002"}},
+		{"slice.move", `{"slice_id":"SLICE-003","after":"SLICE-004"}`, []string{"slice", "move", "SLICE-003", "--after=SLICE-004"}},
+		{"slice.move", `{"slice_id":"SLICE-003","first":true}`, []string{"slice", "move", "SLICE-003", "--first"}},
+		{"slice.move", `{"slice_id":"SLICE-003","last":true}`, []string{"slice", "move", "SLICE-003", "--last"}},
+		{"slice.take", `{"issue":41}`, []string{"slice", "take", "41"}},
+		{"slice.take", `{"slice_id":"SLICE-007"}`, []string{"slice", "take", "SLICE-007"}},
 		{"slice.reopen", `{"slice_id":"SLICE-001"}`, []string{"slice", "reopen", "SLICE-001"}},
 		{"slice.renumber", `{"identifier":"SLICE-002"}`, []string{"slice", "renumber", "SLICE-002"}},
 		{"reconcile", `{"slice_id":"SLICE-001","take":"mine"}`, []string{"reconcile", "SLICE-001", "--take=mine"}},
@@ -242,6 +248,15 @@ func TestRequestsTheHostRejects(t *testing.T) {
 		{"reconcile", `{"slice_id":"../outside","take":"mine"}`, "SLICE-001"},
 		{"reconcile", `{"slice_id":"--take=theirs","take":"mine"}`, "SLICE-001"},
 		{"reconcile", `{"slice_id":"SLICE-001","take":"both"}`, "mine"},
+		{"slice.move", `{"slice_id":"SLICE-001"}`, "exactly one"},
+		{"slice.move", `{"slice_id":"SLICE-001","first":true,"last":true}`, "exactly one"},
+		{"slice.move", `{"slice_id":"SLICE-001","before":"--first"}`, "SLICE-002"},
+		{"slice.move", `{"slice_id":"SLICE-001","first":"yes"}`, "wrong type"},
+		{"slice.take", `{}`, "exactly one"},
+		{"slice.take", `{"issue":41,"slice_id":"SLICE-001"}`, "exactly one"},
+		{"slice.take", `{"issue":0}`, "issue number"},
+		{"slice.take", `{"issue":"41"}`, "wrong type"},
+		{"slice.take", `{"slice_id":"--help"}`, "SLICE-001"},
 		{"reconcile", `{"slice_id":"SLICE-001","take":"mine","field":"title"}`, "Unknown field"},
 		// shape errors from Decode
 		{"epic.approve", `{"epic_id":"EPIC-001","force":true}`, "Unknown field"},

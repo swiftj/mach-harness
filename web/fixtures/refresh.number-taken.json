@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-18T13:57:25Z",
+      "refreshed_at": "2026-11-18T14:39:13Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-18T13:57:25Z",
+      "refreshed_at": "2026-11-18T14:39:13Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -210,6 +210,62 @@
             }
           ],
           "title": "Someone else's slice"
+        }
+      ],
+      "order": [
+        {
+          "epic_id": "EPIC-001",
+          "issue": 2,
+          "slices": [
+            {
+              "slice_id": "SLICE-001",
+              "title": "Invite a teammate",
+              "in_workspace": true,
+              "issue": 3,
+              "state_label": "mach:building"
+            },
+            {
+              "slice_id": "SLICE-002",
+              "title": "Remove a teammate",
+              "in_workspace": true,
+              "issue": 4,
+              "state_label": "mach:question"
+            },
+            {
+              "slice_id": "SLICE-003",
+              "title": "Resend an invitation",
+              "in_workspace": true,
+              "issue": 5,
+              "state_label": "mach:shipped"
+            },
+            {
+              "slice_id": "SLICE-004",
+              "title": "Rename a teammate",
+              "in_workspace": true,
+              "issue": 6,
+              "state_label": null
+            },
+            {
+              "slice_id": "SLICE-005",
+              "title": "Invite by link",
+              "in_workspace": true,
+              "issue": 77,
+              "state_label": null
+            }
+          ],
+          "on_github": true,
+          "github_order": [
+            "SLICE-001",
+            "SLICE-002",
+            "SLICE-003",
+            "SLICE-004"
+          ],
+          "github_read_at": "2026-11-18T14:39:13Z",
+          "matches_github": true,
+          "unfinished": false,
+          "taken_from_github": false,
+          "could_not_read": false,
+          "note": null
         }
       ]
     },

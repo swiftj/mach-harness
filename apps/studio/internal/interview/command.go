@@ -17,7 +17,7 @@ var (
 	// the names of commands the app never offers: the removed wave and approval commands, and the
 	// terminal-only `acceptance record`.
 	deniedOps = []string{"slice ready", "epic approve", "reconcile", "slice renumber", "epic renumber",
-		"slice reopen", "project", "slice new", "epic add", "epic set",
+		"slice reopen", "slice move", "slice take", "project", "slice new", "epic add", "epic set",
 		"slice approve", "wave", "send", "feedback", "acceptance"}
 )
 

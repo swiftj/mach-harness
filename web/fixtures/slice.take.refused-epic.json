@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "SLICE-001 belongs to EPIC-001 on GitHub (#2), and EPIC-001 here is a different epic. Give your epic a new number first, then open #3 again.",
+  "hint": {
+    "kind": "renumber_epic",
+    "target": "EPIC-001"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "exit_code": 0,
+  "data": {
+    "taken": true,
+    "already_in_workspace": false,
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 1,
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "spec_path": "specs/slices/SLICE-001-invite-a-teammate.md",
+      "spec_sha256": "b0097bdf9d525aac493e1f8038476fc27984db47a22b6f3d229d6fd3ca4c15aa",
+      "status": "approved_for_engineering",
+      "title": "Invite a teammate"
+    },
+    "issue": 3,
+    "url": "https://github.com/acme/team-space/issues/3",
+    "revision": 1,
+    "approved_by": "ada-pm",
+    "state_label": "mach:ready",
+    "epic": {
+      "epic_id": "EPIC-001",
+      "issue": 2,
+      "created_here": true
+    },
+    "dependencies": [],
+    "spec": "specs/slices/SLICE-001-invite-a-teammate.md",
+    "why": "product/intents/SLICE-001.md",
+    "editable": false,
+    "factory_authorized": false,
+    "note": "SLICE-001 is now in your workspace exactly as #3 holds it (version 1, approved by ada-pm). To change it, reopen it; marking it ready again saves a new version of the same issue."
+  },
+  "refused": null,
+  "hint": null
+}

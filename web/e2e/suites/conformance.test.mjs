@@ -15,7 +15,7 @@ import { specFor, whyFor } from "../lib/content.mjs";
 // The host's allowlist as documented (contract sections 3, 8.1 and 8.4, apps/studio/README.md).
 const ALLOWLIST = [
   "where", "status", "validate", "refresh", "project.init", "project.set", "epic.add", "epic.set", "epic.approve", "epic.renumber",
-  "slice.new", "slice.set", "slice.resume", "slice.pause", "slice.check", "slice.show", "slice.ready", "slice.reopen", "slice.renumber",
+  "slice.new", "slice.set", "slice.resume", "slice.pause", "slice.check", "slice.show", "slice.ready", "slice.reopen", "slice.renumber", "slice.move", "slice.take",
   "reconcile", "request.list", "request.show", "request.pick", "request.link", "request.met",
 ];
 // Commands the engine keeps only for another team's tests (docs/mach-next/M11_STUDIO_ISSUES.md). The host never reaches them.
@@ -82,6 +82,8 @@ const STEPS = [
   { name: "second slice", argv: ["slice", "new", "--epic", "EPIC-002", "--title", "See the seat count"], op: ["slice.new", { epic: "EPIC-002", title: "See the seat count", depends_on: [] }] },
   { name: "slice set", argv: ["slice", "set", "SLICE-002", "--title", "See how many seats are used"], op: ["slice.set", { slice_id: "SLICE-002", title: "See how many seats are used" }] },
   { name: "slice renumber", argv: ["slice", "renumber", "SLICE-002"], op: ["slice.renumber", { identifier: "SLICE-002" }] },
+  { name: "a third slice", argv: ["slice", "new", "--epic", "EPIC-001", "--title", "Remove a teammate"], op: ["slice.new", { epic: "EPIC-001", title: "Remove a teammate", depends_on: [] }] },
+  { name: "slice move", argv: ["slice", "move", "SLICE-004", "--before", "SLICE-001"], op: ["slice.move", { slice_id: "SLICE-004", before: "SLICE-001" }] },
   { name: "the builders take it, then refresh", github: (w) => w.setStateLabel(w.issues("mach:slice")[0].number, "mach:building"), argv: ["refresh"], op: ["refresh", {}] },
   { name: "slice reopen", argv: ["slice", "reopen", "SLICE-001"], op: ["slice.reopen", { slice_id: "SLICE-001" }] },
   { name: "someone saves a newer version, then refresh", github: (w) => w.newerVersion(w.issues("mach:slice")[0].number, "\nChanged by Ben.\n"), argv: ["refresh"], op: ["refresh", {}] },

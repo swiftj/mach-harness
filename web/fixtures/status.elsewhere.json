@@ -21,13 +21,14 @@
       "note": "Everything is saved.",
       "not_saved": []
     },
+    "order": [],
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-18T13:57:29Z"
+      "last_read": "2026-11-18T14:39:19Z"
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-18T13:57:29Z",
+    "last_refreshed": "2026-11-18T14:39:19Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

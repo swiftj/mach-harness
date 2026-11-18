@@ -334,7 +334,7 @@ func TestTheAllowListIsOnlyTheInterviewersOperationsOnItsOwnSlice(t *testing.T) 
 			t.Errorf("a Write or relative Edit rule: %s", rule)
 		}
 	}
-	for _, op := range []string{"slice ready", "slice approve", "epic approve", "wave", "send", "feedback", "acceptance", "reconcile", "project", "slice new"} {
+	for _, op := range []string{"slice ready", "slice move", "slice take", "slice approve", "epic approve", "wave", "send", "feedback", "acceptance", "reconcile", "project", "slice new"} {
 		found := false
 		for _, rule := range deny {
 			if strings.HasSuffix(rule, " "+op+" *)") {

@@ -140,6 +140,10 @@ func TestEveryOperationAgainstTheRealEngine(t *testing.T) {
 	if renumbered := mustOK(t, e, "slice.renumber", `{"identifier":"`+second+`"}`)["renumbered"].(map[string]any); renumbered["from"] != second {
 		t.Fatalf("slice.renumber: %v", renumbered)
 	}
+	if moved := mustOK(t, e, "slice.move", `{"slice_id":"SLICE-001","last":true}`); moved["position"] != float64(2) {
+		t.Fatalf("slice.move: %v", moved)
+	}
+	mustFail(t, e, "slice.take", `{"issue":41}`, engine.KindRefused, "")
 	mustOK(t, e, "epic.add", `{"title":"Billing","criterion":["Invoices are correct"]}`)
 	mustOK(t, e, "epic.renumber", `{"identifier":"EPIC-002"}`)
 	mustFail(t, e, "project.set", `{"status":"bogus"}`, engine.KindInvalid, "invalid choice")

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowRight, CircleAlert, Plus } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, CircleAlert, Plus } from "lucide-react";
 import {
   ArtifactId,
   Banner,
@@ -19,12 +19,18 @@ import {
   describeError,
   formatWhen,
   plural,
+  toast,
+  builderStates,
   type NextAction,
+  type OrderRow,
+  type StatusSliceRow,
   type Refresh,
   type Status,
   type StatusEpicRow,
 } from "@mach/ui";
-import type { failureText } from "@mach/ui/api";
+import { failureText, type OperationArgs } from "@mach/ui/api";
+import { client } from "../../api/client";
+import { toApiError } from "../../api/session";
 import { useRefresh, useStatus } from "../../api/store";
 import { describePath, titleFor } from "../../api/describe";
 import { nextActions, routeFor } from "../../api/nextActions";
@@ -328,6 +334,7 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
   const slices = status.slices.filter((s) => s.epic_id === epic.epic_id);
   const headingId = `epic-${epic.epic_id}-title`;
   const counts = epic.counts;
+  const order = status.order.find((o) => o.epic_id === epic.epic_id);
   // The same epics the start-a-slice dialog offers.
   const open = epic.status !== "superseded" && epic.status !== "completed";
   return (
@@ -368,7 +375,9 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
           Ready or further means {counts.ready_or_further_means}.
         </Text>
       ) : null}
-      {slices.length ? (
+      {order?.slices.length ? (
+        <OrderedSlices order={order} status={status} />
+      ) : slices.length ? (
         <SliceList slices={slices} status={status} />
       ) : (
         <Text size="body-sm" tone="muted">
@@ -389,42 +398,146 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
 function SliceList({ slices, status }: { slices: Status["slices"]; status: Status }) {
   return (
     <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
-      {slices.map((slice) => {
-        const current = slice.slice_id === status.current_slice;
-        const interview =
-          slice.editable === false ? null : slice.status === "draft" ? "Start the interview" : slice.status === "interviewing" ? "Continue the interview" : null;
-        return (
-          <li key={slice.slice_id} className={cn("flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-3", current && "bg-accent-soft")}>
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
-                <Link to={`/slices/${slice.slice_id}`} className="rounded-xs text-body font-semibold text-ink underline-offset-2 hover:underline">
-                  {slice.title}
-                </Link>
-                <ArtifactId>{slice.slice_id}</ArtifactId>
-              </span>
-              {slice.open_questions > 0 || current ? (
-                <span className="text-caption text-ink-muted">
-                  {[current ? "You were last working on this slice" : null, slice.open_questions > 0 ? `${plural(slice.open_questions, "open question")}` : null]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              ) : null}
-              <SliceTimes github={slice.github} mode="latest" />
-            </div>
-            <SliceStatusPill status={slice.status} size="sm" />
-            <SliceGithubPills github={slice.github} size="sm" />
-            {slice.github.issue ? <IssueLink number={slice.github.issue} url={slice.github.url} /> : null}
-            {interview ? (
-              <Button size="sm" variant={current ? "secondary" : "ghost"} asChild>
-                <Link to={`/slices/${slice.slice_id}/interview`} aria-label={`${interview}: ${slice.title}`}>
-                  {interview}
-                </Link>
-              </Button>
-            ) : null}
-          </li>
-        );
-      })}
+      {slices.map((slice) => (
+        <SliceRow key={slice.slice_id} slice={slice} status={status} />
+      ))}
     </ul>
+  );
+}
+
+function SliceRow({ slice, status, children }: { slice: StatusSliceRow; status: Status; children?: ReactNode }) {
+  const current = slice.slice_id === status.current_slice;
+  const interview = slice.editable === false ? null : slice.status === "draft" ? "Start the interview" : slice.status === "interviewing" ? "Continue the interview" : null;
+  return (
+    <li className={cn("flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-3", current && "bg-accent-soft")}>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
+          <Link to={`/slices/${slice.slice_id}`} className="rounded-xs text-body font-semibold text-ink underline-offset-2 hover:underline">
+            {slice.title}
+          </Link>
+          <ArtifactId>{slice.slice_id}</ArtifactId>
+        </span>
+        {slice.open_questions > 0 || current ? (
+          <span className="text-caption text-ink-muted">
+            {[current ? "You were last working on this slice" : null, slice.open_questions > 0 ? `${plural(slice.open_questions, "open question")}` : null]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        ) : null}
+        <SliceTimes github={slice.github} mode="latest" />
+      </div>
+      <SliceStatusPill status={slice.status} size="sm" />
+      <SliceGithubPills github={slice.github} size="sm" />
+      {slice.github.issue ? <IssueLink number={slice.github.issue} url={slice.github.url} /> : null}
+      {interview ? (
+        <Button size="sm" variant={current ? "secondary" : "ghost"} asChild>
+          <Link to={`/slices/${slice.slice_id}/interview`} aria-label={`${interview}: ${slice.title}`}>
+            {interview}
+          </Link>
+        </Button>
+      ) : null}
+      {children}
+    </li>
+  );
+}
+
+/**
+ * An epic's slices in the engine's order (`status.order`), each with Move up and Move down. Moving
+ * is reversible, so it is not confirmed; the engine's note is announced politely. A slice GitHub
+ * lists under the epic that is not in this workspace keeps its place and leads to "On GitHub".
+ */
+function OrderedSlices({ order, status }: { order: OrderRow; status: Status }) {
+  const [moving, setMoving] = useState<string | null>(null);
+  const [said, setSaid] = useState("");
+  const move = async (key: string, args: OperationArgs<"slice.move">) => {
+    setMoving(key);
+    try {
+      const result = await client.op("slice.move", args);
+      setSaid(result.note);
+    } catch (cause) {
+      const { title, message } = failureText(toApiError(cause, "slice.move"), `${args.slice_id} was not moved`);
+      setSaid(`${title}. ${message}`);
+      toast({ tone: "danger", title, description: message });
+    } finally {
+      setMoving(null);
+    }
+  };
+  const items = order.slices;
+  const first = items[0];
+  return (
+    <div className="flex flex-col gap-2">
+      <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
+        {items.map((item, index) => {
+          const row = item.in_workspace ? status.slices.find((s) => s.slice_id === item.slice_id) : undefined;
+          const title = row?.title ?? item.title ?? item.slice_id;
+          const buttons = (
+            <span className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Move ${title} up`}
+                disabled={index === 0 || moving !== null}
+                loading={moving === `${item.slice_id}-up`}
+                onClick={() => void move(`${item.slice_id}-up`, { slice_id: item.slice_id, before: items[index - 1]!.slice_id })}
+              >
+                <ArrowUp aria-hidden="true" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Move ${title} down`}
+                disabled={index === items.length - 1 || moving !== null}
+                loading={moving === `${item.slice_id}-down`}
+                onClick={() => void move(`${item.slice_id}-down`, { slice_id: item.slice_id, after: items[index + 1]!.slice_id })}
+              >
+                <ArrowDown aria-hidden="true" />
+              </Button>
+            </span>
+          );
+          if (row) {
+            return (
+              <SliceRow key={item.slice_id} slice={row} status={status}>
+                {buttons}
+              </SliceRow>
+            );
+          }
+          return (
+            <li key={item.slice_id} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-3">
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                  <span className="min-w-0 break-words text-body text-ink">{title}</span>
+                  <ArtifactId>{item.slice_id}</ArtifactId>
+                </span>
+                <span className="text-caption text-ink-muted">
+                  Saved on GitHub by someone else; not in your workspace. Its title is as written on GitHub.{" "}
+                  <Link to="/github" className="font-semibold text-accent-ink underline-offset-2 hover:underline">
+                    See it on GitHub's list<span className="sr-only">: {item.slice_id}</span>
+                  </Link>
+                </span>
+              </div>
+              {item.state_label ? <Text as="span" size="body-sm" tone="muted">{builderStates[item.state_label].label}</Text> : null}
+              {item.issue ? <IssueNumber number={item.issue} url={null} /> : null}
+              {buttons}
+            </li>
+          );
+        })}
+      </ul>
+      {order.note ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Text size="body-sm" tone={order.unfinished ? "warning" : "muted"}>
+            {order.note}
+          </Text>
+          {order.unfinished && first ? (
+            <Button size="sm" loading={moving === "finish"} disabled={moving !== null} onClick={() => void move("finish", { slice_id: first.slice_id, first: true })}>
+              Finish the move
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <p role="status" aria-live="polite" className="sr-only">
+        {said}
+      </p>
+    </div>
   );
 }
 

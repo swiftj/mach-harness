@@ -225,6 +225,70 @@ test("a slice the builders asked about shows their question beside its specifica
   }
 });
 
+test("each epic lists its slices in the engine's order, and Move up / Move down set it, announcing the engine's note", async () => {
+  const watched = await open("/");
+  const { page } = watched;
+  try {
+    await home(page).waitFor();
+    const epic = page.getByRole("main").getByRole("region", { name: "Team membership" });
+    const titles = await epic.locator("li a[href^='#/slices/SLICE-']").allInnerTexts();
+    assert.deepEqual(titles.slice(0, 3), ["Invite a teammate", "Remove a teammate", "Resend an invitation"]);
+    assert.equal(await epic.getByRole("button", { name: "Move Invite a teammate up" }).isDisabled(), true, "the first cannot move up");
+    const down = epic.getByRole("button", { name: "Move Invite a teammate by email down" });
+    assert.equal(await down.isDisabled(), true, "the last cannot move down");
+    const up = epic.getByRole("button", { name: "Move Resend an invitation up" });
+    await up.focus();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="status"][aria-live="polite"]')].some((n) => /The order of EPIC-001 is saved/.test(n.textContent ?? "")));
+    assert.equal(await page.getByRole("dialog").count(), 0, "a move is not confirmed");
+    await clean(watched);
+  } finally {
+    await watched.context.close();
+  }
+  const unfinished = await open("/", "fixture=status.move-unfinished");
+  try {
+    const epic = unfinished.page.getByRole("main").getByRole("region", { name: "Team membership" });
+    await epic.getByText("Your new order is saved here but is not yet in place on GitHub.", { exact: false }).waitFor();
+    await epic.getByRole("button", { name: "Finish the move" }).click();
+    await unfinished.page.waitForFunction(() => [...document.querySelectorAll('[role="status"][aria-live="polite"]')].some((n) => /The order of EPIC-001 is saved/.test(n.textContent ?? "")));
+    await clean(unfinished);
+  } finally {
+    await unfinished.context.close();
+  }
+});
+
+test("On GitHub: a slice someone else saved offers Open it here, confirmed, then goes to the slice; a refusal keeps the engine's words and its hint", async () => {
+  const watched = await open("/github", "fixture=status.elsewhere&refresh=refresh.elsewhere");
+  const { page } = watched;
+  try {
+    const main = page.getByRole("main");
+    await main.getByRole("button", { name: "Refresh" }).click();
+    const others = main.getByRole("region", { name: "Saved by others" });
+    await others.getByRole("button", { name: /^Open it here/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Open SLICE-001 in your workspace?" });
+    await dialog.getByText("Nothing changes on GitHub.", { exact: false }).waitFor();
+    assert.deepEqual(await axe(page), []);
+    await dialog.getByRole("button", { name: "Open it here" }).click();
+    await page.waitForURL(/#\/slices\/SLICE-001$/);
+    await page.getByText("is now in your workspace exactly as #3 holds it", { exact: false }).first().waitFor();
+    await clean(watched);
+  } finally {
+    await watched.context.close();
+  }
+  const refused = await open("/github", "fixture=status.elsewhere&refresh=refresh.elsewhere&take=refused");
+  try {
+    const main = refused.page.getByRole("main");
+    await main.getByRole("button", { name: "Refresh" }).click();
+    await main.getByRole("region", { name: "Saved by others" }).getByRole("button", { name: /^Open it here/ }).click();
+    const dialog = refused.page.getByRole("dialog", { name: "Open SLICE-001 in your workspace?" });
+    await dialog.getByRole("button", { name: "Open it here" }).click();
+    await dialog.getByText("EPIC-001 here is a different epic. Give your epic a new number first", { exact: false }).waitFor();
+    await dialog.getByRole("button", { name: "Give EPIC-001 a new number" }).waitFor();
+  } finally {
+    await refused.context.close();
+  }
+});
+
 test("the home page has no axe violation in light or dark", async () => {
   const watched = await open("/", "fixture=status.states");
   try {

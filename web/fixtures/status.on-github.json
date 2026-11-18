@@ -64,7 +64,7 @@
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": "2026-11-18T13:57:22Z",
+            "marked_ready": "2026-11-18T14:39:09Z",
             "building": null,
             "question": null,
             "shipped": null
@@ -78,6 +78,29 @@
       "note": "Everything is saved.",
       "not_saved": []
     },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": 2,
+        "slices": [
+          {
+            "slice_id": "SLICE-001",
+            "title": "Invite a teammate",
+            "in_workspace": true,
+            "issue": 3,
+            "state_label": "mach:ready"
+          }
+        ],
+        "on_github": true,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",

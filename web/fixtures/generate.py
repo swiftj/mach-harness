@@ -71,6 +71,7 @@ def main():
     on_github()
     builders_question()
     someone_elses()
+    someone_elses_refused()
     without_gh()
     print("wrote", len(list(OUT.glob("*.json"))), "fixtures to", OUT)
 
@@ -172,6 +173,14 @@ def on_github():
         s.capture("validate", "validate")
         s.capture("refresh.rich", "refresh")
         s.capture("status.rich", "status")
+        s.capture("slice.move", "slice", "move", resend, "--before", remove)
+        s.capture("slice.move.refused-other-epic", "slice", "move", resend, "--before", "SLICE-008")
+        s.capture("status.moved", "status")
+        s.lose("api PATCH priority")
+        s.ok(s.a, "refresh")
+        s.capture("slice.move.refused-interrupted", "slice", "move", resend, "--first")
+        s.capture("status.move-unfinished", "status")
+        s.capture("slice.move.finished", "slice", "move", resend, "--first")
 
         # Saving stops part way: the slice is approved, and marking it ready again finishes the job.
         interrupted = s.drafted(title="Invite with a message")
@@ -209,7 +218,7 @@ def builders_question():
 
 
 def someone_elses():
-    """Ben's workspace has the project; Ada saved a slice he does not have, which refresh lists as on GitHub only."""
+    """Ben's workspace has the project; Ada saved a slice he does not have. Refresh lists it as on GitHub only, and he opens it here."""
     s = Scenario()
     s.setUp()
     try:
@@ -219,6 +228,25 @@ def someone_elses():
         s.ok(s.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         s.capture("refresh.elsewhere", "refresh", project=s.b)
         s.capture("status.elsewhere", "status", project=s.b)
+        s.capture("slice.take", "slice", "take", "3", project=s.b)
+        s.capture("slice.take.again", "slice", "take", "SLICE-001", project=s.b)
+        s.capture("status.after-take", "status", project=s.b)
+    finally:
+        s.doCleanups()
+
+
+def someone_elses_refused():
+    """Ben already has a different EPIC-001, so Ada's slice under hers cannot be opened until he renumbers his."""
+    s = Scenario()
+    s.setUp()
+    try:
+        s.project_and_epic()
+        s.drafted()
+        s.ready()
+        s.ok(s.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
+        s.ok(s.b, "epic", "add", "--title", "Billing", "--criterion", "Invoices are sent")
+        s.ok(s.b, "refresh")
+        s.capture("slice.take.refused-epic", "slice", "take", "3", project=s.b)
     finally:
         s.doCleanups()
 

@@ -9,6 +9,7 @@
  *   ?show=ready | open-questions | errors | on-github | question   which slice.show the slice screens see
  *   ?ready=refused | folder                               slice.ready answers with the engine's refusal, or saves to the folder
  *   ?refresh=refresh.offline                              which refresh the app sees
+ *   ?take=refused                                         slice.take answers with the engine's refusal (a different epic here)
  *   ?interview=unavailable                                the session reports interview: false
  *
  * Every answer is a real engine run from web/fixtures. The only adjustment: the slice.ready and
@@ -45,6 +46,7 @@ const defaults: Record<string, string> = {
   refresh: "refresh.rich",
   "slice.resume": "slice.resume.ready",
   "slice.renumber": "slice.renumber",
+  "slice.move": "slice.move",
   reconcile: "reconcile.theirs",
 };
 
@@ -157,6 +159,11 @@ export const fixtureTransport: Transport = async ({ path, method, body }) => {
   if (slice) return slice;
 
   const op = path.startsWith("/api/ops/") ? path.slice("/api/ops/".length) : null;
+  if (op === "slice.take") {
+    const run = await load<unknown>(devParam("take") === "refused" ? "slice.take.refused-epic" : "slice.take");
+    if (run?.data) return ok(run.data);
+    return fail("refused", run?.refused ?? "Refused.", 422, run?.hint ?? null);
+  }
   const chosen = op === "status" ? devParam("fixture") : op === "refresh" ? devParam("refresh") : null;
   const name = chosen ?? (op ? defaults[op] : undefined);
   const run = name ? await load<unknown>(name) : null;

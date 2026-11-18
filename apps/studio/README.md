@@ -136,6 +136,8 @@ delivery waves. These operations may reach GitHub:
 | `slice.ready` | `{slice_id}` | `slice ready <SLICE>` | the approval: saves the slice as an issue under its epic, or to the ready folder |
 | `slice.reopen` | `{slice_id}` | `slice reopen <SLICE>` | takes the slice back from GitHub first |
 | `reconcile` | `{slice_id, take}` | `reconcile <SLICE> --take=mine\|theirs` | for a slice someone else saved a newer version of |
+| `slice.move` | `{slice_id}` and exactly one of `before`, `after` (slice IDs), `first`, `last` (`true`) | `slice move <SLICE> --before=<SLICE>\|--after=<SLICE>\|--first\|--last` | the product manager's order within the epic; GitHub's order is put in place where the epic's slices are there |
+| `slice.take` | exactly one of `{issue}` (a whole number) or `{slice_id}` | `slice take <n\|SLICE>` | opens a slice another product manager saved on GitHub as a draft here |
 
 `acceptance record` stays a terminal command; it is not on the allowlist, and neither is any name of
 the removed `slice approve`, waves, `send` or `feedback`. No operation's argument vector can start
@@ -189,7 +191,7 @@ claude -p --output-format stream-json --verbose --include-partial-messages
   own slice `slice resume|check|pause|set`, each spelled with `python3` and the absolute
   interpreter, and the script through the plugin link and its real path, quoted and unquoted;
   `Edit(//…)` for that slice's spec and why only. Denied again: `slice ready`, epic approval,
-  reconcile, renumber, reopen, project, slice new and epic add/set, and
+  reconcile, renumber, reopen, `slice move`, `slice take`, project, slice new and epic add/set, and
   names the app never offers (`slice approve`, `wave`, `send`, `feedback`, `acceptance`).
 - The environment is `HOME USER LOGNAME PATH LANG LC_ALL TMPDIR SHELL TERM` and
   `GIT_TERMINAL_PROMPT=0`; nothing else of the host's, so no API key or token passes.

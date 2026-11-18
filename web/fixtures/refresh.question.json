@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-18T13:57:27Z",
+      "refreshed_at": "2026-11-18T14:39:17Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-18T13:57:28Z",
+      "refreshed_at": "2026-11-18T14:39:18Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -66,6 +66,31 @@
             }
           ],
           "title": "Invite a teammate"
+        }
+      ],
+      "order": [
+        {
+          "epic_id": "EPIC-001",
+          "issue": 2,
+          "slices": [
+            {
+              "slice_id": "SLICE-001",
+              "title": "Invite a teammate",
+              "in_workspace": true,
+              "issue": 3,
+              "state_label": "mach:question"
+            }
+          ],
+          "on_github": true,
+          "github_order": [
+            "SLICE-001"
+          ],
+          "github_read_at": "2026-11-18T14:39:18Z",
+          "matches_github": true,
+          "unfinished": false,
+          "taken_from_github": false,
+          "could_not_read": false,
+          "note": null
         }
       ]
     },
