@@ -353,8 +353,8 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
           </Text>
         ) : null}
         {epic.status === "proposed" ? (
-          <Button size="sm" className="ml-auto" onClick={onApprove}>
-            Approve {epic.epic_id}
+          <Button size="sm" className="ml-auto" aria-label={`Approve this epic’s scope: ${epic.epic_id}`} onClick={onApprove}>
+            Approve this epic’s scope
           </Button>
         ) : null}
       </div>

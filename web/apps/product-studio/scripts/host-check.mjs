@@ -45,10 +45,10 @@ try {
 
   // A personal act, confirmed in a dialog (exercises Radix under the CSP), then cancelled.
   await page.goto(`${host.origin}/#/vision`, { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: /^Approve EPIC-001/ }).first().click();
+  await page.getByRole("button", { name: /^Approve this epic’s scope: EPIC-001/ }).first().click();
   await page.getByRole("dialog").waitFor();
   check("approval dialog opens", true);
-  await page.getByRole("dialog").getByRole("button", { name: "Approve epic" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Approve this epic’s scope" }).click();
   await page.getByText("Approved EPIC-001").first().waitFor({ timeout: 20000 });
   await page.getByRole("dialog").waitFor({ state: "detached" });
   const approvedNow = studio(project, "status").epics[0]?.status;

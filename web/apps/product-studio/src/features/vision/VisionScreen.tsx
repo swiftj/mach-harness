@@ -357,8 +357,8 @@ function Epics({ status }: { status: Status }) {
                 </div>
                 <div className="flex flex-wrap items-start justify-end gap-2">
                   {epic.status === "proposed" ? (
-                    <Button size="sm" variant="primary" onClick={() => setApprove(epic)}>
-                      Approve {epic.epic_id}
+                    <Button size="sm" variant="primary" aria-label={`Approve this epic’s scope: ${epic.epic_id}`} onClick={() => setApprove(epic)}>
+                      Approve this epic’s scope
                     </Button>
                   ) : null}
                   <Button size="sm" onClick={() => setNewSlice(epic.epic_id)} disabled={epic.status === "superseded" || epic.status === "completed"}>

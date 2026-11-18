@@ -21,7 +21,7 @@ export function ApproveEpicDialog({ epic, sliceTitles = [], onOpenChange }: Appr
       }}
       title={epic ? `Approve ${epic.epic_id}: ${epic.title}?` : ""}
       description="Approving puts this capability in the product's scope, so its slices can be marked ready to build one by one. Nothing goes to the builders until you mark a slice ready."
-      confirmLabel="Approve epic"
+      confirmLabel="Approve this epic’s scope"
       error={act.shown}
       onConfirm={async () => {
         if (!epic) return;

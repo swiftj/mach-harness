@@ -260,10 +260,10 @@ test("keyboard only: the lifecycle's main path", async (t) => {
       await press("Enter");
       await dialog().waitFor({ state: "detached" });
       await afterClose("adding an epic");
-      await tabTo("Approve EPIC-001", { back: true }).catch(() => tabTo("Approve EPIC-001"));
+      await tabTo("Approve this epic’s scope: EPIC-001", { back: true }).catch(() => tabTo("Approve this epic’s scope: EPIC-001"));
       await press("Enter");
       await dialog().waitFor();
-      await tabTo("Approve epic", { within: "dialog" });
+      await tabTo("Approve this epic’s scope", { within: "dialog" });
       await press("Enter");
       await dialog().waitFor({ state: "detached" });
       await afterClose("approving an epic");
@@ -424,7 +424,7 @@ test("reduced motion is respected", async (t) => {
             return { name: a.animationName || a.transitionProperty || a.constructor.name, duration: Number(timing.duration) || 0, target: target ? `${target.tagName.toLowerCase()}${target.getAttribute("role") ? `[${target.getAttribute("role")}]` : ""}` : "" };
           }),
         );
-      await page.getByRole("button", { name: /^Approve EPIC-002/ }).click();
+      await page.getByRole("button", { name: /^Approve this epic’s scope: EPIC-002/ }).click();
       await page.waitForTimeout(30);
       const dialogAnims = await sample();
       await page.keyboard.press("Escape");
