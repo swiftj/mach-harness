@@ -527,6 +527,17 @@ class Requests:
         self.save(data)
         return self.flush(data) if by_number else {"queued": 0}
 
+    def queue_ready(self, origin: Dict[str, Any], slice_id: str, issue: int) -> Dict[str, Any]:
+        """After a slice made from a request is marked ready: one comment on the request linking the slice's issue."""
+        with self.exclusive():
+            data = self.load()
+            number = origin_number({"origin": origin}, data.get("repository"))
+            if not number or not data.get("repository"):
+                return {"queued": 0}
+            self.queue_comment(data, number, "ready", [slice_id, f"#{int(issue)}"])
+            self.save(data)
+            return self.flush(data, only=number)
+
     def queue_close(self, number: int) -> Dict[str, Any]:
         with self.exclusive():
             data = self.load()

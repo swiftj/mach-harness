@@ -1,4 +1,4 @@
-"""Tests for Product Studio's collaboration: refresh, reconcile, renumber, send and feedback.
+"""Tests for the leftover wave publishing (refresh, reconcile, renumber, send and feedback) that the Factory's intake and release tests still build their fixtures with; removed with them in M11 step 3.
 
 Everything runs against a local bare repository as the shared remote, with a stand-in for gh.
 """
@@ -655,11 +655,11 @@ class FeedbackTest(Base):
     def test_accepted_after_merge_and_published_after_refresh(self):
         self.first_wave(self.a)
         self.ok(self.a, "send", "WAVE-001")
-        self.assertEqual(self.ok(self.a, "status")["waves"][0]["sent"], True)
+        self.assertNotIn("waves", self.ok(self.a, "status"))  # status no longer speaks of waves (M11)
         self.land("product/WAVE-001")
         self.assertEqual(self.ok(self.a, "feedback")["waves"][0]["status"], "Accepted")
         status = self.ok(self.a, "status")
-        self.assertEqual({row["source"] for row in status["slices"] + status["waves"] + status["epics"]}, {"published"})
+        self.assertEqual({row["source"] for row in status["slices"] + status["epics"]}, {"published"})
         again = self.ok(self.a, "send", "WAVE-001")
         self.assertEqual((again["sent"], again["already_accepted"]), (False, True))
         self.assertEqual(self.ok(self.b, "feedback")["waves"][0]["status"], "Accepted")
@@ -849,10 +849,6 @@ class LaterRevisionTest(Base):
         self.shared_start()
         earlier = git(self.origin, "rev-parse", "product/WAVE-001").strip()
         self.revise(self.a, "Revised after it was accepted.")
-        wave = next(row for row in self.ok(self.a, "status")["waves"] if row["wave_id"] == "WAVE-001")
-        shared_revision = wave["shared"]["revision"]
-        self.assertLess(shared_revision, wave["revision"])
-        self.assertEqual(wave["shared_note"], f"merged at revision {shared_revision}; your draft is revision {wave['revision']}, not sent")
         self.assertEqual(self.ok(self.a, "send", "WAVE-001", "--dry-run")["request"], "opens a new request")
         sent = self.ok(self.a, "send", "WAVE-001")
         self.assertEqual((sent["status"], sent["pull_request"]), ("Waiting for review", "https://example.test/pull/2"))
@@ -861,7 +857,6 @@ class LaterRevisionTest(Base):
         entry = json.loads((self.a / ".factory/studio/publications.json").read_text())["waves"]["WAVE-001"]
         self.assertEqual([(r["number"], r["state"]) for r in entry["earlier_requests"]], [(1, "merged")])
         self.assertEqual(self.ok(self.a, "feedback", "WAVE-001")["waves"][0]["pull_request"], "https://example.test/pull/2")
-        self.assertTrue(next(row for row in self.ok(self.a, "status")["waves"] if row["wave_id"] == "WAVE-001")["shared_note"].endswith(", sent"))
         self.ok(self.a, "send", "WAVE-001")  # again: the open one is reused
         self.assertEqual(len(self.gh()["prs"]), 2)
 

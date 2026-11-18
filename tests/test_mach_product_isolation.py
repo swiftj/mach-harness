@@ -220,6 +220,46 @@ class NothingIsWiredInTest(unittest.TestCase):
         self.assertIn("refs/heads/{branch}", pushes[0])
         self.assertIn("branch = studio.shared.prefix + wave_id", sources["studio.py"])
 
+    def test_the_hand_off_uses_only_the_gh_calls_it_is_meant_to(self):
+        """M11: issues.py holds every GitHub call that saves a slice as an issue; handoff.py decides and
+        records, and reaches GitHub only through it. No Git at all, no closing, deleting, locking or
+        transferring an issue, and only mach:ready is ever removed."""
+        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("issues.py", "handoff.py")}
+        for name, source in sources.items():
+            imported = set()
+            for node in ast.walk(ast.parse(source)):
+                if isinstance(node, ast.Import):
+                    imported |= {alias.name.split(".")[0] for alias in node.names}
+                elif isinstance(node, ast.ImportFrom):
+                    imported.add((node.module or "").split(".")[0])
+            self.assertFalse(imported & {"subprocess", "socket", "http", "urllib"}, (name, imported))
+            for word in ("git(", "git_bytes(", "\"push\"", "\"close\"", "\"delete\"", "\"lock\"", "\"transfer\"", "\"reopen\"", "--force", "runner.json",
+                         "read_local_policy", "run.py", "ticket.py", "import ticket", "\"DELETE\""):
+                self.assertFalse(word in source, (name, word))
+        handoff_source = sources["handoff.py"]
+        self.assertFalse(re.findall(r"collab\.(gh|_gh_json|_gh_write)\(", handoff_source))  # GitHub only through issues.py
+        issues_source = sources["issues.py"]
+        calls = set(re.findall(r"_gh_(?:json|write)\(project, \"([a-z]+)\", \"([a-z]+|--[a-z]+)\"", issues_source))
+        calls |= set(re.findall(r"args = \[\"(issue)\", \"([a-z]+)\"", issues_source))
+        self.assertEqual(calls, {("issue", "list"), ("issue", "view"), ("issue", "create"), ("issue", "edit"), ("issue", "comment"), ("issue", "pin"),
+                                 ("label", "list"), ("label", "create"), ("api", "--paginate"), ("api", "--method")} | {("api", "--method")})
+        api = re.findall(r"_gh_(?:json|write)\(project, \"api\"[^\n]*", issues_source)
+        paths = sorted(re.search(r"(\"user\"|ISSUE_PATH|SUB_ISSUES_PATH|PRIORITY_PATH)", call).group(1) for call in api)
+        self.assertEqual(paths, ["\"user\"", "ISSUE_PATH", "PRIORITY_PATH", "SUB_ISSUES_PATH", "SUB_ISSUES_PATH"])
+        writes = [call for call in api if "--method" in call]
+        self.assertEqual(sorted(re.search(r"\"--method\", \"([A-Z]+)\"", call).group(1) for call in writes), ["PATCH", "POST"])
+        self.assertTrue(all(call.startswith("_gh_write(") for call in writes) and all(call.startswith("_gh_json(") for call in api if call not in writes))
+        self.assertIn('SUB_ISSUES_PATH = "repos/{repository}/issues/{number}/sub_issues"', issues_source)
+        self.assertIn('PRIORITY_PATH = "repos/{repository}/issues/{number}/sub_issues/priority"', issues_source)
+        self.assertIn('ISSUE_PATH = "repos/{repository}/issues/{number}"', issues_source)
+        removals = re.findall(r"--remove-label[^\n]*", issues_source)
+        self.assertEqual(removals, ['--remove-label", READY)'])
+        self.assertIn('READY = "mach:ready"', issues_source)
+        self.assertNotIn("--body\"", issues_source)  # text goes in a file written from a template, never on the command line
+        # studio.py reads issues only to settle a slice someone else changed; it writes through handoff.py.
+        studio_source = (PRODUCT_SCRIPTS / "studio.py").read_text()
+        self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", studio_source)), {"view", "comments"})
+
     def test_studio_imports_only_the_rules_from_the_ticket_skill(self):
         """Product Studio shares the ticket skill's issue rules and nothing else from it."""
         ticket_modules = {path.stem for path in (ROOT / "skills" / "ticket" / "scripts").glob("*.py")}
@@ -252,7 +292,7 @@ class NothingIsWiredInTest(unittest.TestCase):
                 self.assertNotIn(node.id, ("subprocess", "os", "socket"))
 
     def test_report_never_authorizes(self):
-        for name in ("product.py", "studio.py", "collab.py", "requests_in.py"):
+        for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py"):
             source = (PRODUCT_SCRIPTS / name).read_text()
             self.assertNotIn('"factory_authorized": True', source)
         for name in ("product.py", "studio.py"):

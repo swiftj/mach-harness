@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """MACH Product Studio: every deterministic operation a product manager's session needs.
 
-A PM defines a project and its epics, interviews one slice at a time, and approves slices and
-delivery waves. All of it happens in a draft workspace, .factory/studio/draft/, which mirrors
-the repository layout:
+A PM defines a project and its epics, interviews one slice at a time, and marks each finished
+slice ready for the builders. Drafts live in a workspace, .factory/studio/draft/:
 
     product/project.json            product/epics/EPIC-NNN.json
     product/slices/SLICE-NNN.json   product/intents/SLICE-NNN.md
-    product/delivery-waves/WAVE-NNN.json
     specs/slices/SLICE-NNN-name.md
 
-The workspace is git-ignored and machine-local. Nothing here creates a ticket, a cell or a
-branch, commits, pushes, or starts any Factory work: publishing is a later milestone, and
-approval here is product approval only.
+`slice ready` saves an approved slice as a GitHub issue under its epic's issue (handoff.py), or,
+where gh cannot be used, writes it to product/ready/SLICE-NNN/ in the workspace. The workspace is
+git-ignored and machine-local. Nothing here creates a ticket or a cell, touches the product
+manager's checkout, or starts any Factory work: approval is product approval only.
+
+Leftovers kept only for the Factory's intake and release tests until they read issues (M11 step
+3), hidden from help and the skill: `slice approve`, `wave new|add|remove|approve|renumber`,
+`send` (with --acceptance), `feedback`, `acceptance record|show`, and the three-way sync of
+merged product files that `refresh` and every command still run (Studio.sync).
 
 The slice spec is judged by the intent skill's validate_slice.py, and slice IDs come from the
 intent skill's allocator (cell.py slice_ids). This script never reimplements either.
@@ -33,6 +37,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collab  # noqa: E402
+import handoff  # noqa: E402
+import issues  # noqa: E402
 import product  # noqa: E402
 import requests_in  # noqa: E402
 
@@ -147,6 +153,10 @@ class Studio:
                 raise StudioError(f"{folder} is a symbolic link. Product Studio only works in a real folder inside the project.")
         self.shared = collab.Shared(project, self.cell.load_config(project))
         self._theirs: Optional[Dict[str, bytes]] = None
+
+    def handoff(self) -> handoff.Handoff:
+        """Where a slice marked ready goes: its GitHub issue, or the ready folder."""
+        return handoff.Handoff(self.project, self.home, self.draft, ticket_rules(), write)
 
     def requests(self) -> requests_in.Requests:
         """GitHub issues labelled as requests: the cache, pick-up and the outbox of status writes."""
@@ -438,7 +448,8 @@ class Studio:
         if kind == "slice":
             used, reserved = self.cell.slice_ids(self.project)
             taken = [int(match.group(1)) for name in self.theirs() for match in [re.search(r"SLICE-(\d{3,})", name)] if match]
-            return f"SLICE-{max([0, *used, *reserved, *taken, *in_review['SLICE']]) + 1:03d}"
+            on_github = self.handoff().taken_ids()  # slice IDs GitHub's issues hold, as last read
+            return f"SLICE-{max([0, *used, *reserved, *taken, *on_github, *in_review['SLICE']]) + 1:03d}"
         folder, prefix, rule, _ = KINDS[kind]
         numbers = [0, *in_review[prefix]]
         numbers += [int(match.group(1)) for name in self.theirs() for match in [re.search(prefix + r"-(\d{3,})\.json$", name)] if match]
@@ -614,9 +625,10 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
     session = studio.session()
     project_path = studio.path("project")
     project = studio.load("project") if project_path.is_file() else None
-    epics, slices, waves = studio.all("epic"), studio.all("slice"), studio.all("wave")
+    epics, slices = studio.all("epic"), studio.all("slice")
     theirs = studio.theirs()
-    ledger = studio.ledger()["waves"]
+    hand = studio.handoff()
+    ledger = hand.load()
 
     def source(relative: str) -> str:
         target = studio.draft / relative
@@ -628,11 +640,6 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
             return "published"
         return "draft"
 
-    waved: Dict[str, List[str]] = {}
-    for wave_id, data in waves.items():
-        if data.get("status") != "superseded":
-            for sid in data.get("slices") or []:
-                waved.setdefault(sid, []).append(wave_id)
     slice_rows = []
     for slice_id, data in slices.items():
         spec = studio.spec_of(slice_id)
@@ -642,30 +649,26 @@ def describe(studio: Studio, sync: Dict[str, Any]) -> Dict[str, Any]:
             "spec": studio.relative(spec) if spec else None, "has_intent": studio.intent_path(slice_id).is_file(),
             "source": source(f"product/slices/{slice_id}.json"), "resume_note": (session["notes"].get(slice_id) or {}).get("note"),
             "dependencies": list(data.get("dependencies") or []), "editable": edit_refusal(slice_id, data) is None,
-            "in_waves": waved.get(slice_id, []),
+            "github": handoff.slice_view(ledger, slice_id, data, ticket_rules()),
         })
     structural = studio.structural() if project else None
-    actions = next_actions(project, epics, slices, waves, slice_rows, waved, sync, ledger, source)
+    actions = next_actions(project, epics, slice_rows, sync)
     withdrawn = []
     for artifact, note in sorted((session.get("withdrawn") or {}).items()):
-        current = (slices if artifact.startswith("SLICE-") else waves).get(artifact)
+        current = slices.get(artifact)
         if current and current.get("status") != APPROVED and isinstance(note, dict):
-            withdrawn.append({"artifact": artifact, "kind": "slice" if artifact.startswith("SLICE-") else "wave",
-                              "reason": note.get("reason"), "at": note.get("at")})
+            withdrawn.append({"artifact": artifact, "kind": "slice", "reason": note.get("reason"), "at": note.get("at")})
     return {
         "project": project and {**{key: project.get(key) for key in ("project_id", "name", "status", "revision", "vision", "outcomes")},
-                                "source": source("product/project.json")},
+                                "source": source("product/project.json"), "issue": (ledger.get("project") or {}).get("number")},
         "approvals_withdrawn": withdrawn,
         **({"repaired": sync["repaired"]} if sync.get("repaired") else {}),
         "epics": [{"epic_id": key, "title": data.get("title"), "status": data.get("status"), "revision": data.get("revision"),
                    "acceptance_criteria": list(data.get("acceptance_criteria") or []),
-                   "source": source(f"product/epics/{key}.json")} for key, data in epics.items()],
+                   "source": source(f"product/epics/{key}.json"), "issue": (ledger["epics"].get(key) or {}).get("number")} for key, data in epics.items()],
         "slices": slice_rows,
-        "waves": [{"wave_id": key, "status": data.get("status"), "revision": data.get("revision"), "slices": data.get("slices"),
-                   "approval": data.get("approval"), "source": source(f"product/delivery-waves/{key}.json"),
-                   "sent": bool((ledger.get(key) or {}).get("pushed")),
-                   "pull_request": ((ledger.get(key) or {}).get("pull_request") or {}).get("url"),
-                   **shared_wave(studio, key, data, theirs, ledger, source)} for key, data in waves.items()],
+        "github": {"repository": ledger.get("repository"), "form": ledger.get("form"),
+                   "last_read": (ledger.get("seen") or {}).get("refreshed_at")},
         "current_slice": session.get("current_slice"),
         "needs_reconciling": reconciling(sync),
         "shared_project": shared_project_words(studio),
@@ -695,29 +698,15 @@ def github_updates_waiting(studio: Studio) -> Dict[str, Any]:
     return found
 
 
-def shared_wave(studio: Studio, wave_id: str, data: Dict[str, Any], theirs: Dict[str, bytes], ledger: Dict[str, Any], source: Any) -> Dict[str, Any]:
-    """A wave the shared project already has at an earlier revision than this workspace's draft:
-    both facts, so the accepted one is never hidden by the later draft."""
-    relative = f"product/delivery-waves/{wave_id}.json"
-    shared = collab.parse(theirs.get(relative))
-    if not shared or source(relative) == "published":
-        return {}
-    entry = ledger.get(wave_id) or {}
-    mine = (studio.draft / relative).read_bytes()
-    sent = bool(entry.get("pushed") and entry.get("commit") and collab.git_bytes(studio.project, "show", f"{entry['commit']}:{relative}") == mine)
-    where = say("merged", "in the shared project")
-    return {"shared": {"revision": shared.get("revision"), "status": shared.get("status")},
-            "shared_note": f"{where} at revision {shared.get('revision')}; your draft is revision {data.get('revision')}, {'sent' if sent else 'not sent'}"}
-
-
 # The vocabulary of next_actions[].kind. A client maps each to its own button or screen.
-NEXT_ACTION_KINDS = ("define_project", "add_epic", "reconcile", "continue_interview", "approve_slice", "approve_epic",
-                     "create_wave", "approve_wave", "send_wave", "start_slice")
+NEXT_ACTION_KINDS = ("define_project", "add_epic", "reconcile", "renumber_slice", "continue_interview", "mark_ready", "finish_ready",
+                     "approve_epic", "start_slice")
 # The vocabulary of a refusal's hint (--app): the next-action kinds, plus the acts that resolve a refusal.
-HINT_KINDS = NEXT_ACTION_KINDS + ("reopen_slice", "renumber_slice", "renumber_epic", "renumber_wave", "edit_epic", "edit_project", "name_approver")
+# approve_wave, renumber_wave and name_approver are given only by the leftover wave commands (see the module's docstring).
+HINT_KINDS = NEXT_ACTION_KINDS + ("reopen_slice", "renumber_epic", "edit_epic", "edit_project", "approve_wave", "renumber_wave", "name_approver")
 
 
-def next_actions(project, epics, slices, waves, slice_rows, waved, sync, ledger, source) -> List[Dict[str, Any]]:
+def next_actions(project, epics, slice_rows, sync) -> List[Dict[str, Any]]:
     """What to do next, in order. One decision produces both forms: `sentence` for the terminal
     (it ends with the command in brackets) and kind, target, title and reason for an app."""
     actions: List[Dict[str, Any]] = []
@@ -736,28 +725,29 @@ def next_actions(project, epics, slices, waves, slice_rows, waved, sync, ledger,
             "Add the first epic (epic add).")
         return actions
     for row in slice_rows:
+        sid, gh = row["slice_id"], row["github"]
+        if gh["newer_elsewhere"]:
+            act("reconcile", sid, f"Choose a version of {sid}", f"Someone else saved a newer version of {row['title']} on GitHub. Choose yours or theirs.",
+                f"Someone else saved a newer version of {sid} on GitHub: choose yours or theirs (reconcile {sid} --take mine|theirs).", first=True)
+        elif gh["number_taken"]:
+            act("renumber_slice", sid, f"Give {sid} a new number", f"Another slice on GitHub already has the number of {row['title']}.",
+                f"Another slice on GitHub already uses {sid}: give your draft a new number (slice renumber {sid}).", first=True)
         if row["status"] in ("draft", "interviewing"):
-            act("continue_interview", row["slice_id"], f"Continue the interview for {row['slice_id']}",
-                f"{row['title']} is still being defined.",
-                f"Continue the interview for {row['slice_id']}: {row['title']} (slice resume {row['slice_id']}).")
+            act("continue_interview", sid, f"Continue the interview for {sid}", f"{row['title']} is still being defined.",
+                f"Continue the interview for {sid}: {row['title']} (slice resume {sid}).")
         elif row["status"] == "ready_for_approval":
-            act("approve_slice", row["slice_id"], f"Approve {row['slice_id']}", f"{row['title']} is ready for your approval.",
-                f"{row['slice_id']} is ready: approve it (slice approve {row['slice_id']}).")
+            act("mark_ready", sid, f"Mark {sid} ready", f"{row['title']} is ready for your approval. Marking it ready hands it to the builders.",
+                f"{sid} is ready for your approval: mark it ready for the builders (slice ready {sid}).")
+        elif row["status"] == APPROVED and (gh["unfinished"] or gh["saved"] is None):
+            act("finish_ready", sid, f"Finish marking {sid} ready", f"{row['title']} is approved, but saving it did not finish.",
+                f"{sid} is approved, but saving it did not finish: mark it ready again to finish (slice ready {sid}).")
+        elif row["status"] == APPROVED and gh["changed_on_github"]:
+            act("mark_ready", sid, f"Mark {sid} ready again", f"{row['title']} was changed on GitHub after you approved it, so the builders will not take it.",
+                f"{sid} was changed on GitHub after you approved it: mark it ready again to put your approved version back (slice ready {sid}).")
     for epic_id, data in epics.items():
         if data.get("status") == "proposed":
-            act("approve_epic", epic_id, f"Approve epic {epic_id}", f"{data.get('title')}: its slices can be approved only once it is.",
-                f"Approve epic {epic_id}: {data.get('title')} (epic approve {epic_id}), so its slices can be approved.")
-    loose = [row["slice_id"] for row in slice_rows if row["status"] == APPROVED and row["slice_id"] not in waved]
-    if loose:
-        act("create_wave", None, "Put approved slices into a delivery wave", f"Approved and not in a delivery wave yet: {', '.join(loose)}.",
-            f"Put approved slices into a delivery wave: {', '.join(loose)} (wave new).", related=loose)
-    for wave_id, data in waves.items():
-        if data.get("status") == "draft" and data.get("slices") and all((slices.get(s) or {}).get("status") == APPROVED for s in data["slices"]):
-            act("approve_wave", wave_id, f"Approve {wave_id}", "It holds only approved slices.",
-                f"{wave_id} holds only approved slices: approve it (wave approve {wave_id}).", related=data["slices"])
-        if data.get("status") == APPROVED and source(f"product/delivery-waves/{wave_id}.json") != "published" and not (ledger.get(wave_id) or {}).get("pushed"):
-            act("send_wave", wave_id, f"Send {wave_id} to engineering", "It is approved and has not been sent yet.",
-                f"{wave_id} is approved and has not been sent to engineering (send {wave_id}).", related=data.get("slices") or [])
+            act("approve_epic", epic_id, f"Approve epic {epic_id}", f"{data.get('title')}: its slices can be marked ready only once it is.",
+                f"Approve epic {epic_id}: {data.get('title')} (epic approve {epic_id}), so its slices can be marked ready.")
     if sync["conflicts"] or sync["collisions"]:
         act("reconcile", None, "Settle what disagrees with the shared project",
             "Some of your drafts and the shared project disagree. Settle those first: choose a version, or renumber a draft whose number is taken.",
@@ -1050,23 +1040,23 @@ def cmd_slice_show(studio: Studio, args: argparse.Namespace) -> int:
         "why": why_sections(intent_text, studio.cell),
         "check": check,
         "resume_note": (studio.session()["notes"].get(slice_id) or {}).get("note"),
+        "github": handoff.slice_view(studio.handoff().load(), slice_id, data, ticket_rules()),
         **request_field(studio, slice_id, data),
         "factory_authorized": False,
     })
 
 
-def cmd_slice_approve(studio: Studio, args: argparse.Namespace) -> int:
-    sync = studio.sync()
-    data = require_editable(studio, args.slice_id)
-    slice_id = args.slice_id
+def approval_problems(studio: Studio, sync: Dict[str, Any], data: Dict[str, Any], slice_id: str, verb: str) -> Tuple[Dict[str, Any], List[str], Optional[Dict[str, Any]]]:
+    """The gates a slice passes before it is approved: the spec passes the validator with no open
+    questions, the why is complete, its epic is approved and its dependencies exist."""
     work_order = f"product/slices/{slice_id}.json"
     if work_order in sync["collisions"]:
         raise StudioError(say(f"{slice_id} now exists in the shared project as a different slice, so this draft cannot keep that number. "
-                              "It has to be renumbered before it can be approved; renumbering arrives with the publishing milestone.",
-                              f"{slice_id} now exists in the shared project as a different slice, so this draft needs a new number before it can be approved."),
+                              f"It has to be renumbered before it can be {verb}.",
+                              f"{slice_id} now exists in the shared project as a different slice, so this draft needs a new number before it can be {verb}."),
                           hint("renumber_slice", slice_id))
     if work_order in sync["conflicts"]:
-        raise StudioError(f"{slice_id} changed in the shared project while you were editing it. Reconcile the two versions before approving.", hint("reconcile", slice_id))
+        raise StudioError(f"{slice_id} changed in the shared project while you were editing it. Reconcile the two versions before it is {verb}.", hint("reconcile", slice_id))
     result = studio.check_slice(slice_id, ready=True)
     refusal_hint: Optional[Dict[str, Any]] = None
     problems = list(result["errors"]) + list(result["intent_problems"])
@@ -1082,16 +1072,100 @@ def cmd_slice_approve(studio: Studio, args: argparse.Namespace) -> int:
     for dependency in data.get("dependencies") or []:
         if dependency not in slices:
             problems.append(f"dependency {dependency} does not exist")
-    if problems:
-        raise StudioError(f"{slice_id} cannot be approved yet:\n  " + "\n  ".join(problems), refusal_hint)
+    return result, problems, refusal_hint
+
+
+def approve_locally(studio: Studio, data: Dict[str, Any], slice_id: str) -> None:
     spec = studio.spec_of(slice_id)
-    data.update({"status": APPROVED, "open_questions": [],
-                 "spec_path": studio.relative(spec), "spec_sha256": sha(spec.read_bytes())})
+    assert spec is not None
+    data.update({"status": APPROVED, "open_questions": [], "spec_path": studio.relative(spec), "spec_sha256": sha(spec.read_bytes())})
     studio.commit_or_restore([("slice", data)], f"Approving {slice_id}")
     studio.clear_withdrawn(slice_id)
+
+
+def cmd_slice_approve(studio: Studio, args: argparse.Namespace) -> int:
+    """Leftover for the Factory's intake and release tests (see the module's docstring). `slice ready` is the command."""
+    sync = studio.sync()
+    data = require_editable(studio, args.slice_id)
+    slice_id = args.slice_id
+    result, problems, refusal_hint = approval_problems(studio, sync, data, slice_id, "approved")
+    if problems:
+        raise StudioError(f"{slice_id} cannot be approved yet:\n  " + "\n  ".join(problems), refusal_hint)
+    approve_locally(studio, data, slice_id)
     return emit({"approved": True, "slice": studio.load("slice", slice_id), "risk": result.get("risk"), "counts": result.get("counts"),
                  "warnings": result["warnings"], "factory_authorized": False,
                  "note": "Product approval only. Nothing has been sent to engineering and no work has started."})
+
+
+def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
+    """Approve a slice and hand it to the builders: its GitHub issue under its epic, or the ready folder."""
+    sync = studio.sync()
+    slice_id = args.slice_id
+    data = studio.load("slice", slice_id)
+    if data.get("status") in EDITABLE_SLICE:
+        result, problems, refusal_hint = approval_problems(studio, sync, data, slice_id, "marked ready")
+        if problems:
+            raise StudioError(f"{slice_id} cannot be marked ready yet:\n  " + "\n  ".join(problems), refusal_hint)
+    elif data.get("status") == APPROVED:
+        spec = studio.spec_of(slice_id)
+        if spec is None or sha(spec.read_bytes()) != data.get("spec_sha256"):
+            raise StudioError(say(f"{slice_id}'s spec changed after you approved it. Reopen it to change it (slice reopen {slice_id}).",
+                                  f"{slice_id}'s spec changed after you approved it. Reopen it to change it."), hint("reopen_slice", slice_id))
+        result = studio.check_slice(slice_id, ready=True)
+    else:
+        raise StudioError(f"{slice_id} is {state(data.get('status'))}; it cannot be marked ready.")
+    spec_path = studio.spec_of(slice_id)
+    assert spec_path is not None
+    try:
+        spec = spec_path.read_bytes().decode("utf-8")
+        why = studio.intent_path(slice_id).read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        raise StudioError(f"{slice_id}'s spec or why could not be read as text.")
+    epic = studio.load("epic", data["epic_id"])
+    project = studio.load("project")
+    dependencies = list(data.get("dependencies") or [])
+    rules = ticket_rules()
+    hand = studio.handoff()
+    with hand.exclusive():
+        ledger = hand.load()
+        channel = hand.channel()  # GitHub or the folder, decided before anything is written
+        entry = ledger["slices"].get(slice_id) or {}
+        if channel.kind == "folder":
+            if entry.get("number"):
+                raise StudioError(f"{slice_id} is already saved on GitHub as #{entry['number']}, and GitHub cannot be used from here: {channel.why} "
+                                  "Nothing was saved. Mark it ready again on a computer signed in to GitHub.")
+            waiting = [dep for dep in dependencies if not hand.folder_published(ledger, dep) and (ledger["slices"].get(dep) or {}).get("saved") != "github"]
+            if waiting:
+                raise StudioError(f"{slice_id} depends on {', '.join(waiting)}, which {'is' if len(waiting) == 1 else 'are'} not ready yet. Mark {waiting[0]} ready first.",
+                                  hint("mark_ready", waiting[0]))
+            length = len(rules.slice_issue_body(slice_id, 999999, 999999999, [999999999] * len(dependencies), why, spec))
+            if length > rules.ISSUE_BODY_LIMIT:
+                raise StudioError(handoff.too_large(slice_id, length, rules.ISSUE_BODY_LIMIT))
+            if data.get("status") != APPROVED:
+                approve_locally(studio, data, slice_id)
+            saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec)
+            folder = Path(saved["folder"])
+            return emit({"ready": True, "saved_to": "folder", "slice": studio.load("slice", slice_id), "folder": str(folder),
+                         "files": [str(folder / name) for name in ("spec.md", "why.md", "slice.json")], "revision": saved["revision"],
+                         "why_folder": channel.why, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
+                         "ways_on": [say(f"Commit the folder {folder.relative_to(studio.draft)} to the repository; the builders take it from the main branch.",
+                                         "Add this folder to the project's repository; the builders take it from there."),
+                                     say(f"Or hand the folder to the engineer, who runs /mach product import {folder}.",
+                                         "Or hand the folder to the engineer, who brings it in with MACH.")],
+                         "factory_authorized": False,
+                         "note": "Approved and written to the folder. Nothing was sent to GitHub and no work has started."})
+        plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec)
+        if data.get("status") != APPROVED:
+            approve_locally(studio, data, slice_id)
+        saved = hand.run(plan, channel, slice_id, project, epic, why, spec)
+    request = None
+    if isinstance(data.get("origin"), dict):
+        request = studio.requests().queue_ready(data["origin"], slice_id, saved["issue"])
+    return emit({"ready": True, "saved_to": "github", "slice": studio.load("slice", slice_id), "issue": saved["issue"], "url": saved["url"],
+                 "revision": saved["revision"], "follows": saved["follows"], "epic_issue": saved["epic_issue"], "project_issue": saved["project_issue"],
+                 "approved_by": channel.login, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
+                 "request_updates": request, "factory_authorized": False,
+                 "note": f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."})
 
 
 def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
@@ -1099,10 +1173,11 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
     data = studio.load("slice", args.slice_id)
     if data.get("status") != APPROVED:
         raise StudioError(f"{args.slice_id} is {state(data.get('status'))}; only an approved slice can be reopened.")
+    taken = studio.handoff().withdraw(args.slice_id)  # off GitHub first; nothing local changes if that fails
     data.update({"status": "interviewing", "spec_sha256": None})
     changes: List[Tuple[str, Dict[str, Any]]] = [("slice", data)]
     withdrawn = []
-    for wave_id, wave in studio.all("wave").items():
+    for wave_id, wave in studio.all("wave").items():  # leftover: a slice approved for the intake tests' waves
         if args.slice_id in (wave.get("slices") or []) and wave.get("status") == APPROVED:
             wave.update({"status": "draft", "approval": None})
             changes.append(("wave", wave))
@@ -1110,7 +1185,17 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
     studio.commit_or_restore(changes, f"Reopening {args.slice_id}")
     studio.note_withdrawn({args.slice_id: "You reopened it to change it.",
                            **{wave_id: f"{args.slice_id} was reopened, so this wave went back to draft." for wave_id in withdrawn}})
-    return emit({"reopened": True, "slice": studio.load("slice", args.slice_id), "waves_returned_to_draft": withdrawn})
+    note = "You can change it now. Mark it ready again when it is done."
+    if taken.get("where") == "github":
+        note = f"It is no longer marked ready on GitHub (#{taken['issue']}). " + note
+        if taken.get("shipped"):
+            note += f" It has already shipped, so marking it ready again makes a new issue that links to #{taken['issue']}."
+        elif taken.get("building"):
+            note += " The builders have already started on it; when you mark it ready again they will be told it changed."
+    elif taken.get("where") == "folder":
+        note = "Its ready folder was removed. " + note
+    return emit({"reopened": True, "slice": studio.load("slice", args.slice_id), "github": taken, "note": note,
+                 **({"waves_returned_to_draft": withdrawn} if withdrawn else {})})
 
 
 def editable_wave(studio: Studio, wave_id: str) -> Dict[str, Any]:
@@ -1295,6 +1380,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         session["refreshed_at"] = now(None)
         studio.save_session(session)
     requests = studio.requests().refresh(studio.all("slice"))  # never refuses: GitHub's problems are reported in the block
+    github = studio.handoff().refresh(studio.all("slice"))  # read only; never refuses
     return emit({
         "refreshed": fetched,
         "problem": None if fetched else problem,
@@ -1305,6 +1391,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         "needs_reconciling": reconciling(sync),
         **({"repaired": sync["repaired"]} if sync.get("repaired") else {}),
         "requests": requests,
+        "github": github,
         "factory_authorized": False,
     })
 
@@ -1428,7 +1515,58 @@ def withdraw_slice(studio: Studio, slice_id: str) -> List[str]:
     return withdrawn
 
 
+def reconcile_slice(studio: Studio, slice_id: str, take: str) -> int:
+    """Someone else saved a newer version of this slice on GitHub: keep mine (my next "ready" replaces
+    theirs) or take theirs (their approved why and spec replace my draft)."""
+    hand = studio.handoff()
+    rules = ticket_rules()
+    with hand.exclusive():
+        ledger = hand.load()
+        entry = ledger["slices"].get(slice_id) or {}
+        number, repository = entry.get("number"), ledger.get("repository")
+        if not number or not repository:
+            raise StudioError(f"{slice_id} has no version on GitHub to choose from.")
+        current, failure = issues.view(studio.project, repository, number)
+        marker = rules.parse_slice_body((current or {}).get("body")) if not failure else None
+        if failure or not marker:
+            raise StudioError(f"{slice_id}'s issue could not be read, so nothing was changed. {handoff.explain(failure)}")
+        if marker["revision"] <= int(entry.get("base_revision") or 0):
+            raise StudioError(f"Your draft of {slice_id} already has GitHub's latest version; there is nothing to choose.")
+        withdrawn: List[str] = []
+        if take == "theirs":
+            found, failure = issues.comments(studio.project, repository, number)
+            approved = [a for a in rules.approvals([c["body"] for c in found or []]) if a["revision"] == marker["revision"] and a["slice_id"] == slice_id
+                        and (a["spec_sha256"], a["why_sha256"]) == (marker["spec_sha256"], marker["why_sha256"])]
+            if failure or not marker["intact"] or not approved:
+                raise StudioError(f"The version of {slice_id} on GitHub was changed after it was approved, so it cannot be taken. Nothing was changed.")
+            data = studio.load("slice", slice_id)
+            spec = studio.spec_of(slice_id) or studio.draft / "specs" / "slices" / f"{slice_id}-{kebab(data.get('title') or 'slice')}.md"
+            write(spec, marker["spec"])
+            write(studio.intent_path(slice_id), marker["why"])
+            withdrawn = withdraw_slice(studio, slice_id)
+            entry.update(revision=marker["revision"], spec_sha256=marker["spec_sha256"], why_sha256=marker["why_sha256"])
+        entry["base_revision"] = marker["revision"]
+        hand.save(ledger)
+    if take == "theirs":
+        data = studio.load("slice", slice_id)
+        result = studio.check_slice(slice_id, ready=True)
+        data.update({"status": "ready_for_approval" if result["ready"] else "interviewing", "open_questions": result["open_questions"],
+                     "spec_path": studio.relative(studio.spec_of(slice_id)), "spec_sha256": None})
+        studio.save("slice", data, bump=False)
+    return emit({"reconciled": slice_id, "took": take, "github_version": marker["revision"], "approvals_withdrawn": withdrawn,
+                 "note": "Your draft now holds the version from GitHub. Mark it ready to approve it yourself." if take == "theirs"
+                 else "Your draft stays as it is. Marking it ready replaces the version on GitHub."})
+
+
+def kebab(title: str) -> str:
+    return "-".join(re.findall(r"[a-z0-9]+", title.lower())[:8]) or "slice"
+
+
 def cmd_reconcile(studio: Studio, args: argparse.Namespace) -> int:
+    if product.SLICE_RE.fullmatch(args.artifact) and handoff.slice_view(studio.handoff().load(), args.artifact, None, ticket_rules())["newer_elsewhere"]:
+        if args.field:
+            raise StudioError("A slice is taken whole: yours or theirs.")
+        return reconcile_slice(studio, args.artifact, args.take)
     sync = studio.sync()
     relative = resolve_artifact(args.artifact, [*sync["conflicts"], *sync["collisions"]])
     if relative in sync["collisions"]:
@@ -1479,6 +1617,10 @@ def cmd_renumber(studio: Studio, args: argparse.Namespace) -> int:
         raise StudioError(f"'{old}' is not a usable {kind} ID, such as {prefix}-001." + (f" Renumbering takes the ID, not the file: use {named.group(0)}." if named else ""))
     relative = f"product/{folder}/{old}.json"
     path = studio.draft / relative
+    record = studio.handoff().load()
+    handed = (record["slices"].get(old) or {}) if kind == "slice" else (record["epics"].get(old) or {}) if kind == "epic" else {}
+    if handed.get("number") or handed.get("saved") == "folder":
+        raise StudioError(f"{old} is already saved under that number, so its number cannot change.")
     mine = path.is_file() and not studio.is_published(relative)
     if path.is_file() and not mine and kind != "slice":
         raise StudioError(f"{old} is already part of the shared project, so its number cannot change.")
@@ -1841,23 +1983,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH Product Studio operations (drafts only; never starts Factory work)")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
     parser.add_argument("--app", action="store_true", help="word refusals and reports for the local web app: no terminal commands, plus a hint")
-    sub = parser.add_subparsers(dest="command", required=True)
+    # The leftover commands (send, feedback, wave, acceptance, slice approve) are parsed but never listed.
+    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,request}")
 
     sub.add_parser("where", help="print the workspace and the files the interview needs").set_defaults(func=cmd_where)
     sub.add_parser("status", help="every artifact with its state, and what to do next").set_defaults(func=cmd_status)
     sub.add_parser("validate", help="structural check of the whole workspace").set_defaults(func=cmd_validate)
-    sub.add_parser("refresh", help="bring in what others have published; drafts are never lost").set_defaults(func=cmd_refresh)
-    p = sub.add_parser("reconcile", help="settle a draft that disagrees with the shared project")
+    sub.add_parser("refresh", help="read the project, epics and slices on GitHub, and the requests; drafts are never lost").set_defaults(func=cmd_refresh)
+    p = sub.add_parser("reconcile", help="choose yours or theirs for a slice someone else saved a newer version of")
     p.add_argument("artifact", help="the path or ID listed under needs_reconciling")
     p.add_argument("--take", required=True, choices=("mine", "theirs"))
     p.add_argument("--field", help="settle one field of a project, epic, work order or wave")
     p.set_defaults(func=cmd_reconcile)
-    p = sub.add_parser("send", help="ask engineering to accept an approved delivery wave")
+    p = sub.add_parser("send")
     p.add_argument("wave_id")
     p.add_argument("--dry-run", action="store_true", help="show what would be shared; send nothing")
     p.add_argument("--acceptance", action="store_true", help="send only the recorded acceptance decision, as its own request")
     p.set_defaults(func=cmd_send)
-    p = sub.add_parser("feedback", help="how review of sent waves is going")
+    p = sub.add_parser("feedback")
     p.add_argument("wave_id", nargs="?")
     p.set_defaults(func=cmd_feedback)
 
@@ -1893,7 +2036,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="epic")
 
-    slice_ = sub.add_parser("slice", help="slice work orders and their interview").add_subparsers(dest="action", required=True)
+    slice_ = sub.add_parser("slice", help="slice work orders, their interview, and marking them ready").add_subparsers(
+        dest="action", required=True, metavar="{new,set,resume,pause,check,show,ready,reopen,renumber}")
     p = slice_.add_parser("new")
     p.add_argument("--epic", required=True)
     p.add_argument("--title", required=True)
@@ -1920,10 +2064,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = slice_.add_parser("show", help="the work order, spec, why and current check in one read; changes nothing")
     p.add_argument("slice_id")
     p.set_defaults(func=cmd_slice_show)
+    p = slice_.add_parser("ready", help="approve the slice and hand it to the builders (only on the product manager's word)")
+    p.add_argument("slice_id")
+    p.set_defaults(func=cmd_slice_ready)
     p = slice_.add_parser("approve")
     p.add_argument("slice_id")
     p.set_defaults(func=cmd_slice_approve)
-    p = slice_.add_parser("reopen")
+    p = slice_.add_parser("reopen", help="take a ready slice back to change it (only on the product manager's word)")
     p.add_argument("slice_id")
     p.set_defaults(func=cmd_slice_reopen)
     p = slice_.add_parser("renumber", help="give an unpublished draft the next free number")
@@ -1950,7 +2097,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("number")
     p.set_defaults(func=cmd_request_met)
 
-    acceptance = sub.add_parser("acceptance", help="product's decision on a qualified release of a wave").add_subparsers(dest="action", required=True)
+    acceptance = sub.add_parser("acceptance").add_subparsers(dest="action", required=True)
     p = acceptance.add_parser("record", help="record accepted or rejected for one wave at one release")
     p.add_argument("wave_id")
     p.add_argument("--release", required=True, help="the release ID engineering qualified")
@@ -1964,7 +2111,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = acceptance.add_parser("show", help="recorded decisions; changes nothing")
     p.add_argument("wave_id", nargs="?")
     p.set_defaults(func=cmd_acceptance_show)
-    wave = sub.add_parser("wave", help="delivery waves").add_subparsers(dest="action", required=True)
+    wave = sub.add_parser("wave").add_subparsers(dest="action", required=True)
     p = wave.add_parser("new")
     p.add_argument("--slice", action="append", default=[])
     p.set_defaults(func=cmd_wave_new)
@@ -2011,7 +2158,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if not project.is_dir():
             raise StudioError(f"{project} is not a folder.")
         return args.func(Studio(project), args)
-    except (StudioError, collab.CollabError, requests_in.RequestError) as exc:
+    except (StudioError, collab.CollabError, requests_in.RequestError, handoff.HandoffError) as exc:
         return refuse(exc)
     except FileNotFoundError as exc:
         if exc.filename == "git":  # Git is not installed: say so plainly, not as a traceback

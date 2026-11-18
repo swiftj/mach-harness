@@ -281,7 +281,7 @@ def fence(number: int, title: str, body: str) -> Dict[str, str]:
 
 # ---- status comments ----
 
-MOMENTS = ("picked", "sent", "merged", "blocked")
+MOMENTS = ("picked", "sent", "merged", "blocked", "ready")
 REF_RE = re.compile(r"^(?:SLICE-[0-9]{3,}(?:@r[0-9]{1,6})?|#[0-9]{1,9}|ticket:[A-Za-z0-9][A-Za-z0-9_.-]{0,79})$")
 MARKER_RE = re.compile(r"<!-- mach:status v1 moment=([a-z]+) key=([0-9a-f]{16}) -->")
 
@@ -325,6 +325,8 @@ def comment(moment: str, refs: Sequence[str], nonce: str) -> Dict[str, str]:
         text = f"{slices[0]} revision {revisions[0]} is approved and merged; the Factory may take it (ticket {tickets[0]})."
     elif moment == "blocked" and len(tickets) == 1 and len(refs) == 1:
         text = f"Ticket {tickets[0]} is blocked and waits for a person."
+    elif moment == "ready" and len(slices) == 1 and not revisions and len(pulls) == 1 and len(refs) == 2:
+        text = f"{slices[0]}, made from this request, is ready to be built: {pulls[0]}."
     else:
         raise ValueError(f"the references do not fit the {moment} comment")
     key = status_key(moment, refs, nonce)
@@ -334,6 +336,169 @@ def comment(moment: str, refs: Sequence[str], nonce: str) -> Dict[str, str]:
 def has_marker(bodies: Iterable[Any], key: str) -> bool:
     """True when one of the issue's comments already carries this write's marker."""
     return any(isinstance(body, str) and any(found.group(2) == key for found in MARKER_RE.finditer(body)) for body in bodies)
+
+
+# ---- the product model as issues (M11) ----
+#
+# A project, its epics and its slices live as issues carrying MACH's labels. Each body is written
+# from a fixed template that opens with a hidden marker; a slice's marker carries the SHA-256 of the
+# why and the spec it holds, and an approval comment from a fixed template repeats them. Product
+# Studio writes them; the Factory will read them. Nothing here reaches GitHub.
+
+PRODUCT_LABELS: Dict[str, Dict[str, str]] = {
+    "mach:project": {"color": "5319E7", "description": "MACH: the product's vision and outcomes"},
+    "mach:epic": {"color": "0052CC", "description": "MACH: an epic; its slices are listed under it"},
+    "mach:slice": {"color": "C5DEF5", "description": "MACH: one slice of product work, written by Product Studio"},
+    "mach:ready": {"color": "1D76DB", "description": "MACH: approved by product; the builders may take it"},
+    "mach:building": {"color": "FBCA04", "description": "MACH: the builders have taken it"},
+    "mach:question": {"color": "D93F0B", "description": "MACH: the builders need the product manager's answer"},
+    "mach:shipped": {"color": "0E8A16", "description": "MACH: built and merged"},
+}
+SLICE_STATE_LABELS = ("mach:ready", "mach:building", "mach:question", "mach:shipped")
+# Product Studio sets and removes only this one state label; the others belong to the Factory.
+STUDIO_STATE_LABEL = "mach:ready"
+EPIC_TASK_LABEL_RE = re.compile(r"^mach:epic-([0-9]{1,9})$")
+# GitHub refuses an issue body longer than this many characters.
+ISSUE_BODY_LIMIT = 65536
+SLICE_ID_RE = re.compile(r"^SLICE-[0-9]{3,}$")
+EPIC_ID_RE = re.compile(r"^EPIC-[0-9]{3,}$")
+PROJECT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
+HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+SLICE_MARKER_RE = re.compile(
+    r"\A<!-- mach:slice id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) epic=#([0-9]{1,9}) depends=(none|#[0-9]{1,9}(?:,#[0-9]{1,9})*)\n"
+    r"     spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64}) -->\n")
+FOLLOWS_RE = re.compile(r"\AChanges #([0-9]{1,9}), which has shipped\.\n")
+PRODUCT_MARKER_RE = re.compile(r"\A<!-- mach:(project|epic) id=([A-Za-z0-9-]{1,64}) -->\n")
+APPROVAL_RE = re.compile(r"<!-- mach:approval id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) by=([A-Za-z0-9-]{1,39}) "
+                         r"spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64}) -->")
+WHY_HEADING = "## Why\n"
+SPEC_HEADING = "\n## Specification\n"
+
+
+def epic_task_label(number: int) -> str:
+    """The label a slice carries when its repository has no sub-issues: its epic's issue number."""
+    if not is_issue_number(number):
+        raise ValueError("not an issue number")
+    return f"mach:epic-{number}"
+
+
+def text_sha256_of(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def slice_marker(slice_id: str, revision: int, epic: int, depends: Sequence[int], spec_sha256: str, why_sha256: str) -> str:
+    if not SLICE_ID_RE.fullmatch(slice_id) or type(revision) is not int or not 1 <= revision < 10 ** 6 or not is_issue_number(epic):
+        raise ValueError("a slice marker names a slice ID, a revision and its epic's issue")
+    if any(not is_issue_number(n) for n in depends) or not HEX64_RE.fullmatch(spec_sha256) or not HEX64_RE.fullmatch(why_sha256):
+        raise ValueError("a slice marker carries issue numbers and SHA-256 digests only")
+    listed = ",".join(f"#{n}" for n in depends) or "none"
+    return (f"<!-- mach:slice id={slice_id} revision={revision} epic=#{epic} depends={listed}\n"
+            f"     spec-sha256={spec_sha256} why-sha256={why_sha256} -->\n")
+
+
+def slice_issue_body(slice_id: str, revision: int, epic: int, depends: Sequence[int], why: str, spec: str,
+                     follows: Optional[int] = None) -> str:
+    """A slice's issue body: the marker, then the why and the spec exactly as approved."""
+    head = slice_marker(slice_id, revision, epic, depends, text_sha256_of(spec), text_sha256_of(why))
+    if follows is not None:
+        if not is_issue_number(follows):
+            raise ValueError("not an issue number")
+        head += f"Changes #{follows}, which has shipped.\n"
+    return head + WHY_HEADING + why + SPEC_HEADING + spec
+
+
+def parse_slice_body(body: Any) -> Optional[Dict[str, Any]]:
+    """The marker of a slice issue's body, and the why and spec it holds when their SHA-256 match
+    the marker. `intact` is False when the body was changed after it was written. None when the
+    body does not open with a slice marker."""
+    if not isinstance(body, str):
+        return None
+    result: Optional[Dict[str, Any]] = None
+    for text in dict.fromkeys((body, body.replace("\r\n", "\n"))):
+        found = SLICE_MARKER_RE.match(text)
+        if not found:
+            continue
+        depends = [] if found.group(4) == "none" else [int(part[1:]) for part in found.group(4).split(",")]
+        marker = {"slice_id": found.group(1), "revision": int(found.group(2)), "epic": int(found.group(3)), "depends": depends,
+                  "spec_sha256": found.group(5), "why_sha256": found.group(6), "follows": None}
+        rest = text[found.end():]
+        follows = FOLLOWS_RE.match(rest)
+        if follows:
+            marker["follows"] = int(follows.group(1))
+            rest = rest[follows.end():]
+        split = None
+        if rest.startswith(WHY_HEADING):
+            rest = rest[len(WHY_HEADING):]
+            at = rest.find(SPEC_HEADING)
+            while at >= 0 and split is None:
+                why, spec = rest[:at], rest[at + len(SPEC_HEADING):]
+                # GitHub may drop a final newline; the spec is still the one approved.
+                if text_sha256_of(why) == marker["why_sha256"] and marker["spec_sha256"] in (text_sha256_of(spec), text_sha256_of(spec + "\n")):
+                    split = (why, spec if text_sha256_of(spec) == marker["spec_sha256"] else spec + "\n")
+                at = rest.find(SPEC_HEADING, at + 1)
+        result = {**marker, "intact": bool(split), "why": split[0] if split else None, "spec": split[1] if split else None}
+        if split:
+            break
+    return result
+
+
+def approval_comment(slice_id: str, revision: int, login: str, spec_sha256: str, why_sha256: str) -> str:
+    """The comment that records a product manager's approval of one revision of a slice."""
+    if not LOGIN_RE.fullmatch(login or "") or not SLICE_ID_RE.fullmatch(slice_id) or type(revision) is not int:
+        raise ValueError("an approval names a slice, a revision and a GitHub account")
+    if not HEX64_RE.fullmatch(spec_sha256) or not HEX64_RE.fullmatch(why_sha256):
+        raise ValueError("an approval carries SHA-256 digests")
+    return (f"Approved in MACH Product Studio by {login}: {slice_id}, revision {revision}.\n\n"
+            f"- Specification SHA-256: `{spec_sha256}`\n- Why SHA-256: `{why_sha256}`\n\n"
+            f"<!-- mach:approval id={slice_id} revision={revision} by={login} spec-sha256={spec_sha256} why-sha256={why_sha256} -->")
+
+
+def approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Every approval marker found in an issue's comments, in order."""
+    found = []
+    for body in bodies:
+        for match in APPROVAL_RE.finditer(body if isinstance(body, str) else ""):
+            found.append({"slice_id": match.group(1), "revision": int(match.group(2)), "by": match.group(3),
+                          "spec_sha256": match.group(4), "why_sha256": match.group(5)})
+    return found
+
+
+def _one_line(value: Any, limit: int) -> str:
+    return bound_text(value, limit, one_line=True)[0]
+
+
+def project_issue_body(project_id: str, vision: str, outcomes: Sequence[str]) -> str:
+    if not PROJECT_ID_RE.fullmatch(project_id or ""):
+        raise ValueError("not a project ID")
+    lines = [f"<!-- mach:project id={project_id} -->", "## Vision", " ".join(str(vision).split()), "", "## Outcomes"]
+    lines += [f"- {' '.join(str(outcome).split())}" for outcome in outcomes]
+    return "\n".join(lines) + "\n\nWritten by MACH Product Studio.\n"
+
+
+def epic_issue_body(epic_id: str, criteria: Sequence[str], tasks: Optional[Sequence[Tuple[int, str, bool]]] = None) -> str:
+    """An epic's body. `tasks` is given only where sub-issues are not available: the slices as a
+    task list, (issue number, slice ID, shipped), in the product manager's order."""
+    if not EPIC_ID_RE.fullmatch(epic_id or ""):
+        raise ValueError("not an epic ID")
+    lines = [f"<!-- mach:epic id={epic_id} -->", "## Done when"] + [f"- {' '.join(str(item).split())}" for item in criteria]
+    if tasks is not None:
+        lines += ["", "## Slices"]
+        for number, slice_id, shipped in tasks:
+            if not is_issue_number(number) or not SLICE_ID_RE.fullmatch(slice_id):
+                raise ValueError("a task names an issue and a slice ID")
+            lines.append(f"- [{'x' if shipped else ' '}] #{number} {slice_id}")
+    return "\n".join(lines) + "\n\nWritten by MACH Product Studio.\n"
+
+
+def product_marker(body: Any) -> Optional[Tuple[str, str]]:
+    """("project", id) or ("epic", id) for a body Product Studio wrote; None otherwise."""
+    found = PRODUCT_MARKER_RE.match(body.replace("\r\n", "\n")) if isinstance(body, str) else None
+    return (found.group(1), found.group(2)) if found else None
+
+
+def issue_title(text: Any) -> str:
+    """A title Product Studio writes: one line, bounded."""
+    return _one_line(text, TITLE_LIMIT)
 
 
 # ---- monitoring requests (M8 D7) ----
