@@ -221,7 +221,9 @@ class NothingIsWiredInTest(unittest.TestCase):
                                  ("label", "list"), ("label", "create"), ("api", "--paginate"), ("api", "--method")} | {("api", "--method")})
         api = re.findall(r"_gh_(?:json|write)\(project, \"api\"[^\n]*", issues_source)
         paths = sorted(re.search(r"(\"user\"|ISSUE_PATH|SUB_ISSUES_PATH|PRIORITY_PATH)", call).group(1) for call in api)
-        self.assertEqual(paths, ["\"user\"", "ISSUE_PATH", "PRIORITY_PATH", "SUB_ISSUES_PATH", "SUB_ISSUES_PATH"])
+        self.assertEqual(paths, ["\"user\"", "ISSUE_PATH", "PRIORITY_PATH", "SUB_ISSUES_PATH", "SUB_ISSUES_PATH", "SUB_ISSUES_PATH"])
+        # The sub-issues are read twice over (ids to link, ids and numbers to compare orders); the order is written only by PRIORITY_PATH.
+        self.assertEqual(sorted(re.findall(r'"--jq", "(\.\[\] \| \{[a-z, ]+\})"', issues_source)), [".[] | {id, number}", ".[] | {id}"])
         writes = [call for call in api if "--method" in call]
         self.assertEqual(sorted(re.search(r"\"--method\", \"([A-Z]+)\"", call).group(1) for call in writes), ["PATCH", "POST"])
         self.assertTrue(all(call.startswith("_gh_write(") for call in writes) and all(call.startswith("_gh_json(") for call in api if call not in writes))

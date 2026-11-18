@@ -447,6 +447,7 @@ def describe(studio: Studio) -> Dict[str, Any]:
                   for key, data in epics.items()],
         "slices": slice_rows,
         "saved": saved_state(studio, ledger, slices),
+        "order": handoff.order_rows(ledger, slices, rules, list(epics)),
         "github": {"repository": ledger.get("repository"), "form": ledger.get("form"),
                    "last_read": (ledger.get("seen") or {}).get("refreshed_at")},
         "current_slice": session.get("current_slice"),
@@ -1032,6 +1033,181 @@ def cmd_acceptance_record(studio: Studio, args: argparse.Namespace) -> int:
                  "note": "Product's decision only, on the epic's issue. It releases and deploys nothing."})
 
 
+# ---- the order of slices within an epic, and another product manager's slice ----
+
+
+def slice_epic(ledger: Dict[str, Any], local: Dict[str, Dict[str, Any]], slice_id: str) -> Optional[str]:
+    """The epic a slice belongs to: its draft's here, else the epic GitHub lists it under (as last read)."""
+    if slice_id in local:
+        return local[slice_id].get("epic_id")
+    numbers = {row.get("epic_issue") for row in ((ledger.get("seen") or {}).get("slices") or {}).get(slice_id) or []}
+    known = {**{item.get("epic_id"): item.get("number") for item in (ledger.get("seen") or {}).get("epics") or [] if isinstance(item, dict)},
+             **{key: value.get("number") for key, value in ledger["epics"].items()}}
+    return next((epic_id for epic_id, number in sorted(known.items()) if number in numbers), None)
+
+
+def cmd_slice_move(studio: Studio, args: argparse.Namespace) -> int:
+    """Set a slice's place among its epic's slices. Saved here first; where the epic's slices are on GitHub,
+    their order there is then put in place, step by step, recorded before it is tried."""
+    studio.prepare()
+    slice_id, reference = args.slice_id, args.before or args.after
+    for named in (slice_id, reference):
+        if named is not None and not product.SLICE_RE.fullmatch(named):
+            raise StudioError(f"'{named}' is not a usable slice ID, such as SLICE-004.")
+    local = studio.all("slice")
+    rules = ticket_rules()
+    hand = studio.handoff()
+    with hand.exclusive():
+        ledger = hand.load()
+        epic_id = slice_epic(ledger, local, slice_id)
+        if epic_id is None:
+            raise StudioError(f"No slice {slice_id} is in this workspace or was on GitHub at the last refresh. Nothing was changed.")
+        if epic_id not in studio.all("epic"):
+            raise StudioError(f"{slice_id} belongs to {epic_id}, which is not in this workspace, so its order cannot be set here. Nothing was changed.")
+        epic = studio.load("epic", epic_id)
+        if reference is not None:
+            other = slice_epic(ledger, local, reference)
+            if reference == slice_id:
+                raise StudioError(f"{slice_id} cannot be placed before or after itself. Nothing was changed.")
+            if other is None:
+                raise StudioError(f"No slice {reference} is in this workspace or was on GitHub at the last refresh. Nothing was changed.")
+            if other != epic_id:
+                raise StudioError(f"{slice_id} is in {epic_id} and {reference} is in {other}. Slices are put in order only within their own epic, so nothing was changed.")
+        order = [item for item in handoff.effective_order(ledger, local, epic_id, hand.rank(ledger, epic_id)) if item != slice_id]
+        if reference is not None and reference not in order:
+            raise StudioError(f"{reference} is not listed among the slices of {epic_id}. Refresh, then try again. Nothing was changed.")
+        at =0 if args.first else len(order) if args.last else order.index(reference) + (1 if args.after else 0)
+        order.insert(at, slice_id)
+        record = ledger["order"].setdefault(epic_id, handoff.empty_order())
+        on_github = [item for item in order if handoff.issue_of(ledger, item)]
+        to_github = len(on_github) > 1 or (record.get("move") or {}).get("state") == "trying"
+        if to_github:
+            channel = hand.channel()  # refuses, changing nothing, when GitHub cannot be reached
+            if channel.kind != "github":
+                raise StudioError(f"Nothing was changed. Slices of {epic_id} are saved on GitHub, and GitHub cannot be used from here: {channel.why}")
+            ledger = hand.for_repository(ledger, str(channel.repository))
+            record = ledger["order"].setdefault(epic_id, handoff.empty_order())
+            record.update(slices=order, move={"state": "trying", "slices": order, "at": handoff.utc_now()})
+            hand.save(ledger)
+            failure = hand.arrange(ledger, str(channel.repository), epic, order)
+            if failure:
+                hand.save(ledger)
+                raise StudioError(f"The new order of {epic_id} is saved here, but putting it in place on GitHub stopped part way. {handoff.explain(failure)} "
+                                  "Move it again to finish; nothing is moved twice.")
+            record["move"] = {"state": "done", "slices": order, "at": handoff.utc_now()}
+        else:
+            record["slices"] = order
+        hand.save(ledger)
+    (row,) = handoff.order_rows(ledger, local, rules, [epic_id])
+    return emit({"moved": slice_id, "epic_id": epic_id, "position": order.index(slice_id) + 1, "order": row,
+                 "github": "in_place" if to_github else "not_needed", "factory_authorized": False,
+                 "note": (f"The order of {epic_id} is saved, and GitHub shows it the same way. The builders take its ready slices in this order." if to_github
+                          else f"The order of {epic_id} is saved here. Each slice takes its place on GitHub when it is marked ready.")})
+
+
+TAKE_REFUSALS = {
+    "not_ours": "Issue #{number} was not written by Product Studio, so it cannot be opened here. Nothing was changed.",
+    "shipped": "{slice_id} has already shipped as #{number}, so it cannot be opened here. Shipped work is not changed in place: "
+               "a changed version, when it is marked ready, opens a new issue that links to #{number}. Nothing was changed.",
+    "edited": "The text of #{number} was changed on GitHub after it was approved, so it cannot be opened here. "
+              "The product manager who approved it can mark it ready again to put the approved version back. Nothing was changed.",
+    "no_approval": "#{number} has no approval for the version it holds, so it cannot be opened here. Nothing was changed.",
+}
+
+
+def cmd_slice_take(studio: Studio, args: argparse.Namespace) -> int:
+    """Open another product manager's slice from GitHub here as a draft, based on its current version. Its
+    why and spec are written exactly as approved, only after their SHA-256 match the approval and the spec
+    passes the validator. GitHub's text is data: it is checked, never followed."""
+    studio.prepare()
+    target = args.target
+    if not (target.isdigit() and 1 <= int(target) < 10 ** 9) and not product.SLICE_RE.fullmatch(target):
+        raise StudioError(f"'{target}' is neither an issue number, such as 41, nor a slice ID, such as SLICE-004.")
+    project = studio.load("project")
+    rules = ticket_rules()
+    hand = studio.handoff()
+    with hand.exclusive():
+        read = hand.take_read(target)
+        check, number = read["check"], read["number"]
+        marker = check["marker"] or {}
+        slice_id = marker.get("slice_id") or target
+        if check["problem"]:
+            raise StudioError(TAKE_REFUSALS[check["problem"]].format(number=number, slice_id=slice_id))
+        ledger = hand.load()
+        local = studio.all("slice")
+        if slice_id in local:
+            if (ledger["slices"].get(slice_id) or {}).get("number") == number:
+                return emit({"taken": False, "already_in_workspace": True, "slice": local[slice_id], "issue": number,
+                             "url": rules.issue_url(read["repository"], number), "factory_authorized": False,
+                             "note": f"{slice_id} is already in your workspace from #{number}. Nothing was changed."})
+            raise StudioError(say(f"{slice_id} is already used here by a different draft, so #{number} cannot be opened under that number. "
+                                  f"Give your draft a new number first (slice renumber {slice_id}), then open #{number} again.",
+                                  f"{slice_id} is already used here by a different draft, so #{number} cannot be opened under that number. "
+                                  f"Give your draft a new number first, then open #{number} again."), hint("renumber_slice", slice_id))
+        epic_issue = read["epic"]
+        if epic_issue is None or not product.EPIC_RE.fullmatch(str(epic_issue.get("id"))):
+            raise StudioError(f"The epic #{number} belongs to on GitHub (#{marker.get('epic')}) was not written by Product Studio, so the slice cannot be opened here. Nothing was changed.")
+        epic_id = epic_issue["id"]
+        hand.find_project(ledger, read["snapshot"], project)  # refuses a repository that holds a different project
+        local_epic = studio.all("epic").get(epic_id)
+        linked = (ledger["epics"].get(epic_id) or {}).get("number")
+        if local_epic and linked != epic_issue["number"] and (linked or rules.issue_title(local_epic.get("title")) != rules.issue_title(epic_issue.get("title"))):
+            raise StudioError(say(f"{slice_id} belongs to {epic_id} on GitHub (#{epic_issue['number']}), and {epic_id} here is a different epic. "
+                                  f"Give your epic a new number first (epic renumber {epic_id}), then open #{number} again.",
+                                  f"{slice_id} belongs to {epic_id} on GitHub (#{epic_issue['number']}), and {epic_id} here is a different epic. "
+                                  f"Give your epic a new number first, then open #{number} again."), hint("renumber_epic", epic_id))
+        dependencies = []
+        for dependency, dependency_id in read["depends"]:
+            if dependency_id is None:
+                raise StudioError(f"{slice_id} depends on #{dependency}, which is not a slice Product Studio wrote, so it cannot be opened here. Nothing was changed.")
+            if dependency_id not in local:
+                raise StudioError(say(f"{slice_id} depends on {dependency_id} (#{dependency}), which is not in this workspace. Open it here first (slice take {dependency}), then open #{number} again.",
+                                      f"{slice_id} depends on {dependency_id} (#{dependency}), which is not in this workspace. Open it here first, then open #{number} again."))
+            dependencies.append(dependency_id)
+        spec, why = check["spec"], check["why"]
+        title = read["title"] or slice_id
+        existing, intent = studio.spec_of(slice_id), studio.intent_path(slice_id)
+        for path, text in ((existing, spec), (intent, why)):
+            if path is not None and path.exists() and path.read_bytes() != text.encode("utf-8"):
+                raise StudioError(say(f"Your workspace already holds other text for {slice_id} that is not a draft ({studio.relative(path)}), so it was left alone and nothing was changed.",
+                                      f"Your workspace already holds other text for {slice_id} that is not a draft, so it was left alone and nothing was changed."))
+        spec_path = existing or studio.draft / "specs" / "slices" / f"{slice_id}-{kebab(title)}.md"
+        others = studio.validate_slice.sibling_specs(spec_path, studio.cell.registries(studio.project, own=spec_path.parent))
+        findings, model = studio.validate_slice.analyze(spec, spec_path.name, others, ready=True)
+        errors = [f"{finding.message} [{finding.rule}]" for finding in findings if finding.severity == "error"]
+        if model.get("slice_id") != slice_id:
+            errors.append(f"the spec's title names {model.get('slice_id')}, not {slice_id}")
+        if errors or model.get("open_questions"):
+            raise StudioError(f"The spec in #{number} does not pass the spec check, so it cannot be opened here. Nothing was changed.\n  "
+                              + "\n  ".join(errors[:5] or ["it has open questions"]))
+        ready_like = bool({"mach:ready", "mach:building", "mach:question"} & set(read["labels"]))
+        hand.record_taken(ledger, read, slice_id, "github" if ready_like else "withdrawn", epic_id)  # recorded before the draft is written
+        created_epic = local_epic is None
+        if created_epic:
+            studio.commit_or_restore([("epic", {"schema_version": 1, "epic_id": epic_id, "project_id": project["project_id"], "revision": 1,
+                                                "title": rules.issue_title(epic_issue.get("title")) or epic_id, "status": "approved",
+                                                "acceptance_criteria": rules.epic_criteria(epic_issue.get("body"))})], f"Opening {epic_id}")
+        write(spec_path, spec)
+        write(intent, why)
+        work = {"schema_version": 1, "slice_id": slice_id, "project_id": project["project_id"], "epic_id": epic_id, "revision": 1, "title": title,
+                "status": APPROVED if ready_like else "interviewing", "dependencies": dependencies, "open_questions": [],
+                "spec_path": studio.relative(spec_path), "spec_sha256": sha(spec_path.read_bytes()) if ready_like else None}
+        studio.commit_or_restore([("slice", work)], f"Opening {slice_id}")
+    if not ready_like:
+        result = studio.check_slice(slice_id, ready=True)
+        work.update(status="ready_for_approval" if result["ready"] else "interviewing", open_questions=result["open_questions"])
+        studio.save("slice", work, bump=False)
+    return emit({"taken": True, "already_in_workspace": False, "slice": studio.load("slice", slice_id), "issue": number,
+                 "url": rules.issue_url(read["repository"], number), "revision": marker["revision"], "approved_by": check["approved_by"],
+                 "state_label": next((name for name in ("mach:question", "mach:building", "mach:ready") if name in read["labels"]), None),
+                 "epic": {"epic_id": epic_id, "issue": epic_issue["number"], "created_here": created_epic}, "dependencies": dependencies,
+                 "spec": studio.relative(spec_path), "why": studio.relative(intent), "editable": not ready_like, "factory_authorized": False,
+                 "note": (f"{slice_id} is now in your workspace exactly as #{number} holds it (version {marker['revision']}, approved by {check['approved_by']}). "
+                          "To change it, reopen it; marking it ready again saves a new version of the same issue." if ready_like else
+                          f"{slice_id} is now in your workspace exactly as #{number} holds it (version {marker['revision']}). "
+                          "It is not marked ready on GitHub, so you can change it now and mark it ready when it is done.")})
+
+
 # ---- collaboration ----
 
 
@@ -1283,6 +1459,8 @@ def cmd_renumber(studio: Studio, args: argparse.Namespace) -> int:
         if old in session["notes"]:
             session["notes"][new] = session["notes"].pop(old)
     studio.save_session(session)
+    if kind == "slice":
+        studio.handoff().rename_in_order(old, new)
     studio.note_withdrawn({artifact: "It was given a new number, so it needs your approval again." for artifact in set(returned)})
     structural = studio.structural()
     return emit({"renumbered": {"from": old, "to": new}, "changed": sorted(set(changed)), "needs_approval_again": sorted(set(returned)),
@@ -1337,7 +1515,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_renumber, kind="epic")
 
     slice_ = sub.add_parser("slice", help="slice work orders, their interview, and marking them ready").add_subparsers(
-        dest="action", required=True, metavar="{new,set,resume,pause,check,show,ready,reopen,renumber}")
+        dest="action", required=True, metavar="{new,set,resume,pause,check,show,ready,reopen,renumber,move,take}")
     p = slice_.add_parser("new")
     p.add_argument("--epic", required=True)
     p.add_argument("--title", required=True)
@@ -1373,6 +1551,17 @@ def build_parser() -> argparse.ArgumentParser:
     p = slice_.add_parser("renumber", help="give an unpublished draft the next free number")
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="slice")
+    p = slice_.add_parser("move", help="set a slice's place in its epic's order, which the builders follow (only on the product manager's word)")
+    p.add_argument("slice_id")
+    where = p.add_mutually_exclusive_group(required=True)
+    where.add_argument("--before", metavar="SLICE-ID")
+    where.add_argument("--after", metavar="SLICE-ID")
+    where.add_argument("--first", action="store_true")
+    where.add_argument("--last", action="store_true")
+    p.set_defaults(func=cmd_slice_move)
+    p = slice_.add_parser("take", help="open another product manager's slice from GitHub here as a draft (only on the product manager's word)")
+    p.add_argument("target", metavar="ISSUE-OR-SLICE-ID", help="the slice's issue number, such as 41, or its slice ID")
+    p.set_defaults(func=cmd_slice_take)
 
     request = sub.add_parser("request", help="GitHub issues labelled as requests").add_subparsers(dest="action", required=True)
     request.add_parser("list", help="the requests found at the last refresh; changes nothing").set_defaults(func=cmd_request_list)

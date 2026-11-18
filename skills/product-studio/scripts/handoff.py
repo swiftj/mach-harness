@@ -108,6 +108,7 @@ class Handoff:
         clean["slices"] = {key: value for key, value in (data.get("slices") or {}).items()
                            if isinstance(key, str) and self.rules.SLICE_ID_RE.fullmatch(key) and isinstance(value, dict)} if isinstance(data.get("slices"), dict) else {}
         clean["seen"] = data.get("seen") if isinstance(data.get("seen"), dict) else {}
+        clean["order"] = clean_order(data.get("order"), self.rules)
         return clean
 
     def save(self, data: Dict[str, Any]) -> None:
@@ -481,25 +482,26 @@ class Handoff:
         return self.order(data, repository, epic_number, slice_id, entry["id"], children)
 
     def order(self, data: Dict[str, Any], repository: str, epic_number: int, slice_id: str, child: int, children: List[int]) -> Optional[Dict[str, str]]:
-        """The product manager's order is the slices' IDs. The slice goes just after the nearest
+        """The product manager's order (slice move), else the slices' IDs. The slice goes just after the nearest
         earlier slice this workspace knows, or just before the first later one; others keep their place."""
+        rank = self.rank(data, (data["slices"][slice_id].get("run") or {}).get("epic_id"))
         known = {value.get("id"): key for key, value in data["slices"].items() if value.get("id") and key != slice_id}
-        earlier = [c for c in children if c in known and known[c] < slice_id]
-        later = [c for c in children if c in known and known[c] > slice_id]
+        earlier = [c for c in children if c in known and rank(known[c]) < rank(slice_id)]
+        later = [c for c in children if c in known and rank(known[c]) > rank(slice_id)]
         at = children.index(child)
         if earlier:
-            previous = max(earlier, key=lambda c: known[c])
+            previous = max(earlier, key=lambda c: rank(known[c]))
             if children.index(previous) != at - 1:
                 return issues.place_sub_issue(self.project, repository, epic_number, child, previous, None)
         elif later:
-            following = min(later, key=lambda c: known[c])
+            following = min(later, key=lambda c: rank(known[c]))
             if children.index(following) < at:
                 return issues.place_sub_issue(self.project, repository, epic_number, child, None, following)
         return None
 
     def epic_body(self, epic: Dict[str, Any], epic_number: int, snapshot: Dict[str, Any], entry: Dict[str, Any], slice_id: str,
                   number: Optional[int]) -> str:
-        """The epic's body where sub-issues are not available: its slices as a task list, by slice ID.
+        """The epic's body where sub-issues are not available: its slices as a task list, in the product manager's order.
         A slice's earlier, shipped issue is listed only while no newer issue holds its place."""
         tasks: Dict[str, Tuple[int, str, bool]] = {}
         for item in sorted(snapshot["slices"], key=lambda item: item["number"]):
@@ -508,7 +510,7 @@ class Handoff:
                 tasks[item["marker"]["slice_id"]] = (item["number"], item["marker"]["slice_id"], shipped)
         if number:
             tasks[slice_id] = (number, slice_id, False)
-        return self.rules.epic_issue_body(epic["epic_id"], epic.get("acceptance_criteria") or [], [tasks[key] for key in sorted(tasks)])
+        return self.rules.epic_issue_body(epic["epic_id"], epic.get("acceptance_criteria") or [], [tasks[key] for key in sorted(tasks, key=self.rank(None, epic["epic_id"]))])
 
     def outgoing_file(self, name: str, text: str) -> Path:
         """Text for gh to read (--body-file): written here, never passed on the command line."""
@@ -620,6 +622,7 @@ class Handoff:
                 data["seen"].update(refreshed_at=utc_now(), problem=None, problem_at=None, slices=rows,
                                     project=[{"number": p["number"], "project_id": p["id"]} for p in snapshot["projects"]],
                                     epics=[{"number": e["number"], "epic_id": e["id"], "title": self.rules.list_title(e.get("title"))} for e in snapshot["epics"]])
+                self.read_order(data, repository, snapshot, local)
                 self.save(data)
         except HandoffError as exc:
             return self.failed(repository, str(exc), local)
@@ -677,7 +680,7 @@ class Handoff:
                 "project_url": self.rules.issue_url(repo, project_number) if repo and project_number else None,
                 "epics": {key: value["number"] for key, value in data["epics"].items()},
                 "epic_urls": {key: self.rules.issue_url(repo, value["number"]) for key, value in data["epics"].items() if repo},
-                "slices": slice_rows(data, local, self.rules)}
+                "slices": slice_rows(data, local, self.rules), "order": order_rows(data, local, self.rules)}
 
     def record_acceptance(self, epic_id: str, release_id: str, commit: str, decision: str, readiness_sha256: str) -> Dict[str, Any]:
         """Product's decision on one release of an epic, as a comment from a fixed template on the epic's issue. Posted once."""
@@ -707,6 +710,179 @@ class Handoff:
 
     def taken_ids(self) -> List[int]:
         return [int(sid.split("-")[1]) for sid in (self.load().get("seen") or {}).get("taken") or [] if self.rules.SLICE_ID_RE.fullmatch(str(sid))]
+
+    # ---- the product manager's order within an epic ----
+
+    def rank(self, data: Optional[Dict[str, Any]], epic_id: Optional[str]) -> Callable[[str], Tuple[int, str]]:
+        """A sort key for the epic's slices: the order the product manager set, then any others by slice ID."""
+        return rank_key(((data if data is not None else self.load()).get("order") or {}).get(epic_id or "", {}).get("slices") or [])
+
+    def github_order(self, repository: str, epic_number: int, body: Any, number_to_slice: Dict[int, str],
+                     form: Optional[str]) -> Tuple[Optional[List[str]], Optional[List[Tuple[int, int]]], Optional[Dict[str, str]]]:
+        """The epic's slices in GitHub's order (its sub-issues, or its task list where it has none), with
+        the sub-issues as (id, number) when that is the form. A slice listed twice (shipped, then changed)
+        takes the place of its newest issue."""
+        children: Optional[List[Tuple[int, int]]] = None
+        numbers: Optional[List[int]] = None
+        if form != "task_list":
+            children, failure = issues.sub_issue_numbers(self.project, repository, epic_number)
+            if failure and not (form is None and issues.unavailable(failure)):
+                return None, None, failure
+            if children and not failure:
+                numbers = [number for _, number in children]
+            elif form == "sub_issues" and not failure:
+                numbers = []
+            else:
+                children = None
+        if numbers is None:
+            numbers = self.rules.epic_tasks(body)
+        return current_order(numbers, number_to_slice), children, None
+
+    def read_order(self, data: Dict[str, Any], repository: str, snapshot: Dict[str, Any], local: Dict[str, Dict[str, Any]]) -> None:
+        """For refresh: each epic's order on GitHub. Where it changed since this workspace last read or wrote
+        it, another product manager changed it, and theirs is taken; a move of this workspace's own that has
+        not finished is never overwritten. A failure to read one epic keeps what was known."""
+        number_to_slice = {item["number"]: item["marker"]["slice_id"] for item in snapshot["slices"]}
+        taken: List[str] = []
+        problems: List[str] = []
+        done: set = set()
+        for item in sorted(snapshot["epics"], key=lambda e: e["number"]):
+            epic_id = item["id"]
+            linked = (data["epics"].get(epic_id) or {}).get("number")
+            if not self.rules.EPIC_ID_RE.fullmatch(str(epic_id)) or epic_id in done or (linked and linked != item["number"]):
+                continue
+            done.add(epic_id)
+            found, _, failure = self.github_order(repository, item["number"], item.get("body"), number_to_slice, data.get("form"))
+            record = data["order"].setdefault(epic_id, empty_order())
+            if failure or found is None:
+                problems.append(epic_id)
+                continue
+            last = (record.get("github") or {}).get("slices") if (record.get("github") or {}).get("repository") == repository else None
+            mine = effective_order(data, local, epic_id, self.rank(data, epic_id))
+            pending = (record.get("move") or {}).get("state") == "trying"
+            if last is not None:
+                changed = relative(found, last) != relative(last, found)
+            else:
+                changed = not record.get("slices") and relative(found, mine) != relative(mine, found)
+            if changed and not pending:
+                record.update(slices=merge_order(found, mine), taken_at=utc_now())
+                taken.append(epic_id)
+            record["github"] = {"repository": repository, "slices": found, "read_at": utc_now()}
+        data["seen"].update(order_taken=taken, order_not_read=problems)
+
+    def arrange(self, data: Dict[str, Any], repository: str, epic: Dict[str, Any], wanted: Sequence[str]) -> Optional[Dict[str, str]]:
+        """Put the epic's slices on GitHub in the product manager's order. Reads GitHub first and moves only
+        what is out of place, so a repeated or interrupted run never moves anything twice."""
+        snapshot, failure = self.read(repository)
+        if failure or snapshot is None:
+            return failure or {"kind": "other", "reason": "", "link": ""}
+        self.remember(data, snapshot)
+        epic_number = self.find_epic(data, snapshot, epic)
+        if epic_number is None:
+            return None
+        data["epics"][epic["epic_id"]] = {"number": epic_number}
+        item = next(e for e in snapshot["epics"] if e["number"] == epic_number)
+        number_to_slice = {found["number"]: found["marker"]["slice_id"] for found in snapshot["slices"]}
+        _, children, failure = self.github_order(repository, epic_number, item.get("body"), number_to_slice, data.get("form"))
+        if failure:
+            return failure
+        record = data["order"].setdefault(epic["epic_id"], empty_order())
+        if children is None or (not children and data.get("form") != "sub_issues"):
+            if data.get("form") != "task_list" and not self.rules.epic_tasks(item.get("body")):
+                return None  # no slice of this epic is listed on GitHub yet
+            body = self.epic_body(epic, epic_number, snapshot, {}, "", None)
+            _, failure = self.ensure(repository, epic_number, self.rules.issue_title(epic.get("title")), body, ["mach:epic"], "mach:epic", f"epic-{epic['epic_id']}")
+            if failure:
+                return failure
+            record["github"] = {"repository": repository, "slices": current_order(self.rules.epic_tasks(body), number_to_slice), "read_at": utc_now()}
+            return None
+        newest: Dict[str, Tuple[int, int]] = {}
+        for child, number in children:
+            slice_id = number_to_slice.get(number)
+            if slice_id and (slice_id not in newest or number > newest[slice_id][1]):
+                newest[slice_id] = (child, number)
+        desired = [newest[slice_id][0] for slice_id in wanted if slice_id in newest]
+        current = [child for child, _ in children]
+        staying = in_place(desired, current)
+        for at, child in enumerate(desired):
+            if child in staying:
+                continue
+            after, before = (desired[at - 1], None) if at else (None, next(other for other in desired if other in staying))
+            failure = issues.place_sub_issue(self.project, repository, epic_number, child, after, before)
+            if failure:
+                return failure
+            current.remove(child)
+            current.insert(current.index(after) + 1 if after is not None else current.index(before), child)
+        numbers = dict(children)
+        record["github"] = {"repository": repository, "slices": current_order([numbers[child] for child in current], number_to_slice), "read_at": utc_now()}
+        return None
+
+    def rename_in_order(self, old: str, new: str) -> None:
+        """A draft given a new number keeps its place in its epic's order."""
+        with self.exclusive():
+            data = self.load()
+            for record in data["order"].values():
+                record["slices"] = [new if slice_id == old else slice_id for slice_id in record.get("slices") or []]
+            self.save(data)
+
+    # ---- opening another product manager's slice ----
+
+    def take_read(self, target: str) -> Dict[str, Any]:
+        """Everything about a slice issue that is needed to open it here, read from GitHub. Writes nothing;
+        refuses when GitHub cannot be read. The issue's text is data: what it holds is decided by the shared rules."""
+        if shutil.which("gh") is None:
+            raise HandoffError("The GitHub tool (gh) is not installed on this computer, so a slice cannot be read from GitHub. Nothing was changed.")
+        repository, failure = collab.request_repository(self.project)
+        if repository is None:
+            raise HandoffError(f"{explain(failure) if failure else 'This project is not connected to a GitHub repository.'} Nothing was changed.")
+        snapshot, failure = self.read(repository)
+        if failure or snapshot is None:
+            raise HandoffError(f"Nothing was changed. {explain(failure)} Try again when GitHub can be reached.")
+        if target.isdecimal():
+            number = int(target)
+        else:
+            listed = [item for item in snapshot["slices"] if item["marker"]["slice_id"] == target]
+            waiting = [item for item in listed if item["state"] == "open" and "mach:shipped" not in item["labels"]]
+            if not listed:
+                raise HandoffError(f"No slice {target} was found on GitHub. Nothing was changed.")
+            number = max(item["number"] for item in (waiting or listed))
+        current, failure = issues.view(self.project, repository, number)
+        if failure or current is None:
+            raise HandoffError(f"Issue #{number} could not be read, so nothing was changed. {explain(failure)}")
+        found, failure = issues.comments(self.project, repository, number)
+        if failure:
+            raise HandoffError(f"Issue #{number}'s approval could not be read, so nothing was changed. {explain(failure)}")
+        names = issues.label_names(current)
+        check = self.rules.slice_take_check({"state": current.get("state"), "labels": names, "body": current.get("body")}, found or [])
+        marker = check["marker"] or {}
+        epic = next((item for item in snapshot["epics"] if item["number"] == marker.get("epic")), None)
+        number_to_slice = {item["number"]: item["marker"]["slice_id"] for item in snapshot["slices"]}
+        return {"repository": repository, "number": number, "title": self.rules.issue_title(current.get("title")), "labels": names,
+                "state": str(current.get("state") or "").lower(), "check": check, "epic": epic, "comments": found or [],
+                "depends": [(dep, number_to_slice.get(dep)) for dep in marker.get("depends") or []], "snapshot": snapshot}
+
+    def record_taken(self, data: Dict[str, Any], read: Dict[str, Any], slice_id: str, saved: str, epic_id: str) -> None:
+        """Link the slice opened here to its issue, at the revision it was based on. Recorded before the
+        draft's files are written, so an interrupted take is finished by taking it again."""
+        data = self.for_repository(data, read["repository"])
+        marker, check = read["check"]["marker"], read["check"]
+        self.remember(data, read["snapshot"])
+        entry = self.entry(data, slice_id)
+        entry.update(number=read["number"], id=None, base_revision=marker["revision"], revision=marker["revision"], spec_sha256=marker["spec_sha256"],
+                     why_sha256=marker["why_sha256"], saved=saved, approved_by=check["approved_by"], run=None, taken_at=utc_now(),
+                     shipped=sorted(set(entry.get("shipped") or []) | ({marker["follows"]} if marker.get("follows") else set())))
+        data["epics"][epic_id] = {"number": read["epic"]["number"]}
+        item = {"number": read["number"], "state": read["state"], "labels": read["labels"], "title": read["title"], "marker": {**marker, "intact": True}}
+        rows = data.setdefault("seen", {}).setdefault("slices", {}).setdefault(slice_id, [])
+        rows[:] = [row for row in rows if row.get("issue") != read["number"]] + [self.describe(data, item, read["comments"], None)]
+        record = data["order"].get(epic_id)
+        github = (record or {}).get("github") or {}
+        if record and record.get("slices") and slice_id not in record["slices"]:
+            # Its place is where GitHub has it, after the nearest slice before it that the order here already lists.
+            there = github.get("slices") or [] if github.get("repository") == read["repository"] else []
+            before = [other for other in there[:there.index(slice_id)] if other in record["slices"]] if slice_id in there else []
+            record["slices"].insert(record["slices"].index(before[-1]) + 1 if before else 0 if slice_id in there else len(record["slices"]), slice_id)
+        self.save(data)
 
 
 def too_large(slice_id: str, length: int, limit: int) -> str:
@@ -788,4 +964,133 @@ def slice_rows(data: Dict[str, Any], local: Dict[str, Dict[str, Any]], rules: An
                      "on_github": [{key: row.get(key) for key in ("issue", "state", "state_label", "revision", "title", "matches_approval", "approved_by", "question")}
                                    for row in sorted(listed, key=lambda row: row["issue"])],
                      "title": latest.get("title") or (local.get(slice_id) or {}).get("title")})
+    return rows
+
+
+# ---- the product manager's order within an epic ----
+
+
+def empty_order() -> Dict[str, Any]:
+    return {"slices": [], "github": None, "move": None, "taken_at": None}
+
+
+def clean_order(raw: Any, rules: Any) -> Dict[str, Dict[str, Any]]:
+    """The order record as read back: per epic, the slice IDs in the product manager's order, GitHub's
+    order as last read or written, and a move not yet finished on GitHub."""
+    clean: Dict[str, Dict[str, Any]] = {}
+    for epic_id, record in (raw.items() if isinstance(raw, dict) else []):
+        if not isinstance(epic_id, str) or not rules.EPIC_ID_RE.fullmatch(epic_id) or not isinstance(record, dict):
+            continue
+        ids = lambda value: list(dict.fromkeys(item for item in value if isinstance(item, str) and rules.SLICE_ID_RE.fullmatch(item))) if isinstance(value, list) else []
+        github = record.get("github") if isinstance(record.get("github"), dict) and rules.is_repository(record["github"].get("repository")) else None
+        move = record.get("move") if isinstance(record.get("move"), dict) and record["move"].get("state") in ("trying", "done") else None
+        clean[epic_id] = {"slices": ids(record.get("slices")), "taken_at": record.get("taken_at") if isinstance(record.get("taken_at"), str) else None,
+                          "github": {**github, "slices": ids(github.get("slices"))} if github else None,
+                          "move": {**move, "slices": ids(move.get("slices"))} if move else None}
+    return clean
+
+
+def rank_key(listed: Sequence[str]) -> Callable[[str], Tuple[int, str]]:
+    """A sort key: the order the product manager set, then any other slices by slice ID."""
+    listed = list(listed)
+    return lambda slice_id: (listed.index(slice_id), "") if slice_id in listed else (len(listed), slice_id)
+
+
+def relative(order: Sequence[str], among: Sequence[str]) -> List[str]:
+    """`order` kept to the slices that are also in `among`."""
+    return [slice_id for slice_id in order if slice_id in among]
+
+
+def current_order(numbers: Sequence[int], number_to_slice: Dict[int, str]) -> List[str]:
+    """Slice IDs in the order of their issues. A slice with several issues (shipped, then changed) is placed by its newest."""
+    newest: Dict[str, Tuple[int, int]] = {}
+    for at, number in enumerate(numbers):
+        slice_id = number_to_slice.get(number)
+        if slice_id and (slice_id not in newest or number > newest[slice_id][1]):
+            newest[slice_id] = (at, number)
+    return [slice_id for slice_id, _ in sorted(newest.items(), key=lambda item: item[1][0])]
+
+
+def in_place(desired: Sequence[int], current: Sequence[int]) -> set:
+    """The largest set of sub-issues already in the wanted order relative to each other; only the others are moved."""
+    positions = [current.index(child) for child in desired]
+    best: List[List[int]] = []
+    for at, position in enumerate(positions):
+        longest = max((best[earlier] for earlier in range(at) if positions[earlier] < position), key=len, default=[])
+        best.append(longest + [at])
+    return {desired[at] for at in max(best, key=len, default=[])}
+
+
+def merge_order(github: Sequence[str], mine: Sequence[str]) -> List[str]:
+    """GitHub's order, with the slices only this workspace has kept just after the slice they followed here."""
+    merged = list(github)
+    for at, slice_id in enumerate(mine):
+        if slice_id in merged:
+            continue
+        before = [other for other in mine[:at] if other in merged]
+        merged.insert(merged.index(before[-1]) + 1 if before else 0, slice_id)
+    return merged
+
+
+def epic_number(data: Dict[str, Any], epic_id: str) -> Optional[int]:
+    linked = (data["epics"].get(epic_id) or {}).get("number")
+    if linked:
+        return linked
+    seen = sorted(item["number"] for item in (data.get("seen") or {}).get("epics") or [] if isinstance(item, dict) and item.get("epic_id") == epic_id)
+    return seen[0] if seen else None
+
+
+def issue_of(data: Dict[str, Any], slice_id: str) -> Optional[int]:
+    """The slice's current issue: its own, else the newest open one GitHub holds for it, else the newest."""
+    entry = data["slices"].get(slice_id) or {}
+    if entry.get("number"):
+        return entry["number"]
+    rows = ((data.get("seen") or {}).get("slices") or {}).get(slice_id) or []
+    waiting = [row["issue"] for row in rows if row.get("state") == "open" and row.get("state_label") != "mach:shipped"]
+    return max(waiting or [row["issue"] for row in rows] or [0]) or None
+
+
+def epic_members(data: Dict[str, Any], local: Dict[str, Dict[str, Any]], epic_id: str) -> List[str]:
+    """The epic's slices: the drafts here that belong to it, and the slices GitHub lists under its issue."""
+    number = epic_number(data, epic_id)
+    members = {slice_id for slice_id, work in local.items() if work.get("epic_id") == epic_id}
+    for slice_id, rows in ((data.get("seen") or {}).get("slices") or {}).items():
+        if slice_id not in local and number and any(row.get("epic_issue") == number for row in rows):
+            members.add(slice_id)
+    return sorted(members)
+
+
+def effective_order(data: Dict[str, Any], local: Dict[str, Dict[str, Any]], epic_id: str, rank: Callable[[str], Tuple[int, str]]) -> List[str]:
+    return sorted(epic_members(data, local, epic_id), key=rank)
+
+
+def order_rows(data: Dict[str, Any], local: Dict[str, Dict[str, Any]], rules: Any, epic_ids: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+    """Each epic's slices in the product manager's order, and whether GitHub shows them in the same order."""
+    seen = data.get("seen") or {}
+    wanted = epic_ids if epic_ids is not None else sorted({work.get("epic_id") for work in local.values() if isinstance(work.get("epic_id"), str)}
+                                                          | set(data["order"]) | set(data["epics"]))
+    rows = []
+    for epic_id in wanted:
+        record = data["order"].get(epic_id) or empty_order()
+        order = sorted(epic_members(data, local, epic_id), key=rank_key(record.get("slices") or []))
+        github = record.get("github") or {}
+        there = github.get("slices") if github.get("repository") == data.get("repository") else None
+        slices = []
+        for slice_id in order:
+            number = issue_of(data, slice_id)
+            row = next((item for item in (seen.get("slices") or {}).get(slice_id) or [] if item.get("issue") == number), {})
+            slices.append({"slice_id": slice_id, "title": (local.get(slice_id) or {}).get("title") or row.get("title"), "in_workspace": slice_id in local,
+                           "issue": number, "state_label": row.get("state_label")})
+        on_github = [item["slice_id"] for item in slices if item["issue"]]
+        unfinished = (record.get("move") or {}).get("state") == "trying"
+        matches = None if there is None or not on_github else relative(there, order) == relative(order, there)
+        taken = epic_id in (seen.get("order_taken") or [])
+        note = ("Your new order is saved here but is not yet in place on GitHub. Move a slice again to finish; nothing is moved twice." if unfinished
+                else "Another product manager changed this order on GitHub; their order was taken at the last refresh." if taken
+                else "GitHub shows these slices in a different order from yours. Moving a slice puts your order in place." if matches is False
+                else None)
+        rows.append({"epic_id": epic_id, "issue": epic_number(data, epic_id), "slices": slices, "on_github": bool(on_github),
+                     "github_order": list(there) if there is not None else None, "github_read_at": github.get("read_at") if there is not None else None,
+                     "matches_github": matches, "unfinished": unfinished, "taken_from_github": taken,
+                     "could_not_read": epic_id in (seen.get("order_not_read") or []), "note": note})
     return rows
