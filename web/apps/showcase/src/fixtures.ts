@@ -30,7 +30,7 @@ import statusWithDependencyJson from "../../../fixtures/status.with-dependency.j
 import sliceCheckErrorsJson from "../../../fixtures/slice.check.errors.json";
 import sliceReadyJson from "../../../fixtures/slice.ready.json";
 import sliceReadyFolderJson from "../../../fixtures/slice.ready.folder.json";
-import sliceReadyRefusedEpicJson from "../../../fixtures/slice.ready.refused-epic.json";
+import sliceReadyRefusedOpenQuestionsJson from "../../../fixtures/slice.ready.refused-open-questions.json";
 import sliceReadyRefusedNoSpecJson from "../../../fixtures/slice.ready.refused-no-spec.json";
 import sliceReadyRefusedNewerJson from "../../../fixtures/slice.ready.refused-newer-elsewhere.json";
 import sliceReopenJson from "../../../fixtures/slice.reopen.json";
@@ -64,7 +64,7 @@ export const runs = {
   sliceCheckErrors: fixture<SliceCheck>(sliceCheckErrorsJson),
   sliceReady: fixture<SliceReadyOnGithub>(sliceReadyJson),
   sliceReadyFolder: fixture<SliceReadyInFolder>(sliceReadyFolderJson),
-  sliceReadyRefusedEpic: fixture<SliceReady>(sliceReadyRefusedEpicJson),
+  sliceReadyRefusedOpenQuestions: fixture<SliceReady>(sliceReadyRefusedOpenQuestionsJson),
   sliceReadyRefusedNoSpec: fixture<SliceReady>(sliceReadyRefusedNoSpecJson),
   sliceReadyRefusedNewer: fixture<SliceReady>(sliceReadyRefusedNewerJson),
   sliceReopen: fixture<SliceReopen>(sliceReopenJson),

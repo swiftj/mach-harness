@@ -12,7 +12,7 @@ import (
 // The contract's section 3, plus slice.show. Nothing else may be reachable.
 func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	want := []string{
-		"epic.add", "epic.approve", "epic.renumber", "epic.set", "project.init", "project.set",
+		"epic.add", "epic.renumber", "epic.set", "project.init", "project.set",
 		"reconcile", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
 		"slice.check", "slice.move", "slice.new", "slice.pause", "slice.ready",
 		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "status", "validate", "where",
@@ -60,7 +60,7 @@ func TestCommandsTheAppNeverOffersAreUnreachable(t *testing.T) {
 		case "wave", "send", "feedback", "acceptance":
 			return true
 		}
-		return len(argv) > 1 && argv[0] == "slice" && argv[1] == "approve"
+		return len(argv) > 1 && (argv[0] == "slice" || argv[0] == "epic") && argv[1] == "approve"
 	}
 	bodies := []string{`{}`, `{"slice_id":"SLICE-001"}`, `{"slice_id":"SLICE-001","first":true}`, `{"issue":41}`, `{"slice_id":"SLICE-001","take":"mine"}`, `{"identifier":"SLICE-001"}`,
 		`{"identifier":"EPIC-001"}`, `{"epic_id":"EPIC-001"}`, `{"number":42}`, `{"number":42,"slice_id":"SLICE-001"}`}
@@ -113,7 +113,6 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 			[]string{"epic", "add", "--title=Team membership", "--criterion=Only invited people can join"}},
 		{"epic.set", `{"epic_id":"EPIC-001","title":"T","criterion":["a","b"],"status":"deferred"}`,
 			[]string{"epic", "set", "EPIC-001", "--title=T", "--criterion=a", "--criterion=b", "--status=deferred"}},
-		{"epic.approve", `{"epic_id":"EPIC-001"}`, []string{"epic", "approve", "EPIC-001"}},
 		{"epic.renumber", `{"identifier":"EPIC-002"}`, []string{"epic", "renumber", "EPIC-002"}},
 		{"slice.new", `{"epic":"EPIC-001","title":"Invite","depends_on":["SLICE-001"],"id":"SLICE-004"}`,
 			[]string{"slice", "new", "--epic=EPIC-001", "--title=Invite", "--depends-on=SLICE-001", "--id=SLICE-004"}},
@@ -231,9 +230,9 @@ func TestRequestOpsArgv(t *testing.T) {
 func TestRequestsTheHostRejects(t *testing.T) {
 	long := strings.Repeat("x", 301)
 	cases := []struct{ op, body, says string }{
-		{"epic.approve", `{"epic_id":"../../etc"}`, "EPIC-001"},
-		{"epic.approve", `{"epic_id":"EPIC-1"}`, "EPIC-001"},
-		{"epic.approve", `{}`, "required"},
+		{"epic.set", `{"epic_id":"../../etc"}`, "EPIC-001"},
+		{"epic.set", `{"epic_id":"EPIC-1"}`, "EPIC-001"},
+		{"epic.set", `{}`, "required"},
 		{"slice.show", `{"slice_id":"SLICE-001/../x"}`, "SLICE-001"},
 		{"slice.show", `{"slice_id":"slice-001"}`, "SLICE-001"},
 		{"slice.show", `{"slice_id":"SLICE-0000000000000000000000000001"}`, "SLICE-001"},
@@ -259,11 +258,11 @@ func TestRequestsTheHostRejects(t *testing.T) {
 		{"slice.take", `{"slice_id":"--help"}`, "SLICE-001"},
 		{"reconcile", `{"slice_id":"SLICE-001","take":"mine","field":"title"}`, "Unknown field"},
 		// shape errors from Decode
-		{"epic.approve", `{"epic_id":"EPIC-001","force":true}`, "Unknown field"},
-		{"epic.approve", `{"epic_id":1}`, "wrong type"},
-		{"epic.approve", `["EPIC-001"]`, "JSON object"},
-		{"epic.approve", `{"epic_id":"EPIC-001"} {}`, "exactly one"},
-		{"epic.approve", `{"epic_id":`, "not valid JSON"},
+		{"epic.set", `{"epic_id":"EPIC-001","force":true}`, "Unknown field"},
+		{"epic.set", `{"epic_id":1}`, "wrong type"},
+		{"epic.set", `["EPIC-001"]`, "JSON object"},
+		{"epic.set", `{"epic_id":"EPIC-001"} {}`, "exactly one"},
+		{"epic.set", `{"epic_id":`, "not valid JSON"},
 		{"slice.check", `{"slice_id":"SLICE-001","ready":"yes"}`, "wrong type"},
 	}
 	for _, c := range cases {

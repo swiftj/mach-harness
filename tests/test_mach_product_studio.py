@@ -121,7 +121,6 @@ class Base(unittest.TestCase):
 
     def approved_slice(self, project=None):
         self.ready_slice(project)
-        self.ok("epic", "approve", "EPIC-001", project=project)
         return self.ok("slice", "ready", "SLICE-001", project=project)
 
     def artifact(self, relative, project=None):
@@ -161,7 +160,7 @@ class FullSessionTest(Base):
         self.ok("slice", "check", "SLICE-001")
         suggestions = " ".join(self.ok("status")["suggested_next"])
         self.assertIn("slice ready SLICE-001", suggestions)
-        self.assertIn("epic approve EPIC-001", suggestions)
+        self.assertNotIn("epic approve", suggestions)
 
     def test_where_points_at_the_shared_interview_files(self):
         where = self.ok("where")
@@ -199,7 +198,6 @@ class ApprovalGateTest(Base):
 
     def test_open_question_blocks(self):
         self.ready_slice()
-        self.ok("epic", "approve", "EPIC-001")
         text = FIXTURE.read_text().replace("## Open questions\n\n- None.", "## Open questions\n\n- Do invitations expire? Follow up: ask Legal.")
         self.assertNotEqual(text, FIXTURE.read_text())
         self.write_spec(text=text)
@@ -212,7 +210,6 @@ class ApprovalGateTest(Base):
 
     def test_spec_the_validator_rejects_blocks(self):
         self.ready_slice()
-        self.ok("epic", "approve", "EPIC-001")
         text = FIXTURE.read_text()
         cut = text.index("## Invariants")
         self.write_spec(text=text[:cut] + text[text.index("## Functional requirements"):])
@@ -223,13 +220,11 @@ class ApprovalGateTest(Base):
 
     def test_spec_for_another_slice_blocks(self):
         self.ready_slice()
-        self.ok("epic", "approve", "EPIC-001")
         self.write_spec(text=FIXTURE.read_text().replace("# SLICE-001:", "# SLICE-009:", 1))
         self.refused("slice", "ready", "SLICE-001")
 
     def test_missing_or_unfinished_intent_blocks(self):
         self.ready_slice()
-        self.ok("epic", "approve", "EPIC-001")
         (self.draft / "product/intents/SLICE-001.md").unlink()
         self.assertIn("is missing", self.refused("slice", "ready", "SLICE-001"))
         self.write_intent(text=(ROOT / "skills/product-studio/assets/intent-template.md").read_text())
@@ -237,14 +232,26 @@ class ApprovalGateTest(Base):
         self.write_intent(text=INTENT_TEXT.replace("- **Tier:** High", "- **Tier:** Severe"))
         self.assertIn("Tier", self.refused("slice", "ready", "SLICE-001"))
 
-    def test_unapproved_epic_blocks(self):
+    def test_a_new_epic_is_open_and_needs_no_approval(self):
         self.ready_slice()
-        self.assertIn("epic EPIC-001 is proposed", self.refused("slice", "ready", "SLICE-001"))
+        epic = self.artifact("product/epics/EPIC-001.json")
+        self.assertEqual(epic["status"], "open")
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            self.run_studio("epic", "approve", "EPIC-001")  # there is no such command
+        self.ok("slice", "ready", "SLICE-001")  # a slice under a new epic is marked ready with no step for the epic
 
-    def test_epic_needs_criteria_to_be_approved(self):
+    def test_an_epic_set_aside_is_brought_back(self):
         self.start()
-        self.ok("epic", "add", "--title", "Billing")
-        self.assertIn("acceptance criteria", self.refused("epic", "approve", "EPIC-002"))
+        self.assertEqual(self.ok("epic", "set", "EPIC-001", "--status", "deferred")["epic"]["status"], "deferred")
+        self.assertEqual(self.ok("epic", "set", "EPIC-001", "--status", "open")["epic"]["status"], "open")
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            self.run_studio("epic", "set", "EPIC-001", "--status", "approved")
+
+    def test_a_dependency_not_ready_blocks(self):
+        self.ready_slice()
+        other = self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Remove a teammate")["slice"]["slice_id"]
+        self.ok("slice", "set", "SLICE-001", "--depends-on", other)
+        self.assertIn(f"SLICE-001 depends on {other}, which is not ready yet", self.refused("slice", "ready", "SLICE-001"))
 
     def test_approved_slice_cannot_be_edited_in_place(self):
         self.approved_slice()
@@ -481,14 +488,13 @@ class NextActionsTest(Base):
         self.ok("project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "v", "--outcome", "o")
         self.assertEqual(self.actions()[1], [("add_epic", None)])
         self.ok("epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join")
-        self.assertEqual(self.actions()[1], [("approve_epic", "EPIC-001"), ("start_slice", None)])
+        self.assertEqual(self.actions()[1], [("start_slice", None)])
         self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
-        self.assertEqual(self.actions()[1], [("continue_interview", "SLICE-001"), ("approve_epic", "EPIC-001")])
+        self.assertEqual(self.actions()[1], [("continue_interview", "SLICE-001")])
         self.write_spec()
         self.write_intent()
         self.ok("slice", "check", "SLICE-001")
-        self.assertEqual(self.actions()[1], [("mark_ready", "SLICE-001"), ("approve_epic", "EPIC-001")])  # a ready slice is still open
-        self.ok("epic", "approve", "EPIC-001")
+        self.assertEqual(self.actions()[1], [("mark_ready", "SLICE-001")])  # a ready slice is still open
         self.ok("slice", "ready", "SLICE-001")
         self.assertEqual(self.actions()[1], [("start_slice", None)])
         # Approved but not handed over (an interrupted run): finish it.
@@ -531,11 +537,17 @@ class AppWordingTest(Base):
         self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
         self.write_spec()
         self.write_intent()
-        message, hint = self.app_refusal("slice", "ready", "SLICE-001")
-        self.assertEqual(message, "SLICE-001 cannot be marked ready yet:\n  epic EPIC-001 is proposed, not approved")
-        self.assertEqual(hint, {"kind": "approve_epic", "target": "EPIC-001"})
-        self.assertIn("(studio.py epic approve EPIC-001)", self.refused("slice", "ready", "SLICE-001"))  # the terminal keeps its hint
-        self.ok("epic", "approve", "EPIC-001")
+        asked = FIXTURE.read_text().replace("## Open questions\n\n- None.", "## Open questions\n\n- Do invitations expire? Follow up: ask Legal.")
+        self.write_spec(text=asked)
+        # The app titles a refusal itself ("SLICE-001 was not marked ready"), so its message is the reasons alone.
+        self.assertEqual(self.app_refusal("slice", "ready", "SLICE-001"), ("open question: Do invitations expire?", None))
+        self.assertIn("SLICE-001 cannot be marked ready yet:\n  open question: Do invitations expire?", self.refused("slice", "ready", "SLICE-001"))  # the terminal keeps its heading
+        self.write_spec()
+        other = self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Remove a teammate")["slice"]["slice_id"]
+        self.ok("slice", "set", "SLICE-001", "--depends-on", other)
+        self.assertEqual(self.app_refusal("slice", "ready", "SLICE-001"),
+                         (f"SLICE-001 depends on {other}, which is not ready yet. Mark {other} ready first.", {"kind": "mark_ready", "target": other}))
+        self.ok("slice", "set", "SLICE-001", "--depends-on", "none")
         self.ok("slice", "ready", "SLICE-001")
         self.assertEqual(self.app_refusal("slice", "check", "SLICE-001"),
                          ("SLICE-001 is approved. To change an approved slice, reopen it first.", {"kind": "reopen_slice", "target": "SLICE-001"}))

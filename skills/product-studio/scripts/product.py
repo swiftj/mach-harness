@@ -38,7 +38,7 @@ ORIGIN_KINDS = ("github_issue",)
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 ENUMS = {
     "project": {"status": ("draft", "active", "archived")},
-    "epic": {"status": ("proposed", "approved", "deferred", "completed", "superseded")},
+    "epic": {"status": ("open", "deferred")},  # an epic is a container for slices: in the project, or set aside
     "slice": {"status": ("draft", "interviewing", "ready_for_approval", "approved_for_engineering", "superseded")},
 }
 

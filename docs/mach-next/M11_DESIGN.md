@@ -74,9 +74,9 @@ validated exactly as a spec file is today.
 
 ## 3. Product Studio
 
-- **`slice ready`** replaces `slice approve`, `wave approve` and `send`. It runs today's approval
-  gates (the spec passes `validate_slice.py --ready`, no open questions, a complete why, dependencies
-  exist), then: creates or updates the issue, posts an approval comment from a fixed template that
+- **`slice ready`** replaces `slice approve`, `wave approve` and `send`. It runs the approval gates
+  (the spec passes `validate_slice.py --ready`, no open questions, a complete why, its epic and its
+  dependencies exist; the epic is never approved, see section 11), then: creates or updates the issue, posts an approval comment from a fixed template that
   carries the two hashes, the revision and the approver, and only then adds `mach:ready`. A ledger
   records each step before it is tried, so an interrupted run never duplicates an issue.
 - **`slice reopen`** removes `mach:ready` first, then lets the draft be edited. If the Factory has
@@ -203,3 +203,16 @@ accept, so MACH can work on existing and legacy projects.
    closes on the product manager's word.
 4. **Slice IDs stay `SLICE-NNN`**, allocated when a draft is created, checked against every slice
    issue at approval, and renumbered then on a clash. The ID is shown beside the issue number.
+
+## 11. Decided on 2026-11-18
+
+1. **Epics are not approved.** An epic is a container for slices: a title, its "Done when" criteria
+   and its slices. A slice is what is approved, when the product manager marks it ready. The gate
+   "its epic is approved" is gone from `slice ready`, and so are `epic approve`, the `approve_epic`
+   next action and hint, the host's `epic.approve` operation and every screen and word for it. The
+   engine as first built for this milestone required an approved epic; this corrects it.
+2. **An epic's state is `open` or `deferred`** ("set aside"), set with `epic set --status`. A new epic,
+   and one `slice take` creates from its issue, is `open`. `proposed`, `approved`, `completed` and
+   `superseded` are removed: nothing but a bare flag ever set the last two. Nothing on the Factory
+   side read an epic's state (intake, release qualification, `slice_acceptance`, `epic-check` and the
+   epic's issue template carry none), so nothing there changed. Old drafts are not migrated.

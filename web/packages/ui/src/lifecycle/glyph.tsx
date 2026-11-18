@@ -4,16 +4,16 @@ import { cn } from "../lib/cn";
  * The shape vocabulary for state. Every lifecycle and graph state has a glyph that differs in
  * shape, not only colour, so state reads in greyscale, for colour-blind people and in print.
  *
- *   open (dashed ring)      proposed, draft: nothing settled yet
+ *   open (dashed ring)      draft: nothing settled yet; an open epic
  *   half (half-filled)      interviewing: being worked out
  *   ready (ring with dot)   ready for approval: settled, waiting for a person
  *   approved (solid, tick)  approved by a person
  *   submitted (solid, arrow) handed to the builders: ready to build
  *   building (three quarters) being built
  *   question (solid, mark)   the builders asked a question
- *   accepted (double ring)  shipped, or an epic completed
+ *   accepted (double ring)  shipped
  *   blocked (octagon, bar)  cannot move until something is fixed
- *   superseded (ring, slash) replaced; kept for history
+ *   superseded (ring, slash) replaced; kept for history; an epic set aside
  */
 export type GlyphShape = "open" | "half" | "ready" | "approved" | "submitted" | "building" | "question" | "accepted" | "blocked" | "superseded";
 

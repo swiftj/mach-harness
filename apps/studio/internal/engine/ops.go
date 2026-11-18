@@ -139,19 +139,6 @@ func (a *EpicSetArgs) Argv() ([]string, error) {
 	return append(argv, optional("status", a.Status)...), nil
 }
 
-// EpicIDArgs serves epic approve.
-type EpicIDArgs struct {
-	EpicID string `json:"epic_id"`
-	verb   string
-}
-
-func (a *EpicIDArgs) Argv() ([]string, error) {
-	if err := checkID("epic_id", a.EpicID, EpicIDPattern, "EPIC-001"); err != nil {
-		return nil, err
-	}
-	return []string{"epic", a.verb, a.EpicID}, nil
-}
-
 // RenumberArgs serves epic and slice renumber; `identifier` is the engine's own name.
 type RenumberArgs struct {
 	Identifier string `json:"identifier"`
@@ -450,7 +437,6 @@ func init() {
 	register(Operation{Name: "project.set", New: func() Args { return &ProjectSetArgs{} }})
 	register(Operation{Name: "epic.add", New: func() Args { return &EpicAddArgs{} }})
 	register(Operation{Name: "epic.set", New: func() Args { return &EpicSetArgs{} }})
-	register(Operation{Name: "epic.approve", New: func() Args { return &EpicIDArgs{verb: "approve"} }})
 	register(Operation{Name: "epic.renumber", New: func() Args { return &RenumberArgs{kind: "epic"} }})
 	register(Operation{Name: "slice.new", New: func() Args { return &SliceNewArgs{} }})
 	register(Operation{Name: "slice.set", New: func() Args { return &SliceSetArgs{} }})

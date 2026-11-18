@@ -515,6 +515,61 @@ test("without GitHub, the slice is saved to a folder and the engine's two ways o
   }
 });
 
+/** True when the element is inside the viewport and is what is drawn at its centre: nothing clips or covers it, and no scrolling is needed. */
+async function inView(locator) {
+  return locator.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0 || r.top < 0 || r.left < 0 || r.bottom > window.innerHeight || r.right > window.innerWidth) return false;
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return hit !== null && (hit === el || el.contains(hit));
+  });
+}
+
+// "ready": the check passes. "errors": the check lists its problems above the refusal, the longest dialog.
+for (const [width, height, show] of [
+  [1440, 900, "ready"],
+  [1440, 900, "errors"],
+  [1100, 800, "ready"],
+  [1100, 800, "errors"],
+]) {
+  test(`at ${width}x${height} (check: ${show}), a refusal and its way on are in view in the mark-ready dialog, and pressing again shows it working, then the new result`, async () => {
+    const watched = await open("/slices/SLICE-001", `show=${show}&ready=refused-once`);
+    const { page } = watched;
+    try {
+      await page.setViewportSize({ width, height });
+      await settle(page, 200);
+      await page.getByRole("main").getByRole("button", { name: "Mark ready to build" }).click();
+      const dialog = page.getByRole("dialog", { name: /^Mark SLICE-\d+ ready to build\?$/ });
+      const press = dialog.getByRole("button", { name: "Mark ready to build" });
+      await press.click();
+      // The app's own title, then the engine's reasons alone: no second heading from the engine.
+      const refusal = dialog.getByRole("alert");
+      const title = refusal.getByText(/^SLICE-\d+ was not marked ready$/);
+      await title.waitFor();
+      const words = await refusal.innerText();
+      assert.match(words, /SLICE-005 is already used on GitHub by another slice \(#77\)\. Give your draft a new number, then mark it ready\./);
+      assert.doesNotMatch(words, /cannot be marked ready yet/, "the engine does not repeat a heading under the app's title");
+      assert.doesNotMatch(words, /epic/i, "no refusal speaks of an epic");
+      const way = refusal.getByRole("button", { name: "Give SLICE-005 a new number" });
+      await way.waitFor();
+      await settle(page, 300);
+      assert.ok(await inView(title), "the refusal's title is in view without scrolling");
+      assert.ok(await inView(way), "the refusal's way on is in view without scrolling");
+      assert.ok(await inView(press), "Mark ready to build is in view without scrolling");
+
+      // Pressed again: the button shows it is working, the old refusal is gone, then the new result.
+      await press.click();
+      await page.waitForFunction(() => document.querySelectorAll('[role="dialog"] button[aria-busy="true"]').length === 1, null, { timeout: 1000 });
+      assert.equal(await dialog.getByRole("alert").count(), 0, "the earlier refusal is cleared while it works");
+      const done = page.getByRole("dialog", { name: /^SLICE-\d+ is ready to build$/ });
+      await done.getByText("Saved to GitHub as #3 and marked ready.", { exact: false }).waitFor();
+      await clean(watched);
+    } finally {
+      await watched.context.close();
+    }
+  });
+}
+
 test("what the latest write added to the slice is marked, in words", async () => {
   const watched = await open("/slices/SLICE-002/interview", "speed=fast");
   const { page } = watched;
@@ -525,18 +580,26 @@ test("what the latest write added to the slice is marked, in words", async () =>
     await doc.getByText("FR-01", { exact: true }).waitFor({ timeout: 20000 });
     await ask.getByRole("button", { name: "Yes, accept" }).waitFor({ timeout: 20000 });
     assert.equal(await doc.getByText("New", { exact: true }).count(), 0, "nothing is marked on the first read");
+    let sawSummaryYes = false;
     // Answer every turn of the scripted interview until it writes the specification up.
     for (let turn = 0; turn < 12 && !(await doc.getByText("INV-01", { exact: true }).count()); turn++) {
       // Act only once the interviewer has finished its turn.
       await page.getByRole("status").filter({ hasText: "Waiting for you" }).waitFor({ timeout: 30000 });
       const accept = ask.getByRole("button", { name: "Yes, accept" });
+      // The summary to confirm has the same one-press yes as a question; its text box is for what is missing.
+      const writeUp = ask.getByRole("button", { name: "Yes, write it up" });
       if (await accept.count()) await accept.click();
-      else {
-        await ask.getByRole("textbox", { name: /Your reply|Does this capture the intent/ }).fill("yes");
+      else if (await writeUp.count()) {
+        await ask.getByRole("textbox", { name: "Or say what is missing or needs refining" }).waitFor();
+        sawSummaryYes = true;
+        await writeUp.click();
+      } else {
+        await ask.getByRole("textbox", { name: "Your reply" }).fill("yes");
         await ask.getByRole("button", { name: "Send reply" }).click();
       }
       await page.getByRole("status").filter({ hasText: "Waiting for you" }).waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
     }
+    assert.ok(sawSummaryYes, "the summary to confirm offered a Yes button, and pressing it had the specification written up");
     const added = doc.getByRole("listitem").filter({ hasText: "INV-01" });
     await added.getByText("New", { exact: true }).waitFor({ timeout: 30000 });
     const kept = doc.getByRole("listitem").filter({ hasText: "FR-01" }).first();

@@ -18,8 +18,8 @@
       {
         "epic_id": "EPIC-001",
         "title": "Team membership",
-        "status": "approved",
-        "revision": 2,
+        "status": "open",
+        "revision": 1,
         "acceptance_criteria": [
           "Only invited people can join"
         ],

@@ -110,7 +110,7 @@ Open Claude Code in the project folder and type:
 With nothing after it, it shows where things stand and suggests the next step. Say "open the app" to work in your browser instead; the app and the conversation share the same drafts.
 
 1. **Describe the project.** A name, a vision, and the outcomes you want for people.
-2. **Add an epic**, a larger capability, and approve it.
+2. **Add an epic**, a larger capability that several slices deliver. An epic needs no approval; each slice is approved on its own when you mark it ready.
 3. **Start a slice.** Claude interviews you one question at a time. Each question is a yes-or-no proposal with a recommended answer:
 
    | You say | What happens |

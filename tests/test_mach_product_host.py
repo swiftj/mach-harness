@@ -162,7 +162,6 @@ class HostConformanceTest(unittest.TestCase):
         shown = self.op("slice.show", slice_id="SLICE-001")
         self.assertIs(shown["editable"], True)
         self.assertEqual(shown["spec"]["markdown"], FIXTURE.read_text())
-        self.op("epic.approve", epic_id="EPIC-001")
         approved = self.op("slice.ready", slice_id="SLICE-001")
         self.assertEqual((approved["slice"]["status"], approved["saved_to"]), ("approved_for_engineering", "folder"))
         self.assertIs(approved["factory_authorized"], False)
@@ -178,7 +177,6 @@ class HostConformanceTest(unittest.TestCase):
         (draft / "product/intents/SLICE-001.md").write_text(INTENT_TEXT)
         self.studio("slice", "check", "SLICE-001")
         self.studio("slice", "show", "SLICE-001")
-        self.studio("epic", "approve", "EPIC-001")
         self.studio("slice", "ready", "SLICE-001")
 
         host_files, direct_files = workspace(self.via_host), workspace(self.direct)

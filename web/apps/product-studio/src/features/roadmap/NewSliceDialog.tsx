@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { Button, Dialog, DialogClose, DialogContent, Field, Input, Select, Textarea, toast, HintAction } from "@mach/ui";
+import { Button, Dialog, DialogClose, DialogContent, Field, Input, Select, Textarea, epicStates, toast, HintAction } from "@mach/ui";
 import type { StatusEpicRow } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 import { rememberIdea } from "../../api/pendingIdea";
@@ -36,8 +36,7 @@ export function NewSliceDialog(props: NewSliceDialogProps) {
 function NewSliceBody({ onOpenChange, epics, epicId }: NewSliceDialogProps) {
   const navigate = useNavigate();
   const act = useEngineAct();
-  const usable = epics.filter((e) => e.status !== "superseded" && e.status !== "completed");
-  const [epic, setEpic] = useState(epicId ?? usable[0]?.epic_id ?? "");
+  const [epic, setEpic] = useState(epicId ?? epics[0]?.epic_id ?? "");
   const [title, setTitle] = useState("");
   const [idea, setIdea] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
@@ -78,7 +77,7 @@ function NewSliceBody({ onOpenChange, epics, epicId }: NewSliceDialogProps) {
             <Select
               value={epic}
               onValueChange={setEpic}
-              options={usable.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}`, description: e.status === "approved" ? "Approved" : e.status === "deferred" ? "Deferred" : "Proposed" }))}
+              options={epics.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}`, description: epicStates[e.status].label }))}
             />
           </Field>
           <Field label="Title" hint="The outcome, in a few words." error={titleError}>

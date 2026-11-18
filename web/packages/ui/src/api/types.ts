@@ -15,7 +15,8 @@
 /* ── Vocabulary ─────────────────────────────────────────────────────────── */
 
 export type ProjectStatus = "draft" | "active" | "archived";
-export type EpicStatus = "proposed" | "approved" | "deferred" | "completed" | "superseded";
+/** An epic is a container for slices: in the project (open), or set aside (deferred). It is never approved. */
+export type EpicStatus = "open" | "deferred";
 export type SliceStatus = "draft" | "interviewing" | "ready_for_approval" | "approved_for_engineering" | "superseded";
 
 export type RiskTier = "Low" | "Medium" | "High";
@@ -226,7 +227,6 @@ export type HintKind =
   | NextActionKind
   | "reopen_slice"
   | "renumber_epic"
-  | "edit_epic"
   | "edit_project"
   /** POST /api/interview for a slice this host already interviews: `target` is the live interview's ID. */
   | "open_interview";
@@ -235,7 +235,6 @@ export type HintKind =
 export type NextActionKind =
   | "define_project"
   | "add_epic"
-  | "approve_epic"
   | "start_slice"
   | "continue_interview"
   | "answer_question"
@@ -617,10 +616,9 @@ export interface Operations {
   };
   "epic.add": { args: { title: string; criterion: string[] }; result: { epic: Epic } };
   "epic.set": {
-    args: { epic_id: string; title?: string; criterion?: string[]; status?: Exclude<EpicStatus, "approved"> };
+    args: { epic_id: string; title?: string; criterion?: string[]; status?: EpicStatus };
     result: { epic: Epic };
   };
-  "epic.approve": { args: { epic_id: string }; result: { epic: Epic } };
   "epic.renumber": { args: { identifier: string }; result: Renumber };
   "slice.new": { args: { epic: string; title: string; depends_on?: string[]; id?: string }; result: SliceNew };
   "slice.set": { args: { slice_id: string; title?: string; epic?: string; depends_on?: string[] }; result: { slice: WorkOrder } };
@@ -647,7 +645,7 @@ export type OperationResult<K extends OperationName> = Operations[K]["result"];
 export const readOnlyOperations: ReadonlySet<OperationName> = new Set<OperationName>(["where", "status", "validate", "slice.show"]);
 
 /** Operations that record a person's decision. The UI confirms each in a dialog before calling it. */
-export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>(["epic.approve", "slice.ready", "slice.reopen", "reconcile", "slice.renumber", "epic.renumber", "slice.take"]);
+export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>(["slice.ready", "slice.reopen", "reconcile", "slice.renumber", "epic.renumber", "slice.take"]);
 
 /* ── Host endpoints (contract section 4) ────────────────────────────────── */
 

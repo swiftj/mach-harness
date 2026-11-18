@@ -16,7 +16,7 @@ var (
 	// A person's acts, denied again as a second layer (the allow list already leaves them out), and
 	// the names of commands the app never offers: the removed wave and approval commands, and the
 	// terminal-only `acceptance record`.
-	deniedOps = []string{"slice ready", "epic approve", "reconcile", "slice renumber", "epic renumber",
+	deniedOps = []string{"slice ready", "reconcile", "slice renumber", "epic renumber",
 		"slice reopen", "slice move", "slice take", "project", "slice new", "epic add", "epic set",
 		"slice approve", "wave", "send", "feedback", "acceptance"}
 )
@@ -27,7 +27,7 @@ const Tools = "Read,Glob,Grep,Edit,Write,Bash"
 // HostNote is appended to the system prompt. It does not change the interview method.
 const HostNote = "You are the interviewer inside MACH Product Studio's local app. Each of your messages is shown to the " +
 	"product manager as is, and their reply comes back as the next message. The app created the slice before " +
-	"this session started. Marking a slice ready to build, approving an epic, reopening, choosing between versions and " +
+	"this session started. Marking a slice ready to build, reopening, choosing between versions and " +
 	"renumbering are the product manager's own acts, done with the app's buttons; you cannot run them here, so " +
 	"if asked, tell the PM which button to use. Run the studio script as a plain command, one per Bash call, " +
 	"exactly as the skill spells it: no shell variables, functions, cd or chained commands. If one command is " +

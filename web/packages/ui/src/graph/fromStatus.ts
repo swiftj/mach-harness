@@ -20,12 +20,10 @@ const fromBuilders: Record<SliceStateLabel, GraphState> = {
   "mach:shipped": "shipped",
 };
 
+/** An epic is a container, never approved: open reads as the open ring, set aside as faded. */
 const fromEpic: Record<EpicStatus, GraphState> = {
-  proposed: "proposed",
-  approved: "approved",
+  open: "proposed",
   deferred: "superseded",
-  completed: "shipped",
-  superseded: "superseded",
 };
 
 const fromProject: Record<ProjectStatus, GraphState> = { draft: "proposed", active: "approved", archived: "superseded" };

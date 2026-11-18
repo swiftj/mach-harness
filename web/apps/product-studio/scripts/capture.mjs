@@ -131,14 +131,14 @@ for (const scenario of ["empty", "established"]) {
 
         await page.goto(`${host.origin}/#/vision`);
         await settle(page);
-        await page.getByRole("button", { name: "Approve this epic’s scope: EPIC-002" }).click();
+        await page.getByRole("listitem").filter({ hasText: "EPIC-002" }).getByRole("button", { name: "Edit", exact: true }).click();
         await page.getByRole("dialog").waitFor();
         await page.waitForTimeout(400);
-        await page.screenshot({ path: join(out, `established-vision-approve-${theme}-1440.png`) });
+        await page.screenshot({ path: join(out, `established-vision-epic-editor-${theme}-1440.png`) });
         const axeDialog = await new AxeBuilder({ page }).include("[role=dialog]").analyze();
-        report.runs.push({ scenario, screen: "vision-approve-dialog", theme, size: "1440", violations: axeDialog.violations.map((v) => v.id) });
+        report.runs.push({ scenario, screen: "vision-epic-editor", theme, size: "1440", violations: axeDialog.violations.map((v) => v.id) });
         failures += axeDialog.violations.length;
-        await page.getByRole("button", { name: "Not now" }).click();
+        await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
       }
     }
     const problems = await watcher.collect();

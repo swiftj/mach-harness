@@ -19,7 +19,7 @@
       {
         "epic_id": "EPIC-001",
         "title": "Team membership",
-        "status": "proposed",
+        "status": "open",
         "revision": 1,
         "acceptance_criteria": [
           "Only invited people can join",
@@ -67,17 +67,9 @@
     "structural_errors": [],
     "factory_authorized": false,
     "suggested_next": [
-      "Approve epic EPIC-001: Team membership (epic approve EPIC-001), so its slices can be marked ready.",
       "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
     ],
     "next_actions": [
-      {
-        "kind": "approve_epic",
-        "target": "EPIC-001",
-        "title": "Approve epic EPIC-001",
-        "reason": "Team membership: its slices can be marked ready only once it is.",
-        "related": []
-      },
       {
         "kind": "start_slice",
         "target": null,

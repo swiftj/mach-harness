@@ -6,9 +6,7 @@ import { artifactKind, type ApiErrorHint, type NextAction, type Status } from "@
 
 export type ActionRoute =
   /** Go to a screen. */
-  | { type: "navigate"; to: string; label: string; state?: unknown }
-  /** A personal act confirmed in place (epic approval). */
-  | { type: "approve-epic"; epicId: string; label: string }
+  | { type: "navigate"; to: string; label: string }
   /** Start a slice: ask for its title, then open its interview. */
   | { type: "new-slice"; epicId: string | null; label: string }
   /** Give a draft the next free number, confirmed in place. */
@@ -27,8 +25,6 @@ export function routeFor(action: NextAction): ActionRoute {
       return { type: "navigate", to: "/vision", label: "Define the project" };
     case "add_epic":
       return { type: "add-epic", label: "Add an epic" };
-    case "approve_epic":
-      return id && kind === "epic" ? { type: "approve-epic", epicId: id, label: "Review and approve" } : { type: "navigate", to: "/vision", label: "Open" };
     case "start_slice":
       return { type: "new-slice", epicId: kind === "epic" ? id : null, label: "Start a slice" };
     case "continue_interview":
@@ -68,13 +64,10 @@ export function routeForHint(hint: ApiErrorHint): ActionRoute {
       return t ? { type: "navigate", to: `/slices/${t}`, label: `Open ${t} to reopen it` } : { type: "navigate", to: "/roadmap", label: "Open the roadmap" };
     case "renumber_epic":
       return t ? { type: "renumber", id: t, label: `Give ${t} a new number` } : { type: "navigate", to: "/vision", label: "Open the epics" };
-    case "edit_epic":
-      return { type: "navigate", to: "/vision", label: t ? `Edit ${t}` : "Edit the epics", state: { focus: "epics" } };
     case "edit_project":
       return { type: "navigate", to: "/vision", label: "Edit the project" };
     default: {
       const route = routeFor({ kind: hint.kind, target: t, title: "", reason: null });
-      if (route.type === "approve-epic") return { ...route, label: `Approve ${route.epicId}` };
       if (route.type === "renumber") return { ...route, label: `Give ${route.id} a new number` };
       return route;
     }

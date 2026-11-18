@@ -8,6 +8,8 @@ export const devState = {
   writtenUp: false,
   /** Set after a reopen in fixture mode; cleared by marking the slice ready again. */
   reopened: new Set<string>(),
+  /** How many times slice.ready was asked, for ?ready=refused-once. */
+  readyAsked: 0,
 };
 
 /** Query parameters before the hash: http://127.0.0.1:5173/?show=errors#/slices/SLICE-002 */

@@ -84,24 +84,19 @@ test("lifecycle: from nothing to a slice ready to build, through the UI only", a
     await shoot(page, FOLDER, "02-vision");
   });
 
-  await step("03 create an epic and approve it", async () => {
+  await step("03 create an epic: it is open at once, with nothing to approve", async () => {
     await main().getByRole("button", { name: "Add an epic" }).click();
     await dialog().getByRole("textbox", { name: "Title" }).fill("Team membership");
     await dialog().getByRole("textbox", { name: "Criterion 1" }).fill("Only invited people can join");
     await dialog().getByRole("button", { name: "Add epic" }).click();
     await dialog().waitFor({ state: "detached" });
-    let epic = engineStatus().epics[0];
-    assert.deepEqual([epic.epic_id, epic.title, epic.status], ["EPIC-001", "Team membership", "proposed"]);
+    const epic = engineStatus().epics[0];
+    assert.deepEqual([epic.epic_id, epic.title, epic.status], ["EPIC-001", "Team membership", "open"]);
     const card = main().getByRole("listitem").filter({ has: page.getByRole("heading", { name: "Team membership" }) });
-    await card.getByText("Proposed").waitFor();
-    await card.getByRole("button", { name: "Approve this epic’s scope: EPIC-001" }).click();
-    await shoot(page, FOLDER, "03a-approve-epic-dialog");
-    await dialog().getByRole("button", { name: "Approve this epic’s scope" }).click();
-    await dialog().waitFor({ state: "detached" });
-    await card.getByText("Approved", { exact: true }).waitFor();
-    epic = engineStatus().epics[0];
-    assert.equal(epic.status, "approved");
-    await shoot(page, FOLDER, "03b-epic-approved");
+    await card.getByText("Open", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: /Approve/ }).count(), 0, "no epic approval is offered");
+    assert.equal(await main().getByText(/approv\w* an epic/i).count(), 0, "no wording speaks of approving an epic");
+    await shoot(page, FOLDER, "03-epic-added");
   });
 
   await step("04 create a slice", async () => {

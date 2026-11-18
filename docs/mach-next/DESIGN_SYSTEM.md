@@ -200,7 +200,7 @@ Shadows are tinted charcoal, never grey-blue. In dark, elevation shows mainly as
 - **Field** wraps label, hint, control and error and wires `id`, `aria-describedby` and `aria-invalid` into `Input`, `Textarea` and `Select`. Errors say what to do ("Use lowercase words joined by hyphens, such as team-space."). `Textarea editorial` sets product writing at the larger reading size.
 - **Select** for short lists (Radix). **Checkbox** with label and description; disabled options say why they are disabled.
 - **Dialog**: a decision. Title is a question, description says what the act means (both required), the confirming button is last. Focus is trapped, Escape closes, focus returns to the trigger.
-- **ConfirmDialog**: the one way a personal act (`personalActs`: approve an epic, mark a slice ready, reopen, choose a version, renumber) is confirmed. `onConfirm` performs the act and resolves `false` to stay open; a refusal is shown inside the dialog in the engine's own words (`error`). The confirming button shows progress and blocks a second click.
+- **ConfirmDialog**: the one way a personal act (`personalActs`: mark a slice ready, reopen, choose a version, renumber) is confirmed. `onConfirm` performs the act and resolves `false` to stay open; a refusal is shown inside the dialog in the engine's own words (`error`). The confirming button shows progress and blocks a second click.
 - **Sheet**: detail beside the page, from the right (400, 480 or 640px). Used for a roadmap item's detail and a slice's check.
 - **Popover**: non-modal explanation anchored to a control. **Tooltip**: names an icon-only control; never holds essential information.
 - **Tabs**: underline in `accent`; arrow keys move between tabs.
@@ -213,14 +213,14 @@ Every state has a word, a glyph and a tone. The glyph vocabulary (`StateGlyph`):
 
 | Glyph | Shape | Means |
 |-------|-------|-------|
-| `open` | dashed ring | nothing settled yet (draft slice, proposed epic) |
+| `open` | dashed ring | nothing settled yet (draft slice); an open epic, which is never approved |
 | `half` | half-filled ring | being worked out (interviewing) |
 | `ready` | ring with dot | settled, waiting for a person (ready for approval) |
 | `approved` | solid disc with tick | a person approved it |
 | `submitted` | solid disc with arrow | handed to the builders: ready to build; saved to a folder |
 | `building` | three-quarter-filled ring | being built |
 | `question` | solid disc with a question mark | the builders asked the product manager a question |
-| `accepted` | double ring | shipped; epic completed |
+| `accepted` | double ring | shipped |
 | `blocked` | octagon with bar | cannot move until the PM acts (changed on GitHub after approval, number taken, saving did not finish) |
 | `superseded` | ring with slash | replaced or deferred, kept for history; a newer version saved by someone else |
 

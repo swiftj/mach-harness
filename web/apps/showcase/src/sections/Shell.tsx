@@ -25,7 +25,7 @@ const fixtureTransport: Transport = async ({ path }) => {
   }
   if (path === "/api/ops/status") return { status: 200, json: { ok: true, data: fx.statusSliceReady } };
   if (path === "/api/ops/slice.ready") {
-    const refused = runs.sliceReadyRefusedEpic;
+    const refused = runs.sliceReadyRefusedOpenQuestions;
     return { status: 200, json: { ok: false, error: { kind: "refused", message: refused.refused, hint: refused.hint } } };
   }
   return { status: 404, json: { ok: false, error: { kind: "invalid", message: `No such operation: ${path}` } } };
@@ -85,7 +85,7 @@ export function ShellSection() {
 
       <Specimen
         title="The client, running against fixtures"
-        source="status.slice-ready.json, slice.ready.refused-epic.json"
+        source="status.slice-ready.json, slice.ready.refused-open-questions.json"
         note="createClient() with a fixture transport. In the apps the transport is fetch against the host."
       >
         <div className="flex flex-col gap-5">

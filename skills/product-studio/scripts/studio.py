@@ -62,8 +62,8 @@ def say(terminal: str, app: str) -> str:
 
 # A state in a product manager's words, for app wording; the terminal keeps the identifier.
 STATE_WORDS = {"draft": "a draft", "interviewing": "being defined", "ready_for_approval": "ready for approval",
-               "approved_for_engineering": "approved", "superseded": "replaced", "proposed": "proposed", "approved": "approved",
-               "deferred": "set aside", "completed": "completed", "active": "active", "archived": "archived"}
+               "approved_for_engineering": "approved", "superseded": "replaced", "open": "open",
+               "deferred": "set aside", "active": "active", "archived": "archived"}
 
 
 def state(status: Any) -> str:
@@ -514,9 +514,9 @@ def github_updates_waiting(studio: Studio) -> Dict[str, Any]:
 
 # The vocabulary of next_actions[].kind. A client maps each to its own button or screen.
 NEXT_ACTION_KINDS = ("define_project", "add_epic", "reconcile", "renumber_slice", "answer_question", "continue_interview", "mark_ready", "finish_ready",
-                     "approve_epic", "start_slice")
+                     "start_slice")
 # The vocabulary of a refusal's hint (--app): the next-action kinds, plus the acts that resolve a refusal.
-HINT_KINDS = NEXT_ACTION_KINDS + ("reopen_slice", "renumber_epic", "edit_epic", "edit_project")
+HINT_KINDS = NEXT_ACTION_KINDS + ("reopen_slice", "renumber_epic", "edit_project")
 
 
 def next_actions(project, epics, slice_rows) -> List[Dict[str, Any]]:
@@ -561,10 +561,6 @@ def next_actions(project, epics, slice_rows) -> List[Dict[str, Any]]:
         elif row["status"] == APPROVED and gh["changed_on_github"]:
             act("mark_ready", sid, f"Mark {sid} ready again", f"{row['title']} was changed on GitHub after you approved it, so the builders will not take it.",
                 f"{sid} was changed on GitHub after you approved it: mark it ready again to put your approved version back (slice ready {sid}).")
-    for epic_id, data in epics.items():
-        if data.get("status") == "proposed":
-            act("approve_epic", epic_id, f"Approve epic {epic_id}", f"{data.get('title')}: its slices can be marked ready only once it is.",
-                f"Approve epic {epic_id}: {data.get('title')} (epic approve {epic_id}), so its slices can be marked ready.")
     if not any(row["status"] in EDITABLE_SLICE for row in slice_rows):
         act("start_slice", None, "Start a new slice", "No slice is being defined right now.",
             "Start a new slice (slice new --epic EPIC-NNN --title \"...\").")
@@ -622,7 +618,7 @@ def cmd_project_set(studio: Studio, args: argparse.Namespace) -> int:
 def cmd_epic_add(studio: Studio, args: argparse.Namespace) -> int:
     studio.prepare()
     data = {"schema_version": 1, "epic_id": studio.next_id("epic"), "project_id": studio.project_id(), "revision": 1,
-            "title": args.title.strip(), "status": "proposed", "acceptance_criteria": clean_list(args.criterion, "acceptance criterion")}
+            "title": args.title.strip(), "status": "open", "acceptance_criteria": clean_list(args.criterion, "acceptance criterion")}
     studio.commit_or_restore([("epic", data)], "Adding the epic")
     return emit({"epic": data})
 
@@ -637,19 +633,6 @@ def cmd_epic_set(studio: Studio, args: argparse.Namespace) -> int:
     if args.status is not None:
         data["status"] = args.status
     studio.commit_or_restore([("epic", data)], "Changing the epic")
-    return emit({"epic": studio.load("epic", args.epic_id)})
-
-
-def cmd_epic_approve(studio: Studio, args: argparse.Namespace) -> int:
-    studio.prepare()
-    data = studio.load("epic", args.epic_id)
-    if data.get("status") not in ("proposed", "deferred", "approved"):
-        raise StudioError(f"{args.epic_id} is {state(data.get('status'))}; only a proposed or deferred epic can be approved.")
-    if not data.get("acceptance_criteria"):
-        raise StudioError(say(f"{args.epic_id} has no acceptance criteria. Add at least one before approving (epic set {args.epic_id} --criterion \"...\").",
-                              f"{args.epic_id} has no acceptance criteria. Add at least one before approving."), hint("edit_epic", args.epic_id))
-    data["status"] = "approved"
-    studio.commit_or_restore([("epic", data)], "Approving the epic")
     return emit({"epic": studio.load("epic", args.epic_id)})
 
 
@@ -677,9 +660,7 @@ def start_slice(studio: Studio, epic_id: str, title: str, depends_on: Sequence[s
                 origin: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The steps of `slice new`, shared with `request pick`, which also records where the slice came from."""
     studio.prepare()
-    epic = studio.load("epic", epic_id)
-    if epic.get("status") in ("completed", "superseded"):
-        raise StudioError(f"{epic_id} is {state(epic.get('status'))}; a new slice needs an open epic.")
+    studio.load("epic", epic_id)
     if given_id:
         if not product.SLICE_RE.fullmatch(given_id):
             raise StudioError(f"'{given_id}' is not a usable slice ID, such as SLICE-004.")
@@ -871,25 +852,20 @@ def cmd_slice_show(studio: Studio, args: argparse.Namespace) -> int:
     })
 
 
-def approval_problems(studio: Studio, data: Dict[str, Any], slice_id: str) -> Tuple[Dict[str, Any], List[str], Optional[Dict[str, Any]]]:
+def approval_problems(studio: Studio, data: Dict[str, Any], slice_id: str) -> Tuple[Dict[str, Any], List[str]]:
     """The gates a slice passes before it is approved: the spec passes the validator with no open
-    questions, the why is complete, its epic is approved and its dependencies exist."""
+    questions, the why is complete, and its epic and its dependencies exist."""
     result = studio.check_slice(slice_id, ready=True)
-    refusal_hint: Optional[Dict[str, Any]] = None
     problems = list(result["errors"]) + list(result["intent_problems"])
     problems += [f"open question: {question}" for question in result["open_questions"]]
     epic = studio.all("epic").get(data.get("epic_id"))
     if not epic:
         problems.append(f"epic {data.get('epic_id')} does not exist")
-    elif epic.get("status") != "approved":
-        problems.append(say(f"epic {data.get('epic_id')} is {state(epic.get('status'))}, not approved (studio.py epic approve {data.get('epic_id')})",
-                            f"epic {data.get('epic_id')} is {state(epic.get('status'))}, not approved"))
-        refusal_hint = hint("approve_epic", data.get("epic_id"))
     slices = studio.all("slice")
     for dependency in data.get("dependencies") or []:
         if dependency not in slices:
             problems.append(f"dependency {dependency} does not exist")
-    return result, problems, refusal_hint
+    return result, problems
 
 
 def approve_locally(studio: Studio, data: Dict[str, Any], slice_id: str) -> None:
@@ -906,9 +882,10 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     slice_id = args.slice_id
     data = studio.load("slice", slice_id)
     if data.get("status") in EDITABLE_SLICE:
-        result, problems, refusal_hint = approval_problems(studio, data, slice_id)
+        result, problems = approval_problems(studio, data, slice_id)
         if problems:
-            raise StudioError(f"{slice_id} cannot be marked ready yet:\n  " + "\n  ".join(problems), refusal_hint)
+            # The app titles the refusal itself, so its wording is the reasons alone.
+            raise StudioError(say(f"{slice_id} cannot be marked ready yet:\n  " + "\n  ".join(problems), "\n".join(problems)))
     elif data.get("status") == APPROVED:
         spec = studio.spec_of(slice_id)
         if spec is None or sha(spec.read_bytes()) != data.get("spec_sha256"):
@@ -1185,7 +1162,7 @@ def cmd_slice_take(studio: Studio, args: argparse.Namespace) -> int:
         created_epic = local_epic is None
         if created_epic:
             studio.commit_or_restore([("epic", {"schema_version": 1, "epic_id": epic_id, "project_id": project["project_id"], "revision": 1,
-                                                "title": rules.issue_title(epic_issue.get("title")) or epic_id, "status": "approved",
+                                                "title": rules.issue_title(epic_issue.get("title")) or epic_id, "status": "open",
                                                 "acceptance_criteria": rules.epic_criteria(epic_issue.get("body"))})], f"Opening {epic_id}")
         write(spec_path, spec)
         write(intent, why)
@@ -1505,11 +1482,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("epic_id")
     p.add_argument("--title")
     p.add_argument("--criterion", action="append", help="repeat for each criterion; replaces the list")
-    p.add_argument("--status", choices=("proposed", "deferred", "completed", "superseded"))
+    p.add_argument("--status", choices=product.ENUMS["epic"]["status"], help="deferred sets it aside; open brings it back")
     p.set_defaults(func=cmd_epic_set)
-    p = epic.add_parser("approve")
-    p.add_argument("epic_id")
-    p.set_defaults(func=cmd_epic_approve)
     p = epic.add_parser("renumber", help="give an unpublished draft the next free number")
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="epic")
