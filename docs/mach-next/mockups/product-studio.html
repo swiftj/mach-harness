@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product Studio (mockup)</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,400;0,450;0,600;0,650;0,700;1,400&family=JetBrains+Mono:wght@450&display=swap">
+<style>
+/* Tokens copied from web/packages/ui/src/styles/tokens.css. Mockup only. */
+:root{
+  --canvas:#FAF9F5;--surface:#FFFFFF;--sunken:#F3F1EA;--ink:#141413;--ink-muted:#5C5A54;--ink-subtle:#6B6962;
+  --line:#E3E0D5;--line-strong:#D1CDBF;--line-control:#8C887C;
+  --accent:#D97757;--accent-fill:#B5512F;--accent-fill-hover:#9F4628;--accent-ink:#A9482A;--accent-soft:#F6E7DF;--on-accent:#FFFFFF;--focus:#2F6AA3;
+  --info-ink:#3A6496;--info-soft:#E8EFF7;--info-line:#B7CCE3;
+  --success-ink:#4E5E39;--success-soft:#EEF1E6;--success-line:#C5CFB4;--success-fill:#788C5D;
+  --warning-ink:#7D5A12;--warning-soft:#F8EED7;--warning-line:#E3CD98;
+  --neutral-ink:#5C5A54;--neutral-soft:#ECE9DF;--neutral-line:#D1CDBF;
+  --shadow-3:0 12px 32px rgba(20,20,19,.14),0 2px 6px rgba(20,20,19,.08);
+  --sans:'Source Sans 3','Segoe UI',system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --canvas:#141413;--surface:#1C1C1A;--sunken:#0F0F0E;--ink:#F0EEE6;--ink-muted:#B5B2A7;--ink-subtle:#9A978C;
+  --line:#2E2D2A;--line-strong:#3D3C38;--line-control:#75736A;
+  --accent-fill:#D97757;--accent-fill-hover:#E48B6C;--accent-ink:#E8957A;--accent-soft:#3A2620;--on-accent:#141413;--focus:#8DB4DD;
+  --info-ink:#8DB4DD;--info-soft:#1E2A36;--info-line:#34506C;
+  --success-ink:#A7B98A;--success-soft:#232A1B;--success-line:#47573A;
+  --warning-ink:#D9B061;--warning-soft:#2F2716;--warning-line:#5E4C25;
+  --neutral-ink:#B5B2A7;--neutral-soft:#242422;--neutral-line:#3D3C38;
+  --shadow-3:0 16px 40px rgba(0,0,0,.6);
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--ink);font:400 16px/1.5 var(--sans)}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.id{font:450 13px/1.25 var(--mono);color:var(--ink-subtle)}
+.muted{color:var(--ink-muted)}
+
+.note{background:var(--sunken);border-bottom:1px solid var(--line);padding:6px 20px;font-size:13px;color:var(--ink-subtle);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.note button{border:1px solid var(--line-control);background:var(--surface);border-radius:5px;padding:1px 10px;font-size:13px}
+.note button[aria-pressed=true]{background:var(--ink);color:var(--canvas);border-color:var(--ink)}
+
+.top{display:flex;align-items:center;gap:14px;padding:0 24px;height:56px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650}
+.crumb{color:var(--ink-muted);font-size:15px}
+.crumb b{color:var(--ink);font-weight:600}
+.saved{margin-left:auto;font-size:14px;color:var(--ink-muted)}
+.saved i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--success-fill);margin-right:6px}
+
+.btn{border:1px solid var(--line-control);background:var(--surface);border-radius:8px;padding:8px 16px;font-weight:600}
+.btn.primary{background:var(--accent-fill);border-color:var(--accent-fill);color:var(--on-accent)}
+.btn.primary:hover{background:var(--accent-fill-hover)}
+.btn.quiet{border-color:transparent;background:none;color:var(--accent-ink);padding-left:0}
+.state{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;white-space:nowrap}
+.state::before{content:"";width:9px;height:9px;flex:none}
+.s-draft{color:var(--neutral-ink)}.s-draft::before{border:1.5px solid currentColor;border-radius:50%}
+.s-talk{color:var(--info-ink)}.s-talk::before{border:1.5px solid currentColor;border-radius:50%;background:linear-gradient(90deg,currentColor 50%,transparent 50%)}
+.s-ready{color:var(--accent-ink)}.s-ready::before{background:currentColor;transform:rotate(45deg) scale(.85)}
+.s-build{color:var(--info-ink)}.s-build::before{background:currentColor;border-radius:2px}
+.s-done{color:var(--success-ink)}.s-done::before{background:currentColor;border-radius:50%}
+.s-ask{color:var(--warning-ink)}.s-ask::before{border:1.5px solid currentColor;transform:rotate(45deg) scale(.85)}
+
+/* ---------- Home ---------- */
+.home{max-width:920px;margin:0 auto;padding:56px 24px 80px}
+.home h1{font:700 40px/46px var(--sans);letter-spacing:-.02em;margin:0 0 10px}
+.vision{font:400 20px/30px var(--sans);color:var(--ink-muted);max-width:60ch;margin:0}
+.next{margin:36px 0 44px;padding:22px 24px;background:var(--surface);border:1px solid var(--line-strong);border-left:4px solid var(--accent);border-radius:8px;display:flex;gap:24px;align-items:center;flex-wrap:wrap}
+.next h2{font:650 20px/28px var(--sans);margin:0 0 2px}
+.next p{margin:0;color:var(--ink-muted)}
+.next .btn{margin-left:auto}
+.asks{margin:-24px 0 44px;padding:12px 16px;background:var(--warning-soft);border:1px solid var(--warning-line);border-radius:8px;color:var(--warning-ink);display:flex;gap:12px;align-items:center;font-size:15px}
+.asks button{margin-left:auto;white-space:nowrap;background:none;border:0;color:inherit;font-weight:600;text-decoration:underline}
+.epic{border-top:1px solid var(--line-strong);padding:22px 0 6px}
+.epic header{display:flex;align-items:baseline;gap:14px}
+.epic h3{font:650 23px/30px var(--sans);letter-spacing:-.01em;margin:0}
+.epic header span{margin-left:auto;font-size:14px;color:var(--ink-muted)}
+.epic>p{margin:2px 0 12px;color:var(--ink-muted);max-width:68ch}
+.slices{list-style:none;margin:0;padding:0}
+.slices li{display:grid;grid-template-columns:1fr 170px 150px;gap:16px;align-items:center;padding:11px 12px;margin:0 -12px;border-radius:8px}
+.slices li:hover{background:var(--sunken)}
+.slices a{color:var(--ink);text-decoration:none;font-weight:600}
+.slices small{color:var(--ink-subtle);font-size:13.5px;text-align:right}
+.add{background:none;border:0;color:var(--accent-ink);font-weight:600;padding:10px 0}
+.homefoot{margin-top:18px;display:flex;gap:28px;flex-wrap:wrap;font-size:15px}
+.homefoot button{background:none;border:0;padding:0;color:var(--accent-ink);font-weight:600}
+
+/* ---------- Interview ---------- */
+.talk{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);min-height:calc(100vh - 56px - 33px)}
+.ask{padding:56px 56px 40px;display:flex;flex-direction:column;max-width:760px;justify-self:end;width:100%}
+.progress{display:flex;align-items:center;gap:12px;color:var(--ink-muted);font-size:14.5px;margin-bottom:36px}
+.pips{display:flex;gap:4px}
+.pips i{width:18px;height:4px;border-radius:2px;background:var(--line-strong)}
+.pips i.d{background:var(--ink-muted)}.pips i.c{background:var(--accent)}
+.topic{color:var(--ink-muted);margin:0 0 8px;font-size:16px}
+.q{font:650 30px/38px var(--sans);letter-spacing:-.015em;margin:0 0 20px;max-width:24ch}
+.rec{background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;padding:14px 18px;max-width:56ch}
+.rec b{font-weight:650}
+.rec p{margin:4px 0 0;color:var(--ink-muted)}
+.answers{display:flex;gap:12px;margin:28px 0 14px;flex-wrap:wrap}
+.answers .btn{min-width:150px;padding:14px 20px;font-size:17px;text-align:left;display:flex;justify-content:space-between;gap:16px}
+.answers kbd{font:450 12px var(--mono);border:1px solid currentColor;border-radius:3px;padding:0 5px;opacity:.7;align-self:center}
+.other{display:flex;gap:8px;max-width:56ch}
+.other input{flex:1;border:1px solid var(--line-control);border-radius:8px;padding:10px 12px;font:inherit;background:var(--surface);color:var(--ink)}
+.settled{margin-top:auto;padding-top:40px}
+.settled h4{font:600 14px var(--sans);color:var(--ink-muted);margin:0 0 6px}
+.settled ol{margin:0;padding:0;list-style:none;font-size:15px}
+.settled li{display:grid;grid-template-columns:1fr auto;gap:12px;padding:6px 0;border-top:1px solid var(--line);color:var(--ink-muted)}
+.settled li b{color:var(--ink);font-weight:600}
+
+.doc{background:var(--surface);border-left:1px solid var(--line);padding:56px 48px 40px;overflow:auto}
+.doc .inner{max-width:60ch}
+.doc h2{font:700 23px/30px var(--sans);margin:4px 0 4px}
+.doc h3{font:600 14px var(--sans);color:var(--ink-muted);margin:26px 0 8px}
+.doc p,.doc li{font-size:15.5px;line-height:24px}
+.doc ul{list-style:none;margin:0;padding:0}
+.doc li{display:grid;grid-template-columns:58px 1fr;gap:8px;padding:5px 8px;margin:0 -8px;border-radius:5px}
+.doc li.new{background:var(--accent-soft)}
+.doc li.new::after{content:"just added";grid-column:2;font-size:12.5px;font-weight:600;color:var(--accent-ink)}
+.doc li.todo{color:var(--ink-subtle);font-style:italic}
+.doc table{border-collapse:collapse;font-size:14.5px;width:100%}
+.doc th,.doc td{border:1px solid var(--line);padding:5px 8px;text-align:left}
+.doc th{background:var(--sunken);font-weight:600}
+.doc td.open{color:var(--ink-subtle);font-style:italic}
+
+dialog{border:1px solid var(--line-strong);border-radius:12px;padding:26px 28px;background:var(--surface);color:var(--ink);box-shadow:var(--shadow-3);width:min(560px,94vw)}
+dialog::backdrop{background:rgba(20,20,19,.42)}
+dialog h3{font:700 23px/30px var(--sans);margin:0 0 8px}
+dialog ul{padding-left:20px;margin:10px 0 18px}
+dialog li{margin:4px 0}
+dialog .row{display:flex;gap:10px;justify-content:flex-end}
+[hidden]{display:none!important}
+@media (max-width:900px){.talk{grid-template-columns:1fr}.ask{padding:32px 24px}.doc{border-left:0;border-top:1px solid var(--line);padding:32px 24px}.slices li{grid-template-columns:1fr auto}.slices small{display:none}}
+</style>
+</head>
+<body>
+<div class="note">Mockup with sample data. Screen:
+  <button id="bHome" aria-pressed="true">Project home</button>
+  <button id="bTalk" aria-pressed="false">Slice interview</button>
+  <button id="bDone" aria-pressed="false">Interview finished</button>
+</div>
+
+<header class="top">
+  <div class="brand">
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="11" y="1" width="8" height="8" rx="1.5" fill="#D97757"/><rect x="1" y="11" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="11" y="11" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+    Product Studio
+  </div>
+  <div class="crumb" id="crumb"></div>
+  <div class="saved"><i></i>Everything is saved</div>
+</header>
+
+<!-- ============ HOME ============ -->
+<main class="home" id="home">
+  <h1>Branch Library</h1>
+  <p class="vision">Patrons manage their own loans, holds and fines from their account, so the desk is free for the questions only a librarian can answer.</p>
+  <nav class="homefoot" aria-label="Project"><button>Add an epic</button><button>Edit the vision and outcomes</button><button>2 requests from other people</button></nav>
+
+  <section class="next">
+    <div><h2>Carry on with “Renew a loan”</h2><p>You have answered 6 questions. About 4 are left before it can be built.</p></div>
+    <button class="btn primary" id="goTalk">Continue the interview</button>
+  </section>
+
+  <div class="asks"><span><b>The builders have a question</b> about “Show overdue fines at checkout”: two of its rules disagree.</span><button>Answer it</button></div>
+
+  <section class="epic">
+    <header><h3>Loans</h3><span>2 of 4 slices ready or further</span></header>
+    <p>A patron can see, renew and return what they have borrowed without visiting the desk.</p>
+    <ul class="slices">
+      <li><a href="#">See my current loans</a><span class="state s-done">Shipped</span><small>3 days ago</small></li>
+      <li><a href="#">Show overdue fines at checkout</a><span class="state s-ask">Needs your answer</span><small>asked 1 hour ago</small></li>
+      <li><a href="#">Renew a loan</a><span class="state s-talk">In interview</span><small>4 questions left</small></li>
+      <li><a href="#">Email a receipt after renewal</a><span class="state s-build">Being built</span><small>started today</small></li>
+    </ul>
+    <button class="add">Add a slice to Loans</button>
+  </section>
+
+  <section class="epic">
+    <header><h3>Holds</h3><span>1 of 3 slices ready or further</span></header>
+    <p>A patron can reserve a book that is out and collect it when it comes back.</p>
+    <ul class="slices">
+      <li><a href="#">Hold a book for pickup</a><span class="state s-ready">Ready to build</span><small>marked ready yesterday</small></li>
+      <li><a href="#">Cancel a hold</a><span class="state s-draft">Draft</span><small>not started</small></li>
+      <li><a href="#">Tell me when my hold arrives</a><span class="state s-draft">Draft</span><small>not started</small></li>
+    </ul>
+    <button class="add">Add a slice to Holds</button>
+  </section>
+
+</main>
+
+<!-- ============ INTERVIEW ============ -->
+<main class="talk" id="talk" hidden>
+  <section class="ask">
+    <div id="asking">
+      <div class="progress"><div class="pips"><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="c"></i><i></i><i></i><i></i></div>Question 7, about 4 left</div>
+      <p class="topic">About renewing a loan that someone else is waiting for</p>
+      <h1 class="q">If another patron has a hold on the book, should the renewal be refused?</h1>
+      <div class="rec"><b>I recommend yes.</b><p>You said earlier that holds exist so a waiting patron gets the book next. Letting a renewal through would push them back without telling them.</p></div>
+      <div class="answers">
+        <button class="btn primary">Yes, refuse it <kbd>Y</kbd></button>
+        <button class="btn">No, allow it <kbd>N</kbd></button>
+      </div>
+      <div class="other"><input placeholder="Or say it in your own words" aria-label="Answer in your own words"><button class="btn">Answer</button></div>
+    </div>
+
+    <div id="finished" hidden>
+      <div class="progress"><div class="pips"><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i></div>All 10 questions answered</div>
+      <p class="topic">Renew a loan</p>
+      <h1 class="q">Nothing is left open. Read it through, then mark it ready.</h1>
+      <div class="rec"><b>What “ready” means.</b><p>The slice is saved to the project on GitHub and the builders pick it up from there. You can still reopen it; if they have already started, they are told it changed.</p></div>
+      <div class="answers">
+        <button class="btn primary" id="markReady">Mark ready to build</button>
+        <button class="btn">Keep it as a draft</button>
+      </div>
+    </div>
+
+    <div class="settled">
+      <h4>Settled so far</h4>
+      <ol>
+        <li><span>Can a patron renew a loan that is already overdue?</span><b>No</b></li>
+        <li><span>Is there a limit on renewals for one loan?</span><b>Yes, two</b></li>
+        <li><span>Does a renewal extend from today or from the due date?</span><b>From the due date</b></li>
+      </ol>
+      <button class="btn quiet">Show all 6, or change an answer</button>
+    </div>
+  </section>
+
+  <aside class="doc" aria-label="The slice so far">
+    <div class="inner">
+      <span class="id">SLICE-007, in the Loans epic</span>
+      <h2>Renew a loan</h2>
+      <p class="muted">A patron extends a loan from their account page instead of asking at the desk.</p>
+
+      <h3>What must always be true</h3>
+      <ul>
+        <li><span class="id">INV-01</span><span>A loan MUST NOT be renewed more than two times.</span></li>
+        <li><span class="id">INV-02</span><span>An overdue loan MUST NOT be renewed.</span></li>
+      </ul>
+
+      <h3>What it does</h3>
+      <ul>
+        <li><span class="id">FR-01</span><span>When a patron renews a loan, the system shall set the new due date to 21 days after the current due date.</span></li>
+        <li><span class="id">FR-02</span><span>If the loan has been renewed twice, then the system shall refuse and say “This loan cannot be renewed again.”</span></li>
+        <li class="new"><span class="id">FR-03</span><span>If the loan is overdue, then the system shall refuse and say “Return this item or pay the fine before renewing.”</span></li>
+        <li class="todo"><span class="id">FR-04</span><span>A hold by another patron: being decided now</span></li>
+      </ul>
+
+      <h3>Every case</h3>
+      <table>
+        <tr><th>Overdue</th><th>Renewed twice</th><th>Held by another</th><th>Result</th></tr>
+        <tr><td>No</td><td>No</td><td>No</td><td>Renewed</td></tr>
+        <tr><td>Yes</td><td>any</td><td>any</td><td>Refused</td></tr>
+        <tr><td>No</td><td>Yes</td><td>any</td><td>Refused</td></tr>
+        <tr><td>No</td><td>No</td><td>Yes</td><td class="open">being decided now</td></tr>
+      </table>
+
+      <h3>Examples to prove it</h3>
+      <ul>
+        <li><span class="id">AC-01</span><span>Given a loan due 12 March, when the patron renews it, then it is due 2 April.</span></li>
+        <li class="todo"><span class="id">AC-02</span><span>3 more examples follow from the remaining answers</span></li>
+      </ul>
+    </div>
+  </aside>
+</main>
+
+<dialog id="confirm">
+  <h3>Mark “Renew a loan” ready to build?</h3>
+  <p class="muted" style="margin:0">Doing this:</p>
+  <ul>
+    <li>saves the slice to the project on GitHub, under the Loans epic</li>
+    <li>tells the builders it is ready; they start when they have room</li>
+    <li>records that you approved exactly this text, today</li>
+  </ul>
+  <div class="row"><button class="btn" onclick="confirm_.close()">Not yet</button><button class="btn primary" onclick="confirm_.close();show('home')">Mark ready to build</button></div>
+</dialog>
+
+<script>
+const $=id=>document.getElementById(id),confirm_=$('confirm');
+function show(s){
+  $('home').hidden=s!=='home';$('talk').hidden=s==='home';
+  $('asking').hidden=s!=='talk';$('finished').hidden=s!=='done';
+  $('bHome').setAttribute('aria-pressed',s==='home');$('bTalk').setAttribute('aria-pressed',s==='talk');$('bDone').setAttribute('aria-pressed',s==='done');
+  $('crumb').innerHTML=s==='home'?'':'Branch Library / Loans / <b>Renew a loan</b>';
+  document.querySelectorAll('.doc li.todo,.doc td.open').forEach(e=>e.style.visibility=s==='done'?'hidden':'');
+  scrollTo(0,0);
+}
+$('bHome').onclick=()=>show('home');$('bTalk').onclick=()=>show('talk');$('bDone').onclick=()=>show('done');
+$('goTalk').onclick=()=>show('talk');$('markReady').onclick=()=>confirm_.showModal();
+show('home');
+</script>
+</body>
+</html>

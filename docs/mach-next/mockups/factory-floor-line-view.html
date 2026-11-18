@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factory Floor: line view (mockup)</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;450;600;650;700&family=JetBrains+Mono:wght@450;600&display=swap">
+<style>
+/* Tokens copied from web/packages/ui/src/styles/tokens.css. Mockup only. */
+:root{
+  --canvas:#FAF9F5;--surface:#FFFFFF;--sunken:#F3F1EA;--ink:#141413;--ink-muted:#5C5A54;--ink-subtle:#6B6962;
+  --line:#E3E0D5;--line-strong:#D1CDBF;--line-control:#8C887C;
+  --accent:#D97757;--accent-fill:#B5512F;--accent-ink:#A9482A;--accent-soft:#F6E7DF;--focus:#2F6AA3;
+  --ground:#EFEBE2;--grid:#E3DFD3;--plate:#FDFCF9;--plate-shade:#D5CFC0;--plate-edge:#8A8679;--hatch:#B5AF9E;
+  --f-ink:#3A3833;--f-ink-soft:#7A766B;--route:#858175;
+  --live:#2F6AA3;--live-soft:#DCE7F3;--pass:#56683F;--pass-soft:#E6EBDB;--fail:#A12F3A;--fail-soft:#F5DEDF;
+  --wait:#86621A;--wait-soft:#F3E6C6;--human:#A9482A;--human-soft:#F6E3D9;
+  --shadow-2:0 2px 8px rgba(20,20,19,.08),0 1px 2px rgba(20,20,19,.06);--shadow-3:0 12px 32px rgba(20,20,19,.14),0 2px 6px rgba(20,20,19,.08);
+  --sans:'Source Sans 3','Segoe UI',system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --canvas:#141413;--surface:#1C1C1A;--sunken:#0F0F0E;--ink:#F0EEE6;--ink-muted:#B5B2A7;--ink-subtle:#9A978C;
+  --line:#2E2D2A;--line-strong:#3D3C38;--line-control:#75736A;
+  --accent-fill:#D97757;--accent-ink:#E8957A;--accent-soft:#3A2620;--focus:#8DB4DD;
+  --ground:#0B0B0A;--grid:#181816;--plate:#211F1D;--plate-shade:#121110;--plate-edge:#78756C;--hatch:#3E3C37;
+  --f-ink:#DAD6CA;--f-ink-soft:#A19E93;--route:#8C897F;
+  --live:#8DB4DD;--live-soft:#1E3046;--pass:#A7B98A;--pass-soft:#26301E;--fail:#EC8F96;--fail-soft:#3E2024;
+  --wait:#D9B061;--wait-soft:#362C17;--human:#E8957A;--human-soft:#42291F;
+  --shadow-2:0 4px 12px rgba(0,0,0,.45);--shadow-3:0 16px 40px rgba(0,0,0,.6);
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--ink);font:400 16px/1.5 var(--sans)}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.id{font:450 13px/1.25 var(--mono)}
+
+.note{background:var(--sunken);border-bottom:1px solid var(--line);padding:6px 20px;font-size:13px;color:var(--ink-subtle)}
+
+.top{display:flex;align-items:center;gap:20px;white-space:nowrap;overflow:hidden;padding:0 20px;height:56px;border-bottom:1px solid var(--line);background:var(--surface)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650}
+.brand small{font-weight:400;color:var(--ink-muted);font-size:14px}
+.views{display:flex;gap:2px;margin-left:12px}
+.views button{background:none;border:0;border-bottom:2px solid transparent;padding:16px 12px 14px;color:var(--ink-muted);cursor:pointer;font-weight:600;font-size:14px}
+.views button[aria-pressed=true]{color:var(--accent-ink);border-bottom-color:var(--accent)}
+.state{margin-left:auto;display:flex;gap:18px;align-items:center;font-size:14px;color:var(--ink-muted)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--live);margin-right:6px}
+.places{display:inline-flex;gap:3px;vertical-align:-1px;margin-right:6px}
+.places i{width:9px;height:9px;border:1.5px solid var(--f-ink-soft);border-radius:2px}
+.places i.on{background:var(--f-ink-soft)}
+
+.needs{display:flex;gap:12px;padding:14px 20px;align-items:stretch;flex-wrap:wrap}
+.needs h2{font:650 15px/1.3 var(--sans);margin:0;align-self:center;min-width:92px}
+.need{flex:1 1 320px;display:flex;gap:12px;align-items:center;background:var(--human-soft);border:1px solid var(--human);border-radius:8px;padding:10px 14px;cursor:pointer;text-align:left}
+.need.fail{background:var(--fail-soft);border-color:var(--fail)}
+.need b{font-weight:650}
+.need p{margin:0;font-size:14px;color:var(--ink-muted)}
+.need .ago{margin-left:auto;font-size:13px;color:var(--ink-muted);white-space:nowrap}
+
+.work{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:0;border-top:1px solid var(--line)}
+.board{background:var(--ground);overflow-x:auto;padding:8px 0 4px}
+.board svg{display:block;min-width:980px;width:100%;height:auto}
+.side{border-left:1px solid var(--line);background:var(--surface);padding:18px 20px;min-height:560px}
+.side h3{font:650 18px/1.4 var(--sans);margin:0 0 2px}
+.side h4{font:600 14px/1.3 var(--sans);margin:18px 0 6px;color:var(--ink-muted)}
+.side p{margin:0 0 8px}
+.side .sub{color:var(--ink-muted);font-size:14px}
+.feed{list-style:none;margin:0;padding:0}
+.feed li{display:grid;grid-template-columns:54px 1fr;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+.feed time{color:var(--ink-subtle);font-size:13px;padding-top:1px}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:1px 10px;font-size:13px;font-weight:600;border:1px solid}
+.pill.live{color:var(--live);background:var(--live-soft);border-color:var(--live)}
+.pill.human{color:var(--human);background:var(--human-soft);border-color:var(--human)}
+.pill.fail{color:var(--fail);background:var(--fail-soft);border-color:var(--fail)}
+.pill.wait{color:var(--wait);background:var(--wait-soft);border-color:var(--wait)}
+.pill.pass{color:var(--pass);background:var(--pass-soft);border-color:var(--pass)}
+.bars{display:grid;grid-template-columns:70px 1fr 78px;gap:4px 8px;align-items:center;font-size:13.5px}
+.bars .bar{height:8px;border-radius:2px;background:var(--route)}
+.bars .bar.now{background:var(--live)}
+.bars .bar.re{background:var(--fail)}
+.bars span:nth-child(3n){color:var(--ink-muted);text-align:right}
+.cmd{display:flex;align-items:center;gap:8px;background:var(--sunken);border:1px solid var(--line);border-radius:5px;padding:6px 8px 6px 10px;margin-top:6px}
+.cmd code{font:450 13px/1.25 var(--mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmd button{border:1px solid var(--line-control);background:var(--surface);border-radius:5px;padding:2px 10px;font-size:13px;cursor:pointer}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;font-size:14.5px;margin:0}
+.kv dt{color:var(--ink-muted)}.kv dd{margin:0}
+.guide{display:inline-flex;gap:2px;vertical-align:1px;margin-right:6px}
+.guide i{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--f-ink-soft)}
+.guide i.on{background:var(--f-ink-soft)}
+.linkish{background:none;border:0;padding:0;color:var(--accent-ink);text-decoration:underline;cursor:pointer;font-size:14px}
+.foot{padding:10px 20px;color:var(--ink-subtle);font-size:13px;border-top:1px solid var(--line)}
+
+/* board drawing */
+.bay{fill:var(--plate);stroke:var(--plate-shade)}
+.bayhead{font:650 15px var(--sans);fill:var(--f-ink)}
+.baysub{font:400 12.5px var(--sans);fill:var(--f-ink-soft)}
+.rowlabel{font:600 14px var(--sans);fill:var(--f-ink)}
+.rowid{font:450 12px var(--mono);fill:var(--f-ink-soft)}
+.belt{stroke:var(--hatch);stroke-width:2;stroke-dasharray:2 6;stroke-linecap:round}
+.done{stroke:var(--pass);stroke-width:3;stroke-linecap:round}
+.node{fill:var(--pass)}
+.tick{stroke:var(--plate);stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.carrier rect{stroke-width:1.5}
+.carrier text{font:600 12.5px var(--sans)}
+.c-live rect{fill:var(--live-soft);stroke:var(--live)}.c-live text{fill:var(--live)}
+.c-human rect{fill:var(--human-soft);stroke:var(--human)}.c-human text{fill:var(--human)}
+.c-fail rect{fill:var(--fail-soft);stroke:var(--fail)}.c-fail text{fill:var(--fail)}
+.c-wait rect{fill:var(--wait-soft);stroke:var(--wait);stroke-dasharray:4 3}.c-wait text{fill:var(--wait)}
+.c-pass rect{fill:var(--pass-soft);stroke:var(--pass)}.c-pass text{fill:var(--pass)}
+.under{font:400 12px var(--sans);fill:var(--f-ink-soft)}
+.back{fill:none;stroke:var(--fail);stroke-width:1.6;stroke-dasharray:5 4}
+.backtxt{font:600 11.5px var(--sans);fill:var(--fail)}
+.gate{fill:var(--plate);stroke:var(--human);stroke-width:1.5}
+.gatetxt{font:600 12px var(--sans);fill:var(--human)}
+.row{cursor:pointer}
+.row .hit{fill:transparent}
+.row:hover .hit,.row.sel .hit{fill:var(--accent);fill-opacity:.07}
+.row.sel .selbar{fill:var(--accent)}
+.selbar{fill:transparent}
+.row.faded{opacity:.55}
+.headhit{fill:transparent;cursor:pointer}
+.headhit:hover{fill:var(--accent);fill-opacity:.07}
+.pulse{fill:none;stroke:var(--live);stroke-width:1.5;opacity:0}
+@media (prefers-reduced-motion:no-preference){.pulse{animation:p 2.4s ease-out infinite}}
+@keyframes p{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(1.18)}}
+
+dialog{border:1px solid var(--line-strong);border-radius:12px;padding:0;background:var(--surface);color:var(--ink);box-shadow:var(--shadow-3);width:min(880px,94vw)}
+dialog::backdrop{background:rgba(20,20,19,.42)}
+.sheet{padding:22px 26px}
+.sheet h3{font:700 23px/1.3 var(--sans);margin:0}
+.sheet table{width:100%;border-collapse:collapse;margin-top:14px;font-size:14.5px}
+.sheet th{text-align:left;font-weight:600;color:var(--ink-muted);border-bottom:1px solid var(--line-strong);padding:6px 8px}
+.sheet td{border-bottom:1px solid var(--line);padding:8px;vertical-align:top}
+.sheet .close{float:right;border:1px solid var(--line-control);background:var(--surface);border-radius:5px;padding:4px 12px;cursor:pointer}
+@media (max-width:900px){.work{grid-template-columns:1fr}.side{border-left:0;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div class="note">Mockup with sample data. Click a ticket or a station; double-click a ticket for its full record.</div>
+
+<header class="top">
+  <div class="brand">
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="11" y="1" width="8" height="8" rx="1.5" fill="#D97757"/><rect x="1" y="11" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="11" y="11" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+    Factory Floor <small>Branch Library</small>
+  </div>
+  <nav class="views" aria-label="Views">
+    <button aria-pressed="true">Line</button>
+    <button aria-pressed="false">Floor</button>
+    <button aria-pressed="false">Analytics</button>
+  </nav>
+  <div class="state">
+    <span><span class="dot"></span>Live, updated 4 seconds ago</span>
+    <span><span class="places"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span>3 of 4 places working</span>
+  </div>
+</header>
+
+<section class="needs" aria-label="Needs you">
+  <h2>Needs you</h2>
+  <button class="need" data-pick="LOCAL-014"><div><b>Approve or send back <span class="id">LOCAL-014</span></b><p>Renew a loan from the account page. All three reviewers approved; it changes sign-in, so a person decides.</p></div><span class="ago">waiting 42 min</span></button>
+  <button class="need fail" data-pick="LOCAL-009"><div><b>Unblock <span class="id">LOCAL-009</span></b><p>Import patrons from a file. Rejected in its third and last round; the line has stopped work on it.</p></div><span class="ago">waiting 2 h 10 min</span></button>
+</section>
+
+<div class="work">
+  <div class="board"><svg id="board" viewBox="0 0 1130 664" role="img" aria-label="Tickets moving left to right through the stations"></svg></div>
+  <aside class="side" id="side" aria-live="polite"></aside>
+</div>
+<div class="foot">This page only reads. To change anything, copy the command it shows and run it in Claude Code.</div>
+
+<dialog id="full"><div class="sheet" id="sheet"></div></dialog>
+
+<script>
+const ST=[
+ {k:'groom',n:'Groom',w:'Fable',t:'typical 11 min',g:4,now:0,back:'none sent back',note:'Interviews the product owner and writes the spec.'},
+ {k:'plan',n:'Plan',w:'Opus',t:'typical 6 min',g:3,now:1,back:'1 in 10 planned twice',note:'The contract engineer writes contracts and the test-first plan.'},
+ {k:'build',n:'Build',w:'Sonnet',t:'typical 24 min',g:2,now:1,back:'takes most of the time',note:'Writes failing tests first, then the code, one task at a time.'},
+ {k:'verify',n:'Verify',w:'Sonnet',t:'typical 9 min',g:2,now:1,back:'1 in 6 sent back',note:'Runs the slice as its user would and captures proof.'},
+ {k:'review',n:'Review',w:'Opus, Sonnet',t:'typical 7 min',g:3,now:0,back:'1 in 4 sent back',note:'Three reviewers with fresh eyes; findings decide the vote.'},
+ {k:'merge',n:'Merge',w:'script',t:'typical 2 min',g:0,now:0,back:'none sent back',note:'Lands exactly what review approved, by pull request.'},
+ {k:'clean',n:'Clean up',w:'Haiku',t:'under 1 min',g:1,now:0,back:'',note:'Archives the record and removes the workspace.'}];
+const T=[
+ {id:'LOCAL-014',name:'Renew a loan from the account page',risk:'High',at:5,gate:true,kind:'human',lab:'Your approval',under:'waiting 42 min',
+  why:'All three reviewers approved in round 1. It changes sign-in, which is High risk, so a person must approve before it merges.',next:'Approve it, or send it back with your reason.',cmd:'/mach decide LOCAL-014',
+  times:[['Groom',14],['Plan',7],['Build',31],['Verify',10],['Review',8]],cost:'$4.18 recorded',rounds:'1 of 3'},
+ {id:'LOCAL-012',name:'Show overdue fines at checkout',risk:'Medium',at:3,kind:'live',lab:'9 of 14 checks',under:'working 6 min',
+  why:'The verifier is running the slice and capturing proof for each scenario and rule.',next:'Nothing. It goes to review when all 14 checks are proven.',cmd:'/mach explain LOCAL-012',
+  times:[['Groom',9],['Plan',5],['Build',22],['Verify',6,'now']],cost:'not recorded',rounds:'1 of 3'},
+ {id:'LOCAL-015',name:'Email a receipt after renewal',risk:'Medium',at:2,kind:'live',lab:'task 4 of 9',under:'round 2, working 12 min',back:[4,2,'sent back once'],
+  why:'Review rejected round 1: the receipt could be sent twice (rule INV-02). The builder is fixing that finding.',next:'Nothing yet. One more rejection after this one stops the ticket for you.',cmd:'/mach explain LOCAL-015',
+  times:[['Groom',12],['Plan',6],['Build',26],['Verify',8],['Review',7],['Build',12,'re']],cost:'not recorded',rounds:'2 of 3'},
+ {id:'LOCAL-009',name:'Import patrons from a file',risk:'Medium',at:4,kind:'fail',lab:'Stopped',under:'3 rounds used',back:[4,2,'sent back twice'],
+  why:'Rejected in round 3 for the same finding each time: rows with a missing card number are imported instead of refused (FR-04).',next:'Read the findings, then re-plan it, fix it by hand, or abandon it.',cmd:'/mach decide LOCAL-009',
+  times:[['Groom',10],['Plan',6],['Build',71,'re'],['Verify',25],['Review',22]],cost:'$11.02 recorded',rounds:'3 of 3'},
+ {id:'LOCAL-016',name:'Hold a book for pickup',risk:'Low',at:1,kind:'live',lab:'writing the plan',under:'working 3 min',
+  why:'The contract engineer is writing the contracts and the test-first plan from the spec.',next:'Nothing.',cmd:'/mach explain LOCAL-016',
+  times:[['Groom',8],['Plan',3,'now']],cost:'not recorded',rounds:'0 of 3'},
+ {id:'LOCAL-017',name:'Cancel a hold',risk:'Low',at:2,kind:'wait',lab:'Held',under:'same files as LOCAL-015',
+  why:'Its plan changes two files that LOCAL-015 is changing now. Two tickets never build on the same files at once.',next:'Nothing. It starts when LOCAL-015 has merged.',cmd:'/mach schedule',
+  times:[['Groom',7],['Plan',5]],cost:'not recorded',rounds:'0 of 3'},
+ {id:'LOCAL-011',name:'Waive a late fee (staff)',risk:'Medium',at:6,kind:'pass',lab:'Landed',under:'12 min ago',faded:true,
+  why:'Merged by pull request and cleaned up. Its record is in the archive.',next:'Nothing.',cmd:'/mach explain LOCAL-011',
+  times:[['Groom',11],['Plan',6],['Build',19],['Verify',9],['Review',6],['Merge',2]],cost:'$3.40 recorded',rounds:'1 of 3'}];
+const X0=232,W=126,Y0=92,RH=80,cx=i=>X0+i*W+W/2;
+const guide=n=>'<span class="guide">'+[1,2,3,4].map(i=>`<i class="${i<=n?'on':''}"></i>`).join('')+'</span>';
+function draw(){
+ let s='';
+ ST.forEach((b,i)=>{const x=X0+i*W;
+  s+=`<rect class="bay" x="${x+5}" y="14" width="${W-10}" height="${Y0+T.length*RH-18}" rx="6"/>`
+   +`<text class="bayhead" x="${x+16}" y="40">${b.n}</text><text class="baysub" x="${x+16}" y="58">${b.w}</text><text class="baysub" x="${x+16}" y="74">${b.t}</text>`
+   +`<rect class="headhit" data-st="${i}" x="${x+5}" y="14" width="${W-10}" height="70" rx="6"><title>${b.n}</title></rect>`;});
+ T.forEach((t,r)=>{const y=Y0+r*RH+RH/2,xa=cx(t.at)-(t.gate?W/2:0);
+  let g=`<g class="row${t.faded?' faded':''}" data-id="${t.id}" tabindex="0"><rect class="hit" x="0" y="${y-RH/2+2}" width="1130" height="${RH-4}"/><rect class="selbar" x="0" y="${y-RH/2+2}" width="4" height="${RH-4}"/>`
+   +`<text class="rowid" x="16" y="${y-6}">${t.id}</text><text class="rowlabel" x="16" y="${y+12}">${t.name.length>27?t.name.slice(0,26)+'…':t.name}</text>`
+   +`<line class="belt" x1="${X0+8}" y1="${y}" x2="${X0+7*W-8}" y2="${y}"/>`;
+  if(t.at>0)g+=`<line class="done" x1="${cx(0)}" y1="${y}" x2="${xa-(t.gate?16:48)}" y2="${y}"/>`;
+  for(let i=0;i<t.at;i++)g+=`<circle class="node" cx="${cx(i)}" cy="${y}" r="7"/><path class="tick" d="M${cx(i)-3} ${y}l2.2 2.4 4-4.6"/>`;
+  if(t.back){const a=cx(t.back[0]),b=cx(t.back[1]);g+=`<path class="back" d="M${a} ${y-9} C${a} ${y-27},${b} ${y-27},${b} ${y-15}"/><path class="back" style="stroke-dasharray:none" d="M${b-4} ${y-21}l4 6 4-6"/><text class="backtxt" x="${(a+b)/2}" y="${y-25}" text-anchor="middle">${t.back[2]}</text>`;}
+  if(t.gate){g+=`<path class="gate" d="M${xa} ${y-13}l13 13-13 13-13-13z"/><text class="gatetxt" x="${xa+20}" y="${y+4}">${t.lab}</text><text class="under" x="${xa+20}" y="${y+19}">${t.under}</text>`;}
+  else{const w=Math.max(64,t.lab.length*7.2+22);
+   if(t.kind==='live')g+=`<rect class="pulse" x="${xa-w/2}" y="${y-13}" width="${w}" height="26" rx="13" style="transform-origin:${xa}px ${y}px"/>`;
+   g+=`<g class="carrier c-${t.kind}"><rect x="${xa-w/2}" y="${y-13}" width="${w}" height="26" rx="13"/><text x="${xa}" y="${y+4.5}" text-anchor="middle">${t.lab}</text></g><text class="under" x="${xa}" y="${y+27}" text-anchor="middle">${t.under}</text>`;}
+  s+=g+'</g>';});
+ board.innerHTML=s;
+}
+const feed=`<h3>What just happened</h3><p class="sub">Newest first. Pick a ticket or a station to look closer.</p><ul class="feed">
+<li><time>10:42</time><span><span class="id">LOCAL-012</span> proved 9 of its 14 checks.</span></li>
+<li><time>10:39</time><span><span class="id">LOCAL-016</span> has a finished spec; the contract engineer started its plan.</span></li>
+<li><time>10:31</time><span><span class="id">LOCAL-011</span> merged by pull request and was cleaned up.</span></li>
+<li><time>10:30</time><span><span class="id">LOCAL-015</span> began fixing what review found in round 1.</span></li>
+<li><time>10:24</time><span><span class="id">LOCAL-017</span> is held: it changes the same files as <span class="id">LOCAL-015</span>.</span></li>
+<li><time>10:00</time><span><span class="id">LOCAL-014</span> was approved by all three reviewers and now waits for you.</span></li>
+<li><time>08:32</time><span><span class="id">LOCAL-009</span> was rejected in its last round and stopped.</span></li></ul>`;
+const cmd=c=>`<div class="cmd"><code>${c}</code><button onclick="this.textContent='Copied'">Copy</button></div>`;
+function ticket(t){const max=Math.max(...t.times.map(x=>x[1]));
+ return `<button class="linkish" onclick="pick(null)">Back to what just happened</button>
+ <p class="id" style="margin:14px 0 0;color:var(--ink-muted)">${t.id}</p><h3>${t.name}</h3>
+ <p><span class="pill ${t.kind}">${t.gate?'Waiting for you':t.kind==='live'?'Working':t.kind==='wait'?'Held':t.kind==='fail'?'Stopped':'Landed'}</span> <span class="sub">at ${ST[t.gate?4:t.at].n}${t.gate?', before Merge':''}</span></p>
+ <h4>Why it is here</h4><p>${t.why}</p><h4>What it needs from you</h4><p>${t.next}</p>${cmd(t.cmd)}
+ <h4>Where the time went</h4><div class="bars">${t.times.map(x=>`<span>${x[0]}</span><span class="bar ${x[2]||''}" style="width:${Math.max(6,x[1]/max*100)}%"></span><span>${x[1]} min</span>`).join('')}</div>
+ <h4>Facts</h4><dl class="kv"><dt>Risk</dt><dd>${t.risk}</dd><dt>Rounds used</dt><dd>${t.rounds}</dd><dt>Cost</dt><dd>${t.cost}</dd></dl>
+ <p style="margin-top:16px"><button class="linkish" onclick="full('${t.id}')">Open the full record</button> <span class="sub">or double-click the ticket</span></p>`;}
+function station(b){return `<button class="linkish" onclick="pick(null)">Back to what just happened</button>
+ <h3 style="margin-top:14px">${b.n}</h3><p class="sub">${b.note}</p>
+ <h4>Who works here</h4><dl class="kv"><dt>Model</dt><dd>${b.w}</dd><dt>Relative cost</dt><dd>${b.g?guide(b.g)+'<span class="sub">a guide, not a bill</span>':'no model; a script'}</dd><dt>At work now</dt><dd>${b.now} ticket${b.now===1?'':'s'}</dd></dl>
+ <h4>Last 20 tickets</h4><dl class="kv"><dt>Time here</dt><dd>${b.t}</dd><dt>Rework</dt><dd>${b.back||'none'}</dd></dl>
+ <h4>To change the model for this station</h4><p class="sub">Model tiers are set in the project's settings file.</p>${cmd('.factory/config.json  models.'+b.k)}`;}
+function pick(id){document.querySelectorAll('.row').forEach(r=>r.classList.toggle('sel',r.dataset.id===id));
+ const t=T.find(x=>x.id===id);side.innerHTML=t?ticket(t):feed;}
+function full(id){const t=T.find(x=>x.id===id);
+ const res=(n,i)=>i<t.at||t.faded?'Passed':i===t.at?(t.gate?'Approved by 3 of 3':t.kind==='fail'?'Rejected, round 3':t.kind==='wait'?'Held':'Working'):'';
+ sheet.innerHTML=`<button class="close" onclick="full_.close()">Close</button><p class="id" style="margin:0;color:var(--ink-muted)">${t.id}</p><h3>${t.name}</h3>
+ <p class="sub" style="margin:4px 0 0;color:var(--ink-muted)">${t.risk} risk. Rounds used: ${t.rounds}. Cost: ${t.cost}.</p>
+ <table><thead><tr><th>Station</th><th>Worker</th><th>Time</th><th>Result</th><th>What to look at</th></tr></thead><tbody>
+ ${t.times.map((x,i)=>{const b=ST.find(s=>s.n===x[0]);return `<tr><td><b>${x[0]}</b>${x[2]==='re'?' <span class="pill fail">rework</span>':''}</td><td>${b.w}</td><td>${x[1]} min</td><td>${res(x[0],ST.indexOf(b))}</td><td>${x[0]==='Verify'?'<button class="linkish">14 checks and their captured proof</button>':x[0]==='Review'?'<button class="linkish">Findings by reviewer, with the rule each cites</button>':x[0]==='Build'?'<button class="linkish">9 tasks, tests seen failing first</button>':x[0]==='Plan'?'<button class="linkish">Plan and contracts</button>':x[0]==='Groom'?'<button class="linkish">Spec and the why</button>':'<button class="linkish">Pull request</button>'}</td></tr>`}).join('')}
+ </tbody></table><h4 style="font:600 14px var(--sans);color:var(--ink-muted);margin:18px 0 4px">What it needs from you</h4><p style="margin:0">${t.next}</p>${cmd(t.cmd)}`;
+ full_.showModal();}
+const board=document.getElementById('board'),side=document.getElementById('side'),sheet=document.getElementById('sheet'),full_=document.getElementById('full');
+draw();pick(null);
+board.addEventListener('click',e=>{const h=e.target.closest('[data-st]');if(h){document.querySelectorAll('.row').forEach(r=>r.classList.remove('sel'));side.innerHTML=station(ST[h.dataset.st]);return;}
+ const r=e.target.closest('.row');if(r)pick(r.dataset.id);});
+board.addEventListener('dblclick',e=>{const r=e.target.closest('.row');if(r)full(r.dataset.id);});
+board.addEventListener('keydown',e=>{const r=e.target.closest('.row');if(r&&e.key==='Enter')pick(r.dataset.id);});
+document.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>pick(b.dataset.pick));
+</script>
+</body>
+</html>
