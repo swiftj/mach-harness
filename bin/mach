@@ -418,8 +418,17 @@ def backup(project: Path, relative: str, stamp: str, dry: bool) -> str:
 def write(project: Path, item: Item) -> None:
     path = project / item.dest
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(item.data)
-    path.chmod(0o755 if item.executable else 0o644)
+    # A new file moved into place, never the old one rewritten: macOS remembers a program's code
+    # signature by file, and stops a program whose file was overwritten ("Code Signature Invalid").
+    handle, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(handle, "wb") as out:
+            out.write(item.data)
+        os.chmod(name, 0o755 if item.executable else 0o644)
+        os.replace(name, path)
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
 
 
 def apply(project: Path, items: Sequence[Item], components: Sequence[str], version: str, args: argparse.Namespace,
