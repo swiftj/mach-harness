@@ -164,3 +164,25 @@ func TestSliceTitleComesFromTheLedgerForItsRevision(t *testing.T) {
 		}
 	}
 }
+
+// M11: an intake line of version 3 names no wave and no project; both stay absent, never invented.
+func TestAVersion3IntakeLineHasNoWave(t *testing.T) {
+	id := NewIdentity()
+	b, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": 1, "at": "2026-11-17T10:00:00Z", "type": "slice.materialized",
+		"source_commit": nil, "epic_id": "EPIC-001", "issue": 57, "slice_id": "SLICE-001", "revision": 1, "ticket_id": "57", "runner_id": nil,
+		"execution_id": nil, "source": "intake", "cause": nil, "refs": nil, "data": map[string]any{"adopted": false, "dependencies": []string{}, "digest": strings.Repeat("c", 64)}})
+	evs := NewLedger("0badc0de", "/work/p", id).Line(b, Read{Line: 1, At: time.Date(2026, 11, 17, 10, 0, 1, 0, time.UTC)})
+	if len(evs) != 1 || evs[0].Type != "slice.materialized" {
+		t.Fatalf("got %+v", evs)
+	}
+	if evs[0].IDs.WaveID != "" || evs[0].IDs.ProjectID != "" || evs[0].Origin.SourceVersion != "3" {
+		t.Errorf("wave %q project %q version %q", evs[0].IDs.WaveID, evs[0].IDs.ProjectID, evs[0].Origin.SourceVersion)
+	}
+	if evs[0].IDs.SliceID != "SLICE-001" || evs[0].IDs.TicketID != "57" {
+		t.Errorf("ids %+v", evs[0].IDs)
+	}
+	bad, _ := json.Marshal(map[string]any{"schema_version": 4, "seq": 2, "at": "2026-11-17T10:00:00Z", "type": "slice.materialized"})
+	if evs := NewLedger("0badc0de", "/work/p", id).Line(bad, Read{Line: 2}); len(evs) != 1 || evs[0].Type == "slice.materialized" {
+		t.Errorf("a version the observer does not know must be a gap, got %+v", evs)
+	}
+}

@@ -737,7 +737,7 @@ func (w *world) runRecord(c *cell) obj {
 	return obj{
 		{"record_version", 2},
 		{"integration", integration},
-		{"product", obj{{"slice_id", s.id}, {"revision", s.rev}, {"wave_id", s.wave.id}, {"digest", s.digest}, {"source_commit", nil}}},
+		{"product", obj{{"slice_id", s.id}, {"revision", s.rev}, {"epic_id", nil}, {"digest", s.digest}, {"source", "folder"}, {"source_commit", nil}}},
 		{"ticket_id", c.ticket}, {"slice_id", s.id}, {"title", f.title},
 		{"risk", c.risk}, {"app_type", f.appType},
 		{"mode", "headless"},

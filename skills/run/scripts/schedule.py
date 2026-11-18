@@ -251,7 +251,8 @@ def dependencies(root: Path, factory: Optional[Callable[[], Any]]) -> Dict[str, 
     for row in plan["slices"]:
         if row.get("state") in ("superseded", "completed") or not row.get("ticket_id"):
             continue
-        waits[row["ticket_id"]] = [ticket_of.get(dep["slice_id"]) or dep["slice_id"] for dep in row.get("depends_on") or [] if not dep.get("integrated")]
+        waits[row["ticket_id"]] = [ticket_of.get(dep.get("slice_id")) or dep.get("slice_id") or dep.get("name") for dep in row.get("depends_on") or []
+                                   if not dep.get("integrated")]
     return waits
 
 

@@ -349,7 +349,7 @@ def check_requests(project: Path, config: Any, gh_state: Dict[str, Any]) -> List
     skipped = "Needs the GitHub CLI signed in first."
     request_label = github.get("request_label")
     request_label = request_label if isinstance(request_label, str) and request_label.strip() else "mach:request"
-    wanted = [request_label, "mach:grooming", "mach:ready", "mach:blocked"]
+    wanted = [request_label, "mach:slice", "mach:ready", "mach:building", "mach:question", "mach:shipped"]
     if not ready:
         results.append(check("requests.labels", f"{title}: labels", "not_checked", skipped, ""))
     else:
@@ -371,9 +371,9 @@ def check_requests(project: Path, config: Any, gh_state: Dict[str, Any]) -> List
             if missing:
                 lines = "\n".join(f"    gh label create {shlex.quote(name)} --repo {repo}" for name in missing)
                 results.append(check("requests.labels", f"{title}: labels", "warn", f"{repo} lacks the label(s): {', '.join(missing)}.",
-                                     f"To create them now, run these yourself (the doctor creates none; MACH adds a missing status label of its own when it first needs it, and never the request label):\n{lines}"))
+                                     f"To create them now, run these yourself (the doctor creates none; Product Studio and the Factory add a missing label of their own when they first need it, and never the request label):\n{lines}"))
             else:
-                results.append(check("requests.labels", f"{title}: labels", "ok", f"All four MACH status labels exist in {repo}."))
+                results.append(check("requests.labels", f"{title}: labels", "ok", f"The request label and MACH's slice labels exist in {repo}."))
     if not ready:
         results.append(check("requests.permission", f"{title}: permission", "not_checked", skipped, ""))
     else:

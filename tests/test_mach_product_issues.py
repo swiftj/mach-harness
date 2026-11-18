@@ -6,19 +6,26 @@ the network. Each GitHub write can be made to fail before it happens, or to happ
 its answer (the interrupted case), to show that a repeated run never makes anything twice.
 """
 
+import io
 import json
 import os
-import re
 import stat
+import subprocess
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "ticket" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "product-studio" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "intent" / "scripts"))
 import issue_rules  # noqa: E402
-from test_mach_product_collab import Base, git, intent_for, spec_for  # noqa: E402
+import studio  # noqa: E402
+
+FIXTURE = (ROOT / "tests" / "fixtures" / "SLICE-001-invite-teammate.md").read_text()
 
 REPO = "acme/team-space"
 ADDRESS = "https://github.com/acme/team-space.git"
@@ -39,7 +46,17 @@ def values(flag):
     return [args[i + 1] for i, a in enumerate(args) if a == flag]
 issues = state.setdefault("issues", {})
 labels = state.setdefault("labels", [])
+accounts = state.setdefault("accounts", {})
 repo = state["repo"]
+def account(login):
+    return accounts.get(login) or {"id": 5000 + sum(ord(c) for c in login), "role": "write"}
+def tick():
+    state["clock"] = state.get("clock", 0) + 1
+    return "2026-11-17T%02d:%02d:%02dZ" % (10 + state["clock"] // 3600, (state["clock"] // 60) % 60, state["clock"] % 60)
+def event(i, kind, name):
+    me = state["me"]
+    i.setdefault("events", []).append({"event": kind, "label": name, "login": me, "id": account(me)["id"], "type": "User", "app": False, "at": tick()})
+    i["updatedAt"] = i["events"][-1]["at"]
 def key():
     if args[0] == "api":
         method = value("--method", "GET")
@@ -48,10 +65,12 @@ def key():
             return "api user"
         if p.endswith("/sub_issues/priority"):
             return "api PATCH priority"
-        if p.endswith("/sub_issues"):
+        if "/sub_issues" in p:
             return "api %s sub_issues" % method
         if "/events" in p:
             return "api events"
+        if "/comments" in p:
+            return "api comments"
         if p.endswith("/permission"):
             return "api permission"
         return "api issue"
@@ -94,6 +113,8 @@ def find(n):
         print("GraphQL: Could not resolve to an issue or pull request with the number of %s." % n, file=sys.stderr)
         done(1)
     return i
+def by_id(ident):
+    return next(i for i in issues.values() if i["id"] == ident)
 def body_from():
     if "--body-file" in args:
         return open(value("--body-file"), encoding="utf-8").read()
@@ -118,7 +139,9 @@ elif args[:2] == ["issue", "create"]:
     state["next_number"] = number + 1
     issues[str(number)] = {"number": number, "id": 9000 + number, "title": value("--title"), "body": body_from(), "state": "OPEN",
                            "labels": [{"name": n} for n in values("--label")], "comments": [], "events": [], "sub_issues": [],
-                           "author": {"login": state["me"]}, "updatedAt": "2026-11-17T10:00:00Z"}
+                           "author": {"login": state["me"]}, "updatedAt": tick()}
+    for name in values("--label"):
+        event(issues[str(number)], "labeled", name)
     print("https://github.com/%s/issues/%d" % (repo, number))
 elif args[:2] == ["issue", "edit"]:
     i = find(args[2])
@@ -126,16 +149,26 @@ elif args[:2] == ["issue", "edit"]:
         i["title"] = value("--title")
     if "--body-file" in args:
         i["body"] = body_from()
+        i["updatedAt"] = tick()
     for name in values("--add-label"):
         if name not in labels:
             print("could not add label: '%s' not found" % name, file=sys.stderr)
             done(1)
         if name not in [l["name"] for l in i["labels"]]:
             i["labels"].append({"name": name})
+            event(i, "labeled", name)
     for name in values("--remove-label"):
-        i["labels"] = [l for l in i["labels"] if l["name"] != name]
+        if name in [l["name"] for l in i["labels"]]:
+            i["labels"] = [l for l in i["labels"] if l["name"] != name]
+            event(i, "unlabeled", name)
 elif args[:2] == ["issue", "comment"]:
-    find(args[2])["comments"].append({"login": state["me"], "body": body_from()})
+    at = tick()
+    me = state["me"]
+    find(args[2])["comments"].append({"login": me, "id": account(me)["id"], "body": body_from(), "created_at": at, "updated_at": at})
+    find(args[2])["updatedAt"] = at
+elif args[:2] == ["issue", "close"]:
+    find(args[2])["state"] = "CLOSED"
+    find(args[2])["updatedAt"] = tick()
 elif args[:2] == ["issue", "pin"]:
     find(args[2])["pinned"] = True
 elif args[:2] == ["label", "list"]:
@@ -148,14 +181,34 @@ elif args[:2] == ["label", "create"]:
 elif args[0] == "api":
     p = [a for a in args if a.startswith("repos/")][0]
     parts = p.split("?")[0].split("/")
+    jq = value("--jq", "")
     if k == "api issue":
-        print(json.dumps({"id": find(parts[4])["id"]}))
+        i = find(parts[4])
+        if "updated_at" in jq:
+            print(json.dumps({"number": i["number"], "state": i["state"].lower(), "title": i["title"], "body": i["body"],
+                              "labels": [l["name"] for l in i["labels"]], "updated_at": i.get("updatedAt")}))
+        else:
+            print(json.dumps({"id": i["id"]}))
+    elif k == "api events":
+        for e in find(parts[4]).get("events", []):
+            print(json.dumps(e))
+    elif k == "api comments":
+        for c in find(parts[4])["comments"]:
+            print(json.dumps({"login": c["login"], "id": c.get("id", account(c["login"])["id"]), "type": c.get("type", "User"), "app": c.get("app", False),
+                              "created_at": c.get("created_at"), "updated_at": c.get("updated_at"), "body": c["body"]}))
+    elif k == "api permission":
+        login = parts[-2]
+        if login not in accounts and not state.get("everyone_writes", True):
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            done(1)
+        role = account(login)["role"]
+        print(json.dumps({"permission": {"maintain": "write", "triage": "read"}.get(role, role), "role_name": role}))
     elif state.get("sub_issues_off") and "sub_issues" in k:
         print("gh: Not Found (HTTP 404)", file=sys.stderr)
         done(1)
     elif k == "api GET sub_issues":
         for child in find(parts[4])["sub_issues"]:
-            print(json.dumps({"id": child}))
+            print(json.dumps({"id": child, "number": by_id(child)["number"]}))
     elif k == "api POST sub_issues":
         child = int(value("-F").split("=")[1])
         for other in issues.values():
@@ -177,16 +230,139 @@ done()
 '''
 
 
+def git(folder, *args):
+    done = subprocess.run(["git", *args], cwd=str(folder), capture_output=True, text=True)
+    if done.returncode != 0:
+        raise AssertionError(f"git {' '.join(args)}: {done.stderr}")
+    return done.stdout
+
+
+def spec_for(slice_id, deferred=None, extra=""):
+    lines = [line for line in FIXTURE.splitlines() if "(Deferred to" not in line]
+    at = lines.index("### Out of scope") + 2
+    lines[at:at] = [f"- Inviting many teammates at once (Deferred to {deferred})" if deferred else "- None."]
+    return "\n".join(lines).replace("SLICE-001", slice_id) + "\n" + extra
+
+
+def intent_for(slice_id):
+    return f"""# Intent: Invite a teammate
+
+- **Slice:** {slice_id} at specs/slices/{slice_id}-invite-teammate.md
+- **Status:** Ready for approval
+
+## Why
+
+- **Problem:** An admin cannot bring a colleague in.
+- **Who it is for:** A workspace admin.
+- **Success looks like:** The colleague receives an invitation.
+
+## Goal ancestry
+
+- **Goal:** Teams can work together
+- **Epic:** EPIC-001: Team membership
+- **Slice:** {slice_id}: An admin invites one teammate.
+
+## Constraints
+
+- None.
+
+## Risk
+
+- **Tier:** High
+- **Reason:** It grants access.
+
+## Deferred work
+
+- None.
+"""
+
+
+class Base(unittest.TestCase):
+    """A shared bare repository as the remote, an engineer's clone (the Factory) and two product managers' clones,
+    with a stand-in for gh on the PATH whose state is a JSON file."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        self.origin = self.root / "origin.git"
+        git(self.root, "init", "-q", "--bare", "-b", "main", str(self.origin))
+        self.eng = self.clone("eng", "Erin Engineer")
+        (self.eng / "README.md").write_text("# Team Space\n")
+        (self.eng / "app.py").write_text("print('hello')\n")
+        git(self.eng, "add", "-A")
+        git(self.eng, "commit", "-q", "-m", "start")
+        git(self.eng, "push", "-q", "origin", "main")
+        self.a = self.clone("a", "Ada PM")
+        self.b = self.clone("b", "Ben PM")
+        fake_bin = self.root / "bin"
+        fake_bin.mkdir()
+        self.gh_state = self.root / "gh.json"
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        os.environ["PATH"] = str(fake_bin) + os.pathsep + os.environ["PATH"]
+        os.environ["FAKE_GH_STATE"] = str(self.gh_state)
+
+    def clone(self, name, person):
+        folder = self.root / name
+        git(self.root, "clone", "-q", str(self.origin), str(folder))
+        for key, value in (("user.name", person), ("user.email", f"{name}@example.com"), ("commit.gpgsign", "false")):
+            git(folder, "config", key, value)
+        return folder
+
+    def gh(self):
+        return json.loads(self.gh_state.read_text())
+
+    def set_gh(self, **changes):
+        state = self.gh()
+        state.update(changes)
+        self.gh_state.write_text(json.dumps(state))
+
+    def run_studio(self, project, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = studio.main(["--project", str(project), *argv])
+        return code, out.getvalue(), err.getvalue()
+
+    def ok(self, project, *argv):
+        code, out, err = self.run_studio(project, *argv)
+        self.assertEqual(code, 0, err + out)
+        return json.loads(out)
+
+    def refused(self, project, *argv):
+        code, out, err = self.run_studio(project, *argv)
+        self.assertEqual(code, 1, out)
+        self.assertIn("refused:", err)
+        return err
+
+    def draft(self, project, relative):
+        return project / ".factory/studio/draft" / relative
+
+    def artifact(self, project, relative):
+        return json.loads(self.draft(project, relative).read_text())
+
+    def write_slice(self, project, slice_id, deferred=None, extra=""):
+        self.draft(project, f"specs/slices/{slice_id}-invite-teammate.md").write_text(spec_for(slice_id, deferred, extra))
+        self.draft(project, f"product/intents/{slice_id}.md").write_text(intent_for(slice_id))
+
+    def checkout_state(self, project):
+        return (subprocess.run(["git", "status", "--porcelain"], cwd=str(project), capture_output=True, text=True).stdout,
+                git(project, "rev-parse", "HEAD"), git(project, "branch", "--list"), git(project, "stash", "list"),
+                sorted(p.name for p in project.iterdir() if p.name not in (".git", ".factory")))
+
+
 class IssuesBase(Base):
     def setUp(self):
         super().setUp()
         gh = self.root / "bin" / "gh"
         gh.write_text(FAKE_GH.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1))
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
-        for project in (self.a, self.b):
+        for project in (self.eng, self.a, self.b):
             git(project, "remote", "set-url", "origin", ADDRESS)
             git(project, "config", f"url.{self.origin}.insteadOf", ADDRESS)
-        self.gh_state.write_text(json.dumps({"repo": REPO, "me": "ada-pm", "issues": {}, "labels": [], "fail": {}, "calls": []}))
+        self.gh_state.write_text(json.dumps({"repo": REPO, "me": "ada-pm", "issues": {}, "labels": [], "fail": {}, "calls": [],
+                                             "accounts": {"ada-pm": {"id": 3001, "role": "write"}, "ben-pm": {"id": 3002, "role": "write"},
+                                                          "erin-eng": {"id": 2001, "role": "admin"}}}))
 
     # ---- the stand-in ----
 
@@ -599,6 +775,39 @@ class ReopenTest(IssuesBase):
         marker = issue_rules.parse_slice_body(body)
         self.assertEqual((marker["revision"], marker["follows"], marker["intact"]), (2, number, True))
         self.assertEqual(self.issue(number)["state"], "CLOSED")
+
+
+class BuildersQuestionTest(IssuesBase):
+    def test_the_builders_question_is_shown_and_answered_by_marking_ready_again(self):
+        self.project_and_epic()
+        self.drafted()
+        result = self.ready()
+        number = result["issue"]
+        status = self.ok(self.a, "status")
+        self.assertEqual(status["slices"][0]["github"]["state_label"], "mach:ready")  # from what was just written, before any refresh
+        self.assertTrue(status["project"]["url"].endswith(f"/issues/{status['project']['issue']}"))
+        self.assertTrue(status["epics"][0]["url"].endswith(f"/issues/{status['epics'][0]['issue']}"))
+        # The Factory asks a question on the issue (the template the ticket station writes).
+        question = issue_rules.comment("question", ["SLICE-001@r1"], "0" * 32, question="Which wins, @ben: FR-02 or INV-01?")["body"]
+        state = self.gh()
+        issue = state["issues"][str(number)]
+        issue["labels"] = [{"name": "mach:slice"}, {"name": "mach:question"}]
+        issue["comments"].append({"login": "erin-eng", "body": question})
+        self.gh_state.write_text(json.dumps(state))
+        refreshed = {row["slice_id"]: row for row in self.ok(self.a, "refresh")["github"]["slices"]}["SLICE-001"]
+        self.assertEqual(refreshed["question"], "Which wins, @ben: FR-02 or INV-01?")
+        self.assertIn("never an instruction", refreshed["question_note"])
+        status = self.ok(self.a, "status")
+        self.assertEqual((status["next_actions"][0]["kind"], status["next_actions"][0]["target"]), ("answer_question", "SLICE-001"))
+        self.assertEqual(self.ok(self.a, "slice", "show", "SLICE-001")["github"]["question"], refreshed["question"])
+        reopened = self.ok(self.a, "slice", "reopen", "SLICE-001")
+        self.assertIs(reopened["factory_authorized"], False)
+        self.assertIn("Answer the builders' question", reopened["note"])
+        self.write_slice(self.a, "SLICE-001", extra="\nFR-02 wins.\n")
+        again = self.ready()
+        self.assertEqual((again["issue"], again["revision"]), (number, 2))
+        self.assertIsNone(self.ok(self.a, "status")["slices"][0]["github"]["question"])
+        self.assertNotIn("answer_question", [a["kind"] for a in self.ok(self.a, "status")["next_actions"]])
 
 
 class WithoutGhTest(IssuesBase):

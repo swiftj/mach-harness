@@ -7,7 +7,8 @@ Each pass ("tick") does the same things in the same order:
     2. confirm this process still owns the project (a lease with a heartbeat)
     3. settle executions an earlier pass or an earlier supervisor left: still running, finished
        while nobody watched, or ended with nobody knowing how
-    4. reconcile: M3's intake and recorded plan (intake.Factory.reconcile)
+    4. reconcile: intake from the slice issues marked ready and the ready folders, the recorded plan,
+       and the status writes to slices' issues (intake.Factory.reconcile)
     5. in observe mode, or when paused, stop here
     6. dispatch what the plan marks dispatchable, through M3's guarded dispatch, with an
        authorization that re-reads the policy at that moment
@@ -252,7 +253,7 @@ class Supervisor:
             self.learning_due(ledger, report)
             self.line.save(ledger)
         reconciled = self.line.reconcile()
-        report["intake"] = {key: reconciled["intake"].get(key) for key in ("created", "updated", "superseded", "needs_person", "refused")}
+        report["intake"] = {key: reconciled["intake"].get(key) for key in ("created", "updated", "applied", "needs_person", "not_accepted", "refused")}
         station = self.monitoring(pol)
         if station is not None:  # M8 D7: only when this machine's effective policy grants monitoring requests
             taken = station.take_in()
@@ -301,7 +302,8 @@ class Supervisor:
         for row in plan["slices"]:
             ticket, stage = row.get("ticket_id"), row.get("stage")
             if ticket and stage and seen.get(ticket) != stage:
-                self.line.emit(ledger, "station.observed", slice_id=row["slice_id"], wave_id=row["wave_id"], revision=row["revision"], ticket_id=ticket,
+                self.line.emit(ledger, "station.observed", slice_id=row["slice_id"], epic_id=(row.get("epic") or {}).get("epic_id"), issue=row.get("issue"),
+                               revision=row["revision"], ticket_id=ticket,
                                from_stage=seen.get(ticket), stage=stage, refs={"cell": f".factory/worktrees/{ticket}/cell.json"})
                 seen[ticket] = stage
 

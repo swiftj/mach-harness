@@ -2,11 +2,11 @@
 """MACH release qualification: does the integrated capability work, at one exact commit?
 
 Each slice is verified and reviewed in its own cell. Nothing in the line says whether the slices
-of one or more delivery waves work together once they are on the integration branch. This module
-measures that and records a decision, reached as `run.py release ...`:
+of an epic, or of a named list of slices, work together once they are on the integration branch.
+This module measures that and records a decision, reached as `run.py release ...`:
 
     status                       releases qualified so far, and what a new run would evaluate
-    qualify <WAVE-ID>... [--release <id>] [--commit <sha>]
+    qualify --epic <EPIC-ID|issue number> | <SLICE-ID>... [--release <id>] [--commit <sha>]
                                  evaluate the integration branch at one commit and write
                                  .factory/release/<release-id>/readiness.json
     show <release-id>            the snapshot, the exceptions and the run's metadata
@@ -17,14 +17,16 @@ The snapshot is deterministic: the same inputs give the same bytes (sorted keys,
 inside it). When the run happened, how long it took and the suite's output sit beside it in
 run.json and the logs, outside the decision.
 
-What it reuses, and never reimplements: intake's reading of product definitions from Git objects,
-its validators and its rule for what is integrated (a commit on the branch, checked in Git); the
-cleanup station's run records and archives; the verification and review stations' recorded
-verdicts; the audit station's detection and running of the test command.
+What it reuses, and never reimplements: intake's ledger (which revision of each slice was taken in,
+by which ticket), its spec header, its validators and its rule for what is integrated (a commit on
+the branch, checked in Git); the cleanup station's run records and archives; the verification and
+review stations' recorded verdicts; the audit station's detection and running of the test command;
+the ticket station's read of an epic's issue.
 
-What it never does: land, publish or label a commit, change any checkout, start a station, an
-agent or a workflow, or read the machine-local Factory settings. Product acceptance is read from
-the product files; it is never inferred from a merge or a passing suite.
+What it never does: land, publish or label a commit, change any checkout, write to GitHub, start a
+station, an agent or a workflow, or read the machine-local Factory settings. Product acceptance is
+read from the epic issue's acceptance comments, checked like an approval; it is never inferred from
+a merge or a passing suite.
 
 Standard library only. Imported by run.py; not a command of its own.
 """
@@ -43,11 +45,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 SCHEMA = "mach.release-readiness"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: an epic or a named list of slices instead of waves; acceptance per epic
 OUTCOMES = ("qualified", "qualified_with_exceptions", "blocked", "incomplete")
 INCOMPLETE = ("missing", "not_run", "not_configured")  # a required check in one of these states was not shown to pass
 RELEASE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
-WAVE_RE = re.compile(r"^WAVE-[0-9]{3,}$")
+SLICE_RE = re.compile(r"^SLICE-[0-9]{3,}$")
+EPIC_RE = re.compile(r"^EPIC-[0-9]{3,}$")
 ROLE_RE = re.compile(r"^[a-z][a-z0-9-]{1,39}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 AC_RE = re.compile(r"^AC-[0-9]+$")
@@ -146,9 +149,9 @@ class Release:
                 found[record["ticket_id"]] = record
         return found
 
-    def archive(self, ticket_id: str) -> Dict[str, bytes]:
+    @staticmethod
+    def archive_file(path: Path, ticket_id: str) -> Dict[str, bytes]:
         """Every file in a cleaned-up ticket's archive, by its path inside the cell folder."""
-        path = self.root / ".factory" / "archive" / f"{ticket_id}.tar.gz"
         files: Dict[str, bytes] = {}
         try:
             with tarfile.open(str(path), "r:gz") as archive:
@@ -262,81 +265,165 @@ class Release:
             return (configured if isinstance(configured, str) else None), ("config" if configured else None)
         return found["command"], ("config" if configured else found["source"])
 
+    # ---- the scope: an epic, or a named list of slices ----
+
+    def specs_at(self, commit: str) -> Dict[str, Dict[str, Any]]:
+        """Every slice spec at the commit: its path, the approved text (header taken off) and what the header names."""
+        found: Dict[str, Dict[str, Any]] = {}
+        listing = self._git("ls-tree", "--name-only", commit, "--", "specs/slices/").stdout.splitlines()
+        for path in listing:
+            match = re.match(r"^specs/slices/(SLICE-[0-9]{3,})-[a-z0-9-]+\.md$", path)
+            data = self.file_at(commit, path) if match else None
+            if data is None or match.group(1) in found:
+                continue
+            text, header = self.line_module().without_header(data.decode("utf-8-sig", errors="replace"))
+            found[match.group(1)] = {"path": path, "text": text, "spec_sha256": sha(text.encode("utf-8")),
+                                     "epic_id": header.group(2) if header else None, "epic_issue": int(header.group(3)) if header and header.group(3) else None,
+                                     "issue": int(header.group(4)) if header and header.group(4) else None}
+        return found
+
+    def line_module(self):
+        import intake  # beside this script: the spec header and its reading
+        return intake
+
+    def scope(self, epic: Optional[str], slice_ids: Sequence[str], specs: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """Which slices the release holds. An epic's are every slice this Factory took in for it, every spec at the commit whose
+        header names it, and, when GitHub can be read, every slice its issue lists; a named list is just that list."""
+        entries = self.line.ledger()["slices"]
+        if epic is None:
+            names = sorted(dict.fromkeys(slice_ids), key=number)
+            if not names or any(not SLICE_RE.match(name) for name in names):
+                raise QualifyError("Name an epic (--epic EPIC-001, or its issue number) or one or more slices, such as SLICE-001.")
+            return {"epic": None, "slices": names, "listed_issues": [], "github": None}
+        if slice_ids:
+            raise QualifyError("Name an epic or a list of slices, not both.")
+        bare = epic.lstrip("#")
+        if EPIC_RE.match(epic):
+            epic_id, issue = epic, None
+        elif bare.isdigit() and int(bare) > 0:
+            epic_id, issue = None, int(bare)
+        else:
+            raise QualifyError(f"'{epic}' is not an epic: give its ID (EPIC-001) or its issue number.")
+        for entry in entries.values():
+            known = entry.get("epic") or {}
+            if epic_id and known.get("epic_id") == epic_id and known.get("issue"):
+                issue = issue or known["issue"]
+            if issue and known.get("issue") == issue and known.get("epic_id"):
+                epic_id = epic_id or known["epic_id"]
+        for spec in specs.values():
+            if epic_id and spec["epic_id"] == epic_id and spec["epic_issue"]:
+                issue = issue or spec["epic_issue"]
+            if issue and spec["epic_issue"] == issue:
+                epic_id = epic_id or spec["epic_id"]
+        github = None
+        if issue:
+            github = self.line.ticket_json("epic-check", str(issue)) or {"failure": {"kind": "other"}}
+            listed_epic = github.get("epic") or {}
+            if listed_epic.get("epic_id"):
+                if epic_id and listed_epic["epic_id"] != epic_id:
+                    raise QualifyError(f"Issue #{issue} is {listed_epic['epic_id']}, not {epic_id}.")
+                epic_id = listed_epic["epic_id"]
+        if not epic_id:
+            raise QualifyError(f"Epic {epic} is not known here: no slice taken in or merged names it, and its issue could not be read.")
+        names = {key for key, entry in entries.items() if (entry.get("epic") or {}).get("epic_id") == epic_id}
+        names |= {key for key, spec in specs.items() if spec["epic_id"] == epic_id}
+        listed = [n for n in ((github or {}).get("epic") or {}).get("order") or [] if type(n) is int]
+        by_issue = {entry.get("issue"): key for key, entry in entries.items() if entry.get("issue")}
+        by_issue.update({item.get("issue"): key for key, entry in entries.items() for item in entry.get("history") or [] if item.get("issue")})
+        by_issue.update({spec["issue"]: key for key, spec in specs.items() if spec["issue"]})
+        names |= {by_issue[n] for n in listed if n in by_issue}
+        if not names and not listed:
+            raise QualifyError(f"Epic {epic} is not known here: no slice taken in or merged names it" + ("." if issue else ", and it has no issue to read."))
+        return {"epic": {"epic_id": epic_id, "issue": issue}, "slices": sorted(names, key=number), "github": github,
+                "listed_issues": sorted(n for n in listed if n not in by_issue)}
+
     # ---- the evaluation ----
 
-    def qualify(self, wave_ids: Sequence[str], release_id: Optional[str] = None, commit: Optional[str] = None) -> Dict[str, Any]:
-        waves = sorted(dict.fromkeys(wave_ids), key=number)
-        if not waves or any(not WAVE_RE.match(w) for w in waves):
-            raise QualifyError("Name one or more delivery waves, such as WAVE-001.")
+    def record_of(self, ticket_id: Optional[str], earlier_runs: int) -> Dict[str, Any]:
+        """The run record of one life of a ticket (records before `earlier_runs` belong to an earlier one)."""
+        records = self.line.run_records(ticket_id)[int(earlier_runs or 0):] if ticket_id else []
+        return records[-1] if records else {}
+
+    def archive_of(self, record: Dict[str, Any]) -> Dict[str, bytes]:
+        relative = record.get("archive") if isinstance(record.get("archive"), str) else None
+        if not relative:
+            return {}
+        path = self.root / relative
+        try:
+            if not path.resolve().is_relative_to((self.root / ".factory" / "archive").resolve()):
+                return {}
+        except OSError:
+            return {}
+        return self.archive_file(path, str(record.get("ticket_id")))
+
+    def qualify(self, slice_ids: Sequence[str] = (), epic: Optional[str] = None, release_id: Optional[str] = None, commit: Optional[str] = None) -> Dict[str, Any]:
         source, commit = self.resolve(commit)
-        release_id = release_id or f"{'-'.join(waves)}-{commit[:12]}"
+        specs = self.specs_at(commit)
+        scope = self.scope(epic, slice_ids, specs)
+        label = scope["epic"]["epic_id"] if scope["epic"] else "-".join(scope["slices"][:3]) + ("-and-more" if len(scope["slices"]) > 3 else "")
+        release_id = release_id or f"{label}-{commit[:12]}"
         if not RELEASE_RE.match(release_id):
             raise QualifyError(f"'{release_id}' is not a usable release ID (letters, digits, '.', '_' and '-').")
         folder = self.home / release_id
         earlier = load_json(folder / "readiness.json")
         if isinstance(earlier, dict) and (earlier.get("release") or {}).get("commit") not in (None, commit):
             raise QualifyError(f"Release {release_id} was qualified at {earlier['release']['commit'][:12]}. A release ID names one commit; choose another ID for {commit[:12]}.")
-        snap = self.line.snapshot(commit)
-        missing = [w for w in waves if (snap.waves.get(w) or {}).get("status") != "approved_for_engineering"]
-        if missing:
-            raise QualifyError(f"Not an approved delivery wave at {commit[:12]}: {', '.join(missing)}. Only merged, approved waves can be qualified.")
 
         checks: Dict[str, Dict[str, Any]] = {}
 
         def check(check_id: str, kind: str, status: str, detail: str, required: bool = True, **extra: Any) -> None:
             checks[check_id] = {"id": check_id, "kind": kind, "status": status, "required": required, "detail": detail, **extra}
 
-        whole, per_wave = self.line.verify(snap)
-        check("product.definitions", "product", "fail" if whole else "pass", "; ".join(whole) or "The product definitions at this commit pass the structural validator.")
-        for wave_id in waves:
-            problems = per_wave.get(wave_id) or []
-            check(f"product.{wave_id}", "product", "fail" if problems else "pass", "; ".join(problems) or "Approved, and every slice's spec and why pass the intent gates.")
+        if not scope["slices"] and not scope["listed_issues"]:
+            check("scope", "product", "missing", "The epic holds no slice this Factory knows of, and none is merged.")
+        for issue in scope["listed_issues"]:
+            check(f"issue.{issue}", "slice", "missing", f"The epic lists issue #{issue}, which this Factory never took in, and no spec at this commit names it.")
+        github = scope.get("github")
+        if scope["epic"] and scope["epic"]["issue"] and (github or {}).get("epic") is None:
+            check("scope.github", "product", "missing", f"The epic's issue #{scope['epic']['issue']} could not be read, so slices it lists but this Factory never "
+                  "took in may be missing from this release.", reason="its issue could not be read")
 
         ledger = self.line.ledger()
-        records = self.run_records()
-        latest_commit = source.get("product_commit")
-        latest = self.line.snapshot(latest_commit) if latest_commit and latest_commit != commit else snap
-        in_scope: List[str] = []
-        for wave_id in waves:
-            in_scope += [s for s in snap.waves[wave_id].get("slices") or [] if s not in in_scope]
+        entries = ledger["slices"]
+        records_by_ticket: Dict[str, Dict[str, Any]] = {}
         integrated: Dict[str, bool] = {}
         slices_out, scenarios_out, approvals, open_blockers = [], [], [], []
         shared: Dict[str, List[Dict[str, Any]]] = {}
 
-        for wave_id in waves:
-            wave = snap.waves[wave_id]
-            approval = wave.get("approval") or {}
-            approvals.append({"kind": "product.wave_approval", "subject": wave_id, "by": approval.get("actor"), "at": approval.get("approved_at"),
-                              "source": f"product/delivery-waves/{wave_id}.json at the release commit"})
-
-        for slice_id in sorted(in_scope, key=number):
-            work = snap.slices.get(slice_id) or {}
-            digest = snap.slice_digest(slice_id)
-            row: Dict[str, Any] = {"slice_id": slice_id, "wave_id": snap.wave_of(slice_id), "revision": work.get("revision"), "spec_path": work.get("spec_path"),
-                                   "spec_sha256": work.get("spec_sha256"), "digest": digest, "dependencies": list(work.get("dependencies") or [])}
-            entry = ledger["slices"].get(slice_id) or {}
-            built = [entry] + [h for h in entry.get("history") or [] if isinstance(h, dict)]
-            match = next((item for item in built if item.get("digest") == digest and item.get("ticket_id")), None)
+        for slice_id in scope["slices"]:
+            entry = entries.get(slice_id) or {}
+            spec = specs.get(slice_id)
+            lives = [entry] + [item for item in reversed(entry.get("history") or []) if isinstance(item, dict)] if entry else []
+            match = next((item for item in lives if spec and item.get("spec_sha256") == spec["spec_sha256"] and item.get("ticket_id")), None)
+            if match is None and spec:  # a life recorded before its spec hash was kept: by its revision's ticket
+                match = next((item for item in lives if item.get("ticket_id") and item.get("integrated")), None) if not any(i.get("spec_sha256") for i in lives) else None
             ticket_id = (match or {}).get("ticket_id")
-            row["ticket_id"] = ticket_id
+            row: Dict[str, Any] = {"slice_id": slice_id, "issue": (match or entry or {}).get("issue"), "epic_id": (entry.get("epic") or {}).get("epic_id") or (spec or {}).get("epic_id"),
+                                   "revision": (match or {}).get("revision"), "spec_path": (spec or {}).get("path"), "spec_sha256": (spec or {}).get("spec_sha256"),
+                                   "ticket_id": ticket_id, "dependencies": [dep.get("slice_id") or f"#{dep.get('issue')}" for dep in entry.get("depends") or []]}
+            if spec is None:
+                check(f"slice.{slice_id}.spec", "slice", "fail" if entry.get("dispatched_at") else "missing", "Its spec is not on the integration branch at this commit.")
+            else:
+                findings, model = self.line.validate_slice.analyze(spec["text"], Path(spec["path"]).name, [], ready=True)
+                problems = [f"{f.message} [{f.rule}]" for f in findings if f.severity == "error"]
+                check(f"slice.{slice_id}.spec", "slice", "fail" if problems else "pass", "; ".join(problems[:5]) or "Its spec at this commit passes the intent station's gates.")
             if not entry:
                 check(f"slice.{slice_id}.ticket", "slice", "missing", "This Factory never took the slice in (no intake ledger entry), so no execution of it is known.")
             elif not match:
-                check(f"slice.{slice_id}.ticket", "slice", "fail", f"The ticket taken in is for revision {entry.get('revision')}; revision {work.get('revision')} approved at this commit was never built.")
+                check(f"slice.{slice_id}.ticket", "slice", "fail", f"The spec at this commit is not a revision this Factory built (it took in revision {entry.get('revision')}).")
             else:
-                check(f"slice.{slice_id}.ticket", "slice", "pass", f"Ticket {ticket_id} was filed for revision {work.get('revision')}.")
-            newer = latest.slice_digest(slice_id) if slice_id in latest.slices else None
-            newer_waves = [w for w, data in latest.approved_waves().items() if slice_id in data["slices"]]
-            if entry.get("state") == "superseded" and match is entry:
-                check(f"slice.{slice_id}.current", "slice", "fail", "Product withdrew this slice after it was taken in.")
-            elif newer and newer != digest and newer_waves and not self.contains(latest_commit, commit):
-                check(f"slice.{slice_id}.current", "slice", "fail", f"A newer approved revision ({(latest.slices.get(slice_id) or {}).get('revision')}) is on the integration branch and is not part of this release.")
+                check(f"slice.{slice_id}.ticket", "slice", "pass", f"Ticket {ticket_id} built revision {match.get('revision')}.")
+            newer = entry.get("product_pending") or (entry if match is not None and match is not entry and entry.get("revision") != match.get("revision") else None)
+            if newer and not (newer is entry and entry.get("integrated") and self.contains((entry.get("integrated") or {}).get("commit"), commit)):
+                check(f"slice.{slice_id}.current", "slice", "fail", f"A newer revision ({newer.get('revision')}) was approved and is not part of this release.")
             else:
                 check(f"slice.{slice_id}.current", "slice", "pass", "No newer approved revision supersedes this one.")
 
-            facts = self.line.work(ticket_id, commit) if ticket_id else {"status": "unticketed"}
+            earlier_runs = int((match or {}).get("earlier_runs") or 0)
+            facts = self.line.work(ticket_id, commit, earlier_runs) if ticket_id else {"status": "unticketed"}
             integrated[slice_id] = facts.get("status") == "integrated"
-            record = records.get(ticket_id or "") or {}
+            record = self.record_of(ticket_id, earlier_runs)
+            records_by_ticket[str(ticket_id)] = record
             row["integration"] = {"status": facts.get("status"), "commit": facts.get("commit"),
                                   "established_by": f"git merge-base --is-ancestor {facts.get('commit')} {commit}" if integrated[slice_id] else None,
                                   "recorded_in": "run record (integration)" if record.get("integration") else "the cell's merge record" if integrated[slice_id] else None}
@@ -344,12 +431,12 @@ class Release:
                   f"Its commit {str(facts.get('commit'))[:12]} is an ancestor of the release commit." if integrated[slice_id]
                   else f"Its work is not on the integration branch at this commit (now {facts.get('status')}).")
 
-            files = self.archive(ticket_id) if ticket_id and record else {}
+            files = self.archive_of(record) if record else {}
             cell = self.json_in(files, "cell.json")
             summary = self.json_in(files, "evidence/summary.json")
             decision = self.json_in(files, "review/decision.json")
             approved = ((record.get("integration") or {}).get("approved_commit")) or decision.get("head")
-            where = f".factory/archive/{ticket_id}.tar.gz" if files else None
+            where = record.get("archive") if files else None
             row["verification"] = {"verdict": summary.get("status"), "head": summary.get("head"), "source": where and f"{where}:evidence/summary.json"}
             row["review"] = {"decision": decision.get("outcome"), "risk": decision.get("risk"), "round": decision.get("round"), "approved_commit": approved,
                              "human_approval_required": decision.get("human_approval_required"), "source": where and f"{where}:review/decision.json"}
@@ -390,12 +477,14 @@ class Release:
                     open_blockers.append({"check": blocker_id, "slice_id": slice_id, "ticket_id": ticket_id, "security": blocker.get("reviewer") == "security", **blocker})
                     check(blocker_id, "security" if blocker.get("reviewer") == "security" else "review", "fail",
                           f"Outvoted, still open: {blocker.get('title')} ({blocker.get('reviewer')}; breaks {blocker.get('rule')}).")
+            if match is not None and match.get("approved_by"):
+                approvals.append({"kind": "product.slice_approval", "subject": f"{slice_id} revision {match.get('revision')}", "by": match.get("approved_by"),
+                                  "at": match.get("ready_at"), "source": f"the approval comment on issue #{match.get('issue')}" if match.get("issue") else "the ready folder"})
 
             # Required acceptance scenarios: every AC of the spec at this commit, with its recorded evidence.
-            spec_text = snap.files.get(str(work.get("spec_path") or ""))
             ids: List[str] = []
-            if spec_text is not None:
-                _, model = self.line.validate_slice.analyze(spec_text.decode("utf-8-sig", errors="replace"), Path(str(work.get("spec_path"))).name, [], ready=False)
+            if spec is not None:
+                _, model = self.line.validate_slice.analyze(spec["text"], Path(spec["path"]).name, [], ready=False)
                 ids = [s.get("id") for s in model.get("scenarios") or [] if isinstance(s, dict) and AC_RE.match(str(s.get("id")))]
             if not ids:
                 check(f"scenario.{slice_id}", "scenario", "missing", "No acceptance scenarios could be read from the spec at this commit.")
@@ -425,19 +514,21 @@ class Release:
                                                          "landed": facts.get("commit") if integrated[slice_id] else None, "row": row})
             slices_out.append(row)
 
+        records = self.run_records()
         for name in sorted(shared):
             self.judge_contract(name, shared[name], commit, records, {row["ticket_id"] for row in slices_out}, check)
 
         for row in slices_out:
-            for dep in row["dependencies"]:
-                if dep in integrated:
-                    ok = integrated[dep]
-                    check(f"dependency.{row['slice_id']}.{dep}", "dependency", "pass" if ok else "fail",
-                          f"{dep} is integrated at this commit." if ok else f"{dep} is not integrated at this commit.")
+            entry = entries.get(row["slice_id"]) or {}
+            for dep in entry.get("depends") or []:
+                label, found = self.line.resolve_dep(dep, entries)
+                if found in integrated:
+                    ok = integrated[found]
+                    detail = f"{label} is integrated at this commit." if ok else f"{label} is not integrated at this commit."
                 else:
-                    check(f"dependency.{row['slice_id']}.{dep}", "dependency", "pass" if self.dependency_integrated(dep, commit) else "fail",
-                          f"{dep} is outside this release; whether it is integrated was checked the same way.")
-
+                    ok = self.dependency_integrated(dep, found, entries, specs, commit)
+                    detail = f"{label} is outside this release; whether it is integrated was checked the same way."
+                check(f"dependency.{row['slice_id']}.{found or label.lstrip('#')}", "dependency", "pass" if ok else "fail", detail)
         # Commands at exactly this commit, on a clean tree from Git's objects.
         logs = folder / "logs"
         commands: Dict[str, Dict[str, Any]] = {}
@@ -504,13 +595,10 @@ class Release:
         gaps = [checks[key] for key in sorted(checks) if checks[key]["status"] in INCOMPLETE]
         summary_line = outcome + ("; not assessed: " + ", ".join(gap(item) for item in gaps) if gaps else "")
 
-        project = snap.project
         body = {
             "schema": SCHEMA, "schema_version": SCHEMA_VERSION,
             "release": {"release_id": release_id, "commit": commit, "integration_branch": source["branch"]},
-            "product": {"project_id": project.get("project_id"), "name": project.get("name"), "revision": project.get("revision")},
-            "waves": [{"wave_id": w, "revision": snap.waves[w].get("revision"), "sha256": sha(snap.files[f"product/delivery-waves/{w}.json"]),
-                       "slices": list(snap.waves[w].get("slices") or [])} for w in waves],
+            "scope": {"epic": scope["epic"], "slices": list(scope["slices"]), "issues_not_taken_in": list(scope["listed_issues"])},
             "slices": slices_out,
             "acceptance_scenarios": scenarios_out,
             "commands": {key: {k: v for k, v in value.items() if k != "seconds"} for key, value in commands.items()},
@@ -522,7 +610,7 @@ class Release:
             "checks": [checks[key] for key in sorted(checks)],
             "exceptions": applied, "exceptions_not_applied": not_applied,
             "human_approvals": approvals,
-            "product_acceptance": self.acceptance(waves, release_id, commit, snap, latest),
+            "product_acceptance": self.acceptance(scope, release_id, commit),
             "outcome": outcome,
         }
         text = canonical(body)
@@ -578,7 +666,7 @@ class Release:
                 check(check_id, "contract", "pass", "Unchanged since this slice's review approved it.")
             elif outside:
                 check(check_id, "contract", "missing", f"The latest change to it came from {outside} outside this release, so the release would ship a contract "
-                      "not reviewed within it. Qualify with that slice's wave included.")
+                      "not reviewed within it. Qualify with that slice included.")
             else:
                 check(check_id, "contract", "fail", "The integrated file matches no version a review in this release approved: it was changed outside review.")
 
@@ -587,7 +675,7 @@ class Release:
         for ticket_id, record in sorted(records.items()):
             if ticket_id in in_scope_tickets or record.get("outcome") != "merged":
                 continue
-            files = self.archive(ticket_id)
+            files = self.archive_of(record)
             cell = self.json_in(files, "cell.json")
             if name not in (cell.get("contracts") or []):
                 continue
@@ -600,39 +688,37 @@ class Release:
                 return f"{cell.get('slice_id') or record.get('slice_id') or 'a slice'} ({ticket_id})"
         return None
 
-    def dependency_integrated(self, slice_id: str, commit: str) -> bool:
-        entry = self.line.ledger()["slices"].get(slice_id) or {}
-        return bool(entry.get("ticket_id")) and self.line.work(entry["ticket_id"], commit).get("status") == "integrated"
+    def dependency_integrated(self, dep: Dict[str, Any], found: Optional[str], entries: Dict[str, Dict[str, Any]], specs: Dict[str, Dict[str, Any]], commit: str) -> bool:
+        """A dependency outside the release: integrated at this commit when this Factory's record of it says so, checked in
+        Git, or, for one it never took in, when its spec is at the commit."""
+        if found is not None:
+            entry = entries[found]
+            return bool(entry.get("ticket_id")) and self.line.work(entry["ticket_id"], commit, entry.get("earlier_runs") or 0).get("status") == "integrated"
+        if dep.get("slice_id"):
+            return dep["slice_id"] in specs
+        return any(spec["issue"] == dep.get("issue") for spec in specs.values())
 
-    def acceptance(self, waves: Sequence[str], release_id: str, commit: str, snap: Any, latest: Any) -> Dict[str, Any]:
-        """The product decision as recorded in the merged product files. Never inferred."""
-        per_wave = []
-        for wave_id in waves:
-            relative = f"product/acceptance/{wave_id}.json"
-            found, where = None, None
-            for label, source in (("integration branch", latest), ("release commit", snap)):
-                try:
-                    data = json.loads(source.files[relative].decode("utf-8"))
-                except (KeyError, ValueError, UnicodeDecodeError):
-                    continue
-                if isinstance(data, dict):
-                    found, where = data, label
-                    break
-            wave_sha = sha(snap.files[f"product/delivery-waves/{wave_id}.json"])
-            if found is None:
-                per_wave.append({"wave_id": wave_id, "decision": "not_recorded", "reason": "No acceptance file in the merged product files."})
-            elif found.get("release_commit") != commit or found.get("release_id") != release_id:
-                per_wave.append({"wave_id": wave_id, "decision": "not_recorded", "reason": f"The recorded acceptance is for release {found.get('release_id')} at {str(found.get('release_commit'))[:12]}."})
-            elif found.get("wave_sha256") != wave_sha:
-                per_wave.append({"wave_id": wave_id, "decision": "not_recorded", "reason": "The recorded acceptance is for another revision of the wave."})
-            elif found.get("decision") in ("accepted", "rejected"):
-                per_wave.append({"wave_id": wave_id, "decision": found["decision"], "by": found.get("by"), "at": found.get("recorded_at"),
-                                 "source": f"{relative} on the {where}"})
-            else:
-                per_wave.append({"wave_id": wave_id, "decision": "not_recorded", "reason": "The acceptance file holds no decision."})
-        decisions = {item["decision"] for item in per_wave}
-        overall = "rejected" if "rejected" in decisions else "accepted" if decisions == {"accepted"} else "not_recorded"
-        return {"decision": overall, "waves": per_wave}
+    def acceptance(self, scope: Dict[str, Any], release_id: str, commit: str) -> Dict[str, Any]:
+        """Product's decision on this release of the epic, as an acceptance comment on the epic's issue records it, bound to this
+        release ID and this commit, written by the account it names, unedited, by someone with the triage role or above.
+        The latest such comment decides. Never inferred."""
+        epic = scope.get("epic")
+        if not epic:
+            return {"decision": "not_recorded", "reason": "Product acceptance is recorded per epic; this release names slices.", "epic": None}
+        if not epic.get("issue"):
+            return {"decision": "not_recorded", "reason": "The epic has no issue to record a decision on.", "epic": epic}
+        read = self.line.ticket_json("epic-check", str(epic["issue"]), "--release", release_id, "--commit", commit) or {}
+        found = read.get("acceptances")
+        if not isinstance(found, list):
+            return {"decision": "not_recorded", "reason": f"The epic's issue #{epic['issue']} could not be read.", "epic": epic}
+        valid = [item for item in found if isinstance(item, dict) and not item.get("problem") and item.get("decision") in ("accepted", "rejected")]
+        ignored = [{"by": item.get("by"), "why": item.get("problem")} for item in found if isinstance(item, dict) and item.get("problem")]
+        if not valid:
+            return {"decision": "not_recorded", "reason": f"No acceptance comment for release {release_id} at {commit[:12]} on issue #{epic['issue']}.",
+                    "epic": epic, "ignored": ignored}
+        last = sorted(valid, key=lambda item: str(item.get("at") or ""))[-1]
+        return {"decision": last["decision"], "by": last.get("by"), "at": last.get("at"), "readiness_sha256": last.get("readiness_sha256"),
+                "source": f"an acceptance comment on issue #{epic['issue']}", "epic": epic, "ignored": ignored}
 
     # ---- reading and exceptions ----
 
@@ -642,12 +728,19 @@ class Release:
             data = load_json(path) or {}
             run = load_json(path.parent / "run.json") or {}
             releases.append({"release_id": path.parent.name, "commit": (data.get("release") or {}).get("commit"), "outcome": data.get("outcome"),
-                             "waves": [w.get("wave_id") for w in data.get("waves") or []], "product_acceptance": (data.get("product_acceptance") or {}).get("decision"),
+                             "scope": data.get("scope"), "product_acceptance": (data.get("product_acceptance") or {}).get("decision"),
                              "evaluated_at": run.get("evaluated_at")})
         source = self.line.integration()
-        snap = self.line.snapshot(source["commit"]) if source.get("commit") and not source["problems"] else None
+        epics: Dict[str, Dict[str, Any]] = {}
+        for slice_id, entry in sorted(self.line.ledger()["slices"].items(), key=lambda item: number(item[0])):
+            epic = entry.get("epic") or {}
+            if epic.get("epic_id"):
+                known = epics.setdefault(epic["epic_id"], {"epic_id": epic["epic_id"], "issue": epic.get("issue"), "slices": [], "integrated": []})
+                known["slices"].append(slice_id)
+                if entry.get("integrated"):
+                    known["integrated"].append(slice_id)
         return {"releases": releases, "integration": {"branch": source.get("branch"), "commit": source.get("commit"), "problems": source["problems"]},
-                "approved_waves": sorted(snap.approved_waves(), key=number) if snap else [], "released": False}
+                "epics": [epics[key] for key in sorted(epics, key=number)], "released": False}
 
     def show(self, release_id: str) -> Dict[str, Any]:
         if not RELEASE_RE.match(release_id):
@@ -655,7 +748,7 @@ class Release:
         folder = self.home / release_id
         data = load_json(folder / "readiness.json")
         if not isinstance(data, dict):
-            raise QualifyError(f"No readiness snapshot for release {release_id}. Run: release qualify <WAVE-ID>... --release {release_id}")
+            raise QualifyError(f"No readiness snapshot for release {release_id}. Run: release qualify --epic <EPIC-ID> --release {release_id}")
         return {"readiness": data, "run": load_json(folder / "run.json"), "exceptions_recorded": self.exceptions(release_id)}
 
     def record_exception(self, release_id: str, check_id: str, by: str, reason: str) -> Dict[str, Any]:

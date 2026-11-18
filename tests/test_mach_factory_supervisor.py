@@ -31,7 +31,7 @@ import policy  # noqa: E402
 import run  # noqa: E402
 import service  # noqa: E402
 import supervisor  # noqa: E402
-from test_mach_product_collab import git  # noqa: E402
+from test_mach_product_issues import git  # noqa: E402
 from test_mach_product_intake import Base as IntakeBase  # noqa: E402
 
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
@@ -228,7 +228,7 @@ class Base(IntakeBase):
         return [event["type"] for event in self.events(since)]
 
     def supervised(self, *flags):
-        """A merged wave with SLICE-001, and Supervised Autopilot enabled."""
+        """SLICE-001 in a ready folder on the shared branch, and Supervised Autopilot enabled."""
         self.first()
         return self.enable("--include-backlog", *flags)
 
@@ -236,6 +236,7 @@ class Base(IntakeBase):
 class ActivationTest(Base):
     def test_a_fresh_clone_is_disabled_and_asking_changes_nothing(self):
         self.first()
+        (self.a / ".factory").mkdir()
         for project in (self.eng, self.a):
             for _ in range(2):
                 status = self.factory("status", project=project)
@@ -391,11 +392,14 @@ class ActivationTest(Base):
         self.assertEqual(self.calls(), [])
 
     def test_product_studio_cannot_activate_the_factory(self):
-        """A product manager's whole workflow, including publishing, leaves every machine's Factory as it was."""
-        self.first()
+        """A product manager's whole workflow, including marking a slice ready on GitHub, leaves every machine's Factory as it was."""
+        self.set_gh(me="ada-pm")
+        self.project_and_epic(self.b)
+        self.drafted(self.b)
+        self.assertEqual(self.ok(self.b, "slice", "ready", "SLICE-001")["saved_to"], "github")
         self.ok(self.b, "refresh")
-        self.publish(self.b, self.slice(self.b, "Ben's"))
-        self.ok(self.a, "feedback")
+        self.first()
+        (self.a / ".factory").mkdir(exist_ok=True)
         for project in (self.a, self.b):
             self.assertFalse((project / ".factory/local").exists())
             self.assertEqual(self.factory("status", project=project)["factory"], "disabled")
@@ -605,7 +609,7 @@ class SupervisedTest(Base):
         self.assertEqual((record["state"], record["how"], record["stage_at_end"], record["next_at_end"], record["moved"], record["cost_usd"]),
                          ("finished", "exited", "approved", "stop", True, 0.5))
         kinds = self.kinds()
-        for kind in ("factory.activated", "revision.discovered", "wave.discovered", "intake.validated", "slice.materialized", "work.scheduled", "scheduling.decided",
+        for kind in ("factory.activated", "revision.discovered", "intake.validated", "slice.materialized", "work.scheduled", "scheduling.decided",
                      "work.claimed", "execution.started", "station.observed", "execution.completed", "human.required"):
             self.assertIn(kind, kinds)
         self.assertLess(kinds.index("work.claimed"), kinds.index("execution.started"))  # claimed, durably, before anything ran
@@ -797,13 +801,13 @@ class ScheduleHoldTest(Base):
 
 
 class LimitsTest(Base):
-    def waves(self, count):
+    def ready_slices(self, count):
         self.first()
         for index in range(count - 1):
             self.publish(self.a, self.slice(self.a, f"Slice {index + 2}"))
 
     def test_places_are_limited(self):
-        self.waves(3)
+        self.ready_slices(3)
         release = self.root / "release-the-run"
         self.claude({"default": {"hold": str(release), "stage": "approved"}})
         self.enable("--include-backlog", "--max-parallel", "1")
@@ -817,7 +821,7 @@ class LimitsTest(Base):
         self.assertEqual(len(self.calls()), 1)
 
     def test_the_project_can_restrict_but_never_widen(self):
-        self.waves(3)
+        self.ready_slices(3)
         self.claude({"default": {"sleep": 2, "stage": "approved"}})
         self.enable("--include-backlog", "--max-parallel", "2")
         self.config(factory={"max_parallel": 8, "max_runs_per_day": 500, "max_risk": "High", "supervisor": True, "autonomy_ceiling": "extended", "allow_merge": True,
@@ -839,7 +843,7 @@ class LimitsTest(Base):
 
     def test_review_settings_that_remove_the_security_check_hold_every_pass(self):
         """M7: a tracked change made after enabling is seen on the next pass and before any dispatch, not only at resume."""
-        self.waves(1)
+        self.ready_slices(1)
         self.enable("--include-backlog")
         for review in ({"security_veto": False}, {"medium": {"reviewers": 1}}, {"high": {"human_approval": False}}):
             with self.subTest(review=review):
@@ -856,7 +860,7 @@ class LimitsTest(Base):
         self.wait()
 
     def test_runs_and_money_per_day_are_limited(self):
-        self.waves(2)
+        self.ready_slices(2)
         self.enable("--include-backlog", "--max-runs-per-day", "1")
         report = self.tick()
         self.assertEqual(len(report["started"]), 1)
@@ -894,7 +898,7 @@ class LimitsTest(Base):
         self.assertEqual([e["data"]["limits"]["budget_usd"] for e in started], [5, 3.82])
 
     def test_runs_started_in_one_pass_never_add_up_to_more_than_the_day(self):
-        self.waves(3)
+        self.ready_slices(3)
         self.claude({"default": {"sleep": 2, "stage": "approved"}})
         self.enable("--include-backlog", "--max-parallel", "3", "--budget-per-run", "3", "--budget-per-day", "5.5")
         report = self.tick()
@@ -907,7 +911,7 @@ class LimitsTest(Base):
         self.assertLessEqual(sum(float(budget) for budget in self.budgets()), 5.5)
 
     def test_too_little_left_to_start_is_the_daily_budget_reached(self):
-        self.waves(2)
+        self.ready_slices(2)
         self.claude({"default": {"sleep": 2, "stage": "approved"}})
         self.enable("--include-backlog", "--max-parallel", "2", "--budget-per-run", "5", "--budget-per-day", "5.5")
         report = self.tick()
@@ -1329,22 +1333,22 @@ class GitTest(Base):
         self.tick()
         self.wait()
         self.tick()
-        # A new wave is merged on the shared repository by someone else; the engineer has not pulled.
+        # A ready folder is merged on the shared repository by someone else; the engineer has not pulled.
         other = self.clone("eng2", "Other Engineer")
-        self.ok(self.a, "refresh")
-        wave = self.new_wave(self.a, self.slice(self.a, "Arrived while away"))
-        self.ok(self.a, "send", wave)
-        git(other, "fetch", "-q", "origin")
-        git(other, "merge", "-q", "--no-ff", "-m", "merge", f"origin/product/{wave}")
+        slice_id = self.slice(self.a, "Arrived while away")
+        target = other / "product/ready" / slice_id
+        target.mkdir(parents=True)
+        for name, text in self.folders[slice_id].items():
+            (target / name).write_text(text)
+        git(other, "add", "-A")
+        git(other, "commit", "-q", "-m", "ready while away")
         git(other, "push", "-q", "origin", "main")
         before = self.checkout()
         report = self.tick()
         self.assertEqual(self.checkout(), before)  # fetched, never checked out or reset
         self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])  # discovered and taken in
-        self.assertEqual(report["dispatched"], [])
-        self.assertIn("is not the approved spec. Update the checkout", json.dumps(report["held"]))  # a person brings the checkout up to date
-        git(self.eng, "merge", "-q", "--ff-only", "origin/main")
-        self.assertEqual([item["slice_id"] for item in self.tick()["dispatched"]], ["SLICE-002"])
+        # The spec comes from the verified folder, not the checkout, so it is dispatched without pulling.
+        self.assertEqual([item["slice_id"] for item in report["dispatched"]], ["SLICE-002"])
 
     def test_existing_hooks_are_preserved(self):
         self.first()
@@ -1520,11 +1524,11 @@ class EventsTest(Base):
         self.tick()
         events = self.events()
         runner = policy.read(self.eng)["runner_id"]
-        keys = {"schema_version", "seq", "at", "type", "project_id", "source_commit", "wave_id", "slice_id", "revision", "ticket_id",
+        keys = {"schema_version", "seq", "at", "type", "source_commit", "epic_id", "issue", "slice_id", "revision", "ticket_id",
                 "runner_id", "execution_id", "source", "cause", "refs", "data"}
         for event in events:
             self.assertEqual(set(event), keys)
-            self.assertEqual(event["schema_version"], 2)
+            self.assertEqual(event["schema_version"], 3)
             self.assertIn(event["type"], intake.EVENT_TYPES)
             self.assertIn(event["source"], ("supervisor", "engineer", "intake"))
             self.assertEqual(event["runner_id"], runner)

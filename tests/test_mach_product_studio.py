@@ -365,45 +365,6 @@ class WorkspaceTest(Base):
         self.start()
         self.assertIn("Say which slice", self.refused("slice", "resume"))
 
-    def publish(self, relative, data):
-        path = self.project / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(studio.canonical(data))
-        return path
-
-    def test_published_work_arrives_and_unedited_copies_follow_it(self):
-        project = {"schema_version": 1, "project_id": "team-space", "name": "Team Space", "revision": 4, "status": "active",
-                   "vision": "Teams work together.", "outcomes": ["Teams can work together"]}
-        path = self.publish("product/project.json", project)
-        status = self.ok("status")
-        self.assertEqual(status["project"]["revision"], 4)
-        self.assertIn("already defined", self.refused("project", "init", "--id", "x-y", "--name", "n", "--vision", "v", "--outcome", "o"))
-        self.publish("product/project.json", {**project, "revision": 5, "name": "Team Rooms"})
-        self.assertEqual(self.ok("status")["project"]["name"], "Team Rooms")
-        self.assertEqual(path.read_text(), studio.canonical({**project, "revision": 5, "name": "Team Rooms"}))  # never written back
-
-    def test_an_edited_copy_is_kept_and_the_conflict_reported(self):
-        project = {"schema_version": 1, "project_id": "team-space", "name": "Team Space", "revision": 4, "status": "active",
-                   "vision": "Teams work together.", "outcomes": ["Teams can work together"]}
-        self.publish("product/project.json", project)
-        self.ok("project", "set", "--vision", "My draft vision.")
-        self.publish("product/project.json", {**project, "revision": 5, "vision": "Their vision."})
-        status = self.ok("status")
-        self.assertEqual(status["project"]["vision"], "My draft vision.")
-        self.assertEqual(status["needs_reconciling"]["conflicts"], ["product/project.json"])
-
-    def test_a_number_taken_upstream_blocks_approval_of_the_draft(self):
-        self.ready_slice()
-        self.ok("epic", "approve", "EPIC-001")
-        self.publish("product/slices/SLICE-001.json", {"schema_version": 1, "slice_id": "SLICE-001", "project_id": "team-space",
-                                                       "epic_id": "EPIC-001", "revision": 1, "title": "Someone else's slice", "status": "draft",
-                                                       "dependencies": [], "open_questions": [], "spec_path": None, "spec_sha256": None})
-        self.assertIn("renumbered", self.refused("slice", "ready", "SLICE-001"))
-        status = self.ok("status")
-        self.assertEqual(status["needs_reconciling"]["collisions"], ["product/slices/SLICE-001.json"])
-        self.assertEqual(status["slices"][0]["source"], "collision")
-        self.assertEqual(self.artifact("product/slices/SLICE-001.json")["title"], "Invite a teammate")
-
     def test_symlinked_workspace_is_refused(self):
         elsewhere = Path(self.tmp.name) / "elsewhere"
         elsewhere.mkdir()
@@ -586,8 +547,6 @@ class AppWordingTest(Base):
         shown = json.loads(self.run_studio("--app", "slice", "show", "SLICE-001")[1])
         self.assertIsNone(self.BANNED.search(shown["edit_refusal"]))
         self.assertEqual(self.run_studio("--app", "status")[0], 0)
-        self.assertEqual(self.ok("status")["shared_project"], "this folder (no shared repository)")
-        self.assertEqual(json.loads(self.run_studio("--app", "status")[1])["shared_project"], "this folder only (no shared project)")
 
     def test_every_refusal_with_a_command_has_app_wording(self):
         """Every refusal or problem whose text names a command, an option or a branch says it twice, through say()."""
@@ -637,9 +596,9 @@ class StatusFactsTest(Base):
         self.ok("slice", "ready", "SLICE-001")
         self.assertEqual(self.ok("status")["approvals_withdrawn"], [])
 
-    def test_the_project_says_where_it_came_from(self):
+    def test_the_project_has_no_issue_until_a_slice_is_marked_ready(self):
         self.start()
-        self.assertEqual(self.ok("status")["project"]["source"], "draft")
+        self.assertEqual((self.ok("status")["project"]["issue"], self.ok("status")["project"]["url"]), (None, None))
 
     def test_each_diagnostic_names_its_section(self):
         self.ready_slice()
@@ -659,20 +618,6 @@ class StatusFactsTest(Base):
         self.assertTrue(any(item["section"] for item in check["diagnostics"]))
         shown = self.ok("slice", "show", "SLICE-001")
         self.assertTrue(all("section" in f for f in shown["spec"]["findings"]))
-
-
-class OfflineMessageTest(Base):
-    """A shared repository that cannot be reached is reported in a plain sentence, not Git's last line."""
-
-    def setUp(self):
-        super().setUp()
-        git(self.project, "remote", "add", "origin", str(Path(self.tmp.name) / "no-such-repository"))
-
-    def test_refresh_says_so_plainly(self):
-        refreshed = self.ok("refresh")
-        self.assertIs(refreshed["refreshed"], False)
-        self.assertEqual(refreshed["problem"], "The shared repository could not be reached.")
-        self.assertTrue(refreshed["problem_detail"])  # Git's own words, kept apart for an engineer
 
 
 def cell_validator():

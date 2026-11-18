@@ -56,7 +56,7 @@ UNBLOCKED_BY_A_PERSON = ("approval", "merge", "pull-request")
 DATA_FIELDS = ("situation.title", "situation.reason", "situation.causes[].detail", "situation.causes[].rule",
                "situation.causes[].file", "situation.causes[].requirement.text", "situation.causes[].reasons[]",
                "situation.parked.reason", "situation.approval_reasons[]", "situation.pull_request",
-               "situation.adr.title", "situation.adr.reason", "situation.adr_problems[]", "situation.proposed[].title")
+               "situation.adr.title", "situation.adr.reason", "situation.adr_problems[]", "situation.proposed[].title", "situation.question")
 # A stop for an architecture decision, by the routing sheet's `needs`, and the waiting state it is walked as.
 ADR_STATES = {"adr-decision": "adr-conflict", "adr-acceptance": "adr-acceptance", "adr-fix": "adr-fix"}
 DATA_NOTE = ("Fields listed in data_fields hold text written by reviewers, the verifier, a test run, a ticket or the supervisor's "
@@ -67,6 +67,7 @@ SUMMARY = {
     "pull-request": "A pull request is open for this ticket and has not landed yet.",
     "merge-stopped": "The merge station stopped before landing this approved ticket.",
     "answers": "The spec has open questions that only the product owner can answer.",
+    "product-answer": "The contract engineer found a defect in the slice's spec; the question waits for the product manager on the slice's issue.",
     "build-gate": "The build stopped at a gate.",
     "escalated": "The ticket failed its last judging round and was escalated: the line will not run it again.",
     "stuck": "The cell is in a state the line cannot handle.",
@@ -268,6 +269,8 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
             return "merge"
         if needs == "answers":
             return "answers"
+        if needs == "product-answer":
+            return "product-answer"
         if needs == "repository-hardening":
             return "bronze"
         if needs == "person-to-take-over":
@@ -337,6 +340,14 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
                               "The intent skill continues the interview in this conversation, one question at a time.", f"{intent_skill} {ticket}"))
         options.append(abandon(ticket))
         rule = "Only the product owner's answers settle open questions; nothing else moves this ticket."
+    elif state == "product-answer":
+        question = cell.get("spec_question") if isinstance(cell.get("spec_question"), dict) else {}
+        facts["question"] = explain.clean(question.get("text"))
+        options.append(option("wait", "Wait for the product manager",
+                              "Nothing changes here. The product manager answers in Product Studio and marks the slice ready again; the next intake "
+                              "gives the cell the new revision and the plan is written again.", None))
+        options.append(abandon(ticket))
+        rule = "Only the product manager's new revision of the slice answers the question; the spec is never patched in the cell."
     elif state == "build-gate":
         gate = explain.refused_gate(explain.read_lines(cellroot / "lifecycle.jsonl"), "build") or {}
         facts["gate"] = {"gate": explain.clean(gate.get("gate"), 60), "reason_code": explain.clean(gate.get("reason_code"), 60),

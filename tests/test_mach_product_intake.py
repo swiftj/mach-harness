@@ -1,7 +1,10 @@
-"""Tests for Factory product intake and the dependency scheduler (run.py product ...).
+"""Tests for Factory product intake and the dependency scheduler (run.py product ...), M11.
 
-Each test publishes real delivery waves with Product Studio into a local bare repository, has an
-"engineer" merge them, and then takes them into the engineer's Factory.
+Product Studio hands a slice over as a GitHub issue marked ready, or as a ready folder. The issue
+tests build slice and epic issues exactly as Product Studio writes them (issue_rules' templates),
+in the stand-in for gh from test_mach_product_issues, which keeps issues, labels with their
+events, comments with their times, accounts with their roles, and sub-issues. The folder tests
+commit product/ready/SLICE-NNN/ to the shared repository. Nothing reaches the network.
 """
 
 import io
@@ -19,13 +22,15 @@ sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 import intake  # noqa: E402
 import run  # noqa: E402
-from test_mach_product_collab import AT, Base as CollabBase, git, intent_for, spec_for  # noqa: E402
+from test_mach_product_issues import REPO, IssuesBase, git, intent_for, spec_for  # noqa: E402
+import issue_rules  # noqa: E402
 
-EVENT_KEYS = {"schema_version", "seq", "at", "type", "project_id", "source_commit", "wave_id", "slice_id", "revision", "ticket_id",
+TICKET = ROOT / "skills" / "ticket" / "scripts" / "ticket.py"
+EVENT_KEYS = {"schema_version", "seq", "at", "type", "source_commit", "epic_id", "issue", "slice_id", "revision", "ticket_id",
               "runner_id", "execution_id", "source", "cause", "refs", "data"}
 
 
-class Base(CollabBase):
+class Base(IssuesBase):
     def setUp(self):
         super().setUp()
         # The engineer's clone is the Factory. Execution state is git-ignored there, as in a real install.
@@ -35,6 +40,11 @@ class Base(CollabBase):
         git(self.eng, "add", ".gitignore")
         git(self.eng, "commit", "-q", "-m", "ignore execution state")
         git(self.eng, "push", "-q", "origin", "main")
+        git(self.a, "pull", "-q", "--ff-only")
+        self.set_gh(me="erin-eng")  # the account gh is signed in as on the Factory's machine
+        self.folders = {}
+
+    # ---- the Factory's commands ----
 
     def run_product(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -81,31 +91,117 @@ class Base(CollabBase):
     def checkout(self):
         return (subprocess.run(["git", "status", "--porcelain"], cwd=str(self.eng), capture_output=True, text=True).stdout, git(self.eng, "rev-parse", "HEAD"))
 
-    def slice(self, project, title, depends=()):
-        """An approved slice in a product manager's workspace."""
-        args = [arg for dep in depends for arg in ("--depends-on", dep)]
-        slice_id = self.ok(project, "slice", "new", "--epic", "EPIC-001", "--title", title, *args)["slice"]["slice_id"]
-        self.write_slice(project, slice_id)
-        self.ok(project, "slice", "approve", slice_id)
+    # ---- slices as GitHub issues, as Product Studio writes them ----
+
+    def write_state(self, state):
+        self.gh_state.write_text(json.dumps(state))
+
+    def tick(self, state):
+        state["clock"] = state.get("clock", 0) + 1
+        return "2026-11-17T%02d:%02d:%02dZ" % (10 + state["clock"] // 3600, (state["clock"] // 60) % 60, state["clock"] % 60)
+
+    def new_issue(self, state, title, body, labels):
+        number = state.get("next_number", 1)
+        state["next_number"] = number + 1
+        for name in labels:
+            if name not in state["labels"]:
+                state["labels"].append(name)
+        state["issues"][str(number)] = {"number": number, "id": 9000 + number, "title": title, "body": body, "state": "OPEN",
+                                        "labels": [{"name": name} for name in labels], "comments": [], "events": [], "sub_issues": [],
+                                        "author": {"login": "ada-pm"}, "updatedAt": self.tick(state)}
+        return state["issues"][str(number)]
+
+    def label(self, state, issue, name, by="ada-pm", kind="labeled", user_type="User", app=False):
+        account = state["accounts"].get(by, {"id": 7777})
+        if kind == "labeled" and name not in [l["name"] for l in issue["labels"]]:
+            issue["labels"].append({"name": name})
+        if kind == "unlabeled":
+            issue["labels"] = [l for l in issue["labels"] if l["name"] != name]
+        issue["events"].append({"event": kind, "label": name, "login": by, "id": account["id"], "type": user_type, "app": app, "at": self.tick(state)})
+        issue["updatedAt"] = issue["events"][-1]["at"]
+
+    def epic(self, epic_id="EPIC-001", title="Team membership"):
+        state = self.gh()
+        issue = self.new_issue(state, title, issue_rules.epic_issue_body(epic_id, ["Only invited people can join"]), ["mach:epic"])
+        self.write_state(state)
+        return issue["number"]
+
+    def ready(self, slice_id, epic=None, depends=(), revision=1, by="ada-pm", extra="", follows=None, title="Invite a teammate", number=None):
+        """Product Studio's `slice ready`: the issue (made or replaced whole), the approval comment, then mach:ready."""
+        epic = epic or self.epic_number()
+        state = self.gh()
+        why, spec = intent_for(slice_id), spec_for(slice_id, extra=extra)
+        body = issue_rules.slice_issue_body(slice_id, revision, epic, list(depends), why, spec, follows=follows)
+        if number is None:
+            issue = self.new_issue(state, title, body, ["mach:slice"])
+            self.label(state, issue, "mach:slice", by=by)
+            state["issues"][str(epic)]["sub_issues"].append(issue["id"])
+        else:
+            issue = state["issues"][str(number)]
+            issue["body"] = body
+        at = self.tick(state)
+        account = state["accounts"].get(by, {"id": 7777})
+        issue["comments"].append({"login": by, "id": account["id"], "body": issue_rules.approval_comment(slice_id, revision, by, issue_rules.text_sha256_of(spec),
+                                                                                                         issue_rules.text_sha256_of(why)),
+                                  "created_at": at, "updated_at": at})
+        self.label(state, issue, "mach:ready", by=by)
+        self.write_state(state)
+        return issue["number"]
+
+    def epic_number(self):
+        epics = [i for i in self.gh()["issues"].values() if "mach:epic" in [l["name"] for l in i["labels"]]]
+        return epics[0]["number"] if epics else self.epic()
+
+    def change(self, number, **changes):
+        state = self.gh()
+        state["issues"][str(number)].update(changes)
+        state["issues"][str(number)]["updatedAt"] = self.tick(state)
+        self.write_state(state)
+
+    def labels_of(self, number):
+        return sorted(l["name"] for l in self.gh()["issues"][str(number)]["labels"])
+
+    def comments_on(self, number):
+        return [c["body"] for c in self.gh()["issues"][str(number)]["comments"]]
+
+    def gh_calls(self, since=0):
+        return self.gh()["calls"][since:]
+
+    # ---- slices as ready folders on the integration branch ----
+
+    def slice(self, project, title, depends=(), revision=1, extra=""):
+        """A slice Product Studio wrote to a ready folder (not yet committed). Returns its ID."""
+        slice_id = f"SLICE-{len(self.folders) + 1:03d}"
+        self.folders[slice_id] = self.folder(slice_id, title, depends, revision, extra)
         return slice_id
 
+    def folder(self, slice_id, title, depends=(), revision=1, extra=""):
+        spec, why = spec_for(slice_id, extra=extra), intent_for(slice_id)
+        record = {"schema_version": 1, "slice_id": slice_id, "title": title, "revision": revision,
+                  "epic": {"epic_id": "EPIC-001", "title": "Team membership"}, "dependencies": list(depends),
+                  "spec_sha256": issue_rules.text_sha256_of(spec), "why_sha256": issue_rules.text_sha256_of(why)}
+        return {"slice.json": json.dumps(record, indent=2, sort_keys=True) + "\n", "spec.md": spec, "why.md": why}
+
     def publish(self, project, *slice_ids):
-        """Approve a wave, send it, and have engineering merge it."""
-        wave = self.new_wave(project, *slice_ids)
-        self.ok(project, "send", wave)
-        self.land(f"product/{wave}")
-        self.ok(project, "refresh")
-        return wave
+        """The product manager commits the ready folders to the shared repository; the engineer's checkout is brought up to date."""
+        git(self.eng, "push", "-q", "origin", "main")  # what the engineer merged is on the shared branch
+        git(self.a, "pull", "-q", "--ff-only")
+        for slice_id in slice_ids:
+            target = self.a / "product/ready" / slice_id
+            target.mkdir(parents=True, exist_ok=True)
+            for name, text in self.folders[slice_id].items():
+                (target / name).write_text(text)
+        git(self.a, "add", "-A")
+        git(self.a, "commit", "-q", "-m", f"ready {' '.join(slice_ids)}")
+        git(self.a, "push", "-q", "origin", "main")
+        git(self.eng, "pull", "-q", "--ff-only")
 
     def first(self):
-        """Ada's first wave, SLICE-001, is merged; the engineer's main has it."""
-        self.first_wave(self.a)
-        self.ok(self.a, "send", "WAVE-001")
-        self.land("product/WAVE-001")
-        self.ok(self.a, "refresh")
+        """SLICE-001 is in a ready folder on the shared main branch, and the engineer's main has it."""
+        self.publish(self.a, self.slice(self.a, "Invite a teammate"))
 
     def chain(self):
-        """WAVE-001 holds SLICE-001; WAVE-002 holds SLICE-002 (needs 001) and SLICE-003 (needs 002)."""
+        """SLICE-001; SLICE-002 needs 001; SLICE-003 needs 002. Taken in."""
         self.first()
         second = self.slice(self.a, "Second", depends=["SLICE-001"])
         third = self.slice(self.a, "Third", depends=[second])
@@ -113,16 +209,17 @@ class Base(CollabBase):
         self.product("intake")
 
     def revise(self, slice_id="SLICE-001"):
-        """Product changes an accepted slice: reopen, edit, approve, publish in a new wave."""
-        self.ok(self.a, "slice", "reopen", slice_id)
-        self.write_slice(self.a, slice_id, extra="\nRevised by product.\n")
-        self.ok(self.a, "slice", "approve", slice_id)
-        return self.publish(self.a, slice_id)
+        """Product changes a slice: a new revision of its folder."""
+        record = json.loads(self.folders[slice_id]["slice.json"])
+        self.folders[slice_id] = self.folder(slice_id, record["title"], record["dependencies"], record["revision"] + 1, extra="\nRevised by product.\n")
+        self.publish(self.a, slice_id)
+
+    # ---- the line, standing in for the stations ----
 
     def integrate(self, ticket_id, cleanup=False):
         """The line finishes a ticket for real: its branch is merged into the integration branch."""
         repo = self.eng / ".factory/worktrees" / ticket_id / "repo"
-        (repo / f"{ticket_id.lower()}.py").write_text("print('built')\n")
+        (repo / f"t{ticket_id.lower()}.py").write_text("print('built')\n")
         git(repo, "add", "-A")
         git(repo, "commit", "-q", "-m", f"build {ticket_id}")
         landed = git(repo, "rev-parse", "HEAD").strip()
@@ -138,669 +235,648 @@ class Base(CollabBase):
         archive = self.eng / ".factory/archive"
         archive.mkdir(exist_ok=True)
         cell_file = self.eng / ".factory/worktrees" / ticket_id / "cell.json"
-        with tarfile.open(str(archive / f"{ticket_id}.tar.gz"), "w:gz") as tar:
+        name, number = archive / f"{ticket_id}.tar.gz", 1
+        while name.exists():
+            name, number = archive / f"{ticket_id}-{number}.tar.gz", number + 1
+        with tarfile.open(str(name), "w:gz") as tar:
             tar.add(str(cell_file), arcname=f"{ticket_id}/cell.json")
         with (archive / "runs.jsonl").open("a") as handle:
-            handle.write(json.dumps({"ticket_id": ticket_id, "outcome": outcome, "archive": f".factory/archive/{ticket_id}.tar.gz"}) + "\n")
+            handle.write(json.dumps({"ticket_id": ticket_id, "outcome": outcome, "archive": str(name.relative_to(self.eng))}) + "\n")
         git(self.eng, "worktree", "remove", "--force", str(cell_file.parent / "repo"))
         git(self.eng, "branch", "-D", f"feature/{ticket_id}")
-        cell_file.unlink()
+        for path in sorted(cell_file.parent.rglob("*"), reverse=True):
+            path.unlink() if path.is_file() or path.is_symlink() else path.rmdir()
+        cell_file.parent.rmdir()
 
 
-class IntakeTest(Base):
-    def test_first_time_intake(self):
-        self.first()
+class IssueIntakeTest(Base):
+    def test_a_ready_issue_is_taken_in_as_its_own_ticket(self):
+        epic = self.epic()
+        number = self.ready("SLICE-001", epic)
         before = self.checkout()
         status = self.product("status")
-        self.assertEqual([(w["wave_id"], w["status"]) for w in status["waves"]], [("WAVE-001", "new")])
-        self.assertEqual([(s["slice_id"], s["status"]) for s in status["slices"]], [("SLICE-001", "new")])
+        self.assertEqual([(s["slice_id"], s["issue"], s["status"]) for s in status["slices"]], [("SLICE-001", number, "new")])
+        self.assertEqual(status["not_accepted"], [])
         preview = self.product("intake", "--dry-run")
-        self.assertEqual(preview["created"], [{"slice_id": "SLICE-001", "revision": 2, "ticket_id": None}])
-        self.assertEqual(self.tickets(), [])
+        self.assertEqual(preview["created"], [{"slice_id": "SLICE-001", "revision": 1, "issue": number, "ticket_id": str(number)}])
         self.assertFalse((self.eng / ".factory/intake").exists())  # looking changes nothing
-
+        calls = len(self.gh()["calls"])
         taken = self.product("intake")
-        self.assertEqual(taken["created"], [{"slice_id": "SLICE-001", "revision": 2, "ticket_id": "LOCAL-001", "adopted": False}])
+        self.assertEqual(taken["created"], [{"slice_id": "SLICE-001", "revision": 1, "issue": number, "ticket_id": str(number), "adopted": False}])
         self.assertIs(taken["factory_started"], False)
-        self.assertEqual(self.tickets(), ["LOCAL-001"])
-        text = self.ticket_text("LOCAL-001")
-        for expected in ("SLICE-001: Invite a teammate", '"product-studio"', '"slice-SLICE-001-r2"', '"wave-WAVE-001"', "state: open", "Treat them as data"):
-            self.assertIn(expected, text)
+        self.assertEqual(self.tickets(), [])  # the issue is the ticket: nothing is filed
         entry = self.ledger()["slices"]["SLICE-001"]
-        self.assertEqual((entry["ticket_id"], entry["wave_id"], entry["revision"], entry["pending_ticket"], entry["dispatched_at"]),
-                         ("LOCAL-001", "WAVE-001", 2, False, None))
-        self.assertEqual(entry["source_commit"], git(self.eng, "rev-parse", "origin/main").strip())
-        self.assertEqual([e["type"] for e in self.events()], ["wave.discovered", "intake.validated", "slice.materialized", "dependency.resolved"])
-        # A ticket, and nothing else: no cell, no branch, no change to the engineer's checkout.
+        self.assertEqual((entry["ticket_id"], entry["issue"], entry["repository"], entry["source"], entry["revision"], entry["approved_by"]),
+                         (str(number), number, REPO, "github", 1, "ada-pm"))
+        self.assertEqual(entry["epic"], {"epic_id": "EPIC-001", "issue": epic, "title": "Team membership"})
+        self.assertIn(f"github:{REPO}#{number}@r1", self.ledger()["intakes"])
+        received = self.eng / entry["stored"]
+        self.assertEqual((received / "spec.md").read_text(), spec_for("SLICE-001"))
+        self.assertEqual([e["type"] for e in self.events()], ["intake.validated", "slice.materialized", "dependency.resolved"])
+        # Nothing else: no cell, no branch, no change to the checkout, no write to GitHub.
         self.assertFalse((self.eng / ".factory/worktrees").exists())
         self.assertEqual(git(self.eng, "branch", "--list").split(), ["*", "main"])
         self.assertEqual(self.checkout(), before)
+        made = self.gh_calls(calls)
+        self.assertEqual([c for c in made if c[0] != "api" and c[:2] not in (["repo", "view"], ["issue", "list"])], [])
+        # The exact reads, all in the origin remote's repository.
+        shapes = sorted({" ".join(c[:2]) if c[0] != "api" else "api " + next(a for a in c if a.startswith("repos/")).split("?")[0].replace(f"repos/{REPO}/", "")
+                         for c in made})
+        self.assertEqual(shapes, sorted({"repo view", "issue list", f"api issues/{number}", f"api issues/{number}/events", f"api issues/{number}/comments",
+                                         "api collaborators/ada-pm/permission", f"api issues/{epic}", f"api issues/{epic}/sub_issues"}))
+        listing = next(c for c in made if c[:2] == ["issue", "list"])
+        self.assertEqual(listing, ["issue", "list", "--repo", REPO, "--label", "mach:ready", "--state", "open", "--limit", "200", "--json", "number,labels,updatedAt"])
+        for call in made:
+            self.assertTrue(f"repos/{REPO}/" in " ".join(call) or REPO in call or call[:2] == ["repo", "view"], call)
 
-    def test_repeated_intake_creates_nothing(self):
-        self.first()
+    def test_repeated_intake_takes_nothing_twice_and_does_not_check_an_unchanged_issue_again(self):
+        self.ready("SLICE-001")
         self.product("intake")
-        ledger, events = self.ledger(), self.events()
+        ledger, events, calls = self.ledger(), self.events(), len(self.gh()["calls"])
         for _ in range(3):
             again = self.product("intake")
             self.assertEqual((again["created"], again["updated"], again["unchanged"]), ([], [], ["SLICE-001"]))
-        self.assertEqual(self.tickets(), ["LOCAL-001"])
         self.assertEqual(self.events(), events)
         after = self.ledger()
         after["source"]["at"] = ledger["source"]["at"]
-        self.assertEqual(after, ledger)
-        self.assertEqual(self.product("status")["waves"][0]["status"], "known")
+        self.assertEqual({key: value for key, value in after.items() if key != "checked"}, {key: value for key, value in ledger.items() if key != "checked"})
+        self.assertFalse([c for c in self.gh_calls(calls) if any("/events" in a for a in c)])  # unchanged since it was checked: not checked again
 
-    def test_two_product_managers_independent_waves(self):
-        self.first()
-        self.product("intake")
-        self.ok(self.b, "refresh")
-        ada, ben = self.slice(self.a, "Ada's"), None
-        self.ok(self.a, "send", self.new_wave(self.a, ada))
-        self.ok(self.b, "refresh")
-        ben = self.slice(self.b, "Ben's")
-        self.ok(self.b, "send", self.new_wave(self.b, ben))
-        self.land("product/WAVE-002")
-        self.land("product/WAVE-003")
+    def test_several_issues_and_an_issue_number_names_the_ticket(self):
+        epic = self.epic()
+        first, second = self.ready("SLICE-001", epic), self.ready("SLICE-002", epic)
         taken = self.product("intake")
-        self.assertEqual([(c["slice_id"], c["ticket_id"]) for c in taken["created"]], [("SLICE-002", "LOCAL-002"), ("SLICE-003", "LOCAL-003")])
-        plan, rows = self.plan()
-        self.assertEqual(plan["dispatchable"], ["SLICE-001", "SLICE-002", "SLICE-003"])
-        self.assertEqual(plan["parallel_groups"], [["SLICE-001", "SLICE-002", "SLICE-003"]])
-        self.assertEqual({rows[key]["wave_id"] for key in rows}, {"WAVE-001", "WAVE-002", "WAVE-003"})
+        self.assertEqual([(c["slice_id"], c["ticket_id"]) for c in taken["created"]], [("SLICE-001", str(first)), ("SLICE-002", str(second))])
+        self.assertEqual(self.plan()[0]["dispatchable"], ["SLICE-001", "SLICE-002"])
+        step = run.next_step(run.Project(self.eng), str(second), False)
+        self.assertEqual((step["action"], step["needs"]), ("stop", "dispatch"))  # handed over by Product Studio: never groomed again
+        self.assertIn("product dispatch SLICE-002", step["reason"])
 
-    def test_restart_after_a_ticket_was_filed_but_not_recorded(self):
-        self.first()
-        real = intake.Factory.ticket
-        calls = []
-
-        def crash_after_create(factory, *argv, stdin=None):
-            done = real(factory, *argv, stdin=stdin)
-            calls.append(argv[0])
-            if argv[0] == "create":
-                raise RuntimeError("power cut")
-            return done
-
-        with mock.patch.object(intake.Factory, "ticket", crash_after_create):
-            with self.assertRaises(RuntimeError):
-                self.run_product("intake")
-        self.assertEqual(self.tickets(), ["LOCAL-001"])
-        entry = self.ledger()["slices"]["SLICE-001"]
-        self.assertEqual((entry["ticket_id"], entry["pending_ticket"]), (None, True))  # the intention was on record first
-        self.assertIn("has not been filed yet", self.plan()[1]["SLICE-001"]["reasons"][0])
-        resumed = self.product("intake")
-        self.assertEqual(resumed["created"], [{"slice_id": "SLICE-001", "revision": 2, "ticket_id": "LOCAL-001", "adopted": True}])
-        self.assertEqual(self.tickets(), ["LOCAL-001"])  # found again by its marker, not filed twice
-        self.assertEqual(self.product("intake")["created"], [])
-        self.assertEqual([e["type"] for e in self.events()].count("slice.materialized"), 1)
-
-    def test_restart_between_two_slices(self):
-        self.first()
-        second = self.slice(self.a, "Second")
-        self.publish(self.a, second)
-        real = intake.Factory.materialize
-        seen = []
-
-        def crash_on_second(factory, ledger, entry, *rest):
-            if seen:
-                raise RuntimeError("power cut")
-            seen.append(entry["slice_id"])
-            return real(factory, ledger, entry, *rest)
-
-        with mock.patch.object(intake.Factory, "materialize", crash_on_second):
-            with self.assertRaises(RuntimeError):
-                self.run_product("intake")
-        self.assertEqual(self.tickets(), ["LOCAL-001"])
-        self.product("intake")
-        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])
-        self.assertEqual({key: value["ticket_id"] for key, value in self.ledger()["slices"].items()}, {"SLICE-001": "LOCAL-001", "SLICE-002": "LOCAL-002"})
-
-    def test_events_survive_a_crash_between_the_ledger_and_the_log(self):
-        self.first()
-        self.product("intake")
-        _, line = run.factory(run.Project(self.eng))
-        ledger = line.ledger()
-        line.emit(ledger, "human.required", slice_id="SLICE-001", reason="test")
-        intake.write_atomic(line.ledger_path, intake.canonical(ledger))  # the ledger was written; the log append never happened
-        before = len(self.events())
-        line.save(line.ledger())
-        line.save(line.ledger())
-        events = self.events()
-        self.assertEqual(len(events), before + 1)
-        self.assertEqual([e["seq"] for e in events], list(range(1, len(events) + 1)))
-        self.assertEqual(line.ledger()["pending_events"], [])
-
-    def test_a_tracker_without_label_search_asks_a_person(self):
-        self.first()
-        real = intake.Factory.ticket
-
-        def no_search(factory, *argv, stdin=None):
-            if argv[0] == "list":
-                return subprocess.CompletedProcess(argv, 1, "", "refused: cannot filter by label")
-            return real(factory, *argv, stdin=stdin)
-
-        def crash_after_create(factory, *argv, stdin=None):
-            done = no_search(factory, *argv, stdin=stdin)
-            if argv[0] == "create":
-                raise RuntimeError("power cut")
-            return done
-
-        with mock.patch.object(intake.Factory, "ticket", crash_after_create):
-            with self.assertRaises(RuntimeError):
-                self.run_product("intake")
-        with mock.patch.object(intake.Factory, "ticket", no_search):
-            stuck = self.product("intake")
-            self.assertIn("--adopt SLICE-001=", stuck["needs_person"][0]["why"])
-            self.assertEqual(self.tickets(), ["LOCAL-001"])
-            adopted = self.product("intake", "--adopt", "SLICE-001=LOCAL-001")
-        self.assertEqual(adopted["created"][0]["adopted"], True)
-        self.assertEqual(self.tickets(), ["LOCAL-001"])
-
-
-class VerificationTest(Base):
-    def tamper(self, relative, change, message="tamper"):
-        path = self.eng / relative
-        if relative.endswith(".json"):
-            data = json.loads(path.read_text())
-            change(data)
-            path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-        else:
-            path.write_text(change(path.read_text()))
-        git(self.eng, "add", "-A")
-        git(self.eng, "commit", "-q", "-m", message)
-        git(self.eng, "push", "-q", "origin", "main")
-
-    def assert_refused(self, expected, waves=1):
-        message = self.refused("intake")
-        self.assertIn(expected, message)
-        self.assertEqual(self.tickets(), [])
-        self.assertEqual(self.ledger()["slices"], {})
-        kinds = [e["type"] for e in self.events()]
-        self.assertEqual((kinds.count("intake.refused"), kinds.count("human.required"), kinds.count("slice.materialized")), (waves, waves, 0))
-        self.refused("intake")
-        self.assertEqual(len(self.events()), len(kinds))  # the same refusal is reported once
-
-    def test_spec_changed_after_approval(self):
-        self.first()
-        self.tamper("specs/slices/SLICE-001-invite-teammate.md", lambda text: text + "\nSlipped in after approval.\n")
-        self.assert_refused("spec_sha256 does not match")
-
-    def test_unsafe_spec_reference(self):
-        self.first()
-        self.tamper("product/slices/SLICE-001.json", lambda d: d.update(spec_path="../../etc/passwd"))
-        self.assert_refused("spec_path")
-
-    def test_symlinked_spec(self):
-        self.first()
-        spec = self.eng / "specs/slices/SLICE-001-invite-teammate.md"
-        (self.eng / "elsewhere.md").write_text(spec.read_text())
-        spec.unlink()
-        spec.symlink_to("../../elsewhere.md")
-        git(self.eng, "add", "-A")
-        git(self.eng, "commit", "-q", "-m", "symlink")
-        git(self.eng, "push", "-q", "origin", "main")
-        self.assert_refused("SLICE-001")
-
-    def test_wave_without_an_approval_record(self):
-        self.first()
-        self.tamper("product/delivery-waves/WAVE-001.json", lambda d: d.update(approval=None))
-        self.assert_refused("requires recorded author approval")
-
-    def test_cyclic_dependencies(self):
-        self.first()
-        second = self.slice(self.a, "Second", depends=["SLICE-001"])
-        self.publish(self.a, second)
-        self.tamper("product/slices/SLICE-001.json", lambda d: d.update(dependencies=[second]))
-        self.assert_refused("dependency cycle: SLICE-001 -> SLICE-002 -> SLICE-001", waves=2)
-
-    def test_unknown_dependency(self):
-        self.first()
-        self.tamper("product/slices/SLICE-001.json", lambda d: d.update(dependencies=["SLICE-404"]))
-        self.assert_refused("unknown dependency 'SLICE-404'")
-
-    def test_unmerged_local_product_changes_are_ignored(self):
-        self.first()
-        path = self.eng / "product/slices/SLICE-001.json"
-        data = json.loads(path.read_text())
-        data["title"] = "Changed locally, never reviewed"
-        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-        git(self.eng, "commit", "-q", "-am", "local only")
+    def test_studio_slice_ready_is_accepted_by_the_factory(self):
+        """End to end: what Product Studio's own `slice ready` writes passes every check of the Factory."""
+        self.set_gh(me="ada-pm")
+        self.project_and_epic()
+        self.drafted()
+        number = self.ok(self.a, "slice", "ready", "SLICE-001")["issue"]
+        self.set_gh(me="erin-eng")
         taken = self.product("intake")
-        self.assertIn("unshared commits that change product files", " ".join(taken["notes"]))
-        self.assertEqual(self.ledger()["slices"]["SLICE-001"]["title"], "Invite a teammate")
-        self.assertEqual(self.ledger()["source"]["commit"], git(self.eng, "rev-parse", "origin/main").strip())
+        self.assertEqual([(c["slice_id"], c["ticket_id"]) for c in taken["created"]], [("SLICE-001", str(number))])
+        self.assertEqual(taken["not_accepted"], [])
 
-    def test_a_refused_wave_does_not_stop_a_good_one(self):
-        self.first()
-        second = self.slice(self.a, "Second")
-        self.publish(self.a, second)
-        self.tamper("product/delivery-waves/WAVE-002.json", lambda d: d.update(project_id="other-project"))
-        code, out, _ = self.run_product("intake")
-        report = json.loads(out)
-        self.assertTrue(report["refused"])  # the tree as a whole no longer validates, so nothing is taken
-        self.assertEqual(self.tickets(), [])
 
-    def test_no_product_definitions_yet(self):
-        status = self.product("status")
-        self.assertEqual((status["has_product"], status["waves"]), (False, []))
-        self.assertEqual(self.product("intake")["created"], [])
-        self.assertEqual(self.plan()[0]["slices"], [])
+class AcceptanceTest(Base):
+    """Design section 4: only an issue that passes every check is taken in; anything else is listed with its reason."""
+
+    def not_accepted(self, number):
+        taken = self.product("intake")
+        self.assertEqual(taken["created"], [])
+        found = [item for item in taken["not_accepted"] if item.get("issue") == number]
+        self.assertEqual(len(found), 1, taken["not_accepted"])
+        self.assertNotIn("SLICE-001", self.ledger()["slices"])
+        return found[0]["reason"]
+
+    def test_a_body_edited_after_approval(self):
+        number = self.ready("SLICE-001")
+        self.change(number, body=self.gh()["issues"][str(number)]["body"].replace("An admin", "Anyone"))
+        self.assertIn("its body was changed after it was approved", self.not_accepted(number))
+
+    def test_marked_ready_by_an_account_without_the_role(self):
+        state = self.gh()
+        state["accounts"]["rae-reader"] = {"id": 3009, "role": "read"}
+        self.write_state(state)
+        number = self.ready("SLICE-001", by="rae-reader")
+        self.assertIn("without the triage, write, maintain or admin role", self.not_accepted(number))
+
+    def test_the_triage_role_counts(self):
+        state = self.gh()
+        state["accounts"]["tess-triage"] = {"id": 3010, "role": "triage"}
+        self.write_state(state)
+        self.ready("SLICE-001", by="tess-triage")
+        self.assertEqual(len(self.product("intake")["created"]), 1)
+
+    def test_marked_ready_by_an_automated_account(self):
+        number = self.ready("SLICE-001")
+        state = self.gh()
+        issue = state["issues"][str(number)]
+        self.label(state, issue, "mach:ready", kind="unlabeled")
+        self.label(state, issue, "mach:ready", by="ada-pm", user_type="Bot")
+        self.write_state(state)
+        self.assertIn("automated account", self.not_accepted(number))
+
+    def test_the_last_ready_label_decides_who_marked_it(self):
+        number = self.ready("SLICE-001")
+        state = self.gh()
+        state["accounts"]["ben-pm"] = {"id": 3002, "role": "write"}
+        issue = state["issues"][str(number)]
+        self.label(state, issue, "mach:ready", kind="unlabeled")
+        self.label(state, issue, "mach:ready", by="ben-pm")  # Ben marked it ready again, but the approval is Ada's
+        self.write_state(state)
+        self.assertIn("no approval comment for this revision by the account that marked it ready", self.not_accepted(number))
+
+    def test_an_edited_approval_comment(self):
+        number = self.ready("SLICE-001")
+        state = self.gh()
+        state["issues"][str(number)]["comments"][0]["updated_at"] = "2026-11-18T09:00:00Z"
+        state["issues"][str(number)]["updatedAt"] = "2026-11-18T09:00:00Z"
+        self.write_state(state)
+        self.assertIn("the approval comment was edited after it was written", self.not_accepted(number))
+
+    def test_an_approval_of_other_text(self):
+        number = self.ready("SLICE-001")
+        state = self.gh()
+        comment = state["issues"][str(number)]["comments"][0]
+        comment["body"] = issue_rules.approval_comment("SLICE-001", 1, "ada-pm", "0" * 64, "1" * 64)
+        state["issues"][str(number)]["updatedAt"] = self.tick(state)
+        self.write_state(state)
+        self.assertIn("no approval comment for this revision", self.not_accepted(number))
+
+    def test_a_spec_that_fails_the_intent_gates(self):
+        epic = self.epic()
+        state = self.gh()
+        why, spec = intent_for("SLICE-001"), spec_for("SLICE-001").replace("## Invariants", "## Invariant notes")
+        issue = self.new_issue(state, "Broken", issue_rules.slice_issue_body("SLICE-001", 1, epic, [], why, spec), ["mach:slice"])
+        issue["comments"].append({"login": "ada-pm", "id": 3001, "body": issue_rules.approval_comment("SLICE-001", 1, "ada-pm", issue_rules.text_sha256_of(spec),
+                                                                                                      issue_rules.text_sha256_of(why)),
+                                  "created_at": "2026-11-17T09:00:00Z", "updated_at": "2026-11-17T09:00:00Z"})
+        self.label(state, issue, "mach:ready")
+        self.write_state(state)
+        self.assertIn("does not pass the intent station's gates", self.not_accepted(issue["number"]))
+
+    def test_an_epic_not_written_by_product_studio(self):
+        state = self.gh()
+        epic = self.new_issue(state, "Somebody's epic", "Just text", ["mach:epic"])
+        self.write_state(state)
+        number = self.ready("SLICE-001", epic["number"])
+        self.assertIn(f"its epic issue #{epic['number']} is not an epic written by MACH Product Studio", self.not_accepted(number))
+
+    def test_each_refusal_is_said_once_and_a_good_slice_still_goes_in(self):
+        epic = self.epic()
+        bad = self.ready("SLICE-001", epic)
+        self.change(bad, body=self.gh()["issues"][str(bad)]["body"] + "\nEdited.\n")
+        good = self.ready("SLICE-002", epic)
+        taken = self.product("intake")
+        self.assertEqual([c["ticket_id"] for c in taken["created"]], [str(good)])
+        refused = [e for e in self.events() if e["type"] == "intake.refused"]
+        self.assertEqual([(e["issue"], e["slice_id"]) for e in refused], [(bad, "SLICE-001")])
+        self.product("intake")
+        self.assertEqual(len([e for e in self.events() if e["type"] == "intake.refused"]), 1)
+        self.assertEqual(self.product("status")["not_accepted"][0]["issue"], bad)
+
+    def test_github_out_of_reach_keeps_what_was_taken_in(self):
+        number = self.ready("SLICE-001")
+        self.product("intake")
+        self.set_gh(fail={"*": "error connecting to api.github.com"})
+        taken = self.product("intake")
+        self.assertIn("GitHub could not be read (network)", " ".join(taken["notes"]))
+        _, rows = self.plan()
+        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-001"]["ticket_id"]), ("ready", str(number)))
+
+    def test_the_slice_check_reads_only(self):
+        number = self.ready("SLICE-001")
+        calls = len(self.gh()["calls"])
+        done = subprocess.run([sys.executable, str(TICKET), "--project", str(self.eng), "slice-check", str(number)], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        decision = json.loads(done.stdout)["decision"]
+        self.assertEqual((decision["state"], decision["approved_by"], decision["spec"]), ("accepted", "ada-pm", spec_for("SLICE-001")))
+        self.assertFalse([c for c in self.gh_calls(calls) if c[:2] in (["issue", "edit"], ["issue", "comment"], ["issue", "close"]) or "--method" in c])
 
 
 class SchedulerTest(Base):
-    def test_dependencies_decide_what_is_ready(self):
-        self.chain()
+    def test_dependencies_by_issue_decide_what_is_ready(self):
+        epic = self.epic()
+        first = self.ready("SLICE-001", epic)
+        self.ready("SLICE-002", epic, depends=[first])
+        self.product("intake")
         plan, rows = self.plan()
-        self.assertEqual({key: row["state"] for key, row in rows.items()}, {"SLICE-001": "ready", "SLICE-002": "blocked", "SLICE-003": "blocked"})
         self.assertEqual(plan["dispatchable"], ["SLICE-001"])
-        self.assertEqual(plan["parallel_groups"], [["SLICE-001"], ["SLICE-002"], ["SLICE-003"]])
-        self.assertEqual(rows["SLICE-001"]["reasons"], ["It depends on nothing."])
-        self.assertEqual(rows["SLICE-002"]["reasons"], ["It waits for SLICE-001 to be integrated (now queued)."])
-        self.assertEqual(rows["SLICE-002"]["depends_on"], [{"slice_id": "SLICE-001", "integrated": False, "state": "queued"}])
-        self.assertEqual(plan["counts"], {"ready": 1, "blocked": 2})
-        self.assertIs(plan["intake_is_current"], True)
-        self.assertEqual(plan, self.product("plan"))  # deterministic, and reading it changes nothing
+        self.assertEqual(rows["SLICE-002"]["reasons"], [f"It waits for #{first} (SLICE-001) to be merged (now queued)."])
 
-    def test_finished_is_not_integrated(self):
-        self.chain()
+    def test_merging_a_dependency_unblocks_and_ships_it(self):
+        epic = self.epic()
+        first = self.ready("SLICE-001", epic)
+        self.ready("SLICE-002", epic, depends=[first])
+        self.product("intake")
         self.product("dispatch", "SLICE-001")
-        for stage in ("planned", "built", "verified", "approved"):
-            self.set_cell("LOCAL-001", stage=stage)
-            _, rows = self.plan()
-            self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-002"]["state"]), ("active", "blocked"), stage)
-            self.assertIn("now active", rows["SLICE-002"]["reasons"][0])
-        # A cell that says "merged" while its commit is not on the integration branch proves nothing.
-        self.set_cell("LOCAL-001", stage="merged", merged={"commit": "0" * 40, "landed_commit": None})
-        _, rows = self.plan()
-        self.assertEqual(rows["SLICE-001"]["state"], "blocked")
-        self.assertIn("its commit is not on the integration branch", rows["SLICE-001"]["reasons"][0])
-        self.assertEqual(rows["SLICE-002"]["state"], "blocked")
-
-    def test_integration_unblocks_the_next_slice(self):
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        landed = self.integrate("LOCAL-001")
+        self.set_cell(str(first), stage="approved")
+        self.assertEqual(self.plan()[1]["SLICE-002"]["state"], "blocked")  # approved is still in the line
+        self.integrate(str(first), cleanup=True)
         plan, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-002"]["state"], rows["SLICE-003"]["state"]), ("completed", "ready", "blocked"))
-        self.assertEqual(rows["SLICE-001"]["integrated_commit"], git(self.eng, "rev-parse", "HEAD").strip())
-        self.assertEqual(rows["SLICE-002"]["reasons"], ["Everything it depends on is integrated."])
-        self.assertEqual(plan["dispatchable"], ["SLICE-002"])
-        seq = len(self.events())
-        self.product("dispatch", "SLICE-002")
-        kinds = [(e["type"], e["slice_id"]) for e in self.events(seq)]
-        self.assertEqual(kinds, [("slice.integrated", "SLICE-001"), ("dependency.resolved", "SLICE-002"), ("work.scheduled", "SLICE-002")])
-        self.assertEqual(self.ledger()["slices"]["SLICE-002"]["built_against"], {"SLICE-001": 2})
-        self.assertTrue(landed)
+        self.assertEqual((rows["SLICE-001"]["state"], plan["dispatchable"]), ("completed", ["SLICE-002"]))
 
-    def test_integration_is_still_known_after_cleanup(self):
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        self.integrate("LOCAL-001", cleanup=True)
-        _, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-002"]["state"]), ("completed", "ready"))
-
-    def test_a_manual_merge_is_recognised_from_the_approved_commit(self):
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        landed = self.integrate("LOCAL-001")
-        self.set_cell("LOCAL-001", stage="approved", merged=None)  # merged by hand: the merge station recorded nothing
-        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "active")  # still in the line until it is cleaned up
-        archive = self.eng / ".factory/archive"
-        archive.mkdir()
-        decision = self.eng / "decision.json"
-        decision.write_text(json.dumps({"outcome": "APPROVED", "head": landed}))
-        with tarfile.open(str(archive / "LOCAL-001.tar.gz"), "w:gz") as tar:
-            tar.add(str(self.eng / ".factory/worktrees/LOCAL-001/cell.json"), arcname="LOCAL-001/cell.json")
-            tar.add(str(decision), arcname="LOCAL-001/review/decision.json")
-        decision.unlink()
-        (archive / "runs.jsonl").write_text(json.dumps({"ticket_id": "LOCAL-001", "outcome": "merged"}) + "\n")
-        git(self.eng, "worktree", "remove", "--force", str(self.eng / ".factory/worktrees/LOCAL-001/repo"))
-        (self.eng / ".factory/worktrees/LOCAL-001/cell.json").unlink()
-        _, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-001"]["integrated_commit"], rows["SLICE-002"]["state"]), ("completed", landed, "ready"))
-
-    def test_the_run_record_says_what_landed_and_git_confirms_it(self):
-        """A version 2 run record names the commit. No archive is needed, and the commit is still checked."""
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        landed = self.integrate("LOCAL-001")
-        merge_commit = git(self.eng, "rev-parse", "HEAD").strip()
-        archive = self.eng / ".factory/archive"
-        archive.mkdir()
-        record = {"record_version": 2, "ticket_id": "LOCAL-001", "outcome": "merged",
-                  "integration": {"branch": "feature/LOCAL-001", "into": "main", "method": "local", "landed_commit": landed, "merge_commit": merge_commit}}
-        (archive / "runs.jsonl").write_text(json.dumps(record) + "\n")
-        git(self.eng, "worktree", "remove", "--force", str(self.eng / ".factory/worktrees/LOCAL-001/repo"))
-        (self.eng / ".factory/worktrees/LOCAL-001/cell.json").unlink()
-        _, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-001"]["integrated_commit"], rows["SLICE-002"]["state"]), ("completed", merge_commit, "ready"))
-        record["integration"].update(landed_commit="1" * 40, merge_commit="2" * 40)  # a record naming commits that are not on the branch
-        (archive / "runs.jsonl").write_text(json.dumps(record) + "\n")
-        _, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-002"]["state"]), ("blocked", "blocked"))
-
-    def test_a_run_record_alone_is_not_integration(self):
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        self.set_cell("LOCAL-001", stage="merged", merged={"commit": "0" * 40})
-        self.clean_up("LOCAL-001")  # the record says merged; the commit it names is nowhere on main
-        _, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-001"]["needs_person"], rows["SLICE-002"]["state"]), ("blocked", True, "blocked"))
-
-    def test_an_abandoned_ticket_blocks_until_reissued(self):
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        self.clean_up("LOCAL-001", outcome="abandoned")
-        plan, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], plan["needs_person"]), ("blocked", ["SLICE-001"]))
-        self.assertIn("was abandoned", rows["SLICE-001"]["reasons"][0])
-        self.assertIn("not abandoned", self.refused("intake", "--reissue", "SLICE-002"))
-        again = self.product("intake", "--reissue", "SLICE-001")
-        self.assertEqual(again["created"], [{"slice_id": "SLICE-001", "revision": 2, "ticket_id": "LOCAL-004", "reissued": True}])
-        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "ready")
-
-    def test_concurrency_limit(self):
-        self.first()
-        for title in ("B", "C", "D"):
-            self.publish(self.a, self.slice(self.a, title))
-        (self.eng / ".factory/config.json").write_text(json.dumps({"tickets": {"provider": "local"}, "factory": {"max_parallel": 2}}))
+    def test_a_dependency_merged_before_this_factory_counts_when_its_spec_is_on_the_branch(self):
+        (self.eng / "specs/slices").mkdir(parents=True)
+        spec = intake.with_header(spec_for("SLICE-009"), intake.spec_header({"epic_id": "EPIC-001", "issue": 1, "title": "Old"}, 99))
+        (self.eng / "specs/slices/SLICE-009-invite-a-teammate-by-email.md").write_text(spec)
+        git(self.eng, "add", "-A")
+        git(self.eng, "commit", "-q", "-m", "merged earlier")
+        git(self.eng, "push", "-q", "origin", "main")
+        epic = self.epic()
+        self.ready("SLICE-001", epic, depends=[99])
+        self.ready("SLICE-002", epic, depends=[98])
         self.product("intake")
         plan, rows = self.plan()
-        self.assertEqual((plan["dispatchable"], plan["waiting_for_a_place"]), (["SLICE-001", "SLICE-002"], ["SLICE-003", "SLICE-004"]))
-        self.assertIn("waiting for a free place: 0 of 2", rows["SLICE-003"]["reasons"][-1])
-        refused = self.product("dispatch", "SLICE-004")
-        self.assertEqual((refused["tickets"], refused["refused"][0]["state"]), ([], "ready"))
-        sent = self.product("dispatch", "--ready")
-        self.assertEqual(sent["tickets"], ["LOCAL-001", "LOCAL-002"])
+        self.assertEqual(plan["dispatchable"], ["SLICE-001"])
+        self.assertEqual(rows["SLICE-001"]["depends_on"][0]["state"], "merged (its spec is on the integration branch)")
+        self.assertIn("It depends on #98, which this Factory has not taken in and which is not merged.", rows["SLICE-002"]["reasons"])
+
+    def test_the_product_managers_order_within_an_epic_then_oldest_first(self):
+        one = self.epic("EPIC-001", "Membership")
+        a1 = self.ready("SLICE-001", one)
+        other = self.epic("EPIC-002", "Billing")
+        b1 = self.ready("SLICE-002", other)
+        a2 = self.ready("SLICE-003", one)
+        state = self.gh()
+        state["issues"][str(one)]["sub_issues"] = [9000 + a2, 9000 + a1]  # the product manager put SLICE-003 first
+        state["issues"][str(one)]["updatedAt"] = self.tick(state)
+        self.write_state(state)
+        self.product("intake")
         plan, _ = self.plan()
-        self.assertEqual((plan["limits"], plan["dispatchable"], plan["waiting_for_a_place"]),
-                         ({"max_parallel": 2, "max_parallel_high": 1, "active": 2, "free": 0}, [], ["SLICE-003", "SLICE-004"]))
-        self.assertEqual(self.product("dispatch", "--ready")["tickets"], [])
-        self.integrate("LOCAL-001")
-        self.assertEqual(self.plan()[0]["dispatchable"], ["SLICE-003"])
-        self.assertEqual(self.product("dispatch", "--ready", "--limit", "1")["tickets"], ["LOCAL-003"])
+        # Oldest ready first is SLICE-001, SLICE-002, SLICE-003; within EPIC-001 the product manager's order puts 003 before 001.
+        self.assertEqual(plan["order"], ["SLICE-003", "SLICE-002", "SLICE-001"])
+        self.assertEqual(intake.Factory.order(["SLICE-001", "SLICE-002"], {"SLICE-001": {"ready_at": "2", "epic": {"issue": 1}},
+                                                                          "SLICE-002": {"ready_at": "1", "epic": {"issue": 2}}}), ["SLICE-002", "SLICE-001"])
+        self.assertTrue(b1)
 
-    def test_a_dependency_that_is_not_approved_work_here(self):
-        self.chain()
-        ledger = self.ledger()
-        ledger["slices"]["SLICE-001"]["state"] = "superseded"
-        (self.eng / ".factory/intake/ledger.json").write_text(json.dumps(ledger))
-        _, rows = self.plan()
-        self.assertEqual(rows["SLICE-001"]["state"], "superseded")
-        self.assertEqual(rows["SLICE-002"]["reasons"], ["It depends on SLICE-001, which is not approved work in this Factory."])
-
-    def test_the_scheduler_finds_cycles_itself(self):
-        self.assertEqual(intake.find_cycles({"SLICE-003": ["SLICE-001"], "SLICE-001": ["SLICE-002"], "SLICE-002": ["SLICE-003"], "SLICE-004": ["SLICE-001"]}),
-                         [["SLICE-001", "SLICE-002", "SLICE-003"]])
-        self.assertEqual(intake.find_cycles({"SLICE-001": [], "SLICE-002": ["SLICE-001"]}), [])
-        self.chain()
-        ledger = self.ledger()
-        ledger["slices"]["SLICE-001"]["dependencies"] = ["SLICE-003"]
-        (self.eng / ".factory/intake/ledger.json").write_text(json.dumps(ledger))
-        plan, rows = self.plan()
-        self.assertEqual(plan["cycles"], [["SLICE-001", "SLICE-003", "SLICE-002", "SLICE-001"]])
-        self.assertEqual((plan["dispatchable"], {row["state"] for row in rows.values()}), ([], {"blocked"}))
-        self.assertIn("dependency cycle: SLICE-001 -> SLICE-003 -> SLICE-002 -> SLICE-001", rows["SLICE-002"]["reasons"][0])
-
-
-class RevisionTest(Base):
-    def test_modified_before_execution(self):
-        self.first()
+    def test_the_concurrency_limit(self):
+        (self.eng / ".factory/config.json").write_text(json.dumps({"tickets": {"provider": "local"}, "factory": {"max_parallel": 1}}))
+        epic = self.epic()
+        first = self.ready("SLICE-001", epic)
+        self.ready("SLICE-002", epic)
         self.product("intake")
-        self.revise()
-        status = self.product("status")
-        self.assertEqual([(s["slice_id"], s["status"], s["was_revision"], s["revision"], s["work"]) for s in status["slices"]],
-                         [("SLICE-001", "modified", 2, 4, "queued")])
         plan, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], plan["intake_is_current"]), ("blocked", False))
-        self.assertIn("changed since intake", rows["SLICE-001"]["reasons"][0])
-        self.assertIn("changed since intake", json.dumps(self.product("dispatch", "SLICE-001")["refused"]))
-        taken = self.product("intake")
-        self.assertEqual(taken["updated"], [{"slice_id": "SLICE-001", "from_revision": 2, "to_revision": 4, "ticket_id": "LOCAL-001", "effect": "ticket updated"}])
-        self.assertEqual(self.tickets(), ["LOCAL-001"])  # the same ticket, not a second one
-        text = self.ticket_text("LOCAL-001")
-        self.assertIn('"slice-SLICE-001-r4"', text)
-        self.assertNotIn('"slice-SLICE-001-r2"', text)
-        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "ready")
-        self.assertIn("revision.superseded", [e["type"] for e in self.events()])
-        self.product("dispatch", "SLICE-001")
-        self.assertIn("Revised by product.", (self.eng / ".factory/worktrees/LOCAL-001/spec.md").read_text())
-
-    def test_modified_during_execution(self):
-        self.first()
-        self.product("intake")
-        self.product("dispatch", "SLICE-001")
-        cell_before = (self.eng / ".factory/worktrees/LOCAL-001/cell.json").read_text()
-        spec_before = (self.eng / ".factory/worktrees/LOCAL-001/spec.md").read_text()
-        self.revise()
-        taken = self.product("intake")
-        self.assertEqual(taken["needs_person"], [{"slice_id": "SLICE-001", "from_revision": 2, "to_revision": 4, "ticket_id": "LOCAL-001",
-                                                  "why": "the definition changed while work was in progress",
-                                                  "resolve": "product resolve SLICE-001 --supersede-in-work \"<why>\", only on a person's explicit instruction"}])
-        self.assertEqual((taken["created"], taken["updated"]), ([], []))
-        # Work in flight is never changed underneath the line.
-        self.assertEqual((self.eng / ".factory/worktrees/LOCAL-001/cell.json").read_text(), cell_before)
-        self.assertEqual((self.eng / ".factory/worktrees/LOCAL-001/spec.md").read_text(), spec_before)
-        self.assertEqual(self.tickets(), ["LOCAL-001"])
+        self.assertEqual((plan["dispatchable"], plan["waiting_for_a_place"]), (["SLICE-001"], ["SLICE-002"]))
+        self.product("dispatch", "--ready")
         plan, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-001"]["needs_person"], plan["needs_person"]), ("active", True, ["SLICE-001"]))
-        self.assertEqual(rows["SLICE-001"]["stale"], ["The approved definition changed while this was being built."])
-        seq = len(self.events())
-        self.product("intake")
-        self.assertEqual(self.events(seq), [])  # said once
-        kinds = [e["type"] for e in self.events()]
-        self.assertIn("revision.superseded", kinds)
-        self.assertIn("human.required", kinds)
+        self.assertEqual((plan["dispatchable"], plan["limits"]["active"]), ([], 1))
+        self.assertIn("waiting for a free place: 1 of 1", rows["SLICE-002"]["reasons"][-1])
+        self.assertTrue((self.eng / ".factory/worktrees" / str(first)).is_dir())
 
-    def test_completed_work_becomes_stale(self):
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        self.integrate("LOCAL-001", cleanup=True)
-        self.product("dispatch", "SLICE-002")
-        self.integrate("LOCAL-002")
-        self.revise("SLICE-001")
-        _, rows = self.plan()
-        self.assertEqual(rows["SLICE-001"]["state"], "completed")
-        self.assertEqual(rows["SLICE-001"]["stale"], ["The approved definition changed after this was built. Run intake to open follow-up work."])
-        taken = self.product("intake")
-        self.assertEqual(taken["updated"], [{"slice_id": "SLICE-001", "from_revision": 2, "to_revision": 4, "ticket_id": "LOCAL-004", "effect": "follow-up ticket"}])
-        entry = self.ledger()["slices"]["SLICE-001"]
-        self.assertEqual((entry["ticket_id"], entry["revision"], entry["history"][0]["ticket_id"], entry["history"][0]["revision"]), ("LOCAL-004", 4, "LOCAL-001", 2))
+    def test_a_cycle_is_found(self):
+        epic = self.epic()
+        state = self.gh()
+        state["next_number"] = state["next_number"]  # the next two issues are numbered n and n + 1
+        self.write_state(state)
+        n = state["next_number"]
+        self.ready("SLICE-001", epic, depends=[n + 1])
+        self.ready("SLICE-002", epic, depends=[n])
+        self.product("intake")
         plan, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-002"]["state"], rows["SLICE-003"]["state"]), ("ready", "completed", "ready"))
-        self.assertEqual(rows["SLICE-002"]["stale"], ["Built against SLICE-001 revision 2; SLICE-001 is now revision 4."])
-        self.assertEqual(plan["dispatchable"], ["SLICE-001", "SLICE-003"])
-        self.assertEqual([e["slice_id"] for e in self.events() if e["type"] == "slice.integrated"], ["SLICE-001", "SLICE-002"])
-
-    def test_a_withdrawn_wave(self):
-        self.first()
-        self.product("intake")
-        path = self.eng / "product/delivery-waves/WAVE-001.json"
-        data = json.loads(path.read_text())
-        data.update(status="superseded")
-        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-        git(self.eng, "commit", "-q", "-am", "withdraw the wave")
-        git(self.eng, "push", "-q", "origin", "main")
-        self.assertEqual(self.product("status")["slices"][0]["status"], "superseded")
-        taken = self.product("intake")
-        self.assertEqual(taken["superseded"], [{"slice_id": "SLICE-001", "why": "it is no longer in any approved delivery wave", "ticket_id": "LOCAL-001"}])
-        self.assertIn("state: closed", self.ticket_text("LOCAL-001"))
-        plan, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], plan["dispatchable"]), ("superseded", []))
-        self.assertIn("Withdrawn", rows["SLICE-001"]["reasons"][0])
-        self.assertEqual(self.product("intake")["superseded"], [])
-
-    def test_a_wave_withdrawn_while_being_built(self):
-        self.first()
-        self.product("intake")
-        self.product("dispatch", "SLICE-001")
-        path = self.eng / "product/delivery-waves/WAVE-001.json"
-        data = json.loads(path.read_text())
-        data.update(status="superseded")
-        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-        git(self.eng, "commit", "-q", "-am", "withdraw the wave")
-        git(self.eng, "push", "-q", "origin", "main")
-        taken = self.product("intake")
-        self.assertIn("withdrawn by product while in progress", taken["needs_person"][0]["why"])
-        self.assertNotIn("state: closed", self.ticket_text("LOCAL-001"))
-        _, rows = self.plan()
-        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-001"]["needs_person"]), ("active", True))
+        self.assertEqual(plan["cycles"], [["SLICE-001", "SLICE-002", "SLICE-001"]])
+        self.assertEqual(plan["dispatchable"], [])
 
 
 class DispatchTest(Base):
-    def test_explicit_dispatch_prepares_the_cell_and_starts_nothing(self):
-        self.first()
+    def test_dispatch_opens_the_cell_from_the_issue_and_starts_nothing(self):
+        epic = self.epic()
+        number = self.ready("SLICE-001", epic)
         self.product("intake")
-        self.assertFalse((self.eng / ".factory/local").exists())  # automatic execution was never enabled
-        result = self.product("dispatch", "SLICE-001")
-        self.assertEqual(result["dispatched"], [{"slice_id": "SLICE-001", "ticket_id": "LOCAL-001", "stage": "spec-ready", "risk": "High", "already_dispatched": False}])
-        self.assertEqual((result["tickets"], result["factory_started"], result["workflow"]), (["LOCAL-001"], False, "mach:belt"))
-        cell = self.cell("LOCAL-001")
-        self.assertEqual((cell["stage"], cell["slice_id"], cell["risk"], cell["branch"], cell["isolation"]), ("spec-ready", "SLICE-001", "High", "feature/LOCAL-001", "worktree"))
-        self.assertEqual(cell["product"]["revision"], 2)
-        self.assertEqual(cell["product"]["digest"], self.ledger()["slices"]["SLICE-001"]["digest"])
-        root = self.eng / ".factory/worktrees/LOCAL-001"
-        intent = (root / "intent.md").read_text()
-        for expected in ("- **Ticket:** LOCAL-001 (local)", "- **Mode:** Interactive (Product Studio, approved by Ada PM)", "- **Status:** Ready for contracts",
-                         "- **Ticket:** LOCAL-001: Invite a teammate", "- **Problem:** An admin cannot bring a colleague in."):
-            self.assertIn(expected, intent)
-        spec_json = json.loads((root / "spec.json").read_text())
-        self.assertEqual((spec_json["ticket_id"], spec_json["slice_id"], len(spec_json["functional_requirements"])), ("LOCAL-001", "SLICE-001", 9))
-        self.assertFalse((root / "plan.md").exists())  # contracts and the plan are still engineering's work
-        self.assertIn("state: in_progress", self.ticket_text("LOCAL-001"))
-        # The existing state machine takes over from here, unchanged.
-        step = run.next_step(run.Project(self.eng), "LOCAL-001", True)
-        self.assertEqual((step["stage"], step["action"], step["model"]), ("spec-ready", "plan", "opus"))
-        board = json.loads(self.status())
-        self.assertEqual((board["ready_to_run"], [row["action"] for row in board["tickets"]]), (["LOCAL-001"], ["plan"]))
+        before = self.checkout()
+        sent = self.product("dispatch", str(number))  # named by its issue number
+        ticket = str(number)
+        self.assertEqual((sent["tickets"], sent["factory_started"]), ([ticket], False))
+        cell = self.cell(ticket)
+        self.assertEqual((cell["stage"], cell["branch"], cell["slice_id"], cell["risk"]), ("spec-ready", f"feature/{ticket}", "SLICE-001", "High"))
+        self.assertEqual(cell["product"]["issue"], {"repository": REPO, "number": number})
+        self.assertEqual((cell["product"]["epic_id"], cell["product"]["epic_issue"], cell["product"]["source"]), ("EPIC-001", epic, "github"))
+        # The spec is committed on the ticket's branch with its header, and is otherwise the approved text.
+        name = "specs/slices/SLICE-001-invite-a-teammate-by-email.md"
+        committed = git(self.eng, "show", f"feature/{ticket}:{name}")
+        self.assertIn(f"\n> Epic: Team membership (EPIC-001, issue #{epic}). Slice issue: #{number}.\n", committed)
+        self.assertEqual(intake.without_header(committed)[0], spec_for("SLICE-001"))
+        intent = (self.eng / ".factory/worktrees" / ticket / "intent.md").read_text()
+        self.assertIn(f"- **Ticket:** {ticket} (github)", intent)
+        self.assertIn("approved by ada-pm", intent)
+        # Status on the issue: building, and ready taken off; one comment from the fixed template.
+        self.assertEqual(self.labels_of(number), ["mach:building", "mach:slice"])
+        self.assertEqual(len(self.comments_on(number)), 2)
+        self.assertTrue(self.comments_on(number)[-1].startswith("The MACH Factory has started building SLICE-001 revision 1."))
+        self.assertEqual(self.checkout(), before)
+        self.assertEqual(git(self.eng, "branch", "--show-current").strip(), "main")
+        step = run.next_step(run.Project(self.eng), ticket, True)
+        self.assertEqual(step["action"], "plan")  # the line takes it from here, with every gate
 
-    def status(self):
-        out = io.StringIO()
-        with redirect_stdout(out):
-            run.main(["--project", str(self.eng), "status"])
-        return out.getvalue()
-
-    def test_dispatch_is_idempotent_and_resumes(self):
-        self.first()
+    def test_dispatch_is_idempotent_and_a_product_tier_of_low_is_raised(self):
+        epic = self.epic()
+        number = self.ready("SLICE-001", epic)
+        state = self.gh()
+        issue = state["issues"][str(number)]
+        why = intent_for("SLICE-001").replace("- **Tier:** High", "- **Tier:** Low")
+        spec = spec_for("SLICE-001")
+        issue["body"] = issue_rules.slice_issue_body("SLICE-001", 1, epic, [], why, spec)
+        issue["comments"][0]["body"] = issue_rules.approval_comment("SLICE-001", 1, "ada-pm", issue_rules.text_sha256_of(spec), issue_rules.text_sha256_of(why))
+        issue["updatedAt"] = self.tick(state)
+        self.write_state(state)
         self.product("intake")
         self.product("dispatch", "SLICE-001")
-        seq = len(self.events())
+        self.assertEqual(self.cell(str(number))["risk"], "Medium")
         again = self.product("dispatch", "SLICE-001")
-        self.assertEqual(again["dispatched"], [{"slice_id": "SLICE-001", "ticket_id": "LOCAL-001", "stage": "spec-ready", "already_dispatched": True}])
-        self.assertEqual(self.events(seq), [])
-        self.assertEqual(git(self.eng, "worktree", "list").count("\n"), 2)
+        self.assertEqual(again["dispatched"][0]["already_dispatched"], True)
+        self.assertEqual(len(self.comments_on(number)), 2)  # the building comment is not made twice
 
-    def test_dispatch_interrupted_after_the_cell_opened(self):
-        self.first()
+    def test_only_ready_slices_and_only_when_asked(self):
+        epic = self.epic()
+        first = self.ready("SLICE-001", epic)
+        self.ready("SLICE-002", epic, depends=[first])
+        self.product("reconcile")
+        self.assertFalse((self.eng / ".factory/worktrees").exists())  # nothing dispatches without being asked
+        sent = self.product("dispatch", "SLICE-002")
+        self.assertEqual((sent["tickets"], sent["refused"][0]["state"]), ([], "blocked"))
+        self.assertIn("Not in the intake ledger", " ".join(self.product("dispatch", "SLICE-404")["refused"][0]["why"]).replace("It is not", "Not"))
+
+    def test_a_received_copy_that_changed_is_never_used(self):
+        number = self.ready("SLICE-001")
         self.product("intake")
-        real = intake.Factory.script
+        stored = self.eng / self.ledger()["slices"]["SLICE-001"]["stored"]
+        (stored / "spec.md").write_text(spec_for("SLICE-001") + "\nSlipped in.\n")
+        self.assertIn("no longer matches what was approved", self.refused("dispatch", "SLICE-001"))
+        self.assertFalse((self.eng / ".factory/worktrees" / str(number)).exists())
 
-        def crash_at_finalize(factory, station, name, *argv, stdin=None):
-            if name == "cell.py" and argv[0] == "finalize":
-                raise RuntimeError("power cut")
-            return real(factory, station, name, *argv, stdin=stdin)
 
-        with mock.patch.object(intake.Factory, "script", crash_at_finalize):
-            with self.assertRaises(RuntimeError):
-                self.run_product("dispatch", "SLICE-001")
-        self.assertEqual(self.cell("LOCAL-001")["stage"], "interview")
-        self.assertIsNone(self.ledger()["slices"]["SLICE-001"]["dispatched_at"])
-        resumed = self.product("dispatch", "SLICE-001")
-        self.assertEqual((resumed["dispatched"][0]["stage"], resumed["dispatched"][0]["already_dispatched"]), ("spec-ready", False))
-        self.assertEqual([e["type"] for e in self.events()].count("work.scheduled"), 1)
-
-    def test_nothing_dispatches_without_being_asked(self):
-        self.chain()
-        local = self.eng / ".factory/local"
-        local.mkdir()
-        (local / "runner.json").write_text(json.dumps({"schema_version": 1, "enabled": True, "paused": False, "auto_sync": True, "autonomy": "extended"}))
-        for argv in (("status",), ("intake",), ("plan",), ("events",), ("intake", "--dry-run")):
-            self.product(*argv)
-        self.assertFalse((self.eng / ".factory/worktrees").exists())
-        self.assertEqual(git(self.eng, "branch", "--list").split(), ["*", "main"])
-        self.assertNotIn("work.scheduled", [e["type"] for e in self.events()])
-        self.assertIn("Name the slices to dispatch", self.refused("dispatch"))
-
-    def test_only_ready_slices_can_be_dispatched(self):
-        self.chain()
-        result = self.product("dispatch", "SLICE-002", "SLICE-404", "SLICE-001")
-        self.assertEqual(result["tickets"], ["LOCAL-001"])
-        self.assertEqual([(r["slice_id"], r["why"][0]) for r in result["refused"]],
-                         [("SLICE-002", "It waits for SLICE-001 to be integrated (now queued)."), ("SLICE-404", "It is not in the intake ledger. Run intake first.")])
-
-    def test_dispatch_never_changes_the_checkout(self):
-        self.first()
+class StatusTest(Base):
+    def test_a_status_write_is_recorded_before_it_is_tried_and_retried(self):
+        number = self.ready("SLICE-001")
         self.product("intake")
-        git(self.eng, "switch", "-q", "-c", "something-else")
-        (self.eng / "wip.txt").write_text("work in progress\n")
+        self.set_gh(fail={"issue edit labels": "error connecting to api.github.com"})
+        sent = self.product("dispatch", "SLICE-001")
+        self.assertEqual(sent["issue_status"], {"pending": 1})
+        (write,) = self.ledger()["status"].values()
+        self.assertEqual((write["moment"], write["state"], write["kind"], write["attempts"]), ("building", "pending", "network", 1))
+        self.assertTrue(self.cell(str(number)))  # the line was not held up
+        self.set_gh(fail={})
+        self.product("intake")
+        self.assertEqual([w["state"] for w in self.ledger()["status"].values()], ["done"])
+        self.assertIn("mach:building", self.labels_of(number))
+
+    def test_shipped_closes_the_issue_once_the_merge_is_on_the_branch(self):
+        number = self.ready("SLICE-001")
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.set_cell(str(number), stage="approved")
+        self.product("intake")
+        self.assertEqual(self.gh()["issues"][str(number)]["state"], "OPEN")  # approved is not shipped
+        self.integrate(str(number))
+        self.product("intake")
+        self.assertEqual((self.gh()["issues"][str(number)]["state"], self.labels_of(number)), ("CLOSED", ["mach:shipped", "mach:slice"]))
+        self.assertTrue(self.comments_on(number)[-1].startswith("SLICE-001 revision 1 is merged into the integration branch."))
+        self.product("intake")
+        self.assertEqual(len(self.comments_on(number)), 3)  # once
+
+    def test_status_comments_off_stops_comments_not_labels(self):
+        (self.eng / ".factory/config.json").write_text(json.dumps({"tickets": {"provider": "local", "github": {"status_comments": False}}}))
+        number = self.ready("SLICE-001")
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.assertEqual((self.labels_of(number), len(self.comments_on(number))), (["mach:building", "mach:slice"], 1))
+
+    def test_a_blocked_cell_is_said_on_its_issue(self):
+        number = self.ready("SLICE-001")
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.set_cell(str(number), stage="blocked")
+        self.product("intake")
+        self.assertTrue(self.comments_on(number)[-1].startswith("Work on SLICE-001 revision 1 is blocked and waits for an engineer."))
+
+    def test_the_builders_question_and_the_product_managers_answer(self):
+        epic = self.epic()
+        number = self.ready("SLICE-001", epic)
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        asked = subprocess.run([sys.executable, str(ROOT / "skills/intent/scripts/cell.py"), "--project", str(self.eng), "spec-question", str(number),
+                                "--question", "FR-02 and INV-01 disagree about seats for @ben-pm, see #12; password=hunter2. Which wins?"],
+                               capture_output=True, text=True)
+        self.assertEqual(asked.returncode, 0, asked.stderr)
+        step = run.next_step(run.Project(self.eng), str(number), True)
+        self.assertEqual((step["action"], step["needs"]), ("stop", "product-answer"))
+        self.product("intake")
+        self.assertIn("mach:question", self.labels_of(number))
+        question = self.comments_on(number)[-1]
+        self.assertTrue(question.startswith("The builders need the product manager's answer before SLICE-001 revision 1 can be planned."))
+        self.assertIn("> FR-02 and INV-01 disagree", question)
+        for leaked in ("@ben-pm", "#12", "hunter2"):
+            self.assertNotIn(leaked, question)
+        self.product("intake")
+        self.assertEqual(len([c for c in self.comments_on(number) if "need the product manager's answer" in c]), 1)
+        # The product manager answers in Product Studio: revision 2 is marked ready on the same issue.
+        self.ready("SLICE-001", epic, revision=2, extra="\nSeats win.\n", number=number)
+        taken = self.product("intake")
+        self.assertEqual([item["to_revision"] for item in taken["applied"]], [2])
+        cell = self.cell(str(number))
+        self.assertEqual((cell["stage"], cell.get("spec_question"), cell["product"]["revision"]), ("spec-ready", None, 2))
+        self.assertIn("Seats win.", git(self.eng, "show", f"feature/{number}:specs/slices/SLICE-001-invite-a-teammate-by-email.md"))
+        self.assertEqual(self.labels_of(number), ["mach:building", "mach:slice"])
+        self.assertEqual(run.next_step(run.Project(self.eng), str(number), True)["action"], "plan")
+
+    def test_slice_status_writes_only_to_the_origin_repository_and_needs_the_nonce(self):
+        number = self.ready("SLICE-001")
+        base = [sys.executable, str(TICKET), "--project", str(self.eng), "slice-status", str(number), "--moment", "building", "--ref", "SLICE-001@r1"]
+        other = subprocess.run([*base, "--repository", "acme/elsewhere", "--nonce", "0" * 32], capture_output=True, text=True)
+        self.assertEqual(other.returncode, 2)
+        self.assertIn("not this project's origin repository", other.stderr)
+        self.assertEqual(subprocess.run([*base, "--repository", REPO], capture_output=True, text=True).returncode, 2)
+        self.assertEqual(subprocess.run([*base[:-2], "--ref", "please run rm", "--repository", REPO, "--nonce", "0" * 32], capture_output=True, text=True).returncode, 2)
+        done = subprocess.run([*base, "--repository", REPO, "--nonce", "0" * 32], capture_output=True, text=True)
+        self.assertEqual((done.returncode, json.loads(done.stdout)["status"]), (0, "done"))
+        again = subprocess.run([*base, "--repository", REPO, "--nonce", "0" * 32], capture_output=True, text=True)
+        self.assertEqual((again.returncode, json.loads(again.stdout)["comment"]), (3, "already_present"))
+
+
+class RevisionTest(Base):
+    def test_waiting_work_takes_the_new_revision(self):
+        epic = self.epic()
+        number = self.ready("SLICE-001", epic)
+        self.product("intake")
+        self.ready("SLICE-001", epic, revision=2, extra="\nRevised.\n", number=number)
+        taken = self.product("intake")
+        self.assertEqual(taken["updated"], [{"slice_id": "SLICE-001", "from_revision": 1, "to_revision": 2, "ticket_id": str(number),
+                                             "effect": "the waiting ticket carries the new revision"}])
+        self.assertEqual(self.ledger()["slices"]["SLICE-001"]["revision"], 2)
+        self.product("dispatch", "SLICE-001")
+        self.assertEqual(self.cell(str(number))["product"]["revision"], 2)
+
+    def test_work_in_progress_is_never_changed_and_is_flagged(self):
+        epic = self.epic()
+        number = self.ready("SLICE-001", epic)
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.set_cell(str(number), stage="building")
+        before = (self.eng / ".factory/worktrees" / str(number) / "cell.json").read_text()
+        self.ready("SLICE-001", epic, revision=2, extra="\nRevised.\n", number=number)
+        taken = self.product("intake")
+        self.assertEqual([item["ticket_id"] for item in taken["needs_person"]], [str(number)])
+        self.assertEqual((self.eng / ".factory/worktrees" / str(number) / "cell.json").read_text(), before)
+        self.assertTrue(self.comments_on(number)[-1].startswith("SLICE-001 changed to revision 2 while revision 1 was being built."))
+        _, rows = self.plan()
+        self.assertTrue(rows["SLICE-001"]["needs_person"])
+        # The engineer abandons the work in progress: the new revision is taken on the same ticket.
+        self.clean_up(str(number), outcome="abandoned")
+        taken = self.product("intake")
+        self.assertEqual(taken["updated"][0]["to_revision"], 2)
+        entry = self.ledger()["slices"]["SLICE-001"]
+        self.assertEqual((entry["ticket_id"], entry["revision"], entry["history"][-1]["outcome"]), (str(number), 2, "abandoned"))
+        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "ready")
+
+    def test_a_shipped_slice_changed_is_a_new_issue_and_new_work(self):
+        epic = self.epic()
+        number = self.ready("SLICE-001", epic)
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.integrate(str(number), cleanup=True)
+        self.product("intake")
+        self.assertEqual(self.gh()["issues"][str(number)]["state"], "CLOSED")
+        follow = self.ready("SLICE-001", epic, revision=2, extra="\nVersion two.\n", follows=number)
+        taken = self.product("intake")
+        self.assertEqual((taken["updated"][0]["ticket_id"], taken["updated"][0]["effect"]), (str(follow), "new work after shipping"))
+        entry = self.ledger()["slices"]["SLICE-001"]
+        self.assertEqual((entry["ticket_id"], entry["issue"], entry["follows"], entry["depends"]), (str(follow), follow, number, []))
+        self.assertEqual(entry["history"][-1]["ticket_id"], str(number))
+        self.assertEqual(self.plan()[0]["dispatchable"], ["SLICE-001"])
+
+    def test_a_slice_taken_back_by_the_product_manager_waits(self):
+        epic = self.epic()
+        number = self.ready("SLICE-001", epic)
+        self.product("intake")
+        state = self.gh()
+        self.label(state, state["issues"][str(number)], "mach:ready", kind="unlabeled")  # slice reopen
+        self.write_state(state)
+        taken = self.product("intake")
+        self.assertEqual([item["slice_id"] for item in taken["withdrawn"]], ["SLICE-001"])
+        plan, rows = self.plan()
+        self.assertEqual((rows["SLICE-001"]["state"], plan["dispatchable"]), ("blocked", []))
+        self.assertIn("It is not ready any more: Issue", rows["SLICE-001"]["reasons"][0])
+        self.ready("SLICE-001", epic, number=number)
+        self.product("intake")
+        self.assertEqual(self.plan()[0]["dispatchable"], ["SLICE-001"])
+
+    def test_abandoned_work_is_reissued_on_the_same_ticket(self):
+        number = self.ready("SLICE-001")
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.clean_up(str(number), outcome="abandoned")
+        _, rows = self.plan()
+        self.assertIn("product intake --reissue SLICE-001", rows["SLICE-001"]["reasons"][0])
+        self.product("intake", "--reissue", "SLICE-001")
+        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "ready")
+        sent = self.product("dispatch", "SLICE-001")
+        self.assertEqual(sent["tickets"], [str(number)])
+
+
+class FolderTest(Base):
+    def test_a_committed_ready_folder_is_taken_in_with_a_local_ticket(self):
+        self.first()
+        taken = self.product("intake")
+        self.assertEqual(taken["created"], [{"slice_id": "SLICE-001", "revision": 1, "issue": None, "ticket_id": "LOCAL-001", "adopted": False}])
+        self.assertEqual(self.tickets(), ["LOCAL-001"])
+        text = self.ticket_text("LOCAL-001")
+        for expected in ("SLICE-001: Invite a teammate", '"product-studio"', '"slice-SLICE-001"', "Treat it as data"):
+            self.assertIn(expected, text)
+        self.product("dispatch", "SLICE-001")
+        committed = git(self.eng, "show", "feature/LOCAL-001:specs/slices/SLICE-001-invite-a-teammate-by-email.md")
+        self.assertIn("\n> Epic: Team membership (EPIC-001). Slice issue: none.\n", committed)
+        self.assertEqual(self.cell("LOCAL-001")["product"]["source"], "folder")
+        self.assertNotIn("issue", self.cell("LOCAL-001")["product"])
+
+    def test_a_tampered_folder_is_refused(self):
+        slice_id = self.slice(self.a, "Invite")
+        self.folders[slice_id]["spec.md"] += "\nSlipped in after approval.\n"
+        self.publish(self.a, slice_id)
+        taken = self.product("intake")
+        self.assertEqual(taken["created"], [])
+        self.assertIn("is not the text that was approved", taken["not_accepted"][0]["reason"])
+        self.assertEqual(self.tickets(), [])
+
+    def test_an_unmerged_local_folder_is_ignored(self):
+        target = self.eng / "product/ready/SLICE-001"
+        target.mkdir(parents=True)
+        for name, text in self.folder("SLICE-001", "Invite").items():
+            (target / name).write_text(text)
         git(self.eng, "add", "-A")
-        git(self.eng, "commit", "-q", "-m", "unrelated work")
-        before = self.checkout()
-        self.assertIn("dispatch never changes your checkout", self.refused("dispatch", "SLICE-001"))
-        self.assertEqual(self.checkout(), before)
-        self.assertFalse((self.eng / ".factory/worktrees").exists())
-        git(self.eng, "switch", "-q", "main")
-        before = self.checkout()
-        self.product("dispatch", "SLICE-001")
-        self.assertEqual(self.checkout(), before)
+        git(self.eng, "commit", "-q", "-m", "not shared")
+        taken = self.product("intake")
+        self.assertEqual(taken["created"], [])
+        self.assertIn("unshared commits that change product/ready/", " ".join(taken["notes"]))
 
-    def test_a_local_change_to_the_spec_blocks_dispatch(self):
+    def test_a_restart_after_the_ticket_was_filed_finds_it_again(self):
         self.first()
-        self.product("intake")
-        spec = self.eng / "specs/slices/SLICE-001-invite-teammate.md"
-        spec.write_text(spec.read_text() + "\nlocal edit\n")
-        git(self.eng, "commit", "-q", "-am", "local edit to an approved spec")
-        result = self.product("dispatch", "SLICE-001")
-        self.assertEqual(result["tickets"], [])
-        self.assertIn("is not the approved spec", result["refused"][0]["why"][0])
-        self.assertFalse((self.eng / ".factory/worktrees").exists())
+        real = intake.Factory.ticket
 
-    def test_product_cannot_lower_the_review_tier(self):
-        self.first_wave(self.a)
-        intent = self.draft(self.a, "product/intents/SLICE-001.md")
-        self.ok(self.a, "slice", "reopen", "SLICE-001")
-        intent.write_text(intent_for("SLICE-001").replace("- **Tier:** High", "- **Tier:** Low"))
-        self.ok(self.a, "slice", "approve", "SLICE-001")
-        self.ok(self.a, "wave", "approve", "WAVE-001", "--at", AT)
-        self.ok(self.a, "send", "WAVE-001")
-        self.land("product/WAVE-001")
-        self.product("intake")
-        self.product("dispatch", "SLICE-001")
-        self.assertEqual(self.cell("LOCAL-001")["risk"], "Medium")
-        intent_md = (self.eng / ".factory/worktrees/LOCAL-001/intent.md").read_text()
-        self.assertIn("- **Tier:** Medium", intent_md)
-        self.assertIn("Product proposed Low; product-sourced work is reviewed at Medium or above.", intent_md)
+        def crash_after_create(factory, *argv, stdin=None):
+            done = real(factory, *argv, stdin=stdin)
+            if "create" in argv:
+                raise RuntimeError("power cut")
+            return done
+
+        with mock.patch.object(intake.Factory, "ticket", crash_after_create):
+            with self.assertRaises(RuntimeError):
+                self.run_product("intake")
+        entry = self.ledger()["slices"]["SLICE-001"]
+        self.assertEqual((entry["ticket_id"], entry["pending_ticket"]), (None, True))  # the intention was on record first
+        resumed = self.product("intake")
+        self.assertEqual(resumed["created"], [{"slice_id": "SLICE-001", "revision": 1, "issue": None, "ticket_id": "LOCAL-001", "adopted": True}])
+        self.assertEqual(self.tickets(), ["LOCAL-001"])
+        self.assertEqual([e["type"] for e in self.events()].count("slice.materialized"), 1)
+
+    def test_import_takes_a_handed_over_folder_in_once(self):
+        folder = self.root / "handed-over" / "SLICE-001"
+        folder.mkdir(parents=True)
+        for name, text in self.folder("SLICE-001", "Invite").items():
+            (folder / name).write_text(text)
+        imported = self.product("import", str(folder))
+        self.assertEqual([c["ticket_id"] for c in imported["created"]], ["LOCAL-001"])
+        self.assertEqual(self.ledger()["slices"]["SLICE-001"]["source"], "import")
+        self.assertEqual(self.product("import", str(folder))["unchanged"], ["SLICE-001"])
+        self.assertEqual(self.tickets(), ["LOCAL-001"])
+        (folder / "why.md").write_text("changed\n")
+        self.assertIn("It was not imported", self.refused("import", str(folder)))
+        (folder / "extra.txt").write_text("x")
+        self.assertIn("exactly slice.json, spec.md and why.md", self.refused("import", str(folder)))
+
+    def test_import_is_an_engineers_act(self):
+        folder = self.root / "handed-over" / "SLICE-001"
+        folder.mkdir(parents=True)
+        for name, text in self.folder("SLICE-001", "Invite").items():
+            (folder / name).write_text(text)
+        with mock.patch.dict("os.environ", {"MACH_EXECUTION_ID": "x000000000001"}):
+            self.assertIn("a supervised execution", self.refused("import", str(folder)) + " ")
+
+    def test_product_studios_folder_is_imported(self):
+        """End to end: Product Studio's `slice ready` without gh writes the folder the Factory imports."""
+        import os
+        (self.root / "bin" / "gh").unlink()
+        os.environ["PATH"] = os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if not (Path(p) / "gh").exists())
+        self.project_and_epic()
+        self.drafted()
+        result = self.ok(self.a, "slice", "ready", "SLICE-001")
+        imported = self.product("import", result["folder"])
+        self.assertEqual([c["slice_id"] for c in imported["created"]], ["SLICE-001"])
 
 
 class SupervisorReadinessTest(Base):
-    """What the next milestone builds on: one reconcile step, one guarded way into the line, one writer at a time."""
+    """One reconcile step, one guarded way into the line, one writer at a time."""
 
     def line(self):
         return run.factory(run.Project(self.eng))[1]
 
     def test_reconcile_is_intake_and_a_recorded_plan_and_never_dispatches(self):
-        self.chain_published()
+        self.first()
+        second = self.slice(self.a, "Second", depends=["SLICE-001"])
+        third = self.slice(self.a, "Third", depends=[second])
+        self.publish(self.a, second, third)
         first = self.product("reconcile")
         self.assertEqual([c["slice_id"] for c in first["intake"]["created"]], ["SLICE-001", "SLICE-002", "SLICE-003"])
         self.assertEqual((first["plan"]["dispatchable"], first["factory_started"]), (["SLICE-001"], False))
         self.assertEqual(first["last_event"], len(self.events()))
         seq = first["last_event"]
         again = self.product("reconcile")
-        self.assertEqual((again["intake"]["created"], again["last_event"]), ([], seq))  # idempotent: nothing new, nothing said twice
+        self.assertEqual((again["intake"]["created"], again["last_event"]), ([], seq))
         self.assertFalse((self.eng / ".factory/worktrees").exists())
         self.assertFalse((self.eng / ".factory/intake/lock").exists())
-
-    def chain_published(self):
-        self.first()
-        second = self.slice(self.a, "Second", depends=["SLICE-001"])
-        third = self.slice(self.a, "Third", depends=[second])
-        self.publish(self.a, second, third)
 
     def test_the_plan_lists_what_a_driver_would_run(self):
         self.chain()
         self.assertEqual(self.plan()[0]["runnable"], [])
         self.product("dispatch", "SLICE-001")
         self.assertEqual(self.plan()[0]["runnable"], [{"slice_id": "SLICE-001", "ticket_id": "LOCAL-001", "next": "plan"}])
-        self.set_cell("LOCAL-001", stage="awaiting-human")  # stopped for a person: nothing to run
+        self.set_cell("LOCAL-001", stage="awaiting-human")
         plan, _ = self.plan()
         self.assertEqual((plan["runnable"], plan["needs_person"]), ([], ["SLICE-001"]))
 
@@ -821,9 +897,8 @@ class SupervisorReadinessTest(Base):
         self.assertIn("not authorized: the Factory is paused", str(refused.exception))
         with self.assertRaises(intake.IntakeError):
             line.dispatch(["SLICE-001"], by="supervisor", authorize=lambda plan: ("yes", "truthy is not True"))
-        self.assertEqual(seen, [["SLICE-001"]])  # it was shown the plan it was asked about
+        self.assertEqual(seen, [["SLICE-001"]])
         self.assertFalse((self.eng / ".factory/worktrees").exists())
-        self.assertNotIn("work.scheduled", [e["type"] for e in self.events()])
         done = line.dispatch(["SLICE-001"], by="supervisor", authorize=lambda plan: (True, "enabled; supervised; preflight passed"))
         self.assertEqual((done["tickets"], done["factory_started"]), (["LOCAL-001"], False))
         scheduled = [e for e in self.events() if e["type"] == "work.scheduled"][0]
@@ -836,10 +911,8 @@ class SupervisorReadinessTest(Base):
         held = {"pid": os.getpid(), "host": intake.platform.node(), "at": intake.now(), "purpose": "dispatch"}
         lock.write_text(json.dumps(held))
         for argv in (("intake",), ("reconcile",), ("dispatch", "SLICE-001")):
-            message = self.refused(*argv)
-            self.assertIn("Another dispatch is running on this Factory", message)
-        self.assertFalse((self.eng / ".factory/worktrees").exists())
-        self.product("plan")  # reading never needs the lock
+            self.assertIn("Another dispatch is running on this Factory", self.refused(*argv))
+        self.product("plan")
         self.product("status")
         self.product("intake", "--dry-run")
         self.assertEqual(json.loads(lock.read_text()), held)
@@ -872,33 +945,48 @@ class SupervisorReadinessTest(Base):
         self.assertFalse((self.eng / ".factory/intake/lock").exists())
         self.product("intake")
 
+    def test_events_survive_a_crash_between_the_ledger_and_the_log(self):
+        self.first()
+        self.product("intake")
+        line = self.line()
+        ledger = line.ledger()
+        line.emit(ledger, "human.required", slice_id="SLICE-001", reason="test")
+        intake.write_atomic(line.ledger_path, intake.canonical(ledger))
+        before = len(self.events())
+        line.save(line.ledger())
+        line.save(line.ledger())
+        events = self.events()
+        self.assertEqual(len(events), before + 1)
+        self.assertEqual([e["seq"] for e in events], list(range(1, len(events) + 1)))
+
 
 class EventsTest(Base):
     def test_every_event_is_versioned_ordered_and_typed(self):
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        self.integrate("LOCAL-001")
-        self.revise("SLICE-001")
+        epic = self.epic()
+        first = self.ready("SLICE-001", epic)
+        self.ready("SLICE-002", epic, depends=[first])
         self.product("intake")
-        self.product("plan")
+        self.product("dispatch", "SLICE-001")
+        self.integrate(str(first))
+        self.ready("SLICE-001", epic, revision=2, extra="\nRevised.\n", number=first)
+        self.product("intake")
         result = self.product("events")
         events = result["events"]
-        self.assertEqual((result["schema_version"], result["event_types"]), (2, list(intake.EVENT_TYPES)))
+        self.assertEqual((result["schema_version"], result["event_types"]), (3, list(intake.EVENT_TYPES)))
+        self.assertNotIn("wave.discovered", intake.EVENT_TYPES)
         self.assertEqual([e["seq"] for e in events], list(range(1, len(events) + 1)))
         for event in events:
             self.assertEqual(set(event), EVENT_KEYS)
-            self.assertIn(event["type"], intake.EVENT_TYPES)
-            self.assertEqual((event["schema_version"], event["project_id"]), (2, "team-space"))
-            self.assertEqual((event["runner_id"], event["source"], event["execution_id"]), (None, "intake", None))  # no supervisor: an engineer at the controls
+            self.assertEqual(event["schema_version"], 3)
+            self.assertEqual((event["runner_id"], event["source"], event["execution_id"]), (None, "intake", None))
             self.assertRegex(event["at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
-        self.assertEqual({e["type"] for e in events}, {"wave.discovered", "intake.validated", "slice.materialized", "dependency.resolved", "dependency.blocked",
+        self.assertEqual({e["type"] for e in events}, {"intake.validated", "slice.materialized", "dependency.resolved", "dependency.blocked",
                                                        "work.scheduled", "slice.integrated", "revision.superseded"})
-        self.assertEqual(self.product("events", "--since", str(len(events) - 2))["events"], events[-2:])
         blocked = next(e for e in events if e["type"] == "dependency.blocked")
-        self.assertEqual((blocked["slice_id"], blocked["data"]["reasons"]), ("SLICE-002", ["It waits for SLICE-001 to be integrated (now queued)."]))
+        self.assertEqual((blocked["slice_id"], blocked["epic_id"], blocked["data"]["reasons"]),
+                         ("SLICE-002", "EPIC-001", [f"It waits for #{first} (SLICE-001) to be merged (now queued)."]))
         scheduled = next(e for e in events if e["type"] == "work.scheduled")
-        self.assertEqual((scheduled["ticket_id"], scheduled["data"]["by"], scheduled["data"]["stage"]), ("LOCAL-001", "engineer", "spec-ready"))
-        self.assertEqual(scheduled["data"]["authorization"], "an engineer's explicit command")
+        self.assertEqual((scheduled["ticket_id"], scheduled["issue"], scheduled["data"]["by"], scheduled["data"]["stage"]), (str(first), first, "engineer", "spec-ready"))
 
     def test_schema_files_describe_the_events_and_the_ledger(self):
         schemas = ROOT / "docs/mach-next/schemas"
@@ -908,212 +996,34 @@ class EventsTest(Base):
         self.assertEqual(event["properties"]["schema_version"], {"const": intake.EVENT_VERSION})
         ledger = json.loads((schemas / "intake-ledger.schema.json").read_text())
         self.assertEqual(ledger["properties"]["schema_version"], {"const": intake.LEDGER_VERSION})
-        self.first()
+        self.ready("SLICE-001")
         self.product("intake")
-        self.assertEqual(sorted(set(self.ledger()) - {"last_refusal"}), sorted(ledger["required"]))
+        self.assertEqual(sorted(set(self.ledger()) - {"status_nonce"}), sorted(ledger["required"]))
         entry = self.ledger()["slices"]["SLICE-001"]
         self.assertTrue(set(ledger["properties"]["slices"]["additionalProperties"]["required"]) <= set(entry))
 
 
+class RulesTest(unittest.TestCase):
+    def test_the_spec_header_round_trips(self):
+        spec = spec_for("SLICE-007")
+        header = intake.spec_header({"epic_id": "EPIC-002", "issue": 41, "title": "Billing <!-- x --> (v2)"}, 57)
+        self.assertEqual(header, "> Epic: Billing -- x -- v2 (EPIC-002, issue #41). Slice issue: #57.")
+        text = intake.with_header(spec, header)
+        back, found = intake.without_header(text)
+        self.assertEqual((back, found.group(2), found.group(3), found.group(4)), (spec, "EPIC-002", "41", "57"))
+        self.assertNotIn("<!--", text)
+        self.assertEqual(intake.without_header(spec), (spec, None))
 
-class AbandonedRevisionTest(Base):
-    """M7 N2 and N7: a revised slice whose earlier ticket was abandoned, and one still in work."""
-
-    def close(self, ticket_id):
-        done = subprocess.run([sys.executable, str(ROOT / "skills/ticket/scripts/ticket.py"), "--project", str(self.eng), "update", ticket_id,
-                               "--state", "closed", "--label", "abandoned"], capture_output=True, text=True)
-        self.assertEqual(done.returncode, 0, done.stderr)
-
-    def revised_under_work(self):
-        """The live run's sequence up to the defect: dispatched, then product revises the slice."""
-        self.first()
-        self.product("intake")
-        self.product("dispatch", "SLICE-001")
-        self.revise()
-        taken = self.product("intake")
-        self.assertEqual([item["ticket_id"] for item in taken["needs_person"]], ["LOCAL-001"])
-        self.assertIn("product resolve SLICE-001 --supersede-in-work", taken["needs_person"][0]["resolve"])
-
-    def test_the_n2_sequence_resolves_without_a_hand_edit(self):
-        self.revised_under_work()
-        self.clean_up("LOCAL-001", outcome="abandoned")
-        # Abandoned by cleanup but still open in the tracker: a person closes it, with a command that exists.
-        waiting = self.product("intake")
-        self.assertIn("is in_progress in the tracker; close it", waiting["needs_person"][0]["why"])
-        self.assertEqual(self.tickets(), ["LOCAL-001"])
-        self.close("LOCAL-001")
-        taken = self.product("intake")
-        self.assertEqual(taken["needs_person"], [])
-        self.assertEqual(taken["created"], [{"slice_id": "SLICE-001", "revision": 4, "ticket_id": "LOCAL-002", "adopted": False}])
-        self.assertEqual((taken["updated"][0]["follows"], taken["updated"][0]["ticket_id"]), ("LOCAL-001", "LOCAL-002"))
-        entry = self.ledger()["slices"]["SLICE-001"]
-        self.assertEqual((entry["ticket_id"], entry["revision"], entry["follows"]["ticket_id"], entry["follows"]["outcome"]), ("LOCAL-002", 4, "LOCAL-001", "abandoned"))
-        self.assertEqual([(h["ticket_id"], h["revision"], h["outcome"]) for h in entry["history"]], [("LOCAL-001", 2, "abandoned")])
-        self.assertIn('"slice-SLICE-001-r4"', self.ticket_text("LOCAL-002"))
-        superseded = [e for e in self.events() if e["type"] == "revision.superseded" and e["data"].get("outcome") == "abandoned"]
-        self.assertEqual([(e["ticket_id"], e["revision"], e["data"]["from_revision"]) for e in superseded], [("LOCAL-001", 4, 2)])
-        materialized = [e for e in self.events() if e["type"] == "slice.materialized"]
-        self.assertEqual(materialized[-1]["data"]["follows"]["ticket_id"], "LOCAL-001")
-        # Repeat intake files nothing; the slice is ready and dispatches the new revision.
-        events = self.events()
-        for _ in range(2):
-            again = self.product("intake")
-            self.assertEqual((again["created"], again["updated"], again["needs_person"]), ([], [], []))
-        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])
-        self.assertEqual([e["type"] for e in self.events(len(events))], [])
-        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "ready")
-        sent = self.product("dispatch", "SLICE-001")
-        self.assertEqual(sent["tickets"], ["LOCAL-002"])
-        self.assertEqual(self.cell("LOCAL-002")["product"]["revision"], 4)
-
-    def test_interrupted_between_intention_and_effect_files_nothing_twice(self):
-        self.revised_under_work()
-        self.clean_up("LOCAL-001", outcome="abandoned")
-        self.close("LOCAL-001")
-        real = intake.Factory.ticket
-
-        def crash_after_create(factory, *argv, stdin=None):
-            done = real(factory, *argv, stdin=stdin)
-            if argv[0] == "create":
-                raise RuntimeError("power cut")
-            return done
-
-        with mock.patch.object(intake.Factory, "ticket", crash_after_create):
-            with self.assertRaises(RuntimeError):
-                self.run_product("intake")
-        entry = self.ledger()["slices"]["SLICE-001"]
-        self.assertEqual((entry["ticket_id"], entry["pending_ticket"], entry["follows"]["ticket_id"]), (None, True, "LOCAL-001"))  # the intention was on record first
-        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])  # filed, not yet recorded
-        resumed = self.product("intake")
-        self.assertEqual(resumed["created"], [{"slice_id": "SLICE-001", "revision": 4, "ticket_id": "LOCAL-002", "adopted": True}])
-        self.assertEqual(self.product("intake")["created"], [])
-        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])
-        self.assertEqual([e["ticket_id"] for e in self.events() if e["type"] == "slice.materialized"], ["LOCAL-001", "LOCAL-002"])
-
-    def test_an_interrupted_reissue_never_adopts_the_abandoned_ticket(self):
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        self.clean_up("LOCAL-001", outcome="abandoned")
-        with mock.patch.object(intake.Factory, "materialize", side_effect=RuntimeError("power cut")):
-            with self.assertRaises(RuntimeError):
-                self.run_product("intake", "--reissue", "SLICE-001")
-        self.assertEqual(self.ledger()["slices"]["SLICE-001"]["marker"], "slice-SLICE-001-r2-issue2")
-        resumed = self.product("intake")
-        self.assertEqual(resumed["created"], [{"slice_id": "SLICE-001", "revision": 2, "ticket_id": "LOCAL-004", "reissued": True}])
-        self.assertEqual(self.product("intake")["created"], [])
-        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002", "LOCAL-003", "LOCAL-004"])
-
-    def test_work_still_in_progress_needs_a_person_and_resolve_settles_it(self):
-        self.revised_under_work()
-        cell_before = (self.eng / ".factory/worktrees/LOCAL-001/cell.json").read_text()
-        ticket_before = self.ticket_text("LOCAL-001")
-        for _ in range(2):  # still flagged on every pass, never resolved by intake on its own
-            self.assertEqual([item["ticket_id"] for item in self.product("intake")["needs_person"]], ["LOCAL-001"])
-        self.assertIn("Say why", self.refused("resolve", "SLICE-001", "--supersede-in-work", " "))
-        self.assertIn("not approved product work", self.refused("resolve", "SLICE-999", "--supersede-in-work", "x"))
-        settled = self.product("resolve", "SLICE-001", "--supersede-in-work", "product changed the rules; restart on revision 4")
-        self.assertEqual(settled["created"], [{"slice_id": "SLICE-001", "revision": 4, "ticket_id": "LOCAL-002", "adopted": False}])
-        self.assertEqual((settled["superseded_in_work"]["ticket_id"], settled["superseded_in_work"]["by"]), ("LOCAL-001", "engineer"))
-        # The in-work cell and its ticket are untouched, for the engineer to finish or abandon.
-        self.assertEqual((self.eng / ".factory/worktrees/LOCAL-001/cell.json").read_text(), cell_before)
-        self.assertEqual(self.ticket_text("LOCAL-001"), ticket_before)
-        history = self.ledger()["slices"]["SLICE-001"]["history"]
-        self.assertEqual([(h["ticket_id"], h["revision"], h["outcome"], h["by"], h["why"]) for h in history],
-                         [("LOCAL-001", 2, "superseded-in-work", "engineer", "product changed the rules; restart on revision 4")])
-        kinds = [(e["type"], e["ticket_id"], e["data"].get("outcome")) for e in self.events()]
-        self.assertIn(("revision.superseded", "LOCAL-001", "superseded-in-work"), kinds)
-        # The superseded revision is never dispatched: the scheduler lists it as superseded, with the reason.
-        plan, rows = self.plan()
-        self.assertEqual([(r["ticket_id"], r["state"], r["dispatchable"], r["cell_open"]) for r in plan["superseded_revisions"]], [("LOCAL-001", "superseded", False, True)])
-        self.assertIn("Superseded while in work by engineer", plan["superseded_revisions"][0]["reasons"][0])
-        self.assertEqual((rows["SLICE-001"]["ticket_id"], rows["SLICE-001"]["state"]), ("LOCAL-002", "ready"))
-        self.assertNotIn("LOCAL-001", [item["ticket_id"] for item in plan["runnable"]])
-        self.assertEqual(plan["limits"]["active"], 1)  # its open cell still takes a place
-        self.assertEqual((self.product("intake")["created"], self.product("intake")["needs_person"]), ([], []))
-        self.assertIn("Nothing to resolve", self.refused("resolve", "SLICE-001", "--supersede-in-work", "again"))
-        self.assertEqual(self.tickets(), ["LOCAL-001", "LOCAL-002"])
-        sent = self.product("dispatch", "SLICE-001")  # only the new revision's ticket can enter the line
-        self.assertEqual((sent["tickets"], self.cell("LOCAL-002")["product"]["revision"]), (["LOCAL-002"], 4))
-        self.assertEqual((self.eng / ".factory/worktrees/LOCAL-001/cell.json").read_text(), cell_before)
-
-    def test_resolve_refuses_abandoned_work_and_points_at_intake(self):
-        self.revised_under_work()
-        self.clean_up("LOCAL-001", outcome="abandoned")
-        self.assertIn("Close it in the tracker and run intake", self.refused("resolve", "SLICE-001", "--supersede-in-work", "x"))
-
-    def test_abandoned_and_closed_tickets_are_not_waiting_for_a_person(self):
-        self.chain()
-        self.product("dispatch", "SLICE-001")
-        self.clean_up("LOCAL-001", outcome="abandoned")
-        _, line = run.factory(run.Project(self.eng))
-        self.assertEqual(line.settled(line.ledger(), ["LOCAL-001"]), {})  # abandoned but still open: someone has to close it
-        self.close("LOCAL-001")
-        self.assertEqual(line.settled(line.ledger(), ["LOCAL-001"])["LOCAL-001"]["reissued_as"], None)
-        self.product("intake", "--reissue", "SLICE-001")
-        self.assertEqual(line.settled(line.ledger(), ["LOCAL-001", "LOCAL-002"]),
-                         {"LOCAL-001": {"ticket_id": "LOCAL-001", "outcome": "abandoned", "ticket_state": "closed", "reissued_as": "LOCAL-004"}})
-
-
-class RealRecordsTest(unittest.TestCase):
-    """The ledger, event log, run records and ticket states of the M7 second live run at the moment of
-    its hand edit (tests/fixtures/m7-n2-ledger, stripped to IDs and states). Discovery is simulated:
-    the product snapshot is replaced by the one fact the run had, SLICE-005 at revision 6."""
-
-    FIXTURE = ROOT / "tests/fixtures/m7-n2-ledger"
-
-    def setUp(self):
-        import shutil
-        import tempfile
-        self.root = Path(tempfile.mkdtemp(prefix="mach-n2-"))
-        self.addCleanup(shutil.rmtree, self.root, True)
-        factory = self.root / ".factory"
-        (factory / "intake").mkdir(parents=True)
-        (factory / "archive").mkdir()
-        (factory / "tickets").mkdir()
-        (factory / "config.json").write_text(json.dumps({"tickets": {"provider": "local"}}))
-        shutil.copy(self.FIXTURE / "ledger-before-hand-edit.json", factory / "intake/ledger.json")
-        shutil.copy(self.FIXTURE / "events-SLICE-005.jsonl", factory / "intake/events.jsonl")
-        shutil.copy(self.FIXTURE / "runs-before-hand-edit.jsonl", factory / "archive/runs.jsonl")
-        states = json.loads((self.FIXTURE / "ticket-states-before-hand-edit.json").read_text())
-        for number in range(1, 7):
-            ticket_id = f"LOCAL-{number:03d}"
-            (factory / "tickets" / f"{ticket_id}.md").write_text(
-                f'---\nid: {ticket_id}\ntitle: "{ticket_id}"\nstate: {states.get(ticket_id, "closed")}\nlabels: []\n---\n\n# {ticket_id}\n')
-        self.line = intake.Factory(self.root, {"tickets": {"provider": "local"}}, sibling=run.sibling, git=run.git, next_step=lambda ticket_id: {})
-        self.r6 = self.line.ledger()["slices"]["SLICE-005"]["product_pending"]["digest"]
-
-    def discover(self, ledger=None):
-        ledger = ledger if ledger is not None else self.line.ledger()
-        entry = ledger["slices"]["SLICE-005"]
-        row = {"slice_id": "SLICE-005", "title": "Borrow an item", "wave_id": "WAVE-003", "revision": 6, "digest": self.r6, "dependencies": ["SLICE-001", "SLICE-002"],
-               "epic_id": "EPIC-002", "spec_path": "specs/slices/SLICE-005-borrow-an-item.md", "spec_sha256": "0" * 64, "ticket_id": entry.get("ticket_id")}
-        if entry.get("digest") == self.r6:
-            row["status"] = "known"
-        else:
-            row.update(status="modified", was_revision=entry.get("revision"), work=self.line.work(entry.get("ticket_id"), None)["status"])
-        return {"source": {"branch": "main", "commit": "f" * 40, "has_remote": True}, "notes": [], "refused": [], "waves": [], "has_product": True,
-                "project_id": "PROJECT-FIXTURE", "slices": [row], "_snapshot": intake.Snapshot("f" * 40, {})}
-
-    def test_the_recorded_state_takes_revision_6_in_without_a_hand_edit(self):
-        with mock.patch.object(intake.Factory, "discover", lambda factory, ledger=None: self.discover(ledger)), \
-                mock.patch.object(intake.Factory, "plan", lambda factory, ledger=None, record=False: {}):
-            taken = self.line.intake()
-            self.assertEqual(taken["needs_person"], [])
-            self.assertEqual(taken["created"], [{"slice_id": "SLICE-005", "revision": 6, "ticket_id": "LOCAL-007", "adopted": False}])  # what the hand edit produced
-            again = self.line.intake()
-        self.assertEqual((again["created"], again["updated"], again["needs_person"]), ([], [], []))
-        ledger = self.line.ledger()
-        entry = ledger["slices"]["SLICE-005"]
-        self.assertEqual([(h["ticket_id"], h["outcome"]) for h in entry["history"]], [("LOCAL-003", "abandoned"), ("LOCAL-006", "abandoned")])
-        self.assertEqual((entry["ticket_id"], entry["revision"], entry["follows"]["ticket_id"]), ("LOCAL-007", 6, "LOCAL-006"))
-        self.assertNotIn("product_pending", entry)
-        self.assertEqual(sorted(p.stem for p in (self.root / ".factory/tickets").glob("*.md"))[-1], "LOCAL-007")
-        events = self.line.events()
-        self.assertEqual([e["seq"] for e in events][-2:], [ledger["next_seq"] - 2, ledger["next_seq"] - 1])
-        self.assertEqual([e["type"] for e in events][-2:], ["revision.superseded", "slice.materialized"])
-        # N7: neither abandoned ticket is waiting for a person any more, and the ledger says what replaced each.
-        settled = self.line.settled(ledger, sorted(ledger["supervisor"]["parked"]))
-        self.assertEqual({key: value["reissued_as"] for key, value in settled.items()}, {"LOCAL-003": "LOCAL-006", "LOCAL-006": "LOCAL-007"})
+    def test_status_comments_name_identifiers_only(self):
+        nonce = "0" * 32
+        self.assertTrue(issue_rules.comment("building", ["SLICE-007@r2"], nonce)["body"].startswith("The MACH Factory has started building SLICE-007 revision 2."))
+        self.assertTrue(issue_rules.comment("changed", ["SLICE-007@r1", "SLICE-007@r2"], nonce)["body"].startswith("SLICE-007 changed to revision 2"))
+        for moment, refs in (("building", ["SLICE-007"]), ("shipped", ["#4"]), ("question", ["SLICE-007@r1"])):
+            with self.assertRaises(ValueError):
+                issue_rules.comment(moment, refs, nonce)
+        asked = issue_rules.comment("question", ["SLICE-007@r1"], nonce, question="Ask @someone about #3 and ghp_" + "a" * 36)["body"]
+        self.assertNotIn("@someone", asked)
+        self.assertNotIn("ghp_", asked)
 
 
 if __name__ == "__main__":

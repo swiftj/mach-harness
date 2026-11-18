@@ -275,7 +275,7 @@ class DoctorTest(unittest.TestCase):
         self.git("remote", "set-url", "origin", url)
         self.log = self.project.parent / "gh.log"
 
-    def fake_gh(self, labels='[{"name":"mach:request"},{"name":"mach:grooming"},{"name":"mach:ready"},{"name":"mach:blocked"}]',
+    def fake_gh(self, labels='[{"name":"mach:request"},{"name":"mach:slice"},{"name":"mach:ready"},{"name":"mach:building"},{"name":"mach:question"},{"name":"mach:shipped"}]',
                 permission="write", extra=""):
         self.fake("gh", f'''echo "$@" >> "{self.log}"
 {extra}
@@ -320,14 +320,14 @@ exit 1''')
 
     def test_requests_missing_labels_warn_with_one_create_line_each(self):
         self.github_project({"tickets": {"provider": "local", "github": {"request_label": "mach:ask"}}})
-        self.fake_gh(labels='[{"name":"mach:ask"},{"name":"mach:ready"}]')
+        self.fake_gh(labels='[{"name":"mach:ask"},{"name":"mach:ready"},{"name":"mach:building"},{"name":"mach:question"}]')
         _, checks, _, _ = self.checks()
         labels = checks["requests.labels"]
         self.assertEqual(labels["status"], "warn")
         creates = [line for line in labels["fix"].splitlines() if "gh label create" in line]
         self.assertEqual(len(creates), 2)
-        self.assertIn("mach:grooming", creates[0])
-        self.assertIn("mach:blocked", creates[1])
+        self.assertIn("mach:slice", creates[0])
+        self.assertIn("mach:shipped", creates[1])
         self.assertTrue(all("--repo acme/widgets" in line for line in creates))
 
     def test_requests_fix_creates_no_label(self):

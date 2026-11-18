@@ -424,9 +424,14 @@ class IsolationTest(unittest.TestCase):
 
     def test_request_check_is_read_only(self):
         source = (ROOT / "skills/ticket/scripts/ticket.py").read_text()
-        body = source[source.index("def gh_read("):source.index("# ---------------------------------------------------------------- entry point")]
+        body = source[source.index("# ---------------------------------------------------------------- monitoring requests (read only)"):
+                      source.index("# ---------------------------------------------------------------- entry point")]
         calls = re.findall(r"gh_read\(ctx, (\"[^\"]+\"(?:, \"[^\"]+\")?)", body)
         self.assertEqual(sorted(set(calls)), sorted({'"repo", "view"', '"api"', '"api", "--paginate"'}))
+        # M11: the slice reads (slice-list, slice-check, epic-check) are reads too; only slice-status writes.
+        reads = source[source.index("def gh_read("):source.index("def cmd_slice_status(")]
+        for word in ("--method", "\"-f\"", "\"-F\"", "\"comment\"", "\"close\"", "\"edit\"", "write_text", "write_inbox"):
+            self.assertNotIn(word, reads, word)
         for word in ("--method", "-X", "\"-f\"", "\"-F\"", "comment", "close", "edit", "write_text", "write_inbox", "create("):
             self.assertNotIn(word, body.replace("closes", ""), word)
 

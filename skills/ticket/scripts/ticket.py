@@ -8,8 +8,13 @@
     ticket.py update <id> [...]           change state or labels, add a comment
     ticket.py comment <id> --body B       add a comment
     ticket.py ingest-telemetry SRC FILE   turn a crash, alert or failed build into an AUTO- ticket
-    ticket.py request-status OWNER/REPO#N --moment merged|blocked --ref ID... --nonce HEX
-                                          status label and comment on a request's GitHub issue (M8)
+    ticket.py request-check N             read only: who filed issue N and who labelled it a request (M8)
+    ticket.py slice-list                  read only: the open slice issues marked ready (M11)
+    ticket.py slice-check N               read only: whether slice issue N counts, with its why and spec (M11)
+    ticket.py slice-status N --moment M --ref SLICE-NNN@rN... --nonce HEX [--question-file F]
+                                          a status label, comment or close on a slice's own issue (M11)
+    ticket.py epic-check N [--release R --commit C]
+                                          read only: an epic's slices in order and its acceptance comments (M11)
 
 Providers: local (Markdown files in .factory/tickets/, the default), github (gh), gitea-cli (gt),
 jira, fossil. Local and GitHub are fully handled here. For the others this script runs the
@@ -28,6 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -883,20 +889,12 @@ def cmd_ingest(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
-# ---------------------------------------------------------------- request status (M8)
+# ---------------------------------------------------------------- GitHub reads and writes (M8, M11)
 #
-# Status writes on a product request's GitHub issue, called by the run skill's intake. Always gh,
-# whatever tickets.provider says, and only on the repository the project's `origin` remote names.
-# Only OWNER/REPO is handed to gh, never the remote's address, which may carry a credential.
-# A gh failure is reported by its kind alone; gh's own words are never relayed.
+# Always gh, whatever tickets.provider says, and only on the repository the project's `origin`
+# remote names. Only OWNER/REPO is handed to gh, never the remote's address, which may carry a
+# credential. A gh failure is reported by its kind alone; gh's own words are never relayed.
 
-REQUEST_MOMENTS = {
-    # moment: (labels added, labels removed). A product request's blocked moment is a comment only:
-    # mach:blocked stays with monitoring issues, which are their own execution tickets.
-    "merged": (("mach:ready",), (issue_rules.GROOMING,)),
-    "blocked": ((), ()),
-}
-REQUEST_RE = re.compile(r"^([^#\s]+)#([0-9]{1,9})$")
 GITHUB_REMOTE_RE = re.compile(r"^(?:https://(?:[^/@\s]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)"
                               r"([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
 GH_TIMEOUT_SECONDS = 60
@@ -951,29 +949,6 @@ def origin_repository(project: Path) -> Optional[str]:
     return named.group(1) if named else None
 
 
-def parse_request(value: str) -> Tuple[str, int]:
-    match = REQUEST_RE.fullmatch(value or "")
-    if not match or not issue_rules.is_repository(match.group(1)) or not issue_rules.is_issue_number(int(match.group(2))):
-        raise TicketError("Name the request as OWNER/REPO#N, for example acme/app#42.")
-    return match.group(1), int(match.group(2))
-
-
-def status_label(project: Path, repository: str, number: int, label: str) -> None:
-    """Add one of MACH's status labels. It is created only when GitHub says it is missing, only for
-    a name MACH owns, and never with --force, so an existing label is never overwritten."""
-    if label not in issue_rules.STATUS_LABELS:
-        raise TicketError(f"{label} is not one of MACH's status labels.")
-    edit = ("issue", "edit", str(number), "--repo", repository, "--add-label", label)
-    try:
-        gh_call(project, *edit)
-    except GhFailed as failed:
-        if failed.kind != "not_found":
-            raise
-        spec = issue_rules.STATUS_LABELS[label]
-        gh_call(project, "label", "create", label, "--repo", repository, "--color", spec["color"], "--description", spec["description"])
-        gh_call(project, *edit)
-
-
 def issue_is_here(project: Path, repository: str, number: int) -> bool:
     """Checked before any write: the issue GitHub finds by this number must still live in
     `repository`. An issue moved to another repository answers at its new address and is never written to."""
@@ -981,71 +956,6 @@ def issue_is_here(project: Path, repository: str, number: int) -> bool:
     url = found.get("url") if isinstance(found, dict) else None
     return isinstance(url, str) and url.lower().startswith(f"https://github.com/{repository}/issues/".lower())
 
-
-def cmd_request_status(ctx: Context, args: argparse.Namespace) -> int:
-    repository, number = parse_request(args.request)
-    refs = list(dict.fromkeys(args.ref or []))
-    if not issue_rules.is_nonce(args.nonce):
-        raise TicketError("A status write needs the intake ledger's nonce (--nonce, 32 hexadecimal characters); it was missing or malformed.")
-    try:
-        written = issue_rules.comment(args.moment, refs, args.nonce)
-    except ValueError as exc:
-        raise TicketError(f"The references do not fit the {args.moment} status: {exc}.")
-    remote = origin_repository(ctx.project)
-    if remote is None:
-        raise TicketError("This project's origin remote is not a GitHub repository, so it has no requests to update.")
-    if remote.lower() != repository.lower():
-        raise TicketError(f"{repository} is not this project's origin repository ({remote}). Status is written only there.")
-    github = ctx.tickets.get("github") if isinstance(ctx.tickets.get("github"), dict) else {}
-    comments_on = github.get("status_comments") is not False
-    add, remove = REQUEST_MOMENTS[args.moment]
-    result: Dict[str, Any] = {"request": f"{repository}#{number}", "moment": args.moment, "key": written["key"], "refs": refs,
-                              "labels_added": [], "labels_removed": [], "comment": "off", "status": "pending", "kind": None}
-
-    def answer(status: str, kind: Optional[str] = None) -> int:
-        result.update(status=status, kind=kind)
-        print(json.dumps(result, indent=2))
-        return {"done": 0, "already_done": EXIT_ALREADY_DONE}.get(status, EXIT_PENDING)
-
-    try:
-        # The repository as GitHub names it, resolved the way Product Studio resolves it.
-        named = json.loads(gh_call(ctx.project, "repo", "view", remote, "--json", "nameWithOwner") or "null")
-        canonical = named.get("nameWithOwner") if isinstance(named, dict) else None
-        if not issue_rules.is_repository(canonical):
-            return answer("pending", "other")
-        if canonical != repository:
-            raise TicketError(f"{repository} is not this project's origin repository ({canonical}). Status is written only there.")
-        if not issue_is_here(ctx.project, repository, number):
-            return answer("pending", "moved")  # the issue has moved to another repository: nothing is written
-        for label in add:
-            status_label(ctx.project, repository, number, label)
-            result["labels_added"].append(label)
-        for label in remove:
-            try:
-                gh_call(ctx.project, "issue", "edit", str(number), "--repo", repository, "--remove-label", label)
-                result["labels_removed"].append(label)
-            except GhFailed as failed:
-                if failed.kind != "not_found":  # a label that does not exist is already absent
-                    raise
-        if not comments_on:
-            return answer("done")
-        # A write whose outcome was lost may already be there: its hidden marker says so.
-        view = json.loads(gh_call(ctx.project, "issue", "view", str(number), "--repo", repository, "--json", "comments") or "null")
-        comments = view.get("comments") if isinstance(view, dict) else None
-        if not isinstance(comments, list):
-            return answer("pending", "other")
-        if issue_rules.has_marker([item.get("body") for item in comments if isinstance(item, dict)], written["key"]):
-            result["comment"] = "already_present"
-            return answer("already_done")
-        result["comment"] = "not_posted"
-        gh_call(ctx.project, "issue", "comment", str(number), "--repo", repository, "--body", written["body"])
-        result["comment"] = "posted"
-        return answer("done")
-    except GhFailed as failed:
-        return answer("pending", failed.kind)
-    except ValueError:
-        return answer("pending", "other")
-# ---------------------------------------------------------------- monitoring requests (read only)
 
 GH_API_HEADERS = ("-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28")
 ISSUE_PATH = "repos/{repository}/issues/{number}"
@@ -1055,6 +965,14 @@ EVENTS_JQ = ('.[] | select(.event=="labeled" or .event=="unlabeled") | {event, l
              'login: .actor.login, id: .actor.id, type: .actor.type, app: (.performed_via_github_app != null), at: .created_at}')
 PERMISSION_PATH = "repos/{repository}/collaborators/{login}/permission"
 PERMISSION_JQ = "{permission, role_name}"
+# M11: slice and epic issues.
+PRODUCT_ISSUE_JQ = "{number: .number, state: .state, title: .title, body: .body, labels: [.labels[].name], updated_at: .updated_at}"
+COMMENTS_PATH = "repos/{repository}/issues/{number}/comments?per_page=100"
+COMMENTS_JQ = ('.[] | {login: .user.login, id: .user.id, type: .user.type, app: (.performed_via_github_app != null), '
+               'created_at: .created_at, updated_at: .updated_at, body: .body}')
+SUB_ISSUES_PATH = "repos/{repository}/issues/{number}/sub_issues?per_page=100"
+SUB_ISSUES_JQ = ".[] | {number: .number}"
+READY_LIST_LIMIT = "200"
 
 
 def gh_read(ctx: Context, *args: str) -> Tuple[Optional[str], Optional[Dict[str, str]]]:
@@ -1066,6 +984,289 @@ def gh_read(ctx: Context, *args: str) -> Tuple[Optional[str], Optional[Dict[str,
         kind = "forbidden" if failed.kind == "refused" else failed.kind
         return None, {"kind": kind, "reason": f"GitHub did not answer the read ({kind})"}
 
+
+def json_lines(out: str) -> List[Any]:
+    found = []
+    for line in out.splitlines():
+        try:
+            found.append(json.loads(line))
+        except ValueError:
+            continue
+    return found
+
+
+def here(ctx: Context) -> Tuple[Optional[str], Optional[Dict[str, str]]]:
+    """The origin remote's repository as GitHub names it, or the reason it cannot be named."""
+    remote = origin_repository(ctx.project)
+    if remote is None:
+        return None, {"kind": "no_github", "reason": "this project's origin remote is not a GitHub repository"}
+    out, failure = gh_read(ctx, "repo", "view", remote, "--json", "nameWithOwner")
+    if out is None:
+        return None, failure
+    try:
+        named = json.loads(out).get("nameWithOwner")
+    except (ValueError, AttributeError):
+        named = None
+    if not issue_rules.is_repository(named):
+        return None, {"kind": "other", "reason": "GitHub did not name the repository"}
+    return named, None
+
+
+def read_issue(ctx: Context, repository: str, number: int) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+    out, failure = gh_read(ctx, "api", *GH_API_HEADERS, ISSUE_PATH.format(repository=repository, number=number), "--jq", PRODUCT_ISSUE_JQ)
+    if out is None:
+        return None, failure
+    try:
+        issue = json.loads(out)
+    except ValueError:
+        issue = None
+    if not isinstance(issue, dict) or issue.get("number") != number:
+        return None, {"kind": "other", "reason": "GitHub's answer for the issue could not be read"}
+    issue["labels"] = [name for name in issue.get("labels") or [] if isinstance(name, str)]
+    return issue, None
+
+
+def read_comments(ctx: Context, repository: str, number: int) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, str]]]:
+    out, failure = gh_read(ctx, "api", "--paginate", *GH_API_HEADERS, COMMENTS_PATH.format(repository=repository, number=number), "--jq", COMMENTS_JQ)
+    return (issue_rules.issue_comments(json_lines(out)), None) if out is not None else (None, failure)
+
+
+def read_permission(ctx: Context, repository: str, login: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+    out, failure = gh_read(ctx, "api", *GH_API_HEADERS, PERMISSION_PATH.format(repository=repository, login=login), "--jq", PERMISSION_JQ)
+    if out is None:
+        return None, failure
+    try:
+        answer = json.loads(out)
+    except ValueError:
+        answer = None
+    return (answer, None) if isinstance(answer, dict) else (None, {"kind": "other", "reason": "GitHub's permission answer could not be read"})
+
+
+def read_epic(ctx: Context, repository: str, number: int) -> Dict[str, Any]:
+    """An epic issue Product Studio wrote: its ID, its title (bounded), and its slices in the product manager's order:
+    its sub-issues, or its task list where it has none. `problem` says why it does not count."""
+    found: Dict[str, Any] = {"number": number, "epic_id": None, "title": None, "order": [], "form": None, "problem": None, "body": None}
+    issue, failure = read_issue(ctx, repository, number)
+    if issue is None:
+        found["problem"] = f"its epic issue #{number} could not be read ({(failure or {}).get('kind', 'other')})"
+        found["transient"] = (failure or {}).get("kind") == "network"
+        return found
+    marker = issue_rules.product_marker(issue.get("body"))
+    if issue_rules.EPIC_LABEL not in issue["labels"] or not marker or marker[0] != "epic" or not issue_rules.EPIC_ID_RE.fullmatch(marker[1]):
+        found["problem"] = f"its epic issue #{number} is not an epic written by MACH Product Studio"
+        return found
+    found.update(epic_id=marker[1], title=issue_rules.issue_title(issue.get("title")), body=issue.get("body"))
+    out, failure = gh_read(ctx, "api", "--paginate", *GH_API_HEADERS, SUB_ISSUES_PATH.format(repository=repository, number=number), "--jq", SUB_ISSUES_JQ)
+    children = [item["number"] for item in json_lines(out or "") if isinstance(item, dict) and issue_rules.is_issue_number(item.get("number"))]
+    if children:
+        found.update(order=children, form="sub_issues")
+    else:
+        found.update(order=issue_rules.epic_tasks(issue.get("body")), form="task_list")
+    return found
+
+
+def cmd_slice_list(ctx: Context, args: argparse.Namespace) -> int:
+    """The open issues marked ready that are slices, with when each last changed. Reads only."""
+    repository, failure = here(ctx)
+    report: Dict[str, Any] = {"repository": repository, "issues": None, "failure": failure}
+    if repository is not None:
+        out, failure = gh_read(ctx, "issue", "list", "--repo", repository, "--label", issue_rules.READY_LABEL, "--state", "open",
+                               "--limit", READY_LIST_LIMIT, "--json", "number,labels,updatedAt")
+        report["failure"] = failure
+        if out is not None:
+            try:
+                items = json.loads(out)
+            except ValueError:
+                items, report["failure"] = None, {"kind": "other", "reason": "GitHub's list could not be read"}
+            if isinstance(items, list):
+                report["issues"] = sorted(({"number": item["number"], "updated_at": item.get("updatedAt") if isinstance(item.get("updatedAt"), str) else None}
+                                           for item in items if isinstance(item, dict) and issue_rules.is_issue_number(item.get("number"))
+                                           and issue_rules.SLICE_LABEL in [l.get("name") for l in item.get("labels") or [] if isinstance(l, dict)]),
+                                          key=lambda item: item["number"])
+                report["limit_reached"] = len(items) >= int(READY_LIST_LIMIT)
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+def cmd_slice_check(ctx: Context, args: argparse.Namespace) -> int:
+    """Whether slice issue N counts, by the rules in issue_rules.slice_acceptance. Reads only. The why and the spec
+    are printed only when accepted, verbatim (they are checked against their SHA-256, not redacted); the title is bounded."""
+    number = int(args.number) if str(args.number).isdigit() else 0
+    if not issue_rules.is_issue_number(number):
+        raise TicketError(f"'{args.number}' is not an issue number.")
+    repository, failure = here(ctx)
+    report: Dict[str, Any] = {"repository": repository, "number": number, "title": None, "updated_at": None, "decision": None, "epic": None, "failure": failure}
+
+    def done(decision: Dict[str, Any]) -> int:
+        report["decision"] = decision
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0
+
+    def unconfirmed(failure: Optional[Dict[str, str]]) -> int:
+        report["failure"] = failure
+        report["transient"] = (failure or {}).get("kind") == "network"
+        return done({**issue_rules.slice_acceptance({}, [], [], None, failure),
+                     "reason": f"Not accepted: GitHub could not be read for it ({(failure or {}).get('kind', 'other')})."})
+
+    if repository is None:
+        return unconfirmed(failure)
+    issue, failure = read_issue(ctx, repository, number)
+    if issue is None:
+        return unconfirmed(failure)
+    report.update(title=issue_rules.issue_title(issue.get("title")), updated_at=issue.get("updated_at"))
+    out, failure = gh_read(ctx, "api", "--paginate", *GH_API_HEADERS, EVENTS_PATH.format(repository=repository, number=number), "--jq", EVENTS_JQ)
+    if out is None:
+        return unconfirmed(failure)
+    events = issue_rules.label_events(json_lines(out))
+    comments, failure = read_comments(ctx, repository, number)
+    if comments is None:
+        return unconfirmed(failure)
+    event = issue_rules.deciding_event(events, issue_rules.READY_LABEL)
+    permission, failure = None, None
+    if issue_rules.actor_problem(event) is None:
+        permission, failure = read_permission(ctx, repository, event["login"])
+        report["transient"] = (failure or {}).get("kind") == "network"
+    decision = issue_rules.slice_acceptance(issue, events, comments, permission, failure)
+    marker = decision.get("marker")
+    if decision["state"] == "accepted" and marker:
+        epic = read_epic(ctx, repository, marker["epic"])
+        epic.pop("body", None)
+        report["epic"] = epic
+        if epic["problem"]:
+            report["transient"] = bool(epic.get("transient"))
+            decision.update(state="not_accepted", reason=f"Not accepted: {epic['problem']}.", why=None, spec=None)
+    return done(decision)
+
+
+def cmd_epic_check(ctx: Context, args: argparse.Namespace) -> int:
+    """An epic's slices in order and, for one release at one commit, product's decisions on it with whether each
+    author can count (written by the account it names, unedited, with the triage role or above). Reads only."""
+    number = int(args.number) if str(args.number).isdigit() else 0
+    if not issue_rules.is_issue_number(number):
+        raise TicketError(f"'{args.number}' is not an issue number.")
+    if (args.release is None) != (args.commit is None):
+        raise TicketError("Give --release and --commit together, or neither.")
+    repository, failure = here(ctx)
+    report: Dict[str, Any] = {"repository": repository, "number": number, "epic": None, "acceptances": None, "failure": failure}
+    if repository is not None:
+        epic = read_epic(ctx, repository, number)
+        epic.pop("body", None)
+        report["epic"] = epic
+        if args.release is not None and not epic["problem"]:
+            comments, failure = read_comments(ctx, repository, number)
+            report["failure"] = failure
+            if comments is not None:
+                found = issue_rules.acceptances(comments, epic["epic_id"], args.release, args.commit)
+                roles: Dict[str, Any] = {}
+                for item in found:
+                    if item["problem"]:
+                        continue
+                    if item["by"] not in roles:
+                        roles[item["by"]] = read_permission(ctx, repository, item["by"])
+                    answer, failed = roles[item["by"]]
+                    if answer is None:
+                        item["problem"] = f"the role of the account that wrote it could not be confirmed ({(failed or {}).get('kind', 'other')})"
+                    elif not issue_rules.role_counts(answer):
+                        item["problem"] = "it was written by an account without the triage, write, maintain or admin role"
+                report["acceptances"] = found
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_slice_status(ctx: Context, args: argparse.Namespace) -> int:
+    """One status write on a slice's own issue: labels, a comment from a fixed template with its hidden marker, and,
+    when it ships, closing the issue. A comment whose outcome was lost is found again by its marker, never posted twice.
+    tickets.github.status_comments false stops the comment, never the labels or the close."""
+    number = int(args.number) if str(args.number).isdigit() else 0
+    if not issue_rules.is_issue_number(number):
+        raise TicketError(f"'{args.number}' is not an issue number.")
+    if not issue_rules.is_nonce(args.nonce):
+        raise TicketError("A status write needs the intake ledger's nonce (--nonce, 32 hexadecimal characters); it was missing or malformed.")
+    question = None
+    if args.moment == "question":
+        if not args.question_file:
+            raise TicketError("The question moment needs --question-file.")
+        try:
+            question = Path(args.question_file).read_text(encoding="utf-8")[:20000]
+        except (OSError, UnicodeDecodeError):
+            raise TicketError("The question file could not be read.")
+    refs = list(dict.fromkeys(args.ref or []))
+    try:
+        written = issue_rules.comment(args.moment, refs, args.nonce, question=question)
+    except ValueError as exc:
+        raise TicketError(f"The references do not fit the {args.moment} status: {exc}.")
+    add, remove, close = issue_rules.SLICE_MOMENTS[args.moment]
+    github = ctx.tickets.get("github") if isinstance(ctx.tickets.get("github"), dict) else {}
+    comments_on = github.get("status_comments") is not False
+    result: Dict[str, Any] = {"issue": number, "moment": args.moment, "key": written["key"], "labels_added": [], "labels_removed": [],
+                              "comment": "off", "closed": False, "status": "pending", "kind": None}
+
+    def answer(status: str, kind: Optional[str] = None) -> int:
+        result.update(status=status, kind=kind)
+        print(json.dumps(result, indent=2))
+        return {"done": 0, "already_done": EXIT_ALREADY_DONE}.get(status, EXIT_PENDING)
+
+    if not issue_rules.is_repository(args.repository):
+        raise TicketError("Name the slice's repository as OWNER/REPO (--repository).")
+    remote = origin_repository(ctx.project)
+    if remote is not None and remote.lower() != args.repository.lower():
+        raise TicketError(f"{args.repository} is not this project's origin repository ({remote}). Status is written only there.")
+    repository, failure = here(ctx)
+    if repository is None:
+        return answer("pending", (failure or {}).get("kind") or "other")
+    if repository != args.repository:
+        raise TicketError(f"{args.repository} is not this project's origin repository ({repository}). Status is written only there.")
+    result["repository"] = repository
+    try:
+        if not issue_is_here(ctx.project, repository, number):
+            return answer("pending", "moved")  # the issue has moved to another repository: nothing is written
+        for label in add:
+            edit = ("issue", "edit", str(number), "--repo", repository, "--add-label", label)
+            try:
+                gh_call(ctx.project, *edit)
+            except GhFailed as failed:
+                if failed.kind != "not_found":
+                    raise
+                spec = issue_rules.PRODUCT_LABELS[label]  # created only when missing, only for MACH's own names, never with --force
+                gh_call(ctx.project, "label", "create", label, "--repo", repository, "--color", spec["color"], "--description", spec["description"])
+                gh_call(ctx.project, *edit)
+            result["labels_added"].append(label)
+        for label in remove:
+            try:
+                gh_call(ctx.project, "issue", "edit", str(number), "--repo", repository, "--remove-label", label)
+                result["labels_removed"].append(label)
+            except GhFailed as failed:
+                if failed.kind != "not_found":  # a label that does not exist is already absent
+                    raise
+        already = False
+        if comments_on:
+            # A write whose outcome was lost may already be there: its hidden marker says so.
+            view = json.loads(gh_call(ctx.project, "issue", "view", str(number), "--repo", repository, "--json", "comments") or "null")
+            comments = view.get("comments") if isinstance(view, dict) else None
+            if not isinstance(comments, list):
+                return answer("pending", "other")
+            if issue_rules.has_marker([item.get("body") for item in comments if isinstance(item, dict)], written["key"]):
+                result["comment"], already = "already_present", True
+            else:
+                result["comment"] = "not_posted"
+                with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as handle:
+                    handle.write(written["body"])
+                try:
+                    gh_call(ctx.project, "issue", "comment", str(number), "--repo", repository, "--body-file", handle.name)
+                finally:
+                    os.unlink(handle.name)
+                result["comment"] = "posted"
+        if close:
+            gh_call(ctx.project, "issue", "close", str(number), "--repo", repository)
+            result["closed"] = True
+        return answer("already_done" if already else "done")
+    except GhFailed as failed:
+        return answer("pending", failed.kind)
+    except ValueError:
+        return answer("pending", "other")
+
+
+# ---------------------------------------------------------------- monitoring requests (read only)
 
 def cmd_request_check(ctx: Context, args: argparse.Namespace) -> int:
     """Who filed issue N, who applied the request label and with what access, and which fault it reports.
@@ -1191,15 +1392,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-duplicate", action="store_true", help="create a ticket even if the same fault already has an open one")
     p.set_defaults(func=cmd_ingest)
 
-    p = sub.add_parser("request-status", help="status label and comment on a product request's GitHub issue (called by intake)")
-    p.add_argument("request", help="OWNER/REPO#N; must be the origin remote's repository")
-    p.add_argument("--moment", required=True, choices=sorted(REQUEST_MOMENTS))
-    p.add_argument("--ref", action="extend", nargs="+", required=True, help="identifiers for the comment: SLICE-NNN@rN, ticket:ID")
-    p.add_argument("--nonce", help="the intake ledger's marker nonce; required")
-    p.set_defaults(func=cmd_request_status)
     p = sub.add_parser("request-check", help="read only: who filed GitHub issue N and who applied the request label, with what access")
     p.add_argument("number")
     p.set_defaults(func=cmd_request_check)
+    p = sub.add_parser("slice-list", help="read only: the open slice issues marked ready, in the origin remote's repository")
+    p.set_defaults(func=cmd_slice_list)
+    p = sub.add_parser("slice-check", help="read only: whether slice issue N counts, with its why and spec when it does")
+    p.add_argument("number")
+    p.set_defaults(func=cmd_slice_check)
+    p = sub.add_parser("epic-check", help="read only: an epic's slices in order, and product's decisions on one release of it")
+    p.add_argument("number")
+    p.add_argument("--release")
+    p.add_argument("--commit")
+    p.set_defaults(func=cmd_epic_check)
+    p = sub.add_parser("slice-status", help="a status label, comment or close on a slice's own issue (called by intake)")
+    p.add_argument("number")
+    p.add_argument("--repository", required=True, help="OWNER/REPO: must be the origin remote's repository")
+    p.add_argument("--moment", required=True, choices=sorted(issue_rules.SLICE_MOMENTS))
+    p.add_argument("--ref", action="extend", nargs="+", required=True, help="identifiers for the comment: SLICE-NNN@rN")
+    p.add_argument("--nonce", help="the intake ledger's marker nonce; required")
+    p.add_argument("--question-file", help="for the question moment: the contract engineer's question")
+    p.set_defaults(func=cmd_slice_status)
     return parser
 
 

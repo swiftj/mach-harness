@@ -70,7 +70,7 @@ A cell that never had a worktree (`isolation: none`) is archived and its folder 
 
 If `observe_due` is true, enough tickets have finished for the factory to learn from them. After closing the ticket, run the observe skill with `--auto` if you are running unattended or as part of the line; otherwise tell the user it is due.
 
-Only after `run` succeeds, update the ticket with the ticket skill: state `closed`; for an abandoned ticket, also the label `abandoned` and a comment with the reason. The script does not do this.
+Only after `run` succeeds, update the ticket with the ticket skill: state `closed`; for an abandoned ticket, also the label `abandoned` and a comment with the reason. The script does not do this. A slice handed over by Product Studio as a GitHub issue (`cell.json` `product.issue`) is different: do not close it, label it or comment on it. The Factory closes it itself, with `mach:shipped`, once its merge is on the integration branch; abandoned work stays open so the product manager's slice can be built again.
 
 ### 4. Report
 

@@ -24,19 +24,16 @@ class LineIsUnchangedTest(Base):
     """run.py names the same next step whether or not approved product work and an enabled policy are present."""
 
     def add_approved_product_and_enabled_policy(self):
-        shutil.copytree(SEED / "product", self.project / "product")
-        spec = self.project / "specs/slices/SLICE-001-invite-member.md"
-        spec.parent.mkdir(parents=True, exist_ok=True)
-        spec.write_text("# SLICE-001: Invite member\n\nTest-only content; not a valid MACH intent spec.\n")
-        for relative, change in (
-            ("product/slices/SLICE-001.json", {"status": "approved_for_engineering", "open_questions": [],
-                                               "spec_path": "specs/slices/SLICE-001-invite-member.md",
-                                               "spec_sha256": hashlib.sha256(spec.read_bytes()).hexdigest()}),
-            ("product/delivery-waves/WAVE-001.json", {"status": "approved_for_engineering",
-                                                      "approval": {"actor": "PM A", "approved_at": "2026-11-10T14:00:00Z"}}),
-        ):
-            path = self.project / relative
-            path.write_text(json.dumps({**json.loads(path.read_text()), **change}))
+        """A ready folder as Product Studio writes it without GitHub, and an enabled policy."""
+        folder = self.project / "product/ready/SLICE-001"
+        folder.mkdir(parents=True)
+        spec, why = "# SLICE-001: Invite member\n\nTest-only content; not a valid MACH intent spec.\n", "# Intent: Invite member\n"
+        (folder / "spec.md").write_text(spec)
+        (folder / "why.md").write_text(why)
+        (folder / "slice.json").write_text(json.dumps({"schema_version": 1, "slice_id": "SLICE-001", "title": "Invite member", "revision": 1,
+                                                        "epic": {"epic_id": "EPIC-001", "title": "Membership"}, "dependencies": [],
+                                                        "spec_sha256": hashlib.sha256(spec.encode()).hexdigest(),
+                                                        "why_sha256": hashlib.sha256(why.encode()).hexdigest()}))
         local = self.project / ".factory/local"
         local.mkdir(parents=True)
         (local / "runner.json").write_text(json.dumps(ENABLED))
@@ -49,9 +46,6 @@ class LineIsUnchangedTest(Base):
     def check_unchanged(self):
         before = self.observe()
         self.add_approved_product_and_enabled_policy()
-        report = validate_workspace(self.project)
-        self.assertTrue(report["valid"], report["errors"])
-        self.assertFalse(report["factory_authorized"])
         self.assertTrue(read_local_policy(self.project)["enabled"])  # the policy is readable, and still starts nothing
         self.assertEqual(self.observe(), before)
         self.assertFalse((self.project / ".factory/tickets").exists())
@@ -86,29 +80,26 @@ class NothingIsWiredInTest(unittest.TestCase):
     def test_only_intake_reaches_into_product_studio_and_only_to_read(self):
         """No station, agent or workflow calls Product Studio's scripts, with one exception: the run
         skill's intake module reuses its validator and its read-from-Git helper. It never publishes."""
-        intake = ROOT / "skills" / "run" / "scripts" / "intake.py"
         found = []
         for top in ("skills", "agents", "workflows", "bin"):
             for path in sorted((ROOT / top).rglob("*")):
-                if path.is_file() and "__pycache__" not in path.parts and "product-studio" not in path.parts and path != intake and path.suffix in (".py", ".js", ""):
+                if path.is_file() and "__pycache__" not in path.parts and "product-studio" not in path.parts and path.suffix in (".py", ".js", ""):
                     text = path.read_text(encoding="utf-8", errors="ignore")
                     found += [f"{path.relative_to(ROOT)}: {word}" for word in ("studio.py", "product.py", "collab.py", "import product", "import studio", "import collab") if word in text]
         self.assertEqual(found, [])
-        source = intake.read_text()
-        self.assertNotIn("import studio", source)
-        self.assertEqual(set(re.findall(r"self\.collab\.(\w+)", source)), {"files_at", "tracked", "git_bytes"})
-        self.assertEqual(set(re.findall(r"self\.product\.(\w+)", source)), {"validate_workspace"})
+        source = (ROOT / "skills" / "run" / "scripts" / "intake.py").read_text()
+        for word in ("self.collab", "self.product", "sibling(\"product-studio\")"):
+            self.assertNotIn(word, source)  # M11: the Factory reads what Product Studio handed over, never its scripts
 
     def test_intake_reads_git_and_starts_nothing(self):
         """Intake and the scheduler only query Git. Tickets and cells are made by the ticket and
         intent stations' own scripts; no agent, workflow or background process is started, and the
         machine-local Factory policy is never read."""
         source = (ROOT / "skills" / "run" / "scripts" / "intake.py").read_text()
-        used = set(re.findall(r"git\(self\.root, \"([a-z-]+)\"", source)) | set(re.findall(r"git_bytes\(self\.root, \"([a-z-]+)\"", source))
-        self.assertEqual(used, {"symbolic-ref", "show-ref", "rev-parse", "merge-base", "diff", "rev-list", "check-ignore", "show"})
-        runs = re.findall(r"subprocess\.run\(\[([^\]]*)\]", source)
-        self.assertEqual(len(runs), 1)
-        self.assertTrue(runs[0].startswith("sys.executable, str(path)"))  # only another station's script, with this Python
+        used = set(re.findall(r"git\(self\.root, \"([a-z-]+)\"", source)) | set(re.findall(r"git_bytes\(\"([a-z-]+)\"", source))
+        self.assertEqual(used, {"symbolic-ref", "show-ref", "rev-parse", "merge-base", "diff", "rev-list", "check-ignore", "show", "ls-tree"})
+        runs = sorted(re.findall(r"subprocess\.run\(\[([^\]]*)\]", source))
+        self.assertEqual(runs, ["\"git\", *args", "sys.executable, str(path), \"--project\", str(self.root), *argv"])  # Git reads, and another station's script
         self.assertEqual(set(re.findall(r"self\.script\(\"(\w+)\", \"([\w.]+)\"", source)), {("ticket", "ticket.py"), ("intent", "cell.py")})
         for word in ("runner.json", "read_local_policy", "claude", "Workflow", "launchctl", "LaunchAgent", "hooks", "Popen", "os.system", "socket", "http",
                      "\"fetch\"", "\"push\"", "\"checkout\"", "\"switch\"", "\"reset\"", "\"pull\""):
@@ -156,8 +147,7 @@ class NothingIsWiredInTest(unittest.TestCase):
     GIT_ALLOWED = {
         # reading
         "rev-parse", "check-ignore", "config", "remote", "symbolic-ref", "ls-tree", "show", "cat-file", "for-each-ref", "diff", "merge-base",
-        # the shared project, and a contribution built in a temporary worktree
-        "fetch", "worktree", "add", "commit", "merge", "update-ref", "push",
+        # (M11: no fetch, worktree, commit or push: a slice reaches the builders as an issue or a folder)
     }
 
     def test_studio_uses_only_the_git_and_gh_commands_it_is_meant_to(self):
@@ -177,15 +167,12 @@ class NothingIsWiredInTest(unittest.TestCase):
             used |= set(re.findall(r"git\(\[\"([a-z-]+)\"", source))                          # cell.git(["config", ...], project)
             used |= set(re.findall(r"git(?:_bytes)?\([a-z_.]+, \"([a-z-]+)\"", source))         # collab.git(project, "fetch", ...)
             used |= set(re.findall(r"\[\"git\", \"([a-z-]+)\"", source))                       # subprocess.run(["git", "cat-file", ...])
-        self.assertTrue({"fetch", "push", "worktree"} <= used, used)
         self.assertEqual(used - self.GIT_ALLOWED, set())
-        gh_used = set(re.findall(r"gh\([a-z_.]+, \"pr\", \"([a-z]+)\"", sources["collab.py"])) | set(re.findall(r"\[\"pr\", \"([a-z]+)\"", sources["collab.py"]))
-        self.assertEqual(gh_used, {"list", "create", "view"})  # never merge, close, review or edit
+        self.assertFalse(used & {"fetch", "push", "worktree", "commit", "merge"}, used)
         collab_source = sources["collab.py"]
-        self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"issue\", \"([a-z]+)\"", collab_source)), {"list", "view", "edit", "comment", "close"})
-        self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"label\", \"([a-z]+)\"", collab_source)), {"create"})
+        self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"issue\", \"([a-z]+)\"", collab_source)), {"list", "view", "comment", "close"})
         self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"repo\", \"([a-z]+)\"", collab_source)), {"view"})
-        self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"([a-z]+)\"", collab_source)), {"pr", "issue", "label", "repo", "api"})
+        self.assertEqual(set(re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"([a-z]+)\"", collab_source)), {"issue", "repo", "api"})
         # gh api only reads, and only the two paths that say who labelled an issue and what access that account has.
         api_calls = re.findall(r"gh(?:_json|_write)?\([a-z_.]+, \"api\"[^\n]*", collab_source)
         self.assertEqual(len(api_calls), 2, api_calls)
@@ -195,16 +182,9 @@ class NothingIsWiredInTest(unittest.TestCase):
         self.assertIn('PERMISSION_PATH = "repos/{repository}/collaborators/{login}/permission"', collab_source)
         for flag in ("\"-X\"", "\"--method\"", "\"-F\"", "\"--field\"", "\"--raw-field\"", "\"--input\""):
             self.assertNotIn(flag, collab_source, flag)
-        # A label is added only from MACH's own status labels, never removed by Studio, and never created with --force.
-        edits = re.findall(r"\"issue\", \"edit\"[^\n]*", collab_source)
-        self.assertTrue(edits)
-        self.assertTrue(all("\"--add-label\", label" in edit for edit in edits), edits)
-        self.assertIn("if label not in labels:", collab_source)
-        self.assertNotIn("--remove-label", collab_source)
-        studio_source = sources["studio.py"] + sources["requests_in.py"]
-        self.assertNotIn("STATUS_LABELS[", studio_source)
-        self.assertIn("rules.STATUS_LABELS)", sources["requests_in.py"])
-        self.assertNotIn("--force", re.search(r"\"label\", \"create\"[^\n]*\n[^\n]*", collab_source).group(0))
+        # A request's issue gets no label from Product Studio (M11): its progress is told by comments.
+        for word in ("--add-label", "--remove-label", "\"label\", \"create\"", "STATUS_LABELS", "GROOMING"):
+            self.assertNotIn(word, collab_source + sources["requests_in.py"], word)
         for source in sources.values():
             for word in ("--force", "\"-f\"", "--force-with-lease", "\"reset\"", "\"checkout\"", "\"switch\"", "\"rebase\"", "\"stash\"", "\"pull\"",
                          "\"clean\"", "--no-verify", "--no-gpg-sign", "--admin", "--auto", "runner.json", "read_local_policy", "run.py", "ticket-new",
@@ -214,11 +194,7 @@ class NothingIsWiredInTest(unittest.TestCase):
         for name in ("collab.py", "requests_in.py"):
             for word in ("reopen", "lock", "transfer"):
                 self.assertNotIn(word, re.sub(r"(?i)\bblock\w*|\bclock\w*|\blocal\w*", "", sources[name]), (name, word))
-        # A push names an exact commit and a branch under the product prefix; nothing else is pushed.
-        pushes = re.findall(r"git\([^\n]*\"push\"[^\n]*", "\n".join(sources.values()))
-        self.assertEqual(len(pushes), 1)
-        self.assertIn("refs/heads/{branch}", pushes[0])
-        self.assertIn("branch = studio.shared.prefix + wave_id", sources["studio.py"])
+        self.assertFalse(re.findall(r"git\([^\n]*\"push\"", "\n".join(sources.values())))  # nothing is ever pushed
 
     def test_the_hand_off_uses_only_the_gh_calls_it_is_meant_to(self):
         """M11: issues.py holds every GitHub call that saves a slice as an issue; handoff.py decides and

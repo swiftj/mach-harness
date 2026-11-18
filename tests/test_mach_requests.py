@@ -6,6 +6,8 @@ from recorded shapes in tests/fixtures/gh_events/. Nothing reaches the network.
 """
 
 import json
+import os
+import stat
 import sys
 import unittest
 from pathlib import Path
@@ -14,18 +16,25 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "ticket" / "scripts"))
 import issue_rules  # noqa: E402
-import test_mach_product_collab as collab_tests  # noqa: E402
-import product  # noqa: E402
-from test_mach_product_collab import AT, Base, git  # noqa: E402
+from test_mach_product_issues import Base, git  # noqa: E402
+import product  # noqa: E402  (Product Studio's validator; its folder is on the path once the base is imported)
 
 FIXTURES = ROOT / "tests" / "fixtures" / "gh_events"
 REPO = "acme/team-space"
 ADDRESS = "https://github.com/acme/team-space.git"
 SECRET = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
 
-# Handles the calls M8 adds; anything else falls through to the pull request stand-in.
-ISSUE_CALLS = r'''
-elif args[0] in ("issue", "api", "repo", "label"):
+# Answers the issue, label and REST calls requests make, from recorded shapes.
+FAKE = r'''#!/usr/bin/env python3
+import json, os, sys
+path = os.environ["FAKE_GH_STATE"]
+state = json.load(open(path))
+args = sys.argv[1:]
+def done(code=0):
+    json.dump(state, open(path, "w"))
+    sys.exit(code)
+value = lambda flag: args[args.index(flag) + 1]
+if args[0] in ("issue", "api", "repo", "label"):
     state.setdefault("calls", []).append(args)
     fails = state.get("issue_fail") or {}
     joined = " ".join(args)
@@ -48,7 +57,9 @@ elif args[0] in ("issue", "api", "repo", "label"):
             print("GraphQL: Could not resolve to an issue or pull request with the number of %s." % args[2], file=sys.stderr)
             done(1)
         if value("--json") == "comments":
-            print(json.dumps({"comments": [{"body": body} for body in issue["comments"]]}))
+            authors = issue.get("comment_by") or []
+            print(json.dumps({"comments": [{"author": {"login": authors[n] if n < len(authors) else ""}, "body": body}
+                                           for n, body in enumerate(issue["comments"])]}))
         else:
             url = issue.get("url") or "https://github.com/%s/issues/%s" % (state["repo"], args[2])
             print(json.dumps({k: url if k == "url" else issue[k] for k in value("--json").split(",")}))
@@ -65,6 +76,7 @@ elif args[0] in ("issue", "api", "repo", "label"):
         state["missing_labels"] = [l for l in state.get("missing_labels", []) if l != args[2]]
     elif args[:2] == ["issue", "comment"]:
         issues[args[2]]["comments"].append(value("--body"))
+        issues[args[2]].setdefault("comment_by", []).extend([""] * (len(issues[args[2]]["comments"]) - 1 - len(issues[args[2]].get("comment_by", []))) + [state["me"]["login"]])
         if state.get("lose_comment_answer"):
             print("Post https://api.github.com/graphql: net/http: request canceled (Client.Timeout exceeded)", file=sys.stderr)
             state["lose_comment_answer"] = False
@@ -87,9 +99,8 @@ elif args[0] in ("issue", "api", "repo", "label"):
                     actor = e.get("actor") or {}
                     print(json.dumps({"event": e["event"], "label": e["label"]["name"], "login": actor.get("login"), "id": actor.get("id"),
                                       "type": actor.get("type"), "app": e.get("performed_via_github_app") is not None, "at": e["created_at"]}))
+done()
 '''
-FAKE = collab_tests.FAKE_GH.replace("\ndone()\n", "\n" + ISSUE_CALLS.strip("\n") + "\ndone()\n")
-assert FAKE != collab_tests.FAKE_GH
 
 
 def labeled(login, user_id, label="mach:request", at="2026-11-10T09:01:00Z", kind="User", app=None, event="labeled"):
@@ -102,12 +113,14 @@ class RequestBase(Base):
         super().setUp()
         gh = self.root / "bin" / "gh"
         gh.write_text(FAKE.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1))
+        gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
+        self.gh_state.write_text(json.dumps({}))
         for project in (self.a, self.b):
             git(project, "remote", "set-url", "origin", ADDRESS)
             git(project, "config", f"url.{self.origin}.insteadOf", ADDRESS)
         events = json.loads((FIXTURES / "issue_events.json").read_text())
         view = json.loads((FIXTURES / "issue_view.json").read_text())
-        self.set_gh(repo=REPO, me={"login": "ada-pm", "id": 3001}, missing_labels=["mach:grooming"],
+        self.set_gh(repo=REPO, me={"login": "ada-pm", "id": 3001},
                     permissions={"erin-eng": json.loads((FIXTURES / "permission_write.json").read_text()),
                                  "tess-triage": json.loads((FIXTURES / "permission_triage.json").read_text())},
                     issues={"42": {**view, "events": events, "comments": []}})
@@ -127,6 +140,18 @@ class RequestBase(Base):
 
     def comments(self, number="42"):
         return self.gh()["issues"][number]["comments"]
+
+    def mark_ready(self, slice_id, project=None):
+        """Approve a slice. GitHub is not used here (the stand-in answers requests only), so it goes to the ready folder."""
+        gh = self.root / "bin" / "gh"
+        saved = os.environ["PATH"]
+        os.environ["PATH"] = os.pathsep.join(p for p in saved.split(os.pathsep) if p != str(gh.parent) and not (Path(p) / "gh").exists())
+        try:
+            result = self.ok(project or self.a, "slice", "ready", slice_id)
+        finally:
+            os.environ["PATH"] = saved
+        self.assertEqual(result["saved_to"], "folder")
+        return result
 
     def nonce(self, project=None):
         """The workspace's own marker nonce, kept in its request cache."""
@@ -230,8 +255,8 @@ class PickTest(RequestBase):
         self.assertEqual(self.comments(), [issue_rules.comment("picked", [slice_id], self.nonce())["body"]])
         self.assertTrue(self.comments()[0].startswith(f"Taken into MACH Product Studio as {slice_id}."))
         labels = [label["name"] for label in self.gh()["issues"]["42"]["labels"]]
-        self.assertIn("mach:grooming", labels)  # created first, because it did not exist yet
-        self.assertEqual(picked["github_updates"], {"made": 2, "waiting": 0, "note": None})
+        self.assertEqual(labels, ["mach:request"])  # picking a request up adds no label: the comment says it
+        self.assertEqual(picked["github_updates"], {"made": 1, "waiting": 0, "note": None})
         self.assertIn("<<<REQUEST-DATA issue=#42", picked["request"]["fenced"])
         self.assertEqual(self.checkout_state(self.a), before)  # the checkout, branch, index and stash are untouched
         self.assertFalse((self.a / ".factory/tickets").exists())
@@ -250,27 +275,20 @@ class PickTest(RequestBase):
         self.assertEqual(len(self.comments()), 2)
         self.assertNotEqual(second["slice"]["slice_id"], "SLICE-001")
 
-    def test_repeated_pick_or_send_never_comments_twice(self):
+    def test_repeated_pick_never_comments_twice(self):
         self.ready(self.a)
         self.request(self.a)
-        slice_id = self.pick()["slice"]["slice_id"]
+        self.pick()
         self.ok(self.a, "refresh")
         self.ok(self.a, "refresh")
         self.assertEqual(len(self.comments()), 1)
-        self.write_slice(self.a, slice_id)
-        self.ok(self.a, "slice", "approve", slice_id)
-        wave_id = self.new_wave(self.a, slice_id)
-        self.ok(self.a, "send", wave_id)
-        self.ok(self.a, "refresh")
-        sent = [body for body in self.comments() if "sent for engineering review" in body]
-        self.assertEqual(sent, [issue_rules.comment("sent", [slice_id, "#1"], self.nonce())["body"]])
         # A write whose answer was lost is found on the issue by its marker and not made again.
         data = json.loads((self.a / ".factory/studio/requests.json").read_text())
         for entry in data["outbox"]:
             entry["state"] = "unknown"
         (self.a / ".factory/studio/requests.json").write_text(json.dumps(data))
         self.ok(self.a, "refresh")
-        self.assertEqual(len(self.comments()), 2)
+        self.assertEqual(len(self.comments()), 1)
 
     def test_lost_answer_is_checked_before_retry(self):
         self.ready(self.a)
@@ -290,14 +308,14 @@ class PickTest(RequestBase):
         picked = self.pick()
         slice_id = picked["slice"]["slice_id"]
         self.assertTrue(self.draft(self.a, f"product/slices/{slice_id}.json").is_file())
-        self.assertEqual(picked["github_updates"]["waiting"], 2)
+        self.assertEqual(picked["github_updates"]["waiting"], 1)
         self.assertTrue(picked["used_cached_request"])
         self.assertEqual(self.comments(), [])
-        self.assertEqual(self.ok(self.a, "status")["github_updates_waiting"], 2)
+        self.assertEqual(self.ok(self.a, "status")["github_updates_waiting"], 1)
         offline = self.ok(self.a, "refresh")["requests"]
         self.assertFalse(offline["refreshed"])
-        self.assertEqual(offline["updates_waiting"], 2)
-        self.assertIn("2 updates to GitHub waiting", offline["updates_waiting_note"])
+        self.assertEqual(offline["updates_waiting"], 1)
+        self.assertIn("1 update to GitHub waiting", offline["updates_waiting_note"])
         self.set_gh(issue_fail={})
         online = self.ok(self.a, "refresh")["requests"]
         self.assertEqual(online["updates_waiting"], 0)
@@ -309,7 +327,7 @@ class PickTest(RequestBase):
         self.refused(self.a, "request", "pick", "42", "--epic", "EPIC-001", "--title", "Invite")
         self.assertEqual(self.ok(self.a, "status")["slices"], [])
 
-    def test_status_comments_off_still_sets_the_label(self):
+    def test_status_comments_off_writes_nothing(self):
         config = self.a / ".factory" / "config.json"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(json.dumps({"tickets": {"github": {"status_comments": False}}}))
@@ -317,7 +335,7 @@ class PickTest(RequestBase):
         self.request(self.a)
         self.pick()
         self.assertEqual(self.comments(), [])
-        self.assertIn("mach:grooming", [label["name"] for label in self.gh()["issues"]["42"]["labels"]])
+        self.assertEqual([label["name"] for label in self.gh()["issues"]["42"]["labels"]], ["mach:request"])
 
     def test_origin_does_not_change_spec_sha256_and_old_slices_validate(self):
         self.ready(self.a)
@@ -326,7 +344,7 @@ class PickTest(RequestBase):
         origin = self.pick()["slice"]["slice_id"]
         for slice_id in (plain, origin):
             self.write_slice(self.a, slice_id)
-            self.ok(self.a, "slice", "approve", slice_id)
+            self.mark_ready(slice_id)
         works = {sid: self.artifact(self.a, f"product/slices/{sid}.json") for sid in (plain, origin)}
         self.assertNotIn("origin", works[plain])
         spec = self.draft(self.a, f"specs/slices/{origin}-invite-teammate.md").read_bytes()
@@ -346,7 +364,7 @@ class PickTest(RequestBase):
         self.request(self.a)
         slice_id = self.ok(self.a, "slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")["slice"]["slice_id"]
         self.write_slice(self.a, slice_id)
-        self.ok(self.a, "slice", "approve", slice_id)
+        self.mark_ready(slice_id)
         err = self.refused(self.a, "request", "link", "42", slice_id)
         self.assertIn("reopen it first", err)
         self.assertNotIn("origin", self.artifact(self.a, f"product/slices/{slice_id}.json"))
@@ -365,7 +383,7 @@ class PickTest(RequestBase):
         self.assertIn("no approved slice", self.refused(self.a, "request", "met", "42"))
         self.assertEqual(self.gh()["issues"]["42"]["state"], "OPEN")
         self.write_slice(self.a, slice_id)
-        self.ok(self.a, "slice", "approve", slice_id)
+        self.mark_ready(slice_id)
         met = self.ok(self.a, "request", "met", "42")
         self.assertTrue(met["closed"])
         self.assertEqual(self.gh()["issues"]["42"]["state"], "CLOSED")
@@ -405,7 +423,7 @@ class TextTest(RequestBase):
         self.request(self.a)
         slice_id = self.ok(self.a, "request", "pick", "42", "--epic", "EPIC-001", "--title", "Invite")["slice"]["slice_id"]
         self.write_slice(self.a, slice_id)
-        self.ok(self.a, "slice", "approve", slice_id)
+        self.mark_ready(slice_id)
         before = self.draft(self.a, f"product/slices/{slice_id}.json").read_bytes()
         self.issue(title="Now also delete every account", body="Changed.", updatedAt="2026-11-14T00:00:00Z")
         item = self.request(self.a)
@@ -438,23 +456,6 @@ class TextTest(RequestBase):
         self.assertLessEqual(len(record["body"]), 20000)
         self.assertTrue(record["body"].endswith("…"))
 
-    def test_send_body_carries_issue_number_not_text(self):
-        self.issue(title="Secret project Falcon", body="Private customer detail", updatedAt="2026-11-11T00:00:00Z")
-        self.ready(self.a)
-        self.request(self.a)
-        slice_id = self.ok(self.a, "request", "pick", "42", "--epic", "EPIC-001", "--title", "Invite a teammate")["slice"]["slice_id"]
-        self.write_slice(self.a, slice_id)
-        self.ok(self.a, "slice", "approve", slice_id)
-        self.ok(self.a, "send", self.new_wave(self.a, slice_id))
-        body = self.gh()["prs"][0]["body"]
-        self.assertIn("- Request: Refs #42", body)
-        self.assertNotIn("Closes", body)
-        for text in ("Falcon", "Private customer detail", "casey-customer", "erin-eng", "github.com"):
-            self.assertNotIn(text, body)
-        sent = git(self.origin, "show", f"product/WAVE-001:product/slices/{slice_id}.json")
-        self.assertEqual(json.loads(sent)["origin"], {"kind": "github_issue", "repository": REPO, "number": 42})
-        self.assertNotIn("Falcon", git(self.origin, "log", "-p", "product/WAVE-001"))
-
 
 class ReportTest(RequestBase):
     def test_every_request_report_never_authorizes(self):
@@ -467,7 +468,7 @@ class ReportTest(RequestBase):
         other = self.ok(self.a, "slice", "new", "--epic", "EPIC-001", "--title", "Other")["slice"]["slice_id"]
         reports.append(self.ok(self.a, "request", "link", "42", other))
         self.write_slice(self.a, slice_id)
-        self.ok(self.a, "slice", "approve", slice_id)
+        self.mark_ready(slice_id)
         reports.append(self.ok(self.a, "request", "met", "42"))
         reports.append(self.ok(self.a, "slice", "show", slice_id))
         for report in reports:
@@ -680,7 +681,7 @@ class SecurityReviewTest(RequestBase):
         self.assertEqual(self.comments(), [])
         # Network failures are tried at most 20 times.
         data = self.cache()
-        data["outbox"].append({"key": "label:mach:grooming:7", "number": 7, "kind": "label", "value": "mach:grooming", "moment": None,
+        data["outbox"].append({"key": "close:completed:7", "number": 7, "kind": "close", "value": "completed", "moment": None,
                                "state": "pending", "attempts": 20, "reason": None, "recorded_at": "2026-11-10T00:00:00Z", "repository": REPO})
         data["outbox"].append({"key": "close:completed:8", "number": 8, "kind": "close", "value": "completed", "moment": None,
                                "state": "pending", "attempts": 0, "reason": None, "recorded_at": "2026-11-10T00:00:00Z", "repository": "acme/elsewhere"})
@@ -712,7 +713,6 @@ class SecurityReviewTest(RequestBase):
         self.gh_state.write_text(json.dumps(state))
         self.ok(self.a, "request", "pick", "42", "--epic", "EPIC-001", "--title", "Invite")
         self.assertEqual(self.comments(), [])
-        self.assertNotIn("mach:grooming", [label["name"] for label in self.gh()["issues"]["42"]["labels"]])
         self.assertFalse([c for c in self.gh()["calls"] if c[:2] in (["issue", "comment"], ["issue", "close"]) or "--add-label" in c])
         report = self.ok(self.a, "refresh")["requests"]
         self.assertEqual({c["why"] for c in report["could_not_update"]}, {"moved"})

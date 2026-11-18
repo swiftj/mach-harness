@@ -1,0 +1,464 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://mach.local/schemas/release-readiness.v2.schema.json",
+ "title": "MACH release-readiness snapshot, version 2 (.factory/release/<release-id>/readiness.json)",
+ "description": "Written by run.py release qualify (skills/run/scripts/qualify.py). Deterministic: identical inputs give identical bytes (keys sorted, no wall-clock; the run's time is in run.json beside it). Version 2 (M11): an epic or a named list of slices (scope) in place of delivery waves; product acceptance per epic, read from the epic issue's acceptance comments.",
+ "type": "object",
+ "required": [
+  "schema",
+  "schema_version",
+  "release",
+  "scope",
+  "slices",
+  "acceptance_scenarios",
+  "commands",
+  "security",
+  "unresolved_blockers",
+  "incomplete",
+  "not_assessed",
+  "outcome_summary",
+  "checks",
+  "exceptions",
+  "exceptions_not_applied",
+  "human_approvals",
+  "product_acceptance",
+  "outcome"
+ ],
+ "additionalProperties": false,
+ "$defs": {
+  "status": {
+   "enum": [
+    "pass",
+    "fail",
+    "missing",
+    "not_run",
+    "not_configured"
+   ]
+  },
+  "sha": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "pattern": "^[0-9a-f]{64}$"
+  },
+  "commit": {
+   "type": "string",
+   "pattern": "^[0-9a-f]{40}$"
+  },
+  "command": {
+   "type": "object",
+   "required": [
+    "command",
+    "source",
+    "status",
+    "exit_code"
+   ],
+   "properties": {
+    "command": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "source": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "status": {
+     "$ref": "#/$defs/status"
+    },
+    "exit_code": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    }
+   }
+  },
+  "exception": {
+   "type": "object",
+   "required": [
+    "release_id",
+    "check",
+    "commit",
+    "by",
+    "reason",
+    "recorded_at"
+   ],
+   "properties": {
+    "release_id": {
+     "type": "string"
+    },
+    "check": {
+     "type": "string"
+    },
+    "commit": {
+     "type": "string"
+    },
+    "by": {
+     "type": "string",
+     "pattern": "^[a-z][a-z0-9-]{1,39}$",
+     "description": "a role, never a name"
+    },
+    "reason": {
+     "type": "string"
+    },
+    "recorded_at": {
+     "type": "string"
+    },
+    "recorded_by": {
+     "type": "string"
+    },
+    "not_applied_because": {
+     "type": "string"
+    }
+   }
+  }
+ },
+ "properties": {
+  "schema": {
+   "const": "mach.release-readiness"
+  },
+  "schema_version": {
+   "const": 2
+  },
+  "release": {
+   "type": "object",
+   "required": [
+    "release_id",
+    "commit",
+    "integration_branch"
+   ],
+   "properties": {
+    "release_id": {
+     "type": "string"
+    },
+    "commit": {
+     "$ref": "#/$defs/commit"
+    },
+    "integration_branch": {
+     "type": "string"
+    }
+   }
+  },
+  "scope": {
+   "type": "object",
+   "required": [
+    "epic",
+    "slices",
+    "issues_not_taken_in"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "epic": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "required": [
+      "epic_id",
+      "issue"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "epic_id": {
+       "type": "string",
+       "pattern": "^EPIC-[0-9]{3,}$"
+      },
+      "issue": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "minimum": 1
+      }
+     },
+     "description": "The epic qualified, or null for a named list of slices."
+    },
+    "slices": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "pattern": "^SLICE-[0-9]{3,}$"
+     }
+    },
+    "issues_not_taken_in": {
+     "type": "array",
+     "items": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "description": "Slice issues the epic lists that this Factory never took in."
+    }
+   }
+  },
+  "slices": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "slice_id",
+     "issue",
+     "epic_id",
+     "revision",
+     "spec_path",
+     "spec_sha256",
+     "ticket_id",
+     "dependencies",
+     "integration",
+     "verification",
+     "review",
+     "contracts"
+    ],
+    "properties": {
+     "integration": {
+      "type": "object",
+      "required": [
+       "status",
+       "commit",
+       "established_by",
+       "recorded_in"
+      ]
+     },
+     "verification": {
+      "type": "object",
+      "required": [
+       "verdict",
+       "head",
+       "source"
+      ]
+     },
+     "review": {
+      "type": "object",
+      "required": [
+       "decision",
+       "risk",
+       "round",
+       "approved_commit",
+       "human_approval_required",
+       "source"
+      ]
+     },
+     "contracts": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "path",
+        "sha256_at_release",
+        "sha256_approved"
+       ]
+      }
+     }
+    }
+   }
+  },
+  "acceptance_scenarios": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "slice_id",
+     "scenario_id",
+     "status",
+     "evidence"
+    ],
+    "properties": {
+     "scenario_id": {
+      "type": "string",
+      "pattern": "^AC-[0-9]+$"
+     },
+     "status": {
+      "$ref": "#/$defs/status"
+     },
+     "evidence": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "file",
+        "sha256",
+        "matches_summary"
+       ]
+      }
+     }
+    }
+   }
+  },
+  "commands": {
+   "type": "object",
+   "required": [
+    "test_suite",
+    "integration_tests",
+    "performance"
+   ],
+   "additionalProperties": {
+    "$ref": "#/$defs/command"
+   }
+  },
+  "security": {
+   "type": "object",
+   "required": [
+    "open_review_blockers",
+    "scanner_reports",
+    "scanner_reports_ignored"
+   ]
+  },
+  "unresolved_blockers": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "failing checks with no exception"
+  },
+  "incomplete": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "required checks not shown to pass (missing, not_run, not_configured) with no exception"
+  },
+  "not_assessed": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "optional checks that did not run, such as performance with no command declared"
+  },
+  "checks": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "kind",
+     "status",
+     "required",
+     "detail"
+    ],
+    "properties": {
+     "kind": {
+      "enum": [
+       "product",
+       "slice",
+       "scenario",
+       "contract",
+       "dependency",
+       "test",
+       "security",
+       "review"
+      ]
+     },
+     "status": {
+      "$ref": "#/$defs/status"
+     },
+     "required": {
+      "type": "boolean"
+     },
+     "detail": {
+      "type": "string"
+     },
+     "exception": {
+      "type": "object"
+     }
+    }
+   }
+  },
+  "exceptions": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/exception"
+   }
+  },
+  "exceptions_not_applied": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/exception"
+   }
+  },
+  "human_approvals": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "kind",
+     "subject",
+     "by",
+     "at",
+     "source"
+    ]
+   }
+  },
+  "product_acceptance": {
+   "type": "object",
+   "required": [
+    "decision",
+    "epic"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "decision": {
+     "enum": [
+      "accepted",
+      "rejected",
+      "not_recorded"
+     ]
+    },
+    "reason": {
+     "type": "string",
+     "description": "Why nothing is recorded."
+    },
+    "by": {
+     "type": "string",
+     "description": "The GitHub account that wrote the deciding comment."
+    },
+    "at": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "readiness_sha256": {
+     "type": "string",
+     "pattern": "^[0-9a-f]{64}$",
+     "description": "The snapshot the decision was made against, as the comment states it; recorded, not enforced."
+    },
+    "source": {
+     "type": "string"
+    },
+    "epic": {
+     "type": [
+      "object",
+      "null"
+     ]
+    },
+    "ignored": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "by",
+       "why"
+      ]
+     },
+     "description": "Acceptance comments that do not count, with why."
+    }
+   }
+  },
+  "outcome_summary": {
+   "type": "string",
+   "description": "the outcome and, when any optional check was not assessed, which and why, such as 'qualified; not assessed: performance (not configured)'"
+  },
+  "outcome": {
+   "enum": [
+    "qualified",
+    "qualified_with_exceptions",
+    "blocked",
+    "incomplete"
+   ]
+  }
+ }
+}

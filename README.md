@@ -90,7 +90,7 @@ A request can start as a GitHub issue labelled `mach:request`; Product Studio sh
   at a time, per slice
   mark a slice ready
   (saved as a GitHub issue
-  under its epic)  ─────────────►  take the work in  ───────────►  one ticket per slice
+  under its epic)  ─────────────►  take the work in  ───────────►  the issue is the ticket
                                    dispatch what is ready           groom ► plan ► build ► verify
                                                                     ► review ► merge ► clean up
                                    approve high-risk changes  ◄──  stops wherever a person is needed
@@ -186,16 +186,17 @@ An interrupted run loses nothing. Run the same command again and it resumes at t
 
 ### Approved product work
 
-When a product manager's wave has been merged:
+When a product manager marks a slice ready, it arrives as a GitHub issue (or, without GitHub, as a `product/ready/SLICE-NNN/` folder):
 
 ```
-/mach product status      what is approved and merged; changes nothing
-/mach product intake      file one ticket per new slice
+/mach product status      what is marked ready, and what is not accepted and why; changes nothing
+/mach product intake      take each new slice revision in, once (the issue is its ticket)
 /mach product plan        what is ready, active, blocked, and why
-/mach product dispatch SLICE-001
+/mach product dispatch 41 the slice of issue #41, or its slice ID
+/mach product import <folder>   a ready folder handed to you outside Git
 ```
 
-Dispatch opens the cell and stops; `/mach <ticket>` then runs it. Nothing is dispatched without your command.
+Dispatch opens the cell and stops; `/mach <ticket>` then runs it. Nothing is dispatched without your command, except by the supervisor on a machine where you enabled it. The Factory tells the slice's issue as it goes: building, a question for the product manager, shipped (and closed once merged).
 
 ### Several tickets at once
 
@@ -236,10 +237,10 @@ Run `/mach floor`, or say "open the Factory Floor". It opens a read-only view in
 ### Releasing
 
 ```
-/mach release qualify WAVE-001
+/mach release qualify --epic EPIC-001
 ```
 
-It checks, at one exact commit, that every slice in the wave is merged, verified and reviewed, reruns the tests, and writes a readiness snapshot. It never tags or deploys.
+It checks, at one exact commit, that every slice of the epic (or of a list of slices you name) is merged, verified and reviewed, reruns the tests, and writes a readiness snapshot. The product manager records acceptance as a comment on the epic's issue. It never tags or deploys.
 
 Full guide: [Engineer Guide](docs/guides/ENGINEER_GUIDE.md).
 
@@ -337,9 +338,9 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach adr except <ticket> <ADR-NNNN> "<why>"` | Let one ticket depart from an accepted ADR, with your reason |
 | `/mach adr accept <ticket> <ADR-NNNN>` | Accept the ADR a ticket proposes, on that ticket's branch |
 | `/mach audit` | The repository's readiness tier |
-| `/mach product status\|intake\|plan\|dispatch` | Take approved product work into the factory |
+| `/mach product status\|intake\|import\|plan\|dispatch` | Take slices marked ready into the factory |
 | `/mach factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
-| `/mach release status\|qualify\|show` | Is a wave ready to release, at one commit |
+| `/mach release status\|qualify\|show` | Is an epic, or a set of slices, ready to release, at one commit |
 | `/mach-intent <ticket or idea>` | The interview, spec, contracts and plan; `--headless` when no person can answer |
 | `/mach-build <ticket>` | Build test-first inside the cell |
 | `/mach-verify <ticket>` | Prove the built slice with captured evidence |

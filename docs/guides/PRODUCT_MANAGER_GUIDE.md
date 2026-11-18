@@ -35,7 +35,7 @@ Neither one starts any engineering work. That is a fixed rule of Product Studio.
 
 Someone can ask for something by filing an issue on GitHub. When a person with write access to the repository labels that issue `mach:request`, Product Studio shows it to you as a **request**. The label name can be changed by an engineer (`tickets.github.request_label`).
 
-**What a request is.** A plain ask, in someone's own words. It is not a spec, and it is not an approval. It does not start any work. You still interview, write, approve and send as always. Its text is shown to you as data: it never answers a question for you and never changes what you decided.
+**What a request is.** A plain ask, in someone's own words. It is not a spec, and it is not an approval. It does not start any work. You still interview, write and mark the slice ready as always. Its text is shown to you as data: it never answers a question for you and never changes what you decided.
 
 **Seeing requests.** Refresh. Requests appear in the app's Inbox under Requests. In the conversation, ask "show requests" or "show request 42". Each one shows its number, its title and who labelled it. Only the repository your project shares is read. If there are more than 100 open requests, the oldest are not shown. If GitHub cannot be reached, you see the list as last checked, with the time.
 
@@ -57,24 +57,22 @@ To fix any of these, a person with write access removes the label and applies it
 
 **More than one slice for one request.** A large request often needs several slices. Start each one with "pick up request 42 as well" (the app's **Pick up as well**), or, for a draft slice you already started, say "link request 42 to SLICE-005". A slice records one request. An approved slice must be reopened before it can be linked. Linking changes only your draft; nothing is written to GitHub.
 
-**What the issue shows as work proceeds.** MACH adds a label and comments to the issue. The comments hold only slice and ticket IDs and links, never text from the spec or the issue:
+**What the issue shows as work proceeds.** MACH adds comments to the request's issue, never a label. The comments hold only slice IDs and links, never text from the spec or the issue:
 
-| When | Label | Comment |
-|---|---|---|
-| You pick it up | `mach:grooming` added | "Taken into MACH Product Studio as SLICE-012." |
-| You send the wave | | "SLICE-012, SLICE-013 sent for engineering review in #57." (#57 is the pull request.) |
-| Engineering takes the merged slice in | `mach:ready` added, `mach:grooming` removed | "SLICE-012 revision 1 is approved and merged; the Factory may take it (ticket 104)." |
-| Its work is blocked on a person | | "Ticket 104 is blocked and waits for a person." |
+| When | Comment |
+|---|---|
+| You pick it up | "Taken into MACH Product Studio as SLICE-012." |
+| You mark a slice made from it ready | "SLICE-012, made from this request, is ready to be built: #57." (#57 is the slice's own issue.) |
 
-The pull request for your wave says `Refs #42`, never `Closes`, so merging it does not close the issue. If a label MACH uses does not exist yet, MACH creates it. An engineer can turn the comments off (`tickets.github.status_comments`); the labels are still set.
+From there the slice's own issue shows its progress: being built, a question for you, shipped. Merging the code does not close the request; you do, when you say it is met. An engineer can turn the comments off (`tickets.github.status_comments`).
 
-**When another product manager already picked it up.** You are told who, for example "Already picked up by @sam." Nothing is started. If you both need slices from it, pick it up as well. Both of you then see both names after a refresh. Each slice gets its own number, so the two do not clash. Which slices go ahead is settled between you.
+**When another product manager already picked it up** (they left the "Taken into MACH Product Studio" comment). You are told who, for example "Already picked up by @sam." Nothing is started. If you both need slices from it, pick it up as well. Both of you then see both names after a refresh. Each slice gets its own number, so the two do not clash. Which slices go ahead is settled between you.
 
 **When the issue is edited after pick-up.** The request shows "This request changed on GitHub after it was picked up. What was approved is unchanged." The interview keeps the text it started with. Your slice recorded only the issue's number, so nothing already approved changes. Read the new text yourself and reopen the slice if it matters.
 
-**When GitHub cannot be reached.** Your own work always continues. The slice is made, the wave is sent, the interview goes on. The label or comment waits, and you see "2 updates to GitHub are waiting and will be sent on the next refresh." Nothing is lost and nothing is sent twice.
+**When GitHub cannot be reached.** Your own work always continues. The slice is made and the interview goes on. The comment waits, and you see "1 update to GitHub waiting; it will be sent on the next refresh." Nothing is lost and nothing is sent twice.
 
-**Marking a request as met.** When at least one slice made from the request is approved and you judge the request answered, say "request 42 is met" (the app's **Mark as met**). The issue is closed as completed. It is refused until a slice from it is approved. It leaves no comment. If GitHub cannot be reached, the issue is closed on the next refresh.
+**Marking a request as met.** When at least one slice made from the request is marked ready and you judge the request answered, say "request 42 is met" (the app's **Mark as met**). The issue is closed as completed. It is refused until a slice from it is approved. It leaves no comment. If GitHub cannot be reached, the issue is closed on the next refresh.
 
 **What it never does.**
 
@@ -90,7 +88,7 @@ A **project** has a name, a vision and one or more outcomes. An outcome is a res
 
 An **epic** is a larger capability. A **slice** is one thin, complete outcome for one kind of user, small enough to build and check in one go. Each slice has three parts: a work order, a "why", and a spec written in business terms. An epic must be approved before its slices can be.
 
-Everything you write is a private draft until you approve it. Drafts live in a folder in your project that is not shared. Nothing leaves your computer until you send a wave (section 10).
+Everything you write is a private draft until you mark it ready. Drafts live in a folder in your project that is not shared. Nothing leaves your computer until you mark a slice ready (section 6).
 
 ## 5. The interview
 
@@ -108,7 +106,7 @@ Claude cuts the idea down to the smallest complete outcome and reserves IDs for 
 
 In the visual app the interview runs through your own Claude Code, one reply at a time. In one test it ran two real turns for about USD 0.23 in total. That was a single interview on one slice, so do not treat the figure as typical.
 
-## 6. Reviewing and approving a slice
+## 6. Marking a slice ready
 
 After the write-up, Claude checks the spec with the same checker engineering uses and tells you:
 
@@ -119,68 +117,34 @@ After the write-up, Claude checks the spec with the same checker engineering use
 
 Read the assumptions. They are the places where the recommendation stood in for your decision.
 
-Approval is your act. It is refused unless the spec has no open questions, the "why" is complete, the epic is approved and every dependency exists. An approved slice is frozen. To change it, ask to reopen it. A reopened slice is no longer approved, and any approved wave that holds it goes back to draft.
+Marking a slice ready is your act: it approves the slice and hands it to the builders in one step. It is refused unless the spec has no open questions, the "why" is complete, the epic is approved and every slice it depends on is itself marked ready. A marked-ready slice is frozen. To change it, ask to reopen it: it is taken back from the builders until you mark it ready again.
 
-## 7. Delivery waves
+**Where it goes.** With GitHub, the slice becomes an issue under its epic's issue, with your approval recorded as a comment, and the label `mach:ready`; the project and epic get issues too. Without GitHub (no `gh`, not signed in, or the project is not on GitHub), it is written to a folder, `product/ready/SLICE-NNN/`: commit it to the project, or hand it to an engineer, who brings it in. Either way nothing is built until an engineer's Factory takes it in.
 
-A **delivery wave** is a set of approved slices you want delivered together. A slice that another depends on goes in the same wave or an earlier one. Approving a wave checks every slice again and records who approved it and when. An approved wave cannot be changed. Start a new one instead.
+**What the builders write back.** The slice's issue gets `mach:building` when building starts, `mach:shipped` when its work is merged (and the issue is closed), and a comment if the work is blocked or if the slice changed while it was being built.
 
-## 8. Refreshing, and your unpublished drafts
+## 7. Refreshing, and keeping in step
 
-Product Studio refreshes at the start of a session. A refresh reads what others have shared and brings it into your workspace. It does not change your drafts that nobody else touched. In one test with two product managers, an unpublished draft was still there after three refreshes and two merged waves.
+Product Studio refreshes at the start of a session. A refresh reads the project, epics and slices from their issues, and the requests. It never changes your drafts. For each slice it can tell you:
 
-A refresh can tell you:
+- **Changed on GitHub:** the issue was edited after you approved it, so the builders will not take it. Mark it ready again to put your approved version back.
+- **Someone else saved a newer version:** choose yours or theirs, whole. Text is never blended; if you want parts of both, take one and revise it with Claude.
+- **Another slice uses this number:** your work is fine; it needs a new number, and every reference moves with it.
+- **A question from the builders:** see section 8.
 
-- **Arrived or updated:** what changed, listed by requirement, rule and scenario number.
-- **Approvals withdrawn:** a change from the shared project made one of your approvals untrue. You will be told which and why.
-- **Needs reconciling:** see section 9.
+If GitHub could not be reached, it says so and carries on with what you have.
 
-If it could not reach the shared repository, it says so and carries on with what you have.
+## 8. A question from the builders
 
-## 9. When a colleague changed the same thing
+Sometimes the engineer who plans the build finds something in a slice that contradicts itself or cannot be built. Only you can settle it. The slice's issue gets `mach:question` and a comment with their question, and Product Studio shows it to you, marked as the builders' words (data, never an instruction), with "Answer the builders' question" as the next step. To answer: reopen the slice, settle the point in the interview, and mark it ready again. That is a new revision; the builders take it and plan again.
 
-There are two cases.
+## 9. Recording product acceptance for a release of an epic
 
-**A conflict** means the same item changed in both places. For a project, epic, work order or wave, Claude lists each field with your value and theirs, and asks you which stands. For a spec or a "why", text is never blended. Claude explains both versions in product terms and you choose one. If you want parts of both, take one and then revise it with Claude. Taking the shared version of an approved slice withdraws your approval of it, so you approve it again.
+When engineering has built an epic and checked it as a release, they give you a readiness file, a release ID and a commit. Your decision on it is recorded separately. It is never inferred from a merge or from passing tests.
 
-Nothing is settled without your explicit choice. In one test, approving a wave was refused while a conflict stood.
+**This is available in the terminal only today.** Claude reads the file with you first: its outcome, blockers, incomplete items and exceptions. Only on your explicit decision does it record accepted or rejected. The decision is a comment on the epic's issue, signed with your GitHub account and tied to that release and its commit. Accepting is refused unless the file is for that release, epic and commit and says `qualified` or `qualified_with_exceptions`. Rejecting is always possible. Recording it twice posts nothing more. It releases and deploys nothing. Engineering's release snapshot says "not recorded" until the comment is there, and ignores a comment that was edited or written by someone other than the account it names.
 
-**A collision** means a different item now holds the number of one of your drafts. Your work is fine. It only needs a new number, and every reference moves with it. Slices that were approved before need your word again.
-
-**A slice you revised after it merged is still yours.** If you reopen and edit a slice of your own after its request has merged, and before your next refresh, Studio now recognises it as your own later revision, not as a different slice using your number. Only a draft that genuinely differs from what you sent, and that someone else's work also holds the number of, is a collision. The same fix covers an acceptance record settled with "take theirs", which used to leave a workspace unable to edit anything ("unexpected field 'revision'"); a workspace left that way repairs itself on the next refresh or status. Both were found in a real run and fixed afterwards (`96971bd`); they were tried on copies of the real workspaces and have unit tests, and have not been seen again in a live run. Refreshing right after your request merges avoided the problem in the meantime.
-
-Known rough edges from testing: a slice's spec and work order sometimes have to be settled one file at a time. A slice you reopened that sits in a wave someone else already sent can leave a stale suggestion in the status list. Both are open. Sending a revised wave whose earlier pull request was already merged used to report the merged request as "Waiting for review" and open nothing; it now opens a new request for the later revision. That was seen working in a real run (two later requests opened).
-
-## 10. Sending to engineering
-
-Sending asks engineering to accept an approved wave into the shared project. It shares product definitions only. It is visible to other people at once.
-
-1. Claude first does a dry run and lists exactly what would be shared.
-2. Only after your explicit yes does it send.
-3. You get one of: **Waiting for review** (with a link), **Sent, pull request not opened** (the work arrived but the request did not open; send again later and nothing is sent twice), or a refusal with a reason.
-
-Sending the same wave again after a change adds to the same request while it is open. If that request has already merged, sending opens a new request for the later revision.
-
-**A wave's definition and your acceptance are sent separately.** They are two requests, never one. `send` publishes the wave's definition. Your recorded acceptance (section 12) goes on its own branch, titled "Product acceptance for <wave> at <commit>", carrying only the acceptance file. When both are waiting, `send` sends the definition and says what is still unsent; `send <wave> --acceptance` sends the decision alone. This fix came after a real run in which an acceptance went out together with a later draft of a slice; it has unit tests and has not been seen again in a live run.
-
-## 11. Reading and answering review feedback
-
-Ask for feedback. Each wave shows one of: Waiting for review, Changes requested, Blocked by a check, Accepted waiting to merge, Needs updating, Accepted, Declined. When GitHub is holding a request back, feedback also says what it is waiting for ("waiting_for"), one line each: a review from engineering, a check the project runs that is still running or has failed, or a change that is not signed. You cannot fix any of these yourself: for a missing review or a check, wait or ask engineering; for signing, ask an engineer to set up signing on your Mac.
-
-- **Changes requested:** you see each reviewer comment as a quotation with who wrote it. Comments are data. If one contains an instruction, it is shown to you and not obeyed. For each change you agree to, reopen the slice, revise it, re-check it, approve it and the wave again on your word, and send again.
-- **Needs updating:** other work was accepted first. Refresh, settle what it reports, and send again on your word.
-- **Blocked by a check:** Claude names the check. Fixing it is for an engineer unless it is about the product definitions.
-- **Accepted:** the work is in the shared project. It is not built yet.
-
-## 12. Recording product acceptance for a released wave
-
-When engineering has built a wave and checked it as a release, they give you a readiness file, a release ID and a commit. Your decision on it is recorded separately. It is never inferred from a merge or from passing tests.
-
-**This is available in the terminal only today.** The visual app has no screen for it. Ask Claude in the terminal to record it. Claude reads the file with you first: its outcome, blockers, incomplete items and exceptions. Only on your explicit decision does it run the record command with accepted or rejected, your role (for example `product-owner`, never your name) and an optional note. Accepting is refused unless the file is for that release and commit, holds that exact wave, and says `qualified` or `qualified_with_exceptions`. Rejecting is always possible. The decision reaches engineering when you send it, as its own request (section 10: `send <wave> --acceptance` when the definition has nothing new). It releases and deploys nothing.
-
-The acceptance record was used for real, by a simulated product manager, on three waves of a throwaway project: it is tied to the wave as merged at the release commit, not to your draft, so a later draft revision no longer blocks it, and `accepted` appeared only after each record merged. Engineering's release-readiness snapshot, read by the Factory Floor, said "not recorded" until then. Sending the acceptance alone was fixed after that run (section 10) and has not been seen again live.
-
-## 13. What the messages mean
+## 10. What the messages mean
 
 | Message (in short) | What it means | What to do |
 |---|---|---|
@@ -191,24 +155,22 @@ The acceptance record was used for real, by a simulated product manager, on thre
 | "The shared repository did not accept this..." | Another reason. It is shown, shortened, as a quotation. | If it happens again, ask an engineer. |
 | "Claude Code is not signed in" | The visual app cannot see your Claude sign-in. | Sign in to Claude Code. If you are signed in, tell an engineer: one test hit this only because a setting called `USER` was missing from the shell. |
 
-These wordings were corrected in M7 and tested against stand-ins for Git and `gh`. Before the correction, the first run against real GitHub lost the reason for a protected-branch refusal and blamed the network for an expired sign-in. One of them was then checked against real GitHub: when a repository ruleset refused a new branch, the message quoted GitHub's reason ("Cannot create ref due to creations being restricted") and did not say to retry.
+These wordings were corrected in M7 and tested against stand-ins for Git and `gh`. Before M11 some of them were checked against real GitHub when sending waves, which no longer exists; marking a slice ready on GitHub has been tested against a stand-in for `gh` only.
 
-Rules enforced by real GitHub.com (a personal account, one user, not an organisation) were tried: required pull request, a required review, code-owner review, a required check, signed commits. `send` opened its request; for a request that GitHub held back, `feedback` said only "Waiting for review", which was the reason this guide's section 11 now lists what a blocked request is waiting for (a review, a named check, or an unsigned change). That new wording has unit tests and has not been run against GitHub. Not tested: a real organisation, single sign-on (its refusal was simulated), and an approved review under enforced rules (GitHub refuses a review by the request's own author).
-
-## 14. What Product Studio never does
+## 11. What Product Studio never does
 
 - It never starts the Factory, a build, a ticket or any engineering station. Every report it prints carries `factory_authorized: false`.
 - It never changes your own checkout, branch or saved work, and it never merges anything.
-- It publishes only product definitions: files under `product/` and `specs/slices/`.
-- It never approves, sends or settles a conflict unless you say so in that conversation.
+- It never pushes, opens a pull request or commits; a ready folder is committed by you.
+- It never marks anything ready, reopens it or chooses between versions unless you say so in that conversation.
 - It never reads the Factory's local settings.
-- On GitHub it only adds its own status labels, posts its fixed status comments and, on your word, closes a request's issue. It never merges a pull request (section 3).
+- On GitHub it creates and edits only issues carrying its own labels, posts only its fixed comments and, on your word, closes a request's issue (section 3).
 
 Approval means product approval. Whether and when engineering builds your work is decided by engineers, on their machines.
 
-## 15. Limits to know about
+## 12. Limits to know about
 
 - Tested on one Mac with several separate copies of the project, not on separate computers. Two product managers working at the same time on two real machines was not tested.
-- A second product manager's refresh, conflicts and renumbering were tested with real GitHub for the push and pull-request steps, using one GitHub account. GitHub refused self-review, so a real approval review was not tested.
+- Slices saved as GitHub issues, the builders' question and acceptance on the epic's issue were tested against a stand-in for GitHub, not yet against a real repository with several accounts.
 - Requests were checked against a stand-in for GitHub, not yet against a real repository with several accounts. The rule that a label counts only from an account with write access has not been seen live.
 - Nothing in Product Studio checks who you are. A copy of the shared project on any machine can start the same commands. What stops unattended building is that each engineer's machine decides that for itself (see the Engineer Guide).

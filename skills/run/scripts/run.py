@@ -17,19 +17,19 @@ and not by whoever is driving it.
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
     run.py review-tally <ticket>         count the review votes
     run.py where                         where this script and the project are (used by the workflow)
-    run.py product status                approved product work on the integration branch, against what was taken in
-    run.py product intake [--dry-run]    take approved delivery waves in: one ticket per new slice, never twice
+    run.py product status                slices marked ready (issues and folders) against what was taken in
+    run.py product intake [--dry-run]    take ready slices in: each revision once; an issue is its own ticket
+    run.py product import <folder>       take in a ready folder handed over outside Git (an engineer's command)
     run.py product plan                  the dependency-aware plan: what is ready, blocked, active or done, and why
     run.py product dispatch <slice>...   open the cells for chosen ready slices (or --ready); starts nothing
     run.py product events [--since N]    the intake ledger's transitions, for a supervisor or a dashboard
-    run.py product resolve <slice> --supersede-in-work "<why>"
-                                         a person's decision: the revision in work is superseded, the new one gets a ticket
     run.py product reconcile [--fetch]   intake and a recorded plan in one locked step; never dispatches
     run.py adr list                      every architecture decision: ID, title, status, applies-to, problems; reads only (adr.py)
     run.py adr new --title T --context C --decision D [--option O]... [--consequence X]... [--applies-to A]...
                                          write a new ADR as proposed in the main checkout's working tree; commits nothing
     run.py release status                release-readiness snapshots so far, and what a new one would evaluate
-    run.py release qualify <WAVE>...     evaluate the integration branch at one commit; write .factory/release/<id>/readiness.json
+    run.py release qualify --epic E | <SLICE>...
+                                         evaluate an epic or named slices at one commit; write .factory/release/<id>/readiness.json
     run.py release show <release-id>     a readiness snapshot, its exceptions and when it was taken
     run.py release except ...            a person's exception for one check at the snapshot's commit; only on their explicit word
     run.py factory status                what is in force on this machine and what the supervisor is doing; changes nothing
@@ -277,6 +277,10 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     flag = " --headless" if headless else ""
     groom_prompt = f"Use the MACH intent skill: {skill('intent')} {ticket_id}{flag}"
     if not isinstance(cell, dict):
+        waiting = handed_over(project, ticket_id)
+        if waiting:
+            return step(ticket_id, None, "stop", f"{waiting} was handed over by Product Studio and is not groomed again. It waits to be dispatched "
+                        f"(product dispatch {waiting}), which the Factory does on an enabled machine.", needs="dispatch")
         finished = project.finished(ticket_id)
         if finished:
             return step(ticket_id, None, "stop", finished, needs="nothing")
@@ -296,6 +300,10 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         return step(ticket_id, stage, "groom", "The spec has open questions; the interview continues with a person.", model=project.model("planning"),
                     prompt=groom_prompt, interactive=True)
     if stage == "spec-ready":
+        question = cell.get("spec_question")
+        if isinstance(question, dict):
+            return step(ticket_id, stage, "stop", "The contract engineer found a defect in the spec that only the product manager can settle. "
+                        "The question is on the slice's issue; their answer comes back as a new revision of the slice.", needs="product-answer")
         conflict = cell.get("adr_conflict")
         if isinstance(conflict, dict):
             return step(ticket_id, stage, "stop", f"The plan cannot follow {conflict.get('adr')}, an accepted architecture decision: {conflict.get('reason')}",
@@ -400,10 +408,24 @@ def resolve_ticket(given: str, known: Iterable[str], native_numbers: bool = Fals
     return found_id, (given if found_id != given else None)
 
 
+def handed_over(project: Project, ticket_id: str) -> Optional[str]:
+    """The slice a ticket carries when the intake ledger took it in from Product Studio and it has no cell yet."""
+    ledger = load_json(project.root / ".factory" / "intake" / "ledger.json", {}) or {}
+    slices = ledger.get("slices") if isinstance(ledger, dict) and ledger.get("schema_version") == 2 else None
+    for slice_id, entry in (slices or {}).items():
+        if (isinstance(entry, dict) and str(entry.get("ticket_id")) == ticket_id and not entry.get("pending_ticket") and not entry.get("integrated")
+                and not entry.get("dispatched_at")):
+            return slice_id
+    return None
+
+
 def known_tickets(project: Project) -> List[str]:
-    """Every ticket ID this project knows locally: open cells, local tickets and inbox records."""
+    """Every ticket ID this project knows locally: open cells, local tickets, inbox records and the intake ledger's tickets."""
     factory = project.root / ".factory"
-    names = [path.name for path in (factory / "worktrees").iterdir() if path.is_dir()] if (factory / "worktrees").is_dir() else []
+    ledger = load_json(factory / "intake" / "ledger.json", {}) or {}
+    slices = ledger.get("slices") if isinstance(ledger, dict) and isinstance(ledger.get("slices"), dict) else {}
+    names = [str(entry.get("ticket_id")) for entry in slices.values() if isinstance(entry, dict) and entry.get("ticket_id")]
+    names += [path.name for path in (factory / "worktrees").iterdir() if path.is_dir()] if (factory / "worktrees").is_dir() else []
     names += [path.stem for path in (factory / "tickets").glob("*.md")] if (factory / "tickets").is_dir() else []
     names += [path.stem for path in (factory / "inbox").glob("*.json")] if (factory / "inbox").is_dir() else []
     return sorted({name for name in names if TICKET_ID_RE.match(name)})
@@ -427,6 +449,8 @@ NEEDS_TEXT = {
     "repository-hardening": "Harden the repository first: its readiness tier is Bronze.",
     "person": "Dispatch this ticket on its own.",
     "worker-in-cell": "Another worker is already on this ticket's step: wait for it to finish, or say to take over.",
+    "dispatch": "Dispatch this slice (product dispatch), or let the Factory do it on an enabled machine.",
+    "product-answer": "The product manager answers the builders' question in Product Studio and marks the slice ready again.",
     "adr-decision": "Decide about an architecture decision the plan cannot follow: record an exception, or supersede the ADR and plan again.",
     "adr-acceptance": "Accept the architecture decision this High-risk ticket proposes, or not: the build waits for it.",
     "adr-fix": "Fix an architecture decision record the factory cannot read, by pull request.",
@@ -916,24 +940,20 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
     try:
         if args.action == "status":
             found = line.discover()
-            found.pop("_snapshot", None)
+            found.pop("_rows", None)
             plan = line.plan()
-            result = {**found, "plan_summary": {key: plan[key] for key in ("counts", "dispatchable", "waiting_for_a_place", "needs_person", "intake_is_current", "limits")},
-                      **line.request_status_summary(), "factory_started": False}
+            result = {**found, "plan_summary": {key: plan[key] for key in ("counts", "order", "dispatchable", "waiting_for_a_place", "needs_person", "intake_is_current", "limits")},
+                      **line.status_summary(), "factory_started": False}
         elif args.action == "intake":
             if args.fetch:
                 fetch(project)
-            adopt = {}
-            for pair in args.adopt or []:
-                slice_id, _, ticket_id = pair.partition("=")
-                if not slice_id or not TICKET_ID_RE.match(ticket_id):
-                    raise RunError(f"'{pair}' is not SLICE-ID=TICKET-ID.")
-                adopt[slice_id] = ticket_id
-            result = line.intake(dry_run=args.dry_run, adopt=adopt, reissue=args.reissue or [])
+            result = line.intake(dry_run=args.dry_run, reissue=args.reissue or [])
+        elif args.action == "import":
+            if execution_scope(project) is not None:
+                raise RunError("Importing a ready folder is an engineer's act, in conversation; a supervised execution does not import.")
+            result = line.import_folder(Path(args.folder).expanduser())
         elif args.action == "plan":
             result = line.plan()
-        elif args.action == "resolve":
-            result = line.resolve(args.slice_id, args.supersede_in_work)
         elif args.action == "reconcile":
             if args.fetch:
                 fetch(project)
@@ -960,7 +980,7 @@ def cmd_release(project: Project, args: argparse.Namespace) -> int:
         if args.action == "status":
             result = release.status()
         elif args.action == "qualify":
-            result = release.qualify(args.wave_ids, release_id=args.release, commit=args.commit)
+            result = release.qualify(args.slice_ids, epic=args.epic, release_id=args.release, commit=args.commit)
         elif args.action == "show":
             result = release.show(args.release_id)
         else:
@@ -1132,24 +1152,22 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=text)
         p.add_argument("ticket_id")
         p.set_defaults(func=func)
-    product = sub.add_parser("product", help="approved product work: take it in, plan it, dispatch it").add_subparsers(dest="action", required=True)
-    product.add_parser("status", help="approved waves on the integration branch against the intake ledger; reads only").set_defaults(func=cmd_product)
-    p = product.add_parser("intake", help="take approved delivery waves in: one ticket per new slice")
+    product = sub.add_parser("product", help="slices Product Studio marked ready: take them in, plan them, dispatch them").add_subparsers(dest="action", required=True)
+    product.add_parser("status", help="ready slice issues and folders against the intake ledger, and what is not accepted; reads only").set_defaults(func=cmd_product)
+    p = product.add_parser("intake", help="take ready slices in: a slice issue is its own ticket; a ready folder gets a local ticket")
     p.add_argument("--dry-run", action="store_true", help="show what would be taken in; change nothing")
     p.add_argument("--fetch", action="store_true", help="fetch from the shared repository first (never changes the checkout)")
-    p.add_argument("--adopt", action="append", metavar="SLICE-ID=TICKET-ID", help="use an existing ticket for a slice instead of filing one")
-    p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="file a fresh ticket for a slice whose ticket was abandoned")
+    p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="put a slice whose work was abandoned back in the queue, on the same ticket")
+    p.set_defaults(func=cmd_product)
+    p = product.add_parser("import", help="take in a ready folder handed over outside Git; only on an engineer's explicit command")
+    p.add_argument("folder", help="a product/ready/SLICE-NNN folder: slice.json, spec.md and why.md")
     p.set_defaults(func=cmd_product)
     product.add_parser("plan", help="the dependency-aware execution plan; reads only").set_defaults(func=cmd_product)
-    p = product.add_parser("resolve", help="settle a slice whose newer revision waits behind work in progress; only on a person's explicit instruction")
-    p.add_argument("slice_id")
-    p.add_argument("--supersede-in-work", required=True, metavar="WHY", help="supersede the revision in work, recording why; its cell and ticket are left untouched")
-    p.set_defaults(func=cmd_product)
     p = product.add_parser("reconcile", help="intake and a recorded plan in one locked step; never dispatches")
     p.add_argument("--fetch", action="store_true", help="fetch from the shared repository first (never changes the checkout)")
     p.set_defaults(func=cmd_product)
     p = product.add_parser("dispatch", help="open the cells for ready slices; starts no agent")
-    p.add_argument("slice_ids", nargs="*")
+    p.add_argument("slice_ids", nargs="*", help="slice IDs, or their issue numbers")
     p.add_argument("--ready", action="store_true", help="every slice the plan marks dispatchable")
     p.add_argument("--limit", type=int, help="dispatch at most this many")
     p.set_defaults(func=cmd_product)
@@ -1175,9 +1193,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     rel = sub.add_parser("release", help="release qualification: is the integrated capability ready, at one commit").add_subparsers(dest="action", required=True)
     rel.add_parser("status", help="readiness snapshots so far; changes nothing").set_defaults(func=cmd_release)
-    p = rel.add_parser("qualify", help="evaluate approved waves at one commit of the integration branch")
-    p.add_argument("wave_ids", nargs="+", metavar="WAVE-ID")
-    p.add_argument("--release", help="the release ID (default: the waves and the commit)")
+    p = rel.add_parser("qualify", help="evaluate an epic, or a named list of slices, at one commit of the integration branch")
+    p.add_argument("slice_ids", nargs="*", metavar="SLICE-ID", help="the slices to evaluate, or none with --epic")
+    p.add_argument("--epic", help="an epic: its ID (EPIC-001) or its issue number")
+    p.add_argument("--release", help="the release ID (default: the epic or the slices, and the commit)")
     p.add_argument("--commit", help="a commit on the integration branch (default: its local head)")
     p.set_defaults(func=cmd_release)
     p = rel.add_parser("show", help="one readiness snapshot; changes nothing")

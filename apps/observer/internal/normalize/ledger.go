@@ -71,7 +71,7 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 		redact.PeopleFor(l.Root).LearnJSON(line)
 	}
 	var in ledgerLine
-	if err := json.Unmarshal(line, &in); err != nil || in.SchemaVersion == nil || *in.SchemaVersion != 2 || in.Seq == nil || *in.Seq < 1 {
+	if err := json.Unmarshal(line, &in); err != nil || in.SchemaVersion == nil || intakeVersions[*in.SchemaVersion] == "" || in.Seq == nil || *in.Seq < 1 {
 		ev := gapEvent(event.ObserverID("gap", l.key, int(r.Line)), l.key, "unparsable-line", nil, nil, 1, nil, r)
 		ev.AnchorKey, ev.AnchorSeq = l.key, l.lastSeq
 		return []*event.Event{ev}
@@ -96,7 +96,7 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 	}
 	ev := newEvent(typ, event.StreamIntake, l.key, seq, "intake", event.Authoritative)
 	ev.ID = event.At(l.key, seq)
-	ev.Origin.SourceVersion = IntakeVersion
+	ev.Origin.SourceVersion = intakeVersions[*in.SchemaVersion]
 	if w := enum(in.Source, "intake", "engineer", "supervisor"); w != nil {
 		ev.Origin.Writer = w.(string)
 	}

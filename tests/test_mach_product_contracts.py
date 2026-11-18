@@ -43,20 +43,16 @@ class ProductValidationTests(unittest.TestCase):
         def approve_slice(obj):
             obj.update({"status": "approved_for_engineering", "open_questions": [], "spec_path": location, "spec_sha256": digest})
 
-        def approve_wave(obj):
-            obj.update({"status": "approved_for_engineering", "approval": {"actor": "PM A", "approved_at": "2026-11-10T14:00:00Z"}})
-
         self.edit("product/slices/SLICE-001.json", approve_slice)
-        self.edit("product/delivery-waves/WAVE-001.json", approve_wave)
         return target
 
     def test_draft_project_is_valid_but_not_authorized(self):
         report = validate_workspace(self.root)
         self.assertTrue(report["valid"], report["errors"])
         self.assertFalse(report["factory_authorized"])
-        self.assertEqual(report["counts"], {"epics": 1, "slices": 1, "waves": 1})
+        self.assertEqual(report["counts"], {"epics": 1, "slices": 1})
 
-    def test_approved_structural_wave_is_still_not_factory_authorized(self):
+    def test_an_approved_slice_is_still_not_factory_authorized(self):
         self.approved()
         report = validate_workspace(self.root)
         self.assertTrue(report["valid"], report["errors"])
@@ -94,15 +90,6 @@ class ProductValidationTests(unittest.TestCase):
         self.edit("product/slices/SLICE-001.json", lambda d: d.update(dependencies=["SLICE-002"]))
         self.assertIn("dependency cycle", " ".join(validate_workspace(self.root)["errors"]))
 
-    def test_wave_cannot_approve_draft_slice(self):
-        self.edit("product/delivery-waves/WAVE-001.json", lambda d: d.update(status="approved_for_engineering", approval={"actor": "PM", "approved_at": "2026-11-10T14:00:00Z"}))
-        report = validate_workspace(self.root)
-        self.assertIn("unapproved slice", " ".join(report["errors"]))
-
-    def test_wave_baseline_cannot_be_future(self):
-        self.edit("product/delivery-waves/WAVE-001.json", lambda d: d.update(base_project_revision=99))
-        self.assertIn("baseline is newer", " ".join(validate_workspace(self.root)["errors"]))
-
     def test_malformed_json_is_reported_not_raised(self):
         self.doc("product/epics/EPIC-001.json").write_text("{not json")
         report = validate_workspace(self.root)
@@ -126,7 +113,7 @@ class ProductValidationTests(unittest.TestCase):
 
     def test_unknown_status_rejected_for_every_kind(self):
         for relative in ("product/project.json", "product/epics/EPIC-001.json",
-                         "product/slices/SLICE-001.json", "product/delivery-waves/WAVE-001.json"):
+                         "product/slices/SLICE-001.json"):
             with self.subTest(relative=relative):
                 self.setUp()
                 self.edit(relative, lambda d: d.update(status="nonsense"))
@@ -137,22 +124,6 @@ class ProductValidationTests(unittest.TestCase):
         report = validate_workspace(self.root)
         self.assertIn("unexpected field 'factory_authorized'", " ".join(report["errors"]))
         self.assertFalse(report["factory_authorized"])
-
-    def test_approval_timestamp_must_be_a_date_time(self):
-        self.approved()
-        for stamp in ("yesterday", "2026-11-10", "2026-11-10 14:00:00", "2026-11-10T14:00:00", "2026-13-40T14:00:00Z", "2026-11-10T25:00:00Z"):
-            with self.subTest(stamp=stamp):
-                self.edit("product/delivery-waves/WAVE-001.json", lambda d: d["approval"].update(approved_at=stamp))
-                self.assertIn("approved_at must be a date-time", " ".join(validate_workspace(self.root)["errors"]))
-        for stamp in ("2026-11-10T14:00:00Z", "2026-11-10T14:00:00.250Z", "2026-11-10T09:00:00-05:00"):
-            with self.subTest(stamp=stamp):
-                self.edit("product/delivery-waves/WAVE-001.json", lambda d: d["approval"].update(approved_at=stamp))
-                self.assertTrue(validate_workspace(self.root)["valid"])
-
-    def test_approved_wave_needs_an_approval_record(self):
-        self.approved()
-        self.edit("product/delivery-waves/WAVE-001.json", lambda d: d.update(approval=None))
-        self.assertIn("requires recorded author approval", " ".join(validate_workspace(self.root)["errors"]))
 
     def test_unsafe_spec_paths_rejected(self):
         self.approved()
@@ -233,7 +204,7 @@ class ProductValidationTests(unittest.TestCase):
 class SchemaParityTests(unittest.TestCase):
     """The JSON Schema files and the Python validator must describe the same shapes."""
 
-    KINDS = {"project": "project", "epic": "epic", "slice": "slice", "wave": "delivery-wave"}
+    KINDS = {"project": "project", "epic": "epic", "slice": "slice"}
 
     def schema(self, kind):
         return json.loads((ROOT / "docs" / "mach-next" / "schemas" / (self.KINDS[kind] + ".schema.json")).read_text())
@@ -254,21 +225,20 @@ class SchemaParityTests(unittest.TestCase):
                 self.assertEqual(tuple(self.schema(kind)["properties"]["status"]["enum"]), validate.ENUMS[kind]["status"])
 
     def test_id_patterns_match(self):
-        rules = {"project_id": validate.PROJECT_RE, "epic_id": validate.EPIC_RE, "slice_id": validate.SLICE_RE, "wave_id": validate.WAVE_RE}
+        rules = {"project_id": validate.PROJECT_RE, "epic_id": validate.EPIC_RE, "slice_id": validate.SLICE_RE}
         for kind in self.KINDS:
             for field, rule in rules.items():
                 if field in validate.SHAPES[kind]:
                     with self.subTest(kind=kind, field=field):
                         self.assertEqual(self.schema(kind)["properties"][field]["pattern"], rule.pattern)
-        slice_schema, wave_schema = self.schema("slice")["properties"], self.schema("wave")["properties"]
+        slice_schema = self.schema("slice")["properties"]
         self.assertEqual(slice_schema["dependencies"]["items"]["pattern"], validate.SLICE_RE.pattern)
-        self.assertEqual(wave_schema["slices"]["items"]["pattern"], validate.SLICE_RE.pattern)
         self.assertEqual(slice_schema["spec_sha256"]["pattern"], validate.HEX_RE.pattern)
 
     def test_example_project_satisfies_the_schema_fields(self):
         product = SEED / "product"
         files = {"project": [product / "project.json"], "epic": sorted((product / "epics").glob("*.json")),
-                 "slice": sorted((product / "slices").glob("*.json")), "wave": sorted((product / "delivery-waves").glob("*.json"))}
+                 "slice": sorted((product / "slices").glob("*.json"))}
         for kind, paths in files.items():
             self.assertTrue(paths, kind)
             for path in paths:

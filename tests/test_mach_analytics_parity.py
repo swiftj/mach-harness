@@ -260,7 +260,7 @@ class RunRecordShapeTest(unittest.TestCase):
             (root / "cell.json").write_text(json.dumps({"ticket_id": "SYN-001", "stage": "approved", "risk": "Medium", "app_type": "cli", "mode": "headless",
                                                         "branch": "feature/SYN-001", "created_at": "2026-11-01T10:00:00+00:00",
                                                         "merged": {"method": "local", "commit": "abc1234", "at": "2026-11-01T11:00:00+00:00"},
-                                                        "product": {"slice_id": "SLICE-001", "revision": 1, "wave_id": "WAVE-001"}}))
+                                                        "product": {"slice_id": "SLICE-001", "revision": 1, "epic_id": "EPIC-001", "source": "github"}}))
             (root / "build-report.json").write_text(json.dumps({"review_loop": 0, "tests_seen_failing_first": 1, "tests_passing_on_first_run": [],
                                                                 "deviations": [{"type": "scope", "task": "T2", "detail": "x"}]}))
             (root / "review" / "round-1" / "decision.json").write_text(json.dumps({"outcome": "APPROVED", "head": "abc1234", "human_approval": None}))

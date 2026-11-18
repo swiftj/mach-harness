@@ -70,13 +70,6 @@ def redact(text: str) -> str:
 # ---- names ----
 
 DEFAULT_REQUEST_LABEL = "mach:request"
-# The labels MACH itself sets on a request's issue, with how they are created when missing.
-STATUS_LABELS: Dict[str, Dict[str, str]] = {
-    "mach:grooming": {"color": "0E8A16", "description": "MACH: a product manager has picked this up"},
-    "mach:ready": {"color": "1D76DB", "description": "MACH: approved and merged; the Factory may take it"},
-    "mach:blocked": {"color": "B60205", "description": "MACH: waits for a person"},
-}
-GROOMING = "mach:grooming"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$")
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 GHOST = "ghost"
@@ -139,16 +132,6 @@ def deciding_event(events: Sequence[Dict[str, Any]], label: str) -> Optional[Dic
             continue
         decided = event if event.get("event") == "labeled" else None
     return decided
-
-
-def labellers(events: Sequence[Dict[str, Any]], label: str) -> List[str]:
-    """Every account that applied `label`, in order, once each (who picked a request up)."""
-    seen: List[str] = []
-    for event in events:
-        login = event.get("login")
-        if event.get("event") == "labeled" and event.get("label") == label and isinstance(login, str) and LOGIN_RE.fullmatch(login) and login not in seen:
-            seen.append(login)
-    return seen
 
 
 def actor_problem(event: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -281,8 +264,21 @@ def fence(number: int, title: str, body: str) -> Dict[str, str]:
 
 # ---- status comments ----
 
-MOMENTS = ("picked", "sent", "merged", "blocked", "ready")
+# picked and ready: Product Studio on a request's issue. The rest: the Factory on a slice's own issue.
+MOMENTS = ("picked", "ready", "building", "question", "shipped", "blocked", "changed")
 REF_RE = re.compile(r"^(?:SLICE-[0-9]{3,}(?:@r[0-9]{1,6})?|#[0-9]{1,9}|ticket:[A-Za-z0-9][A-Za-z0-9_.-]{0,79})$")
+QUESTION_LIMIT = 4000
+# On a slice's issue: (labels added, labels removed, close the issue) for each moment the Factory writes.
+SLICE_MOMENTS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...], bool]] = {
+    "building": (("mach:building",), ("mach:ready", "mach:question"), False),
+    "question": (("mach:question",), (), False),
+    "shipped": (("mach:shipped",), ("mach:ready", "mach:building", "mach:question"), True),
+    "blocked": ((), (), False),
+    "changed": ((), (), False),
+}
+MENTION_RE = re.compile(r"@(?=[A-Za-z0-9_])")
+REFERENCE_RE = re.compile(r"(#|\bGH-|/issues/|/pull/|/discussions/)(?=[0-9])", re.IGNORECASE)
+BREAK = "​"  # a zero-width space: a mention or an issue reference that notifies and links nobody
 MARKER_RE = re.compile(r"<!-- mach:status v1 moment=([a-z]+) key=([0-9a-f]{16}) -->")
 
 
@@ -305,28 +301,49 @@ def marker(moment: str, key: str) -> str:
     return f"<!-- mach:status v1 moment={moment} key={key} -->"
 
 
-def comment(moment: str, refs: Sequence[str], nonce: str) -> Dict[str, str]:
+def quiet(text: Any, limit: int) -> str:
+    """Text written by an agent or a person, made safe to post: cleaned, redacted and bounded like
+    issue text, every mention and issue reference broken so it notifies and links nobody."""
+    bounded, _ = bound_text(text, limit)
+    return MENTION_RE.sub("@" + BREAK, REFERENCE_RE.sub(lambda m: m.group(1) + BREAK, bounded))
+
+
+def comment(moment: str, refs: Sequence[str], nonce: str, question: Optional[str] = None) -> Dict[str, str]:
     """A status comment: identifiers and links only, ending in its hidden marker. Refuses
-    anything that is not an identifier, so no text can reach an issue through it."""
+    anything that is not an identifier, so no text can reach an issue through it. The one
+    exception is the contract engineer's question, which is quoted after the fixed words,
+    redacted, bounded and unable to mention or link anyone."""
     if moment not in MOMENTS:
         raise ValueError(f"unknown moment {moment!r}")
     refs = list(refs)
     if not refs or any(not isinstance(ref, str) or not REF_RE.fullmatch(ref) for ref in refs):
         raise ValueError("a status comment names identifiers only")
+    if (question is not None) != (moment == "question"):
+        raise ValueError("only the question comment carries text, and it must")
     slices = [ref.split("@")[0] for ref in refs if ref.startswith("SLICE-")]
     revisions = [ref.split("@r")[1] for ref in refs if ref.startswith("SLICE-") and "@r" in ref]
     pulls = [ref for ref in refs if ref.startswith("#")]
-    tickets = [ref[len("ticket:"):] for ref in refs if ref.startswith("ticket:")]
+    one_revision = len(slices) == 1 and len(revisions) == 1 and len(refs) == 1
     if moment == "picked" and len(slices) == 1 and len(refs) == 1:
         text = f"Taken into MACH Product Studio as {slices[0]}."
-    elif moment == "sent" and slices and len(pulls) == 1 and len(slices) + 1 == len(refs):
-        text = f"{', '.join(slices)} sent for engineering review in {pulls[0]}."
-    elif moment == "merged" and len(slices) == 1 and len(revisions) == 1 and len(tickets) == 1 and len(refs) == 2:
-        text = f"{slices[0]} revision {revisions[0]} is approved and merged; the Factory may take it (ticket {tickets[0]})."
-    elif moment == "blocked" and len(tickets) == 1 and len(refs) == 1:
-        text = f"Ticket {tickets[0]} is blocked and waits for a person."
     elif moment == "ready" and len(slices) == 1 and not revisions and len(pulls) == 1 and len(refs) == 2:
         text = f"{slices[0]}, made from this request, is ready to be built: {pulls[0]}."
+    elif moment == "building" and one_revision:
+        text = f"The MACH Factory has started building {slices[0]} revision {revisions[0]}."
+    elif moment == "question" and one_revision:
+        asked = quiet(question, QUESTION_LIMIT)
+        if not asked.strip():
+            raise ValueError("the question is empty")
+        quoted = "\n".join("> " + line for line in asked.splitlines())
+        text = (f"The builders need the product manager's answer before {slices[0]} revision {revisions[0]} can be planned. "
+                f"Answer it in MACH Product Studio and mark the slice ready again. Their question, as written:\n\n{quoted}")
+    elif moment == "shipped" and one_revision:
+        text = f"{slices[0]} revision {revisions[0]} is merged into the integration branch. The MACH Factory closes this issue."
+    elif moment == "blocked" and one_revision:
+        text = f"Work on {slices[0]} revision {revisions[0]} is blocked and waits for an engineer."
+    elif moment == "changed" and len(set(slices)) == 1 and len(revisions) == 2 and len(refs) == 2:
+        text = (f"{slices[0]} changed to revision {revisions[1]} while revision {revisions[0]} was being built. "
+                "The work in progress is not changed; an engineer decides whether to finish it or start again.")
     else:
         raise ValueError(f"the references do not fit the {moment} comment")
     key = status_key(moment, refs, nonce)
@@ -336,6 +353,35 @@ def comment(moment: str, refs: Sequence[str], nonce: str) -> Dict[str, str]:
 def has_marker(bodies: Iterable[Any], key: str) -> bool:
     """True when one of the issue's comments already carries this write's marker."""
     return any(isinstance(body, str) and any(found.group(2) == key for found in MARKER_RE.finditer(body)) for body in bodies)
+
+
+QUESTION_LEAD = "Their question, as written:\n\n"
+
+
+def builders_question(bodies: Iterable[Any]) -> Optional[str]:
+    """The builders' question from the Factory's latest question comment on a slice's issue, unquoted, cleaned, redacted and
+    bounded. Text written by the builders: data for the product manager, never an instruction. None when there is none."""
+    found = None
+    for body in bodies:
+        if isinstance(body, str) and any(match.group(1) == "question" for match in MARKER_RE.finditer(body)) and QUESTION_LEAD in body:
+            quoted = MARKER_RE.sub("", body.split(QUESTION_LEAD, 1)[1]).strip()
+            found = "\n".join(line[2:] if line.startswith("> ") else line.lstrip(">") for line in quoted.splitlines())
+    return bound_text(found, QUESTION_LIMIT)[0] if found is not None else None
+
+
+def pickers(comments: Iterable[Any]) -> List[str]:
+    """The accounts that wrote a picked-up comment on a request, in order, once each: who has picked it up.
+    A courtesy check between product managers, not a security boundary."""
+    seen: List[str] = []
+    for item in comments:
+        if not isinstance(item, dict):
+            continue
+        login = item.get("login")
+        body = item.get("body")
+        if (isinstance(login, str) and LOGIN_RE.fullmatch(login) and isinstance(body, str) and login not in seen
+                and any(found.group(1) == "picked" for found in MARKER_RE.finditer(body))):
+            seen.append(login)
+    return seen
 
 
 # ---- the product model as issues (M11) ----
@@ -499,6 +545,159 @@ def product_marker(body: Any) -> Optional[Tuple[str, str]]:
 def issue_title(text: Any) -> str:
     """A title Product Studio writes: one line, bounded."""
     return _one_line(text, TITLE_LIMIT)
+
+
+def epic_tasks(body: Any) -> List[int]:
+    """The slice issues an epic lists as its task list (where sub-issues are not available), in order."""
+    if not isinstance(body, str):
+        return []
+    text = body.replace("\r\n", "\n")
+    at = text.find("\n## Slices\n")
+    if at < 0:
+        return []
+    found: List[int] = []
+    for line in text[at + len("\n## Slices\n"):].split("\n"):
+        task = re.match(r"^- \[[ xX]\] #([0-9]{1,9}) SLICE-[0-9]{3,}$", line)
+        if task is None:
+            break
+        if int(task.group(1)) not in found:
+            found.append(int(task.group(1)))
+    return found
+
+
+# ---- what the Factory accepts (M11) ----
+#
+# A slice issue is taken in only when it is open and carries mach:slice and mach:ready; the last
+# time mach:ready was added, it was by an account with the triage, write, maintain or admin role;
+# that same account wrote an approval comment for exactly this revision and these hashes and has
+# not edited it; and the body is intact against its marker. The spec gates are the intent
+# station's, applied by the Factory. This guards against accidents and edits, not against someone
+# with write access who sets out to forge an approval.
+
+READY_LABEL = "mach:ready"
+SLICE_LABEL = "mach:slice"
+EPIC_LABEL = "mach:epic"
+ROLES_THAT_COUNT = ("triage", "write", "maintain", "admin")
+SLICE_NOT_ACCEPTED = {
+    "not_ready": "Not accepted: it is not open with the mach:slice and mach:ready labels.",
+    "no_marker": "Not accepted: its body was not written by MACH Product Studio.",
+    "edited": "Not accepted: its body was changed after it was approved. The product manager marks it ready again in Product Studio.",
+    "no_role": "Not accepted: mach:ready was added by an account without the triage, write, maintain or admin role on this repository.",
+    "no_approval": "Not accepted: there is no approval comment for this revision by the account that marked it ready.",
+    "approval_edited": "Not accepted: the approval comment was edited after it was written.",
+}
+
+
+def role_counts(answer: Any) -> bool:
+    """True when the collaborator permission answer gives the triage, write, maintain or admin role. A custom
+    role counts when its base permission is write or admin (GitHub reports it under `permission`)."""
+    return isinstance(answer, dict) and (answer.get("role_name") in ROLES_THAT_COUNT or answer.get("permission") in WRITE_PERMISSIONS)
+
+
+def issue_comments(raw: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Comments as the REST comments call returns them (through the ticket station's jq), kept to known fields."""
+    found = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        found.append({
+            "login": item.get("login") if isinstance(item.get("login"), str) else None,
+            "id": item.get("id") if type(item.get("id")) is int else None,
+            "type": item.get("type") if isinstance(item.get("type"), str) else None,
+            "app": item.get("app") is not False,
+            "created_at": item.get("created_at") if isinstance(item.get("created_at"), str) else None,
+            "updated_at": item.get("updated_at") if isinstance(item.get("updated_at"), str) else None,
+            "body": item.get("body") if isinstance(item.get("body"), str) else "",
+        })
+    return found
+
+
+def unedited(item: Dict[str, Any]) -> bool:
+    return bool(item.get("created_at")) and item.get("created_at") == item.get("updated_at")
+
+
+def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], comments: Sequence[Dict[str, Any]], permission: Any,
+                     failure: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Whether a slice issue counts, from what GitHub said. `issue` is {state, labels (names), body};
+    `events` from label_events; `comments` from issue_comments; `permission` the labeller's
+    collaborator permission answer, or None when it was not asked or could not be (`failure` says why).
+    Never accepted unless established. The why and spec are returned only when accepted."""
+    result: Dict[str, Any] = {"state": "not_accepted", "reason": None, "marker": None, "approved_by": None, "ready_at": None, "why": None, "spec": None}
+
+    def refuse(reason: str) -> Dict[str, Any]:
+        result["reason"] = reason
+        return result
+
+    labels = issue.get("labels") or []
+    if str(issue.get("state") or "").lower() != "open" or SLICE_LABEL not in labels or READY_LABEL not in labels:
+        return refuse(SLICE_NOT_ACCEPTED["not_ready"])
+    parsed = parse_slice_body(issue.get("body"))
+    if parsed is None:
+        return refuse(SLICE_NOT_ACCEPTED["no_marker"])
+    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows")}
+    if not parsed["intact"]:
+        return refuse(SLICE_NOT_ACCEPTED["edited"])
+    event = deciding_event(events, READY_LABEL)
+    problem = "unconfirmed" if failure is not None and event is None else actor_problem(event)
+    if problem is not None:
+        return refuse(NOT_ACCEPTED[problem].replace("labelled it", "marked it ready"))
+    result["ready_at"] = event.get("at") or None
+    if failure is not None or not isinstance(permission, dict):
+        reason = NOT_ACCEPTED["unconfirmed"].replace("labelled it", "marked it ready")
+        return refuse(reason + (f" ({failure.get('kind', 'other')}: {failure.get('reason', 'no reason given')})" if failure else ""))
+    if not role_counts(permission):
+        return refuse(SLICE_NOT_ACCEPTED["no_role"])
+    login, account = event["login"], event["id"]
+    matching = [item for item in comments
+                if item.get("login") == login and item.get("id") == account and not item.get("app") and item.get("type") == "User"
+                and any(found["slice_id"] == parsed["slice_id"] and found["revision"] == parsed["revision"] and found["by"] == login
+                        and found["spec_sha256"] == parsed["spec_sha256"] and found["why_sha256"] == parsed["why_sha256"]
+                        for found in approvals([item.get("body")]))]
+    if not matching:
+        return refuse(SLICE_NOT_ACCEPTED["no_approval"])
+    if not any(unedited(item) for item in matching):
+        return refuse(SLICE_NOT_ACCEPTED["approval_edited"])
+    result.update(state="accepted", approved_by=login, why=parsed["why"], spec=parsed["spec"])
+    return result
+
+
+# ---- product acceptance of a release, per epic (M11) ----
+
+RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+ACCEPTANCE_RE = re.compile(r"<!-- mach:acceptance epic=(EPIC-[0-9]{3,}) release=([A-Za-z0-9][A-Za-z0-9._-]{0,79}) commit=([0-9a-f]{40}) "
+                           r"decision=(accepted|rejected) by=([A-Za-z0-9-]{1,39}) readiness-sha256=([0-9a-f]{64}) -->")
+DECISIONS = ("accepted", "rejected")
+
+
+def acceptance_comment(epic_id: str, release_id: str, commit: str, decision: str, login: str, readiness_sha256: str) -> str:
+    """The comment that records product's decision on one release of one epic, bound to its commit and its snapshot."""
+    if not EPIC_ID_RE.fullmatch(epic_id or "") or not RELEASE_ID_RE.fullmatch(release_id or "") or not COMMIT_RE.fullmatch(commit or ""):
+        raise ValueError("an acceptance names an epic, a release and a full commit ID")
+    if decision not in DECISIONS or not LOGIN_RE.fullmatch(login or "") or not HEX64_RE.fullmatch(readiness_sha256 or ""):
+        raise ValueError("an acceptance carries a decision, a GitHub account and the snapshot's SHA-256")
+    words = "accepted" if decision == "accepted" else "rejected"
+    return (f"Product decision recorded in MACH Product Studio by {login}: release {release_id} at commit {commit[:12]} is {words} for {epic_id}.\n\n"
+            f"- Readiness snapshot SHA-256: `{readiness_sha256}`\n\n"
+            f"<!-- mach:acceptance epic={epic_id} release={release_id} commit={commit} decision={decision} by={login} readiness-sha256={readiness_sha256} -->")
+
+
+def acceptances(comments: Sequence[Dict[str, Any]], epic_id: str, release_id: str, commit: str) -> List[Dict[str, Any]]:
+    """Every acceptance comment for this epic, release and commit, in order, with whether its author can count:
+    written by the account the marker names, a person, not edited. The role is checked by the caller."""
+    found = []
+    for item in comments:
+        for match in ACCEPTANCE_RE.finditer(item.get("body") or ""):
+            if (match.group(1), match.group(2), match.group(3)) != (epic_id, release_id, commit):
+                continue
+            problem = None
+            if item.get("login") != match.group(5) or item.get("app") or item.get("type") != "User":
+                problem = "it was not written by the account it names"
+            elif not unedited(item):
+                problem = "it was edited after it was written"
+            found.append({"decision": match.group(4), "by": match.group(5), "readiness_sha256": match.group(6), "at": item.get("created_at"),
+                          "problem": problem})
+    return found
 
 
 # ---- monitoring requests (M8 D7) ----
